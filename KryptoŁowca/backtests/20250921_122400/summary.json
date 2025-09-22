@@ -1,0 +1,48 @@
+{
+  "params": {
+    "symbols": [
+      "ETH/USDT"
+    ],
+    "timeframe": "15m",
+    "ema_fast": 50,
+    "ema_slow": 150,
+    "atr_len": 14,
+    "min_atr_pct": 0.15,
+    "execution": "next_open",
+    "capital": 10000.0,
+    "risk_pct": 0.005,
+    "k_sl": 1.5,
+    "fee_rate": 0.001,
+    "tp": {
+      "k_tp1": 1.0,
+      "k_tp2": 2.0,
+      "k_tp3": 3.0,
+      "p1": 0.4,
+      "p2": 0.3,
+      "p3": 0.3,
+      "move_be_after_tp1": true,
+      "trail_act_pct": 0.008,
+      "trail_dist_pct": 0.003
+    }
+  },
+  "per_symbol": {
+    "ETH/USDT": {
+      "symbol": "ETH/USDT",
+      "trades": 1
+    }
+  },
+  "metrics": {
+    "n_trades": 1,
+    "gross_profit": 19.82253315306119,
+    "gross_loss": 0,
+    "net_profit": 19.82253315306119,
+    "avg_trade_usdt": 19.82253315306119,
+    "profit_factor": Infinity,
+    "expectancy_usdt": 19.82253315306119,
+    "expectancy_r": 0.3964506630612238,
+    "max_drawdown_usdt": 0.0,
+    "sharpe_like": 0.0,
+    "r_multiple_avg": 0.3964506630612238,
+    "win_rate_%": 100.0
+  }
+}

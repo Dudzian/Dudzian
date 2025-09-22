@@ -1,0 +1,22 @@
+[
+  {
+    "id": 1,
+    "updated_at": "2025-09-08T18:41:47.388325",
+    "symbol": "BTC/USDT",
+    "side": "LONG",
+    "quantity": 0.01,
+    "avg_price": 50000.0,
+    "unrealized_pnl": 0.0,
+    "mode": "paper"
+  },
+  {
+    "id": 2,
+    "updated_at": "2025-09-07T19:17:27.406609",
+    "symbol": "ETH/USDT",
+    "side": "LONG",
+    "quantity": 0.00840371,
+    "avg_price": 4283.8186072,
+    "unrealized_pnl": 0.0,
+    "mode": "paper"
+  }
+]

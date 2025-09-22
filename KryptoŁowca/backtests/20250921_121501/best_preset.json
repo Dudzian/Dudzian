@@ -1,0 +1,41 @@
+{
+  "score": -0.0,
+  "params": {
+    "min_atr_pct": 0.08,
+    "k_sl": 0.8,
+    "k_tp1": 0.6,
+    "k_tp2": 1.2,
+    "k_tp3": 2.0,
+    "p1": 0.4,
+    "p2": 0.3,
+    "p3": 0.2,
+    "trail_act_pct": 0.3,
+    "trail_dist_pct": 0.2,
+    "timeframe": "5m",
+    "ema_fast": 50,
+    "ema_slow": 150,
+    "capital": 10000.0,
+    "risk_pct": 1.0,
+    "fee": 0.1,
+    "symbols": [
+      "ETH/USDT",
+      "SOL/USDT",
+      "BNB/USDT",
+      "LINK/USDT"
+    ]
+  },
+  "metrics": {
+    "n_trades": 9,
+    "gross_profit": 0,
+    "gross_loss": 1704.4265686291433,
+    "net_profit": -1704.4265686291433,
+    "avg_trade_usdt": -189.38072984768257,
+    "profit_factor": 0.0,
+    "expectancy_usdt": -189.38072984768257,
+    "expectancy_r": -1.8938072984768257,
+    "max_drawdown_usdt": 1704.426568629143,
+    "sharpe_like": -6.58620379196933,
+    "r_multiple_avg": -1.8938072984768257,
+    "win_rate_%": 0.0
+  }
+}

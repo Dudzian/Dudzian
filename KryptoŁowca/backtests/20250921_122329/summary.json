@@ -1,0 +1,63 @@
+{
+  "params": {
+    "symbols": [
+      "ETH/USDT",
+      "SOL/USDT",
+      "BNB/USDT",
+      "LINK/USDT"
+    ],
+    "timeframe": "5m",
+    "ema_fast": 50,
+    "ema_slow": 150,
+    "atr_len": 14,
+    "min_atr_pct": 0.12,
+    "execution": "next_open",
+    "capital": 10000.0,
+    "risk_pct": 0.005,
+    "k_sl": 1.5,
+    "fee_rate": 0.001,
+    "tp": {
+      "k_tp1": 1.0,
+      "k_tp2": 2.0,
+      "k_tp3": 3.0,
+      "p1": 0.4,
+      "p2": 0.3,
+      "p3": 0.3,
+      "move_be_after_tp1": true,
+      "trail_act_pct": 0.099,
+      "trail_dist_pct": 0.099
+    }
+  },
+  "per_symbol": {
+    "ETH/USDT": {
+      "symbol": "ETH/USDT",
+      "trades": 0
+    },
+    "SOL/USDT": {
+      "symbol": "SOL/USDT",
+      "trades": 1
+    },
+    "BNB/USDT": {
+      "symbol": "BNB/USDT",
+      "trades": 0
+    },
+    "LINK/USDT": {
+      "symbol": "LINK/USDT",
+      "trades": 6
+    }
+  },
+  "metrics": {
+    "n_trades": 7,
+    "gross_profit": 0,
+    "gross_loss": 631.4110762602256,
+    "net_profit": -631.4110762602256,
+    "avg_trade_usdt": -90.20158232288938,
+    "profit_factor": 0.0,
+    "expectancy_usdt": -90.20158232288938,
+    "expectancy_r": -1.8040316464577875,
+    "max_drawdown_usdt": 631.4110762602257,
+    "sharpe_like": -30.262078573306674,
+    "r_multiple_avg": -1.8040316464577875,
+    "win_rate_%": 0.0
+  }
+}
