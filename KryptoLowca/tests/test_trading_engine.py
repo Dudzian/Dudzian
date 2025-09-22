@@ -1,109 +1,138 @@
 # tests/test_trading_engine.py
 # -*- coding: utf-8 -*-
-"""
-Unit tests for trading_engine.py.
-"""
-import pytest
+"""Testy jednostkowe dla modułu core.trading_engine."""
+
 import asyncio
-import pandas as pd
+from dataclasses import replace
+
 import numpy as np
-from unittest.mock import AsyncMock
+import pandas as pd
+import pytest
+
 from core.trading_engine import TradingEngine, TradingError
-from trading_strategies import TradingParameters, EngineConfig, TradingStrategies
+from trading_strategies import EngineConfig, TradingParameters
 
-class MockExchange:
+
+class DummyExchange:
     async def fetch_balance(self):
-        return {"USDT": 10000.0}
+        # Symuluje strukturę jak w CCXT
+        return {"total": {"USDT": 10_000.0}}
 
-class MockAI:
-    async def predict_series(self, symbol, df):
-        return pd.Series(np.full(len(df), 10.0), index=df.index)
+
+class DummyAI:
     ai_threshold_bps = 5.0
 
-class MockRisk:
-    def calculate_position_size(self, symbol, signal, market_data, portfolio):
-        return 0.1
 
-class MockDB:
+class DummyRisk:
+    def calculate_position_size(self, symbol, signal, market_data, portfolio):
+        # Zwracamy strukturę zgodną z RiskManagement.PositionSizing
+        return {"recommended_size": 0.1, "risk_adjusted_size": 0.08}
+
+
+class DummyDB:
+    def __init__(self):
+        self.logged_messages = []
+        self.positions = []
+
     async def ensure_user(self, email):
         return 1
+
     async def log(self, user_id, level, msg, category="general", context=None):
-        pass
+        self.logged_messages.append((user_id, level, category, msg))
+
     async def get_positions(self, user_id):
-        return []
+        return list(self.positions)
+
 
 @pytest.fixture
-async def engine(monkeypatch):
-    monkeypatch.setattr("core.trading_engine.ExchangeManager", MockExchange)
-    monkeypatch.setattr("core.trading_engine.AIManager", MockAI)
-    monkeypatch.setattr("core.trading_engine.RiskManager", MockRisk)
-    monkeypatch.setattr("core.trading_engine.DatabaseManager", MockDB)
-    engine = TradingEngine(db_manager=MockDB())
-    await engine.configure(MockExchange(), MockAI(), MockRisk())
-    engine.set_parameters(TradingParameters(), EngineConfig())
+def engine():
+    db = DummyDB()
+    engine = TradingEngine(db_manager=db)
+    asyncio.run(engine.configure(DummyExchange(), DummyAI(), DummyRisk()))
+    params = TradingParameters()
+    config = EngineConfig(min_data_points=20, max_position_size=5, enable_shorting=True)
+    engine.set_parameters(params, config)
     return engine
 
-@pytest.mark.asyncio
-async def test_execute_live_tick(engine):
-    df = pd.DataFrame({
-        "timestamp": pd.date_range("2025-08-21", periods=252, freq="T"),
-        "open": np.full(252, 100.0),
-        "high": np.full(252, 101.0),
-        "low": np.full(252, 99.0),
-        "close": np.full(252, 100.5),
-        "volume": np.full(252, 10.0)
-    })
-    preds = pd.Series(np.full(252, 10.0), index=df.index)
-    plan = await engine.execute_live_tick("BTC/USDT", df, preds)
+
+def _build_df(rows: int = 30, price: float = 100.0) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2024-01-01", periods=rows, freq="T"),
+            "open": np.full(rows, price),
+            "high": np.full(rows, price * 1.01),
+            "low": np.full(rows, price * 0.99),
+            "close": np.full(rows, price),
+            "volume": np.full(rows, 10.0),
+        }
+    )
+
+
+def test_execute_live_tick_generates_plan(engine):
+    df = _build_df()
+    preds = pd.Series(np.full(len(df), 10.0), index=df.index)
+
+    plan = asyncio.run(engine.execute_live_tick("BTC/USDT", df, preds))
+
     assert plan is not None
     assert plan["symbol"] == "BTC/USDT"
     assert plan["side"] == "buy"
-    assert plan["qty_hint"] == 0.1
-    assert plan["price_ref"] == 100.5
+    # 10% kapitału (10 000) przy cenie 100 -> 10 jednostek
+    assert plan["qty_hint"] == pytest.approx(10.0, rel=1e-3)
+    assert plan["price_ref"] == pytest.approx(100.0)
+    assert plan["strength"] >= 1.0
+    assert plan["stop_loss"] < plan["price_ref"]
+    assert plan["take_profit"] > plan["price_ref"]
 
-@pytest.mark.asyncio
-async def test_no_signal(engine, monkeypatch):
-    monkeypatch.setattr(engine.strategies, "run_strategy", lambda *args: ({}, [], pd.Series()))
-    df = pd.DataFrame({
-        "timestamp": pd.date_range("2025-08-21", periods=252, freq="T"),
-        "open": np.full(252, 100.0),
-        "high": np.full(252, 101.0),
-        "low": np.full(252, 99.0),
-        "close": np.full(252, 100.5),
-        "volume": np.full(252, 10.0)
-    })
-    preds = pd.Series(np.full(252, 0.0), index=df.index)
-    plan = await engine.execute_live_tick("BTC/USDT", df, preds)
+
+def test_execute_live_tick_no_signal(engine):
+    df = _build_df()
+    preds = pd.Series(np.full(len(df), 1.0), index=df.index)  # poniżej progu
+
+    plan = asyncio.run(engine.execute_live_tick("BTC/USDT", df, preds))
+
     assert plan is None
 
-@pytest.mark.asyncio
-async def test_max_positions(engine, monkeypatch):
-    monkeypatch.setattr(engine.db_manager, "get_positions", AsyncMock(return_value=[{}]*1))
-    engine.tp = TradingParameters(max_position_size=1)
-    df = pd.DataFrame({
-        "timestamp": pd.date_range("2025-08-21", periods=252, freq="T"),
-        "open": np.full(252, 100.0),
-        "high": np.full(252, 101.0),
-        "low": np.full(252, 99.0),
-        "close": np.full(252, 100.5),
-        "volume": np.full(252, 10.0)
-    })
-    preds = pd.Series(np.full(252, 10.0), index=df.index)
-    plan = await engine.execute_live_tick("BTC/USDT", df, preds)
+
+def test_execute_live_tick_max_positions(engine):
+    # Przygotuj konfigurację z maksymalnie 1 pozycją
+    engine.set_parameters(engine.tp, replace(engine.ec, max_position_size=1))
+    engine.db_manager.positions = [{}]
+
+    df = _build_df()
+    preds = pd.Series(np.full(len(df), 10.0), index=df.index)
+
+    plan = asyncio.run(engine.execute_live_tick("BTC/USDT", df, preds))
+
     assert plan is None
 
-@pytest.mark.asyncio
-async def test_invalid_input(engine):
-    df = pd.DataFrame({
-        "timestamp": pd.date_range("2025-08-21", periods=10, freq="T"),
-        "open": np.full(10, 100.0),
-        "high": np.full(10, 101.0),
-        "low": np.full(10, 99.0),
-        "close": np.full(10, 100.5),
-        "volume": np.full(10, 10.0)
-    })
-    preds = pd.Series(np.full(10, 10.0), index=df.index)
+
+def test_execute_live_tick_shorting_disabled(engine):
+    engine.set_parameters(engine.tp, replace(engine.ec, enable_shorting=False))
+
+    df = _build_df()
+    preds = pd.Series(np.full(len(df), -10.0), index=df.index)
+
+    plan = asyncio.run(engine.execute_live_tick("BTC/USDT", df, preds))
+
+    assert plan is None
+
+
+def test_execute_live_tick_invalid_input(engine):
+    df = _build_df(rows=10)  # mniej niż min_data_points
+    preds = pd.Series(np.full(len(df), 10.0), index=df.index)
+
     with pytest.raises(ValueError):
-        await engine.execute_live_tick("", df, preds)
+        asyncio.run(engine.execute_live_tick("BTC/USDT", df, preds))
+
     with pytest.raises(ValueError):
-        await engine.execute_live_tick("BTC/USDT", df, preds)
+        asyncio.run(engine.execute_live_tick("", _build_df(), preds))
+
+
+def test_execute_live_tick_missing_dependencies():
+    engine = TradingEngine()
+    df = _build_df()
+    preds = pd.Series(np.full(len(df), 10.0), index=df.index)
+
+    with pytest.raises(TradingError):
+        asyncio.run(engine.execute_live_tick("BTC/USDT", df, preds))

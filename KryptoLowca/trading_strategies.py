@@ -70,6 +70,7 @@ class EngineConfig:
     max_portfolio_risk: float = 0.02
     enable_stop_loss: bool = True
     enable_take_profit: bool = True
+    enable_shorting: bool = False
     enable_position_sizing: bool = True
     rebalance_frequency: str = 'daily'
     risk_free_rate: float = 0.02
