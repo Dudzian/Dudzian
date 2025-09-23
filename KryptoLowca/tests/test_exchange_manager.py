@@ -50,6 +50,7 @@ class DummyPublic:
             [1_700_000_000_000, 100.0, 101.0, 99.0, 100.5, 10.0],
             [1_700_000_060_000, 100.5, 102.0, 99.5, 101.0, 12.0],
         ]
+        self.closed = False
 
     def load_markets(self):
         return self.rules
@@ -66,11 +67,15 @@ class DummyPublic:
     def fetch_order_book(self, symbol: str, limit: int = 50):
         return self.order_book
 
+    def close(self) -> None:
+        self.closed = True
+
 
 class DummyPaperBackend:
     def __init__(self, public: DummyPublic) -> None:
         self.public = public
         self.created = []
+        self.closed = False
 
     def load_markets(self):
         return self.public.load_markets()
@@ -124,6 +129,9 @@ class DummyPaperBackend:
         if symbol and symbol != pos.symbol:
             return []
         return [pos]
+
+    def close(self) -> None:
+        self.closed = True
 
 
 class DummyPrivateBackend(DummyPaperBackend):
@@ -263,3 +271,34 @@ def test_set_mode_resets_backends(manager: ExchangeManager):
 def test_fetch_ohlcv_pass_through(manager: ExchangeManager):
     data = manager.fetch_ohlcv("BTC/USDT", timeframe="1m", limit=1)
     assert data and data[0][0] == 1_700_000_000_000
+
+
+def test_fetch_markets(manager: ExchangeManager):
+    symbols = manager.fetch_markets()
+    assert set(symbols) == {"BTC/USDT", "ETH/USDT"}
+
+
+def test_fetch_batch(manager: ExchangeManager):
+    batch = manager.fetch_batch(["BTC/USDT"], timeframe="1m", use_orderbook=True, limit_ohlcv=1)
+    assert len(batch) == 1
+    symbol, ohlcv, ticker, orderbook, error = batch[0]
+    assert symbol == "BTC/USDT"
+    assert ohlcv and ohlcv[0][0] == 1_700_000_000_000
+    assert ticker and ticker["last"] == pytest.approx(100.0)
+    assert orderbook and "asks" in orderbook
+    assert error is None
+
+
+def test_close(manager: ExchangeManager):
+    public = manager._public  # type: ignore[attr-defined]
+    paper = manager._paper  # type: ignore[attr-defined]
+    private = manager._private  # type: ignore[attr-defined]
+
+    manager.close()
+
+    assert public.closed  # type: ignore[attr-defined]
+    assert paper.closed  # type: ignore[attr-defined]
+    assert private.closed  # type: ignore[attr-defined]
+    assert manager._public is None  # type: ignore[attr-defined]
+    assert manager._private is None  # type: ignore[attr-defined]
+    assert manager._paper is None  # type: ignore[attr-defined]

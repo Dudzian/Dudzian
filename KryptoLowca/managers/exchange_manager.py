@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional, List, Tuple
+from typing import Any, Dict, Optional, List, Tuple, Iterable
 
 from pydantic import BaseModel, Field
 
@@ -373,6 +373,19 @@ class ExchangeManager:
             self._paper.load_markets()
         return rules
 
+    def fetch_markets(self) -> List[str]:
+        """Zwraca listę symboli dostępnych na giełdzie.
+
+        Metoda jest zachowana dla kompatybilności wstecznej ze starszymi
+        fragmentami GUI oraz skryptami szybkich testów, które wcześniej
+        korzystały z ``ExchangeAdapter.fetch_markets``. Dzięki delegacji do
+        :meth:`load_markets` mamy pewność, że źródłem prawdy pozostają
+        dokładne reguły rynku (kroki cenowe, minimalne wolumeny itp.).
+        """
+
+        rules = self.load_markets() or {}
+        return list(rules.keys())
+
     # --- dane ---
 
     def fetch_ticker(self, symbol: str) -> Optional[Dict[str, Any]]:
@@ -383,6 +396,51 @@ class ExchangeManager:
 
     def fetch_order_book(self, symbol: str, limit: int = 50) -> Optional[Dict[str, Any]]:
         return self._ensure_public().fetch_order_book(symbol, limit=limit)
+
+    def fetch_batch(
+        self,
+        symbols: Iterable[str],
+        *,
+        timeframe: str = "1m",
+        use_orderbook: bool = False,
+        limit_ohlcv: int = 500,
+    ) -> List[Tuple[str, Optional[List[List[float]]], Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[str]]]:
+        """Pobiera zestaw danych dla wielu symboli.
+
+        Funkcja przydaje się w widoku GUI, który w jednej iteracji pętli
+        potrzebuje świeżego OHLCV, tikera oraz (opcjonalnie) arkusza zleceń
+        dla kilku instrumentów. Zwracana lista zachowuje format znany z
+        poprzedniej implementacji ``ExchangeAdapter``: każdy element to krotka
+        ``(symbol, ohlcv, ticker, orderbook, error)``. W przypadku błędów
+        pobrania odpowiednie pole ``error`` zawiera opis ostrzeżenia.
+        """
+
+        results: List[Tuple[str, Optional[List[List[float]]], Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[str]]] = []
+        for sym in symbols:
+            error: Optional[str] = None
+            ohlcv: Optional[List[List[float]]] = None
+            ticker: Optional[Dict[str, Any]] = None
+            orderbook: Optional[Dict[str, Any]] = None
+
+            try:
+                ohlcv = self.fetch_ohlcv(sym, timeframe=timeframe, limit=limit_ohlcv)
+            except Exception as exc:  # pragma: no cover - fetch_ohlcv już loguje
+                error = f"ohlcv: {exc}"
+
+            try:
+                ticker = self.fetch_ticker(sym)
+            except Exception as exc:  # pragma: no cover - fetch_ticker już loguje
+                error = f"{error}; ticker: {exc}" if error else f"ticker: {exc}"
+
+            if use_orderbook:
+                try:
+                    orderbook = self.fetch_order_book(sym, limit=50)
+                except Exception as exc:  # pragma: no cover - fetch_order_book loguje
+                    error = f"{error}; orderbook: {exc}" if error else f"orderbook: {exc}"
+
+            results.append((sym, ohlcv, ticker, orderbook, error))
+
+        return results
 
     # --- reguły/kwantyzacja ---
 
@@ -517,3 +575,35 @@ class ExchangeManager:
 
     def on(self, event_type: str, callback) -> None:
         self._event_bus.subscribe(event_type, callback)
+
+    def close(self) -> None:
+        """Zamyka połączenia CCXT i czyści backendy.
+
+        W długotrwale działającym bocie ważne jest zwolnienie uchwytów do
+        klientów HTTP/WebSocket (szczególnie podczas zamykania aplikacji lub
+        przełączania środowiska). Domknięcie zapobiega wyciekom zasobów oraz
+        ułatwia ponowne inicjalizacje np. przy zmianie API key.
+        """
+
+        backends = [self._public, self._private, self._paper]
+        seen: set[int] = set()
+        for backend in backends:
+            if backend is None:
+                continue
+            for target in (backend, getattr(backend, "client", None)):
+                if target is None:
+                    continue
+                ident = id(target)
+                if ident in seen:
+                    continue
+                seen.add(ident)
+                close_fn = getattr(target, "close", None)
+                if callable(close_fn):
+                    try:
+                        close_fn()  # type: ignore[call-arg]
+                    except Exception as exc:  # pragma: no cover - defensywne
+                        log.debug("Error while closing backend %s: %s", target, exc)
+
+        self._public = None
+        self._private = None
+        self._paper = None
