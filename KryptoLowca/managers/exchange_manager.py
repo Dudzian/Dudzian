@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, Optional, List, Tuple
 
 from pydantic import BaseModel, Field
 
@@ -89,6 +89,13 @@ class _CCXTPublicFeed(BaseBackend):
             return self.client.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
         except Exception as e:
             log.warning("fetch_ohlcv failed: %s", e)
+            return None
+
+    def fetch_order_book(self, symbol: str, limit: int = 50) -> Optional[Dict[str, Any]]:
+        try:
+            return self.client.fetch_order_book(symbol, limit=limit)
+        except Exception as e:
+            log.warning("fetch_order_book failed: %s", e)
             return None
 
     # Backend publiczny nie tworzy zamówień/pozycji
@@ -239,6 +246,13 @@ class _CCXTPrivateBackend(_CCXTPublicFeed):
             ))
         return out
 
+    def fetch_balance(self) -> Dict[str, Any]:
+        try:
+            return self.client.fetch_balance()
+        except Exception as e:
+            log.error("fetch_balance failed: %s", e)
+            return {}
+
 
 # =========================================
 #          Exchange Manager (Facade)
@@ -260,7 +274,8 @@ class ExchangeManager:
       - SPOT/FUTURES: MARKET/LIMIT przez CCXT (bez OCO/SL/TP).
     """
 
-    def __init__(self, exchange_id: str = "binance") -> None:
+    def __init__(self, exchange_id: str = "binance", *, paper_initial_cash: float = 10_000.0,
+                 paper_cash_asset: str = "USDT") -> None:
         self.exchange_id = exchange_id
         self.mode: Mode = Mode.PAPER
         self._testnet: bool = False
@@ -275,6 +290,8 @@ class ExchangeManager:
         self._private: Optional[_CCXTPrivateBackend] = None
         # paper backend korzysta z _public dla cen/rynku
         self._paper: Optional[PaperBackend] = None
+        self._paper_initial_cash = float(paper_initial_cash)
+        self._paper_cash_asset = paper_cash_asset.upper()
 
         log.info("ExchangeManager initialized (Core 2.0)")
 
@@ -329,9 +346,23 @@ class ExchangeManager:
     def _ensure_paper(self) -> PaperBackend:
         pub = self._ensure_public()
         if self._paper is None:
-            self._paper = PaperBackend(price_feed_backend=pub, event_bus=self._event_bus)
+            self._paper = PaperBackend(
+                price_feed_backend=pub,
+                event_bus=self._event_bus,
+                initial_cash=self._paper_initial_cash,
+                cash_asset=self._paper_cash_asset,
+            )
             self._paper.load_markets()
         return self._paper
+
+    def set_paper_balance(self, amount: float, asset: Optional[str] = None) -> None:
+        self._paper_initial_cash = float(amount)
+        if asset:
+            self._paper_cash_asset = asset.upper()
+        if self._paper is not None:
+            self._paper._cash_balance = max(0.0, float(amount))  # type: ignore[attr-defined]
+            if asset:
+                self._paper._cash_asset = self._paper_cash_asset  # type: ignore[attr-defined]
 
     def load_markets(self) -> Dict[str, MarketRules]:
         pub = self._ensure_public()
@@ -349,6 +380,9 @@ class ExchangeManager:
 
     def fetch_ohlcv(self, symbol: str, timeframe: str, limit: int = 500) -> Optional[List[List[float]]]:
         return self._ensure_public().fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
+
+    def fetch_order_book(self, symbol: str, limit: int = 50) -> Optional[Dict[str, Any]]:
+        return self._ensure_public().fetch_order_book(symbol, limit=limit)
 
     # --- reguły/kwantyzacja ---
 
@@ -369,6 +403,83 @@ class ExchangeManager:
     def min_notional(self, symbol: str) -> float:
         mr = self.get_market_rules(symbol)
         return float(mr.min_notional) if mr else 0.0
+
+    def simulate_vwap_price(
+        self,
+        symbol: str,
+        side: str,
+        amount: Optional[float],
+        fallback_bps: float = 5.0,
+        limit: int = 50,
+    ) -> Tuple[Optional[float], float]:
+        try:
+            ticker = self.fetch_ticker(symbol) or {}
+            last = ticker.get("last") or ticker.get("close") or ticker.get("bid") or ticker.get("ask")
+            mid = float(last) if last else None
+            if amount is None or amount <= 0:
+                return (mid, float(fallback_bps))
+
+            order_book = self.fetch_order_book(symbol, limit=limit) or {}
+            side = side.lower().strip()
+            levels = order_book.get("asks") if side == "buy" else order_book.get("bids")
+            if not levels:
+                return (mid, float(fallback_bps))
+
+            remaining = float(amount)
+            taken = 0.0
+            cost = 0.0
+            for price, qty in levels:
+                take_qty = min(remaining - taken, float(qty))
+                if take_qty <= 0:
+                    break
+                cost += take_qty * float(price)
+                taken += take_qty
+                if taken >= remaining - 1e-12:
+                    break
+
+            if taken <= 0:
+                return (mid, float(fallback_bps))
+
+            vwap = cost / taken
+            if mid:
+                slip_bps = abs(vwap - mid) / mid * 10_000.0
+            else:
+                slip_bps = float(fallback_bps)
+            return (float(vwap), float(slip_bps))
+        except Exception as exc:
+            log.warning("simulate_vwap_price failed for %s: %s", symbol, exc)
+            try:
+                fallback = self.fetch_ticker(symbol) or {}
+                last = fallback.get("last") or fallback.get("close")
+                return (float(last) if last else None, float(fallback_bps))
+            except Exception:
+                return (None, float(fallback_bps))
+
+    def fetch_balance(self) -> Dict[str, Any]:
+        if self.mode == Mode.PAPER:
+            return self._ensure_paper().fetch_balance()
+        backend = self._ensure_private()
+        raw = backend.fetch_balance()
+        return self._normalize_balance(raw)
+
+    @staticmethod
+    def _normalize_balance(balance: Any) -> Dict[str, Any]:
+        if not isinstance(balance, dict):
+            return {}
+        result: Dict[str, Any] = dict(balance)
+        for key in ("free", "total", "used"):
+            section = balance.get(key)
+            if not isinstance(section, dict):
+                continue
+            normalized = {}
+            for asset, amount in section.items():
+                try:
+                    normalized[asset] = float(amount)
+                except Exception:
+                    continue
+                result.setdefault(asset, normalized[asset])
+            result[key] = normalized
+        return result
 
     # --- zlecenia ---
 

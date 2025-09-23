@@ -7,6 +7,7 @@ import threading
 import random
 import logging
 import traceback
+import queue
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Union, DefaultDict, Tuple
 from collections import defaultdict
@@ -36,6 +37,7 @@ class EventType:
     TRADE_EXECUTED   = "TRADE_EXECUTED"
     POSITION_UPDATE  = "POSITION_UPDATE"
     PNL_UPDATE       = "PNL_UPDATE"
+    METRICS          = "METRICS"
     ATR_UPDATE       = "ATR_UPDATE"
     ATR_SPIKE        = "ATR_SPIKE"
     WFO_TRIGGER      = "WFO_TRIGGER"
@@ -70,6 +72,7 @@ class DebounceRule:
             window = 0.2
         self.window: float = float(window)
         self.max_batch: int = int(max_batch)
+        self.deliver_list: bool = bool(kwargs.pop("deliver_list", True))
 
 
 # ===== EventBus ==================================================================================
@@ -99,6 +102,33 @@ class EventBus:
         self._subs: DefaultDict[str, List[EventBus._Sub]] = defaultdict(list)
         self._lock = threading.Lock()
         self._closed = False
+        self._queue: "queue.Queue[Optional[Event]]" = queue.Queue()
+        self._thread: Optional[threading.Thread] = None
+        self._async_mode = False
+
+    def start(self) -> None:
+        with self._lock:
+            if self._thread and self._thread.is_alive():
+                return
+            self._closed = False
+            self._async_mode = True
+            self._thread = threading.Thread(target=self._run, name="EventBus", daemon=True)
+            self._thread.start()
+
+    def stop(self) -> None:
+        with self._lock:
+            self._closed = True
+            if not self._async_mode:
+                return
+        self._queue.put(None)
+        if self._thread:
+            try:
+                self._thread.join(timeout=1.0)
+            except Exception:
+                pass
+        with self._lock:
+            self._async_mode = False
+            self._thread = None
 
     def subscribe(self,
                   event_type: Union[str, Any],
@@ -123,7 +153,10 @@ class EventBus:
         if self._closed:
             return
         evt = Event(type=self._key(event_type), payload=payload)
-        self._dispatch(evt)
+        if self._async_mode:
+            self._queue.put(evt)
+        else:
+            self._dispatch(evt)
 
     # Aliasy zgodności
     def emit(self, event_type: Union[str, Any], payload: Optional[dict] = None) -> None:
@@ -136,8 +169,8 @@ class EventBus:
         self.publish(event_type, payload)
 
     def close(self) -> None:
+        self.stop()
         with self._lock:
-            self._closed = True
             for subs in self._subs.values():
                 for s in subs:
                     with s.lock:
@@ -187,7 +220,12 @@ class EventBus:
                 pass
         if not buf:
             return
-        self._safe_call(sub.callback, buf)
+        rule = sub.rule
+        if rule is not None and not rule.deliver_list:
+            for evt in buf:
+                self._safe_call(sub.callback, evt)
+        else:
+            self._safe_call(sub.callback, buf)
 
     @staticmethod
     def _safe_call(cb: _Callback, arg: Any) -> None:
@@ -199,25 +237,233 @@ class EventBus:
             except Exception:
                 pass
 
+    def _run(self) -> None:
+        while True:
+            try:
+                evt = self._queue.get(timeout=0.25)
+            except queue.Empty:
+                if self._closed:
+                    break
+                continue
+            if evt is None:
+                break
+            self._dispatch(evt)
 
+
+@dataclass
+class EmitterConfig:
+    pf_min: float = 1.4
+    expectancy_min: float = 0.0
+    min_trades_for_pf: int = 20
+    atr_period: int = 14
+    atr_trigger_growth_pct: float = 30.0
+    component: str = "EmitterAdapter"
+
+
+class EventEmitter:
+    """Wygodny wrapper na EventBus z obsługą tagów i logowania."""
+
+    def __init__(self, bus: Optional[EventBus] = None) -> None:
+        self.bus = bus or EventBus()
+        self._logger = logging.getLogger("event-emitter")
+        self._tag_map: DefaultDict[Tuple[str, str], List[Callable[[Any], None]]] = defaultdict(list)
+        self._lock = threading.Lock()
+
+    def on(
+        self,
+        event_type: Union[str, Any],
+        callback: Callable[[Any], None],
+        *,
+        tag: Optional[str] = None,
+        debounce: Optional[Union[DebounceRule, float]] = None,
+    ) -> None:
+        rule: Optional[DebounceRule]
+        if debounce is None:
+            rule = None
+        elif isinstance(debounce, DebounceRule):
+            rule = debounce
+        else:
+            rule = DebounceRule(window=float(debounce))
+        self.bus.subscribe(event_type, callback, rule=rule)
+        if tag:
+            key = (self._key(event_type), tag)
+            with self._lock:
+                self._tag_map[key].append(callback)
+
+    def off(
+        self,
+        event_type: Union[str, Any],
+        callback: Optional[Callable[[Any], None]] = None,
+        *,
+        tag: Optional[str] = None,
+    ) -> None:
+        key = self._key(event_type)
+        if callback is not None:
+            self.bus.unsubscribe(event_type, callback)
+            with self._lock:
+                for k in list(self._tag_map.keys()):
+                    if k[0] != key:
+                        continue
+                    if callback in self._tag_map[k]:
+                        self._tag_map[k].remove(callback)
+                    if not self._tag_map[k]:
+                        del self._tag_map[k]
+            return
+
+        if tag is not None:
+            with self._lock:
+                callbacks = self._tag_map.pop((key, tag), [])
+            for cb in callbacks:
+                self.bus.unsubscribe(event_type, cb)
+            return
+
+        with self._lock:
+            for k in [k for k in self._tag_map if k[0] == key]:
+                for cb in self._tag_map.pop(k, []):
+                    self.bus.unsubscribe(event_type, cb)
+
+    def emit(self, event_type: Union[str, Any], **payload: Any) -> None:
+        self.bus.publish(event_type, payload)
+
+    def emit_event(self, event_type: Union[str, Any], **payload: Any) -> None:
+        self.emit(event_type, **payload)
+
+    def log(self, message: str, level: str = "INFO", *, component: Optional[str] = None, **extra: Any) -> None:
+        lvl = level.upper()
+        comp = component or "EventEmitter"
+        record = {
+            "message": message,
+            "level": lvl,
+            "component": comp,
+            "ts": time.time(),
+        }
+        if extra:
+            record.update(extra)
+        try:
+            self.bus.publish(EventType.LOG, record)
+        except Exception:
+            self._logger.debug("Failed to emit log event", exc_info=True)
+        log_method = getattr(self._logger, lvl.lower(), self._logger.info)
+        log_method("[%s] %s", comp, message)
+
+    def close(self) -> None:
+        try:
+            self.bus.close()
+        finally:
+            with self._lock:
+                self._tag_map.clear()
+
+    @staticmethod
+    def _key(event_type: Union[str, Any]) -> str:
+        if isinstance(event_type, str):
+            return event_type
+        return f"{event_type}"
 # ===== EmitterAdapter (zgodność z dotychczasowymi importami) ====================================
 
 class EmitterAdapter:
-    """
-    Cienki wrapper zapewniający, że stare importy będą działały. Udostępnia `.bus`
-    i te same metody co EventBus.
-    """
-    def __init__(self, bus: Optional[EventBus] = None) -> None:
-        self.bus = bus or EventBus()
+    """Adapter zapewniający metody ułatwiające komunikację z GUI/serwisami."""
 
-    # proxy
-    def subscribe(self, *a, **kw) -> None:   return self.bus.subscribe(*a, **kw)
-    def unsubscribe(self, *a, **kw) -> None: return self.bus.unsubscribe(*a, **kw)
-    def publish(self, *a, **kw) -> None:     return self.bus.publish(*a, **kw)
-    def emit(self, *a, **kw) -> None:        return self.bus.emit(*a, **kw)
-    def emit_event(self, *a, **kw) -> None:  return self.bus.emit_event(*a, **kw)
-    def post(self, *a, **kw) -> None:        return self.bus.post(*a, **kw)
-    def close(self) -> None:                  return self.bus.close()
+    def __init__(
+        self,
+        bus: Optional[EventBus] = None,
+        cfg: Optional[EmitterConfig] = None,
+        **kwargs: Any,
+    ) -> None:
+        if bus is None:
+            bus = EventBus()
+        self.bus = bus
+        self.bus.start()
+        cfg_overrides = {k: kwargs.pop(k) for k in list(kwargs.keys()) if hasattr(EmitterConfig, k)}
+        self.cfg = cfg or EmitterConfig(**cfg_overrides)
+        self.emitter = EventEmitter(self.bus)
+
+    # proxy helpers
+    def subscribe(self, *a, **kw) -> None:
+        return self.bus.subscribe(*a, **kw)
+
+    def unsubscribe(self, *a, **kw) -> None:
+        return self.bus.unsubscribe(*a, **kw)
+
+    def publish(self, *a, **kw) -> None:
+        return self.bus.publish(*a, **kw)
+
+    def emit(self, *a, **kw) -> None:
+        return self.bus.emit(*a, **kw)
+
+    def emit_event(self, *a, **kw) -> None:
+        return self.bus.emit_event(*a, **kw)
+
+    def post(self, *a, **kw) -> None:
+        return self.bus.post(*a, **kw)
+
+    def log(self, message: str, level: str = "INFO", **extra: Any) -> None:
+        self.emitter.log(message, level=level, component=self.cfg.component, **extra)
+
+    def push_market_tick(self, symbol: str, *, price: float, ts: Optional[float] = None,
+                         high: Optional[float] = None, low: Optional[float] = None,
+                         close: Optional[float] = None, volume: Optional[float] = None) -> None:
+        payload: Dict[str, Any] = {
+            "symbol": symbol,
+            "price": float(price),
+            "ts": float(ts if ts is not None else time.time()),
+        }
+        if high is not None:
+            payload["high"] = float(high)
+        if low is not None:
+            payload["low"] = float(low)
+        if close is not None:
+            payload["close"] = float(close)
+        if volume is not None:
+            payload["volume"] = float(volume)
+        self.bus.publish(EventType.MARKET_TICK, payload)
+
+    def push_signal(self, symbol: str, *, side: str, strength: Optional[float] = None,
+                    confidence: Optional[float] = None, ts: Optional[float] = None) -> None:
+        payload: Dict[str, Any] = {
+            "symbol": symbol,
+            "side": side,
+            "ts": float(ts if ts is not None else time.time()),
+        }
+        if strength is not None:
+            payload["strength"] = float(strength)
+        if confidence is not None:
+            payload["confidence"] = float(confidence)
+        self.bus.publish(EventType.SIGNAL, payload)
+
+    def push_order_status(self, **info: Any) -> None:
+        payload = dict(info)
+        payload.setdefault("ts", time.time())
+        self.bus.publish(EventType.ORDER_STATUS, payload)
+
+    def update_metrics(self, symbol: str, *, pf: Optional[float], expectancy: Optional[float],
+                       trades: int, ts: Optional[float] = None, **extra: Any) -> None:
+        payload: Dict[str, Any] = {
+            "symbol": symbol,
+            "pf": float(pf) if pf is not None else None,
+            "expectancy": float(expectancy) if expectancy is not None else None,
+            "trades": int(trades),
+            "ts": float(ts if ts is not None else time.time()),
+        }
+        if extra:
+            payload.update(extra)
+        self.bus.publish(EventType.METRICS, payload)
+
+        if trades >= self.cfg.min_trades_for_pf:
+            triggers: List[str] = []
+            if pf is not None and pf < self.cfg.pf_min:
+                triggers.append("pf_drop")
+            if expectancy is not None and expectancy < self.cfg.expectancy_min:
+                triggers.append("expectancy_drop")
+            if triggers:
+                self.bus.publish(EventType.WFO_TRIGGER, {
+                    "symbol": symbol,
+                    "reason": "+".join(triggers),
+                    "metrics": payload,
+                    "ts": payload["ts"],
+                })
+
+    def close(self) -> None:
+        self.emitter.close()
 
 
 # ===== DummyMarketFeed ===========================================================================
@@ -473,6 +719,8 @@ __all__ = [
     "EventType",
     "DebounceRule",
     "EventBus",
+    "EventEmitter",
+    "EmitterConfig",
     "EmitterAdapter",
     "EventEmitterAdapter",
     "DummyMarketFeed",

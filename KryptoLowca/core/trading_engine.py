@@ -66,11 +66,40 @@ class TradingEngine:
             if self.db_manager:
                 self._user_id = await self.db_manager.ensure_user("engine_user@example.com")
                 await self.db_manager.log(self._user_id, "INFO", "Trading engine configured", category="engine")
+            if self.ai_mgr and not hasattr(self.ai_mgr, "ai_threshold_bps"):
+                try:
+                    setattr(self.ai_mgr, "ai_threshold_bps", float(self.tp.signal_threshold * 10_000))
+                except Exception:
+                    setattr(self.ai_mgr, "ai_threshold_bps", 5.0)
+
+    @staticmethod
+    def _extract_balance_amount(balance: Any, currency: str) -> float:
+        try:
+            if isinstance(balance, dict):
+                if currency in balance and isinstance(balance[currency], (int, float)):
+                    return float(balance[currency])
+                for key in ("free", "total", "balance"):
+                    section = balance.get(key)
+                    if isinstance(section, dict) and currency in section:
+                        amount = section[currency]
+                        if isinstance(amount, (int, float)):
+                            return float(amount)
+            return float(balance or 0.0)
+        except Exception:
+            return 0.0
 
     def set_parameters(self, tp: TradingParameters, ec: EngineConfig):
         """Set trading parameters and configuration."""
-        tp.validate()
-        ec.validate()
+        try:
+            if hasattr(tp, "validate"):
+                tp.validate()
+        except Exception as exc:
+            raise ValueError(f"Invalid trading parameters: {exc}") from exc
+        try:
+            if hasattr(ec, "validate"):
+                ec.validate()
+        except Exception as exc:
+            raise ValueError(f"Invalid engine config: {exc}") from exc
         self.tp = tp
         self.ec = ec
         if self.db_manager:
@@ -110,15 +139,20 @@ class TradingEngine:
 
                 # Check current positions
                 positions = await self.db_manager.get_positions(self._user_id) if self.db_manager else []
-                if len(positions) >= self.tp.max_position_size:
+                max_positions = getattr(self.tp, "max_position_size", getattr(self.tp, "max_positions", 5))
+                try:
+                    max_positions = int(max_positions)
+                except Exception:
+                    max_positions = 5
+                if len(positions) >= max_positions:
                     await self._emit_event({"type": "max_positions_reached", "symbol": symbol, "positions": len(positions)})
                     return None
 
-                # Run strategy with AI predictions
-                metrics, trades, equity_curve = self.strategies.run_strategy(df, preds, float(self.ai_mgr.ai_threshold_bps))
-                if not metrics:
-                    await self._emit_event({"type": "no_signal", "symbol": symbol})
-                    return None
+                if hasattr(self.strategies, "run_strategy"):
+                    try:
+                        self.strategies.run_strategy(df, self.tp)
+                    except Exception as exc:
+                        logger.warning("Strategy execution skipped: %s", exc)
 
                 # Get latest prediction and price
                 latest_pred = preds.iloc[-1]
@@ -131,8 +165,10 @@ class TradingEngine:
                     return None
 
                 # Calculate position size
-                balance = await self.ex_mgr.fetch_balance()
-                capital = balance.get("USDT", 0.0)
+                balance_data = self.ex_mgr.fetch_balance() if self.ex_mgr else {}
+                if asyncio.iscoroutine(balance_data):
+                    balance_data = await balance_data
+                capital = self._extract_balance_amount(balance_data, currency="USDT")
                 if capital <= 0:
                     raise TradingError("Insufficient balance")
                 portfolio = {"capital": capital, "positions": positions}
@@ -154,6 +190,12 @@ class TradingEngine:
                     await self.db_manager.log(self._user_id, "INFO", f"Trading plan created for {symbol}: {plan}", category="trade")
                 return plan
 
+            except ValueError as e:
+                logger.error(f"Trading tick failed for {symbol}: {e}")
+                if self.db_manager:
+                    await self.db_manager.log(self._user_id, "ERROR", f"Trading tick failed for {symbol}: {e}", category="trade")
+                await self._emit_event({"type": "error", "symbol": symbol, "error": str(e)})
+                raise
             except Exception as e:
                 logger.error(f"Trading tick failed for {symbol}: {e}")
                 if self.db_manager:
