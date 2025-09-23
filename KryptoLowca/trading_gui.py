@@ -246,6 +246,7 @@ class TradingGUI:
         self._last_retrain_ts: float = 0.0
         self._last_trade_ts_per_symbol: Dict[str, float] = {}
         self._open_positions: Dict[str, Dict[str, Any]] = {}
+        self._market_data: Dict[str, pd.DataFrame] = {}
 
         # ====== MENEDŻERY ======
         self.db = DatabaseManager()  # bezargumentowy
@@ -268,6 +269,10 @@ class TradingGUI:
                     self.ai_mgr = AIManager(MODELS_DIR)
                 except Exception:
                     self.ai_mgr = AIManager()
+        try:
+            setattr(self.ai_mgr, "ai_threshold_bps", float(self.ai_threshold_var.get()))
+        except Exception:
+            setattr(self.ai_mgr, "ai_threshold_bps", 5.0)
 
         self.ex_mgr: Optional[ExchangeManager] = None
 
@@ -291,6 +296,7 @@ class TradingGUI:
         self._build_ui()
         self.network_var.trace_add("write", lambda *_: self._on_network_changed())
         self._on_network_changed()
+        self.ai_threshold_var.trace_add("write", lambda *_: self._on_ai_threshold_changed())
         self._log("GUI ready", "INFO")
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -747,6 +753,13 @@ class TradingGUI:
     def _on_network_changed(self):
         self.account_balance_var.set("…" if self.network_var.get()=="Live" else "— (Live only)")
 
+    def _on_ai_threshold_changed(self):
+        try:
+            if hasattr(self.ai_mgr, "ai_threshold_bps"):
+                self.ai_mgr.ai_threshold_bps = float(self.ai_threshold_var.get())
+        except Exception:
+            pass
+
     def _update_run_buttons(self, running: bool):
         try:
             if running:
@@ -769,22 +782,32 @@ class TradingGUI:
     # Markets / Symbols
     def _ensure_exchange(self):
         if self.ex_mgr is None:
-            testnet = (self.network_var.get().lower() == "testnet")
-            api_key = self.testnet_key.get() if testnet else self.live_key.get()
-            secret  = self.testnet_secret.get() if testnet else self.live_secret.get()
-            self.ex_mgr = ExchangeManager(
-                exchange_id="binance",
-                api_key=api_key or None,
-                secret=secret or None,
-                testnet=testnet
-            )
+            self.ex_mgr = ExchangeManager(exchange_id="binance", paper_initial_cash=float(self.paper_capital.get()))
+
+        network = (self.network_var.get() or "testnet").strip().lower()
+        mode = (self.mode_var.get() or "spot").strip().lower()
+        api_key = self.testnet_key.get() if network == "testnet" else self.live_key.get()
+        secret = self.testnet_secret.get() if network == "testnet" else self.live_secret.get()
+
+        if network == "testnet" and not api_key and not secret:
+            self.ex_mgr.set_mode(paper=True)
+            self.ex_mgr.set_paper_balance(float(self.paper_capital.get()), asset="USDT")
+            self.paper_balance = float(self.paper_capital.get())
+            self.paper_balance_var.set(f"{self.paper_balance:,.2f}")
+        else:
+            futures = (mode == "futures")
+            if network == "testnet":
+                self.ex_mgr.set_mode(futures=futures, testnet=True)
+            else:
+                self.ex_mgr.set_mode(futures=futures, spot=not futures, testnet=False)
+            self.ex_mgr.set_credentials(api_key or None, secret or None)
 
     def _load_markets(self):
         try:
             self._show_loader("Loading markets...")
             self._ensure_exchange()
-            markets = self.ex_mgr.fetch_markets()
-            usdt = [m for m in markets if ("USDT" in m) and (m.count("/") == 1) and (":" not in m)]
+            markets = self.ex_mgr.load_markets() or {}
+            usdt = [m for m in markets.keys() if ("USDT" in m) and (m.count("/") == 1) and (":" not in m)]
             self._populate_symbols(sorted(usdt, key=lambda s: (0 if self.favorites.get(s, False) else 1, s)))
             self._log(f"Loaded {len(usdt)} USDT markets", "INFO")
         except Exception as e:
@@ -1084,6 +1107,14 @@ class TradingGUI:
         try:
             self.paper_balance = float(self.paper_capital.get())
             self.paper_balance_var.set(f"{self.paper_balance:,.2f}")
+            try:
+                if self.ex_mgr:
+                    mode_attr = getattr(self.ex_mgr, "mode", "")
+                    mode_val = getattr(mode_attr, "value", mode_attr)
+                    if isinstance(mode_val, str) and mode_val.lower() == "paper":
+                        self.ex_mgr.set_paper_balance(self.paper_balance, asset="USDT")
+            except Exception:
+                pass
             self._log(f"Paper capital applied: {self.paper_balance:,.2f}", "INFO")
         except Exception as e:
             self._log(f"Paper capital error: {e}", "ERROR")
@@ -1114,32 +1145,39 @@ class TradingGUI:
                 if not syms:
                     time.sleep(1.0); continue
 
-                try:
-                    batch = self.ex_mgr.fetch_batch(
-                        syms,
-                        timeframe=self.timeframe_var.get(),
-                        use_orderbook=self.use_orderbook_vwap.get(),
-                        limit_ohlcv=max(300, self.train_window_bars_var.get())
-                    )
-                except Exception as e:
-                    self._log(f"Fetch error: {e}", "ERROR")
-                    time.sleep(self.trade_cooldown_on_error)
-                    continue
-
                 main_df = None
                 symbol_for_chart = None
                 tickers: Dict[str, Dict[str, Any]] = {}
-                for sym, ohlcv, ticker, orderbook, err in batch:
-                    if err:
-                        self._log(f"{sym} fetch warn: {err}", "WARNING")
+                for sym in syms:
+                    df = None
+                    try:
+                        raw = self.ex_mgr.fetch_ohlcv(
+                            sym,
+                            timeframe=self.timeframe_var.get(),
+                            limit=max(300, self.train_window_bars_var.get())
+                        ) or []
+                        if raw:
+                            df = pd.DataFrame(raw, columns=["timestamp", "open", "high", "low", "close", "volume"])
+                            self._market_data[sym] = df
+                    except Exception as exc:
+                        df = self._market_data.get(sym)
+                        self._log(f"{sym} fetch warn: {exc}", "WARNING")
+
+                    if df is not None and main_df is None:
+                        symbol_for_chart = sym
+                        main_df = df
+
+                    try:
+                        ticker = self.ex_mgr.fetch_ticker(sym) or {}
+                    except Exception as exc:
+                        ticker = {}
+                        self._log(f"{sym} ticker warn: {exc}", "WARNING")
                     if ticker:
                         tickers[sym] = ticker
-                        if "last" in ticker and (sym not in last_price_log or (time.time() - last_price_log.get(sym, 0)) > 1.0):
-                            self._log(f"{sym} price: {ticker.get('last')}", "INFO")
+                        last_price = ticker.get("last") or ticker.get("close")
+                        if last_price and (sym not in last_price_log or (time.time() - last_price_log.get(sym, 0)) > 1.0):
+                            self._log(f"{sym} price: {last_price}", "INFO")
                             last_price_log[sym] = time.time()
-                    if ohlcv and main_df is None:
-                        symbol_for_chart = sym
-                        main_df = pd.DataFrame(ohlcv, columns=["timestamp","open","high","low","close","volume"])
 
                 preds = None
                 if main_df is not None:
@@ -1148,11 +1186,8 @@ class TradingGUI:
                     if self.enable_ai_var.get():
                         try:
                             preds = self.ai_mgr.predict_series(
-                                symbol=self.chart_symbol,
-                                df=self.chart_df,
-                                feature_cols=["open","high","low","close","volume"],
-                                seq_len=int(self.seq_len_var.get()),
-                                model_type=None
+                                self.chart_df,
+                                feature_cols=["open", "high", "low", "close", "volume"]
                             )
                         except Exception as e:
                             self._log(f"AI predict error: {e}", "ERROR")
@@ -1221,21 +1256,31 @@ class TradingGUI:
             vwap, slip = self.ex_mgr.simulate_vwap_price(symbol, "buy" if side == "buy" else "sell", amount=None, fallback_bps=slip_bps)
             exec_price = safe_float(vwap, mkt_price)
 
-            qty = 0.0
-            try:
-                qty = self.risk_mgr.calculate_position_size(
-                    symbol=symbol,
-                    signal=1.0 if side == "buy" else -1.0,
-                    market_data={"price": exec_price},
-                    portfolio={"paper_balance": self.paper_balance, "risk_per_trade": self.risk_per_trade.get()}
-                )
-            except Exception:
-                pass
-            if qty <= 0:
-                cap = float(self.paper_balance)
-                qty = max(0.0, (cap * float(self.fraction_var.get())) / max(exec_price, 1e-8))
+            market_df = self._market_data.get(symbol)
+            signal_payload = {
+                "symbol": symbol,
+                "direction": "LONG" if side == "buy" else "SHORT",
+                "strength": 1.0,
+                "confidence": 1.0,
+                "prediction": 1.0 if side == "buy" else -1.0,
+            }
 
-            qty = self.ex_mgr.quantize_amount(symbol, qty)
+            try:
+                fraction = float(self.risk_mgr.calculate_position_size(
+                    symbol=symbol,
+                    signal=signal_payload,
+                    market_data=market_df if market_df is not None else {"price": exec_price},
+                    portfolio={"cash": self.paper_balance, "positions": self._open_positions},
+                ))
+            except Exception as exc:
+                self._log(f"Risk sizing error: {exc}", "WARNING")
+                fraction = 0.0
+
+            capital = float(self.paper_balance)
+            if fraction <= 0:
+                fraction = float(self.fraction_var.get())
+            notional = max(0.0, capital * min(1.0, fraction))
+            qty = self.ex_mgr.quantize_amount(symbol, notional / max(exec_price, 1e-8))
             if qty <= 0: return
 
             ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1243,14 +1288,21 @@ class TradingGUI:
 
             if side == "buy":
                 if pos and pos["side"] == "buy": return
+                cost = qty * exec_price
+                if cost > self.paper_balance + 1e-8:
+                    self._log("Insufficient paper balance for BUY", "WARNING")
+                    return
+                self.paper_balance = max(0.0, self.paper_balance - cost)
+                self.paper_balance_var.set(f"{self.paper_balance:,.2f}")
                 self._open_positions[symbol] = {"side":"buy","qty":qty,"entry":exec_price,"ts":ts}
                 self._append_open_position(symbol, "buy", qty, exec_price, 0.0)
                 self._log(f"EXEC BUY {symbol} qty={qty} @ {exec_price} (paper)", "INFO")
             else:
                 if pos and pos["side"] == "buy":
-                    pnl = (exec_price - pos["entry"]) * pos["qty"]
-                    self._append_closed_trade_row(ts, symbol, "sell", pos["qty"], pos["entry"], exec_price, pnl)
-                    self.paper_balance += pnl
+                    qty = float(pos["qty"])
+                    pnl = (exec_price - pos["entry"]) * qty
+                    self._append_closed_trade_row(ts, symbol, "sell", qty, pos["entry"], exec_price, pnl)
+                    self.paper_balance += qty * exec_price
                     self.paper_balance_var.set(f"{self.paper_balance:,.2f}")
                     self._remove_open_position(symbol)
                     self._log(f"CLOSE LONG {symbol} qty={pos['qty']} @ {exec_price} pnl={pnl:.2f}", "INFO")
@@ -1441,9 +1493,10 @@ class TradingGUI:
         try: self._run_flag.clear()
         except Exception: pass
         try:
-            if hasattr(self, "ex_mgr") and self.ex_mgr:
-                self.ex_mgr.close()
-        except Exception: pass
+            if hasattr(self, "ex_mgr"):
+                self.ex_mgr = None
+        except Exception:
+            pass
         self.root.after(150, self.root.destroy)
 
 # ===== MAIN =====

@@ -209,7 +209,14 @@ from managers.database_manager import DatabaseManager
 class PaperBackend(BaseBackend):
     FEE_RATE = 0.001  # 0.1%
 
-    def __init__(self, price_feed_backend: "BaseBackend", event_bus: Optional[EventBus] = None) -> None:
+    def __init__(
+        self,
+        price_feed_backend: "BaseBackend",
+        event_bus: Optional[EventBus] = None,
+        *,
+        initial_cash: float = 10_000.0,
+        cash_asset: str = "USDT",
+    ) -> None:
         """
         price_feed_backend – skąd brać ceny OHLCV/ticker (np. CCXT public z ExchangeManagera).
         """
@@ -218,6 +225,8 @@ class PaperBackend(BaseBackend):
         self._db.sync.init_db()
         self._price_feed = price_feed_backend
         self._rules: Dict[str, MarketRules] = {}
+        self._cash_asset = cash_asset.upper()
+        self._cash_balance = max(0.0, float(initial_cash))
 
     # --- rynki i dane ---
 
@@ -253,6 +262,12 @@ class PaperBackend(BaseBackend):
         if qty <= 0:
             raise ValueError("Ilość po kwantyzacji = 0.")
 
+        existing_qty = 0.0
+        for pos in self._db.sync.get_open_positions(mode=Mode.PAPER.value):
+            if pos.get("symbol") == symbol:
+                existing_qty = float(pos.get("quantity") or 0.0)
+                break
+
         t = self.fetch_ticker(symbol) or {}
         last = t.get("last") or t.get("close") or t.get("bid") or t.get("ask")
         if not last:
@@ -264,6 +279,17 @@ class PaperBackend(BaseBackend):
         if mn and notional < mn:
             raise ValueError(f"Notional {notional:.8f} < minNotional {mn:.8f} dla {symbol}")
 
+        fee = qty * px * self.FEE_RATE
+        if side == OrderSide.BUY:
+            required = notional + fee
+            if required > self._cash_balance + 1e-8:
+                raise ValueError("Niewystarczający balans papierowy do zakupu.")
+            self._cash_balance = max(0.0, self._cash_balance - required)
+        else:
+            if qty > existing_qty + 1e-8:
+                raise ValueError("Brak pozycji do sprzedaży w trybie paper.")
+            self._cash_balance += max(0.0, notional - fee)
+
         # zapis zlecenia i transakcji do DB
         oid = self._db.sync.record_order({
             "symbol": symbol, "side": side.value, "type": type.value,
@@ -272,7 +298,6 @@ class PaperBackend(BaseBackend):
         })
         self._db.sync.update_order_status(order_id=oid, status=OrderStatus.FILLED.value)
 
-        fee = qty * px * self.FEE_RATE
         self._db.sync.record_trade({
             "symbol": symbol, "side": side.value, "quantity": qty,
             "price": px, "fee": fee, "order_id": oid, "mode": Mode.PAPER.value
@@ -330,4 +355,21 @@ class PaperBackend(BaseBackend):
                 quantity=p.get("quantity"), avg_price=p.get("avg_price"),
                 unrealized_pnl=p.get("unrealized_pnl", 0.0), mode=Mode.PAPER
             ))
+        return out
+
+    def fetch_balance(self) -> Dict[str, Any]:
+        balances: Dict[str, float] = {self._cash_asset: float(self._cash_balance)}
+        for pos in self.fetch_positions():
+            try:
+                base = pos.symbol.split("/")[0].upper()
+            except Exception:
+                base = pos.symbol
+            balances[base] = balances.get(base, 0.0) + float(pos.quantity)
+
+        totals = {asset: float(amount) for asset, amount in balances.items()}
+        out: Dict[str, Any] = {
+            "free": dict(totals),
+            "total": dict(totals),
+        }
+        out.update({asset: float(amount) for asset, amount in balances.items()})
         return out

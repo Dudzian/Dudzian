@@ -6,6 +6,8 @@ import threading
 import time
 import statistics
 from typing import Optional, List, Dict, Any, Callable
+
+import pandas as pd
 try:
     from collections import deque
 except Exception:
@@ -80,6 +82,7 @@ class AutoTrader:
     # -- Public API --
     def start(self) -> None:
         self._stop.clear()
+        self._threads = []
         # Walk-forward loop only if configured
         if self.walkforward_interval_s:
             t = threading.Thread(target=self._walkforward_loop, daemon=True)
@@ -96,6 +99,13 @@ class AutoTrader:
         self.emitter.off("trade_closed", tag="autotrader")
         self.emitter.off("bar", tag="autotrader")
         self.emitter.log("AutoTrader stopped.", component="AutoTrader")
+        for t in list(self._threads):
+            try:
+                if t.is_alive():
+                    t.join(timeout=2.0)
+            except Exception:
+                pass
+        self._threads.clear()
 
     def set_enable_auto_trade(self, flag: bool) -> None:
         with self._lock:
@@ -211,33 +221,59 @@ class AutoTrader:
                 if not symbol:
                     self._stop.wait(self.auto_trade_interval_s)
                     continue
-                # Ask AI for direction if available
-                side = None
-                ai = getattr(self.gui, "ai_mgr", None)
-                if ai is not None and hasattr(ai, "predict_series"):
-                    try:
-                        series = ai.predict_series(symbol=symbol, bars=128)
-                        if hasattr(series, "__getitem__"):
-                            last = float(series[-1])
-                            side = "BUY" if last >= 0 else "SELL"
-                    except Exception as e:
-                        self.emitter.log(f"predict_series failed: {e!r}", level="ERROR", component="AutoTrader")
-                if side is None:
-                    side = "BUY" if int(time.time()/max(1,self.auto_trade_interval_s)) % 2 == 0 else "SELL"
-                # Market price via ex_mgr if available
-                mkt_price = float('nan')
                 ex = getattr(self.gui, "ex_mgr", None)
-                if ex is not None:
-                    try:
-                        if hasattr(ex, "fetch_ticker"):
-                            tick = ex.fetch_ticker(symbol)
-                            if isinstance(tick, dict) and "last" in tick:
-                                mkt_price = float(tick["last"])
-                    except Exception as e:
-                        self.emitter.log(f"fetch_ticker failed: {e!r}", level="ERROR", component="AutoTrader")
-                # Execute via GUI bridge
+                if ex is None or not hasattr(ex, "fetch_ohlcv"):
+                    self._stop.wait(self.auto_trade_interval_s)
+                    continue
+
+                timeframe = "1m"
+                tf_var = getattr(self.gui, "timeframe_var", None)
+                if tf_var is not None and hasattr(tf_var, "get"):
+                    timeframe = tf_var.get()
+
+                try:
+                    raw = ex.fetch_ohlcv(symbol, timeframe=timeframe, limit=256) or []
+                except Exception as e:
+                    self.emitter.log(f"fetch_ohlcv failed: {e!r}", level="ERROR", component="AutoTrader")
+                    self._stop.wait(self.auto_trade_interval_s)
+                    continue
+
+                if not raw:
+                    self._stop.wait(self.auto_trade_interval_s)
+                    continue
+
+                df = pd.DataFrame(raw, columns=["timestamp", "open", "high", "low", "close", "volume"])
+                ai = getattr(self.gui, "ai_mgr", None)
+                if ai is None or not hasattr(ai, "predict_series"):
+                    self._stop.wait(self.auto_trade_interval_s)
+                    continue
+
+                try:
+                    preds = ai.predict_series(df, feature_cols=["open", "high", "low", "close", "volume"])
+                except Exception as e:
+                    self.emitter.log(f"predict_series failed: {e!r}", level="ERROR", component="AutoTrader")
+                    preds = None
+
+                if preds is None or len(preds.dropna()) == 0:
+                    self._stop.wait(self.auto_trade_interval_s)
+                    continue
+
+                last_pred = float(preds.dropna().iloc[-1])
+                threshold_bps = float(getattr(ai, "ai_threshold_bps", 5.0))
+                threshold = threshold_bps / 10_000.0
+
+                if last_pred >= threshold:
+                    side = "BUY"
+                elif last_pred <= -threshold:
+                    side = "SELL"
+                else:
+                    self._stop.wait(self.auto_trade_interval_s)
+                    continue
+
+                mkt_price = float(df["close"].iloc[-1])
+
                 if hasattr(self.gui, "_bridge_execute_trade"):
-                    self.gui._bridge_execute_trade(symbol, side, mkt_price)
+                    self.gui._bridge_execute_trade(symbol, side.lower(), mkt_price)
                     self.emitter.emit("auto_trade_tick", symbol=symbol, ts=time.time())
                 else:
                     self.emitter.log("_bridge_execute_trade missing on GUI", level="ERROR", component="AutoTrader")

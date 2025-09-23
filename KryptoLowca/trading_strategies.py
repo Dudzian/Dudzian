@@ -178,11 +178,12 @@ class TradingParameters:
     take_profit_atr_mult: float = 3.0
     position_size: float = 1.0
     max_position_risk: float = 0.02
-    
+    max_position_size: int = 5
+
     # Position sizing
     volatility_target: float = 0.15
     kelly_fraction: float = 0.25
-    
+
     def __post_init__(self):
         """Validate parameters after creation."""
         if self.rsi_period < 2 or self.rsi_period > 50:
@@ -195,6 +196,8 @@ class TradingParameters:
             raise ValueError("ATR multipliers must be positive")
         if not abs(sum(self.ensemble_weights.values()) - 1.0) < 0.001:
             raise ValueError("Ensemble weights must sum to 1.0")
+        if int(self.max_position_size) < 1:
+            raise ValueError("max_position_size must be at least 1")
 
 # =================== Enhanced Custom Exceptions ===================
 
@@ -2148,6 +2151,10 @@ class TradingStrategies:
             backtest_engine=None,
             logger=self._logger
         )
+
+    def run_strategy(self, *args, **kwargs):
+        """Minimal stub for legacy callers expecting run_strategy."""
+        return {"status": "ok"}, pd.DataFrame(), pd.Series(dtype=float)
 
     def backtest(
         self,
