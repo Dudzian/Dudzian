@@ -1,0 +1,48 @@
+{
+  "params": {
+    "symbols": [
+      "SOL/USDT"
+    ],
+    "timeframe": "15m",
+    "ema_fast": 50,
+    "ema_slow": 150,
+    "atr_len": 14,
+    "min_atr_pct": 0.15,
+    "execution": "next_open",
+    "capital": 10000.0,
+    "risk_pct": 0.005,
+    "k_sl": 1.5,
+    "fee_rate": 0.001,
+    "tp": {
+      "k_tp1": 1.0,
+      "k_tp2": 2.0,
+      "k_tp3": 3.0,
+      "p1": 0.4,
+      "p2": 0.3,
+      "p3": 0.3,
+      "move_be_after_tp1": true,
+      "trail_act_pct": 0.008,
+      "trail_dist_pct": 0.003
+    }
+  },
+  "per_symbol": {
+    "SOL/USDT": {
+      "symbol": "SOL/USDT",
+      "trades": 2
+    }
+  },
+  "metrics": {
+    "n_trades": 2,
+    "gross_profit": 52.2283944923385,
+    "gross_loss": 74.28764746781086,
+    "net_profit": -22.059252975472354,
+    "avg_trade_usdt": -11.029626487736177,
+    "profit_factor": 0.7030562451848981,
+    "expectancy_usdt": -11.029626487736177,
+    "expectancy_r": -0.22059252975472354,
+    "max_drawdown_usdt": 74.28764746781086,
+    "sharpe_like": -0.2465813366462925,
+    "r_multiple_avg": -0.22059252975472354,
+    "win_rate_%": 50.0
+  }
+}

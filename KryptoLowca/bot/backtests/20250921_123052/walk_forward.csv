@@ -1,0 +1,2 @@
+window_start,window_end,n_trades,PnL_USDT,ProfitFactor,Winrate_%,R_avg,R_med,Hold_min_avg
+2025-09-18 00:00:00+00:00,2025-10-02 00:00:00+00:00,2.0,54.74198611,inf,100.0,0.54745,0.54745,142.5

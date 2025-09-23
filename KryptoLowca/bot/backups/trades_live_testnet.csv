@@ -1,0 +1,4 @@
+id,ts,symbol,side,quantity,price,fee,order_id,pnl,mode,extra
+3,2025-09-07T17:25:36.627208,BTC/USDT,BUY,0.0002,111029.44,0.0,3,,live,
+2,2025-09-07T16:57:30.979003,BTC/USDT,SELL,0.01,52000.0,0.52,2,,paper,
+1,2025-09-07T16:57:30.943518,BTC/USDT,BUY,0.02,50025.0,1.0005,1,,paper,

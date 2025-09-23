@@ -1,0 +1,58 @@
+{
+  "params": {
+    "symbols": [
+      "BTC/USDT",
+      "ETH/USDT",
+      "SOL/USDT"
+    ],
+    "timeframe": "15m",
+    "ema_fast": 50,
+    "ema_slow": 200,
+    "atr_len": 14,
+    "min_atr_pct": 0.5,
+    "execution": "next_open",
+    "capital": 10000.0,
+    "risk_pct": 0.01,
+    "k_sl": 1.5,
+    "fee_rate": 0.001,
+    "tp": {
+      "k_tp1": 1.0,
+      "k_tp2": 2.0,
+      "k_tp3": 3.0,
+      "p1": 0.5,
+      "p2": 0.3,
+      "p3": 0.2,
+      "move_be_after_tp1": true,
+      "trail_act_pct": 0.008,
+      "trail_dist_pct": 0.003
+    }
+  },
+  "per_symbol": {
+    "BTC/USDT": {
+      "symbol": "BTC/USDT",
+      "trades": 0
+    },
+    "ETH/USDT": {
+      "symbol": "ETH/USDT",
+      "trades": 1
+    },
+    "SOL/USDT": {
+      "symbol": "SOL/USDT",
+      "trades": 1
+    }
+  },
+  "metrics": {
+    "n_trades": 2,
+    "gross_profit": 124.39,
+    "gross_loss": 0.0,
+    "net_profit": 124.39,
+    "win_rate_%": 100.0,
+    "avg_trade_usdt": 62.2,
+    "profit_factor": "inf",
+    "expectancy_usdt": 62.2,
+    "expectancy_r": 0.622,
+    "max_drawdown_usdt": 0.0,
+    "sharpe_like": 3.645,
+    "r_multiple_avg": 0.622
+  }
+}

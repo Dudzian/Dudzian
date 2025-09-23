@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kryptolowca"
+version = "0.1.0"
+description = "Trading bot (desktop) with exchange, AI, risk, reporting."
+requires-python = ">=3.10"
+authors = [{name = "Your Name"}]
+license = { text = "Proprietary" }
+dependencies = [
+  "pandas>=2.2",
+  "numpy>=1.26",
+  "ccxt>=4.0.0",
+  "SQLAlchemy>=2.0",
+  "aiosqlite>=0.19",
+  "cryptography>=42.0",
+  "pyyaml>=6.0",
+  "reportlab>=4.0",
+  "plotly>=5.20",
+  "matplotlib>=3.8",
+  "typer>=0.9",
+]
+
+[project.optional-dependencies]
+ml = [
+  "scikit-learn>=1.4",
+  "xgboost>=2.0",
+  "lightgbm>=4.0",
+  "torch>=2.2",
+  "vectorbt>=0.26",
+]
+dev = [
+  "pytest>=8.0",
+  "pytest-asyncio>=0.23",
+  "ruff>=0.4",
+  "black>=24.3.0",
+  "mypy>=1.8",
+  "types-PyYAML>=6.0.12.12",
+]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+asyncio_mode = "auto"

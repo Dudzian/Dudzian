@@ -1,0 +1,12 @@
+[
+  {
+    "id": 1,
+    "updated_at": "2025-09-07T16:57:30.986842",
+    "symbol": "BTC/USDT",
+    "side": "LONG",
+    "quantity": 0.01,
+    "avg_price": 50025.0,
+    "unrealized_pnl": 37.5,
+    "mode": "paper"
+  }
+]
