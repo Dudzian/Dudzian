@@ -32,10 +32,15 @@ class MockRisk:
         return 0.1
 
 class MockDB:
+    def __init__(self):
+        self.logs: list[tuple[str, str, str]] = []
+
     async def ensure_user(self, email):
         return 1
+
     async def log(self, user_id, level, msg, category="general", context=None):
-        pass
+        self.logs.append((level, msg, category))
+
     async def get_positions(self, user_id):
         return []
 
@@ -45,7 +50,6 @@ def engine(monkeypatch):
     monkeypatch.setattr("core.trading_engine.AIManager", MockAI)
     monkeypatch.setattr("core.trading_engine.RiskManager", MockRisk)
     monkeypatch.setattr("core.trading_engine.DatabaseManager", MockDB)
-    monkeypatch.setattr(asyncio, "create_task", lambda coro: asyncio.run(coro))
     engine = TradingEngine(db_manager=MockDB())
     asyncio.run(engine.configure(MockExchange(), MockAI(), MockRisk()))
     engine.set_parameters(TradingParameters(), EngineConfig())
@@ -67,6 +71,15 @@ def test_execute_live_tick(engine):
     assert plan["side"] == "buy"
     assert plan["qty_hint"] == 0.1
     assert plan["price_ref"] == 100.5
+
+
+def test_set_parameters_without_running_loop():
+    db = MockDB()
+    engine = TradingEngine(db_manager=db)
+    asyncio.run(engine.configure(MockExchange(), MockAI(), MockRisk()))
+    before = len(db.logs)
+    engine.set_parameters(TradingParameters(), EngineConfig())
+    assert len(db.logs) == before + 1
 
 def test_no_signal(engine, monkeypatch):
     monkeypatch.setattr(engine.strategies, "run_strategy", lambda *args: ({}, [], pd.Series()))

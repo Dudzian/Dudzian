@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import pandas as pd
-from typing import Dict, Optional, Callable, Any
+from typing import Dict, Optional, Callable, Any, Awaitable
 from dataclasses import dataclass
 import numpy as np
 
@@ -56,6 +56,19 @@ class TradingEngine:
         self._event_callback: Optional[Callable] = None
         self._lock = asyncio.Lock()
         self._user_id: Optional[int] = None
+
+    def _schedule_background(self, coro: Awaitable[Any]) -> None:
+        """Uruchamia coroutine w tle niezależnie od tego, czy działa pętla."""
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # Brak aktywnej pętli (np. wywołanie z wątku GUI) – tworzymy
+            # tymczasową pętlę, aby dokończyć zapis i nie generować
+            # "RuntimeError: no running event loop".
+            asyncio.run(coro)
+        else:
+            loop.create_task(coro)
 
     async def configure(self, ex_mgr: ExchangeManager, ai_mgr: AIManager, risk_mgr: RiskManager):
         """Configure the engine with dependencies."""
@@ -103,7 +116,14 @@ class TradingEngine:
         self.tp = tp
         self.ec = ec
         if self.db_manager:
-            asyncio.create_task(self.db_manager.log(self._user_id, "INFO", f"Parameters set: {tp.__dict__}, {ec.__dict__}", category="engine"))
+            self._schedule_background(
+                self.db_manager.log(
+                    self._user_id,
+                    "INFO",
+                    f"Parameters set: {tp.__dict__}, {ec.__dict__}",
+                    category="engine",
+                )
+            )
 
     def on_event(self, callback: Callable):
         """Register event callback for GUI updates."""
