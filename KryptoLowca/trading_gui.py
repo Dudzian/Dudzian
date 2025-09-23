@@ -69,10 +69,12 @@ SALT_FILE = APP_ROOT / "salt.bin"
 from managers.security_manager import SecurityManager
 from managers.config_manager import ConfigManager
 from managers.exchange_manager import ExchangeManager
+from managers.exchange_core import Mode
 from managers.ai_manager import AIManager
 from managers.report_manager import ReportManager
 from managers.risk_manager_adapter import RiskManager
 from core.trading_engine import TradingEngine
+from services.execution_service import ExecutionService
 
 # istniejące moduły w repo
 from trading_strategies import TradingStrategies
@@ -102,6 +104,26 @@ def clamp(v, lo, hi):
         return max(lo, min(hi, v))
     except Exception:
         return v
+
+
+def extract_balance_amount(balance: Any, asset: str) -> float:
+    """Bezpieczne pobieranie dostępnego salda danego aktywa."""
+
+    try:
+        if not isinstance(balance, dict):
+            return 0.0
+        asset = asset.upper()
+        if asset in balance and isinstance(balance[asset], (int, float)):
+            return float(balance[asset])
+        for key in ("free", "total", "balance"):
+            section = balance.get(key)
+            if isinstance(section, dict) and asset in section:
+                val = section[asset]
+                if isinstance(val, (int, float)):
+                    return float(val)
+        return 0.0
+    except Exception:
+        return 0.0
 
 # --- Tooltip ---
 class Tooltip:
@@ -165,6 +187,7 @@ class TradingGUI:
         self.timeframe_var = tk.StringVar(value="1m")
         self.fraction_var = tk.DoubleVar(value=0.05)
         self.paper_capital = tk.DoubleVar(value=10000.0)
+        self.paper_cash_asset = "USDT"
         self.paper_balance = self.paper_capital.get()
         self.paper_balance_var = tk.StringVar(value=f"{self.paper_balance:,.2f}")
         self.account_balance_var = tk.StringVar(value="— (Live only)")
@@ -246,6 +269,7 @@ class TradingGUI:
         self._last_retrain_ts: float = 0.0
         self._last_trade_ts_per_symbol: Dict[str, float] = {}
         self._open_positions: Dict[str, Dict[str, Any]] = {}
+        self._market_data: Dict[str, pd.DataFrame] = {}
 
         # ====== MENEDŻERY ======
         self.db = DatabaseManager()  # bezargumentowy
@@ -268,8 +292,13 @@ class TradingGUI:
                     self.ai_mgr = AIManager(MODELS_DIR)
                 except Exception:
                     self.ai_mgr = AIManager()
+        try:
+            setattr(self.ai_mgr, "ai_threshold_bps", float(self.ai_threshold_var.get()))
+        except Exception:
+            setattr(self.ai_mgr, "ai_threshold_bps", 5.0)
 
         self.ex_mgr: Optional[ExchangeManager] = None
+        self.exec_service: Optional[ExecutionService] = None
 
         # === TradingEngine: bez argumentu 'reporter' ===
         try:
@@ -291,6 +320,7 @@ class TradingGUI:
         self._build_ui()
         self.network_var.trace_add("write", lambda *_: self._on_network_changed())
         self._on_network_changed()
+        self.ai_threshold_var.trace_add("write", lambda *_: self._on_ai_threshold_changed())
         self._log("GUI ready", "INFO")
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -747,6 +777,13 @@ class TradingGUI:
     def _on_network_changed(self):
         self.account_balance_var.set("…" if self.network_var.get()=="Live" else "— (Live only)")
 
+    def _on_ai_threshold_changed(self):
+        try:
+            if hasattr(self.ai_mgr, "ai_threshold_bps"):
+                self.ai_mgr.ai_threshold_bps = float(self.ai_threshold_var.get())
+        except Exception:
+            pass
+
     def _update_run_buttons(self, running: bool):
         try:
             if running:
@@ -769,22 +806,36 @@ class TradingGUI:
     # Markets / Symbols
     def _ensure_exchange(self):
         if self.ex_mgr is None:
-            testnet = (self.network_var.get().lower() == "testnet")
-            api_key = self.testnet_key.get() if testnet else self.live_key.get()
-            secret  = self.testnet_secret.get() if testnet else self.live_secret.get()
-            self.ex_mgr = ExchangeManager(
-                exchange_id="binance",
-                api_key=api_key or None,
-                secret=secret or None,
-                testnet=testnet
-            )
+            self.ex_mgr = ExchangeManager(exchange_id="binance", paper_initial_cash=float(self.paper_capital.get()))
+        if self.exec_service is None:
+            self.exec_service = ExecutionService(self.ex_mgr)
+
+        network = (self.network_var.get() or "testnet").strip().lower()
+        mode = (self.mode_var.get() or "spot").strip().lower()
+        api_key = self.testnet_key.get() if network == "testnet" else self.live_key.get()
+        secret = self.testnet_secret.get() if network == "testnet" else self.live_secret.get()
+
+        if network == "testnet" and not api_key and not secret:
+            self.ex_mgr.set_mode(paper=True)
+            if self.exec_service:
+                self.exec_service.set_paper_balance(float(self.paper_capital.get()), asset=self.paper_cash_asset)
+        else:
+            futures = (mode == "futures")
+            if network == "testnet":
+                self.ex_mgr.set_mode(futures=futures, testnet=True)
+            else:
+                self.ex_mgr.set_mode(futures=futures, spot=not futures, testnet=False)
+            self.ex_mgr.set_credentials(api_key or None, secret or None)
+
+        self._refresh_balances_from_service()
+        self._sync_positions_from_service()
 
     def _load_markets(self):
         try:
             self._show_loader("Loading markets...")
             self._ensure_exchange()
-            markets = self.ex_mgr.fetch_markets()
-            usdt = [m for m in markets if ("USDT" in m) and (m.count("/") == 1) and (":" not in m)]
+            markets = self.ex_mgr.load_markets() or {}
+            usdt = [m for m in markets.keys() if ("USDT" in m) and (m.count("/") == 1) and (":" not in m)]
             self._populate_symbols(sorted(usdt, key=lambda s: (0 if self.favorites.get(s, False) else 1, s)))
             self._log(f"Loaded {len(usdt)} USDT markets", "INFO")
         except Exception as e:
@@ -816,6 +867,66 @@ class TradingGUI:
 
     def _deselect_all_symbols(self):
         for var in self.symbol_vars.values(): var.set(False)
+
+    def _refresh_balances_from_service(self):
+        if not self.exec_service:
+            return
+        try:
+            balance = self.exec_service.fetch_balance() or {}
+            amount = extract_balance_amount(balance, self.paper_cash_asset)
+            mode = self.exec_service.mode
+            if mode == Mode.PAPER:
+                self.paper_balance = float(amount)
+                self.paper_balance_var.set(f"{self.paper_balance:,.2f}")
+            else:
+                self.account_balance_var.set(f"{amount:,.2f} {self.paper_cash_asset}")
+        except Exception as exc:
+            self._log(f"Balance refresh error: {exc}", "ERROR")
+
+    def _sync_positions_from_service(self):
+        if not self.exec_service:
+            return
+        try:
+            positions = self.exec_service.list_positions()
+        except Exception as exc:
+            self._log(f"Positions refresh error: {exc}", "ERROR")
+            return
+
+        updated: Dict[str, Dict[str, Any]] = {}
+        for pos in positions or []:
+            try:
+                side = str(getattr(pos, "side", "LONG")).upper()
+                side_gui = "buy" if side in {"LONG", "BUY"} else "sell"
+                updated[pos.symbol] = {
+                    "side": side_gui,
+                    "qty": float(getattr(pos, "quantity", 0.0)),
+                    "entry": float(getattr(pos, "avg_price", 0.0)),
+                    "unrealized": float(getattr(pos, "unrealized_pnl", 0.0)),
+                }
+            except Exception:
+                continue
+
+        self._open_positions = updated
+        self._render_open_positions()
+
+    def _render_open_positions(self):
+        try:
+            for iid in self.open_tv.get_children():
+                self.open_tv.delete(iid)
+            for symbol, data in sorted(self._open_positions.items()):
+                self.open_tv.insert(
+                    "",
+                    "end",
+                    values=(
+                        symbol,
+                        data.get("side", ""),
+                        safe_float(data.get("qty", 0.0)),
+                        human_money(safe_float(data.get("entry", 0.0))),
+                        human_money(safe_float(data.get("unrealized", 0.0))),
+                    ),
+                )
+        except Exception:
+            pass
 
     def _apply_symbol_selection(self):
         self.selected_symbols = [s for s,v in self.symbol_vars.items() if v.get()]
@@ -1069,8 +1180,18 @@ class TradingGUI:
 
             paper = d.get("paper", {})
             self.paper_capital.set(float(paper.get("capital", self.paper_capital.get())))
-            self.paper_balance = self.paper_capital.get()
-            self.paper_balance_var.set(f"{self.paper_balance:,.2f}")
+            try:
+                cash_asset = paper.get("asset")
+                if isinstance(cash_asset, str) and cash_asset.strip():
+                    self.paper_cash_asset = cash_asset.strip().upper()
+            except Exception:
+                pass
+            if self.exec_service:
+                try:
+                    self.exec_service.set_paper_balance(float(self.paper_capital.get()), asset=self.paper_cash_asset)
+                except Exception:
+                    pass
+            self._refresh_balances_from_service()
 
             sel = d.get("selected_symbols", None)
             if sel:
@@ -1082,9 +1203,14 @@ class TradingGUI:
 
     def _apply_paper_capital(self):
         try:
-            self.paper_balance = float(self.paper_capital.get())
-            self.paper_balance_var.set(f"{self.paper_balance:,.2f}")
-            self._log(f"Paper capital applied: {self.paper_balance:,.2f}", "INFO")
+            amount = float(self.paper_capital.get())
+            if self.exec_service:
+                try:
+                    self.exec_service.set_paper_balance(amount, asset=self.paper_cash_asset)
+                except Exception as exc:
+                    self._log(f"Paper balance sync failed: {exc}", "WARNING")
+            self._refresh_balances_from_service()
+            self._log(f"Paper capital applied: {amount:,.2f}", "INFO")
         except Exception as e:
             self._log(f"Paper capital error: {e}", "ERROR")
 
@@ -1114,32 +1240,39 @@ class TradingGUI:
                 if not syms:
                     time.sleep(1.0); continue
 
-                try:
-                    batch = self.ex_mgr.fetch_batch(
-                        syms,
-                        timeframe=self.timeframe_var.get(),
-                        use_orderbook=self.use_orderbook_vwap.get(),
-                        limit_ohlcv=max(300, self.train_window_bars_var.get())
-                    )
-                except Exception as e:
-                    self._log(f"Fetch error: {e}", "ERROR")
-                    time.sleep(self.trade_cooldown_on_error)
-                    continue
-
                 main_df = None
                 symbol_for_chart = None
                 tickers: Dict[str, Dict[str, Any]] = {}
-                for sym, ohlcv, ticker, orderbook, err in batch:
-                    if err:
-                        self._log(f"{sym} fetch warn: {err}", "WARNING")
+                for sym in syms:
+                    df = None
+                    try:
+                        raw = self.ex_mgr.fetch_ohlcv(
+                            sym,
+                            timeframe=self.timeframe_var.get(),
+                            limit=max(300, self.train_window_bars_var.get())
+                        ) or []
+                        if raw:
+                            df = pd.DataFrame(raw, columns=["timestamp", "open", "high", "low", "close", "volume"])
+                            self._market_data[sym] = df
+                    except Exception as exc:
+                        df = self._market_data.get(sym)
+                        self._log(f"{sym} fetch warn: {exc}", "WARNING")
+
+                    if df is not None and main_df is None:
+                        symbol_for_chart = sym
+                        main_df = df
+
+                    try:
+                        ticker = self.ex_mgr.fetch_ticker(sym) or {}
+                    except Exception as exc:
+                        ticker = {}
+                        self._log(f"{sym} ticker warn: {exc}", "WARNING")
                     if ticker:
                         tickers[sym] = ticker
-                        if "last" in ticker and (sym not in last_price_log or (time.time() - last_price_log.get(sym, 0)) > 1.0):
-                            self._log(f"{sym} price: {ticker.get('last')}", "INFO")
+                        last_price = ticker.get("last") or ticker.get("close")
+                        if last_price and (sym not in last_price_log or (time.time() - last_price_log.get(sym, 0)) > 1.0):
+                            self._log(f"{sym} price: {last_price}", "INFO")
                             last_price_log[sym] = time.time()
-                    if ohlcv and main_df is None:
-                        symbol_for_chart = sym
-                        main_df = pd.DataFrame(ohlcv, columns=["timestamp","open","high","low","close","volume"])
 
                 preds = None
                 if main_df is not None:
@@ -1148,11 +1281,8 @@ class TradingGUI:
                     if self.enable_ai_var.get():
                         try:
                             preds = self.ai_mgr.predict_series(
-                                symbol=self.chart_symbol,
-                                df=self.chart_df,
-                                feature_cols=["open","high","low","close","volume"],
-                                seq_len=int(self.seq_len_var.get()),
-                                model_type=None
+                                self.chart_df,
+                                feature_cols=["open", "high", "low", "close", "volume"]
                             )
                         except Exception as e:
                             self._log(f"AI predict error: {e}", "ERROR")
@@ -1217,84 +1347,119 @@ class TradingGUI:
     def _bridge_execute_trade(self, symbol: str, side: str, mkt_price: float):
         try:
             self._ensure_exchange()
+            if not self.exec_service:
+                return
+
             slip_bps = float(self.slippage_bps_var.get())
-            vwap, slip = self.ex_mgr.simulate_vwap_price(symbol, "buy" if side == "buy" else "sell", amount=None, fallback_bps=slip_bps)
-            exec_price = safe_float(vwap, mkt_price)
+            quoted_price, slip = self.exec_service.quote_market(
+                symbol,
+                "buy" if side == "buy" else "sell",
+                amount=None,
+                fallback_bps=slip_bps,
+            )
+            exec_price = safe_float(quoted_price, mkt_price)
 
-            qty = 0.0
+            balance_data: Dict[str, Any] = {}
             try:
-                qty = self.risk_mgr.calculate_position_size(
+                balance_data = self.exec_service.fetch_balance() or {}
+            except Exception as exc:
+                self._log(f"Balance fetch error before trade: {exc}", "WARNING")
+
+            available_cash = extract_balance_amount(balance_data, self.paper_cash_asset)
+            if self.exec_service.mode == Mode.PAPER:
+                self.paper_balance = available_cash
+                self.paper_balance_var.set(f"{self.paper_balance:,.2f}")
+
+            market_df = self._market_data.get(symbol)
+            signal_payload = {
+                "symbol": symbol,
+                "direction": "LONG" if side == "buy" else "SHORT",
+                "strength": 1.0,
+                "confidence": 1.0,
+                "prediction": 1.0 if side == "buy" else -1.0,
+            }
+
+            try:
+                fraction = float(self.risk_mgr.calculate_position_size(
                     symbol=symbol,
-                    signal=1.0 if side == "buy" else -1.0,
-                    market_data={"price": exec_price},
-                    portfolio={"paper_balance": self.paper_balance, "risk_per_trade": self.risk_per_trade.get()}
-                )
-            except Exception:
-                pass
+                    signal=signal_payload,
+                    market_data=market_df if market_df is not None else {"price": exec_price},
+                    portfolio={"cash": available_cash, "positions": self._open_positions},
+                ))
+            except Exception as exc:
+                self._log(f"Risk sizing error: {exc}", "WARNING")
+                fraction = 0.0
+
+            if fraction <= 0:
+                fraction = float(self.fraction_var.get())
+
+            notional = max(0.0, available_cash * min(1.0, fraction))
+            qty = self.exec_service.calculate_quantity(symbol, notional, max(exec_price, 1e-8))
             if qty <= 0:
-                cap = float(self.paper_balance)
-                qty = max(0.0, (cap * float(self.fraction_var.get())) / max(exec_price, 1e-8))
+                self._log("Quantity <= 0 – trade skipped", "WARNING")
+                return
 
-            qty = self.ex_mgr.quantize_amount(symbol, qty)
-            if qty <= 0: return
-
+            prev_pos = self._open_positions.get(symbol)
+            order = self.exec_service.execute_market(symbol, side.upper(), qty)
+            exec_price = safe_float(exec_price or 0.0, order.price or mkt_price)
             ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            pos = self._open_positions.get(symbol)
 
+            mode_label = getattr(self.exec_service.mode, "value", "paper")
             if side == "buy":
-                if pos and pos["side"] == "buy": return
-                self._open_positions[symbol] = {"side":"buy","qty":qty,"entry":exec_price,"ts":ts}
-                self._append_open_position(symbol, "buy", qty, exec_price, 0.0)
-                self._log(f"EXEC BUY {symbol} qty={qty} @ {exec_price} (paper)", "INFO")
+                self._log(f"EXEC BUY {symbol} qty={qty} @ {exec_price} ({mode_label})", "INFO")
             else:
-                if pos and pos["side"] == "buy":
-                    pnl = (exec_price - pos["entry"]) * pos["qty"]
-                    self._append_closed_trade_row(ts, symbol, "sell", pos["qty"], pos["entry"], exec_price, pnl)
-                    self.paper_balance += pnl
-                    self.paper_balance_var.set(f"{self.paper_balance:,.2f}")
-                    self._remove_open_position(symbol)
-                    self._log(f"CLOSE LONG {symbol} qty={pos['qty']} @ {exec_price} pnl={pnl:.2f}", "INFO")
+                if prev_pos and prev_pos.get("side") == "buy":
+                    close_qty = safe_float(prev_pos.get("qty", qty))
+                    entry_price = safe_float(prev_pos.get("entry", exec_price))
+                    pnl = (exec_price - entry_price) * close_qty
+                    self._append_closed_trade_row(ts, symbol, "sell", close_qty, entry_price, exec_price, pnl)
+                    self._log(f"CLOSE LONG {symbol} qty={close_qty} @ {exec_price} pnl={pnl:.2f}", "INFO")
                 else:
+                    self._log("SELL skipped – brak pozycji do zamknięcia", "WARNING")
                     return
 
             self._last_trade_ts_per_symbol[symbol] = time.time()
+            self._sync_positions_from_service()
+            self._refresh_balances_from_service()
+
             if hasattr(self.engine, "_emit"):
                 try:
-                    self.engine._emit("trade_exec", symbol=symbol, side=side, price=exec_price, qty=qty, paper=True, slip_bps=slip)
+                    self.engine._emit(
+                        "trade_exec",
+                        symbol=symbol,
+                        side=side,
+                        price=exec_price,
+                        qty=qty,
+                        paper=(self.exec_service.mode == Mode.PAPER),
+                        slip_bps=slip,
+                    )
                 except Exception:
                     pass
 
             try:
                 if hasattr(self.db, "log_trade"):
-                    ti = TradeInfo(ts=ts, symbol=symbol, side=side, qty=qty,
-                                   entry=exec_price if side=="buy" else (self._open_positions.get(symbol,{}).get("entry", exec_price)),
-                                   exit=exec_price if side=="sell" else None, pnl=None)
-                    try: self.db.log_trade(ti)
+                    entry_price = exec_price if side == "buy" else safe_float((prev_pos or {}).get("entry", exec_price))
+                    ti = TradeInfo(
+                        ts=ts,
+                        symbol=symbol,
+                        side=side,
+                        qty=qty,
+                        entry=entry_price,
+                        exit=exec_price if side == "sell" else None,
+                        pnl=None,
+                    )
+                    try:
+                        self.db.log_trade(ti)
                     except TypeError:
-                        try: self.db.log_trade(1, ti)
-                        except Exception: pass
-            except Exception: pass
+                        try:
+                            self.db.log_trade(1, ti)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
 
         except Exception as e:
             self._log(f"Bridge exec error: {e}", "ERROR")
-
-    def _append_open_position(self, symbol: str, side: str, qty: float, entry: float, pnl: float):
-        try:
-            for iid in self.open_tv.get_children():
-                vals = self.open_tv.item(iid, "values")
-                if vals and vals[0] == symbol:
-                    self.open_tv.delete(iid)
-            self.open_tv.insert("", "end", values=(symbol, side, qty, human_money(entry), human_money(pnl)))
-        except Exception: pass
-
-    def _remove_open_position(self, symbol: str):
-        try:
-            if symbol in self._open_positions: del self._open_positions[symbol]
-            for iid in self.open_tv.get_children():
-                vals = self.open_tv.item(iid, "values")
-                if vals and vals[0] == symbol:
-                    self.open_tv.delete(iid)
-        except Exception: pass
 
     def _append_closed_trade_row(self, ts: str, symbol: str, side: str, qty: float, entry: float, exitp: float, pnl: float):
         try:
@@ -1441,9 +1606,10 @@ class TradingGUI:
         try: self._run_flag.clear()
         except Exception: pass
         try:
-            if hasattr(self, "ex_mgr") and self.ex_mgr:
-                self.ex_mgr.close()
-        except Exception: pass
+            if hasattr(self, "ex_mgr"):
+                self.ex_mgr = None
+        except Exception:
+            pass
         self.root.after(150, self.root.destroy)
 
 # ===== MAIN =====

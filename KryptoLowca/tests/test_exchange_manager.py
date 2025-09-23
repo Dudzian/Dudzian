@@ -1,134 +1,265 @@
 # test_exchange_manager.py
 # -*- coding: utf-8 -*-
-"""
-Unit tests for exchange_manager.py.
-"""
+"""Testy jednostkowe fasady ExchangeManager (synchronizacja Fazą 0)."""
+
+from __future__ import annotations
+
 import pytest
-import asyncio
-import pandas as pd
-from unittest.mock import AsyncMock, MagicMock
-from exchange_manager import ExchangeManager, ExchangeError, AuthenticationError, OrderResult
-from config_manager import ExchangeConfig
-from database_manager import DatabaseManager
+
+import sys
+from pathlib import Path
+import types
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from managers.exchange_manager import ExchangeManager
+from managers.exchange_core import (
+    MarketRules,
+    Mode,
+    OrderDTO,
+    OrderSide,
+    OrderStatus,
+    OrderType,
+    PositionDTO,
+)
+
+
+class DummyPublic:
+    def __init__(self) -> None:
+        self.rules = {
+            "BTC/USDT": MarketRules(
+                symbol="BTC/USDT",
+                price_step=0.1,
+                amount_step=0.001,
+                min_notional=10.0,
+            ),
+            "ETH/USDT": MarketRules(
+                symbol="ETH/USDT",
+                price_step=0.05,
+                amount_step=0.01,
+                min_notional=5.0,
+            ),
+        }
+        self.order_book = {
+            "asks": [[100.0, 1.0], [101.0, 2.0], [102.0, 4.0]],
+            "bids": [[99.5, 1.5], [99.0, 3.0], [98.5, 6.0]],
+        }
+        self.ohlcv = [
+            [1_700_000_000_000, 100.0, 101.0, 99.0, 100.5, 10.0],
+            [1_700_000_060_000, 100.5, 102.0, 99.5, 101.0, 12.0],
+        ]
+
+    def load_markets(self):
+        return self.rules
+
+    def get_market_rules(self, symbol: str):
+        return self.rules.get(symbol)
+
+    def fetch_ticker(self, symbol: str):
+        return {"last": 100.0, "close": 100.0}
+
+    def fetch_ohlcv(self, symbol: str, timeframe: str, limit: int = 500):
+        return self.ohlcv[:limit]
+
+    def fetch_order_book(self, symbol: str, limit: int = 50):
+        return self.order_book
+
+
+class DummyPaperBackend:
+    def __init__(self, public: DummyPublic) -> None:
+        self.public = public
+        self.created = []
+
+    def load_markets(self):
+        return self.public.load_markets()
+
+    def get_market_rules(self, symbol: str):
+        return self.public.get_market_rules(symbol)
+
+    def fetch_ticker(self, symbol: str):
+        return self.public.fetch_ticker(symbol)
+
+    def fetch_ohlcv(self, symbol: str, timeframe: str, limit: int = 500):
+        return self.public.fetch_ohlcv(symbol, timeframe, limit)
+
+    def fetch_order_book(self, symbol: str, limit: int = 50):
+        return self.public.fetch_order_book(symbol, limit)
+
+    def create_order(
+        self,
+        symbol: str,
+        side: OrderSide,
+        type_: OrderType,
+        quantity: float,
+        price=None,
+        client_order_id=None,
+    ) -> OrderDTO:
+        self.created.append((symbol, side, type_, quantity, price, client_order_id))
+        return OrderDTO(
+            id=123,
+            client_order_id=client_order_id,
+            symbol=symbol,
+            side=side,
+            type=type_,
+            quantity=quantity,
+            price=price,
+            status=OrderStatus.FILLED,
+            mode=Mode.PAPER,
+        )
+
+    def fetch_balance(self):
+        return {"free": {"USDT": 1_000.0}, "total": {"USDT": 1_000.0}}
+
+    def fetch_positions(self, symbol: str | None = None):
+        pos = PositionDTO(
+            symbol="BTC/USDT",
+            side="LONG",
+            quantity=0.5,
+            avg_price=100.0,
+            unrealized_pnl=5.0,
+            mode=Mode.PAPER,
+        )
+        if symbol and symbol != pos.symbol:
+            return []
+        return [pos]
+
+
+class DummyPrivateBackend(DummyPaperBackend):
+    def __init__(self, public: DummyPublic) -> None:
+        super().__init__(public)
+        self.mode = Mode.SPOT
+
+    def create_order(
+        self,
+        symbol: str,
+        side: OrderSide,
+        type_: OrderType,
+        quantity: float,
+        price=None,
+        client_order_id=None,
+    ) -> OrderDTO:
+        self.created.append((symbol, side, type_, quantity, price, client_order_id))
+        return OrderDTO(
+            id=456,
+            client_order_id=client_order_id,
+            symbol=symbol,
+            side=side,
+            type=type_,
+            quantity=quantity,
+            price=price,
+            status=OrderStatus.OPEN,
+            mode=self.mode,
+        )
+
+    def fetch_balance(self):
+        return {"free": {"USDT": 500.0}, "total": {"USDT": 600.0}}
+
+    def fetch_positions(self, symbol: str | None = None):
+        pos = PositionDTO(
+            symbol="ETH/USDT",
+            side="LONG",
+            quantity=1.0,
+            avg_price=50.0,
+            unrealized_pnl=2.5,
+            mode=Mode.SPOT,
+        )
+        if symbol and symbol != pos.symbol:
+            return []
+        return [pos]
+
 
 @pytest.fixture
-async def exchange_manager(monkeypatch):
-    class MockExchange:
-        def __init__(self, config):
-            self.config = config
-            self.markets = {"BTC/USDT": {}, "ETH/USDT": {}}
-            self.load_markets = AsyncMock(return_value=self.markets)
-            self.fetch_ohlcv = AsyncMock(return_value=[
-                [1700000000000, 100.0, 101.0, 99.0, 100.5, 10.0],
-                [1700000060000, 100.5, 101.5, 99.5, 101.0, 11.0]
-            ])
-            self.create_market_order = AsyncMock(return_value={"id": "123", "symbol": "BTC/USDT", "side": "buy", "amount": 0.1, "price": 100.0, "status": "filled", "timestamp": "2025-08-21T18:00:00Z"})
-            self.fetch_balance = AsyncMock(return_value={"total": {"USDT": 1000.0, "BTC": 0.1}})
-            self.fetch_open_orders = AsyncMock(return_value=[{"id": "124", "symbol": "BTC/USDT", "side": "sell", "amount": 0.05, "price": 101.0, "status": "open"}])
-            self.cancel_order = AsyncMock(return_value=True)
-            self.close = AsyncMock()
+def manager() -> ExchangeManager:
+    mgr = ExchangeManager(exchange_id="dummy", paper_initial_cash=5_000.0)
+    public = DummyPublic()
+    paper = DummyPaperBackend(public)
+    private = DummyPrivateBackend(public)
 
-    class MockDB:
-        async def ensure_user(self, email):
-            return 1
-        async def log(self, user_id, level, msg, category="general", context=None):
-            pass
-        async def insert_trade(self, user_id, trade):
-            pass
+    def _ensure_public(self):
+        return public
 
-    class MockSecurity:
-        def load_encrypted_keys(self, pwd):
-            return {"testnet": {"key": "test_key", "secret": "test_secret"}, "live": {"key": "live_key", "secret": "live_secret"}}
+    def _ensure_paper(self):
+        self.mode = Mode.PAPER
+        return paper
 
-    monkeypatch.setattr("ccxt.asyncio.binance", MockExchange)
-    config = ExchangeConfig(exchange_name="binance", testnet=True, api_key="test_key", api_secret="test_secret")
-    db_manager = MockDB()
-    security_manager = MockSecurity()
-    manager = await ExchangeManager.create(config, db_manager, security_manager)
-    yield manager
-    await manager.close()
+    def _ensure_private(self):
+        self.mode = Mode.SPOT
+        return private
 
-@pytest.mark.asyncio
-async def test_initialize(exchange_manager):
-    assert exchange_manager.exchange is not None
-    assert exchange_manager.exchange.config["apiKey"] == "test_key"
-    assert exchange_manager._user_id == 1
+    mgr._public = public  # type: ignore[attr-defined]
+    mgr._paper = paper  # type: ignore[attr-defined]
+    mgr._private = private  # type: ignore[attr-defined]
+    mgr._api_key = "test"  # type: ignore[attr-defined]
+    mgr._secret = "secret"  # type: ignore[attr-defined]
+    mgr._ensure_public = types.MethodType(_ensure_public, mgr)  # type: ignore[attr-defined]
+    mgr._ensure_paper = types.MethodType(_ensure_paper, mgr)  # type: ignore[attr-defined]
+    mgr._ensure_private = types.MethodType(_ensure_private, mgr)  # type: ignore[attr-defined]
+    return mgr
 
-@pytest.mark.asyncio
-async def test_load_markets(exchange_manager):
-    markets = await exchange_manager.load_markets()
-    assert len(markets) == 2
+
+def test_load_markets_and_quantization(manager: ExchangeManager):
+    markets = manager.load_markets()
     assert "BTC/USDT" in markets
-    exchange_manager.exchange.load_markets.assert_called_once()
+    amount = manager.quantize_amount("BTC/USDT", 0.123456)
+    assert amount == pytest.approx(0.123)
+    price = manager.quantize_price("BTC/USDT", 101.337)
+    assert price == pytest.approx(101.3)
 
-@pytest.mark.asyncio
-async def test_fetch_ohlcv(exchange_manager):
-    data = await exchange_manager.fetch_ohlcv("BTC/USDT", "1m", 2)
-    assert len(data) == 2
-    assert data[0] == [1700000000000, 100.0, 101.0, 99.0, 100.5, 10.0]
-    exchange_manager.exchange.fetch_ohlcv.assert_called_with("BTC/USDT", "1m", limit=2)
 
-@pytest.mark.asyncio
-async def test_place_market_order(exchange_manager):
-    order = await exchange_manager.place_market_order("BTC/USDT", "buy", 0.1)
-    assert isinstance(order, OrderResult)
-    assert order.id == "123"
-    assert order.symbol == "BTC/USDT"
-    assert order.side == "buy"
-    assert order.qty == 0.1
-    exchange_manager.exchange.create_market_order.assert_called_with("BTC/USDT", "buy", 0.1)
+def test_simulate_vwap_price(manager: ExchangeManager):
+    price, slip = manager.simulate_vwap_price("BTC/USDT", "buy", amount=2.5)
+    assert price == pytest.approx(100.6, rel=1e-6)
+    assert slip > 0
 
-@pytest.mark.asyncio
-async def test_fetch_balance(exchange_manager):
-    balance = await exchange_manager.fetch_balance()
-    assert balance == {"USDT": 1000.0, "BTC": 0.1}
-    exchange_manager.exchange.fetch_balance.assert_called_once()
 
-@pytest.mark.asyncio
-async def test_fetch_open_orders(exchange_manager):
-    orders = await exchange_manager.fetch_open_orders("BTC/USDT")
-    assert len(orders) == 1
-    assert orders[0].id == "124"
-    assert orders[0].symbol == "BTC/USDT"
-    exchange_manager.exchange.fetch_open_orders.assert_called_with("BTC/USDT")
+def test_fetch_balance_paper(manager: ExchangeManager):
+    manager.mode = Mode.PAPER
+    balance = manager.fetch_balance()
+    assert balance["free"]["USDT"] == pytest.approx(1_000.0)
 
-@pytest.mark.asyncio
-async def test_cancel_order(exchange_manager):
-    result = await exchange_manager.cancel_order("124", "BTC/USDT")
-    assert result is True
-    exchange_manager.exchange.cancel_order.assert_called_with("124", "BTC/USDT")
 
-@pytest.mark.asyncio
-async def test_invalid_input(exchange_manager):
-    with pytest.raises(ValueError):
-        await exchange_manager.fetch_ohlcv("", "1m", 100)
-    with pytest.raises(ValueError):
-        await exchange_manager.place_market_order("BTC/USDT", "invalid", 0.1)
-    with pytest.raises(ValueError):
-        await exchange_manager.place_market_order("BTC/USDT", "buy", -0.1)
-    with pytest.raises(ValueError):
-        await exchange_manager.cancel_order("", "BTC/USDT")
+def test_fetch_balance_spot(manager: ExchangeManager):
+    manager.mode = Mode.SPOT
+    balance = manager.fetch_balance()
+    assert balance["free"]["USDT"] == pytest.approx(500.0)
+    assert balance["total"]["USDT"] == pytest.approx(600.0)
 
-@pytest.mark.asyncio
-async def test_retry_on_failure(exchange_manager, monkeypatch):
-    call_count = 0
-    def failing_fetch(*args, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        if call_count < 2:
-            raise Exception("Temporary failure")
-        return [{"id": "125", "symbol": "BTC/USDT", "side": "sell", "amount": 0.05}]
-    exchange_manager.exchange.fetch_open_orders = AsyncMock(side_effect=failing_fetch)
-    orders = await exchange_manager.fetch_open_orders("BTC/USDT")
-    assert len(orders) == 1
-    assert call_count == 2
 
-@pytest.mark.asyncio
-async def test_authentication_error(monkeypatch):
-    class MockExchange:
-        def __init__(self, config):
-            raise ccxt.AuthenticationError("Invalid credentials")
-    monkeypatch.setattr("ccxt.asyncio.binance", MockExchange)
-    config = ExchangeConfig(exchange_name="binance", testnet=True, api_key="wrong_key", api_secret="wrong_secret")
-    with pytest.raises(ExchangeError):
-        await ExchangeManager.create(config)
+def test_create_order_paper(manager: ExchangeManager):
+    manager.mode = Mode.PAPER
+    order = manager.create_order("BTC/USDT", "BUY", "MARKET", 0.25)
+    assert order.mode == Mode.PAPER
+    assert manager._paper.created  # type: ignore[attr-defined]
+
+
+def test_create_order_spot(manager: ExchangeManager):
+    manager.mode = Mode.SPOT
+    order = manager.create_order("ETH/USDT", "SELL", "LIMIT", 0.5, price=52.0)
+    assert order.mode == Mode.SPOT
+    created = manager._private.created  # type: ignore[attr-defined]
+    assert created[-1][0] == "ETH/USDT"
+
+
+def test_fetch_positions_by_mode(manager: ExchangeManager):
+    manager.mode = Mode.PAPER
+    paper_positions = manager.fetch_positions()
+    assert paper_positions and paper_positions[0].mode == Mode.PAPER
+
+    manager.mode = Mode.SPOT
+    spot_positions = manager.fetch_positions()
+    assert spot_positions and spot_positions[0].mode == Mode.SPOT
+
+
+def test_set_mode_resets_backends(manager: ExchangeManager):
+    manager._paper = DummyPaperBackend(DummyPublic())  # type: ignore[attr-defined]
+    manager._private = DummyPrivateBackend(DummyPublic())  # type: ignore[attr-defined]
+    manager.set_mode(paper=True)
+    assert manager._paper is None  # type: ignore[attr-defined]
+    assert manager._private is None  # type: ignore[attr-defined]
+
+
+def test_fetch_ohlcv_pass_through(manager: ExchangeManager):
+    data = manager.fetch_ohlcv("BTC/USDT", timeframe="1m", limit=1)
+    assert data and data[0][0] == 1_700_000_000_000

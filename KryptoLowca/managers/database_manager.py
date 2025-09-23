@@ -79,6 +79,14 @@ class SchemaVersion(Base):
     applied_at: Mapped[dt.datetime] = mapped_column(DateTime, default=dt.datetime.utcnow, nullable=False)
 
 
+class EngineUser(Base):
+    __tablename__ = "engine_users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    email: Mapped[str] = mapped_column(String(254), unique=True, nullable=False, index=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=dt.datetime.utcnow, nullable=False)
+
+
 class Order(Base):
     __tablename__ = "orders"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -153,10 +161,13 @@ class LogEntry(Base):
     source: Mapped[str] = mapped_column(String(50), index=True) # trading_engine/strategy/exchange/...
     message: Mapped[str] = mapped_column(Text)
     extra: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    user_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    category: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, index=True)
 
     __table_args__ = (
         Index("ix_logs_source_ts", "source", "ts"),
         Index("ix_logs_level_ts", "level", "ts"),
+        Index("ix_logs_user_ts", "user_id", "ts"),
     )
 
 
@@ -341,6 +352,69 @@ class DatabaseManager:
                 await s.rollback()
                 logger.exception("Transaction rollback due to exception")
                 raise
+
+    # ---------- USERS / LOGGING BRIDGE ----------
+    async def ensure_user(self, email: str) -> int:
+        email_norm = (email or "").strip().lower()
+        if not email_norm:
+            raise ValueError("email is required")
+
+        async with self.transaction() as s:
+            q = await s.execute(select(EngineUser).where(EngineUser.email == email_norm))
+            existing = q.scalar_one_or_none()
+            if existing:
+                return existing.id
+
+            rec = EngineUser(email=email_norm)
+            s.add(rec)
+            await s.flush()
+            return rec.id
+
+    async def log(
+        self,
+        user_id: Optional[int],
+        level: str,
+        message: str,
+        *,
+        category: str = "general",
+        context: Optional[Dict[str, Any]] = None,
+    ) -> int:
+        if not level:
+            raise ValueError("level is required")
+        if not message:
+            raise ValueError("message is required")
+
+        payload = {
+            "user_id": user_id,
+            "category": category,
+            "context": context or {},
+        }
+        async with self.transaction() as s:
+            rec = LogEntry(
+                user_id=user_id,
+                level=level.upper(),
+                source=category,
+                category=category,
+                message=message,
+                extra=json.dumps(payload),
+            )
+            s.add(rec)
+            await s.flush()
+            return rec.id
+
+    async def get_positions(self, user_id: Optional[int], *, mode: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Compatibility helper used by TradingEngine/GUI."""
+        rows = await self.get_open_positions(mode=mode)
+        out: List[Dict[str, Any]] = []
+        for row in rows:
+            out.append({
+                "symbol": row.get("symbol"),
+                "qty": row.get("quantity"),
+                "avg_entry": row.get("avg_price"),
+                "side": row.get("side"),
+                "mode": row.get("mode"),
+            })
+        return out
 
     # ---------- OPERACJE: Orders ----------
     async def record_order(self, order: Union[OrderIn, Dict[str, Any]]) -> int:
@@ -545,12 +619,15 @@ class DatabaseManager:
 
     # ---------- OPERACJE: Logi ----------
     async def add_log(self, *, level: str, source: str, message: str, extra: Optional[Dict[str, Any]] = None) -> int:
+        payload = extra or {}
         async with self.transaction() as s:
             rec = LogEntry(
                 level=level.upper(),
                 source=source,
+                category=payload.get("category", source),
+                user_id=payload.get("user_id"),
                 message=message,
-                extra=json.dumps(extra) if extra is not None else None,
+                extra=json.dumps(payload) if payload else None,
             )
             s.add(rec)
             await s.flush()
@@ -635,6 +712,20 @@ class DatabaseManager:
         def init_db(self, *, create: bool = True) -> None:
             return self._run(self._outer.init_db(create=create))
 
+        def ensure_user(self, email: str) -> int:
+            return self._run(self._outer.ensure_user(email))
+
+        def log(
+            self,
+            user_id: Optional[int],
+            level: str,
+            message: str,
+            *,
+            category: str = "general",
+            context: Optional[Dict[str, Any]] = None,
+        ) -> int:
+            return self._run(self._outer.log(user_id, level, message, category=category, context=context))
+
         def record_order(self, order: Union[OrderIn, Dict[str, Any]]) -> int:
             return self._run(self._outer.record_order(order))
 
@@ -678,6 +769,9 @@ class DatabaseManager:
 
         def get_open_positions(self, *, mode: Optional[str] = None) -> List[Dict[str, Any]]:
             return self._run(self._outer.get_open_positions(mode=mode))
+
+        def get_positions(self, user_id: Optional[int], *, mode: Optional[str] = None) -> List[Dict[str, Any]]:
+            return self._run(self._outer.get_positions(user_id, mode=mode))
 
         def log_equity(self, equity: Union[EquityIn, Dict[str, Any]]) -> int:
             return self._run(self._outer.log_equity(equity))

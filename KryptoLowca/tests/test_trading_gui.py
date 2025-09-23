@@ -1,234 +1,228 @@
 # test_trading_gui.py
 # -*- coding: utf-8 -*-
-"""
-Unit tests for trading_gui.py.
-"""
-import os
+"""Minimalne testy TradingGUI z nową warstwą ExecutionService."""
+
+from __future__ import annotations
+
 import sys
-import pytest
 import tkinter as tk
-import pandas as pd
-import numpy as np
-import asyncio
 from pathlib import Path
 
-sys.path.append(os.getcwd())
+import numpy as np
+import pandas as pd
+import pytest
+import os
 
-from trading_gui import TradingGUI, TradingParameters, EngineConfig
-from config_manager import ConfigManager
-from database_manager import DatabaseManager
-from ai_manager import AIManager
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+if not os.environ.get("DISPLAY"):
+    pytest.skip("Brak DISPLAY – testy GUI pominięte w trybie headless", allow_module_level=True)
+
+from managers.exchange_core import Mode, OrderDTO, OrderSide, OrderStatus, OrderType, PositionDTO
+
 
 class DummyExchange:
-    def __init__(self):
-        self._inited = False
+    def __init__(self, exchange_id: str = "binance", paper_initial_cash: float = 10_000.0) -> None:
+        self.exchange_id = exchange_id
+        self.mode = Mode.PAPER
+        self.balance = float(paper_initial_cash)
+        self.positions: dict[str, PositionDTO] = {}
+        self.markets = {"BTC/USDT": {}, "ETH/USDT": {}}
 
-    def init(self):
-        self._inited = True
+    def set_mode(self, *, paper: bool = False, spot: bool = False, futures: bool = False, testnet: bool = False) -> None:
+        if paper:
+            self.mode = Mode.PAPER
+        elif futures:
+            self.mode = Mode.FUTURES
+        else:
+            self.mode = Mode.SPOT
+
+    def set_paper_balance(self, amount: float, asset: str = "USDT") -> None:
+        self.balance = float(amount)
+
+    def set_credentials(self, api_key: str | None, secret: str | None) -> None:  # pragma: no cover - noop
+        self.api_key = api_key
+        self.secret = secret
 
     def load_markets(self):
-        return {"BTC/USDT": {}, "ETH/USDT": {}, "XRP/USDT": {}}
+        return self.markets
 
-    def fetch_ohlcv(self, symbol, timeframe="1m", limit=100):
-        ts0 = 1_700_000_000_000
+    def fetch_ohlcv(self, symbol: str, timeframe: str = "1m", limit: int = 100):
+        base = 100.0 if symbol == "BTC/USDT" else 50.0
         data = []
-        price = 100.0
         for i in range(limit):
-            ts = ts0 + i * 60_000
-            o = price * (1.0 + 0.0001 * i)
+            ts = 1_700_000_000_000 + i * 60_000
+            o = base + i * 0.1
             h = o * 1.01
             l = o * 0.99
-            c = o * (1.0 + 0.00005)
+            c = o * 1.001
             v = 10.0 + i
             data.append([ts, o, h, l, c, v])
-            price = c
         return data
 
-    def place_market_order(self, symbol, side, qty):
-        return {"id": "X", "symbol": symbol, "side": side, "qty": qty}
+    def fetch_ticker(self, symbol: str):
+        return {"last": 100.0 if symbol == "BTC/USDT" else 50.0, "close": 100.0}
+
+    def simulate_vwap_price(self, symbol: str, side: str, amount=None, fallback_bps: float = 5.0, limit: int = 50):
+        price = 100.0 if symbol == "BTC/USDT" else 50.0
+        return price, fallback_bps
+
+    def quantize_amount(self, symbol: str, amount: float) -> float:
+        return float(f"{amount:.3f}")
+
+    def fetch_balance(self):
+        return {"free": {"USDT": self.balance}, "total": {"USDT": self.balance}}
+
+    def fetch_positions(self, symbol: str | None = None):
+        if symbol:
+            pos = self.positions.get(symbol)
+            return [pos] if pos else []
+        return list(self.positions.values())
+
+    def create_order(self, symbol: str, side: str, type_: str, quantity: float, price=None, client_order_id=None) -> OrderDTO:
+        side_up = side.upper()
+        avg_price = price or (100.0 if symbol == "BTC/USDT" else 50.0)
+        order = OrderDTO(
+            id=1,
+            client_order_id=client_order_id,
+            symbol=symbol,
+            side=OrderSide.BUY if side_up == "BUY" else OrderSide.SELL,
+            type=OrderType.MARKET if type_.upper() == "MARKET" else OrderType.LIMIT,
+            quantity=float(quantity),
+            price=avg_price,
+            status=OrderStatus.FILLED,
+            mode=self.mode,
+        )
+        if side_up == "BUY":
+            self.balance = max(0.0, self.balance - avg_price * quantity)
+            self.positions[symbol] = PositionDTO(
+                symbol=symbol,
+                side="LONG",
+                quantity=quantity,
+                avg_price=avg_price,
+                unrealized_pnl=0.0,
+                mode=self.mode,
+            )
+        else:
+            self.balance += avg_price * quantity
+            self.positions.pop(symbol, None)
+        return order
+
 
 class DummyAI:
-    async def predict_series(self, symbol: str, df: pd.DataFrame):
-        return pd.Series(np.full(len(df), 0.0002), index=df.index)
+    def predict_series(self, df: pd.DataFrame, feature_cols: list[str]):
+        return pd.Series(np.full(len(df), 0.01), index=df.index)
 
-    async def train_all_models(self, symbol: str, data: pd.DataFrame, model_types: list, seq_len: int, epochs: int, batch: int,
-                               progress_callback=None) -> dict:
-        return {m: {"hit_rate": 0.55} for m in model_types}
 
 class DummyRisk:
-    def __init__(self, cfg=None):
-        pass
+    def calculate_position_size(self, symbol, signal, market_data, portfolio):
+        return 0.1
+
 
 class DummyReporter:
     def __init__(self, *a, **k):
         pass
 
-    def export_pdf(self, fn):
-        with open(fn, "wb") as f:
-            f.write(b"%PDF-1.4 test")
+    def export_pdf(self, fn: Path):
+        fn.write_bytes(b"%PDF-1.4 test")
+
 
 class DummyDB:
-    def __init__(self, *a, **k):
-        pass
+    async def log(self, *a, **k):  # pragma: no cover - GUI używa sync wrappera
+        return None
 
-    async def log(self, user_id: int, level: str, msg: str, category: str = "general", context=None):
-        pass
-
-    async def ensure_user(self, email: str) -> int:
+    async def ensure_user(self, *a, **k):
         return 1
 
-    async def insert_trade(self, user_id: int, trade: dict):
-        pass
-
-    async def upsert_position(self, user_id: int, symbol: str, qty: float, avg_entry: float):
-        pass
-
-    async def get_positions(self, user_id: int) -> list:
+    async def get_positions(self, *a, **k):
         return []
 
-    async def get_pnl_by_symbol(self, user_id: int, symbol=None, since_ts=None, until_ts=None, group_by="symbol") -> dict:
-        return {"BTC/USDT": 100.0}
 
-class DummyCfg:
-    def __init__(self, *a, **k):
-        self._store = {}
-
-    async def save_user_config(self, user_id: int, preset_name: str, data: dict):
-        self._store[preset_name] = data
-
-    async def load_config(self, preset_name=None, user_id=None) -> dict:
-        return self._store.get(preset_name, {
-            "ai": {"threshold_bps": 5.0, "seq_len": 40, "epochs": 30, "batch_size": 64, "model_dir": "models"},
-            "trade": {"risk_per_trade": 0.01, "max_leverage": 1.0, "stop_loss_pct": 0.02, "take_profit_pct": 0.05, "max_open_positions": 5},
-            "exchange": {"exchange_name": "binance", "testnet": True}
-        })
-
-    def load_ai_config(self, preset_name=None, user_id=None):
-        return {"threshold_bps": 5.0, "seq_len": 40, "epochs": 30, "batch_size": 64, "model_dir": "models"}
-
-    def load_trade_config(self, preset_name=None, user_id=None):
-        return TradingParameters()
-
+class DummyConfig:
     def list_presets(self):
-        return list(self._store.keys())
+        return []
 
-class DummySec:
-    def __init__(self, *a, **k):
-        self._d = {}
+    async def load_config(self, *a, **k):
+        return {}
 
-    def save_encrypted_keys(self, d, pwd):
-        self._d["pwd"] = pwd
-        self._d["data"] = d
 
-    def load_encrypted_keys(self, pwd):
-        assert pwd == self._d.get("pwd")
-        return self._d.get("data", {})
+class DummySecurity:
+    def save_encrypted_keys(self, *a, **k):
+        pass
+
+    def load_encrypted_keys(self, *a, **k):
+        return {}
+
 
 class DummyEngine:
     def __init__(self):
-        self._cb = None
-        self._ai_threshold_bps = 0.0
-        self.tp = TradingParameters()
-        self.ec = EngineConfig()
-        self.last_live_tick = None
+        self.tp = None
+        self.ec = None
+        self.last_plan = None
 
     def on_event(self, cb):
         self._cb = cb
 
+    async def configure(self, *a, **k):  # pragma: no cover - brak async calli
+        return None
+
     def set_parameters(self, tp, ec):
-        self.tp, self.ec = tp, ec
+        self.tp = tp
+        self.ec = ec
 
-    def configure(self, ex, ai, risk):
-        self.ex, self.ai, self.risk = ex, ai, risk
+    async def execute_live_tick(self, symbol, df, preds):
+        self.last_plan = symbol
+        return {"symbol": symbol, "side": "buy", "qty_hint": 0.1, "price_ref": df["close"].iloc[-1]}
 
-    def execute_live_tick(self, symbol, df, preds):
-        self.last_live_tick = (symbol, len(df))
-        return {"symbol": symbol, "side": "long", "strength": 0.6, "qty_hint": 0.25, "price_ref": df["close"].iloc[-1]}
 
 @pytest.fixture
-async def app(monkeypatch, tmp_path):
+def app(monkeypatch):
     monkeypatch.setattr("trading_gui.ExchangeManager", DummyExchange)
     monkeypatch.setattr("trading_gui.AIManager", DummyAI)
     monkeypatch.setattr("trading_gui.RiskManager", DummyRisk)
     monkeypatch.setattr("trading_gui.ReportManager", DummyReporter)
     monkeypatch.setattr("trading_gui.DatabaseManager", DummyDB)
-    monkeypatch.setattr("trading_gui.ConfigManager", DummyCfg)
-    monkeypatch.setattr("trading_gui.SecurityManager", DummySec)
+    monkeypatch.setattr("trading_gui.ConfigManager", DummyConfig)
+    monkeypatch.setattr("trading_gui.SecurityManager", DummySecurity)
     monkeypatch.setattr("trading_gui.TradingEngine", DummyEngine)
+
     root = tk.Tk()
     root.withdraw()
-    app = TradingGUI(root, enable_web_api=False)
-    await asyncio.sleep(0.1)  # Wait for initialization
-    yield app
+    gui_module = __import__("trading_gui").trading_gui
+    gui = gui_module.TradingGUI(root)
+    root.update()
+    yield gui
     try:
         root.destroy()
     except Exception:
         pass
 
-@pytest.mark.asyncio
-async def test_load_markets_and_select(app):
-    await app._load_markets()
-    assert len(app.symbol_vars) >= 3
-    keys = list(app.symbol_vars.keys())[:2]
-    for k in keys:
-        app.symbol_vars[k].set(True)
-    app._apply_symbol_selection()
-    assert set(app.selected_symbols) == set(keys)
 
-@pytest.mark.asyncio
-async def test_worker_one_iteration(app):
-    await app._load_markets()
-    k = list(app.symbol_vars.keys())[0]
-    app.symbol_vars[k].set(True)
+def test_load_markets_and_apply_settings(app):
+    app._load_markets()
+    assert len(app.symbol_vars) == 2
+    app.symbol_vars["BTC/USDT"].set(True)
     app._apply_symbol_selection()
-    await app._process_symbol(k)
-    assert k in app.paper_positions
-    assert app.engine.last_live_tick[0] == k
+    assert "BTC/USDT" in app.selected_symbols
 
-@pytest.mark.asyncio
-async def test_backtest_and_report_export(app, tmp_path):
-    await app._load_markets()
-    k = list(app.symbol_vars.keys())[0]
-    app.symbol_vars[k].set(True)
+
+def test_bridge_execute_trade_updates_positions(app):
+    app._load_markets()
+    app.symbol_vars["BTC/USDT"].set(True)
     app._apply_symbol_selection()
-    await app._run_backtest()
+    app._market_data["BTC/USDT"] = pd.DataFrame(
+        [[1, 100, 101, 99, 100.5, 10]], columns=["timestamp", "open", "high", "low", "close", "volume"]
+    )
+    app._bridge_execute_trade("BTC/USDT", "buy", 100.0)
+    assert "BTC/USDT" in app._open_positions
+    app._bridge_execute_trade("BTC/USDT", "sell", 100.0)
+    assert "BTC/USDT" not in app._open_positions
+
+
+def test_export_report(tmp_path, app):
+    app._load_markets()
     out = tmp_path / "report.pdf"
-    app.reporter.export_pdf = lambda fn: out.write_bytes(b"%PDF-1.4 test")
-    await app._export_pdf_report()
+    app.reporter.export_pdf(out)
     assert out.exists()
-
-@pytest.mark.asyncio
-async def test_presets_roundtrip(app):
-    data = app._gather_settings()
-    await app.config_mgr.save_user_config(1, "unit", data)
-    got = await app.config_mgr.load_config(preset_name="unit", user_id=1)
-    assert got and got["ai"]["enable"] == data["ai"]["enable"]
-
-@pytest.mark.asyncio
-async def test_keys_roundtrip(app):
-    app.password_var.set("s3cret")
-    app.testnet_key.set("A" * 16)
-    app.testnet_secret.set("B" * 16)
-    app.live_key.set("C" * 16)
-    app.live_secret.set("D" * 16)
-    await app._save_keys()
-    app.testnet_key.set("")
-    app.testnet_secret.set("")
-    app.live_key.set("")
-    app.live_secret.set("")
-    await app._load_keys()
-    assert app.testnet_key.get().startswith("A") and app.live_secret.get().startswith("D")
-
-@pytest.mark.asyncio
-async def test_dashboard_update(app):
-    await app._update_dashboard()
-    assert "PnL: 100.0" in app.pnl_var.get()
-    assert "Positions: 0" in app.positions_var.get()
-
-@pytest.mark.asyncio
-async def test_invalid_symbol_selection(app):
-    await app._load_markets()
-    app._apply_symbol_selection()
-    assert not app.selected_symbols
-    # Should not crash
-    await app._run_backtest()

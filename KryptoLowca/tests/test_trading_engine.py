@@ -8,6 +8,13 @@ import asyncio
 import pandas as pd
 import numpy as np
 from unittest.mock import AsyncMock
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from core.trading_engine import TradingEngine, TradingError
 from trading_strategies import TradingParameters, EngineConfig, TradingStrategies
 
@@ -33,18 +40,18 @@ class MockDB:
         return []
 
 @pytest.fixture
-async def engine(monkeypatch):
+def engine(monkeypatch):
     monkeypatch.setattr("core.trading_engine.ExchangeManager", MockExchange)
     monkeypatch.setattr("core.trading_engine.AIManager", MockAI)
     monkeypatch.setattr("core.trading_engine.RiskManager", MockRisk)
     monkeypatch.setattr("core.trading_engine.DatabaseManager", MockDB)
+    monkeypatch.setattr(asyncio, "create_task", lambda coro: asyncio.run(coro))
     engine = TradingEngine(db_manager=MockDB())
-    await engine.configure(MockExchange(), MockAI(), MockRisk())
+    asyncio.run(engine.configure(MockExchange(), MockAI(), MockRisk()))
     engine.set_parameters(TradingParameters(), EngineConfig())
     return engine
 
-@pytest.mark.asyncio
-async def test_execute_live_tick(engine):
+def test_execute_live_tick(engine):
     df = pd.DataFrame({
         "timestamp": pd.date_range("2025-08-21", periods=252, freq="T"),
         "open": np.full(252, 100.0),
@@ -54,15 +61,14 @@ async def test_execute_live_tick(engine):
         "volume": np.full(252, 10.0)
     })
     preds = pd.Series(np.full(252, 10.0), index=df.index)
-    plan = await engine.execute_live_tick("BTC/USDT", df, preds)
+    plan = asyncio.run(engine.execute_live_tick("BTC/USDT", df, preds))
     assert plan is not None
     assert plan["symbol"] == "BTC/USDT"
     assert plan["side"] == "buy"
     assert plan["qty_hint"] == 0.1
     assert plan["price_ref"] == 100.5
 
-@pytest.mark.asyncio
-async def test_no_signal(engine, monkeypatch):
+def test_no_signal(engine, monkeypatch):
     monkeypatch.setattr(engine.strategies, "run_strategy", lambda *args: ({}, [], pd.Series()))
     df = pd.DataFrame({
         "timestamp": pd.date_range("2025-08-21", periods=252, freq="T"),
@@ -73,11 +79,10 @@ async def test_no_signal(engine, monkeypatch):
         "volume": np.full(252, 10.0)
     })
     preds = pd.Series(np.full(252, 0.0), index=df.index)
-    plan = await engine.execute_live_tick("BTC/USDT", df, preds)
+    plan = asyncio.run(engine.execute_live_tick("BTC/USDT", df, preds))
     assert plan is None
 
-@pytest.mark.asyncio
-async def test_max_positions(engine, monkeypatch):
+def test_max_positions(engine, monkeypatch):
     monkeypatch.setattr(engine.db_manager, "get_positions", AsyncMock(return_value=[{}]*1))
     engine.tp = TradingParameters(max_position_size=1)
     df = pd.DataFrame({
@@ -89,11 +94,10 @@ async def test_max_positions(engine, monkeypatch):
         "volume": np.full(252, 10.0)
     })
     preds = pd.Series(np.full(252, 10.0), index=df.index)
-    plan = await engine.execute_live_tick("BTC/USDT", df, preds)
+    plan = asyncio.run(engine.execute_live_tick("BTC/USDT", df, preds))
     assert plan is None
 
-@pytest.mark.asyncio
-async def test_invalid_input(engine):
+def test_invalid_input(engine):
     df = pd.DataFrame({
         "timestamp": pd.date_range("2025-08-21", periods=10, freq="T"),
         "open": np.full(10, 100.0),
@@ -104,6 +108,6 @@ async def test_invalid_input(engine):
     })
     preds = pd.Series(np.full(10, 10.0), index=df.index)
     with pytest.raises(ValueError):
-        await engine.execute_live_tick("", df, preds)
+        asyncio.run(engine.execute_live_tick("", df, preds))
     with pytest.raises(ValueError):
-        await engine.execute_live_tick("BTC/USDT", df, preds)
+        asyncio.run(engine.execute_live_tick("BTC/USDT", df, preds))
