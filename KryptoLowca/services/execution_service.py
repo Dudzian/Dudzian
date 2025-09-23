@@ -115,6 +115,16 @@ class ExecutionService:
 
         self._exchange_manager.set_paper_balance(amount, asset=asset)
 
+    def quantize_amount(self, symbol: str, amount: float) -> float:
+        """Kwantyzuje ilość zgodnie z regułami rynku."""
+
+        return self._exchange_manager.quantize_amount(symbol, amount)
+
+    def quantize_price(self, symbol: str, price: float) -> float:
+        """Kwantyzuje cenę zgodnie z regułami rynku."""
+
+        return self._exchange_manager.quantize_price(symbol, price)
+
     # ------------------------------------------------------------------
     # Dostęp pomocniczy
     # ------------------------------------------------------------------
@@ -129,4 +139,10 @@ class ExecutionService:
             return Mode(str(mode))
         except Exception:
             return Mode.PAPER
+
+    @property
+    def exchange_manager(self) -> ExchangeManager:
+        """Udostępnia wewnętrzny ``ExchangeManager`` (np. dla AutoTradera)."""
+
+        return self._exchange_manager
 

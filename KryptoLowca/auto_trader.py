@@ -5,7 +5,7 @@ from __future__ import annotations
 import threading
 import time
 import statistics
-from typing import Optional, List, Dict, Any, Callable
+from typing import Optional, List, Dict, Any, Callable, TYPE_CHECKING
 
 import pandas as pd
 try:
@@ -21,6 +21,13 @@ except Exception:
         def popleft(self): return super().pop(0)
 
 from event_emitter_adapter import EventEmitter
+
+if TYPE_CHECKING:  # pragma: no cover - tylko na potrzeby typów
+    from services.execution_service import ExecutionService
+    from managers.exchange_manager import ExchangeManager
+    from managers.ai_manager import AIManager
+    from managers.risk_manager_adapter import RiskManager
+    from managers.exchange_core import OrderDTO
 
 class AutoTrader:
     """
@@ -45,7 +52,16 @@ class AutoTrader:
         walkforward_interval_s: Optional[int] = 3600,  # every 1h
         walkforward_min_closed_trades: int = 10,
         enable_auto_trade: bool = True,
-        auto_trade_interval_s: int = 30
+        auto_trade_interval_s: int = 30,
+        *,
+        execution_service: "ExecutionService | None" = None,
+        exchange_manager: "ExchangeManager | None" = None,
+        ai_manager: "AIManager | None" = None,
+        risk_manager: "RiskManager | None" = None,
+        portfolio_getter: Optional[Callable[[], Dict[str, Any]]] = None,
+        cash_asset: str = "USDT",
+        fallback_fraction: float = 0.1,
+        slippage_bps: float = 5.0,
     ) -> None:
         self.emitter = emitter
         self.gui = gui
@@ -66,6 +82,23 @@ class AutoTrader:
 
         self.enable_auto_trade = enable_auto_trade
         self.auto_trade_interval_s = auto_trade_interval_s
+
+        self.execution_service: "ExecutionService | None" = execution_service
+        self.exchange_manager: "ExchangeManager | None" = exchange_manager
+        self.ai_manager: "AIManager | None" = ai_manager
+        self.risk_manager: "RiskManager | None" = risk_manager
+        self.portfolio_getter = portfolio_getter
+        self.cash_asset = str(cash_asset or "USDT").upper()
+        try:
+            self.fallback_fraction = max(0.0, float(fallback_fraction))
+        except Exception:
+            self.fallback_fraction = 0.1
+        try:
+            self.slippage_bps = max(0.0, float(slippage_bps))
+        except Exception:
+            self.slippage_bps = 5.0
+
+        self._last_symbol: Optional[str] = None
 
         self._closed_pnls: deque = deque(maxlen=max(10, metrics_window))
         self._atr_values: deque = deque(maxlen=max(50, atr_baseline_len*2))
@@ -116,6 +149,21 @@ class AutoTrader:
         """Runtime reconfiguration from the ControlPanel."""
         with self._lock:
             for key, val in kwargs.items():
+                if key == "cash_asset":
+                    self.cash_asset = str(val or self.cash_asset).upper()
+                    continue
+                if key == "fallback_fraction":
+                    try:
+                        self.fallback_fraction = max(0.0, float(val))
+                    except Exception:
+                        pass
+                    continue
+                if key == "slippage_bps":
+                    try:
+                        self.slippage_bps = max(0.0, float(val))
+                    except Exception:
+                        pass
+                    continue
                 if not hasattr(self, key):
                     continue
                 setattr(self, key, val)
@@ -214,69 +262,307 @@ class AutoTrader:
     def _auto_trade_loop(self) -> None:
         while not self._stop.is_set():
             try:
-                if not self.enable_auto_trade:
-                    self._stop.wait(self.auto_trade_interval_s)
-                    continue
-                symbol = self.symbol_getter()
-                if not symbol:
-                    self._stop.wait(self.auto_trade_interval_s)
-                    continue
-                ex = getattr(self.gui, "ex_mgr", None)
-                if ex is None or not hasattr(ex, "fetch_ohlcv"):
-                    self._stop.wait(self.auto_trade_interval_s)
-                    continue
-
-                timeframe = "1m"
-                tf_var = getattr(self.gui, "timeframe_var", None)
-                if tf_var is not None and hasattr(tf_var, "get"):
-                    timeframe = tf_var.get()
-
-                try:
-                    raw = ex.fetch_ohlcv(symbol, timeframe=timeframe, limit=256) or []
-                except Exception as e:
-                    self.emitter.log(f"fetch_ohlcv failed: {e!r}", level="ERROR", component="AutoTrader")
-                    self._stop.wait(self.auto_trade_interval_s)
-                    continue
-
-                if not raw:
-                    self._stop.wait(self.auto_trade_interval_s)
-                    continue
-
-                df = pd.DataFrame(raw, columns=["timestamp", "open", "high", "low", "close", "volume"])
-                ai = getattr(self.gui, "ai_mgr", None)
-                if ai is None or not hasattr(ai, "predict_series"):
-                    self._stop.wait(self.auto_trade_interval_s)
-                    continue
-
-                try:
-                    preds = ai.predict_series(df, feature_cols=["open", "high", "low", "close", "volume"])
-                except Exception as e:
-                    self.emitter.log(f"predict_series failed: {e!r}", level="ERROR", component="AutoTrader")
-                    preds = None
-
-                if preds is None or len(preds.dropna()) == 0:
-                    self._stop.wait(self.auto_trade_interval_s)
-                    continue
-
-                last_pred = float(preds.dropna().iloc[-1])
-                threshold_bps = float(getattr(ai, "ai_threshold_bps", 5.0))
-                threshold = threshold_bps / 10_000.0
-
-                if last_pred >= threshold:
-                    side = "BUY"
-                elif last_pred <= -threshold:
-                    side = "SELL"
-                else:
-                    self._stop.wait(self.auto_trade_interval_s)
-                    continue
-
-                mkt_price = float(df["close"].iloc[-1])
-
-                if hasattr(self.gui, "_bridge_execute_trade"):
-                    self.gui._bridge_execute_trade(symbol, side.lower(), mkt_price)
-                    self.emitter.emit("auto_trade_tick", symbol=symbol, ts=time.time())
-                else:
-                    self.emitter.log("_bridge_execute_trade missing on GUI", level="ERROR", component="AutoTrader")
+                executed = self._auto_trade_once()
+                if executed:
+                    self.emitter.emit("auto_trade_tick", symbol=self._last_symbol or "", ts=time.time())
             except Exception as e:
                 self.emitter.log(f"Auto trade tick error: {e!r}", level="ERROR", component="AutoTrader")
             self._stop.wait(self.auto_trade_interval_s)
+
+    def _auto_trade_once(self) -> bool:
+        if not self.enable_auto_trade:
+            return False
+
+        symbol = self.symbol_getter()
+        if not symbol:
+            return False
+
+        self._last_symbol = symbol
+
+        ex = self._resolve_exchange_manager()
+        if ex is None or not hasattr(ex, "fetch_ohlcv"):
+            return False
+
+        timeframe = "1m"
+        tf_var = getattr(self.gui, "timeframe_var", None)
+        if tf_var is not None and hasattr(tf_var, "get"):
+            try:
+                timeframe = tf_var.get() or timeframe
+            except Exception:
+                pass
+
+        try:
+            raw = ex.fetch_ohlcv(symbol, timeframe=timeframe, limit=256) or []
+        except Exception as e:
+            self.emitter.log(f"fetch_ohlcv failed: {e!r}", level="ERROR", component="AutoTrader")
+            return False
+
+        if not raw:
+            return False
+
+        df = pd.DataFrame(raw, columns=["timestamp", "open", "high", "low", "close", "volume"])
+        ai = self._resolve_ai_manager()
+        if ai is None or not hasattr(ai, "predict_series"):
+            return False
+
+        try:
+            preds = ai.predict_series(df, feature_cols=["open", "high", "low", "close", "volume"])
+        except Exception as e:
+            self.emitter.log(f"predict_series failed: {e!r}", level="ERROR", component="AutoTrader")
+            preds = None
+
+        if preds is None or len(preds.dropna()) == 0:
+            return False
+
+        series = preds.dropna()
+        last_pred = float(series.iloc[-1])
+        threshold_bps = float(getattr(ai, "ai_threshold_bps", 5.0))
+        threshold = threshold_bps / 10_000.0
+
+        if last_pred >= threshold:
+            side = "BUY"
+        elif last_pred <= -threshold:
+            side = "SELL"
+        else:
+            return False
+
+        order = self._execute_trade(symbol, side, df)
+        return order is not None
+
+    # -- Dependency helpers --
+    def _resolve_execution_service(self) -> "ExecutionService | None":
+        if self.execution_service is not None:
+            return self.execution_service
+        if self.gui is not None:
+            svc = getattr(self.gui, "exec_service", None)
+            if svc is not None:
+                self.execution_service = svc
+        return self.execution_service
+
+    def _resolve_exchange_manager(self):
+        if self.exchange_manager is not None:
+            return self.exchange_manager
+        svc = self._resolve_execution_service()
+        if svc is not None and hasattr(svc, "exchange_manager"):
+            self.exchange_manager = getattr(svc, "exchange_manager")
+            return self.exchange_manager
+        if self.gui is not None:
+            mgr = getattr(self.gui, "ex_mgr", None)
+            if mgr is not None:
+                self.exchange_manager = mgr
+        return self.exchange_manager
+
+    def _resolve_ai_manager(self):
+        if self.ai_manager is not None:
+            return self.ai_manager
+        if self.gui is not None:
+            mgr = getattr(self.gui, "ai_mgr", None)
+            if mgr is not None:
+                self.ai_manager = mgr
+        return self.ai_manager
+
+    def _resolve_risk_manager(self):
+        if self.risk_manager is not None:
+            return self.risk_manager
+        if self.gui is not None:
+            mgr = getattr(self.gui, "risk_mgr", None)
+            if mgr is not None:
+                self.risk_manager = mgr
+        return self.risk_manager
+
+    # -- Execution helpers --
+    def _execute_trade(self, symbol: str, side: str, market_df: pd.DataFrame) -> "OrderDTO | None":
+        exec_service = self._resolve_execution_service()
+        if exec_service is None:
+            self.emitter.log("ExecutionService unavailable – trade skipped.", level="ERROR", component="AutoTrader")
+            return None
+
+        side_up = side.upper()
+        price_hint = float(market_df["close"].iloc[-1]) if not market_df.empty else 0.0
+
+        try:
+            quoted_price, slip = exec_service.quote_market(
+                symbol,
+                "buy" if side_up == "BUY" else "sell",
+                amount=None,
+                fallback_bps=self.slippage_bps,
+            )
+        except Exception as e:
+            self.emitter.log(f"quote_market failed: {e!r}", level="ERROR", component="AutoTrader")
+            quoted_price, slip = (price_hint or 0.0, self.slippage_bps)
+
+        exec_price = float(quoted_price or price_hint or 0.0)
+        if exec_price <= 0:
+            self.emitter.log("Brak ceny do egzekucji – trade pominięty.", level="WARNING", component="AutoTrader")
+            return None
+
+        try:
+            balance = exec_service.fetch_balance() or {}
+        except Exception as e:
+            self.emitter.log(f"fetch_balance failed: {e!r}", level="ERROR", component="AutoTrader")
+            balance = {}
+
+        available_cash = self._extract_cash(balance)
+
+        try:
+            positions = exec_service.list_positions(symbol)
+        except Exception as e:
+            self.emitter.log(f"list_positions failed: {e!r}", level="ERROR", component="AutoTrader")
+            positions = []
+
+        long_qty = self._position_quantity(positions, target_side="LONG")
+
+        if side_up == "SELL" and long_qty <= 0:
+            self.emitter.log("Brak pozycji LONG do zamknięcia – SELL pominięty.", level="WARNING", component="AutoTrader")
+            return None
+
+        if side_up == "BUY" and available_cash <= 0:
+            self.emitter.log("Brak wolnej gotówki – BUY pominięty.", level="WARNING", component="AutoTrader")
+            return None
+
+        fraction = self._compute_fraction(symbol, side_up, market_df, available_cash, positions)
+
+        if side_up == "BUY":
+            notional = max(0.0, available_cash * max(fraction, 0.0))
+            qty = exec_service.calculate_quantity(symbol, notional, exec_price)
+        else:
+            qty = exec_service.quantize_amount(symbol, long_qty)
+            notional = qty * exec_price
+
+        if qty <= 0:
+            self.emitter.log("Quantity <= 0 – trade skipped.", level="WARNING", component="AutoTrader")
+            return None
+
+        order = exec_service.execute_market(symbol, side_up, qty)
+        price_out = float(getattr(order, "price", None) or exec_price)
+        mode = getattr(exec_service.mode, "value", str(exec_service.mode))
+
+        self.emitter.log(
+            f"AutoTrade {side_up} {symbol} qty={qty:.6f} price≈{price_out:.4f} (mode={mode})",
+            component="AutoTrader",
+        )
+
+        payload = {
+            "symbol": symbol,
+            "side": side_up,
+            "qty": qty,
+            "price": price_out,
+            "mode": mode,
+            "slip_bps": slip,
+            "notional": notional,
+        }
+        try:
+            if hasattr(order, "model_dump"):
+                payload["order"] = order.model_dump()
+        except Exception:
+            pass
+        self.emitter.emit("auto_trade_exec", **payload)
+        return order
+
+    def _compute_fraction(
+        self,
+        symbol: str,
+        side: str,
+        market_df: pd.DataFrame,
+        available_cash: float,
+        positions: List[Any],
+    ) -> float:
+        if side == "SELL":
+            return 1.0
+
+        risk_mgr = self._resolve_risk_manager()
+        if risk_mgr is None:
+            return self.fallback_fraction
+
+        signal_payload = {
+            "symbol": symbol,
+            "direction": "LONG" if side == "BUY" else "SHORT",
+            "strength": 1.0,
+            "confidence": 1.0,
+            "prediction": 1.0 if side == "BUY" else -1.0,
+        }
+
+        portfolio_ctx: Dict[str, Any] = {
+            "cash": available_cash,
+            "positions": self._positions_to_dicts(positions),
+        }
+
+        if self.portfolio_getter is not None:
+            try:
+                extra = self.portfolio_getter() or {}
+                if isinstance(extra, dict):
+                    for key, value in extra.items():
+                        portfolio_ctx.setdefault(key, value)
+            except Exception as exc:
+                self.emitter.log(f"portfolio_getter error: {exc!r}", level="ERROR", component="AutoTrader")
+
+        try:
+            fraction = float(
+                risk_mgr.calculate_position_size(
+                    symbol=symbol,
+                    signal=signal_payload,
+                    market_data=market_df,
+                    portfolio=portfolio_ctx,
+                )
+            )
+        except Exception as exc:
+            self.emitter.log(f"Risk sizing error: {exc!r}", level="ERROR", component="AutoTrader")
+            return self.fallback_fraction
+
+        if not (fraction > 0):
+            return self.fallback_fraction
+        return min(1.0, fraction)
+
+    def _extract_cash(self, balance: Dict[str, Any]) -> float:
+        if not isinstance(balance, dict):
+            return 0.0
+        asset = self.cash_asset
+        if asset in balance and isinstance(balance[asset], (int, float)):
+            return float(balance[asset])
+        for key in ("free", "total", "balance"):
+            section = balance.get(key)
+            if isinstance(section, dict) and asset in section:
+                amount = section.get(asset)
+                if isinstance(amount, (int, float)):
+                    return float(amount)
+        return 0.0
+
+    @staticmethod
+    def _positions_to_dicts(positions: List[Any]) -> List[Dict[str, Any]]:
+        out: List[Dict[str, Any]] = []
+        for pos in positions or []:
+            if isinstance(pos, dict):
+                out.append(dict(pos))
+                continue
+            data: Dict[str, Any] = {}
+            for attr in ("symbol", "side", "quantity", "avg_price"):
+                data[attr] = getattr(pos, attr, None)
+            try:
+                data["quantity"] = float(data.get("quantity", 0.0) or 0.0)
+            except Exception:
+                data["quantity"] = 0.0
+            try:
+                data["avg_price"] = float(data.get("avg_price", 0.0) or 0.0)
+            except Exception:
+                data["avg_price"] = 0.0
+            out.append(data)
+        return out
+
+    @staticmethod
+    def _position_quantity(positions: List[Any], target_side: str = "LONG") -> float:
+        total = 0.0
+        target = target_side.upper()
+        for pos in positions or []:
+            if isinstance(pos, dict):
+                side = str(pos.get("side", "")).upper()
+                qty_val = pos.get("quantity", 0.0)
+            else:
+                side = str(getattr(pos, "side", "")).upper()
+                qty_val = getattr(pos, "quantity", 0.0)
+            try:
+                qty = float(qty_val or 0.0)
+            except Exception:
+                qty = 0.0
+            if side == target:
+                total += max(0.0, qty)
+        return total
