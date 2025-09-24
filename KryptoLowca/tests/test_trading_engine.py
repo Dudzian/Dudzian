@@ -176,9 +176,11 @@ def test_execute_live_tick(engine):
     assert plan is not None
     assert plan["symbol"] == "BTC/USDT"
     assert plan["side"] == "buy"
+    # Sprawdź limity frakcji i detale ryzyka
     assert plan["max_fraction"] <= 0.2
     assert plan["applied_fraction"] <= plan["max_fraction"]
     assert plan["risk"]["recommended_size"] == pytest.approx(engine.risk_mgr.return_value)  # type: ignore[attr-defined]
+    # Sprawdź wykonanie zlecenia i rejestry
     assert "execution" in plan
     assert plan["execution"]["status"] == "FILLED"
     assert engine.ex_mgr.created_orders  # type: ignore[attr-defined]
@@ -208,11 +210,13 @@ def test_max_positions(engine, monkeypatch):
 
 
 def test_parallel_execution_different_symbols(engine):
+    """Równoległe ticki dla różnych symboli powinny wykonać się współbieżnie."""
     df = _sample_df()
     preds = pd.Series(np.full(len(df), 10.0), index=df.index)
 
-    engine.ex_mgr.balance_delay = 0.05
-    engine.ex_mgr.order_delay = 0.05
+    # Wprowadź lekkie opóźnienia, które skumulowałyby się bez współbieżności
+    engine.ex_mgr.balance_delay = 0.05  # type: ignore[attr-defined]
+    engine.ex_mgr.order_delay = 0.05    # type: ignore[attr-defined]
 
     async def _run_parallel():
         await asyncio.gather(
@@ -224,8 +228,9 @@ def test_parallel_execution_different_symbols(engine):
     asyncio.run(_run_parallel())
     duration = time.perf_counter() - start
 
+    # Dwa zlecenia z ~0.1s łącznych opóźnień każde — gdyby było sekwencyjnie, byłoby >0.2s
     assert duration < 0.18
-    assert len(engine.ex_mgr.created_orders) >= 2
+    assert len(engine.ex_mgr.created_orders) >= 2  # type: ignore[attr-defined]
 
 
 def test_invalid_input(engine):
@@ -239,6 +244,7 @@ def test_invalid_input(engine):
 
 
 def test_fraction_cap_limit(engine):
+    # Ustaw wyższą rekomendowaną frakcję, ale ogranicz ją configiem silnika
     engine.risk_mgr.return_value = 0.9  # type: ignore[attr-defined]
     cfg = EngineConfig(capital_fraction=0.25)
     engine.set_parameters(engine.tp, cfg)
@@ -253,4 +259,5 @@ def test_fraction_cap_limit(engine):
     assert plan["applied_fraction"] <= 0.25
     execution = plan["execution"]
     notional = execution["quantity"] * execution["price"]
-    assert notional <= 10_000 * 0.26  # niewielka nadwyżka na bufory/zaokrąglenia
+    # dopuszczamy niewielką nadwyżkę na bufory/zaokrąglenia
+    assert notional <= 10_000 * 0.26

@@ -17,6 +17,7 @@ except Exception:  # pragma: no cover - starsze wersje ccxt
     try:
         import ccxt.asyncio as ccxt_async  # type: ignore
     except Exception:  # pragma: no cover - brak ccxt
+        # Utwórz atrapę modułu, aby testy mogły się odwoływać do ccxt.asyncio
         ccxt_async = types.ModuleType("ccxt.asyncio")  # type: ignore
         ccxt_module = sys.modules.setdefault("ccxt", types.ModuleType("ccxt"))
         setattr(ccxt_module, "asyncio", ccxt_async)
@@ -94,8 +95,10 @@ class ExchangeManager:
         try:
             exchange = exchange_cls(kwargs)
         except Exception as exc:
-            from ccxt.base.errors import AuthenticationError as CCXTAuthError  # type: ignore
-
+            try:
+                from ccxt.base.errors import AuthenticationError as CCXTAuthError  # type: ignore
+            except Exception:  # pragma: no cover
+                CCXTAuthError = type("AuthenticationError", (Exception,), {})  # type: ignore
             if isinstance(exc, CCXTAuthError):
                 raise AuthenticationError(str(exc)) from exc
             raise ExchangeError(str(exc)) from exc
@@ -154,6 +157,7 @@ class ExchangeManager:
             raise ValueError("Symbol nie może być pusty.")
         if limit <= 0:
             raise ValueError("Limit musi być dodatni.")
+
         async def _call() -> Any:
             return await self.exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
 
@@ -202,10 +206,10 @@ class ExchangeManager:
         else:
             px = float(price) if price is not None else None
 
-        params = dict(params or {})
+        _params = dict(params or {})
         if client_order_id:
-            params.setdefault("newClientOrderId", client_order_id)
-            params.setdefault("clientOrderId", client_order_id)
+            _params.setdefault("newClientOrderId", client_order_id)
+            _params.setdefault("clientOrderId", client_order_id)
 
         notional_price = px if px is not None else price
         if order_type == "market" and notional_price is None:
@@ -217,7 +221,7 @@ class ExchangeManager:
                 raise ValueError("Wartość zlecenia poniżej min_notional")
 
         response = await self._submit_order(
-            symbol, side.lower(), order_type, qty, px, params or {}, client_order_id
+            symbol, side.lower(), order_type, qty, px, _params or {}, client_order_id
         )
         amount = float(response.get("amount") or response.get("quantity") or qty)
         filled_price = response.get("price") or px or notional_price or 0.0

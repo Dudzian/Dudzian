@@ -63,7 +63,7 @@ class _UserConfigModel(_core.Base):
 
 
 class DatabaseManager(_CoreDatabaseManager):
-    """Rozszerzenie nowego menedżera o pomocnicze metody fabryczne."""
+    """Rozszerzenie nowego menedżera o pomocnicze metody fabryczne i legacy API."""
 
     @classmethod
     async def create(cls, options: Optional[DBOptions] = None) -> "DatabaseManager":

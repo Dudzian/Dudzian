@@ -16,6 +16,7 @@ for path in (str(ROOT), str(PACKAGE_ROOT)):
 @pytest.hookimpl
 def pytest_pyfunc_call(pyfuncitem):
     if inspect.iscoroutinefunction(pyfuncitem.obj):
+
         async def _resolve_args():
             resolved = {}
             closers: list = []
@@ -27,10 +28,15 @@ def pytest_pyfunc_call(pyfuncitem):
                     value = await value
                 elif inspect.isasyncgen(value):
                     agen = value
+                    # pobierz pierwszy (i jedyny) element z async generatora
                     value = await agen.__anext__()
 
                     async def _close(gen):
-                        await gen.aclose()
+                        try:
+                            await gen.aclose()
+                        except Exception:
+                            # nie przerywaj zamykania przy błędach cleanupu
+                            pass
 
                     closers.append(_close(agen))
                 resolved[name] = value
