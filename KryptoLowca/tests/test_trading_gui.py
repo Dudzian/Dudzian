@@ -14,10 +14,12 @@ from pathlib import Path
 
 sys.path.append(os.getcwd())
 
-from trading_gui import TradingGUI, TradingParameters, EngineConfig
-from config_manager import ConfigManager
+from trading_gui import TradingGUI
+from trading_strategies import TradingParameters, EngineConfig
+from managers.exchange_manager import ExchangeManager
+from managers.exchange_core import Mode
+from managers.config_manager import ConfigManager
 from database_manager import DatabaseManager
-from ai_manager import AIManager
 
 class DummyExchange:
     def __init__(self):
@@ -155,7 +157,10 @@ async def app(monkeypatch, tmp_path):
     monkeypatch.setattr("trading_gui.ConfigManager", DummyCfg)
     monkeypatch.setattr("trading_gui.SecurityManager", DummySec)
     monkeypatch.setattr("trading_gui.TradingEngine", DummyEngine)
-    root = tk.Tk()
+    try:
+        root = tk.Tk()
+    except tk.TclError:
+        pytest.skip("Tkinter display not available")
     root.withdraw()
     app = TradingGUI(root, enable_web_api=False)
     await asyncio.sleep(0.1)  # Wait for initialization
@@ -232,3 +237,55 @@ async def test_invalid_symbol_selection(app):
     assert not app.selected_symbols
     # Should not crash
     await app._run_backtest()
+
+
+def test_sync_positions_from_service_spot(tmp_path, monkeypatch):
+    db_path = tmp_path / "spot_positions.db"
+    db_url = f"sqlite+aiosqlite:///{db_path.as_posix()}"
+    ex_mgr = ExchangeManager(exchange_id="binance", db_url=db_url)
+    ex_mgr.set_mode(spot=True)
+    db = ex_mgr._ensure_db()
+    assert db is not None
+    db.sync.upsert_position({
+        "symbol": "BTC/USDT",
+        "side": "LONG",
+        "quantity": 0.5,
+        "avg_price": 25_000.0,
+        "unrealized_pnl": 123.45,
+        "mode": "live",
+    })
+
+    import trading_gui as tg
+
+    monkeypatch.setattr(tg, "DatabaseManager", DummyDB)
+    monkeypatch.setattr(tg, "SecurityManager", DummySec)
+    monkeypatch.setattr(tg, "ConfigManager", DummyCfg)
+    monkeypatch.setattr(tg, "ReportManager", DummyReporter)
+    monkeypatch.setattr(tg, "RiskManager", DummyRisk)
+    monkeypatch.setattr(tg, "AIManager", DummyAI)
+    monkeypatch.setattr(tg, "TradingEngine", DummyEngine)
+
+    try:
+        root = tk.Tk()
+    except tk.TclError:
+        pytest.skip("Tkinter display not available")
+    root.withdraw()
+    try:
+        app = tg.TradingGUI(root, enable_web_api=False)
+        app.ex_mgr = ex_mgr
+        app.mode_var.set("Spot")
+        app.network_var.set("Live")
+
+        positions = app._sync_positions_from_service()
+        assert any(p.symbol == "BTC/USDT" for p in positions)
+
+        synced = app._open_positions.get("BTC/USDT")
+        assert synced is not None
+        assert synced["side"] == "buy"
+        assert synced["qty"] == pytest.approx(0.5)
+        assert synced["entry"] == pytest.approx(25_000.0)
+    finally:
+        try:
+            root.destroy()
+        except Exception:
+            pass

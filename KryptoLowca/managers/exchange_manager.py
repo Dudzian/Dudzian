@@ -12,6 +12,7 @@ from managers.exchange_core import (
     MarketRules, OrderDTO, TradeDTO, PositionDTO,
     Event, EventBus, BaseBackend, PaperBackend
 )
+from managers.database_manager import DatabaseManager
 
 # CCXT jest używane jako publiczny feed danych i backend live/testnet
 try:
@@ -267,7 +268,7 @@ class ExchangeManager:
       - fetch_ticker(), fetch_ohlcv()
       - quantize_amount/price(), min_notional()
       - create_order()/cancel_order()/fetch_open_orders()
-      - fetch_positions()
+      - fetch_positions() (PAPER → PaperBackend, SPOT → DB/balance, FUTURES → CCXT)
 
     W Fazie 0:
       - PAPER: MARKET z natychmiastowym fill’em do DB (limit/SL/TP – panel).
@@ -275,7 +276,7 @@ class ExchangeManager:
     """
 
     def __init__(self, exchange_id: str = "binance", *, paper_initial_cash: float = 10_000.0,
-                 paper_cash_asset: str = "USDT") -> None:
+                 paper_cash_asset: str = "USDT", db_url: Optional[str] = None) -> None:
         self.exchange_id = exchange_id
         self.mode: Mode = Mode.PAPER
         self._testnet: bool = False
@@ -292,6 +293,9 @@ class ExchangeManager:
         self._paper: Optional[PaperBackend] = None
         self._paper_initial_cash = float(paper_initial_cash)
         self._paper_cash_asset = paper_cash_asset.upper()
+        self._db_url = db_url or "sqlite+aiosqlite:///trading.db"
+        self._db: Optional[DatabaseManager] = None
+        self._db_failed: bool = False
 
         log.info("ExchangeManager initialized (Core 2.0)")
 
@@ -354,6 +358,19 @@ class ExchangeManager:
             )
             self._paper.load_markets()
         return self._paper
+
+    def _ensure_db(self) -> Optional[DatabaseManager]:
+        if self._db_failed:
+            return None
+        if self._db is None:
+            try:
+                self._db = DatabaseManager(self._db_url)
+                self._db.sync.init_db()
+            except Exception as exc:  # pragma: no cover - log only
+                log.warning("DatabaseManager init failed (%s): %s", self._db_url, exc)
+                self._db = None
+                self._db_failed = True
+        return self._db
 
     def set_paper_balance(self, amount: float, asset: Optional[str] = None) -> None:
         self._paper_initial_cash = float(amount)
@@ -509,9 +526,166 @@ class ExchangeManager:
         return self._ensure_private().fetch_open_orders(symbol)
 
     def fetch_positions(self, symbol: Optional[str] = None) -> List[PositionDTO]:
+        """Zwraca listę pozycji w zależności od trybu.
+
+        PAPER → PaperBackend (DB paper),
+        SPOT  → najpierw DatabaseManager (mode='live'/'spot'), fallback: balans giełdy,
+        FUTURES → CCXT private backend.
+        """
         if self.mode == Mode.PAPER:
             return self._ensure_paper().fetch_positions(symbol)
+
+        if self.mode == Mode.SPOT:
+            positions: List[PositionDTO] = []
+            db = self._ensure_db()
+            if db is not None:
+                try:
+                    rows = db.sync.get_open_positions()
+                except Exception as exc:
+                    log.warning("DB fetch_positions failed: %s", exc)
+                    rows = []
+                for row in rows:
+                    sym = row.get("symbol")
+                    if symbol and sym != symbol:
+                        continue
+                    mode_val = str(row.get("mode") or "").lower()
+                    if mode_val and mode_val not in {Mode.SPOT.value, "live"}:
+                        continue
+                    try:
+                        qty = float(row.get("quantity") or 0.0)
+                    except Exception:
+                        qty = 0.0
+                    if abs(qty) <= 1e-12:
+                        continue
+                    try:
+                        avg_price = float(row.get("avg_price") or 0.0)
+                    except Exception:
+                        avg_price = 0.0
+                    try:
+                        unreal = float(row.get("unrealized_pnl") or 0.0)
+                    except Exception:
+                        unreal = 0.0
+                    side_raw = str(row.get("side") or "LONG").upper()
+                    side_val = "LONG" if side_raw not in {"LONG", "SHORT"} else side_raw
+                    positions.append(PositionDTO(
+                        symbol=sym,
+                        side=side_val,
+                        quantity=qty,
+                        avg_price=avg_price,
+                        unrealized_pnl=unreal,
+                        mode=Mode.SPOT,
+                    ))
+            if positions:
+                return positions
+
+            try:
+                backend = self._ensure_private()
+                balance = backend.fetch_balance()
+            except Exception as exc:
+                log.warning("Spot balance fallback failed: %s", exc)
+                return []
+            normalized = self._normalize_balance(balance)
+            return self._positions_from_balance(normalized, symbol)
+
         return self._ensure_private().fetch_positions(symbol)
+
+    def _positions_from_balance(self, balance: Dict[str, Any], symbol: Optional[str]) -> List[PositionDTO]:
+        totals: Dict[str, Any] = {}
+        if isinstance(balance.get("total"), dict):
+            totals = dict(balance.get("total") or {})
+        elif isinstance(balance.get("free"), dict):
+            totals = dict(balance.get("free") or {})
+        else:
+            totals = {
+                k: v for k, v in balance.items()
+                if k not in {"free", "used", "total", "info"}
+            }
+
+        preferred_quotes = {
+            self._paper_cash_asset.upper(), "USDT", "USD", "USDC", "BUSD", "EUR"
+        }
+        fallback_quote = self._paper_cash_asset.upper()
+        markets: Dict[str, Any] = {}
+        try:
+            pub = self._ensure_public()
+            markets = pub._markets or pub.load_markets()
+        except Exception as exc:  # pragma: no cover - informative only
+            log.debug("Market load failed for balance conversion: %s", exc)
+
+        symbol_filter = symbol
+        base_filter: Optional[str] = None
+        if symbol_filter:
+            try:
+                base_filter = symbol_filter.split("/")[0].upper()
+            except Exception:
+                base_filter = symbol_filter.upper()
+
+        out: List[PositionDTO] = []
+        for asset, amount in totals.items():
+            try:
+                qty = float(amount)
+            except Exception:
+                continue
+            if qty <= 0:
+                continue
+            base = asset.upper()
+            if base_filter and base != base_filter:
+                continue
+            if base in preferred_quotes:
+                continue
+
+            resolved_symbol: Optional[str] = None
+            if symbol_filter and base_filter == base:
+                resolved_symbol = symbol_filter
+            else:
+                resolved_symbol = self._resolve_symbol_from_markets(base, markets, preferred_quotes, fallback_quote)
+            if resolved_symbol is None:
+                resolved_symbol = base
+
+            price = 0.0
+            if resolved_symbol and "/" in resolved_symbol:
+                try:
+                    ticker = self.fetch_ticker(resolved_symbol) or {}
+                    price = float(
+                        ticker.get("last") or ticker.get("close") or ticker.get("bid") or ticker.get("ask") or 0.0
+                    )
+                except Exception:
+                    price = 0.0
+
+            out.append(PositionDTO(
+                symbol=resolved_symbol,
+                side="LONG",
+                quantity=qty,
+                avg_price=price,
+                unrealized_pnl=0.0,
+                mode=Mode.SPOT,
+            ))
+        return out
+
+    def _resolve_symbol_from_markets(
+        self,
+        base: str,
+        markets: Dict[str, Any],
+        preferred_quotes: set,
+        fallback_quote: str,
+    ) -> Optional[str]:
+        candidates: List[Tuple[str, str]] = []
+        for sym in markets.keys():
+            if not isinstance(sym, str) or "/" not in sym:
+                continue
+            base_part, quote_part = sym.split("/", 1)
+            if base_part.upper() != base.upper():
+                continue
+            candidates.append((quote_part.upper(), sym))
+
+        for quote, sym in candidates:
+            if quote in preferred_quotes:
+                return sym
+        if candidates:
+            return candidates[0][1]
+        if fallback_quote:
+            return f"{base}/{fallback_quote}"
+        return None
 
     # --- events ---
 
