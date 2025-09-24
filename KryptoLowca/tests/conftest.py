@@ -16,20 +16,39 @@ for path in (str(ROOT), str(PACKAGE_ROOT)):
 @pytest.hookimpl
 def pytest_pyfunc_call(pyfuncitem):
     if inspect.iscoroutinefunction(pyfuncitem.obj):
+
         async def _resolve_args():
             resolved = {}
+            closers: list = []
             for name in pyfuncitem._fixtureinfo.argnames:
                 if name not in pyfuncitem.funcargs:
                     continue
                 value = pyfuncitem.funcargs[name]
                 if inspect.iscoroutine(value):
                     value = await value
+                elif inspect.isasyncgen(value):
+                    agen = value
+                    # pobierz pierwszy (i jedyny) element z async generatora
+                    value = await agen.__anext__()
+
+                    async def _close(gen):
+                        try:
+                            await gen.aclose()
+                        except Exception:
+                            # nie przerywaj zamykania przy błędach cleanupu
+                            pass
+
+                    closers.append(_close(agen))
                 resolved[name] = value
-            return resolved
+            return resolved, closers
 
         async def _invoke():
-            kwargs = await _resolve_args()
-            await pyfuncitem.obj(**kwargs)
+            kwargs, closers = await _resolve_args()
+            try:
+                await pyfuncitem.obj(**kwargs)
+            finally:
+                for closer in reversed(closers):
+                    await closer
 
         loop = asyncio.new_event_loop()
         try:
