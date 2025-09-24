@@ -75,7 +75,7 @@ from managers.risk_manager_adapter import RiskManager
 from core.trading_engine import TradingEngine
 
 # istniejące moduły w repo
-from trading_strategies import TradingStrategies
+from trading_strategies import TradingStrategies, TradingParameters, EngineConfig
 from reporting import TradeInfo
 from database_manager import DatabaseManager  # klasyczny (bezargumentowy) konstruktor
 
@@ -1249,11 +1249,41 @@ class TradingGUI:
         except Exception as e:
             self._log(f"Bridge decision error: {e}", "ERROR")
 
+    def execute_market(self, symbol: str, side: str, quantity: float, *, price: Optional[float] = None):
+        """Submit a MARKET order through the exchange manager.
+
+        Parameters
+        ----------
+        symbol:
+            Trading pair (e.g. ``"BTC/USDT"``).
+        side:
+            ``"buy"`` or ``"sell"`` (case-insensitive).
+        quantity:
+            Amount of base asset to trade (already quantized).
+        price:
+            Optional reference price for logging/backends that accept it.
+        """
+        side_norm = (side or "").strip().lower()
+        if side_norm not in ("buy", "sell"):
+            raise ValueError(f"Unsupported market side: {side}")
+        self._ensure_exchange()
+        if not hasattr(self.ex_mgr, "create_order"):
+            raise RuntimeError("Exchange manager is not ready for market execution")
+        order_side = "BUY" if side_norm == "buy" else "SELL"
+        # MARKET orders do not require an explicit price; keep the optional argument for
+        # callers that want to provide a reference value for logging/backtesting.
+        return self.ex_mgr.create_order(symbol, order_side, "MARKET", float(quantity))
+
     def _bridge_execute_trade(self, symbol: str, side: str, mkt_price: float):
         try:
             self._ensure_exchange()
             slip_bps = float(self.slippage_bps_var.get())
-            vwap, slip = self.ex_mgr.simulate_vwap_price(symbol, "buy" if side == "buy" else "sell", amount=None, fallback_bps=slip_bps)
+            vwap, slip = self.ex_mgr.simulate_vwap_price(
+                symbol,
+                "buy" if side == "buy" else "sell",
+                amount=None,
+                fallback_bps=slip_bps,
+            )
             exec_price = safe_float(vwap, mkt_price)
 
             market_df = self._market_data.get(symbol)
@@ -1266,66 +1296,125 @@ class TradingGUI:
             }
 
             try:
-                fraction = float(self.risk_mgr.calculate_position_size(
-                    symbol=symbol,
-                    signal=signal_payload,
-                    market_data=market_df if market_df is not None else {"price": exec_price},
-                    portfolio={"cash": self.paper_balance, "positions": self._open_positions},
-                ))
+                fraction = float(
+                    self.risk_mgr.calculate_position_size(
+                        symbol=symbol,
+                        signal=signal_payload,
+                        market_data=market_df if market_df is not None else {"price": exec_price},
+                        portfolio={"cash": self.paper_balance, "positions": self._open_positions},
+                    )
+                )
             except Exception as exc:
                 self._log(f"Risk sizing error: {exc}", "WARNING")
                 fraction = 0.0
 
-            capital = float(self.paper_balance)
-            if fraction <= 0:
-                fraction = float(self.fraction_var.get())
-            notional = max(0.0, capital * min(1.0, fraction))
-            qty = self.ex_mgr.quantize_amount(symbol, notional / max(exec_price, 1e-8))
-            if qty <= 0: return
-
             ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            pos = self._open_positions.get(symbol)
+            prev_pos = self._open_positions.get(symbol)
+            entry_price = exec_price
+
+            qty_target = 0.0
+            if side == "buy":
+                if prev_pos and prev_pos.get("side") == "buy":
+                    return
+                capital = float(self.paper_balance)
+                if fraction <= 0:
+                    fraction = float(self.fraction_var.get())
+                notional = max(0.0, capital * min(1.0, fraction))
+                if notional <= 0:
+                    self._log(f"Notional <= 0 for BUY {symbol}", "WARNING")
+                    return
+                qty_target = notional / max(exec_price, 1e-8)
+            else:
+                if not prev_pos or prev_pos.get("side") != "buy":
+                    self._log(f"SELL skipped: no open position for {symbol}", "WARNING")
+                    return
+                qty_target = safe_float(prev_pos.get("qty", 0.0))
+                entry_price = safe_float(prev_pos.get("entry", exec_price))
+                if qty_target <= 0:
+                    self._log(f"SELL skipped: zero position size for {symbol}", "WARNING")
+                    return
+
+            qty = self.ex_mgr.quantize_amount(symbol, qty_target)
+            if qty <= 0:
+                self._log(f"Quantity after quantization <= 0 for {symbol}", "WARNING")
+                return
 
             if side == "buy":
-                if pos and pos["side"] == "buy": return
                 cost = qty * exec_price
                 if cost > self.paper_balance + 1e-8:
                     self._log("Insufficient paper balance for BUY", "WARNING")
                     return
+            else:
+                prev_qty = safe_float(prev_pos.get("qty", 0.0))
+                if qty > prev_qty + 1e-8:
+                    qty = prev_qty
+
+            try:
+                self.execute_market(symbol, side, qty, price=exec_price)
+            except Exception as exc:
+                self._log(f"execute_market failed for {symbol}: {exc}", "ERROR")
+                return
+
+            if side == "buy":
+                cost = qty * exec_price
                 self.paper_balance = max(0.0, self.paper_balance - cost)
                 self.paper_balance_var.set(f"{self.paper_balance:,.2f}")
-                self._open_positions[symbol] = {"side":"buy","qty":qty,"entry":exec_price,"ts":ts}
+                self._open_positions[symbol] = {"side": "buy", "qty": qty, "entry": exec_price, "ts": ts}
                 self._append_open_position(symbol, "buy", qty, exec_price, 0.0)
                 self._log(f"EXEC BUY {symbol} qty={qty} @ {exec_price} (paper)", "INFO")
             else:
-                if pos and pos["side"] == "buy":
-                    qty = float(pos["qty"])
-                    pnl = (exec_price - pos["entry"]) * qty
-                    self._append_closed_trade_row(ts, symbol, "sell", qty, pos["entry"], exec_price, pnl)
-                    self.paper_balance += qty * exec_price
-                    self.paper_balance_var.set(f"{self.paper_balance:,.2f}")
+                prev_qty = safe_float(prev_pos.get("qty", 0.0))
+                entry_price = safe_float(prev_pos.get("entry", exec_price))
+                pnl = (exec_price - entry_price) * qty
+                proceeds = qty * exec_price
+                self.paper_balance += proceeds
+                self.paper_balance_var.set(f"{self.paper_balance:,.2f}")
+                remaining_qty = max(0.0, prev_qty - qty)
+                if remaining_qty <= 1e-8:
                     self._remove_open_position(symbol)
-                    self._log(f"CLOSE LONG {symbol} qty={pos['qty']} @ {exec_price} pnl={pnl:.2f}", "INFO")
                 else:
-                    return
+                    prev_pos["qty"] = remaining_qty
+                    self._open_positions[symbol] = prev_pos
+                    self._append_open_position(symbol, "buy", remaining_qty, entry_price, 0.0)
+                self._append_closed_trade_row(ts, symbol, "sell", qty, entry_price, exec_price, pnl)
+                self._log(f"CLOSE LONG {symbol} qty={qty} @ {exec_price} pnl={pnl:.2f}", "INFO")
 
             self._last_trade_ts_per_symbol[symbol] = time.time()
             if hasattr(self.engine, "_emit"):
                 try:
-                    self.engine._emit("trade_exec", symbol=symbol, side=side, price=exec_price, qty=qty, paper=True, slip_bps=slip)
+                    self.engine._emit(
+                        "trade_exec",
+                        symbol=symbol,
+                        side=side,
+                        price=exec_price,
+                        qty=qty,
+                        paper=True,
+                        slip_bps=slip,
+                    )
                 except Exception:
                     pass
 
             try:
                 if hasattr(self.db, "log_trade"):
-                    ti = TradeInfo(ts=ts, symbol=symbol, side=side, qty=qty,
-                                   entry=exec_price if side=="buy" else (self._open_positions.get(symbol,{}).get("entry", exec_price)),
-                                   exit=exec_price if side=="sell" else None, pnl=None)
-                    try: self.db.log_trade(ti)
+                    entry_for_log = exec_price if side == "buy" else entry_price
+                    ti = TradeInfo(
+                        ts=ts,
+                        symbol=symbol,
+                        side=side,
+                        qty=qty,
+                        entry=entry_for_log,
+                        exit=exec_price if side == "sell" else None,
+                        pnl=None,
+                    )
+                    try:
+                        self.db.log_trade(ti)
                     except TypeError:
-                        try: self.db.log_trade(1, ti)
-                        except Exception: pass
-            except Exception: pass
+                        try:
+                            self.db.log_trade(1, ti)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
 
         except Exception as e:
             self._log(f"Bridge exec error: {e}", "ERROR")

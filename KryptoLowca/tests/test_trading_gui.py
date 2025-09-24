@@ -15,9 +15,9 @@ from pathlib import Path
 sys.path.append(os.getcwd())
 
 from trading_gui import TradingGUI, TradingParameters, EngineConfig
-from config_manager import ConfigManager
-from database_manager import DatabaseManager
-from ai_manager import AIManager
+from managers.config_manager import ConfigManager
+from managers.database_manager import DatabaseManager
+from managers.ai_manager import AIManager
 
 class DummyExchange:
     def __init__(self):
@@ -25,6 +25,13 @@ class DummyExchange:
 
     def init(self):
         self._inited = True
+
+    def set_mode(self, *a, **k):
+        self.mode_args = (a, k)
+
+    def set_paper_balance(self, amount, asset="USDT"):
+        self.paper_balance = float(amount)
+        self.paper_asset = asset
 
     def load_markets(self):
         return {"BTC/USDT": {}, "ETH/USDT": {}, "XRP/USDT": {}}
@@ -44,8 +51,24 @@ class DummyExchange:
             price = c
         return data
 
+    def simulate_vwap_price(self, symbol, side, amount=None, fallback_bps=5.0):
+        return (100.0, fallback_bps)
+
+    def quantize_amount(self, symbol, amount):
+        return float(amount)
+
     def place_market_order(self, symbol, side, qty):
         return {"id": "X", "symbol": symbol, "side": side, "qty": qty}
+
+    def create_order(self, symbol, side, type_, quantity, price=None, client_order_id=None):
+        return {
+            "symbol": symbol,
+            "side": side,
+            "type": type_,
+            "quantity": quantity,
+            "price": price,
+            "client_order_id": client_order_id,
+        }
 
 class DummyAI:
     async def predict_series(self, symbol: str, df: pd.DataFrame):
@@ -56,8 +79,11 @@ class DummyAI:
         return {m: {"hit_rate": 0.55} for m in model_types}
 
 class DummyRisk:
-    def __init__(self, cfg=None):
-        pass
+    def __init__(self, cfg=None, **kwargs):
+        self.cfg = cfg or {}
+
+    def calculate_position_size(self, *a, **k):
+        return 0.05
 
 class DummyReporter:
     def __init__(self, *a, **k):
@@ -157,7 +183,7 @@ async def app(monkeypatch, tmp_path):
     monkeypatch.setattr("trading_gui.TradingEngine", DummyEngine)
     root = tk.Tk()
     root.withdraw()
-    app = TradingGUI(root, enable_web_api=False)
+    app = TradingGUI(root)
     await asyncio.sleep(0.1)  # Wait for initialization
     yield app
     try:
@@ -232,3 +258,48 @@ async def test_invalid_symbol_selection(app):
     assert not app.selected_symbols
     # Should not crash
     await app._run_backtest()
+
+
+@pytest.mark.asyncio
+async def test_bridge_execute_trade_sell_closes_position(app):
+    symbol = "BTC/USDT"
+    initial_qty = 0.75
+
+    class StubExchange:
+        def __init__(self):
+            self.quantized = None
+
+        def simulate_vwap_price(self, symbol, side, amount=None, fallback_bps=5.0):
+            return (105.0, fallback_bps)
+
+        def quantize_amount(self, symbol, amount):
+            self.quantized = amount
+            return float(amount)
+
+    stub_ex = StubExchange()
+    app.ex_mgr = stub_ex
+    app._ensure_exchange = lambda: None
+    app._open_positions[symbol] = {"side": "buy", "qty": initial_qty, "entry": 95.0, "ts": "2024-01-01 00:00:00"}
+    app.paper_balance = 500.0
+    app.paper_balance_var.set(f"{app.paper_balance:,.2f}")
+
+    captured = {}
+
+    def fake_execute_market(self, symbol_arg, side_arg, quantity_arg, *, price=None):
+        captured["symbol"] = symbol_arg
+        captured["side"] = side_arg
+        captured["qty"] = quantity_arg
+        captured["price"] = price
+        return {"status": "ok"}
+
+    app.execute_market = fake_execute_market.__get__(app, type(app))
+
+    app._bridge_execute_trade(symbol, "sell", 104.0)
+
+    assert captured["symbol"] == symbol
+    assert captured["side"] == "sell"
+    assert captured["qty"] == pytest.approx(initial_qty)
+    assert stub_ex.quantized == pytest.approx(initial_qty)
+    assert symbol not in app._open_positions
+    expected_balance = 500.0 + initial_qty * 105.0
+    assert app.paper_balance == pytest.approx(expected_balance)
