@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -24,8 +25,12 @@ class MockExchange:
     def __init__(self) -> None:
         self.mode = Mode.PAPER
         self.created_orders = []
+        self.balance_delay = 0.0
+        self.order_delay = 0.0
 
     async def fetch_balance(self):
+        if self.balance_delay:
+            await asyncio.sleep(self.balance_delay)
         return {"USDT": 10_000.0, "free": {"USDT": 10_000.0}}
 
     def quantize_amount(self, symbol: str, amount: float) -> float:
@@ -37,7 +42,7 @@ class MockExchange:
     def min_notional(self, symbol: str) -> float:
         return 10.0
 
-    def create_order(
+    async def create_order(
         self,
         symbol: str,
         side: str,
@@ -46,6 +51,8 @@ class MockExchange:
         price: float | None = None,
         client_order_id: str | None = None,
     ) -> OrderDTO:
+        if self.order_delay:
+            await asyncio.sleep(self.order_delay)
         self.created_orders.append(
             {
                 "symbol": symbol,
@@ -200,6 +207,30 @@ def test_max_positions(engine, monkeypatch):
     plan = asyncio.run(engine.execute_live_tick("BTC/USDT", df, preds))
 
     assert plan is None
+
+
+def test_parallel_execution_different_symbols(engine):
+    """Równoległe ticki dla różnych symboli powinny wykonać się współbieżnie."""
+    df = _sample_df()
+    preds = pd.Series(np.full(len(df), 10.0), index=df.index)
+
+    # Wprowadź lekkie opóźnienia, które skumulowałyby się bez współbieżności
+    engine.ex_mgr.balance_delay = 0.05  # type: ignore[attr-defined]
+    engine.ex_mgr.order_delay = 0.05    # type: ignore[attr-defined]
+
+    async def _run_parallel():
+        await asyncio.gather(
+            engine.execute_live_tick("BTC/USDT", df, preds),
+            engine.execute_live_tick("ETH/USDT", df, preds),
+        )
+
+    start = time.perf_counter()
+    asyncio.run(_run_parallel())
+    duration = time.perf_counter() - start
+
+    # Dwa zlecenia z ~0.1s łącznych opóźnień każde — gdyby było sekwencyjnie, byłoby >0.2s
+    assert duration < 0.18
+    assert len(engine.ex_mgr.created_orders) >= 2  # type: ignore[attr-defined]
 
 
 def test_invalid_input(engine):
