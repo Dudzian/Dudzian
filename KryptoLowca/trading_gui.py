@@ -69,6 +69,7 @@ SALT_FILE = APP_ROOT / "salt.bin"
 from managers.security_manager import SecurityManager
 from managers.config_manager import ConfigManager
 from managers.exchange_manager import ExchangeManager
+from managers.exchange_core import PositionDTO
 from managers.ai_manager import AIManager
 from managers.report_manager import ReportManager
 from managers.risk_manager_adapter import RiskManager
@@ -1376,6 +1377,66 @@ class TradingGUI:
 
         except Exception as e:
             self._log(f"Bridge exec error: {e}", "ERROR")
+
+    def _sync_positions_from_service(self) -> List[PositionDTO]:
+        """Pobiera pozycje z ExchangeManagera i odświeża tabelę GUI."""
+        try:
+            self._ensure_exchange()
+        except Exception as exc:
+            self._log(f"Position sync exchange error: {exc}", "ERROR")
+            return []
+
+        if not self.ex_mgr:
+            return []
+
+        try:
+            positions = self.ex_mgr.fetch_positions()
+        except Exception as exc:
+            self._log(f"Position sync fetch error: {exc}", "ERROR")
+            return []
+
+        try:
+            self._open_positions.clear()
+        except Exception:
+            self._open_positions = {}
+
+        try:
+            for iid in self.open_tv.get_children():
+                self.open_tv.delete(iid)
+        except Exception:
+            pass
+
+        for pos in positions:
+            try:
+                side_raw = str(getattr(pos, "side", "LONG") or "LONG").upper()
+            except Exception:
+                side_raw = "LONG"
+            side_ui = "buy" if side_raw in {"LONG", "BUY"} else "sell"
+            try:
+                qty = float(getattr(pos, "quantity", 0.0) or 0.0)
+            except Exception:
+                qty = 0.0
+            try:
+                entry = float(getattr(pos, "avg_price", 0.0) or 0.0)
+            except Exception:
+                entry = 0.0
+            try:
+                pnl_val = float(getattr(pos, "unrealized_pnl", 0.0) or 0.0)
+            except Exception:
+                pnl_val = 0.0
+
+            self._open_positions[pos.symbol] = {
+                "side": side_ui,
+                "qty": qty,
+                "entry": entry,
+            }
+
+            try:
+                self.open_tv.insert("", "end", values=(pos.symbol, side_ui, qty, human_money(entry), human_money(pnl_val)))
+            except Exception:
+                pass
+
+        return positions
 
     def _append_open_position(self, symbol: str, side: str, qty: float, entry: float, pnl: float):
         try:
