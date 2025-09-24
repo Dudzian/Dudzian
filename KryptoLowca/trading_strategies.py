@@ -68,6 +68,7 @@ class EngineConfig:
     """Configuration for trading engine."""
     max_position_size: float = 1.0
     max_portfolio_risk: float = 0.02
+    capital_fraction: float = 0.2
     enable_stop_loss: bool = True
     enable_take_profit: bool = True
     enable_position_sizing: bool = True

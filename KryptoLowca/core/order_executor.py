@@ -72,6 +72,7 @@ class PreparedOrder:
     plan: Dict[str, Any]
     position_size: float
     allow_short: bool
+    applied_fraction: Optional[float] = None
     db_order_id: Optional[int] = None
 
 
@@ -166,7 +167,7 @@ class OrderExecutor:
 
         position_qty, _ = self._extract_position(symbol, plan.get("portfolio"))
 
-        quantity, notional = self._determine_quantity(
+        quantity, notional, used_fraction = self._determine_quantity(
             symbol=symbol,
             side=side,
             qty_hint=qty_hint,
@@ -174,6 +175,7 @@ class OrderExecutor:
             capital=capital_val,
             position_qty=position_qty,
             allow_short=allow_short,
+            fraction_limit=plan.get("max_fraction"),
         )
 
         limit_price = None
@@ -185,6 +187,9 @@ class OrderExecutor:
         if quantity <= 0:
             raise ValueError("Order quantity collapsed to zero after quantization")
         notional = quantity * price_ref
+
+        if used_fraction is not None:
+            plan["applied_fraction"] = used_fraction
 
         min_notional = self._min_notional(symbol)
         if min_notional and notional + 1e-12 < min_notional:
@@ -205,6 +210,7 @@ class OrderExecutor:
             plan=plan,
             position_size=position_qty,
             allow_short=allow_short,
+            applied_fraction=used_fraction,
         )
 
         prepared.db_order_id = await self._record_initial_order(prepared)
@@ -353,6 +359,9 @@ class OrderExecutor:
                     "strength": prepared.plan.get("strength"),
                     "stop_loss": prepared.plan.get("stop_loss"),
                     "take_profit": prepared.plan.get("take_profit"),
+                    "applied_fraction": prepared.applied_fraction,
+                    "max_fraction": prepared.plan.get("max_fraction"),
+                    "risk": prepared.plan.get("risk"),
                 },
             }
             order_id = await self.db_manager.record_order(payload)
@@ -378,15 +387,23 @@ class OrderExecutor:
         capital: float,
         position_qty: float,
         allow_short: bool,
-    ) -> Tuple[float, float]:
+        fraction_limit: Optional[float],
+    ) -> Tuple[float, float, Optional[float]]:
         min_notional = self._min_notional(symbol)
         fraction: Optional[float] = None
         if qty_hint <= 1.0:
             fraction = max(0.0, qty_hint)
             if self.max_fraction > 0:
                 fraction = min(fraction, self.max_fraction)
+            if fraction_limit is not None:
+                try:
+                    cap = float(fraction_limit)
+                    fraction = min(fraction, max(0.0, min(1.0, cap)))
+                except Exception:
+                    pass
         quantity: float
         notional: float
+        used_fraction: Optional[float] = None
 
         if fraction is not None:
             if side == "buy":
@@ -399,10 +416,12 @@ class OrderExecutor:
                         raise ValueError("Insufficient capital for minimum order size")
                     notional = capital / (1.0 + self.fee_buffer)
                 quantity = notional / price_ref
+                used_fraction = min(1.0, notional / capital) if capital > 0 else fraction
             else:
                 if position_qty > 0 and not allow_short:
                     quantity = position_qty * min(fraction, 1.0)
                     notional = quantity * price_ref
+                    used_fraction = min(1.0, notional / capital) if capital > 0 else fraction
                 else:
                     if not allow_short and position_qty <= 0:
                         raise ValueError("No position available to sell and shorting disabled")
@@ -410,6 +429,7 @@ class OrderExecutor:
                     if min_notional and notional < min_notional:
                         notional = min_notional
                     quantity = notional / price_ref
+                    used_fraction = min(1.0, notional / capital) if capital > 0 else fraction
         else:
             quantity = qty_hint
             notional = quantity * price_ref
@@ -420,7 +440,7 @@ class OrderExecutor:
 
         if quantity <= 0 or notional <= 0:
             raise ValueError("Calculated order size is zero")
-        return quantity, notional
+        return quantity, notional, used_fraction
 
     def _quantize_amount(self, symbol: str, amount: float) -> float:
         quantizer = getattr(self.exchange_manager, "quantize_amount", None)

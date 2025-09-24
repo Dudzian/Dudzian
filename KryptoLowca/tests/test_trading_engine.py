@@ -74,8 +74,21 @@ class MockAI:
 
 
 class MockRisk:
-    def calculate_position_size(self, symbol, signal, market_data, portfolio):
-        return 0.1
+    def __init__(self) -> None:
+        self.return_value = 0.1
+
+    def calculate_position_size(self, symbol, signal, market_data, portfolio, return_details=False):
+        details = {
+            "recommended_size": self.return_value,
+            "max_allowed_size": 0.5,
+            "kelly_size": 0.05,
+            "risk_adjusted_size": self.return_value,
+            "confidence_level": 0.75,
+            "reasoning": "mock",
+        }
+        if return_details:
+            return self.return_value, details
+        return self.return_value
 
 
 class MockDB:
@@ -156,6 +169,11 @@ def test_execute_live_tick(engine):
     assert plan is not None
     assert plan["symbol"] == "BTC/USDT"
     assert plan["side"] == "buy"
+    # Sprawdź limity frakcji i detale ryzyka
+    assert plan["max_fraction"] <= 0.2
+    assert plan["applied_fraction"] <= plan["max_fraction"]
+    assert plan["risk"]["recommended_size"] == pytest.approx(engine.risk_mgr.return_value)  # type: ignore[attr-defined]
+    # Sprawdź wykonanie zlecenia i rejestry
     assert "execution" in plan
     assert plan["execution"]["status"] == "FILLED"
     assert engine.ex_mgr.created_orders  # type: ignore[attr-defined]
@@ -192,3 +210,23 @@ def test_invalid_input(engine):
         asyncio.run(engine.execute_live_tick("", df_short, preds_short))
     with pytest.raises(ValueError):
         asyncio.run(engine.execute_live_tick("BTC/USDT", df_short, preds_short))
+
+
+def test_fraction_cap_limit(engine):
+    # Ustaw wyższą rekomendowaną frakcję, ale ogranicz ją configiem silnika
+    engine.risk_mgr.return_value = 0.9  # type: ignore[attr-defined]
+    cfg = EngineConfig(capital_fraction=0.25)
+    engine.set_parameters(engine.tp, cfg)
+
+    df = _sample_df()
+    preds = pd.Series(np.full(len(df), 15.0), index=df.index)
+
+    plan = asyncio.run(engine.execute_live_tick("ETH/USDT", df, preds))
+
+    assert plan is not None
+    assert plan["max_fraction"] == pytest.approx(0.25)
+    assert plan["applied_fraction"] <= 0.25
+    execution = plan["execution"]
+    notional = execution["quantity"] * execution["price"]
+    # dopuszczamy niewielką nadwyżkę na bufory/zaokrąglenia
+    assert notional <= 10_000 * 0.26

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, Tuple, Union
 
 import pandas as pd
 
@@ -74,7 +74,12 @@ class TradingEngine:
                     setattr(self.ai_mgr, "ai_threshold_bps", float(self.tp.signal_threshold * 10_000))
                 except Exception:
                     setattr(self.ai_mgr, "ai_threshold_bps", 5.0)
-            self._order_executor = OrderExecutor(ex_mgr, self.db_manager)
+            # Pass fraction cap to OrderExecutor
+            self._order_executor = OrderExecutor(
+                ex_mgr,
+                self.db_manager,
+                max_fraction=self._fraction_cap(),
+            )
             self._order_executor.set_user(self._user_id)
 
     @staticmethod
@@ -116,16 +121,24 @@ class TradingEngine:
         self.tp = tp
         self.ec = ec
         if self.db_manager:
-            asyncio.create_task(
-                self.db_manager.log(
+            async def _log_params() -> None:
+                await self.db_manager.log(
                     self._user_id,
                     "INFO",
                     f"Parameters set: {tp.__dict__}, {ec.__dict__}",
                     category="engine",
                 )
-            )
+
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                asyncio.run(_log_params())
+            else:
+                loop.create_task(_log_params())
         if self._order_executor:
             self._order_executor.set_user(self._user_id)
+            # Keep executor's fraction cap in sync with parameters/config
+            self._order_executor.max_fraction = self._fraction_cap()
 
     def on_event(self, callback: Callable[[Dict[str, Any]], None]) -> None:
         """Register event callback for GUI updates."""
@@ -214,13 +227,40 @@ class TradingEngine:
                     raise TradingError("Insufficient balance")
 
                 portfolio_ctx = {"positions": positions, "capital": capital}
-                qty_hint = self.risk_mgr.calculate_position_size(symbol, latest_pred, df, portfolio_ctx)
+
+                # Risk sizing may return either qty or (qty, details)
+                sizing_outcome: Union[float, Tuple[float, Dict[str, Any]]] = self.risk_mgr.calculate_position_size(
+                    symbol, latest_pred, df, portfolio_ctx, return_details=True
+                ) if "return_details" in self.risk_mgr.calculate_position_size.__code__.co_varnames else \
+                    self.risk_mgr.calculate_position_size(symbol, latest_pred, df, portfolio_ctx)
+
+                risk_details: Optional[Dict[str, Any]]
+                if isinstance(sizing_outcome, tuple):
+                    qty_hint, risk_details = sizing_outcome
+                else:
+                    qty_hint = sizing_outcome  # type: ignore[assignment]
+                    getter = getattr(self.risk_mgr, "last_position_details", None)
+                    risk_details = getter() if callable(getter) else None
+
                 try:
-                    qty_hint = float(qty_hint)
+                    qty_hint = float(qty_hint)  # type: ignore[arg-type]
                 except Exception:
                     qty_hint = 0.0
+
+                if risk_details is None:
+                    risk_details = {"recommended_size": qty_hint}
+                else:
+                    risk_details.setdefault("recommended_size", qty_hint)
+
                 if qty_hint <= 0:
                     await self._emit_event({"type": "no_position_size", "symbol": symbol})
+                    return None
+
+                # Apply global fraction cap
+                fraction_cap = self._fraction_cap()
+                risk_details["max_fraction_cap"] = fraction_cap
+                if fraction_cap <= 0:
+                    await self._emit_event({"type": "fraction_cap_zero", "symbol": symbol})
                     return None
 
                 atr_window = max(1, int(getattr(self.tp, "atr_period", 14)))
@@ -248,7 +288,12 @@ class TradingEngine:
                     "allow_short": shorting_enabled,
                     "quote_currency": quote_currency,
                     "user_id": self._user_id,
+                    "max_fraction": fraction_cap,
+                    "risk": risk_details,
                 }
+
+                if qty_hint <= 1.0:
+                    plan["applied_fraction"] = min(max(qty_hint, 0.0), fraction_cap)
 
                 await self._emit_event({"type": "plan_created", "symbol": symbol, "plan": plan})
                 if self.db_manager:
@@ -266,6 +311,8 @@ class TradingEngine:
                     )
                     execution: ExecutionResult = await self._order_executor.execute_plan(plan)
                     plan["execution"] = execution.to_dict()
+                    if plan.get("risk") and isinstance(plan["risk"], dict):
+                        plan["risk"]["executed_fraction"] = plan.get("applied_fraction")
                     event_payload = {
                         "symbol": symbol,
                         "execution": plan["execution"],
@@ -309,3 +356,23 @@ class TradingEngine:
                     )
                 await self._emit_event({"type": "error", "symbol": symbol, "error": str(exc)})
                 raise TradingError(str(exc)) from exc
+
+    def _fraction_cap(self) -> float:
+        """Określ maksymalną frakcję kapitału na trade z konfiguracji."""
+        raw_values = []
+        for candidate in (
+            getattr(self.ec, "capital_fraction", None),
+            getattr(self.tp, "position_size", None),
+        ):
+            if candidate is None:
+                continue
+            try:
+                raw_values.append(float(candidate))
+            except Exception:
+                continue
+        if not raw_values:
+            return 1.0
+        normalised = [max(0.0, min(1.0, value)) for value in raw_values if value >= 0.0]
+        if not normalised:
+            return 1.0
+        return min(normalised)
