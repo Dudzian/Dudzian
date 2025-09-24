@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Optional, Union, Any, Dict, Iterable
 
 try:
-    from event_emitter_adapter import EventBus, EmitterAdapter, EventType, Event
+    from KryptoLowca.event_emitter_adapter import EventBus, EmitterAdapter, EventType, Event
 except Exception as e:
     raise ImportError(f"order_router: brak event_emitter_adapter ({e})")
 

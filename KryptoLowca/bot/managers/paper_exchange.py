@@ -7,7 +7,7 @@ import datetime as dt
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
-from managers.database_manager import DatabaseManager
+from KryptoLowca.managers.database_manager import DatabaseManager
 
 BUY = "BUY"
 SELL = "SELL"

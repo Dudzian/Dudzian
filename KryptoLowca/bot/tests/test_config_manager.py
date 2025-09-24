@@ -9,7 +9,7 @@ import yaml
 from pathlib import Path
 from cryptography.fernet import Fernet
 
-from config_manager import ConfigManager, ConfigError, ValidationError, AIConfig, DBConfig, TradeConfig, ExchangeConfig
+from KryptoLowca.config_manager import ConfigManager, ConfigError, ValidationError, AIConfig, DBConfig, TradeConfig, ExchangeConfig
 
 @pytest.fixture
 async def config_manager(tmp_path):

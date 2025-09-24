@@ -7,7 +7,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from event_emitter_adapter import (
+from KryptoLowca.event_emitter_adapter import (
     EventBus,
     EmitterAdapter,
     Event,
@@ -95,7 +95,7 @@ class WalkForwardService:
                     pass
 
         # krótki debounce; EventBus dostarczy listy
-        from event_emitter_adapter import DebounceRule
+        from KryptoLowca.event_emitter_adapter import DebounceRule
         self.bus.subscribe(EventType.WFO_TRIGGER, on_events, rule=DebounceRule(window_sec=0.2, max_batch=50))
         self.bus.subscribe(EventType.RISK_ALERT, on_events, rule=DebounceRule(window_sec=0.2, max_batch=50))
 

@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 from typing import Any, Dict
-from risk_management import create_risk_manager  # istniejący moduł
+from KryptoLowca.risk_management import create_risk_manager  # istniejący moduł
 
 class RiskManager:
     def __init__(self, config: Dict[str, Any]):

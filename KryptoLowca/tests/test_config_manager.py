@@ -1,97 +1,105 @@
-# test_config_manager.py
+# tests/test_config_manager.py
 # -*- coding: utf-8 -*-
-"""
-Unit tests for config_manager.py.
-"""
-import asyncio
-import pytest
-import yaml
+"""Testy walidacji presetów w :mod:`managers.config_manager`."""
+
+from __future__ import annotations
+
+import sys
 from pathlib import Path
-from cryptography.fernet import Fernet
 
-from config_manager import ConfigManager, ConfigError, ValidationError, AIConfig, DBConfig, TradeConfig, ExchangeConfig
+import pytest
 
-@pytest.fixture
-async def config_manager(tmp_path):
-    config_path = tmp_path / "config.yaml"
-    encryption_key = Fernet.generate_key()
-    manager = await ConfigManager.create(config_path=str(config_path), encryption_key=encryption_key)
-    return manager
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-@pytest.mark.asyncio
-async def test_load_save_config(config_manager, tmp_path):
-    config = {
-        "ai": {"threshold_bps": 7.0, "model_types": ["rf", "lstm"], "seq_len": 20, "epochs": 10, "batch_size": 32, "model_dir": "models"},
-        "db": {"db_url": "sqlite+aiosqlite:///test.db", "timeout_s": 15.0, "pool_size": 10, "max_overflow": 5},
-        "trade": {"risk_per_trade": 0.02, "max_leverage": 2.0, "stop_loss_pct": 0.03, "take_profit_pct": 0.06, "max_open_positions": 3},
-        "exchange": {"api_key": "test_key", "api_secret": "test_secret", "exchange_name": "binance", "testnet": True}
+from KryptoLowca.managers.config_manager import ConfigManager
+
+
+@pytest.fixture()
+def sample_preset() -> dict:
+    return {
+        "network": "Testnet",
+        "mode": "Spot",
+        "timeframe": "5m",
+        "fraction": 0.25,
+        "ai": {
+            "enable": True,
+            "seq_len": 256,
+            "epochs": 20,
+            "batch": 64,
+            "retrain_min": 30,
+            "train_window": 720,
+            "valid_window": 120,
+            "ai_threshold_bps": 4.5,
+            "train_all": False,
+        },
+        "risk": {
+            "max_daily_loss_pct": 0.08,
+            "soft_halt_losses": 2,
+            "trade_cooldown_on_error": 60,
+            "risk_per_trade": 0.02,
+            "portfolio_risk": 0.3,
+            "one_trade_per_bar": True,
+            "cooldown_s": 15,
+            "min_move_pct": 0.01,
+        },
+        "dca_trailing": {
+            "use_trailing": True,
+            "atr_period": 14,
+            "trail_atr_mult": 2.5,
+            "take_atr_mult": 3.5,
+            "dca_enabled": True,
+            "dca_max_adds": 2,
+            "dca_step_atr": 1.5,
+        },
+        "slippage": {"use_orderbook_vwap": True, "fallback_bps": 6.0},
+        "advanced": {
+            "rsi_period": 14,
+            "ema_fast": 12,
+            "ema_slow": 26,
+            "atr_period": 14,
+            "rsi_buy": 30.0,
+            "rsi_sell": 70.0,
+        },
+        "paper": {"capital": 15_000.0},
+        "selected_symbols": ["btc/usdt", "eth/usdt", "btc/usdt"],
     }
-    await config_manager.save_config(config)
-    loaded = await config_manager.load_config()
-    assert loaded["ai"]["threshold_bps"] == 7.0
-    assert loaded["exchange"]["api_key"] == "test_key"  # Decrypted
-    assert config_manager.config_path.exists()
-    with open(config_manager.config_path, "r") as f:
-        saved = yaml.safe_load(f)
-    assert saved["ai"]["threshold_bps"] == 7.0
 
-@pytest.mark.asyncio
-async def test_user_config(config_manager):
-    user_id = await config_manager.db_manager.ensure_user("tester@example.com")
-    config = {
-        "ai": {"threshold_bps": 10.0, "model_types": ["gb"], "seq_len": 30, "epochs": 15, "batch_size": 16},
-        "trade": {"risk_per_trade": 0.015}
-    }
-    await config_manager.save_user_config(user_id, "custom", config)
-    loaded = await config_manager.load_config(preset_name="custom", user_id=user_id)
-    assert loaded["ai"]["threshold_bps"] == 10.0
-    assert loaded["trade"]["risk_per_trade"] == 0.015
 
-@pytest.mark.asyncio
-async def test_specific_configs(config_manager):
-    config = {
-        "ai": {"threshold_bps": 6.0, "model_types": ["rf"], "seq_len": 25, "epochs": 20, "batch_size": 48},
-        "db": {"db_url": "sqlite+aiosqlite:///test2.db", "timeout_s": 20.0},
-        "trade": {"risk_per_trade": 0.01, "max_leverage": 1.5},
-        "exchange": {"exchange_name": "kraken", "testnet": False}
-    }
-    await config_manager.save_config(config)
-    ai_config = config_manager.load_ai_config()
-    db_config = config_manager.load_db_config()
-    trade_config = config_manager.load_trade_config()
-    exchange_config = config_manager.load_exchange_config()
-    assert ai_config.threshold_bps == 6.0
-    assert db_config.db_url == "sqlite+aiosqlite:///test2.db"
-    assert trade_config.max_leverage == 1.5
-    assert exchange_config.exchange_name == "kraken"
+@pytest.fixture()
+def cfg(tmp_path: Path) -> ConfigManager:
+    return ConfigManager(tmp_path)
 
-@pytest.mark.asyncio
-async def test_encryption(config_manager):
-    config = {
-        "exchange": {"api_key": "sensitive_key", "api_secret": "sensitive_secret"}
-    }
-    await config_manager.save_config(config)
-    with open(config_manager.config_path, "r") as f:
-        saved = yaml.safe_load(f)
-    assert saved["exchange"]["api_key"] != "sensitive_key"  # Encrypted
-    loaded = await config_manager.load_config()
-    assert loaded["exchange"]["api_key"] == "sensitive_key"  # Decrypted
 
-@pytest.mark.asyncio
-async def test_invalid_config(config_manager):
-    config = {
-        "ai": {"threshold_bps": -1.0},  # Invalid
-        "db": {"db_url": ""},  # Invalid
-        "trade": {"risk_per_trade": 2.0},  # Invalid
-        "exchange": {"api_key": 123}  # Invalid
-    }
-    with pytest.raises(ValidationError):
-        await config_manager.save_config(config)
+def test_save_and_load_roundtrip(cfg: ConfigManager, sample_preset: dict) -> None:
+    path = cfg.save_preset("demo", sample_preset)
+    assert path.exists()
 
-@pytest.mark.asyncio
-async def test_default_config(config_manager):
-    config = await config_manager.load_config()
-    assert config["ai"]["threshold_bps"] == 5.0
-    assert config["db"]["db_url"] == "sqlite+aiosqlite:///trading.db"
-    assert config["trade"]["risk_per_trade"] == 0.01
-    assert config["exchange"]["exchange_name"] == "binance"
+    loaded = cfg.load_preset("demo")
+    assert loaded["network"] == "Testnet"
+    assert loaded["mode"] == "Spot"
+    assert loaded["timeframe"] == "5m"
+    assert loaded["fraction"] == pytest.approx(0.25)
+    # symbole oczyszczone i bez duplikatów
+    assert loaded["selected_symbols"] == ["BTC/USDT", "ETH/USDT"]
+    # sekcje dodatkowe obecne
+    assert loaded["ai"]["epochs"] == 20
+    assert loaded["risk"]["risk_per_trade"] == pytest.approx(0.02)
+
+
+def test_invalid_fraction_rejected(cfg: ConfigManager, sample_preset: dict) -> None:
+    sample_preset["fraction"] = 1.5
+    with pytest.raises(ValueError):
+        cfg.save_preset("bad_fraction", sample_preset)
+
+
+def test_defaults_and_normalisation(cfg: ConfigManager) -> None:
+    minimal = {"selected_symbols": [" sol/usdt ", "ada/usdt"], "fraction": 0.0}
+    preset = cfg.validate_preset(minimal)
+
+    assert preset.network == "Testnet"
+    assert preset.mode == "Spot"
+    assert preset.timeframe == "1m"
+    assert preset.selected_symbols == ["SOL/USDT", "ADA/USDT"]
+    assert preset.fraction == pytest.approx(0.0)
+    data = preset.to_dict()
+    assert "ai" in data and "risk" in data

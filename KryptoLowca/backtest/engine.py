@@ -7,8 +7,8 @@ import math
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Tuple
 
-from managers.exchange_manager import ExchangeManager
-from managers.scanner import _compute_atr
+from KryptoLowca.managers.exchange_manager import ExchangeManager
+from KryptoLowca.managers.scanner import _compute_atr
 
 
 MIN_SL_PCT = 0.0005  # min 0.05% – anty-mikro

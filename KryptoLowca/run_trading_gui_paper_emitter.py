@@ -17,7 +17,7 @@ logging.basicConfig(
 logger = logging.getLogger("runner")
 
 # Event adapter
-from event_emitter_adapter import (
+from KryptoLowca.event_emitter_adapter import (
     EventBus,
     DebounceRule,
     EmitterAdapter,

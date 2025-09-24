@@ -5,4 +5,4 @@ Shim kompatybilności: re-eksportuje publiczny interfejs z managers/database_man
 Zostaw ten plik w katalogu głównym projektu, aby stare importy nadal działały.
 """
 from __future__ import annotations
-from managers.database_manager import *  # noqa: F401,F403
+from KryptoLowca.managers.database_manager import *  # noqa: F401,F403

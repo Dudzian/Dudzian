@@ -15,13 +15,13 @@ Zależności: pandas, numpy (tylko standardowe).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Literal, Tuple
+from typing import Any, Dict, List, Optional, Literal, Tuple
 import numpy as np
 import pandas as pd
 
 # Opcjonalnie do typów (nie wymagane do działania)
 try:
-    from trading_strategies import TradingParameters  # noqa: F401
+    from KryptoLowca.trading_strategies import TradingParameters  # noqa: F401
 except Exception:  # pragma: no cover
     TradingParameters = object  # type: ignore
 
@@ -38,6 +38,12 @@ class PreprocessorConfig:
     scale: bool = False                      # robust scaling
     scaler_center_median: bool = True
     scaler_iqr_eps: float = 1e-9
+    sequence_length: int = 64
+    cache_indicators: bool = False
+
+    def __post_init__(self) -> None:
+        if self.sequence_length <= 0:
+            raise ValueError("sequence_length must be positive")
 
 class DataPreprocessor:
     def __init__(self, cfg: Optional[PreprocessorConfig] = None):
@@ -45,6 +51,7 @@ class DataPreprocessor:
         # Bufory skalera per-kolumna
         self._median_: Dict[str, float] = {}
         self._iqr_: Dict[str, float] = {}
+        self._indicator_cache: Dict[str, pd.DataFrame] = {}
 
     # ---------- API wysokiego poziomu ----------
     def process(self, df: pd.DataFrame, cfg: Optional[PreprocessorConfig] = None) -> pd.DataFrame:
@@ -76,6 +83,77 @@ class DataPreprocessor:
         for sym, df in data.items():
             out[sym] = self.process(df, cfg=cfg)
         return out
+
+    def _cache_key(self, df: pd.DataFrame) -> str:
+        if df.empty:
+            return "empty"
+        start = df.index[0]
+        end = df.index[-1]
+        checksum = float(df[REQUIRED_COLS].sum().sum())
+        return f"{len(df)}|{start}|{end}|{checksum:.6f}"
+
+    def add_indicators(self, df: pd.DataFrame, params: Optional[Any] = None) -> pd.DataFrame:
+        cfg = self.cfg
+        df = self._validate_df(df.copy())
+        key = self._cache_key(df)
+        if cfg.cache_indicators and key in self._indicator_cache:
+            return self._indicator_cache[key].copy()
+
+        close = df["close"]
+        high = df["high"]
+        low = df["low"]
+
+        window = 20
+        bb_mid = close.rolling(window).mean()
+        bb_std = close.rolling(window).std(ddof=0)
+        df["bb_mid"] = bb_mid
+        df["bb_up"] = bb_mid + 2 * bb_std
+        df["bb_dn"] = bb_mid - 2 * bb_std
+        df["bb_bwidth"] = (df["bb_up"] - df["bb_dn"]) / (bb_mid.abs() + 1e-9)
+
+        delta = close.diff()
+        gain = delta.clip(lower=0.0)
+        loss = -delta.clip(upper=0.0)
+        period = 14
+        avg_gain = gain.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+        avg_loss = loss.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+        rs = avg_gain / (avg_loss.replace(0.0, np.nan))
+        rsi = 100 - (100 / (1 + rs))
+        df["rsi"] = rsi
+        df["rsi_n"] = (rsi / 100.0).clip(0.0, 1.0)
+
+        prev_close = close.shift(1)
+        tr = pd.concat([
+            (high - low).abs(),
+            (high - prev_close).abs(),
+            (low - prev_close).abs(),
+        ], axis=1).max(axis=1)
+        df["atr"] = tr.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+
+        ema_fast = close.ewm(span=12, adjust=False).mean()
+        ema_slow = close.ewm(span=26, adjust=False).mean()
+        macd = ema_fast - ema_slow
+        signal = macd.ewm(span=9, adjust=False).mean()
+        df["macd"] = macd
+        df["macd_signal"] = signal
+        df["macd_hist"] = macd - signal
+
+        lowest_low = low.rolling(window).min()
+        highest_high = high.rolling(window).max()
+        stoch_k = ((close - lowest_low) / (highest_high - lowest_low + 1e-9)) * 100
+        stoch_d = stoch_k.rolling(3).mean()
+        df["stoch_k"] = stoch_k
+        df["stoch_d"] = stoch_d
+        df["stoch_k_n"] = (stoch_k / 100.0).clip(0.0, 1.0)
+        df["stoch_d_n"] = (stoch_d / 100.0).clip(0.0, 1.0)
+
+        df["ema_fast"] = ema_fast
+        df["ema_slow"] = ema_slow
+        df["sma_trend"] = close.rolling(50).mean()
+
+        if cfg.cache_indicators:
+            self._indicator_cache[key] = df.copy()
+        return df
 
     @staticmethod
     def export_df(df: pd.DataFrame, fmt: Literal["csv", "json"] = "csv") -> str:

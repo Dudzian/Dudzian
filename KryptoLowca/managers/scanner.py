@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from typing import Dict, Any, List, Optional
 
-from managers.exchange_manager import ExchangeManager
+from KryptoLowca.managers.exchange_manager import ExchangeManager
 
 
 def _compute_atr(ohlcv: List[List[float]], length: int) -> Optional[float]:
