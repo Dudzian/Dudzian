@@ -1222,6 +1222,53 @@ class TradingGUI:
         except Exception:
             return self.selected_symbols[:3]
 
+    # ======== Public helpers (AutoTrader integration) ========
+    def get_symbol_for_auto_trader(self) -> str:
+        """Zwraca symbol, który powinien być używany przez moduł AutoTrader."""
+        try:
+            primary = (self.symbol_var.get() if hasattr(self, "symbol_var") else "")
+        except Exception:
+            primary = ""
+        primary = (primary or "").strip()
+        if primary:
+            return primary
+
+        picks = self._auto_pick_symbols()
+        if picks:
+            return picks[0]
+
+        if getattr(self, "chart_symbol", None):
+            return str(self.chart_symbol)
+
+        if getattr(self, "selected_symbols", None):
+            for sym in self.selected_symbols:
+                if sym:
+                    return sym
+        return ""
+
+    def get_symbols_for_auto_trader(self, limit: Optional[int] = None) -> List[str]:
+        """Lista symboli w kolejności priorytetów dla automatycznego handlu."""
+        symbols: List[str] = []
+        symbols.extend(self._auto_pick_symbols())
+        if getattr(self, "chart_symbol", None):
+            symbols.append(str(self.chart_symbol))
+        if getattr(self, "selected_symbols", None):
+            symbols.extend([sym for sym in self.selected_symbols if sym])
+
+        # usuń duplikaty zachowując kolejność
+        seen = set()
+        ordered: List[str] = []
+        for sym in symbols:
+            sym_norm = (sym or "").strip()
+            if not sym_norm or sym_norm in seen:
+                continue
+            ordered.append(sym_norm)
+            seen.add(sym_norm)
+
+        if limit is not None and limit > 0:
+            return ordered[:limit]
+        return ordered
+
     # ============== BRIDGE: AI → Risk → Execution ==============
     def _bridge_decide_and_trade(self, symbol: str, ticker: Dict[str, Any], preds: Optional[pd.Series]):
         try:

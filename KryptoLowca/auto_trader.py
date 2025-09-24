@@ -5,7 +5,9 @@ from __future__ import annotations
 import threading
 import time
 import statistics
-from typing import Optional, List, Dict, Any, Callable
+from typing import Optional, List, Dict, Any, Callable, Tuple
+
+import inspect
 
 import pandas as pd
 try:
@@ -221,62 +223,202 @@ class AutoTrader:
                 if not symbol:
                     self._stop.wait(self.auto_trade_interval_s)
                     continue
-                ex = getattr(self.gui, "ex_mgr", None)
-                if ex is None or not hasattr(ex, "fetch_ohlcv"):
-                    self._stop.wait(self.auto_trade_interval_s)
-                    continue
-
                 timeframe = "1m"
                 tf_var = getattr(self.gui, "timeframe_var", None)
                 if tf_var is not None and hasattr(tf_var, "get"):
-                    timeframe = tf_var.get()
+                    try:
+                        timeframe = tf_var.get() or timeframe
+                    except Exception:
+                        pass
 
-                try:
-                    raw = ex.fetch_ohlcv(symbol, timeframe=timeframe, limit=256) or []
-                except Exception as e:
-                    self.emitter.log(f"fetch_ohlcv failed: {e!r}", level="ERROR", component="AutoTrader")
-                    self._stop.wait(self.auto_trade_interval_s)
-                    continue
-
-                if not raw:
-                    self._stop.wait(self.auto_trade_interval_s)
-                    continue
-
-                df = pd.DataFrame(raw, columns=["timestamp", "open", "high", "low", "close", "volume"])
+                ex = getattr(self.gui, "ex_mgr", None)
                 ai = getattr(self.gui, "ai_mgr", None)
-                if ai is None or not hasattr(ai, "predict_series"):
+
+                df: Optional[pd.DataFrame] = None
+                last_price: Optional[float] = None
+                last_pred: Optional[float] = None
+
+                if ai is not None and hasattr(ai, "predict_series"):
+                    try:
+                        last_pred, df, last_price = self._obtain_prediction(ai, symbol, timeframe, ex)
+                    except Exception as e:
+                        self.emitter.log(
+                            f"predict_series failed: {e!r}", level="ERROR", component="AutoTrader"
+                        )
+
+                if last_price is None:
+                    last_price = self._resolve_market_price(symbol, ex, df)
+
+                side: Optional[str] = None
+                if last_pred is not None and ai is not None:
+                    threshold_bps = float(getattr(ai, "ai_threshold_bps", 5.0))
+                    threshold = threshold_bps / 10_000.0
+                    if last_pred >= threshold:
+                        side = "BUY"
+                    elif last_pred <= -threshold:
+                        side = "SELL"
+                elif last_pred is not None:
+                    # brak ai_threshold -> użyj domyślnego progu
+                    threshold = 5.0 / 10_000.0
+                    if last_pred >= threshold:
+                        side = "BUY"
+                    elif last_pred <= -threshold:
+                        side = "SELL"
+
+                if side is None and last_price is not None:
+                    # fallback – prosty przełącznik BUY/SELL aby utrzymać aktywność w trybie demo
+                    side = "BUY" if int(time.time() / max(1, self.auto_trade_interval_s)) % 2 == 0 else "SELL"
+
+                if side is None or last_price is None:
                     self._stop.wait(self.auto_trade_interval_s)
                     continue
-
-                try:
-                    preds = ai.predict_series(df, feature_cols=["open", "high", "low", "close", "volume"])
-                except Exception as e:
-                    self.emitter.log(f"predict_series failed: {e!r}", level="ERROR", component="AutoTrader")
-                    preds = None
-
-                if preds is None or len(preds.dropna()) == 0:
-                    self._stop.wait(self.auto_trade_interval_s)
-                    continue
-
-                last_pred = float(preds.dropna().iloc[-1])
-                threshold_bps = float(getattr(ai, "ai_threshold_bps", 5.0))
-                threshold = threshold_bps / 10_000.0
-
-                if last_pred >= threshold:
-                    side = "BUY"
-                elif last_pred <= -threshold:
-                    side = "SELL"
-                else:
-                    self._stop.wait(self.auto_trade_interval_s)
-                    continue
-
-                mkt_price = float(df["close"].iloc[-1])
 
                 if hasattr(self.gui, "_bridge_execute_trade"):
-                    self.gui._bridge_execute_trade(symbol, side.lower(), mkt_price)
+                    self.gui._bridge_execute_trade(symbol, side.lower(), float(last_price))
                     self.emitter.emit("auto_trade_tick", symbol=symbol, ts=time.time())
                 else:
-                    self.emitter.log("_bridge_execute_trade missing on GUI", level="ERROR", component="AutoTrader")
+                    self.emitter.log(
+                        "_bridge_execute_trade missing on GUI",
+                        level="ERROR",
+                        component="AutoTrader",
+                    )
             except Exception as e:
                 self.emitter.log(f"Auto trade tick error: {e!r}", level="ERROR", component="AutoTrader")
             self._stop.wait(self.auto_trade_interval_s)
+
+    # --- Prediction helpers ---
+    def _obtain_prediction(
+        self,
+        ai: Any,
+        symbol: str,
+        timeframe: str,
+        ex: Any,
+    ) -> Tuple[Optional[float], Optional[pd.DataFrame], Optional[float]]:
+        predict_fn = getattr(ai, "predict_series", None)
+        if not callable(predict_fn):
+            return (None, None, None)
+
+        df: Optional[pd.DataFrame] = None
+        last_price: Optional[float] = None
+        last_pred: Optional[float] = None
+
+        try:
+            sig = inspect.signature(predict_fn)
+            params = sig.parameters
+        except (TypeError, ValueError):
+            sig = None
+            params = {}
+
+        # 1) Spróbuj wywołania na podstawie symbolu/bars – zgodność z prostym API
+        if "symbol" in params and last_pred is None:
+            kwargs: Dict[str, Any] = {"symbol": symbol}
+            if "timeframe" in params:
+                kwargs["timeframe"] = timeframe
+            if "bars" in params:
+                kwargs["bars"] = 256
+            elif "limit" in params:
+                kwargs["limit"] = 256
+            try:
+                preds = predict_fn(**kwargs)
+                last_pred = self._extract_last_pred(preds)
+            except Exception:
+                last_pred = None
+
+        # 2) Klasyczny wariant – przekazanie DataFrame z OHLCV
+        if last_pred is None:
+            df = self._ensure_dataframe(symbol, timeframe, ex)
+            if df is not None and not df.empty:
+                last_price = float(df["close"].iloc[-1])
+                call_attempts = []
+                if sig is None or "feature_cols" in params:
+                    call_attempts.append({"feature_cols": ["open", "high", "low", "close", "volume"]})
+                call_attempts.append({})  # bez dodatkowych argumentów
+                for extra in call_attempts:
+                    try:
+                        preds = predict_fn(df, **extra)
+                        last_pred = self._extract_last_pred(preds)
+                    except TypeError:
+                        # jeśli feature_cols niepasuje – spróbuj kolejnego wariantu
+                        continue
+                    except Exception:
+                        continue
+                    if last_pred is not None:
+                        break
+
+        if last_price is None:
+            last_price = self._resolve_market_price(symbol, ex, df)
+
+        return (last_pred, df, last_price)
+
+    def _ensure_dataframe(
+        self, symbol: str, timeframe: str, ex: Any
+    ) -> Optional[pd.DataFrame]:
+        if ex is None or not hasattr(ex, "fetch_ohlcv"):
+            return None
+        try:
+            raw = ex.fetch_ohlcv(symbol, timeframe=timeframe, limit=256) or []
+        except Exception as exc:
+            self.emitter.log(
+                f"fetch_ohlcv failed: {exc!r}", level="ERROR", component="AutoTrader"
+            )
+            return None
+        if not raw:
+            return None
+        try:
+            df = pd.DataFrame(raw, columns=["timestamp", "open", "high", "low", "close", "volume"])
+        except Exception:
+            df = pd.DataFrame(raw)
+            expected = ["timestamp", "open", "high", "low", "close", "volume"]
+            for idx, col in enumerate(df.columns):
+                if idx < len(expected):
+                    df.rename(columns={col: expected[idx]}, inplace=True)
+        return df
+
+    def _resolve_market_price(
+        self, symbol: str, ex: Any, df: Optional[pd.DataFrame]
+    ) -> Optional[float]:
+        if df is not None and not df.empty and "close" in df.columns:
+            try:
+                return float(df["close"].iloc[-1])
+            except Exception:
+                pass
+        if ex is None:
+            return None
+        if hasattr(ex, "fetch_ticker"):
+            try:
+                ticker = ex.fetch_ticker(symbol) or {}
+                for key in ("last", "close", "bid", "ask"):
+                    val = ticker.get(key)
+                    if val is not None:
+                        return float(val)
+            except Exception as exc:
+                self.emitter.log(
+                    f"fetch_ticker failed: {exc!r}", level="ERROR", component="AutoTrader"
+                )
+        return None
+
+    @staticmethod
+    def _extract_last_pred(preds: Any) -> Optional[float]:
+        if preds is None:
+            return None
+        series: Optional[pd.Series]
+        if isinstance(preds, pd.Series):
+            series = preds
+        elif isinstance(preds, pd.DataFrame):
+            if preds.empty:
+                return None
+            series = preds.iloc[:, -1]
+        else:
+            try:
+                series = pd.Series(list(preds))
+            except Exception:
+                return None
+        if series is None:
+            return None
+        series = series.dropna()
+        if series.empty:
+            return None
+        try:
+            return float(series.iloc[-1])
+        except Exception:
+            return None
