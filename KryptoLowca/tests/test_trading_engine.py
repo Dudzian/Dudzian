@@ -169,9 +169,11 @@ def test_execute_live_tick(engine):
     assert plan is not None
     assert plan["symbol"] == "BTC/USDT"
     assert plan["side"] == "buy"
+    # Sprawdź limity frakcji i detale ryzyka
     assert plan["max_fraction"] <= 0.2
     assert plan["applied_fraction"] <= plan["max_fraction"]
     assert plan["risk"]["recommended_size"] == pytest.approx(engine.risk_mgr.return_value)  # type: ignore[attr-defined]
+    # Sprawdź wykonanie zlecenia i rejestry
     assert "execution" in plan
     assert plan["execution"]["status"] == "FILLED"
     assert engine.ex_mgr.created_orders  # type: ignore[attr-defined]
@@ -211,6 +213,7 @@ def test_invalid_input(engine):
 
 
 def test_fraction_cap_limit(engine):
+    # Ustaw wyższą rekomendowaną frakcję, ale ogranicz ją configiem silnika
     engine.risk_mgr.return_value = 0.9  # type: ignore[attr-defined]
     cfg = EngineConfig(capital_fraction=0.25)
     engine.set_parameters(engine.tp, cfg)
@@ -225,4 +228,5 @@ def test_fraction_cap_limit(engine):
     assert plan["applied_fraction"] <= 0.25
     execution = plan["execution"]
     notional = execution["quantity"] * execution["price"]
-    assert notional <= 10_000 * 0.26  # niewielka nadwyżka na bufory/zaokrąglenia
+    # dopuszczamy niewielką nadwyżkę na bufory/zaokrąglenia
+    assert notional <= 10_000 * 0.26

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, Tuple, Union
 
 import pandas as pd
 
@@ -74,6 +74,7 @@ class TradingEngine:
                     setattr(self.ai_mgr, "ai_threshold_bps", float(self.tp.signal_threshold * 10_000))
                 except Exception:
                     setattr(self.ai_mgr, "ai_threshold_bps", 5.0)
+            # Pass fraction cap to OrderExecutor
             self._order_executor = OrderExecutor(
                 ex_mgr,
                 self.db_manager,
@@ -136,6 +137,7 @@ class TradingEngine:
                 loop.create_task(_log_params())
         if self._order_executor:
             self._order_executor.set_user(self._user_id)
+            # Keep executor's fraction cap in sync with parameters/config
             self._order_executor.max_fraction = self._fraction_cap()
 
     def on_event(self, callback: Callable[[Dict[str, Any]], None]) -> None:
@@ -225,32 +227,36 @@ class TradingEngine:
                     raise TradingError("Insufficient balance")
 
                 portfolio_ctx = {"positions": positions, "capital": capital}
-                sizing_outcome = self.risk_mgr.calculate_position_size(
-                    symbol,
-                    latest_pred,
-                    df,
-                    portfolio_ctx,
-                    return_details=True,
-                )
+
+                # Risk sizing may return either qty or (qty, details)
+                sizing_outcome: Union[float, Tuple[float, Dict[str, Any]]] = self.risk_mgr.calculate_position_size(
+                    symbol, latest_pred, df, portfolio_ctx, return_details=True
+                ) if "return_details" in self.risk_mgr.calculate_position_size.__code__.co_varnames else \
+                    self.risk_mgr.calculate_position_size(symbol, latest_pred, df, portfolio_ctx)
+
                 risk_details: Optional[Dict[str, Any]]
                 if isinstance(sizing_outcome, tuple):
                     qty_hint, risk_details = sizing_outcome
                 else:
-                    qty_hint = sizing_outcome
+                    qty_hint = sizing_outcome  # type: ignore[assignment]
                     getter = getattr(self.risk_mgr, "last_position_details", None)
                     risk_details = getter() if callable(getter) else None
+
                 try:
-                    qty_hint = float(qty_hint)
+                    qty_hint = float(qty_hint)  # type: ignore[arg-type]
                 except Exception:
                     qty_hint = 0.0
+
                 if risk_details is None:
                     risk_details = {"recommended_size": qty_hint}
                 else:
                     risk_details.setdefault("recommended_size", qty_hint)
+
                 if qty_hint <= 0:
                     await self._emit_event({"type": "no_position_size", "symbol": symbol})
                     return None
 
+                # Apply global fraction cap
                 fraction_cap = self._fraction_cap()
                 risk_details["max_fraction_cap"] = fraction_cap
                 if fraction_cap <= 0:
@@ -353,7 +359,6 @@ class TradingEngine:
 
     def _fraction_cap(self) -> float:
         """Określ maksymalną frakcję kapitału na trade z konfiguracji."""
-
         raw_values = []
         for candidate in (
             getattr(self.ec, "capital_fraction", None),
