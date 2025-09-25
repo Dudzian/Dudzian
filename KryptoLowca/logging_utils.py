@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Utilities for consistent application logging.
 
 This module centralises setup of rotating file handlers so that every

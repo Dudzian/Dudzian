@@ -42,6 +42,16 @@ class NoSignalAI:
         return None
 
 
+class DummyDB:
+    def __init__(self) -> None:
+        self.records: List[Dict[str, Any]] = []
+        self.sync = self
+
+    def log_performance_metric(self, payload: Dict[str, Any]) -> int:
+        self.records.append(payload)
+        return len(self.records)
+
+
 class DummyGUI:
     def __init__(self, demo: bool, allow_live: bool) -> None:
         self.timeframe_var = DummyVar("1m")
@@ -64,16 +74,6 @@ class DummyGUI:
     # Exchange-like API -------------------------------------------------
     def fetch_ticker(self, symbol: str) -> Dict[str, float]:
         return {"last": 100.0}
-
-
-class DummyDB:
-    def __init__(self) -> None:
-        self.records: List[Dict[str, Any]] = []
-        self.sync = self
-
-    def log_performance_metric(self, payload: Dict[str, Any]) -> int:
-        self.records.append(payload)
-        return len(self.records)
 
 
 @pytest.fixture()
@@ -109,7 +109,11 @@ def test_live_trading_blocked_without_confirmation(demo_autotrader: Callable[[Du
     trader = demo_autotrader(gui)
     _run_loop(trader)
     assert gui.executed == []
-    assert any("live trading requires explicit confirmation" in msg for kind, _, msg in trader.emitter.logs if kind == "log")
+    assert any(
+        "live trading requires explicit confirmation" in msg
+        for kind, _, msg in trader.emitter.logs
+        if kind == "log"
+    )
 
 
 def test_metrics_persisted_on_trade_close(demo_autotrader: Callable[[DummyGUI], AutoTrader]) -> None:

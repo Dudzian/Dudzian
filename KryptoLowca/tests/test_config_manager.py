@@ -137,10 +137,12 @@ def test_create_preset_with_audit(cfg: ConfigManager, sample_preset: dict) -> No
 
 def test_preset_wizard_profiles(cfg: ConfigManager, sample_preset: dict) -> None:
     cfg.save_preset("base", sample_preset)
-    wizard = cfg.preset_wizard().from_template("base").with_risk_profile("aggressive").with_symbols([
-        "btc/usdt",
-        "ada/usdt",
-    ])
+    wizard = (
+        cfg.preset_wizard()
+        .from_template("base")
+        .with_risk_profile("aggressive")
+        .with_symbols(["btc/usdt", "ada/usdt"])
+    )
     audit = wizard.build("aggressive_profile")
 
     assert audit["preset"]["selected_symbols"] == ["BTC/USDT", "ADA/USDT"]
