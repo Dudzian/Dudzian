@@ -1,5 +1,3 @@
-"""Utilities for consistent application logging.
-
 This module centralises setup of rotating file handlers so that every
 component (GUI, background workers, integration tests) writes to the same
 log files without growing indefinitely. Importing :func:`get_logger`

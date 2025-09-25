@@ -242,7 +242,6 @@ class ExchangeManager:
     # --------------------------- konfiguracja ---------------------------
     def set_retry_policy(self, *, attempts: int, delay: float) -> None:
         """Skonfiguruj politykę ponawiania żądań."""
-
         try:
             attempts_int = max(0, int(attempts))
         except Exception:
@@ -256,7 +255,6 @@ class ExchangeManager:
 
     def set_metrics_log_interval(self, seconds: float) -> None:
         """Ustaw minimalny odstęp między zapisami telemetrii API do bazy."""
-
         try:
             interval = max(0.0, float(seconds))
         except Exception:
@@ -271,7 +269,6 @@ class ExchangeManager:
         buckets: Optional[Sequence[Dict[str, Any]]] = None,
     ) -> None:
         """Zaktualizuj konfigurację limitów API i wyzeruj liczniki."""
-
         self._rate_limit_window = max(0.1, float(window_seconds or 60.0))
         self._rate_limit_per_minute = None
         self._max_calls_per_window = None
@@ -357,10 +354,7 @@ class ExchangeManager:
                     elapsed = 0.0
 
                 projected = bucket.count + 1
-                if bucket.capacity > 0:
-                    usage_pct = projected / bucket.capacity
-                else:
-                    usage_pct = 0.0
+                usage_pct = projected / bucket.capacity if bucket.capacity > 0 else 0.0
                 bucket.last_usage = min(usage_pct, 1.0 if bucket.capacity > 0 else usage_pct)
                 bucket.max_usage = max(bucket.max_usage, bucket.last_usage)
 
@@ -837,15 +831,13 @@ class ExchangeManager:
 
     def get_rate_limit_snapshot(self) -> List[Dict[str, Any]]:
         """Szybki podgląd stanu kubełków limitów API."""
-
         return [bucket.snapshot() for bucket in self._rate_limit_buckets]
 
     def get_api_metrics(self) -> Dict[str, Any]:
         """Zwróć metryki zużycia API (łącznie i per-endpoint)."""
         usage = None
         if self._max_calls_per_window:
-            if self._max_calls_per_window:
-                usage = self._window_count / self._max_calls_per_window
+            usage = self._window_count / self._max_calls_per_window
         buckets_snapshot = [bucket.snapshot() for bucket in self._rate_limit_buckets]
         return {
             "total_calls": self._metrics.total_calls,

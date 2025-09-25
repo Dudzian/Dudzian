@@ -21,8 +21,7 @@ import re
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence
-from typing import Literal
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
@@ -45,7 +44,6 @@ except Exception:  # pragma: no cover - środowiska bez PyYAML
 _SANITIZE = re.compile(r"[^a-zA-Z0-9_\-\.]")
 _TIMEFRAME_PATTERN = re.compile(r"^[1-9][0-9]*(m|h|d|w)$", re.IGNORECASE)
 
-
 CONFIG_SCHEMA_VERSION = 2
 
 
@@ -62,7 +60,6 @@ def _sanitize_name(name: str) -> str:
 
 class _SectionModel(BaseModel):
     """Bazowa klasa modeli sekcji – pozwala na dodatkowe pola."""
-
     model_config = ConfigDict(extra="allow")
 
 
@@ -119,7 +116,6 @@ class PaperSettings(_SectionModel):
 
 class ConfigPreset(BaseModel):
     """Model najwyższego poziomu opisujący pojedynczy preset."""
-
     version: int = Field(default=CONFIG_SCHEMA_VERSION, ge=1)
     network: Literal["Testnet", "Live"] = "Testnet"
     mode: Literal["Spot", "Futures"] = "Spot"
@@ -226,11 +222,10 @@ class ConfigManager:
     # --- walidacja ---
     def validate_preset(self, data: Dict[str, Any]) -> ConfigPreset:
         """Zwróć obiekt ``ConfigPreset`` po walidacji danych wejściowych."""
-
         upgraded = self._upgrade_payload(data)
         try:
             preset = ConfigPreset.model_validate(upgraded)
-        except ValidationError as exc:  # pragma: no cover - trudne do pełnego pokrycia
+        except ValidationError as exc:  # pragma: no cover
             errors = "; ".join(
                 f"{'.'.join(str(loc) for loc in err['loc'])}: {err['msg']}" for err in exc.errors()
             )
@@ -245,12 +240,10 @@ class ConfigManager:
 
     def require_demo_mode(self, required: bool = True) -> None:
         """Włącz/wyłącz wymóg zapisu presetów w trybie demo."""
-
         self._demo_required = bool(required)
 
     def demo_mode_required(self) -> bool:
         """Zwraca informację, czy polityka bezpieczeństwa wymaga trybu demo."""
-
         return self._demo_required
 
     @staticmethod
@@ -305,7 +298,6 @@ class ConfigManager:
 
     def audit_preset(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Przeprowadź szybki audyt bezpieczeństwa i ryzyka dla presetu."""
-
         preset = self.validate_preset(data)
         issues: List[str] = []
         warnings: List[str] = []
@@ -376,7 +368,7 @@ class ConfigManager:
                     yaml.safe_dump(payload, f, allow_unicode=True, sort_keys=False)  # type: ignore[arg-type]
                 logger.info("Zapisano preset YAML: %s", path)
                 return path
-            except Exception as e:  # pragma: no cover - zależne od dysku/środowiska
+            except Exception as e:  # pragma: no cover
                 logger.error("Błąd zapisu YAML (%s): %s – próba JSON", path, e)
 
         path = self._path_json(safe)
@@ -394,7 +386,6 @@ class ConfigManager:
         ensure_demo: Optional[bool] = None,
     ) -> Dict[str, Any]:
         """Stwórz preset na bazie szablonu i nadpisów, zwracając raport audytu."""
-
         payload = deepcopy(self._default_template)
         if base:
             base_payload = self.load_preset(base)
@@ -447,7 +438,6 @@ class ConfigManager:
 
     def preset_wizard(self) -> "PresetWizard":
         """Utwórz kreator presetów ułatwiający stopniowe budowanie konfiguracji."""
-
         return PresetWizard(self)
 
     # --- dodatki przydatne w GUI ---
@@ -469,7 +459,7 @@ class ConfigManager:
                 if p.exists():
                     p.unlink()
                     ok = True
-            except Exception as e:  # pragma: no cover - błędy IO
+            except Exception as e:  # pragma: no cover
                 logger.error("Nie udało się usunąć presetu %s: %s", p, e)
         return ok
 
