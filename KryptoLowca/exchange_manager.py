@@ -9,11 +9,50 @@ import math
 import sys
 import time
 import types
+import weakref
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
-# ---- ccxt async importy odporne na różne wersje / brak biblioteki ----
+# ---- Alerts (z fallbackiem, gdy moduł nie istnieje) -------------------------
+try:  # pragma: no cover
+    from KryptoLowca.alerts import (  # type: ignore
+        AlertEvent,
+        AlertSeverity,
+        BotError,
+        emit_alert,
+        get_alert_dispatcher,
+    )
+except Exception:  # pragma: no cover
+    class AlertSeverity:
+        INFO = "INFO"
+        WARNING = "WARNING"
+        ERROR = "ERROR"
+        CRITICAL = "CRITICAL"
+
+    class BotError(RuntimeError):
+        severity = AlertSeverity.ERROR
+        source = "general"
+
+    def emit_alert(message: str, *, severity: str, source: str, context: Optional[Dict[str, Any]] = None) -> None:
+        logging.getLogger(__name__).critical("[ALERT:FALLBACK] %s | src=%s | ctx=%s", message, source, context or {})
+
+    class _DummyDispatcher:
+        def register(self, callback: Callable[[Any], None], *, name: str) -> str:
+            return name
+        def unregister(self, token: str) -> None:
+            return None
+    def get_alert_dispatcher() -> _DummyDispatcher:
+        return _DummyDispatcher()
+
+    @dataclass
+    class AlertEvent:
+        message: str
+        severity: str = AlertSeverity.INFO
+        source: str = "general"
+        context: Dict[str, Any] = field(default_factory=dict)
+
+# ---- ccxt async importy odporne na różne wersje / brak biblioteki -----------
 try:  # pragma: no cover - importowany tylko jeśli ccxt jest dostępne
     import ccxt.async_support as ccxt_async  # type: ignore
 except Exception:  # pragma: no cover - starsze wersje ccxt
@@ -26,7 +65,7 @@ except Exception:  # pragma: no cover - starsze wersje ccxt
         setattr(ccxt_module, "asyncio", ccxt_async)
         sys.modules["ccxt.asyncio"] = ccxt_async
 
-# ---- odporny import Mode ----
+# ---- odporny import Mode ----------------------------------------------------
 try:  # pragma: no cover
     from KryptoLowca.managers.exchange_core import Mode  # type: ignore
 except Exception:  # pragma: no cover
@@ -46,7 +85,7 @@ __all__ = [
     "OrderResult",
 ]
 
-
+# ------------------------------- Telemetria ----------------------------------
 @dataclass(slots=True)
 class _EndpointMetrics:
     total_calls: int = 0
@@ -72,7 +111,6 @@ class _APIMetrics:
 @dataclass(slots=True)
 class _RateLimitBucket:
     """Opis pojedynczego limitu czasowego API."""
-
     name: str
     capacity: int
     window_seconds: float
@@ -102,19 +140,21 @@ class _RateLimitBucket:
             "reset_in_seconds": remaining,
         }
 
-
-class ExchangeError(RuntimeError):
+# ------------------------------- Wyjątki -------------------------------------
+class ExchangeError(BotError):
     """Podstawowy wyjątek warstwy wymiany."""
+    severity = AlertSeverity.ERROR
+    source = "exchange"
 
 
 class AuthenticationError(ExchangeError):
     """Błąd uwierzytelniania API giełdy."""
+    severity = AlertSeverity.CRITICAL
 
-
+# -------------------------- Wynik zlecenia -----------------------------------
 @dataclass(slots=True)
 class OrderResult:
     """Minimalna struktura opisująca wynik zlecenia."""
-
     id: Any
     symbol: str
     side: str
@@ -122,7 +162,7 @@ class OrderResult:
     price: Optional[float]
     status: str
 
-
+# ---------------------------- ExchangeManager --------------------------------
 class ExchangeManager:
     """Asynchroniczny wrapper wykorzystywany w testach jednostkowych."""
 
@@ -137,6 +177,9 @@ class ExchangeManager:
         # Telemetria / alerty / throttling
         self._db_manager: Optional[Any] = None
         self._alert_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None
+        self._alert_listener_token: Optional[str] = None
+        self._alert_dispatcher = get_alert_dispatcher()
+        self._alert_listener_ref: Optional[Callable[[AlertEvent], None]] = None
 
         self._metrics = _APIMetrics()
         self._endpoint_metrics: Dict[str, _EndpointMetrics] = defaultdict(lambda: _EndpointMetrics())
@@ -157,6 +200,7 @@ class ExchangeManager:
         self._metrics_log_interval = 30.0
         self._last_metrics_log = 0.0
 
+    # -------------------------------- Factory --------------------------------
     @classmethod
     async def create(
         cls,
@@ -239,7 +283,7 @@ class ExchangeManager:
         )
         return manager
 
-    # --------------------------- konfiguracja ---------------------------
+    # --------------------------- konfiguracja ---------------------------------
     def set_retry_policy(self, *, attempts: int, delay: float) -> None:
         """Skonfiguruj politykę ponawiania żądań."""
         try:
@@ -429,10 +473,7 @@ class ExchangeManager:
             metrics.window_errors += 1
             metrics.consecutive_errors += 1
             endpoint_metrics.total_errors += 1
-            if (
-                self._error_alert_threshold
-                and metrics.consecutive_errors == self._error_alert_threshold
-            ):
+            if self._error_alert_threshold and metrics.consecutive_errors == self._error_alert_threshold:
                 context = {
                     "endpoint": endpoint,
                     "consecutive_errors": metrics.consecutive_errors,
@@ -451,7 +492,7 @@ class ExchangeManager:
         if final and self._db_manager and self._user_id:
             try:
                 loop = asyncio.get_running_loop()
-            except RuntimeError:  # pragma: no cover - brak aktywnej pętli
+            except RuntimeError:  # pragma: no cover
                 pass
             else:
                 loop.create_task(
@@ -469,12 +510,16 @@ class ExchangeManager:
         if now - last < self._alert_cooldown_seconds:
             return
         self._alert_last[key] = now
-        logger.critical("[ALERT] %s | context=%s", message, context or {})
-        if self._alert_callback:
-            try:
-                self._alert_callback(message, context or {})
-            except Exception:  # pragma: no cover - nie przerywamy głównego przepływu
-                logger.exception("Alert callback zgłosił wyjątek")
+        payload = dict(context or {})
+        if self._user_id is not None:
+            payload.setdefault("user_id", self._user_id)
+        logger.critical("[ALERT] %s | context=%s", message, payload)
+        emit_alert(
+            message,
+            severity=AlertSeverity.CRITICAL,
+            source="exchange",
+            context=payload,
+        )
         if self._db_manager and self._user_id:
             try:
                 loop = asyncio.get_running_loop()
@@ -486,7 +531,7 @@ class ExchangeManager:
                     "CRITICAL",
                     message,
                     category="exchange",
-                    context=context,
+                    context=payload,
                 )
             )
 
@@ -544,7 +589,6 @@ class ExchangeManager:
             if inspect.isawaitable(result):
                 return await result
             return result
-
         return await self._run_with_retry(_factory, endpoint=endpoint)
 
     def _market(self, symbol: str) -> Dict[str, Any]:
@@ -685,8 +729,13 @@ class ExchangeManager:
             maybe = close()
             if inspect.isawaitable(maybe):
                 await maybe
+        if self._alert_listener_token is not None:
+            self._alert_dispatcher.unregister(self._alert_listener_token)
+            self._alert_listener_token = None
+            self._alert_listener_ref = None
+            self._alert_callback = None
 
-    # ------------------------------- helpers ---------------------------------
+    # ------------------------------- helpers ----------------------------------
     def quantize_amount(self, symbol: str, amount: float) -> float:
         market = self._market(symbol)
         value = float(amount)
@@ -828,6 +877,32 @@ class ExchangeManager:
     def register_alert_handler(self, callback: Callable[[str, Dict[str, Any]], None]) -> None:
         """Zarejestruj zewnętrzny handler alertów (np. GUI / moduł powiadomień)."""
         self._alert_callback = callback
+        if self._alert_listener_token is not None:
+            self._alert_dispatcher.unregister(self._alert_listener_token)
+            self._alert_listener_token = None
+            self._alert_listener_ref = None
+
+        manager_ref = weakref.ref(self)
+
+        def _listener(event: AlertEvent) -> None:
+            manager = manager_ref()
+            if manager is None:
+                return
+            if getattr(event, "source", None) != "exchange":
+                return
+            cb = manager._alert_callback
+            if cb is None:
+                return
+            try:
+                cb(event.message, dict(getattr(event, "context", {}) or {}))
+            except Exception:  # pragma: no cover
+                logger.exception("Alert callback zgłosił wyjątek")
+
+        self._alert_listener_ref = _listener
+        self._alert_listener_token = self._alert_dispatcher.register(
+            _listener,
+            name=f"exchange-{id(self)}",
+        )
 
     def get_rate_limit_snapshot(self) -> List[Dict[str, Any]]:
         """Szybki podgląd stanu kubełków limitów API."""
