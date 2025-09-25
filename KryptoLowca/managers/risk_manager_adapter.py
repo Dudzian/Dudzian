@@ -2,11 +2,11 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 import pandas as pd
 
-from risk_management import create_risk_manager  # istniejący moduł
+from KryptoLowca.risk_management import create_risk_manager  # istniejący moduł
 
 
 class RiskManager:
@@ -14,6 +14,7 @@ class RiskManager:
 
     def __init__(self, config: Dict[str, Any]):
         self.risk_mgr = create_risk_manager(config)
+        self._last_details: Optional[Dict[str, Any]] = None
 
     def calculate_position_size(
         self,
@@ -21,7 +22,9 @@ class RiskManager:
         signal: Any,
         market_data: Any,
         portfolio: Optional[Dict[str, Any]] = None,
-    ) -> float:
+        *,
+        return_details: bool = False,
+    ) -> float | Tuple[float, Dict[str, Any]]:
         """
         Zwraca rekomendowaną frakcję kapitału (0..1).
 
@@ -59,10 +62,44 @@ class RiskManager:
 
         sizing = self.risk_mgr.calculate_position_size(symbol, signal_payload, market_df, portfolio_ctx)
 
-        if hasattr(sizing, "recommended_size"):
-            return float(getattr(sizing, "recommended_size", 0.0))
+        details: Dict[str, Any] = {}
+        recommended = 0.0
 
-        try:
-            return float(sizing)
-        except Exception:
-            return 0.0
+        if hasattr(sizing, "recommended_size"):
+            recommended = float(getattr(sizing, "recommended_size", 0.0))
+            details = {
+                "recommended_size": recommended,
+                "max_allowed_size": float(getattr(sizing, "max_allowed_size", recommended)),
+                "kelly_size": float(getattr(sizing, "kelly_size", recommended)),
+                "risk_adjusted_size": float(getattr(sizing, "risk_adjusted_size", recommended)),
+                "confidence_level": float(getattr(sizing, "confidence_level", 0.0)),
+                "reasoning": getattr(sizing, "reasoning", ""),
+            }
+        elif isinstance(sizing, dict):
+            try:
+                recommended = float(sizing.get("recommended_size", sizing.get("size", 0.0)))
+            except Exception:
+                recommended = 0.0
+            details = dict(sizing)
+            details.setdefault("recommended_size", recommended)
+        else:
+            try:
+                recommended = float(sizing)
+            except Exception:
+                recommended = 0.0
+
+        recommended = max(0.0, min(1.0, recommended))
+        if not details:
+            details = {"recommended_size": recommended}
+        else:
+            details["recommended_size"] = recommended
+
+        self._last_details = details
+        if return_details:
+            return recommended, details
+        return recommended
+
+    def last_position_details(self) -> Optional[Dict[str, Any]]:
+        """Zwróć ostatnie szczegóły kalkulacji wielkości pozycji."""
+
+        return self._last_details

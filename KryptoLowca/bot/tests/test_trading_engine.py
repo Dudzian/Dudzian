@@ -8,8 +8,8 @@ import asyncio
 import pandas as pd
 import numpy as np
 from unittest.mock import AsyncMock
-from core.trading_engine import TradingEngine, TradingError
-from trading_strategies import TradingParameters, EngineConfig, TradingStrategies
+from KryptoLowca.core.trading_engine import TradingEngine, TradingError
+from KryptoLowca.trading_strategies import TradingParameters, EngineConfig, TradingStrategies
 
 class MockExchange:
     async def fetch_balance(self):
@@ -46,7 +46,7 @@ async def engine(monkeypatch):
 @pytest.mark.asyncio
 async def test_execute_live_tick(engine):
     df = pd.DataFrame({
-        "timestamp": pd.date_range("2025-08-21", periods=252, freq="T"),
+        "timestamp": pd.date_range("2025-08-21", periods=252, freq="min"),
         "open": np.full(252, 100.0),
         "high": np.full(252, 101.0),
         "low": np.full(252, 99.0),
@@ -65,7 +65,7 @@ async def test_execute_live_tick(engine):
 async def test_no_signal(engine, monkeypatch):
     monkeypatch.setattr(engine.strategies, "run_strategy", lambda *args: ({}, [], pd.Series()))
     df = pd.DataFrame({
-        "timestamp": pd.date_range("2025-08-21", periods=252, freq="T"),
+        "timestamp": pd.date_range("2025-08-21", periods=252, freq="min"),
         "open": np.full(252, 100.0),
         "high": np.full(252, 101.0),
         "low": np.full(252, 99.0),
@@ -81,7 +81,7 @@ async def test_max_positions(engine, monkeypatch):
     monkeypatch.setattr(engine.db_manager, "get_positions", AsyncMock(return_value=[{}]*1))
     engine.tp = TradingParameters(max_position_size=1)
     df = pd.DataFrame({
-        "timestamp": pd.date_range("2025-08-21", periods=252, freq="T"),
+        "timestamp": pd.date_range("2025-08-21", periods=252, freq="min"),
         "open": np.full(252, 100.0),
         "high": np.full(252, 101.0),
         "low": np.full(252, 99.0),
@@ -95,7 +95,7 @@ async def test_max_positions(engine, monkeypatch):
 @pytest.mark.asyncio
 async def test_invalid_input(engine):
     df = pd.DataFrame({
-        "timestamp": pd.date_range("2025-08-21", periods=10, freq="T"),
+        "timestamp": pd.date_range("2025-08-21", periods=10, freq="min"),
         "open": np.full(10, 100.0),
         "high": np.full(10, 101.0),
         "low": np.full(10, 99.0),

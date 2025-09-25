@@ -707,7 +707,7 @@ def unwire_gui_logs_from_adapter(handler: logging.Handler) -> None:
 # ===== Alias kompatybilnościowy dla starszych importów ===========================================
 
 # Niektóre pliki importują starą nazwę:
-#   from event_emitter_adapter import EventEmitterAdapter
+#   from KryptoLowca.event_emitter_adapter import EventEmitterAdapter
 # Utrzymujemy alias, aby uniknąć błędów po aktualizacjach.
 EventEmitterAdapter = EmitterAdapter
 

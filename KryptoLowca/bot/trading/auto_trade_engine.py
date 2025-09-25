@@ -5,7 +5,7 @@ import time
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
-from event_emitter_adapter import EventBus, EmitterAdapter, Event, EventType
+from KryptoLowca.event_emitter_adapter import EventBus, EmitterAdapter, Event, EventType
 from backtest.strategy_ma import simulate_trades_ma
 
 

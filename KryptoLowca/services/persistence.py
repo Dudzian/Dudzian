@@ -10,7 +10,7 @@ import logging
 from typing import Iterable, Union, Optional
 
 try:
-    from event_emitter_adapter import Event, EventType, EventBus
+    from KryptoLowca.event_emitter_adapter import Event, EventType, EventBus
 except Exception as e:
     raise ImportError(f"persistence: brak event_emitter_adapter ({e})")
 

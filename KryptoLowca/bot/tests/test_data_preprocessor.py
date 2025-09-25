@@ -3,10 +3,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from data_preprocessor import DataPreprocessor, PreprocessorConfig, TradingParameters
+from KryptoLowca.data_preprocessor import DataPreprocessor, PreprocessorConfig, TradingParameters
 
 def _make_ohlcv(n=200, start=1.0):
-    idx = pd.date_range("2024-01-01", periods=n, freq="H")
+    idx = pd.date_range("2024-01-01", periods=n, freq="h")
     price = pd.Series(np.cumsum(np.random.randn(n)) * 0.5 + start, index=idx).abs() + 10.0
     high = price * (1 + np.random.rand(n) * 0.01)
     low = price * (1 - np.random.rand(n) * 0.01)

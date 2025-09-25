@@ -10,7 +10,7 @@ from collections import deque
 from typing import Optional, Iterable, Union, Dict, Any, Deque, List, Tuple
 
 try:
-    from event_emitter_adapter import Event, EventType, EventBus
+    from KryptoLowca.event_emitter_adapter import Event, EventType, EventBus
 except Exception as e:
     raise ImportError(f"walkforward_service: brak event_emitter_adapter ({e})")
 

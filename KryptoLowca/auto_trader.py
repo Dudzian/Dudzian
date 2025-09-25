@@ -22,7 +22,7 @@ except Exception:
                 del self[0]
         def popleft(self): return super().pop(0)
 
-from event_emitter_adapter import EventEmitter
+from KryptoLowca.event_emitter_adapter import EventEmitter
 
 class AutoTrader:
     """

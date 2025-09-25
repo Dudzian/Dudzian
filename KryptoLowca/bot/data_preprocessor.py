@@ -21,7 +21,7 @@ import pandas as pd
 
 # Opcjonalnie do typów (nie wymagane do działania)
 try:
-    from trading_strategies import TradingParameters  # noqa: F401
+    from KryptoLowca.trading_strategies import TradingParameters  # noqa: F401
 except Exception:  # pragma: no cover
     TradingParameters = object  # type: ignore
 

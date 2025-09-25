@@ -9,7 +9,7 @@ import pytest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from database_manager import DatabaseManager, DBOptions, DatabaseConnectionError, MigrationError
+from KryptoLowca.database_manager import DatabaseManager, DBOptions, DatabaseConnectionError, MigrationError
 
 @pytest.fixture
 async def db(tmp_path):

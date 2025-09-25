@@ -10,7 +10,7 @@ from typing import Optional, Iterable, Union, Deque, Dict, Any
 from collections import deque
 
 try:
-    from event_emitter_adapter import Event, EventType, EventBus
+    from KryptoLowca.event_emitter_adapter import Event, EventType, EventBus
 except Exception as e:
     raise ImportError(f"marketdata: brak event_emitter_adapter ({e})")
 

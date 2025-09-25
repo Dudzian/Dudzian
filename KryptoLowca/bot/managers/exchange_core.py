@@ -204,7 +204,7 @@ class BaseBackend:
 # Minimalny „realistyczny” PAPER: MARKET z natychmiastowym fill’em do DB.
 # Limit/SL/TP/trailing – zostawiamy na panelu (jak dotąd).
 
-from managers.database_manager import DatabaseManager
+from KryptoLowca.managers.database_manager import DatabaseManager
 
 class PaperBackend(BaseBackend):
     FEE_RATE = 0.001  # 0.1%

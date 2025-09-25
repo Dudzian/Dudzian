@@ -1,8 +1,8 @@
 # quick_paper_test.py
 # -*- coding: utf-8 -*-
 
-from managers.database_manager import DatabaseManager
-from managers.paper_exchange import PaperExchange
+from KryptoLowca.managers.database_manager import DatabaseManager
+from KryptoLowca.managers.paper_exchange import PaperExchange
 import datetime as dt
 
 def main():

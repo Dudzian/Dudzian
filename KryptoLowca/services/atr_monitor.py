@@ -5,7 +5,7 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Deque, Dict, List, Optional
 
-from event_emitter_adapter import EventBus, EmitterAdapter, Event, EventType
+from KryptoLowca.event_emitter_adapter import EventBus, EmitterAdapter, Event, EventType
 
 
 @dataclass

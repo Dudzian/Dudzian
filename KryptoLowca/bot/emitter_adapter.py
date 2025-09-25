@@ -8,7 +8,7 @@ Lekki adapter / emitter zdarzeń do integracji z Twoim GUI tradingowym.
 - Może też logować zdarzenia do SQLite (opcjonalnie).
 
 Użycie w skrócie:
-    from event_emitter_adapter import EventEmitter, Events
+    from KryptoLowca.event_emitter_adapter import EventEmitter, Events
 
     bus = EventEmitter()
     bus.subscribe(Events.METRICS, lambda e: print("metrics:", e))

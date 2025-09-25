@@ -14,12 +14,12 @@ from pathlib import Path
 
 sys.path.append(os.getcwd())
 
-from trading_gui import TradingGUI
-from trading_strategies import TradingParameters, EngineConfig
-from managers.exchange_manager import ExchangeManager
-from managers.exchange_core import Mode
-from managers.config_manager import ConfigManager
-from database_manager import DatabaseManager
+from KryptoLowca.trading_gui import TradingGUI
+from KryptoLowca.trading_strategies import TradingParameters, EngineConfig
+from KryptoLowca.managers.exchange_manager import ExchangeManager
+from KryptoLowca.managers.exchange_core import Mode
+from KryptoLowca.managers.config_manager import ConfigManager
+from KryptoLowca.database_manager import DatabaseManager
 
 class DummyExchange:
     def __init__(self):
@@ -255,7 +255,7 @@ def test_sync_positions_from_service_spot(tmp_path, monkeypatch):
         "mode": "live",
     })
 
-    import trading_gui as tg
+    import KryptoLowca.trading_gui as tg
 
     monkeypatch.setattr(tg, "DatabaseManager", DummyDB)
     monkeypatch.setattr(tg, "SecurityManager", DummySec)

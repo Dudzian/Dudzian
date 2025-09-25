@@ -1,11 +1,16 @@
 # managers/config_manager.py
 # -*- coding: utf-8 -*-
-"""
-Lekki ConfigManager zgodny z trading_gui.py:
-- operuje na katalogu presetów (PRESETS_DIR z GUI),
-- metody: save_preset(name, dict), load_preset(name),
-- zapis w YAML (jeśli dostępny PyYAML), fallback do JSON,
-- bez importów ExchangeAdapter itp.
+"""Konsekwentny manager presetów z walidacją Pydantic.
+
+Funkcje kluczowe:
+- zapis/odczyt presetów do katalogu ``presets`` (YAML lub JSON),
+- walidacja i normalizacja ustawień GUI bota przed zapisem,
+- raportowanie błędów walidacji użytkownikowi (ValueError),
+- metody pomocnicze przydatne w GUI: listowanie, usuwanie, ścieżki plików.
+
+Walidacja wykorzystuje ``pydantic`` inspirowaną komercyjnymi botami –
+nieprawidłowe wartości (np. frakcja kapitału > 1) są blokowane, a dane
+starszych presetów są automatycznie uzupełniane domyślnymi wartościami.
 """
 
 from __future__ import annotations
@@ -15,23 +20,29 @@ import logging
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:
     _h = logging.StreamHandler()
     _h.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
     logger.addHandler(_h)
-    logger.setLevel(logging.INFO)
+logger.setLevel(logging.INFO)
 
 # YAML opcjonalnie
 try:
     import yaml  # type: ignore
+
     _HAS_YAML = True
-except Exception:
+except Exception:  # pragma: no cover - środowiska bez PyYAML
     yaml = None  # type: ignore
     _HAS_YAML = False
 
 _SANITIZE = re.compile(r"[^a-zA-Z0-9_\-\.]")
+_TIMEFRAME_PATTERN = re.compile(r"^[1-9][0-9]*(m|h|d|w)$", re.IGNORECASE)
+
 
 def _sanitize_name(name: str) -> str:
     name = (name or "").strip()
@@ -44,20 +55,166 @@ def _sanitize_name(name: str) -> str:
     return name
 
 
-class ConfigManager:
-    """
-    Minimalny manager presetów używany przez trading_gui.py
+class _SectionModel(BaseModel):
+    """Bazowa klasa modeli sekcji – pozwala na dodatkowe pola."""
 
-    Przykład:
-        cfg = ConfigManager(Path('presets'))
-        cfg.save_preset('moja_konfig', {'exchange': 'binance', 'testnet': True})
-        data = cfg.load_preset('moja_konfig')
-    """
+    model_config = ConfigDict(extra="allow")
+
+
+class AISettings(_SectionModel):
+    enable: bool = True
+    seq_len: int = Field(default=256, ge=16, le=10_000)
+    epochs: int = Field(default=10, ge=1, le=10_000)
+    batch: int = Field(default=32, ge=1, le=10_000)
+    retrain_min: int = Field(default=60, ge=1, le=100_000)
+    train_window: int = Field(default=500, ge=32, le=500_000)
+    valid_window: int = Field(default=100, ge=16, le=200_000)
+    ai_threshold_bps: float = Field(default=5.0, ge=0.0, le=10_000.0)
+    train_all: bool = True
+
+
+class RiskSettings(_SectionModel):
+    max_daily_loss_pct: float = Field(default=0.10, ge=0.0, le=1.0)
+    soft_halt_losses: int = Field(default=3, ge=0)
+    trade_cooldown_on_error: int = Field(default=30, ge=0, le=3600)
+    risk_per_trade: float = Field(default=0.01, ge=0.0, le=1.0)
+    portfolio_risk: float = Field(default=0.20, ge=0.0, le=1.0)
+    one_trade_per_bar: bool = True
+    cooldown_s: int = Field(default=0, ge=0, le=86_400)
+    min_move_pct: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
+class DcaTrailingSettings(_SectionModel):
+    use_trailing: bool = True
+    atr_period: int = Field(default=14, ge=1, le=500)
+    trail_atr_mult: float = Field(default=2.0, ge=0.0, le=20.0)
+    take_atr_mult: float = Field(default=3.0, ge=0.0, le=50.0)
+    dca_enabled: bool = False
+    dca_max_adds: int = Field(default=0, ge=0, le=50)
+    dca_step_atr: float = Field(default=2.0, ge=0.0, le=50.0)
+
+
+class SlippageSettings(_SectionModel):
+    use_orderbook_vwap: bool = True
+    fallback_bps: float = Field(default=5.0, ge=0.0, le=10_000.0)
+
+
+class AdvancedSettings(_SectionModel):
+    rsi_period: int = Field(default=14, ge=1, le=200)
+    ema_fast: int = Field(default=12, ge=1, le=500)
+    ema_slow: int = Field(default=26, ge=1, le=1_000)
+    atr_period: int = Field(default=14, ge=1, le=500)
+    rsi_buy: float = Field(default=35.0, ge=0.0, le=100.0)
+    rsi_sell: float = Field(default=65.0, ge=0.0, le=100.0)
+
+
+class PaperSettings(_SectionModel):
+    capital: float = Field(default=10_000.0, ge=0.0, le=1_000_000_000.0)
+
+
+class ConfigPreset(BaseModel):
+    """Model najwyższego poziomu opisujący pojedynczy preset."""
+
+    network: Literal["Testnet", "Live"] = "Testnet"
+    mode: Literal["Spot", "Futures"] = "Spot"
+    timeframe: str = "1m"
+    fraction: float = Field(default=0.1, ge=0.0, le=1.0)
+    ai: AISettings = Field(default_factory=AISettings)
+    risk: RiskSettings = Field(default_factory=RiskSettings)
+    dca_trailing: DcaTrailingSettings = Field(default_factory=DcaTrailingSettings)
+    slippage: SlippageSettings = Field(default_factory=SlippageSettings)
+    advanced: AdvancedSettings = Field(default_factory=AdvancedSettings)
+    paper: PaperSettings = Field(default_factory=PaperSettings)
+    selected_symbols: List[str] = Field(default_factory=list)
+
+    model_config = ConfigDict(extra="allow")
+
+    @field_validator("timeframe")
+    @classmethod
+    def _validate_timeframe(cls, value: Any) -> str:
+        tf = str(value or "").strip()
+        if not tf:
+            raise ValueError("Pole 'timeframe' nie może być puste.")
+        if not _TIMEFRAME_PATTERN.match(tf):
+            raise ValueError("Timeframe musi mieć format np. '1m', '4h', '1d'.")
+        return tf.lower()
+
+    @field_validator("fraction")
+    @classmethod
+    def _validate_fraction(cls, value: Any) -> float:
+        try:
+            fraction = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Frakcja kapitału musi być liczbą.") from exc
+        if fraction < 0.0 or fraction > 1.0:
+            raise ValueError("Frakcja kapitału musi być w zakresie 0.0 - 1.0.")
+        return round(fraction, 4)
+
+    @field_validator("selected_symbols", mode="before")
+    @classmethod
+    def _clean_symbols(cls, value: Any) -> List[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            value = [value]
+        cleaned: List[str] = []
+        for item in value:
+            if not isinstance(item, str):
+                continue
+            sym = item.strip().upper()
+            if sym:
+                cleaned.append(sym)
+        # usuwamy duplikaty zachowując kolejność
+        deduped: List[str] = []
+        seen = set()
+        for sym in cleaned:
+            if sym not in seen:
+                seen.add(sym)
+                deduped.append(sym)
+        return deduped
+
+    @model_validator(mode="after")
+    def _post_validation(self) -> "ConfigPreset":
+        if self.mode == "Futures" and self.network == "Live":
+            logger.warning(
+                "Preset używa trybu Futures na Live – upewnij się, że konto ma odpowiednie uprawnienia (zalecane testy na testnet)."
+            )
+        if self.fraction == 0.0:
+            logger.warning(
+                "Preset zapisany z frakcją 0.0 – bot nie będzie otwierał nowych pozycji, traktuj to jako tryb tylko-do-oglądania."
+            )
+        if self.paper.capital < 100.0:
+            logger.warning(
+                "Preset posiada bardzo niski kapitał symulacyjny (%.2f). Rozważ >= 100 USD dla sensownych testów.",
+                self.paper.capital,
+            )
+        return self
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Zwróć słownik bez pól None – gotowy do serializacji."""
+        return self.model_dump(mode="python", exclude_none=True)
+
+
+class ConfigManager:
+    """Manager presetów wykorzystywany przez ``trading_gui.py``."""
 
     def __init__(self, presets_dir: Path | str) -> None:
         self.presets_dir = Path(presets_dir)
         self.presets_dir.mkdir(parents=True, exist_ok=True)
         logger.info("ConfigManager: katalog presetów = %s", self.presets_dir)
+
+    # --- walidacja ---
+    def validate_preset(self, data: Dict[str, Any]) -> ConfigPreset:
+        """Zwróć obiekt ``ConfigPreset`` po walidacji danych wejściowych."""
+
+        try:
+            preset = ConfigPreset.model_validate(data)
+        except ValidationError as exc:  # pragma: no cover - trudne do pełnego pokrycia
+            errors = "; ".join(
+                f"{'.'.join(str(loc) for loc in err['loc'])}: {err['msg']}" for err in exc.errors()
+            )
+            raise ValueError(f"Preset validation failed: {errors}") from exc
+        return preset
 
     # --- ścieżki ---
     def _path_yaml(self, safe_name: str) -> Path:
@@ -81,19 +238,22 @@ class ConfigManager:
         if not isinstance(data, dict):
             raise ValueError("Preset musi być słownikiem (dict).")
 
+        preset = self.validate_preset(data)
+        payload = preset.to_dict()
+
         if _HAS_YAML:
             path = self._path_yaml(safe)
             try:
                 with path.open("w", encoding="utf-8") as f:
-                    yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)  # type: ignore
+                    yaml.safe_dump(payload, f, allow_unicode=True, sort_keys=False)  # type: ignore[arg-type]
                 logger.info("Zapisano preset YAML: %s", path)
                 return path
-            except Exception as e:
+            except Exception as e:  # pragma: no cover - zależne od dysku/środowiska
                 logger.error("Błąd zapisu YAML (%s): %s – próba JSON", path, e)
 
         path = self._path_json(safe)
         with path.open("w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+            json.dump(payload, f, ensure_ascii=False, indent=2)
         logger.info("Zapisano preset JSON: %s", path)
         return path
 
@@ -105,18 +265,22 @@ class ConfigManager:
 
         if path.suffix.lower() in {".yml", ".yaml"}:
             if not _HAS_YAML:
-                raise RuntimeError("Preset jest w YAML, ale PyYAML nie jest zainstalowany. Zainstaluj: pip install pyyaml")
+                raise RuntimeError(
+                    "Preset jest w YAML, ale PyYAML nie jest zainstalowany. Zainstaluj: pip install pyyaml"
+                )
             with path.open("r", encoding="utf-8") as f:
-                data = yaml.safe_load(f)  # type: ignore
-            if not isinstance(data, dict):
-                raise ValueError(f"Preset '{name}' ma niepoprawną strukturę (oczekiwano dict).")
-            return data  # type: ignore
+                data = yaml.safe_load(f)  # type: ignore[assignment]
+        else:
+            with path.open("r", encoding="utf-8") as f:
+                data = json.load(f)
 
-        with path.open("r", encoding="utf-8") as f:
-            data = json.load(f)
         if not isinstance(data, dict):
             raise ValueError(f"Preset '{name}' ma niepoprawną strukturę (oczekiwano dict).")
-        return data  # type: ignore
+
+        preset = self.validate_preset(data)
+        payload = preset.to_dict()
+        logger.info("Załadowano preset %s (znormalizowany)", path)
+        return payload
 
     # --- dodatki przydatne w GUI ---
     def list_presets(self) -> List[str]:
@@ -137,7 +301,7 @@ class ConfigManager:
                 if p.exists():
                     p.unlink()
                     ok = True
-            except Exception as e:
+            except Exception as e:  # pragma: no cover - błędy IO
                 logger.error("Nie udało się usunąć presetu %s: %s", p, e)
         return ok
 
@@ -145,3 +309,15 @@ class ConfigManager:
         safe = _sanitize_name(name)
         p = self._pick_existing_path(safe)
         return p if p is not None else self._path_yaml(safe)
+
+
+__all__ = [
+    "ConfigManager",
+    "ConfigPreset",
+    "AISettings",
+    "RiskSettings",
+    "DcaTrailingSettings",
+    "SlippageSettings",
+    "AdvancedSettings",
+    "PaperSettings",
+]

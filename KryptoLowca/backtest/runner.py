@@ -19,7 +19,7 @@ if PROJECT_ROOT not in sys.path:
 
 # Importy – działają zarówno przy `python -m backtest.runner`, jak i `python backtest\runner.py`
 try:
-    from managers.exchange_manager import ExchangeManager
+    from KryptoLowca.managers.exchange_manager import ExchangeManager
 except ImportError as e:
     raise SystemExit(f"[ImportError] Nie znaleziono pakietu 'managers'. Upewnij się, że uruchamiasz z katalogu projektu. Szczegóły: {e}")
 
