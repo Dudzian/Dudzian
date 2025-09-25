@@ -6,7 +6,6 @@ import threading
 import time
 import statistics
 from typing import Optional, List, Dict, Any, Callable, Tuple
-
 import inspect
 
 import pandas as pd
@@ -24,7 +23,6 @@ except Exception:
 
 from KryptoLowca.event_emitter_adapter import EventEmitter
 from KryptoLowca.logging_utils import get_logger
-
 
 logger = get_logger(__name__)
 
@@ -131,7 +129,17 @@ class AutoTrader:
         self.emitter.log(f"AutoTrader reconfigured: {kwargs}", component="AutoTrader")
 
     # -- Event handlers --
-    def _on_trade_closed(self, symbol: str, side: str, entry: float, exit: float, pnl: float, ts: float, meta: Dict[str, Any] | None = None, **_) -> None:
+    def _on_trade_closed(
+        self,
+        symbol: str,
+        side: str,
+        entry: float,
+        exit: float,
+        pnl: float,
+        ts: float,
+        meta: Dict[str, Any] | None = None,
+        **_,
+    ) -> None:
         self._closed_pnls.append(pnl)
         pf, exp, win_rate = self._compute_metrics()
         self.emitter.emit(
@@ -143,9 +151,10 @@ class AutoTrader:
             ts=time.time(),
         )
         self._persist_performance_metrics(symbol, pf, exp, win_rate)
+
         # Check thresholds
         trigger_reason = None
-        details = {}
+        details: Dict[str, Any] = {}
         if pf is not None and pf < self.pf_min:
             trigger_reason = "pf_drop"
             details["pf"] = pf

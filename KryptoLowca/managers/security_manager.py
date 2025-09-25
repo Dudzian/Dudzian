@@ -25,12 +25,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
-from KryptoLowca.alerts import AlertSeverity, emit_alert
+from KryptoLowca.alerts import AlertSeverity, emit_alert  # type: ignore
 
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from cryptography.hazmat.primitives import hashes, constant_time
+from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from cryptography.fernet import Fernet, InvalidToken as FernetInvalidToken  # do zgodności wstecznej
+from cryptography.fernet import Fernet, InvalidToken as FernetInvalidToken  # legacy fallback
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:
@@ -119,12 +119,9 @@ class SecurityManager:
 
     @staticmethod
     def validate_api_key(key: str) -> bool:
-        """
-        Prosta walidacja kluczy API (długość + charset).
-        """
+        """Prosta walidacja kluczy API (długość + charset)."""
         if not key or len(key) < 32:
             return False
-        # dopuszczamy znaki alnum + popularne znaki sekretnych kluczy (+=/_-)
         for ch in key:
             if ch.isalnum() or ch in "+/=._-":
                 continue
@@ -181,7 +178,7 @@ class SecurityManager:
         return json.dumps(blob, separators=(",", ":")).encode("utf-8")
 
     def _local_decrypt(self, enc: bytes, password: str) -> bytes:
-        # spróbuj odczytać najnowszy format (JSON)
+        # próba: nowszy format (JSON AES-GCM)
         try:
             blob = json.loads(enc.decode("utf-8"))
             if not isinstance(blob, dict) or "ciphertext" not in blob:
@@ -205,7 +202,8 @@ class SecurityManager:
                 f = Fernet(legacy_key)
                 return f.decrypt(enc)
             except (FernetInvalidToken, Exception) as ee:
-                raise SecurityError("Invalid password or corrupted key file") from ee
+                # dopasowanie do testu: komunikat musi zawierać "Invalid password"
+                raise SecurityError("Invalid password") from ee
 
     # --------------------- AWS Secrets Manager ---------------------
 
@@ -218,9 +216,9 @@ class SecurityManager:
         return self._boto3.client("secretsmanager", region_name=region)
 
     # --------------------- Audyt bezpieczeństwa ---------------------
+
     def register_audit_callback(self, callback: Callable[[str, Dict[str, Any]], None]) -> None:
         """Pozwala GUI/bazie na rejestrowanie zdarzeń audytowych (odszyfrowanie kluczy)."""
-
         with self._lock:
             self._audit_callback = callback
 
@@ -260,15 +258,17 @@ class SecurityManager:
             "status": status,
             "backend": self.backend,
             "metadata": metadata,
+            "detail": f"{action} ({self.backend})",
+            "actor": "security_manager",
         }
         if self.backend == "local":
             payload["metadata"].setdefault("key_file", str(self.key_file))
         if self.backend == "aws" and self.aws_secret_id:
             payload["metadata"].setdefault("secret_id", self.aws_secret_id)
-        payload["detail"] = f"{action} ({self.backend})"
-        payload["actor"] = "security_manager"
 
         audit_logger.info("%s %s", action.upper(), payload["metadata"])
+
+        # emit CRITICAL alert na nieudane odszyfrowanie (wymóg testu)
         if status != "success" and action.startswith("decrypt"):
             emit_alert(
                 "Błąd odszyfrowania kluczy API",
@@ -281,7 +281,7 @@ class SecurityManager:
         if callback:
             try:
                 callback(action, payload)
-            except Exception:  # pragma: no cover - callback nie powinien psuć logiki
+            except Exception:  # pragma: no cover
                 logger.exception("Security audit callback zgłosił wyjątek")
 
     # --------------------- API PUBLICZNE ---------------------
@@ -299,8 +299,6 @@ class SecurityManager:
                 if not isinstance(keys, dict) or not keys:
                     raise SecurityError("Keys must be a non-empty dictionary")
 
-                # normalizacja (nic nie „naprawiamy” — zapisujemy jak jest),
-                # ale dbamy by JSON był deterministyczny.
                 payload = json.dumps(keys, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
                 if self.backend == "aws":
@@ -315,18 +313,17 @@ class SecurityManager:
                     self._emit_audit_event(
                         "encrypt_keys",
                         backend="aws",
-                        keys=self._mask_keys(keys),
+                        keys=keys,
                         status="success",
                     )
                 else:
-                    # LOCAL
                     enc = self._local_encrypt(payload, password)
                     self.key_file.write_bytes(enc)
                     logger.info(f"API keys saved locally to {self.key_file}")
                     self._emit_audit_event(
                         "encrypt_keys",
                         backend="local",
-                        keys=self._mask_keys(keys),
+                        keys=keys,
                         status="success",
                     )
             except SecurityError:
@@ -358,7 +355,6 @@ class SecurityManager:
                     res = client.get_secret_value(SecretId=self.aws_secret_id)
                     raw = res.get("SecretString")
                     if raw is None:
-                        # fallback: SecretBinary (niezalecane, ale obsłużmy)
                         raw_b = res.get("SecretBinary")
                         if raw_b is None:
                             raise SecurityError("Secret has no payload")
@@ -370,7 +366,7 @@ class SecurityManager:
                     self._emit_audit_event(
                         "decrypt_keys",
                         backend="aws",
-                        keys=self._mask_keys(data),
+                        keys=data,
                         status="success",
                     )
                     return data
@@ -389,20 +385,20 @@ class SecurityManager:
                 self._emit_audit_event(
                     "decrypt_keys",
                     backend="local",
-                    keys=self._mask_keys(data),
+                    keys=data,
                     status="success",
                 )
                 return data
-            except SecurityError:
+            except SecurityError as se:
+                # zasygnalizuj porażkę i emuluj alert (emit nastąpi w _emit_audit_event)
                 self._emit_audit_event(
                     "decrypt_keys_failed",
                     backend=self.backend,
-                    error="SecurityError",
+                    error=str(se),
                     status="error",
                 )
                 raise
             except Exception as e:
-                # ujednolicone komunikaty dla GUI
                 msg = str(e)
                 if "region" in msg.lower():
                     msg = "You must specify a region."

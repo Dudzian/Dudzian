@@ -91,7 +91,7 @@ class ExchangeConfig:
     api_key: str = ""
     api_secret: str = ""
     testnet: bool = True
-    # rozszerzenia z gałęzi codex/*
+    # rozszerzenia: limity/alerty/retry
     rate_limit_per_minute: int = 1200
     rate_limit_window_seconds: float = 60.0
     rate_limit_alert_threshold: float = 0.85
@@ -100,6 +100,7 @@ class ExchangeConfig:
     retry_attempts: int = 1
     retry_delay: float = 0.05
     require_demo_mode: bool = True
+    # rozszerzenia telemetryczne (opcjonalne)
     telemetry_log_interval_s: float = 30.0
     telemetry_schema_version: int = 1
     telemetry_storage_path: Optional[str] = None
@@ -130,6 +131,8 @@ class ExchangeConfig:
             raise ValidationError("telemetry_grpc_target musi być tekstem lub None")
         if not isinstance(self.rate_limit_buckets, list):
             raise ValidationError("rate_limit_buckets musi być listą")
+
+        # normalizacja kubełków
         cleaned_buckets: List[Dict[str, Any]] = []
         for bucket in self.rate_limit_buckets:
             if not isinstance(bucket, dict):
@@ -141,6 +144,8 @@ class ExchangeConfig:
             name = str(bucket.get("name") or f"bucket_{len(cleaned_buckets) + 1}")
             cleaned_buckets.append({"name": name, "capacity": capacity, "window_seconds": window})
         self.rate_limit_buckets = cleaned_buckets
+
+        # rzutowania
         self.retry_attempts = int(self.retry_attempts)
         self.retry_delay = float(self.retry_delay)
         self.require_demo_mode = bool(self.require_demo_mode)

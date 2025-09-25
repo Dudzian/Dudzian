@@ -1,4 +1,4 @@
-# test_database_manager.py
+# tests/test_database_manager.py
 # -*- coding: utf-8 -*-
 """
 Unit tests for database_manager.py.
@@ -9,15 +9,22 @@ import pytest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from KryptoLowca.database_manager import DatabaseManager, DBOptions, DatabaseConnectionError, MigrationError
+from KryptoLowca.database_manager import (
+    DatabaseManager,
+    DBOptions,
+    DatabaseConnectionError,
+    MigrationError,
+)
 from KryptoLowca.managers.database_manager import CURRENT_SCHEMA_VERSION
 
+
 @pytest.fixture
-async def db(tmp_path):
+async def db(tmp_path: Path):
     options = DBOptions(db_url=f"sqlite+aiosqlite:///{tmp_path}/test.db", timeout_s=10.0)
     db = await DatabaseManager.create(options)
     user_id = await db.ensure_user("tester@example.com")
     return db, user_id
+
 
 @pytest.mark.asyncio
 async def test_user_and_config(db):
@@ -27,6 +34,7 @@ async def test_user_and_config(db):
     await dbm.save_user_config(uid, "default", preset)
     loaded = await dbm.load_user_config(uid, "default")
     assert loaded == preset
+
 
 @pytest.mark.asyncio
 async def test_logging_and_export(db):
@@ -42,6 +50,7 @@ async def test_logging_and_export(db):
     json_data = await dbm.export_logs(rows, fmt="json")
     parsed = json.loads(json_data)
     assert parsed[0]["context"]["k"] == 1
+
 
 @pytest.mark.asyncio
 async def test_trades_and_pnl(db):
@@ -59,6 +68,7 @@ async def test_trades_and_pnl(db):
     pnl_daily = await dbm.get_pnl_by_symbol(uid, group_by="day")
     assert len(pnl_daily) > 0
 
+
 @pytest.mark.asyncio
 async def test_positions(db):
     dbm, uid = db
@@ -69,16 +79,21 @@ async def test_positions(db):
     assert pytest.approx(pos[0]["qty"], 1e-8) == 0.75
     assert pytest.approx(pos[0]["avg_entry"], 1e-8) == 31000.0
 
+
 @pytest.mark.asyncio
 async def test_reporting_feed(db):
     dbm, uid = db
     now = datetime.now(timezone.utc).isoformat()
-    await dbm.insert_trade(uid, {"ts": now, "symbol": "ADAUSDT", "side": "BUY", "qty": 100, "entry": 0.5, "pnl": 5})
+    await dbm.insert_trade(
+        uid,
+        {"ts": now, "symbol": "ADAUSDT", "side": "BUY", "qty": 100, "entry": 0.5, "pnl": 5},
+    )
     feed = await dbm.feed_reporting_trades(uid, "ADAUSDT")
     assert feed and "commission" in feed[0] and "slippage" in feed[0]
 
+
 @pytest.mark.asyncio
-async def test_backup_restore(db, tmp_path):
+async def test_backup_restore(db, tmp_path: Path):
     dbm, uid = db
     backup_path = tmp_path / "backup.db"
     await dbm.log(uid, "INFO", "test")
@@ -87,6 +102,7 @@ async def test_backup_restore(db, tmp_path):
     await dbm.restore_database(backup_path)
     logs = await dbm.get_logs(uid)
     assert len(logs) == 1
+
 
 @pytest.mark.asyncio
 async def test_invalid_input(db):
@@ -136,6 +152,7 @@ async def test_performance_and_risk_logging(db):
     limits = await dbm.fetch_risk_limits(symbol="BTC/USDT")
     assert limits and limits[0]["symbol"] == "BTC/USDT"
 
+    # --- Extended telemetry/audit logging ---
     rate_id = await dbm.log_rate_limit_snapshot(
         {
             "bucket_name": "global",

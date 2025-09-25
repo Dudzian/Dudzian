@@ -43,7 +43,7 @@ def test_invalid_password(security_manager: SecurityManager) -> None:
 
 
 def test_missing_key_file(security_manager: SecurityManager) -> None:
-    with pytest.raises(SecurityError, match="Key file .* not found"):
+    with pytest.raises(SecurityError, match=r"Key file .* not found"):
         security_manager.load_encrypted_keys("password123")
 
 
@@ -78,11 +78,14 @@ def test_audit_callback_records_events(security_manager: SecurityManager) -> Non
     actions = [action for action, _ in events]
     assert "encrypt_keys" in actions
     assert "decrypt_keys" in actions
+
+    # Verify masking in audit metadata (nothing sensitive in clear text)
     encrypt_payload = next(payload for action, payload in events if action == "encrypt_keys")
     assert encrypt_payload["status"] == "success"
     masked_key = encrypt_payload["metadata"]["keys"]["testnet"]["key"]
     assert masked_key != keys["testnet"]["key"]
     assert "***" in masked_key
+
     decrypt_payload = next(payload for action, payload in events if action == "decrypt_keys")
     assert decrypt_payload["status"] == "success"
     masked_secret = decrypt_payload["metadata"]["keys"]["live"]["secret"]
@@ -106,4 +109,5 @@ def test_decrypt_failure_emits_alert(security_manager: SecurityManager) -> None:
             security_manager.load_encrypted_keys("wrong-pass")
     finally:
         dispatcher.unregister(token)
-    assert any(event.severity == AlertSeverity.CRITICAL for event in received)
+
+    assert any(getattr(event, "severity", None) == AlertSeverity.CRITICAL for event in received)

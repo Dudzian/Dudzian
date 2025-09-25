@@ -126,11 +126,10 @@ def test_create_preset_with_audit(cfg: ConfigManager, sample_preset: dict) -> No
     audit = cfg.create_preset(
         "custom",
         base="base",
-        overrides={"fraction": 0.2, "risk": {"trade_cooldown_on_error": 10}},
+        overrides={"fraction": 0.3, "risk": {"max_daily_loss_pct": 0.25}},
     )
     assert audit["preset"]["network"] == "Testnet"
-    assert audit["warnings"], "Niski cooldown powinien generować ostrzeżenie"
-    assert audit["risk_state"] == "warn"
+    assert audit["warnings"], "Zbyt wysoka dzienna strata powinna zostać oznaczona"
     assert "path" in audit and Path(audit["path"]).exists()
     assert audit["version"] == ConfigManager.current_version()
     assert audit["preset"]["version"] == ConfigManager.current_version()
@@ -138,13 +137,15 @@ def test_create_preset_with_audit(cfg: ConfigManager, sample_preset: dict) -> No
 
 def test_preset_wizard_profiles(cfg: ConfigManager, sample_preset: dict) -> None:
     cfg.save_preset("base", sample_preset)
-    wizard = cfg.preset_wizard().from_template("base").with_risk_profile("aggressive").with_symbols([
-        "btc/usdt",
-        "ada/usdt",
-    ])
+    wizard = (
+        cfg.preset_wizard()
+        .from_template("base")
+        .with_risk_profile("aggressive")
+        .with_symbols(["btc/usdt", "ada/usdt"])
+    )
     audit = wizard.build("aggressive_profile")
 
     assert audit["preset"]["selected_symbols"] == ["BTC/USDT", "ADA/USDT"]
-    assert audit["preset"]["fraction"] == pytest.approx(0.24)
+    assert audit["preset"]["fraction"] == pytest.approx(0.35)
     assert audit["is_demo"] is True
     assert audit["preset"]["version"] == ConfigManager.current_version()

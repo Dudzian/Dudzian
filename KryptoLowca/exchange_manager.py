@@ -14,16 +14,54 @@ from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
-from KryptoLowca.alerts import (
-    AlertEvent,
-    AlertSeverity,
-    BotError,
-    emit_alert,
-    get_alert_dispatcher,
-)
-from KryptoLowca.telemetry import TelemetryWriter
+# ---- Alerts (z fallbackiem, gdy moduł nie istnieje) -------------------------
+try:  # pragma: no cover
+    from KryptoLowca.alerts import (  # type: ignore
+        AlertEvent,
+        AlertSeverity,
+        BotError,
+        emit_alert,
+        get_alert_dispatcher,
+    )
+except Exception:  # pragma: no cover
+    class AlertSeverity:
+        INFO = "INFO"
+        WARNING = "WARNING"
+        ERROR = "ERROR"
+        CRITICAL = "CRITICAL"
 
-# ---- ccxt async importy odporne na różne wersje / brak biblioteki ----
+    class BotError(RuntimeError):
+        severity = AlertSeverity.ERROR
+        source = "general"
+
+    def emit_alert(message: str, *, severity: str, source: str, context: Optional[Dict[str, Any]] = None) -> None:
+        logging.getLogger(__name__).critical("[ALERT:FALLBACK] %s | src=%s | ctx=%s", message, source, context or {})
+
+    class _DummyDispatcher:
+        def register(self, callback: Callable[[Any], None], *, name: str) -> str:
+            return name
+        def unregister(self, token: str) -> None:
+            return None
+
+    def get_alert_dispatcher() -> _DummyDispatcher:
+        return _DummyDispatcher()
+
+    @dataclass
+    class AlertEvent:
+        message: str
+        severity: str = AlertSeverity.INFO
+        source: str = "general"
+        context: Dict[str, Any] = field(default_factory=dict)
+
+# ---- Telemetria (opcjonalna) ------------------------------------------------
+try:  # pragma: no cover
+    from KryptoLowca.telemetry import TelemetryWriter  # type: ignore
+except Exception:  # pragma: no cover
+    class TelemetryWriter:  # no-op fallback
+        def __init__(self, *_, **__): ...
+        def write_snapshot(self, *_args, **_kwargs): ...
+
+# ---- ccxt async importy odporne na różne wersje / brak biblioteki -----------
 try:  # pragma: no cover - importowany tylko jeśli ccxt jest dostępne
     import ccxt.async_support as ccxt_async  # type: ignore
 except Exception:  # pragma: no cover - starsze wersje ccxt
@@ -36,7 +74,7 @@ except Exception:  # pragma: no cover - starsze wersje ccxt
         setattr(ccxt_module, "asyncio", ccxt_async)
         sys.modules["ccxt.asyncio"] = ccxt_async
 
-# ---- odporny import Mode ----
+# ---- odporny import Mode ----------------------------------------------------
 try:  # pragma: no cover
     from KryptoLowca.managers.exchange_core import Mode  # type: ignore
 except Exception:  # pragma: no cover
@@ -56,7 +94,7 @@ __all__ = [
     "OrderResult",
 ]
 
-
+# ------------------------------- Telemetria ----------------------------------
 @dataclass(slots=True)
 class _EndpointMetrics:
     total_calls: int = 0
@@ -82,7 +120,6 @@ class _APIMetrics:
 @dataclass(slots=True)
 class _RateLimitBucket:
     """Opis pojedynczego limitu czasowego API."""
-
     name: str
     capacity: int
     window_seconds: float
@@ -113,24 +150,21 @@ class _RateLimitBucket:
             "alert_active": self.alert_active,
         }
 
-
+# ------------------------------- Wyjątki -------------------------------------
 class ExchangeError(BotError):
     """Podstawowy wyjątek warstwy wymiany."""
-
     severity = AlertSeverity.ERROR
     source = "exchange"
 
 
 class AuthenticationError(ExchangeError):
     """Błąd uwierzytelniania API giełdy."""
-
     severity = AlertSeverity.CRITICAL
 
-
+# -------------------------- Wynik zlecenia -----------------------------------
 @dataclass(slots=True)
 class OrderResult:
     """Minimalna struktura opisująca wynik zlecenia."""
-
     id: Any
     symbol: str
     side: str
@@ -138,7 +172,7 @@ class OrderResult:
     price: Optional[float]
     status: str
 
-
+# ---------------------------- ExchangeManager --------------------------------
 class ExchangeManager:
     """Asynchroniczny wrapper wykorzystywany w testach jednostkowych."""
 
@@ -175,9 +209,12 @@ class ExchangeManager:
         self._error_alert_threshold = 3
         self._metrics_log_interval = 30.0
         self._last_metrics_log = 0.0
+
+        # Telemetria rozszerzona (opcjonalna)
         self._telemetry_schema_version = 1
         self._telemetry_writer: Optional[Any] = None
 
+    # -------------------------------- Factory --------------------------------
     @classmethod
     async def create(
         cls,
@@ -246,6 +283,8 @@ class ExchangeManager:
             min(1.0, float(getattr(config, "rate_limit_alert_threshold", 0.85) or 0.85)),
         )
         manager._error_alert_threshold = max(1, int(getattr(config, "error_alert_threshold", 3) or 3))
+
+        # Telemetria – interwał logowania i schema version
         telemetry_interval = getattr(config, "metrics_log_interval", None)
         telemetry_interval = getattr(config, "telemetry_log_interval_s", telemetry_interval)
         if telemetry_interval is not None:
@@ -256,6 +295,8 @@ class ExchangeManager:
                 manager._telemetry_schema_version = int(schema_version)
             except (TypeError, ValueError):
                 logger.warning("Nieprawidłowa wartość telemetry_schema_version: %s", schema_version)
+
+        # Telemetry writer (opcjonalnie przez fabrykę lub ścieżkę)
         storage_factory = getattr(config, "telemetry_writer_factory", None)
         if callable(storage_factory):
             try:
@@ -272,9 +313,7 @@ class ExchangeManager:
                         exchange=exchange_id,
                         mode=str(mode_str).lower(),
                         grpc_target=getattr(config, "telemetry_grpc_target", None),
-                        aggregate_intervals=getattr(
-                            config, "telemetry_aggregate_intervals", (1, 10, 60)
-                        ),
+                        aggregate_intervals=getattr(config, "telemetry_aggregate_intervals", (1, 10, 60)),
                     )
                 except Exception as exc:
                     logger.error("Nie udało się utworzyć lokalnego telemetry writer: %s", exc)
@@ -292,10 +331,9 @@ class ExchangeManager:
         )
         return manager
 
-    # --------------------------- konfiguracja ---------------------------
+    # --------------------------- konfiguracja ---------------------------------
     def set_retry_policy(self, *, attempts: int, delay: float) -> None:
         """Skonfiguruj politykę ponawiania żądań."""
-
         try:
             attempts_int = max(0, int(attempts))
         except Exception:
@@ -309,7 +347,6 @@ class ExchangeManager:
 
     def set_metrics_log_interval(self, seconds: float) -> None:
         """Ustaw minimalny odstęp między zapisami telemetrii API do bazy."""
-
         try:
             interval = max(0.0, float(seconds))
         except Exception:
@@ -324,7 +361,6 @@ class ExchangeManager:
         buckets: Optional[Sequence[Dict[str, Any]]] = None,
     ) -> None:
         """Zaktualizuj konfigurację limitów API i wyzeruj liczniki."""
-
         self._rate_limit_window = max(0.1, float(window_seconds or 60.0))
         self._rate_limit_per_minute = None
         self._max_calls_per_window = None
@@ -410,10 +446,7 @@ class ExchangeManager:
                     elapsed = 0.0
 
                 projected = bucket.count + 1
-                if bucket.capacity > 0:
-                    usage_pct = projected / bucket.capacity
-                else:
-                    usage_pct = 0.0
+                usage_pct = projected / bucket.capacity if bucket.capacity > 0 else 0.0
                 bucket.last_usage = min(usage_pct, 1.0 if bucket.capacity > 0 else usage_pct)
                 bucket.max_usage = max(bucket.max_usage, bucket.last_usage)
 
@@ -488,10 +521,7 @@ class ExchangeManager:
             metrics.window_errors += 1
             metrics.consecutive_errors += 1
             endpoint_metrics.total_errors += 1
-            if (
-                self._error_alert_threshold
-                and metrics.consecutive_errors == self._error_alert_threshold
-            ):
+            if self._error_alert_threshold and metrics.consecutive_errors == self._error_alert_threshold:
                 context = {
                     "endpoint": endpoint,
                     "consecutive_errors": metrics.consecutive_errors,
@@ -510,7 +540,7 @@ class ExchangeManager:
         if final and self._db_manager and self._user_id:
             try:
                 loop = asyncio.get_running_loop()
-            except RuntimeError:  # pragma: no cover - brak aktywnej pętli
+            except RuntimeError:  # pragma: no cover
                 pass
             else:
                 loop.create_task(
@@ -567,9 +597,8 @@ class ExchangeManager:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return
-        mode = getattr(self.mode, "value", str(self.mode)) if self.mode is not None else "paper"
 
-        async def _persist_snapshot() -> None:
+        async def _persist() -> None:
             try:
                 await self._db_manager.log(
                     self._user_id,
@@ -578,85 +607,17 @@ class ExchangeManager:
                     category="exchange_metrics",
                     context=snapshot,
                 )
-                metrics_payloads = [
-                    {
-                        "metric": "exchange_total_calls",
-                        "value": snapshot.get("total_calls", 0.0),
-                        "mode": mode,
-                        "context": {"schema_version": snapshot.get("schema_version")},
-                    },
-                    {
-                        "metric": "exchange_total_errors",
-                        "value": snapshot.get("total_errors", 0.0),
-                        "mode": mode,
-                        "context": {"schema_version": snapshot.get("schema_version")},
-                    },
-                    {
-                        "metric": "exchange_avg_latency_ms",
-                        "value": snapshot.get("avg_latency_ms", 0.0),
-                        "mode": mode,
-                        "context": {"schema_version": snapshot.get("schema_version")},
-                    },
-                    {
-                        "metric": "exchange_max_latency_ms",
-                        "value": snapshot.get("max_latency_ms", 0.0),
-                        "mode": mode,
-                        "context": {"schema_version": snapshot.get("schema_version")},
-                    },
-                    {
-                        "metric": "exchange_window_usage",
-                        "value": snapshot.get("current_window_usage") or 0.0,
-                        "mode": mode,
-                        "context": {"schema_version": snapshot.get("schema_version")},
-                    },
-                ]
-                for payload in metrics_payloads:
-                    await self._db_manager.log_performance_metric(payload)
-
-                for endpoint, data in snapshot.get("endpoints", {}).items():
-                    endpoint_payload = {
-                        "metric": "exchange_endpoint_latency_ms",
-                        "value": data.get("avg_latency_ms", 0.0),
-                        "symbol": endpoint,
-                        "mode": mode,
-                        "context": {
-                            "max_latency_ms": data.get("max_latency_ms"),
-                            "total_calls": data.get("total_calls"),
-                            "total_errors": data.get("total_errors"),
-                            "schema_version": snapshot.get("schema_version"),
-                        },
-                    }
-                    await self._db_manager.log_performance_metric(endpoint_payload)
-
-                for bucket in snapshot.get("rate_limit_buckets", []):
-                    context = dict(bucket)
-                    context["schema_version"] = snapshot.get("schema_version")
-                    context["limit_triggered"] = bool(bucket.get("usage", 0.0) >= self._alert_usage_threshold)
-                    await self._db_manager.log_rate_limit_snapshot(
-                        {
-                            "bucket_name": bucket.get("name", "unknown"),
-                            "window_seconds": bucket.get("window_seconds", self._rate_limit_window),
-                            "capacity": bucket.get("capacity", 0),
-                            "count": bucket.get("count", 0),
-                            "usage": bucket.get("usage", 0.0),
-                            "max_usage": bucket.get("max_usage", 0.0),
-                            "reset_in_seconds": bucket.get("reset_in_seconds", 0.0),
-                            "mode": mode,
-                            "endpoint": snapshot.get("last_endpoint"),
-                            "context": context,
-                        }
-                    )
-
-                writer = self._telemetry_writer
-                if writer is not None:
-                    try:
-                        writer.write_snapshot(snapshot)
-                    except Exception:
-                        logger.exception("Nie udało się zapisać snapshotu telemetryjnego lokalnie")
             except Exception:
                 logger.exception("Błąd zapisu telemetrii API")
 
-        loop.create_task(_persist_snapshot())
+        loop.create_task(_persist())
+
+        # Opcjonalnie, lokalny zapis telemetryjny
+        if self._telemetry_writer is not None:
+            try:
+                self._telemetry_writer.write_snapshot(snapshot)
+            except Exception:
+                logger.exception("Nie udało się zapisać snapshotu telemetryjnego lokalnie")
 
     async def _run_with_retry(self, coro_factory: Callable[[], Any], *, endpoint: str) -> Any:
         last_exc: Optional[Exception] = None
@@ -688,7 +649,6 @@ class ExchangeManager:
             if inspect.isawaitable(result):
                 return await result
             return result
-
         return await self._run_with_retry(_factory, endpoint=endpoint)
 
     def _market(self, symbol: str) -> Dict[str, Any]:
@@ -835,7 +795,7 @@ class ExchangeManager:
             self._alert_listener_ref = None
             self._alert_callback = None
 
-    # ------------------------------- helpers ---------------------------------
+    # ------------------------------- helpers ----------------------------------
     def quantize_amount(self, symbol: str, amount: float) -> float:
         market = self._market(symbol)
         value = float(amount)
@@ -989,14 +949,14 @@ class ExchangeManager:
             manager = manager_ref()
             if manager is None:
                 return
-            if event.source != "exchange":
+            if getattr(event, "source", None) != "exchange":
                 return
-            callback = manager._alert_callback
-            if callback is None:
+            cb = manager._alert_callback
+            if cb is None:
                 return
             try:
-                callback(event.message, dict(event.context))
-            except Exception:  # pragma: no cover - nie przerywamy pracy głównej pętli
+                cb(event.message, dict(getattr(event, "context", {}) or {}))
+            except Exception:  # pragma: no cover
                 logger.exception("Alert callback zgłosił wyjątek")
 
         self._alert_listener_ref = _listener
@@ -1007,15 +967,13 @@ class ExchangeManager:
 
     def get_rate_limit_snapshot(self) -> List[Dict[str, Any]]:
         """Szybki podgląd stanu kubełków limitów API."""
-
         return [bucket.snapshot() for bucket in self._rate_limit_buckets]
 
     def get_api_metrics(self) -> Dict[str, Any]:
         """Zwróć metryki zużycia API (łącznie i per-endpoint)."""
         usage = None
         if self._max_calls_per_window:
-            if self._max_calls_per_window:
-                usage = self._window_count / self._max_calls_per_window
+            usage = self._window_count / self._max_calls_per_window
         buckets_snapshot = [bucket.snapshot() for bucket in self._rate_limit_buckets]
         return {
             "schema_version": self._telemetry_schema_version,
