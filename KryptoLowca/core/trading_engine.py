@@ -19,6 +19,9 @@ from typing import Any, Callable, Dict, Optional, Tuple, Union
 
 import pandas as pd
 
+# centralny dispatcher alertów
+from KryptoLowca.alerts import AlertEvent, AlertSeverity, get_alert_dispatcher
+
 # Odporne importy: najpierw przestrzeń nazw KryptoLowca, potem lokalne
 try:  # pragma: no cover
     from KryptoLowca.core.order_executor import ExecutionResult, OrderExecutor  # type: ignore
@@ -73,6 +76,8 @@ class TradingEngine:
         self._symbol_locks: Dict[str, asyncio.Lock] = {}
         self._user_id: Optional[int] = None
         self._order_executor: Optional[OrderExecutor] = None
+        self._alert_dispatcher = get_alert_dispatcher()
+        self._alert_listener_token: Optional[str] = None
 
     async def configure(self, ex_mgr: ExchangeManager, ai_mgr: AIManager, risk_mgr: RiskManager) -> None:
         """Configure the engine with dependencies."""
@@ -89,12 +94,14 @@ class TradingEngine:
                 except Exception:
                     setattr(self.ai_mgr, "ai_threshold_bps", 5.0)
 
-            # jeśli ExchangeManager wspiera alerty – podłącz handler
-            if hasattr(self.ex_mgr, "register_alert_handler"):
-                try:
-                    self.ex_mgr.register_alert_handler(self._handle_exchange_alert)  # type: ignore[arg-type]
-                except Exception:  # pragma: no cover
-                    logger.warning("Failed to register exchange alert handler", exc_info=True)
+            # globalne alerty – integracja z dispatcherem
+            if self._alert_listener_token is not None:
+                self._alert_dispatcher.unregister(self._alert_listener_token)
+                self._alert_listener_token = None
+            self._alert_listener_token = self._alert_dispatcher.register(
+                self._handle_alert_event,
+                name=f"trading-engine-{id(self)}",
+            )
 
             # wykonawca z limitem frakcji zsynchronizowanym z konfiguracją
             self._order_executor = OrderExecutor(
@@ -103,6 +110,13 @@ class TradingEngine:
                 max_fraction=self._fraction_cap(),
             )
             self._order_executor.set_user(self._user_id)
+
+    def __del__(self) -> None:  # pragma: no cover - cleanup best-effort
+        try:
+            if self._alert_listener_token is not None:
+                self._alert_dispatcher.unregister(self._alert_listener_token)
+        except Exception:
+            pass
 
     @staticmethod
     def _extract_balance_amount(balance: Any, currency: str) -> float:
@@ -166,18 +180,37 @@ class TradingEngine:
         """Register event callback for GUI updates."""
         self._event_callback = callback
 
-    def _handle_exchange_alert(self, message: str, context: Optional[Dict[str, Any]] = None) -> None:
-        """Propagate krytyczne alerty z warstwy giełdowej do logów i GUI."""
-        logger.critical("[ALERT] %s | context=%s", message, context or {})
+    def _handle_alert_event(self, event: AlertEvent) -> None:
+        """Centralna obsługa alertów z ExchangeManagera, RiskManagera itd."""
+
+        context = dict(event.context)
+        level_map = {
+            AlertSeverity.INFO: logging.INFO,
+            AlertSeverity.WARNING: logging.WARNING,
+            AlertSeverity.ERROR: logging.ERROR,
+            AlertSeverity.CRITICAL: logging.CRITICAL,
+        }
+        level = level_map.get(event.severity, logging.INFO)
+        logger.log(level, "[ALERT][%s] %s | context=%s", event.source, event.message, context)
 
         if self.db_manager:
+            db_level_map = {
+                AlertSeverity.INFO: "INFO",
+                AlertSeverity.WARNING: "WARNING",
+                AlertSeverity.ERROR: "ERROR",
+                AlertSeverity.CRITICAL: "CRITICAL",
+            }
+            payload = dict(context)
+            payload.setdefault("severity", event.severity.value)
+            payload.setdefault("source", event.source)
+
             async def _log_alert() -> None:
                 await self.db_manager.log(
                     self._user_id,
-                    "CRITICAL",
-                    message,
-                    category="exchange",
-                    context=context,
+                    db_level_map.get(event.severity, "INFO"),
+                    event.message,
+                    category=f"alert:{event.source}",
+                    context=payload,
                 )
 
             try:
@@ -188,7 +221,13 @@ class TradingEngine:
                 loop.create_task(_log_alert())
 
         if self._event_callback:
-            payload = {"type": "alert", "message": message, "context": context or {}}
+            payload = {
+                "type": "alert",
+                "source": event.source,
+                "severity": event.severity.value,
+                "message": event.message,
+                "context": context,
+            }
             try:
                 self._event_callback(payload)
             except Exception:  # pragma: no cover
@@ -335,6 +374,27 @@ class TradingEngine:
                 if fraction_cap <= 0:
                     await self._emit_event({"type": "fraction_cap_zero", "symbol": symbol_key})
                     return None
+
+                if db_manager:
+                    mode_value = getattr(ex_mgr, "mode", None)
+                    if isinstance(mode_value, str):
+                        mode_str = mode_value.lower()
+                    elif hasattr(mode_value, "value"):
+                        mode_str = str(mode_value.value).lower()
+                    else:
+                        mode_str = "live"
+                    try:
+                        await db_manager.log_risk_limit(
+                            {
+                                "symbol": symbol_key,
+                                "max_fraction": fraction_cap,
+                                "recommended_size": qty_hint,
+                                "mode": mode_str,
+                                "details": risk_details,
+                            }
+                        )
+                    except Exception:
+                        logger.exception("Persisting risk limit snapshot failed")
 
                 atr_window = max(1, int(getattr(tp, "atr_period", 14)))
                 tr = (df["high"] - df["low"]).abs()

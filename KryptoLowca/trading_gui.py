@@ -46,17 +46,26 @@ except Exception:
 
 # --- LOGGING ---
 import logging
-logger = logging.getLogger(__name__)
-if not logger.handlers:
-    h = logging.StreamHandler(sys.stdout)
-    h.setFormatter(logging.Formatter('[%(asctime)s] %(levelname)s: %(message)s'))
-    logger.addHandler(h)
+from KryptoLowca.logging_utils import (
+    LOGS_DIR as GLOBAL_LOGS_DIR,
+    DEFAULT_LOG_FILE,
+    get_logger,
+    setup_app_logging,
+)
+
+setup_app_logging()
+logger = get_logger(__name__)
+if not any(isinstance(h, logging.StreamHandler) for h in logger.handlers):
+    stream_handler = logging.StreamHandler(sys.stdout)
+    stream_handler.setFormatter(logging.Formatter('[%(asctime)s] %(levelname)s: %(message)s'))
+    logger.addHandler(stream_handler)
 logger.setLevel(logging.INFO)
 
 # --- ŚCIEŻKI APLIKACJI ---
 APP_ROOT = Path(__file__).resolve().parent
-LOGS_DIR = APP_ROOT / "logs"; LOGS_DIR.mkdir(parents=True, exist_ok=True)
-TEXT_LOG_FILE = LOGS_DIR / "trading.log"
+LOGS_DIR = GLOBAL_LOGS_DIR
+LOGS_DIR.mkdir(parents=True, exist_ok=True)
+TEXT_LOG_FILE = DEFAULT_LOG_FILE
 DB_FILE = APP_ROOT / "trading_bot.db"
 OPEN_POS_FILE = APP_ROOT / "open_positions.json"
 FAV_FILE = APP_ROOT / "favorites.json"
@@ -169,6 +178,7 @@ class TradingGUI:
         self.paper_balance = self.paper_capital.get()
         self.paper_balance_var = tk.StringVar(value=f"{self.paper_balance:,.2f}")
         self.account_balance_var = tk.StringVar(value="— (Live only)")
+        self._live_trading_confirmed = False
 
         # AI
         self.enable_ai_var = tk.BooleanVar(value=False)
@@ -449,12 +459,13 @@ class TradingGUI:
 
     # --------------- LOGS ---------------
     def _log(self, msg: str, level: str = "INFO"):
-        # 1) UI + plik teksowy
-        line = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {level}: {msg}\n"
+        level_name = (level or "INFO").upper()
+        log_level = getattr(logging, level_name, logging.INFO)
+        logger.log(log_level, msg)
+
+        # 1) UI log window
+        line = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {level_name}: {msg}\n"
         try: self.log_text.insert("end", line); self.log_text.see("end")
-        except Exception: pass
-        try:
-            with open(TEXT_LOG_FILE, "a", encoding="utf-8") as f: f.write(line)
         except Exception: pass
 
         # 2) DB (obsługa sync/async + różnych sygnatur)
@@ -752,7 +763,14 @@ class TradingGUI:
 
     # ===================== Handlery =====================
     def _on_network_changed(self):
-        self.account_balance_var.set("…" if self.network_var.get()=="Live" else "— (Live only)")
+        net = self.network_var.get()
+        self.account_balance_var.set("…" if net == "Live" else "— (Live only)")
+        self._reset_live_confirmation()
+        if net == "Live":
+            self._log(
+                "Tryb LIVE: przed uruchomieniem handlu wykonaj pełne testy na koncie demo/testnet i przygotuj plan zarządzania ryzykiem.",
+                "WARNING",
+            )
 
     def _on_ai_threshold_changed(self):
         try:
@@ -845,11 +863,64 @@ class TradingGUI:
         self.selected_symbols = [s for s,v in self.symbol_vars.items() if v.get()]
         self._log(f"Applied {len(self.selected_symbols)} symbols", "INFO")
 
+    # Safety helpers -------------------------------------------------
+    def is_demo_mode_active(self) -> bool:
+        try:
+            network = (self.network_var.get() or "").strip().lower()
+            return network != "live"
+        except Exception:
+            return True
+
+    def is_live_trading_allowed(self) -> bool:
+        return bool(self._live_trading_confirmed)
+
+    def _has_valid_live_keys(self) -> bool:
+        key = (self.live_key.get() or "").strip()
+        secret = (self.live_secret.get() or "").strip()
+        if not key or not secret:
+            return False
+        try:
+            return SecurityManager.validate_api_key(key) and SecurityManager.validate_api_key(secret)
+        except Exception:
+            return False
+
+    def _reset_live_confirmation(self) -> None:
+        self._live_trading_confirmed = False
+
+    def _ensure_live_trading_prerequisites(self) -> bool:
+        if self.is_demo_mode_active():
+            return True
+
+        if not self._has_valid_live_keys():
+            messagebox.showwarning(
+                "Klucze API",
+                "Przed uruchomieniem handlu LIVE uzupełnij poprawne klucze API i upewnij się, "
+                "że konto ma włączone limity bezpieczeństwa. Na tym etapie zalecamy kontynuację w trybie demo/testnet.",
+            )
+            self._log("Live trading blocked: missing or invalid API keys.", "WARNING")
+            return False
+
+        if not self._live_trading_confirmed:
+            proceed = messagebox.askyesno(
+                "Potwierdzenie handlu LIVE",
+                "Handel na żywym rynku wiąże się z ryzykiem utraty środków. Bot jest w fazie rozwoju — uruchamiaj go wyłącznie po "
+                "pełnym przetestowaniu na koncie demo/testnet i upewnij się, że spełniasz wymogi KYC/AML swojej giełdy.\n\nCzy na pewno chcesz kontynuować?",
+            )
+            if not proceed:
+                self._log("Live trading start cancelled przez użytkownika.", "WARNING")
+                return False
+            self._live_trading_confirmed = True
+            self._log("Live trading confirmed przez użytkownika. Zachowaj ostrożność i monitoruj transakcje.", "WARNING")
+
+        return True
+
     # Start/Stop
     def _on_start(self):
         if self._worker_thread and self._worker_thread.is_alive(): return
         if not self.selected_symbols:
             messagebox.showwarning("No symbols", "Zaznacz symbole (po lewej) i kliknij Apply selection.")
+            return
+        if not self._ensure_live_trading_prerequisites():
             return
         self._run_flag.set()
         self._worker_thread = threading.Thread(target=self._worker, daemon=True)
@@ -958,9 +1029,15 @@ class TradingGUI:
         try:
             name = (self.preset_name.get() or "default").strip()
             d = self._collect_settings_dict()
-            self.cfg.save_preset(name, d)
+            audit = self.cfg.audit_preset(d)
+            if audit["issues"]:
+                messagebox.showerror("Preset audit", "\n".join(audit["issues"]))
+                return
+            path = self.cfg.save_preset(name, d)
             self._refresh_presets_list()
-            self._log(f"Preset saved: {name}.json", "INFO")
+            self._log(f"Preset saved: {Path(path).name}", "INFO")
+            if audit["warnings"]:
+                messagebox.showwarning("Preset warnings", "\n".join(audit["warnings"]))
         except Exception as e:
             self._log(f"Save preset error: {e}", "ERROR")
             messagebox.showerror("Save preset error", str(e))
@@ -1041,6 +1118,21 @@ class TradingGUI:
             "paper": {"capital": self.paper_capital.get()},
             "selected_symbols": self.selected_symbols
         }
+
+    def _handle_security_audit(self, action: str, payload: Dict[str, Any]) -> None:
+        try:
+            record = {
+                "action": action,
+                "status": payload.get("status", "ok"),
+                "detail": payload.get("detail", action),
+                "metadata": payload.get("metadata"),
+                "actor": payload.get("actor"),
+            }
+            self.db.sync.log_security_audit(record)
+            self._log(f"Security audit: {action} ({record['status']})", "INFO")
+        except Exception as exc:
+            logger.exception("Failed to persist security audit event")
+            self._log(f"Security audit log error: {exc}", "ERROR")
 
     def _apply_settings_dict(self, d: Dict[str, Any]):
         try:

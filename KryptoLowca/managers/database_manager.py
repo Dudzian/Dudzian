@@ -36,7 +36,7 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, AsyncIterator, Dict, List, Optional, Union
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Union
 
 from pydantic import BaseModel, ValidationError, field_validator
 
@@ -50,6 +50,7 @@ from sqlalchemy import (
     UniqueConstraint,
     select,
     func,
+    text,
 )
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
@@ -64,7 +65,6 @@ if not logger.handlers:
     ))
     logger.addHandler(_h)
 logger.setLevel(logging.INFO)
-
 
 # --- SQLAlchemy Base ---
 class Base(DeclarativeBase):
@@ -168,6 +168,81 @@ class LogEntry(Base):
         Index("ix_logs_source_ts", "source", "ts"),
         Index("ix_logs_level_ts", "level", "ts"),
         Index("ix_logs_user_ts", "user_id", "ts"),
+    )
+
+
+class PerformanceMetric(Base):
+    __tablename__ = "performance_metrics"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ts: Mapped[dt.datetime] = mapped_column(DateTime, default=dt.datetime.utcnow, index=True)
+    metric: Mapped[str] = mapped_column(String(64), index=True)
+    value: Mapped[float] = mapped_column(Float)
+    window: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    symbol: Mapped[Optional[str]] = mapped_column(String(50), index=True, nullable=True)
+    mode: Mapped[str] = mapped_column(String(10), default="live", index=True)
+    extra: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("ix_performance_metric_metric_ts", "metric", "ts"),
+        Index("ix_performance_metric_symbol_ts", "symbol", "ts"),
+    )
+
+
+class RiskLimitSnapshot(Base):
+    __tablename__ = "risk_limits"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ts: Mapped[dt.datetime] = mapped_column(DateTime, default=dt.datetime.utcnow, index=True)
+    symbol: Mapped[str] = mapped_column(String(50), index=True)
+    max_fraction: Mapped[float] = mapped_column(Float)
+    recommended_size: Mapped[float] = mapped_column(Float)
+    mode: Mapped[str] = mapped_column(String(10), default="live", index=True)
+    details: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("ix_risk_limits_symbol_ts", "symbol", "ts"),
+        Index("ix_risk_limits_mode_ts", "mode", "ts"),
+    )
+
+
+class ApiRateLimitSnapshot(Base):
+    __tablename__ = "api_rate_limits"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ts: Mapped[dt.datetime] = mapped_column(DateTime, default=dt.datetime.utcnow, index=True)
+    bucket_name: Mapped[str] = mapped_column(String(64), index=True)
+    window_seconds: Mapped[float] = mapped_column(Float)
+    capacity: Mapped[int] = mapped_column(Integer)
+    count: Mapped[int] = mapped_column(Integer)
+    usage: Mapped[float] = mapped_column(Float)
+    max_usage: Mapped[float] = mapped_column(Float)
+    reset_in_seconds: Mapped[float] = mapped_column(Float)
+    mode: Mapped[str] = mapped_column(String(10), default="live", index=True)
+    endpoint: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, index=True)
+    context: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("ix_api_rate_limits_bucket_ts", "bucket_name", "ts"),
+        Index("ix_api_rate_limits_endpoint_ts", "endpoint", "ts"),
+    )
+
+
+class SecurityAuditLog(Base):
+    __tablename__ = "security_audit_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ts: Mapped[dt.datetime] = mapped_column(DateTime, default=dt.datetime.utcnow, index=True)
+    action: Mapped[str] = mapped_column(String(64), index=True)
+    status: Mapped[str] = mapped_column(String(16), index=True)
+    detail: Mapped[str] = mapped_column(Text)
+    actor: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, index=True)
+    user_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    metadata_json: Mapped[Optional[str]] = mapped_column("metadata", Text, nullable=True)
+
+    __table_args__ = (
+        Index("ix_security_audit_action_ts", "action", "ts"),
+        Index("ix_security_audit_user_ts", "user_id", "ts"),
     )
 
 
@@ -276,6 +351,109 @@ class EquityIn(BaseModel):
         return v
 
 
+class PerformanceMetricIn(BaseModel):
+    metric: str
+    value: float
+    window: int | None = None
+    symbol: str | None = None
+    mode: str = "live"
+    context: Dict[str, Any] | None = None
+
+    @field_validator("metric")
+    @classmethod
+    def _metric(cls, v: str) -> str:
+        v = (v or "").strip()
+        if not v:
+            raise ValueError("metric is required")
+        return v
+
+    @field_validator("mode")
+    @classmethod
+    def _mode(cls, v: str) -> str:
+        v = v.lower()
+        if v not in {"live", "paper"}:
+            raise ValueError("mode must be 'live' or 'paper'")
+        return v
+
+
+class RiskLimitIn(BaseModel):
+    symbol: str
+    max_fraction: float
+    recommended_size: float
+    mode: str = "live"
+    details: Dict[str, Any] | None = None
+
+    @field_validator("symbol")
+    @classmethod
+    def _symbol(cls, v: str) -> str:
+        v = (v or "").strip().upper()
+        if not v:
+            raise ValueError("symbol is required")
+        return v
+
+    @field_validator("mode")
+    @classmethod
+    def _mode(cls, v: str) -> str:
+        v = v.lower()
+        if v not in {"live", "paper"}:
+            raise ValueError("mode must be 'live' or 'paper'")
+        return v
+
+
+class RateLimitSnapshotIn(BaseModel):
+    bucket_name: str
+    window_seconds: float
+    capacity: int
+    count: int
+    usage: float
+    max_usage: float
+    reset_in_seconds: float
+    mode: str = "live"
+    endpoint: str | None = None
+    context: Dict[str, Any] | None = None
+
+    @field_validator("bucket_name")
+    @classmethod
+    def _name(cls, v: str) -> str:
+        v = (v or "").strip()
+        if not v:
+            raise ValueError("bucket_name is required")
+        return v
+
+    @field_validator("mode")
+    @classmethod
+    def _mode(cls, v: str) -> str:
+        v = v.lower()
+        if v not in {"live", "paper"}:
+            raise ValueError("mode must be 'live' or 'paper'")
+        return v
+
+
+class SecurityAuditEventIn(BaseModel):
+    action: str
+    status: str
+    detail: str
+    actor: str | None = None
+    user_id: int | None = None
+    metadata: Dict[str, Any] | None = None
+
+    @field_validator("action")
+    @classmethod
+    def _action(cls, v: str) -> str:
+        v = (v or "").strip()
+        if not v:
+            raise ValueError("action is required")
+        return v
+
+    @field_validator("status")
+    @classmethod
+    def _status(cls, v: str) -> str:
+        v = (v or "").strip().lower()
+        if v not in {"ok", "error", "denied"}:
+            raise ValueError("status must be ok/error/denied")
+        return v
+
+
 # --- Database Manager ---
 @dataclass
 class _EngineState:
@@ -315,16 +493,44 @@ class DatabaseManager:
             async with self._state.engine.begin() as conn:  # type: ignore[union-attr]
                 await conn.run_sync(Base.metadata.create_all)
 
-            # 2) Wersjonowanie schematu – zwykłe operacje przez sesję
-            async with self.session() as s:
-                q = await s.execute(select(func.count(SchemaVersion.id)))
-                count = q.scalar() or 0
-                if count == 0:
-                    sv = SchemaVersion(version=1)
-                    s.add(sv)
-                    await s.commit()
+        await self._apply_migrations()
 
+        if create:
             logger.info("Database initialized (url=%s)", self.db_url)
+
+    async def _apply_migrations(self) -> None:
+        if self._state.session_factory is None:
+            return
+
+        async with self.session() as session:
+            existing = (
+                await session.execute(select(SchemaVersion.version))
+            ).scalars().all()
+            applied = set(int(v) for v in existing)
+            current = max(applied) if applied else 0
+            target = int(CURRENT_SCHEMA_VERSION)
+            updated = False
+
+            for version in range(current + 1, target + 1):
+                migration = MIGRATIONS.get(version)
+                logger.info("Applying database migration -> version %s", version)
+                if migration is not None:
+                    await migration(session, self)
+                session.add(SchemaVersion(version=version))
+                await session.flush()
+                updated = True
+
+            if updated:
+                await session.commit()
+
+    async def get_schema_version(self) -> int:
+        if self._state.session_factory is None:
+            return 0
+
+        async with self.session() as session:
+            result = await session.execute(select(func.max(SchemaVersion.version)))
+            version = result.scalar()
+            return int(version or 0)
 
     @contextlib.asynccontextmanager
     async def session(self) -> AsyncIterator[AsyncSession]:
@@ -617,6 +823,170 @@ class DatabaseManager:
             rows = (await s.execute(stmt)).scalars().all()
             return [self._row_to_dict(r) for r in rows]
 
+    # ---------- OPERACJE: Performance metrics ----------
+    async def log_performance_metric(
+        self, metric: Union[PerformanceMetricIn, Dict[str, Any]]
+    ) -> int:
+        try:
+            payload = metric if isinstance(metric, PerformanceMetricIn) else PerformanceMetricIn(**metric)
+        except ValidationError as exc:
+            logger.error("Performance metric validation error: %s", exc)
+            raise
+
+        async with self.transaction() as session:
+            rec = PerformanceMetric(
+                metric=payload.metric,
+                value=float(payload.value),
+                window=payload.window,
+                symbol=payload.symbol,
+                mode=payload.mode,
+                extra=json.dumps(payload.context) if payload.context is not None else None,
+            )
+            session.add(rec)
+            await session.flush()
+            return rec.id
+
+    async def fetch_performance_metrics(
+        self,
+        *,
+        metric: Optional[str] = None,
+        symbol: Optional[str] = None,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        async with self.session() as session:
+            stmt = select(PerformanceMetric).order_by(PerformanceMetric.ts.desc()).limit(limit)
+            if metric:
+                stmt = stmt.where(PerformanceMetric.metric == metric)
+            if symbol:
+                stmt = stmt.where(PerformanceMetric.symbol == symbol)
+            rows = (await session.execute(stmt)).scalars().all()
+            return [self._row_to_dict(row) for row in rows]
+
+    # ---------- OPERACJE: Risk limits ----------
+    async def log_risk_limit(
+        self, snapshot: Union[RiskLimitIn, Dict[str, Any]]
+    ) -> int:
+        try:
+            payload = snapshot if isinstance(snapshot, RiskLimitIn) else RiskLimitIn(**snapshot)
+        except ValidationError as exc:
+            logger.error("Risk limit validation error: %s", exc)
+            raise
+
+        async with self.transaction() as session:
+            rec = RiskLimitSnapshot(
+                symbol=payload.symbol,
+                max_fraction=float(payload.max_fraction),
+                recommended_size=float(payload.recommended_size),
+                mode=payload.mode,
+                details=json.dumps(payload.details) if payload.details is not None else None,
+            )
+            session.add(rec)
+            await session.flush()
+            return rec.id
+
+    async def fetch_risk_limits(
+        self,
+        *,
+        symbol: Optional[str] = None,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        async with self.session() as session:
+            stmt = select(RiskLimitSnapshot).order_by(RiskLimitSnapshot.ts.desc()).limit(limit)
+            if symbol:
+                stmt = stmt.where(RiskLimitSnapshot.symbol == symbol)
+            rows = (await session.execute(stmt)).scalars().all()
+            return [self._row_to_dict(row) for row in rows]
+
+    # ---------- OPERACJE: API rate limits ----------
+    async def log_rate_limit_snapshot(
+        self,
+        snapshot: Union[RateLimitSnapshotIn, Dict[str, Any]],
+    ) -> int:
+        try:
+            payload = (
+                snapshot
+                if isinstance(snapshot, RateLimitSnapshotIn)
+                else RateLimitSnapshotIn(**snapshot)
+            )
+        except ValidationError as exc:
+            logger.error("Rate limit snapshot validation error: %s", exc)
+            raise
+
+        async with self.transaction() as session:
+            rec = ApiRateLimitSnapshot(
+                bucket_name=payload.bucket_name,
+                window_seconds=float(payload.window_seconds),
+                capacity=int(payload.capacity),
+                count=int(payload.count),
+                usage=float(payload.usage),
+                max_usage=float(payload.max_usage),
+                reset_in_seconds=float(payload.reset_in_seconds),
+                mode=payload.mode,
+                endpoint=payload.endpoint,
+                context=json.dumps(payload.context) if payload.context is not None else None,
+            )
+            session.add(rec)
+            await session.flush()
+            return rec.id
+
+    async def fetch_rate_limit_snapshots(
+        self,
+        *,
+        bucket: Optional[str] = None,
+        endpoint: Optional[str] = None,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        async with self.session() as session:
+            stmt = select(ApiRateLimitSnapshot).order_by(ApiRateLimitSnapshot.ts.desc()).limit(limit)
+            if bucket:
+                stmt = stmt.where(ApiRateLimitSnapshot.bucket_name == bucket)
+            if endpoint:
+                stmt = stmt.where(ApiRateLimitSnapshot.endpoint == endpoint)
+            rows = (await session.execute(stmt)).scalars().all()
+            return [self._row_to_dict(row) for row in rows]
+
+    # ---------- OPERACJE: Security audit ----------
+    async def log_security_audit(
+        self,
+        event: Union[SecurityAuditEventIn, Dict[str, Any]],
+    ) -> int:
+        try:
+            payload = (
+                event if isinstance(event, SecurityAuditEventIn) else SecurityAuditEventIn(**event)
+            )
+        except ValidationError as exc:
+            logger.error("Security audit validation error: %s", exc)
+            raise
+
+        async with self.transaction() as session:
+            rec = SecurityAuditLog(
+                action=payload.action,
+                status=payload.status,
+                detail=payload.detail,
+                actor=payload.actor,
+                user_id=payload.user_id,
+                metadata_json=json.dumps(payload.metadata) if payload.metadata is not None else None,
+            )
+            session.add(rec)
+            await session.flush()
+            return rec.id
+
+    async def fetch_security_audit(
+        self,
+        *,
+        action: Optional[str] = None,
+        status: Optional[str] = None,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        async with self.session() as session:
+            stmt = select(SecurityAuditLog).order_by(SecurityAuditLog.ts.desc()).limit(limit)
+            if action:
+                stmt = stmt.where(SecurityAuditLog.action == action)
+            if status:
+                stmt = stmt.where(SecurityAuditLog.status == status)
+            rows = (await session.execute(stmt)).scalars().all()
+            return [self._row_to_dict(row) for row in rows]
+
     # ---------- OPERACJE: Logi ----------
     async def add_log(self, *, level: str, source: str, message: str, extra: Optional[Dict[str, Any]] = None) -> int:
         payload = extra or {}
@@ -687,11 +1057,32 @@ class DatabaseManager:
     def _row_to_dict(obj: Any) -> Dict[str, Any]:
         out: Dict[str, Any] = {}
         for c in obj.__table__.columns:  # type: ignore[attr-defined]
-            val = getattr(obj, c.name)
+            attr_name = c.key
+            col_name = c.name
+            val = getattr(obj, attr_name)
             if isinstance(val, dt.datetime):
-                out[c.name] = val.isoformat()
-            else:
-                out[c.name] = val
+                out[attr_name] = val.isoformat()
+                continue
+
+            if isinstance(val, str) and val:
+                # dekodujemy popularne pola JSON
+                json_fields = {
+                    "extra",
+                    "details",
+                    "context",
+                    "metadata_json",
+                }
+                target_name = attr_name
+                if attr_name.endswith("_json"):
+                    target_name = attr_name[:-5]
+                    json_fields.add(attr_name)
+                if attr_name in json_fields or target_name in {"extra", "details", "context", "metadata"}:
+                    try:
+                        out[target_name] = json.loads(val)
+                        continue
+                    except json.JSONDecodeError:
+                        logger.warning("Nie udało się zdekodować JSON z kolumny %s", col_name)
+            out[attr_name] = val
         return out
 
     # ---------- Sync wrapper ----------
@@ -779,6 +1170,70 @@ class DatabaseManager:
         def fetch_equity_curve(self, *, limit: int = 1000, mode: Optional[str] = None) -> List[Dict[str, Any]]:
             return self._run(self._outer.fetch_equity_curve(limit=limit, mode=mode))
 
+        def log_performance_metric(self, metric: Union[PerformanceMetricIn, Dict[str, Any]]) -> int:
+            return self._run(self._outer.log_performance_metric(metric))
+
+        def fetch_performance_metrics(
+            self,
+            *,
+            metric: Optional[str] = None,
+            symbol: Optional[str] = None,
+            limit: int = 100,
+        ) -> List[Dict[str, Any]]:
+            return self._run(
+                self._outer.fetch_performance_metrics(metric=metric, symbol=symbol, limit=limit)
+            )
+
+        def log_risk_limit(self, snapshot: Union[RiskLimitIn, Dict[str, Any]]) -> int:
+            return self._run(self._outer.log_risk_limit(snapshot))
+
+        def fetch_risk_limits(
+            self,
+            *,
+            symbol: Optional[str] = None,
+            limit: int = 100,
+        ) -> List[Dict[str, Any]]:
+            return self._run(self._outer.fetch_risk_limits(symbol=symbol, limit=limit))
+
+        def log_rate_limit_snapshot(
+            self, snapshot: Union[RateLimitSnapshotIn, Dict[str, Any]]
+        ) -> int:
+            return self._run(self._outer.log_rate_limit_snapshot(snapshot))
+
+        def fetch_rate_limit_snapshots(
+            self,
+            *,
+            bucket: Optional[str] = None,
+            endpoint: Optional[str] = None,
+            limit: int = 100,
+        ) -> List[Dict[str, Any]]:
+            return self._run(
+                self._outer.fetch_rate_limit_snapshots(
+                    bucket=bucket, endpoint=endpoint, limit=limit
+                )
+            )
+
+        def log_security_audit(
+            self, event: Union[SecurityAuditEventIn, Dict[str, Any]]
+        ) -> int:
+            return self._run(self._outer.log_security_audit(event))
+
+        def fetch_security_audit(
+            self,
+            *,
+            action: Optional[str] = None,
+            status: Optional[str] = None,
+            limit: int = 100,
+        ) -> List[Dict[str, Any]]:
+            return self._run(
+                self._outer.fetch_security_audit(
+                    action=action, status=status, limit=limit
+                )
+            )
+
+        def get_schema_version(self) -> int:
+            return self._run(self._outer.get_schema_version())
+
         def add_log(self, *, level: str, source: str, message: str, extra: Optional[Dict[str, Any]] = None) -> int:
             return self._run(self._outer.add_log(level=level, source=source, message=message, extra=extra))
 
@@ -791,3 +1246,89 @@ class DatabaseManager:
     @property
     def sync(self) -> "DatabaseManager._SyncWrapper":
         return DatabaseManager._SyncWrapper(self)
+
+
+async def _migration_initial(session: AsyncSession, manager: "DatabaseManager") -> None:
+    """Początkowa migracja – struktury tworzone przez ``create_all``."""
+    # Brak dodatkowych działań – pozostawiamy jako znacznik wersji 1.
+    return None
+
+
+async def _migration_performance_tables(session: AsyncSession, manager: "DatabaseManager") -> None:
+    """Migracja dodająca tabele metryk i limitów ryzyka."""
+    # Struktury tabel dodawane są przez ``Base.metadata.create_all`` w ``init_db``.
+    # Migracja pozostawiona dla kompatybilności – w razie potrzeby można dodać transformacje danych.
+    return None
+
+
+async def _migration_api_rate_limits(session: AsyncSession, manager: "DatabaseManager") -> None:
+    """Migracja przygotowująca widoki łączące metryki i limity ryzyka."""
+    await session.execute(text("DROP VIEW IF EXISTS vw_strategy_health"))
+    await session.execute(
+        text(
+            """
+            CREATE VIEW IF NOT EXISTS vw_strategy_health AS
+            WITH latest_metrics AS (
+                SELECT
+                    pm.symbol,
+                    pm.metric,
+                    pm.value,
+                    pm.ts,
+                    pm.mode,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY pm.symbol, pm.metric, pm.mode
+                        ORDER BY pm.ts DESC
+                    ) AS rn
+                FROM performance_metrics pm
+            ),
+            latest_limits AS (
+                SELECT
+                    rl.symbol,
+                    rl.max_fraction,
+                    rl.recommended_size,
+                    rl.details,
+                    rl.ts,
+                    rl.mode,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY rl.symbol, rl.mode
+                        ORDER BY rl.ts DESC
+                    ) AS rn
+                FROM risk_limits rl
+            )
+            SELECT
+                lm.symbol,
+                lm.mode,
+                MAX(CASE WHEN lm.metric = 'auto_trader_expectancy' THEN lm.value END) AS expectancy,
+                MAX(CASE WHEN lm.metric = 'auto_trader_profit_factor' THEN lm.value END) AS profit_factor,
+                MAX(CASE WHEN lm.metric = 'auto_trader_win_rate' THEN lm.value END) AS win_rate,
+                rl.max_fraction,
+                rl.recommended_size,
+                rl.details,
+                lm.ts AS metric_ts,
+                rl.ts AS risk_ts
+            FROM latest_metrics lm
+            LEFT JOIN latest_limits rl
+                ON rl.symbol = lm.symbol
+                AND rl.mode = lm.mode
+                AND rl.rn = 1
+            WHERE lm.rn = 1
+            GROUP BY
+                lm.symbol,
+                lm.mode,
+                rl.max_fraction,
+                rl.recommended_size,
+                rl.details,
+                lm.ts,
+                rl.ts;
+            """
+        )
+    )
+
+
+MIGRATIONS: Dict[int, Callable[[AsyncSession, "DatabaseManager"], Any]] = {
+    1: _migration_initial,
+    2: _migration_performance_tables,
+    3: _migration_api_rate_limits,
+}
+
+CURRENT_SCHEMA_VERSION = max(MIGRATIONS)

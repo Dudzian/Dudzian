@@ -9,9 +9,19 @@ import math
 import sys
 import time
 import types
+import weakref
 from collections import defaultdict
-from dataclasses import asdict, dataclass
-from typing import Any, Callable, Dict, Iterable, List, Optional
+from dataclasses import asdict, dataclass, field
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
+
+from KryptoLowca.alerts import (
+    AlertEvent,
+    AlertSeverity,
+    BotError,
+    emit_alert,
+    get_alert_dispatcher,
+)
+from KryptoLowca.telemetry import TelemetryWriter
 
 # ---- ccxt async importy odporne na różne wersje / brak biblioteki ----
 try:  # pragma: no cover - importowany tylko jeśli ccxt jest dostępne
@@ -69,12 +79,52 @@ class _APIMetrics:
     last_endpoint: Optional[str] = None
 
 
-class ExchangeError(RuntimeError):
+@dataclass(slots=True)
+class _RateLimitBucket:
+    """Opis pojedynczego limitu czasowego API."""
+
+    name: str
+    capacity: int
+    window_seconds: float
+    count: int = 0
+    window_start: float = field(default_factory=time.monotonic)
+    alert_active: bool = False
+    last_usage: float = 0.0
+    max_usage: float = 0.0
+
+    def reset(self, *, now: Optional[float] = None, hard: bool = False) -> None:
+        self.count = 0
+        self.window_start = now if now is not None else time.monotonic()
+        self.alert_active = False
+        self.last_usage = 0.0
+        if hard:
+            self.max_usage = 0.0
+
+    def snapshot(self) -> Dict[str, Any]:
+        remaining = max(0.0, self.window_seconds - (time.monotonic() - self.window_start))
+        return {
+            "name": self.name,
+            "capacity": self.capacity,
+            "window_seconds": self.window_seconds,
+            "count": self.count,
+            "usage": self.last_usage,
+            "max_usage": self.max_usage,
+            "reset_in_seconds": remaining,
+            "alert_active": self.alert_active,
+        }
+
+
+class ExchangeError(BotError):
     """Podstawowy wyjątek warstwy wymiany."""
+
+    severity = AlertSeverity.ERROR
+    source = "exchange"
 
 
 class AuthenticationError(ExchangeError):
     """Błąd uwierzytelniania API giełdy."""
+
+    severity = AlertSeverity.CRITICAL
 
 
 @dataclass(slots=True)
@@ -103,6 +153,9 @@ class ExchangeManager:
         # Telemetria / alerty / throttling
         self._db_manager: Optional[Any] = None
         self._alert_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None
+        self._alert_listener_token: Optional[str] = None
+        self._alert_dispatcher = get_alert_dispatcher()
+        self._alert_listener_ref: Optional[Callable[[AlertEvent], None]] = None
 
         self._metrics = _APIMetrics()
         self._endpoint_metrics: Dict[str, _EndpointMetrics] = defaultdict(lambda: _EndpointMetrics())
@@ -114,11 +167,16 @@ class ExchangeManager:
         self._rate_limit_window = 60.0
         self._rate_limit_per_minute: Optional[int] = None
         self._max_calls_per_window: Optional[int] = None
+        self._rate_limit_buckets: List[_RateLimitBucket] = []
         self._alert_usage_threshold = 0.85
         self._rate_alert_active = False
         self._alert_cooldown_seconds = 5.0
         self._alert_last: Dict[str, float] = {}
         self._error_alert_threshold = 3
+        self._metrics_log_interval = 30.0
+        self._last_metrics_log = 0.0
+        self._telemetry_schema_version = 1
+        self._telemetry_writer: Optional[Any] = None
 
     @classmethod
     async def create(
@@ -168,19 +226,58 @@ class ExchangeManager:
             except ValueError:
                 pass
 
+        require_demo = bool(getattr(config, "require_demo_mode", False))
+        if require_demo and not getattr(config, "testnet", True):
+            raise ExchangeError(
+                "Polityka bezpieczeństwa wymaga uruchomienia bota w trybie testnet/paper na tym etapie."
+            )
+
         # Konfiguracja limitów/alertów z configu
         per_minute = max(0, int(getattr(config, "rate_limit_per_minute", 0) or 0))
         window_seconds = float(getattr(config, "rate_limit_window_seconds", 60.0) or 60.0)
         manager._rate_limit_window = max(0.1, window_seconds)
-        manager._rate_limit_per_minute = per_minute or None
-        if per_minute > 0:
-            calls_per_window = per_minute * (manager._rate_limit_window / 60.0)
-            manager._max_calls_per_window = max(1, int(math.floor(calls_per_window)))
+        manager.configure_rate_limits(
+            per_minute=per_minute or None,
+            window_seconds=manager._rate_limit_window,
+            buckets=getattr(config, "rate_limit_buckets", None),
+        )
         manager._alert_usage_threshold = max(
             0.1,
             min(1.0, float(getattr(config, "rate_limit_alert_threshold", 0.85) or 0.85)),
         )
         manager._error_alert_threshold = max(1, int(getattr(config, "error_alert_threshold", 3) or 3))
+        telemetry_interval = getattr(config, "metrics_log_interval", None)
+        telemetry_interval = getattr(config, "telemetry_log_interval_s", telemetry_interval)
+        if telemetry_interval is not None:
+            manager.set_metrics_log_interval(telemetry_interval)
+        schema_version = getattr(config, "telemetry_schema_version", None)
+        if schema_version is not None:
+            try:
+                manager._telemetry_schema_version = int(schema_version)
+            except (TypeError, ValueError):
+                logger.warning("Nieprawidłowa wartość telemetry_schema_version: %s", schema_version)
+        storage_factory = getattr(config, "telemetry_writer_factory", None)
+        if callable(storage_factory):
+            try:
+                manager._telemetry_writer = storage_factory()
+            except Exception as exc:
+                logger.error("Nie udało się utworzyć telemetry writer: %s", exc)
+        else:
+            storage_path = getattr(config, "telemetry_storage_path", None)
+            if storage_path:
+                try:
+                    mode_str = getattr(manager.mode, "value", manager.mode)
+                    manager._telemetry_writer = TelemetryWriter(
+                        storage_path=storage_path,
+                        exchange=exchange_id,
+                        mode=str(mode_str).lower(),
+                        grpc_target=getattr(config, "telemetry_grpc_target", None),
+                        aggregate_intervals=getattr(
+                            config, "telemetry_aggregate_intervals", (1, 10, 60)
+                        ),
+                    )
+                except Exception as exc:
+                    logger.error("Nie udało się utworzyć lokalnego telemetry writer: %s", exc)
 
         rate_limit_ms = getattr(exchange, "rateLimit", None)
         try:
@@ -189,52 +286,181 @@ class ExchangeManager:
             manager._min_interval = 0.0
         manager._window_start = time.monotonic()
         manager._window_count = 0
+        manager.set_retry_policy(
+            attempts=getattr(config, "retry_attempts", manager._retry_attempts),
+            delay=getattr(config, "retry_delay", manager._retry_delay),
+        )
         return manager
+
+    # --------------------------- konfiguracja ---------------------------
+    def set_retry_policy(self, *, attempts: int, delay: float) -> None:
+        """Skonfiguruj politykę ponawiania żądań."""
+
+        try:
+            attempts_int = max(0, int(attempts))
+        except Exception:
+            attempts_int = self._retry_attempts
+        try:
+            delay_float = max(0.0, float(delay))
+        except Exception:
+            delay_float = self._retry_delay
+        self._retry_attempts = attempts_int
+        self._retry_delay = delay_float
+
+    def set_metrics_log_interval(self, seconds: float) -> None:
+        """Ustaw minimalny odstęp między zapisami telemetrii API do bazy."""
+
+        try:
+            interval = max(0.0, float(seconds))
+        except Exception:
+            interval = 0.0
+        self._metrics_log_interval = interval
+
+    def configure_rate_limits(
+        self,
+        *,
+        per_minute: Optional[int] = None,
+        window_seconds: float = 60.0,
+        buckets: Optional[Sequence[Dict[str, Any]]] = None,
+    ) -> None:
+        """Zaktualizuj konfigurację limitów API i wyzeruj liczniki."""
+
+        self._rate_limit_window = max(0.1, float(window_seconds or 60.0))
+        self._rate_limit_per_minute = None
+        self._max_calls_per_window = None
+        new_buckets: List[_RateLimitBucket] = []
+
+        if per_minute:
+            try:
+                per_minute_int = max(0, int(per_minute))
+            except Exception:
+                per_minute_int = 0
+            if per_minute_int > 0:
+                calls_per_window = per_minute_int * (self._rate_limit_window / 60.0)
+                capacity = max(1, int(math.floor(calls_per_window)))
+                new_buckets.append(
+                    _RateLimitBucket(name="global", capacity=capacity, window_seconds=self._rate_limit_window)
+                )
+                self._rate_limit_per_minute = per_minute_int
+                self._max_calls_per_window = capacity
+
+        if buckets:
+            for raw in buckets:
+                if not isinstance(raw, dict):
+                    continue
+                name = str(raw.get("name") or f"bucket_{len(new_buckets) + 1}")
+                try:
+                    capacity = int(raw.get("capacity", 0))
+                    window = float(raw.get("window_seconds", 0.0))
+                except Exception:
+                    continue
+                if capacity <= 0 or window <= 0:
+                    continue
+                new_buckets.append(
+                    _RateLimitBucket(name=name, capacity=capacity, window_seconds=float(window))
+                )
+
+        if not new_buckets:
+            new_buckets.append(
+                _RateLimitBucket(
+                    name="unbounded",
+                    capacity=1_000_000_000,
+                    window_seconds=self._rate_limit_window,
+                )
+            )
+
+        self._rate_limit_buckets = new_buckets
+        self._reset_rate_windows()
+
+    def _reset_rate_windows(self) -> None:
+        now = time.monotonic()
+        self._window_start = now
+        self._window_count = 0
+        self._metrics.window_calls = 0
+        self._metrics.window_errors = 0
+        self._rate_alert_active = False
+        for bucket in self._rate_limit_buckets:
+            bucket.reset(now=now, hard=True)
+
+    def _ensure_rate_buckets(self) -> None:
+        if not self._rate_limit_buckets:
+            self._rate_limit_buckets = [
+                _RateLimitBucket(
+                    name="unbounded",
+                    capacity=1_000_000_000,
+                    window_seconds=self._rate_limit_window,
+                )
+            ]
 
     # --------------------------- operacje pomocnicze ---------------------------
     async def _before_call(self, endpoint: str) -> None:
         wait_time = 0.0
-        should_alert = False
-        usage_pct = 0.0
+        alerts: List[Tuple[str, Dict[str, Any], str]] = []
         async with self._throttle_lock:
             now = time.monotonic()
             if now - self._window_start >= self._rate_limit_window:
-                self._window_start = now
-                self._window_count = 0
-                self._metrics.window_calls = 0
-                self._metrics.window_errors = 0
-                self._rate_alert_active = False
-            if self._max_calls_per_window:
-                usage_pct = (self._window_count + 1) / self._max_calls_per_window
-                if self._window_count >= self._max_calls_per_window:
-                    wait_time = max(wait_time, self._rate_limit_window - (now - self._window_start))
-                if usage_pct >= self._alert_usage_threshold and not self._rate_alert_active:
-                    should_alert = True
-                    self._rate_alert_active = True
+                self._reset_rate_windows()
+
+            self._ensure_rate_buckets()
+
+            for bucket in self._rate_limit_buckets:
+                elapsed = now - bucket.window_start
+                if elapsed >= bucket.window_seconds:
+                    bucket.reset(now=now, hard=True)
+                    elapsed = 0.0
+
+                projected = bucket.count + 1
+                if bucket.capacity > 0:
+                    usage_pct = projected / bucket.capacity
+                else:
+                    usage_pct = 0.0
+                bucket.last_usage = min(usage_pct, 1.0 if bucket.capacity > 0 else usage_pct)
+                bucket.max_usage = max(bucket.max_usage, bucket.last_usage)
+
+                if bucket.capacity > 0 and bucket.count >= bucket.capacity:
+                    wait_time = max(wait_time, bucket.window_seconds - elapsed)
+
+                if (
+                    bucket.capacity > 0
+                    and usage_pct >= self._alert_usage_threshold
+                    and not bucket.alert_active
+                ):
+                    bucket.alert_active = True
+                    context = {
+                        "endpoint": endpoint,
+                        "bucket": bucket.name,
+                        "usage": bucket.last_usage,
+                        "capacity": bucket.capacity,
+                        "window_seconds": bucket.window_seconds,
+                        "reset_in_seconds": max(0.0, bucket.window_seconds - elapsed),
+                    }
+                    alerts.append(
+                        (
+                            f"Zużyto {bucket.last_usage * 100:.1f}% limitu API dla kubełka '{bucket.name}'.",
+                            context,
+                            f"rate_limit::{bucket.name}",
+                        )
+                    )
+
+                bucket.count = projected
+
+            if self._rate_limit_buckets:
+                self._window_count = self._rate_limit_buckets[0].count
+                self._rate_alert_active = any(bucket.alert_active for bucket in self._rate_limit_buckets)
+
             if self._min_interval > 0:
                 delta = now - self._last_request_ts
                 if delta < self._min_interval:
                     wait_time = max(wait_time, self._min_interval - delta)
-            self._window_count += 1
+
             self._metrics.window_calls = self._window_count
             self._last_request_ts = now + wait_time if wait_time > 0 else now
+
         if wait_time > 0:
             await asyncio.sleep(wait_time)
-        if should_alert and self._max_calls_per_window:
-            remaining = max(0.0, self._rate_limit_window - (time.monotonic() - self._window_start))
-            context = {
-                "endpoint": endpoint,
-                "usage": usage_pct,
-                "calls_in_window": self._window_count,
-                "max_calls": self._max_calls_per_window,
-                "window_seconds": self._rate_limit_window,
-                "reset_in_seconds": remaining,
-            }
-            self._raise_alert(
-                f"Zużyto {usage_pct * 100:.1f}% dostępnego limitu API w bieżącym oknie.",
-                context=context,
-                key="rate_limit",
-            )
+
+        for message, context, key in alerts:
+            self._raise_alert(message, context=context, key=key)
 
     def _record_metrics(self, endpoint: str, latency_ms: float, *, success: bool) -> None:
         metrics = self._metrics
@@ -276,6 +502,8 @@ class ExchangeManager:
                     key="error",
                 )
 
+        self._schedule_metrics_snapshot()
+
     def _register_error(self, endpoint: str, exc: Exception, *, final: bool) -> None:
         level = logging.ERROR if final else logging.WARNING
         logger.log(level, "Wywołanie %s nie powiodło się: %s", endpoint, exc)
@@ -300,12 +528,16 @@ class ExchangeManager:
         if now - last < self._alert_cooldown_seconds:
             return
         self._alert_last[key] = now
-        logger.critical("[ALERT] %s | context=%s", message, context or {})
-        if self._alert_callback:
-            try:
-                self._alert_callback(message, context or {})
-            except Exception:  # pragma: no cover - nie przerywamy głównego przepływu
-                logger.exception("Alert callback zgłosił wyjątek")
+        payload = dict(context or {})
+        if self._user_id is not None:
+            payload.setdefault("user_id", self._user_id)
+        logger.critical("[ALERT] %s | context=%s", message, payload)
+        emit_alert(
+            message,
+            severity=AlertSeverity.CRITICAL,
+            source="exchange",
+            context=payload,
+        )
         if self._db_manager and self._user_id:
             try:
                 loop = asyncio.get_running_loop()
@@ -317,9 +549,114 @@ class ExchangeManager:
                     "CRITICAL",
                     message,
                     category="exchange",
-                    context=context,
+                    context=payload,
                 )
             )
+
+    def _schedule_metrics_snapshot(self) -> None:
+        if not self._db_manager or not self._user_id:
+            return
+        if self._metrics_log_interval <= 0:
+            return
+        now = time.monotonic()
+        if now - self._last_metrics_log < self._metrics_log_interval:
+            return
+        self._last_metrics_log = now
+        snapshot = self.get_api_metrics()
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        mode = getattr(self.mode, "value", str(self.mode)) if self.mode is not None else "paper"
+
+        async def _persist_snapshot() -> None:
+            try:
+                await self._db_manager.log(
+                    self._user_id,
+                    "INFO",
+                    "API metrics snapshot",
+                    category="exchange_metrics",
+                    context=snapshot,
+                )
+                metrics_payloads = [
+                    {
+                        "metric": "exchange_total_calls",
+                        "value": snapshot.get("total_calls", 0.0),
+                        "mode": mode,
+                        "context": {"schema_version": snapshot.get("schema_version")},
+                    },
+                    {
+                        "metric": "exchange_total_errors",
+                        "value": snapshot.get("total_errors", 0.0),
+                        "mode": mode,
+                        "context": {"schema_version": snapshot.get("schema_version")},
+                    },
+                    {
+                        "metric": "exchange_avg_latency_ms",
+                        "value": snapshot.get("avg_latency_ms", 0.0),
+                        "mode": mode,
+                        "context": {"schema_version": snapshot.get("schema_version")},
+                    },
+                    {
+                        "metric": "exchange_max_latency_ms",
+                        "value": snapshot.get("max_latency_ms", 0.0),
+                        "mode": mode,
+                        "context": {"schema_version": snapshot.get("schema_version")},
+                    },
+                    {
+                        "metric": "exchange_window_usage",
+                        "value": snapshot.get("current_window_usage") or 0.0,
+                        "mode": mode,
+                        "context": {"schema_version": snapshot.get("schema_version")},
+                    },
+                ]
+                for payload in metrics_payloads:
+                    await self._db_manager.log_performance_metric(payload)
+
+                for endpoint, data in snapshot.get("endpoints", {}).items():
+                    endpoint_payload = {
+                        "metric": "exchange_endpoint_latency_ms",
+                        "value": data.get("avg_latency_ms", 0.0),
+                        "symbol": endpoint,
+                        "mode": mode,
+                        "context": {
+                            "max_latency_ms": data.get("max_latency_ms"),
+                            "total_calls": data.get("total_calls"),
+                            "total_errors": data.get("total_errors"),
+                            "schema_version": snapshot.get("schema_version"),
+                        },
+                    }
+                    await self._db_manager.log_performance_metric(endpoint_payload)
+
+                for bucket in snapshot.get("rate_limit_buckets", []):
+                    context = dict(bucket)
+                    context["schema_version"] = snapshot.get("schema_version")
+                    context["limit_triggered"] = bool(bucket.get("usage", 0.0) >= self._alert_usage_threshold)
+                    await self._db_manager.log_rate_limit_snapshot(
+                        {
+                            "bucket_name": bucket.get("name", "unknown"),
+                            "window_seconds": bucket.get("window_seconds", self._rate_limit_window),
+                            "capacity": bucket.get("capacity", 0),
+                            "count": bucket.get("count", 0),
+                            "usage": bucket.get("usage", 0.0),
+                            "max_usage": bucket.get("max_usage", 0.0),
+                            "reset_in_seconds": bucket.get("reset_in_seconds", 0.0),
+                            "mode": mode,
+                            "endpoint": snapshot.get("last_endpoint"),
+                            "context": context,
+                        }
+                    )
+
+                writer = self._telemetry_writer
+                if writer is not None:
+                    try:
+                        writer.write_snapshot(snapshot)
+                    except Exception:
+                        logger.exception("Nie udało się zapisać snapshotu telemetryjnego lokalnie")
+            except Exception:
+                logger.exception("Błąd zapisu telemetrii API")
+
+        loop.create_task(_persist_snapshot())
 
     async def _run_with_retry(self, coro_factory: Callable[[], Any], *, endpoint: str) -> Any:
         last_exc: Optional[Exception] = None
@@ -492,6 +829,11 @@ class ExchangeManager:
             maybe = close()
             if inspect.isawaitable(maybe):
                 await maybe
+        if self._alert_listener_token is not None:
+            self._alert_dispatcher.unregister(self._alert_listener_token)
+            self._alert_listener_token = None
+            self._alert_listener_ref = None
+            self._alert_callback = None
 
     # ------------------------------- helpers ---------------------------------
     def quantize_amount(self, symbol: str, amount: float) -> float:
@@ -634,14 +976,50 @@ class ExchangeManager:
     # ------------------------------ telemetry ---------------------------------
     def register_alert_handler(self, callback: Callable[[str, Dict[str, Any]], None]) -> None:
         """Zarejestruj zewnętrzny handler alertów (np. GUI / moduł powiadomień)."""
+
         self._alert_callback = callback
+        if self._alert_listener_token is not None:
+            self._alert_dispatcher.unregister(self._alert_listener_token)
+            self._alert_listener_token = None
+            self._alert_listener_ref = None
+
+        manager_ref = weakref.ref(self)
+
+        def _listener(event: AlertEvent) -> None:
+            manager = manager_ref()
+            if manager is None:
+                return
+            if event.source != "exchange":
+                return
+            callback = manager._alert_callback
+            if callback is None:
+                return
+            try:
+                callback(event.message, dict(event.context))
+            except Exception:  # pragma: no cover - nie przerywamy pracy głównej pętli
+                logger.exception("Alert callback zgłosił wyjątek")
+
+        self._alert_listener_ref = _listener
+        self._alert_listener_token = self._alert_dispatcher.register(
+            _listener,
+            name=f"exchange-{id(self)}",
+        )
+
+    def get_rate_limit_snapshot(self) -> List[Dict[str, Any]]:
+        """Szybki podgląd stanu kubełków limitów API."""
+
+        return [bucket.snapshot() for bucket in self._rate_limit_buckets]
 
     def get_api_metrics(self) -> Dict[str, Any]:
         """Zwróć metryki zużycia API (łącznie i per-endpoint)."""
         usage = None
         if self._max_calls_per_window:
-            usage = self._window_count / self._max_calls_per_window if self._max_calls_per_window else None
+            if self._max_calls_per_window:
+                usage = self._window_count / self._max_calls_per_window
+        buckets_snapshot = [bucket.snapshot() for bucket in self._rate_limit_buckets]
         return {
+            "schema_version": self._telemetry_schema_version,
+            "timestamp_ns": time.time_ns(),
             "total_calls": self._metrics.total_calls,
             "total_errors": self._metrics.total_errors,
             "avg_latency_ms": self._metrics.avg_latency_ms,
@@ -654,6 +1032,7 @@ class ExchangeManager:
             "rate_limit_per_minute": self._rate_limit_per_minute,
             "rate_limit_window_seconds": self._rate_limit_window,
             "current_window_usage": usage,
+            "rate_limit_buckets": buckets_snapshot,
             "endpoints": {name: asdict(data) for name, data in self._endpoint_metrics.items()},
         }
 
@@ -661,10 +1040,7 @@ class ExchangeManager:
         """Wyzeruj liczniki metryk (np. po raporcie)."""
         self._metrics = _APIMetrics()
         self._endpoint_metrics = defaultdict(lambda: _EndpointMetrics())
-        self._window_count = 0
-        self._metrics.window_calls = 0
-        self._metrics.window_errors = 0
         self._metrics.consecutive_errors = 0
-        self._window_start = time.monotonic()
-        self._rate_alert_active = False
         self._alert_last.clear()
+        self._reset_rate_windows()
+        self._last_metrics_log = 0.0

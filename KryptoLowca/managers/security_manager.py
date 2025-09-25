@@ -21,8 +21,11 @@ import json
 import base64
 import logging
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
+
+from KryptoLowca.alerts import AlertSeverity, emit_alert
 
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives import hashes, constant_time
@@ -35,6 +38,15 @@ if not logger.handlers:
     _h.setFormatter(logging.Formatter('[%(asctime)s] %(name)s - %(levelname)s - %(message)s'))
     logger.addHandler(_h)
 logger.setLevel(logging.INFO)
+
+audit_logger = logging.getLogger(f"{__name__}.audit")
+if not audit_logger.handlers:
+    _audit_handler = logging.StreamHandler()
+    _audit_handler.setFormatter(
+        logging.Formatter('[%(asctime)s] SECURITY-AUDIT %(levelname)s: %(message)s')
+    )
+    audit_logger.addHandler(_audit_handler)
+audit_logger.setLevel(logging.INFO)
 
 
 class SecurityError(Exception):
@@ -81,6 +93,7 @@ class SecurityManager:
         self.aws_secret_id = aws_secret_id
         self.aws_region_name = aws_region_name
         self._lock = threading.RLock()
+        self._audit_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None
 
         # AWS opcjonalnie
         self._aws_available = False
@@ -204,6 +217,73 @@ class SecurityManager:
             raise SecurityError("You must specify a region.")
         return self._boto3.client("secretsmanager", region_name=region)
 
+    # --------------------- Audyt bezpieczeństwa ---------------------
+    def register_audit_callback(self, callback: Callable[[str, Dict[str, Any]], None]) -> None:
+        """Pozwala GUI/bazie na rejestrowanie zdarzeń audytowych (odszyfrowanie kluczy)."""
+
+        with self._lock:
+            self._audit_callback = callback
+
+    @staticmethod
+    def _mask_value(value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        if not value:
+            return value
+        if len(value) <= 4:
+            return "*" * len(value)
+        return f"{value[:2]}***{value[-2:]}"
+
+    def _mask_keys(self, keys: Dict[str, Any]) -> Dict[str, Any]:
+        masked: Dict[str, Any] = {}
+        for scope, creds in keys.items():
+            if isinstance(creds, dict):
+                masked[scope] = {k: self._mask_value(v) for k, v in creds.items()}
+            else:
+                masked[scope] = self._mask_value(creds)
+        return masked
+
+    def _emit_audit_event(self, action: str, **context: Any) -> None:
+        status = str(context.pop("status", "success"))
+        metadata: Dict[str, Any] = {}
+        for key, value in context.items():
+            if key in {"secret", "secrets", "payload"}:
+                continue
+            if key == "keys" and isinstance(value, dict):
+                metadata[key] = self._mask_keys(value)
+            else:
+                metadata[key] = value
+
+        payload: Dict[str, Any] = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "action": action,
+            "status": status,
+            "backend": self.backend,
+            "metadata": metadata,
+        }
+        if self.backend == "local":
+            payload["metadata"].setdefault("key_file", str(self.key_file))
+        if self.backend == "aws" and self.aws_secret_id:
+            payload["metadata"].setdefault("secret_id", self.aws_secret_id)
+        payload["detail"] = f"{action} ({self.backend})"
+        payload["actor"] = "security_manager"
+
+        audit_logger.info("%s %s", action.upper(), payload["metadata"])
+        if status != "success" and action.startswith("decrypt"):
+            emit_alert(
+                "Błąd odszyfrowania kluczy API",
+                severity=AlertSeverity.CRITICAL,
+                source="security",
+                context={"action": action, "backend": self.backend},
+            )
+
+        callback = self._audit_callback
+        if callback:
+            try:
+                callback(action, payload)
+            except Exception:  # pragma: no cover - callback nie powinien psuć logiki
+                logger.exception("Security audit callback zgłosił wyjątek")
+
     # --------------------- API PUBLICZNE ---------------------
 
     def save_encrypted_keys(self, keys: Dict[str, Any], password: str) -> None:
@@ -232,15 +312,33 @@ class SecurityManager:
                         SecretString=payload.decode("utf-8"),
                     )
                     logger.info("API keys saved to AWS Secrets Manager")
+                    self._emit_audit_event(
+                        "encrypt_keys",
+                        backend="aws",
+                        keys=self._mask_keys(keys),
+                        status="success",
+                    )
                 else:
                     # LOCAL
                     enc = self._local_encrypt(payload, password)
                     self.key_file.write_bytes(enc)
                     logger.info(f"API keys saved locally to {self.key_file}")
+                    self._emit_audit_event(
+                        "encrypt_keys",
+                        backend="local",
+                        keys=self._mask_keys(keys),
+                        status="success",
+                    )
             except SecurityError:
                 raise
             except Exception as e:
                 logger.error(f"Failed to save keys: {e}")
+                self._emit_audit_event(
+                    "encrypt_keys_failed",
+                    error=str(e),
+                    backend=self.backend,
+                    status="error",
+                )
                 raise SecurityError(f"Failed to save keys: {e}") from e
 
     def load_encrypted_keys(self, password: str) -> Dict[str, Any]:
@@ -269,6 +367,12 @@ class SecurityManager:
                     if not isinstance(data, dict):
                         raise SecurityError("Invalid key format in AWS secret")
                     logger.info("API keys loaded from AWS Secrets Manager")
+                    self._emit_audit_event(
+                        "decrypt_keys",
+                        backend="aws",
+                        keys=self._mask_keys(data),
+                        status="success",
+                    )
                     return data
 
                 # LOCAL
@@ -282,8 +386,20 @@ class SecurityManager:
                 if not isinstance(data, dict):
                     raise SecurityError("Invalid key format")
                 logger.info("API keys loaded from local file")
+                self._emit_audit_event(
+                    "decrypt_keys",
+                    backend="local",
+                    keys=self._mask_keys(data),
+                    status="success",
+                )
                 return data
             except SecurityError:
+                self._emit_audit_event(
+                    "decrypt_keys_failed",
+                    backend=self.backend,
+                    error="SecurityError",
+                    status="error",
+                )
                 raise
             except Exception as e:
                 # ujednolicone komunikaty dla GUI
@@ -291,4 +407,10 @@ class SecurityManager:
                 if "region" in msg.lower():
                     msg = "You must specify a region."
                 logger.error(f"Failed to load keys: {msg}")
+                self._emit_audit_event(
+                    "decrypt_keys_failed",
+                    backend=self.backend,
+                    error=msg,
+                    status="error",
+                )
                 raise SecurityError(f"Failed to load keys: {msg}") from e

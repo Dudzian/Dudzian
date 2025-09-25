@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from unittest.mock import AsyncMock
+
+from typing import Any, Dict, List
 
 import pytest
 
 import ccxt  # type: ignore
 
+from KryptoLowca.alerts import get_alert_dispatcher
 from KryptoLowca.config_manager import ExchangeConfig
 from KryptoLowca.exchange_manager import (
     AuthenticationError,
@@ -61,11 +65,31 @@ async def exchange_manager(monkeypatch):
             self.close = AsyncMock()
 
     class MockDB:
+        def __init__(self):
+            self.metrics: List[Dict[str, Any]] = []
+            self.rate_limits: List[Dict[str, Any]] = []
+            self.logs: List[Dict[str, Any]] = []
+
         async def ensure_user(self, email):
             return 1
 
         async def log(self, user_id, level, msg, category="general", context=None):
-            pass
+            self.logs.append({
+                "user_id": user_id,
+                "level": level,
+                "message": msg,
+                "category": category,
+                "context": context or {},
+            })
+            return 1
+
+        async def log_performance_metric(self, payload):
+            self.metrics.append(dict(payload))
+            return len(self.metrics)
+
+        async def log_rate_limit_snapshot(self, payload):
+            self.rate_limits.append(dict(payload))
+            return len(self.rate_limits)
 
     class MockSecurity:
         def load_encrypted_keys(self, pwd):
@@ -88,6 +112,7 @@ async def exchange_manager(monkeypatch):
     db_manager = MockDB()
     security_manager = MockSecurity()
     manager = await ExchangeManager.create(config, db_manager, security_manager)
+    manager.set_metrics_log_interval(0.01)
     manager._retry_delay = 0.0
     yield manager
     await manager.close()
@@ -197,6 +222,37 @@ async def test_authentication_error(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_metrics_snapshot_logged(exchange_manager):
+    await exchange_manager.fetch_balance()
+    await asyncio.sleep(0.05)
+    db = exchange_manager._db_manager
+    assert db.metrics, "Performance metrics should be stored"
+    assert any(entry["metric"] == "exchange_total_calls" for entry in db.metrics)
+    assert db.rate_limits, "Rate limit snapshots should be stored"
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_alert_triggers_snapshot(exchange_manager):
+    dispatcher = get_alert_dispatcher()
+    events: List[Any] = []
+
+    def _listener(event):
+        events.append(event)
+
+    token = dispatcher.register(_listener, name="test-rate-limit")
+    try:
+        exchange_manager.configure_rate_limits(per_minute=1, window_seconds=1.0)
+        await exchange_manager.fetch_balance()
+        await asyncio.sleep(0.05)
+        db = exchange_manager._db_manager
+        assert db.rate_limits, "Rate limit snapshots should be captured"
+        assert any(entry["context"]["limit_triggered"] for entry in db.rate_limits)
+        assert events, "An alert should be emitted when rate limit threshold is reached"
+    finally:
+        dispatcher.unregister(token)
+
+
+@pytest.mark.asyncio
 async def test_api_metrics_tracking(exchange_manager):
     await exchange_manager.load_markets()
     await exchange_manager.fetch_balance()
@@ -232,3 +288,92 @@ async def test_error_alert(exchange_manager, caplog):
             await exchange_manager.fetch_balance()
 
     assert any("[ALERT]" in record.message for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_multi_symbol_retry_and_logging():
+    class FakeExchange:
+        rateLimit = None
+
+        def __init__(self) -> None:
+            self.markets = {
+                "BTC/USDT": {"limits": {"amount": {"step": 0.001}, "price": {"step": 0.1}}},
+                "ETH/USDT": {"limits": {"amount": {"step": 0.001}, "price": {"step": 0.1}}},
+            }
+            self._fail_once = {"ETH/USDT": True}
+
+        async def load_markets(self):
+            return self.markets
+
+        async def create_order(self, symbol, order_type, side, amount, price=None, params=None):
+            if self._fail_once.get(symbol):
+                self._fail_once[symbol] = False
+                raise RuntimeError("temporary outage")
+            return {
+                "id": f"{symbol}-order",
+                "symbol": symbol,
+                "side": side,
+                "amount": amount,
+                "price": price or 100.0,
+                "status": "filled",
+            }
+
+        async def fetch_balance(self):
+            return {"total": {"USDT": 1000.0}}
+
+        async def fetch_ticker(self, symbol):
+            return {"last": 100.0}
+
+    class FakeDB:
+        def __init__(self) -> None:
+            self.entries: List[Dict[str, Any]] = []
+
+        async def log(self, user_id, level, message, category="general", context=None):
+            self.entries.append(
+                {
+                    "user_id": user_id,
+                    "level": level,
+                    "message": message,
+                    "category": category,
+                    "context": context or {},
+                }
+            )
+
+    fake_exchange = FakeExchange()
+    manager = ExchangeManager(fake_exchange)
+    manager._db_manager = FakeDB()
+    manager._user_id = 42
+    manager.set_retry_policy(attempts=2, delay=0.0)
+    manager.configure_rate_limits(
+        per_minute=None,
+        window_seconds=1.0,
+        buckets=[{"name": "burst", "capacity": 2, "window_seconds": 0.1}],
+    )
+    manager._alert_usage_threshold = 0.5
+    manager._alert_cooldown_seconds = 0.0
+    alerts: List[Dict[str, Any]] = []
+
+    def _alert_handler(message: str, context: Dict[str, Any]) -> None:
+        alerts.append({"message": message, "context": context})
+
+    manager.register_alert_handler(_alert_handler)
+
+    await manager.load_markets()
+
+    # pierwsze zlecenie – sukces
+    result1 = await manager.create_order("BTC/USDT", "buy", "market", 0.01)
+    assert result1.status == "filled"
+
+    # drugie zlecenie – pierwsze podejście rzuca wyjątek, drugie powinno się powieść
+    result2 = await manager.create_order("ETH/USDT", "buy", "limit", 0.02, price=100.1)
+    assert result2.status == "filled"
+
+    # dodatkowe wywołanie aby przekroczyć próg limitu i wygenerować alert + log DB
+    await manager.fetch_balance()
+    await asyncio.sleep(0)  # pozwól logom z DB się wykonać
+
+    metrics = manager.get_api_metrics()
+    assert metrics["total_calls"] >= 3
+    assert metrics["rate_limit_buckets"], "Powinny istnieć metryki kubełków limitów"
+    assert alerts, "Alert o zbliżającym się limicie powinien zostać wygenerowany"
+    assert any(entry["category"] == "exchange" for entry in manager._db_manager.entries)

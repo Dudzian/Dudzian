@@ -37,10 +37,10 @@ def sample_preset() -> dict:
             "train_all": False,
         },
         "risk": {
-            "max_daily_loss_pct": 0.08,
+            "max_daily_loss_pct": 0.02,
             "soft_halt_losses": 2,
             "trade_cooldown_on_error": 60,
-            "risk_per_trade": 0.02,
+            "risk_per_trade": 0.005,
             "portfolio_risk": 0.3,
             "one_trade_per_bar": True,
             "cooldown_s": 15,
@@ -87,7 +87,8 @@ def test_save_and_load_roundtrip(cfg: ConfigManager, sample_preset: dict) -> Non
     assert loaded["selected_symbols"] == ["BTC/USDT", "ETH/USDT"]
     # sekcje dodatkowe obecne
     assert loaded["ai"]["epochs"] == 20
-    assert loaded["risk"]["risk_per_trade"] == pytest.approx(0.02)
+    assert loaded["risk"]["risk_per_trade"] == pytest.approx(0.005)
+    assert loaded["version"] == ConfigManager.current_version()
 
 
 def test_invalid_fraction_rejected(cfg: ConfigManager, sample_preset: dict) -> None:
@@ -107,3 +108,43 @@ def test_defaults_and_normalisation(cfg: ConfigManager) -> None:
     assert preset.fraction == pytest.approx(0.0)
     data = preset.to_dict()
     assert "ai" in data and "risk" in data
+    assert preset.version == ConfigManager.current_version()
+
+
+def test_demo_requirement_blocks_live(cfg: ConfigManager, sample_preset: dict) -> None:
+    sample_preset["network"] = "Live"
+    with pytest.raises(ValueError):
+        cfg.save_preset("live", sample_preset)
+
+    cfg.require_demo_mode(False)
+    path = cfg.save_preset("live_allowed", sample_preset)
+    assert path.exists()
+
+
+def test_create_preset_with_audit(cfg: ConfigManager, sample_preset: dict) -> None:
+    cfg.save_preset("base", sample_preset)
+    audit = cfg.create_preset(
+        "custom",
+        base="base",
+        overrides={"fraction": 0.2, "risk": {"trade_cooldown_on_error": 10}},
+    )
+    assert audit["preset"]["network"] == "Testnet"
+    assert audit["warnings"], "Niski cooldown powinien generować ostrzeżenie"
+    assert audit["risk_state"] == "warn"
+    assert "path" in audit and Path(audit["path"]).exists()
+    assert audit["version"] == ConfigManager.current_version()
+    assert audit["preset"]["version"] == ConfigManager.current_version()
+
+
+def test_preset_wizard_profiles(cfg: ConfigManager, sample_preset: dict) -> None:
+    cfg.save_preset("base", sample_preset)
+    wizard = cfg.preset_wizard().from_template("base").with_risk_profile("aggressive").with_symbols([
+        "btc/usdt",
+        "ada/usdt",
+    ])
+    audit = wizard.build("aggressive_profile")
+
+    assert audit["preset"]["selected_symbols"] == ["BTC/USDT", "ADA/USDT"]
+    assert audit["preset"]["fraction"] == pytest.approx(0.24)
+    assert audit["is_demo"] is True
+    assert audit["preset"]["version"] == ConfigManager.current_version()

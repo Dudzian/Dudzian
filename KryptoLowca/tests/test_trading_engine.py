@@ -116,6 +116,7 @@ class MockDB:
         self.order_updates = []
         self.logs = []
         self.positions = []
+        self.risk_limits = []
 
     async def ensure_user(self, email: str) -> int:
         return 1
@@ -129,6 +130,10 @@ class MockDB:
     async def record_order(self, order):
         self.orders.append(order)
         return len(self.orders)
+
+    async def log_risk_limit(self, payload):
+        self.risk_limits.append(payload)
+        return len(self.risk_limits)
 
     async def update_order_status(
         self,
@@ -197,6 +202,7 @@ def test_execute_live_tick(engine):
     assert plan["execution"]["status"] == "FILLED"
     assert engine.ex_mgr.created_orders  # type: ignore[attr-defined]
     assert engine.db_manager.orders  # type: ignore[attr-defined]
+    assert engine.db_manager.risk_limits  # type: ignore[attr-defined]
 
 
 def test_no_signal(engine):

@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from KryptoLowca.database_manager import DatabaseManager, DBOptions, DatabaseConnectionError, MigrationError
+from KryptoLowca.managers.database_manager import CURRENT_SCHEMA_VERSION
 
 @pytest.fixture
 async def db(tmp_path):
@@ -96,3 +97,70 @@ async def test_invalid_input(db):
         await dbm.insert_trade(uid, {"ts": "2025-08-21", "qty": 1.0})
     with pytest.raises(ValueError):
         await dbm.upsert_position(uid, "BTCUSDT", -1.0, 30000.0)
+
+
+@pytest.mark.asyncio
+async def test_schema_version(db):
+    dbm, _ = db
+    version = await dbm.get_schema_version()
+    assert version == CURRENT_SCHEMA_VERSION
+
+
+@pytest.mark.asyncio
+async def test_performance_and_risk_logging(db):
+    dbm, _ = db
+    metric_id = await dbm.log_performance_metric(
+        {
+            "metric": "auto_trader_expectancy",
+            "value": 1.5,
+            "symbol": "BTC/USDT",
+            "mode": "paper",
+            "window": 10,
+            "context": {"source": "test"},
+        }
+    )
+    assert metric_id > 0
+    metrics = await dbm.fetch_performance_metrics(metric="auto_trader_expectancy")
+    assert metrics and metrics[0]["metric"] == "auto_trader_expectancy"
+
+    risk_id = await dbm.log_risk_limit(
+        {
+            "symbol": "BTC/USDT",
+            "max_fraction": 0.2,
+            "recommended_size": 0.1,
+            "mode": "paper",
+            "details": {"kelly": 0.05},
+        }
+    )
+    assert risk_id > 0
+    limits = await dbm.fetch_risk_limits(symbol="BTC/USDT")
+    assert limits and limits[0]["symbol"] == "BTC/USDT"
+
+    rate_id = await dbm.log_rate_limit_snapshot(
+        {
+            "bucket_name": "global",
+            "window_seconds": 60.0,
+            "capacity": 1200,
+            "count": 600,
+            "usage": 0.5,
+            "max_usage": 0.75,
+            "reset_in_seconds": 10.0,
+            "mode": "paper",
+            "context": {"limit_triggered": False},
+        }
+    )
+    assert rate_id > 0
+    rate_snapshots = await dbm.fetch_rate_limit_snapshots(bucket="global")
+    assert rate_snapshots and rate_snapshots[0]["bucket_name"] == "global"
+
+    audit_id = await dbm.log_security_audit(
+        {
+            "action": "decrypt_keys",
+            "status": "ok",
+            "detail": "unit-test",
+            "metadata": {"source": "tests"},
+        }
+    )
+    assert audit_id > 0
+    audits = await dbm.fetch_security_audit(action="decrypt_keys")
+    assert audits and audits[0]["detail"] == "unit-test"
