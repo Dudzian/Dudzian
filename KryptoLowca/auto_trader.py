@@ -6,7 +6,6 @@ import threading
 import time
 import statistics
 from typing import Optional, List, Dict, Any, Callable, Tuple
-
 import inspect
 
 import pandas as pd
@@ -24,7 +23,6 @@ except Exception:
 
 from KryptoLowca.event_emitter_adapter import EventEmitter
 from KryptoLowca.logging_utils import get_logger
-
 
 logger = get_logger(__name__)
 
@@ -131,14 +129,32 @@ class AutoTrader:
         self.emitter.log(f"AutoTrader reconfigured: {kwargs}", component="AutoTrader")
 
     # -- Event handlers --
-    def _on_trade_closed(self, symbol: str, side: str, entry: float, exit: float, pnl: float, ts: float, meta: Dict[str, Any] | None = None, **_) -> None:
+    def _on_trade_closed(
+        self,
+        symbol: str,
+        side: str,
+        entry: float,
+        exit: float,
+        pnl: float,
+        ts: float,
+        meta: Dict[str, Any] | None = None,
+        **_,
+    ) -> None:
         self._closed_pnls.append(pnl)
-        pf, exp = self._compute_metrics()
-        self.emitter.emit("metrics_updated", pf=pf, expectancy=exp, window=len(self._closed_pnls), ts=time.time())
-        self._persist_performance_metrics(symbol, pf, exp)
+        pf, exp, win_rate = self._compute_metrics()
+        self.emitter.emit(
+            "metrics_updated",
+            pf=pf,
+            expectancy=exp,
+            win_rate=win_rate,
+            window=len(self._closed_pnls),
+            ts=time.time(),
+        )
+        self._persist_performance_metrics(symbol, pf, exp, win_rate)
+
         # Check thresholds
         trigger_reason = None
-        details = {}
+        details: Dict[str, Any] = {}
         if pf is not None and pf < self.pf_min:
             trigger_reason = "pf_drop"
             details["pf"] = pf
@@ -164,9 +180,9 @@ class AutoTrader:
                 self._maybe_reoptimize("atr_spike", {"atr": atr, "baseline": baseline, "ratio": ratio})
 
     # -- Helpers --
-    def _compute_metrics(self) -> tuple[Optional[float], Optional[float]]:
+    def _compute_metrics(self) -> tuple[Optional[float], Optional[float], Optional[float]]:
         if not self._closed_pnls:
-            return (None, None)
+            return (None, None, None)
         pnls = list(self._closed_pnls)
         wins = [p for p in pnls if p > 0]
         losses = [-p for p in pnls if p < 0]
@@ -175,7 +191,8 @@ class AutoTrader:
         pf = (gross_profit / gross_loss) if gross_loss > 0 else (float('inf') if gross_profit > 0 else None)
         # Expectancy per trade (avg pnl)
         expectancy = statistics.mean(pnls) if pnls else None
-        return (pf, expectancy)
+        win_rate = (len(wins) / len(pnls)) if pnls else None
+        return (pf, expectancy, win_rate)
 
     def _resolve_db(self):
         db = self._db_manager
@@ -234,11 +251,17 @@ class AutoTrader:
         symbol: str,
         pf: Optional[float],
         expectancy: Optional[float],
+        win_rate: Optional[float],
     ) -> None:
         window = len(self._closed_pnls)
-        extra = {"profit_factor": pf, "expectancy": expectancy}
+        extra = {
+            "profit_factor": pf,
+            "expectancy": expectancy,
+            "win_rate": win_rate,
+        }
         self._log_metric("auto_trader_expectancy", expectancy, symbol=symbol, window=window, extra=extra)
         self._log_metric("auto_trader_profit_factor", pf, symbol=symbol, window=window, extra=extra)
+        self._log_metric("auto_trader_win_rate", win_rate, symbol=symbol, window=window, extra=extra)
 
     def _maybe_reoptimize(self, reason: str, details: Dict[str, Any]) -> None:
         now = time.time()

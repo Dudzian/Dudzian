@@ -42,6 +42,7 @@ except Exception:  # pragma: no cover
             return name
         def unregister(self, token: str) -> None:
             return None
+
     def get_alert_dispatcher() -> _DummyDispatcher:
         return _DummyDispatcher()
 
@@ -51,6 +52,14 @@ except Exception:  # pragma: no cover
         severity: str = AlertSeverity.INFO
         source: str = "general"
         context: Dict[str, Any] = field(default_factory=dict)
+
+# ---- Telemetria (opcjonalna) ------------------------------------------------
+try:  # pragma: no cover
+    from KryptoLowca.telemetry import TelemetryWriter  # type: ignore
+except Exception:  # pragma: no cover
+    class TelemetryWriter:  # no-op fallback
+        def __init__(self, *_, **__): ...
+        def write_snapshot(self, *_args, **_kwargs): ...
 
 # ---- ccxt async importy odporne na różne wersje / brak biblioteki -----------
 try:  # pragma: no cover - importowany tylko jeśli ccxt jest dostępne
@@ -138,6 +147,7 @@ class _RateLimitBucket:
             "usage": self.last_usage,
             "max_usage": self.max_usage,
             "reset_in_seconds": remaining,
+            "alert_active": self.alert_active,
         }
 
 # ------------------------------- Wyjątki -------------------------------------
@@ -199,6 +209,10 @@ class ExchangeManager:
         self._error_alert_threshold = 3
         self._metrics_log_interval = 30.0
         self._last_metrics_log = 0.0
+
+        # Telemetria rozszerzona (opcjonalna)
+        self._telemetry_schema_version = 1
+        self._telemetry_writer: Optional[Any] = None
 
     # -------------------------------- Factory --------------------------------
     @classmethod
@@ -269,6 +283,40 @@ class ExchangeManager:
             min(1.0, float(getattr(config, "rate_limit_alert_threshold", 0.85) or 0.85)),
         )
         manager._error_alert_threshold = max(1, int(getattr(config, "error_alert_threshold", 3) or 3))
+
+        # Telemetria – interwał logowania i schema version
+        telemetry_interval = getattr(config, "metrics_log_interval", None)
+        telemetry_interval = getattr(config, "telemetry_log_interval_s", telemetry_interval)
+        if telemetry_interval is not None:
+            manager.set_metrics_log_interval(telemetry_interval)
+        schema_version = getattr(config, "telemetry_schema_version", None)
+        if schema_version is not None:
+            try:
+                manager._telemetry_schema_version = int(schema_version)
+            except (TypeError, ValueError):
+                logger.warning("Nieprawidłowa wartość telemetry_schema_version: %s", schema_version)
+
+        # Telemetry writer (opcjonalnie przez fabrykę lub ścieżkę)
+        storage_factory = getattr(config, "telemetry_writer_factory", None)
+        if callable(storage_factory):
+            try:
+                manager._telemetry_writer = storage_factory()
+            except Exception as exc:
+                logger.error("Nie udało się utworzyć telemetry writer: %s", exc)
+        else:
+            storage_path = getattr(config, "telemetry_storage_path", None)
+            if storage_path:
+                try:
+                    mode_str = getattr(manager.mode, "value", manager.mode)
+                    manager._telemetry_writer = TelemetryWriter(
+                        storage_path=storage_path,
+                        exchange=exchange_id,
+                        mode=str(mode_str).lower(),
+                        grpc_target=getattr(config, "telemetry_grpc_target", None),
+                        aggregate_intervals=getattr(config, "telemetry_aggregate_intervals", (1, 10, 60)),
+                    )
+                except Exception as exc:
+                    logger.error("Nie udało się utworzyć lokalnego telemetry writer: %s", exc)
 
         rate_limit_ms = getattr(exchange, "rateLimit", None)
         try:
@@ -549,15 +597,27 @@ class ExchangeManager:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return
-        loop.create_task(
-            self._db_manager.log(
-                self._user_id,
-                "INFO",
-                "API metrics snapshot",
-                category="exchange_metrics",
-                context=snapshot,
-            )
-        )
+
+        async def _persist() -> None:
+            try:
+                await self._db_manager.log(
+                    self._user_id,
+                    "INFO",
+                    "API metrics snapshot",
+                    category="exchange_metrics",
+                    context=snapshot,
+                )
+            except Exception:
+                logger.exception("Błąd zapisu telemetrii API")
+
+        loop.create_task(_persist())
+
+        # Opcjonalnie, lokalny zapis telemetryjny
+        if self._telemetry_writer is not None:
+            try:
+                self._telemetry_writer.write_snapshot(snapshot)
+            except Exception:
+                logger.exception("Nie udało się zapisać snapshotu telemetryjnego lokalnie")
 
     async def _run_with_retry(self, coro_factory: Callable[[], Any], *, endpoint: str) -> Any:
         last_exc: Optional[Exception] = None
@@ -876,6 +936,7 @@ class ExchangeManager:
     # ------------------------------ telemetry ---------------------------------
     def register_alert_handler(self, callback: Callable[[str, Dict[str, Any]], None]) -> None:
         """Zarejestruj zewnętrzny handler alertów (np. GUI / moduł powiadomień)."""
+
         self._alert_callback = callback
         if self._alert_listener_token is not None:
             self._alert_dispatcher.unregister(self._alert_listener_token)
@@ -915,6 +976,8 @@ class ExchangeManager:
             usage = self._window_count / self._max_calls_per_window
         buckets_snapshot = [bucket.snapshot() for bucket in self._rate_limit_buckets]
         return {
+            "schema_version": self._telemetry_schema_version,
+            "timestamp_ns": time.time_ns(),
             "total_calls": self._metrics.total_calls,
             "total_errors": self._metrics.total_errors,
             "avg_latency_ms": self._metrics.avg_latency_ms,

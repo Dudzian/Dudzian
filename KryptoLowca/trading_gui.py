@@ -1029,9 +1029,15 @@ class TradingGUI:
         try:
             name = (self.preset_name.get() or "default").strip()
             d = self._collect_settings_dict()
-            self.cfg.save_preset(name, d)
+            audit = self.cfg.audit_preset(d)
+            if audit["issues"]:
+                messagebox.showerror("Preset audit", "\n".join(audit["issues"]))
+                return
+            path = self.cfg.save_preset(name, d)
             self._refresh_presets_list()
-            self._log(f"Preset saved: {name}.json", "INFO")
+            self._log(f"Preset saved: {Path(path).name}", "INFO")
+            if audit["warnings"]:
+                messagebox.showwarning("Preset warnings", "\n".join(audit["warnings"]))
         except Exception as e:
             self._log(f"Save preset error: {e}", "ERROR")
             messagebox.showerror("Save preset error", str(e))
@@ -1112,6 +1118,21 @@ class TradingGUI:
             "paper": {"capital": self.paper_capital.get()},
             "selected_symbols": self.selected_symbols
         }
+
+    def _handle_security_audit(self, action: str, payload: Dict[str, Any]) -> None:
+        try:
+            record = {
+                "action": action,
+                "status": payload.get("status", "ok"),
+                "detail": payload.get("detail", action),
+                "metadata": payload.get("metadata"),
+                "actor": payload.get("actor"),
+            }
+            self.db.sync.log_security_audit(record)
+            self._log(f"Security audit: {action} ({record['status']})", "INFO")
+        except Exception as exc:
+            logger.exception("Failed to persist security audit event")
+            self._log(f"Security audit log error: {exc}", "ERROR")
 
     def _apply_settings_dict(self, d: Dict[str, Any]):
         try:

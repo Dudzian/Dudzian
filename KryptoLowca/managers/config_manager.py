@@ -44,7 +44,7 @@ except Exception:  # pragma: no cover - środowiska bez PyYAML
 _SANITIZE = re.compile(r"[^a-zA-Z0-9_\-\.]")
 _TIMEFRAME_PATTERN = re.compile(r"^[1-9][0-9]*(m|h|d|w)$", re.IGNORECASE)
 
-CONFIG_SCHEMA_VERSION = 2
+CONFIG_SCHEMA_VERSION = 3
 
 
 def _sanitize_name(name: str) -> str:
@@ -76,10 +76,10 @@ class AISettings(_SectionModel):
 
 
 class RiskSettings(_SectionModel):
-    max_daily_loss_pct: float = Field(default=0.10, ge=0.0, le=1.0)
+    max_daily_loss_pct: float = Field(default=0.02, ge=0.0, le=1.0)
     soft_halt_losses: int = Field(default=3, ge=0)
     trade_cooldown_on_error: int = Field(default=30, ge=0, le=3600)
-    risk_per_trade: float = Field(default=0.01, ge=0.0, le=1.0)
+    risk_per_trade: float = Field(default=0.005, ge=0.0, le=1.0)
     portfolio_risk: float = Field(default=0.20, ge=0.0, le=1.0)
     one_trade_per_bar: bool = True
     cooldown_s: int = Field(default=0, ge=0, le=86_400)
@@ -114,6 +114,15 @@ class PaperSettings(_SectionModel):
     capital: float = Field(default=10_000.0, ge=0.0, le=1_000_000_000.0)
 
 
+class TelemetrySettings(_SectionModel):
+    log_interval_s: float = Field(default=30.0, ge=1.0, le=600.0)
+    alert_threshold: float = Field(default=0.85, ge=0.1, le=1.0)
+    error_threshold: int = Field(default=3, ge=1, le=50)
+    schema_version: int = Field(default=1, ge=1, le=100)
+    storage_path: Optional[str] = None
+    grpc_target: Optional[str] = None
+
+
 class ConfigPreset(BaseModel):
     """Model najwyższego poziomu opisujący pojedynczy preset."""
     version: int = Field(default=CONFIG_SCHEMA_VERSION, ge=1)
@@ -127,6 +136,7 @@ class ConfigPreset(BaseModel):
     slippage: SlippageSettings = Field(default_factory=SlippageSettings)
     advanced: AdvancedSettings = Field(default_factory=AdvancedSettings)
     paper: PaperSettings = Field(default_factory=PaperSettings)
+    telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)
     selected_symbols: List[str] = Field(default_factory=list)
 
     model_config = ConfigDict(extra="allow")
@@ -201,6 +211,32 @@ class ConfigPreset(BaseModel):
                 "Preset posiada bardzo niski kapitał symulacyjny (%.2f). Rozważ >= 100 USD dla sensownych testów.",
                 self.paper.capital,
             )
+
+        equity = max(self.paper.capital, 0.0)
+        requested_notional = equity * self.fraction
+        spot_limit = equity * 0.25
+        futures_limit = equity * 0.15
+        if self.mode == "Spot" and requested_notional > spot_limit + 1e-8:
+            raise ValueError(
+                "Frakcja przekracza limit 25% kapitału dla rynku Spot zgodnie z polityką zarządzania ryzykiem."
+            )
+        if self.mode == "Futures" and requested_notional > futures_limit + 1e-8:
+            raise ValueError(
+                "Frakcja przekracza limit 15% kapitału dla rynku Futures zgodnie z polityką zarządzania ryzykiem."
+            )
+
+        max_daily_loss_pct = min(0.02, 2000.0 / equity) if equity > 0 else 0.02
+        if self.risk.max_daily_loss_pct > max_daily_loss_pct + 1e-9:
+            raise ValueError(
+                "Parametr max_daily_loss_pct przekracza politykę bezpieczeństwa (min(2% * kapitału, 2000 USDT))."
+            )
+
+        if self.risk.risk_per_trade > 0.005 + 1e-9:
+            raise ValueError("risk_per_trade nie może przekraczać 0.5% kapitału na transakcję.")
+
+        if self.risk.portfolio_risk > 0.5 + 1e-9:
+            raise ValueError("portfolio_risk nie może przekraczać 50% ekspozycji łącznej.")
+
         return self
 
     def to_dict(self) -> Dict[str, Any]:
@@ -211,13 +247,17 @@ class ConfigPreset(BaseModel):
 class ConfigManager:
     """Manager presetów wykorzystywany przez ``trading_gui.py``."""
 
-    def __init__(self, presets_dir: Path | str) -> None:
+    def __init__(self, presets_dir: Path | str, *, database: Any | None = None) -> None:
         self.presets_dir = Path(presets_dir)
         self.presets_dir.mkdir(parents=True, exist_ok=True)
         logger.info("ConfigManager: katalog presetów = %s", self.presets_dir)
         self._demo_required = True
         self._default_template = ConfigPreset().to_dict()
         self._last_upgrade_from: Optional[int] = None
+        # rozszerzenia: ślady audytu i opcjonalna baza do logowania
+        self._database = database
+        self._audit_history_path = self.presets_dir / "preset_migrations.jsonl"
+        self._preset_audit_path = self.presets_dir / "preset_audit_history.jsonl"
 
     # --- walidacja ---
     def validate_preset(self, data: Dict[str, Any]) -> ConfigPreset:
@@ -225,7 +265,7 @@ class ConfigManager:
         upgraded = self._upgrade_payload(data)
         try:
             preset = ConfigPreset.model_validate(upgraded)
-        except ValidationError as exc:  # pragma: no cover
+        except ValidationError as exc:  # pragma: no cover - trudne do pełnego pokrycia
             errors = "; ".join(
                 f"{'.'.join(str(loc) for loc in err['loc'])}: {err['msg']}" for err in exc.errors()
             )
@@ -236,6 +276,7 @@ class ConfigManager:
                 self._last_upgrade_from,
                 CONFIG_SCHEMA_VERSION,
             )
+            self._record_migration_history(upgraded)
         return preset
 
     def require_demo_mode(self, required: bool = True) -> None:
@@ -291,14 +332,37 @@ class ConfigManager:
                         paper_section["capital"] = float(paper_section.get("capital", 10_000.0))
                     except (TypeError, ValueError):
                         paper_section["capital"] = 10_000.0
+            if upgraded_from < 3:
+                telemetry_section = payload.get("telemetry")
+                if not isinstance(telemetry_section, dict):
+                    telemetry_section = {}
+                telemetry_section.setdefault("log_interval_s", 30.0)
+                telemetry_section.setdefault("alert_threshold", 0.85)
+                telemetry_section.setdefault("error_threshold", 3)
+                telemetry_section.setdefault("schema_version", 1)
+                payload["telemetry"] = telemetry_section
 
         payload["version"] = CONFIG_SCHEMA_VERSION
         self._last_upgrade_from = upgraded_from
         return payload
 
-    def audit_preset(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    def _record_migration_history(self, upgraded_payload: Dict[str, Any]) -> None:
+        entry = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "from_version": self._last_upgrade_from,
+            "to_version": CONFIG_SCHEMA_VERSION,
+            "preview": {k: upgraded_payload.get(k) for k in ("network", "mode", "timeframe")},
+        }
+        try:
+            with self._audit_history_path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        except Exception:
+            logger.exception("Nie udało się zapisać historii migracji presetów")
+
+    def audit_preset(self, data: Dict[str, Any] | ConfigPreset) -> Dict[str, Any]:
         """Przeprowadź szybki audyt bezpieczeństwa i ryzyka dla presetu."""
-        preset = self.validate_preset(data)
+        preset = data if isinstance(data, ConfigPreset) else self.validate_preset(data)
+
         issues: List[str] = []
         warnings: List[str] = []
 
@@ -311,14 +375,36 @@ class ConfigManager:
             warnings.append(
                 "Przed uruchomieniem na Live wykonaj pełne testy na koncie demo i upewnij się, że klucze API mają ograniczone uprawnienia."
             )
-        if preset.fraction > 0.5:
-            warnings.append("Frakcja kapitału przekracza 50% – rozważ niższą wartość dla redukcji ryzyka.")
-        if preset.risk.max_daily_loss_pct > 0.2:
-            warnings.append(
-                "Parametr max_daily_loss_pct przekracza 20% – może naruszać zasady zarządzania ryzykiem."
+
+        equity = max(preset.paper.capital, 0.0)
+        requested_notional = equity * preset.fraction
+        spot_limit = equity * 0.25
+        futures_limit = equity * 0.15
+        notional_limit = spot_limit if preset.mode == "Spot" else futures_limit
+        if requested_notional > notional_limit + 1e-9:
+            issues.append(
+                "Notional pozycji przekracza dopuszczalny limit ekspozycji dla profilu początkującego."
             )
+
+        allowed_daily_loss = min(0.02, 2000.0 / equity) if equity > 0 else 0.02
+        if preset.risk.max_daily_loss_pct > allowed_daily_loss + 1e-9:
+            issues.append(
+                "max_daily_loss_pct przekracza limit bezpieczeństwa (min(2% * E, 2000 USDT))."
+            )
+
+        if preset.risk.risk_per_trade > 0.005 + 1e-9:
+            issues.append("risk_per_trade musi być <= 0.5% kapitału.")
+
+        if preset.risk.portfolio_risk > 0.5 + 1e-9:
+            issues.append("portfolio_risk nie może przekraczać 50% ekspozycji.")
+
         if preset.paper.capital < 500:
             warnings.append("Kapitał paper trading < 500 – wyniki backtestu mogą być mało reprezentatywne.")
+
+        if preset.risk.trade_cooldown_on_error < 60:
+            warnings.append("Zwiększ trade_cooldown_on_error do >= 60s aby respektować politykę cooldown.")
+
+        risk_state = "lock" if issues else ("warn" if warnings else "ok")
 
         return {
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -329,6 +415,11 @@ class ConfigManager:
             "warnings": warnings,
             "demo_required": self._demo_required,
             "is_demo": is_demo,
+            "risk_state": risk_state,
+            "requested_notional": requested_notional,
+            "notional_limit": notional_limit,
+            "allowed_daily_loss_pct": allowed_daily_loss,
+            "schema_version": CONFIG_SCHEMA_VERSION,
         }
 
     # --- ścieżki ---
@@ -354,11 +445,10 @@ class ConfigManager:
             raise ValueError("Preset musi być słownikiem (dict).")
 
         preset = self.validate_preset(data)
-        if self._demo_required and preset.network.lower() != "testnet":
-            raise ValueError(
-                "Polityka bezpieczeństwa wymaga tworzenia presetów w trybie Testnet. "
-                "Zmień pole 'network' na 'Testnet' lub wyłącz ten wymóg metodą require_demo_mode(False)."
-            )
+        audit = self.audit_preset(preset)
+        if audit["issues"] and self._demo_required:
+            raise ValueError(audit["issues"][0])
+
         payload = preset.to_dict()
 
         if _HAS_YAML:
@@ -367,6 +457,7 @@ class ConfigManager:
                 with path.open("w", encoding="utf-8") as f:
                     yaml.safe_dump(payload, f, allow_unicode=True, sort_keys=False)  # type: ignore[arg-type]
                 logger.info("Zapisano preset YAML: %s", path)
+                self._log_audit_entry(name, audit, payload, path)
                 return path
             except Exception as e:  # pragma: no cover
                 logger.error("Błąd zapisu YAML (%s): %s – próba JSON", path, e)
@@ -375,6 +466,7 @@ class ConfigManager:
         with path.open("w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
         logger.info("Zapisano preset JSON: %s", path)
+        self._log_audit_entry(name, audit, payload, path)
         return path
 
     def create_preset(
@@ -398,18 +490,46 @@ class ConfigManager:
         if require_demo and preset.network.lower() != "testnet":
             preset = preset.copy(update={"network": "Testnet"})
 
-        audit = self.audit_preset(preset.to_dict())
+        audit = self.audit_preset(preset)
         if require_demo and audit["issues"]:
-            # Próba zapisu bez trybu demo – blokujemy zanim powstanie plik.
             raise ValueError(audit["issues"][0])
 
         path = self.save_preset(name, preset.to_dict())
-        audit.update({
+        result = dict(audit)
+        result.update({
             "name": name,
             "path": str(path),
+            "preset": preset.to_dict(),
         })
-        audit["preset"] = preset.to_dict()
-        return audit
+        return result
+
+    def _log_audit_entry(
+        self,
+        name: str,
+        audit: Dict[str, Any],
+        payload: Dict[str, Any],
+        path: Path,
+    ) -> None:
+        record = dict(audit)
+        record.update({"name": name, "path": str(path)})
+        record["preset"] = payload
+        try:
+            with self._preset_audit_path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except Exception:
+            logger.exception("Nie udało się zapisać audytu presetu")
+
+        db = self._database
+        if db is not None and hasattr(db, "sync"):
+            try:
+                db.sync.add_log(
+                    level="INFO",
+                    source="config_audit",
+                    message=f"Preset audit {name}: {audit.get('risk_state', 'ok')}",
+                    extra={"category": "config_audit", "audit": audit},
+                )
+            except Exception:
+                logger.exception("Nie udało się zapisać audytu presetu do bazy")
 
     def load_preset(self, name: str) -> Dict[str, Any]:
         safe = _sanitize_name(name)
@@ -498,15 +618,15 @@ class PresetWizard:
         presets = {
             "conservative": {
                 "fraction": 0.1,
-                "risk": {"max_daily_loss_pct": 0.04, "risk_per_trade": 0.01},
+                "risk": {"max_daily_loss_pct": 0.02, "risk_per_trade": 0.004},
             },
             "balanced": {
-                "fraction": 0.2,
-                "risk": {"max_daily_loss_pct": 0.08, "risk_per_trade": 0.02},
+                "fraction": 0.18,
+                "risk": {"max_daily_loss_pct": 0.02, "risk_per_trade": 0.005},
             },
             "aggressive": {
-                "fraction": 0.35,
-                "risk": {"max_daily_loss_pct": 0.15, "risk_per_trade": 0.04},
+                "fraction": 0.24,
+                "risk": {"max_daily_loss_pct": 0.02, "risk_per_trade": 0.005},
             },
         }
         key = profile.strip().lower()
@@ -547,5 +667,6 @@ __all__ = [
     "SlippageSettings",
     "AdvancedSettings",
     "PaperSettings",
+    "TelemetrySettings",
     "PresetWizard",
 ]

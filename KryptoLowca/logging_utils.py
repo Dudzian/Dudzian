@@ -39,6 +39,7 @@ def _ensure_rotating_handler(
         maxBytes=max_bytes,
         backupCount=backup_count,
         encoding="utf-8",
+        delay=True,  # create file on first use
     )
     handler.setFormatter(
         logging.Formatter("[%(asctime)s] %(levelname)s %(name)s: %(message)s")

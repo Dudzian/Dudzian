@@ -12,6 +12,7 @@ import pytest
 
 import ccxt  # type: ignore
 
+from KryptoLowca.alerts import get_alert_dispatcher
 from KryptoLowca.config_manager import ExchangeConfig
 from KryptoLowca.exchange_manager import (
     AuthenticationError,
@@ -64,11 +65,31 @@ async def exchange_manager(monkeypatch):
             self.close = AsyncMock()
 
     class MockDB:
+        def __init__(self):
+            self.metrics: List[Dict[str, Any]] = []
+            self.rate_limits: List[Dict[str, Any]] = []
+            self.logs: List[Dict[str, Any]] = []
+
         async def ensure_user(self, email):
             return 1
 
         async def log(self, user_id, level, msg, category="general", context=None):
-            pass
+            self.logs.append({
+                "user_id": user_id,
+                "level": level,
+                "message": msg,
+                "category": category,
+                "context": context or {},
+            })
+            return 1
+
+        async def log_performance_metric(self, payload):
+            self.metrics.append(dict(payload))
+            return len(self.metrics)
+
+        async def log_rate_limit_snapshot(self, payload):
+            self.rate_limits.append(dict(payload))
+            return len(self.rate_limits)
 
     class MockSecurity:
         def load_encrypted_keys(self, pwd):
@@ -91,6 +112,7 @@ async def exchange_manager(monkeypatch):
     db_manager = MockDB()
     security_manager = MockSecurity()
     manager = await ExchangeManager.create(config, db_manager, security_manager)
+    manager.set_metrics_log_interval(0.01)
     manager._retry_delay = 0.0
     yield manager
     await manager.close()
@@ -197,6 +219,37 @@ async def test_authentication_error(monkeypatch):
     )
     with pytest.raises(ExchangeError):
         await ExchangeManager.create(config)
+
+
+@pytest.mark.asyncio
+async def test_metrics_snapshot_logged(exchange_manager):
+    await exchange_manager.fetch_balance()
+    await asyncio.sleep(0.05)
+    db = exchange_manager._db_manager
+    assert db.metrics, "Performance metrics should be stored"
+    assert any(entry["metric"] == "exchange_total_calls" for entry in db.metrics)
+    assert db.rate_limits, "Rate limit snapshots should be stored"
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_alert_triggers_snapshot(exchange_manager):
+    dispatcher = get_alert_dispatcher()
+    events: List[Any] = []
+
+    def _listener(event):
+        events.append(event)
+
+    token = dispatcher.register(_listener, name="test-rate-limit")
+    try:
+        exchange_manager.configure_rate_limits(per_minute=1, window_seconds=1.0)
+        await exchange_manager.fetch_balance()
+        await asyncio.sleep(0.05)
+        db = exchange_manager._db_manager
+        assert db.rate_limits, "Rate limit snapshots should be captured"
+        assert any(entry["context"]["limit_triggered"] for entry in db.rate_limits)
+        assert events, "An alert should be emitted when rate limit threshold is reached"
+    finally:
+        dispatcher.unregister(token)
 
 
 @pytest.mark.asyncio

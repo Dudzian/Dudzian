@@ -37,10 +37,10 @@ def sample_preset() -> dict:
             "train_all": False,
         },
         "risk": {
-            "max_daily_loss_pct": 0.08,
+            "max_daily_loss_pct": 0.02,
             "soft_halt_losses": 2,
             "trade_cooldown_on_error": 60,
-            "risk_per_trade": 0.02,
+            "risk_per_trade": 0.005,
             "portfolio_risk": 0.3,
             "one_trade_per_bar": True,
             "cooldown_s": 15,
@@ -87,7 +87,7 @@ def test_save_and_load_roundtrip(cfg: ConfigManager, sample_preset: dict) -> Non
     assert loaded["selected_symbols"] == ["BTC/USDT", "ETH/USDT"]
     # sekcje dodatkowe obecne
     assert loaded["ai"]["epochs"] == 20
-    assert loaded["risk"]["risk_per_trade"] == pytest.approx(0.02)
+    assert loaded["risk"]["risk_per_trade"] == pytest.approx(0.005)
     assert loaded["version"] == ConfigManager.current_version()
 
 
