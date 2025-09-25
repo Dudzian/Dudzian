@@ -6,7 +6,7 @@ Unit tests for security_manager.py.
 import pytest
 import json
 from pathlib import Path
-from managers.security_manager import SecurityManager, SecurityError
+from KryptoLowca.managers.security_manager import SecurityManager, SecurityError
 from cryptography.fernet import InvalidToken
 
 @pytest.fixture

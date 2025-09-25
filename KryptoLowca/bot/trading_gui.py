@@ -20,7 +20,7 @@ from typing import Dict, List, Any, Optional
 
 # --- alias zgodności: core/trading_engine może importować managers.database_manager
 try:
-    import database_manager as _dbm_alias
+    import KryptoLowca.database_manager as _dbm_alias
     sys.modules.setdefault("managers.database_manager", _dbm_alias)
 except Exception:
     pass
@@ -66,18 +66,18 @@ KEYS_FILE = APP_ROOT / "api_keys.enc"
 SALT_FILE = APP_ROOT / "salt.bin"
 
 # --- MENEDŻERY / CORE ---
-from managers.security_manager import SecurityManager
-from managers.config_manager import ConfigManager
-from managers.exchange_manager import ExchangeManager
-from managers.ai_manager import AIManager
-from managers.report_manager import ReportManager
-from managers.risk_manager_adapter import RiskManager
-from core.trading_engine import TradingEngine
+from KryptoLowca.managers.security_manager import SecurityManager
+from KryptoLowca.managers.config_manager import ConfigManager
+from KryptoLowca.managers.exchange_manager import ExchangeManager
+from KryptoLowca.managers.ai_manager import AIManager
+from KryptoLowca.managers.report_manager import ReportManager
+from KryptoLowca.managers.risk_manager_adapter import RiskManager
+from KryptoLowca.core.trading_engine import TradingEngine
 
 # istniejące moduły w repo
-from trading_strategies import TradingStrategies
+from KryptoLowca.trading_strategies import TradingStrategies
 from reporting import TradeInfo
-from database_manager import DatabaseManager  # klasyczny (bezargumentowy) konstruktor
+from KryptoLowca.database_manager import DatabaseManager  # klasyczny (bezargumentowy) konstruktor
 
 # =====================================
 # Pomocnicze

@@ -25,8 +25,8 @@ from typing import Optional, List, Dict, Any, Set, Tuple
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-import trading_gui  # oryginalne GUI
-from managers.database_manager import DatabaseManager
+import KryptoLowca.trading_gui  # oryginalne GUI
+from KryptoLowca.managers.database_manager import DatabaseManager
 
 
 # ----------------- KONFIG / POMOCNICZE -----------------

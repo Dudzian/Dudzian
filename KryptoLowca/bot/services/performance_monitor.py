@@ -9,7 +9,7 @@ from collections import deque
 from typing import Deque, Iterable, Union
 
 try:
-    from event_emitter_adapter import Event, EventType, EventBus
+    from KryptoLowca.event_emitter_adapter import Event, EventType, EventBus
 except Exception as e:
     raise ImportError(f"performance_monitor: brak event_emitter_adapter ({e})")
 

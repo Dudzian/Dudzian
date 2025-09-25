@@ -15,8 +15,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
-from managers import database_manager as _core
-from managers.database_manager import DatabaseManager as _CoreDatabaseManager
+# Odporne importy: najpierw namespacowane, potem lokalne
+try:  # pragma: no cover
+    from KryptoLowca.managers import database_manager as _core  # type: ignore
+    from KryptoLowca.managers.database_manager import (  # type: ignore
+        DatabaseManager as _CoreDatabaseManager,
+    )
+except Exception:  # pragma: no cover
+    from managers import database_manager as _core
+    from managers.database_manager import DatabaseManager as _CoreDatabaseManager
+
 from sqlalchemy import DateTime, Integer, String, Text, UniqueConstraint, select
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Mapped, mapped_column

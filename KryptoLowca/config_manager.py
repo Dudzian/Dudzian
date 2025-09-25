@@ -91,10 +91,23 @@ class ExchangeConfig:
     api_key: str = ""
     api_secret: str = ""
     testnet: bool = True
+    # rozszerzenia z gałęzi codex/*
+    rate_limit_per_minute: int = 1200
+    rate_limit_window_seconds: float = 60.0
+    rate_limit_alert_threshold: float = 0.85
+    error_alert_threshold: int = 3
 
     def validate(self) -> "ExchangeConfig":
         if not self.exchange_name:
             raise ValidationError("exchange_name nie może być puste")
+        if self.rate_limit_per_minute < 0:
+            raise ValidationError("rate_limit_per_minute musi być nieujemne")
+        if self.rate_limit_window_seconds <= 0:
+            raise ValidationError("rate_limit_window_seconds musi być dodatnie")
+        if not (0.0 < self.rate_limit_alert_threshold <= 1.0):
+            raise ValidationError("rate_limit_alert_threshold musi być w zakresie (0, 1]")
+        if self.error_alert_threshold <= 0:
+            raise ValidationError("error_alert_threshold musi być dodatnie")
         return self
 
 
@@ -176,6 +189,7 @@ class ConfigManager:
                 try:
                     decrypted[key] = self._fernet.decrypt(value.encode()).decode()
                 except InvalidToken:
+                    # jeśli nie jest zaszyfrowane lub klucz się zmienił – pozostaw oryginał
                     pass
         return decrypted
 

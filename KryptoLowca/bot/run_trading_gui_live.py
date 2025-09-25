@@ -19,10 +19,10 @@ from typing import Optional, List, Dict, Any
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-import trading_gui  # Twój oryginalny plik GUI (NIE MODYFIKUJEMY GO)
+import KryptoLowca.trading_gui  # Twój oryginalny plik GUI (NIE MODYFIKUJEMY GO)
 
 # DB manager (używamy tego samego co w testach earlier)
-from managers.database_manager import DatabaseManager
+from KryptoLowca.managers.database_manager import DatabaseManager
 
 
 # ----------------- POMOCNICZE -----------------

@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
-from event_emitter_adapter import EmitterAdapter, EventType
+from KryptoLowca.event_emitter_adapter import EmitterAdapter, EventType
 
 
 @dataclass

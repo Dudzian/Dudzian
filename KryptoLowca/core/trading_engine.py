@@ -19,12 +19,25 @@ from typing import Any, Callable, Dict, Optional, Tuple, Union
 
 import pandas as pd
 
-from core.order_executor import ExecutionResult, OrderExecutor
-from managers.ai_manager import AIManager
-from managers.database_manager import DatabaseManager
-from managers.exchange_manager import ExchangeManager
-from managers.risk_manager_adapter import RiskManager
-from trading_strategies import EngineConfig, TradingParameters, TradingStrategies
+# Odporne importy: najpierw przestrzeń nazw KryptoLowca, potem lokalne
+try:  # pragma: no cover
+    from KryptoLowca.core.order_executor import ExecutionResult, OrderExecutor  # type: ignore
+    from KryptoLowca.managers.ai_manager import AIManager  # type: ignore
+    from KryptoLowca.managers.database_manager import DatabaseManager  # type: ignore
+    from KryptoLowca.managers.exchange_manager import ExchangeManager  # type: ignore
+    from KryptoLowca.managers.risk_manager_adapter import RiskManager  # type: ignore
+    from KryptoLowca.trading_strategies import (  # type: ignore
+        EngineConfig,
+        TradingParameters,
+        TradingStrategies,
+    )
+except Exception:  # pragma: no cover
+    from core.order_executor import ExecutionResult, OrderExecutor
+    from managers.ai_manager import AIManager
+    from managers.database_manager import DatabaseManager
+    from managers.exchange_manager import ExchangeManager
+    from managers.risk_manager_adapter import RiskManager
+    from trading_strategies import EngineConfig, TradingParameters, TradingStrategies
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:
@@ -75,7 +88,15 @@ class TradingEngine:
                     setattr(self.ai_mgr, "ai_threshold_bps", float(self.tp.signal_threshold * 10_000))
                 except Exception:
                     setattr(self.ai_mgr, "ai_threshold_bps", 5.0)
-            # Pass fraction cap to OrderExecutor
+
+            # jeśli ExchangeManager wspiera alerty – podłącz handler
+            if hasattr(self.ex_mgr, "register_alert_handler"):
+                try:
+                    self.ex_mgr.register_alert_handler(self._handle_exchange_alert)  # type: ignore[arg-type]
+                except Exception:  # pragma: no cover
+                    logger.warning("Failed to register exchange alert handler", exc_info=True)
+
+            # wykonawca z limitem frakcji zsynchronizowanym z konfiguracją
             self._order_executor = OrderExecutor(
                 ex_mgr,
                 self.db_manager,
@@ -112,12 +133,12 @@ class TradingEngine:
         try:
             if hasattr(tp, "validate"):
                 tp.validate()
-        except Exception as exc:  # pragma: no cover - walidacja
+        except Exception as exc:  # pragma: no cover
             raise ValueError(f"Invalid trading parameters: {exc}") from exc
         try:
             if hasattr(ec, "validate"):
                 ec.validate()
-        except Exception as exc:  # pragma: no cover - walidacja
+        except Exception as exc:  # pragma: no cover
             raise ValueError(f"Invalid engine config: {exc}") from exc
         self.tp = tp
         self.ec = ec
@@ -138,19 +159,47 @@ class TradingEngine:
                 loop.create_task(_log_params())
         if self._order_executor:
             self._order_executor.set_user(self._user_id)
-            # Keep executor's fraction cap in sync with parameters/config
+            # utrzymuj cap frakcji w OrderExecutor w sync z tp/ec
             self._order_executor.max_fraction = self._fraction_cap(tp, ec)
 
     def on_event(self, callback: Callable[[Dict[str, Any]], None]) -> None:
         """Register event callback for GUI updates."""
         self._event_callback = callback
 
+    def _handle_exchange_alert(self, message: str, context: Optional[Dict[str, Any]] = None) -> None:
+        """Propagate krytyczne alerty z warstwy giełdowej do logów i GUI."""
+        logger.critical("[ALERT] %s | context=%s", message, context or {})
+
+        if self.db_manager:
+            async def _log_alert() -> None:
+                await self.db_manager.log(
+                    self._user_id,
+                    "CRITICAL",
+                    message,
+                    category="exchange",
+                    context=context,
+                )
+
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                asyncio.run(_log_alert())
+            else:
+                loop.create_task(_log_alert())
+
+        if self._event_callback:
+            payload = {"type": "alert", "message": message, "context": context or {}}
+            try:
+                self._event_callback(payload)
+            except Exception:  # pragma: no cover
+                logger.warning("Event callback for alert failed", exc_info=True)
+
     async def _emit_event(self, event: Dict[str, Any]) -> None:
         """Emit an event to the callback."""
         if self._event_callback:
             try:
                 self._event_callback(event)
-            except Exception as exc:  # pragma: no cover - logujemy, ale nie przerywamy handlu
+            except Exception as exc:  # pragma: no cover
                 logger.warning("Event callback raised error: %s", exc, exc_info=True)
         if self.db_manager:
             await self.db_manager.log(
@@ -224,7 +273,7 @@ class TradingEngine:
                 if hasattr(self.strategies, "run_strategy"):
                     try:
                         self.strategies.run_strategy(df, tp)
-                    except Exception as exc:  # pragma: no cover - ostrzeżenie
+                    except Exception as exc:  # pragma: no cover
                         logger.warning("Strategy execution skipped: %s", exc)
 
                 latest_pred = float(preds.iloc[-1])

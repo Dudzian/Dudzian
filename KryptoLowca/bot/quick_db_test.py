@@ -1,7 +1,7 @@
 # quick_db_test.py
 # -*- coding: utf-8 -*-
 
-from managers.database_manager import DatabaseManager
+from KryptoLowca.managers.database_manager import DatabaseManager
 
 def main():
     # 1) Łączymy się z lokalną bazą SQLite (plik trading.db utworzy się sam)

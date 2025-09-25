@@ -16,9 +16,21 @@ from unittest.mock import AsyncMock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from core.trading_engine import TradingEngine
-from managers.exchange_core import Mode, OrderDTO, OrderSide, OrderStatus, OrderType
-from trading_strategies import EngineConfig, TradingParameters
+# Odporny import: najpierw przestrzeń nazw KryptoLowca, potem lokalny fallback
+try:  # pragma: no cover
+    from KryptoLowca.core.trading_engine import TradingEngine  # type: ignore
+    from KryptoLowca.managers.exchange_core import (  # type: ignore
+        Mode,
+        OrderDTO,
+        OrderSide,
+        OrderStatus,
+        OrderType,
+    )
+    from KryptoLowca.trading_strategies import EngineConfig, TradingParameters  # type: ignore
+except Exception:  # pragma: no cover
+    from core.trading_engine import TradingEngine
+    from managers.exchange_core import Mode, OrderDTO, OrderSide, OrderStatus, OrderType
+    from trading_strategies import EngineConfig, TradingParameters
 
 
 class MockExchange:

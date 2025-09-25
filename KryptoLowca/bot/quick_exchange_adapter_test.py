@@ -1,8 +1,8 @@
 # quick_exchange_adapter_test.py
 # -*- coding: utf-8 -*-
 
-from managers.database_manager import DatabaseManager
-from managers.exchange_adapter import ExchangeAdapter
+from KryptoLowca.managers.database_manager import DatabaseManager
+from KryptoLowca.managers.exchange_adapter import ExchangeAdapter
 
 def main():
     db = DatabaseManager("sqlite+aiosqlite:///trading.db")

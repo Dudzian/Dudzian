@@ -12,7 +12,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(na
 log = logging.getLogger("runner")
 
 try:
-    from event_emitter_adapter import (
+    from KryptoLowca.event_emitter_adapter import (
         Event, EventType,
         EventBus, EmitterAdapter, EventEmitterAdapter,
         DummyMarketFeed, DummyMarketFeedConfig,
@@ -43,7 +43,7 @@ def _start_gui_in_main_thread(adapter: EmitterAdapter, enable_gui: bool = True):
     try:
         import tkinter as tk  # noqa
         try:
-            import trading_gui
+            import KryptoLowca.trading_gui
         except Exception as e:
             log.info("GUI: nie udało się załadować trading_gui (%s). Uruchamiam bez GUI.", e)
             return

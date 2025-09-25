@@ -7,7 +7,7 @@ import asyncio
 import pytest
 import pandas as pd
 import numpy as np
-from ai_manager import AIManager, TrainResult
+from KryptoLowca.ai_manager import AIManager, TrainResult
 
 @pytest.fixture
 async def ai_manager(tmp_path):

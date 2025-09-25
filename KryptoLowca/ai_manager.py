@@ -13,7 +13,7 @@ import inspect
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union
 
 try:  # pragma: no cover - środowisko testowe może nie mieć joblib
     import joblib
@@ -35,6 +35,7 @@ else:
 
     def _joblib_load(path: Path) -> Any:
         return joblib.load(path)
+
 import numpy as np
 import pandas as pd
 
@@ -98,26 +99,27 @@ except Exception as exc:  # pragma: no cover - brak zależności na CI
         def load_model(path: str) -> "_DefaultAIModels":
             return _joblib_load(Path(path))
 
-
-try:  # pragma: no cover - domyślna implementacja
-    from data_preprocessor import windowize as _default_windowize  # type: ignore
-except Exception:  # pragma: no cover - brak modułu w środowisku testowym
-
-    def _default_windowize(df: pd.DataFrame, feature_cols: List[str], seq_len: int, target_col: str):
-        """Minimalna implementacja okienkująca dane dla modeli sekwencyjnych."""
-
-        if seq_len <= 0 or len(df) <= seq_len:
-            raise ValueError("Za mało danych do przygotowania sekwencji.")
-        X: List[np.ndarray] = []
-        y: List[float] = []
-        values = df[feature_cols].to_numpy(dtype=float)
-        target = df[target_col].to_numpy(dtype=float)
-        for idx in range(seq_len, len(df)):
-            X.append(values[idx - seq_len : idx])
-            prev = target[idx - 1] if target[idx - 1] != 0 else 1e-12
-            y.append((target[idx] / prev) - 1.0)
-        return np.asarray(X, dtype=np.float32), np.asarray(y, dtype=np.float32)
-
+# --- Import funkcji windowize z różnych możliwych miejsc, z bezpiecznym fallbackiem ---
+_default_windowize: Callable[..., Tuple[np.ndarray, np.ndarray]]
+try:  # najpierw wariant namespacowany
+    from KryptoLowca.data_preprocessor import windowize as _default_windowize  # type: ignore
+except Exception:
+    try:  # następnie wariant lokalny
+        from data_preprocessor import windowize as _default_windowize  # type: ignore
+    except Exception:  # fallback minimalny – działa w środowisku testowym bez zależności
+        def _default_windowize(df: pd.DataFrame, feature_cols: List[str], seq_len: int, target_col: str):
+            """Minimalna implementacja okienkująca dane dla modeli sekwencyjnych."""
+            if seq_len <= 0 or len(df) <= seq_len:
+                raise ValueError("Za mało danych do przygotowania sekwencji.")
+            X: List[np.ndarray] = []
+            y: List[float] = []
+            values = df[feature_cols].to_numpy(dtype=float)
+            target = df[target_col].to_numpy(dtype=float)
+            for idx in range(seq_len, len(df)):
+                X.append(values[idx - seq_len : idx])
+                prev = target[idx - 1] if target[idx - 1] != 0 else 1e-12
+                y.append((target[idx] / prev) - 1.0)
+            return np.asarray(X, dtype=np.float32), np.asarray(y, dtype=np.float32)
 
 # Zmienne modułowe podmieniane w testach jednostkowych
 _AIModels = _DefaultAIModels
@@ -171,7 +173,6 @@ class AIManager:
 
     def _sanitize_predictions(self, series: pd.Series) -> pd.Series:
         """Ogranicz sygnały do zakresu [-1, 1] i usuń wartości odstające."""
-
         sanitized = series.replace([np.inf, -np.inf], np.nan).fillna(0.0)
         sanitized = sanitized.clip(lower=-1.0, upper=1.0)
         return sanitized
@@ -271,8 +272,8 @@ class AIManager:
             raise ValueError("Brak wytrenowanych modeli dla podanego symbolu.")
 
         async with self._lock:
-            model = None
-            chosen_type = None
+            model: Any = None
+            chosen_type: Optional[str] = None
             for candidate in candidates:
                 key = self._model_key(symbol, candidate)
                 model = self.models.get(key)
@@ -292,13 +293,14 @@ class AIManager:
                 # automatyczne doraźne przetrenowanie prostego modelu fallback
                 candidate = candidates[0]
                 try:
-                    X_tmp, y_tmp = _windowize(df, feats, min(len(df) // 2, max(2, self.ai_threshold_bps and 10)), "close")
+                    X_tmp, y_tmp = _windowize(
+                        df, feats, min(len(df) // 2, max(2, int(self.ai_threshold_bps and 10))), "close"
+                    )
                 except Exception as exc:
                     logger.error("Fallback windowize failed: %s", exc)
                     X_tmp, y_tmp = None, None
                 if X_tmp is not None and y_tmp is not None and len(X_tmp) > 0:
                     model = _AIModels(input_size=X_tmp.shape[-1], seq_len=X_tmp.shape[1], model_type=candidate)
-
                     result = model.train(
                         X_tmp,
                         y_tmp,

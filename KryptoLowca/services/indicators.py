@@ -8,7 +8,7 @@ from collections import deque
 from typing import Optional, Deque, Any
 
 try:
-    from event_emitter_adapter import EventBus, EventType
+    from KryptoLowca.event_emitter_adapter import EventBus, EventType
 except Exception as ex:  # pragma: no cover
     EventBus = object  # type: ignore
     EventType = object  # type: ignore

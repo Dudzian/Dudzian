@@ -7,9 +7,9 @@ import pytest
 import asyncio
 import pandas as pd
 from unittest.mock import AsyncMock, MagicMock
-from exchange_manager import ExchangeManager, ExchangeError, AuthenticationError, OrderResult
-from config_manager import ExchangeConfig
-from database_manager import DatabaseManager
+from KryptoLowca.exchange_manager import ExchangeManager, ExchangeError, AuthenticationError, OrderResult
+from KryptoLowca.config_manager import ExchangeConfig
+from KryptoLowca.database_manager import DatabaseManager
 
 @pytest.fixture
 async def exchange_manager(monkeypatch):

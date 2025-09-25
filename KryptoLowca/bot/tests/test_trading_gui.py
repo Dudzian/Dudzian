@@ -14,10 +14,10 @@ from pathlib import Path
 
 sys.path.append(os.getcwd())
 
-from trading_gui import TradingGUI, TradingParameters, EngineConfig
-from config_manager import ConfigManager
-from database_manager import DatabaseManager
-from ai_manager import AIManager
+from KryptoLowca.trading_gui import TradingGUI, TradingParameters, EngineConfig
+from KryptoLowca.config_manager import ConfigManager
+from KryptoLowca.database_manager import DatabaseManager
+from KryptoLowca.ai_manager import AIManager
 
 class DummyExchange:
     def __init__(self):
