@@ -2,11 +2,13 @@
 # -*- coding: utf-8 -*-
 import pandas as pd
 import numpy as np
-from typing import Dict, Tuple, Optional, List
+from typing import Any, Dict, Tuple, Optional, List
 import logging
 from dataclasses import dataclass
 from enum import Enum
 import math
+
+from KryptoLowca.alerts import AlertSeverity, emit_alert
 
 
 # --- logging ---
@@ -180,6 +182,12 @@ class RiskManagement:
         # Validation
         self._validate_parameters()
 
+    def _emit_alert(self, message: str, *, severity: AlertSeverity = AlertSeverity.WARNING, context: Optional[Dict[str, Any]] = None) -> None:
+        try:
+            emit_alert(message, severity=severity, source="risk", context=context)
+        except Exception:  # pragma: no cover - alert nie może zatrzymać risk engine'u
+            self.logger.exception("Failed to emit risk alert")
+
     # ---------- Walidacja ----------
     def _validate_parameters(self):
         """Waliduje parametry zarządzania ryzykiem"""
@@ -214,6 +222,12 @@ class RiskManagement:
             # 4) Portfolio heat
             portfolio_heat = self._calculate_portfolio_heat(current_portfolio)
             heat_adjusted_size = self._heat_adjusted_sizing(portfolio_heat)
+            if portfolio_heat > 0.8:
+                self._emit_alert(
+                    f"Wysokie 'portfolio heat' ({portfolio_heat:.2%}) – ograniczam ekspozycję.",
+                    severity=AlertSeverity.WARNING,
+                    context={"portfolio_heat": float(portfolio_heat), "symbol": symbol},
+                )
 
             # 5) Korelacja
             correlation_adjustment = self._correlation_adjustment(symbol, current_portfolio)
@@ -226,9 +240,30 @@ class RiskManagement:
             # limity pozycji
             max_allowed = float(self._calculate_max_position_size(current_portfolio))
             recommended_size = float(max(0.0, min(final_size, max_allowed)))
+            if recommended_size == 0.0:
+                self._emit_alert(
+                    f"Rekomendacja risk engine: brak nowej pozycji na {symbol} (0%).",
+                    severity=AlertSeverity.WARNING,
+                    context={
+                        "symbol": symbol,
+                        "portfolio_heat": float(portfolio_heat),
+                        "max_allowed": max_allowed,
+                        "correlation_adjustment": float(correlation_adjustment),
+                    },
+                )
 
             size_variance = float(np.var(sizes))
             confidence = float(max(0.1, 1.0 - size_variance))
+            if confidence < 0.2:
+                self._emit_alert(
+                    f"Bardzo niska pewność sizingu dla {symbol} ({confidence:.2f}).",
+                    severity=AlertSeverity.INFO,
+                    context={
+                        "symbol": symbol,
+                        "confidence": confidence,
+                        "size_variance": size_variance,
+                    },
+                )
 
             reasoning = self._generate_sizing_reasoning(
                 kelly_size, vol_adjusted_size, risk_parity_size,
@@ -246,6 +281,11 @@ class RiskManagement:
 
         except Exception as e:
             self.logger.error(f"Error calculating position size: {e}")
+            self._emit_alert(
+                f"Błąd kalkulacji wielkości pozycji dla {symbol}: {e}",
+                severity=AlertSeverity.ERROR,
+                context={"symbol": symbol},
+            )
             return PositionSizing(
                 recommended_size=0.01,
                 max_allowed_size=0.02,
@@ -399,6 +439,18 @@ class RiskManagement:
             else:
                 level = RiskLevel.VERY_HIGH
 
+            if level.value >= RiskLevel.HIGH.value:
+                self._emit_alert(
+                    "Podwyższone ryzyko portfela",
+                    severity=AlertSeverity.WARNING if level == RiskLevel.HIGH else AlertSeverity.CRITICAL,
+                    context={
+                        "overall_risk_score": overall_score,
+                        "risk_level": level.name,
+                        "var_95": var_95,
+                        "expected_shortfall": expected_shortfall,
+                    },
+                )
+
             return RiskMetrics(
                 var_95=var_95,
                 expected_shortfall=expected_shortfall,
@@ -521,19 +573,37 @@ class RiskManagement:
         """Sprawdza czy nowa pozycja nie narusza limitów ryzyka"""
         try:
             if len(current_portfolio) >= self.max_positions:
-                return False, f"Maximum positions limit reached ({self.max_positions})"
+                message = f"Maximum positions limit reached ({self.max_positions})"
+                self._emit_alert(
+                    message,
+                    severity=AlertSeverity.WARNING,
+                    context={"max_positions": self.max_positions},
+                )
+                return False, message
 
             current_risk = self._calculate_portfolio_heat(current_portfolio)
             new_pos_risk = float(new_position.get('size', 0.0)) * float(new_position.get('volatility', 0.2))
             total = current_risk + new_pos_risk
             if total > self.max_portfolio_risk:
-                return False, f"Portfolio risk limit exceeded: {total:.3f} > {self.max_portfolio_risk:.3f}"
+                message = f"Portfolio risk limit exceeded: {total:.3f} > {self.max_portfolio_risk:.3f}"
+                self._emit_alert(
+                    message,
+                    severity=AlertSeverity.CRITICAL,
+                    context={"total_risk": total, "max_portfolio_risk": self.max_portfolio_risk},
+                )
+                return False, message
 
             symbol = new_position.get('symbol')
             if symbol and symbol in self.historical_returns:
                 corr_factor = self._correlation_adjustment(symbol, current_portfolio)
                 if corr_factor < 0.5:
-                    return False, f"High correlation risk detected (factor: {corr_factor:.3f})"
+                    message = f"High correlation risk detected (factor: {corr_factor:.3f})"
+                    self._emit_alert(
+                        message,
+                        severity=AlertSeverity.WARNING,
+                        context={"symbol": symbol, "correlation_factor": float(corr_factor)},
+                    )
+                    return False, message
 
             sector = new_position.get('sector')
             if sector:
@@ -542,11 +612,24 @@ class RiskManagement:
                 )
                 new_sector_exposure = float(sector_exposure) + float(new_position.get('size', 0.0))
                 if new_sector_exposure > self.max_sector_concentration:
-                    return False, f"Sector concentration limit exceeded: {new_sector_exposure:.3f} > {self.max_sector_concentration:.3f}"
+                    message = (
+                        f"Sector concentration limit exceeded: {new_sector_exposure:.3f} > {self.max_sector_concentration:.3f}"
+                    )
+                    self._emit_alert(
+                        message,
+                        severity=AlertSeverity.WARNING,
+                        context={"sector": sector, "exposure": new_sector_exposure},
+                    )
+                    return False, message
 
             return True, "Position approved"
         except Exception as e:
             self.logger.error(f"Error checking position limits: {e}")
+            self._emit_alert(
+                f"Błąd walidacji limitów pozycji: {e}",
+                severity=AlertSeverity.ERROR,
+                context={"error": str(e)},
+            )
             return False, f"Error in limit check: {e}"
 
     # ---------- Stopy i trailing ----------
@@ -637,22 +720,42 @@ class RiskManagement:
             if current_drawdown > self.emergency_stop_drawdown:
                 actions.append("EMERGENCY_STOP")
                 alerts.append(f"Emergency drawdown exceeded: {current_drawdown:.2%} > {self.emergency_stop_drawdown:.2%}")
+                self._emit_alert(
+                    f"Drawdown {current_drawdown:.2%} przekracza limit awaryjny",
+                    severity=AlertSeverity.CRITICAL,
+                    context={"drawdown": float(current_drawdown)},
+                )
 
             portfolio_heat = self._calculate_portfolio_heat(current_positions)
             if portfolio_heat > 0.8:
                 actions.append("REDUCE_POSITIONS")
                 alerts.append(f"Portfolio heat too high: {portfolio_heat:.2%}")
+                self._emit_alert(
+                    f"Przegrzanie portfela: heat {portfolio_heat:.2%}",
+                    severity=AlertSeverity.WARNING,
+                    context={"portfolio_heat": float(portfolio_heat)},
+                )
 
             position_sizes = [pos.get('size', 0.0) for pos in current_positions.values()] if current_positions else []
             max_position = float(max(position_sizes)) if position_sizes else 0.0
             if max_position > 0.15:
                 actions.append("REDUCE_LARGEST_POSITION")
                 alerts.append(f"Position too large: {max_position:.2%}")
+                self._emit_alert(
+                    f"Pojedyncza pozycja {max_position:.2%} przekracza limit",
+                    severity=AlertSeverity.WARNING,
+                    context={"max_position": float(max_position)},
+                )
 
             correlation_risk = self._calculate_correlation_risk(current_positions, {})
             if correlation_risk > 0.8:
                 actions.append("DIVERSIFY_PORTFOLIO")
                 alerts.append(f"High correlation risk: {correlation_risk:.2%}")
+                self._emit_alert(
+                    f"Wysoka korelacja portfela ({correlation_risk:.2%})",
+                    severity=AlertSeverity.WARNING,
+                    context={"correlation_risk": float(correlation_risk)},
+                )
 
             return {
                 'emergency_stop_required': "EMERGENCY_STOP" in actions,
@@ -665,6 +768,11 @@ class RiskManagement:
             }
         except Exception as e:
             self.logger.error(f"Error in emergency risk check: {e}")
+            self._emit_alert(
+                f"Błąd awaryjnej kontroli ryzyka: {e}",
+                severity=AlertSeverity.ERROR,
+                context={"error": str(e)},
+            )
             return {
                 'emergency_stop_required': True,
                 'actions_required': ["EMERGENCY_STOP"],

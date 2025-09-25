@@ -18,8 +18,10 @@ from __future__ import annotations
 import json
 import logging
 import re
+from copy import deepcopy
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Sequence
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
@@ -42,6 +44,9 @@ except Exception:  # pragma: no cover - środowiska bez PyYAML
 
 _SANITIZE = re.compile(r"[^a-zA-Z0-9_\-\.]")
 _TIMEFRAME_PATTERN = re.compile(r"^[1-9][0-9]*(m|h|d|w)$", re.IGNORECASE)
+
+
+CONFIG_SCHEMA_VERSION = 2
 
 
 def _sanitize_name(name: str) -> str:
@@ -115,6 +120,7 @@ class PaperSettings(_SectionModel):
 class ConfigPreset(BaseModel):
     """Model najwyższego poziomu opisujący pojedynczy preset."""
 
+    version: int = Field(default=CONFIG_SCHEMA_VERSION, ge=1)
     network: Literal["Testnet", "Live"] = "Testnet"
     mode: Literal["Spot", "Futures"] = "Spot"
     timeframe: str = "1m"
@@ -138,6 +144,17 @@ class ConfigPreset(BaseModel):
         if not _TIMEFRAME_PATTERN.match(tf):
             raise ValueError("Timeframe musi mieć format np. '1m', '4h', '1d'.")
         return tf.lower()
+
+    @field_validator("version")
+    @classmethod
+    def _validate_version(cls, value: Any) -> int:
+        try:
+            version = int(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Pole 'version' musi być liczbą całkowitą.") from exc
+        if version <= 0:
+            raise ValueError("Pole 'version' musi być dodatnie.")
+        return version
 
     @field_validator("fraction")
     @classmethod
@@ -202,19 +219,125 @@ class ConfigManager:
         self.presets_dir = Path(presets_dir)
         self.presets_dir.mkdir(parents=True, exist_ok=True)
         logger.info("ConfigManager: katalog presetów = %s", self.presets_dir)
+        self._demo_required = True
+        self._default_template = ConfigPreset().to_dict()
+        self._last_upgrade_from: Optional[int] = None
 
     # --- walidacja ---
     def validate_preset(self, data: Dict[str, Any]) -> ConfigPreset:
         """Zwróć obiekt ``ConfigPreset`` po walidacji danych wejściowych."""
 
+        upgraded = self._upgrade_payload(data)
         try:
-            preset = ConfigPreset.model_validate(data)
+            preset = ConfigPreset.model_validate(upgraded)
         except ValidationError as exc:  # pragma: no cover - trudne do pełnego pokrycia
             errors = "; ".join(
                 f"{'.'.join(str(loc) for loc in err['loc'])}: {err['msg']}" for err in exc.errors()
             )
             raise ValueError(f"Preset validation failed: {errors}") from exc
+        if self._last_upgrade_from is not None:
+            logger.info(
+                "Preset został automatycznie zaktualizowany z wersji %s do %s.",
+                self._last_upgrade_from,
+                CONFIG_SCHEMA_VERSION,
+            )
         return preset
+
+    def require_demo_mode(self, required: bool = True) -> None:
+        """Włącz/wyłącz wymóg zapisu presetów w trybie demo."""
+
+        self._demo_required = bool(required)
+
+    def demo_mode_required(self) -> bool:
+        """Zwraca informację, czy polityka bezpieczeństwa wymaga trybu demo."""
+
+        return self._demo_required
+
+    @staticmethod
+    def current_version() -> int:
+        return CONFIG_SCHEMA_VERSION
+
+    def last_upgrade_from(self) -> Optional[int]:
+        return self._last_upgrade_from
+
+    @staticmethod
+    def _merge_nested(base: Dict[str, Any], overrides: Dict[str, Any]) -> Dict[str, Any]:
+        result = deepcopy(base)
+        for key, value in overrides.items():
+            if isinstance(value, dict) and isinstance(result.get(key), dict):
+                result[key] = ConfigManager._merge_nested(result[key], value)
+            else:
+                result[key] = value
+        return result
+
+    def _upgrade_payload(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        payload = deepcopy(data)
+        version_raw = payload.get("version", 1)
+        try:
+            version = int(version_raw)
+        except (TypeError, ValueError):
+            version = 1
+        if version < 1:
+            version = 1
+
+        upgraded_from = version if version < CONFIG_SCHEMA_VERSION else None
+        if upgraded_from is not None:
+            logger.info(
+                "Aktualizuję preset z wersji %s do %s",
+                upgraded_from,
+                CONFIG_SCHEMA_VERSION,
+            )
+            if upgraded_from < 2:
+                risk_section = payload.get("risk")
+                if isinstance(risk_section, dict):
+                    risk_section.setdefault("trade_cooldown_on_error", 30)
+                    risk_section.setdefault("soft_halt_losses", risk_section.get("soft_halt_losses", 3))
+                paper_section = payload.get("paper")
+                if isinstance(paper_section, dict):
+                    try:
+                        paper_section["capital"] = float(paper_section.get("capital", 10_000.0))
+                    except (TypeError, ValueError):
+                        paper_section["capital"] = 10_000.0
+
+        payload["version"] = CONFIG_SCHEMA_VERSION
+        self._last_upgrade_from = upgraded_from
+        return payload
+
+    def audit_preset(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Przeprowadź szybki audyt bezpieczeństwa i ryzyka dla presetu."""
+
+        preset = self.validate_preset(data)
+        issues: List[str] = []
+        warnings: List[str] = []
+
+        is_demo = preset.network.lower() == "testnet"
+        if self._demo_required and not is_demo:
+            issues.append(
+                "Preset wymaga trybu Testnet zgodnie z polityką bezpieczeństwa. Zmień pole 'network' na 'Testnet'."
+            )
+        if preset.network.lower() == "live":
+            warnings.append(
+                "Przed uruchomieniem na Live wykonaj pełne testy na koncie demo i upewnij się, że klucze API mają ograniczone uprawnienia."
+            )
+        if preset.fraction > 0.5:
+            warnings.append("Frakcja kapitału przekracza 50% – rozważ niższą wartość dla redukcji ryzyka.")
+        if preset.risk.max_daily_loss_pct > 0.2:
+            warnings.append(
+                "Parametr max_daily_loss_pct przekracza 20% – może naruszać zasady zarządzania ryzykiem."
+            )
+        if preset.paper.capital < 500:
+            warnings.append("Kapitał paper trading < 500 – wyniki backtestu mogą być mało reprezentatywne.")
+
+        return {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "network": preset.network,
+            "version": preset.version,
+            "upgraded_from": self._last_upgrade_from,
+            "issues": issues,
+            "warnings": warnings,
+            "demo_required": self._demo_required,
+            "is_demo": is_demo,
+        }
 
     # --- ścieżki ---
     def _path_yaml(self, safe_name: str) -> Path:
@@ -239,6 +362,11 @@ class ConfigManager:
             raise ValueError("Preset musi być słownikiem (dict).")
 
         preset = self.validate_preset(data)
+        if self._demo_required and preset.network.lower() != "testnet":
+            raise ValueError(
+                "Polityka bezpieczeństwa wymaga tworzenia presetów w trybie Testnet. "
+                "Zmień pole 'network' na 'Testnet' lub wyłącz ten wymóg metodą require_demo_mode(False)."
+            )
         payload = preset.to_dict()
 
         if _HAS_YAML:
@@ -256,6 +384,41 @@ class ConfigManager:
             json.dump(payload, f, ensure_ascii=False, indent=2)
         logger.info("Zapisano preset JSON: %s", path)
         return path
+
+    def create_preset(
+        self,
+        name: str,
+        *,
+        base: Optional[str] = None,
+        overrides: Optional[Dict[str, Any]] = None,
+        ensure_demo: Optional[bool] = None,
+    ) -> Dict[str, Any]:
+        """Stwórz preset na bazie szablonu i nadpisów, zwracając raport audytu."""
+
+        payload = deepcopy(self._default_template)
+        if base:
+            base_payload = self.load_preset(base)
+            payload = ConfigManager._merge_nested(payload, base_payload)
+        if overrides:
+            payload = ConfigManager._merge_nested(payload, overrides)
+
+        preset = self.validate_preset(payload)
+        require_demo = self._demo_required if ensure_demo is None else bool(ensure_demo)
+        if require_demo and preset.network.lower() != "testnet":
+            preset = preset.copy(update={"network": "Testnet"})
+
+        audit = self.audit_preset(preset.to_dict())
+        if require_demo and audit["issues"]:
+            # Próba zapisu bez trybu demo – blokujemy zanim powstanie plik.
+            raise ValueError(audit["issues"][0])
+
+        path = self.save_preset(name, preset.to_dict())
+        audit.update({
+            "name": name,
+            "path": str(path),
+        })
+        audit["preset"] = preset.to_dict()
+        return audit
 
     def load_preset(self, name: str) -> Dict[str, Any]:
         safe = _sanitize_name(name)
@@ -281,6 +444,11 @@ class ConfigManager:
         payload = preset.to_dict()
         logger.info("Załadowano preset %s (znormalizowany)", path)
         return payload
+
+    def preset_wizard(self) -> "PresetWizard":
+        """Utwórz kreator presetów ułatwiający stopniowe budowanie konfiguracji."""
+
+        return PresetWizard(self)
 
     # --- dodatki przydatne w GUI ---
     def list_presets(self) -> List[str]:
@@ -311,6 +479,75 @@ class ConfigManager:
         return p if p is not None else self._path_yaml(safe)
 
 
+class PresetWizard:
+    """Prosty kreator presetów wspierający profile ryzyka i kontrolę demo."""
+
+    def __init__(self, manager: ConfigManager) -> None:
+        self._manager = manager
+        self._base: Optional[str] = None
+        self._overrides: Dict[str, Any] = {}
+        self._ensure_demo: Optional[bool] = None
+
+    def from_template(self, name: str) -> "PresetWizard":
+        self._base = name
+        return self
+
+    def with_symbols(self, symbols: Iterable[str]) -> "PresetWizard":
+        cleaned: List[str] = []
+        for sym in symbols:
+            if not isinstance(sym, str):
+                continue
+            normalised = sym.strip().upper()
+            if normalised and normalised not in cleaned:
+                cleaned.append(normalised)
+        if cleaned:
+            self._overrides["selected_symbols"] = cleaned
+        return self
+
+    def with_risk_profile(self, profile: str) -> "PresetWizard":
+        presets = {
+            "conservative": {
+                "fraction": 0.1,
+                "risk": {"max_daily_loss_pct": 0.04, "risk_per_trade": 0.01},
+            },
+            "balanced": {
+                "fraction": 0.2,
+                "risk": {"max_daily_loss_pct": 0.08, "risk_per_trade": 0.02},
+            },
+            "aggressive": {
+                "fraction": 0.35,
+                "risk": {"max_daily_loss_pct": 0.15, "risk_per_trade": 0.04},
+            },
+        }
+        key = profile.strip().lower()
+        if key not in presets:
+            raise ValueError(f"Nieznany profil ryzyka: {profile}")
+        self._overrides = ConfigManager._merge_nested(self._overrides, presets[key])
+        return self
+
+    def ensure_demo(self, required: bool = True) -> "PresetWizard":
+        self._ensure_demo = required
+        return self
+
+    def override(self, **kwargs: Any) -> "PresetWizard":
+        if kwargs:
+            self._overrides = ConfigManager._merge_nested(self._overrides, kwargs)
+        return self
+
+    def build(self, name: str) -> Dict[str, Any]:
+        audit = self._manager.create_preset(
+            name,
+            base=self._base,
+            overrides=self._overrides or None,
+            ensure_demo=self._ensure_demo,
+        )
+        # reset stanu aby kreator można było użyć ponownie
+        self._base = None
+        self._overrides = {}
+        self._ensure_demo = None
+        return audit
+
+
 __all__ = [
     "ConfigManager",
     "ConfigPreset",
@@ -320,4 +557,5 @@ __all__ = [
     "SlippageSettings",
     "AdvancedSettings",
     "PaperSettings",
+    "PresetWizard",
 ]

@@ -23,6 +23,10 @@ except Exception:
         def popleft(self): return super().pop(0)
 
 from KryptoLowca.event_emitter_adapter import EventEmitter
+from KryptoLowca.logging_utils import get_logger
+
+
+logger = get_logger(__name__)
 
 class AutoTrader:
     """
@@ -52,6 +56,7 @@ class AutoTrader:
         self.emitter = emitter
         self.gui = gui
         self.symbol_getter = symbol_getter
+        self._db_manager = getattr(gui, "db", None)
 
         self.pf_min = pf_min
         self.expectancy_min = expectancy_min
@@ -95,18 +100,20 @@ class AutoTrader:
         t2.start()
         self._threads.append(t2)
         self.emitter.log("AutoTrader started.", component="AutoTrader")
+        logger.info("AutoTrader worker threads started")
 
     def stop(self) -> None:
         self._stop.set()
         self.emitter.off("trade_closed", tag="autotrader")
         self.emitter.off("bar", tag="autotrader")
         self.emitter.log("AutoTrader stopped.", component="AutoTrader")
+        logger.info("AutoTrader stop requested")
         for t in list(self._threads):
             try:
                 if t.is_alive():
                     t.join(timeout=2.0)
             except Exception:
-                pass
+                logger.exception("Error while joining AutoTrader thread")
         self._threads.clear()
 
     def set_enable_auto_trade(self, flag: bool) -> None:
@@ -128,6 +135,7 @@ class AutoTrader:
         self._closed_pnls.append(pnl)
         pf, exp = self._compute_metrics()
         self.emitter.emit("metrics_updated", pf=pf, expectancy=exp, window=len(self._closed_pnls), ts=time.time())
+        self._persist_performance_metrics(symbol, pf, exp)
         # Check thresholds
         trigger_reason = None
         details = {}
@@ -169,6 +177,69 @@ class AutoTrader:
         expectancy = statistics.mean(pnls) if pnls else None
         return (pf, expectancy)
 
+    def _resolve_db(self):
+        db = self._db_manager
+        if db is None:
+            candidate = getattr(self.gui, "db", None)
+            if candidate is not None:
+                db = candidate
+                self._db_manager = candidate
+        if db is None or not hasattr(db, "sync"):
+            return None
+        return db
+
+    def _resolve_mode(self) -> str:
+        network_var = getattr(self.gui, "network_var", None)
+        if network_var is not None and hasattr(network_var, "get"):
+            try:
+                network = str(network_var.get()).strip().lower()
+            except Exception:
+                network = ""
+            if network in {"testnet", "paper", "demo"}:
+                return "paper"
+        return "live"
+
+    def _log_metric(
+        self,
+        metric: str,
+        value: Optional[float],
+        *,
+        symbol: str,
+        window: int,
+        extra: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        if value is None:
+            return
+        db = self._resolve_db()
+        if db is None:
+            return
+        context: Dict[str, Any] = {"symbol": symbol, "window": window, "source": "AutoTrader"}
+        if extra:
+            context.update(extra)
+        payload = {
+            "metric": metric,
+            "value": float(value),
+            "window": window,
+            "symbol": symbol,
+            "mode": self._resolve_mode(),
+            "context": context,
+        }
+        try:
+            db.sync.log_performance_metric(payload)
+        except Exception:
+            logger.exception("Nie udało się zapisać metryki %s", metric)
+
+    def _persist_performance_metrics(
+        self,
+        symbol: str,
+        pf: Optional[float],
+        expectancy: Optional[float],
+    ) -> None:
+        window = len(self._closed_pnls)
+        extra = {"profit_factor": pf, "expectancy": expectancy}
+        self._log_metric("auto_trader_expectancy", expectancy, symbol=symbol, window=window, extra=extra)
+        self._log_metric("auto_trader_profit_factor", pf, symbol=symbol, window=window, extra=extra)
+
     def _maybe_reoptimize(self, reason: str, details: Dict[str, Any]) -> None:
         now = time.time()
         if now - self.last_reopt_ts < self.reopt_cooldown_s:
@@ -184,6 +255,7 @@ class AutoTrader:
                 threading.Thread(target=self._call_train_safe, args=(ai,), daemon=True).start()
             except Exception as e:
                 self.emitter.log(f"AI retrain failed to start: {e!r}", level="ERROR", component="AutoTrader")
+                logger.exception("AI retrain thread failed to start")
         else:
             self.emitter.log("AI manager not available; reopt event emitted only.", level="WARNING", component="AutoTrader")
 
@@ -194,6 +266,7 @@ class AutoTrader:
             self.emitter.log("AI retrain finished.", component="AutoTrader")
         except Exception as e:
             self.emitter.log(f"AI retrain error: {e!r}", level="ERROR", component="AutoTrader")
+            logger.exception("AI retrain raised an exception")
 
     # -- Loops --
     def _walkforward_loop(self) -> None:
@@ -211,6 +284,7 @@ class AutoTrader:
                     last_ts = now
             except Exception as e:
                 self.emitter.log(f"Walk-forward loop error: {e!r}", level="ERROR", component="AutoTrader")
+                logger.exception("Walk-forward loop error")
             self._stop.wait(1.0)
 
     def _auto_trade_loop(self) -> None:
@@ -234,6 +308,19 @@ class AutoTrader:
                 ex = getattr(self.gui, "ex_mgr", None)
                 ai = getattr(self.gui, "ai_mgr", None)
 
+                if hasattr(self.gui, "is_demo_mode_active"):
+                    try:
+                        if not self.gui.is_demo_mode_active():
+                            guard_fn = getattr(self.gui, "is_live_trading_allowed", None)
+                            if callable(guard_fn) and not guard_fn():
+                                msg = "Auto-trade blocked: live trading requires explicit confirmation."
+                                self.emitter.log(msg, level="WARNING", component="AutoTrader")
+                                logger.warning("%s Skipping auto trade for %s", msg, symbol)
+                                self._stop.wait(self.auto_trade_interval_s)
+                                continue
+                    except Exception:
+                        logger.exception("Failed to evaluate live trading guard")
+
                 df: Optional[pd.DataFrame] = None
                 last_price: Optional[float] = None
                 last_pred: Optional[float] = None
@@ -245,6 +332,7 @@ class AutoTrader:
                         self.emitter.log(
                             f"predict_series failed: {e!r}", level="ERROR", component="AutoTrader"
                         )
+                        logger.exception("predict_series failed during auto trade loop")
 
                 if last_price is None:
                     last_price = self._resolve_market_price(symbol, ex, df)
@@ -265,25 +353,41 @@ class AutoTrader:
                     elif last_pred <= -threshold:
                         side = "SELL"
 
-                if side is None and last_price is not None:
-                    # fallback – prosty przełącznik BUY/SELL aby utrzymać aktywność w trybie demo
-                    side = "BUY" if int(time.time() / max(1, self.auto_trade_interval_s)) % 2 == 0 else "SELL"
+                if side is None:
+                    self.emitter.log(
+                        f"Auto-trade skipped for {symbol}: no valid model signal.",
+                        level="WARNING",
+                        component="AutoTrader",
+                    )
+                    logger.info("Skipping auto trade for %s due to missing model signal", symbol)
+                    self._stop.wait(self.auto_trade_interval_s)
+                    continue
 
-                if side is None or last_price is None:
+                if last_price is None:
+                    self.emitter.log(
+                        f"Auto-trade skipped for {symbol}: missing market price.",
+                        level="WARNING",
+                        component="AutoTrader",
+                    )
+                    logger.warning("Skipping auto trade for %s due to missing market price", symbol)
                     self._stop.wait(self.auto_trade_interval_s)
                     continue
 
                 if hasattr(self.gui, "_bridge_execute_trade"):
                     self.gui._bridge_execute_trade(symbol, side.lower(), float(last_price))
                     self.emitter.emit("auto_trade_tick", symbol=symbol, ts=time.time())
+                    self.emitter.log(f"Auto-trade executed: {symbol} {side}", component="AutoTrader")
+                    logger.info("Auto trade executed for %s (%s)", symbol, side)
                 else:
                     self.emitter.log(
                         "_bridge_execute_trade missing on GUI",
                         level="ERROR",
                         component="AutoTrader",
                     )
+                    logger.error("GUI bridge missing for auto trade execution")
             except Exception as e:
                 self.emitter.log(f"Auto trade tick error: {e!r}", level="ERROR", component="AutoTrader")
+                logger.exception("Unhandled exception inside auto trade loop")
             self._stop.wait(self.auto_trade_interval_s)
 
     # --- Prediction helpers ---
