@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Warstwa kompatybilności z historycznym API ``database_manager``.
+"""Warstwa zgodności dla menedżera bazy danych.
 
-Nowa implementacja znajduje się w ``managers.database_manager``. Ten plik
-zapewnia jedynie przyjazne aliasy (``DBOptions``) oraz ujednolicone wyjątki,
-tak aby starsze testy oraz skrypty mogły działać bez zmian.
+Nowa implementacja znajduje się w ``managers.database_manager``. Ten moduł
+zapewnia przyjazne aliasy (``DBOptions``) oraz ujednolicone wyjątki, tak aby
+starsze testy oraz skrypty mogły działać bez zmian.
 """
 from __future__ import annotations
 

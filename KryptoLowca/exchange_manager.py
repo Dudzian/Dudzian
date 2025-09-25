@@ -10,8 +10,8 @@ import sys
 import time
 import types
 from collections import defaultdict
-from dataclasses import asdict, dataclass
-from typing import Any, Callable, Dict, Iterable, List, Optional
+from dataclasses import asdict, dataclass, field
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 # ---- ccxt async importy odporne na różne wersje / brak biblioteki ----
 try:  # pragma: no cover - importowany tylko jeśli ccxt jest dostępne
@@ -69,6 +69,40 @@ class _APIMetrics:
     last_endpoint: Optional[str] = None
 
 
+@dataclass(slots=True)
+class _RateLimitBucket:
+    """Opis pojedynczego limitu czasowego API."""
+
+    name: str
+    capacity: int
+    window_seconds: float
+    count: int = 0
+    window_start: float = field(default_factory=time.monotonic)
+    alert_active: bool = False
+    last_usage: float = 0.0
+    max_usage: float = 0.0
+
+    def reset(self, *, now: Optional[float] = None, hard: bool = False) -> None:
+        self.count = 0
+        self.window_start = now if now is not None else time.monotonic()
+        self.alert_active = False
+        self.last_usage = 0.0
+        if hard:
+            self.max_usage = 0.0
+
+    def snapshot(self) -> Dict[str, Any]:
+        remaining = max(0.0, self.window_seconds - (time.monotonic() - self.window_start))
+        return {
+            "name": self.name,
+            "capacity": self.capacity,
+            "window_seconds": self.window_seconds,
+            "count": self.count,
+            "usage": self.last_usage,
+            "max_usage": self.max_usage,
+            "reset_in_seconds": remaining,
+        }
+
+
 class ExchangeError(RuntimeError):
     """Podstawowy wyjątek warstwy wymiany."""
 
@@ -114,11 +148,14 @@ class ExchangeManager:
         self._rate_limit_window = 60.0
         self._rate_limit_per_minute: Optional[int] = None
         self._max_calls_per_window: Optional[int] = None
+        self._rate_limit_buckets: List[_RateLimitBucket] = []
         self._alert_usage_threshold = 0.85
         self._rate_alert_active = False
         self._alert_cooldown_seconds = 5.0
         self._alert_last: Dict[str, float] = {}
         self._error_alert_threshold = 3
+        self._metrics_log_interval = 30.0
+        self._last_metrics_log = 0.0
 
     @classmethod
     async def create(
@@ -168,14 +205,21 @@ class ExchangeManager:
             except ValueError:
                 pass
 
+        require_demo = bool(getattr(config, "require_demo_mode", False))
+        if require_demo and not getattr(config, "testnet", True):
+            raise ExchangeError(
+                "Polityka bezpieczeństwa wymaga uruchomienia bota w trybie testnet/paper na tym etapie."
+            )
+
         # Konfiguracja limitów/alertów z configu
         per_minute = max(0, int(getattr(config, "rate_limit_per_minute", 0) or 0))
         window_seconds = float(getattr(config, "rate_limit_window_seconds", 60.0) or 60.0)
         manager._rate_limit_window = max(0.1, window_seconds)
-        manager._rate_limit_per_minute = per_minute or None
-        if per_minute > 0:
-            calls_per_window = per_minute * (manager._rate_limit_window / 60.0)
-            manager._max_calls_per_window = max(1, int(math.floor(calls_per_window)))
+        manager.configure_rate_limits(
+            per_minute=per_minute or None,
+            window_seconds=manager._rate_limit_window,
+            buckets=getattr(config, "rate_limit_buckets", None),
+        )
         manager._alert_usage_threshold = max(
             0.1,
             min(1.0, float(getattr(config, "rate_limit_alert_threshold", 0.85) or 0.85)),
@@ -189,52 +233,181 @@ class ExchangeManager:
             manager._min_interval = 0.0
         manager._window_start = time.monotonic()
         manager._window_count = 0
+        manager.set_retry_policy(
+            attempts=getattr(config, "retry_attempts", manager._retry_attempts),
+            delay=getattr(config, "retry_delay", manager._retry_delay),
+        )
         return manager
+
+    # --------------------------- konfiguracja ---------------------------
+    def set_retry_policy(self, *, attempts: int, delay: float) -> None:
+        """Skonfiguruj politykę ponawiania żądań."""
+
+        try:
+            attempts_int = max(0, int(attempts))
+        except Exception:
+            attempts_int = self._retry_attempts
+        try:
+            delay_float = max(0.0, float(delay))
+        except Exception:
+            delay_float = self._retry_delay
+        self._retry_attempts = attempts_int
+        self._retry_delay = delay_float
+
+    def set_metrics_log_interval(self, seconds: float) -> None:
+        """Ustaw minimalny odstęp między zapisami telemetrii API do bazy."""
+
+        try:
+            interval = max(0.0, float(seconds))
+        except Exception:
+            interval = 0.0
+        self._metrics_log_interval = interval
+
+    def configure_rate_limits(
+        self,
+        *,
+        per_minute: Optional[int] = None,
+        window_seconds: float = 60.0,
+        buckets: Optional[Sequence[Dict[str, Any]]] = None,
+    ) -> None:
+        """Zaktualizuj konfigurację limitów API i wyzeruj liczniki."""
+
+        self._rate_limit_window = max(0.1, float(window_seconds or 60.0))
+        self._rate_limit_per_minute = None
+        self._max_calls_per_window = None
+        new_buckets: List[_RateLimitBucket] = []
+
+        if per_minute:
+            try:
+                per_minute_int = max(0, int(per_minute))
+            except Exception:
+                per_minute_int = 0
+            if per_minute_int > 0:
+                calls_per_window = per_minute_int * (self._rate_limit_window / 60.0)
+                capacity = max(1, int(math.floor(calls_per_window)))
+                new_buckets.append(
+                    _RateLimitBucket(name="global", capacity=capacity, window_seconds=self._rate_limit_window)
+                )
+                self._rate_limit_per_minute = per_minute_int
+                self._max_calls_per_window = capacity
+
+        if buckets:
+            for raw in buckets:
+                if not isinstance(raw, dict):
+                    continue
+                name = str(raw.get("name") or f"bucket_{len(new_buckets) + 1}")
+                try:
+                    capacity = int(raw.get("capacity", 0))
+                    window = float(raw.get("window_seconds", 0.0))
+                except Exception:
+                    continue
+                if capacity <= 0 or window <= 0:
+                    continue
+                new_buckets.append(
+                    _RateLimitBucket(name=name, capacity=capacity, window_seconds=float(window))
+                )
+
+        if not new_buckets:
+            new_buckets.append(
+                _RateLimitBucket(
+                    name="unbounded",
+                    capacity=1_000_000_000,
+                    window_seconds=self._rate_limit_window,
+                )
+            )
+
+        self._rate_limit_buckets = new_buckets
+        self._reset_rate_windows()
+
+    def _reset_rate_windows(self) -> None:
+        now = time.monotonic()
+        self._window_start = now
+        self._window_count = 0
+        self._metrics.window_calls = 0
+        self._metrics.window_errors = 0
+        self._rate_alert_active = False
+        for bucket in self._rate_limit_buckets:
+            bucket.reset(now=now, hard=True)
+
+    def _ensure_rate_buckets(self) -> None:
+        if not self._rate_limit_buckets:
+            self._rate_limit_buckets = [
+                _RateLimitBucket(
+                    name="unbounded",
+                    capacity=1_000_000_000,
+                    window_seconds=self._rate_limit_window,
+                )
+            ]
 
     # --------------------------- operacje pomocnicze ---------------------------
     async def _before_call(self, endpoint: str) -> None:
         wait_time = 0.0
-        should_alert = False
-        usage_pct = 0.0
+        alerts: List[Tuple[str, Dict[str, Any], str]] = []
         async with self._throttle_lock:
             now = time.monotonic()
             if now - self._window_start >= self._rate_limit_window:
-                self._window_start = now
-                self._window_count = 0
-                self._metrics.window_calls = 0
-                self._metrics.window_errors = 0
-                self._rate_alert_active = False
-            if self._max_calls_per_window:
-                usage_pct = (self._window_count + 1) / self._max_calls_per_window
-                if self._window_count >= self._max_calls_per_window:
-                    wait_time = max(wait_time, self._rate_limit_window - (now - self._window_start))
-                if usage_pct >= self._alert_usage_threshold and not self._rate_alert_active:
-                    should_alert = True
-                    self._rate_alert_active = True
+                self._reset_rate_windows()
+
+            self._ensure_rate_buckets()
+
+            for bucket in self._rate_limit_buckets:
+                elapsed = now - bucket.window_start
+                if elapsed >= bucket.window_seconds:
+                    bucket.reset(now=now, hard=True)
+                    elapsed = 0.0
+
+                projected = bucket.count + 1
+                if bucket.capacity > 0:
+                    usage_pct = projected / bucket.capacity
+                else:
+                    usage_pct = 0.0
+                bucket.last_usage = min(usage_pct, 1.0 if bucket.capacity > 0 else usage_pct)
+                bucket.max_usage = max(bucket.max_usage, bucket.last_usage)
+
+                if bucket.capacity > 0 and bucket.count >= bucket.capacity:
+                    wait_time = max(wait_time, bucket.window_seconds - elapsed)
+
+                if (
+                    bucket.capacity > 0
+                    and usage_pct >= self._alert_usage_threshold
+                    and not bucket.alert_active
+                ):
+                    bucket.alert_active = True
+                    context = {
+                        "endpoint": endpoint,
+                        "bucket": bucket.name,
+                        "usage": bucket.last_usage,
+                        "capacity": bucket.capacity,
+                        "window_seconds": bucket.window_seconds,
+                        "reset_in_seconds": max(0.0, bucket.window_seconds - elapsed),
+                    }
+                    alerts.append(
+                        (
+                            f"Zużyto {bucket.last_usage * 100:.1f}% limitu API dla kubełka '{bucket.name}'.",
+                            context,
+                            f"rate_limit::{bucket.name}",
+                        )
+                    )
+
+                bucket.count = projected
+
+            if self._rate_limit_buckets:
+                self._window_count = self._rate_limit_buckets[0].count
+                self._rate_alert_active = any(bucket.alert_active for bucket in self._rate_limit_buckets)
+
             if self._min_interval > 0:
                 delta = now - self._last_request_ts
                 if delta < self._min_interval:
                     wait_time = max(wait_time, self._min_interval - delta)
-            self._window_count += 1
+
             self._metrics.window_calls = self._window_count
             self._last_request_ts = now + wait_time if wait_time > 0 else now
+
         if wait_time > 0:
             await asyncio.sleep(wait_time)
-        if should_alert and self._max_calls_per_window:
-            remaining = max(0.0, self._rate_limit_window - (time.monotonic() - self._window_start))
-            context = {
-                "endpoint": endpoint,
-                "usage": usage_pct,
-                "calls_in_window": self._window_count,
-                "max_calls": self._max_calls_per_window,
-                "window_seconds": self._rate_limit_window,
-                "reset_in_seconds": remaining,
-            }
-            self._raise_alert(
-                f"Zużyto {usage_pct * 100:.1f}% dostępnego limitu API w bieżącym oknie.",
-                context=context,
-                key="rate_limit",
-            )
+
+        for message, context, key in alerts:
+            self._raise_alert(message, context=context, key=key)
 
     def _record_metrics(self, endpoint: str, latency_ms: float, *, success: bool) -> None:
         metrics = self._metrics
@@ -275,6 +448,8 @@ class ExchangeManager:
                     context=context,
                     key="error",
                 )
+
+        self._schedule_metrics_snapshot()
 
     def _register_error(self, endpoint: str, exc: Exception, *, final: bool) -> None:
         level = logging.ERROR if final else logging.WARNING
@@ -320,6 +495,30 @@ class ExchangeManager:
                     context=context,
                 )
             )
+
+    def _schedule_metrics_snapshot(self) -> None:
+        if not self._db_manager or not self._user_id:
+            return
+        if self._metrics_log_interval <= 0:
+            return
+        now = time.monotonic()
+        if now - self._last_metrics_log < self._metrics_log_interval:
+            return
+        self._last_metrics_log = now
+        snapshot = self.get_api_metrics()
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        loop.create_task(
+            self._db_manager.log(
+                self._user_id,
+                "INFO",
+                "API metrics snapshot",
+                category="exchange_metrics",
+                context=snapshot,
+            )
+        )
 
     async def _run_with_retry(self, coro_factory: Callable[[], Any], *, endpoint: str) -> Any:
         last_exc: Optional[Exception] = None
@@ -636,11 +835,18 @@ class ExchangeManager:
         """Zarejestruj zewnętrzny handler alertów (np. GUI / moduł powiadomień)."""
         self._alert_callback = callback
 
+    def get_rate_limit_snapshot(self) -> List[Dict[str, Any]]:
+        """Szybki podgląd stanu kubełków limitów API."""
+
+        return [bucket.snapshot() for bucket in self._rate_limit_buckets]
+
     def get_api_metrics(self) -> Dict[str, Any]:
         """Zwróć metryki zużycia API (łącznie i per-endpoint)."""
         usage = None
         if self._max_calls_per_window:
-            usage = self._window_count / self._max_calls_per_window if self._max_calls_per_window else None
+            if self._max_calls_per_window:
+                usage = self._window_count / self._max_calls_per_window
+        buckets_snapshot = [bucket.snapshot() for bucket in self._rate_limit_buckets]
         return {
             "total_calls": self._metrics.total_calls,
             "total_errors": self._metrics.total_errors,
@@ -654,6 +860,7 @@ class ExchangeManager:
             "rate_limit_per_minute": self._rate_limit_per_minute,
             "rate_limit_window_seconds": self._rate_limit_window,
             "current_window_usage": usage,
+            "rate_limit_buckets": buckets_snapshot,
             "endpoints": {name: asdict(data) for name, data in self._endpoint_metrics.items()},
         }
 
@@ -661,10 +868,7 @@ class ExchangeManager:
         """Wyzeruj liczniki metryk (np. po raporcie)."""
         self._metrics = _APIMetrics()
         self._endpoint_metrics = defaultdict(lambda: _EndpointMetrics())
-        self._window_count = 0
-        self._metrics.window_calls = 0
-        self._metrics.window_errors = 0
         self._metrics.consecutive_errors = 0
-        self._window_start = time.monotonic()
-        self._rate_alert_active = False
         self._alert_last.clear()
+        self._reset_rate_windows()
+        self._last_metrics_log = 0.0

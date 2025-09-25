@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 
 import pytest
 
+from KryptoLowca.managers.database_manager import DatabaseManager
 from KryptoLowca.managers.paper_exchange import BUY, LIMIT, MARKET, PaperExchange
 
 
@@ -107,3 +109,36 @@ def test_equity_logging(paper_exchange: PaperExchange) -> None:
     assert paper_exchange.db.sync.equity  # type: ignore[attr-defined]
     last_entry = paper_exchange.db.sync.equity[-1]  # type: ignore[attr-defined]
     assert set(last_entry.keys()) >= {"equity", "balance", "pnl", "mode"}
+
+
+def test_paper_exchange_with_real_database(tmp_path) -> None:
+    """Zapewnia, że PaperExchange współpracuje z prawdziwym DatabaseManagerem."""
+
+    db_path = tmp_path / "paper_smoke.db"
+    db_url = f"sqlite+aiosqlite:///{db_path}"
+    db = DatabaseManager(db_url=db_url)
+    asyncio.run(db.init_db(create=True))
+
+    try:
+        exchange = PaperExchange(
+            db,
+            symbol="BTC/USDT",
+            starting_balance=5_000.0,
+            fee_rate=0.0,
+            slippage_bps=0,
+        )
+        exchange.process_tick(100.0, ts=dt.datetime.utcnow())
+
+        order_id = exchange.create_order(side=BUY, type=MARKET, quantity=0.25)
+        assert order_id == 1
+
+        # W bazie powinien pojawić się wpis o transakcji
+        trades = asyncio.run(db.fetch_trades(symbol="BTC/USDT"))
+        assert trades, "Oczekiwano zarejestrowanych transakcji w bazie"
+
+        position = exchange.get_position()
+        assert position["quantity"] == pytest.approx(0.25)
+        assert position["balance_quote"] < 5_000.0
+    finally:
+        if hasattr(db, "_state") and db._state.engine is not None:  # type: ignore[attr-defined]
+            asyncio.run(db._state.engine.dispose())
