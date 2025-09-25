@@ -107,3 +107,38 @@ def test_defaults_and_normalisation(cfg: ConfigManager) -> None:
     assert preset.fraction == pytest.approx(0.0)
     data = preset.to_dict()
     assert "ai" in data and "risk" in data
+
+
+def test_demo_requirement_blocks_live(cfg: ConfigManager, sample_preset: dict) -> None:
+    sample_preset["network"] = "Live"
+    with pytest.raises(ValueError):
+        cfg.save_preset("live", sample_preset)
+
+    cfg.require_demo_mode(False)
+    path = cfg.save_preset("live_allowed", sample_preset)
+    assert path.exists()
+
+
+def test_create_preset_with_audit(cfg: ConfigManager, sample_preset: dict) -> None:
+    cfg.save_preset("base", sample_preset)
+    audit = cfg.create_preset(
+        "custom",
+        base="base",
+        overrides={"fraction": 0.3, "risk": {"max_daily_loss_pct": 0.25}},
+    )
+    assert audit["preset"]["network"] == "Testnet"
+    assert audit["warnings"], "Zbyt wysoka dzienna strata powinna zostać oznaczona"
+    assert "path" in audit and Path(audit["path"]).exists()
+
+
+def test_preset_wizard_profiles(cfg: ConfigManager, sample_preset: dict) -> None:
+    cfg.save_preset("base", sample_preset)
+    wizard = cfg.preset_wizard().from_template("base").with_risk_profile("aggressive").with_symbols([
+        "btc/usdt",
+        "ada/usdt",
+    ])
+    audit = wizard.build("aggressive_profile")
+
+    assert audit["preset"]["selected_symbols"] == ["BTC/USDT", "ADA/USDT"]
+    assert audit["preset"]["fraction"] == pytest.approx(0.35)
+    assert audit["is_demo"] is True

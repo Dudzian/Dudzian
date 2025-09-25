@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from unittest.mock import AsyncMock
+
+from typing import Any, Dict, List
 
 import pytest
 
@@ -232,3 +235,92 @@ async def test_error_alert(exchange_manager, caplog):
             await exchange_manager.fetch_balance()
 
     assert any("[ALERT]" in record.message for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_multi_symbol_retry_and_logging():
+    class FakeExchange:
+        rateLimit = None
+
+        def __init__(self) -> None:
+            self.markets = {
+                "BTC/USDT": {"limits": {"amount": {"step": 0.001}, "price": {"step": 0.1}}},
+                "ETH/USDT": {"limits": {"amount": {"step": 0.001}, "price": {"step": 0.1}}},
+            }
+            self._fail_once = {"ETH/USDT": True}
+
+        async def load_markets(self):
+            return self.markets
+
+        async def create_order(self, symbol, order_type, side, amount, price=None, params=None):
+            if self._fail_once.get(symbol):
+                self._fail_once[symbol] = False
+                raise RuntimeError("temporary outage")
+            return {
+                "id": f"{symbol}-order",
+                "symbol": symbol,
+                "side": side,
+                "amount": amount,
+                "price": price or 100.0,
+                "status": "filled",
+            }
+
+        async def fetch_balance(self):
+            return {"total": {"USDT": 1000.0}}
+
+        async def fetch_ticker(self, symbol):
+            return {"last": 100.0}
+
+    class FakeDB:
+        def __init__(self) -> None:
+            self.entries: List[Dict[str, Any]] = []
+
+        async def log(self, user_id, level, message, category="general", context=None):
+            self.entries.append(
+                {
+                    "user_id": user_id,
+                    "level": level,
+                    "message": message,
+                    "category": category,
+                    "context": context or {},
+                }
+            )
+
+    fake_exchange = FakeExchange()
+    manager = ExchangeManager(fake_exchange)
+    manager._db_manager = FakeDB()
+    manager._user_id = 42
+    manager.set_retry_policy(attempts=2, delay=0.0)
+    manager.configure_rate_limits(
+        per_minute=None,
+        window_seconds=1.0,
+        buckets=[{"name": "burst", "capacity": 2, "window_seconds": 0.1}],
+    )
+    manager._alert_usage_threshold = 0.5
+    manager._alert_cooldown_seconds = 0.0
+    alerts: List[Dict[str, Any]] = []
+
+    def _alert_handler(message: str, context: Dict[str, Any]) -> None:
+        alerts.append({"message": message, "context": context})
+
+    manager.register_alert_handler(_alert_handler)
+
+    await manager.load_markets()
+
+    # pierwsze zlecenie – sukces
+    result1 = await manager.create_order("BTC/USDT", "buy", "market", 0.01)
+    assert result1.status == "filled"
+
+    # drugie zlecenie – pierwsze podejście rzuca wyjątek, drugie powinno się powieść
+    result2 = await manager.create_order("ETH/USDT", "buy", "limit", 0.02, price=100.1)
+    assert result2.status == "filled"
+
+    # dodatkowe wywołanie aby przekroczyć próg limitu i wygenerować alert + log DB
+    await manager.fetch_balance()
+    await asyncio.sleep(0)  # pozwól logom z DB się wykonać
+
+    metrics = manager.get_api_metrics()
+    assert metrics["total_calls"] >= 3
+    assert metrics["rate_limit_buckets"], "Powinny istnieć metryki kubełków limitów"
+    assert alerts, "Alert o zbliżającym się limicie powinien zostać wygenerowany"
+    assert any(entry["category"] == "exchange" for entry in manager._db_manager.entries)
