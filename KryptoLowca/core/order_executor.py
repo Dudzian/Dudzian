@@ -10,7 +10,11 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
-from KryptoLowca.managers.exchange_core import Mode, OrderStatus
+# Odporne na strukturę pakietu: najpierw namespacowany import, potem lokalny
+try:  # pragma: no cover
+    from KryptoLowca.managers.exchange_core import Mode, OrderStatus  # type: ignore
+except Exception:  # pragma: no cover
+    from managers.exchange_core import Mode, OrderStatus  # type: ignore
 
 try:  # pragma: no cover - opcjonalne
     import ccxt  # type: ignore

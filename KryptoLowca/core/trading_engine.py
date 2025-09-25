@@ -15,16 +15,29 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, Tuple, Union
 
 import pandas as pd
 
-from KryptoLowca.core.order_executor import ExecutionResult, OrderExecutor
-from KryptoLowca.managers.ai_manager import AIManager
-from KryptoLowca.managers.database_manager import DatabaseManager
-from KryptoLowca.managers.exchange_manager import ExchangeManager
-from KryptoLowca.managers.risk_manager_adapter import RiskManager
-from KryptoLowca.trading_strategies import EngineConfig, TradingParameters, TradingStrategies
+# Odporne importy: najpierw przestrzeń nazw KryptoLowca, potem lokalne
+try:  # pragma: no cover
+    from KryptoLowca.core.order_executor import ExecutionResult, OrderExecutor  # type: ignore
+    from KryptoLowca.managers.ai_manager import AIManager  # type: ignore
+    from KryptoLowca.managers.database_manager import DatabaseManager  # type: ignore
+    from KryptoLowca.managers.exchange_manager import ExchangeManager  # type: ignore
+    from KryptoLowca.managers.risk_manager_adapter import RiskManager  # type: ignore
+    from KryptoLowca.trading_strategies import (  # type: ignore
+        EngineConfig,
+        TradingParameters,
+        TradingStrategies,
+    )
+except Exception:  # pragma: no cover
+    from core.order_executor import ExecutionResult, OrderExecutor
+    from managers.ai_manager import AIManager
+    from managers.database_manager import DatabaseManager
+    from managers.exchange_manager import ExchangeManager
+    from managers.risk_manager_adapter import RiskManager
+    from trading_strategies import EngineConfig, TradingParameters, TradingStrategies
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:
@@ -75,11 +88,15 @@ class TradingEngine:
                     setattr(self.ai_mgr, "ai_threshold_bps", float(self.tp.signal_threshold * 10_000))
                 except Exception:
                     setattr(self.ai_mgr, "ai_threshold_bps", 5.0)
+
+            # jeśli ExchangeManager wspiera alerty – podłącz handler
             if hasattr(self.ex_mgr, "register_alert_handler"):
                 try:
                     self.ex_mgr.register_alert_handler(self._handle_exchange_alert)  # type: ignore[arg-type]
-                except Exception:  # pragma: no cover - logujemy, ale nie przerywamy konfiguracji
+                except Exception:  # pragma: no cover
                     logger.warning("Failed to register exchange alert handler", exc_info=True)
+
+            # wykonawca z limitem frakcji zsynchronizowanym z konfiguracją
             self._order_executor = OrderExecutor(
                 ex_mgr,
                 self.db_manager,
@@ -116,12 +133,12 @@ class TradingEngine:
         try:
             if hasattr(tp, "validate"):
                 tp.validate()
-        except Exception as exc:  # pragma: no cover - walidacja
+        except Exception as exc:  # pragma: no cover
             raise ValueError(f"Invalid trading parameters: {exc}") from exc
         try:
             if hasattr(ec, "validate"):
                 ec.validate()
-        except Exception as exc:  # pragma: no cover - walidacja
+        except Exception as exc:  # pragma: no cover
             raise ValueError(f"Invalid engine config: {exc}") from exc
         self.tp = tp
         self.ec = ec
@@ -142,6 +159,7 @@ class TradingEngine:
                 loop.create_task(_log_params())
         if self._order_executor:
             self._order_executor.set_user(self._user_id)
+            # utrzymuj cap frakcji w OrderExecutor w sync z tp/ec
             self._order_executor.max_fraction = self._fraction_cap(tp, ec)
 
     def on_event(self, callback: Callable[[Dict[str, Any]], None]) -> None:
@@ -150,7 +168,6 @@ class TradingEngine:
 
     def _handle_exchange_alert(self, message: str, context: Optional[Dict[str, Any]] = None) -> None:
         """Propagate krytyczne alerty z warstwy giełdowej do logów i GUI."""
-
         logger.critical("[ALERT] %s | context=%s", message, context or {})
 
         if self.db_manager:
@@ -174,7 +191,7 @@ class TradingEngine:
             payload = {"type": "alert", "message": message, "context": context or {}}
             try:
                 self._event_callback(payload)
-            except Exception:  # pragma: no cover - nie zatrzymujemy dalszego działania
+            except Exception:  # pragma: no cover
                 logger.warning("Event callback for alert failed", exc_info=True)
 
     async def _emit_event(self, event: Dict[str, Any]) -> None:
@@ -182,7 +199,7 @@ class TradingEngine:
         if self._event_callback:
             try:
                 self._event_callback(event)
-            except Exception as exc:  # pragma: no cover - logujemy, ale nie przerywamy handlu
+            except Exception as exc:  # pragma: no cover
                 logger.warning("Event callback raised error: %s", exc, exc_info=True)
         if self.db_manager:
             await self.db_manager.log(
@@ -213,11 +230,13 @@ class TradingEngine:
         if not symbol_key:
             raise ValueError("Invalid symbol")
 
+        # Lock per-symbol to serialize concurrent ticks for the same market
         lock = self._symbol_locks.setdefault(symbol_key.upper(), asyncio.Lock())
         async with lock:
             db_manager: Optional[DatabaseManager] = None
             user_id: Optional[int] = None
             try:
+                # Snapshot dependencies under engine lock
                 async with self._lock:
                     ex_mgr = self.ex_mgr
                     ai_mgr = self.ai_mgr
@@ -235,7 +254,8 @@ class TradingEngine:
                     )
                 if len(preds) != len(df):
                     raise ValueError("Predictions length does not match data length")
-                if not ex_mgr or not ai_mgr or not risk_mgr or not order_executor:
+                # For planning we only require core managers; executor is optional unless auto_execute=True
+                if not ex_mgr or not ai_mgr or not risk_mgr:
                     raise TradingError("Trading engine is not fully configured")
 
                 positions = await db_manager.get_positions(user_id) if db_manager else []
@@ -253,7 +273,7 @@ class TradingEngine:
                 if hasattr(self.strategies, "run_strategy"):
                     try:
                         self.strategies.run_strategy(df, tp)
-                    except Exception as exc:  # pragma: no cover - ostrzeżenie
+                    except Exception as exc:  # pragma: no cover
                         logger.warning("Strategy execution skipped: %s", exc)
 
                 latest_pred = float(preds.iloc[-1])
@@ -279,32 +299,38 @@ class TradingEngine:
                     raise TradingError("Insufficient balance")
 
                 portfolio_ctx = {"positions": positions, "capital": capital}
-                sizing_outcome = risk_mgr.calculate_position_size(
-                    symbol_key,
-                    latest_pred,
-                    df,
-                    portfolio_ctx,
-                    return_details=True,
-                )
+
+                # Risk sizing may return either qty or (qty, details)
+                if "return_details" in risk_mgr.calculate_position_size.__code__.co_varnames:  # type: ignore[attr-defined]
+                    sizing_outcome: Union[float, Tuple[float, Dict[str, Any]]] = risk_mgr.calculate_position_size(
+                        symbol_key, latest_pred, df, portfolio_ctx, return_details=True
+                    )
+                else:
+                    sizing_outcome = risk_mgr.calculate_position_size(symbol_key, latest_pred, df, portfolio_ctx)
+
                 risk_details: Optional[Dict[str, Any]]
                 if isinstance(sizing_outcome, tuple):
                     qty_hint, risk_details = sizing_outcome
                 else:
-                    qty_hint = sizing_outcome
+                    qty_hint = sizing_outcome  # type: ignore[assignment]
                     getter = getattr(risk_mgr, "last_position_details", None)
                     risk_details = getter() if callable(getter) else None
+
                 try:
-                    qty_hint = float(qty_hint)
+                    qty_hint = float(qty_hint)  # type: ignore[arg-type]
                 except Exception:
                     qty_hint = 0.0
+
                 if risk_details is None:
                     risk_details = {"recommended_size": qty_hint}
                 else:
                     risk_details.setdefault("recommended_size", qty_hint)
+
                 if qty_hint <= 0:
                     await self._emit_event({"type": "no_position_size", "symbol": symbol_key})
                     return None
 
+                # Apply global fraction cap
                 risk_details["max_fraction_cap"] = fraction_cap
                 if fraction_cap <= 0:
                     await self._emit_event({"type": "fraction_cap_zero", "symbol": symbol_key})
@@ -352,7 +378,7 @@ class TradingEngine:
                     )
 
                 auto_execute = bool(getattr(ec, "auto_execute", True))
-                if auto_execute:
+                if auto_execute and order_executor:
                     await self._emit_event(
                         {"type": "order_submitting", "symbol": symbol_key, "plan": plan}
                     )
@@ -410,7 +436,6 @@ class TradingEngine:
         ec: Optional[EngineConfig] = None,
     ) -> float:
         """Określ maksymalną frakcję kapitału na trade z konfiguracji."""
-
         tp = tp or self.tp
         ec = ec or self.ec
         raw_values = []

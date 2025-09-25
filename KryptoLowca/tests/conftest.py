@@ -1,14 +1,15 @@
 from __future__ import annotations
 
+import sys
+from pathlib import Path
 import asyncio
 import inspect
-import sys
 from contextlib import suppress
-from pathlib import Path
 from typing import Any, Callable, Dict, Tuple
 
 import pytest
 
+# Dostosuj sys.path, aby testy mogły importować pakiet i root projektu
 ROOT = Path(__file__).resolve().parents[2]
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 for path in (str(ROOT), str(PACKAGE_ROOT)):
@@ -18,7 +19,6 @@ for path in (str(ROOT), str(PACKAGE_ROOT)):
 
 def _run_coroutine(coro: Any) -> Any:
     """Run *coro* in a temporary event loop and return its result."""
-
     loop = asyncio.new_event_loop()
     try:
         asyncio.set_event_loop(loop)
@@ -32,7 +32,6 @@ def _run_coroutine(coro: Any) -> Any:
 
 def _resolve_fixture_arguments(fixturedef, request) -> Dict[str, Any]:
     """Collect already-evaluated dependency fixtures for ``fixturedef``."""
-
     kwargs: Dict[str, Any] = {}
     for name in getattr(fixturedef, "argnames", ()):
         kwargs[name] = request.getfixturevalue(name)
@@ -42,7 +41,6 @@ def _resolve_fixture_arguments(fixturedef, request) -> Dict[str, Any]:
 @pytest.hookimpl(tryfirst=True)
 def pytest_addoption(parser):
     """Register legacy asyncio config option expected by the test-suite."""
-
     parser.addini(
         "asyncio_mode",
         "Compatibility placeholder so pytest accepts the asyncio_mode option",
@@ -60,6 +58,7 @@ def pytest_configure(config):
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_fixture_setup(fixturedef, request):
+    """Pozwala na używanie async fixture’ów bez pytest-asyncio."""
     func = fixturedef.func
     if inspect.iscoroutinefunction(func):
 
@@ -82,7 +81,6 @@ def pytest_fixture_setup(fixturedef, request):
         value, agen = _run_coroutine(_call_gen())
 
         def _finalizer() -> None:
-
             async def _close() -> None:
                 with suppress(StopAsyncIteration):
                     await agen.__anext__()
@@ -97,11 +95,12 @@ def pytest_fixture_setup(fixturedef, request):
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_pyfunc_call(pyfuncitem):
+    """Uruchamiaj funkcje testowe będące coroutine bez zewnętrznego pluginu."""
     if inspect.iscoroutinefunction(pyfuncitem.obj):
 
         async def _resolve_args():
             resolved: Dict[str, Any] = {}
-            closers: list[Callable[[], Any]] = []
+            closers: list[Any] = []
             for name in pyfuncitem._fixtureinfo.argnames:
                 if name not in pyfuncitem.funcargs:
                     continue
@@ -110,13 +109,17 @@ def pytest_pyfunc_call(pyfuncitem):
                     value = await value
                 elif inspect.isasyncgen(value):
                     agen = value
+                    # pobierz pierwszy (i jedyny) element z async generatora
                     value = await agen.__anext__()
 
                     async def _close(gen):
-                        with suppress(Exception):
+                        try:
                             await gen.aclose()
+                        except Exception:
+                            # nie przerywaj zamykania przy błędach cleanupu
+                            pass
 
-                    closers.append(lambda gen=agen: _run_coroutine(_close(gen)))
+                    closers.append(_close(agen))
                 resolved[name] = value
             return resolved, closers
 
@@ -126,7 +129,18 @@ def pytest_pyfunc_call(pyfuncitem):
                 await pyfuncitem.obj(**kwargs)
             finally:
                 for closer in reversed(closers):
-                    closer()
+                    # closers są coroutine – trzeba je odczekać
+                    await closer
 
-        _run_coroutine(_invoke())
+        # własna pętla event loop dla testu
+        loop = asyncio.new_event_loop()
+        try:
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(_invoke())
+        finally:
+            try:
+                loop.run_until_complete(loop.shutdown_asyncgens())
+            finally:
+                asyncio.set_event_loop(None)
+                loop.close()
         return True

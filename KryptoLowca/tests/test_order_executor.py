@@ -8,8 +8,19 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from KryptoLowca.core.order_executor import OrderExecutor
-from KryptoLowca.managers.exchange_core import Mode, OrderDTO, OrderSide, OrderStatus, OrderType
+# Odporny import na różne układy pakietów
+try:  # pragma: no cover
+    from KryptoLowca.core.order_executor import OrderExecutor  # type: ignore
+    from KryptoLowca.managers.exchange_core import (  # type: ignore
+        Mode,
+        OrderDTO,
+        OrderSide,
+        OrderStatus,
+        OrderType,
+    )
+except Exception:  # pragma: no cover
+    from core.order_executor import OrderExecutor
+    from managers.exchange_core import Mode, OrderDTO, OrderSide, OrderStatus, OrderType
 
 
 class DummyExchange:

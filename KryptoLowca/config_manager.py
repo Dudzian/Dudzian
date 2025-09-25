@@ -91,6 +91,7 @@ class ExchangeConfig:
     api_key: str = ""
     api_secret: str = ""
     testnet: bool = True
+    # rozszerzenia z gałęzi codex/*
     rate_limit_per_minute: int = 1200
     rate_limit_window_seconds: float = 60.0
     rate_limit_alert_threshold: float = 0.85
@@ -188,6 +189,7 @@ class ConfigManager:
                 try:
                     decrypted[key] = self._fernet.decrypt(value.encode()).decode()
                 except InvalidToken:
+                    # jeśli nie jest zaszyfrowane lub klucz się zmienił – pozostaw oryginał
                     pass
         return decrypted
 

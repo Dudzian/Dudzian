@@ -13,18 +13,24 @@ from collections import defaultdict
 from dataclasses import asdict, dataclass
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
+# ---- ccxt async importy odporne na różne wersje / brak biblioteki ----
 try:  # pragma: no cover - importowany tylko jeśli ccxt jest dostępne
     import ccxt.async_support as ccxt_async  # type: ignore
 except Exception:  # pragma: no cover - starsze wersje ccxt
     try:
         import ccxt.asyncio as ccxt_async  # type: ignore
     except Exception:  # pragma: no cover - brak ccxt
+        # Utwórz atrapę modułu, aby testy mogły się odwoływać do ccxt.asyncio
         ccxt_async = types.ModuleType("ccxt.asyncio")  # type: ignore
         ccxt_module = sys.modules.setdefault("ccxt", types.ModuleType("ccxt"))
         setattr(ccxt_module, "asyncio", ccxt_async)
         sys.modules["ccxt.asyncio"] = ccxt_async
 
-from KryptoLowca.managers.exchange_core import Mode
+# ---- odporny import Mode ----
+try:  # pragma: no cover
+    from KryptoLowca.managers.exchange_core import Mode  # type: ignore
+except Exception:  # pragma: no cover
+    from managers.exchange_core import Mode  # type: ignore
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:
@@ -94,6 +100,7 @@ class ExchangeManager:
         self.mode = Mode.PAPER
         self._markets: Dict[str, Dict[str, Any]] = {}
 
+        # Telemetria / alerty / throttling
         self._db_manager: Optional[Any] = None
         self._alert_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None
 
@@ -137,8 +144,10 @@ class ExchangeManager:
         try:
             exchange = exchange_cls(kwargs)
         except Exception as exc:
-            from ccxt.base.errors import AuthenticationError as CCXTAuthError  # type: ignore
-
+            try:
+                from ccxt.base.errors import AuthenticationError as CCXTAuthError  # type: ignore
+            except Exception:  # pragma: no cover
+                CCXTAuthError = type("AuthenticationError", (Exception,), {})  # type: ignore
             if isinstance(exc, CCXTAuthError):
                 raise AuthenticationError(str(exc)) from exc
             raise ExchangeError(str(exc)) from exc
@@ -159,6 +168,7 @@ class ExchangeManager:
             except ValueError:
                 pass
 
+        # Konfiguracja limitów/alertów z configu
         per_minute = max(0, int(getattr(config, "rate_limit_per_minute", 0) or 0))
         window_seconds = float(getattr(config, "rate_limit_window_seconds", 60.0) or 60.0)
         manager._rate_limit_window = max(0.1, window_seconds)
@@ -624,12 +634,10 @@ class ExchangeManager:
     # ------------------------------ telemetry ---------------------------------
     def register_alert_handler(self, callback: Callable[[str, Dict[str, Any]], None]) -> None:
         """Zarejestruj zewnętrzny handler alertów (np. GUI / moduł powiadomień)."""
-
         self._alert_callback = callback
 
     def get_api_metrics(self) -> Dict[str, Any]:
         """Zwróć metryki zużycia API (łącznie i per-endpoint)."""
-
         usage = None
         if self._max_calls_per_window:
             usage = self._window_count / self._max_calls_per_window if self._max_calls_per_window else None
@@ -651,7 +659,6 @@ class ExchangeManager:
 
     def reset_api_metrics(self) -> None:
         """Wyzeruj liczniki metryk (np. po raporcie)."""
-
         self._metrics = _APIMetrics()
         self._endpoint_metrics = defaultdict(lambda: _EndpointMetrics())
         self._window_count = 0
