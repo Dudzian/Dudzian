@@ -21,8 +21,7 @@ import re
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence
-from typing import Literal
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
@@ -45,6 +44,8 @@ except Exception:  # pragma: no cover - środowiska bez PyYAML
 _SANITIZE = re.compile(r"[^a-zA-Z0-9_\-\.]")
 _TIMEFRAME_PATTERN = re.compile(r"^[1-9][0-9]*(m|h|d|w)$", re.IGNORECASE)
 
+CONFIG_SCHEMA_VERSION = 2
+
 
 def _sanitize_name(name: str) -> str:
     name = (name or "").strip()
@@ -59,7 +60,6 @@ def _sanitize_name(name: str) -> str:
 
 class _SectionModel(BaseModel):
     """Bazowa klasa modeli sekcji – pozwala na dodatkowe pola."""
-
     model_config = ConfigDict(extra="allow")
 
 
@@ -116,7 +116,7 @@ class PaperSettings(_SectionModel):
 
 class ConfigPreset(BaseModel):
     """Model najwyższego poziomu opisujący pojedynczy preset."""
-
+    version: int = Field(default=CONFIG_SCHEMA_VERSION, ge=1)
     network: Literal["Testnet", "Live"] = "Testnet"
     mode: Literal["Spot", "Futures"] = "Spot"
     timeframe: str = "1m"
@@ -140,6 +140,17 @@ class ConfigPreset(BaseModel):
         if not _TIMEFRAME_PATTERN.match(tf):
             raise ValueError("Timeframe musi mieć format np. '1m', '4h', '1d'.")
         return tf.lower()
+
+    @field_validator("version")
+    @classmethod
+    def _validate_version(cls, value: Any) -> int:
+        try:
+            version = int(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Pole 'version' musi być liczbą całkowitą.") from exc
+        if version <= 0:
+            raise ValueError("Pole 'version' musi być dodatnie.")
+        return version
 
     @field_validator("fraction")
     @classmethod
@@ -206,29 +217,41 @@ class ConfigManager:
         logger.info("ConfigManager: katalog presetów = %s", self.presets_dir)
         self._demo_required = True
         self._default_template = ConfigPreset().to_dict()
+        self._last_upgrade_from: Optional[int] = None
 
     # --- walidacja ---
     def validate_preset(self, data: Dict[str, Any]) -> ConfigPreset:
         """Zwróć obiekt ``ConfigPreset`` po walidacji danych wejściowych."""
-
+        upgraded = self._upgrade_payload(data)
         try:
-            preset = ConfigPreset.model_validate(data)
-        except ValidationError as exc:  # pragma: no cover - trudne do pełnego pokrycia
+            preset = ConfigPreset.model_validate(upgraded)
+        except ValidationError as exc:  # pragma: no cover
             errors = "; ".join(
                 f"{'.'.join(str(loc) for loc in err['loc'])}: {err['msg']}" for err in exc.errors()
             )
             raise ValueError(f"Preset validation failed: {errors}") from exc
+        if self._last_upgrade_from is not None:
+            logger.info(
+                "Preset został automatycznie zaktualizowany z wersji %s do %s.",
+                self._last_upgrade_from,
+                CONFIG_SCHEMA_VERSION,
+            )
         return preset
 
     def require_demo_mode(self, required: bool = True) -> None:
         """Włącz/wyłącz wymóg zapisu presetów w trybie demo."""
-
         self._demo_required = bool(required)
 
     def demo_mode_required(self) -> bool:
         """Zwraca informację, czy polityka bezpieczeństwa wymaga trybu demo."""
-
         return self._demo_required
+
+    @staticmethod
+    def current_version() -> int:
+        return CONFIG_SCHEMA_VERSION
+
+    def last_upgrade_from(self) -> Optional[int]:
+        return self._last_upgrade_from
 
     @staticmethod
     def _merge_nested(base: Dict[str, Any], overrides: Dict[str, Any]) -> Dict[str, Any]:
@@ -240,9 +263,41 @@ class ConfigManager:
                 result[key] = value
         return result
 
+    def _upgrade_payload(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        payload = deepcopy(data)
+        version_raw = payload.get("version", 1)
+        try:
+            version = int(version_raw)
+        except (TypeError, ValueError):
+            version = 1
+        if version < 1:
+            version = 1
+
+        upgraded_from = version if version < CONFIG_SCHEMA_VERSION else None
+        if upgraded_from is not None:
+            logger.info(
+                "Aktualizuję preset z wersji %s do %s",
+                upgraded_from,
+                CONFIG_SCHEMA_VERSION,
+            )
+            if upgraded_from < 2:
+                risk_section = payload.get("risk")
+                if isinstance(risk_section, dict):
+                    risk_section.setdefault("trade_cooldown_on_error", 30)
+                    risk_section.setdefault("soft_halt_losses", risk_section.get("soft_halt_losses", 3))
+                paper_section = payload.get("paper")
+                if isinstance(paper_section, dict):
+                    try:
+                        paper_section["capital"] = float(paper_section.get("capital", 10_000.0))
+                    except (TypeError, ValueError):
+                        paper_section["capital"] = 10_000.0
+
+        payload["version"] = CONFIG_SCHEMA_VERSION
+        self._last_upgrade_from = upgraded_from
+        return payload
+
     def audit_preset(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Przeprowadź szybki audyt bezpieczeństwa i ryzyka dla presetu."""
-
         preset = self.validate_preset(data)
         issues: List[str] = []
         warnings: List[str] = []
@@ -268,6 +323,8 @@ class ConfigManager:
         return {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "network": preset.network,
+            "version": preset.version,
+            "upgraded_from": self._last_upgrade_from,
             "issues": issues,
             "warnings": warnings,
             "demo_required": self._demo_required,
@@ -311,7 +368,7 @@ class ConfigManager:
                     yaml.safe_dump(payload, f, allow_unicode=True, sort_keys=False)  # type: ignore[arg-type]
                 logger.info("Zapisano preset YAML: %s", path)
                 return path
-            except Exception as e:  # pragma: no cover - zależne od dysku/środowiska
+            except Exception as e:  # pragma: no cover
                 logger.error("Błąd zapisu YAML (%s): %s – próba JSON", path, e)
 
         path = self._path_json(safe)
@@ -329,7 +386,6 @@ class ConfigManager:
         ensure_demo: Optional[bool] = None,
     ) -> Dict[str, Any]:
         """Stwórz preset na bazie szablonu i nadpisów, zwracając raport audytu."""
-
         payload = deepcopy(self._default_template)
         if base:
             base_payload = self.load_preset(base)
@@ -382,7 +438,6 @@ class ConfigManager:
 
     def preset_wizard(self) -> "PresetWizard":
         """Utwórz kreator presetów ułatwiający stopniowe budowanie konfiguracji."""
-
         return PresetWizard(self)
 
     # --- dodatki przydatne w GUI ---
@@ -404,7 +459,7 @@ class ConfigManager:
                 if p.exists():
                     p.unlink()
                     ok = True
-            except Exception as e:  # pragma: no cover - błędy IO
+            except Exception as e:  # pragma: no cover
                 logger.error("Nie udało się usunąć presetu %s: %s", p, e)
         return ok
 

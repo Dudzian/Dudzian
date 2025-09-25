@@ -88,6 +88,7 @@ def test_save_and_load_roundtrip(cfg: ConfigManager, sample_preset: dict) -> Non
     # sekcje dodatkowe obecne
     assert loaded["ai"]["epochs"] == 20
     assert loaded["risk"]["risk_per_trade"] == pytest.approx(0.02)
+    assert loaded["version"] == ConfigManager.current_version()
 
 
 def test_invalid_fraction_rejected(cfg: ConfigManager, sample_preset: dict) -> None:
@@ -107,6 +108,7 @@ def test_defaults_and_normalisation(cfg: ConfigManager) -> None:
     assert preset.fraction == pytest.approx(0.0)
     data = preset.to_dict()
     assert "ai" in data and "risk" in data
+    assert preset.version == ConfigManager.current_version()
 
 
 def test_demo_requirement_blocks_live(cfg: ConfigManager, sample_preset: dict) -> None:
@@ -129,16 +131,21 @@ def test_create_preset_with_audit(cfg: ConfigManager, sample_preset: dict) -> No
     assert audit["preset"]["network"] == "Testnet"
     assert audit["warnings"], "Zbyt wysoka dzienna strata powinna zostać oznaczona"
     assert "path" in audit and Path(audit["path"]).exists()
+    assert audit["version"] == ConfigManager.current_version()
+    assert audit["preset"]["version"] == ConfigManager.current_version()
 
 
 def test_preset_wizard_profiles(cfg: ConfigManager, sample_preset: dict) -> None:
     cfg.save_preset("base", sample_preset)
-    wizard = cfg.preset_wizard().from_template("base").with_risk_profile("aggressive").with_symbols([
-        "btc/usdt",
-        "ada/usdt",
-    ])
+    wizard = (
+        cfg.preset_wizard()
+        .from_template("base")
+        .with_risk_profile("aggressive")
+        .with_symbols(["btc/usdt", "ada/usdt"])
+    )
     audit = wizard.build("aggressive_profile")
 
     assert audit["preset"]["selected_symbols"] == ["BTC/USDT", "ADA/USDT"]
     assert audit["preset"]["fraction"] == pytest.approx(0.35)
     assert audit["is_demo"] is True
+    assert audit["preset"]["version"] == ConfigManager.current_version()

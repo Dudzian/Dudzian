@@ -42,6 +42,16 @@ class NoSignalAI:
         return None
 
 
+class DummyDB:
+    def __init__(self) -> None:
+        self.records: List[Dict[str, Any]] = []
+        self.sync = self
+
+    def log_performance_metric(self, payload: Dict[str, Any]) -> int:
+        self.records.append(payload)
+        return len(self.records)
+
+
 class DummyGUI:
     def __init__(self, demo: bool, allow_live: bool) -> None:
         self.timeframe_var = DummyVar("1m")
@@ -50,6 +60,7 @@ class DummyGUI:
         self._demo = demo
         self._allow_live = allow_live
         self.executed: List[Tuple[str, str, float]] = []
+        self.db = DummyDB()
 
     def is_demo_mode_active(self) -> bool:
         return self._demo
@@ -98,4 +109,19 @@ def test_live_trading_blocked_without_confirmation(demo_autotrader: Callable[[Du
     trader = demo_autotrader(gui)
     _run_loop(trader)
     assert gui.executed == []
-    assert any("live trading requires explicit confirmation" in msg for kind, _, msg in trader.emitter.logs if kind == "log")
+    assert any(
+        "live trading requires explicit confirmation" in msg
+        for kind, _, msg in trader.emitter.logs
+        if kind == "log"
+    )
+
+
+def test_metrics_persisted_on_trade_close(demo_autotrader: Callable[[DummyGUI], AutoTrader]) -> None:
+    gui = DummyGUI(demo=True, allow_live=True)
+    trader = demo_autotrader(gui)
+    trader._on_trade_closed("BTC/USDT", "BUY", 100.0, 110.0, 5.0, time.time())
+    metrics = gui.db.records
+    assert metrics, "Brak zapisanych metryk po zamknięciu transakcji"
+    names = {entry["metric"] for entry in metrics}
+    assert "auto_trader_expectancy" in names
+    assert any(entry["symbol"] == "BTC/USDT" for entry in metrics)

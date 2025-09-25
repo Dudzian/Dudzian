@@ -154,6 +154,8 @@ class ExchangeManager:
         self._alert_cooldown_seconds = 5.0
         self._alert_last: Dict[str, float] = {}
         self._error_alert_threshold = 3
+        self._metrics_log_interval = 30.0
+        self._last_metrics_log = 0.0
 
     @classmethod
     async def create(
@@ -240,7 +242,6 @@ class ExchangeManager:
     # --------------------------- konfiguracja ---------------------------
     def set_retry_policy(self, *, attempts: int, delay: float) -> None:
         """Skonfiguruj politykę ponawiania żądań."""
-
         try:
             attempts_int = max(0, int(attempts))
         except Exception:
@@ -252,6 +253,14 @@ class ExchangeManager:
         self._retry_attempts = attempts_int
         self._retry_delay = delay_float
 
+    def set_metrics_log_interval(self, seconds: float) -> None:
+        """Ustaw minimalny odstęp między zapisami telemetrii API do bazy."""
+        try:
+            interval = max(0.0, float(seconds))
+        except Exception:
+            interval = 0.0
+        self._metrics_log_interval = interval
+
     def configure_rate_limits(
         self,
         *,
@@ -260,7 +269,6 @@ class ExchangeManager:
         buckets: Optional[Sequence[Dict[str, Any]]] = None,
     ) -> None:
         """Zaktualizuj konfigurację limitów API i wyzeruj liczniki."""
-
         self._rate_limit_window = max(0.1, float(window_seconds or 60.0))
         self._rate_limit_per_minute = None
         self._max_calls_per_window = None
@@ -346,10 +354,7 @@ class ExchangeManager:
                     elapsed = 0.0
 
                 projected = bucket.count + 1
-                if bucket.capacity > 0:
-                    usage_pct = projected / bucket.capacity
-                else:
-                    usage_pct = 0.0
+                usage_pct = projected / bucket.capacity if bucket.capacity > 0 else 0.0
                 bucket.last_usage = min(usage_pct, 1.0 if bucket.capacity > 0 else usage_pct)
                 bucket.max_usage = max(bucket.max_usage, bucket.last_usage)
 
@@ -438,6 +443,8 @@ class ExchangeManager:
                     key="error",
                 )
 
+        self._schedule_metrics_snapshot()
+
     def _register_error(self, endpoint: str, exc: Exception, *, final: bool) -> None:
         level = logging.ERROR if final else logging.WARNING
         logger.log(level, "Wywołanie %s nie powiodło się: %s", endpoint, exc)
@@ -482,6 +489,30 @@ class ExchangeManager:
                     context=context,
                 )
             )
+
+    def _schedule_metrics_snapshot(self) -> None:
+        if not self._db_manager or not self._user_id:
+            return
+        if self._metrics_log_interval <= 0:
+            return
+        now = time.monotonic()
+        if now - self._last_metrics_log < self._metrics_log_interval:
+            return
+        self._last_metrics_log = now
+        snapshot = self.get_api_metrics()
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        loop.create_task(
+            self._db_manager.log(
+                self._user_id,
+                "INFO",
+                "API metrics snapshot",
+                category="exchange_metrics",
+                context=snapshot,
+            )
+        )
 
     async def _run_with_retry(self, coro_factory: Callable[[], Any], *, endpoint: str) -> Any:
         last_exc: Optional[Exception] = None
@@ -800,15 +831,13 @@ class ExchangeManager:
 
     def get_rate_limit_snapshot(self) -> List[Dict[str, Any]]:
         """Szybki podgląd stanu kubełków limitów API."""
-
         return [bucket.snapshot() for bucket in self._rate_limit_buckets]
 
     def get_api_metrics(self) -> Dict[str, Any]:
         """Zwróć metryki zużycia API (łącznie i per-endpoint)."""
         usage = None
         if self._max_calls_per_window:
-            if self._max_calls_per_window:
-                usage = self._window_count / self._max_calls_per_window
+            usage = self._window_count / self._max_calls_per_window
         buckets_snapshot = [bucket.snapshot() for bucket in self._rate_limit_buckets]
         return {
             "total_calls": self._metrics.total_calls,
@@ -834,3 +863,4 @@ class ExchangeManager:
         self._metrics.consecutive_errors = 0
         self._alert_last.clear()
         self._reset_rate_windows()
+        self._last_metrics_log = 0.0

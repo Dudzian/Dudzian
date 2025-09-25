@@ -336,6 +336,27 @@ class TradingEngine:
                     await self._emit_event({"type": "fraction_cap_zero", "symbol": symbol_key})
                     return None
 
+                if db_manager:
+                    mode_value = getattr(ex_mgr, "mode", None)
+                    if isinstance(mode_value, str):
+                        mode_str = mode_value.lower()
+                    elif hasattr(mode_value, "value"):
+                        mode_str = str(mode_value.value).lower()
+                    else:
+                        mode_str = "live"
+                    try:
+                        await db_manager.log_risk_limit(
+                            {
+                                "symbol": symbol_key,
+                                "max_fraction": fraction_cap,
+                                "recommended_size": qty_hint,
+                                "mode": mode_str,
+                                "details": risk_details,
+                            }
+                        )
+                    except Exception:
+                        logger.exception("Persisting risk limit snapshot failed")
+
                 atr_window = max(1, int(getattr(tp, "atr_period", 14)))
                 tr = (df["high"] - df["low"]).abs()
                 atr = float(tr.tail(atr_window).mean()) if not tr.empty else 0.0

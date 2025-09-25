@@ -56,6 +56,7 @@ class AutoTrader:
         self.emitter = emitter
         self.gui = gui
         self.symbol_getter = symbol_getter
+        self._db_manager = getattr(gui, "db", None)
 
         self.pf_min = pf_min
         self.expectancy_min = expectancy_min
@@ -134,6 +135,7 @@ class AutoTrader:
         self._closed_pnls.append(pnl)
         pf, exp = self._compute_metrics()
         self.emitter.emit("metrics_updated", pf=pf, expectancy=exp, window=len(self._closed_pnls), ts=time.time())
+        self._persist_performance_metrics(symbol, pf, exp)
         # Check thresholds
         trigger_reason = None
         details = {}
@@ -174,6 +176,69 @@ class AutoTrader:
         # Expectancy per trade (avg pnl)
         expectancy = statistics.mean(pnls) if pnls else None
         return (pf, expectancy)
+
+    def _resolve_db(self):
+        db = self._db_manager
+        if db is None:
+            candidate = getattr(self.gui, "db", None)
+            if candidate is not None:
+                db = candidate
+                self._db_manager = candidate
+        if db is None or not hasattr(db, "sync"):
+            return None
+        return db
+
+    def _resolve_mode(self) -> str:
+        network_var = getattr(self.gui, "network_var", None)
+        if network_var is not None and hasattr(network_var, "get"):
+            try:
+                network = str(network_var.get()).strip().lower()
+            except Exception:
+                network = ""
+            if network in {"testnet", "paper", "demo"}:
+                return "paper"
+        return "live"
+
+    def _log_metric(
+        self,
+        metric: str,
+        value: Optional[float],
+        *,
+        symbol: str,
+        window: int,
+        extra: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        if value is None:
+            return
+        db = self._resolve_db()
+        if db is None:
+            return
+        context: Dict[str, Any] = {"symbol": symbol, "window": window, "source": "AutoTrader"}
+        if extra:
+            context.update(extra)
+        payload = {
+            "metric": metric,
+            "value": float(value),
+            "window": window,
+            "symbol": symbol,
+            "mode": self._resolve_mode(),
+            "context": context,
+        }
+        try:
+            db.sync.log_performance_metric(payload)
+        except Exception:
+            logger.exception("Nie udało się zapisać metryki %s", metric)
+
+    def _persist_performance_metrics(
+        self,
+        symbol: str,
+        pf: Optional[float],
+        expectancy: Optional[float],
+    ) -> None:
+        window = len(self._closed_pnls)
+        extra = {"profit_factor": pf, "expectancy": expectancy}
+        self._log_metric("auto_trader_expectancy", expectancy, symbol=symbol, window=window, extra=extra)
+        self._log_metric("auto_trader_profit_factor", pf, symbol=symbol, window=window, extra=extra)
 
     def _maybe_reoptimize(self, reason: str, details: Dict[str, Any]) -> None:
         now = time.time()
