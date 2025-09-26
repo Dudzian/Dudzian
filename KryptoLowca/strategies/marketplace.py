@@ -6,6 +6,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional
 
+try:  # pragma: no cover - moduł opcjonalny w starszych środowiskach
+    from .presets import load_builtin_presets
+except Exception:  # pragma: no cover
+    def load_builtin_presets():  # type: ignore
+        return []
+
 
 DEFAULT_MARKETPLACE_DIR = Path(__file__).parent / "marketplace"
 
@@ -31,16 +37,16 @@ def _load_json(path: Path) -> Dict[str, object]:
 
 
 def load_marketplace_presets(base_path: Optional[Path] = None) -> List[StrategyPreset]:
-    directory = base_path or DEFAULT_MARKETPLACE_DIR
-    if not directory.exists():
-        return []
+    presets: Dict[str, StrategyPreset] = {
+        preset.preset_id: preset for preset in load_builtin_presets()
+    }
 
-    presets: List[StrategyPreset] = []
-    for file in sorted(directory.glob("*.json")):
-        data = _load_json(file)
-        config = data.get("config", {})
-        presets.append(
-            StrategyPreset(
+    directory = base_path or DEFAULT_MARKETPLACE_DIR
+    if directory.exists():
+        for file in sorted(directory.glob("*.json")):
+            data = _load_json(file)
+            config = data.get("config", {})
+            preset = StrategyPreset(
                 preset_id=data["id"],
                 name=data["name"],
                 description=data.get("description", ""),
@@ -51,8 +57,9 @@ def load_marketplace_presets(base_path: Optional[Path] = None) -> List[StrategyP
                 tags=list(data.get("tags", [])),
                 config=dict(config),
             )
-        )
-    return presets
+            presets[preset.preset_id] = preset
+
+    return list(presets.values())
 
 
 def load_preset(preset_id: str, base_path: Optional[Path] = None) -> StrategyPreset:
