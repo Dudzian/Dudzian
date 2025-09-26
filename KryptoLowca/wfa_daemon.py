@@ -10,15 +10,15 @@ niż poprzednia implementacja uruchamiana w izolacji.
 
 from __future__ import annotations
 
+from pathlib import Path
+import sys
 import argparse
 import csv
 import json
 import logging
-import sys
 import time
 from dataclasses import asdict
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 if __package__ in {None, ""}:

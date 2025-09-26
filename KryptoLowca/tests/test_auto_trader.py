@@ -141,7 +141,7 @@ class DummyGUI:
             low = open_ * 0.999
             close = open_ * 1.0005
             volume = 10.0 + i
-            data.append([ts, open_, high_, low, close, volume])
+            data.append([ts, open_, high, low, close, volume])
             price = close
         return data
 
