@@ -725,6 +725,36 @@ class AutoTrader:
                 mode=strategy_cfg.mode,
             )
 
+        compliance_state = {
+            "compliance_confirmed": bool(strategy_cfg.compliance_confirmed),
+            "api_keys_configured": bool(strategy_cfg.api_keys_configured),
+            "acknowledged_risk_disclaimer": bool(
+                strategy_cfg.acknowledged_risk_disclaimer
+            ),
+        }
+        if strategy_cfg.mode == "live":
+            missing_checks = [name for name, ok in compliance_state.items() if not ok]
+            if missing_checks:
+                summary = ", ".join(missing_checks)
+                log_message = (
+                    "Live trading blocked: missing compliance confirmations -> "
+                    f"{summary}"
+                )
+                self.emitter.log(log_message, level="WARNING", component="AutoTrader")
+                return RiskDecision(
+                    should_trade=False,
+                    fraction=0.0,
+                    state="lock",
+                    reason="live_compliance_missing",
+                    details={
+                        "missing_checks": missing_checks,
+                        "compliance_state": compliance_state,
+                    },
+                    stop_loss_pct=strategy_cfg.default_sl,
+                    take_profit_pct=strategy_cfg.default_tp,
+                    mode=strategy_cfg.mode,
+                )
+
         portfolio_ctx = self._build_portfolio_context(symbol, price)
         risk_mgr = getattr(self.gui, "risk_mgr", None)
         fraction = strategy_cfg.trade_risk_pct

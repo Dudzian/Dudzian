@@ -186,6 +186,35 @@ def test_live_trading_blocked_without_confirmation(demo_autotrader: Callable[[Du
     )
 
 
+def test_live_trade_requires_compliance_flags(
+    demo_autotrader: Callable[[DummyGUI], AutoTrader]
+) -> None:
+    strategy = StrategyConfig(
+        preset="CUSTOM",
+        mode="live",
+        compliance_confirmed=False,
+        api_keys_configured=False,
+        acknowledged_risk_disclaimer=False,
+    )
+    gui = DummyGUI(demo=False, allow_live=True, strategy=strategy)
+    trader = demo_autotrader(gui)
+    signal_payload = trader._build_signal_payload("BTC/USDT", "BUY", 0.5)
+    decision = trader._evaluate_risk("BTC/USDT", "BUY", 100.0, signal_payload, None)
+
+    assert not decision.should_trade
+    assert decision.reason == "live_compliance_missing"
+    assert set(decision.details.get("missing_checks", [])) == {
+        "compliance_confirmed",
+        "api_keys_configured",
+        "acknowledged_risk_disclaimer",
+    }
+    assert any(
+        "Live trading blocked: missing compliance confirmations" in msg
+        for kind, _, msg in trader.emitter.logs
+        if kind == "log"
+    )
+
+
 def test_metrics_persisted_on_trade_close(demo_autotrader: Callable[[DummyGUI], AutoTrader]) -> None:
     gui = DummyGUI(demo=True, allow_live=True)
     trader = demo_autotrader(gui)
