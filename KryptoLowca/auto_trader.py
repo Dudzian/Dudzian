@@ -5,6 +5,7 @@ from __future__ import annotations
 import threading
 import time
 import statistics
+import asyncio
 from typing import Optional, List, Dict, Any, Callable, Tuple
 import inspect
 from dataclasses import dataclass, field
@@ -725,6 +726,36 @@ class AutoTrader:
                 mode=strategy_cfg.mode,
             )
 
+        compliance_state = {
+            "compliance_confirmed": bool(strategy_cfg.compliance_confirmed),
+            "api_keys_configured": bool(strategy_cfg.api_keys_configured),
+            "acknowledged_risk_disclaimer": bool(
+                strategy_cfg.acknowledged_risk_disclaimer
+            ),
+        }
+        if strategy_cfg.mode == "live":
+            missing_checks = [name for name, ok in compliance_state.items() if not ok]
+            if missing_checks:
+                summary = ", ".join(missing_checks)
+                log_message = (
+                    "Live trading blocked: missing compliance confirmations -> "
+                    f"{summary}"
+                )
+                self.emitter.log(log_message, level="WARNING", component="AutoTrader")
+                return RiskDecision(
+                    should_trade=False,
+                    fraction=0.0,
+                    state="lock",
+                    reason="live_compliance_missing",
+                    details={
+                        "missing_checks": missing_checks,
+                        "compliance_state": compliance_state,
+                    },
+                    stop_loss_pct=strategy_cfg.default_sl,
+                    take_profit_pct=strategy_cfg.default_tp,
+                    mode=strategy_cfg.mode,
+                )
+
         portfolio_ctx = self._build_portfolio_context(symbol, price)
         risk_mgr = getattr(self.gui, "risk_mgr", None)
         fraction = strategy_cfg.trade_risk_pct
@@ -949,6 +980,67 @@ class AutoTrader:
             self.emitter.emit("risk_guard_event", **payload)
         except Exception:  # pragma: no cover - audyt nie może zatrzymać bota
             logger.exception("Failed to emit risk_guard_event")
+
+        db_manager = self._resolve_db()
+        if db_manager is not None:
+            limit_events: Optional[List[str]] = None
+            if isinstance(decision.details, dict):
+                candidate = decision.details.get("limit_events")
+                if isinstance(candidate, (list, tuple)):
+                    limit_events = [str(item) for item in candidate]
+            db_payload = {
+                "symbol": symbol,
+                "state": decision.state,
+                "fraction": float(decision.fraction),
+                "side": side,
+                "reason": decision.reason,
+                "price": float(price),
+                "mode": decision.mode,
+                "limit_events": limit_events,
+                "details": decision.details,
+                "stop_loss_pct": decision.stop_loss_pct,
+                "take_profit_pct": decision.take_profit_pct,
+                "should_trade": decision.should_trade,
+            }
+            try:
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = None
+
+                if loop is not None:
+                    async_method = getattr(db_manager, "log_risk_audit", None)
+                    if callable(async_method):
+                        result = async_method(db_payload)
+                        if inspect.isawaitable(result):
+                            task = loop.create_task(result)
+
+                            def _handle_task(t: asyncio.Task[Any]) -> None:
+                                try:
+                                    t.result()
+                                except Exception:  # pragma: no cover - logowanie awarii w tle
+                                    logger.exception("Async risk audit log failed")
+
+                            task.add_done_callback(_handle_task)
+                        else:
+                            logger.debug("Async log_risk_audit returned non-awaitable result")
+                    else:
+                        logger.debug("No async log_risk_audit available on db manager")
+                else:
+                    sync = getattr(db_manager, "sync", None)
+                    log_method = None
+                    if sync is not None:
+                        log_method = getattr(sync, "log_risk_audit", None)
+                    if log_method is None:
+                        log_method = getattr(db_manager, "log_risk_audit", None)
+                    if callable(log_method):
+                        result = log_method(db_payload)
+                        if inspect.isawaitable(result):
+                            asyncio.run(result)
+                    else:
+                        logger.debug("No log_risk_audit method available on db manager")
+            except Exception:  # pragma: no cover - logowanie awarii
+                logger.exception("Failed to persist risk audit log")
 
         msg = (
             f"Risk state={decision.state} reason={decision.reason} symbol={symbol} side={side} fraction={decision.fraction:.4f}"
