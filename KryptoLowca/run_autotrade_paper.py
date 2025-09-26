@@ -2,11 +2,26 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-import sys
-import time
-import signal
 import logging
+import signal
+import sys
 import threading
+import time
+from pathlib import Path
+
+if __package__ in {None, ""}:
+    _current_file = Path(__file__).resolve()
+    for _parent in _current_file.parents:
+        candidate = _parent / "KryptoLowca" / "__init__.py"
+        if candidate.exists():
+            sys.path.insert(0, str(_parent))
+            __package__ = "KryptoLowca"
+            break
+    else:  # pragma: no cover - ochronna gałąź diagnostyczna
+        raise ModuleNotFoundError(
+            "Nie można zlokalizować pakietu 'KryptoLowca'. Uruchom skrypt z katalogu projektu lub"
+            " zainstaluj pakiet w środowisku (pip install -e .)."
+        )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 log = logging.getLogger("runner")
@@ -22,16 +37,20 @@ except Exception as e:
     log.error("Nie udało się zaimportować event_emitter_adapter: %s", e, exc_info=True)
     raise
 
-from services.order_router import PaperBroker, PaperBrokerConfig
-from services.performance_monitor import PerformanceMonitor, PerfMonitorConfig
-from services.walkforward_service import WalkForwardService, WFOServiceConfig, ObjectiveWeights
-from services.risk_manager import RiskManager, RiskConfig
-from services.strategy_engine import StrategyEngine, StrategyConfig
-from services.persistence import PersistenceService
-from services.risk_guard import RiskGuard, RiskGuardConfig
-from services.marketdata import MarketDataService, MarketDataConfig
-from services.position_sizer import PositionSizer, PositionSizerConfig
-from services.stop_tp import StopTPService, StopTPConfig
+from KryptoLowca.services.marketdata import MarketDataConfig, MarketDataService
+from KryptoLowca.services.order_router import PaperBroker, PaperBrokerConfig
+from KryptoLowca.services.performance_monitor import PerfMonitorConfig, PerformanceMonitor
+from KryptoLowca.services.persistence import PersistenceService
+from KryptoLowca.services.position_sizer import PositionSizer, PositionSizerConfig
+from KryptoLowca.services.risk_guard import RiskGuard, RiskGuardConfig
+from KryptoLowca.services.risk_manager import RiskConfig, RiskManager
+from KryptoLowca.services.stop_tp import StopTPConfig, StopTPService
+from KryptoLowca.services.strategy_engine import StrategyConfig, StrategyEngine
+from KryptoLowca.services.walkforward_service import (
+    ObjectiveWeights,
+    WFOServiceConfig,
+    WalkForwardService,
+)
 
 SYMBOL = "BTCUSDT"
 
