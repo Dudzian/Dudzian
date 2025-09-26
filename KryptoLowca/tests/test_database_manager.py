@@ -9,13 +9,16 @@ import pytest
 from datetime import datetime, timezone
 from pathlib import Path
 
+from sqlalchemy import select
+
 from KryptoLowca.database_manager import (
     DatabaseManager,
     DBOptions,
     DatabaseConnectionError,
     MigrationError,
 )
-from KryptoLowca.managers.database_manager import CURRENT_SCHEMA_VERSION
+from KryptoLowca.auto_trader import AutoTrader, RiskDecision
+from KryptoLowca.managers.database_manager import CURRENT_SCHEMA_VERSION, RiskAuditLog
 
 
 @pytest.fixture
@@ -181,3 +184,51 @@ async def test_performance_and_risk_logging(db):
     assert audit_id > 0
     audits = await dbm.fetch_security_audit(action="decrypt_keys")
     assert audits and audits[0]["detail"] == "unit-test"
+
+
+@pytest.mark.asyncio
+async def test_risk_audit_logged_via_autotrader(db):
+    dbm, _ = db
+
+    class _Emitter:
+        def on(self, *_, **__):
+            return None
+
+        def off(self, *_, **__):
+            return None
+
+        def emit(self, *_, **__):
+            return None
+
+        def log(self, *_, **__):
+            return None
+
+    class _Var:
+        def get(self) -> str:
+            return "Testnet"
+
+    class _GUI:
+        def __init__(self, db_manager):
+            self.db = db_manager
+            self.network_var = _Var()
+
+    trader = AutoTrader(_Emitter(), _GUI(dbm), lambda: "BTC/USDT")
+    decision = RiskDecision(
+        should_trade=True,
+        fraction=0.25,
+        state="warn",
+        reason="risk_clamped",
+        details={"limit_events": ["max_fraction", "portfolio_cap"]},
+        mode="paper",
+    )
+
+    trader._emit_risk_audit("BTC/USDT", "BUY", decision, 101.0)
+    await asyncio.sleep(0)
+
+    async with dbm.session() as session:
+        rows = (await session.execute(select(RiskAuditLog))).scalars().all()
+
+    assert rows and rows[0].symbol == "BTC/USDT"
+    assert rows[0].state == "warn"
+    assert pytest.approx(rows[0].fraction, 1e-8) == 0.25
+    assert json.loads(rows[0].limit_events) == ["max_fraction", "portfolio_cap"]
