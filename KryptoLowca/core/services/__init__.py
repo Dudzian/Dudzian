@@ -5,6 +5,7 @@ from .execution_service import ExecutionService
 from .data_provider import ExchangeDataProvider
 from .risk_service import RiskAssessment, RiskService
 from .signal_service import SignalService
+from .paper_adapter import PaperTradingAdapter
 
 __all__ = [
     "exception_guard",
@@ -14,4 +15,5 @@ __all__ = [
     "RiskAssessment",
     "RiskService",
     "SignalService",
+    "PaperTradingAdapter",
 ]

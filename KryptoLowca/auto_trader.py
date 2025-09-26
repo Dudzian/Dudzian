@@ -30,6 +30,7 @@ from KryptoLowca.config_manager import StrategyConfig
 from KryptoLowca.telemetry.prometheus_exporter import metrics as prometheus_metrics
 from KryptoLowca.core.services import ExecutionService, RiskService, SignalService, exception_guard
 from KryptoLowca.core.services.data_provider import ExchangeDataProvider
+from KryptoLowca.core.services.paper_adapter import PaperTradingAdapter
 from KryptoLowca.strategies.base import DataProvider, StrategyMetadata, StrategySignal
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -156,11 +157,16 @@ class AutoTrader:
         self._signal_service = signal_service or SignalService()
         self._risk_service = risk_service or RiskService()
         self._execution_service = execution_service or ExecutionService(_NullExchangeAdapter(self.emitter))
+        self._live_execution_adapter = getattr(self._execution_service, "_adapter", None)
         self._data_provider: Optional[DataProvider] = data_provider or self._build_data_provider()
         self._service_mode_enabled = self._data_provider is not None
         self._cooldowns: Dict[str, float] = {}
         self._service_tasks: Dict[Tuple[str, str], asyncio.Task[Any]] = {}
         self._service_loop: Optional[asyncio.AbstractEventLoop] = None
+        self._paper_adapter: Optional[PaperTradingAdapter] = None
+        self._paper_enabled = False
+        self._exchange_config: Optional[Dict[str, Any]] = None
+        self._refresh_execution_mode()
 
         # Subscribe to events
         emitter.on("trade_closed", self._on_trade_closed, tag="autotrader")
@@ -218,9 +224,16 @@ class AutoTrader:
                 if key == "strategy":
                     self._update_strategy_config(val)
                     continue
+                if key == "exchange":
+                    if isinstance(val, Mapping):
+                        self._exchange_config = dict(val)
+                    else:
+                        self._exchange_config = None
+                    continue
                 if not hasattr(self, key):
                     continue
                 setattr(self, key, val)
+        self._refresh_execution_mode()
         self.emitter.log(f"AutoTrader reconfigured: {kwargs}", component="AutoTrader")
 
     # -- Event handlers --
@@ -563,6 +576,7 @@ class AutoTrader:
             market_payload = await self._build_market_payload(symbol, timeframe)
             if not market_payload:
                 return
+            self._execution_service.update_market_data(symbol, timeframe, market_payload)
             price = float(market_payload.get("price") or 0.0)
             portfolio_snapshot = self._resolve_portfolio_snapshot(symbol, price)
             portfolio_value = float(
@@ -704,6 +718,14 @@ class AutoTrader:
         return StrategyMetadata(name=strategy_cls.__name__, description="AutoTrader context")
 
     def _resolve_portfolio_snapshot(self, symbol: str, price: float) -> Dict[str, Any]:
+        adapter_snapshot = self._execution_service.portfolio_snapshot(symbol)
+        if adapter_snapshot:
+            return {
+                "value": float(adapter_snapshot.get("value", 0.0)),
+                "position": float(adapter_snapshot.get("position", 0.0)),
+                "daily_loss_pct": 0.0,
+                "price": float(adapter_snapshot.get("price", price)),
+            }
         snapshot_fn = getattr(self.gui, "get_portfolio_snapshot", None)
         if callable(snapshot_fn):
             try:
@@ -730,6 +752,32 @@ class AutoTrader:
             "position": qty,
             "daily_loss_pct": 0.0,
         }
+
+    def _refresh_execution_mode(self) -> None:
+        cfg = self._get_strategy_config()
+        exchange_cfg = self._exchange_config or {}
+        testnet = bool(exchange_cfg.get("testnet", True))
+        if cfg.mode == "demo" and not testnet:
+            self._enable_paper_trading()
+        else:
+            self._disable_paper_trading()
+
+    def _enable_paper_trading(self) -> None:
+        if self._paper_enabled:
+            return
+        self._paper_adapter = PaperTradingAdapter(initial_balance=10_000.0)
+        self._execution_service.set_adapter(self._paper_adapter)
+        self._paper_enabled = True
+        self.emitter.log("Paper trading engine enabled", component="AutoTrader")
+
+    def _disable_paper_trading(self) -> None:
+        if not self._paper_enabled:
+            return
+        if self._live_execution_adapter is not None:
+            self._execution_service.set_adapter(self._live_execution_adapter)
+        self._paper_adapter = None
+        self._paper_enabled = False
+        self.emitter.log("Paper trading engine disabled", component="AutoTrader")
 
     def _auto_trade_loop(self) -> None:
         if self._service_mode_enabled:
