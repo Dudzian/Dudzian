@@ -6,7 +6,7 @@ import threading
 import time
 import statistics
 import asyncio
-from typing import Optional, List, Dict, Any, Callable, Tuple, TYPE_CHECKING
+from typing import Iterable, Mapping, Optional, List, Dict, Any, Callable, Tuple, TYPE_CHECKING
 import inspect
 from dataclasses import dataclass, field
 
@@ -28,6 +28,9 @@ from KryptoLowca.event_emitter_adapter import EventEmitter
 from KryptoLowca.logging_utils import get_logger
 from KryptoLowca.config_manager import StrategyConfig
 from KryptoLowca.telemetry.prometheus_exporter import metrics as prometheus_metrics
+from KryptoLowca.core.services import ExecutionService, RiskService, SignalService, exception_guard
+from KryptoLowca.core.services.data_provider import ExchangeDataProvider
+from KryptoLowca.strategies.base import DataProvider, StrategyMetadata, StrategySignal
 
 if TYPE_CHECKING:  # pragma: no cover
     from KryptoLowca.data.market_data import MarketDataProvider, MarketDataRequest
@@ -62,6 +65,28 @@ class RiskDecision:
         return payload
 
 
+class _NullExchangeAdapter:
+    """Minimalny adapter wykorzystywany, gdy nie podano właściwego wykonawcy."""
+
+    def __init__(self, emitter: EventEmitter | None) -> None:
+        self._emitter = emitter
+
+    async def submit_order(self, *, symbol: str, side: str, size: float, **kwargs: Any) -> Mapping[str, Any]:
+        message = "Execution adapter not configured; skipping order"
+        if self._emitter is not None:
+            try:
+                self._emitter.log(message, level="WARNING", component="AutoTrader")
+            except Exception:  # pragma: no cover - defensywne logowanie
+                logger.warning(message)
+        logger.warning("%s (symbol=%s side=%s size=%s)", message, symbol, side, size)
+        return {
+            "status": "skipped",
+            "symbol": symbol,
+            "side": side,
+            "size": size,
+        }
+
+
 class AutoTrader:
     """
     - Listens to trade_closed events to compute rolling PF & Expectancy
@@ -87,6 +112,11 @@ class AutoTrader:
         enable_auto_trade: bool = True,
         auto_trade_interval_s: int = 30,
         market_data_provider: Optional["MarketDataProvider"] = None,
+        *,
+        signal_service: Optional[SignalService] = None,
+        risk_service: Optional[RiskService] = None,
+        execution_service: Optional[ExecutionService] = None,
+        data_provider: Optional[DataProvider] = None,
     ) -> None:
         self.emitter = emitter
         self.gui = gui
@@ -123,12 +153,30 @@ class AutoTrader:
         self._risk_lock_until: float = 0.0
         self._last_risk_audit: Optional[Dict[str, Any]] = None
         self._market_data_provider = market_data_provider
+        self._signal_service = signal_service or SignalService()
+        self._risk_service = risk_service or RiskService()
+        self._execution_service = execution_service or ExecutionService(_NullExchangeAdapter(self.emitter))
+        self._data_provider: Optional[DataProvider] = data_provider or self._build_data_provider()
+        self._service_mode_enabled = self._data_provider is not None
+        self._cooldowns: Dict[str, float] = {}
+        self._service_tasks: Dict[Tuple[str, str], asyncio.Task[Any]] = {}
+        self._service_loop: Optional[asyncio.AbstractEventLoop] = None
 
         # Subscribe to events
         emitter.on("trade_closed", self._on_trade_closed, tag="autotrader")
         emitter.on("bar", self._on_bar, tag="autotrader")
 
     # -- Public API --
+    def _build_data_provider(self) -> Optional[DataProvider]:
+        ex_mgr = getattr(self.gui, "ex_mgr", None)
+        if ex_mgr is None:
+            return None
+        try:
+            return ExchangeDataProvider(ex_mgr)
+        except Exception:  # pragma: no cover - defensywne
+            logger.exception("Failed to initialise ExchangeDataProvider")
+            return None
+
     def start(self) -> None:
         self._stop.clear()
         self._threads = []
@@ -361,7 +409,332 @@ class AutoTrader:
                 logger.exception("Walk-forward loop error")
             self._stop.wait(1.0)
 
+    def _run_service_loop(self) -> None:
+        loop = asyncio.new_event_loop()
+        self._service_loop = loop
+        try:
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(self._service_loop_main())
+        except Exception:  # pragma: no cover - defensywny log
+            logger.exception("Service-based auto trade loop crashed")
+        finally:
+            try:
+                pending = [task for task in asyncio.all_tasks(loop=loop) if not task.done()]
+                for task in pending:
+                    task.cancel()
+                if pending:
+                    loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                loop.run_until_complete(loop.shutdown_asyncgens())
+            except Exception:
+                logger.exception("Failed to shutdown auto trade service loop")
+            finally:
+                asyncio.set_event_loop(None)
+                loop.close()
+                self._service_loop = None
+
+    async def _service_loop_main(self) -> None:
+        try:
+            while not self._stop.is_set():
+                schedule = self._resolve_schedule_entries()
+                await self._ensure_service_schedule(schedule)
+                await asyncio.sleep(0.5)
+        finally:
+            await self._cancel_service_tasks()
+
+    async def _ensure_service_schedule(self, schedule: List[Tuple[str, str]]) -> None:
+        desired = {(sym, tf) for sym, tf in schedule if sym}
+        for key in list(self._service_tasks):
+            if key not in desired:
+                task = self._service_tasks.pop(key)
+                task.cancel()
+                with exception_guard("AutoTrader.scheduler"):
+                    await asyncio.gather(task, return_exceptions=True)
+        for entry in schedule:
+            if entry not in self._service_tasks:
+                symbol, timeframe = entry
+                if not symbol:
+                    continue
+                self._service_tasks[entry] = asyncio.create_task(
+                    self._symbol_service_loop(symbol, timeframe)
+                )
+
+    async def _cancel_service_tasks(self) -> None:
+        if not self._service_tasks:
+            return
+        tasks = list(self._service_tasks.values())
+        for task in tasks:
+            task.cancel()
+        with exception_guard("AutoTrader.scheduler"):
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._service_tasks.clear()
+
+    async def _symbol_service_loop(self, symbol: str, timeframe: str) -> None:
+        interval = max(0.1, float(self.auto_trade_interval_s))
+        while not self._stop.is_set():
+            if not self.enable_auto_trade:
+                await asyncio.sleep(interval)
+                continue
+            if self._is_symbol_on_cooldown(symbol):
+                await asyncio.sleep(interval)
+                continue
+            await self._trade_once(symbol, timeframe)
+            await asyncio.sleep(interval)
+
+    def _resolve_schedule_entries(self) -> List[Tuple[str, str]]:
+        timeframe = self._resolve_timeframe()
+        entries: List[Tuple[str, str]] = []
+        try:
+            raw = self.symbol_getter()
+        except Exception:
+            logger.exception("Symbol getter failed")
+            return entries
+
+        if isinstance(raw, str):
+            symbol = raw.strip()
+            if symbol:
+                entries.append((symbol, timeframe))
+            return entries
+        if isinstance(raw, Mapping):
+            for sym, tf in raw.items():
+                symbol = str(sym).strip()
+                tf_value = str(tf).strip() or timeframe
+                if symbol:
+                    entries.append((symbol, tf_value))
+            return entries
+        if isinstance(raw, Iterable):
+            for item in raw:
+                if isinstance(item, tuple) and len(item) >= 2:
+                    symbol = str(item[0]).strip()
+                    tf_value = str(item[1]).strip() or timeframe
+                else:
+                    symbol = str(item).strip()
+                    tf_value = timeframe
+                if symbol:
+                    entries.append((symbol, tf_value))
+            return entries
+        if raw:
+            symbol = str(raw).strip()
+            if symbol:
+                entries.append((symbol, timeframe))
+        return entries
+
+    def _resolve_timeframe(self) -> str:
+        timeframe = "1m"
+        tf_var = getattr(self.gui, "timeframe_var", None)
+        if tf_var is not None and hasattr(tf_var, "get"):
+            try:
+                value = tf_var.get()
+            except Exception:
+                value = None
+            if value:
+                timeframe = str(value)
+        return timeframe
+
+    def _is_symbol_on_cooldown(self, symbol: str) -> bool:
+        with self._lock:
+            until = self._cooldowns.get(symbol, 0.0)
+            if not until:
+                return False
+            now = time.time()
+            if now >= until:
+                self._cooldowns.pop(symbol, None)
+                return False
+            return True
+
+    def _register_cooldown(self, symbol: str, reason: str, duration: Optional[float] = None) -> None:
+        cfg = self._get_strategy_config()
+        cooldown = float(duration) if duration is not None else max(float(cfg.violation_cooldown_s), float(self.auto_trade_interval_s))
+        until = time.time() + cooldown
+        with self._lock:
+            self._cooldowns[symbol] = until
+        self.emitter.log(
+            f"Cooldown applied for {symbol}: {reason} (until {until:.0f})",
+            level="WARNING",
+            component="AutoTrader",
+        )
+
+    async def _trade_once(self, symbol: str, timeframe: str) -> None:
+        if self._data_provider is None:
+            return
+        with exception_guard("AutoTrader.trade"):
+            cfg = self._get_strategy_config()
+            strategy_name = cfg.preset or "SAFE"
+            metadata = self._resolve_strategy_metadata(strategy_name)
+            market_payload = await self._build_market_payload(symbol, timeframe)
+            if not market_payload:
+                return
+            price = float(market_payload.get("price") or 0.0)
+            portfolio_snapshot = self._resolve_portfolio_snapshot(symbol, price)
+            portfolio_value = float(
+                portfolio_snapshot.get("value")
+                or portfolio_snapshot.get("portfolio_value")
+                or portfolio_snapshot.get("equity")
+                or 0.0
+            )
+            position = float(portfolio_snapshot.get("position") or portfolio_snapshot.get("qty") or 0.0)
+            context = self._signal_service.build_context(
+                symbol=symbol,
+                timeframe=timeframe,
+                portfolio_value=portfolio_value,
+                position=position,
+                metadata=metadata,
+                mode=cfg.mode,
+            )
+            signal = await self._signal_service.run_strategy(
+                strategy_name,
+                context,
+                market_payload,
+                self._data_provider,
+            )
+            if signal is None:
+                return
+            market_state = self._build_market_state(portfolio_snapshot, market_payload)
+            assessment = self._risk_service.assess(signal, context, market_state)
+            base_value = portfolio_value if portfolio_value > 0 else 1.0
+            fraction = float(assessment.size or 0.0) / base_value
+            decision = RiskDecision(
+                should_trade=bool(assessment.allow),
+                fraction=fraction,
+                state="ok" if assessment.allow else "reject",
+                reason=assessment.reason,
+                details={"market_state": market_state},
+                stop_loss_pct=assessment.stop_loss,
+                take_profit_pct=assessment.take_profit,
+                mode=cfg.mode,
+            )
+            self._emit_risk_audit(
+                symbol,
+                signal.action or "HOLD",
+                decision,
+                float(market_state.get("price") or 0.0),
+            )
+            if not assessment.allow:
+                self._register_cooldown(symbol, assessment.reason or "risk_rejected")
+                return
+
+            if assessment.size is not None:
+                signal.size = assessment.size
+            if assessment.stop_loss is not None and signal.stop_loss is None:
+                signal.stop_loss = assessment.stop_loss
+            if assessment.take_profit is not None and signal.take_profit is None:
+                signal.take_profit = assessment.take_profit
+            signal.payload.setdefault("market_state", market_state)
+            signal.payload.setdefault("price", market_state.get("price"))
+
+            context.require_demo_mode()
+            result = await self._execution_service.execute(signal, context)
+            if result is not None:
+                try:
+                    prometheus_metrics.record_order(symbol, signal.action, float(signal.size or 0.0))
+                except Exception:
+                    logger.debug("Prometheus record_order skipped", exc_info=True)
+                self.emitter.emit("auto_trade_tick", symbol=symbol, ts=time.time())
+                self.emitter.log(
+                    f"Auto-trade executed: {symbol} {signal.action}",
+                    component="AutoTrader",
+                )
+            with self._lock:
+                self._cooldowns.pop(symbol, None)
+
+    async def _build_market_payload(self, symbol: str, timeframe: str) -> Optional[Dict[str, Any]]:
+        if self._data_provider is None:
+            return None
+        with exception_guard("AutoTrader.market_data"):
+            ohlcv = await self._data_provider.get_ohlcv(symbol, timeframe, limit=256)
+            ticker = await self._data_provider.get_ticker(symbol)
+        payload: Dict[str, Any] = {
+            "ohlcv": ohlcv or {},
+            "ticker": ticker or {},
+        }
+        payload["price"] = self._extract_price_from_payload(payload)
+        return payload
+
+    def _build_market_state(
+        self,
+        portfolio_snapshot: Mapping[str, Any],
+        market_payload: Mapping[str, Any],
+    ) -> Dict[str, Any]:
+        price = float(market_payload.get("price") or 0.0)
+        daily_loss = float(portfolio_snapshot.get("daily_loss_pct") or portfolio_snapshot.get("daily_loss") or 0.0)
+        return {
+            "price": price,
+            "daily_loss_pct": daily_loss,
+        }
+
+    def _extract_price_from_payload(self, market_payload: Mapping[str, Any]) -> float:
+        ticker = market_payload.get("ticker") if isinstance(market_payload, Mapping) else None
+        if isinstance(ticker, Mapping):
+            for key in ("last", "close", "bid", "ask", "price"):
+                value = ticker.get(key)
+                if isinstance(value, (int, float)):
+                    return float(value)
+        ohlcv = market_payload.get("ohlcv") if isinstance(market_payload, Mapping) else None
+        if isinstance(ohlcv, Mapping):
+            close = ohlcv.get("close")
+            if isinstance(close, (int, float)):
+                return float(close)
+        if isinstance(ohlcv, pd.DataFrame) and not ohlcv.empty:
+            try:
+                return float(ohlcv["close"].iloc[-1])
+            except Exception:
+                pass
+        if isinstance(ohlcv, Iterable):
+            try:
+                last = list(ohlcv)[-1]
+                if isinstance(last, Mapping):
+                    value = last.get("close")
+                    if isinstance(value, (int, float)):
+                        return float(value)
+                elif isinstance(last, (list, tuple)) and last:
+                    candidate = last[4] if len(last) > 4 else last[-2]
+                    if isinstance(candidate, (int, float)):
+                        return float(candidate)
+            except Exception:
+                pass
+        return 0.0
+
+    def _resolve_strategy_metadata(self, strategy_name: str) -> StrategyMetadata:
+        try:
+            strategy_cls = self._signal_service._registry.get(strategy_name)
+        except KeyError:
+            return StrategyMetadata(name=strategy_name or "Unknown", description="AutoTrader context")
+        metadata = getattr(strategy_cls, "metadata", None)
+        if isinstance(metadata, StrategyMetadata):
+            return metadata
+        return StrategyMetadata(name=strategy_cls.__name__, description="AutoTrader context")
+
+    def _resolve_portfolio_snapshot(self, symbol: str, price: float) -> Dict[str, Any]:
+        snapshot_fn = getattr(self.gui, "get_portfolio_snapshot", None)
+        if callable(snapshot_fn):
+            try:
+                snapshot = snapshot_fn(symbol=symbol)
+                if isinstance(snapshot, Mapping):
+                    return dict(snapshot)
+            except Exception:
+                logger.exception("Portfolio snapshot retrieval failed")
+        balance = float(getattr(self.gui, "paper_balance", 0.0) or 0.0)
+        positions = getattr(self.gui, "_open_positions", {})
+        qty = 0.0
+        if isinstance(positions, Mapping):
+            entry = positions.get(symbol)
+            if isinstance(entry, Mapping):
+                qty = float(entry.get("qty") or entry.get("quantity") or 0.0)
+                entry_price = float(entry.get("entry") or price or 0.0)
+            else:
+                entry_price = price
+        else:
+            entry_price = price
+        notional = qty * float(price or entry_price or 0.0)
+        return {
+            "value": balance + notional,
+            "position": qty,
+            "daily_loss_pct": 0.0,
+        }
+
     def _auto_trade_loop(self) -> None:
+        if self._service_mode_enabled:
+            self._run_service_loop()
+            return
         while not self._stop.is_set():
             try:
                 if not self.enable_auto_trade:
