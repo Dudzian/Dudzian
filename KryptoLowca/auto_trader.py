@@ -728,6 +728,8 @@ class AutoTrader:
         risk_mgr = getattr(self.gui, "risk_mgr", None)
         fraction = strategy_cfg.trade_risk_pct
         details: Dict[str, Any] = {}
+        stop_loss_pct = strategy_cfg.default_sl
+        take_profit_pct = strategy_cfg.default_tp
 
         market_payload: Any
         if isinstance(market_df, pd.DataFrame):
@@ -737,33 +739,56 @@ class AutoTrader:
 
         if risk_mgr is not None and hasattr(risk_mgr, "calculate_position_size"):
             try:
-                supports_details = self._supports_return_details(risk_mgr)
-                if supports_details:
-                    fraction, details = risk_mgr.calculate_position_size(  # type: ignore[assignment]
-                        symbol=symbol,
-                        signal=signal_payload,
-                        market_data=market_payload,
-                        portfolio=portfolio_ctx,
-                        return_details=True,
-                    )
-                else:
-                    fraction = float(
-                        risk_mgr.calculate_position_size(  # type: ignore[call-arg]
-                            symbol=symbol,
-                            signal=signal_payload,
-                            market_data=market_payload,
-                            portfolio=portfolio_ctx,
-                        )
-                    )
-            except TypeError:
-                fraction = float(
-                    risk_mgr.calculate_position_size(  # type: ignore[call-arg]
-                        symbol=symbol,
-                        signal=signal_payload,
-                        market_data=market_payload,
-                        portfolio=portfolio_ctx,
-                    )
+                prepared_kwargs, request_details = self._prepare_risk_kwargs(
+                    risk_mgr,
+                    symbol=symbol,
+                    signal_payload=signal_payload,
+                    market_payload=market_payload,
+                    portfolio_ctx=portfolio_ctx,
+                    price=price,
                 )
+                result: Any = None
+                if prepared_kwargs is not None:
+                    try:
+                        result = risk_mgr.calculate_position_size(**prepared_kwargs)
+                    except TypeError as exc:
+                        logger.warning(
+                            "Risk manager %s signature call failed (%s); falling back to legacy invocation",
+                            type(risk_mgr).__name__,
+                            exc,
+                        )
+                        result = None
+                if result is None:
+                    legacy_args = [symbol, signal_payload, market_payload, portfolio_ctx]
+                    if request_details:
+                        legacy_args.append(True)
+                    try:
+                        result = risk_mgr.calculate_position_size(*legacy_args)
+                    except TypeError as exc:
+                        if request_details:
+                            logger.warning(
+                                "Risk manager %s rejected return_details flag (%s); retrying without details",
+                                type(risk_mgr).__name__,
+                                exc,
+                            )
+                            result = risk_mgr.calculate_position_size(
+                                symbol,
+                                signal_payload,
+                                market_payload,
+                                portfolio_ctx,
+                            )
+                            request_details = False
+                        else:
+                            raise
+                fraction_val, details_val, sl_override, tp_override = self._normalize_risk_result(result)
+                if fraction_val is not None:
+                    fraction = fraction_val
+                if details_val:
+                    details = details_val
+                if sl_override is not None:
+                    stop_loss_pct = sl_override
+                if tp_override is not None:
+                    take_profit_pct = tp_override
             except Exception as exc:
                 self.emitter.log(
                     f"Risk sizing error: {exc!r}", level="ERROR", component="AutoTrader"
@@ -779,6 +804,21 @@ class AutoTrader:
         except Exception:
             fraction = 0.0
         fraction = max(0.0, min(1.0, fraction))
+
+        if fraction is not None and "recommended_size" not in details:
+            details["recommended_size"] = fraction
+
+        try:
+            if stop_loss_pct is not None:
+                stop_loss_pct = float(stop_loss_pct)
+        except Exception:
+            stop_loss_pct = strategy_cfg.default_sl
+
+        try:
+            if take_profit_pct is not None:
+                take_profit_pct = float(take_profit_pct)
+        except Exception:
+            take_profit_pct = strategy_cfg.default_tp
 
         state = "ok"
         limit_events: List[Dict[str, Any]] = []
@@ -809,8 +849,8 @@ class AutoTrader:
                 state="lock",
                 reason="account_value_non_positive",
                 details=details,
-                stop_loss_pct=strategy_cfg.default_sl,
-                take_profit_pct=strategy_cfg.default_tp,
+                stop_loss_pct=stop_loss_pct,
+                take_profit_pct=take_profit_pct,
                 mode=strategy_cfg.mode,
             )
 
@@ -839,8 +879,8 @@ class AutoTrader:
                     "max_leverage": strategy_cfg.max_leverage,
                     "limit_events": limit_events,
                 },
-                stop_loss_pct=strategy_cfg.default_sl,
-                take_profit_pct=strategy_cfg.default_tp,
+                stop_loss_pct=stop_loss_pct,
+                take_profit_pct=take_profit_pct,
                 mode=strategy_cfg.mode,
             )
 
@@ -854,8 +894,8 @@ class AutoTrader:
                 state="lock",
                 reason="risk_fraction_zero",
                 details=details,
-                stop_loss_pct=strategy_cfg.default_sl,
-                take_profit_pct=strategy_cfg.default_tp,
+                stop_loss_pct=stop_loss_pct,
+                take_profit_pct=take_profit_pct,
                 mode=strategy_cfg.mode,
             )
 
@@ -883,8 +923,8 @@ class AutoTrader:
             state=state,
             reason="risk_ok" if state == "ok" else "risk_clamped",
             details=decision_details,
-            stop_loss_pct=strategy_cfg.default_sl,
-            take_profit_pct=strategy_cfg.default_tp,
+            stop_loss_pct=stop_loss_pct,
+            take_profit_pct=take_profit_pct,
             mode=strategy_cfg.mode,
         )
 
@@ -920,12 +960,198 @@ class AutoTrader:
         self.emitter.log(msg, level=level, component="AutoTrader")
 
     @staticmethod
-    def _supports_return_details(risk_mgr: Any) -> bool:
+    def _supports_return_details(
+        risk_mgr: Any, signature: inspect.Signature | None = None
+    ) -> bool:
+        if signature is None:
+            try:
+                signature = inspect.signature(risk_mgr.calculate_position_size)  # type: ignore[attr-defined]
+            except (TypeError, ValueError, AttributeError):
+                return False
+        return "return_details" in signature.parameters
+
+    @staticmethod
+    def _prepare_risk_kwargs(
+        risk_mgr: Any,
+        *,
+        symbol: str,
+        signal_payload: Dict[str, Any],
+        market_payload: Any,
+        portfolio_ctx: Dict[str, Any],
+        price: float,
+    ) -> Tuple[Optional[Dict[str, Any]], bool]:
         try:
-            sig = inspect.signature(risk_mgr.calculate_position_size)  # type: ignore[attr-defined]
-        except (TypeError, ValueError, AttributeError):
-            return False
-        return "return_details" in sig.parameters
+            method = risk_mgr.calculate_position_size  # type: ignore[attr-defined]
+        except AttributeError:
+            return None, False
+        try:
+            signature = inspect.signature(method)
+        except (TypeError, ValueError) as exc:
+            logger.warning(
+                "Unable to inspect %s.calculate_position_size signature: %s",
+                type(risk_mgr).__name__,
+                exc,
+            )
+            return None, False
+
+        kwargs: Dict[str, Any] = {}
+        missing_required: List[str] = []
+        has_signal_param = False
+        has_portfolio_param = False
+
+        for name, param in signature.parameters.items():
+            if name == "self":
+                continue
+            if param.kind in (
+                inspect.Parameter.VAR_POSITIONAL,
+                inspect.Parameter.VAR_KEYWORD,
+            ):
+                continue
+            if name == "symbol":
+                kwargs[name] = symbol
+            elif name in {"signal", "signal_data"}:
+                kwargs[name] = signal_payload
+                has_signal_param = True
+            elif name in {"portfolio", "current_portfolio"}:
+                kwargs[name] = portfolio_ctx
+                has_portfolio_param = True
+            elif name in {"market_data", "market", "market_payload", "market_ctx", "market_context"}:
+                kwargs[name] = market_payload
+            elif name == "price":
+                kwargs[name] = price
+            elif name == "return_details":
+                kwargs[name] = True
+            elif param.default is inspect._empty:
+                missing_required.append(name)
+
+        request_details = AutoTrader._supports_return_details(risk_mgr, signature)
+
+        if missing_required:
+            logger.warning(
+                "Risk manager %s.calculate_position_size has unsupported required parameters: %s",
+                type(risk_mgr).__name__,
+                ", ".join(missing_required),
+            )
+            return None, request_details
+
+        if not has_signal_param and any(
+            alias in signature.parameters for alias in ("signal", "signal_data")
+        ):
+            logger.warning(
+                "Risk manager %s.calculate_position_size signature declares signal data but mapping failed",
+                type(risk_mgr).__name__,
+            )
+            return None, request_details
+
+        if not has_signal_param and not any(
+            alias in signature.parameters for alias in ("signal", "signal_data")
+        ):
+            logger.warning(
+                "Risk manager %s.calculate_position_size is missing signal parameter (expected 'signal' or 'signal_data')",
+                type(risk_mgr).__name__,
+            )
+            return None, request_details
+
+        if not has_portfolio_param and any(
+            alias in signature.parameters for alias in ("portfolio", "current_portfolio")
+        ):
+            logger.warning(
+                "Risk manager %s.calculate_position_size signature declares portfolio data but mapping failed",
+                type(risk_mgr).__name__,
+            )
+            return None, request_details
+
+        if not has_portfolio_param and not any(
+            alias in signature.parameters for alias in ("portfolio", "current_portfolio")
+        ):
+            logger.warning(
+                "Risk manager %s.calculate_position_size is missing portfolio parameter (expected 'portfolio' or 'current_portfolio')",
+                type(risk_mgr).__name__,
+            )
+            return None, request_details
+
+        return kwargs, request_details
+
+    @staticmethod
+    def _normalize_risk_result(
+        result: Any,
+    ) -> Tuple[Optional[float], Dict[str, Any], Optional[float], Optional[float]]:
+        fraction: Optional[float] = None
+        details: Dict[str, Any] = {}
+        stop_loss_override: Optional[float] = None
+        take_profit_override: Optional[float] = None
+
+        if hasattr(result, "recommended_size"):
+            try:
+                recommended = float(getattr(result, "recommended_size", 0.0))
+            except Exception:
+                recommended = 0.0
+            fraction = recommended
+            details = {
+                "recommended_size": recommended,
+                "max_allowed_size": float(
+                    getattr(result, "max_allowed_size", recommended) or recommended
+                ),
+                "kelly_size": float(getattr(result, "kelly_size", recommended) or recommended),
+                "risk_adjusted_size": float(
+                    getattr(result, "risk_adjusted_size", recommended) or recommended
+                ),
+            }
+            confidence = getattr(result, "confidence_level", None)
+            if confidence is not None:
+                try:
+                    details["confidence_level"] = float(confidence)
+                except Exception:
+                    details["confidence_level"] = confidence
+            reasoning = getattr(result, "reasoning", None)
+            if reasoning is not None:
+                details["reasoning"] = reasoning
+            for attr_name in ("stop_loss_pct", "stop_loss"):
+                sl_value = getattr(result, attr_name, None)
+                if sl_value is not None:
+                    try:
+                        stop_loss_override = float(sl_value)
+                        break
+                    except Exception:
+                        continue
+            for attr_name in ("take_profit_pct", "take_profit"):
+                tp_value = getattr(result, attr_name, None)
+                if tp_value is not None:
+                    try:
+                        take_profit_override = float(tp_value)
+                        break
+                    except Exception:
+                        continue
+        elif isinstance(result, tuple) and len(result) == 2:
+            fraction, details_val = result
+            if isinstance(details_val, dict):
+                details = dict(details_val)
+            else:
+                details = {"details": details_val}
+        elif isinstance(result, dict):
+            details = dict(result)
+            raw_fraction = details.get(
+                "recommended_size",
+                details.get("fraction", details.get("size")),
+            )
+            if raw_fraction is not None:
+                try:
+                    fraction = float(raw_fraction)
+                except Exception:
+                    fraction = None
+        else:
+            fraction = result if result is not None else None
+
+        try:
+            if fraction is not None:
+                fraction = float(fraction)
+        except Exception:
+            fraction = None
+
+        if fraction is not None:
+            details.setdefault("recommended_size", fraction)
+
+        return fraction, details, stop_loss_override, take_profit_override
 
     def _resolve_account_value(self, portfolio_ctx: Dict[str, Any]) -> float:
         account_value = portfolio_ctx.get("equity")
