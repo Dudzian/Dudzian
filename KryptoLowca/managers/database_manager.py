@@ -41,6 +41,7 @@ from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Union
 from pydantic import BaseModel, ValidationError, field_validator
 
 from sqlalchemy import (
+    Boolean,
     Integer,
     String,
     Float,
@@ -204,6 +205,25 @@ class RiskLimitSnapshot(Base):
         Index("ix_risk_limits_symbol_ts", "symbol", "ts"),
         Index("ix_risk_limits_mode_ts", "mode", "ts"),
     )
+
+
+class RiskAuditLog(Base):
+    __tablename__ = "risk_audit_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ts: Mapped[dt.datetime] = mapped_column(DateTime, default=dt.datetime.utcnow, index=True)
+    symbol: Mapped[str] = mapped_column(String(50), index=True)
+    side: Mapped[Optional[str]] = mapped_column(String(5), nullable=True, index=True)
+    state: Mapped[str] = mapped_column(String(16), index=True)
+    reason: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    fraction: Mapped[float] = mapped_column(Float)
+    price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    mode: Mapped[str] = mapped_column(String(10), default="live", index=True)
+    limit_events: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    details: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    stop_loss_pct: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    take_profit_pct: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    should_trade: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
 
 
 class ApiRateLimitSnapshot(Base):
@@ -389,6 +409,45 @@ class RiskLimitIn(BaseModel):
         v = (v or "").strip().upper()
         if not v:
             raise ValueError("symbol is required")
+        return v
+
+    @field_validator("mode")
+    @classmethod
+    def _mode(cls, v: str) -> str:
+        v = v.lower()
+        if v not in {"live", "paper"}:
+            raise ValueError("mode must be 'live' or 'paper'")
+        return v
+
+
+class RiskAuditLogIn(BaseModel):
+    symbol: str
+    state: str
+    fraction: float
+    side: str | None = None
+    reason: str | None = None
+    price: float | None = None
+    mode: str = "live"
+    limit_events: List[str] | None = None
+    details: Dict[str, Any] | None = None
+    stop_loss_pct: float | None = None
+    take_profit_pct: float | None = None
+    should_trade: bool | None = None
+
+    @field_validator("symbol")
+    @classmethod
+    def _symbol(cls, v: str) -> str:
+        v = (v or "").strip().upper()
+        if not v:
+            raise ValueError("symbol is required")
+        return v
+
+    @field_validator("state")
+    @classmethod
+    def _state(cls, v: str) -> str:
+        v = (v or "").strip().lower()
+        if not v:
+            raise ValueError("state is required")
         return v
 
     @field_validator("mode")
@@ -897,6 +956,36 @@ class DatabaseManager:
             rows = (await session.execute(stmt)).scalars().all()
             return [self._row_to_dict(row) for row in rows]
 
+    async def log_risk_audit(self, payload: Dict[str, Any]) -> Optional[int]:
+        try:
+            data = payload if isinstance(payload, RiskAuditLogIn) else RiskAuditLogIn(**payload)
+        except ValidationError as exc:
+            logger.error("Risk audit validation error: %s", exc)
+            return None
+
+        try:
+            async with self.transaction() as session:
+                record = RiskAuditLog(
+                    symbol=data.symbol,
+                    side=data.side,
+                    state=data.state,
+                    reason=data.reason,
+                    fraction=float(data.fraction),
+                    price=float(data.price) if data.price is not None else None,
+                    mode=data.mode,
+                    limit_events=json.dumps(data.limit_events) if data.limit_events is not None else None,
+                    details=json.dumps(data.details) if data.details is not None else None,
+                    stop_loss_pct=float(data.stop_loss_pct) if data.stop_loss_pct is not None else None,
+                    take_profit_pct=float(data.take_profit_pct) if data.take_profit_pct is not None else None,
+                    should_trade=data.should_trade,
+                )
+                session.add(record)
+                await session.flush()
+                return record.id
+        except Exception:
+            logger.exception("Failed to persist risk audit log")
+            return None
+
     # ---------- OPERACJE: API rate limits ----------
     async def log_rate_limit_snapshot(
         self,
@@ -1071,6 +1160,7 @@ class DatabaseManager:
                     "details",
                     "context",
                     "metadata_json",
+                    "limit_events",
                 }
                 target_name = attr_name
                 if attr_name.endswith("_json"):
@@ -1194,6 +1284,9 @@ class DatabaseManager:
             limit: int = 100,
         ) -> List[Dict[str, Any]]:
             return self._run(self._outer.fetch_risk_limits(symbol=symbol, limit=limit))
+
+        def log_risk_audit(self, payload: Dict[str, Any]) -> Optional[int]:
+            return self._run(self._outer.log_risk_audit(payload))
 
         def log_rate_limit_snapshot(
             self, snapshot: Union[RateLimitSnapshotIn, Dict[str, Any]]
@@ -1325,10 +1418,17 @@ async def _migration_api_rate_limits(session: AsyncSession, manager: "DatabaseMa
     )
 
 
+async def _migration_risk_audit_logs(session: AsyncSession, manager: "DatabaseManager") -> None:
+    """Migracja dodająca tabelę logów audytu ryzyka."""
+    # Nowa tabela jest tworzona przez Base.metadata.create_all; migracja to marker wersji.
+    return None
+
+
 MIGRATIONS: Dict[int, Callable[[AsyncSession, "DatabaseManager"], Any]] = {
     1: _migration_initial,
     2: _migration_performance_tables,
     3: _migration_api_rate_limits,
+    4: _migration_risk_audit_logs,
 }
 
 CURRENT_SCHEMA_VERSION = max(MIGRATIONS)
