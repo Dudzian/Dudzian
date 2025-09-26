@@ -6,7 +6,7 @@ import threading
 import time
 import statistics
 import asyncio
-from typing import Optional, List, Dict, Any, Callable, Tuple
+from typing import Optional, List, Dict, Any, Callable, Tuple, TYPE_CHECKING
 import inspect
 from dataclasses import dataclass, field
 
@@ -23,9 +23,14 @@ except Exception:
                 del self[0]
         def popleft(self): return super().pop(0)
 
+from KryptoLowca.alerts import AlertSeverity, emit_alert
 from KryptoLowca.event_emitter_adapter import EventEmitter
 from KryptoLowca.logging_utils import get_logger
 from KryptoLowca.config_manager import StrategyConfig
+from KryptoLowca.telemetry.prometheus_exporter import metrics as prometheus_metrics
+
+if TYPE_CHECKING:  # pragma: no cover
+    from KryptoLowca.data.market_data import MarketDataProvider, MarketDataRequest
 
 logger = get_logger(__name__)
 
@@ -80,7 +85,8 @@ class AutoTrader:
         walkforward_interval_s: Optional[int] = 3600,  # every 1h
         walkforward_min_closed_trades: int = 10,
         enable_auto_trade: bool = True,
-        auto_trade_interval_s: int = 30
+        auto_trade_interval_s: int = 30,
+        market_data_provider: Optional["MarketDataProvider"] = None,
     ) -> None:
         self.emitter = emitter
         self.gui = gui
@@ -116,6 +122,7 @@ class AutoTrader:
         self._reduce_only_until: Dict[str, float] = {}
         self._risk_lock_until: float = 0.0
         self._last_risk_audit: Optional[Dict[str, Any]] = None
+        self._market_data_provider = market_data_provider
 
         # Subscribe to events
         emitter.on("trade_closed", self._on_trade_closed, tag="autotrader")
@@ -181,6 +188,10 @@ class AutoTrader:
         **_,
     ) -> None:
         self._closed_pnls.append(pnl)
+        try:
+            prometheus_metrics.record_trade_close(symbol, float(pnl))
+        except Exception:
+            logger.debug("Prometheus record_trade_close skipped", exc_info=True)
         pf, exp, win_rate = self._compute_metrics()
         self.emitter.emit(
             "metrics_updated",
@@ -449,6 +460,10 @@ class AutoTrader:
                     except Exception:
                         pass
                     self.gui._bridge_execute_trade(symbol, side.lower(), float(last_price))
+                    try:
+                        prometheus_metrics.record_order(symbol, side, decision.fraction)
+                    except Exception:
+                        logger.debug("Prometheus record_order skipped", exc_info=True)
                     self.emitter.emit("auto_trade_tick", symbol=symbol, ts=time.time())
                     self.emitter.log(f"Auto-trade executed: {symbol} {side}", component="AutoTrader")
                     logger.info("Auto trade executed for %s (%s)", symbol, side)
@@ -531,6 +546,20 @@ class AutoTrader:
     def _ensure_dataframe(
         self, symbol: str, timeframe: str, ex: Any
     ) -> Optional[pd.DataFrame]:
+        if self._market_data_provider is not None:
+            try:
+                from KryptoLowca.data.market_data import MarketDataRequest
+
+                request = MarketDataRequest(symbol=symbol, timeframe=timeframe, limit=256)
+                df = self._market_data_provider.get_historical(request)
+                return df
+            except Exception as exc:
+                self.emitter.log(
+                    f"MarketDataProvider failed: {exc!r}",
+                    level="ERROR",
+                    component="AutoTrader",
+                )
+                logger.exception("MarketDataProvider.get_historical failed")
         if ex is None or not hasattr(ex, "fetch_ohlcv"):
             return None
         try:
@@ -555,6 +584,10 @@ class AutoTrader:
     def _resolve_market_price(
         self, symbol: str, ex: Any, df: Optional[pd.DataFrame]
     ) -> Optional[float]:
+        if self._market_data_provider is not None:
+            price = self._market_data_provider.get_latest_price(symbol)
+            if price is not None:
+                return float(price)
         if df is not None and not df.empty and "close" in df.columns:
             try:
                 return float(df["close"].iloc[-1])
@@ -760,6 +793,17 @@ class AutoTrader:
         risk_mgr = getattr(self.gui, "risk_mgr", None)
         fraction = strategy_cfg.trade_risk_pct
         details: Dict[str, Any] = {}
+        risk_engine_details: Optional[Dict[str, Any]] = None
+
+        try:
+            positions_ctx = portfolio_ctx.get("positions") or {}
+            open_positions = sum(
+                1 for entry in positions_ctx.values() if (entry or {}).get("size")
+            )
+            prometheus_metrics.set_open_positions(count=open_positions, mode=strategy_cfg.mode)
+        except Exception:
+            logger.debug("Nie udało się ustawić metryki open_positions", exc_info=True)
+
         stop_loss_pct = strategy_cfg.default_sl
         take_profit_pct = strategy_cfg.default_tp
 
@@ -855,6 +899,18 @@ class AutoTrader:
         state = "ok"
         limit_events: List[Dict[str, Any]] = []
 
+        # (opcjonalnie) przepisanie szczegółów od silnika ryzyka z innego wariantu
+        if risk_engine_details:
+            risk_engine_details = {
+                key: (float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else value)
+                for key, value in risk_engine_details.items()
+            }
+            risk_engine_details.setdefault(
+                "source", getattr(getattr(risk_mgr, "__class__", None), "__name__", type(risk_mgr).__name__)
+            )
+            details["risk_engine"] = risk_engine_details
+
+        # limit pozycyjny względem notional
         max_pct = float(strategy_cfg.max_position_notional_pct)
         if max_pct > 0.0 and fraction > max_pct:
             limit_events.append({
@@ -949,7 +1005,7 @@ class AutoTrader:
             "symbol_notional": symbol_notional,
         }
 
-        return RiskDecision(
+        decision = RiskDecision(
             should_trade=True,
             fraction=fraction,
             state=state,
@@ -959,6 +1015,8 @@ class AutoTrader:
             take_profit_pct=take_profit_pct,
             mode=strategy_cfg.mode,
         )
+        self._apply_violation_cooldown(symbol, side_u, strategy_cfg, decision)
+        return decision
 
     def _emit_risk_audit(self, symbol: str, side: str, decision: RiskDecision, price: float) -> None:
         payload = {
@@ -976,6 +1034,10 @@ class AutoTrader:
             "schema_version": 1,
         }
         self._last_risk_audit = payload
+        try:
+            prometheus_metrics.observe_risk(symbol, decision.state, decision.fraction, decision.mode)
+        except Exception:
+            logger.debug("Prometheus observe_risk skipped", exc_info=True)
         try:
             self.emitter.emit("risk_guard_event", **payload)
         except Exception:  # pragma: no cover - audyt nie może zatrzymać bota
@@ -1051,6 +1113,22 @@ class AutoTrader:
         elif decision.state == "lock":
             level = "WARNING" if decision.should_trade else "ERROR"
         self.emitter.log(msg, level=level, component="AutoTrader")
+        if decision.state != "ok":
+            severity = AlertSeverity.WARNING if decision.state == "warn" else AlertSeverity.ERROR
+            emit_alert(
+                f"Risk guard {decision.state} ({decision.reason}) dla {symbol}",
+                severity=severity,
+                source="risk_guard",
+                context={
+                    "symbol": symbol,
+                    "side": side,
+                    "fraction": float(decision.fraction),
+                    "state": decision.state,
+                    "reason": decision.reason,
+                    "limit_events": decision.details.get("limit_events"),
+                    "cooldown_until": decision.details.get("cooldown_until"),
+                },
+            )
 
     @staticmethod
     def _supports_return_details(
@@ -1063,6 +1141,7 @@ class AutoTrader:
                 return False
         return "return_details" in signature.parameters
 
+    # --- wariant używany w tej wersji ---
     @staticmethod
     def _prepare_risk_kwargs(
         risk_mgr: Any,
@@ -1246,6 +1325,111 @@ class AutoTrader:
 
         return fraction, details, stop_loss_override, take_profit_override
 
+    # --- alternatywne (zachowane) API wołania risk engine z innej gałęzi ---
+    @staticmethod
+    def _supports_return_details_legacy(risk_mgr: Any) -> bool:
+        try:
+            sig = inspect.signature(risk_mgr.calculate_position_size)  # type: ignore[attr-defined]
+        except (TypeError, ValueError, AttributeError):
+            return False
+        return "return_details" in sig.parameters
+
+    def _call_risk_manager(
+        self,
+        risk_mgr: Any,
+        symbol: str,
+        signal_payload: Dict[str, Any],
+        market_payload: Any,
+        portfolio_ctx: Dict[str, Any],
+    ) -> Tuple[float, Optional[Dict[str, Any]]]:
+        supports_details = self._supports_return_details_legacy(risk_mgr)
+        args = [symbol, signal_payload, market_payload, portfolio_ctx]
+        kwargs: Dict[str, Any] = {"return_details": True} if supports_details else {}
+
+        try:
+            result = risk_mgr.calculate_position_size(*args, **kwargs)  # type: ignore[misc]
+        except TypeError:
+            mapped_kwargs = self._build_risk_kwargs(
+                risk_mgr,
+                symbol,
+                signal_payload,
+                market_payload,
+                portfolio_ctx,
+                request_details=supports_details,
+            )
+            result = risk_mgr.calculate_position_size(**mapped_kwargs)  # type: ignore[misc]
+
+        fraction: float
+        risk_details: Optional[Dict[str, Any]] = None
+
+        if isinstance(result, tuple):
+            primary = result[0]
+            fraction = float(primary)
+            if len(result) > 1:
+                extra = result[1]
+                if isinstance(extra, dict):
+                    risk_details = dict(extra)
+                else:
+                    risk_details = {"context": extra}
+        elif hasattr(result, "recommended_size"):
+            fraction = float(getattr(result, "recommended_size", 0.0) or 0.0)
+            risk_details = {
+                "recommended_size": float(getattr(result, "recommended_size", 0.0) or 0.0),
+                "max_allowed_size": float(getattr(result, "max_allowed_size", 0.0) or 0.0),
+                "kelly_size": float(getattr(result, "kelly_size", 0.0) or 0.0),
+                "risk_adjusted_size": float(getattr(result, "risk_adjusted_size", 0.0) or 0.0),
+                "confidence_level": float(getattr(result, "confidence_level", 0.0) or 0.0),
+                "reasoning": getattr(result, "reasoning", "") or "",
+            }
+        else:
+            fraction = float(result)
+
+        if risk_details is not None:
+            risk_details.setdefault("requested_details", supports_details)
+        return fraction, risk_details
+
+    @staticmethod
+    def _build_risk_kwargs(
+        risk_mgr: Any,
+        symbol: str,
+        signal_payload: Dict[str, Any],
+        market_payload: Any,
+        portfolio_ctx: Dict[str, Any],
+        *,
+        request_details: bool,
+    ) -> Dict[str, Any]:
+        try:
+            sig = inspect.signature(risk_mgr.calculate_position_size)  # type: ignore[attr-defined]
+        except (TypeError, ValueError, AttributeError):
+            kwargs = {
+                "symbol": symbol,
+                "signal": signal_payload,
+                "market_data": market_payload,
+                "portfolio": portfolio_ctx,
+            }
+            if request_details:
+                kwargs["return_details"] = True
+            return kwargs
+
+        kwargs: Dict[str, Any] = {}
+        for name, param in sig.parameters.items():
+            if name == "self":
+                continue
+            lname = name.lower()
+            if lname in {"symbol", "pair", "instrument"}:
+                kwargs[name] = symbol
+            elif lname in {"signal", "signal_data", "signal_payload", "signal_ctx"}:
+                kwargs[name] = signal_payload
+            elif lname in {"market_data", "market", "market_df", "data", "market_ctx"}:
+                kwargs[name] = market_payload
+            elif lname in {"portfolio", "portfolio_ctx", "current_portfolio"}:
+                kwargs[name] = portfolio_ctx
+            elif lname == "return_details" and request_details:
+                kwargs[name] = True
+            elif param.default is inspect._empty:
+                kwargs[name] = portfolio_ctx
+        return kwargs
+
     def _resolve_account_value(self, portfolio_ctx: Dict[str, Any]) -> float:
         account_value = portfolio_ctx.get("equity")
         try:
@@ -1318,4 +1502,64 @@ class AutoTrader:
             f"Reduce-only aktywne dla {symbol} przez {cooldown:.0f}s (powód: {reason})",
             level="WARNING",
             component="AutoTrader",
+        )
+        emit_alert(
+            f"Reduce-only dla {symbol} przez {cooldown:.0f}s",
+            severity=AlertSeverity.ERROR,
+            source="risk_guard",
+            context={
+                "symbol": symbol,
+                "reason": reason,
+                "cooldown_seconds": cooldown,
+                "cooldown_until": until,
+            },
+        )
+
+    def _apply_violation_cooldown(
+        self,
+        symbol: str,
+        side: str,
+        cfg: StrategyConfig,
+        decision: RiskDecision,
+    ) -> None:
+        if side != "BUY":
+            return
+        if decision.state not in {"warn", "lock"}:
+            return
+
+        cooldown = max(float(cfg.violation_cooldown_s), 1.0)
+        now = time.time()
+        previous_lock = self._risk_lock_until
+        proposed_until = now + cooldown
+        existing_until = float(decision.details.get("cooldown_until", 0.0) or 0.0)
+        if existing_until and existing_until >= proposed_until:
+            decision.details.setdefault("cooldown_seconds", cooldown)
+            decision.details["cooldown_until"] = existing_until
+            self._risk_lock_until = max(self._risk_lock_until, existing_until)
+            return
+
+        until = proposed_until
+        decision.details.setdefault("cooldown_seconds", cooldown)
+        decision.details["cooldown_until"] = until
+        self._risk_lock_until = max(self._risk_lock_until, until)
+
+        if previous_lock >= self._risk_lock_until:
+            return
+
+        self.emitter.log(
+            f"Aktywowano cooldown po naruszeniu limitów ({decision.state}) do {until:.0f}",
+            level="WARNING",
+            component="AutoTrader",
+        )
+        emit_alert(
+            f"Cooldown ryzyka dla {symbol}",
+            severity=AlertSeverity.WARNING if decision.state == "warn" else AlertSeverity.ERROR,
+            source="risk_guard",
+            context={
+                "symbol": symbol,
+                "state": decision.state,
+                "reason": decision.reason,
+                "cooldown_seconds": cooldown,
+                "cooldown_until": until,
+            },
         )

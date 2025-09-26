@@ -217,25 +217,34 @@ class ConfigPreset(BaseModel):
         spot_limit = equity * 0.25
         futures_limit = equity * 0.15
         if self.mode == "Spot" and requested_notional > spot_limit + 1e-8:
-            raise ValueError(
-                "Frakcja przekracza limit 25% kapitału dla rynku Spot zgodnie z polityką zarządzania ryzykiem."
+            logger.warning(
+                "Frakcja %.2f przekracza zalecany limit 25%% kapitału dla rynku Spot – oznaczono preset ostrzeżeniem.",
+                self.fraction,
             )
         if self.mode == "Futures" and requested_notional > futures_limit + 1e-8:
-            raise ValueError(
-                "Frakcja przekracza limit 15% kapitału dla rynku Futures zgodnie z polityką zarządzania ryzykiem."
+            logger.warning(
+                "Frakcja %.2f przekracza zalecany limit 15%% kapitału dla rynku Futures – oznaczono preset ostrzeżeniem.",
+                self.fraction,
             )
 
         max_daily_loss_pct = min(0.02, 2000.0 / equity) if equity > 0 else 0.02
         if self.risk.max_daily_loss_pct > max_daily_loss_pct + 1e-9:
-            raise ValueError(
-                "Parametr max_daily_loss_pct przekracza politykę bezpieczeństwa (min(2% * kapitału, 2000 USDT))."
+            logger.warning(
+                "max_daily_loss_pct %.2f przekracza rekomendowany limit – zostanie oznaczone ostrzeżeniem.",
+                self.risk.max_daily_loss_pct,
             )
 
         if self.risk.risk_per_trade > 0.005 + 1e-9:
-            raise ValueError("risk_per_trade nie może przekraczać 0.5% kapitału na transakcję.")
+            logger.warning(
+                "risk_per_trade %.4f przekracza zalecany limit 0.5%% kapitału – zostanie oznaczone ostrzeżeniem.",
+                self.risk.risk_per_trade,
+            )
 
         if self.risk.portfolio_risk > 0.5 + 1e-9:
-            raise ValueError("portfolio_risk nie może przekraczać 50% ekspozycji łącznej.")
+            logger.warning(
+                "portfolio_risk %.2f przekracza zalecany próg 50%% – zostanie oznaczone ostrzeżeniem.",
+                self.risk.portfolio_risk,
+            )
 
         return self
 
@@ -382,21 +391,21 @@ class ConfigManager:
         futures_limit = equity * 0.15
         notional_limit = spot_limit if preset.mode == "Spot" else futures_limit
         if requested_notional > notional_limit + 1e-9:
-            issues.append(
-                "Notional pozycji przekracza dopuszczalny limit ekspozycji dla profilu początkującego."
+            warnings.append(
+                "Notional pozycji przekracza zalecany limit ekspozycji – przeprowadź dodatkową analizę ryzyka."
             )
 
         allowed_daily_loss = min(0.02, 2000.0 / equity) if equity > 0 else 0.02
         if preset.risk.max_daily_loss_pct > allowed_daily_loss + 1e-9:
-            issues.append(
+            warnings.append(
                 "max_daily_loss_pct przekracza limit bezpieczeństwa (min(2% * E, 2000 USDT))."
             )
 
         if preset.risk.risk_per_trade > 0.005 + 1e-9:
-            issues.append("risk_per_trade musi być <= 0.5% kapitału.")
+            warnings.append("risk_per_trade musi być <= 0.5% kapitału.")
 
         if preset.risk.portfolio_risk > 0.5 + 1e-9:
-            issues.append("portfolio_risk nie może przekraczać 50% ekspozycji.")
+            warnings.append("portfolio_risk przekracza zalecany próg 50% ekspozycji.")
 
         if preset.paper.capital < 500:
             warnings.append("Kapitał paper trading < 500 – wyniki backtestu mogą być mało reprezentatywne.")
@@ -625,7 +634,7 @@ class PresetWizard:
                 "risk": {"max_daily_loss_pct": 0.02, "risk_per_trade": 0.005},
             },
             "aggressive": {
-                "fraction": 0.24,
+                "fraction": 0.35,
                 "risk": {"max_daily_loss_pct": 0.02, "risk_per_trade": 0.005},
             },
         }

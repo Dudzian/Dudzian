@@ -9,7 +9,9 @@ import signal
 import threading
 import time
 
+
 def _ensure_repo_root() -> None:
+    """Dopisuje katalog repo do sys.path tak, by import 'KryptoLowca' działał przy uruchamianiu skryptu bez instalacji."""
     current_dir = Path(__file__).resolve().parent
     for candidate in (current_dir, *current_dir.parents):
         package_init = candidate / "KryptoLowca" / "__init__.py"
@@ -19,29 +21,9 @@ def _ensure_repo_root() -> None:
                 sys.path.insert(0, candidate_str)
             break
 
+
 if __package__ in (None, ""):
     _ensure_repo_root()
-
-import logging
-import signal
-import sys
-import threading
-import time
-from pathlib import Path
-
-if __package__ in {None, ""}:
-    _current_file = Path(__file__).resolve()
-    for _parent in _current_file.parents:
-        candidate = _parent / "KryptoLowca" / "__init__.py"
-        if candidate.exists():
-            sys.path.insert(0, str(_parent))
-            __package__ = "KryptoLowca"
-            break
-    else:  # pragma: no cover - ochronna gałąź diagnostyczna
-        raise ModuleNotFoundError(
-            "Nie można zlokalizować pakietu 'KryptoLowca'. Uruchom skrypt z katalogu projektu lub"
-            " zainstaluj pakiet w środowisku (pip install -e .)."
-        )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 log = logging.getLogger("runner")
@@ -75,14 +57,14 @@ from KryptoLowca.services.walkforward_service import (
 SYMBOL = "BTCUSDT"
 
 
-def _start_gui_in_main_thread(adapter: EmitterAdapter, enable_gui: bool = True):
+def _start_gui_in_main_thread(adapter: EmitterAdapter, enable_gui: bool = True) -> None:
     if not enable_gui:
         log.info("GUI disabled by flag.")
         return
     try:
-        import tkinter as tk  # noqa
+        import tkinter as tk  # noqa: F401
         try:
-            import KryptoLowca.trading_gui
+            import KryptoLowca.trading_gui as trading_gui
         except Exception as e:
             log.info("GUI: nie udało się załadować trading_gui (%s). Uruchamiam bez GUI.", e)
             return

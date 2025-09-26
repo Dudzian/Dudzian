@@ -19,8 +19,9 @@ import logging
 import time
 from dataclasses import asdict
 from datetime import datetime
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+# Repo bootstrap
 if __package__ in {None, ""}:
     _current_file = Path(__file__).resolve()
     for _parent in _current_file.parents:
@@ -79,7 +80,7 @@ def _as_tuple(seq: Any, caster) -> Sequence[Any]:
     return (caster(seq),)
 
 
-def build_service_config(cfg_dict: Dict[str, Any]) -> tuple[WFOServiceConfig, Dict[str, Any]]:
+def build_service_config(cfg_dict: Dict[str, Any]) -> Tuple[WFOServiceConfig, Dict[str, Any]]:
     defaults = WFOServiceConfig()
     obj_defaults = ObjectiveWeights()
 

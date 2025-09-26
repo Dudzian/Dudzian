@@ -10,21 +10,6 @@ Production-grade DatabaseManager dla bota tradingowego.
 - Sync wrapper (łatwe użycie z GUI/innymi miejscami).
 - Eksport CSV/JSON, proste backupy, walidacja Pydantic.
 - Gotowe pod Paper Trading (te same tabele i metody co w trybie live).
-
-Użycie (async):
-    db = DatabaseManager("sqlite+aiosqlite:///trading.db")
-    await db.init_db()
-    await db.record_order(...)
-    await db.record_trade(...)
-    await db.upsert_position(...)
-
-Użycie (sync):
-    db = DatabaseManager("sqlite+aiosqlite:///trading.db")
-    db.sync.init_db()
-    db.sync.record_order(...)
-    ...
-
-Autor: Krok 1 – konsolidacja DB pod dalszy rozwój (paper trading, backtest, raporty).
 """
 from __future__ import annotations
 
@@ -118,8 +103,8 @@ class Trade(Base):
     quantity: Mapped[float] = mapped_column(Float)
     price: Mapped[float] = mapped_column(Float)
     fee: Mapped[float] = mapped_column(Float, default=0.0)
-    order_id: Mapped[Optional[int]] = mapped_column(Integer, index=True)  # FK logiczna (bez constraintu dla prostoty)
-    pnl: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # Realized PnL (jeśli dotyczy)
+    order_id: Mapped[Optional[int]] = mapped_column(Integer, index=True)  # FK logiczna
+    pnl: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     mode: Mapped[str] = mapped_column(String(10), default="live")
     extra: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
@@ -158,8 +143,8 @@ class LogEntry(Base):
     __tablename__ = "logs"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     ts: Mapped[dt.datetime] = mapped_column(DateTime, default=dt.datetime.utcnow, index=True)
-    level: Mapped[str] = mapped_column(String(10), index=True)  # INFO/WARN/ERROR
-    source: Mapped[str] = mapped_column(String(50), index=True) # trading_engine/strategy/exchange/...
+    level: Mapped[str] = mapped_column(String(10), index=True)   # INFO/WARN/ERROR
+    source: Mapped[str] = mapped_column(String(50), index=True)  # trading_engine/strategy/exchange/...
     message: Mapped[str] = mapped_column(Text)
     extra: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     user_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
@@ -213,17 +198,23 @@ class RiskAuditLog(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     ts: Mapped[dt.datetime] = mapped_column(DateTime, default=dt.datetime.utcnow, index=True)
     symbol: Mapped[str] = mapped_column(String(50), index=True)
-    side: Mapped[Optional[str]] = mapped_column(String(5), nullable=True, index=True)
+    side: Mapped[Optional[str]] = mapped_column(String(5), nullable=True, index=True)  # BUY/SELL
     state: Mapped[str] = mapped_column(String(16), index=True)
-    reason: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    reason: Mapped[Optional[str]] = mapped_column(String(80), nullable=True, index=True)
     fraction: Mapped[float] = mapped_column(Float)
     price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     mode: Mapped[str] = mapped_column(String(10), default="live", index=True)
+    schema_version: Mapped[int] = mapped_column(Integer, default=1)
     limit_events: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     details: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     stop_loss_pct: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     take_profit_pct: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     should_trade: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+
+    __table_args__ = (
+        Index("ix_risk_audit_symbol_ts", "symbol", "ts"),
+        Index("ix_risk_audit_state_ts", "state", "ts"),
+    )
 
 
 class ApiRateLimitSnapshot(Base):
@@ -420,19 +411,22 @@ class RiskLimitIn(BaseModel):
         return v
 
 
-class RiskAuditLogIn(BaseModel):
+class RiskAuditIn(BaseModel):
     symbol: str
     state: str
     fraction: float
-    side: str | None = None
+    # opcjonalne pola
+    side: str | None = None              # BUY/SELL
     reason: str | None = None
     price: float | None = None
-    mode: str = "live"
+    mode: str = "live"                   # akceptujemy też 'demo' w walidatorze
+    schema_version: int = 1
     limit_events: List[str] | None = None
     details: Dict[str, Any] | None = None
     stop_loss_pct: float | None = None
     take_profit_pct: float | None = None
     should_trade: bool | None = None
+    ts: float | None = None              # epoch seconds
 
     @field_validator("symbol")
     @classmethod
@@ -441,6 +435,16 @@ class RiskAuditLogIn(BaseModel):
         if not v:
             raise ValueError("symbol is required")
         return v
+
+    @field_validator("side")
+    @classmethod
+    def _side(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        vv = v.strip().upper()
+        if vv not in {"BUY", "SELL"}:
+            raise ValueError("side must be BUY or SELL")
+        return vv
 
     @field_validator("state")
     @classmethod
@@ -453,10 +457,17 @@ class RiskAuditLogIn(BaseModel):
     @field_validator("mode")
     @classmethod
     def _mode(cls, v: str) -> str:
-        v = v.lower()
-        if v not in {"live", "paper"}:
-            raise ValueError("mode must be 'live' or 'paper'")
+        v = (v or "").strip().lower()
+        if v not in {"live", "paper", "demo"}:
+            raise ValueError("mode must be live/demo/paper")
         return v
+
+    @field_validator("schema_version")
+    @classmethod
+    def _schema_version(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("schema_version must be positive")
+        return int(v)
 
 
 class RateLimitSnapshotIn(BaseModel):
@@ -548,7 +559,6 @@ class DatabaseManager:
                 )
 
         if create:
-            # 1) DDL na połączeniu
             async with self._state.engine.begin() as conn:  # type: ignore[union-attr]
                 await conn.run_sync(Base.metadata.create_all)
 
@@ -683,10 +693,7 @@ class DatabaseManager:
 
     # ---------- OPERACJE: Orders ----------
     async def record_order(self, order: Union[OrderIn, Dict[str, Any]]) -> int:
-        """
-        Zapisuje zlecenie (idempotencja po client_order_id).
-        Zwraca ID rekordu.
-        """
+        """Zapisuje zlecenie (idempotencja po client_order_id). Zwraca ID rekordu."""
         try:
             o = order if isinstance(order, OrderIn) else OrderIn(**order)
         except ValidationError as e:
@@ -695,11 +702,9 @@ class DatabaseManager:
 
         async with self.transaction() as s:
             if o.client_order_id:
-                # idempotencja
                 q = await s.execute(select(Order).where(Order.client_order_id == o.client_order_id))
                 existing = q.scalar_one_or_none()
                 if existing:
-                    # ewentualna aktualizacja statusu/price itp.
                     existing.status = o.status
                     if o.price is not None:
                         existing.price = o.price
@@ -761,9 +766,7 @@ class DatabaseManager:
 
     # ---------- OPERACJE: Trades ----------
     async def record_trade(self, trade: Union[TradeIn, Dict[str, Any]]) -> int:
-        """
-        Zapisuje trade. Zwraca ID.
-        """
+        """Zapisuje trade. Zwraca ID."""
         try:
             t = trade if isinstance(trade, TradeIn) else TradeIn(**trade)
         except ValidationError as e:
@@ -807,9 +810,7 @@ class DatabaseManager:
 
     # ---------- OPERACJE: Positions ----------
     async def upsert_position(self, pos: Union[PositionIn, Dict[str, Any]]) -> int:
-        """
-        Wstawia/aktualizuje po symbolu (unique), zwraca id.
-        """
+        """Wstawia/aktualizuje po symbolu (unique), zwraca id."""
         try:
             p = pos if isinstance(pos, PositionIn) else PositionIn(**pos)
         except ValidationError as e:
@@ -956,35 +957,80 @@ class DatabaseManager:
             rows = (await session.execute(stmt)).scalars().all()
             return [self._row_to_dict(row) for row in rows]
 
-    async def log_risk_audit(self, payload: Dict[str, Any]) -> Optional[int]:
+    # ---------- OPERACJE: Risk audit logs ----------
+    async def log_risk_audit(
+        self,
+        event: Union[RiskAuditIn, Dict[str, Any]],
+    ) -> int:
         try:
-            data = payload if isinstance(payload, RiskAuditLogIn) else RiskAuditLogIn(**payload)
+            payload = event if isinstance(event, RiskAuditIn) else RiskAuditIn(**event)
         except ValidationError as exc:
             logger.error("Risk audit validation error: %s", exc)
-            return None
+            raise
 
-        try:
-            async with self.transaction() as session:
-                record = RiskAuditLog(
-                    symbol=data.symbol,
-                    side=data.side,
-                    state=data.state,
-                    reason=data.reason,
-                    fraction=float(data.fraction),
-                    price=float(data.price) if data.price is not None else None,
-                    mode=data.mode,
-                    limit_events=json.dumps(data.limit_events) if data.limit_events is not None else None,
-                    details=json.dumps(data.details) if data.details is not None else None,
-                    stop_loss_pct=float(data.stop_loss_pct) if data.stop_loss_pct is not None else None,
-                    take_profit_pct=float(data.take_profit_pct) if data.take_profit_pct is not None else None,
-                    should_trade=data.should_trade,
-                )
-                session.add(record)
-                await session.flush()
-                return record.id
-        except Exception:
-            logger.exception("Failed to persist risk audit log")
-            return None
+        ts_value = (
+            dt.datetime.utcfromtimestamp(float(payload.ts))
+            if payload.ts is not None
+            else dt.datetime.utcnow()
+        )
+
+        async with self.transaction() as session:
+            rec = RiskAuditLog(
+                ts=ts_value,
+                symbol=payload.symbol,
+                side=payload.side,
+                state=payload.state,
+                reason=payload.reason,
+                fraction=float(payload.fraction),
+                price=float(payload.price) if payload.price is not None else None,
+                mode=payload.mode,
+                schema_version=int(payload.schema_version),
+                limit_events=json.dumps(payload.limit_events) if payload.limit_events is not None else None,
+                details=json.dumps(payload.details) if payload.details is not None else None,
+                stop_loss_pct=float(payload.stop_loss_pct) if payload.stop_loss_pct is not None else None,
+                take_profit_pct=float(payload.take_profit_pct) if payload.take_profit_pct is not None else None,
+                should_trade=payload.should_trade,
+            )
+            session.add(rec)
+            await session.flush()
+            return rec.id
+
+    async def fetch_risk_audits(
+        self,
+        *,
+        symbol: Optional[str] = None,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        async with self.session() as session:
+            stmt = select(RiskAuditLog).order_by(RiskAuditLog.ts.desc()).limit(limit)
+            if symbol:
+                stmt = stmt.where(RiskAuditLog.symbol == symbol.upper())
+            rows = (await session.execute(stmt)).scalars().all()
+
+        result: List[Dict[str, Any]] = []
+        for row in rows:
+            details = json.loads(row.details) if row.details else None
+            limit_events = json.loads(row.limit_events) if row.limit_events else None
+            result.append(
+                {
+                    "id": row.id,
+                    "timestamp": row.ts.isoformat() if row.ts else None,
+                    "symbol": row.symbol,
+                    "side": row.side,
+                    "state": row.state,
+                    "reason": row.reason,
+                    "fraction": row.fraction,
+                    "price": row.price,
+                    "mode": row.mode,
+                    "schema_version": row.schema_version,
+                    "limit_events": limit_events,
+                    "details": details,
+                    "stop_loss_pct": row.stop_loss_pct,
+                    "take_profit_pct": row.take_profit_pct,
+                    "should_trade": row.should_trade,
+                }
+            )
+        return result
 
     # ---------- OPERACJE: API rate limits ----------
     async def log_rate_limit_snapshot(
@@ -1186,7 +1232,6 @@ class DatabaseManager:
             except RuntimeError:
                 loop = None
             if loop and loop.is_running():
-                # W razie wywołania z kontekstu async — użytkownik powinien użyć metod async.
                 raise RuntimeError("Use async methods inside running event loop.")
             return asyncio.run(coro)
 
@@ -1285,8 +1330,16 @@ class DatabaseManager:
         ) -> List[Dict[str, Any]]:
             return self._run(self._outer.fetch_risk_limits(symbol=symbol, limit=limit))
 
-        def log_risk_audit(self, payload: Dict[str, Any]) -> Optional[int]:
-            return self._run(self._outer.log_risk_audit(payload))
+        def log_risk_audit(self, event: Union[RiskAuditIn, Dict[str, Any]]) -> int:
+            return self._run(self._outer.log_risk_audit(event))
+
+        def fetch_risk_audits(
+            self,
+            *,
+            symbol: Optional[str] = None,
+            limit: int = 100,
+        ) -> List[Dict[str, Any]]:
+            return self._run(self._outer.fetch_risk_audits(symbol=symbol, limit=limit))
 
         def log_rate_limit_snapshot(
             self, snapshot: Union[RateLimitSnapshotIn, Dict[str, Any]]
@@ -1343,14 +1396,11 @@ class DatabaseManager:
 
 async def _migration_initial(session: AsyncSession, manager: "DatabaseManager") -> None:
     """Początkowa migracja – struktury tworzone przez ``create_all``."""
-    # Brak dodatkowych działań – pozostawiamy jako znacznik wersji 1.
     return None
 
 
 async def _migration_performance_tables(session: AsyncSession, manager: "DatabaseManager") -> None:
     """Migracja dodająca tabele metryk i limitów ryzyka."""
-    # Struktury tabel dodawane są przez ``Base.metadata.create_all`` w ``init_db``.
-    # Migracja pozostawiona dla kompatybilności – w razie potrzeby można dodać transformacje danych.
     return None
 
 
@@ -1420,7 +1470,6 @@ async def _migration_api_rate_limits(session: AsyncSession, manager: "DatabaseMa
 
 async def _migration_risk_audit_logs(session: AsyncSession, manager: "DatabaseManager") -> None:
     """Migracja dodająca tabelę logów audytu ryzyka."""
-    # Nowa tabela jest tworzona przez Base.metadata.create_all; migracja to marker wersji.
     return None
 
 

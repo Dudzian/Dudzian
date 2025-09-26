@@ -11,9 +11,11 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from collections import deque
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union
+from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional, Tuple, Union
 
 try:  # pragma: no cover - środowisko testowe może nie mieć joblib
     import joblib
@@ -135,6 +137,57 @@ class TrainResult:
     model_path: Optional[str]
 
 
+@dataclass(slots=True)
+class ModelEvaluation:
+    """Szczegółowa ocena modelu wykorzystywana przy selekcji strategii."""
+
+    model_type: str
+    hit_rate: float
+    pnl: float
+    sharpe: float
+    cv_scores: List[float] = field(default_factory=list)
+    model_path: Optional[str] = None
+
+    def composite_score(self) -> float:
+        """Łączna ocena – średnia trafności ważona Sharpe'em."""
+
+        sharpe_bonus = max(self.sharpe, 0.0)
+        return float(self.hit_rate * (1.0 + sharpe_bonus))
+
+
+@dataclass(slots=True)
+class StrategySelectionResult:
+    """Wynik wyboru najlepszego modelu dla strategii."""
+
+    symbol: str
+    best_model: str
+    evaluations: List[ModelEvaluation]
+    decided_at: datetime
+    drift_report: Optional["DriftReport"] = None
+    predictions: Optional[pd.Series] = None
+
+
+@dataclass(slots=True)
+class DriftReport:
+    """Raport detekcji dryfu danych wejściowych."""
+
+    feature_drift: float
+    volatility_shift: float
+    triggered: bool
+    threshold: float
+
+
+@dataclass(slots=True)
+class TrainingSchedule:
+    """Reprezentuje zaplanowane zadanie treningowe."""
+
+    symbol: str
+    interval_seconds: float
+    task: asyncio.Task
+    model_types: Tuple[str, ...]
+    seq_len: int
+
+
 class AIManager:
     """Wysokopoziomowy kontroler treningu i predykcji modeli AI.
 
@@ -149,6 +202,8 @@ class AIManager:
         self.model_dir.mkdir(parents=True, exist_ok=True)
         self._lock = asyncio.Lock()
         self.models: Dict[str, Any] = {}
+        self._schedules: Dict[str, TrainingSchedule] = {}
+        self._recent_signals: Dict[str, deque[float]] = {}
 
     # -------------------------- API pomocnicze --------------------------
     @staticmethod
@@ -177,6 +232,324 @@ class AIManager:
         sanitized = sanitized.clip(lower=-1.0, upper=1.0)
         return sanitized
 
+    def _track_signal(self, symbol: str, signals: pd.Series) -> None:
+        """Zachowaj ostatnie predykcje do monitorowania dryfu."""
+
+        key = self._normalize_symbol(symbol)
+        buffer = self._recent_signals.setdefault(key, deque(maxlen=500))
+        buffer.extend(float(v) for v in signals.values if np.isfinite(v))
+
+    @staticmethod
+    def _sharpe_ratio(returns: np.ndarray) -> float:
+        if returns.size == 0:
+            return 0.0
+        mean = float(np.mean(returns))
+        std = float(np.std(returns))
+        if std == 0.0:
+            return 0.0
+        return mean / std
+
+    async def _train_single_model(
+        self,
+        model_name: str,
+        X: np.ndarray,
+        y: np.ndarray,
+        *,
+        seq_len: int,
+        epochs: int,
+        batch_size: int,
+        model_path: Path,
+    ) -> Any:
+        model = _AIModels(input_size=X.shape[-1], seq_len=int(seq_len), model_type=model_name)
+
+        async def _run_train() -> None:
+            train_kwargs = dict(
+                X=X,
+                y=y,
+                epochs=int(max(1, epochs)),
+                batch_size=int(max(1, batch_size)),
+                progress_callback=(lambda *_: None),
+                model_out=str(model_path),
+                verbose=False,
+            )
+            result = model.train(**train_kwargs)
+            if inspect.isawaitable(result):
+                await result
+
+        await _run_train()
+        return model
+
+    def detect_drift(
+        self,
+        baseline: pd.DataFrame,
+        recent: pd.DataFrame,
+        feature_cols: Optional[Iterable[str]] = None,
+        *,
+        threshold: float = 0.35,
+    ) -> DriftReport:
+        """Porównaj zmienność cech i zgłoś dryf."""
+
+        feats = list(feature_cols or ["open", "high", "low", "close", "volume"])
+        self._validate_dataframe(baseline, feats)
+        self._validate_dataframe(recent, feats)
+
+        baseline_pct = baseline[feats].pct_change().replace([np.inf, -np.inf], np.nan).dropna()
+        recent_pct = recent[feats].pct_change().replace([np.inf, -np.inf], np.nan).dropna()
+
+        if baseline_pct.empty or recent_pct.empty:
+            return DriftReport(0.0, 0.0, False, threshold)
+
+        baseline_std = baseline_pct.std().replace(0.0, np.nan)
+        recent_std = recent_pct.std()
+        volatility_shift = float(
+            ((recent_std - baseline_std).abs() / (baseline_std.abs() + 1e-9))
+            .replace([np.inf, -np.inf], np.nan)
+            .fillna(0.0)
+            .max()
+        )
+
+        baseline_mean = baseline_pct.mean()
+        recent_mean = recent_pct.mean()
+        feature_drift = float(
+            ((recent_mean - baseline_mean).abs() / (baseline_std.abs() + 1e-9))
+            .replace([np.inf, -np.inf], np.nan)
+            .fillna(0.0)
+            .max()
+        )
+
+        triggered = volatility_shift > threshold or feature_drift > threshold
+        return DriftReport(feature_drift=feature_drift, volatility_shift=volatility_shift, triggered=triggered, threshold=threshold)
+
+    async def rank_models(
+        self,
+        symbol: str,
+        df: pd.DataFrame,
+        model_types: Iterable[str],
+        *,
+        seq_len: int = 64,
+        folds: int = 3,
+        epochs: int = 10,
+        batch_size: int = 32,
+    ) -> List[ModelEvaluation]:
+        """Przeprowadź walidację krzyżową modeli i zwróć ranking."""
+
+        feature_cols = ["open", "high", "low", "close", "volume"]
+        self._validate_dataframe(df, feature_cols)
+        symbol_key = self._normalize_symbol(symbol)
+        folds = max(2, int(folds))
+
+        async with self._lock:
+            X, y = _windowize(df, feature_cols, int(seq_len), "close")
+            if X is None or y is None or len(X) <= folds:
+                raise ValueError("Za mało danych do walidacji modeli AI.")
+
+            total = len(X)
+            fold_size = max(1, total // folds)
+            evaluations: List[ModelEvaluation] = []
+
+            for model_type in model_types:
+                model_name = str(model_type).lower()
+                cv_scores: List[float] = []
+                pnl_scores: List[float] = []
+
+                for fold_idx in range(folds):
+                    start = fold_idx * fold_size
+                    end = total if fold_idx == folds - 1 else min(total, start + fold_size)
+                    if start >= end:
+                        continue
+
+                    X_val = X[start:end]
+                    y_val = y[start:end]
+                    X_train = np.concatenate((X[:start], X[end:]), axis=0) if start > 0 or end < total else X
+                    y_train = np.concatenate((y[:start], y[end:]), axis=0) if start > 0 or end < total else y
+
+                    if len(X_train) == 0 or len(X_val) == 0:
+                        continue
+
+                    model_path = self.model_dir / f"{symbol_key}:{model_name}.fold{fold_idx}.joblib"
+                    model = await self._train_single_model(
+                        model_name,
+                        X_train,
+                        y_train,
+                        seq_len=seq_len,
+                        epochs=epochs,
+                        batch_size=batch_size,
+                        model_path=model_path,
+                    )
+
+                    pred = model.predict(X_val)
+                    if inspect.isawaitable(pred):
+                        pred = await pred
+                    preds = np.asarray(pred, dtype=float).flatten()
+                    if preds.shape[0] != y_val.shape[0]:
+                        preds = np.resize(preds, y_val.shape[0])
+
+                    guesses = np.sign(preds)
+                    target = np.sign(np.asarray(y_val, dtype=float))
+                    cv_scores.append(float((guesses == target).mean()))
+
+                    pnl_vector = preds * np.asarray(y_val, dtype=float)
+                    pnl_scores.append(float(np.sum(pnl_vector)))
+
+                hit_rate = float(np.mean(cv_scores)) if cv_scores else 0.0
+                pnl = float(np.mean(pnl_scores)) if pnl_scores else 0.0
+                sharpe = self._sharpe_ratio(np.asarray(pnl_scores, dtype=float))
+                evaluations.append(
+                    ModelEvaluation(
+                        model_type=model_name,
+                        hit_rate=hit_rate,
+                        pnl=pnl,
+                        sharpe=sharpe,
+                        cv_scores=cv_scores,
+                        model_path=str(self.model_dir / f"{symbol_key}:{model_name}.joblib"),
+                    )
+                )
+
+            evaluations.sort(key=lambda ev: ev.composite_score(), reverse=True)
+            return evaluations
+
+    async def select_best_model(
+        self,
+        symbol: str,
+        df: pd.DataFrame,
+        model_types: Iterable[str],
+        *,
+        seq_len: int = 64,
+        folds: int = 3,
+    ) -> StrategySelectionResult:
+        """Wybierz najlepszy model w oparciu o ranking."""
+
+        evaluations = await self.rank_models(
+            symbol,
+            df,
+            model_types,
+            seq_len=seq_len,
+            folds=folds,
+        )
+        if not evaluations:
+            raise ValueError("Nie udało się ocenić żadnego modelu.")
+
+        best = evaluations[0]
+        decided_at = datetime.now(timezone.utc)
+        return StrategySelectionResult(
+            symbol=self._normalize_symbol(symbol),
+            best_model=best.model_type,
+            evaluations=evaluations,
+            decided_at=decided_at,
+        )
+
+    def cancel_schedule(self, symbol: str) -> None:
+        key = self._normalize_symbol(symbol)
+        schedule = self._schedules.pop(key, None)
+        if schedule and not schedule.task.done():
+            schedule.task.cancel()
+
+    def active_schedules(self) -> Dict[str, TrainingSchedule]:
+        return dict(self._schedules)
+
+    def _schedule_runner(
+        self,
+        symbol: str,
+        df_provider: Callable[[], Union[pd.DataFrame, Awaitable[pd.DataFrame]]],
+        model_types: Iterable[str],
+        interval_seconds: float,
+        seq_len: int,
+        epochs: int,
+        batch_size: int,
+    ) -> Callable[[], Awaitable[None]]:
+        async def _runner() -> None:
+            while True:
+                try:
+                    df_candidate = df_provider()
+                    if inspect.isawaitable(df_candidate):
+                        df_candidate = await df_candidate
+                    await self.train_all_models(
+                        symbol,
+                        df_candidate,
+                        model_types,
+                        seq_len=seq_len,
+                        epochs=epochs,
+                        batch_size=batch_size,
+                    )
+                    await asyncio.sleep(interval_seconds)
+                except asyncio.CancelledError:
+                    break
+                except Exception as exc:  # pragma: no cover - błędy runtime
+                    logger.error("Błąd harmonogramu treningowego %s: %s", symbol, exc)
+                    await asyncio.sleep(min(60.0, interval_seconds))
+
+        return _runner
+
+    def schedule_periodic_training(
+        self,
+        symbol: str,
+        df_provider: Callable[[], Union[pd.DataFrame, Awaitable[pd.DataFrame]]],
+        model_types: Iterable[str],
+        *,
+        interval_seconds: float = 3600.0,
+        seq_len: int = 64,
+        epochs: int = 10,
+        batch_size: int = 32,
+    ) -> TrainingSchedule:
+        """Utwórz cykliczny trening modeli AI."""
+
+        model_types_tuple = tuple(model_types)
+        runner = self._schedule_runner(
+            symbol,
+            df_provider,
+            model_types_tuple,
+            interval_seconds,
+            seq_len,
+            epochs,
+            batch_size,
+        )
+        task = asyncio.create_task(runner())
+        schedule = TrainingSchedule(
+            symbol=self._normalize_symbol(symbol),
+            interval_seconds=float(interval_seconds),
+            task=task,
+            model_types=model_types_tuple,
+            seq_len=int(seq_len),
+        )
+        self._schedules[schedule.symbol] = schedule
+        return schedule
+
+    async def run_pipeline(
+        self,
+        symbol: str,
+        df: pd.DataFrame,
+        model_types: Iterable[str],
+        *,
+        seq_len: int = 64,
+        folds: int = 3,
+        baseline: Optional[pd.DataFrame] = None,
+    ) -> StrategySelectionResult:
+        """Zautomatyzowany pipeline: selekcja modelu → trening → predykcja."""
+
+        selection = await self.select_best_model(
+            symbol,
+            df,
+            model_types,
+            seq_len=seq_len,
+            folds=folds,
+        )
+        await self.train_all_models(
+            symbol,
+            df,
+            [selection.best_model],
+            seq_len=seq_len,
+        )
+        predictions = await self.predict_series(
+            symbol,
+            df,
+            model_types=[selection.best_model],
+        )
+        selection.predictions = predictions
+        if baseline is not None:
+            selection.drift_report = self.detect_drift(baseline, df)
+        self._track_signal(symbol, predictions)
+        return selection
+
     # ----------------------------- Trening -----------------------------
     async def train_all_models(
         self,
@@ -204,27 +577,15 @@ class AIManager:
             for model_type in model_types:
                 model_name = str(model_type).lower()
                 model_path = self.model_dir / f"{symbol_key}:{model_name}.joblib"
-                try:
-                    model = _AIModels(input_size=X.shape[-1], seq_len=int(seq_len), model_type=model_name)
-                except Exception as exc:
-                    logger.error("Nie można utworzyć modelu %s: %s", model_name, exc)
-                    raise
-
-                async def _run_train() -> None:
-                    train_kwargs = dict(
-                        X=X,
-                        y=y,
-                        epochs=int(max(1, epochs)),
-                        batch_size=int(max(1, batch_size)),
-                        progress_callback=(lambda *_: None),
-                        model_out=str(model_path),
-                        verbose=False,
-                    )
-                    result = model.train(**train_kwargs)
-                    if inspect.isawaitable(result):
-                        await result
-
-                await _run_train()
+                model = await self._train_single_model(
+                    model_name,
+                    X,
+                    y,
+                    seq_len=seq_len,
+                    epochs=epochs,
+                    batch_size=batch_size,
+                    model_path=model_path,
+                )
 
                 preds = None
                 try:
@@ -324,6 +685,7 @@ class AIManager:
             if not isinstance(preds, pd.Series):
                 preds = pd.Series(np.asarray(preds, dtype=float), index=df.index)
             sanitized = self._sanitize_predictions(preds)
+            self._track_signal(symbol, sanitized)
             logger.debug("Zwracam predykcje modelu %s dla %s", chosen_type, symbol_key)
             return sanitized
 
@@ -351,4 +713,13 @@ class AIManager:
         logger.info("Zaimportowano model %s z pliku %s", key, model_path)
 
 
-__all__ = ["AIManager", "TrainResult", "_AIModels", "_windowize"]
+__all__ = [
+    "AIManager",
+    "TrainResult",
+    "ModelEvaluation",
+    "StrategySelectionResult",
+    "DriftReport",
+    "TrainingSchedule",
+    "_AIModels",
+    "_windowize",
+]

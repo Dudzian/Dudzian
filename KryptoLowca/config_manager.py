@@ -5,10 +5,21 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field, asdict, fields
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 import yaml
 from cryptography.fernet import Fernet, InvalidToken
+import pandas as pd
+
+if TYPE_CHECKING:  # pragma: no cover - tylko dla typowania
+    from KryptoLowca.backtest.mini_backtester import BacktestReport
+    from KryptoLowca.data.market_data import MarketDataProvider, MarketDataRequest
+
+from KryptoLowca.strategies.marketplace import (
+    StrategyPreset,
+    load_marketplace_presets,
+    load_preset,
+)
 
 __all__ = [
     "ConfigManager",
@@ -193,8 +204,8 @@ class StrategyConfig:
         if self.violation_cooldown_s <= 0:
             raise ValidationError("violation_cooldown_s musi być dodatnie")
         self.reduce_only_after_violation = bool(self.reduce_only_after_violation)
-        self.preset = (self.preset or "").strip().upper() or "CUSTOM"
 
+        # Normalizacja flag zgodności (zachowuje kompatybilność ze starszym API)
         for field_name in (
             "compliance_confirmed",
             "api_keys_configured",
@@ -213,6 +224,22 @@ class StrategyConfig:
                 )
             setattr(self, field_name, normalized)
 
+        # W trybie LIVE wymagamy spełnienia wszystkich potwierdzeń
+        if self.mode == "live":
+            missing: List[str] = []
+            if not self.api_keys_configured:
+                missing.append("api_keys_configured")
+            if not self.compliance_confirmed:
+                missing.append("compliance_confirmed")
+            if not self.acknowledged_risk_disclaimer:
+                missing.append("acknowledged_risk_disclaimer")
+            if missing:
+                raise ValidationError(
+                    "Nie można przełączyć strategii w tryb LIVE bez potwierdzenia: "
+                    + ", ".join(missing)
+                )
+
+        self.preset = (self.preset or "").strip().upper() or "CUSTOM"
         return self
 
     @classmethod
@@ -228,6 +255,9 @@ class StrategyConfig:
                 default_tp=0.04,
                 violation_cooldown_s=300,
                 reduce_only_after_violation=True,
+                compliance_confirmed=False,
+                api_keys_configured=False,
+                acknowledged_risk_disclaimer=False,
             ),
             "BALANCED": cls(
                 preset="BALANCED",
@@ -239,6 +269,9 @@ class StrategyConfig:
                 default_tp=0.06,
                 violation_cooldown_s=240,
                 reduce_only_after_violation=True,
+                compliance_confirmed=False,
+                api_keys_configured=False,
+                acknowledged_risk_disclaimer=False,
             ),
         }
 
@@ -247,6 +280,13 @@ class StrategyConfig:
         presets = cls.presets()
         preset = presets.get((name or "").strip().upper())
         return (preset or cls(preset="CUSTOM")).validate()
+
+    def guard_backtest(self, report: "BacktestReport") -> "StrategyConfig":
+        """Sprawdza wyniki backtestu i zwraca konfigurację, jeśli test został zaliczony."""
+        from KryptoLowca.backtest.mini_backtester import evaluate_strategy_backtest
+
+        evaluate_strategy_backtest(self, report)
+        return self
 
 
 _STRATEGY_FIELD_NAMES = {f.name for f in fields(StrategyConfig)}
@@ -296,6 +336,7 @@ class ConfigManager:
         self._fernet = Fernet(encryption_key) if encryption_key else None
         self.db_manager = _InMemoryDB()
         self._current_config: Dict[str, Any] = self._default_config()
+        self._marketplace_dir: Optional[Path] = None
 
     @classmethod
     async def create(
@@ -376,6 +417,27 @@ class ConfigManager:
             "strategy": strategy_section,
         }
 
+    def set_marketplace_directory(self, directory: str | Path) -> None:
+        self._marketplace_dir = Path(directory)
+
+    def list_marketplace_catalog(self) -> List[StrategyPreset]:
+        return load_marketplace_presets(base_path=self._marketplace_dir)
+
+    def get_marketplace_preset(self, preset_id: str) -> StrategyPreset:
+        return load_preset(preset_id, base_path=self._marketplace_dir)
+
+    def apply_marketplace_preset(self, preset_id: str) -> Dict[str, Any]:
+        preset = self.get_marketplace_preset(preset_id)
+        merged = dict(self._current_config)
+        for section, payload in preset.config.items():
+            if not isinstance(payload, dict):
+                continue
+            existing = dict(merged.get(section, {}))
+            existing.update(payload)
+            merged[section] = existing
+        self._current_config = self._validate_payload(merged)
+        return self._current_config
+
     async def save_config(self, config: Dict[str, Any]) -> None:
         sanitized = self._validate_payload(config)
         to_disk = dict(sanitized)
@@ -428,3 +490,63 @@ class ConfigManager:
 
     def list_strategy_presets(self) -> Dict[str, Dict[str, Any]]:
         return {name: asdict(cfg.validate()) for name, cfg in StrategyConfig.presets().items()}
+
+    def run_backtest_on_dataframe(
+        self,
+        data: pd.DataFrame,
+        *,
+        signal_column: str = "signal",
+        price_column: str = "close",
+        initial_balance: float = 10_000.0,
+        fee_rate: float = 0.001,
+        slippage_rate: float = 0.0005,
+        allow_short: bool = False,
+    ) -> "BacktestReport":
+        from KryptoLowca.backtest.mini_backtester import MiniBacktester
+
+        strategy = self.load_strategy_config()
+        backtester = MiniBacktester(
+            strategy,
+            fee_rate=fee_rate,
+            slippage_rate=slippage_rate,
+            allow_short=allow_short,
+        )
+        report = backtester.run(
+            data,
+            signal_column=signal_column,
+            price_column=price_column,
+            initial_balance=initial_balance,
+        )
+        strategy.guard_backtest(report)
+        return report
+
+    async def preflight_backtest(
+        self,
+        provider: "MarketDataProvider",
+        request: "MarketDataRequest",
+        *,
+        signal_column: str = "signal",
+        price_column: str = "close",
+        initial_balance: float = 10_000.0,
+        fee_rate: float = 0.001,
+        slippage_rate: float = 0.0005,
+        allow_short: bool = False,
+    ) -> "BacktestReport":
+        df = await provider.get_historical_async(request)
+        if signal_column not in df.columns:
+            raise ValidationError(
+                f"Dane z provider'a nie zawierają kolumny sygnału '{signal_column}'"
+            )
+        if price_column not in df.columns:
+            raise ValidationError(
+                f"Dane z provider'a nie zawierają kolumny ceny '{price_column}'"
+            )
+        return self.run_backtest_on_dataframe(
+            df,
+            signal_column=signal_column,
+            price_column=price_column,
+            initial_balance=initial_balance,
+            fee_rate=fee_rate,
+            slippage_rate=slippage_rate,
+            allow_short=allow_short,
+        )

@@ -113,6 +113,9 @@ async def test_invalid_config(config_manager):
     with pytest.raises(ValidationError):
         await config_manager.save_config(config)
 
+    with pytest.raises(ValidationError):
+        await config_manager.save_config({"strategy": {"mode": "live"}})
+
 @pytest.mark.asyncio
 async def test_default_config(config_manager):
     config = await config_manager.load_config()

@@ -4,10 +4,10 @@ from __future__ import annotations
 import asyncio
 import ast
 import sys
-from pathlib import Path
-import threading
 import time
+import threading
 from dataclasses import asdict
+from pathlib import Path
 from types import MethodType
 from typing import Any, Callable, Dict, List, Tuple
 
@@ -59,11 +59,16 @@ class NoSignalAI:
 class DummyDB:
     def __init__(self) -> None:
         self.records: List[Dict[str, Any]] = []
-        self.sync = self
+        self.risk_audits: List[Dict[str, Any]] = []
+        self.sync = self  # AutoTrader spodziewa się obiektu z .sync
 
     def log_performance_metric(self, payload: Dict[str, Any]) -> int:
         self.records.append(payload)
         return len(self.records)
+
+    def log_risk_audit(self, payload: Dict[str, Any]) -> int:
+        self.risk_audits.append(payload)
+        return len(self.risk_audits)
 
 
 class DummyRiskManager:
@@ -155,7 +160,6 @@ def demo_autotrader() -> Callable[[DummyGUI], AutoTrader]:
         trader = AutoTrader(emitter, gui, lambda: "BTC/USDT", auto_trade_interval_s=0.01)
         trader.enable_auto_trade = True
         return trader
-
     return factory
 
 
@@ -277,8 +281,14 @@ def test_risk_manager_blocks_trade_on_zero_fraction(
 
     assert gui.executed == []
     assert risk_mgr.calls > 0
-    risk_events = [payload for kind, event, payload in trader.emitter.logs if kind == "event" and event == "risk_guard_event"]
+    risk_events = [
+        payload
+        for kind, event, payload in trader.emitter.logs
+        if kind == "event" and event == "risk_guard_event"
+    ]
     assert any("risk_fraction_zero" in payload for payload in risk_events)
+    assert gui.db.risk_audits, "Powinien zostać zapisany audyt ryzyka"
+    assert any(entry["reason"] == "risk_fraction_zero" for entry in gui.db.risk_audits)
 
 
 def test_real_risk_management_integration_handles_reduce_only(
@@ -354,6 +364,7 @@ def test_real_risk_management_integration_handles_reduce_only(
     assert decision.details["risk_adjusted_size"] == pytest.approx(expected_sizing.risk_adjusted_size, rel=1e-6)
     assert decision.mode == "demo"
 
+    # wymuś naruszenie dźwigni -> reduce-only
     tight_cfg = StrategyConfig(
         preset="SAFE",
         mode="demo",
