@@ -244,7 +244,7 @@ class StrategyConfig:
 
     @classmethod
     def presets(cls) -> Dict[str, "StrategyConfig"]:
-        return {
+        base_presets = {
             "SAFE": cls(
                 preset="SAFE",
                 mode="demo",
@@ -274,6 +274,20 @@ class StrategyConfig:
                 acknowledged_risk_disclaimer=False,
             ),
         }
+        try:
+            from KryptoLowca.strategies.presets import load_builtin_presets
+
+            for preset in load_builtin_presets():
+                strategy_section = dict(preset.config.get("strategy", {}))
+                if not strategy_section:
+                    continue
+                name = preset.preset_id.upper()
+                merged = asdict(cls())
+                merged.update(strategy_section)
+                base_presets[name] = cls(**merged)
+        except Exception:
+            pass
+        return base_presets
 
     @classmethod
     def from_preset(cls, name: str) -> "StrategyConfig":
@@ -330,6 +344,10 @@ class _InMemoryDB:
 class ConfigManager:
     """Prosta implementacja asynchroniczna zgodna z testami."""
 
+    ENCRYPTED_FIELDS = {
+        "exchange": {"api_key", "api_secret"},
+    }
+
     def __init__(self, config_path: Path, encryption_key: Optional[bytes] = None) -> None:
         self.config_path = config_path
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -361,21 +379,21 @@ class ConfigManager:
             "strategy": strategy_section,
         }
 
-    def _encrypt_section(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    def _encrypt_section(self, section: str, data: Dict[str, Any]) -> Dict[str, Any]:
         if not self._fernet:
             return data
         encrypted = dict(data)
-        for key in ("api_key", "api_secret"):
+        for key in self.ENCRYPTED_FIELDS.get(section, set()):
             value = encrypted.get(key)
             if isinstance(value, str) and value:
                 encrypted[key] = self._fernet.encrypt(value.encode()).decode()
         return encrypted
 
-    def _decrypt_section(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    def _decrypt_section(self, section: str, data: Dict[str, Any]) -> Dict[str, Any]:
         if not self._fernet:
             return data
         decrypted = dict(data)
-        for key in ("api_key", "api_secret"):
+        for key in self.ENCRYPTED_FIELDS.get(section, set()):
             value = decrypted.get(key)
             if isinstance(value, str) and value:
                 try:
@@ -441,7 +459,7 @@ class ConfigManager:
     async def save_config(self, config: Dict[str, Any]) -> None:
         sanitized = self._validate_payload(config)
         to_disk = dict(sanitized)
-        to_disk["exchange"] = self._encrypt_section(to_disk["exchange"])
+        to_disk["exchange"] = self._encrypt_section("exchange", to_disk["exchange"])
         with self.config_path.open("w", encoding="utf-8") as fh:
             yaml.safe_dump(to_disk, fh, sort_keys=True)
         self._current_config = sanitized
@@ -460,11 +478,26 @@ class ConfigManager:
         if self.config_path.exists():
             with self.config_path.open("r", encoding="utf-8") as fh:
                 data = yaml.safe_load(fh) or {}
-            data["exchange"] = self._decrypt_section(data.get("exchange", {}))
+            exchange_section = data.get("exchange", {})
+            data["exchange"] = self._decrypt_section("exchange", exchange_section)
             self._current_config = self._validate_payload(data)
         else:
             self._current_config = self._default_config()
         return self._current_config
+
+    def write_template(self, *, force: bool = False) -> Path:
+        """Generuje plik YAML z domyślną konfiguracją."""
+
+        if self.config_path.exists() and not force:
+            return self.config_path
+        template = self._default_config()
+        template["exchange"] = {
+            key: ("" if key in self.ENCRYPTED_FIELDS.get("exchange", set()) else value)
+            for key, value in template["exchange"].items()
+        }
+        with self.config_path.open("w", encoding="utf-8") as fh:
+            yaml.safe_dump(template, fh, sort_keys=True)
+        return self.config_path
 
     async def save_user_config(self, user_id: int, name: str, config: Dict[str, Any]) -> None:
         sanitized = self._validate_payload(config)
