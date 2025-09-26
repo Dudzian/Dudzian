@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass, field, asdict, fields
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
@@ -360,6 +362,7 @@ class ConfigManager:
         self.db_manager = _InMemoryDB()
         self._current_config: Dict[str, Any] = self._default_config()
         self._marketplace_dir: Optional[Path] = None
+        self._versions_dir: Path = self.config_path.parent / "versions"
 
     @classmethod
     async def create(
@@ -408,6 +411,97 @@ class ConfigManager:
                     pass
         return decrypted
 
+    def _record_snapshot(
+        self,
+        *,
+        preset_id: str,
+        marketplace_version: Optional[str],
+        config: Dict[str, Any],
+        actor: Optional[str],
+        note: Optional[str],
+        source: str,
+    ) -> str:
+        timestamp = datetime.now(timezone.utc)
+        version_id = timestamp.strftime("%Y%m%dT%H%M%S%fZ")
+        actor_name = (actor or "unknown").strip() or "unknown"
+        directory = self._versions_dir / preset_id
+        directory.mkdir(parents=True, exist_ok=True)
+
+        try:
+            serialized_config = json.loads(json.dumps(config, default=str))
+        except TypeError:
+            serialized_config = json.loads(json.dumps(self._validate_payload(config)))
+        exchange_section = serialized_config.get("exchange", {})
+        if isinstance(exchange_section, dict):
+            serialized_config["exchange"] = self._encrypt_section("exchange", exchange_section)
+
+        metadata = {
+            "preset_id": preset_id,
+            "marketplace_version": marketplace_version,
+            "applied_at": timestamp.isoformat(),
+            "actor": actor_name,
+            "note": note,
+            "source": source,
+            "config": serialized_config,
+        }
+
+        file_path = directory / f"{version_id}.json"
+        with file_path.open("w", encoding="utf-8") as fh:
+            json.dump(metadata, fh, indent=2, ensure_ascii=False)
+
+        self._append_audit_entry(
+            timestamp=timestamp,
+            preset_id=preset_id,
+            actor=actor_name,
+            marketplace_version=marketplace_version,
+            source=source,
+            note=note,
+        )
+        return version_id
+
+    def _append_audit_entry(
+        self,
+        *,
+        timestamp: datetime,
+        preset_id: str,
+        actor: str,
+        marketplace_version: Optional[str],
+        source: str,
+        note: Optional[str],
+    ) -> None:
+        self._versions_dir.mkdir(parents=True, exist_ok=True)
+        audit_path = self._versions_dir / "audit.log"
+        line = (
+            f"{timestamp.isoformat()}|{actor}|{preset_id}|"
+            f"{marketplace_version or '-'}|{source}|{note or ''}\n"
+        )
+        with audit_path.open("a", encoding="utf-8") as fh:
+            fh.write(line)
+
+    def _ensure_live_mode_requirements(
+        self, config: Dict[str, Any], *, user_confirmed: bool
+    ) -> None:
+        strategy_section = config.get("strategy", {})
+        if not isinstance(strategy_section, dict):
+            return
+        mode = str(strategy_section.get("mode", "demo")).strip().lower()
+        if mode != "live":
+            return
+        missing = [
+            flag
+            for flag in _COMPLIANCE_FLAGS
+            if not bool(strategy_section.get(flag))
+        ]
+        if missing:
+            raise ValidationError(
+                "Tryb LIVE wymaga potwierdzonych flag zgodności: "
+                + ", ".join(missing)
+            )
+        if not user_confirmed:
+            raise ValidationError(
+                "Aktywacja trybu LIVE wymaga potwierdzenia użytkownika (ustaw opcję confirm)."
+            )
+
     def _validate_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         ai = AIConfig(**payload.get("ai", {})).validate()
         db = DBConfig(**payload.get("db", {})).validate()
@@ -449,7 +543,14 @@ class ConfigManager:
     def get_marketplace_preset(self, preset_id: str) -> StrategyPreset:
         return load_preset(preset_id, base_path=self._marketplace_dir)
 
-    def apply_marketplace_preset(self, preset_id: str) -> Dict[str, Any]:
+    def apply_marketplace_preset(
+        self,
+        preset_id: str,
+        *,
+        actor: str | None = None,
+        user_confirmed: bool = False,
+        note: Optional[str] = None,
+    ) -> Dict[str, Any]:
         preset = self.get_marketplace_preset(preset_id)
         merged = dict(self._current_config)
         for section, payload in preset.config.items():
@@ -458,16 +559,101 @@ class ConfigManager:
             existing = dict(merged.get(section, {}))
             existing.update(payload)
             merged[section] = existing
-        self._current_config = self._validate_payload(merged)
+        sanitized = self._validate_payload(merged)
+        self._ensure_live_mode_requirements(sanitized, user_confirmed=user_confirmed)
+        self._current_config = sanitized
+        self._record_snapshot(
+            preset_id=preset.preset_id,
+            marketplace_version=preset.version,
+            config=sanitized,
+            actor=actor,
+            note=note,
+            source="marketplace",
+        )
         return self._current_config
 
-    async def save_config(self, config: Dict[str, Any]) -> None:
+    def get_preset_history(self, preset_id: str) -> List[Dict[str, Any]]:
+        directory = self._versions_dir / preset_id
+        if not directory.exists():
+            return []
+        history: List[Dict[str, Any]] = []
+        for file in sorted(directory.glob("*.json")):
+            try:
+                with file.open("r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+            except (OSError, json.JSONDecodeError):
+                continue
+            history.append(
+                {
+                    "version_id": file.stem,
+                    "preset_id": preset_id,
+                    "marketplace_version": data.get("marketplace_version"),
+                    "applied_at": data.get("applied_at"),
+                    "actor": data.get("actor"),
+                    "note": data.get("note"),
+                    "source": data.get("source"),
+                }
+            )
+        return history
+
+    def rollback_preset(
+        self,
+        preset_id: str,
+        version_id: str,
+        *,
+        actor: str | None = None,
+        user_confirmed: bool = False,
+        note: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        directory = self._versions_dir / preset_id
+        file_path = directory / f"{version_id}.json"
+        if not file_path.exists():
+            raise ConfigError(
+                f"Brak wersji '{version_id}' dla presetu '{preset_id}'"
+            )
+        with file_path.open("r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        payload = data.get("config", {})
+        if isinstance(payload, dict):
+            exchange_section = payload.get("exchange", {})
+            payload["exchange"] = self._decrypt_section("exchange", exchange_section)
+        sanitized = self._validate_payload(payload)
+        self._ensure_live_mode_requirements(sanitized, user_confirmed=user_confirmed)
+        self._current_config = sanitized
+        self._record_snapshot(
+            preset_id=preset_id,
+            marketplace_version=data.get("marketplace_version"),
+            config=sanitized,
+            actor=actor,
+            note=note or f"rollback to {version_id}",
+            source="rollback",
+        )
+        return self._current_config
+
+    async def save_config(
+        self,
+        config: Dict[str, Any],
+        *,
+        actor: Optional[str] = None,
+        preset_id: Optional[str] = None,
+        note: Optional[str] = None,
+        source: str = "manual",
+    ) -> None:
         sanitized = self._validate_payload(config)
         to_disk = dict(sanitized)
         to_disk["exchange"] = self._encrypt_section("exchange", to_disk["exchange"])
         with self.config_path.open("w", encoding="utf-8") as fh:
             yaml.safe_dump(to_disk, fh, sort_keys=True)
         self._current_config = sanitized
+        if preset_id:
+            self._record_snapshot(
+                preset_id=preset_id,
+                marketplace_version=None,
+                config=sanitized,
+                actor=actor,
+                note=note,
+                source=source,
+            )
 
     async def load_config(
         self,

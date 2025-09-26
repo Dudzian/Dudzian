@@ -1,6 +1,8 @@
 """Wbudowany preset dziennego trend following dla kont demo."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from KryptoLowca.strategies.marketplace import StrategyPreset
 
 DAILY_TREND_PRESET = StrategyPreset(
@@ -42,6 +44,16 @@ DAILY_TREND_PRESET = StrategyPreset(
             "rate_limit_per_minute": 1200,
             "rate_limit_alert_threshold": 0.75,
         },
+    },
+    version="1.1.0",
+    last_updated=datetime(2024, 3, 1, 12, 0, tzinfo=timezone.utc),
+    compatibility={"app": ">=2.8.0", "schema": "1.0"},
+    compliance={
+        "required_flags": [
+            "compliance_confirmed",
+            "acknowledged_risk_disclaimer",
+        ],
+        "allow_live": False,
     },
 )
 

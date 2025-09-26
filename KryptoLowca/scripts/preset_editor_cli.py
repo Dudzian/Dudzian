@@ -1,0 +1,133 @@
+"""Prosty edytor CLI presetów marketplace.
+
+Pozwala zastosować preset, wprowadzić modyfikacje i zapisać konfigurację
+z wykorzystaniem szyfrowania sekcji API. Moduł stanowi stub możliwy do
+rozszerzenia o GUI w przyszłości.
+"""
+from __future__ import annotations
+
+import argparse
+import asyncio
+from pathlib import Path
+from typing import Dict, Iterable, Tuple
+
+import yaml
+from KryptoLowca.config_manager import ConfigManager, ConfigError, ValidationError
+
+
+def _load_key(args: argparse.Namespace) -> bytes:
+    if args.encryption_key and args.encryption_key_file:
+        raise SystemExit("Podaj klucz w formie tekstu lub pliku, nie obu jednocześnie.")
+    if args.encryption_key:
+        return args.encryption_key.encode()
+    if args.encryption_key_file:
+        path = Path(args.encryption_key_file)
+        try:
+            return path.read_text(encoding="utf-8").strip().encode()
+        except OSError as exc:  # pragma: no cover - informacja o błędzie IO
+            raise SystemExit(f"Nie można odczytać pliku z kluczem: {exc}")
+    raise SystemExit("Wymagany jest klucz szyfrujący (podaj --encryption-key lub --encryption-key-file).")
+
+
+def _parse_overrides(items: Iterable[str]) -> Dict[str, Dict[str, object]]:
+    overrides: Dict[str, Dict[str, object]] = {}
+    for item in items:
+        if "=" not in item:
+            raise SystemExit(f"Nieprawidłowy format nadpisania: '{item}'. Użyj section.key=value.")
+        path, raw_value = item.split("=", 1)
+        if "." not in path:
+            raise SystemExit(f"Nieprawidłowy format ścieżki: '{path}'. Użyj section.key.")
+        section, key = path.split(".", 1)
+        try:
+            value = yaml.safe_load(raw_value)
+        except yaml.YAMLError:
+            value = raw_value
+        section = section.strip()
+        key = key.strip()
+        overrides.setdefault(section, {})[key] = value
+    return overrides
+
+
+def _summarise_overrides(overrides: Dict[str, Dict[str, object]]) -> str:
+    flattened: Iterable[Tuple[str, str, object]] = (
+        (section, key, value)
+        for section, values in overrides.items()
+        for key, value in values.items()
+    )
+    return ", ".join(f"{section}.{key}={value}" for section, key, value in flattened)
+
+
+async def _run_async(args: argparse.Namespace) -> int:
+    key = _load_key(args)
+    manager = ConfigManager(Path(args.config_path), encryption_key=key)
+    if args.marketplace_dir:
+        manager.set_marketplace_directory(Path(args.marketplace_dir))
+
+    await manager.load_config()
+    try:
+        config = manager.apply_marketplace_preset(
+            args.preset_id,
+            actor=args.actor,
+            user_confirmed=args.confirm_live,
+            note=args.note,
+        )
+    except (ConfigError, ValidationError) as exc:
+        print(f"Błąd zastosowania presetu: {exc}")
+        return 1
+
+    overrides = _parse_overrides(args.set or [])
+    for section, values in overrides.items():
+        section_payload = config.get(section)
+        if not isinstance(section_payload, dict):
+            section_payload = {}
+            config[section] = section_payload
+        section_payload.update(values)
+
+    override_note = _summarise_overrides(overrides) if overrides else None
+    combined_note = args.note
+    if override_note:
+        combined_note = f"{args.note}; overrides: {override_note}" if args.note else f"overrides: {override_note}"
+
+    await manager.save_config(
+        config,
+        actor=args.actor,
+        preset_id=args.preset_id,
+        note=combined_note,
+        source="editor",
+    )
+
+    print(
+        "Zapisano preset '{preset}' (wersja: {version}) do pliku {path}".format(
+            preset=args.preset_id,
+            version=config.get("strategy", {}).get("preset", "custom"),
+            path=manager.config_path,
+        )
+    )
+    return 0
+
+
+def main(argv: Iterable[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Edytor presetów marketplace (CLI)")
+    parser.add_argument("--config-path", required=True, help="Ścieżka do pliku konfiguracji YAML")
+    parser.add_argument("--preset-id", required=True, help="Identyfikator presetu z marketplace")
+    parser.add_argument("--marketplace-dir", help="Katalog z plikami presetów marketplace (opcjonalnie)")
+    parser.add_argument("--encryption-key", help="Klucz Fernet w formacie base64")
+    parser.add_argument("--encryption-key-file", help="Plik zawierający klucz Fernet")
+    parser.add_argument("--set", action="append", help="Nadpisania sekcji, np. trade.max_open_positions=3")
+    parser.add_argument("--actor", required=True, help="Adres e-mail lub identyfikator użytkownika wykonującego zmianę")
+    parser.add_argument("--note", help="Dodatkowa notatka do zapisu audytowego")
+    parser.add_argument(
+        "--confirm-live",
+        action="store_true",
+        help="Potwierdza świadomą aktywację trybu LIVE (jeśli preset go wymaga)",
+    )
+
+    args = parser.parse_args(list(argv) if argv is not None else None)
+    try:
+        return asyncio.run(_run_async(args))
+    except KeyboardInterrupt:  # pragma: no cover - obsługa przerwania
+        return 130
+
+
+if __name__ == "__main__":  # pragma: no cover - wejście CLI
+    raise SystemExit(main())
