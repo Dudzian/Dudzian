@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, asdict, fields
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -172,6 +172,9 @@ class StrategyConfig:
     default_tp: float = 0.04
     violation_cooldown_s: int = 300
     reduce_only_after_violation: bool = True
+    compliance_confirmed: bool = False
+    api_keys_configured: bool = False
+    acknowledged_risk_disclaimer: bool = False
 
     def validate(self) -> "StrategyConfig":
         mode = (self.mode or "demo").strip().lower()
@@ -191,6 +194,25 @@ class StrategyConfig:
             raise ValidationError("violation_cooldown_s musi być dodatnie")
         self.reduce_only_after_violation = bool(self.reduce_only_after_violation)
         self.preset = (self.preset or "").strip().upper() or "CUSTOM"
+
+        for field_name in (
+            "compliance_confirmed",
+            "api_keys_configured",
+            "acknowledged_risk_disclaimer",
+        ):
+            value = getattr(self, field_name, None)
+            if value is None:
+                normalized = False
+            elif isinstance(value, bool):
+                normalized = value
+            elif isinstance(value, (int, float)) and value in (0, 1):
+                normalized = bool(value)
+            else:
+                raise ValidationError(
+                    f"{field_name} musi być wartością boolowską (domyślnie False)"
+                )
+            setattr(self, field_name, normalized)
+
         return self
 
     @classmethod
@@ -225,6 +247,14 @@ class StrategyConfig:
         presets = cls.presets()
         preset = presets.get((name or "").strip().upper())
         return (preset or cls(preset="CUSTOM")).validate()
+
+
+_STRATEGY_FIELD_NAMES = {f.name for f in fields(StrategyConfig)}
+_COMPLIANCE_FLAGS = (
+    "compliance_confirmed",
+    "api_keys_configured",
+    "acknowledged_risk_disclaimer",
+)
 
 
 class _InMemoryDB:
@@ -278,12 +308,16 @@ class ConfigManager:
 
     # -------------------------- obsługa konfiguracji --------------------------
     def _default_config(self) -> Dict[str, Any]:
+        strategy_cfg = StrategyConfig.presets()["SAFE"].validate()
+        strategy_section = asdict(strategy_cfg)
+        for flag in _COMPLIANCE_FLAGS:
+            strategy_section.setdefault(flag, False)
         return {
             "ai": asdict(AIConfig().validate()),
             "db": asdict(DBConfig().validate()),
             "trade": asdict(TradeConfig().validate()),
             "exchange": asdict(ExchangeConfig().validate()),
-            "strategy": asdict(StrategyConfig.presets()["SAFE"].validate()),
+            "strategy": strategy_section,
         }
 
     def _encrypt_section(self, data: Dict[str, Any]) -> Dict[str, Any]:
@@ -318,14 +352,28 @@ class ConfigManager:
         strategy_payload = payload.get("strategy", {})
         if isinstance(strategy_payload, str):
             strategy = StrategyConfig.from_preset(strategy_payload)
+        elif isinstance(strategy_payload, dict):
+            default_strategy = StrategyConfig().validate()
+            merged_strategy = asdict(default_strategy)
+            filtered_payload = {
+                key: strategy_payload[key]
+                for key in strategy_payload
+                if key in _STRATEGY_FIELD_NAMES
+            }
+            merged_strategy.update(filtered_payload)
+            strategy = StrategyConfig(**merged_strategy).validate()
         else:
-            strategy = StrategyConfig(**strategy_payload).validate()
+            strategy = StrategyConfig().validate()
+
+        strategy_section = asdict(strategy)
+        for flag in _COMPLIANCE_FLAGS:
+            strategy_section[flag] = bool(strategy_section.get(flag, False))
         return {
             "ai": asdict(ai),
             "db": asdict(db),
             "trade": asdict(trade),
             "exchange": asdict(exchange),
-            "strategy": asdict(strategy),
+            "strategy": strategy_section,
         }
 
     async def save_config(self, config: Dict[str, Any]) -> None:
