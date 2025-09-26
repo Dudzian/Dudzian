@@ -278,7 +278,12 @@ class StrategyConfig:
             from KryptoLowca.strategies.presets import load_builtin_presets
 
             for preset in load_builtin_presets():
-                strategy_section = dict(preset.config.get("strategy", {}))
+                raw_section = preset.config.get("strategy", {})
+                strategy_section: Dict[str, Any]
+                if isinstance(raw_section, dict):
+                    strategy_section = dict(raw_section)
+                else:
+                    strategy_section = {}
                 if not strategy_section:
                     continue
                 name = preset.preset_id.upper()
