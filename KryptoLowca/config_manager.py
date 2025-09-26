@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -18,6 +18,7 @@ __all__ = [
     "DBConfig",
     "TradeConfig",
     "ExchangeConfig",
+    "StrategyConfig",
 ]
 
 
@@ -158,6 +159,74 @@ class ExchangeConfig:
         return self
 
 
+@dataclass(slots=True)
+class StrategyConfig:
+    """Parametry strategii oraz sztywne limity ryzyka dla auto-tradingu."""
+
+    preset: str = "SAFE"
+    mode: str = "demo"
+    max_leverage: float = 1.0
+    max_position_notional_pct: float = 0.02  # 2% kapitału na pojedynczą pozycję
+    trade_risk_pct: float = 0.01
+    default_sl: float = 0.02
+    default_tp: float = 0.04
+    violation_cooldown_s: int = 300
+    reduce_only_after_violation: bool = True
+
+    def validate(self) -> "StrategyConfig":
+        mode = (self.mode or "demo").strip().lower()
+        if mode not in {"demo", "live"}:
+            raise ValidationError("mode musi mieć wartość 'demo' lub 'live'")
+        self.mode = mode
+
+        if self.max_leverage <= 0:
+            raise ValidationError("max_leverage musi być dodatnie")
+        if not (0.0 < self.max_position_notional_pct <= 1.0):
+            raise ValidationError("max_position_notional_pct musi być w zakresie (0, 1]")
+        if not (0.0 < self.trade_risk_pct <= 1.0):
+            raise ValidationError("trade_risk_pct musi być w zakresie (0, 1]")
+        if self.default_sl < 0 or self.default_tp < 0:
+            raise ValidationError("default_sl i default_tp muszą być nieujemne")
+        if self.violation_cooldown_s <= 0:
+            raise ValidationError("violation_cooldown_s musi być dodatnie")
+        self.reduce_only_after_violation = bool(self.reduce_only_after_violation)
+        self.preset = (self.preset or "").strip().upper() or "CUSTOM"
+        return self
+
+    @classmethod
+    def presets(cls) -> Dict[str, "StrategyConfig"]:
+        return {
+            "SAFE": cls(
+                preset="SAFE",
+                mode="demo",
+                max_leverage=1.0,
+                max_position_notional_pct=0.02,
+                trade_risk_pct=0.01,
+                default_sl=0.02,
+                default_tp=0.04,
+                violation_cooldown_s=300,
+                reduce_only_after_violation=True,
+            ),
+            "BALANCED": cls(
+                preset="BALANCED",
+                mode="demo",
+                max_leverage=2.0,
+                max_position_notional_pct=0.05,
+                trade_risk_pct=0.02,
+                default_sl=0.03,
+                default_tp=0.06,
+                violation_cooldown_s=240,
+                reduce_only_after_violation=True,
+            ),
+        }
+
+    @classmethod
+    def from_preset(cls, name: str) -> "StrategyConfig":
+        presets = cls.presets()
+        preset = presets.get((name or "").strip().upper())
+        return (preset or cls(preset="CUSTOM")).validate()
+
+
 class _InMemoryDB:
     def __init__(self) -> None:
         self._users: Dict[str, int] = {}
@@ -210,10 +279,11 @@ class ConfigManager:
     # -------------------------- obsługa konfiguracji --------------------------
     def _default_config(self) -> Dict[str, Any]:
         return {
-            "ai": AIConfig().validate().__dict__.copy(),
-            "db": DBConfig().validate().__dict__.copy(),
-            "trade": TradeConfig().validate().__dict__.copy(),
-            "exchange": ExchangeConfig().validate().__dict__.copy(),
+            "ai": asdict(AIConfig().validate()),
+            "db": asdict(DBConfig().validate()),
+            "trade": asdict(TradeConfig().validate()),
+            "exchange": asdict(ExchangeConfig().validate()),
+            "strategy": asdict(StrategyConfig.presets()["SAFE"].validate()),
         }
 
     def _encrypt_section(self, data: Dict[str, Any]) -> Dict[str, Any]:
@@ -245,11 +315,17 @@ class ConfigManager:
         db = DBConfig(**payload.get("db", {})).validate()
         trade = TradeConfig(**payload.get("trade", {})).validate()
         exchange = ExchangeConfig(**payload.get("exchange", {})).validate()
+        strategy_payload = payload.get("strategy", {})
+        if isinstance(strategy_payload, str):
+            strategy = StrategyConfig.from_preset(strategy_payload)
+        else:
+            strategy = StrategyConfig(**strategy_payload).validate()
         return {
-            "ai": ai.__dict__,
-            "db": db.__dict__,
-            "trade": trade.__dict__,
-            "exchange": exchange.__dict__,
+            "ai": asdict(ai),
+            "db": asdict(db),
+            "trade": asdict(trade),
+            "exchange": asdict(exchange),
+            "strategy": asdict(strategy),
         }
 
     async def save_config(self, config: Dict[str, Any]) -> None:
@@ -295,3 +371,12 @@ class ConfigManager:
 
     def load_exchange_config(self) -> ExchangeConfig:
         return ExchangeConfig(**self._current_config.get("exchange", {})).validate()
+
+    def load_strategy_config(self) -> StrategyConfig:
+        strategy = self._current_config.get("strategy", {})
+        if isinstance(strategy, dict):
+            return StrategyConfig(**strategy).validate()
+        return StrategyConfig.from_preset(str(strategy))
+
+    def list_strategy_presets(self) -> Dict[str, Dict[str, Any]]:
+        return {name: asdict(cfg.validate()) for name, cfg in StrategyConfig.presets().items()}
