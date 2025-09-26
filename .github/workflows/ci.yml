@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "master", "develop"]
+  pull_request:
+
+jobs:
+  lint-and-test:
+    name: Lint and Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r KryptoLowca/requirements.txt
+          pip install pytest ruff mypy
+
+      - name: Ruff lint
+        run: >-
+          ruff check
+          KryptoLowca/core/services
+          KryptoLowca/strategies/base
+          KryptoLowca/config_manager.py
+          KryptoLowca/strategies/marketplace.py
+
+      - name: Mypy type check
+        run: mypy
+
+      - name: Pytest
+        run: pytest KryptoLowca/tests/strategies/test_registry.py
