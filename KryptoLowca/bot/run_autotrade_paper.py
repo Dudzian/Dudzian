@@ -2,27 +2,26 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from pathlib import Path
-import sys
 import logging
 import signal
+import sys
 import threading
 import time
+from pathlib import Path
 
-
-def _ensure_repo_root() -> None:
-    current_dir = Path(__file__).resolve().parent
-    for candidate in (current_dir, *current_dir.parents):
-        package_init = candidate / "KryptoLowca" / "__init__.py"
-        if package_init.exists():
-            candidate_str = str(candidate)
-            if candidate_str not in sys.path:
-                sys.path.insert(0, candidate_str)
+# — wyszukiwanie katalogu projektu, aby importy KryptoLowca działały przy uruchamianiu jako skrypt —
+if __package__ in {None, ""}:
+    _current_file = Path(__file__).resolve()
+    for _parent in _current_file.parents:
+        candidate = _parent / "KryptoLowca" / "__init__.py"
+        if candidate.exists():
+            sys.path.insert(0, str(_parent))
             break
-
-
-if __package__ in (None, ""):
-    _ensure_repo_root()
+    else:  # pragma: no cover
+        raise ModuleNotFoundError(
+            "Nie można zlokalizować pakietu 'KryptoLowca'. Uruchom skrypt z katalogu projektu lub "
+            "zainstaluj pakiet w środowisku (pip install -e .)."
+        )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 log = logging.getLogger("runner")
@@ -63,7 +62,8 @@ def _start_gui_in_main_thread(adapter: EmitterAdapter, enable_gui: bool = True):
     try:
         import tkinter as tk  # noqa
         try:
-            import KryptoLowca.trading_gui
+            # poprawiony import tak, aby moduł był dostępny jako 'trading_gui'
+            from KryptoLowca import trading_gui as trading_gui  # noqa: F401
         except Exception as e:
             log.info("GUI: nie udało się załadować trading_gui (%s). Uruchamiam bez GUI.", e)
             return

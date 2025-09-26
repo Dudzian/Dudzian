@@ -11,6 +11,7 @@ import time
 
 
 def _ensure_repo_root() -> None:
+    """Dopisuje katalog repo do sys.path tak, by import 'KryptoLowca' działał przy uruchamianiu skryptu bez instalacji."""
     current_dir = Path(__file__).resolve().parent
     for candidate in (current_dir, *current_dir.parents):
         package_init = candidate / "KryptoLowca" / "__init__.py"
@@ -56,14 +57,14 @@ from KryptoLowca.services.walkforward_service import (
 SYMBOL = "BTCUSDT"
 
 
-def _start_gui_in_main_thread(adapter: EmitterAdapter, enable_gui: bool = True):
+def _start_gui_in_main_thread(adapter: EmitterAdapter, enable_gui: bool = True) -> None:
     if not enable_gui:
         log.info("GUI disabled by flag.")
         return
     try:
-        import tkinter as tk  # noqa
+        import tkinter as tk  # noqa: F401
         try:
-            import KryptoLowca.trading_gui
+            import KryptoLowca.trading_gui as trading_gui
         except Exception as e:
             log.info("GUI: nie udało się załadować trading_gui (%s). Uruchamiam bez GUI.", e)
             return

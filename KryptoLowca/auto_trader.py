@@ -5,6 +5,7 @@ from __future__ import annotations
 import threading
 import time
 import statistics
+import asyncio
 from typing import Optional, List, Dict, Any, Callable, Tuple, TYPE_CHECKING
 import inspect
 from dataclasses import dataclass, field
@@ -59,6 +60,7 @@ class RiskDecision:
         if self.take_profit_pct is not None:
             payload["take_profit_pct"] = float(self.take_profit_pct)
         return payload
+
 
 class AutoTrader:
     """
@@ -757,26 +759,31 @@ class AutoTrader:
                 mode=strategy_cfg.mode,
             )
 
+        compliance_state = {
+            "compliance_confirmed": bool(strategy_cfg.compliance_confirmed),
+            "api_keys_configured": bool(strategy_cfg.api_keys_configured),
+            "acknowledged_risk_disclaimer": bool(
+                strategy_cfg.acknowledged_risk_disclaimer
+            ),
+        }
         if strategy_cfg.mode == "live":
-            missing_flags: List[str] = []
-            if not strategy_cfg.api_keys_configured:
-                missing_flags.append("api_keys_configured")
-            if not strategy_cfg.compliance_confirmed:
-                missing_flags.append("compliance_confirmed")
-            if not strategy_cfg.acknowledged_risk_disclaimer:
-                missing_flags.append("acknowledged_risk_disclaimer")
-            if missing_flags:
-                details = {
-                    "missing": missing_flags,
-                    "configured_mode": strategy_cfg.mode,
-                    "env_mode": env_mode,
-                }
+            missing_checks = [name for name, ok in compliance_state.items() if not ok]
+            if missing_checks:
+                summary = ", ".join(missing_checks)
+                log_message = (
+                    "Live trading blocked: missing compliance confirmations -> "
+                    f"{summary}"
+                )
+                self.emitter.log(log_message, level="WARNING", component="AutoTrader")
                 return RiskDecision(
                     should_trade=False,
                     fraction=0.0,
                     state="lock",
-                    reason="compliance_requirements_not_met",
-                    details=details,
+                    reason="live_compliance_missing",
+                    details={
+                        "missing_checks": missing_checks,
+                        "compliance_state": compliance_state,
+                    },
                     stop_loss_pct=strategy_cfg.default_sl,
                     take_profit_pct=strategy_cfg.default_tp,
                     mode=strategy_cfg.mode,
@@ -797,6 +804,9 @@ class AutoTrader:
         except Exception:
             logger.debug("Nie udało się ustawić metryki open_positions", exc_info=True)
 
+        stop_loss_pct = strategy_cfg.default_sl
+        take_profit_pct = strategy_cfg.default_tp
+
         market_payload: Any
         if isinstance(market_df, pd.DataFrame):
             market_payload = market_df
@@ -805,20 +815,63 @@ class AutoTrader:
 
         if risk_mgr is not None and hasattr(risk_mgr, "calculate_position_size"):
             try:
-                fraction, risk_engine_details = self._call_risk_manager(
+                prepared_kwargs, request_details = self._prepare_risk_kwargs(
                     risk_mgr,
-                    symbol,
-                    signal_payload,
-                    market_payload,
-                    portfolio_ctx,
+                    symbol=symbol,
+                    signal_payload=signal_payload,
+                    market_payload=market_payload,
+                    portfolio_ctx=portfolio_ctx,
+                    price=price,
                 )
+                result: Any = None
+                if prepared_kwargs is not None:
+                    try:
+                        result = risk_mgr.calculate_position_size(**prepared_kwargs)
+                    except TypeError as exc:
+                        logger.warning(
+                            "Risk manager %s signature call failed (%s); falling back to legacy invocation",
+                            type(risk_mgr).__name__,
+                            exc,
+                        )
+                        result = None
+                if result is None:
+                    legacy_args = [symbol, signal_payload, market_payload, portfolio_ctx]
+                    if request_details:
+                        legacy_args.append(True)
+                    try:
+                        result = risk_mgr.calculate_position_size(*legacy_args)
+                    except TypeError as exc:
+                        if request_details:
+                            logger.warning(
+                                "Risk manager %s rejected return_details flag (%s); retrying without details",
+                                type(risk_mgr).__name__,
+                                exc,
+                            )
+                            result = risk_mgr.calculate_position_size(
+                                symbol,
+                                signal_payload,
+                                market_payload,
+                                portfolio_ctx,
+                            )
+                            request_details = False
+                        else:
+                            raise
+                fraction_val, details_val, sl_override, tp_override = self._normalize_risk_result(result)
+                if fraction_val is not None:
+                    fraction = fraction_val
+                if details_val:
+                    details = details_val
+                if sl_override is not None:
+                    stop_loss_pct = sl_override
+                if tp_override is not None:
+                    take_profit_pct = tp_override
             except Exception as exc:
                 self.emitter.log(
                     f"Risk sizing error: {exc!r}", level="ERROR", component="AutoTrader"
                 )
                 logger.exception("Risk manager calculate_position_size failed")
                 fraction = 0.0
-                details = {"risk_manager_error": str(exc)}
+                details = {"error": str(exc)}
         else:
             details["risk_mgr"] = "missing"
 
@@ -828,8 +881,25 @@ class AutoTrader:
             fraction = 0.0
         fraction = max(0.0, min(1.0, fraction))
 
+        if fraction is not None and "recommended_size" not in details:
+            details["recommended_size"] = fraction
+
+        try:
+            if stop_loss_pct is not None:
+                stop_loss_pct = float(stop_loss_pct)
+        except Exception:
+            stop_loss_pct = strategy_cfg.default_sl
+
+        try:
+            if take_profit_pct is not None:
+                take_profit_pct = float(take_profit_pct)
+        except Exception:
+            take_profit_pct = strategy_cfg.default_tp
+
+        state = "ok"
         limit_events: List[Dict[str, Any]] = []
 
+        # (opcjonalnie) przepisanie szczegółów od silnika ryzyka z innego wariantu
         if risk_engine_details:
             risk_engine_details = {
                 key: (float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else value)
@@ -840,19 +910,7 @@ class AutoTrader:
             )
             details["risk_engine"] = risk_engine_details
 
-        trade_risk_limit = float(strategy_cfg.trade_risk_pct)
-        if fraction > trade_risk_limit:
-            limit_events.append(
-                {
-                    "type": "trade_risk_pct",
-                    "value": fraction,
-                    "threshold": trade_risk_limit,
-                }
-            )
-            fraction = trade_risk_limit
-
-        state = "ok"
-
+        # limit pozycyjny względem notional
         max_pct = float(strategy_cfg.max_position_notional_pct)
         if max_pct > 0.0 and fraction > max_pct:
             limit_events.append({
@@ -879,8 +937,8 @@ class AutoTrader:
                 state="lock",
                 reason="account_value_non_positive",
                 details=details,
-                stop_loss_pct=strategy_cfg.default_sl,
-                take_profit_pct=strategy_cfg.default_tp,
+                stop_loss_pct=stop_loss_pct,
+                take_profit_pct=take_profit_pct,
                 mode=strategy_cfg.mode,
             )
 
@@ -909,8 +967,8 @@ class AutoTrader:
                     "max_leverage": strategy_cfg.max_leverage,
                     "limit_events": limit_events,
                 },
-                stop_loss_pct=strategy_cfg.default_sl,
-                take_profit_pct=strategy_cfg.default_tp,
+                stop_loss_pct=stop_loss_pct,
+                take_profit_pct=take_profit_pct,
                 mode=strategy_cfg.mode,
             )
 
@@ -924,8 +982,8 @@ class AutoTrader:
                 state="lock",
                 reason="risk_fraction_zero",
                 details=details,
-                stop_loss_pct=strategy_cfg.default_sl,
-                take_profit_pct=strategy_cfg.default_tp,
+                stop_loss_pct=stop_loss_pct,
+                take_profit_pct=take_profit_pct,
                 mode=strategy_cfg.mode,
             )
 
@@ -945,8 +1003,6 @@ class AutoTrader:
             "projected_notional": projected_notional,
             "current_notional": total_notional,
             "symbol_notional": symbol_notional,
-            "strategy_trade_risk_pct": trade_risk_limit,
-            "configured_mode": strategy_cfg.mode,
         }
 
         decision = RiskDecision(
@@ -955,8 +1011,8 @@ class AutoTrader:
             state=state,
             reason="risk_ok" if state == "ok" else "risk_clamped",
             details=decision_details,
-            stop_loss_pct=strategy_cfg.default_sl,
-            take_profit_pct=strategy_cfg.default_tp,
+            stop_loss_pct=stop_loss_pct,
+            take_profit_pct=take_profit_pct,
             mode=strategy_cfg.mode,
         )
         self._apply_violation_cooldown(symbol, side_u, strategy_cfg, decision)
@@ -987,12 +1043,66 @@ class AutoTrader:
         except Exception:  # pragma: no cover - audyt nie może zatrzymać bota
             logger.exception("Failed to emit risk_guard_event")
 
-        db = self._resolve_db()
-        if db is not None and hasattr(db, "sync") and hasattr(db.sync, "log_risk_audit"):
+        db_manager = self._resolve_db()
+        if db_manager is not None:
+            limit_events: Optional[List[str]] = None
+            if isinstance(decision.details, dict):
+                candidate = decision.details.get("limit_events")
+                if isinstance(candidate, (list, tuple)):
+                    limit_events = [str(item) for item in candidate]
+            db_payload = {
+                "symbol": symbol,
+                "state": decision.state,
+                "fraction": float(decision.fraction),
+                "side": side,
+                "reason": decision.reason,
+                "price": float(price),
+                "mode": decision.mode,
+                "limit_events": limit_events,
+                "details": decision.details,
+                "stop_loss_pct": decision.stop_loss_pct,
+                "take_profit_pct": decision.take_profit_pct,
+                "should_trade": decision.should_trade,
+            }
             try:
-                db.sync.log_risk_audit(payload)
-            except Exception:
-                logger.exception("Failed to persist risk_guard_event")
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = None
+
+                if loop is not None:
+                    async_method = getattr(db_manager, "log_risk_audit", None)
+                    if callable(async_method):
+                        result = async_method(db_payload)
+                        if inspect.isawaitable(result):
+                            task = loop.create_task(result)
+
+                            def _handle_task(t: asyncio.Task[Any]) -> None:
+                                try:
+                                    t.result()
+                                except Exception:  # pragma: no cover - logowanie awarii w tle
+                                    logger.exception("Async risk audit log failed")
+
+                            task.add_done_callback(_handle_task)
+                        else:
+                            logger.debug("Async log_risk_audit returned non-awaitable result")
+                    else:
+                        logger.debug("No async log_risk_audit available on db manager")
+                else:
+                    sync = getattr(db_manager, "sync", None)
+                    log_method = None
+                    if sync is not None:
+                        log_method = getattr(sync, "log_risk_audit", None)
+                    if log_method is None:
+                        log_method = getattr(db_manager, "log_risk_audit", None)
+                    if callable(log_method):
+                        result = log_method(db_payload)
+                        if inspect.isawaitable(result):
+                            asyncio.run(result)
+                    else:
+                        logger.debug("No log_risk_audit method available on db manager")
+            except Exception:  # pragma: no cover - logowanie awarii
+                logger.exception("Failed to persist risk audit log")
 
         msg = (
             f"Risk state={decision.state} reason={decision.reason} symbol={symbol} side={side} fraction={decision.fraction:.4f}"
@@ -1021,7 +1131,203 @@ class AutoTrader:
             )
 
     @staticmethod
-    def _supports_return_details(risk_mgr: Any) -> bool:
+    def _supports_return_details(
+        risk_mgr: Any, signature: inspect.Signature | None = None
+    ) -> bool:
+        if signature is None:
+            try:
+                signature = inspect.signature(risk_mgr.calculate_position_size)  # type: ignore[attr-defined]
+            except (TypeError, ValueError, AttributeError):
+                return False
+        return "return_details" in signature.parameters
+
+    # --- wariant używany w tej wersji ---
+    @staticmethod
+    def _prepare_risk_kwargs(
+        risk_mgr: Any,
+        *,
+        symbol: str,
+        signal_payload: Dict[str, Any],
+        market_payload: Any,
+        portfolio_ctx: Dict[str, Any],
+        price: float,
+    ) -> Tuple[Optional[Dict[str, Any]], bool]:
+        try:
+            method = risk_mgr.calculate_position_size  # type: ignore[attr-defined]
+        except AttributeError:
+            return None, False
+        try:
+            signature = inspect.signature(method)
+        except (TypeError, ValueError) as exc:
+            logger.warning(
+                "Unable to inspect %s.calculate_position_size signature: %s",
+                type(risk_mgr).__name__,
+                exc,
+            )
+            return None, False
+
+        kwargs: Dict[str, Any] = {}
+        missing_required: List[str] = []
+        has_signal_param = False
+        has_portfolio_param = False
+
+        for name, param in signature.parameters.items():
+            if name == "self":
+                continue
+            if param.kind in (
+                inspect.Parameter.VAR_POSITIONAL,
+                inspect.Parameter.VAR_KEYWORD,
+            ):
+                continue
+            if name == "symbol":
+                kwargs[name] = symbol
+            elif name in {"signal", "signal_data"}:
+                kwargs[name] = signal_payload
+                has_signal_param = True
+            elif name in {"portfolio", "current_portfolio"}:
+                kwargs[name] = portfolio_ctx
+                has_portfolio_param = True
+            elif name in {"market_data", "market", "market_payload", "market_ctx", "market_context"}:
+                kwargs[name] = market_payload
+            elif name == "price":
+                kwargs[name] = price
+            elif name == "return_details":
+                kwargs[name] = True
+            elif param.default is inspect._empty:
+                missing_required.append(name)
+
+        request_details = AutoTrader._supports_return_details(risk_mgr, signature)
+
+        if missing_required:
+            logger.warning(
+                "Risk manager %s.calculate_position_size has unsupported required parameters: %s",
+                type(risk_mgr).__name__,
+                ", ".join(missing_required),
+            )
+            return None, request_details
+
+        if not has_signal_param and any(
+            alias in signature.parameters for alias in ("signal", "signal_data")
+        ):
+            logger.warning(
+                "Risk manager %s.calculate_position_size signature declares signal data but mapping failed",
+                type(risk_mgr).__name__,
+            )
+            return None, request_details
+
+        if not has_signal_param and not any(
+            alias in signature.parameters for alias in ("signal", "signal_data")
+        ):
+            logger.warning(
+                "Risk manager %s.calculate_position_size is missing signal parameter (expected 'signal' or 'signal_data')",
+                type(risk_mgr).__name__,
+            )
+            return None, request_details
+
+        if not has_portfolio_param and any(
+            alias in signature.parameters for alias in ("portfolio", "current_portfolio")
+        ):
+            logger.warning(
+                "Risk manager %s.calculate_position_size signature declares portfolio data but mapping failed",
+                type(risk_mgr).__name__,
+            )
+            return None, request_details
+
+        if not has_portfolio_param and not any(
+            alias in signature.parameters for alias in ("portfolio", "current_portfolio")
+        ):
+            logger.warning(
+                "Risk manager %s.calculate_position_size is missing portfolio parameter (expected 'portfolio' or 'current_portfolio')",
+                type(risk_mgr).__name__,
+            )
+            return None, request_details
+
+        return kwargs, request_details
+
+    @staticmethod
+    def _normalize_risk_result(
+        result: Any,
+    ) -> Tuple[Optional[float], Dict[str, Any], Optional[float], Optional[float]]:
+        fraction: Optional[float] = None
+        details: Dict[str, Any] = {}
+        stop_loss_override: Optional[float] = None
+        take_profit_override: Optional[float] = None
+
+        if hasattr(result, "recommended_size"):
+            try:
+                recommended = float(getattr(result, "recommended_size", 0.0))
+            except Exception:
+                recommended = 0.0
+            fraction = recommended
+            details = {
+                "recommended_size": recommended,
+                "max_allowed_size": float(
+                    getattr(result, "max_allowed_size", recommended) or recommended
+                ),
+                "kelly_size": float(getattr(result, "kelly_size", recommended) or recommended),
+                "risk_adjusted_size": float(
+                    getattr(result, "risk_adjusted_size", recommended) or recommended
+                ),
+            }
+            confidence = getattr(result, "confidence_level", None)
+            if confidence is not None:
+                try:
+                    details["confidence_level"] = float(confidence)
+                except Exception:
+                    details["confidence_level"] = confidence
+            reasoning = getattr(result, "reasoning", None)
+            if reasoning is not None:
+                details["reasoning"] = reasoning
+            for attr_name in ("stop_loss_pct", "stop_loss"):
+                sl_value = getattr(result, attr_name, None)
+                if sl_value is not None:
+                    try:
+                        stop_loss_override = float(sl_value)
+                        break
+                    except Exception:
+                        continue
+            for attr_name in ("take_profit_pct", "take_profit"):
+                tp_value = getattr(result, attr_name, None)
+                if tp_value is not None:
+                    try:
+                        take_profit_override = float(tp_value)
+                        break
+                    except Exception:
+                        continue
+        elif isinstance(result, tuple) and len(result) == 2:
+            fraction, details_val = result
+            if isinstance(details_val, dict):
+                details = dict(details_val)
+            else:
+                details = {"details": details_val}
+        elif isinstance(result, dict):
+            details = dict(result)
+            raw_fraction = details.get(
+                "recommended_size",
+                details.get("fraction", details.get("size")),
+            )
+            if raw_fraction is not None:
+                try:
+                    fraction = float(raw_fraction)
+                except Exception:
+                    fraction = None
+        else:
+            fraction = result if result is not None else None
+
+        try:
+            if fraction is not None:
+                fraction = float(fraction)
+        except Exception:
+            fraction = None
+
+        if fraction is not None:
+            details.setdefault("recommended_size", fraction)
+
+        return fraction, details, stop_loss_override, take_profit_override
+
+    # --- alternatywne (zachowane) API wołania risk engine z innej gałęzi ---
+    @staticmethod
+    def _supports_return_details_legacy(risk_mgr: Any) -> bool:
         try:
             sig = inspect.signature(risk_mgr.calculate_position_size)  # type: ignore[attr-defined]
         except (TypeError, ValueError, AttributeError):
@@ -1036,7 +1342,7 @@ class AutoTrader:
         market_payload: Any,
         portfolio_ctx: Dict[str, Any],
     ) -> Tuple[float, Optional[Dict[str, Any]]]:
-        supports_details = self._supports_return_details(risk_mgr)
+        supports_details = self._supports_return_details_legacy(risk_mgr)
         args = [symbol, signal_payload, market_payload, portfolio_ctx]
         kwargs: Dict[str, Any] = {"return_details": True} if supports_details else {}
 

@@ -19,22 +19,22 @@ import logging
 import time
 from dataclasses import asdict
 from datetime import datetime
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-
-def _ensure_repo_root() -> None:
-    current_dir = Path(__file__).resolve().parent
-    for candidate in (current_dir, *current_dir.parents):
-        package_init = candidate / "KryptoLowca" / "__init__.py"
-        if package_init.exists():
-            candidate_str = str(candidate)
-            if candidate_str not in sys.path:
-                sys.path.insert(0, candidate_str)
+# Repo bootstrap
+if __package__ in {None, ""}:
+    _current_file = Path(__file__).resolve()
+    for _parent in _current_file.parents:
+        candidate = _parent / "KryptoLowca" / "__init__.py"
+        if candidate.exists():
+            sys.path.insert(0, str(_parent))
+            __package__ = "KryptoLowca"
             break
-
-
-if __package__ in (None, ""):
-    _ensure_repo_root()
+    else:  # pragma: no cover - diagnostyka uruchomienia
+        raise ModuleNotFoundError(
+            "Nie można zlokalizować pakietu 'KryptoLowca'. Uruchom daemon z katalogu projektu lub"
+            " zainstaluj pakiet w środowisku (pip install -e .)."
+        )
 
 from KryptoLowca.event_emitter_adapter import Event, EventBus, EventType
 from KryptoLowca.services.walkforward_service import (
@@ -80,7 +80,7 @@ def _as_tuple(seq: Any, caster) -> Sequence[Any]:
     return (caster(seq),)
 
 
-def build_service_config(cfg_dict: Dict[str, Any]) -> tuple[WFOServiceConfig, Dict[str, Any]]:
+def build_service_config(cfg_dict: Dict[str, Any]) -> Tuple[WFOServiceConfig, Dict[str, Any]]:
     defaults = WFOServiceConfig()
     obj_defaults = ObjectiveWeights()
 
