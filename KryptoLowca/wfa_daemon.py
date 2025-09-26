@@ -1,125 +1,237 @@
 # wfa_daemon.py
 # -*- coding: utf-8 -*-
 """
-Prosty daemon WF:
-- Ładuje config JSON,
-- Buduje WalkForwardService,
-- Emisja eventów jako NDJSON (1 linia = {"event": "...", "payload": {...}}) na stdout.
-GUI może to czytać przez pipe/WebSocket bridge.
+Lekki daemon walk-forward optimization (WFO).
 
-Użycie:
-  python wfa_daemon.py --config wfa_config.json
-
-Jeśli chcesz tryb ciągły (live), ustaw w configu: "loop_forever": true.
+Aktualna wersja integruje się z odświeżonym modułem `WalkForwardService`, który
+wymaga EventBus-a, dlatego całość jest bardziej zbliżona do architektury bota
+niż poprzednia implementacja uruchamiana w izolacji.
 """
 
 from __future__ import annotations
 
-import argparse
-import json
-import sys
-import time
-from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+import sys
+import argparse
+import csv
+import json
+import logging
+import time
+from dataclasses import asdict
+from datetime import datetime
+from typing import Any, Dict, Iterable, List, Optional, Sequence
 
-# import serwisu
-from services.walkforward_service import (
+
+def _ensure_repo_root() -> None:
+    current_dir = Path(__file__).resolve().parent
+    for candidate in (current_dir, *current_dir.parents):
+        package_init = candidate / "KryptoLowca" / "__init__.py"
+        if package_init.exists():
+            candidate_str = str(candidate)
+            if candidate_str not in sys.path:
+                sys.path.insert(0, candidate_str)
+            break
+
+
+if __package__ in (None, ""):
+    _ensure_repo_root()
+
+from KryptoLowca.event_emitter_adapter import Event, EventBus, EventType
+from KryptoLowca.services.walkforward_service import (
+    ObjectiveWeights,
+    WFOServiceConfig,
     WalkForwardService,
-    WFConfig,
-    ReoptRules,
-    SubprocessCmds,
 )
 
-# ===== Emiter eventów -> stdout (NDJSON) =====
+log = logging.getLogger("KryptoLowca.wfa_daemon")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+
 
 def emit_stdout(event: str, payload: Dict[str, Any]) -> None:
     rec = {"ts": datetime.utcnow().isoformat(timespec="seconds"), "event": event, "payload": payload}
     sys.stdout.write(json.dumps(rec, ensure_ascii=False) + "\n")
     sys.stdout.flush()
 
-# ===== Opcjonalny provider OHLC =====
-# Podmień to na swój loader danych (DB, pliki, API).
-# Powinien zwrócić listę słowników: {"high": float, "low": float, "close": float} w kolejności po czasie.
-def ohlc_provider_stub(symbol: str, timeframe: str, dt_from, dt_to) -> Optional[List[Dict[str, float]]]:
-    # Brak realnego providera – zwracamy None (ATR wyłączony)
-    return None
 
-# ===== Parsowanie configu =====
+def _iter_events(events: Optional[Iterable[Event] | Event]) -> List[Event]:
+    if not events:
+        return []
+    if isinstance(events, list):
+        return events
+    return [events]
+
 
 def load_config(path: Path) -> Dict[str, Any]:
-    with open(path, "r", encoding="utf-8") as f:
-        text = f.read()
-    # prosty parser JSON (usuń //-komentarze jeśli używasz czystego JSON)
-    lines = []
+    text = path.read_text(encoding="utf-8")
+    lines: List[str] = []
     for line in text.splitlines():
-        line = line.strip()
-        if line.startswith("//"):
+        stripped = line.strip()
+        if stripped.startswith("//"):
             continue
         lines.append(line)
     return json.loads("\n".join(lines))
 
-def build_service_from_config(cfg_dict: Dict[str, Any]) -> WalkForwardService:
-    rules = cfg_dict.get("rules") or {}
-    sp = cfg_dict.get("subprocess_cmds") or {}
 
-    wf_cfg = WFConfig(
-        symbols=cfg_dict["symbols"],
-        timeframe=cfg_dict["timeframe"],
-        max_bars=int(cfg_dict.get("max_bars", 12000)),
-        wf_train_bars=int(cfg_dict.get("wf_train_bars", 6000)),
-        wf_test_bars=int(cfg_dict.get("wf_test_bars", 1500)),
-        wf_step_bars=int(cfg_dict.get("wf_step_bars", 0)) or None,
-        min_trades=int(cfg_dict.get("min_trades", 10)),
-        ema_slow=int(cfg_dict.get("ema_slow", 150)),
-        capital=float(cfg_dict.get("capital", 10000.0)),
-        risk_pct=float(cfg_dict.get("risk_pct", 0.5)),
-        grids=cfg_dict.get("grids") or {},
-        workdir=Path(cfg_dict.get("workdir", "walkforwards")),
-        rules=ReoptRules(
-            reopt_pf_below=float(rules.get("reopt_pf_below", 1.20)),
-            reopt_pf_drop_pct=float(rules.get("reopt_pf_drop_pct", 35.0)),
-            reopt_exp_below=float(rules.get("reopt_exp_below", 0.0)),
-            reopt_exp_drop_pct=float(rules.get("reopt_exp_drop_pct", 40.0)),
-            atr_lookback=int(rules.get("atr_lookback", 14)),
-            atr_rise_pct=float(rules.get("atr_rise_pct", 25.0)),
-        ),
-        poll_interval_sec=float(cfg_dict.get("poll_interval_sec", 0.5)),
-        subprocess_cmds=SubprocessCmds(
-            optimize_cmd=sp.get("optimize_cmd"),
-            run_cmd=sp.get("run_cmd"),
-        ),
-        loop_forever=bool(cfg_dict.get("loop_forever", False)),
-        loop_sleep_sec=float(cfg_dict.get("loop_sleep_sec", 30.0)),
+def _as_tuple(seq: Any, caster) -> Sequence[Any]:
+    if seq is None:
+        return ()
+    if isinstance(seq, (list, tuple, set)):
+        return tuple(caster(x) for x in seq)
+    return (caster(seq),)
+
+
+def build_service_config(cfg_dict: Dict[str, Any]) -> tuple[WFOServiceConfig, Dict[str, Any]]:
+    defaults = WFOServiceConfig()
+    obj_defaults = ObjectiveWeights()
+
+    symbol = cfg_dict.get("symbol")
+    if not symbol:
+        symbols = cfg_dict.get("symbols")
+        if isinstance(symbols, (list, tuple)) and symbols:
+            symbol = symbols[0]
+        else:
+            symbol = defaults.symbol
+
+    obj_cfg = cfg_dict.get("objective_weights") or cfg_dict.get("obj_weights") or {}
+    obj_weights = ObjectiveWeights(
+        w_pf=float(obj_cfg.get("w_pf", obj_defaults.w_pf)),
+        w_expectancy=float(obj_cfg.get("w_expectancy", obj_defaults.w_expectancy)),
+        w_sharpe=float(obj_cfg.get("w_sharpe", obj_defaults.w_sharpe)),
+        w_maxdd=float(obj_cfg.get("w_maxdd", obj_defaults.w_maxdd)),
+        pf_cap=float(obj_cfg.get("pf_cap", obj_defaults.pf_cap)),
     )
 
-    # ATR działa tylko, jeśli podasz realnego providera
-    service = WalkForwardService(cfg=wf_cfg, emit=emit_stdout, ohlc_provider=None)
-    return service
+    fast_grid = _as_tuple(
+        cfg_dict.get("fast_grid") or (cfg_dict.get("grids") or {}).get("fast") or defaults.fast_grid,
+        int,
+    )
+    slow_grid = _as_tuple(
+        cfg_dict.get("slow_grid") or (cfg_dict.get("grids") or {}).get("slow") or defaults.slow_grid,
+        int,
+    )
+    qty_grid = _as_tuple(
+        cfg_dict.get("qty_grid") or (cfg_dict.get("grids") or {}).get("qty") or defaults.qty_grid,
+        float,
+    )
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--config", required=True, help="Ścieżka do pliku konfiguracyjnego JSON/JSON5")
-    args = ap.parse_args()
+    cfg = WFOServiceConfig(
+        symbol=str(symbol),
+        cooldown_sec=float(cfg_dict.get("cooldown_sec", defaults.cooldown_sec)),
+        auto_apply=bool(cfg_dict.get("auto_apply", defaults.auto_apply)),
+        obj_weights=obj_weights,
+        min_is_bars=int(cfg_dict.get("min_is_bars", cfg_dict.get("wf_train_bars", defaults.min_is_bars))),
+        min_oos_bars=int(cfg_dict.get("min_oos_bars", cfg_dict.get("wf_test_bars", defaults.min_oos_bars))),
+        step_bars=int(cfg_dict.get("step_bars", cfg_dict.get("wf_step_bars", defaults.step_bars))),
+        price_buffer=int(cfg_dict.get("price_buffer", defaults.price_buffer)),
+        fast_grid=tuple(int(x) for x in fast_grid) or defaults.fast_grid,
+        slow_grid=tuple(int(x) for x in slow_grid) or defaults.slow_grid,
+        qty_grid=tuple(float(x) for x in qty_grid) or defaults.qty_grid,
+    )
+
+    runtime = {
+        "loop_forever": bool(cfg_dict.get("loop_forever", False)),
+        "loop_sleep_sec": float(cfg_dict.get("loop_sleep_sec", 30.0)),
+        "timeframe": cfg_dict.get("timeframe", "1h"),
+        "data": cfg_dict.get("data") or {},
+    }
+    return cfg, runtime
+
+
+def _load_ohlc_from_csv(path: Path) -> Optional[List[Dict[str, float]]]:
+    if not path.exists():
+        log.warning("Plik CSV z danymi OHLC nie istnieje: %s", path)
+        return None
+    candles: List[Dict[str, float]] = []
+    with path.open("r", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            def _get(keys: Sequence[str]) -> Optional[float]:
+                for key in keys:
+                    value = row.get(key)
+                    if value in (None, ""):
+                        continue
+                    try:
+                        return float(value)
+                    except ValueError:
+                        continue
+                return None
+
+            close = _get(["close", "c"])
+            if close is None:
+                continue
+            candle = {
+                "close": close,
+                "high": _get(["high", "h"]) or close,
+                "low": _get(["low", "l"]) or close,
+            }
+            candles.append(candle)
+    return candles or None
+
+
+def fetch_ohlc(runtime_cfg: Dict[str, Any], symbol: str, timeframe: str) -> Optional[List[Dict[str, float]]]:
+    data_cfg = runtime_cfg.get("data") or {}
+    csv_path = data_cfg.get("ohlc_csv") or data_cfg.get("csv")
+    if csv_path:
+        return _load_ohlc_from_csv(Path(csv_path))
+    # brak podłączonego providera -> odsyłamy None, żeby daemon wypisał instrukcję
+    return None
+
+
+def _forward(event_name: str):
+    def _callback(events: Optional[Iterable[Event] | Event]) -> None:
+        for evt in _iter_events(events):
+            emit_stdout(event_name, evt.payload or {})
+    return _callback
+
+
+def _pump_prices(bus: EventBus, symbol: str, candles: List[Dict[str, float]]) -> None:
+    for candle in candles:
+        price = candle.get("close")
+        if price is None:
+            continue
+        bus.publish(EventType.MARKET_TICK, {"symbol": symbol, "price": float(price)})
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="WalkForward daemon (paper mode)")
+    parser.add_argument("--config", required=True, help="Ścieżka do pliku konfiguracyjnego JSON/JSON5")
+    args = parser.parse_args()
 
     cfg_path = Path(args.config)
-    cfg = load_config(cfg_path)
-    service = build_service_from_config(cfg)
+    if not cfg_path.exists():
+        raise FileNotFoundError(f"Nie znaleziono pliku konfiguracyjnego: {cfg_path}")
 
-    service.start()
+    cfg_dict = load_config(cfg_path)
+    service_cfg, runtime_cfg = build_service_config(cfg_dict)
 
-    # Prostolinijne oczekiwanie na zakończenie.
-    # W GUI zwykle nie używasz tej pętli – serwis żyje w tle, a GUI obsługuje interakcję.
+    bus = EventBus()
+    bus.subscribe(EventType.WFO_STATUS, _forward("WFO_STATUS"))
+    bus.subscribe(EventType.AUTOTRADE_STATUS, _forward("AUTOTRADE_STATUS"))
+
+    service = WalkForwardService(bus=bus, cfg=service_cfg)
+    emit_stdout("DAEMON_STARTED", {"config": asdict(service_cfg)})
+
     try:
-        while service.is_running():
-            time.sleep(0.3)
-    except KeyboardInterrupt:
-        service.stop()
-        # daj mu ładnie się zamknąć
-        for _ in range(50):
-            if not service.is_running():
-                break
-            time.sleep(0.1)
+        while True:
+            candles = fetch_ohlc(runtime_cfg, service_cfg.symbol, runtime_cfg["timeframe"])
+            if not candles:
+                emit_stdout("NO_DATA", {
+                    "symbol": service_cfg.symbol,
+                    "hint": "Dodaj sekcję data.ohlc_csv z drogą do pliku OHLC lub podłącz realny provider.",
+                })
+            else:
+                _pump_prices(bus, service_cfg.symbol, candles)
+                bus.publish(EventType.WFO_TRIGGER, {"symbol": service_cfg.symbol, "source": "wfa_daemon"})
+                emit_stdout("WFO_TRIGGERED", {"bars": len(candles)})
 
-if __name__ == "__main__":
+            if not runtime_cfg["loop_forever"]:
+                break
+            time.sleep(max(0.1, runtime_cfg["loop_sleep_sec"]))
+    except KeyboardInterrupt:
+        emit_stdout("DAEMON_STOP", {"reason": "keyboard_interrupt"})
+    finally:
+        bus.stop()
+
+
+if __name__ == "__main__":  # pragma: no cover - manualne uruchomienie
     main()

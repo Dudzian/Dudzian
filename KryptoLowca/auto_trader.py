@@ -7,6 +7,7 @@ import time
 import statistics
 from typing import Optional, List, Dict, Any, Callable, Tuple
 import inspect
+from dataclasses import dataclass, field
 
 import pandas as pd
 try:
@@ -23,8 +24,36 @@ except Exception:
 
 from KryptoLowca.event_emitter_adapter import EventEmitter
 from KryptoLowca.logging_utils import get_logger
+from KryptoLowca.config_manager import StrategyConfig
 
 logger = get_logger(__name__)
+
+
+@dataclass(slots=True)
+class RiskDecision:
+    should_trade: bool
+    fraction: float
+    state: str
+    reason: Optional[str] = None
+    details: Dict[str, Any] = field(default_factory=dict)
+    stop_loss_pct: Optional[float] = None
+    take_profit_pct: Optional[float] = None
+    mode: str = "demo"
+
+    def to_dict(self) -> Dict[str, Any]:
+        payload = {
+            "should_trade": self.should_trade,
+            "fraction": float(self.fraction),
+            "state": self.state,
+            "reason": self.reason,
+            "details": dict(self.details),
+            "mode": self.mode,
+        }
+        if self.stop_loss_pct is not None:
+            payload["stop_loss_pct"] = float(self.stop_loss_pct)
+        if self.take_profit_pct is not None:
+            payload["take_profit_pct"] = float(self.take_profit_pct)
+        return payload
 
 class AutoTrader:
     """
@@ -79,6 +108,12 @@ class AutoTrader:
         self._stop = threading.Event()
         self._threads: List[threading.Thread] = []
         self._lock = threading.RLock()
+        self._strategy_config: StrategyConfig = StrategyConfig.presets()["SAFE"].validate()
+        self._strategy_override = False
+        self._strategy_config_error_notified = False
+        self._reduce_only_until: Dict[str, float] = {}
+        self._risk_lock_until: float = 0.0
+        self._last_risk_audit: Optional[Dict[str, Any]] = None
 
         # Subscribe to events
         emitter.on("trade_closed", self._on_trade_closed, tag="autotrader")
@@ -123,6 +158,9 @@ class AutoTrader:
         """Runtime reconfiguration from the ControlPanel."""
         with self._lock:
             for key, val in kwargs.items():
+                if key == "strategy":
+                    self._update_strategy_config(val)
+                    continue
                 if not hasattr(self, key):
                     continue
                 setattr(self, key, val)
@@ -396,7 +434,18 @@ class AutoTrader:
                     self._stop.wait(self.auto_trade_interval_s)
                     continue
 
+                signal_payload = self._build_signal_payload(symbol, side, last_pred)
+                decision = self._evaluate_risk(symbol, side, float(last_price), signal_payload, df)
+                self._emit_risk_audit(symbol, side, decision, float(last_price))
+                if not decision.should_trade:
+                    self._stop.wait(self.auto_trade_interval_s)
+                    continue
+
                 if hasattr(self.gui, "_bridge_execute_trade"):
+                    try:
+                        setattr(self.gui, "_autotrade_risk_context", decision.to_dict())
+                    except Exception:
+                        pass
                     self.gui._bridge_execute_trade(symbol, side.lower(), float(last_price))
                     self.emitter.emit("auto_trade_tick", symbol=symbol, ts=time.time())
                     self.emitter.log(f"Auto-trade executed: {symbol} {side}", component="AutoTrader")
@@ -549,3 +598,405 @@ class AutoTrader:
             return float(series.iloc[-1])
         except Exception:
             return None
+
+    # --- Strategy & risk helpers -------------------------------------------------
+    def _update_strategy_config(self, value: Any) -> None:
+        try:
+            if isinstance(value, StrategyConfig):
+                cfg = value.validate()
+            elif isinstance(value, str):
+                cfg = StrategyConfig.from_preset(value)
+            elif isinstance(value, dict):
+                cfg = StrategyConfig(**value).validate()
+            else:
+                raise TypeError("Nieobsługiwany format konfiguracji strategii")
+        except Exception as exc:  # pragma: no cover - logujemy i utrzymujemy stare ustawienia
+            self.emitter.log(
+                f"Nieprawidłowa konfiguracja strategii: {exc!r}",
+                level="ERROR",
+                component="AutoTrader",
+            )
+            logger.exception("Strategy config update failed")
+            return
+        with self._lock:
+            self._strategy_config = cfg
+            self._strategy_override = True
+        self.emitter.log(
+            f"Strategia zaktualizowana: {cfg.preset} mode={cfg.mode} max_notional={cfg.max_position_notional_pct}",
+            level="INFO",
+            component="AutoTrader",
+        )
+
+    def _get_strategy_config(self) -> StrategyConfig:
+        cfg = self._strategy_config
+        if self._strategy_override:
+            return cfg
+        cfg_manager = getattr(self.gui, "cfg", None)
+        loader = getattr(cfg_manager, "load_strategy_config", None) if cfg_manager else None
+        if callable(loader):
+            try:
+                loaded = loader()
+                if isinstance(loaded, StrategyConfig):
+                    cfg = loaded.validate()
+                elif isinstance(loaded, dict):
+                    cfg = StrategyConfig(**loaded).validate()
+                self._strategy_config_error_notified = False
+            except Exception as exc:  # pragma: no cover - unikamy zalewania logów
+                if not self._strategy_config_error_notified:
+                    self.emitter.log(
+                        f"Nie udało się wczytać konfiguracji strategii: {exc!r}",
+                        level="WARNING",
+                        component="AutoTrader",
+                    )
+                    logger.warning("Failed to refresh strategy config", exc_info=True)
+                    self._strategy_config_error_notified = True
+        self._strategy_config = cfg
+        return cfg
+
+    @staticmethod
+    def _build_signal_payload(symbol: str, side: str, prediction: Optional[float]) -> Dict[str, Any]:
+        try:
+            pred_value = float(prediction) if prediction is not None else 0.0
+        except Exception:
+            pred_value = 0.0
+        direction = "LONG" if str(side).upper() == "BUY" else "SHORT"
+        strength = abs(pred_value)
+        confidence = min(1.0, max(0.0, strength * 10.0))
+        return {
+            "symbol": symbol,
+            "direction": direction,
+            "prediction": pred_value,
+            "strength": strength,
+            "confidence": confidence,
+        }
+
+    def _evaluate_risk(
+        self,
+        symbol: str,
+        side: str,
+        price: float,
+        signal_payload: Dict[str, Any],
+        market_df: Optional[pd.DataFrame],
+    ) -> RiskDecision:
+        with self._lock:
+            strategy_cfg = self._get_strategy_config()
+        now = time.time()
+        side_u = side.upper()
+
+        ro_until = self._reduce_only_until.get(symbol, 0.0)
+        if ro_until and now < ro_until and side_u == "BUY":
+            details = {"until": ro_until, "now": now, "policy": "reduce_only"}
+            return RiskDecision(
+                should_trade=False,
+                fraction=0.0,
+                state="lock",
+                reason="reduce_only_active",
+                details=details,
+                stop_loss_pct=strategy_cfg.default_sl,
+                take_profit_pct=strategy_cfg.default_tp,
+                mode=strategy_cfg.mode,
+            )
+
+        if self._risk_lock_until and now < self._risk_lock_until and side_u == "BUY":
+            details = {"until": self._risk_lock_until, "now": now, "policy": "cooldown"}
+            return RiskDecision(
+                should_trade=False,
+                fraction=0.0,
+                state="lock",
+                reason="cooldown_active",
+                details=details,
+                stop_loss_pct=strategy_cfg.default_sl,
+                take_profit_pct=strategy_cfg.default_tp,
+                mode=strategy_cfg.mode,
+            )
+
+        env_mode = self._resolve_mode()
+        if strategy_cfg.mode == "demo" and env_mode != "paper":
+            details = {"configured_mode": strategy_cfg.mode, "env_mode": env_mode}
+            return RiskDecision(
+                should_trade=False,
+                fraction=0.0,
+                state="lock",
+                reason="demo_mode_enforced",
+                details=details,
+                stop_loss_pct=strategy_cfg.default_sl,
+                take_profit_pct=strategy_cfg.default_tp,
+                mode=strategy_cfg.mode,
+            )
+
+        portfolio_ctx = self._build_portfolio_context(symbol, price)
+        risk_mgr = getattr(self.gui, "risk_mgr", None)
+        fraction = strategy_cfg.trade_risk_pct
+        details: Dict[str, Any] = {}
+
+        market_payload: Any
+        if isinstance(market_df, pd.DataFrame):
+            market_payload = market_df
+        else:
+            market_payload = {"price": price}
+
+        if risk_mgr is not None and hasattr(risk_mgr, "calculate_position_size"):
+            try:
+                supports_details = self._supports_return_details(risk_mgr)
+                if supports_details:
+                    fraction, details = risk_mgr.calculate_position_size(  # type: ignore[assignment]
+                        symbol=symbol,
+                        signal=signal_payload,
+                        market_data=market_payload,
+                        portfolio=portfolio_ctx,
+                        return_details=True,
+                    )
+                else:
+                    fraction = float(
+                        risk_mgr.calculate_position_size(  # type: ignore[call-arg]
+                            symbol=symbol,
+                            signal=signal_payload,
+                            market_data=market_payload,
+                            portfolio=portfolio_ctx,
+                        )
+                    )
+            except TypeError:
+                fraction = float(
+                    risk_mgr.calculate_position_size(  # type: ignore[call-arg]
+                        symbol=symbol,
+                        signal=signal_payload,
+                        market_data=market_payload,
+                        portfolio=portfolio_ctx,
+                    )
+                )
+            except Exception as exc:
+                self.emitter.log(
+                    f"Risk sizing error: {exc!r}", level="ERROR", component="AutoTrader"
+                )
+                logger.exception("Risk manager calculate_position_size failed")
+                fraction = 0.0
+                details = {"error": str(exc)}
+        else:
+            details["risk_mgr"] = "missing"
+
+        try:
+            fraction = float(fraction)
+        except Exception:
+            fraction = 0.0
+        fraction = max(0.0, min(1.0, fraction))
+
+        state = "ok"
+        limit_events: List[Dict[str, Any]] = []
+
+        max_pct = float(strategy_cfg.max_position_notional_pct)
+        if max_pct > 0.0 and fraction > max_pct:
+            limit_events.append({
+                "type": "max_position_notional_pct",
+                "value": fraction,
+                "threshold": max_pct,
+            })
+            fraction = max_pct
+            state = "warn"
+
+        account_value = self._resolve_account_value(portfolio_ctx)
+        positions = portfolio_ctx.get("positions") or {}
+        position_ctx = positions.get(symbol, {})
+        symbol_notional = float(position_ctx.get("notional", 0.0) or 0.0)
+        total_notional = float(portfolio_ctx.get("total_notional", 0.0) or 0.0)
+
+        if account_value <= 0.0:
+            if strategy_cfg.reduce_only_after_violation:
+                self._trigger_reduce_only(symbol, "no_account_value", strategy_cfg)
+            details.update({"account_value": account_value, "portfolio_ctx": portfolio_ctx})
+            return RiskDecision(
+                should_trade=False,
+                fraction=0.0,
+                state="lock",
+                reason="account_value_non_positive",
+                details=details,
+                stop_loss_pct=strategy_cfg.default_sl,
+                take_profit_pct=strategy_cfg.default_tp,
+                mode=strategy_cfg.mode,
+            )
+
+        projected_notional = total_notional
+        if side_u == "BUY":
+            projected_notional += fraction * account_value
+        else:
+            projected_notional = max(total_notional - symbol_notional, 0.0)
+
+        leverage_after = projected_notional / max(account_value, 1e-9)
+        if side_u == "BUY" and leverage_after > strategy_cfg.max_leverage + 1e-6:
+            limit_events.append({
+                "type": "max_leverage",
+                "value": leverage_after,
+                "threshold": strategy_cfg.max_leverage,
+            })
+            if strategy_cfg.reduce_only_after_violation:
+                self._trigger_reduce_only(symbol, "max_leverage", strategy_cfg)
+            return RiskDecision(
+                should_trade=False,
+                fraction=0.0,
+                state="lock",
+                reason="max_leverage_exceeded",
+                details={
+                    "leverage_after": leverage_after,
+                    "max_leverage": strategy_cfg.max_leverage,
+                    "limit_events": limit_events,
+                },
+                stop_loss_pct=strategy_cfg.default_sl,
+                take_profit_pct=strategy_cfg.default_tp,
+                mode=strategy_cfg.mode,
+            )
+
+        if fraction <= 0.0:
+            if strategy_cfg.reduce_only_after_violation:
+                self._trigger_reduce_only(symbol, "fraction_non_positive", strategy_cfg)
+            details["limit_events"] = limit_events
+            return RiskDecision(
+                should_trade=False,
+                fraction=0.0,
+                state="lock",
+                reason="risk_fraction_zero",
+                details=details,
+                stop_loss_pct=strategy_cfg.default_sl,
+                take_profit_pct=strategy_cfg.default_tp,
+                mode=strategy_cfg.mode,
+            )
+
+        if side_u == "SELL" and ro_until and now < ro_until:
+            # pozwól zamknąć pozycję i wyczyść reduce-only
+            self._reduce_only_until.pop(symbol, None)
+            details["reduce_only_cleared"] = True
+
+        if limit_events:
+            details.setdefault("limit_events", []).extend(limit_events)
+            if state != "lock":
+                state = "warn"
+
+        decision_details = {
+            **details,
+            "account_value": account_value,
+            "projected_notional": projected_notional,
+            "current_notional": total_notional,
+            "symbol_notional": symbol_notional,
+        }
+
+        return RiskDecision(
+            should_trade=True,
+            fraction=fraction,
+            state=state,
+            reason="risk_ok" if state == "ok" else "risk_clamped",
+            details=decision_details,
+            stop_loss_pct=strategy_cfg.default_sl,
+            take_profit_pct=strategy_cfg.default_tp,
+            mode=strategy_cfg.mode,
+        )
+
+    def _emit_risk_audit(self, symbol: str, side: str, decision: RiskDecision, price: float) -> None:
+        payload = {
+            "symbol": symbol,
+            "side": side,
+            "state": decision.state,
+            "reason": decision.reason,
+            "fraction": float(decision.fraction),
+            "price": float(price),
+            "mode": decision.mode,
+            "details": decision.details,
+            "stop_loss_pct": decision.stop_loss_pct,
+            "take_profit_pct": decision.take_profit_pct,
+            "ts": time.time(),
+            "schema_version": 1,
+        }
+        self._last_risk_audit = payload
+        try:
+            self.emitter.emit("risk_guard_event", **payload)
+        except Exception:  # pragma: no cover - audyt nie może zatrzymać bota
+            logger.exception("Failed to emit risk_guard_event")
+
+        msg = (
+            f"Risk state={decision.state} reason={decision.reason} symbol={symbol} side={side} fraction={decision.fraction:.4f}"
+        )
+        level = "INFO"
+        if decision.state == "warn":
+            level = "WARNING"
+        elif decision.state == "lock":
+            level = "WARNING" if decision.should_trade else "ERROR"
+        self.emitter.log(msg, level=level, component="AutoTrader")
+
+    @staticmethod
+    def _supports_return_details(risk_mgr: Any) -> bool:
+        try:
+            sig = inspect.signature(risk_mgr.calculate_position_size)  # type: ignore[attr-defined]
+        except (TypeError, ValueError, AttributeError):
+            return False
+        return "return_details" in sig.parameters
+
+    def _resolve_account_value(self, portfolio_ctx: Dict[str, Any]) -> float:
+        account_value = portfolio_ctx.get("equity")
+        try:
+            if account_value is not None:
+                return float(account_value)
+        except Exception:
+            pass
+        cash = portfolio_ctx.get("cash")
+        try:
+            if cash is not None:
+                return float(cash)
+        except Exception:
+            pass
+        candidates = ["paper_balance", "account_balance", "equity", "cash"]
+        for attr in candidates:
+            if hasattr(self.gui, attr):
+                try:
+                    return float(getattr(self.gui, attr))
+                except Exception:
+                    continue
+        return 0.0
+
+    def _build_portfolio_context(self, symbol: str, ref_price: float) -> Dict[str, Any]:
+        context: Dict[str, Any] = {
+            "positions": {},
+            "total_notional": 0.0,
+        }
+        raw_positions = getattr(self.gui, "_open_positions", None)
+        if not isinstance(raw_positions, dict):
+            raw_positions = getattr(self.gui, "open_positions", None)
+        if isinstance(raw_positions, dict):
+            for sym, pos in raw_positions.items():
+                try:
+                    qty = float(pos.get("qty", 0.0) or 0.0)
+                    entry = float(pos.get("entry") or pos.get("price") or ref_price or 0.0)
+                except Exception:
+                    qty = 0.0
+                    entry = ref_price or 0.0
+                notional = abs(qty * entry)
+                context["positions"][sym] = {
+                    "qty": qty,
+                    "entry": entry,
+                    "side": str(pos.get("side", "")).upper(),
+                    "notional": notional,
+                }
+                context["total_notional"] += notional
+
+        cash_candidates = [
+            ("paper_balance", getattr(self.gui, "paper_balance", None)),
+            ("account_balance", getattr(self.gui, "account_balance", None)),
+        ]
+        cash_value = 0.0
+        for name, val in cash_candidates:
+            try:
+                if val is not None:
+                    cash_value = float(val)
+                    break
+            except Exception:
+                continue
+        context["cash"] = cash_value
+        context["equity"] = max(cash_value, cash_value + context["total_notional"])
+        return context
+
+    def _trigger_reduce_only(self, symbol: str, reason: str, cfg: StrategyConfig) -> None:
+        cooldown = max(float(cfg.violation_cooldown_s), 1.0)
+        until = time.time() + cooldown
+        self._reduce_only_until[symbol] = until
+        self._risk_lock_until = max(self._risk_lock_until, until)
+        self.emitter.log(
+            f"Reduce-only aktywne dla {symbol} przez {cooldown:.0f}s (powód: {reason})",
+            level="WARNING",
+            component="AutoTrader",
+        )
