@@ -1,6 +1,8 @@
 """Tests for safety guards in AutoTrader."""
 from __future__ import annotations
 
+import sys
+from pathlib import Path
 import threading
 import time
 from dataclasses import asdict
@@ -9,6 +11,11 @@ from typing import Any, Callable, Dict, List, Tuple
 
 import pandas as pd
 import pytest
+
+# Ensure repository root is available on sys.path when running the test as a script
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from KryptoLowca.auto_trader import AutoTrader
 from KryptoLowca.config_manager import StrategyConfig
@@ -134,7 +141,7 @@ class DummyGUI:
             low = open_ * 0.999
             close = open_ * 1.0005
             volume = 10.0 + i
-            data.append([ts, open_, high, low, close, volume])
+            data.append([ts, open_, high_, low, close, volume])
             price = close
         return data
 

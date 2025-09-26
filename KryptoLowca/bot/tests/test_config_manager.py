@@ -3,11 +3,9 @@
 """
 Unit tests for config_manager.py.
 """
-import asyncio
 from dataclasses import asdict
 import pytest
 import yaml
-from pathlib import Path
 from cryptography.fernet import Fernet
 
 from KryptoLowca.config_manager import (

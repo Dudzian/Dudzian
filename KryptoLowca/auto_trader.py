@@ -55,6 +55,7 @@ class RiskDecision:
             payload["take_profit_pct"] = float(self.take_profit_pct)
         return payload
 
+
 class AutoTrader:
     """
     - Listens to trade_closed events to compute rolling PF & Expectancy
