@@ -7,6 +7,20 @@
   "timeframe": "1h",
   "exchanges": ["binance", "okx"],
   "tags": ["trend", "spot", "ai-assisted"],
+  "version": "3.2.0",
+  "last_updated": "2024-06-10T08:30:00+00:00",
+  "compatibility": {
+    "app": ">=2.9.0",
+    "schema": "1.2"
+  },
+  "compliance": {
+    "required_flags": [
+      "compliance_confirmed",
+      "api_keys_configured",
+      "acknowledged_risk_disclaimer"
+    ],
+    "allow_live": true
+  },
   "config": {
     "strategy": {
       "preset": "BALANCED",

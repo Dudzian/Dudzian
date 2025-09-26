@@ -1,8 +1,9 @@
-"""Loader presetów strategii wraz z metadanymi marketplace."""
+"""Loader presetów strategii wraz z rozszerzonymi metadanymi marketplace."""
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -14,6 +15,10 @@ except Exception:  # pragma: no cover
 
 
 DEFAULT_MARKETPLACE_DIR = Path(__file__).parent / "marketplace"
+
+
+def _default_last_updated() -> datetime:
+    return datetime.fromtimestamp(0, tz=timezone.utc)
 
 
 @dataclass(slots=True)
@@ -29,6 +34,10 @@ class StrategyPreset:
     exchanges: List[str]
     tags: List[str]
     config: Dict[str, object]
+    version: str = "1.0.0"
+    last_updated: datetime = field(default_factory=_default_last_updated)
+    compatibility: Dict[str, Any] = field(default_factory=dict)
+    compliance: Dict[str, Any] = field(default_factory=dict)
 def _load_json(path: Path) -> Dict[str, object]:
     with path.open("r", encoding="utf-8") as handle:
         data = json.load(handle)
@@ -49,6 +58,24 @@ def _as_mapping(value: object) -> Dict[str, Any]:
     if isinstance(value, dict):
         return {str(key): val for key, val in value.items()}
     return {}
+
+
+def _parse_last_updated(value: object) -> datetime:
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value
+    if isinstance(value, (int, float)):
+        return datetime.fromtimestamp(float(value), tz=timezone.utc)
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return _default_last_updated()
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed
+    return _default_last_updated()
 
 
 def load_marketplace_presets(base_path: Optional[Path] = None) -> List[StrategyPreset]:
@@ -76,6 +103,10 @@ def load_marketplace_presets(base_path: Optional[Path] = None) -> List[StrategyP
                 exchanges=_as_str_list(data.get("exchanges", [])),
                 tags=_as_str_list(data.get("tags", [])),
                 config=config,
+                version=str(data.get("version", "1.0.0")),
+                last_updated=_parse_last_updated(data.get("last_updated")),
+                compatibility=_as_mapping(data.get("compatibility", {})),
+                compliance=_as_mapping(data.get("compliance", {})),
             )
             if preset.preset_id:
                 presets[preset.preset_id] = preset

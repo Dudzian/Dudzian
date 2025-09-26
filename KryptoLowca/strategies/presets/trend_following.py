@@ -1,6 +1,8 @@
 """Wbudowany preset intraday trend following dla Binance/Kraken."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from KryptoLowca.strategies.marketplace import StrategyPreset
 
 INTRADAY_TREND_PRESET = StrategyPreset(
@@ -42,6 +44,17 @@ INTRADAY_TREND_PRESET = StrategyPreset(
             "rate_limit_per_minute": 900,
             "rate_limit_alert_threshold": 0.8,
         },
+    },
+    version="2.0.0",
+    last_updated=datetime(2024, 5, 15, 9, 30, tzinfo=timezone.utc),
+    compatibility={"app": ">=2.9.0", "schema": "1.1"},
+    compliance={
+        "required_flags": [
+            "compliance_confirmed",
+            "api_keys_configured",
+            "acknowledged_risk_disclaimer",
+        ],
+        "allow_live": False,
     },
 )
 
