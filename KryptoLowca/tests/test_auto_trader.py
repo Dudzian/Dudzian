@@ -9,7 +9,7 @@ import pytest
 
 from KryptoLowca.auto_trader import AutoTrader
 from KryptoLowca.config_manager import StrategyConfig
-from KryptoLowca.core.services import ExecutionService, RiskAssessment, SignalService
+from KryptoLowca.core.services import ExecutionService, PaperTradingAdapter, RiskAssessment, SignalService
 from KryptoLowca.core.services.data_provider import ExchangeDataProvider  # noqa: F401 - ensures module importable
 from KryptoLowca.core.services.risk_service import RiskService
 from KryptoLowca.strategies.base import BaseStrategy, StrategyContext, StrategyMetadata, StrategySignal
@@ -103,6 +103,7 @@ class DummyGUI:
         self.timeframe_var = DummyVar("1m")
         self.paper_balance = paper_balance
         self._open_positions: Dict[str, Dict[str, Any]] = {}
+        self.network_var = DummyVar("demo")
 
     def get_portfolio_snapshot(self, symbol: str) -> Mapping[str, Any]:
         return {
@@ -217,6 +218,22 @@ def test_services_execute_order(strategy_harness: StrategyHarness) -> None:
     assert order["side"] == "buy"
     assert pytest.approx(order["size"], rel=1e-6) == 75.0
     assert any(event[0] == "auto_trade_tick" for event in emitter.events)
+
+
+def test_paper_trading_mode_switch(strategy_harness: StrategyHarness) -> None:
+    provider = StubDataProvider(price=101.0)
+    adapter = RecordingExecutionAdapter()
+    trader, _, _ = _configured_trader(
+        symbol_source=lambda: [("BTC/USDT", "1m")],
+        data_provider=provider,
+        signal_service=strategy_harness.signal_service,
+        risk_service=AcceptAllRiskService(size=25.0),
+        execution_adapter=adapter,
+    )
+    assert not trader._paper_enabled
+    trader.configure(exchange={"testnet": False})
+    assert trader._paper_enabled
+    assert isinstance(getattr(trader._execution_service, "_adapter", None), PaperTradingAdapter)
 
 
 def test_risk_rejection_applies_cooldown(strategy_harness: StrategyHarness) -> None:
