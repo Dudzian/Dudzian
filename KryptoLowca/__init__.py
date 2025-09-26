@@ -7,9 +7,22 @@ Ten plik sprawia, że katalog staje się pakietem Pythona i udostępnia najważn
 from __future__ import annotations
 
 __all__ = [
-    "DatabaseManager", "DBOptions",
-    "AIManager", "ConfigManager", "ExchangeManager", "ReportManager", "RiskManagerAdapter", "SecurityManager",
-    "TradingEngine", "TradingError",
+    "DatabaseManager",
+    "DBOptions",
+    "AIManager",
+    "ConfigManager",
+    "ExchangeManager",
+    "ReportManager",
+    "RiskManagerAdapter",
+    "SecurityManager",
+    "KeyRotationManager",
+    "SecretManager",
+    "SecretBackend",
+    "TradingEngine",
+    "TradingError",
+    "DashboardApp",
+    "DashboardController",
+    "WalkForwardOptimizer",
 ]
 
 # --- Re-eksport menedżerów ---
@@ -48,6 +61,26 @@ try:
     from .managers.security_manager import SecurityManager  # type: ignore
 except Exception:  # pragma: no cover
     SecurityManager = None  # type: ignore
+
+try:
+    from .security import KeyRotationManager, SecretManager, SecretBackend  # type: ignore
+except Exception:  # pragma: no cover
+    KeyRotationManager = None  # type: ignore
+    SecretManager = None  # type: ignore
+    SecretBackend = None  # type: ignore
+
+# --- Dashboard ---
+try:
+    from .dashboard import DashboardApp, DashboardController  # type: ignore
+except Exception:  # pragma: no cover
+    DashboardApp = None  # type: ignore
+    DashboardController = None  # type: ignore
+
+# --- Optymalizacja ---
+try:
+    from .services.wfo import WalkForwardOptimizer  # type: ignore
+except Exception:  # pragma: no cover
+    WalkForwardOptimizer = None  # type: ignore
 
 # --- Re-eksport silnika ---
 try:

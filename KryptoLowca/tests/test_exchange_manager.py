@@ -6,6 +6,7 @@ import asyncio
 import logging
 from unittest.mock import AsyncMock
 
+import time
 from typing import Any, Dict, List
 
 import pytest
@@ -377,3 +378,115 @@ async def test_multi_symbol_retry_and_logging():
     assert metrics["rate_limit_buckets"], "Powinny istnieć metryki kubełków limitów"
     assert alerts, "Alert o zbliżającym się limicie powinien zostać wygenerowany"
     assert any(entry["category"] == "exchange" for entry in manager._db_manager.entries)
+
+
+@pytest.mark.asyncio
+async def test_session_monitor_refresh_called(exchange_manager):
+    calls: List[str] = []
+
+    async def refresher() -> Dict[str, Any]:
+        calls.append("refresh")
+        return {"expires_in": 120}
+
+    exchange_manager.configure_session_monitor(
+        refresher,
+        ttl_seconds=10,
+        margin_seconds=5.0,
+        failure_cooldown=0.1,
+    )
+    assert exchange_manager._session_state is not None
+    exchange_manager._session_state.expires_at = time.time() - 1
+    await exchange_manager.fetch_balance()
+    assert calls, "Powinna nastąpić próba odświeżenia sesji"
+
+
+@pytest.mark.asyncio
+async def test_switch_exchange_uses_adapter(monkeypatch):
+    created_adapters: List[Any] = []
+
+    class DummyAdapter:
+        def __init__(self, *, exchange_id: str, description: str, sandbox: bool, params: Dict[str, Any]):
+            self.exchange_id = exchange_id
+            self.description = description
+            self.sandbox = sandbox
+            self.params = params
+            self.connected = False
+            self.closed = False
+            self._close_mock = AsyncMock()
+
+        async def connect(self):
+            self.connected = True
+            client = type(
+                "DummyClient",
+                (),
+                {"id": self.exchange_id, "close": self._close_mock, "rateLimit": None},
+            )()
+            return client
+
+        async def close(self):
+            self.closed = True
+            await self._close_mock()
+
+    def factory(name: str, **options: Any) -> DummyAdapter:
+        adapter = DummyAdapter(
+            exchange_id=name,
+            description=f"dummy::{name}",
+            sandbox=bool(options.get("sandbox", True)),
+            params=options,
+        )
+        created_adapters.append(adapter)
+        return adapter
+
+    monkeypatch.setattr("KryptoLowca.exchange_manager.create_exchange_adapter", factory)
+
+    initial = type("Initial", (), {"close": AsyncMock()})()
+    manager = ExchangeManager(initial)
+    manager._adapter = DummyAdapter(
+        exchange_id="initial",
+        description="dummy::initial",
+        sandbox=True,
+        params={},
+    )
+
+    await manager.switch_exchange("okx", api_key="abc", api_secret="def", sandbox=False)
+    assert created_adapters, "Fabryka adapterów powinna zostać wywołana"
+    adapter = created_adapters[-1]
+    assert adapter.connected is True
+    assert adapter.params["api_key"] == "abc"
+    assert manager._current_exchange_name == "okx"
+    assert getattr(manager.exchange, "id", None) == "okx"
+    initial.close.assert_awaited()
+
+    await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_session_monitor_failure_triggers_alert(exchange_manager):
+    dispatcher = get_alert_dispatcher()
+    dispatcher.clear()
+    events: List[Any] = []
+
+    def _listener(event):
+        events.append(event)
+
+    token = dispatcher.register(_listener, name="session-refresh-test")
+    try:
+        async def refresher() -> None:
+            raise RuntimeError("token expired")
+
+        exchange_manager.configure_session_monitor(
+            refresher,
+            ttl_seconds=10,
+            margin_seconds=5.0,
+            failure_cooldown=0.1,
+        )
+        assert exchange_manager._session_state is not None
+        exchange_manager._session_state.expires_at = time.time() - 1
+
+        with pytest.raises(AuthenticationError):
+            await exchange_manager.fetch_balance()
+    finally:
+        dispatcher.unregister(token)
+
+    assert events, "Awaria odświeżania powinna wygenerować alert"
+    assert any(event.source == "exchange" for event in events)

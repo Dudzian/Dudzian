@@ -12,7 +12,13 @@ import types
 import weakref
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
+
+from KryptoLowca.exchanges import (
+    AdapterError,
+    BaseExchangeAdapter,
+    create_exchange_adapter,
+)
 
 # ---- Alerts (z fallbackiem, gdy moduł nie istnieje) -------------------------
 try:  # pragma: no cover
@@ -150,6 +156,17 @@ class _RateLimitBucket:
             "alert_active": self.alert_active,
         }
 
+
+@dataclass(slots=True)
+class _SessionState:
+    refresh_callback: Callable[[], Any]
+    default_ttl: float
+    margin: float
+    failure_cooldown: float
+    expires_at: float
+    lock_until: float = 0.0
+    consecutive_failures: int = 0
+
 # ------------------------------- Wyjątki -------------------------------------
 class ExchangeError(BotError):
     """Podstawowy wyjątek warstwy wymiany."""
@@ -178,6 +195,8 @@ class ExchangeManager:
 
     def __init__(self, exchange, *, user_id: Optional[int] = None) -> None:
         self.exchange = exchange
+        self._adapter: Optional[BaseExchangeAdapter] = None
+        self._current_exchange_name: Optional[str] = getattr(exchange, "id", None)
         self._user_id = user_id
         self._retry_attempts = 1
         self._retry_delay = 0.05
@@ -194,6 +213,7 @@ class ExchangeManager:
         self._metrics = _APIMetrics()
         self._endpoint_metrics: Dict[str, _EndpointMetrics] = defaultdict(lambda: _EndpointMetrics())
         self._throttle_lock = asyncio.Lock()
+        self._session_lock = asyncio.Lock()
         self._min_interval = 0.0
         self._last_request_ts = 0.0
         self._window_start = time.monotonic()
@@ -214,6 +234,8 @@ class ExchangeManager:
         self._telemetry_schema_version = 1
         self._telemetry_writer: Optional[Any] = None
 
+        self._session_state: Optional[_SessionState] = None
+
     # -------------------------------- Factory --------------------------------
     @classmethod
     async def create(
@@ -226,25 +248,28 @@ class ExchangeManager:
             raise ExchangeError("Biblioteka ccxt nie jest dostępna w trybie asynchronicznym.")
 
         exchange_id = getattr(config, "exchange_name", "binance")
-        try:
-            exchange_cls = getattr(ccxt_async, exchange_id)
-        except AttributeError as exc:  # pragma: no cover - nieznana giełda
-            raise ExchangeError(f"Nieobsługiwana giełda: {exchange_id}") from exc
-
-        kwargs = {
-            "apiKey": getattr(config, "api_key", ""),
-            "secret": getattr(config, "api_secret", ""),
-            "enableRateLimit": True,
+        adapter_options = {
+            "api_key": getattr(config, "api_key", ""),
+            "api_secret": getattr(config, "api_secret", ""),
+            "sandbox": getattr(config, "testnet", True),
         }
+        extra_options = getattr(config, "ccxt_options", None)
+        if isinstance(extra_options, dict):
+            adapter_options.update(extra_options)
+
         try:
-            exchange = exchange_cls(kwargs)
-        except Exception as exc:
+            adapter = create_exchange_adapter(exchange_id, **adapter_options)
+            exchange = await adapter.connect()
+        except AdapterError as exc:
+            auth_error_cls = None
             try:
                 from ccxt.base.errors import AuthenticationError as CCXTAuthError  # type: ignore
-            except Exception:  # pragma: no cover
-                CCXTAuthError = type("AuthenticationError", (Exception,), {})  # type: ignore
-            if isinstance(exc, CCXTAuthError):
-                raise AuthenticationError(str(exc)) from exc
+                auth_error_cls = CCXTAuthError
+            except Exception:  # pragma: no cover - brak ccxt
+                auth_error_cls = None
+
+            if auth_error_cls is not None and isinstance(exc.__cause__, auth_error_cls):
+                raise AuthenticationError(str(exc.__cause__)) from exc
             raise ExchangeError(str(exc)) from exc
 
         user_id = None
@@ -255,6 +280,8 @@ class ExchangeManager:
                 logger.warning("Nie udało się utworzyć użytkownika w bazie – kontynuuję bez ID.")
 
         manager = cls(exchange, user_id=user_id)
+        manager._adapter = adapter
+        manager._current_exchange_name = str(exchange_id).lower()
         manager._db_manager = db_manager
         manager.mode = getattr(config, "mode", Mode.PAPER)
         if isinstance(manager.mode, str):
@@ -408,6 +435,23 @@ class ExchangeManager:
         self._rate_limit_buckets = new_buckets
         self._reset_rate_windows()
 
+    async def switch_exchange(self, exchange_name: str, **options: Any) -> None:
+        """Dynamiczne przełączenie aktywnej giełdy w trakcie działania managera."""
+        if not exchange_name:
+            raise ValueError("exchange_name jest wymagane")
+
+        adapter = create_exchange_adapter(exchange_name, **options)
+        exchange = await adapter.connect()
+
+        await self._release_exchange()
+        self.exchange = exchange
+        self._adapter = adapter
+        self._current_exchange_name = str(exchange_name).lower()
+        self._markets.clear()
+        self._metrics = _APIMetrics()
+        self._endpoint_metrics.clear()
+        self._reset_rate_windows()
+
     def _reset_rate_windows(self) -> None:
         now = time.monotonic()
         self._window_start = now
@@ -428,8 +472,82 @@ class ExchangeManager:
                 )
             ]
 
+    def configure_session_monitor(
+        self,
+        refresh_callback: Callable[[], Any | Awaitable[Any]],
+        *,
+        ttl_seconds: float,
+        margin_seconds: float = 60.0,
+        failure_cooldown: float = 180.0,
+    ) -> None:
+        ttl = max(float(ttl_seconds), 30.0)
+        margin = max(float(margin_seconds), 5.0)
+        cooldown = max(float(failure_cooldown), 30.0)
+        expires_at = time.time() + ttl
+        self._session_state = _SessionState(
+            refresh_callback=refresh_callback,
+            default_ttl=ttl,
+            margin=margin,
+            failure_cooldown=cooldown,
+            expires_at=expires_at,
+        )
+
+    def update_session_expiry(self, ttl_seconds: float) -> None:
+        state = self._session_state
+        if state is None:
+            return
+        ttl = max(float(ttl_seconds), 1.0)
+        state.expires_at = time.time() + ttl
+        state.default_ttl = ttl
+
+    async def _ensure_session_valid(self) -> None:
+        state = self._session_state
+        if state is None:
+            return
+        now = time.time()
+        if now < state.lock_until:
+            raise AuthenticationError("Sesja API zablokowana po nieudanych próbach odświeżenia.")
+        if now <= state.expires_at - state.margin:
+            return
+        await self._refresh_session(state)
+
+    async def _refresh_session(self, state: _SessionState) -> None:
+        async with self._session_lock:
+            now = time.time()
+            if now < state.lock_until:
+                raise AuthenticationError("Sesja API zablokowana po nieudanych próbach odświeżenia.")
+            if now <= state.expires_at - state.margin:
+                return
+            try:
+                result = state.refresh_callback()
+                if inspect.isawaitable(result):
+                    result = await result
+                new_expiry: Optional[float] = None
+                if isinstance(result, dict):
+                    if "expires_at" in result:
+                        new_expiry = float(result["expires_at"])
+                    elif "expires_in" in result:
+                        new_expiry = time.time() + float(result["expires_in"])
+                elif isinstance(result, (int, float)):
+                    new_expiry = time.time() + float(result)
+                if new_expiry is None:
+                    new_expiry = time.time() + state.default_ttl
+                state.expires_at = new_expiry
+                state.consecutive_failures = 0
+            except Exception as exc:
+                state.consecutive_failures += 1
+                state.lock_until = time.time() + state.failure_cooldown
+                context = {
+                    "error": str(exc),
+                    "failures": state.consecutive_failures,
+                    "cooldown_seconds": state.failure_cooldown,
+                }
+                self._raise_alert("Odświeżanie tokenu API nie powiodło się", context=context, key="session_refresh")
+                raise AuthenticationError("Nie udało się odświeżyć sesji API") from exc
+
     # --------------------------- operacje pomocnicze ---------------------------
     async def _before_call(self, endpoint: str) -> None:
+        await self._ensure_session_valid()
         wait_time = 0.0
         alerts: List[Tuple[str, Dict[str, Any], str]] = []
         async with self._throttle_lock:
@@ -491,6 +609,31 @@ class ExchangeManager:
 
         if wait_time > 0:
             await asyncio.sleep(wait_time)
+
+        if self._db_manager and hasattr(self._db_manager, "log_rate_limit_snapshot"):
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:  # pragma: no cover - brak pętli event
+                loop = None
+            if loop is not None and self._rate_limit_buckets:
+                buckets_snapshot = [bucket.snapshot() for bucket in self._rate_limit_buckets]
+                payload = {
+                    "endpoint": endpoint,
+                    "timestamp": time.time(),
+                    "user_id": self._user_id,
+                    "context": {
+                        "limit_triggered": any(bucket.get("alert_active") for bucket in buckets_snapshot),
+                        "buckets": buckets_snapshot,
+                    },
+                }
+
+                async def _persist_rate_limits() -> None:
+                    try:
+                        await self._db_manager.log_rate_limit_snapshot(payload)
+                    except Exception:
+                        logger.exception("Błąd zapisu snapshotu limitów API")
+
+                loop.create_task(_persist_rate_limits())
 
         for message, context, key in alerts:
             self._raise_alert(message, context=context, key=key)
@@ -611,6 +754,24 @@ class ExchangeManager:
                 logger.exception("Błąd zapisu telemetrii API")
 
         loop.create_task(_persist())
+
+        if hasattr(self._db_manager, "log_performance_metric"):
+            async def _persist_metric() -> None:
+                try:
+                    await self._db_manager.log_performance_metric(
+                        {
+                            "metric": "exchange_total_calls",
+                            "value": snapshot.get("total_calls", 0),
+                            "window": snapshot.get("window_calls", 0),
+                            "symbol": snapshot.get("last_endpoint"),
+                            "mode": getattr(self.mode, "name", str(self.mode)),
+                            "context": snapshot,
+                        }
+                    )
+                except Exception:
+                    logger.exception("Błąd zapisu metryk wydajności API")
+
+            loop.create_task(_persist_metric())
 
         # Opcjonalnie, lokalny zapis telemetryjny
         if self._telemetry_writer is not None:
@@ -783,12 +944,22 @@ class ExchangeManager:
         )
         return bool(result) if result is not None else True
 
-    async def close(self) -> None:
-        close = getattr(self.exchange, "close", None)
-        if close:
-            maybe = close()
+    async def _release_exchange(self) -> None:
+        current = getattr(self, "exchange", None)
+        close_cb = getattr(current, "close", None)
+        if close_cb:
+            maybe = close_cb()
             if inspect.isawaitable(maybe):
                 await maybe
+        if self._adapter is not None:
+            try:
+                await self._adapter.close()
+            finally:
+                self._adapter = None
+        self._current_exchange_name = None
+
+    async def close(self) -> None:
+        await self._release_exchange()
         if self._alert_listener_token is not None:
             self._alert_dispatcher.unregister(self._alert_listener_token)
             self._alert_listener_token = None

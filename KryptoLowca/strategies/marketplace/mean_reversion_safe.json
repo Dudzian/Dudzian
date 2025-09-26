@@ -1,0 +1,26 @@
+{
+  "id": "mean_reversion_safe",
+  "name": "Mean Reversion Safe",
+  "description": "Konserwatywna strategia powrotu do średniej dla par stablecoinowych na interwale 15m.",
+  "risk_level": "safe",
+  "recommended_min_balance": 500,
+  "timeframe": "15m",
+  "exchanges": ["binance", "zonda"],
+  "tags": ["mean-reversion", "paper", "low-volatility"],
+  "config": {
+    "strategy": {
+      "preset": "SAFE",
+      "max_leverage": 1.0,
+      "max_position_notional_pct": 0.02,
+      "trade_risk_pct": 0.01,
+      "default_sl": 0.015,
+      "default_tp": 0.03,
+      "violation_cooldown_s": 300,
+      "reduce_only_after_violation": true
+    },
+    "ai": {
+      "model_types": ["rf"],
+      "threshold_bps": 3.0
+    }
+  }
+}

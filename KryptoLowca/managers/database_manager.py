@@ -206,6 +206,29 @@ class RiskLimitSnapshot(Base):
     )
 
 
+class RiskAuditLog(Base):
+    __tablename__ = "risk_audit_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ts: Mapped[dt.datetime] = mapped_column(DateTime, default=dt.datetime.utcnow, index=True)
+    symbol: Mapped[str] = mapped_column(String(50), index=True)
+    side: Mapped[str] = mapped_column(String(5), index=True)
+    state: Mapped[str] = mapped_column(String(16), index=True)
+    reason: Mapped[Optional[str]] = mapped_column(String(80), nullable=True, index=True)
+    fraction: Mapped[float] = mapped_column(Float)
+    price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    mode: Mapped[str] = mapped_column(String(10), default="live", index=True)
+    schema_version: Mapped[int] = mapped_column(Integer, default=1)
+    details: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    stop_loss_pct: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    take_profit_pct: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
+    __table_args__ = (
+        Index("ix_risk_audit_symbol_ts", "symbol", "ts"),
+        Index("ix_risk_audit_state_ts", "state", "ts"),
+    )
+
+
 class ApiRateLimitSnapshot(Base):
     __tablename__ = "api_rate_limits"
 
@@ -399,6 +422,59 @@ class RiskLimitIn(BaseModel):
             raise ValueError("mode must be 'live' or 'paper'")
         return v
 
+
+class RiskAuditIn(BaseModel):
+    symbol: str
+    side: str
+    state: str
+    reason: str | None = None
+    fraction: float
+    price: float | None = None
+    mode: str = "demo"
+    schema_version: int = 1
+    details: Dict[str, Any] | None = None
+    stop_loss_pct: float | None = None
+    take_profit_pct: float | None = None
+    ts: float | None = None
+
+    @field_validator("symbol")
+    @classmethod
+    def _symbol(cls, v: str) -> str:
+        v = (v or "").strip().upper()
+        if not v:
+            raise ValueError("symbol is required")
+        return v
+
+    @field_validator("side")
+    @classmethod
+    def _side(cls, v: str) -> str:
+        v = (v or "").strip().upper()
+        if v not in {"BUY", "SELL"}:
+            raise ValueError("side must be BUY or SELL")
+        return v
+
+    @field_validator("state")
+    @classmethod
+    def _state(cls, v: str) -> str:
+        v = (v or "").strip().lower()
+        if not v:
+            raise ValueError("state is required")
+        return v
+
+    @field_validator("mode")
+    @classmethod
+    def _mode(cls, v: str) -> str:
+        v = (v or "").strip().lower()
+        if v not in {"live", "paper", "demo"}:
+            raise ValueError("mode must be live/demo/paper")
+        return v
+
+    @field_validator("schema_version")
+    @classmethod
+    def _schema_version(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("schema_version must be positive")
+        return int(v)
 
 class RateLimitSnapshotIn(BaseModel):
     bucket_name: str
@@ -897,6 +973,76 @@ class DatabaseManager:
             rows = (await session.execute(stmt)).scalars().all()
             return [self._row_to_dict(row) for row in rows]
 
+    # ---------- OPERACJE: Risk audit logs ----------
+    async def log_risk_audit(
+        self,
+        event: Union[RiskAuditIn, Dict[str, Any]],
+    ) -> int:
+        try:
+            payload = event if isinstance(event, RiskAuditIn) else RiskAuditIn(**event)
+        except ValidationError as exc:
+            logger.error("Risk audit validation error: %s", exc)
+            raise
+
+        ts_value = (
+            dt.datetime.utcfromtimestamp(float(payload.ts))
+            if payload.ts is not None
+            else dt.datetime.utcnow()
+        )
+
+        async with self.transaction() as session:
+            rec = RiskAuditLog(
+                ts=ts_value,
+                symbol=payload.symbol,
+                side=payload.side,
+                state=payload.state,
+                reason=payload.reason,
+                fraction=float(payload.fraction),
+                price=float(payload.price) if payload.price is not None else None,
+                mode=payload.mode,
+                schema_version=int(payload.schema_version),
+                details=json.dumps(payload.details) if payload.details is not None else None,
+                stop_loss_pct=float(payload.stop_loss_pct) if payload.stop_loss_pct is not None else None,
+                take_profit_pct=float(payload.take_profit_pct) if payload.take_profit_pct is not None else None,
+            )
+            session.add(rec)
+            await session.flush()
+            return rec.id
+
+    async def fetch_risk_audits(
+        self,
+        *,
+        symbol: Optional[str] = None,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        async with self.session() as session:
+            stmt = select(RiskAuditLog).order_by(RiskAuditLog.ts.desc()).limit(limit)
+            if symbol:
+                stmt = stmt.where(RiskAuditLog.symbol == symbol.upper())
+            rows = (await session.execute(stmt)).scalars().all()
+
+        result: List[Dict[str, Any]] = []
+        for row in rows:
+            details = json.loads(row.details) if row.details else None
+            result.append(
+                {
+                    "id": row.id,
+                    "timestamp": row.ts.isoformat() if row.ts else None,
+                    "symbol": row.symbol,
+                    "side": row.side,
+                    "state": row.state,
+                    "reason": row.reason,
+                    "fraction": row.fraction,
+                    "price": row.price,
+                    "mode": row.mode,
+                    "schema_version": row.schema_version,
+                    "details": details,
+                    "stop_loss_pct": row.stop_loss_pct,
+                    "take_profit_pct": row.take_profit_pct,
+                }
+            )
+        return result
+
     # ---------- OPERACJE: API rate limits ----------
     async def log_rate_limit_snapshot(
         self,
@@ -1194,6 +1340,17 @@ class DatabaseManager:
             limit: int = 100,
         ) -> List[Dict[str, Any]]:
             return self._run(self._outer.fetch_risk_limits(symbol=symbol, limit=limit))
+
+        def log_risk_audit(self, event: Union[RiskAuditIn, Dict[str, Any]]) -> int:
+            return self._run(self._outer.log_risk_audit(event))
+
+        def fetch_risk_audits(
+            self,
+            *,
+            symbol: Optional[str] = None,
+            limit: int = 100,
+        ) -> List[Dict[str, Any]]:
+            return self._run(self._outer.fetch_risk_audits(symbol=symbol, limit=limit))
 
         def log_rate_limit_snapshot(
             self, snapshot: Union[RateLimitSnapshotIn, Dict[str, Any]]

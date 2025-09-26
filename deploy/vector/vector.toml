@@ -1,0 +1,42 @@
+[sources.kryptolowca_files]
+type = "file"
+include = ["/var/log/kryptolowca/*.log"]
+ignore_older = 86400
+
+[transforms.parse_json]
+type = "remap"
+inputs = ["kryptolowca_files"]
+source = '''
+structured = false
+if .message != null {
+  . = .message
+}
+if is_object(.) {
+  structured = true
+}
+if !structured {
+  . = {"message": to_string!(.)}
+}
+. |= merge!(., {
+  "service": "kryptolowca-bot",
+  "environment": get_env!("BOT_ENV", default: "demo"),
+})
+'''
+
+[sinks.loki]
+type = "loki"
+inputs = ["parse_json"]
+endpoint = "http://loki:3100"
+encoding.codec = "json"
+labels.service = "kryptolowca-bot"
+labels.environment = "${BOT_ENV:-demo}"
+healthcheck.enabled = true
+
+[sinks.prom_metrics]
+type = "prometheus_exporter"
+inputs = ["parse_json"]
+address = "0.0.0.0:9598"
+
+[api]
+address = "0.0.0.0:8686"
+playground = true

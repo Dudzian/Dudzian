@@ -1,0 +1,80 @@
+version: "3.9"
+
+services:
+  bot:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: kryptolowca/bot:latest
+    container_name: kryptolowca_bot
+    restart: unless-stopped
+    environment:
+      - KRYPT_LOWCA_CONFIG=/data/config.yaml
+      - KRYPT_LOWCA_LOG_FORMAT=json
+      - KRYPT_LOWCA_LOG_LEVEL=INFO
+      - KRYPT_LOWCA_PROMETHEUS_PORT=8001
+      - KRYPT_LOWCA_LOG_SHIP_VECTOR=http://vector:8686
+    volumes:
+      - ./data:/data
+      - ./logs:/app/logs
+    depends_on:
+      - prometheus
+      - vector
+    healthcheck:
+      test: ["CMD", "python", "-m", "KryptoLowca.scripts.healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: kryptolowca_prometheus
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana:10.4.2
+    container_name: kryptolowca_grafana
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+      - loki
+
+  loki:
+    image: grafana/loki:2.9.4
+    container_name: kryptolowca_loki
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    ports:
+      - "3100:3100"
+
+  vector:
+    image: timberio/vector:0.36.0-debian
+    container_name: kryptolowca_vector
+    restart: unless-stopped
+    environment:
+      - VECTOR_WATCH_CONFIG=true
+    volumes:
+      - ./vector/vector.toml:/etc/vector/vector.toml:ro
+      - ./logs:/var/log/kryptolowca:ro
+    ports:
+      - "8686:8686"
+    depends_on:
+      - loki
+
+volumes:
+  grafana-data:

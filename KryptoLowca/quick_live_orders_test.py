@@ -1,6 +1,25 @@
 # quick_live_orders_test.py
 # -*- coding: utf-8 -*-
 
+from pathlib import Path
+import sys
+
+
+def _ensure_repo_root() -> None:
+    current_dir = Path(__file__).resolve().parent
+    for candidate in (current_dir, *current_dir.parents):
+        package_init = candidate / "KryptoLowca" / "__init__.py"
+        if package_init.exists():
+            candidate_str = str(candidate)
+            if candidate_str not in sys.path:
+                sys.path.insert(0, candidate_str)
+            break
+
+
+if __package__ in (None, ""):
+    _ensure_repo_root()
+
+
 import ccxt
 from KryptoLowca.managers.database_manager import DatabaseManager
 from KryptoLowca.managers.exchange_adapter import ExchangeAdapter

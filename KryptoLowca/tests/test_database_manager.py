@@ -5,6 +5,7 @@ Unit tests for database_manager.py.
 """
 import asyncio
 import json
+import time
 import pytest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -151,6 +152,27 @@ async def test_performance_and_risk_logging(db):
     assert risk_id > 0
     limits = await dbm.fetch_risk_limits(symbol="BTC/USDT")
     assert limits and limits[0]["symbol"] == "BTC/USDT"
+
+    audit_entry_id = await dbm.log_risk_audit(
+        {
+            "symbol": "BTC/USDT",
+            "side": "BUY",
+            "state": "warn",
+            "reason": "trade_risk_pct",
+            "fraction": 0.05,
+            "price": 101.0,
+            "mode": "paper",
+            "schema_version": 1,
+            "details": {"limit_events": [{"type": "trade_risk_pct", "value": 0.05, "threshold": 0.02}]},
+            "stop_loss_pct": 0.02,
+            "take_profit_pct": 0.04,
+            "ts": time.time(),
+        }
+    )
+    assert audit_entry_id > 0
+    audit_rows = await dbm.fetch_risk_audits(symbol="BTC/USDT")
+    assert audit_rows and audit_rows[0]["symbol"] == "BTC/USDT"
+    assert audit_rows[0]["details"]["limit_events"][0]["type"] == "trade_risk_pct"
 
     # --- Extended telemetry/audit logging ---
     rate_id = await dbm.log_rate_limit_snapshot(

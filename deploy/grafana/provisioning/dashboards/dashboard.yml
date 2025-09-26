@@ -1,0 +1,13 @@
+apiVersion: 1
+
+datasources: []
+
+dashboardProviders:
+  - name: kryptolowca
+    orgId: 1
+    folder: KryptoLowca
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/provisioning/dashboards

@@ -1,0 +1,74 @@
+{
+  "id": null,
+  "uid": "krypto-overview",
+  "title": "KryptoLowca – Overview",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Orders per minute",
+      "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "rate(kryptolowca_orders_total[5m])",
+          "legendFormat": "orders"
+        }
+      ],
+      "datasource": {"type": "prometheus", "uid": "prometheus"}
+    },
+    {
+      "type": "timeseries",
+      "title": "Risk decision fraction",
+      "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "avg_over_time(kryptolowca_risk_fraction[5m])",
+          "legendFormat": "fraction"
+        }
+      ],
+      "datasource": {"type": "prometheus", "uid": "prometheus"}
+    },
+    {
+      "type": "stat",
+      "title": "Open positions",
+      "gridPos": {"x": 0, "y": 8, "w": 6, "h": 6},
+      "targets": [
+        {
+          "expr": "kryptolowca_open_positions"
+        }
+      ],
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "short"}}
+    },
+    {
+      "type": "state-timeline",
+      "title": "Risk state",
+      "gridPos": {"x": 6, "y": 8, "w": 18, "h": 6},
+      "targets": [
+        {
+          "expr": "kryptolowca_risk_state"
+        }
+      ],
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "options": {"legend": {"displayMode": "table"}}
+    },
+    {
+      "type": "logs",
+      "title": "Central logs (Vector/Loki)",
+      "gridPos": {"x": 0, "y": 14, "w": 24, "h": 10},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "targets": [
+        {
+          "expr": "{service=\"kryptolowca-bot\"}"
+        }
+      ],
+      "options": {
+        "showLabels": true,
+        "wrapLogMessage": true
+      }
+    }
+  ]
+}
