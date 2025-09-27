@@ -2,24 +2,19 @@
 """Prosty menedżer konfiguracji kompatybilny ze starszym API testów."""
 from __future__ import annotations
 
-import asyncio
+import json
 from dataclasses import dataclass, field, asdict, fields
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, TYPE_CHECKING, Mapping
 
+import pandas as pd
 import yaml
 from cryptography.fernet import Fernet, InvalidToken
-import pandas as pd
 
 if TYPE_CHECKING:  # pragma: no cover - tylko dla typowania
     from KryptoLowca.backtest.simulation import BacktestReport, MatchingConfig
     from KryptoLowca.data.market_data import MarketDataProvider, MarketDataRequest
-
-from KryptoLowca.strategies.marketplace import (
-    StrategyPreset,
-    load_marketplace_presets,
-    load_preset,
-)
 
 __all__ = [
     "ConfigManager",
@@ -30,6 +25,9 @@ __all__ = [
     "TradeConfig",
     "ExchangeConfig",
     "StrategyConfig",
+    "StrategyPreset",
+    "load_marketplace_presets",
+    "load_preset",
 ]
 
 
@@ -39,6 +37,181 @@ class ConfigError(RuntimeError):
 
 class ValidationError(ValueError):
     """Nieprawidłowe wartości w konfiguracji."""
+
+
+_DEFAULT_MARKETPLACE_DIR = Path(__file__).with_name("marketplace")
+
+
+def _ensure_optional_str(value: object) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped or None
+    return str(value)
+
+
+def _ensure_float(value: object) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None
+        try:
+            return float(stripped)
+        except ValueError as exc:  # pragma: no cover - defensywne
+            raise ConfigError("Wartość musi być liczbą zmiennoprzecinkową") from exc
+    raise ConfigError("Wartość musi być liczbą zmiennoprzecinkową lub None")
+
+
+def _ensure_str_list(value: object) -> List[str]:
+    if not isinstance(value, list):
+        return []
+    result: List[str] = []
+    for item in value:
+        if isinstance(item, str):
+            stripped = item.strip()
+            if stripped:
+                result.append(stripped)
+        elif isinstance(item, (int, float)):
+            result.append(str(item))
+    return result
+
+
+def _ensure_mapping(value: object) -> Dict[str, Any]:
+    if isinstance(value, Mapping):
+        return dict(value)
+    return {}
+
+
+def _parse_last_updated(value: object) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        dt = value
+    elif isinstance(value, str):
+        try:
+            dt = datetime.fromisoformat(value)
+        except ValueError as exc:  # pragma: no cover - defensywne
+            raise ConfigError("last_updated musi być w formacie ISO 8601") from exc
+    else:
+        raise ConfigError("last_updated musi być napisem lub datetime")
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    else:
+        dt = dt.astimezone(timezone.utc)
+    return dt
+
+
+@dataclass(slots=True)
+class StrategyPreset:
+    preset_id: str
+    name: str
+    description: str
+    config: Dict[str, Any] = field(default_factory=dict)
+    risk_level: str | None = None
+    recommended_min_balance: float | None = None
+    timeframe: str | None = None
+    exchanges: List[str] = field(default_factory=list)
+    tags: List[str] = field(default_factory=list)
+    version: str | None = None
+    last_updated: datetime | None = None
+    compatibility: Dict[str, Any] = field(default_factory=dict)
+    compliance: Dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "StrategyPreset":
+        preset_id = _ensure_optional_str(payload.get("id")) or _ensure_optional_str(
+            payload.get("preset_id")
+        )
+        if not preset_id:
+            raise ConfigError("Preset JSON musi zawierać pole 'id'")
+
+        name = _ensure_optional_str(payload.get("name")) or preset_id
+        description = _ensure_optional_str(payload.get("description")) or ""
+        config_payload = payload.get("config")
+        if config_payload is None:
+            config_data: Dict[str, Any] = {}
+        elif isinstance(config_payload, Mapping):
+            config_data = dict(config_payload)
+        else:
+            raise ConfigError("Pole 'config' musi być słownikiem")
+
+        risk_level = _ensure_optional_str(payload.get("risk_level"))
+        recommended = _ensure_float(payload.get("recommended_min_balance"))
+        timeframe = _ensure_optional_str(payload.get("timeframe"))
+        exchanges = _ensure_str_list(payload.get("exchanges"))
+        tags = _ensure_str_list(payload.get("tags"))
+        version = _ensure_optional_str(payload.get("version"))
+        last_updated = _parse_last_updated(payload.get("last_updated"))
+        compatibility = _ensure_mapping(payload.get("compatibility"))
+        compliance = _ensure_mapping(payload.get("compliance"))
+
+        return cls(
+            preset_id=preset_id,
+            name=name,
+            description=description,
+            config=config_data,
+            risk_level=risk_level,
+            recommended_min_balance=recommended,
+            timeframe=timeframe,
+            exchanges=exchanges,
+            tags=tags,
+            version=version,
+            last_updated=last_updated,
+            compatibility=compatibility,
+            compliance=compliance,
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        data = asdict(self)
+        if self.last_updated is not None:
+            data["last_updated"] = self.last_updated.isoformat()
+        return data
+
+
+def _resolve_marketplace_dir(base_path: str | Path | None) -> Path:
+    if base_path is None:
+        return _DEFAULT_MARKETPLACE_DIR
+    return Path(base_path)
+
+
+def _load_preset_from_path(file_path: Path) -> StrategyPreset:
+    try:
+        raw = json.loads(file_path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise ConfigError(f"Nie można odczytać pliku presetu: {file_path}") from exc
+    except json.JSONDecodeError as exc:
+        raise ConfigError(f"Nieprawidłowy JSON w pliku {file_path}") from exc
+    if not isinstance(raw, Mapping):
+        raise ConfigError("Plik presetu musi zawierać obiekt JSON")
+    return StrategyPreset.from_payload(raw)
+
+
+def load_marketplace_presets(*, base_path: str | Path | None = None) -> List[StrategyPreset]:
+    directory = _resolve_marketplace_dir(base_path)
+    if not directory.exists():
+        return []
+    presets: List[StrategyPreset] = []
+    for file_path in sorted(directory.glob("*.json")):
+        if not file_path.is_file():
+            continue
+        try:
+            presets.append(_load_preset_from_path(file_path))
+        except ConfigError:
+            continue
+    return presets
+
+
+def load_preset(preset_id: str, *, base_path: str | Path | None = None) -> StrategyPreset:
+    directory = _resolve_marketplace_dir(base_path)
+    file_path = directory / f"{preset_id}.json"
+    if not file_path.exists():
+        raise ConfigError(f"Brak presetu o identyfikatorze '{preset_id}'")
+    return _load_preset_from_path(file_path)
 
 
 @dataclass(slots=True)
@@ -159,7 +332,20 @@ class ExchangeConfig:
 
         # rzutowania
         self.retry_attempts = int(self.retry_attempts)
-        self.retry_delay = float(self.retry_delay)
+
+        retry_delay_raw = self.retry_delay
+        if retry_delay_raw is None:
+            retry_delay_value = 0.0
+        elif isinstance(retry_delay_raw, (int, float)):
+            retry_delay_value = float(retry_delay_raw)
+        elif isinstance(retry_delay_raw, str):
+            try:
+                retry_delay_value = float(retry_delay_raw.strip())
+            except ValueError as exc:
+                raise ValidationError("retry_delay musi być liczbą") from exc
+        else:
+            raise ValidationError("retry_delay musi być liczbą lub None")
+        self.retry_delay = retry_delay_value
         self.require_demo_mode = bool(self.require_demo_mode)
         self.telemetry_log_interval_s = float(self.telemetry_log_interval_s)
         self.telemetry_schema_version = int(self.telemetry_schema_version)
