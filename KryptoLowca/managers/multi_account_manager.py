@@ -64,7 +64,6 @@ class MultiExchangeAccountManager:
     @classmethod
     def is_supported_exchange(cls, exchange: str) -> bool:
         """Sprawdza, czy identyfikator giełdy znajduje się na liście wspieranych."""
-
         return exchange in cls.SUPPORTED_EXCHANGES
 
     async def connect_all(self, credentials: Dict[Tuple[str, str], ExchangeCredentials]) -> None:
@@ -83,7 +82,6 @@ class MultiExchangeAccountManager:
         for (exchange, account), managed in self._accounts.items():
             async def _wrap(event: MarketPayload, ex=exchange, acc=account) -> None:
                 await callback(ex, acc, event)
-
             tasks.append(managed.adapter.stream_market_data(subscriptions, _wrap))
         return tasks
 

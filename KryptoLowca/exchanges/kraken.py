@@ -23,7 +23,6 @@ from .interfaces import (
     WebSocketSubscription,
 )
 
-
 try:  # pragma: no cover - zależność opcjonalna
     import websockets
     from websockets.protocol import State as _WSState
