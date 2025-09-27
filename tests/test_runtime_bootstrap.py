@@ -3,11 +3,19 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from typing import Sequence
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from bot_core.alerts import EmailChannel, SMSChannel, TelegramChannel
-from bot_core.exchanges.base import AccountSnapshot, Environment, OrderRequest
+from bot_core.exchanges.base import (
+    AccountSnapshot,
+    Environment,
+    ExchangeAdapter,
+    ExchangeCredentials,
+    OrderRequest,
+    OrderResult,
+)
 from bot_core.risk.engine import ThresholdRiskEngine
 from bot_core.runtime import BootstrapContext, bootstrap_environment
 from bot_core.security import SecretManager, SecretStorage
@@ -47,6 +55,15 @@ def _write_config(tmp_path: Path) -> Path:
         data_cache_path: ./var/data/binance_paper
         risk_profile: balanced
         alert_channels: ["telegram:primary", "email:ops", "sms:orange_local"]
+        ip_allowlist: ["127.0.0.1"]
+      zonda_paper:
+        exchange: zonda_spot
+        environment: paper
+        keychain_key: zonda_paper_key
+        credential_purpose: trading
+        data_cache_path: ./var/data/zonda_paper
+        risk_profile: balanced
+        alert_channels: ["telegram:primary"]
         ip_allowlist: ["127.0.0.1"]
     reporting: {}
     alerts:
@@ -89,6 +106,7 @@ def test_bootstrap_environment_initialises_components(tmp_path: Path) -> None:
         "environment": Environment.PAPER.value,
     }
     storage.set_secret("tests:binance_paper_key:trading", json.dumps(credentials_payload))
+    storage.set_secret("tests:zonda_paper_key:trading", json.dumps(credentials_payload))
     manager.store_secret_value("telegram_token", "telegram-secret", purpose="alerts:telegram")
     manager.store_secret_value(
         "smtp_credentials",
@@ -139,4 +157,62 @@ def test_bootstrap_environment_initialises_components(tmp_path: Path) -> None:
     assert snapshot["telegram:primary"]["status"] == "ok"
 
     assert context.risk_engine.should_liquidate(profile_name="balanced") is False
+
+    class _FakeZondaAdapter(ExchangeAdapter):
+        name = "zonda_spot"
+
+        def __init__(self, credentials: ExchangeCredentials, *, environment: Environment, **_: object) -> None:
+            super().__init__(credentials)
+            self.environment = environment
+            self.network_config: Sequence[str] | None = None
+
+        def configure_network(self, *, ip_allowlist: Sequence[str] | None = None) -> None:  # type: ignore[override]
+            self.network_config = tuple(ip_allowlist) if ip_allowlist else None
+
+        def fetch_account_snapshot(self) -> AccountSnapshot:  # type: ignore[override]
+            return AccountSnapshot(balances={}, total_equity=0.0, available_margin=0.0, maintenance_margin=0.0)
+
+        def fetch_symbols(self) -> Sequence[str]:  # type: ignore[override]
+            return []
+
+        def fetch_ohlcv(
+            self,
+            symbol: str,
+            interval: str,
+            start: int | None = None,
+            end: int | None = None,
+            limit: int | None = None,
+        ) -> Sequence[Sequence[float]]:  # type: ignore[override]
+            return []
+
+        def place_order(self, request: OrderRequest) -> OrderResult:  # type: ignore[override]
+            return OrderResult(order_id="", status="", filled_quantity=0.0, avg_price=None, raw_response={})
+
+        def cancel_order(self, order_id: str, *, symbol: str | None = None) -> None:  # type: ignore[override]
+            return None
+
+        def stream_public_data(self, *, channels: Sequence[str]):  # type: ignore[override]
+            raise NotImplementedError
+
+        def stream_private_data(self, *, channels: Sequence[str]):  # type: ignore[override]
+            raise NotImplementedError
+
+    factory_calls: dict[str, ExchangeCredentials] = {}
+
+    def _fake_factory(credentials: ExchangeCredentials, **kwargs: object) -> ExchangeAdapter:
+        factory_calls["credentials"] = credentials
+        assert kwargs.get("environment") == Environment.PAPER
+        return _FakeZondaAdapter(credentials, environment=kwargs["environment"])  # type: ignore[arg-type]
+
+    zonda_context = bootstrap_environment(
+        "zonda_paper",
+        config_path=config_path,
+        secret_manager=manager,
+        adapter_factories={"zonda_spot": _fake_factory},
+    )
+
+    assert isinstance(zonda_context.adapter, _FakeZondaAdapter)
+    assert zonda_context.adapter.environment is Environment.PAPER
+    assert zonda_context.adapter.network_config == ("127.0.0.1",)
+    assert factory_calls["credentials"].key_id == "paper-key"
 

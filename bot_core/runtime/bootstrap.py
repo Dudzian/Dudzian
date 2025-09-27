@@ -28,14 +28,16 @@ from bot_core.config.models import (
 from bot_core.exchanges.base import Environment, ExchangeAdapter, ExchangeAdapterFactory, ExchangeCredentials
 from bot_core.exchanges.binance import BinanceFuturesAdapter, BinanceSpotAdapter
 from bot_core.exchanges.kraken import KrakenSpotAdapter
+from bot_core.exchanges.zonda import ZondaSpotAdapter
 from bot_core.risk.engine import ThresholdRiskEngine
 from bot_core.risk.profiles.manual import ManualProfile
 from bot_core.security import SecretManager, SecretStorageError
 
 _DEFAULT_ADAPTERS: Mapping[str, ExchangeAdapterFactory] = {
-    "binance_spot":   BinanceSpotAdapter,
+    "binance_spot": BinanceSpotAdapter,
     "binance_futures": BinanceFuturesAdapter,
-    "kraken_spot":    KrakenSpotAdapter,
+    "kraken_spot": KrakenSpotAdapter,
+    "zonda_spot": ZondaSpotAdapter,
 }
 
 
