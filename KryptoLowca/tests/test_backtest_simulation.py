@@ -232,6 +232,31 @@ def test_backtest_engine_generates_metrics() -> None:
     assert report.metrics.max_drawdown_pct >= 0.0
 
 
+def test_backtest_engine_detects_data_issues() -> None:
+    df = _build_dataframe(periods=60)
+    df = df.drop(df.index[10])  # luka czasowa
+    zero_volume_idx = df.index[20:26]
+    df.loc[zero_volume_idx, "volume"] = 0.0
+
+    engine = BacktestEngine(
+        strategy_name="TestTrendStrategy",
+        data=df,
+        symbol="BTC/USDT",
+        timeframe="1m",
+        initial_balance=1_000.0,
+        matching=MatchingConfig(latency_bars=1, slippage_bps=1.0, fee_bps=5.0, liquidity_share=1.0),
+        context_extra={
+            "trade_risk_pct": 0.1,
+            "max_position_notional_pct": 0.5,
+            "max_leverage": 2.0,
+        },
+    )
+    report = engine.run()
+
+    assert any("luka danych" in warning for warning in report.warnings)
+    assert any("zerowego wolumenu" in warning for warning in report.warnings)
+
+
 @pytest.mark.asyncio()
 async def test_config_manager_preflight_backtest(tmp_path: Path, provider: MarketDataProvider) -> None:
     """
