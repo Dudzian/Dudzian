@@ -168,6 +168,13 @@ class ThresholdRiskEngine(RiskEngine):
 
         now = self._clock()
         current_day = now.date()
+        if state.start_of_day_equity <= 0:
+            state.start_of_day_equity = account.total_equity
+            state.last_equity = account.total_equity
+
+        if state.peak_equity <= 0:
+            state.peak_equity = account.total_equity
+
         if state.current_day != current_day:
             state.reset_for_new_day(equity=account.total_equity, day=current_day)
             _LOGGER.info("Reset dziennego licznika PnL dla profilu %s", profile_name)
