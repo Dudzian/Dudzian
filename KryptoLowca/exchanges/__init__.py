@@ -8,6 +8,18 @@ from .adapters import (
     ExchangeAdapterFactory,
     create_exchange_adapter,
 )
+from .binance import BinanceTestnetAdapter
+from .interfaces import (
+    ExchangeAdapter,
+    ExchangeCredentials,
+    MarketSubscription,
+    OrderRequest,
+    OrderStatus,
+    RateLimitRule,
+    RESTWebSocketAdapter,
+    WebSocketSubscription,
+)
+from .kraken import KrakenDemoAdapter
 
 __all__ = [
     "AdapterError",
@@ -15,4 +27,14 @@ __all__ = [
     "CCXTExchangeAdapter",
     "ExchangeAdapterFactory",
     "create_exchange_adapter",
+    "BinanceTestnetAdapter",
+    "KrakenDemoAdapter",
+    "ExchangeAdapter",
+    "ExchangeCredentials",
+    "MarketSubscription",
+    "OrderRequest",
+    "OrderStatus",
+    "RateLimitRule",
+    "RESTWebSocketAdapter",
+    "WebSocketSubscription",
 ]
