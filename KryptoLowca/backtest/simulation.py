@@ -97,6 +97,9 @@ class HistoricalDataProvider(DataProvider):
         self._data = data.sort_index()
         self.symbol = symbol
         self.timeframe = timeframe
+        # prosta cache'ująca głowę ramki na kolejne indeksy
+        self._history_cache_idx = -1
+        self._history_cache: pd.DataFrame = self._data.iloc[:0]
 
     async def get_ohlcv(
         self, symbol: str, timeframe: str, *, limit: int = 500
@@ -117,7 +120,7 @@ class HistoricalDataProvider(DataProvider):
     def iter_rows(self) -> Iterable[Tuple[datetime, Mapping[str, float]]]:
         for ts, row in self._data.iterrows():
             if isinstance(ts, datetime):
-                timestamp = ts
+                timestamp = ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
             else:
                 timestamp = datetime.fromtimestamp(float(ts) / 1000.0, tz=timezone.utc)
             yield timestamp, {
@@ -131,7 +134,16 @@ class HistoricalDataProvider(DataProvider):
     def history_until(self, index: int) -> pd.DataFrame:
         if index < 0:
             return self._data.iloc[:0]
-        return self._data.iloc[: index + 1]
+        if index == self._history_cache_idx:
+            return self._history_cache
+        # optymalizacja: przyrostowo aktualizujemy widok
+        self._history_cache = self._data.head(index + 1)
+        self._history_cache_idx = index
+        return self._history_cache
+
+    @property
+    def dataframe(self) -> pd.DataFrame:
+        return self._data
 
 
 class StrategyBacktestSession:
@@ -180,7 +192,7 @@ class StrategyBacktestSession:
                 try:
                     result["value"] = loop.run_until_complete(coro)
                     loop.run_until_complete(loop.shutdown_asyncgens())
-                except BaseException as exc:  # pragma: no cover - defensive
+                except BaseException as exc:  # pragma: no cover
                     error["value"] = exc
                 finally:
                     asyncio.set_event_loop(None)
@@ -235,7 +247,7 @@ class StrategyBacktestSession:
             return
         try:
             self._run(self._strategy.notify_fill(context, fill))
-        except Exception:  # pragma: no cover - defensywne logowanie
+        except Exception:  # pragma: no cover
             logger.exception("Strategy notify_fill failed during backtest")
 
 
@@ -302,26 +314,18 @@ class MatchingEngine:
                 continue
             volume = max(0.0, float(bar.get("volume", 0.0)))
             liquidity = volume * max(0.0, min(self._cfg.liquidity_share, 1.0))
+            if liquidity <= 0:
+                continue
             remaining = order.remaining
-            fill_size = remaining if liquidity <= 0 else min(remaining, liquidity)
+            fill_size = min(remaining, liquidity)
             if fill_size <= 0:
                 continue
-            slip = base_price * (self._cfg.slippage_bps / 10_000.0)
-            if order.side == "buy":
-                price = base_price + slip
-                slippage = slip
-            else:
-                price = max(0.0, base_price - slip)
-                slippage = -slip
-            fee = price * fill_size * (self._cfg.fee_bps / 10_000.0)
             fills.append(
-                BacktestFill(
+                self._build_fill(
                     order_id=order.order_id,
                     side=order.side,
                     size=fill_size,
-                    price=price,
-                    fee=fee,
-                    slippage=slippage * fill_size,
+                    base_price=base_price,
                     timestamp=timestamp,
                     partial=fill_size < remaining,
                 )
@@ -332,6 +336,59 @@ class MatchingEngine:
         for order in completed:
             self._orders.remove(order)
         return fills
+
+    def force_fill(
+        self,
+        *,
+        side: str,
+        size: float,
+        timestamp: datetime,
+        bar: Mapping[str, float],
+    ) -> BacktestFill:
+        if size <= 0:
+            raise ValidationError("Wielkość wymuszonego zlecenia musi być dodatnia")
+        base_price = float(bar.get("close", bar.get("open", 0.0)))
+        if base_price <= 0:
+            raise ValidationError("Nie można domknąć pozycji bez prawidłowej ceny")
+        fill = self._build_fill(
+            order_id=self._next_id,
+            side=side.lower(),
+            size=size,
+            base_price=base_price,
+            timestamp=timestamp,
+            partial=False,
+        )
+        self._next_id += 1
+        return fill
+
+    def _build_fill(
+        self,
+        *,
+        order_id: int,
+        side: str,
+        size: float,
+        base_price: float,
+        timestamp: datetime,
+        partial: bool,
+    ) -> BacktestFill:
+        slip = base_price * (self._cfg.slippage_bps / 10_000.0)
+        if side == "buy":
+            price = base_price + slip
+            slippage = slip
+        else:
+            price = max(0.0, base_price - slip)
+            slippage = -slip
+        fee = price * size * (self._cfg.fee_bps / 10_000.0)
+        return BacktestFill(
+            order_id=order_id,
+            side=side,
+            size=size,
+            price=price,
+            fee=fee,
+            slippage=slippage * size,
+            timestamp=timestamp,
+            partial=partial,
+        )
 
 
 class BacktestEngine:
@@ -377,7 +434,6 @@ class BacktestEngine:
     def run(self) -> BacktestReport:
         cash = float(self._initial_balance)
         position = 0.0
-        avg_price = 0.0
         trades: List[BacktestTrade] = []
         fills: List[BacktestFill] = []
         equity_curve: List[float] = []
@@ -389,104 +445,151 @@ class BacktestEngine:
         )
         self._session.ensure_prepared(context)
 
-        last_entry_time: datetime | None = None
-        last_entry_price = 0.0
-        entry_equity = cash
-        trade_volume = 0.0
-        fees_paid = 0.0
-        slippage_cost = 0.0
+        total_fees = 0.0
+        total_slippage = 0.0
         returns: List[float] = []
         previous_equity = cash
 
-        last_bar_payload: tuple[int, datetime, Mapping[str, float]] | None = None
-        for idx, (timestamp, bar) in enumerate(self._data_provider.iter_rows()):
-            last_bar_payload = (idx, timestamp, bar)
-            bar_fills = self._matching_engine.process_bar(index=idx, timestamp=timestamp, bar=bar)
-            if bar_fills:
-                position_before = position
-                for fill in bar_fills:
-                    fills.append(fill)
-                    fees_paid += fill.fee
-                    slippage_cost += abs(fill.slippage)
-                    direction = 1 if fill.side == "buy" else -1
-                    cash -= direction * fill.price * fill.size
-                    cash -= fill.fee if fill.side == "buy" else -fill.fee
-                    position += direction * fill.size
-                    trade_volume += abs(fill.size)
-                    if position_before == 0.0 and position != 0.0 and last_entry_time is None:
-                        last_entry_time = timestamp
-                        last_entry_price = fill.price
-                        entry_equity = cash + position * bar["close"]
-                    position_before = position
-                    if position:
-                        avg_price = (
-                            (avg_price * (position - direction * fill.size)) + fill.price * fill.size
-                        ) / position
-                    else:
-                        avg_price = 0.0
-                    fill_context = self._session.build_context(
-                        timestamp=timestamp,
-                        portfolio_value=cash + position * bar["close"],
-                        position=position,
-                    )
-                    self._session.notify_fill(
-                        fill_context,
-                        {
-                            "order_id": fill.order_id,
-                            "price": fill.price,
-                            "size": fill.size,
-                            "side": fill.side,
-                            "fee": fill.fee,
-                            "timestamp": fill.timestamp,
-                        },
-                    )
-                if position == 0.0 and last_entry_time is not None:
-                    exit_price = float(bar.get("close", avg_price))
-                    trade_pnl = (cash + position * exit_price) - entry_equity
-                    trades.append(
-                        BacktestTrade(
-                            direction="LONG" if avg_price >= 0 else "SHORT",
-                            entry_time=last_entry_time,
-                            exit_time=timestamp,
-                            entry_price=last_entry_price,
-                            exit_price=exit_price,
-                            quantity=trade_volume,
-                            pnl=trade_pnl,
-                            pnl_pct=(trade_pnl / self._initial_balance * 100.0)
-                            if self._initial_balance
-                            else 0.0,
-                            fees_paid=fees_paid,
-                            slippage_cost=slippage_cost,
-                        )
-                    )
-                    last_entry_time = None
-                    trade_volume = 0.0
+        df = self._data_provider.dataframe
+        opens = (df["open"].to_numpy(dtype=float, copy=False) if "open" in df else df["close"].to_numpy(dtype=float, copy=False))
+        highs = (df["high"].to_numpy(dtype=float, copy=False) if "high" in df else df["close"].to_numpy(dtype=float, copy=False))
+        lows  = (df["low"].to_numpy(dtype=float, copy=False)  if "low"  in df else df["close"].to_numpy(dtype=float, copy=False))
+        closes = df["close"].to_numpy(dtype=float, copy=False)
+        volumes = df["volume"].to_numpy(dtype=float, copy=False)
 
-            equity = cash + position * float(bar.get("close", 0.0))
+        raw_index = list(df.index)
+        timestamps: List[datetime] = []
+        for ts in raw_index:
+            if isinstance(ts, datetime):
+                timestamps.append(ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc))
+            else:
+                timestamps.append(datetime.fromtimestamp(float(ts) / 1000.0, tz=timezone.utc))
+
+        open_trade: Dict[str, object] | None = None
+
+        def apply_fill(fill: BacktestFill, *, bar_close: float) -> None:
+            nonlocal cash, position, total_fees, total_slippage, open_trade
+            fills.append(fill)
+            total_fees += fill.fee
+            total_slippage += abs(fill.slippage)
+
+            direction = 1 if fill.side == "buy" else -1
+            position_before = position
+            equity_before = cash + position_before * bar_close
+            cash -= direction * fill.price * fill.size
+            cash -= fill.fee if fill.side == "buy" else -fill.fee
+            position = position_before + direction * fill.size
+            if abs(position) < 1e-9:
+                position = 0.0
+            portfolio_value = cash + position * bar_close
+
+            fill_context = self._session.build_context(
+                timestamp=fill.timestamp,
+                portfolio_value=portfolio_value,
+                position=position,
+            )
+            self._session.notify_fill(
+                fill_context,
+                {
+                    "order_id": fill.order_id,
+                    "price": fill.price,
+                    "size": fill.size,
+                    "side": fill.side,
+                    "fee": fill.fee,
+                    "timestamp": fill.timestamp,
+                },
+            )
+
+            # otwarcie
+            if open_trade is None and position_before == 0.0 and position != 0.0:
+                open_trade = {
+                    "direction": "LONG" if position > 0 else "SHORT",
+                    "entry_time": fill.timestamp,
+                    "entry_price": fill.price,
+                    "entry_equity": equity_before,
+                    "fees": 0.0,
+                    "slippage": 0.0,
+                    "volume": 0.0,
+                    "position": abs(position),
+                }
+
+            # aktualizacja/trzymanie
+            if open_trade is not None:
+                open_trade["fees"] = float(open_trade.get("fees", 0.0)) + fill.fee
+                open_trade["slippage"] = float(open_trade.get("slippage", 0.0)) + abs(fill.slippage)
+                open_trade["volume"] = float(open_trade.get("volume", 0.0)) + abs(fill.size)
+                trade_dir = open_trade["direction"]
+                if ((trade_dir == "LONG" and direction == 1 and position > 0) or
+                    (trade_dir == "SHORT" and direction == -1 and position < 0)):
+                    prev_pos = float(open_trade.get("position", 0.0))
+                    new_pos = abs(position)
+                    if new_pos > 0:
+                        open_trade["entry_price"] = (
+                            float(open_trade["entry_price"]) * prev_pos + fill.price * abs(fill.size)
+                        ) / new_pos
+                        open_trade["position"] = new_pos
+                open_trade["position"] = abs(position)
+
+            # zamknięcie
+            if open_trade is not None and position == 0.0:
+                exit_price = fill.price
+                pnl = portfolio_value - float(open_trade["entry_equity"])
+                trades.append(
+                    BacktestTrade(
+                        direction=str(open_trade["direction"]),
+                        entry_time=open_trade["entry_time"],
+                        exit_time=fill.timestamp,
+                        entry_price=float(open_trade["entry_price"]),
+                        exit_price=exit_price,
+                        quantity=float(open_trade["volume"]),
+                        pnl=pnl,
+                        pnl_pct=(pnl / self._initial_balance * 100.0) if self._initial_balance else 0.0,
+                        fees_paid=float(open_trade["fees"]),
+                        slippage_cost=float(open_trade["slippage"]),
+                    )
+                )
+                open_trade = None
+
+        last_bar_idx = -1
+        last_bar: Mapping[str, float] | None = None
+        last_ts: datetime | None = None
+
+        for idx, timestamp in enumerate(timestamps):
+            bar = {
+                "open": float(opens[idx]),
+                "high": float(highs[idx]),
+                "low": float(lows[idx]),
+                "close": float(closes[idx]),
+                "volume": float(volumes[idx]),
+            }
+            last_bar_idx = idx
+            last_bar = bar
+            last_ts = timestamp
+
+            # najpierw realizujemy ewentualne fill'e
+            bar_fills = self._matching_engine.process_bar(index=idx, timestamp=timestamp, bar=bar)
+            for fill in bar_fills:
+                apply_fill(fill, bar_close=bar["close"])
+
+            equity = cash + position * bar["close"]
             equity_curve.append(equity)
             equity_ts.append(timestamp)
             if previous_equity:
                 returns.append((equity - previous_equity) / previous_equity)
             previous_equity = equity
 
-            context = self._session.build_context(
-                timestamp=timestamp,
-                portfolio_value=equity,
-                position=position,
-            )
+            # sygnał i zlecenie
+            context = self._session.build_context(timestamp=timestamp, portfolio_value=equity, position=position)
             history = self._data_provider.history_until(idx)
-            market_payload = {
-                "price": float(bar.get("close", 0.0)),
-                "bar": dict(bar),
-                "ohlcv": history,
-            }
+            market_payload = {"price": bar["close"], "bar": bar, "ohlcv": history}
             signal = self._session.generate_signal(context, market_payload)
-            if signal.action.upper() == "HOLD":
+            action = signal.action.upper()
+            if action == "HOLD":
                 continue
-            if signal.action.upper() not in {"BUY", "SELL"}:
+            if action not in {"BUY", "SELL"}:
                 logger.debug("Ignoruję nieznane działanie sygnału: %s", signal.action)
                 continue
-            side = signal.action.upper()
+            side = action
             size = self._determine_size(signal, context, market_payload)
             if size <= 0:
                 continue
@@ -500,98 +603,38 @@ class BacktestEngine:
                 stop_loss=signal.stop_loss,
                 take_profit=signal.take_profit,
             )
-            if side == "BUY" and last_entry_time is None:
-                last_entry_time = timestamp
-                last_entry_price = float(bar.get("close", 0.0))
-                entry_equity = equity
-                trade_volume = 0.0
 
-        if last_bar_payload is not None:
-            final_idx, final_ts, final_bar = last_bar_payload
+        # finalizacja: ostatnie fill'e + ewentualne wymuszone zamknięcie
+        if last_bar is not None and last_ts is not None:
             final_fills = self._matching_engine.process_bar(
-                index=final_idx + 1,
-                timestamp=final_ts,
-                bar=final_bar,
+                index=last_bar_idx + 1, timestamp=last_ts, bar=last_bar
             )
             for fill in final_fills:
-                fills.append(fill)
-                fees_paid += fill.fee
-                slippage_cost += abs(fill.slippage)
-                direction = 1 if fill.side == "buy" else -1
-                cash -= direction * fill.price * fill.size
-                cash -= fill.fee if fill.side == "buy" else -fill.fee
-                position += direction * fill.size
-                trade_volume += abs(fill.size)
-                if abs(position) < 1e-9:
-                    position = 0.0
-                fill_context = self._session.build_context(
-                    timestamp=final_ts,
-                    portfolio_value=cash + position * final_bar["close"],
-                    position=position,
-                )
-                self._session.notify_fill(
-                    fill_context,
-                    {
-                        "order_id": fill.order_id,
-                        "price": fill.price,
-                        "size": fill.size,
-                        "side": fill.side,
-                        "fee": fill.fee,
-                        "timestamp": fill.timestamp,
-                    },
-                )
-            if position == 0.0 and last_entry_time is not None:
-                exit_price = float(final_bar.get("close", avg_price))
-                trade_pnl = (cash + position * exit_price) - entry_equity
-                trades.append(
-                    BacktestTrade(
-                        direction="LONG" if avg_price >= 0 else "SHORT",
-                        entry_time=last_entry_time,
-                        exit_time=final_ts,
-                        entry_price=last_entry_price,
-                        exit_price=exit_price,
-                        quantity=trade_volume,
-                        pnl=trade_pnl,
-                        pnl_pct=(trade_pnl / self._initial_balance * 100.0)
-                        if self._initial_balance
-                        else 0.0,
-                        fees_paid=fees_paid,
-                        slippage_cost=slippage_cost,
-                    )
-                )
-                last_entry_time = None
+                apply_fill(fill, bar_close=last_bar["close"])
 
-        if last_bar_payload is not None and last_entry_time is not None and position != 0.0:
-            _, final_ts, final_bar = last_bar_payload
-            exit_price = float(final_bar.get("close", avg_price))
-            cash -= position * exit_price
-            trade_pnl = (cash + position * exit_price) - entry_equity
-            trades.append(
-                BacktestTrade(
-                    direction="LONG" if position > 0 else "SHORT",
-                    entry_time=last_entry_time,
-                    exit_time=final_ts,
-                    entry_price=last_entry_price,
-                    exit_price=exit_price,
-                    quantity=trade_volume or abs(position),
-                    pnl=trade_pnl,
-                    pnl_pct=(trade_pnl / self._initial_balance * 100.0)
-                    if self._initial_balance
-                    else 0.0,
-                    fees_paid=fees_paid,
-                    slippage_cost=slippage_cost,
+            if position != 0.0:
+                forced_side = "sell" if position > 0 else "buy"
+                forced_fill = self._matching_engine.force_fill(
+                    side=forced_side,
+                    size=abs(position),
+                    timestamp=last_ts,
+                    bar=last_bar,
                 )
-            )
-            position = 0.0
-            last_entry_time = None
+                apply_fill(forced_fill, bar_close=last_bar["close"])
+                final_equity = cash + position * last_bar["close"]
+                equity_curve.append(final_equity)
+                equity_ts.append(last_ts)
+                if previous_equity:
+                    returns.append((final_equity - previous_equity) / previous_equity)
+                previous_equity = final_equity
 
         self._session.close()
         metrics = self._compute_metrics(
             equity_curve,
             equity_ts,
             returns,
-            fees_paid,
-            slippage_cost,
+            total_fees,
+            total_slippage,
             trades,
         )
         if not trades:
@@ -718,6 +761,7 @@ class BacktestEngine:
         std = math.sqrt(variance)
         if std == 0:
             return 0.0
+        # Załóżmy minutowy sampling -> annualizacja ~ sqrt(365.25*24*60)
         annual_factor = math.sqrt(365.25 * 24 * 60)
         return (mean / std) * annual_factor
 
