@@ -8,7 +8,6 @@ from typing import Dict, Mapping, MutableMapping
 import pandas as pd
 
 from KryptoLowca.logging_utils import get_logger
-
 from KryptoLowca.backtest.simulation import BacktestFill, MatchingConfig, MatchingEngine
 
 logger = get_logger(__name__)
@@ -42,12 +41,12 @@ class PaperTradingAdapter:
     def update_market_data(self, symbol: str, timeframe: str, market_payload: Mapping[str, object]) -> None:
         state = self._ensure_state(symbol)
         bar = self._extract_bar(market_payload)
-        if bar is None:
+        if bar is None or state.matching is None:
             return
         fills = state.matching.process_bar(
             index=int(bar.get("index", 0)),
-            timestamp=bar.get("timestamp", datetime.now(timezone.utc)),
-            bar=bar,
+            timestamp=bar.get("timestamp", datetime.now(timezone.utc)),  # type: ignore[arg-type]
+            bar=bar,  # type: ignore[arg-type]
         )
         for fill in fills:
             self._apply_fill(state, fill)
@@ -55,6 +54,8 @@ class PaperTradingAdapter:
 
     def submit_order(self, *, symbol: str, side: str, size: float, **kwargs) -> Mapping[str, object]:
         state = self._ensure_state(symbol)
+        if state.matching is None:
+            state.matching = MatchingEngine(self._matching_cfg)
         timestamp = datetime.now(timezone.utc)
         order_id = state.matching.submit_market_order(
             side=side,
@@ -74,15 +75,21 @@ class PaperTradingAdapter:
 
     def _apply_fill(self, state: _PortfolioState, fill: BacktestFill) -> None:
         direction = 1 if fill.side == "buy" else -1
-        state.cash -= direction * fill.price * fill.size
-        state.cash -= fill.fee if fill.side == "buy" else -fill.fee
-        state.position += direction * fill.size
+        fee_paid = float(fill.fee)
+        trade_notional = fill.price * fill.size
+        previous_position = state.position
+
+        # gotówka: notional * kierunek + opłata (opłata zawsze zmniejsza cash)
+        state.cash -= direction * trade_notional
+        state.cash -= fee_paid
+
+        # pozycja i cena średnia
+        state.position = previous_position + direction * fill.size
         if state.position:
-            state.avg_price = (
-                (state.avg_price * (state.position - direction * fill.size)) + fill.price * fill.size
-            ) / state.position
+            state.avg_price = ((state.avg_price * previous_position) + fill.price * fill.size) / state.position
         else:
             state.avg_price = 0.0
+
         state.fills.append(fill)
         logger.info(
             "Paper fill: side=%s price=%.4f size=%.4f cash=%.2f position=%.4f",
@@ -94,13 +101,13 @@ class PaperTradingAdapter:
         )
 
     @staticmethod
-    def _extract_bar(market_payload: Mapping[str, object]) -> Dict[str, float] | None:
+    def _extract_bar(market_payload: Mapping[str, object]) -> Dict[str, object] | None:
         if not market_payload:
             return None
         ohlcv = market_payload.get("ohlcv")
         if isinstance(ohlcv, dict) and {"open", "high", "low", "close"}.issubset(ohlcv):
-            bar = dict(ohlcv)
-        elif isinstance(ohlcv, pd.DataFrame) and not ohlcv.empty:  # type: ignore[name-defined]
+            bar: Dict[str, object] = dict(ohlcv)
+        elif isinstance(ohlcv, pd.DataFrame) and not ohlcv.empty:
             last = ohlcv.iloc[-1]
             bar = {
                 "open": float(last.get("open", 0.0)),

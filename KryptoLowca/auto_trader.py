@@ -1066,6 +1066,28 @@ class AutoTrader:
                 cfg = StrategyConfig(**value).validate()
             else:
                 raise TypeError("Nieobsługiwany format konfiguracji strategii")
+            if cfg.mode == "live":
+                backtest_ts = getattr(cfg, "backtest_passed_at", None)
+                freshness_window = getattr(cfg, "BACKTEST_VALIDITY_WINDOW_S", 0.0)
+                reason: Optional[str] = None
+                if not backtest_ts:
+                    reason = "brak potwierdzonego backtestu"
+                else:
+                    age = time.time() - float(backtest_ts)
+                    if freshness_window and age > float(freshness_window):
+                        hours = max(1, int(freshness_window // 3600))
+                        reason = (
+                            "wynik backtestu jest przeterminowany (starszy niż "
+                            f"{hours}h)"
+                        )
+                if reason:
+                    message = (
+                        "Odrzucono przełączenie strategii w tryb LIVE – "
+                        f"{reason}. Uruchom backtest i ponów próbę."
+                    )
+                    self.emitter.log(message, level="WARNING", component="AutoTrader")
+                    logger.warning("%s", message)
+                    return
         except Exception as exc:  # pragma: no cover - logujemy i utrzymujemy stare ustawienia
             self.emitter.log(
                 f"Nieprawidłowa konfiguracja strategii: {exc!r}",

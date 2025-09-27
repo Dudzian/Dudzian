@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from dataclasses import dataclass, field, asdict, fields
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, TYPE_CHECKING, ClassVar
 
 import yaml
 from cryptography.fernet import Fernet, InvalidToken
@@ -17,13 +18,23 @@ if TYPE_CHECKING:  # pragma: no cover - tylko dla typowania
     from KryptoLowca.backtest.simulation import BacktestReport, MatchingConfig
 else:  # pragma: no cover - definiujemy nazwę dla lintów bez importu cyklicznego
     MatchingConfig = object  # type: ignore[assignment]
-    from KryptoLowca.data.market_data import MarketDataProvider, MarketDataRequest
+    BacktestReport = object  # type: ignore[assignment]
+from KryptoLowca.data.market_data import MarketDataProvider, MarketDataRequest
 
-from KryptoLowca.strategies.marketplace import (
-    StrategyPreset,
-    load_marketplace_presets,
-    load_preset,
-)
+try:  # pragma: no cover - zależność opcjonalna w środowisku testowym
+    from KryptoLowca.strategies.marketplace import (
+        StrategyPreset,
+        load_marketplace_presets,
+        load_preset,
+    )
+except Exception:  # pragma: no cover - fallback dla testów bez marketplace
+    StrategyPreset = Any  # type: ignore
+
+    def load_marketplace_presets(*_, **__) -> List[Any]:
+        return []
+
+    def load_preset(*_, **__) -> Any:
+        raise RuntimeError("Marketplace presets are unavailable in this environment")
 
 __all__ = [
     "ConfigManager",
@@ -34,7 +45,11 @@ __all__ = [
     "TradeConfig",
     "ExchangeConfig",
     "StrategyConfig",
+    "BACKTEST_VALIDITY_WINDOW_S",
 ]
+
+
+BACKTEST_VALIDITY_WINDOW_S = 24 * 60 * 60  # 24h
 
 
 class ConfigError(RuntimeError):
@@ -178,6 +193,8 @@ class ExchangeConfig:
 class StrategyConfig:
     """Parametry strategii oraz sztywne limity ryzyka dla auto-tradingu."""
 
+    BACKTEST_VALIDITY_WINDOW_S: ClassVar[float] = BACKTEST_VALIDITY_WINDOW_S
+
     preset: str = "SAFE"
     mode: str = "demo"
     max_leverage: float = 1.0
@@ -190,6 +207,7 @@ class StrategyConfig:
     compliance_confirmed: bool = False
     api_keys_configured: bool = False
     acknowledged_risk_disclaimer: bool = False
+    backtest_passed_at: Optional[float] = None
 
     def validate(self) -> "StrategyConfig":
         mode = (self.mode or "demo").strip().lower()
@@ -208,6 +226,21 @@ class StrategyConfig:
         if self.violation_cooldown_s <= 0:
             raise ValidationError("violation_cooldown_s musi być dodatnie")
         self.reduce_only_after_violation = bool(self.reduce_only_after_violation)
+
+        # Normalizacja znacznika zaliczonego backtestu
+        raw_backtest_ts = getattr(self, "backtest_passed_at", None)
+        if raw_backtest_ts in (None, "", 0, 0.0):
+            normalized_backtest_ts: Optional[float] = None
+        else:
+            try:
+                normalized_backtest_ts = float(raw_backtest_ts)
+            except (TypeError, ValueError) as exc:
+                raise ValidationError(
+                    "backtest_passed_at musi być znacznikiem czasu w sekundach"
+                ) from exc
+            if normalized_backtest_ts <= 0:
+                raise ValidationError("backtest_passed_at musi być dodatnie")
+        self.backtest_passed_at = normalized_backtest_ts
 
         # Normalizacja flag zgodności (zachowuje kompatybilność ze starszym API)
         for field_name in (
@@ -309,7 +342,24 @@ class StrategyConfig:
         from KryptoLowca.backtest.simulation import evaluate_strategy_backtest
 
         evaluate_strategy_backtest(asdict(self), report)
+        # po zaliczeniu backtestu zapamiętaj znacznik czasu
+        self.backtest_passed_at = time.time()
         return self
+
+    def has_fresh_backtest(
+        self,
+        *,
+        freshness_window: Optional[float] = None,
+        now: Optional[float] = None,
+    ) -> bool:
+        """Zwraca True, jeśli konfiguracja posiada aktualne potwierdzenie backtestu."""
+        if not self.backtest_passed_at:
+            return False
+        window = self.BACKTEST_VALIDITY_WINDOW_S if freshness_window is None else float(freshness_window)
+        if window <= 0:
+            return True
+        reference_ts = float(now if now is not None else time.time())
+        return (reference_ts - float(self.backtest_passed_at)) <= window
 
 
 _STRATEGY_FIELD_NAMES = {f.name for f in fields(StrategyConfig)}
@@ -499,6 +549,17 @@ class ConfigManager:
                 "Tryb LIVE wymaga potwierdzonych flag zgodności: "
                 + ", ".join(missing)
             )
+        backtest_ts = strategy_section.get("backtest_passed_at")
+        if not isinstance(backtest_ts, (int, float)) or backtest_ts <= 0:
+            raise ValidationError(
+                "Tryb LIVE wymaga aktualnego potwierdzenia backtestu (brak wpisu)."
+            )
+        freshness_window = StrategyConfig.BACKTEST_VALIDITY_WINDOW_S
+        if freshness_window > 0:
+            if (time.time() - float(backtest_ts)) > float(freshness_window):
+                raise ValidationError(
+                    "Wynik backtestu jest przeterminowany – uruchom backtest ponownie."
+                )
         if not user_confirmed:
             raise ValidationError(
                 "Aktywacja trybu LIVE wymaga potwierdzenia użytkownika (ustaw opcję confirm)."
@@ -688,7 +749,7 @@ class ConfigManager:
             key: ("" if key in self.ENCRYPTED_FIELDS.get("exchange", set()) else value)
             for key, value in template["exchange"].items()
         }
-        with self.config_path.open("w", encoding="utf-8") as fh:
+        with self.config_path.open("w", encoding="utf-8") as fh):
             yaml.safe_dump(template, fh, sort_keys=True)
         return self.config_path
 
@@ -725,15 +786,12 @@ class ConfigManager:
         timeframe: str,
         strategy_name: Optional[str] = None,
         initial_balance: float = 10_000.0,
-        matching: Optional[MatchingConfig] = None,
+        matching: Optional["MatchingConfig"] = None,
         allow_short: bool = False,
         report_dir: Optional[Path] = None,
     ) -> "BacktestReport":
         from KryptoLowca.backtest.reporting import export_report
-        from KryptoLowca.backtest.simulation import (
-            BacktestEngine,
-            MatchingConfig as MatchingConfigImpl,
-        )
+        from KryptoLowca.backtest.simulation import BacktestEngine, MatchingConfig
 
         if data.empty:
             raise ValidationError("Backtest wymaga niepustego zbioru danych")
@@ -753,12 +811,13 @@ class ConfigManager:
             symbol=symbol,
             timeframe=timeframe,
             initial_balance=initial_balance,
-            matching=matching or MatchingConfigImpl(),
+            matching=matching or MatchingConfig(),
             allow_short=allow_short,
             context_extra=context_extra,
         )
         report = engine.run()
         strategy.guard_backtest(report)
+        self._current_config["strategy"] = asdict(strategy)
         if report_dir is not None:
             export_report(report, Path(report_dir))
         return report
