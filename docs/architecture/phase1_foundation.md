@@ -8,7 +8,8 @@ zewnętrznych, z jasnym podziałem na warstwy i środowiska.
 
 | Moduł | Odpowiedzialność | Kluczowe klasy/interfejsy |
 | --- | --- | --- |
-| `bot_core/exchanges` | Adaptery giełdowe z rozdzieleniem środowisk i uprawnień | `ExchangeAdapter`, `ExchangeCredentials`, `BinanceSpotAdapter`, `BinanceFuturesAdapter` |
+
+| `bot_core/exchanges` | Adaptery giełdowe z rozdzieleniem środowisk i uprawnień | `ExchangeAdapter`, `ExchangeCredentials`, `BinanceSpotAdapter`, `BinanceFuturesAdapter`, `KrakenSpotAdapter` |
 | `bot_core/data` | Pobieranie, normalizacja i cache danych OHLCV | `DataSource`, `CachedOHLCVSource`, `PublicAPIDataSource` |
 | `bot_core/strategies` | Silnik strategii i walk-forward | `StrategyEngine`, `MarketSnapshot`, `StrategySignal`, `WalkForwardOptimizer` |
 | `bot_core/risk` | Profile i enforcement limitów ryzyka | `RiskProfile`, `RiskEngine`, `RiskCheckResult`, profile konserwatywny/zbalansowany/agresywny/ręczny |
@@ -24,6 +25,12 @@ Wersja futures korzysta z endpointów USD-M, wymaga jawnego podania symbolu przy
 odczytuje metryki marginesu z `totalMarginBalance`/`totalAvailableBalance`. Testy jednostkowe
 potwierdzają poprawność podpisów i mapowania odpowiedzi.
 
+Dodany `KrakenSpotAdapter` implementuje podpis HMAC-SHA512 z wymaganym nonce, obsługuje publiczne
+endpointy (`AssetPairs`, `OHLC`) oraz prywatne wywołania (`Balance`, `TradeBalance`, `AddOrder`,
+`CancelOrder`). Adapter egzekwuje podział uprawnień (`read`/`trade`), zapewnia monotonistyczny nonce,
+przetwarza dane konta na `AccountSnapshot` i integruje się z bootstrapem środowiska. Testy
+jednostkowe weryfikują poprawność podpisu oraz serializację zleceń.
+
 ## Warstwa konfiguracji
 
 Plik `config/core.yaml` przechowuje:
@@ -32,10 +39,15 @@ Plik `config/core.yaml` przechowuje:
   hard-stop drawdown),
 - definicje środowisk (paper/live/testnet) wraz z kluczami do menedżera sekretów, nazwą wpisu w
   keychainie (`credential_purpose`), ścieżkami cache i listą kanałów alertów,
+- zbiory instrumentów (`instrument_universes`) opisujące koszyk rynków przypisany do środowisk,
+  w tym aliasy symboli na poszczególnych giełdach oraz rekomendowane zakresy backfillu dla interwałów
+  (np. 10 lat D1 dla BTC/ETH, 5 lat dla głównych altów, 1h dla walidacji ryzyka),
 - ustawienia raportowania (czas dziennych/tygodniowych raportów, retencja logów).
 
 Loader `load_core_config` mapuje YAML na dataclasses i zapewnia konwersję pól liczbowych oraz
 walidację środowiska poprzez `Environment` enum. Dzięki temu logika aplikacji otrzymuje w pełni
+ustrukturyzowany obiekt konfiguracyjny wraz z kompletną definicją uniwersum instrumentów, co
+upraszcza backfill danych oraz konfigurację strategii.
 ustrukturyzowany obiekt konfiguracyjny.
 
 ### Bootstrap środowiska
@@ -66,10 +78,14 @@ pobiera świece z Binance i aktualizuje lokalny cache w trybie bezkosztowym.
 
 ## Strategie i walk-forward
 
-`StrategyEngine` definiuje kontrakt odbierania snapshotów rynkowych oraz generowania sygnałów. W
-kolejnych iteracjach zaimplementujemy strategię trend-following D1 i momentum breakout z możliwością
-walk-forward (`WalkForwardOptimizer`). Interfejsy są przygotowane pod rozszerzenia (mean reversion,
-arbitraż, itp.).
+
+`StrategyEngine` definiuje kontrakt odbierania snapshotów rynkowych oraz generowania sygnałów.
+Pierwszą ukończoną implementacją jest `DailyTrendMomentumStrategy`, która łączy średnie kroczące,
+wybicia Donchiana i trailing stop na bazie ATR, aby realizować trend-following na interwale D1.
+Parametry strategii (okna średnich, próg momentum, wielkość ATR) znajdują się w sekcji `strategies`
+pliku `config/core.yaml` i są mapowane na dataclass `DailyTrendMomentumStrategyConfig`. Interfejsy
+pozostają przygotowane pod kolejne moduły (mean reversion, arbitraż, optymalizacja walk-forward)
+korzystające z tego samego kontraktu `StrategyEngine` i `WalkForwardOptimizer`.
 
 ## Zarządzanie ryzykiem
 

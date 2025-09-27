@@ -2,18 +2,28 @@
 from __future__ import annotations
 
 import abc
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Mapping, Protocol, Sequence
 
 
 @dataclass(slots=True)
 class MarketSnapshot:
-    """Minimalny zestaw danych przekazywany do strategii."""
+    """Minimalny zestaw danych przekazywany do strategii.
+
+    Zawiera standardowe pola OHLCV wraz z opcjonalnymi wskaźnikami
+    wyliczonymi wcześniej w łańcuchu przetwarzania. Wszystkie wartości
+    powinny być w strefie czasu UTC, a ceny wyrażone w walucie kwotowanej
+    instrumentu.
+    """
 
     symbol: str
-    timestamp: int
+    timestamp: int  # unix epoch ms/s (w projekcie: ujednolicone po stronie loadera)
+    open: float
+    high: float
+    low: float
     close: float
-    indicators: Mapping[str, float]
+    volume: float = 0.0
+    indicators: Mapping[str, float] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -21,9 +31,9 @@ class StrategySignal:
     """Rezultat działania strategii (np. sygnał wejścia/wyjścia)."""
 
     symbol: str
-    side: str
-    confidence: float
-    metadata: Mapping[str, float]
+    side: str              # "BUY" / "SELL" / "FLAT" itp.
+    confidence: float      # 0.0–1.0
+    metadata: Mapping[str, float] = field(default_factory=dict)
 
 
 class StrategyEngine(abc.ABC):

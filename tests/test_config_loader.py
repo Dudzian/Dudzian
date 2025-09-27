@@ -6,7 +6,11 @@ import sys
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from bot_core.config import SMSProviderSettings, load_core_config
+from bot_core.config import (
+    InstrumentConfig,
+    SMSProviderSettings,
+    load_core_config,
+)
 
 
 def test_load_core_config_reads_sms_providers(tmp_path: Path) -> None:
@@ -14,6 +18,20 @@ def test_load_core_config_reads_sms_providers(tmp_path: Path) -> None:
     config_path.write_text(
         """
         risk_profiles: {}
+        instrument_universes:
+          core_multi_exchange:
+            description: "Testowe uniwersum"
+            instruments:
+              BTC_USDT:
+                base_asset: BTC
+                quote_asset: USDT
+                categories: [core]
+                exchanges:
+                  binance_spot: BTCUSDT
+                  kraken_spot: XBTUSDT
+                backfill:
+                  - interval: 1d
+                    lookback_days: 3650
         environments: {}
         reporting: {}
         alerts:
@@ -45,6 +63,7 @@ def test_load_core_config_reads_sms_providers(tmp_path: Path) -> None:
 
     config = load_core_config(config_path)
 
+    # SMS providers
     assert "orange_local" in config.sms_providers
     provider = config.sms_providers["orange_local"]
     assert isinstance(provider, SMSProviderSettings)
@@ -53,11 +72,15 @@ def test_load_core_config_reads_sms_providers(tmp_path: Path) -> None:
     assert provider.allow_alphanumeric_sender is True
     assert provider.sender_id == "BOT-ORANGE"
     assert provider.credential_key == "orange_sms_credentials"
+
+    # Telegram
     assert "primary" in config.telegram_channels
     telegram = config.telegram_channels["primary"]
     assert telegram.chat_id == "123456789"
     assert telegram.token_secret == "telegram_primary_token"
     assert telegram.parse_mode == "MarkdownV2"
+
+    # Email
     email = config.email_channels["ops"]
     assert email.host == "smtp.example.com"
     assert email.port == 587
@@ -65,3 +88,9 @@ def test_load_core_config_reads_sms_providers(tmp_path: Path) -> None:
     assert email.recipients == ("ops@example.com",)
     assert email.credential_secret == "smtp_ops_credentials"
     assert email.use_tls is True
+
+    # Instrument universes
+    universe = config.instrument_universes["core_multi_exchange"]
+    assert universe.description == "Testowe uniwersum"
+    assert len(universe.instruments) == 1
+    instrument = universe.instru

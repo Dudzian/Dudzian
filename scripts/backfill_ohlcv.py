@@ -3,11 +3,12 @@ from __future__ import annotations
 
 import argparse
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Sequence
 
 from bot_core.config.loader import load_core_config
+from bot_core.config.models import InstrumentUniverseConfig
 from bot_core.data.ohlcv import (
     OHLCVBackfillService,
     CachedOHLCVSource,
@@ -22,7 +23,6 @@ _LOGGER = logging.getLogger(__name__)
 
 def _parse_timestamp(value: str) -> int:
     """Zamienia wejście użytkownika na timestamp w milisekundach (UTC)."""
-
     value = value.strip()
     if value.isdigit():
         return int(value)
@@ -39,21 +39,76 @@ def _parse_timestamp(value: str) -> int:
 
 def _build_adapter(exchange: str, environment: Environment) -> PublicAPIDataSource:
     """Zwraca adapter publicznego API dla wskazanej giełdy."""
-
     builders: dict[str, Callable[[Environment], PublicAPIDataSource]] = {
         "binance_spot": lambda env: PublicAPIDataSource(
             exchange_adapter=BinanceSpotAdapter(
                 ExchangeCredentials(key_id="public", environment=env)
             )
-        )
+        ),
     }
-
     try:
         builder = builders[exchange]
     except KeyError as exc:  # pragma: no cover - zabezpieczenie przyszłych rozszerzeń
         raise ValueError(f"Brak obsługi exchange={exchange} w procesie backfillu") from exc
-
     return builder(environment)
+
+
+def _resolve_symbols(
+    universe: InstrumentUniverseConfig | None,
+    exchange_name: str,
+    explicit_symbols: Sequence[str] | None,
+) -> tuple[str, ...]:
+    """Zwraca listę symboli do backfillu (z CLI lub z uniwersum przypisanego do środowiska)."""
+    if explicit_symbols:
+        return tuple(explicit_symbols)
+
+    if universe is None:
+        raise SystemExit(
+            "Środowisko nie posiada przypisanego uniwersum instrumentów – podaj symbole ręcznie."
+        )
+
+    resolved: list[str] = []
+    for instrument in universe.instruments:
+        symbol = instrument.exchange_symbols.get(exchange_name)
+        if symbol:
+            resolved.append(symbol)
+
+    if not resolved:
+        raise SystemExit(
+            "Żaden instrument z uniwersum nie jest dostępny dla wskazanej giełdy. Zdefiniuj aliasy lub "
+            "przekaż symbole przez --symbols."
+        )
+    return tuple(resolved)
+
+
+def _determine_start_timestamp(
+    interval: str,
+    requested_start: int | None,
+    universe: InstrumentUniverseConfig | None,
+) -> int:
+    """Wyznacza timestamp startu: priorytet ma --start, w przeciwnym razie lookback z uniwersum."""
+    if requested_start is not None:
+        return requested_start
+
+    if universe is None:
+        raise SystemExit(
+            "Nie określono daty początkowej (--start), a środowisko nie wskazuje uniwersum z parametrami "
+            "backfillu."
+        )
+
+    max_lookback_days = 0
+    for instrument in universe.instruments:
+        for window in instrument.backfill_windows:
+            if window.interval == interval:
+                max_lookback_days = max(max_lookback_days, window.lookback_days)
+
+    if max_lookback_days == 0:
+        raise SystemExit(
+            "Uniwersum nie zawiera zakresu backfill dla wskazanego interwału – podaj --start ręcznie."
+        )
+
+    cutoff = datetime.now(tz=timezone.utc) - timedelta(days=max_lookback_days)
+    return int(cutoff.timestamp() * 1000)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -71,22 +126,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--symbols",
         nargs="+",
-        default=(
-            "BTCUSDT",
-            "ETHUSDT",
-            "BTCEUR",
-            "ETHEUR",
-            "SOLUSDT",
-            "BNBUSDT",
-            "XRPUSDT",
-            "ADAUSDT",
-            "LTCUSDT",
-            "MATICUSDT",
-        ),
-        help="Lista symboli do backfillu",
+        help="Lista symboli do backfillu (domyślnie pobierane z uniwersum środowiska)",
     )
     parser.add_argument("--interval", default="1d", help="Interwał (np. 1d, 1h)")
-    parser.add_argument("--start", required=True, type=_parse_timestamp, help="Początek zakresu")
+    parser.add_argument(
+        "--start",
+        type=_parse_timestamp,
+        help="Początek zakresu w ms od epochy lub dacie ISO (domyślnie wg uniwersum)",
+    )
     parser.add_argument(
         "--end",
         type=_parse_timestamp,
@@ -114,6 +161,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     except KeyError as exc:
         raise SystemExit(f"Nie znaleziono środowiska {args.environment} w konfiguracji") from exc
 
+    # Pobierz definicję uniwersum (jeśli wskazane w środowisku)
+    universe: InstrumentUniverseConfig | None = None
+    if getattr(env_cfg, "instrument_universe", None):
+        universe = config.instrument_universes.get(env_cfg.instrument_universe)  # type: ignore[arg-type]
+        if universe is None:
+            raise SystemExit(
+                f"Środowisko {args.environment} wskazuje nieistniejące uniwersum {env_cfg.instrument_universe}."
+            )
+
+    symbols = _resolve_symbols(universe, env_cfg.exchange, args.symbols)
+
     storage_path = Path(env_cfg.data_cache_path) / "ohlcv.sqlite"
     storage = SQLiteCacheStorage(storage_path)
 
@@ -123,21 +181,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     cached_source = CachedOHLCVSource(storage=storage, upstream=upstream_source)
     backfill_service = OHLCVBackfillService(cached_source, chunk_limit=args.chunk_limit)
 
+    start_ts = _determine_start_timestamp(args.interval, args.start, universe)
     end_ts = args.end or int(datetime.now(tz=timezone.utc).timestamp() * 1000)
 
     _LOGGER.info(
         "Rozpoczynam backfill: env=%s, interval=%s, start=%s, end=%s, symbole=%s",
         args.environment,
         args.interval,
-        args.start,
+        start_ts,
         end_ts,
-        ",".join(args.symbols),
+        ",".join(symbols),
     )
 
     summaries = backfill_service.synchronize(
-        symbols=tuple(args.symbols),
+        symbols=symbols,
         interval=args.interval,
-        start=args.start,
+        start=start_ts,
         end=end_ts,
     )
 

@@ -34,6 +34,175 @@ risk_profiles:
     max_open_positions: 0
     hard_drawdown_pct: 0.0
 
+strategies:
+  core_daily_trend:
+    engine: daily_trend_momentum
+    parameters:
+      fast_ma: 25
+      slow_ma: 100
+      breakout_lookback: 55
+      momentum_window: 20
+      atr_window: 14
+      atr_multiplier: 2.0
+      min_trend_strength: 0.005
+      min_momentum: 0.001
+
+instrument_universes:
+  core_multi_exchange:
+    description: >-
+      Bazowy koszyk instrumentów dostępny na Binance, Krakenie i Zondzie.
+      Zawiera pary BTC i ETH do USDT oraz EUR, sześć głównych altów oraz
+      fiatowe pary na Zondzie wykorzystywane do testów integracyjnych.
+    instruments:
+      BTC_USDT:
+        base_asset: BTC
+        quote_asset: USDT
+        categories: [core, btc, stable]
+        exchanges:
+          binance_spot: BTCUSDT
+          binance_futures: BTCUSDT
+          kraken_spot: XBTUSDT
+          zonda_spot: BTC-USDT
+        backfill:
+          - interval: 1d
+            lookback_days: 3650
+          - interval: 1h
+            lookback_days: 1095
+      ETH_USDT:
+        base_asset: ETH
+        quote_asset: USDT
+        categories: [core, eth, stable]
+        exchanges:
+          binance_spot: ETHUSDT
+          binance_futures: ETHUSDT
+          kraken_spot: ETHUSDT
+          zonda_spot: ETH-USDT
+        backfill:
+          - interval: 1d
+            lookback_days: 3650
+          - interval: 1h
+            lookback_days: 1095
+      BTC_EUR:
+        base_asset: BTC
+        quote_asset: EUR
+        categories: [core, btc, fiat]
+        exchanges:
+          binance_spot: BTCEUR
+          kraken_spot: XBTEUR
+          zonda_spot: BTC-EUR
+        backfill:
+          - interval: 1d
+            lookback_days: 3650
+          - interval: 1h
+            lookback_days: 730
+      ETH_EUR:
+        base_asset: ETH
+        quote_asset: EUR
+        categories: [core, eth, fiat]
+        exchanges:
+          binance_spot: ETHEUR
+          kraken_spot: ETHEUR
+          zonda_spot: ETH-EUR
+        backfill:
+          - interval: 1d
+            lookback_days: 3650
+          - interval: 1h
+            lookback_days: 730
+      SOL_USDT:
+        base_asset: SOL
+        quote_asset: USDT
+        categories: [alt, high_liquidity]
+        exchanges:
+          binance_spot: SOLUSDT
+          binance_futures: SOLUSDT
+          kraken_spot: SOLUSDT
+        backfill:
+          - interval: 1d
+            lookback_days: 1825
+          - interval: 1h
+            lookback_days: 730
+      BNB_USDT:
+        base_asset: BNB
+        quote_asset: USDT
+        categories: [alt, high_liquidity]
+        exchanges:
+          binance_spot: BNBUSDT
+          binance_futures: BNBUSDT
+        backfill:
+          - interval: 1d
+            lookback_days: 1825
+          - interval: 1h
+            lookback_days: 730
+      XRP_USDT:
+        base_asset: XRP
+        quote_asset: USDT
+        categories: [alt, high_liquidity]
+        exchanges:
+          binance_spot: XRPUSDT
+          kraken_spot: XRPUSDT
+        backfill:
+          - interval: 1d
+            lookback_days: 1825
+          - interval: 1h
+            lookback_days: 730
+      ADA_USDT:
+        base_asset: ADA
+        quote_asset: USDT
+        categories: [alt, high_liquidity]
+        exchanges:
+          binance_spot: ADAUSDT
+          binance_futures: ADAUSDT
+          kraken_spot: ADAUSDT
+        backfill:
+          - interval: 1d
+            lookback_days: 1825
+          - interval: 1h
+            lookback_days: 730
+      LTC_USDT:
+        base_asset: LTC
+        quote_asset: USDT
+        categories: [alt, high_liquidity]
+        exchanges:
+          binance_spot: LTCUSDT
+          binance_futures: LTCUSDT
+          kraken_spot: LTCUSDT
+        backfill:
+          - interval: 1d
+            lookback_days: 1825
+          - interval: 1h
+            lookback_days: 730
+      MATIC_USDT:
+        base_asset: MATIC
+        quote_asset: USDT
+        categories: [alt, high_liquidity]
+        exchanges:
+          binance_spot: MATICUSDT
+          binance_futures: MATICUSDT
+          kraken_spot: MATICUSDT
+        backfill:
+          - interval: 1d
+            lookback_days: 1825
+          - interval: 1h
+            lookback_days: 730
+      BTC_PLN:
+        base_asset: BTC
+        quote_asset: PLN
+        categories: [fiat, zonda]
+        exchanges:
+          zonda_spot: BTC-PLN
+        backfill:
+          - interval: 1d
+            lookback_days: 3650
+      ETH_PLN:
+        base_asset: ETH
+        quote_asset: PLN
+        categories: [fiat, zonda]
+        exchanges:
+          zonda_spot: ETH-PLN
+        backfill:
+          - interval: 1d
+            lookback_days: 3650
+
 environments:
   binance_paper:
     exchange: binance_spot
@@ -44,6 +213,8 @@ environments:
     risk_profile: balanced
     alert_channels: ["telegram:primary", "email:ops"]
     ip_allowlist: []
+    instrument_universe: core_multi_exchange
+
   binance_live:
     exchange: binance_spot
     environment: live
@@ -52,6 +223,8 @@ environments:
     risk_profile: conservative
     alert_channels: ["telegram:primary", "sms:orange_local", "email:ops"]
     ip_allowlist: []
+    instrument_universe: core_multi_exchange
+
   binance_futures_paper:
     exchange: binance_futures
     environment: paper
@@ -60,6 +233,8 @@ environments:
     risk_profile: balanced
     alert_channels: ["telegram:primary", "email:ops"]
     ip_allowlist: []
+    instrument_universe: core_multi_exchange
+
   binance_futures_live:
     exchange: binance_futures
     environment: live
@@ -68,6 +243,8 @@ environments:
     risk_profile: conservative
     alert_channels: ["telegram:primary", "sms:orange_local", "email:ops"]
     ip_allowlist: []
+    instrument_universe: core_multi_exchange
+
   kraken_paper:
     exchange: kraken_spot
     environment: paper
@@ -76,6 +253,18 @@ environments:
     risk_profile: balanced
     alert_channels: ["telegram:primary", "email:ops"]
     ip_allowlist: []
+    instrument_universe: core_multi_exchange
+
+  kraken_live:
+    exchange: kraken_spot
+    environment: live
+    keychain_key: kraken_live_trading
+    data_cache_path: ./var/data/kraken_live
+    risk_profile: conservative
+    alert_channels: ["telegram:primary", "sms:orange_local", "email:ops"]
+    ip_allowlist: []
+    instrument_universe: core_multi_exchange
+
   zonda_paper:
     exchange: zonda_spot
     environment: paper
@@ -84,12 +273,12 @@ environments:
     risk_profile: conservative
     alert_channels: ["telegram:primary"]
     ip_allowlist: []
+    instrument_universe: core_multi_exchange
 
 reporting:
   daily_report_time_utc: "21:00"
   weekly_report_day: "sunday"
   retention_months: "24"
-
 
 alerts:
   telegram_channels:

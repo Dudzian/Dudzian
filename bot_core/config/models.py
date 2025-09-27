@@ -20,6 +20,7 @@ class EnvironmentConfig:
     alert_channels: Sequence[str]
     ip_allowlist: Sequence[str] = field(default_factory=tuple)
     credential_purpose: str = "trading"
+    instrument_universe: str | None = None
 
 
 @dataclass(slots=True)
@@ -34,6 +35,50 @@ class RiskProfileConfig:
     stop_loss_atr_multiple: float
     max_open_positions: int
     hard_drawdown_pct: float
+
+
+@dataclass(slots=True)
+class InstrumentBackfillWindow:
+    """Definicja zakresu danych historycznych dla danego interwału."""
+
+    interval: str
+    lookback_days: int
+
+
+@dataclass(slots=True)
+class InstrumentConfig:
+    """Opis pojedynczego instrumentu w uniwersum."""
+
+    name: str
+    base_asset: str
+    quote_asset: str
+    categories: Sequence[str]
+    exchange_symbols: Mapping[str, str]
+    backfill_windows: Sequence[InstrumentBackfillWindow] = field(default_factory=tuple)
+
+
+@dataclass(slots=True)
+class InstrumentUniverseConfig:
+    """Zbiór instrumentów przypisany do środowisk."""
+
+    name: str
+    description: str
+    instruments: Sequence[InstrumentConfig]
+
+
+@dataclass(slots=True)
+class DailyTrendMomentumStrategyConfig:
+    """Konfiguracja strategii trend/momentum."""
+
+    name: str
+    fast_ma: int
+    slow_ma: int
+    breakout_lookback: int
+    momentum_window: int
+    atr_window: int
+    atr_multiplier: float
+    min_trend_strength: float
+    min_momentum: float
 
 
 @dataclass(slots=True)
@@ -79,6 +124,8 @@ class CoreConfig:
 
     environments: Mapping[str, EnvironmentConfig]
     risk_profiles: Mapping[str, RiskProfileConfig]
+    instrument_universes: Mapping[str, InstrumentUniverseConfig]
+    strategies: Mapping[str, DailyTrendMomentumStrategyConfig]
     reporting: Mapping[str, str]
     sms_providers: Mapping[str, SMSProviderSettings]
     telegram_channels: Mapping[str, TelegramChannelSettings]
@@ -88,6 +135,10 @@ class CoreConfig:
 __all__ = [
     "EnvironmentConfig",
     "RiskProfileConfig",
+    "InstrumentBackfillWindow",
+    "InstrumentConfig",
+    "InstrumentUniverseConfig",
+    "DailyTrendMomentumStrategyConfig",
     "SMSProviderSettings",
     "TelegramChannelSettings",
     "EmailChannelSettings",
