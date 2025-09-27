@@ -139,10 +139,14 @@ def _resolve_universe(core_config: CoreConfig, universe_key: str | None) -> Inst
 
 
 def _select_symbol(
-    universe: InstrumentUniverseConfig | None, exchange_name: str, explicit_symbol: str | None
+    universe: InstrumentUniverseConfig | None,
+    exchange_name: str,
+    explicit_symbol: str | None,
+    *,
+    prebuilt: Mapping[str, InstrumentConfig] | None = None,
 ) -> tuple[str, InstrumentConfig]:
-    instruments: MutableMapping[str, InstrumentConfig] = {}
-    if universe:
+    instruments: MutableMapping[str, InstrumentConfig] = dict(prebuilt or {})
+    if universe and not instruments:
         for instrument in universe.instruments:
             symbol = instrument.exchange_symbols.get(exchange_name)
             if not symbol:
@@ -296,7 +300,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     except SystemExit as exc:
         _LOGGER.error(str(exc))
         return 1
-    symbol, instrument_metadata = _select_symbol(universe, environment_cfg.exchange, args.symbol)
+    symbol, instrument_metadata = _select_symbol(
+        universe,
+        environment_cfg.exchange,
+        args.symbol,
+        prebuilt=context.instruments,
+    )
 
     strategy_config = core_config.strategies.get(args.strategy)
     if strategy_config is None:

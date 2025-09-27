@@ -16,7 +16,12 @@ from bot_core.security import (
     SecretManager,
     SecretStorageError,
 )
-from bot_core.runtime import BootstrapContext, bootstrap_environment
+from bot_core.runtime import (
+    BootstrapContext,
+    InstrumentUniverse,
+    UniverseInstrument,
+    bootstrap_environment,
+)
 
 __all__ = [
     "AlertChannel",
@@ -31,6 +36,8 @@ __all__ = [
     "SecretManager",
     "SecretStorageError",
     "BootstrapContext",
+    "InstrumentUniverse",
+    "UniverseInstrument",
     "bootstrap_environment",
     "load_core_config",
     "get_global_metrics_registry",

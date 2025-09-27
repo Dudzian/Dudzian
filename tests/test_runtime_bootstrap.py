@@ -48,6 +48,20 @@ def _write_config(tmp_path: Path) -> Path:
         risk_profile: balanced
         alert_channels: ["telegram:primary", "email:ops", "sms:orange_local"]
         ip_allowlist: ["127.0.0.1"]
+        instrument_universe: core_universe
+    instrument_universes:
+      core_universe:
+        description: "Podstawowe pary dla testów na Binance"
+        instruments:
+          BTC_USDT:
+            base_asset: BTC
+            quote_asset: USDT
+            categories: [core, btc]
+            exchanges:
+              binance_spot: BTCUSDT
+            backfill:
+              - interval: 1d
+                lookback_days: 365
     reporting: {}
     alerts:
       telegram_channels:
@@ -134,6 +148,13 @@ def test_bootstrap_environment_initialises_components(tmp_path: Path) -> None:
     assert len(context.alert_router.channels) == 3
     assert context.alert_router.audit_log is context.audit_log
 
+    assert context.instrument_universe is not None
+    assert context.instrument_universe.key == "core_universe"
+    assert "BTCUSDT" in context.instruments
+    instrument_meta = context.instrument_universe.instruments["BTCUSDT"]
+    assert instrument_meta.instrument_key == "BTC_USDT"
+    assert instrument_meta.backfill_windows[0].interval == "1d"
+
     # Health check nie powinien zgłaszać wyjątków dla świeżo zainicjalizowanych kanałów.
     snapshot = context.alert_router.health_snapshot()
     assert snapshot["telegram:primary"]["status"] == "ok"
@@ -196,3 +217,5 @@ def test_bootstrap_environment_supports_zonda(tmp_path: Path) -> None:
     assert context.adapter.name == "zonda_spot"
     assert context.credentials.key_id == "zonda-key"
     assert context.environment.exchange == "zonda_spot"
+    assert context.instrument_universe is None
+    assert context.instruments == {}

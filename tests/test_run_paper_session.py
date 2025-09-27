@@ -238,6 +238,8 @@ def _prepare_context(tmp_path: Path) -> tuple[BootstrapContext, _DummyChannel, T
         alert_router=router,
         alert_channels={channel.name: channel},
         audit_log=audit_log,
+        instrument_universe=None,
+        instruments={},
     )
     return context, channel, risk_engine
 

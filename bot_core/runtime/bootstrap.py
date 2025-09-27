@@ -24,6 +24,8 @@ from bot_core.config.models import (
     CoreConfig,
     EmailChannelSettings,
     EnvironmentConfig,
+    InstrumentBackfillWindow,
+    InstrumentUniverseConfig,
     MessengerChannelSettings,
     RiskProfileConfig,
     SMSProviderSettings,
@@ -38,6 +40,7 @@ from bot_core.exchanges.zonda import ZondaSpotAdapter
 from bot_core.risk.engine import ThresholdRiskEngine
 from bot_core.risk.profiles.manual import ManualProfile
 from bot_core.security import SecretManager, SecretStorageError
+from bot_core.runtime.session import InstrumentConfig as RuntimeInstrumentConfig
 
 _DEFAULT_ADAPTERS: Mapping[str, ExchangeAdapterFactory] = {
     "binance_spot": BinanceSpotAdapter,
@@ -46,6 +49,27 @@ _DEFAULT_ADAPTERS: Mapping[str, ExchangeAdapterFactory] = {
     "kraken_futures": KrakenFuturesAdapter,
     "zonda_spot": ZondaSpotAdapter,
 }
+
+
+@dataclass(slots=True)
+class UniverseInstrument:
+    """Opis instrumentu w kontekście konkretnego uniwersum i giełdy."""
+
+    instrument_key: str
+    symbol: str
+    base_asset: str
+    quote_asset: str
+    categories: tuple[str, ...]
+    backfill_windows: tuple[InstrumentBackfillWindow, ...]
+
+
+@dataclass(slots=True)
+class InstrumentUniverse:
+    """Uniwersum instrumentów dostępne dla środowiska tradingowego."""
+
+    key: str
+    description: str
+    instruments: Mapping[str, UniverseInstrument]
 
 
 @dataclass(slots=True)
@@ -60,6 +84,8 @@ class BootstrapContext:
     alert_router: DefaultAlertRouter
     alert_channels: Mapping[str, AlertChannel]
     audit_log: InMemoryAlertAuditLog
+    instrument_universe: InstrumentUniverse | None
+    instruments: Mapping[str, RuntimeInstrumentConfig]
 
 
 def bootstrap_environment(
@@ -109,6 +135,11 @@ def bootstrap_environment(
         secret_manager=secret_manager,
     )
 
+    instrument_universe, instruments = _resolve_instruments(
+        core_config=core_config,
+        environment=environment,
+    )
+
     return BootstrapContext(
         core_config=core_config,
         environment=environment,
@@ -118,6 +149,8 @@ def bootstrap_environment(
         alert_router=alert_router,
         alert_channels=alert_channels,
         audit_log=audit_log,
+        instrument_universe=instrument_universe,
+        instruments=instruments,
     )
 
 
@@ -178,6 +211,60 @@ def _build_alert_channels(
         channels[channel.name] = channel
 
     return channels, router, audit_log
+
+
+def _resolve_instruments(
+    *,
+    core_config: CoreConfig,
+    environment: EnvironmentConfig,
+) -> tuple[InstrumentUniverse | None, Mapping[str, RuntimeInstrumentConfig]]:
+    universe_key = environment.instrument_universe
+    if not universe_key:
+        return None, {}
+
+    try:
+        universe_config = core_config.instrument_universes[universe_key]
+    except KeyError as exc:
+        raise KeyError(
+            f"Środowisko '{environment.name}' wskazuje uniwersum '{universe_key}', które nie istnieje."
+        ) from exc
+
+    instruments: dict[str, UniverseInstrument] = {}
+    runtime_map: dict[str, RuntimeInstrumentConfig] = {}
+
+    exchange_name = environment.exchange
+    for instrument in universe_config.instruments:
+        symbol = instrument.exchange_symbols.get(exchange_name)
+        if not symbol:
+            continue
+
+        categories = tuple(str(category) for category in instrument.categories)
+        backfill_windows = tuple(instrument.backfill_windows)
+
+        instruments[symbol] = UniverseInstrument(
+            instrument_key=instrument.name,
+            symbol=symbol,
+            base_asset=instrument.base_asset,
+            quote_asset=instrument.quote_asset,
+            categories=categories,
+            backfill_windows=backfill_windows,
+        )
+
+        runtime_map[symbol] = RuntimeInstrumentConfig(
+            symbol=symbol,
+            base_asset=instrument.base_asset,
+            quote_asset=instrument.quote_asset,
+            min_quantity=0.0,
+            min_notional=0.0,
+            step_size=None,
+        )
+
+    universe = InstrumentUniverse(
+        key=universe_config.name,
+        description=universe_config.description,
+        instruments=instruments,
+    )
+    return universe, runtime_map
 
 
 def _build_telegram_channel(
@@ -373,4 +460,9 @@ def _resolve_sms_provider(settings: SMSProviderSettings) -> SmsProviderConfig:
     )
 
 
-__all__ = ["BootstrapContext", "bootstrap_environment"]
+__all__ = [
+    "BootstrapContext",
+    "InstrumentUniverse",
+    "UniverseInstrument",
+    "bootstrap_environment",
+]
