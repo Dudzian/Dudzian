@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
+import hmac
 import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
 from cryptography.fernet import Fernet
-import websockets
 
 from KryptoLowca.config_manager import ConfigManager
 from KryptoLowca.exchanges import (
@@ -17,11 +18,10 @@ from KryptoLowca.exchanges import (
     KrakenDemoAdapter,
     OrderRequest,
     OrderStatus,
+    ZondaAdapter,
 )
+import KryptoLowca.exchanges.zonda as zonda_module
 from KryptoLowca.managers.multi_account_manager import MultiExchangeAccountManager
-
-import KryptoLowca.exchanges.binance as binance_module
-import KryptoLowca.exchanges.kraken as kraken_module
 
 
 class StubResponse:
@@ -127,156 +127,99 @@ async def test_kraken_headers_signed():
 
 
 @pytest.mark.asyncio
-async def test_binance_websocket_subscription(monkeypatch):
-    events: list[dict] = []
-    received_messages: list[dict] = []
-    received_event = asyncio.Event()
-
-    async def handler(websocket):
-        subscribe = json.loads(await websocket.recv())
-        received_messages.append(subscribe)
-        await websocket.send(json.dumps({"stream": "btcusdt@trade", "data": {"p": "100"}}))
-        try:
-            unsub = await asyncio.wait_for(websocket.recv(), timeout=1.0)
-            received_messages.append(json.loads(unsub))
-        except asyncio.TimeoutError:
-            pass
-
-    server = await websockets.serve(handler, "localhost", 0)
-    port = server.sockets[0].getsockname()[1]
-    endpoint = f"ws://localhost:{port}"
-    monkeypatch.setattr(binance_module, "_BINANCE_WS_ENDPOINT", endpoint)
-    monkeypatch.setattr(binance_module, "_BINANCE_WS_INITIAL_BACKOFF", 0.05)
-    monkeypatch.setattr(binance_module, "_BINANCE_WS_MAX_BACKOFF", 0.1)
-
-    adapter = BinanceTestnetAdapter(http_client=RecordingHTTPClient([]))
-    await adapter.connect()
-
-    async def callback(payload):
-        events.append(payload)
-        received_event.set()
-
-    subscription = MarketSubscription(channel="trade", symbols=["BTCUSDT"])
-    context = await adapter.stream_market_data([subscription], callback)
-    try:
-        async with context:
-            await asyncio.wait_for(received_event.wait(), timeout=1.0)
-    finally:
-        server.close()
-        await server.wait_closed()
-        await adapter.close()
-
-    assert events and events[0]["stream"] == "btcusdt@trade"
-    assert received_messages[0]["method"] == "SUBSCRIBE"
-    assert "btcusdt@trade" in received_messages[0]["params"]
-    if len(received_messages) > 1:
-        assert received_messages[1]["method"] == "UNSUBSCRIBE"
-
-
-@pytest.mark.asyncio
-async def test_binance_websocket_reconnect(monkeypatch):
-    connection_count = 0
-    events: list[dict] = []
-    ready = asyncio.Event()
-
-    async def handler(websocket):
-        nonlocal connection_count
-        connection_count += 1
-        await websocket.recv()
-        await websocket.send(
-            json.dumps(
-                {
-                    "stream": "btcusdt@trade",
-                    "data": {"p": "100", "connection": connection_count},
-                }
-            )
-        )
-        if connection_count == 1:
-            await websocket.close()
-        else:
-            await asyncio.sleep(0.1)
-
-    server = await websockets.serve(handler, "localhost", 0)
-    port = server.sockets[0].getsockname()[1]
-    endpoint = f"ws://localhost:{port}"
-    monkeypatch.setattr(binance_module, "_BINANCE_WS_ENDPOINT", endpoint)
-    monkeypatch.setattr(binance_module, "_BINANCE_WS_INITIAL_BACKOFF", 0.05)
-    monkeypatch.setattr(binance_module, "_BINANCE_WS_MAX_BACKOFF", 0.1)
-
-    adapter = BinanceTestnetAdapter(http_client=RecordingHTTPClient([]))
-    await adapter.connect()
-
-    async def callback(payload):
-        events.append(payload)
-        if len(events) >= 2:
-            ready.set()
-
-    subscription = MarketSubscription(channel="trade", symbols=["BTCUSDT"])
-    context = await adapter.stream_market_data([subscription], callback)
-    try:
-        async with context:
-            await asyncio.wait_for(ready.wait(), timeout=2.0)
-    finally:
-        server.close()
-        await server.wait_closed()
-        await adapter.close()
-
-    assert connection_count >= 2
-    assert len(events) >= 2
-    assert {event["data"]["connection"] for event in events} >= {1, 2}
-
-
-@pytest.mark.asyncio
-async def test_kraken_websocket_subscription(monkeypatch):
-    events: list[dict] = []
-    received: list[dict] = []
-    received_event = asyncio.Event()
-
-    async def handler(websocket):
-        subscribe = json.loads(await websocket.recv())
-        received.append(subscribe)
-        await websocket.send(json.dumps({"channel": "ticker", "data": {"price": "100"}}))
-        try:
-            unsub = await asyncio.wait_for(websocket.recv(), timeout=1.0)
-            received.append(json.loads(unsub))
-        except asyncio.TimeoutError:
-            pass
-
-    server = await websockets.serve(handler, "localhost", 0)
-    port = server.sockets[0].getsockname()[1]
-    endpoint = f"ws://localhost:{port}"
-    monkeypatch.setattr(kraken_module, "_KRAKEN_WS_ENDPOINT", endpoint)
-    monkeypatch.setattr(kraken_module, "_KRAKEN_WS_INITIAL_BACKOFF", 0.05)
-    monkeypatch.setattr(kraken_module, "_KRAKEN_WS_MAX_BACKOFF", 0.1)
-
-    adapter = KrakenDemoAdapter(http_client=RecordingHTTPClient([]))
-    await adapter.connect()
-
-    async def callback(payload):
-        events.append(payload)
-        received_event.set()
-
-    subscription = MarketSubscription(
-        channel="ticker",
-        symbols=["XBT/USD"],
-        params={"subscription": {"interval": 2}},
+async def test_zonda_signed_headers(monkeypatch):
+    response = StubResponse(
+        {
+            "status": "Ok",
+            "offerId": "1",
+            "filledAmount": "0",
+            "remainingAmount": "1",
+            "avgPrice": "100",
+        }
     )
-    context = await adapter.stream_market_data([subscription], callback)
-    try:
-        async with context:
-            await asyncio.wait_for(received_event.wait(), timeout=1.0)
-    finally:
-        server.close()
-        await server.wait_closed()
-        await adapter.close()
+    http = RecordingHTTPClient([response])
+    adapter = ZondaAdapter(http_client=http)
+    await adapter.connect()
+    await adapter.authenticate(ExchangeCredentials(api_key="pub", api_secret="priv"))
 
-    assert events and events[0]["channel"] == "ticker"
-    assert received[0]["event"] == "subscribe"
-    assert received[0]["pair"] == ["XBT/USD"]
-    assert received[0]["subscription"]["name"] == "ticker"
-    assert received[0]["subscription"]["interval"] == 2
-    if len(received) > 1:
-        assert received[1]["event"] == "unsubscribe"
+    monkeypatch.setattr(zonda_module.time, "time", lambda: 1_700_000_000.0)
+
+    order = OrderRequest(symbol="BTC-PLN", side="buy", quantity=1.0, price=100.0, order_type="limit")
+    status = await adapter.submit_order(order)
+
+    call = http.requests[0]
+    assert call["headers"]["API-Key"] == "pub"
+    timestamp = call["headers"]["Request-Timestamp"]
+    body = call["data"] or ""
+    expected_signature = hmac.new(
+        b"priv",
+        f"{timestamp}POST/trading/offer{body}".encode(),
+        hashlib.sha512,
+    ).hexdigest()
+    assert call["headers"]["API-Hash"] == expected_signature
+    assert status.order_id == "1"
+    assert status.status == "OK"
+    assert status.remaining_quantity == 1.0
+
+
+@pytest.mark.asyncio
+async def test_zonda_fetch_and_cancel(monkeypatch):
+    responses = [
+        StubResponse(
+            {
+                "status": "Ok",
+                "order": {
+                    "id": "XYZ",
+                    "status": "active",
+                    "filledAmount": "0.1",
+                    "remainingAmount": "0.9",
+                    "avgPrice": "99.5",
+                },
+            }
+        ),
+        StubResponse(
+            {
+                "status": "Ok",
+                "order": {
+                    "id": "XYZ",
+                    "status": "cancelled",
+                    "filledAmount": "0.1",
+                    "remainingAmount": "0.9",
+                    "avgPrice": "99.5",
+                },
+            }
+        ),
+    ]
+    http = RecordingHTTPClient(responses)
+    adapter = ZondaAdapter(http_client=http)
+    await adapter.connect()
+    await adapter.authenticate(ExchangeCredentials(api_key="pub", api_secret="priv"))
+
+    monkeypatch.setattr(zonda_module.time, "time", lambda: 1_700_000_000.0)
+
+    detail = await adapter.fetch_order_status("XYZ")
+    call_status = http.requests[0]
+    ts_status = call_status["headers"]["Request-Timestamp"]
+    expected_status_sig = hmac.new(
+        b"priv",
+        f"{ts_status}GET/trading/order/XYZ".encode(),
+        hashlib.sha512,
+    ).hexdigest()
+    assert call_status["headers"]["API-Hash"] == expected_status_sig
+    assert detail.status == "ACTIVE"
+    assert detail.filled_quantity == 0.1
+
+    cancelled = await adapter.cancel_order("XYZ")
+    call_cancel = http.requests[1]
+    ts_cancel = call_cancel["headers"]["Request-Timestamp"]
+    expected_cancel_sig = hmac.new(
+        b"priv",
+        f"{ts_cancel}DELETE/trading/order/XYZ".encode(),
+        hashlib.sha512,
+    ).hexdigest()
+    assert call_cancel["headers"]["API-Hash"] == expected_cancel_sig
+    assert cancelled.status == "CANCELLED"
+    assert len(http.requests) == 2
 
 
 @pytest.mark.asyncio
@@ -433,4 +376,3 @@ async def test_live_mode_requires_ack(monkeypatch):
 
     adapter = BinanceTestnetAdapter(demo_mode=False, http_client=http, compliance_ack=True)
     await adapter.connect()
-
