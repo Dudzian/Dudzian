@@ -20,6 +20,7 @@ from .interfaces import (
     WebSocketSubscription,
 )
 from .kraken import KrakenDemoAdapter
+from .zonda import ZondaAdapter
 
 __all__ = [
     "AdapterError",
@@ -29,6 +30,7 @@ __all__ = [
     "create_exchange_adapter",
     "BinanceTestnetAdapter",
     "KrakenDemoAdapter",
+    "ZondaAdapter",
     "ExchangeAdapter",
     "ExchangeCredentials",
     "MarketSubscription",

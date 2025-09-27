@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
+import hmac
 import json
 from datetime import datetime, timedelta, timezone
 
@@ -15,7 +17,9 @@ from KryptoLowca.exchanges import (
     KrakenDemoAdapter,
     OrderRequest,
     OrderStatus,
+    ZondaAdapter,
 )
+import KryptoLowca.exchanges.zonda as zonda_module
 from KryptoLowca.managers.multi_account_manager import MultiExchangeAccountManager
 
 
@@ -118,6 +122,102 @@ async def test_kraken_headers_signed():
 
     detail = await adapter.fetch_order_status("ABC")
     assert detail.status == "CLOSED"
+    assert len(http.requests) == 2
+
+
+@pytest.mark.asyncio
+async def test_zonda_signed_headers(monkeypatch):
+    response = StubResponse(
+        {
+            "status": "Ok",
+            "offerId": "1",
+            "filledAmount": "0",
+            "remainingAmount": "1",
+            "avgPrice": "100",
+        }
+    )
+    http = RecordingHTTPClient([response])
+    adapter = ZondaAdapter(http_client=http)
+    await adapter.connect()
+    await adapter.authenticate(ExchangeCredentials(api_key="pub", api_secret="priv"))
+
+    monkeypatch.setattr(zonda_module.time, "time", lambda: 1_700_000_000.0)
+
+    order = OrderRequest(symbol="BTC-PLN", side="buy", quantity=1.0, price=100.0, order_type="limit")
+    status = await adapter.submit_order(order)
+
+    call = http.requests[0]
+    assert call["headers"]["API-Key"] == "pub"
+    timestamp = call["headers"]["Request-Timestamp"]
+    body = call["data"] or ""
+    expected_signature = hmac.new(
+        b"priv",
+        f"{timestamp}POST/trading/offer{body}".encode(),
+        hashlib.sha512,
+    ).hexdigest()
+    assert call["headers"]["API-Hash"] == expected_signature
+    assert status.order_id == "1"
+    assert status.status == "OK"
+    assert status.remaining_quantity == 1.0
+
+
+@pytest.mark.asyncio
+async def test_zonda_fetch_and_cancel(monkeypatch):
+    responses = [
+        StubResponse(
+            {
+                "status": "Ok",
+                "order": {
+                    "id": "XYZ",
+                    "status": "active",
+                    "filledAmount": "0.1",
+                    "remainingAmount": "0.9",
+                    "avgPrice": "99.5",
+                },
+            }
+        ),
+        StubResponse(
+            {
+                "status": "Ok",
+                "order": {
+                    "id": "XYZ",
+                    "status": "cancelled",
+                    "filledAmount": "0.1",
+                    "remainingAmount": "0.9",
+                    "avgPrice": "99.5",
+                },
+            }
+        ),
+    ]
+    http = RecordingHTTPClient(responses)
+    adapter = ZondaAdapter(http_client=http)
+    await adapter.connect()
+    await adapter.authenticate(ExchangeCredentials(api_key="pub", api_secret="priv"))
+
+    monkeypatch.setattr(zonda_module.time, "time", lambda: 1_700_000_000.0)
+
+    detail = await adapter.fetch_order_status("XYZ")
+    call_status = http.requests[0]
+    ts_status = call_status["headers"]["Request-Timestamp"]
+    expected_status_sig = hmac.new(
+        b"priv",
+        f"{ts_status}GET/trading/order/XYZ".encode(),
+        hashlib.sha512,
+    ).hexdigest()
+    assert call_status["headers"]["API-Hash"] == expected_status_sig
+    assert detail.status == "ACTIVE"
+    assert detail.filled_quantity == 0.1
+
+    cancelled = await adapter.cancel_order("XYZ")
+    call_cancel = http.requests[1]
+    ts_cancel = call_cancel["headers"]["Request-Timestamp"]
+    expected_cancel_sig = hmac.new(
+        b"priv",
+        f"{ts_cancel}DELETE/trading/order/XYZ".encode(),
+        hashlib.sha512,
+    ).hexdigest()
+    assert call_cancel["headers"]["API-Hash"] == expected_cancel_sig
+    assert cancelled.status == "CANCELLED"
     assert len(http.requests) == 2
 
 
