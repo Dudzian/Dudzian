@@ -223,6 +223,61 @@ async def test_zonda_fetch_and_cancel(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_zonda_status_mapping_variants(monkeypatch):
+    responses = [
+        StubResponse(
+            {
+                "status": "Ok",
+                "order": {
+                    "id": "AAA",
+                    "status": "PartiallyFilled",
+                    "filledAmount": "0.5",
+                    "remainingAmount": "0.5",
+                },
+            }
+        ),
+        StubResponse(
+            {
+                "status": "Ok",
+                "order": {
+                    "id": "AAA",
+                    "status": "closed",
+                    "filledAmount": "1",
+                    "remainingAmount": "0",
+                },
+            }
+        ),
+        StubResponse(
+            {
+                "status": "Ok",
+                "order": {
+                    "id": "AAA",
+                    "status": "waiting",
+                    "filledAmount": "0",
+                    "remainingAmount": "1",
+                },
+            }
+        ),
+    ]
+    http = RecordingHTTPClient(responses)
+    adapter = ZondaAdapter(http_client=http)
+    await adapter.connect()
+    await adapter.authenticate(ExchangeCredentials(api_key="pub", api_secret="priv"))
+
+    monkeypatch.setattr(zonda_module.time, "time", lambda: 1_700_000_000.0)
+
+    partial = await adapter.fetch_order_status("AAA")
+    filled = await adapter.fetch_order_status("AAA")
+    pending = await adapter.fetch_order_status("AAA")
+
+    assert partial.status == "PARTIALLY_FILLED"
+    assert partial.filled_quantity == 0.5
+    assert filled.status == "FILLED"
+    assert pending.status == "PENDING"
+    assert len(http.requests) == 3
+
+
+@pytest.mark.asyncio
 async def test_zonda_websocket_subscription(monkeypatch):
     events: list[dict] = []
     done = asyncio.Event()
