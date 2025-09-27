@@ -14,6 +14,7 @@ from KryptoLowca.config_manager import ConfigManager
 from KryptoLowca.exchanges import (
     BinanceTestnetAdapter,
     ExchangeCredentials,
+    MarketSubscription,
     KrakenDemoAdapter,
     OrderRequest,
     OrderStatus,
@@ -375,4 +376,3 @@ async def test_live_mode_requires_ack(monkeypatch):
 
     adapter = BinanceTestnetAdapter(demo_mode=False, http_client=http, compliance_ack=True)
     await adapter.connect()
-
