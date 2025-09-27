@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Deque, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Awaitable, Callable, ClassVar, Deque, Dict, FrozenSet, Iterable, List, Optional, Tuple
 
 from KryptoLowca.exchanges.interfaces import (
     ExchangeAdapter,
@@ -27,7 +27,13 @@ class ManagedAccount:
 
 
 class MultiExchangeAccountManager:
-    """Zarządza wieloma kontami, balansując obciążenie i monitorując zlecenia."""
+    """Zarządza wieloma kontami, balansując obciążenie i monitorując zlecenia.
+
+    Domyślnie obsługujemy identyfikatory ``binance``, ``kraken`` oraz ``zonda``
+    wykorzystywane w adapterach REST/WebSocket.
+    """
+
+    SUPPORTED_EXCHANGES: ClassVar[FrozenSet[str]] = frozenset({"binance", "kraken", "zonda"})
 
     def __init__(self) -> None:
         self._accounts: Dict[Tuple[str, str], ManagedAccount] = {}
@@ -54,6 +60,12 @@ class MultiExchangeAccountManager:
         )
         for _ in range(max(1, weight)):
             self._round_robin.append(key)
+
+    @classmethod
+    def is_supported_exchange(cls, exchange: str) -> bool:
+        """Sprawdza, czy identyfikator giełdy znajduje się na liście wspieranych."""
+
+        return exchange in cls.SUPPORTED_EXCHANGES
 
     async def connect_all(self, credentials: Dict[Tuple[str, str], ExchangeCredentials]) -> None:
         for key, account in self._accounts.items():
