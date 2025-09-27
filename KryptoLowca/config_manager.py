@@ -15,7 +15,7 @@ from cryptography.fernet import Fernet, InvalidToken
 import pandas as pd
 
 if TYPE_CHECKING:  # pragma: no cover - tylko dla typowania
-    from KryptoLowca.backtest.mini_backtester import BacktestReport
+    from KryptoLowca.backtest.simulation import BacktestReport, MatchingConfig
     from KryptoLowca.data.market_data import MarketDataProvider, MarketDataRequest
 
 try:  # pragma: no cover - zależność opcjonalna w środowisku testowym
@@ -339,6 +339,7 @@ class StrategyConfig:
         from KryptoLowca.backtest.simulation import evaluate_strategy_backtest
 
         evaluate_strategy_backtest(asdict(self), report)
+        # po zaliczeniu backtestu zapamiętaj znacznik czasu
         self.backtest_passed_at = time.time()
         return self
 

@@ -36,7 +36,6 @@ PaperTradingAdapter = getattr(core_paper, "PaperTradingAdapter", None)
 
 
 # ------------------ dummy exchange / provider ------------------
-
 class DummyExchange:
     def __init__(self) -> None:
         self.calls: List[Dict[str, Any]] = []
@@ -87,7 +86,6 @@ def test_market_data_provider_caches(provider: MarketDataProvider) -> None:
 
 
 # ------------------ dane syntetyczne ------------------
-
 def _build_dataframe(periods: int = 120, freq: str = "1min") -> pd.DataFrame:
     idx = pd.date_range("2024-01-01", periods=periods, freq=freq, tz="UTC")
     base = pd.DataFrame(index=idx)
@@ -106,7 +104,6 @@ def _build_dataframe(periods: int = 120, freq: str = "1min") -> pd.DataFrame:
 
 
 # ------------------ strategie testowe ------------------
-
 @registry.register
 class TestTrendStrategy(BaseStrategy):
     metadata = StrategyMetadata(name="TestTrendStrategy", description="Synthetic test strategy")
@@ -209,7 +206,6 @@ class ZeroVolumeStrategy(BaseStrategy):
 
 
 # ------------------ testy backtestera ------------------
-
 def test_backtest_engine_generates_metrics() -> None:
     df = _build_dataframe()
     engine = BacktestEngine(

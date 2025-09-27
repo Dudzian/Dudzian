@@ -23,7 +23,6 @@ from KryptoLowca.strategies.base import (
 
 logger = get_logger(__name__)
 
-
 _TIMEFRAME_UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
 
 
@@ -33,7 +32,6 @@ def _safe_timeframe_to_seconds(value: str) -> int | None:
     Funkcja jest defensywna – w razie niepoprawnego formatu zwraca ``None``
     zamiast podnosić wyjątek, aby nie przerywać symulacji.
     """
-
     if not value:
         return None
     value = value.strip()
