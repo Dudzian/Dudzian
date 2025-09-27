@@ -1,5 +1,9 @@
 # Exchange Integration Review
 
+> **Legacy notice:** Historical sources once kept in `KryptoLowca/bot` now live under
+> `archive/legacy_bot/` and are excluded from the supported runtime. All integration
+> work must target the main `KryptoLowca` package.
+
 ## Implemented Scope
 - Unified adapter abstraction defined in `KryptoLowca/exchanges/interfaces.py`, with REST and WebSocket helpers, rate limiting, and order handling primitives.
 - Binance Testnet and Kraken Demo adapters leveraging shared base classes, with dependency injection points for HTTP and WebSocket clients.

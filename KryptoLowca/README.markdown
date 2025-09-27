@@ -2,6 +2,10 @@
 
 KryptoŁowca is a production-grade cryptocurrency trading bot with a graphical user interface (GUI) built using Tkinter. It supports multi-exchange trading, AI-driven predictions, risk management, and comprehensive reporting. Inspired by Cryptohopper, it offers real-time trading, backtesting, and secure API key management.
 
+> **Important:** Legacy source code that previously lived under `KryptoLowca/bot` has been archived in `archive/legacy_bot/`.
+> The archived snapshot is kept for reference only and must not be executed in new environments. Always use the modules from
+> the top-level `KryptoLowca` package when developing, deploying, or testing the bot.
+
 ## Project Structure
 
 ```
