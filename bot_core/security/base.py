@@ -1,0 +1,180 @@
+"""Abstrakcje przechowywania sekretów wykorzystywane przez adaptery giełdowe."""
+from __future__ import annotations
+
+import abc
+from dataclasses import dataclass
+from typing import Optional, Sequence
+
+from bot_core.exchanges.base import Environment, ExchangeCredentials
+
+
+class SecretStorageError(RuntimeError):
+    """Błąd zgłaszany, gdy operacja na magazynie sekretów się nie powiodła."""
+
+
+class SecretStorage(abc.ABC):
+    """Abstrakcyjna definicja magazynu sekretów."""
+
+    @abc.abstractmethod
+    def get_secret(self, key: str) -> Optional[str]:
+        """Zwraca sekret zapisany pod wskazanym kluczem lub ``None``."""
+
+    @abc.abstractmethod
+    def set_secret(self, key: str, value: str) -> None:
+        """Zapisuje lub aktualizuje sekret podanym kluczem."""
+
+    @abc.abstractmethod
+    def delete_secret(self, key: str) -> None:
+        """Usuwa sekret. Operacja powinna być idempotentna."""
+
+
+@dataclass(slots=True)
+class SecretPayload:
+    """Reprezentuje komplet informacji niezbędnych do uwierzytelnienia na giełdzie."""
+
+    key_id: str
+    secret: str
+    passphrase: Optional[str]
+    permissions: Sequence[str]
+    environment: Environment
+
+    @classmethod
+    def from_exchange_credentials(
+        cls, credentials: ExchangeCredentials
+    ) -> "SecretPayload":
+        return cls(
+            key_id=credentials.key_id,
+            secret=credentials.secret or "",
+            passphrase=credentials.passphrase,
+            permissions=tuple(credentials.permissions),
+            environment=credentials.environment,
+        )
+
+
+class SecretManager:
+    """Zarządza serializacją i walidacją poświadczeń w magazynach sekretów."""
+
+    def __init__(self, storage: SecretStorage, *, namespace: str = "dudzian.trading") -> None:
+        self._storage = storage
+        self._namespace = namespace.rstrip(":")
+
+    def _format_key(self, keychain_key: str, purpose: str) -> str:
+        return f"{self._namespace}:{keychain_key}:{purpose}".lower()
+
+    def load_exchange_credentials(
+        self,
+        keychain_key: str,
+        *,
+        expected_environment: Environment,
+        purpose: str = "trading",
+    ) -> ExchangeCredentials:
+        """Ładuje poświadczenia i weryfikuje zgodność środowiska."""
+
+        storage_key = self._format_key(keychain_key, purpose)
+        raw_value = self._storage.get_secret(storage_key)
+        if raw_value is None:
+            raise SecretStorageError(
+                f"Brak sekretu '{storage_key}'. Dodaj klucze przy użyciu narzędzia konfiguracyjnego."
+            )
+
+        try:
+            payload = self._deserialize(raw_value)
+        except ValueError as exc:  # pragma: no cover - ochrona przed zepsutymi danymi
+            raise SecretStorageError(
+                f"Sekret '{storage_key}' ma niepoprawny format – usuń go i zapisz ponownie."
+            ) from exc
+
+        if payload.environment != expected_environment:
+            raise SecretStorageError(
+                "Środowisko zapisane w magazynie sekretów ("
+                f"{payload.environment.value}) nie pasuje do oczekiwanego "
+                f"({expected_environment.value})."
+            )
+
+        return ExchangeCredentials(
+            key_id=payload.key_id,
+            secret=payload.secret or None,
+            passphrase=payload.passphrase,
+            environment=payload.environment,
+            permissions=payload.permissions,
+        )
+
+    def store_exchange_credentials(
+        self,
+        keychain_key: str,
+        credentials: ExchangeCredentials,
+        *,
+        purpose: str = "trading",
+    ) -> None:
+        storage_key = self._format_key(keychain_key, purpose)
+        serialized = self._serialize(SecretPayload.from_exchange_credentials(credentials))
+        self._storage.set_secret(storage_key, serialized)
+
+    def delete_exchange_credentials(self, keychain_key: str, *, purpose: str = "trading") -> None:
+        storage_key = self._format_key(keychain_key, purpose)
+        self._storage.delete_secret(storage_key)
+
+    def load_secret_value(self, keychain_key: str, *, purpose: str = "generic") -> str:
+        """Zwraca arbitralny sekret zapisany w magazynie.
+
+        Funkcja jest wykorzystywana do ładowania tokenów kanałów alertów oraz innych
+        poświadczeń, które nie pasują do schematu ``ExchangeCredentials``. Zwracamy
+        prosty łańcuch znaków, aby wywołujący mógł sam zdecydować o formacie
+        serializacji (np. JSON dla kont SMTP).
+        """
+
+        storage_key = self._format_key(keychain_key, purpose)
+        raw_value = self._storage.get_secret(storage_key)
+        if raw_value is None:
+            raise SecretStorageError(
+                f"Brak sekretu '{storage_key}'. Dodaj go do natywnego keychaina przed startem systemu."
+            )
+        return raw_value
+
+    def store_secret_value(self, keychain_key: str, value: str, *, purpose: str = "generic") -> None:
+        """Zapisuje arbitralny sekret w magazynie."""
+
+        storage_key = self._format_key(keychain_key, purpose)
+        self._storage.set_secret(storage_key, value)
+
+    def delete_secret_value(self, keychain_key: str, *, purpose: str = "generic") -> None:
+        """Usuwa sekret zapisany dla wskazanego celu."""
+
+        storage_key = self._format_key(keychain_key, purpose)
+        self._storage.delete_secret(storage_key)
+
+    @staticmethod
+    def _serialize(payload: SecretPayload) -> str:
+        import json
+
+        return json.dumps(
+            {
+                "key_id": payload.key_id,
+                "secret": payload.secret,
+                "passphrase": payload.passphrase,
+                "permissions": list(payload.permissions),
+                "environment": payload.environment.value,
+            },
+            separators=(",", ":"),
+        )
+
+    @staticmethod
+    def _deserialize(raw_value: str) -> SecretPayload:
+        import json
+
+        data = json.loads(raw_value)
+        return SecretPayload(
+            key_id=str(data["key_id"]),
+            secret=str(data.get("secret", "")),
+            passphrase=data.get("passphrase"),
+            permissions=tuple(data.get("permissions", ())),
+            environment=Environment(data["environment"]),
+        )
+
+
+__all__ = [
+    "SecretStorage",
+    "SecretStorageError",
+    "SecretPayload",
+    "SecretManager",
+]
