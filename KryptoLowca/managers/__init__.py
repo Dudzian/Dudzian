@@ -6,6 +6,7 @@ __all__ = [
     "DatabaseManager", "DBOptions",
     "AIManager", "ConfigManager", "ExchangeManager",
     "ReportManager", "RiskManagerAdapter", "SecurityManager",
+    "MultiExchangeAccountManager",
 ]
 
 # Importy opcjonalne z ochroną na brak zależności środowiskowych
@@ -44,3 +45,8 @@ try:
     from .security_manager import SecurityManager  # type: ignore
 except Exception:  # pragma: no cover
     SecurityManager = None  # type: ignore
+
+try:
+    from .multi_account_manager import MultiExchangeAccountManager  # type: ignore
+except Exception:  # pragma: no cover
+    MultiExchangeAccountManager = None  # type: ignore
