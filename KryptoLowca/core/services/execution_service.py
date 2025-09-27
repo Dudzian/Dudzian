@@ -29,7 +29,12 @@ class ExecutionService:
     def portfolio_snapshot(self, symbol: str) -> Mapping[str, object] | None:
         getter = getattr(self._adapter, "portfolio_snapshot", None)
         if callable(getter):
-            return getter(symbol)
+            result = getter(symbol)
+            if result is None or isinstance(result, Mapping):
+                return result
+            raise TypeError(
+                "portfolio_snapshot must return Mapping[str, object] or None"
+            )
         return None
 
     @guard_exceptions("ExecutionService")

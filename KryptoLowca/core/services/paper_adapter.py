@@ -44,13 +44,16 @@ class PaperTradingAdapter:
         if bar is None or state.matching is None:
             return
         fills = state.matching.process_bar(
-            index=int(bar.get("index", 0)),
+            index=self._coerce_int(bar.get("index"), default=0),
             timestamp=bar.get("timestamp", datetime.now(timezone.utc)),  # type: ignore[arg-type]
             bar=bar,  # type: ignore[arg-type]
         )
         for fill in fills:
             self._apply_fill(state, fill)
-        state.last_price = float(bar.get("close", state.last_price))
+        state.last_price = self._coerce_float(
+            bar.get("close", state.last_price),
+            default=state.last_price,
+        )
 
     def submit_order(self, *, symbol: str, side: str, size: float, **kwargs) -> Mapping[str, object]:
         state = self._ensure_state(symbol)
@@ -60,7 +63,7 @@ class PaperTradingAdapter:
         order_id = state.matching.submit_market_order(
             side=side,
             size=float(size),
-            index=int(kwargs.get("bar_index", 0)),
+            index=self._coerce_int(kwargs.get("bar_index"), default=0),
             timestamp=timestamp,
             stop_loss=kwargs.get("stop_loss"),
             take_profit=kwargs.get("take_profit"),
@@ -123,6 +126,41 @@ class PaperTradingAdapter:
             bar = {"open": float(close), "high": float(close), "low": float(close), "close": float(close), "volume": 0.0}
         bar.setdefault("timestamp", datetime.now(timezone.utc))
         return bar
+
+    @staticmethod
+    def _coerce_int(value: object, *, default: int) -> int:
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, (int, float)):
+            return int(value)
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return default
+            try:
+                return int(stripped)
+            except ValueError:
+                try:
+                    return int(float(stripped))
+                except ValueError:
+                    return default
+        return default
+
+    @staticmethod
+    def _coerce_float(value: object, *, default: float) -> float:
+        if isinstance(value, bool):
+            return float(value)
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return default
+            try:
+                return float(stripped)
+            except ValueError:
+                return default
+        return default
 
 
 __all__ = ["PaperTradingAdapter"]

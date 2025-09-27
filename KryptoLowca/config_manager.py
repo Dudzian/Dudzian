@@ -180,7 +180,20 @@ class ExchangeConfig:
 
         # rzutowania
         self.retry_attempts = int(self.retry_attempts)
-        self.retry_delay = float(self.retry_delay)
+
+        retry_delay_raw = self.retry_delay
+        if retry_delay_raw is None:
+            retry_delay_value = 0.0
+        elif isinstance(retry_delay_raw, (int, float)):
+            retry_delay_value = float(retry_delay_raw)
+        elif isinstance(retry_delay_raw, str):
+            try:
+                retry_delay_value = float(retry_delay_raw.strip())
+            except ValueError as exc:
+                raise ValidationError("retry_delay musi być liczbą") from exc
+        else:
+            raise ValidationError("retry_delay musi być liczbą lub None")
+        self.retry_delay = retry_delay_value
         self.require_demo_mode = bool(self.require_demo_mode)
         self.telemetry_log_interval_s = float(self.telemetry_log_interval_s)
         self.telemetry_schema_version = int(self.telemetry_schema_version)
