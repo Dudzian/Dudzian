@@ -264,6 +264,8 @@ environments:
     alert_channels: ["telegram:primary", "email:ops"]
     ip_allowlist: []
     instrument_universe: core_multi_exchange
+    adapter_settings:
+      valuation_asset: ZUSD
 
   kraken_live:
     exchange: kraken_spot
@@ -274,6 +276,8 @@ environments:
     alert_channels: ["telegram:primary", "sms:orange_local", "email:ops"]
     ip_allowlist: []
     instrument_universe: core_multi_exchange
+    adapter_settings:
+      valuation_asset: ZEUR
 
   kraken_futures_paper:
     exchange: kraken_futures

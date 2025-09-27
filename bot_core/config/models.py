@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 from bot_core.exchanges.base import Environment
 
@@ -21,6 +21,7 @@ class EnvironmentConfig:
     ip_allowlist: Sequence[str] = field(default_factory=tuple)
     credential_purpose: str = "trading"
     instrument_universe: str | None = None
+    adapter_settings: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)

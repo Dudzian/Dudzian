@@ -78,6 +78,11 @@ oraz zakresem uprawnień. Struktura przygotowuje grunt pod rozdzielenie kluczy `
 w Windows Credential Manager/macOS Keychain/Linux keyring (`keychain_key` w konfiguracji). Metoda
 `configure_network` umożliwi egzekwowanie IP allowlist.
 
+Sekcja środowisk w `core.yaml` została rozszerzona o pole `adapter_settings`, dzięki któremu możemy
+przekazywać parametry specyficzne dla danej giełdy bez łamania ogólnego kontraktu adapterów. Przykład:
+`kraken_live` korzysta z `valuation_asset: ZEUR`, co powoduje, że `KrakenSpotAdapter` raportuje kapitał
+w walucie referencyjnej EUR zgodnie z wymaganiami risk engine'u i raportowania P&L.
+
 ## Dane rynkowe
 
 `PublicAPIDataSource` zostanie połączony z adapterami do pobierania danych OHLCV z publicznych API.
