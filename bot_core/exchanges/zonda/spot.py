@@ -23,13 +23,21 @@ from bot_core.exchanges.base import (
 
 _LOGGER = logging.getLogger(__name__)
 
-_API_BASE_URL = "https://api.zonda.exchange/rest"
+# --- Konfiguracja endpointów -------------------------------------------------
+
+_BASE_URLS: Mapping[Environment, str] = {
+    Environment.LIVE: "https://api.zonda.exchange/rest",
+    Environment.PAPER: "https://api.zonda.exchange/rest",          # brak osobnego paper – użyj produkcyjnego REST
+    Environment.TESTNET: "https://api-sandbox.zonda.exchange/rest",
+}
+
 _DEFAULT_HEADERS = {"User-Agent": "bot-core/1.0 (+https://github.com/)"}
 
 
+# --- Funkcje pomocnicze ------------------------------------------------------
+
 def _normalize_interval(interval: str) -> int:
     """Konwertuje interwał tekstowy na sekundy wymagane przez API świec."""
-
     mapping = {
         "1m": 60,
         "3m": 180,
@@ -46,18 +54,18 @@ def _normalize_interval(interval: str) -> int:
     key = interval.strip().lower()
     if key.endswith("min"):
         key = key[:-3] + "m"
-    if key.endswith("h") and key[:-1].isdigit():
-        key = key
-    if key.endswith("d") and key[:-1].isdigit():
-        key = key
-    if key.endswith("w") and key[:-1].isdigit():
-        key = key
     if key not in mapping and key.endswith("m") and key[:-1].isdigit():
         mapping[key] = int(key[:-1]) * 60
     try:
         return mapping[key]
-    except KeyError as exc:  # pragma: no cover - walidacja zostanie wychwycona w testach integracyjnych
+    except KeyError as exc:  # pragma: no cover
         raise ValueError(f"Nieobsługiwany interwał Zonda: {interval}") from exc
+
+
+def _json_body(payload: Mapping[str, object] | None) -> str:
+    if not payload:
+        return ""
+    return json.dumps(payload, separators=(",", ":"), sort_keys=True)
 
 
 def _to_float(value: object, default: float = 0.0) -> float:
@@ -65,12 +73,6 @@ def _to_float(value: object, default: float = 0.0) -> float:
         return float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return default
-
-
-def _json_body(payload: Mapping[str, object] | None) -> str:
-    if not payload:
-        return ""
-    return json.dumps(payload, separators=(",", ":"), sort_keys=True)
 
 
 @dataclass(slots=True)
@@ -82,27 +84,26 @@ class _OrderPayload:
     raw: Mapping[str, object]
 
 
+# --- Adapter -----------------------------------------------------------------
+
 class ZondaSpotAdapter(ExchangeAdapter):
     """Adapter REST obsługujący podstawowe operacje tradingowe Zonda."""
 
-    __slots__ = (
-        "_environment",
-        "_base_url",
-        "_ip_allowlist",
-        "_permission_set",
-    )
-
+    __slots__ = ("_environment", "_base_url", "_ip_allowlist", "_permission_set")
     name: str = "zonda_spot"
 
     def __init__(self, credentials: ExchangeCredentials, *, environment: Environment | None = None) -> None:
         super().__init__(credentials)
         self._environment = environment or credentials.environment
-        self._base_url = _API_BASE_URL
+        try:
+            self._base_url = _BASE_URLS[self._environment]
+        except KeyError as exc:  # pragma: no cover
+            raise ValueError(f"Nieobsługiwane środowisko Zonda: {self._environment}") from exc
         self._ip_allowlist: tuple[str, ...] = ()
         self._permission_set = frozenset(perm.lower() for perm in credentials.permissions)
 
-    # ------------------------------------------------------------------
-    # Pomocnicze metody HTTP
+    # --- HTTP ----------------------------------------------------------------
+
     def _build_url(self, path: str) -> str:
         if not path.startswith("/"):
             path = "/" + path
@@ -110,12 +111,12 @@ class ZondaSpotAdapter(ExchangeAdapter):
 
     def _execute_request(self, request: Request) -> dict[str, object] | list[object]:
         try:
-            with urlopen(request, timeout=15) as response:  # nosec: B310 - kontrolowany endpoint
+            with urlopen(request, timeout=15) as response:  # nosec: B310 – kontrolowany endpoint
                 payload = response.read()
-        except HTTPError as exc:  # pragma: no cover - zależne od sieci
+        except HTTPError as exc:  # pragma: no cover
             _LOGGER.error("Zonda zwróciła błąd HTTP: %s", exc)
             raise RuntimeError(f"Zonda API zwróciła błąd HTTP: {exc}") from exc
-        except URLError as exc:  # pragma: no cover - zależne od sieci
+        except URLError as exc:  # pragma: no cover
             _LOGGER.error("Błąd sieci podczas komunikacji z Zonda: %s", exc)
             raise RuntimeError("Nie udało się połączyć z API Zonda") from exc
 
@@ -166,11 +167,7 @@ class ZondaSpotAdapter(ExchangeAdapter):
             }
         )
 
-        if params:
-            query = f"?{urlencode(params)}"
-        else:
-            query = ""
-
+        query = f"?{urlencode(params)}" if params else ""
         data_bytes: Optional[bytes] = None
         if body:
             data_bytes = body.encode("utf-8")
@@ -184,14 +181,63 @@ class ZondaSpotAdapter(ExchangeAdapter):
         )
         return self._execute_request(request)
 
-    # ------------------------------------------------------------------
-    # Interfejs ExchangeAdapter
-    def configure_network(self, *, ip_allowlist: Optional[Sequence[str]] = None) -> None:
+    # --- ExchangeAdapter API --------------------------------------------------
+
+    def configure_network(self, *, ip_allowlist: Optional[Sequence[str]] = None) -> None:  # type: ignore[override]
         self._ip_allowlist = tuple(ip_allowlist or ())
         if self._ip_allowlist:
             _LOGGER.info("Zonda allowlist IP ustawiony na: %s", self._ip_allowlist)
 
-    def fetch_account_snapshot(self) -> AccountSnapshot:
+    def fetch_symbols(self) -> Iterable[str]:  # type: ignore[override]
+        response = self._public_request("/trading/ticker")
+        if not isinstance(response, Mapping):
+            return []
+        items = response.get("items")
+        if isinstance(items, Mapping):
+            return sorted(str(symbol) for symbol in items.keys())
+        return []
+
+    def fetch_ohlcv(  # type: ignore[override]
+        self,
+        symbol: str,
+        interval: str,
+        start: Optional[int] = None,
+        end: Optional[int] = None,
+        limit: Optional[int] = None,
+    ) -> Sequence[Sequence[float]]:
+        resolution = _normalize_interval(interval)
+        params: dict[str, object] = {}
+        # API Zondy przyjmuje znacznik czasu w sekundach
+        if start is not None:
+            params["from"] = int(start // 1000)
+        if end is not None:
+            params["to"] = int(end // 1000)
+        if limit is not None:
+            params["limit"] = int(limit)
+
+        path = f"/trading/candle/history/{symbol}/{resolution}"
+        response = self._public_request(path, params=params)
+        if not isinstance(response, Mapping):
+            raise RuntimeError("Niepoprawna odpowiedź świec z Zonda")
+        items = response.get("items")
+        if not isinstance(items, list):
+            return []
+
+        candles: list[Sequence[float]] = []
+        for entry in items:
+            if not isinstance(entry, Mapping):
+                continue
+            # Zwracamy ms (spójnie z resztą systemu)
+            timestamp = int(_to_float(entry.get("time"))) * 1000
+            open_price = _to_float(entry.get("open") or entry.get("o"))
+            high_price = _to_float(entry.get("high") or entry.get("h"))
+            low_price = _to_float(entry.get("low") or entry.get("l"))
+            close_price = _to_float(entry.get("close") or entry.get("c"))
+            volume = _to_float(entry.get("volume") or entry.get("v"))
+            candles.append([float(timestamp), open_price, high_price, low_price, close_price, volume])
+        return candles
+
+    def fetch_account_snapshot(self) -> AccountSnapshot:  # type: ignore[override]
         if "read" not in self._permission_set and "trade" not in self._permission_set:
             raise PermissionError("Poświadczenia Zonda nie mają uprawnień do odczytu sald.")
 
@@ -221,53 +267,6 @@ class ZondaSpotAdapter(ExchangeAdapter):
             available_margin=available_total,
             maintenance_margin=0.0,
         )
-
-    def fetch_symbols(self) -> Iterable[str]:
-        response = self._public_request("/trading/ticker")
-        if not isinstance(response, Mapping):
-            raise RuntimeError("Niepoprawna odpowiedź ticker z Zonda")
-        items = response.get("items")
-        if isinstance(items, Mapping):
-            return [str(symbol) for symbol in items.keys()]
-        raise RuntimeError("Brak sekcji 'items' w odpowiedzi ticker Zonda")
-
-    def fetch_ohlcv(
-        self,
-        symbol: str,
-        interval: str,
-        start: Optional[int] = None,
-        end: Optional[int] = None,
-        limit: Optional[int] = None,
-    ) -> Sequence[Sequence[float]]:
-        resolution = _normalize_interval(interval)
-        params: dict[str, object] = {}
-        if start is not None:
-            params["from"] = int(start // 1000)
-        if end is not None:
-            params["to"] = int(end // 1000)
-        if limit is not None:
-            params["limit"] = int(limit)
-
-        path = f"/trading/candle/history/{symbol}/{resolution}"
-        response = self._public_request(path, params=params)
-        if not isinstance(response, Mapping):
-            raise RuntimeError("Niepoprawna odpowiedź świec z Zonda")
-        items = response.get("items")
-        if not isinstance(items, list):
-            raise RuntimeError("Sekcja 'items' odpowiedzi świec Zonda ma niepoprawny format")
-
-        candles: list[Sequence[float]] = []
-        for entry in items:
-            if not isinstance(entry, Mapping):
-                continue
-            timestamp = int(_to_float(entry.get("time"))) * 1000
-            open_price = _to_float(entry.get("open"))
-            close_price = _to_float(entry.get("close"))
-            high_price = _to_float(entry.get("high"))
-            low_price = _to_float(entry.get("low"))
-            volume = _to_float(entry.get("volume"))
-            candles.append([float(timestamp), open_price, high_price, low_price, close_price, volume])
-        return candles
 
     def _parse_order_payload(self, response: Mapping[str, object]) -> _OrderPayload:
         order_payload: Mapping[str, object]
@@ -300,7 +299,7 @@ class ZondaSpotAdapter(ExchangeAdapter):
             raw=order_payload,
         )
 
-    def place_order(self, request: OrderRequest) -> OrderResult:
+    def place_order(self, request: OrderRequest) -> OrderResult:  # type: ignore[override]
         if "trade" not in self._permission_set:
             raise PermissionError("Poświadczenia Zonda nie mają uprawnień tradingowych.")
 
@@ -329,8 +328,8 @@ class ZondaSpotAdapter(ExchangeAdapter):
             raw_response=dict(response),
         )
 
-    def cancel_order(self, order_id: str, *, symbol: Optional[str] = None) -> None:
-        del symbol
+    def cancel_order(self, order_id: str, *, symbol: Optional[str] = None) -> None:  # type: ignore[override]
+        del symbol  # Zonda nie wymaga symbolu do anulowania
         response = self._signed_request("DELETE", f"/trading/order/{order_id}")
         if isinstance(response, Mapping):
             order = self._parse_order_payload(response)

@@ -3,11 +3,18 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from typing import Sequence
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from bot_core.alerts import EmailChannel, SMSChannel, TelegramChannel
-from bot_core.exchanges.base import AccountSnapshot, Environment, OrderRequest
+from bot_core.exchanges.base import (
+    AccountSnapshot,
+    Environment,
+    ExchangeCredentials,
+    OrderRequest,
+    OrderResult,
+)
 from bot_core.risk.engine import ThresholdRiskEngine
 from bot_core.runtime import BootstrapContext, bootstrap_environment
 from bot_core.security import SecretManager, SecretStorage
@@ -47,6 +54,15 @@ def _write_config(tmp_path: Path) -> Path:
         data_cache_path: ./var/data/binance_paper
         risk_profile: balanced
         alert_channels: ["telegram:primary", "email:ops", "sms:orange_local"]
+        ip_allowlist: ["127.0.0.1"]
+      zonda_paper:
+        exchange: zonda_spot
+        environment: paper
+        keychain_key: zonda_paper_key
+        credential_purpose: trading
+        data_cache_path: ./var/data/zonda_paper
+        risk_profile: balanced
+        alert_channels: ["telegram:primary"]
         ip_allowlist: ["127.0.0.1"]
     reporting: {}
     alerts:
@@ -89,6 +105,7 @@ def test_bootstrap_environment_initialises_components(tmp_path: Path) -> None:
         "environment": Environment.PAPER.value,
     }
     storage.set_secret("tests:binance_paper_key:trading", json.dumps(credentials_payload))
+    storage.set_secret("tests:zonda_paper_key:trading", json.dumps(credentials_payload))
     manager.store_secret_value("telegram_token", "telegram-secret", purpose="alerts:telegram")
     manager.store_secret_value(
         "smtp_credentials",
