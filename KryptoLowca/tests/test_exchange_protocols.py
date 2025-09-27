@@ -20,6 +20,8 @@ from KryptoLowca.exchanges import (
     OrderStatus,
     ZondaAdapter,
 )
+import KryptoLowca.exchanges.binance as binance_module
+import KryptoLowca.exchanges.kraken as kraken_module
 import KryptoLowca.exchanges.zonda as zonda_module
 from KryptoLowca.managers.multi_account_manager import MultiExchangeAccountManager
 
@@ -281,6 +283,141 @@ async def test_zonda_websocket_subscription(monkeypatch):
     assert "subscribe-public" in actions
     assert "unsubscribe" in actions
     assert events and events[0]["payload"]["symbol"] == "BTC-PLN"
+
+
+@pytest.mark.asyncio
+async def test_binance_websocket_subscription(monkeypatch):
+    events: list[dict] = []
+    done = asyncio.Event()
+
+    class FakeWebSocket:
+        def __init__(self, messages: list[str]) -> None:
+            self._messages = list(messages)
+            self._closed = asyncio.Event()
+            self.sent: list[dict] = []
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if self._messages:
+                return self._messages.pop(0)
+            await self._closed.wait()
+            raise StopAsyncIteration
+
+        async def send(self, payload: str) -> None:
+            self.sent.append(json.loads(payload))
+
+        async def close(self) -> None:
+            self._closed.set()
+
+    fake_ws = FakeWebSocket(
+        [json.dumps({"stream": "btcusdt@ticker", "data": {"c": "123.45"}})]
+    )
+
+    class FakeWebSocketsModule:
+        def __init__(self, websocket: FakeWebSocket) -> None:
+            self._websocket = websocket
+            self.connected: list[tuple[str, int]] = []
+
+        async def connect(self, endpoint: str, ping_interval: int = 20):
+            self.connected.append((endpoint, ping_interval))
+            return self._websocket
+
+    fake_module = FakeWebSocketsModule(fake_ws)
+    monkeypatch.setattr(binance_module, "websockets", fake_module)
+    monkeypatch.setattr(binance_module, "_WSState", None, raising=False)
+
+    adapter = BinanceTestnetAdapter(http_client=RecordingHTTPClient([]))
+
+    async def callback(payload: dict) -> None:
+        events.append(payload)
+        done.set()
+
+    subscription = await adapter.stream_market_data(
+        [MarketSubscription(channel="ticker", symbols=["BTCUSDT"])],
+        callback,
+    )
+
+    async with subscription:
+        await asyncio.wait_for(done.wait(), timeout=0.2)
+
+    assert fake_module.connected[0][0] == binance_module._BINANCE_WS_ENDPOINT
+    assert fake_ws.sent[0]["method"] == "SUBSCRIBE"
+    assert fake_ws.sent[0]["params"] == ["btcusdt@ticker"]
+    assert fake_ws.sent[1]["method"] == "UNSUBSCRIBE"
+    assert events and events[0]["data"]["c"] == "123.45"
+
+
+@pytest.mark.asyncio
+async def test_kraken_websocket_subscription(monkeypatch):
+    events: list[dict | list] = []
+    done = asyncio.Event()
+
+    class FakeWebSocket:
+        def __init__(self, messages: list[str]) -> None:
+            self._messages = list(messages)
+            self._closed = asyncio.Event()
+            self.sent: list[dict] = []
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if self._messages:
+                return self._messages.pop(0)
+            await self._closed.wait()
+            raise StopAsyncIteration
+
+        async def send(self, payload: str) -> None:
+            self.sent.append(json.loads(payload))
+
+        async def close(self) -> None:
+            self._closed.set()
+
+    fake_ws = FakeWebSocket(
+        [json.dumps([42, {"c": ["123.45", "123.46"]}, "ticker", "XBT/USDT"])]
+    )
+
+    class FakeWebSocketsModule:
+        def __init__(self, websocket: FakeWebSocket) -> None:
+            self._websocket = websocket
+            self.connected: list[tuple[str, int]] = []
+
+        async def connect(self, endpoint: str, ping_interval: int = 20):
+            self.connected.append((endpoint, ping_interval))
+            return self._websocket
+
+    fake_module = FakeWebSocketsModule(fake_ws)
+    monkeypatch.setattr(kraken_module, "websockets", fake_module)
+    monkeypatch.setattr(kraken_module, "_WSState", None, raising=False)
+
+    adapter = KrakenDemoAdapter(http_client=RecordingHTTPClient([]))
+
+    async def callback(payload):
+        events.append(payload)
+        done.set()
+
+    subscription = await adapter.stream_market_data(
+        [
+            MarketSubscription(
+                channel="ticker",
+                symbols=["XBT/USDT"],
+                params={"subscription": {"name": "ticker", "interval": 1}},
+            )
+        ],
+        callback,
+    )
+
+    async with subscription:
+        await asyncio.wait_for(done.wait(), timeout=0.2)
+
+    assert fake_module.connected[0][0] == kraken_module._KRAKEN_WS_ENDPOINT
+    assert fake_ws.sent[0]["event"] == "subscribe"
+    assert fake_ws.sent[0]["pair"] == ["XBT/USDT"]
+    assert fake_ws.sent[0]["subscription"]["interval"] == 1
+    assert fake_ws.sent[1]["event"] == "unsubscribe"
+    assert events and isinstance(events[0], list) and events[0][1]["c"][0] == "123.45"
 
 
 @pytest.mark.asyncio
