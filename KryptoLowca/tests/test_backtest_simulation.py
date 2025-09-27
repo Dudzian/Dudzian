@@ -386,15 +386,19 @@ def test_forced_closure_uses_matching_costs() -> None:
     assert total_fees == pytest.approx(report.metrics.fees_paid)
 
     reconstructed_cash = report.starting_balance
+    cash_without_fees = report.starting_balance
     reconstructed_position = 0.0
     for fill in report.fills:
         direction = 1 if fill.side == "buy" else -1
-        reconstructed_cash -= direction * fill.price * fill.size
+        trade_notional = fill.price * fill.size
+        reconstructed_cash -= direction * trade_notional
+        cash_without_fees -= direction * trade_notional
         reconstructed_cash -= fill.fee
         reconstructed_position += direction * fill.size
 
     assert reconstructed_position == pytest.approx(0.0, abs=1e-9)
     assert reconstructed_cash == pytest.approx(report.final_balance)
+    assert (cash_without_fees - reconstructed_cash) == pytest.approx(total_fees)
     assert report.equity_curve
     assert reconstructed_cash == pytest.approx(report.equity_curve[-1])
 
@@ -511,13 +515,17 @@ def test_paper_trading_adapter_multi_symbol_multi_timeframe() -> None:
         assert total_fees > 0
 
         expected_cash = adapter._initial_balance
+        cash_without_fees = adapter._initial_balance
         expected_position = 0.0
         for fill in state.fills:
             direction = 1 if fill.side == "buy" else -1
-            expected_cash -= direction * fill.price * fill.size
+            trade_notional = fill.price * fill.size
+            expected_cash -= direction * trade_notional
+            cash_without_fees -= direction * trade_notional
             expected_cash -= fill.fee
             expected_position += direction * fill.size
 
         assert expected_cash == pytest.approx(state.cash)
+        assert (cash_without_fees - expected_cash) == pytest.approx(total_fees)
         assert expected_position == pytest.approx(state.position)
         assert snapshot["value"] == pytest.approx(state.cash + state.position * state.last_price)
