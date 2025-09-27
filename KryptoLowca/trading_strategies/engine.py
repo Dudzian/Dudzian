@@ -29,8 +29,6 @@ from enum import Enum
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Protocol, Tuple, Union
-import unittest
-from unittest.mock import MagicMock
 
 import numpy as np
 import pandas as pd
@@ -1383,122 +1381,6 @@ class PerformanceMonitor:
 
 # =================== Comprehensive Testing Framework ===================
 
-class TestTradingEngine(unittest.TestCase):
-    """Comprehensive test suite for trading engine."""
-    
-    def setUp(self):
-        """Set up test fixtures."""
-        self.config = EngineConfig(log_level='ERROR')  # Suppress logs during testing
-        self.engine = TradingEngine(config=self.config)
-        self.sample_data = self._create_sample_data()
-        self.params = TradingParameters()
-    
-    def _create_sample_data(self) -> pd.DataFrame:
-        """Create sample OHLCV data for testing."""
-        dates = pd.date_range(start='2020-01-01', end='2022-01-01', freq='D')
-        np.random.seed(42)
-        
-        n_points = len(dates)
-        base_price = 100.0
-        returns = np.random.normal(0.0005, 0.02, n_points)
-        
-        prices = base_price * (1 + returns).cumprod()
-        noise = np.random.normal(0, 0.5, n_points)
-        
-        data = pd.DataFrame({
-            'open': prices + noise,
-            'close': prices,
-            'high': prices + abs(noise) + np.random.exponential(0.5, n_points),
-            'low': prices - abs(noise) - np.random.exponential(0.5, n_points),
-            'volume': np.random.randint(1000, 10000, n_points)
-        }, index=dates)
-        
-        # Ensure OHLC relationships
-        data['high'] = np.maximum.reduce([data['open'], data['high'], data['low'], data['close']])
-        data['low'] = np.minimum.reduce([data['open'], data['high'], data['low'], data['close']])
-        
-        return data
-    
-    def test_data_validation(self):
-        """Test data validation functionality."""
-        validator = DataValidationService(MagicMock(), self.config)
-        validated = validator.validate_ohlcv(self.sample_data)
-        
-        self.assertFalse(validated.empty)
-        self.assertTrue(all(col in validated.columns for col in ['open', 'high', 'low', 'close', 'volume']))
-        self.assertIsInstance(validated.index, pd.DatetimeIndex)
-    
-    def test_indicator_calculation(self):
-        """Test technical indicator calculations."""
-        calculator = TechnicalIndicatorsService(MagicMock(), self.config)
-        indicators = calculator.calculate_indicators(self.sample_data, self.params)
-        
-        self.assertIsInstance(indicators, TechnicalIndicators)
-        self.assertEqual(len(indicators.rsi), len(self.sample_data))
-        self.assertTrue(all(0 <= rsi <= 100 for rsi in indicators.rsi.dropna()))
-    
-    def test_signal_generation(self):
-        """Test signal generation."""
-        calculator = TechnicalIndicatorsService(MagicMock(), self.config)
-        generator = TradingSignalService(MagicMock())
-        
-        indicators = calculator.calculate_indicators(self.sample_data, self.params)
-        signals = generator.generate_signals(indicators, self.params)
-        
-        self.assertEqual(len(signals), len(self.sample_data))
-        self.assertTrue(all(signal in [-1, 0, 1] for signal in signals))
-    
-    def test_risk_management(self):
-        """Test risk management functionality."""
-        calculator = TechnicalIndicatorsService(MagicMock(), self.config)
-        generator = TradingSignalService(MagicMock())
-        risk_manager = RiskManagementService(MagicMock())
-        
-        indicators = calculator.calculate_indicators(self.sample_data, self.params)
-        raw_signals = generator.generate_signals(indicators, self.params)
-        managed_signals = risk_manager.apply_risk_management(
-            self.sample_data, raw_signals, indicators, self.params
-        )
-        
-        self.assertEqual(len(managed_signals), len(raw_signals))
-        self.assertTrue(all(signal in [-1, 0, 1] for signal in managed_signals))
-    
-    def test_backtest_execution(self):
-        """Test backtest execution."""
-        result = self.engine.run_strategy(self.sample_data, self.params)
-        
-        self.assertIsInstance(result, BacktestResult)
-        self.assertIsInstance(result.total_return, float)
-        self.assertIsInstance(result.sharpe_ratio, float)
-        self.assertGreaterEqual(len(result.equity_curve), len(self.sample_data))
-    
-    def test_parameter_validation(self):
-        """Test parameter validation."""
-        with self.assertRaises(ValueError):
-            TradingParameters(rsi_period=0)  # Invalid RSI period
-        
-        with self.assertRaises(ValueError):
-            TradingParameters(ema_fast_period=26, ema_slow_period=12)  # Fast >= Slow
-    
-    def test_empty_data_handling(self):
-        """Test handling of empty data."""
-        empty_data = pd.DataFrame()
-        
-        with self.assertRaises(DataValidationError):
-            self.engine.run_strategy(empty_data, self.params)
-    
-    def test_performance_metrics(self):
-        """Test performance metrics calculation."""
-        result = self.engine.run_strategy(self.sample_data, self.params)
-        
-        # Test that all expected metrics are present and valid
-        self.assertIsInstance(result.sharpe_ratio, float)
-        self.assertIsInstance(result.sortino_ratio, float)
-        self.assertIsInstance(result.max_drawdown, float)
-        self.assertLessEqual(result.max_drawdown, 0)  # Drawdown should be negative
-        self.assertGreaterEqual(result.win_rate, 0)
-        self.assertLessEqual(result.win_rate, 1)
-
 # =================== Advanced Features ===================
 
 class PortfolioManager:
@@ -2091,11 +1973,14 @@ __all__ = [
     'SignalType',
     'MarketRegime',
     'OrderType',
+    'DataValidationService',
+    'TechnicalIndicatorsService',
+    'TradingSignalService',
+    'RiskManagementService',
     'PortfolioManager',
     'RiskAnalyticsService',
     'PerformanceMonitor',
     'StrategyTester',
-    'TestTradingEngine',
     'enhanced_example_usage',
     # Exceptions
     'TradingEngineError',
@@ -2250,18 +2135,10 @@ except Exception:
 
 
 if __name__ == "__main__":
-    # Run enhanced example with comprehensive testing
     try:
-        # Run unit tests first
-        print("Running unit tests...")
-        unittest.main(argv=[''], exit=False, verbosity=2)
-        
-        # Run enhanced example
-        print("\nRunning enhanced example...")
+        print("Running enhanced example...")
         result, best_params, portfolio_result = enhanced_example_usage()
-        
-        print(f"\nExample completed successfully!")
-        
+        print("\nExample completed successfully!")
     except Exception as e:
         print(f"Error in main execution: {e}")
         raise

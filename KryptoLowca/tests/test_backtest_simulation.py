@@ -22,12 +22,10 @@ from KryptoLowca.backtest.simulation import (
 reporting = pytest.importorskip(
     "KryptoLowca.backtest.reporting",
     reason="Reporting not available yet in unified engine",
-    allow_module_level=True,
 )
 core_paper = pytest.importorskip(
     "KryptoLowca.core.services.paper_adapter",
     reason="PaperTradingAdapter not available yet",
-    allow_module_level=True,
 )
 
 export_report = getattr(reporting, "export_report", None)
