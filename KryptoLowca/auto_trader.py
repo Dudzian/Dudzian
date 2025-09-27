@@ -97,6 +97,7 @@ class AutoTrader:
     - Optional auto-trade loop (asks AI for decision and executes via GUI bridge)
     - Runtime-reconfigurable via ControlPanel (configure()/set_enable_auto_trade()).
     """
+    BACKTEST_GUARD_MAX_AGE_S = 30 * 24 * 3600
     def __init__(
         self,
         emitter: EventEmitter,
@@ -1096,6 +1097,23 @@ class AutoTrader:
             )
             logger.exception("Strategy config update failed")
             return
+        if cfg.mode == "live":
+            passed_at = cfg.backtest_passed_at or 0.0
+            now_ts = time.time()
+            if passed_at <= 0:
+                message = (
+                    "Odrzucono przełączenie strategii w tryb LIVE: brak potwierdzonego backtestu."
+                )
+                self.emitter.log(message, level="WARNING", component="AutoTrader")
+                logger.warning(message)
+                return
+            if now_ts - passed_at > self.BACKTEST_GUARD_MAX_AGE_S:
+                message = (
+                    "Odrzucono przełączenie strategii w tryb LIVE: wynik backtestu jest przestarzały."
+                )
+                self.emitter.log(message, level="WARNING", component="AutoTrader")
+                logger.warning(message)
+                return
         with self._lock:
             self._strategy_config = cfg
             self._strategy_override = True

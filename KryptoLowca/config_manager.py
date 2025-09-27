@@ -273,6 +273,34 @@ class StrategyConfig:
                     + ", ".join(missing)
                 )
 
+        if self.backtest_passed_at is not None:
+            value = self.backtest_passed_at
+            if isinstance(value, datetime):
+                if value.tzinfo is None:
+                    value = value.replace(tzinfo=timezone.utc)
+                self.backtest_passed_at = value.timestamp()
+            elif isinstance(value, str):
+                try:
+                    self.backtest_passed_at = float(value)
+                except ValueError:
+                    try:
+                        parsed = datetime.fromisoformat(value)
+                    except ValueError as parse_exc:  # pragma: no cover - fallback
+                        raise ValidationError(
+                            "backtest_passed_at musi być znacznikiem czasu (float) lub ISO 8601"
+                        ) from parse_exc
+                    if parsed.tzinfo is None:
+                        parsed = parsed.replace(tzinfo=timezone.utc)
+                    self.backtest_passed_at = parsed.timestamp()
+            elif isinstance(value, (int, float)):
+                self.backtest_passed_at = float(value)
+            else:
+                raise ValidationError(
+                    "backtest_passed_at musi być liczbą, napisem z datą lub datetime"
+                )
+            if self.backtest_passed_at <= 0:
+                raise ValidationError("backtest_passed_at musi być dodatni")
+
         self.preset = (self.preset or "").strip().upper() or "CUSTOM"
         return self
 
