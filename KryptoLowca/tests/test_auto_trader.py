@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple
 
 import pytest
+import pandas as pd
 
 from KryptoLowca.auto_trader import AutoTrader
 from KryptoLowca.backtest.simulation import BacktestFill
@@ -398,3 +399,78 @@ def test_scheduler_handles_multiple_symbols(strategy_harness: StrategyHarness) -
     assert provider.ohlcv_calls.get("ETH/USDT", 0) > 0
     symbols = {order["symbol"] for order in adapter.orders}
     assert {"BTC/USDT", "ETH/USDT"}.issubset(symbols)
+
+
+def test_obtain_prediction_executes_async_coroutine(strategy_harness: StrategyHarness) -> None:
+    class AsyncPredictAI:
+        ai_threshold_bps = 5.0
+
+        def __init__(self) -> None:
+            self.series = pd.Series([0.0, 0.0125])
+            self.calls = 0
+
+        async def predict_series(self, *, symbol: str, timeframe: str, bars: int = 256) -> pd.Series:
+            self.calls += 1
+            return self.series
+
+    class PriceProvider:
+        def __init__(self, price: float) -> None:
+            self.price = float(price)
+            self.symbols: List[str] = []
+
+        def get_latest_price(self, symbol: str) -> float:
+            self.symbols.append(symbol)
+            return self.price
+
+    class AsyncDummyGUI(DummyGUI):
+        def __init__(self, ai: AsyncPredictAI) -> None:
+            super().__init__()
+            self.ai_mgr = ai
+            self.executed: List[Tuple[str, str, float]] = []
+
+        def _bridge_execute_trade(self, symbol: str, side: str, price: float) -> None:
+            self.executed.append((symbol, side, price))
+
+    ai = AsyncPredictAI()
+    price_provider = PriceProvider(101.25)
+    emitter = DummyEmitter()
+    gui = AsyncDummyGUI(ai)
+    execution_adapter = RecordingExecutionAdapter()
+
+    trader = AutoTrader(
+        emitter,
+        gui,
+        symbol_getter=lambda: "BTC/USDT",
+        auto_trade_interval_s=0.05,
+        walkforward_interval_s=None,
+        signal_service=strategy_harness.signal_service,
+        risk_service=AcceptAllRiskService(size=50.0),
+        execution_service=ExecutionService(execution_adapter),
+        data_provider=None,
+        market_data_provider=price_provider,
+    )
+    trader.enable_auto_trade = True
+    trader.configure(
+        strategy=StrategyConfig(
+            preset="DummyStrategy",
+            mode="demo",
+            max_leverage=1.0,
+            max_position_notional_pct=0.5,
+            trade_risk_pct=0.1,
+            default_sl=0.01,
+            default_tp=0.02,
+            violation_cooldown_s=1,
+            reduce_only_after_violation=False,
+        )
+    )
+
+    last_pred, df, last_price = trader._obtain_prediction(ai, "BTC/USDT", "1m", None)
+    assert df is None
+    assert last_pred is not None
+    assert last_pred == pytest.approx(ai.series.iloc[-1])
+    assert last_price == pytest.approx(price_provider.price)
+
+    _run_for(trader, 0.3)
+
+    assert gui.executed
+    assert any("Auto-trade executed" in message for _, _, message in emitter.logs)
