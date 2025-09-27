@@ -6,7 +6,6 @@ import math
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-import re
 from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 import pandas as pd
@@ -24,42 +23,29 @@ from KryptoLowca.strategies.base import (
 
 logger = get_logger(__name__)
 
+_TIMEFRAME_UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
 
-_TIMEFRAME_PATTERN = re.compile(r"^\s*(\d+)\s*([a-zA-Z]+)\s*$")
 
+def _safe_timeframe_to_seconds(value: str) -> int | None:
+    """Próbuje sparsować timeframe (np. '1m', '5m', '1h') na liczbę sekund.
 
-def _timeframe_to_seconds(value: str) -> float:
-    """Konwertuje oznaczenie interwału (np. '1m', '5min') na sekundy."""
-
+    Funkcja jest defensywna – w razie niepoprawnego formatu zwraca ``None``
+    zamiast podnosić wyjątek, aby nie przerywać symulacji.
+    """
     if not value:
-        return 0.0
-    match = _TIMEFRAME_PATTERN.match(str(value))
-    if not match:
-        return 0.0
-    amount = int(match.group(1))
-    unit = match.group(2).lower()
-    unit_map = {
-        "s": 1,
-        "sec": 1,
-        "secs": 1,
-        "second": 1,
-        "seconds": 1,
-        "m": 60,
-        "min": 60,
-        "mins": 60,
-        "minute": 60,
-        "minutes": 60,
-        "h": 3600,
-        "hr": 3600,
-        "hrs": 3600,
-        "hour": 3600,
-        "hours": 3600,
-        "d": 86400,
-        "day": 86400,
-        "days": 86400,
-    }
-    multiplier = unit_map.get(unit, 0)
-    return float(amount * multiplier)
+        return None
+    value = value.strip()
+    unit = value[-1].lower()
+    factor = _TIMEFRAME_UNITS.get(unit)
+    if factor is None:
+        return None
+    try:
+        amount = int(value[:-1])
+    except ValueError:
+        return None
+    if amount <= 0:
+        return None
+    return amount * factor
 
 
 @dataclass(slots=True)
@@ -135,6 +121,7 @@ class HistoricalDataProvider(DataProvider):
         self._data = data.sort_index()
         self.symbol = symbol
         self.timeframe = timeframe
+        # prosta cache'ująca głowę ramki na kolejne indeksy
         self._history_cache_idx = -1
         self._history_cache: pd.DataFrame = self._data.iloc[:0]
 
@@ -157,7 +144,7 @@ class HistoricalDataProvider(DataProvider):
     def iter_rows(self) -> Iterable[Tuple[datetime, Mapping[str, float]]]:
         for ts, row in self._data.iterrows():
             if isinstance(ts, datetime):
-                timestamp = ts
+                timestamp = ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
             else:
                 timestamp = datetime.fromtimestamp(float(ts) / 1000.0, tz=timezone.utc)
             yield timestamp, {
@@ -173,11 +160,7 @@ class HistoricalDataProvider(DataProvider):
             return self._data.iloc[:0]
         if index == self._history_cache_idx:
             return self._history_cache
-        # optymalizacja: korzystamy z głowy ramki, która zwraca widok bez kopiowania
-        if index == self._history_cache_idx + 1:
-            self._history_cache = self._data.head(index + 1)
-            self._history_cache_idx = index
-            return self._history_cache
+        # optymalizacja: przyrostowo aktualizujemy widok
         self._history_cache = self._data.head(index + 1)
         self._history_cache_idx = index
         return self._history_cache
@@ -233,7 +216,7 @@ class StrategyBacktestSession:
                 try:
                     result["value"] = loop.run_until_complete(coro)
                     loop.run_until_complete(loop.shutdown_asyncgens())
-                except BaseException as exc:  # pragma: no cover - defensive
+                except BaseException as exc:  # pragma: no cover
                     error["value"] = exc
                 finally:
                     asyncio.set_event_loop(None)
@@ -288,7 +271,7 @@ class StrategyBacktestSession:
             return
         try:
             self._run(self._strategy.notify_fill(context, fill))
-        except Exception:  # pragma: no cover - defensywne logowanie
+        except Exception:  # pragma: no cover
             logger.exception("Strategy notify_fill failed during backtest")
 
 
@@ -491,78 +474,84 @@ class BacktestEngine:
         returns: List[float] = []
         previous_equity = cash
 
-        data_frame = self._data_provider.dataframe
-        opens = (
-            data_frame["open"].to_numpy(dtype=float, copy=False)
-            if "open" in data_frame
-            else data_frame["close"].to_numpy(dtype=float, copy=False)
-        )
-        highs = (
-            data_frame["high"].to_numpy(dtype=float, copy=False)
-            if "high" in data_frame
-            else data_frame["close"].to_numpy(dtype=float, copy=False)
-        )
-        lows = (
-            data_frame["low"].to_numpy(dtype=float, copy=False)
-            if "low" in data_frame
-            else data_frame["close"].to_numpy(dtype=float, copy=False)
-        )
-        closes = data_frame["close"].to_numpy(dtype=float, copy=False)
-        volumes = data_frame["volume"].to_numpy(dtype=float, copy=False)
+        df = self._data_provider.dataframe
+        opens = (df["open"].to_numpy(dtype=float, copy=False) if "open" in df else df["close"].to_numpy(dtype=float, copy=False))
+        highs = (df["high"].to_numpy(dtype=float, copy=False) if "high" in df else df["close"].to_numpy(dtype=float, copy=False))
+        lows  = (df["low"].to_numpy(dtype=float, copy=False)  if "low"  in df else df["close"].to_numpy(dtype=float, copy=False))
+        closes = df["close"].to_numpy(dtype=float, copy=False)
+        volumes = df["volume"].to_numpy(dtype=float, copy=False)
 
-        raw_index = list(data_frame.index)
+        raw_index = list(df.index)
         timestamps: List[datetime] = []
         for ts in raw_index:
             if isinstance(ts, datetime):
                 timestamps.append(ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc))
             else:
-                timestamps.append(
-                    datetime.fromtimestamp(float(ts) / 1000.0, tz=timezone.utc)
-                )
+                timestamps.append(datetime.fromtimestamp(float(ts) / 1000.0, tz=timezone.utc))
+
+        timeframe_s = _safe_timeframe_to_seconds(self._timeframe)
+        gap_threshold = timeframe_s * 1.5 if timeframe_s else None
+
+        invalid_volume_indices: List[int] = []
+        for idx, vol in enumerate(volumes):
+            try:
+                value = float(vol)
+            except (TypeError, ValueError):
+                invalid_volume_indices.append(idx)
+                continue
+            if not math.isfinite(value) or value < 0:
+                invalid_volume_indices.append(idx)
+        if invalid_volume_indices:
+            sample_idx = invalid_volume_indices[:3]
+            sample_ts = [timestamps[i].isoformat() for i in sample_idx if i < len(timestamps)]
+            warnings.append(
+                "Wykryto nieprawidłowe wartości wolumenu na świecach: "
+                f"indeksy {sample_idx} (czas: {', '.join(sample_ts)})."
+            )
 
         open_trade: Dict[str, object] | None = None
 
-        expected_interval = _timeframe_to_seconds(self._timeframe)
-        tolerance = expected_interval * 1.5 if expected_interval else 0.0
-        gap_samples: List[Tuple[datetime, datetime, float]] = []
-        if tolerance:
-            for prev, current in zip(timestamps, timestamps[1:]):
-                gap = (current - prev).total_seconds()
-                if gap > tolerance:
-                    gap_samples.append((prev, current, gap))
-        if gap_samples:
-            worst = max(gap_samples, key=lambda item: item[2])
-            warnings.append(
-                "Wykryto luki w danych historycznych: przerwa "
-                f"{int(worst[2])}s pomiędzy {worst[0].isoformat()} a {worst[1].isoformat()}."
-            )
+        zero_volume_start_idx: int | None = None
+        zero_volume_start_ts: datetime | None = None
+        zero_volume_last_ts: datetime | None = None
+        zero_volume_count = 0
+        zero_volume_threshold = 3 if timeframe_s else 10
 
-        zero_volume_indices = [
-            idx for idx, vol in enumerate(volumes) if not (vol > 0.0)
-        ]
-        if zero_volume_indices:
-            sample_idx = zero_volume_indices[0]
-            warnings.append(
-                "Wykryto {count} świec z zerowym wolumenem (np. {ts}).".format(
-                    count=len(zero_volume_indices),
-                    ts=timestamps[sample_idx].isoformat(),
+        def _finalize_zero_volume_warning() -> None:
+            nonlocal zero_volume_start_idx, zero_volume_start_ts, zero_volume_last_ts, zero_volume_count
+            if zero_volume_count >= zero_volume_threshold and zero_volume_start_idx is not None:
+                duration_s: int | None = None
+                if zero_volume_start_ts and zero_volume_last_ts:
+                    duration_s = int((zero_volume_last_ts - zero_volume_start_ts).total_seconds())
+                start_ts = zero_volume_start_ts.isoformat() if zero_volume_start_ts else "?"
+                end_ts = zero_volume_last_ts.isoformat() if zero_volume_last_ts else "?"
+                duration_fragment = (
+                    f", łączny czas ok. {duration_s}s" if duration_s is not None and duration_s > 0 else ""
                 )
-            )
-
-        if data_frame.isna().any().any():
-            warnings.append("Dane historyczne zawierają brakujące wartości (NaN).")
+                warnings.append(
+                    "Wykryto długą sekwencję zerowego wolumenu: "
+                    f"od indeksu {zero_volume_start_idx} ({start_ts}) do {end_ts} "
+                    f"({zero_volume_count} świec{duration_fragment})."
+                )
+            zero_volume_start_idx = None
+            zero_volume_start_ts = None
+            zero_volume_last_ts = None
+            zero_volume_count = 0
 
         def apply_fill(fill: BacktestFill, *, bar_close: float) -> None:
             nonlocal cash, position, total_fees, total_slippage, open_trade
+            fee_paid = float(fill.fee)
             fills.append(fill)
-            total_fees += fill.fee
+            total_fees += fee_paid
             total_slippage += abs(fill.slippage)
 
             direction = 1 if fill.side == "buy" else -1
             position_before = position
             equity_before = cash + position_before * bar_close
-            cash -= direction * fill.price * fill.size
-            cash -= fill.fee
+            trade_notional = fill.price * fill.size
+            cash -= direction * trade_notional
+            # prowizja zawsze zmniejsza ilość dostępnej gotówki, niezależnie od kierunku
+            cash -= fee_paid
             position = position_before + direction * fill.size
             if abs(position) < 1e-9:
                 position = 0.0
@@ -585,6 +574,7 @@ class BacktestEngine:
                 },
             )
 
+            # otwarcie
             if open_trade is None and position_before == 0.0 and position != 0.0:
                 open_trade = {
                     "direction": "LONG" if position > 0 else "SHORT",
@@ -597,32 +587,24 @@ class BacktestEngine:
                     "position": abs(position),
                 }
 
+            # aktualizacja/trzymanie
             if open_trade is not None:
                 open_trade["fees"] = float(open_trade.get("fees", 0.0)) + fill.fee
-                open_trade["slippage"] = float(open_trade.get("slippage", 0.0)) + abs(
-                    fill.slippage
-                )
+                open_trade["slippage"] = float(open_trade.get("slippage", 0.0)) + abs(fill.slippage)
                 open_trade["volume"] = float(open_trade.get("volume", 0.0)) + abs(fill.size)
-                trade_direction = open_trade["direction"]
-                if (
-                    trade_direction == "LONG"
-                    and direction == 1
-                    and position > 0
-                ) or (
-                    trade_direction == "SHORT"
-                    and direction == -1
-                    and position < 0
-                ):
-                    prev_position = float(open_trade.get("position", 0.0))
-                    new_position = abs(position)
-                    if new_position > 0:
+                trade_dir = open_trade["direction"]
+                if ((trade_dir == "LONG" and direction == 1 and position > 0) or
+                    (trade_dir == "SHORT" and direction == -1 and position < 0)):
+                    prev_pos = float(open_trade.get("position", 0.0))
+                    new_pos = abs(position)
+                    if new_pos > 0:
                         open_trade["entry_price"] = (
-                            float(open_trade["entry_price"]) * prev_position
-                            + fill.price * abs(fill.size)
-                        ) / new_position
-                        open_trade["position"] = new_position
+                            float(open_trade["entry_price"]) * prev_pos + fill.price * abs(fill.size)
+                        ) / new_pos
+                        open_trade["position"] = new_pos
                 open_trade["position"] = abs(position)
 
+            # zamknięcie
             if open_trade is not None and position == 0.0:
                 exit_price = fill.price
                 pnl = portfolio_value - float(open_trade["entry_equity"])
@@ -635,9 +617,7 @@ class BacktestEngine:
                         exit_price=exit_price,
                         quantity=float(open_trade["volume"]),
                         pnl=pnl,
-                        pnl_pct=(pnl / self._initial_balance * 100.0)
-                        if self._initial_balance
-                        else 0.0,
+                        pnl_pct=(pnl / self._initial_balance * 100.0) if self._initial_balance else 0.0,
                         fees_paid=float(open_trade["fees"]),
                         slippage_cost=float(open_trade["slippage"]),
                     )
@@ -649,6 +629,19 @@ class BacktestEngine:
         last_ts: datetime | None = None
 
         for idx, timestamp in enumerate(timestamps):
+            if (
+                gap_threshold is not None
+                and last_ts is not None
+                and timestamp > last_ts
+            ):
+                delta_s = (timestamp - last_ts).total_seconds()
+                if delta_s > gap_threshold and timeframe_s:
+                    missing = max(1, int(round(delta_s / timeframe_s)) - 1)
+                    warnings.append(
+                        "Wykryto lukę danych: brak "
+                        f"{missing} świec pomiędzy {last_ts.isoformat()} a {timestamp.isoformat()} "
+                        f"(odstęp {int(delta_s)}s, timeframe {self._timeframe})."
+                    )
             bar = {
                 "open": float(opens[idx]),
                 "high": float(highs[idx]),
@@ -656,10 +649,21 @@ class BacktestEngine:
                 "close": float(closes[idx]),
                 "volume": float(volumes[idx]),
             }
+
+            if bar["volume"] <= 0.0:
+                if zero_volume_start_idx is None:
+                    zero_volume_start_idx = idx
+                    zero_volume_start_ts = timestamp
+                zero_volume_last_ts = timestamp
+                zero_volume_count += 1
+            else:
+                _finalize_zero_volume_warning()
+
             last_bar_idx = idx
             last_bar = bar
             last_ts = timestamp
 
+            # najpierw realizujemy ewentualne fill'e
             bar_fills = self._matching_engine.process_bar(index=idx, timestamp=timestamp, bar=bar)
             for fill in bar_fills:
                 apply_fill(fill, bar_close=bar["close"])
@@ -671,17 +675,10 @@ class BacktestEngine:
                 returns.append((equity - previous_equity) / previous_equity)
             previous_equity = equity
 
-            context = self._session.build_context(
-                timestamp=timestamp,
-                portfolio_value=equity,
-                position=position,
-            )
+            # sygnał i zlecenie
+            context = self._session.build_context(timestamp=timestamp, portfolio_value=equity, position=position)
             history = self._data_provider.history_until(idx)
-            market_payload = {
-                "price": bar["close"],
-                "bar": bar,
-                "ohlcv": history,
-            }
+            market_payload = {"price": bar["close"], "bar": bar, "ohlcv": history}
             signal = self._session.generate_signal(context, market_payload)
             action = signal.action.upper()
             if action == "HOLD":
@@ -704,11 +701,10 @@ class BacktestEngine:
                 take_profit=signal.take_profit,
             )
 
+        # finalizacja: ostatnie fill'e + ewentualne wymuszone zamknięcie
         if last_bar is not None and last_ts is not None:
             final_fills = self._matching_engine.process_bar(
-                index=last_bar_idx + 1,
-                timestamp=last_ts,
-                bar=last_bar,
+                index=last_bar_idx + 1, timestamp=last_ts, bar=last_bar
             )
             for fill in final_fills:
                 apply_fill(fill, bar_close=last_bar["close"])
@@ -728,6 +724,8 @@ class BacktestEngine:
                 if previous_equity:
                     returns.append((final_equity - previous_equity) / previous_equity)
                 previous_equity = final_equity
+
+        _finalize_zero_volume_warning()
 
         self._session.close()
         metrics = self._compute_metrics(
@@ -862,6 +860,7 @@ class BacktestEngine:
         std = math.sqrt(variance)
         if std == 0:
             return 0.0
+        # Załóżmy minutowy sampling -> annualizacja ~ sqrt(365.25*24*60)
         annual_factor = math.sqrt(365.25 * 24 * 60)
         return (mean / std) * annual_factor
 
