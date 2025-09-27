@@ -97,6 +97,7 @@ class HistoricalDataProvider(DataProvider):
         self._data = data.sort_index()
         self.symbol = symbol
         self.timeframe = timeframe
+        # prosta cache'ująca głowę ramki na kolejne indeksy
         self._history_cache_idx = -1
         self._history_cache: pd.DataFrame = self._data.iloc[:0]
 
@@ -119,7 +120,7 @@ class HistoricalDataProvider(DataProvider):
     def iter_rows(self) -> Iterable[Tuple[datetime, Mapping[str, float]]]:
         for ts, row in self._data.iterrows():
             if isinstance(ts, datetime):
-                timestamp = ts
+                timestamp = ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
             else:
                 timestamp = datetime.fromtimestamp(float(ts) / 1000.0, tz=timezone.utc)
             yield timestamp, {
@@ -135,11 +136,7 @@ class HistoricalDataProvider(DataProvider):
             return self._data.iloc[:0]
         if index == self._history_cache_idx:
             return self._history_cache
-        # optymalizacja: korzystamy z głowy ramki, która zwraca widok bez kopiowania
-        if index == self._history_cache_idx + 1:
-            self._history_cache = self._data.head(index + 1)
-            self._history_cache_idx = index
-            return self._history_cache
+        # optymalizacja: przyrostowo aktualizujemy widok
         self._history_cache = self._data.head(index + 1)
         self._history_cache_idx = index
         return self._history_cache
@@ -195,7 +192,7 @@ class StrategyBacktestSession:
                 try:
                     result["value"] = loop.run_until_complete(coro)
                     loop.run_until_complete(loop.shutdown_asyncgens())
-                except BaseException as exc:  # pragma: no cover - defensive
+                except BaseException as exc:  # pragma: no cover
                     error["value"] = exc
                 finally:
                     asyncio.set_event_loop(None)
@@ -250,7 +247,7 @@ class StrategyBacktestSession:
             return
         try:
             self._run(self._strategy.notify_fill(context, fill))
-        except Exception:  # pragma: no cover - defensywne logowanie
+        except Exception:  # pragma: no cover
             logger.exception("Strategy notify_fill failed during backtest")
 
 
@@ -453,34 +450,20 @@ class BacktestEngine:
         returns: List[float] = []
         previous_equity = cash
 
-        data_frame = self._data_provider.dataframe
-        opens = (
-            data_frame["open"].to_numpy(dtype=float, copy=False)
-            if "open" in data_frame
-            else data_frame["close"].to_numpy(dtype=float, copy=False)
-        )
-        highs = (
-            data_frame["high"].to_numpy(dtype=float, copy=False)
-            if "high" in data_frame
-            else data_frame["close"].to_numpy(dtype=float, copy=False)
-        )
-        lows = (
-            data_frame["low"].to_numpy(dtype=float, copy=False)
-            if "low" in data_frame
-            else data_frame["close"].to_numpy(dtype=float, copy=False)
-        )
-        closes = data_frame["close"].to_numpy(dtype=float, copy=False)
-        volumes = data_frame["volume"].to_numpy(dtype=float, copy=False)
+        df = self._data_provider.dataframe
+        opens = (df["open"].to_numpy(dtype=float, copy=False) if "open" in df else df["close"].to_numpy(dtype=float, copy=False))
+        highs = (df["high"].to_numpy(dtype=float, copy=False) if "high" in df else df["close"].to_numpy(dtype=float, copy=False))
+        lows  = (df["low"].to_numpy(dtype=float, copy=False)  if "low"  in df else df["close"].to_numpy(dtype=float, copy=False))
+        closes = df["close"].to_numpy(dtype=float, copy=False)
+        volumes = df["volume"].to_numpy(dtype=float, copy=False)
 
-        raw_index = list(data_frame.index)
+        raw_index = list(df.index)
         timestamps: List[datetime] = []
         for ts in raw_index:
             if isinstance(ts, datetime):
                 timestamps.append(ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc))
             else:
-                timestamps.append(
-                    datetime.fromtimestamp(float(ts) / 1000.0, tz=timezone.utc)
-                )
+                timestamps.append(datetime.fromtimestamp(float(ts) / 1000.0, tz=timezone.utc))
 
         open_trade: Dict[str, object] | None = None
 
@@ -517,6 +500,7 @@ class BacktestEngine:
                 },
             )
 
+            # otwarcie
             if open_trade is None and position_before == 0.0 and position != 0.0:
                 open_trade = {
                     "direction": "LONG" if position > 0 else "SHORT",
@@ -529,32 +513,24 @@ class BacktestEngine:
                     "position": abs(position),
                 }
 
+            # aktualizacja/trzymanie
             if open_trade is not None:
                 open_trade["fees"] = float(open_trade.get("fees", 0.0)) + fill.fee
-                open_trade["slippage"] = float(open_trade.get("slippage", 0.0)) + abs(
-                    fill.slippage
-                )
+                open_trade["slippage"] = float(open_trade.get("slippage", 0.0)) + abs(fill.slippage)
                 open_trade["volume"] = float(open_trade.get("volume", 0.0)) + abs(fill.size)
-                trade_direction = open_trade["direction"]
-                if (
-                    trade_direction == "LONG"
-                    and direction == 1
-                    and position > 0
-                ) or (
-                    trade_direction == "SHORT"
-                    and direction == -1
-                    and position < 0
-                ):
-                    prev_position = float(open_trade.get("position", 0.0))
-                    new_position = abs(position)
-                    if new_position > 0:
+                trade_dir = open_trade["direction"]
+                if ((trade_dir == "LONG" and direction == 1 and position > 0) or
+                    (trade_dir == "SHORT" and direction == -1 and position < 0)):
+                    prev_pos = float(open_trade.get("position", 0.0))
+                    new_pos = abs(position)
+                    if new_pos > 0:
                         open_trade["entry_price"] = (
-                            float(open_trade["entry_price"]) * prev_position
-                            + fill.price * abs(fill.size)
-                        ) / new_position
-                        open_trade["position"] = new_position
+                            float(open_trade["entry_price"]) * prev_pos + fill.price * abs(fill.size)
+                        ) / new_pos
+                        open_trade["position"] = new_pos
                 open_trade["position"] = abs(position)
 
+            # zamknięcie
             if open_trade is not None and position == 0.0:
                 exit_price = fill.price
                 pnl = portfolio_value - float(open_trade["entry_equity"])
@@ -567,9 +543,7 @@ class BacktestEngine:
                         exit_price=exit_price,
                         quantity=float(open_trade["volume"]),
                         pnl=pnl,
-                        pnl_pct=(pnl / self._initial_balance * 100.0)
-                        if self._initial_balance
-                        else 0.0,
+                        pnl_pct=(pnl / self._initial_balance * 100.0) if self._initial_balance else 0.0,
                         fees_paid=float(open_trade["fees"]),
                         slippage_cost=float(open_trade["slippage"]),
                     )
@@ -592,6 +566,7 @@ class BacktestEngine:
             last_bar = bar
             last_ts = timestamp
 
+            # najpierw realizujemy ewentualne fill'e
             bar_fills = self._matching_engine.process_bar(index=idx, timestamp=timestamp, bar=bar)
             for fill in bar_fills:
                 apply_fill(fill, bar_close=bar["close"])
@@ -603,17 +578,10 @@ class BacktestEngine:
                 returns.append((equity - previous_equity) / previous_equity)
             previous_equity = equity
 
-            context = self._session.build_context(
-                timestamp=timestamp,
-                portfolio_value=equity,
-                position=position,
-            )
+            # sygnał i zlecenie
+            context = self._session.build_context(timestamp=timestamp, portfolio_value=equity, position=position)
             history = self._data_provider.history_until(idx)
-            market_payload = {
-                "price": bar["close"],
-                "bar": bar,
-                "ohlcv": history,
-            }
+            market_payload = {"price": bar["close"], "bar": bar, "ohlcv": history}
             signal = self._session.generate_signal(context, market_payload)
             action = signal.action.upper()
             if action == "HOLD":
@@ -636,11 +604,10 @@ class BacktestEngine:
                 take_profit=signal.take_profit,
             )
 
+        # finalizacja: ostatnie fill'e + ewentualne wymuszone zamknięcie
         if last_bar is not None and last_ts is not None:
             final_fills = self._matching_engine.process_bar(
-                index=last_bar_idx + 1,
-                timestamp=last_ts,
-                bar=last_bar,
+                index=last_bar_idx + 1, timestamp=last_ts, bar=last_bar
             )
             for fill in final_fills:
                 apply_fill(fill, bar_close=last_bar["close"])
@@ -794,6 +761,7 @@ class BacktestEngine:
         std = math.sqrt(variance)
         if std == 0:
             return 0.0
+        # Załóżmy minutowy sampling -> annualizacja ~ sqrt(365.25*24*60)
         annual_factor = math.sqrt(365.25 * 24 * 60)
         return (mean / std) * annual_factor
 
