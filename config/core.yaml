@@ -34,6 +34,12 @@ risk_profiles:
     max_open_positions: 0
     hard_drawdown_pct: 0.0
 
+runtime:
+  controllers:
+    daily_trend_core:
+      tick_seconds: 86400
+      interval: 1d
+
 strategies:
   core_daily_trend:
     engine: daily_trend_momentum

@@ -119,6 +119,14 @@ class EmailChannelSettings:
 
 
 @dataclass(slots=True)
+class ControllerRuntimeConfig:
+    """Parametry sterujące cyklem pracy kontrolerów runtime."""
+
+    tick_seconds: float
+    interval: str
+
+
+@dataclass(slots=True)
 class CoreConfig:
     """Najwyższego poziomu konfiguracja aplikacji."""
 
@@ -130,6 +138,7 @@ class CoreConfig:
     sms_providers: Mapping[str, SMSProviderSettings]
     telegram_channels: Mapping[str, TelegramChannelSettings]
     email_channels: Mapping[str, EmailChannelSettings]
+    runtime_controllers: Mapping[str, ControllerRuntimeConfig] = field(default_factory=dict)
 
 
 __all__ = [
@@ -142,5 +151,6 @@ __all__ = [
     "SMSProviderSettings",
     "TelegramChannelSettings",
     "EmailChannelSettings",
+    "ControllerRuntimeConfig",
     "CoreConfig",
 ]

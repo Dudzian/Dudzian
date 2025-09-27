@@ -7,6 +7,7 @@ from typing import Any, Mapping
 import yaml
 
 from bot_core.config.models import (
+    ControllerRuntimeConfig,
     CoreConfig,
     DailyTrendMomentumStrategyConfig,
     EmailChannelSettings,
@@ -156,6 +157,15 @@ def load_core_config(path: str | Path) -> CoreConfig:
         for name, entry in alerts.get("email_channels", {}).items()
     }
 
+    controllers_raw = raw.get("runtime", {}).get("controllers", {})
+    runtime_controllers = {
+        name: ControllerRuntimeConfig(
+            tick_seconds=float(entry.get("tick_seconds", entry.get("tick", 60.0))),
+            interval=str(entry.get("interval", "1d")),
+        )
+        for name, entry in controllers_raw.items()
+    }
+
     return CoreConfig(
         environments=environments,
         risk_profiles=risk_profiles,
@@ -165,6 +175,7 @@ def load_core_config(path: str | Path) -> CoreConfig:
         sms_providers=sms_providers,
         telegram_channels=telegram_channels,
         email_channels=email_channels,
+        runtime_controllers=runtime_controllers,
     )
 
 
