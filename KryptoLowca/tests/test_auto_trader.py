@@ -9,7 +9,7 @@ import pytest
 
 from KryptoLowca.auto_trader import AutoTrader
 from KryptoLowca.config_manager import StrategyConfig
-from KryptoLowca.core.services import ExecutionService, RiskAssessment, SignalService
+from KryptoLowca.core.services import ExecutionService, PaperTradingAdapter, RiskAssessment, SignalService
 from KryptoLowca.core.services.data_provider import ExchangeDataProvider  # noqa: F401 - ensures module importable
 from KryptoLowca.core.services.risk_service import RiskService
 from KryptoLowca.strategies.base import BaseStrategy, StrategyContext, StrategyMetadata, StrategySignal
@@ -103,6 +103,7 @@ class DummyGUI:
         self.timeframe_var = DummyVar("1m")
         self.paper_balance = paper_balance
         self._open_positions: Dict[str, Dict[str, Any]] = {}
+        self.network_var = DummyVar("demo")
 
     def get_portfolio_snapshot(self, symbol: str) -> Mapping[str, Any]:
         return {
@@ -219,6 +220,22 @@ def test_services_execute_order(strategy_harness: StrategyHarness) -> None:
     assert any(event[0] == "auto_trade_tick" for event in emitter.events)
 
 
+def test_paper_trading_mode_switch(strategy_harness: StrategyHarness) -> None:
+    provider = StubDataProvider(price=101.0)
+    adapter = RecordingExecutionAdapter()
+    trader, _, _ = _configured_trader(
+        symbol_source=lambda: [("BTC/USDT", "1m")],
+        data_provider=provider,
+        signal_service=strategy_harness.signal_service,
+        risk_service=AcceptAllRiskService(size=25.0),
+        execution_adapter=adapter,
+    )
+    assert not trader._paper_enabled
+    trader.configure(exchange={"testnet": False})
+    assert trader._paper_enabled
+    assert isinstance(getattr(trader._execution_service, "_adapter", None), PaperTradingAdapter)
+
+
 def test_risk_rejection_applies_cooldown(strategy_harness: StrategyHarness) -> None:
     provider = StubDataProvider(price=99.0)
     adapter = RecordingExecutionAdapter()
@@ -255,4 +272,61 @@ def test_scheduler_handles_multiple_symbols(strategy_harness: StrategyHarness) -
     assert provider.ohlcv_calls.get("ETH/USDT", 0) > 0
     symbols = {order["symbol"] for order in adapter.orders}
     assert {"BTC/USDT", "ETH/USDT"}.issubset(symbols)
+
+
+def test_live_mode_requires_recent_backtest(strategy_harness: StrategyHarness) -> None:
+    provider = StubDataProvider(price=100.0)
+    adapter = RecordingExecutionAdapter()
+    trader, emitter, _ = _configured_trader(
+        symbol_source=lambda: [("BTC/USDT", "1m")],
+        data_provider=provider,
+        signal_service=strategy_harness.signal_service,
+        risk_service=AcceptAllRiskService(size=25.0),
+        execution_adapter=adapter,
+    )
+
+    trader.configure(
+        strategy={
+            "preset": "SAFE",
+            "mode": "live",
+            "compliance_confirmed": True,
+            "api_keys_configured": True,
+            "acknowledged_risk_disclaimer": True,
+        }
+    )
+
+    assert trader._strategy_config.mode == "demo"
+    assert any(
+        "Odrzucono przełączenie strategii w tryb LIVE" in log[2] for log in emitter.logs
+    )
+
+
+def test_live_mode_passes_with_valid_backtest(strategy_harness: StrategyHarness) -> None:
+    provider = StubDataProvider(price=100.0)
+    adapter = RecordingExecutionAdapter()
+    trader, emitter, _ = _configured_trader(
+        symbol_source=lambda: [("BTC/USDT", "1m")],
+        data_provider=provider,
+        signal_service=strategy_harness.signal_service,
+        risk_service=AcceptAllRiskService(size=25.0),
+        execution_adapter=adapter,
+    )
+
+    trader.configure(
+        strategy={
+            "preset": "SAFE",
+            "mode": "live",
+            "compliance_confirmed": True,
+            "api_keys_configured": True,
+            "acknowledged_risk_disclaimer": True,
+            "backtest_passed_at": time.time(),
+        }
+    )
+
+    assert trader._strategy_config.mode == "live"
+    assert any(
+        "Strategia zaktualizowana" in log[2]
+        for log in emitter.logs
+        if log[0] == "INFO"
+    )
 

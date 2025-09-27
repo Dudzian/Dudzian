@@ -21,6 +21,20 @@ class ExecutionService:
         self._adapter = adapter
         self._logger = get_logger(__name__)
 
+    def set_adapter(self, adapter: ExchangeAdapter) -> None:
+        self._adapter = adapter
+
+    def update_market_data(self, symbol: str, timeframe: str, market_payload: Mapping[str, object]) -> None:
+        updater = getattr(self._adapter, "update_market_data", None)
+        if callable(updater):
+            updater(symbol, timeframe, market_payload)
+
+    def portfolio_snapshot(self, symbol: str) -> Mapping[str, object] | None:
+        getter = getattr(self._adapter, "portfolio_snapshot", None)
+        if callable(getter):
+            return getter(symbol)
+        return None
+
     @guard_exceptions("ExecutionService")
     async def execute(self, signal: StrategySignal, context: StrategyContext) -> Mapping[str, Any] | None:
         if signal.action == "HOLD":

@@ -14,7 +14,9 @@ from cryptography.fernet import Fernet, InvalidToken
 import pandas as pd
 
 if TYPE_CHECKING:  # pragma: no cover - tylko dla typowania
-    from KryptoLowca.backtest.mini_backtester import BacktestReport
+    from KryptoLowca.backtest.simulation import BacktestReport, MatchingConfig
+else:  # pragma: no cover - definiujemy nazwę dla lintów bez importu cyklicznego
+    MatchingConfig = object  # type: ignore[assignment]
     from KryptoLowca.data.market_data import MarketDataProvider, MarketDataRequest
 
 from KryptoLowca.strategies.marketplace import (
@@ -188,6 +190,7 @@ class StrategyConfig:
     compliance_confirmed: bool = False
     api_keys_configured: bool = False
     acknowledged_risk_disclaimer: bool = False
+    backtest_passed_at: float | None = None
 
     def validate(self) -> "StrategyConfig":
         mode = (self.mode or "demo").strip().lower()
@@ -240,6 +243,34 @@ class StrategyConfig:
                     "Nie można przełączyć strategii w tryb LIVE bez potwierdzenia: "
                     + ", ".join(missing)
                 )
+
+        if self.backtest_passed_at is not None:
+            value = self.backtest_passed_at
+            if isinstance(value, datetime):
+                if value.tzinfo is None:
+                    value = value.replace(tzinfo=timezone.utc)
+                self.backtest_passed_at = value.timestamp()
+            elif isinstance(value, str):
+                try:
+                    self.backtest_passed_at = float(value)
+                except ValueError:
+                    try:
+                        parsed = datetime.fromisoformat(value)
+                    except ValueError as parse_exc:  # pragma: no cover - fallback
+                        raise ValidationError(
+                            "backtest_passed_at musi być znacznikiem czasu (float) lub ISO 8601"
+                        ) from parse_exc
+                    if parsed.tzinfo is None:
+                        parsed = parsed.replace(tzinfo=timezone.utc)
+                    self.backtest_passed_at = parsed.timestamp()
+            elif isinstance(value, (int, float)):
+                self.backtest_passed_at = float(value)
+            else:
+                raise ValidationError(
+                    "backtest_passed_at musi być liczbą, napisem z datą lub datetime"
+                )
+            if self.backtest_passed_at <= 0:
+                raise ValidationError("backtest_passed_at musi być dodatni")
 
         self.preset = (self.preset or "").strip().upper() or "CUSTOM"
         return self
@@ -304,9 +335,10 @@ class StrategyConfig:
 
     def guard_backtest(self, report: "BacktestReport") -> "StrategyConfig":
         """Sprawdza wyniki backtestu i zwraca konfigurację, jeśli test został zaliczony."""
-        from KryptoLowca.backtest.mini_backtester import evaluate_strategy_backtest
+        from KryptoLowca.backtest.simulation import evaluate_strategy_backtest
 
-        evaluate_strategy_backtest(self, report)
+        evaluate_strategy_backtest(asdict(self), report)
+        self.backtest_passed_at = datetime.now(timezone.utc).timestamp()
         return self
 
 
@@ -719,29 +751,49 @@ class ConfigManager:
         self,
         data: pd.DataFrame,
         *,
-        signal_column: str = "signal",
-        price_column: str = "close",
+        symbol: str,
+        timeframe: str,
+        strategy_name: Optional[str] = None,
         initial_balance: float = 10_000.0,
-        fee_rate: float = 0.001,
-        slippage_rate: float = 0.0005,
+        matching: Optional[MatchingConfig] = None,
         allow_short: bool = False,
+        report_dir: Optional[Path] = None,
     ) -> "BacktestReport":
-        from KryptoLowca.backtest.mini_backtester import MiniBacktester
+        from KryptoLowca.backtest.reporting import export_report
+        from KryptoLowca.backtest.simulation import (
+            BacktestEngine,
+            MatchingConfig as MatchingConfigImpl,
+        )
+
+        if data.empty:
+            raise ValidationError("Backtest wymaga niepustego zbioru danych")
+        if "close" not in data.columns:
+            raise ValidationError("Dane wymagają kolumny 'close'")
 
         strategy = self.load_strategy_config()
-        backtester = MiniBacktester(
-            strategy,
-            fee_rate=fee_rate,
-            slippage_rate=slippage_rate,
-            allow_short=allow_short,
-        )
-        report = backtester.run(
-            data,
-            signal_column=signal_column,
-            price_column=price_column,
+        context_extra = {
+            "mode": "demo",
+            "trade_risk_pct": strategy.trade_risk_pct,
+            "max_position_notional_pct": strategy.max_position_notional_pct,
+            "max_leverage": strategy.max_leverage,
+        }
+        engine = BacktestEngine(
+            strategy_name=(strategy_name or strategy.preset or "SAFE"),
+            data=data,
+            symbol=symbol,
+            timeframe=timeframe,
             initial_balance=initial_balance,
+            matching=matching or MatchingConfigImpl(),
+            allow_short=allow_short,
+            context_extra=context_extra,
         )
+        report = engine.run()
         strategy.guard_backtest(report)
+        if strategy.backtest_passed_at is not None:
+            strategy_section = self._current_config.setdefault("strategy", {})
+            strategy_section["backtest_passed_at"] = strategy.backtest_passed_at
+        if report_dir is not None:
+            export_report(report, Path(report_dir))
         return report
 
     async def preflight_backtest(
@@ -749,28 +801,21 @@ class ConfigManager:
         provider: "MarketDataProvider",
         request: "MarketDataRequest",
         *,
-        signal_column: str = "signal",
-        price_column: str = "close",
+        strategy_name: Optional[str] = None,
         initial_balance: float = 10_000.0,
-        fee_rate: float = 0.001,
-        slippage_rate: float = 0.0005,
         allow_short: bool = False,
+        report_dir: Optional[Path] = None,
     ) -> "BacktestReport":
         df = await provider.get_historical_async(request)
-        if signal_column not in df.columns:
-            raise ValidationError(
-                f"Dane z provider'a nie zawierają kolumny sygnału '{signal_column}'"
-            )
-        if price_column not in df.columns:
-            raise ValidationError(
-                f"Dane z provider'a nie zawierają kolumny ceny '{price_column}'"
-            )
+        if df.empty:
+            raise ValidationError("Provider zwrócił pusty zbiór danych do backtestu")
         return self.run_backtest_on_dataframe(
             df,
-            signal_column=signal_column,
-            price_column=price_column,
+            symbol=request.symbol,
+            timeframe=request.timeframe,
+            strategy_name=strategy_name,
             initial_balance=initial_balance,
-            fee_rate=fee_rate,
-            slippage_rate=slippage_rate,
+            matching=None,
             allow_short=allow_short,
+            report_dir=report_dir,
         )
