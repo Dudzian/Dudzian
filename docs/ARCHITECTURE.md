@@ -8,6 +8,10 @@ trybie demo/testnet** do momentu zakończenia audytu bezpieczeństwa i zgodnośc
 Przed włączeniem trybu LIVE wymagane jest udokumentowane przejście scenariuszy
 papier trading oraz zatwierdzenie przez dział compliance.
 
+> **Kod legacy:** dawna implementacja pakietu (`KryptoLowca/bot`) została przeniesiona do
+> `archive/legacy_bot/`. Utrzymujemy ją jedynie w celach historycznych – wszystkie nowe
+> wdrożenia i testy muszą korzystać z bieżącego pakietu `KryptoLowca/`.
+
 Centralny przepływ danych wygląda następująco:
 
 1. **Serwis sygnałów** (`KryptoLowca/core/services/signal_service.py`) ładuje

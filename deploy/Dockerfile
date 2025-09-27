@@ -41,4 +41,4 @@ EXPOSE 8000 8001
 HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=3 \
     CMD python -m KryptoLowca.scripts.healthcheck || exit 1
 
-CMD ["python", "-m", "KryptoLowca.bot.run_autotrade_paper"]
+CMD ["python", "-m", "KryptoLowca.run_autotrade_paper"]
