@@ -43,6 +43,40 @@ ENCRYPTED_FIELDS = {
     "exchange": {"api_key", "api_secret"},
 }
 
+TRUE_VALUES = {"1", "true", "yes", "y", "on", "demo"}
+FALSE_VALUES = {"0", "false", "no", "n", "off", "live"}
+
+
+def _is_truthy(value: str) -> Optional[bool]:
+    normalized = value.strip().lower()
+    if normalized in TRUE_VALUES:
+        return True
+    if normalized in FALSE_VALUES:
+        return False
+    return None
+
+
+def resolve_demo_mode(exchange_name: str) -> bool:
+    config = EXCHANGES[exchange_name]
+    requested_mode = os.getenv(f"{config.env_prefix}_DEMO_MODE")
+    if not requested_mode:
+        return True
+
+    parsed = _is_truthy(requested_mode)
+    if parsed is None:
+        return True
+
+    if parsed:
+        return True
+
+    ack = os.getenv(f"{config.env_prefix}_COMPLIANCE_ACK")
+    if ack and _is_truthy(ack) is not False:
+        return False
+
+    pytest.skip(
+        "Wymagane jest ustawienie compliance_ack dla uruchomienia testu w trybie live"
+    )
+
 
 def _transform(section: str, data: dict, transform_value) -> dict:
     if section not in ENCRYPTED_FIELDS:
@@ -127,34 +161,37 @@ async def test_binance_testnet_order_lifecycle():
     except MissingCredentials:
         pytest.skip("Brak poświadczeń Binance Testnet")
 
-    adapter = BinanceTestnetAdapter(demo_mode=True)
-    await adapter.connect()
-    await adapter.authenticate(credentials)
-
-    order_request = OrderRequest(
-        symbol=os.getenv("BINANCE_TESTNET_SYMBOL", "BTCUSDT"),
-        side=os.getenv("BINANCE_TESTNET_SIDE", "BUY"),
-        quantity=float(os.getenv("BINANCE_TESTNET_QUANTITY", "0.001")),
-        order_type="LIMIT",
-        price=float(os.getenv("BINANCE_TESTNET_PRICE", "20000")),
-        time_in_force="GTC",
-        client_order_id=f"test-{uuid.uuid4().hex[:10]}",
-    )
+    demo_mode = resolve_demo_mode("binance-testnet")
+    adapter = BinanceTestnetAdapter(demo_mode=demo_mode)
 
     try:
-        submitted = await adapter.submit_order(order_request)
-    except RuntimeError as exc:
-        pytest.skip(f"Zlecenie Binance Testnet odrzucone: {exc}")
+        await adapter.connect()
+        await adapter.authenticate(credentials)
 
-    assert submitted.order_id
+        order_request = OrderRequest(
+            symbol=os.getenv("BINANCE_TESTNET_SYMBOL", "BTCUSDT"),
+            side=os.getenv("BINANCE_TESTNET_SIDE", "BUY"),
+            quantity=float(os.getenv("BINANCE_TESTNET_QUANTITY", "0.001")),
+            order_type="LIMIT",
+            price=float(os.getenv("BINANCE_TESTNET_PRICE", "20000")),
+            time_in_force="GTC",
+            client_order_id=f"test-{uuid.uuid4().hex[:10]}",
+        )
 
-    fetched = await adapter.fetch_order_status(submitted.order_id, symbol=order_request.symbol)
-    assert fetched.order_id == submitted.order_id
+        try:
+            submitted = await adapter.submit_order(order_request)
+        except RuntimeError as exc:
+            pytest.skip(f"Zlecenie Binance Testnet odrzucone: {exc}")
 
-    canceled = await adapter.cancel_order(submitted.order_id, symbol=order_request.symbol)
-    assert canceled.order_id == submitted.order_id
+        assert submitted.order_id
 
-    await adapter.close()
+        fetched = await adapter.fetch_order_status(submitted.order_id, symbol=order_request.symbol)
+        assert fetched.order_id == submitted.order_id
+
+        canceled = await adapter.cancel_order(submitted.order_id, symbol=order_request.symbol)
+        assert canceled.order_id == submitted.order_id
+    finally:
+        await adapter.close()
 
 
 @pytest.mark.integration
@@ -165,30 +202,33 @@ async def test_kraken_demo_order_lifecycle():
     except MissingCredentials:
         pytest.skip("Brak poświadczeń Kraken Demo")
 
-    adapter = KrakenDemoAdapter(demo_mode=True)
-    await adapter.connect()
-    await adapter.authenticate(credentials)
-
-    order_request = OrderRequest(
-        symbol=os.getenv("KRAKEN_DEMO_SYMBOL", "XBTUSDT"),
-        side=os.getenv("KRAKEN_DEMO_SIDE", "buy"),
-        quantity=float(os.getenv("KRAKEN_DEMO_QUANTITY", "0.001")),
-        order_type="LIMIT",
-        price=float(os.getenv("KRAKEN_DEMO_PRICE", "20000")),
-        client_order_id=f"test-{uuid.uuid4().hex[:10]}",
-    )
+    demo_mode = resolve_demo_mode("kraken-demo")
+    adapter = KrakenDemoAdapter(demo_mode=demo_mode)
 
     try:
-        submitted = await adapter.submit_order(order_request)
-    except RuntimeError as exc:
-        pytest.skip(f"Zlecenie Kraken Demo odrzucone: {exc}")
+        await adapter.connect()
+        await adapter.authenticate(credentials)
 
-    assert submitted.order_id
+        order_request = OrderRequest(
+            symbol=os.getenv("KRAKEN_DEMO_SYMBOL", "XBTUSDT"),
+            side=os.getenv("KRAKEN_DEMO_SIDE", "buy"),
+            quantity=float(os.getenv("KRAKEN_DEMO_QUANTITY", "0.001")),
+            order_type="LIMIT",
+            price=float(os.getenv("KRAKEN_DEMO_PRICE", "20000")),
+            client_order_id=f"test-{uuid.uuid4().hex[:10]}",
+        )
 
-    fetched = await adapter.fetch_order_status(submitted.order_id, symbol=order_request.symbol)
-    assert fetched.order_id == submitted.order_id
+        try:
+            submitted = await adapter.submit_order(order_request)
+        except RuntimeError as exc:
+            pytest.skip(f"Zlecenie Kraken Demo odrzucone: {exc}")
 
-    canceled = await adapter.cancel_order(submitted.order_id, symbol=order_request.symbol)
-    assert canceled.order_id == submitted.order_id
+        assert submitted.order_id
 
-    await adapter.close()
+        fetched = await adapter.fetch_order_status(submitted.order_id, symbol=order_request.symbol)
+        assert fetched.order_id == submitted.order_id
+
+        canceled = await adapter.cancel_order(submitted.order_id, symbol=order_request.symbol)
+        assert canceled.order_id == submitted.order_id
+    finally:
+        await adapter.close()
