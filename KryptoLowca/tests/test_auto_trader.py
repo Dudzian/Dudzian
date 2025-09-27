@@ -474,3 +474,28 @@ def test_obtain_prediction_executes_async_coroutine(strategy_harness: StrategyHa
 
     assert gui.executed
     assert any("Auto-trade executed" in message for _, _, message in emitter.logs)
+
+
+@pytest.mark.asyncio
+async def test_resolve_prediction_result_handles_running_event_loop(
+    strategy_harness: StrategyHarness,
+) -> None:
+    provider = StubDataProvider(price=100.0)
+    adapter = RecordingExecutionAdapter()
+    trader, _, _ = _configured_trader(
+        symbol_source=lambda: [("BTC/USDT", "1m")],
+        data_provider=provider,
+        signal_service=strategy_harness.signal_service,
+        risk_service=AcceptAllRiskService(size=25.0),
+        execution_adapter=adapter,
+    )
+
+    async def async_series() -> pd.Series:
+        return pd.Series([0.5, 1.25])
+
+    result = trader._resolve_prediction_result(
+        async_series(), context="test-running-loop"
+    )
+
+    assert isinstance(result, pd.Series)
+    assert result.iloc[-1] == pytest.approx(1.25)
