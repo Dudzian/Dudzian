@@ -8,7 +8,7 @@ from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple
 import pytest
 
 from KryptoLowca.auto_trader import AutoTrader
-from KryptoLowca.config_manager import StrategyConfig
+from KryptoLowca.config_manager import BACKTEST_VALIDITY_WINDOW_S, StrategyConfig
 from KryptoLowca.core.services import ExecutionService, PaperTradingAdapter, RiskAssessment, SignalService
 from KryptoLowca.core.services.data_provider import ExchangeDataProvider  # noqa: F401 - ensures module importable
 from KryptoLowca.core.services.risk_service import RiskService
@@ -232,6 +232,45 @@ def test_live_mode_requires_backtest_confirmation(strategy_harness: StrategyHarn
     assert trader._strategy_config.mode == "demo"
     assert any(
         level == "WARNING" and "backtest" in message.lower()
+        for level, _, message in emitter.logs
+    )
+
+
+def test_live_mode_rejects_stale_backtest(strategy_harness: StrategyHarness) -> None:
+    provider = StubDataProvider(price=102.0)
+    adapter = RecordingExecutionAdapter()
+    trader, emitter, _ = _configured_trader(
+        symbol_source=lambda: [("BTC/USDT", "1m")],
+        data_provider=provider,
+        signal_service=strategy_harness.signal_service,
+        risk_service=AcceptAllRiskService(size=50.0),
+        execution_adapter=adapter,
+    )
+
+    assert trader._strategy_config.mode == "demo"
+
+    stale_ts = time.time() - (BACKTEST_VALIDITY_WINDOW_S + 10)
+    live_cfg = StrategyConfig(
+        preset="DummyStrategy",
+        mode="live",
+        max_leverage=1.0,
+        max_position_notional_pct=0.5,
+        trade_risk_pct=0.1,
+        default_sl=0.01,
+        default_tp=0.02,
+        violation_cooldown_s=1,
+        reduce_only_after_violation=False,
+        compliance_confirmed=True,
+        api_keys_configured=True,
+        acknowledged_risk_disclaimer=True,
+        backtest_passed_at=stale_ts,
+    )
+
+    trader.configure(strategy=live_cfg)
+
+    assert trader._strategy_config.mode == "demo"
+    assert any(
+        level == "WARNING" and "przeterminowany" in message.lower()
         for level, _, message in emitter.logs
     )
 
