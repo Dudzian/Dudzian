@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
+import hmac
 import json
 from datetime import datetime, timedelta, timezone
 
@@ -12,10 +14,13 @@ from KryptoLowca.config_manager import ConfigManager
 from KryptoLowca.exchanges import (
     BinanceTestnetAdapter,
     ExchangeCredentials,
+    MarketSubscription,
     KrakenDemoAdapter,
     OrderRequest,
     OrderStatus,
+    ZondaAdapter,
 )
+import KryptoLowca.exchanges.zonda as zonda_module
 from KryptoLowca.managers.multi_account_manager import MultiExchangeAccountManager
 
 
@@ -119,6 +124,163 @@ async def test_kraken_headers_signed():
     detail = await adapter.fetch_order_status("ABC")
     assert detail.status == "CLOSED"
     assert len(http.requests) == 2
+
+
+@pytest.mark.asyncio
+async def test_zonda_signed_headers(monkeypatch):
+    response = StubResponse(
+        {
+            "status": "Ok",
+            "offerId": "1",
+            "filledAmount": "0",
+            "remainingAmount": "1",
+            "avgPrice": "100",
+        }
+    )
+    http = RecordingHTTPClient([response])
+    adapter = ZondaAdapter(http_client=http)
+    await adapter.connect()
+    await adapter.authenticate(ExchangeCredentials(api_key="pub", api_secret="priv"))
+
+    monkeypatch.setattr(zonda_module.time, "time", lambda: 1_700_000_000.0)
+
+    order = OrderRequest(symbol="BTC-PLN", side="buy", quantity=1.0, price=100.0, order_type="limit")
+    status = await adapter.submit_order(order)
+
+    call = http.requests[0]
+    assert call["headers"]["API-Key"] == "pub"
+    timestamp = call["headers"]["Request-Timestamp"]
+    body = call["data"] or ""
+    expected_signature = hmac.new(
+        b"priv",
+        f"{timestamp}POST/trading/offer{body}".encode(),
+        hashlib.sha512,
+    ).hexdigest()
+    assert call["headers"]["API-Hash"] == expected_signature
+    assert status.order_id == "1"
+    assert status.status == "OK"
+    assert status.remaining_quantity == 1.0
+
+
+@pytest.mark.asyncio
+async def test_zonda_fetch_and_cancel(monkeypatch):
+    responses = [
+        StubResponse(
+            {
+                "status": "Ok",
+                "order": {
+                    "id": "XYZ",
+                    "status": "active",
+                    "filledAmount": "0.1",
+                    "remainingAmount": "0.9",
+                    "avgPrice": "99.5",
+                },
+            }
+        ),
+        StubResponse(
+            {
+                "status": "Ok",
+                "order": {
+                    "id": "XYZ",
+                    "status": "cancelled",
+                    "filledAmount": "0.1",
+                    "remainingAmount": "0.9",
+                    "avgPrice": "99.5",
+                },
+            }
+        ),
+    ]
+    http = RecordingHTTPClient(responses)
+    adapter = ZondaAdapter(http_client=http)
+    await adapter.connect()
+    await adapter.authenticate(ExchangeCredentials(api_key="pub", api_secret="priv"))
+
+    monkeypatch.setattr(zonda_module.time, "time", lambda: 1_700_000_000.0)
+
+    detail = await adapter.fetch_order_status("XYZ")
+    call_status = http.requests[0]
+    ts_status = call_status["headers"]["Request-Timestamp"]
+    expected_status_sig = hmac.new(
+        b"priv",
+        f"{ts_status}GET/trading/order/XYZ".encode(),
+        hashlib.sha512,
+    ).hexdigest()
+    assert call_status["headers"]["API-Hash"] == expected_status_sig
+    assert detail.status == "ACTIVE"
+    assert detail.filled_quantity == 0.1
+
+    cancelled = await adapter.cancel_order("XYZ")
+    call_cancel = http.requests[1]
+    ts_cancel = call_cancel["headers"]["Request-Timestamp"]
+    expected_cancel_sig = hmac.new(
+        b"priv",
+        f"{ts_cancel}DELETE/trading/order/XYZ".encode(),
+        hashlib.sha512,
+    ).hexdigest()
+    assert call_cancel["headers"]["API-Hash"] == expected_cancel_sig
+    assert cancelled.status == "CANCELLED"
+    assert len(http.requests) == 2
+
+
+@pytest.mark.asyncio
+async def test_zonda_websocket_subscription(monkeypatch):
+    events: list[dict] = []
+    done = asyncio.Event()
+
+    class FakeWebSocket:
+        def __init__(self, messages: list[str]) -> None:
+            self._messages = list(messages)
+            self._closed = asyncio.Event()
+            self.sent: list[dict] = []
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if self._messages:
+                return self._messages.pop(0)
+            await self._closed.wait()
+            raise StopAsyncIteration
+
+        async def send(self, payload: str) -> None:
+            self.sent.append(json.loads(payload))
+
+        async def close(self) -> None:
+            self._closed.set()
+
+    fake_ws = FakeWebSocket([json.dumps({"type": "ticker", "payload": {"symbol": "BTC-PLN"}})])
+
+    class FakeWebSocketsModule:
+        def __init__(self, websocket: FakeWebSocket) -> None:
+            self._websocket = websocket
+            self.connected: list[tuple[str, float]] = []
+
+        async def connect(self, endpoint: str, ping_interval: int = 20):
+            self.connected.append((endpoint, ping_interval))
+            return self._websocket
+
+    fake_module = FakeWebSocketsModule(fake_ws)
+    monkeypatch.setattr(zonda_module, "websockets", fake_module)
+
+    adapter = ZondaAdapter(http_client=RecordingHTTPClient([]))
+
+    async def callback(payload: dict) -> None:
+        events.append(payload)
+        done.set()
+
+    subscription = await adapter.stream_market_data(
+        [MarketSubscription(channel="trading/ticker", symbols=["BTC-PLN"])],
+        callback,
+    )
+
+    async with subscription:
+        await asyncio.wait_for(done.wait(), timeout=0.2)
+
+    assert fake_module.connected[0][0] == "wss://api.zondacrypto.exchange/websocket"
+    actions = [message["action"] for message in fake_ws.sent]
+    assert "subscribe-public" in actions
+    assert "unsubscribe" in actions
+    assert events and events[0]["payload"]["symbol"] == "BTC-PLN"
 
 
 @pytest.mark.asyncio
@@ -267,6 +429,10 @@ async def test_multi_account_round_robin():
     assert summary[first.order_id].status == "FILLED"
 
 
+def test_multi_account_supported_exchanges():
+    assert "zonda" in MultiExchangeAccountManager.SUPPORTED_EXCHANGES
+
+
 @pytest.mark.asyncio
 async def test_live_mode_requires_ack(monkeypatch):
     http = RecordingHTTPClient([])
@@ -275,4 +441,3 @@ async def test_live_mode_requires_ack(monkeypatch):
 
     adapter = BinanceTestnetAdapter(demo_mode=False, http_client=http, compliance_ack=True)
     await adapter.connect()
-
