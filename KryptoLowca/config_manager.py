@@ -18,7 +18,10 @@ from KryptoLowca.security.api_key_manager import APIKeyManager
 
 if TYPE_CHECKING:  # pragma: no cover - tylko dla typowania
     from KryptoLowca.backtest.simulation import BacktestReport, MatchingConfig
-    from KryptoLowca.data.market_data import MarketDataProvider, MarketDataRequest
+else:  # pragma: no cover - definiujemy nazwę dla lintów bez importu cyklicznego
+    MatchingConfig = object  # type: ignore[assignment]
+    BacktestReport = object  # type: ignore[assignment]
+from KryptoLowca.data.market_data import MarketDataProvider, MarketDataRequest
 
 try:  # pragma: no cover - zależność opcjonalna w środowisku testowym
     from KryptoLowca.strategies.marketplace import (
@@ -781,7 +784,7 @@ class ConfigManager:
             key: ("" if key in self.ENCRYPTED_FIELDS.get("exchange", set()) else value)
             for key, value in template["exchange"].items()
         }
-        with self.config_path.open("w", encoding="utf-8") as fh:
+        with self.config_path.open("w", encoding="utf-8") as fh):
             yaml.safe_dump(template, fh, sort_keys=True)
         return self.config_path
 

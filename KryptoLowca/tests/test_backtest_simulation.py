@@ -258,7 +258,7 @@ async def test_config_manager_preflight_backtest(tmp_path: Path, provider: Marke
     """
     Używamy BacktestEngine również „przez” ConfigManager:
     - ConfigManager trzyma StrategyConfig, ale sam backtest odpalamy lokalnie,
-      bo unified engine nie jest (jeszcze) bezpośrednio zintegrowany z ConfigManager.
+      bo unified engine nie jest (jeszcze) bezpośrednio zintegrowany z ConfigManager).
     """
     cfg = ConfigManager(tmp_path / "config.yml")
     strategy = StrategyConfig(
@@ -585,6 +585,7 @@ def test_paper_trading_adapter_multi_symbol_multi_timeframe() -> None:
     assert btc_snapshot["position"] > 0
     assert eth_snapshot["position"] < 0
 
+    # rekonstrukcja gotówki/pozycji + weryfikacja prowizji
     for symbol, snapshot in (("BTC/USDT", btc_snapshot), ("ETH/USDT", eth_snapshot)):
         state = adapter._portfolios[symbol]
         total_fees = sum(fill.fee for fill in state.fills)
