@@ -223,6 +223,67 @@ async def test_zonda_fetch_and_cancel(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_zonda_websocket_subscription(monkeypatch):
+    events: list[dict] = []
+    done = asyncio.Event()
+
+    class FakeWebSocket:
+        def __init__(self, messages: list[str]) -> None:
+            self._messages = list(messages)
+            self._closed = asyncio.Event()
+            self.sent: list[dict] = []
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if self._messages:
+                return self._messages.pop(0)
+            await self._closed.wait()
+            raise StopAsyncIteration
+
+        async def send(self, payload: str) -> None:
+            self.sent.append(json.loads(payload))
+
+        async def close(self) -> None:
+            self._closed.set()
+
+    fake_ws = FakeWebSocket([json.dumps({"type": "ticker", "payload": {"symbol": "BTC-PLN"}})])
+
+    class FakeWebSocketsModule:
+        def __init__(self, websocket: FakeWebSocket) -> None:
+            self._websocket = websocket
+            self.connected: list[tuple[str, float]] = []
+
+        async def connect(self, endpoint: str, ping_interval: int = 20):
+            self.connected.append((endpoint, ping_interval))
+            return self._websocket
+
+    fake_module = FakeWebSocketsModule(fake_ws)
+    monkeypatch.setattr(zonda_module, "websockets", fake_module)
+
+    adapter = ZondaAdapter(http_client=RecordingHTTPClient([]))
+
+    async def callback(payload: dict) -> None:
+        events.append(payload)
+        done.set()
+
+    subscription = await adapter.stream_market_data(
+        [MarketSubscription(channel="trading/ticker", symbols=["BTC-PLN"])],
+        callback,
+    )
+
+    async with subscription:
+        await asyncio.wait_for(done.wait(), timeout=0.2)
+
+    assert fake_module.connected[0][0] == "wss://api.zondacrypto.exchange/websocket"
+    actions = [message["action"] for message in fake_ws.sent]
+    assert "subscribe-public" in actions
+    assert "unsubscribe" in actions
+    assert events and events[0]["payload"]["symbol"] == "BTC-PLN"
+
+
+@pytest.mark.asyncio
 async def test_api_key_manager_rotation(tmp_path):
     encryption_key = Fernet.generate_key()
     cfg = await ConfigManager.create(config_path=str(tmp_path / "config.json"), encryption_key=encryption_key)
@@ -366,6 +427,10 @@ async def test_multi_account_round_robin():
 
     summary = await manager.monitor_open_orders()
     assert summary[first.order_id].status == "FILLED"
+
+
+def test_multi_account_supported_exchanges():
+    assert "zonda" in MultiExchangeAccountManager.SUPPORTED_EXCHANGES
 
 
 @pytest.mark.asyncio

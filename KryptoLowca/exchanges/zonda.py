@@ -1,11 +1,14 @@
 """Adapter REST/WebSocket dla giełdy Zonda."""
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import hashlib
 import hmac
 import json
+import logging
 import time
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 from typing import Any, Dict, Optional
 
 from .interfaces import (
@@ -19,19 +22,157 @@ from .interfaces import (
 )
 
 
-class _DummySubscription:
-    """Prosty kontekst WebSocket wykorzystywany w testach kontraktowych."""
+try:  # pragma: no cover - zależność opcjonalna w środowisku runtime
+    import websockets
+except Exception:  # pragma: no cover - środowiska bez websocketów
+    websockets = None  # type: ignore[assignment]
 
-    def __init__(self, callback: Callable[[], None] | None = None) -> None:
+
+logger = logging.getLogger(__name__)
+
+_ZONDA_WS_ENDPOINT = "wss://api.zondacrypto.exchange/websocket"
+_ZONDA_WS_INITIAL_BACKOFF = 1.0
+_ZONDA_WS_MAX_BACKOFF = 20.0
+
+
+class _ZondaWebSocketSubscription(WebSocketSubscription):
+    """Zarządza cyklem życia połączenia WS do publicznych kanałów Zondy."""
+
+    def __init__(
+        self,
+        *,
+        endpoint: str,
+        subscribe_messages: Sequence[Dict[str, Any]],
+        unsubscribe_messages: Sequence[Dict[str, Any]],
+        callback: Callable[[MarketPayload], Awaitable[None]],
+        initial_backoff: float = _ZONDA_WS_INITIAL_BACKOFF,
+        max_backoff: float = _ZONDA_WS_MAX_BACKOFF,
+    ) -> None:
+        if websockets is None:  # pragma: no cover - ochrona przed brakiem zależności
+            raise RuntimeError("Pakiet 'websockets' jest wymagany do streamingu Zonda")
+        if not subscribe_messages:
+            raise ValueError("Wymagana jest co najmniej jedna subskrypcja Zonda")
+        self._endpoint = endpoint
+        self._subscribe_messages = list(subscribe_messages)
+        self._unsubscribe_messages = list(unsubscribe_messages)
         self._callback = callback
+        self._initial_backoff = max(0.1, initial_backoff)
+        self._max_backoff = max(self._initial_backoff, max_backoff)
+        self._task: Optional[asyncio.Task[None]] = None
+        self._ws: Any = None
+        self._closed = False
 
-    async def __aenter__(self) -> "_DummySubscription":
-        if self._callback:
-            self._callback()
+    async def __aenter__(self) -> "_ZondaWebSocketSubscription":
+        self._task = asyncio.create_task(self._runner(), name="zonda-ws-runner")
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> Optional[bool]:  # type: ignore[override]
+        self._closed = True
+        if self._ws:
+            with contextlib.suppress(Exception):
+                await self._send_messages(self._unsubscribe_messages)
+            with contextlib.suppress(Exception):
+                await self._ws.close()
+            self._ws = None
+        if self._task:
+            self._task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._task
         return None
+
+    async def _runner(self) -> None:
+        attempt = 0
+        while not self._closed:
+            try:
+                self._ws = await websockets.connect(self._endpoint, ping_interval=20)
+                try:
+                    await self._send_messages(self._subscribe_messages)
+                    attempt = 0
+                    async for message in self._ws:
+                        await self._handle_message(message)
+                finally:
+                    if self._ws:
+                        with contextlib.suppress(Exception):
+                            await self._ws.close()
+                    self._ws = None
+            except asyncio.CancelledError:  # pragma: no cover - kontrola zamknięcia
+                raise
+            except Exception as exc:
+                if self._closed:
+                    break
+                attempt += 1
+                wait_for = min(self._initial_backoff * (2 ** (attempt - 1)), self._max_backoff)
+                logger.debug("Zonda WS reconnect in %.2fs after error: %s", wait_for, exc)
+                await asyncio.sleep(wait_for)
+            else:
+                if not self._closed:
+                    attempt += 1
+                    wait_for = min(self._initial_backoff * (2 ** (attempt - 1)), self._max_backoff)
+                    logger.debug("Zonda WS reconnect in %.2fs after close", wait_for)
+                    await asyncio.sleep(wait_for)
+
+    async def _send_messages(self, messages: Sequence[Dict[str, Any]]) -> None:
+        if not self._ws:
+            return
+        for message in messages:
+            await self._ws.send(json.dumps(message, separators=(",", ":")))
+
+    async def _handle_message(self, message: str | bytes) -> None:
+        if isinstance(message, bytes):
+            message = message.decode("utf-8", "ignore")
+        try:
+            payload: MarketPayload = json.loads(message)
+        except json.JSONDecodeError:
+            logger.debug("Zonda WS otrzymał nieprawidłowy JSON: %s", message)
+            return
+        try:
+            await self._callback(payload)
+        except Exception as exc:  # pragma: no cover - callback użytkownika
+            logger.exception("Błąd callbacka Zonda WS: %s", exc)
+
+
+def _build_ws_messages(subscriptions: Iterable[MarketSubscription]) -> tuple[list[Dict[str, Any]], list[Dict[str, Any]]]:
+    subscribe: list[Dict[str, Any]] = []
+    unsubscribe: list[Dict[str, Any]] = []
+    for subscription in subscriptions:
+        params = dict(subscription.params.get("params", {})) if subscription.params else {}
+        action = subscription.params.get("action", "subscribe-public") if subscription.params else "subscribe-public"
+        unsubscribe_action = (
+            subscription.params.get("unsubscribe_action", "unsubscribe")
+            if subscription.params
+            else "unsubscribe"
+        )
+        module = subscription.params.get("module") if subscription.params else None
+        path = subscription.params.get("path") if subscription.params else None
+        channel = subscription.channel.strip("/")
+        if not module or not path:
+            parts = channel.split("/", 1)
+            module = module or parts[0]
+            path = path or (parts[1] if len(parts) > 1 else parts[0])
+        template = {
+            "module": module,
+            "path": path,
+            "params": params,
+        }
+        symbols = list(subscription.symbols)
+        targets = symbols or [None]
+        for symbol in targets:
+            payload = {
+                "action": action,
+                **template,
+                "params": dict(template["params"]),
+            }
+            unsubscribe_payload = {
+                "action": unsubscribe_action,
+                **template,
+                "params": dict(template["params"]),
+            }
+            if symbol is not None:
+                payload["params"]["symbol"] = symbol
+                unsubscribe_payload["params"]["symbol"] = symbol
+            subscribe.append(payload)
+            unsubscribe.append(unsubscribe_payload)
+    return subscribe, unsubscribe
 
 
 class ZondaAdapter(RESTWebSocketAdapter):
@@ -209,8 +350,13 @@ class ZondaAdapter(RESTWebSocketAdapter):
         subscriptions: Iterable[MarketSubscription],
         callback: Callable[[MarketPayload], Awaitable[None]],
     ) -> WebSocketSubscription:
-        del subscriptions, callback  # API Zonda wymaga zewnętrznej implementacji w runtime
-        return _DummySubscription()
+        subscribe, unsubscribe = _build_ws_messages(subscriptions)
+        return _ZondaWebSocketSubscription(
+            endpoint=_ZONDA_WS_ENDPOINT,
+            subscribe_messages=subscribe,
+            unsubscribe_messages=unsubscribe,
+            callback=callback,
+        )
 
 
 __all__ = ["ZondaAdapter"]

@@ -43,6 +43,17 @@ które wchodzą w skład tej architektury.
 - `execution_service.py` izoluje logikę wysyłania zleceń. Wymaga adaptera giełdy
   implementującego `submit_order` i respektuje ograniczenia (np. brak rozmiaru).
 
+## Adaptery giełdowe i zarządzanie kontami
+
+- `KryptoLowca/exchanges/binance.py`, `kraken.py` oraz `zonda.py` implementują
+  adaptery REST/WebSocket dla środowisk demo/testnet. Każdy adapter wspiera
+  podpisy specyficzne dla giełdy (np. HMAC SHA512 na Zondzie) oraz streaming
+  danych rynkowych poprzez kanały WebSocket.
+- `MultiExchangeAccountManager` (`KryptoLowca/managers/multi_account_manager.py`)
+  potrafi równoważyć zlecenia pomiędzy kontami na giełdach `binance`, `kraken`
+  i `zonda`, pamiętając kontekst zamówień oraz zarządzając subskrypcjami danych
+  rynkowych.
+
 ## Konfiguracja (`KryptoLowca/config_manager.py`)
 
 `ConfigManager` spina konfigurację aplikacji i integruje się z marketplace
