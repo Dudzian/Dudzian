@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from typing import Any, Dict, List
-from fastapi.testclient import TestClient
+
+import pytest
+
+fastapi = pytest.importorskip("fastapi")
+from fastapi.testclient import TestClient  # type: ignore  # noqa: E402
 
 from KryptoLowca.services.risk_dashboard import create_app
 
