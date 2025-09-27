@@ -17,7 +17,7 @@ class MarketSnapshot:
     """
 
     symbol: str
-    timestamp: int  # unix epoch ms/s (w projekcie: ujednolicone po stronie loadera)
+    timestamp: int  # unix epoch ms/s (ujednolicone po stronie loadera)
     open: float
     high: float
     low: float
@@ -31,8 +31,8 @@ class StrategySignal:
     """Rezultat działania strategii (np. sygnał wejścia/wyjścia)."""
 
     symbol: str
-    side: str              # "BUY" / "SELL" / "FLAT" itp.
-    confidence: float      # 0.0–1.0
+    side: str               # "BUY" / "SELL" / "FLAT" itp.
+    confidence: float       # 0.0–1.0
     metadata: Mapping[str, float] = field(default_factory=dict)
 
 

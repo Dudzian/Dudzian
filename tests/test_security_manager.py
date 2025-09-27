@@ -10,7 +10,13 @@ import pytest
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from bot_core.exchanges.base import Environment, ExchangeCredentials
-from bot_core.security import KeyringSecretStorage, SecretManager, SecretStorageError
+from bot_core.security import (
+    EncryptedFileSecretStorage,
+    KeyringSecretStorage,
+    SecretManager,
+    SecretStorageError,
+    create_default_secret_storage,
+)
 
 
 class _InMemoryKeyring:
@@ -39,7 +45,6 @@ class _InMemoryKeyring:
 @pytest.fixture(autouse=True)
 def fake_keyring() -> types.ModuleType:
     """Podmienia moduł ``keyring`` na wariant in-memory, aby testy były deterministyczne."""
-
     module = types.ModuleType("keyring")
     backend = _InMemoryKeyring()
     module.get_password = backend.get_password
@@ -116,3 +121,76 @@ def test_store_and_load_generic_secret() -> None:
 
     with pytest.raises(SecretStorageError):
         manager.load_secret_value("telegram_bot", purpose="alerts")
+
+
+def test_encrypted_file_secret_storage_roundtrip(tmp_path: Path) -> None:
+    pytest.importorskip("cryptography.fernet")
+
+    storage_path = tmp_path / "secrets.age"
+    storage = EncryptedFileSecretStorage(storage_path, passphrase="haslo")
+
+    assert storage.get_secret("api") is None
+    storage.set_secret("api", "sekret")
+    assert storage.get_secret("api") == "sekret"
+
+    storage.delete_secret("api")
+    assert storage.get_secret("api") is None
+
+    storage_again = EncryptedFileSecretStorage(storage_path, passphrase="haslo")
+    assert storage_again.get_secret("api") is None
+
+
+def test_encrypted_file_secret_storage_persists_between_instances(tmp_path: Path) -> None:
+    pytest.importorskip("cryptography.fernet")
+
+    storage_path = tmp_path / "secrets.age"
+    first = EncryptedFileSecretStorage(storage_path, passphrase="tajne")
+    first.set_secret("binance", "key123")
+
+    second = EncryptedFileSecretStorage(storage_path, passphrase="tajne")
+    assert second.get_secret("binance") == "key123"
+
+
+def test_create_default_secret_storage_linux_gui(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DISPLAY", ":1")
+    monkeypatch.setenv("WAYLAND_DISPLAY", "")
+    monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", "address")
+    monkeypatch.setattr("platform.system", lambda: "Linux")
+
+    storage = create_default_secret_storage(namespace="unit.gui")
+    assert isinstance(storage, KeyringSecretStorage)
+
+
+def test_create_default_secret_storage_linux_headless(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    monkeypatch.delenv("DBUS_SESSION_BUS_ADDRESS", raising=False)
+    monkeypatch.setattr("platform.system", lambda: "Linux")
+
+    pytest.importorskip("cryptography.fernet")
+
+    storage = create_default_secret_storage(
+        namespace="unit.headless",
+        headless_passphrase="bardzotajne",
+        headless_path=tmp_path / "vault.age",
+    )
+
+    assert isinstance(storage, EncryptedFileSecretStorage)
+    storage.set_secret("kraken", "sekret")
+
+    reloaded = EncryptedFileSecretStorage(tmp_path / "vault.age", passphrase="bardzotajne")
+    assert reloaded.get_secret("kraken") == "sekret"
+
+
+def test_create_default_secret_storage_headless_requires_passphrase(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    monkeypatch.delenv("DBUS_SESSION_BUS_ADDRESS", raising=False)
+    monkeypatch.setattr("platform.system", lambda: "Linux")
+
+    with pytest.raises(SecretStorageError):
+        create_default_secret_storage(headless_path=tmp_path / "vault.age")
