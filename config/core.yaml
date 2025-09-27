@@ -1,0 +1,148 @@
+# Konfiguracja bazowa etapu 1 – wartości placeholder do dalszego dostosowania.
+
+risk_profiles:
+  conservative:
+    max_daily_loss_pct: 0.01
+    max_position_pct: 0.03
+    target_volatility: 0.07
+    max_leverage: 2.0
+    stop_loss_atr_multiple: 1.0
+    max_open_positions: 3
+    hard_drawdown_pct: 0.05
+  balanced:
+    max_daily_loss_pct: 0.015
+    max_position_pct: 0.05
+    target_volatility: 0.11
+    max_leverage: 3.0
+    stop_loss_atr_multiple: 1.5
+    max_open_positions: 5
+    hard_drawdown_pct: 0.10
+  aggressive:
+    max_daily_loss_pct: 0.03
+    max_position_pct: 0.10
+    target_volatility: 0.19
+    max_leverage: 5.0
+    stop_loss_atr_multiple: 2.0
+    max_open_positions: 10
+    hard_drawdown_pct: 0.20
+  manual:
+    max_daily_loss_pct: 0.0
+    max_position_pct: 0.0
+    target_volatility: 0.0
+    max_leverage: 0.0
+    stop_loss_atr_multiple: 0.0
+    max_open_positions: 0
+    hard_drawdown_pct: 0.0
+
+environments:
+  binance_paper:
+    exchange: binance_spot
+    environment: paper
+    keychain_key: binance_paper_trading
+    credential_purpose: trading
+    data_cache_path: ./var/data/binance_paper
+    risk_profile: balanced
+    alert_channels: ["telegram:primary", "email:ops"]
+    ip_allowlist: []
+  binance_live:
+    exchange: binance_spot
+    environment: live
+    keychain_key: binance_live_trading
+    data_cache_path: ./var/data/binance_live
+    risk_profile: conservative
+    alert_channels: ["telegram:primary", "sms:orange_local", "email:ops"]
+    ip_allowlist: []
+  binance_futures_paper:
+    exchange: binance_futures
+    environment: paper
+    keychain_key: binance_futures_paper_trading
+    data_cache_path: ./var/data/binance_futures_paper
+    risk_profile: balanced
+    alert_channels: ["telegram:primary", "email:ops"]
+    ip_allowlist: []
+  binance_futures_live:
+    exchange: binance_futures
+    environment: live
+    keychain_key: binance_futures_live_trading
+    data_cache_path: ./var/data/binance_futures_live
+    risk_profile: conservative
+    alert_channels: ["telegram:primary", "sms:orange_local", "email:ops"]
+    ip_allowlist: []
+  kraken_paper:
+    exchange: kraken_spot
+    environment: paper
+    keychain_key: kraken_paper_trading
+    data_cache_path: ./var/data/kraken_paper
+    risk_profile: balanced
+    alert_channels: ["telegram:primary", "email:ops"]
+    ip_allowlist: []
+  zonda_paper:
+    exchange: zonda_spot
+    environment: paper
+    keychain_key: zonda_paper_trading
+    data_cache_path: ./var/data/zonda_paper
+    risk_profile: conservative
+    alert_channels: ["telegram:primary"]
+    ip_allowlist: []
+
+reporting:
+  daily_report_time_utc: "21:00"
+  weekly_report_day: "sunday"
+  retention_months: "24"
+
+
+alerts:
+  telegram_channels:
+    primary:
+      chat_id: "123456789"
+      token_secret: telegram_primary_token
+      parse_mode: MarkdownV2
+  email_channels:
+    ops:
+      host: smtp.example.com
+      port: 587
+      from_address: bot@example.com
+      recipients:
+        - ops@example.com
+      credential_secret: smtp_ops_credentials
+      use_tls: true
+  sms_providers:
+    orange_local:
+      provider: orange_pl
+      api_base_url: https://api.orange.pl/sms/v1
+      from_number: "+48500100100"
+      recipients: ["+48555111222"]
+      allow_alphanumeric_sender: true
+      sender_id: "BOT-ORANGE"
+      credential_key: orange_sms_credentials
+    tmobile_local:
+      provider: tmobile_pl
+      api_base_url: https://api.t-mobile.pl/sms/v1
+      from_number: "+48500100101"
+      recipients: ["+48555111333"]
+      allow_alphanumeric_sender: true
+      sender_id: "BOT-TMOBILE"
+      credential_key: tmobile_sms_credentials
+    plus_local:
+      provider: plus_pl
+      api_base_url: https://api.plus.pl/messaging/v1
+      from_number: "+48500100102"
+      recipients: ["+48555111444"]
+      allow_alphanumeric_sender: false
+      credential_key: plus_sms_credentials
+    play_local:
+      provider: play_pl
+      api_base_url: https://api.play.pl/sms/v1
+      from_number: "+48500100103"
+      recipients: ["+48555111555"]
+      allow_alphanumeric_sender: true
+      sender_id: "BOT-PLAY"
+      credential_key: play_sms_credentials
+    nova_is:
+      provider: nova_is
+      api_base_url: https://api.nova.is/sms/v1
+      from_number: "+3546001001"
+      recipients: ["+3546601234"]
+      allow_alphanumeric_sender: true
+      sender_id: "BOT-NOVA"
+      credential_key: nova_sms_credentials
