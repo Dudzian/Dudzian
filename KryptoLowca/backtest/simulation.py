@@ -477,7 +477,7 @@ class BacktestEngine:
             position_before = position
             equity_before = cash + position_before * bar_close
             cash -= direction * fill.price * fill.size
-            cash -= fill.fee if fill.side == "buy" else -fill.fee
+            cash -= fill.fee
             position = position_before + direction * fill.size
             if abs(position) < 1e-9:
                 position = 0.0

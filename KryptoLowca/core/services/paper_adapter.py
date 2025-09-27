@@ -75,7 +75,7 @@ class PaperTradingAdapter:
     def _apply_fill(self, state: _PortfolioState, fill: BacktestFill) -> None:
         direction = 1 if fill.side == "buy" else -1
         state.cash -= direction * fill.price * fill.size
-        state.cash -= fill.fee if fill.side == "buy" else -fill.fee
+        state.cash -= fill.fee
         state.position += direction * fill.size
         if state.position:
             state.avg_price = (
