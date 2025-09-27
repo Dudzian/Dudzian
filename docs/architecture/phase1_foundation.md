@@ -9,12 +9,12 @@ zewnętrznych, z jasnym podziałem na warstwy i środowiska.
 | Moduł | Odpowiedzialność | Kluczowe klasy/interfejsy |
 | --- | --- | --- |
 
-| `bot_core/exchanges` | Adaptery giełdowe z rozdzieleniem środowisk i uprawnień | `ExchangeAdapter`, `ExchangeCredentials`, `BinanceSpotAdapter`, `BinanceFuturesAdapter`, `KrakenSpotAdapter` |
+| `bot_core/exchanges` | Adaptery giełdowe z rozdzieleniem środowisk i uprawnień | `ExchangeAdapter`, `ExchangeCredentials`, `BinanceSpotAdapter`, `BinanceFuturesAdapter`, `KrakenSpotAdapter`, `KrakenFuturesAdapter`, `ZondaSpotAdapter` |
 | `bot_core/data` | Pobieranie, normalizacja i cache danych OHLCV | `DataSource`, `CachedOHLCVSource`, `PublicAPIDataSource` |
 | `bot_core/strategies` | Silnik strategii i walk-forward | `StrategyEngine`, `MarketSnapshot`, `StrategySignal`, `WalkForwardOptimizer` |
 | `bot_core/risk` | Profile i enforcement limitów ryzyka | `RiskProfile`, `RiskEngine`, `RiskCheckResult`, profile konserwatywny/zbalansowany/agresywny/ręczny |
 | `bot_core/execution` | Warstwa składania zleceń z retry/backoff | `ExecutionService`, `ExecutionContext`, `RetryPolicy` |
-| `bot_core/alerts` | Wspólne API alertów i kanały powiadomień | `AlertChannel`, `AlertRouter`, kanały `TelegramChannel`, `EmailChannel`, `SMSChannel` |
+| `bot_core/alerts` | Wspólne API alertów i kanały powiadomień | `AlertChannel`, `AlertRouter`, kanały `TelegramChannel`, `EmailChannel`, `SMSChannel`, `SignalChannel`, `WhatsAppChannel`, `MessengerChannel` |
 | `bot_core/config` | Ładowanie konfiguracji i mapowanie na dataclasses | `CoreConfig`, `EnvironmentConfig`, `RiskProfileConfig`, `load_core_config` |
 | `bot_core/security` | Bezpieczne przechowywanie kluczy API i integracja z keychainami | `SecretManager`, `KeyringSecretStorage` |
 
@@ -29,7 +29,12 @@ Dodany `KrakenSpotAdapter` implementuje podpis HMAC-SHA512 z wymaganym nonce, ob
 endpointy (`AssetPairs`, `OHLC`) oraz prywatne wywołania (`Balance`, `TradeBalance`, `AddOrder`,
 `CancelOrder`). Adapter egzekwuje podział uprawnień (`read`/`trade`), zapewnia monotonistyczny nonce,
 przetwarza dane konta na `AccountSnapshot` i integruje się z bootstrapem środowiska. Testy
-jednostkowe weryfikują poprawność podpisu oraz serializację zleceń.
+jednostkowe weryfikują poprawność podpisu oraz serializację zleceń. `KrakenFuturesAdapter`
+korzysta z endpointów `derivatives/api/v3`, generuje podpis HMAC-SHA256 wymagany przez Kraken
+Futures (nagłówki `APIKey`, `Authent`, `Nonce`), mapuje wartości marginesu oraz bilansów na
+`AccountSnapshot`, wspiera składanie zleceń `mkt`/`lmt` i anulowanie przez `DELETE /orders/{id}`.
+Wzbogacone testy jednostkowe potwierdzają budowę podpisu i serializację ciała żądania.
+`ZondaSpotAdapter` wykorzystuje REST API Zondy do pobierania świec (endpoint `trading/candle/history`) oraz danych konta (`trading/balance`). Implementacja korzysta z podpisu HMAC-SHA512 zgodnie z nagłówkiem `API-Hash`, obsługuje mapowanie statusów zleceń i zabezpiecza się przed brakiem uprawnień (`read`/`trade`). Adapter został dodany do domyślnych fabryk bootstrapa, dzięki czemu środowiska paper/live mogą korzystać z Zondy bez modyfikacji logiki strategii czy ryzyka.
 
 ## Warstwa konfiguracji
 
@@ -48,14 +53,14 @@ Loader `load_core_config` mapuje YAML na dataclasses i zapewnia konwersję pól 
 walidację środowiska poprzez `Environment` enum. Dzięki temu logika aplikacji otrzymuje w pełni
 ustrukturyzowany obiekt konfiguracyjny wraz z kompletną definicją uniwersum instrumentów, co
 upraszcza backfill danych oraz konfigurację strategii.
-ustrukturyzowany obiekt konfiguracyjny.
 
 ### Bootstrap środowiska
 
 Nowy moduł `bot_core/runtime/bootstrap.py` dostarcza funkcję `bootstrap_environment`, która w oparciu
 o `core.yaml` i `SecretManager` buduje kompletny kontekst uruchomieniowy (`BootstrapContext`). W jego
 skład wchodzą: zainicjalizowany adapter giełdowy (z fabryki dopasowanej do `exchange`), zarejestrowany
-profil ryzyka w `ThresholdRiskEngine`, skonfigurowany router alertów z kanałami Telegram/E-mail/SMS
+profil ryzyka w `ThresholdRiskEngine`, skonfigurowany router alertów z kanałami Telegram/E-mail/SMS/
+Signal/WhatsApp/Messenger
 oraz dziennik audytu. Dzięki temu pojedyncze środowisko (paper/live/testnet) można uruchomić w sposób
 deterministyczny, a desktopowy interfejs w kolejnych etapach będzie mógł komunikować się z core przez
 prostą warstwę IPC, korzystając z gotowego kontekstu.
@@ -74,10 +79,9 @@ w Windows Credential Manager/macOS Keychain/Linux keyring (`keychain_key` w konf
 podziałem na okna czasowe oraz deduplikacją zapisów. Domyślny backend `SQLiteCacheStorage`
 przechowuje dane w pliku `ohlcv.sqlite` (tryb WAL) i udostępnia metadane do audytu. Dla użytkownika
 końcowego przygotowano skrypt `scripts/backfill_ohlcv.py`, który na podstawie `config/core.yaml`
-pobiera świece z Binance i aktualizuje lokalny cache w trybie bezkosztowym.
+pobiera świece z Binance lub Zondy (w zależności od środowiska) i aktualizuje lokalny cache w trybie bezkosztowym.
 
 ## Strategie i walk-forward
-
 
 `StrategyEngine` definiuje kontrakt odbierania snapshotów rynkowych oraz generowania sygnałów.
 Pierwszą ukończoną implementacją jest `DailyTrendMomentumStrategy`, która łączy średnie kroczące,
@@ -123,11 +127,13 @@ formatowanie wiadomości z kontekstem ryzyka i znacznikami czasu UTC.
 
 ## Kolejne kroki implementacyjne
 
-1. Rozszerzyć system alertów o kolejne kanały komunikatorów (Signal/WhatsApp/Messenger) oraz mechanizm
+1. Rozszerzyć testy integracyjne kanałów komunikatorów o scenariusze awarii i fallback do alternatywnych
+   dostawców oraz dodać mechanizm throttle/acknowledgement dla krytycznych incydentów.
+2. Rozszerzyć system alertów o kolejne kanały komunikatorów (Signal/WhatsApp/Messenger) oraz mechanizm
    throttle/acknowledgement dla krytycznych incydentów.
-2. Podłączyć metryki Prometheus (latencja wysyłek, error rate) i dashboard zgodny z wymaganiami SLO.
-3. Ustandaryzować eksport audytu do formatu Parquet/CSV z podpisem kryptograficznym oraz przygotować
+3. Podłączyć metryki Prometheus (latencja wysyłek, error rate) i dashboard zgodny z wymaganiami SLO.
+4. Ustandaryzować eksport audytu do formatu Parquet/CSV z podpisem kryptograficznym oraz przygotować
    rotację logów zgodną z polityką 24–60 miesięcy.
-4. Zintegrować alerty z planowanym modułem raportowania dziennego/tygodniowego.
+5. Zintegrować alerty z planowanym modułem raportowania dziennego/tygodniowego.
 
 Dokument będzie aktualizowany wraz z postępem implementacji kolejnych modułów.

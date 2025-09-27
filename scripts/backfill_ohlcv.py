@@ -17,6 +17,7 @@ from bot_core.data.ohlcv import (
 )
 from bot_core.exchanges.base import Environment, ExchangeCredentials
 from bot_core.exchanges.binance.spot import BinanceSpotAdapter
+from bot_core.exchanges.zonda.spot import ZondaSpotAdapter
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -42,6 +43,11 @@ def _build_adapter(exchange: str, environment: Environment) -> PublicAPIDataSour
     builders: dict[str, Callable[[Environment], PublicAPIDataSource]] = {
         "binance_spot": lambda env: PublicAPIDataSource(
             exchange_adapter=BinanceSpotAdapter(
+                ExchangeCredentials(key_id="public", environment=env)
+            )
+        ),
+        "zonda_spot": lambda env: PublicAPIDataSource(
+            exchange_adapter=ZondaSpotAdapter(
                 ExchangeCredentials(key_id="public", environment=env)
             )
         ),
@@ -163,8 +169,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     # Pobierz definicję uniwersum (jeśli wskazane w środowisku)
     universe: InstrumentUniverseConfig | None = None
-    if getattr(env_cfg, "instrument_universe", None):
-        universe = config.instrument_universes.get(env_cfg.instrument_universe)  # type: ignore[arg-type]
+    if env_cfg.instrument_universe:
+        universe = config.instrument_universes.get(env_cfg.instrument_universe)
         if universe is None:
             raise SystemExit(
                 f"Środowisko {args.environment} wskazuje nieistniejące uniwersum {env_cfg.instrument_universe}."

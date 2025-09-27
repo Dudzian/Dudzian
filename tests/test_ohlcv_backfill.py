@@ -106,3 +106,53 @@ def test_backfill_skips_up_to_date_symbol() -> None:
     summary = summaries[0]
     assert summary.fetched_candles == 0
     assert summary.skipped_candles == 3
+
+
+class FixedSource(DataSource):
+    """Źródło zwracające z góry zdefiniowane świece."""
+
+    def __init__(self, rows: Sequence[Sequence[float]]) -> None:
+        self._rows = rows
+
+    def fetch_ohlcv(self, request: OHLCVRequest) -> OHLCVResponse:
+        del request
+        return OHLCVResponse(columns=("open_time", "open", "high", "low", "close", "volume"), rows=self._rows)
+
+    def warm_cache(self, symbols: Iterable[str], intervals: Iterable[str]) -> None:  # pragma: no cover
+        del symbols, intervals
+
+
+def test_cached_source_updates_metadata_and_merges_rows() -> None:
+    storage = InMemoryStorage()
+    storage.write(
+        "BTCUSDT::1d",
+        {
+            "columns": ("open_time", "open", "high", "low", "close", "volume"),
+            "rows": [[0.0, 1.0, 2.0, 0.5, 1.5, 10.0]],
+        },
+    )
+
+    upstream = FixedSource(
+        rows=[
+            [0.0, 10.0, 20.0, 5.0, 15.0, 100.0],
+            [86_400_000.0, 11.0, 21.0, 6.0, 16.0, 110.0],
+        ]
+    )
+    cached = CachedOHLCVSource(storage=storage, upstream=upstream)
+
+    cached.warm_cache(symbols=("ETHUSDT", "BTCUSDT"), intervals=("1d", "1h", "1d"))
+
+    metadata = storage.metadata()
+    assert metadata["symbols"] == "BTCUSDT,ETHUSDT"
+    assert metadata["intervals"] == "1d,1h"
+
+    response = cached.fetch_ohlcv(
+        OHLCVRequest(symbol="BTCUSDT", interval="1d", start=0, end=200_000_000)
+    )
+    assert len(response.rows) == 2
+    assert response.rows[0][1] == 10.0  # nowa świeca zastąpiła zapis z cache
+    assert response.rows[1][0] == 86_400_000.0
+
+    persisted = storage.read("BTCUSDT::1d")
+    assert len(persisted["rows"]) == 2
+    assert persisted["rows"][0][1] == 10.0

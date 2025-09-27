@@ -6,6 +6,7 @@ from bot_core.execution.paper import (  # noqa: F401 - eksport publiczny
     LedgerEntry,
     MarketMetadata,
     PaperTradingExecutionService,
+    ShortPosition,
 )
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     "MarketMetadata",
     "LedgerEntry",
     "InsufficientBalanceError",
+    "ShortPosition",
 ]
