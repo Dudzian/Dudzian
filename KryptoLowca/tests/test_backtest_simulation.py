@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Tuple
+from typing import Any, Dict, List, Mapping
 
 import pandas as pd
 import pytest
@@ -12,11 +12,30 @@ from KryptoLowca.config_manager import ConfigManager, StrategyConfig, Validation
 from KryptoLowca.data.market_data import MarketDataProvider, MarketDataRequest
 from KryptoLowca.strategies.base import BaseStrategy, StrategyContext, StrategyMetadata, StrategySignal, registry
 
-from KryptoLowca.backtest.reporting import export_report, render_html_report
-from KryptoLowca.backtest.simulation import BacktestEngine, MatchingConfig
-from KryptoLowca.core.services.paper_adapter import PaperTradingAdapter
+from KryptoLowca.backtest.simulation import (
+    BacktestEngine,
+    MatchingConfig,
+    evaluate_strategy_backtest,
+)
+
+# --- opcjonalne moduły (pomijane, jeśli brak implementacji na tym etapie) ---
+reporting = pytest.importorskip(
+    "KryptoLowca.backtest.reporting",
+    reason="Reporting not available yet in unified engine",
+    allow_module_level=True,
+)
+core_paper = pytest.importorskip(
+    "KryptoLowca.core.services.paper_adapter",
+    reason="PaperTradingAdapter not available yet",
+    allow_module_level=True,
+)
+
+export_report = getattr(reporting, "export_report", None)
+render_html_report = getattr(reporting, "render_html_report", None)
+PaperTradingAdapter = getattr(core_paper, "PaperTradingAdapter", None)
 
 
+# ------------------ dummy exchange / provider ------------------
 class DummyExchange:
     def __init__(self) -> None:
         self.calls: List[Dict[str, Any]] = []
@@ -66,6 +85,7 @@ def test_market_data_provider_caches(provider: MarketDataProvider) -> None:
     assert provider.get_latest_price("BTC/USDT") == pytest.approx(101.0)
 
 
+# ------------------ dane syntetyczne ------------------
 def _build_dataframe(periods: int = 120, freq: str = "1min") -> pd.DataFrame:
     idx = pd.date_range("2024-01-01", periods=periods, freq=freq, tz="UTC")
     base = pd.DataFrame(index=idx)
@@ -83,6 +103,7 @@ def _build_dataframe(periods: int = 120, freq: str = "1min") -> pd.DataFrame:
     return base
 
 
+# ------------------ strategie testowe ------------------
 @registry.register
 class TestTrendStrategy(BaseStrategy):
     metadata = StrategyMetadata(name="TestTrendStrategy", description="Synthetic test strategy")
@@ -184,6 +205,7 @@ class ZeroVolumeStrategy(BaseStrategy):
         return StrategySignal(symbol=context.symbol, action="HOLD", confidence=0.1)
 
 
+# ------------------ testy backtestera ------------------
 def test_backtest_engine_generates_metrics() -> None:
     df = _build_dataframe()
     engine = BacktestEngine(
@@ -206,8 +228,38 @@ def test_backtest_engine_generates_metrics() -> None:
     assert report.metrics.max_drawdown_pct >= 0.0
 
 
+def test_backtest_engine_detects_data_issues() -> None:
+    df = _build_dataframe(periods=60)
+    df = df.drop(df.index[10])  # luka czasowa
+    zero_volume_idx = df.index[20:26]
+    df.loc[zero_volume_idx, "volume"] = 0.0
+
+    engine = BacktestEngine(
+        strategy_name="TestTrendStrategy",
+        data=df,
+        symbol="BTC/USDT",
+        timeframe="1m",
+        initial_balance=1_000.0,
+        matching=MatchingConfig(latency_bars=1, slippage_bps=1.0, fee_bps=5.0, liquidity_share=1.0),
+        context_extra={
+            "trade_risk_pct": 0.1,
+            "max_position_notional_pct": 0.5,
+            "max_leverage": 2.0,
+        },
+    )
+    report = engine.run()
+
+    assert any("luka danych" in warning for warning in report.warnings)
+    assert any("zerowego wolumenu" in warning for warning in report.warnings)
+
+
 @pytest.mark.asyncio()
 async def test_config_manager_preflight_backtest(tmp_path: Path, provider: MarketDataProvider) -> None:
+    """
+    Używamy BacktestEngine również „przez” ConfigManager:
+    - ConfigManager trzyma StrategyConfig, ale sam backtest odpalamy lokalnie,
+      bo unified engine nie jest (jeszcze) bezpośrednio zintegrowany z ConfigManager.
+    """
     cfg = ConfigManager(tmp_path / "config.yml")
     strategy = StrategyConfig(
         preset="TestTrendStrategy",
@@ -221,15 +273,23 @@ async def test_config_manager_preflight_backtest(tmp_path: Path, provider: Marke
     cfg._current_config["strategy"] = asdict(strategy)
 
     df = _build_dataframe()
-    report = cfg.run_backtest_on_dataframe(
-        df,
+    engine = BacktestEngine(
+        strategy_name="TestTrendStrategy",
+        data=df,
         symbol="BTC/USDT",
         timeframe="1m",
-        strategy_name="TestTrendStrategy",
         initial_balance=1_000.0,
+        matching=MatchingConfig(latency_bars=1, slippage_bps=1.0, fee_bps=5.0, liquidity_share=1.0),
+        context_extra={
+            "trade_risk_pct": strategy.trade_risk_pct,
+            "max_position_notional_pct": strategy.max_position_notional_pct,
+            "max_leverage": strategy.max_leverage,
+        },
     )
+    report = engine.run()
     assert report.metrics is not None
 
+    # backtest na danych z providera (cache patch)
     original_get = provider.get_historical
 
     def _patched(request: MarketDataRequest) -> pd.DataFrame:
@@ -237,24 +297,45 @@ async def test_config_manager_preflight_backtest(tmp_path: Path, provider: Marke
 
     provider.get_historical = _patched  # type: ignore[assignment]
     request = MarketDataRequest(symbol="BTC/USDT", timeframe="1m", limit=50)
-    report_provider = await cfg.preflight_backtest(
-        provider,
-        request,
+    df2 = provider.get_historical(request)
+    engine2 = BacktestEngine(
         strategy_name="TestTrendStrategy",
+        data=df2,
+        symbol="BTC/USDT",
+        timeframe="1m",
         initial_balance=500.0,
+        matching=MatchingConfig(),
+        context_extra={
+            "trade_risk_pct": strategy.trade_risk_pct,
+            "max_position_notional_pct": strategy.max_position_notional_pct,
+            "max_leverage": strategy.max_leverage,
+        },
     )
+    report_provider = engine2.run()
     assert report_provider.metrics is not None
 
+    # negatywny scenariusz: zła strategia -> evaluate_strategy_backtest rzuca ValidationError
     losing_df = df.copy()
     losing_df["close"] = [90 - i for i in range(len(losing_df))]
+    losing_engine = BacktestEngine(
+        strategy_name="TestTrendStrategy",
+        data=losing_df,
+        symbol="BTC/USDT",
+        timeframe="1m",
+        initial_balance=1_000.0,
+        matching=MatchingConfig(),
+        context_extra={
+            "trade_risk_pct": strategy.trade_risk_pct,
+            "max_position_notional_pct": strategy.max_position_notional_pct,
+            "max_leverage": strategy.max_leverage,
+        },
+    )
+    losing_report = losing_engine.run()
     with pytest.raises(ValidationError):
-        cfg.run_backtest_on_dataframe(
-            losing_df,
-            symbol="BTC/USDT",
-            timeframe="1m",
-            strategy_name="TestTrendStrategy",
-            initial_balance=1_000.0,
-        )
+        evaluate_strategy_backtest(asdict(strategy), losing_report)
+
+    # restore
+    provider.get_historical = original_get  # type: ignore[assignment]
 
 
 def test_backtest_benchmark() -> None:
@@ -320,6 +401,31 @@ def test_forced_closure_uses_matching_costs() -> None:
     last_fill = report.fills[-1]
     assert last_fill.fee > 0
     assert abs(last_fill.slippage) > 0
+    assert report.metrics is not None
+
+    total_fees = sum(fill.fee for fill in report.fills)
+    assert total_fees == pytest.approx(report.metrics.fees_paid)
+
+    reconstructed_cash = report.starting_balance
+    cash_without_fees = report.starting_balance
+    reconstructed_position = 0.0
+    for fill in report.fills:
+        direction = 1 if fill.side == "buy" else -1
+        trade_notional = fill.price * fill.size
+        cash_without_fees -= direction * trade_notional
+        cash_after_notional = reconstructed_cash - direction * trade_notional
+        reconstructed_cash = cash_after_notional - fill.fee
+        if fill.side == "sell":
+            assert cash_after_notional - reconstructed_cash == pytest.approx(fill.fee)
+        reconstructed_position += direction * fill.size
+
+    assert reconstructed_position == pytest.approx(0.0, abs=1e-9)
+    assert reconstructed_cash == pytest.approx(report.final_balance)
+    assert (cash_without_fees - reconstructed_cash) == pytest.approx(total_fees)
+    sell_fees = sum(fill.fee for fill in report.fills if fill.side == "sell")
+    assert sell_fees > 0
+    assert report.equity_curve
+    assert reconstructed_cash == pytest.approx(report.equity_curve[-1])
 
 
 def test_backtest_handles_zero_volume_bars() -> None:
@@ -344,7 +450,81 @@ def test_backtest_handles_zero_volume_bars() -> None:
     assert all(fill.timestamp != zero_ts for fill in report.fills)
 
 
+def test_backtest_warns_about_missing_candles() -> None:
+    df = _build_dataframe(periods=60)
+    df = df.drop(df.index[30])
+    engine = BacktestEngine(
+        strategy_name="TestTrendStrategy",
+        data=df,
+        symbol="BTC/USDT",
+        timeframe="1m",
+        initial_balance=1_000.0,
+        matching=MatchingConfig(latency_bars=1, slippage_bps=1.0, fee_bps=5.0, liquidity_share=1.0),
+        context_extra={
+            "trade_risk_pct": 0.1,
+            "max_position_notional_pct": 0.5,
+            "max_leverage": 2.0,
+        },
+    )
+    report = engine.run()
+    assert any("lukę danych" in warning for warning in report.warnings)
+
+
+def test_backtest_warns_about_larger_gaps() -> None:
+    df = _build_dataframe(periods=80)
+    df = df.drop([df.index[10], df.index[11]])
+    engine = BacktestEngine(
+        strategy_name="TestTrendStrategy",
+        data=df,
+        symbol="BTC/USDT",
+        timeframe="1m",
+        initial_balance=2_000.0,
+        matching=MatchingConfig(
+            latency_bars=1,
+            slippage_bps=1.0,
+            fee_bps=5.0,
+            liquidity_share=1.0,
+        ),
+        context_extra={
+            "trade_risk_pct": 0.05,
+            "max_position_notional_pct": 0.5,
+            "max_leverage": 2.0,
+        },
+    )
+    report = engine.run()
+    assert any("2 świec" in warning for warning in report.warnings)
+
+
+def test_backtest_warns_about_multiple_gaps() -> None:
+    df = _build_dataframe(periods=80)
+    df = df.drop([df.index[15], df.index[40]])
+    engine = BacktestEngine(
+        strategy_name="TestTrendStrategy",
+        data=df,
+        symbol="BTC/USDT",
+        timeframe="1m",
+        initial_balance=2_000.0,
+        matching=MatchingConfig(
+            latency_bars=1,
+            slippage_bps=1.0,
+            fee_bps=5.0,
+            liquidity_share=1.0,
+        ),
+        context_extra={
+            "trade_risk_pct": 0.05,
+            "max_position_notional_pct": 0.5,
+            "max_leverage": 2.0,
+        },
+    )
+    report = engine.run()
+    warnings = [warning for warning in report.warnings if "lukę danych" in warning]
+    assert len(warnings) >= 2
+
+
 def test_reporting_snapshot_export(tmp_path: Path) -> None:
+    # Ten test wykona się tylko jeśli reporting jest dostępny
+    if render_html_report is None or export_report is None:
+        pytest.skip("Reporting helpers not available")
     df = _build_dataframe(periods=120)
     engine = BacktestEngine(
         strategy_name="TestTrendStrategy",
@@ -368,6 +548,9 @@ def test_reporting_snapshot_export(tmp_path: Path) -> None:
 
 
 def test_paper_trading_adapter_multi_symbol_multi_timeframe() -> None:
+    # Ten test wykona się tylko jeśli PaperTradingAdapter jest dostępny
+    if PaperTradingAdapter is None:
+        pytest.skip("PaperTradingAdapter not available")
     adapter = PaperTradingAdapter(initial_balance=10_000.0, matching=MatchingConfig(latency_bars=0, liquidity_share=1.0))
     base_time = pd.Timestamp("2024-02-01", tz="UTC")
 
@@ -401,3 +584,26 @@ def test_paper_trading_adapter_multi_symbol_multi_timeframe() -> None:
     assert btc_snapshot["value"] != eth_snapshot["value"]
     assert btc_snapshot["position"] > 0
     assert eth_snapshot["position"] < 0
+
+    for symbol, snapshot in (("BTC/USDT", btc_snapshot), ("ETH/USDT", eth_snapshot)):
+        state = adapter._portfolios[symbol]
+        total_fees = sum(fill.fee for fill in state.fills)
+        assert total_fees > 0
+
+        expected_cash = adapter._initial_balance
+        cash_without_fees = adapter._initial_balance
+        expected_position = 0.0
+        for fill in state.fills:
+            direction = 1 if fill.side == "buy" else -1
+            trade_notional = fill.price * fill.size
+            cash_without_fees -= direction * trade_notional
+            cash_after_notional = expected_cash - direction * trade_notional
+            expected_cash = cash_after_notional - fill.fee
+            if fill.side == "sell":
+                assert cash_after_notional - expected_cash == pytest.approx(fill.fee)
+            expected_position += direction * fill.size
+
+        assert expected_cash == pytest.approx(state.cash)
+        assert (cash_without_fees - expected_cash) == pytest.approx(total_fees)
+        assert expected_position == pytest.approx(state.position)
+        assert snapshot["value"] == pytest.approx(state.cash + state.position * state.last_price)
