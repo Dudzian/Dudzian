@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from dataclasses import dataclass, field, asdict, fields
 from datetime import datetime, timezone
 from pathlib import Path
@@ -188,6 +189,7 @@ class StrategyConfig:
     compliance_confirmed: bool = False
     api_keys_configured: bool = False
     acknowledged_risk_disclaimer: bool = False
+    backtest_passed_at: Optional[float] = None
 
     def validate(self) -> "StrategyConfig":
         mode = (self.mode or "demo").strip().lower()
@@ -206,6 +208,21 @@ class StrategyConfig:
         if self.violation_cooldown_s <= 0:
             raise ValidationError("violation_cooldown_s musi być dodatnie")
         self.reduce_only_after_violation = bool(self.reduce_only_after_violation)
+
+        # Normalizacja znacznika zaliczonego backtestu
+        raw_backtest_ts = getattr(self, "backtest_passed_at", None)
+        if raw_backtest_ts in (None, "", 0, 0.0):
+            normalized_backtest_ts: Optional[float] = None
+        else:
+            try:
+                normalized_backtest_ts = float(raw_backtest_ts)
+            except (TypeError, ValueError) as exc:
+                raise ValidationError(
+                    "backtest_passed_at musi być znacznikiem czasu w sekundach"
+                ) from exc
+            if normalized_backtest_ts <= 0:
+                raise ValidationError("backtest_passed_at musi być dodatnie")
+        self.backtest_passed_at = normalized_backtest_ts
 
         # Normalizacja flag zgodności (zachowuje kompatybilność ze starszym API)
         for field_name in (
@@ -307,6 +324,7 @@ class StrategyConfig:
         from KryptoLowca.backtest.simulation import evaluate_strategy_backtest
 
         evaluate_strategy_backtest(asdict(self), report)
+        self.backtest_passed_at = time.time()
         return self
 
 
@@ -754,6 +772,7 @@ class ConfigManager:
         )
         report = engine.run()
         strategy.guard_backtest(report)
+        self._current_config["strategy"] = asdict(strategy)
         if report_dir is not None:
             export_report(report, Path(report_dir))
         return report

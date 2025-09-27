@@ -199,6 +199,43 @@ def _wait_until(predicate: Callable[[], bool], timeout: float = 1.5) -> bool:
     return predicate()
 
 
+def test_live_mode_requires_backtest_confirmation(strategy_harness: StrategyHarness) -> None:
+    provider = StubDataProvider(price=100.0)
+    adapter = RecordingExecutionAdapter()
+    trader, emitter, _ = _configured_trader(
+        symbol_source=lambda: [("BTC/USDT", "1m")],
+        data_provider=provider,
+        signal_service=strategy_harness.signal_service,
+        risk_service=AcceptAllRiskService(size=50.0),
+        execution_adapter=adapter,
+    )
+
+    assert trader._strategy_config.mode == "demo"
+
+    live_cfg = StrategyConfig(
+        preset="DummyStrategy",
+        mode="live",
+        max_leverage=1.0,
+        max_position_notional_pct=0.5,
+        trade_risk_pct=0.1,
+        default_sl=0.01,
+        default_tp=0.02,
+        violation_cooldown_s=1,
+        reduce_only_after_violation=False,
+        compliance_confirmed=True,
+        api_keys_configured=True,
+        acknowledged_risk_disclaimer=True,
+    )
+
+    trader.configure(strategy=live_cfg)
+
+    assert trader._strategy_config.mode == "demo"
+    assert any(
+        level == "WARNING" and "backtest" in message.lower()
+        for level, _, message in emitter.logs
+    )
+
+
 def test_services_execute_order(strategy_harness: StrategyHarness) -> None:
     provider = StubDataProvider(price=101.0)
     adapter = RecordingExecutionAdapter()
