@@ -902,6 +902,34 @@ class AutoTrader:
             self._stop.wait(self.auto_trade_interval_s)
 
     # --- Prediction helpers ---
+    def _resolve_prediction_result(self, result: Any, *, context: str) -> Any:
+        if not inspect.isawaitable(result):
+            return result
+
+        async def _await_result(awaitable: Any) -> Any:
+            return await awaitable
+
+        try:
+            if self._service_loop is not None:
+                try:
+                    if self._service_loop.is_running():
+                        future = asyncio.run_coroutine_threadsafe(
+                            _await_result(result), self._service_loop
+                        )
+                        return future.result()
+                except Exception:
+                    # Jeśli pętla nie działa lub zgłosi błąd – fallback do lokalnego wykonania
+                    pass
+            return asyncio.run(_await_result(result))
+        except Exception as exc:
+            message = f"{context} coroutine failed: {exc!r}"
+            try:
+                self.emitter.log(message, level="ERROR", component="AutoTrader")
+            except Exception:
+                logger.exception("Emitter failed while logging coroutine error")
+            logger.error("Coroutine execution failed during %s", context, exc_info=exc)
+            return None
+
     def _obtain_prediction(
         self,
         ai: Any,
@@ -935,6 +963,9 @@ class AutoTrader:
                 kwargs["limit"] = 256
             try:
                 preds = predict_fn(**kwargs)
+                preds = self._resolve_prediction_result(
+                    preds, context=f"predict_series[{symbol}]"
+                )
                 last_pred = self._extract_last_pred(preds)
             except Exception:
                 last_pred = None
@@ -951,6 +982,9 @@ class AutoTrader:
                 for extra in call_attempts:
                     try:
                         preds = predict_fn(df, **extra)
+                        preds = self._resolve_prediction_result(
+                            preds, context=f"predict_series[{symbol}]"
+                        )
                         last_pred = self._extract_last_pred(preds)
                     except TypeError:
                         # jeśli feature_cols niepasuje – spróbuj kolejnego wariantu
