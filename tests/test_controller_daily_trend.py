@@ -102,6 +102,9 @@ def _core_config(runtime: ControllerRuntimeConfig, environment_name: str, risk_p
         sms_providers={},
         telegram_channels={},
         email_channels={},
+        signal_channels={},
+        whatsapp_channels={},
+        messenger_channels={},
         runtime_controllers={"daily_trend": runtime},
     )
 
