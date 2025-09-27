@@ -74,8 +74,10 @@ class PaperTradingAdapter:
 
     def _apply_fill(self, state: _PortfolioState, fill: BacktestFill) -> None:
         direction = 1 if fill.side == "buy" else -1
+        fee_paid = float(fill.fee)
         state.cash -= direction * fill.price * fill.size
-        state.cash -= fill.fee
+        # prowizja zawsze zmniejsza dostępną gotówkę, nawet dla transakcji sprzedaży
+        state.cash -= fee_paid
         state.position += direction * fill.size
         if state.position:
             state.avg_price = (

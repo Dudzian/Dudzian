@@ -525,15 +525,17 @@ class BacktestEngine:
 
         def apply_fill(fill: BacktestFill, *, bar_close: float) -> None:
             nonlocal cash, position, total_fees, total_slippage, open_trade
+            fee_paid = float(fill.fee)
             fills.append(fill)
-            total_fees += fill.fee
+            total_fees += fee_paid
             total_slippage += abs(fill.slippage)
 
             direction = 1 if fill.side == "buy" else -1
             position_before = position
             equity_before = cash + position_before * bar_close
             cash -= direction * fill.price * fill.size
-            cash -= fill.fee
+            # prowizja zawsze zmniejsza ilość dostępnej gotówki, niezależnie od kierunku
+            cash -= fee_paid
             position = position_before + direction * fill.size
             if abs(position) < 1e-9:
                 position = 0.0
