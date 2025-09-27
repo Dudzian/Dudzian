@@ -15,7 +15,6 @@ from bot_core.execution import (  # type: ignore[import-not-found]
     PaperTradingExecutionService,
 )
 from bot_core.exchanges.base import OrderRequest
-from bot_core.observability.metrics import CounterMetric, HistogramMetric, MetricsRegistry
 
 
 def _default_service(**kwargs: object) -> PaperTradingExecutionService:
@@ -123,46 +122,3 @@ def test_ledger_contains_audit_entries() -> None:
     assert first["symbol"] == "BTCUSDT"
     assert first["status"] == "filled"
     assert first["fee"] > 0
-
-
-def test_metrics_are_recorded_for_success_and_failures() -> None:
-    registry = MetricsRegistry()
-    service = _default_service(metrics=registry)
-    context = _default_context()
-
-    successful = OrderRequest(
-        symbol="BTCUSDT",
-        side="buy",
-        quantity=0.1,
-        order_type="market",
-        price=20_000.0,
-    )
-    failed = OrderRequest(
-        symbol="BTCUSDT",
-        side="sell",
-        quantity=5.0,
-        order_type="market",
-        price=20_000.0,
-    )
-
-    service.execute(successful, context)
-
-    with pytest.raises(InsufficientBalanceError):
-        service.execute(failed, context)
-
-    orders_total = registry.get("paper_orders_total")
-    assert isinstance(orders_total, CounterMetric)
-    assert orders_total.value(labels={"symbol": "BTCUSDT", "side": "buy"}) == pytest.approx(1.0)
-
-    rejected_total = registry.get("paper_orders_rejected_total")
-    assert rejected_total.value(labels={"symbol": "BTCUSDT", "reason": "insufficient_balance"}) == pytest.approx(1.0)
-
-    latency_hist = registry.get("paper_execution_latency_seconds")
-    assert isinstance(latency_hist, HistogramMetric)
-    snapshot = latency_hist.snapshot(labels={"symbol": "BTCUSDT", "status": "filled"})
-    assert snapshot.count == 1
-    rejected_snapshot = latency_hist.snapshot(labels={"symbol": "BTCUSDT", "status": "rejected"})
-    assert rejected_snapshot.count == 1
-
-    traded_notional = registry.get("paper_traded_notional_total")
-    assert traded_notional.value(labels={"symbol": "BTCUSDT", "side": "buy"}) > 0

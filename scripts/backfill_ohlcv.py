@@ -24,7 +24,6 @@ _LOGGER = logging.getLogger(__name__)
 
 def _parse_timestamp(value: str) -> int:
     """Zamienia wejście użytkownika na timestamp w milisekundach (UTC)."""
-
     value = value.strip()
     if value.isdigit():
         return int(value)
@@ -41,7 +40,6 @@ def _parse_timestamp(value: str) -> int:
 
 def _build_adapter(exchange: str, environment: Environment) -> PublicAPIDataSource:
     """Zwraca adapter publicznego API dla wskazanej giełdy."""
-
     builders: dict[str, Callable[[Environment], PublicAPIDataSource]] = {
         "binance_spot": lambda env: PublicAPIDataSource(
             exchange_adapter=BinanceSpotAdapter(
@@ -54,12 +52,10 @@ def _build_adapter(exchange: str, environment: Environment) -> PublicAPIDataSour
             )
         ),
     }
-
     try:
         builder = builders[exchange]
     except KeyError as exc:  # pragma: no cover - zabezpieczenie przyszłych rozszerzeń
         raise ValueError(f"Brak obsługi exchange={exchange} w procesie backfillu") from exc
-
     return builder(environment)
 
 
@@ -68,6 +64,7 @@ def _resolve_symbols(
     exchange_name: str,
     explicit_symbols: Sequence[str] | None,
 ) -> tuple[str, ...]:
+    """Zwraca listę symboli do backfillu (z CLI lub z uniwersum przypisanego do środowiska)."""
     if explicit_symbols:
         return tuple(explicit_symbols)
 
@@ -84,8 +81,8 @@ def _resolve_symbols(
 
     if not resolved:
         raise SystemExit(
-            "Żaden instrument z uniwersum nie jest dostępny dla wskazanej giełdy. Zdefiniuj aliasy lub"
-            " przekaż symbole przez --symbols."
+            "Żaden instrument z uniwersum nie jest dostępny dla wskazanej giełdy. Zdefiniuj aliasy lub "
+            "przekaż symbole przez --symbols."
         )
     return tuple(resolved)
 
@@ -95,21 +92,21 @@ def _determine_start_timestamp(
     requested_start: int | None,
     universe: InstrumentUniverseConfig | None,
 ) -> int:
+    """Wyznacza timestamp startu: priorytet ma --start, w przeciwnym razie lookback z uniwersum."""
     if requested_start is not None:
         return requested_start
 
     if universe is None:
         raise SystemExit(
-            "Nie określono daty początkowej (--start), a środowisko nie wskazuje uniwersum z parametrami"
-            " backfillu."
+            "Nie określono daty początkowej (--start), a środowisko nie wskazuje uniwersum z parametrami "
+            "backfillu."
         )
 
     max_lookback_days = 0
     for instrument in universe.instruments:
         for window in instrument.backfill_windows:
             if window.interval == interval:
-                if window.lookback_days > max_lookback_days:
-                    max_lookback_days = window.lookback_days
+                max_lookback_days = max(max_lookback_days, window.lookback_days)
 
     if max_lookback_days == 0:
         raise SystemExit(
@@ -170,13 +167,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     except KeyError as exc:
         raise SystemExit(f"Nie znaleziono środowiska {args.environment} w konfiguracji") from exc
 
+    # Pobierz definicję uniwersum (jeśli wskazane w środowisku)
     universe: InstrumentUniverseConfig | None = None
     if env_cfg.instrument_universe:
         universe = config.instrument_universes.get(env_cfg.instrument_universe)
         if universe is None:
             raise SystemExit(
-                f"Środowisko {args.environment} wskazuje nieistniejące uniwersum "
-                f"{env_cfg.instrument_universe}."
+                f"Środowisko {args.environment} wskazuje nieistniejące uniwersum {env_cfg.instrument_universe}."
             )
 
     symbols = _resolve_symbols(universe, env_cfg.exchange, args.symbols)

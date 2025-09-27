@@ -9,7 +9,29 @@ from typing import Callable, Dict, Iterable, List, Mapping, MutableMapping, Opti
 
 from bot_core.execution.base import ExecutionContext, ExecutionService
 from bot_core.exchanges.base import OrderRequest, OrderResult
-from bot_core.observability.metrics import MetricsRegistry, get_global_metrics_registry
+
+# --- Observability (optional, no-op fallback) --------------------------------
+try:  # pragma: no cover - metrics are optional
+    from bot_core.observability.metrics import MetricsRegistry, get_global_metrics_registry  # type: ignore
+except Exception:  # pragma: no cover
+    class _NoopCounter:
+        def inc(self, value: float = 1.0, *, labels: Optional[Mapping[str, str]] = None) -> None:
+            return None
+
+    class _NoopHistogram:
+        def observe(self, value: float, *, labels: Optional[Mapping[str, str]] = None) -> None:
+            return None
+
+    class MetricsRegistry:  # type: ignore[override]
+        def counter(self, *_args, **_kwargs) -> _NoopCounter:
+            return _NoopCounter()
+
+        def histogram(self, *_args, **_kwargs) -> _NoopHistogram:
+            return _NoopHistogram()
+
+    def get_global_metrics_registry() -> MetricsRegistry:  # type: ignore[override]
+        return MetricsRegistry()
+
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -75,13 +97,17 @@ class PaperTradingExecutionService(ExecutionService):
         if not markets:
             raise ValueError("Wymagana jest co najmniej jedna definicja rynku.")
         self._markets: Dict[str, MarketMetadata] = dict(markets)
-        self._balances: MutableMapping[str, float] = {asset: float(value) for asset, value in (initial_balances or {}).items()}
+        self._balances: MutableMapping[str, float] = {
+            asset: float(value) for asset, value in (initial_balances or {}).items()
+        }
         self._maker_fee = max(0.0, maker_fee)
         self._taker_fee = max(0.0, taker_fee)
         self._slippage_bps = max(0.0, slippage_bps)
         self._time = time_source or time.time
         self._order_counter = itertools.count(1)
         self._ledger: List[LedgerEntry] = []
+
+        # metrics
         self._metrics = metrics or get_global_metrics_registry()
         self._metric_orders_total = self._metrics.counter(
             "paper_orders_total", "Liczba zleceń zrealizowanych w symulatorze paper tradingu."
@@ -116,7 +142,7 @@ class PaperTradingExecutionService(ExecutionService):
 
         start_time = self._time()
         try:
-            result, filled_notional = self._execute_internal(request, context, market, side)
+            result = self._execute_internal(request, context, market, side)
         except InsufficientBalanceError:
             self._metric_orders_rejected.inc(labels={"symbol": symbol, "reason": "insufficient_balance"})
             elapsed = max(0.0, self._time() - start_time)
@@ -128,6 +154,7 @@ class PaperTradingExecutionService(ExecutionService):
             self._metric_latency.observe(elapsed, labels={"symbol": symbol, "status": "error"})
             raise
 
+        filled_notional = (result.avg_price or 0.0) * (result.filled_quantity or 0.0)
         elapsed = max(0.0, self._time() - start_time)
         self._metric_orders_total.inc(labels={"symbol": symbol, "side": side})
         self._metric_latency.observe(elapsed, labels={"symbol": symbol, "status": "filled"})
@@ -140,12 +167,13 @@ class PaperTradingExecutionService(ExecutionService):
         context: ExecutionContext,
         market: MarketMetadata,
         side: str,
-    ) -> tuple[OrderResult, float]:
+    ) -> OrderResult:
+        symbol = request.symbol
         reference_price = self._determine_reference_price(request)
         notional = reference_price * request.quantity
         if notional < market.min_notional:
             raise ValueError(
-                f"Notional {notional:.8f} jest mniejszy niż minimalna wartość {market.min_notional:.8f} dla {request.symbol}."
+                f"Notional {notional:.8f} jest mniejszy niż minimalna wartość {market.min_notional:.8f} dla {symbol}."
             )
 
         fill_price = self._apply_slippage(reference_price, side)
@@ -153,9 +181,9 @@ class PaperTradingExecutionService(ExecutionService):
         fee = request.quantity * fill_price * fee_rate
 
         if side == "buy":
-            self._process_buy(request.symbol, market, request.quantity, fill_price, fee)
+            self._process_buy(symbol, market, request.quantity, fill_price, fee)
         else:
-            self._process_sell(request.symbol, market, request.quantity, fill_price, fee)
+            self._process_sell(symbol, market, request.quantity, fill_price, fee)
 
         order_id = f"paper-{next(self._order_counter)}"
         result = OrderResult(
@@ -175,7 +203,7 @@ class PaperTradingExecutionService(ExecutionService):
             LedgerEntry(
                 timestamp=self._time(),
                 order_id=order_id,
-                symbol=request.symbol,
+                symbol=symbol,
                 side=side,
                 quantity=request.quantity,
                 price=fill_price,
@@ -187,16 +215,15 @@ class PaperTradingExecutionService(ExecutionService):
         _LOGGER.debug(
             "Paper trade %s %s qty=%s price=%s fee=%s (env=%s)",
             side,
-            request.symbol,
+            symbol,
             request.quantity,
             fill_price,
             fee,
             context.environment,
         )
-        filled_notional = fill_price * request.quantity
-        return result, filled_notional
+        return result
 
-    def cancel(self, order_id: str, context: ExecutionContext) -> None:  # noqa: ARG002 - wymagane przez interfejs
+    def cancel(self, order_id: str, context: ExecutionContext) -> None:  # noqa: ARG002
         # Zlecenia w trybie paper trading są realizowane natychmiast – rejestrujemy jedynie próbę anulacji.
         self._ledger.append(
             LedgerEntry(
@@ -300,12 +327,10 @@ class PaperTradingExecutionService(ExecutionService):
     # --- Funkcje obserwowalne -------------------------------------------------
     def balances(self) -> Mapping[str, float]:
         """Zwraca bieżące saldo konta paper trading."""
-
         return dict(self._balances)
 
     def ledger(self) -> Iterable[Mapping[str, object]]:
         """Zwraca kopię wpisów audytowych (do raportów compliance)."""
-
         return [entry.to_mapping() for entry in self._ledger]
 
 

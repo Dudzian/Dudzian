@@ -8,6 +8,7 @@ zewnętrznych, z jasnym podziałem na warstwy i środowiska.
 
 | Moduł | Odpowiedzialność | Kluczowe klasy/interfejsy |
 | --- | --- | --- |
+
 | `bot_core/exchanges` | Adaptery giełdowe z rozdzieleniem środowisk i uprawnień | `ExchangeAdapter`, `ExchangeCredentials`, `BinanceSpotAdapter`, `BinanceFuturesAdapter`, `KrakenSpotAdapter`, `KrakenFuturesAdapter`, `ZondaSpotAdapter` |
 | `bot_core/data` | Pobieranie, normalizacja i cache danych OHLCV | `DataSource`, `CachedOHLCVSource`, `PublicAPIDataSource` |
 | `bot_core/strategies` | Silnik strategii i walk-forward | `StrategyEngine`, `MarketSnapshot`, `StrategySignal`, `WalkForwardOptimizer` |
@@ -34,7 +35,6 @@ Futures (nagłówki `APIKey`, `Authent`, `Nonce`), mapuje wartości marginesu or
 `AccountSnapshot`, wspiera składanie zleceń `mkt`/`lmt` i anulowanie przez `DELETE /orders/{id}`.
 Wzbogacone testy jednostkowe potwierdzają budowę podpisu i serializację ciała żądania.
 `ZondaSpotAdapter` wykorzystuje REST API Zondy do pobierania świec (endpoint `trading/candle/history`) oraz danych konta (`trading/balance`). Implementacja korzysta z podpisu HMAC-SHA512 zgodnie z nagłówkiem `API-Hash`, obsługuje mapowanie statusów zleceń i zabezpiecza się przed brakiem uprawnień (`read`/`trade`). Adapter został dodany do domyślnych fabryk bootstrapa, dzięki czemu środowiska paper/live mogą korzystać z Zondy bez modyfikacji logiki strategii czy ryzyka.
-
 
 ## Warstwa konfiguracji
 
@@ -119,8 +119,8 @@ prowadzi dziennik audytowy transakcji.
 
 ## Alerty i obserwowalność
 
-`AlertChannel` i `AlertRouter` zapewniają jednolite API dla powiadomień (Telegram, e-mail, SMS, Signal,
-WhatsApp, Messenger). Implementacja `DefaultAlertRouter` obsługuje audyt (`InMemoryAlertAuditLog`),
+`AlertChannel` i `AlertRouter` zapewniają jednolite API dla powiadomień (Telegram, e-mail, SMS, a w
+przyszłości Signal/WhatsApp/Messenger). Implementacja `DefaultAlertRouter` obsługuje audyt (`InMemoryAlertAuditLog`),
 kontynuuje wysyłkę pomimo błędów pojedynczych kanałów i zwraca migawkę `health_check` do monitoringu SLO.
 Adaptery kanałów posiadają zabezpieczenia (timeouty, logowanie błędów, walidację odpowiedzi API) oraz
 formatowanie wiadomości z kontekstem ryzyka i znacznikami czasu UTC.
@@ -129,9 +129,11 @@ formatowanie wiadomości z kontekstem ryzyka i znacznikami czasu UTC.
 
 1. Rozszerzyć testy integracyjne kanałów komunikatorów o scenariusze awarii i fallback do alternatywnych
    dostawców oraz dodać mechanizm throttle/acknowledgement dla krytycznych incydentów.
-2. Podłączyć metryki Prometheus (latencja wysyłek, error rate) i dashboard zgodny z wymaganiami SLO.
-3. Ustandaryzować eksport audytu do formatu Parquet/CSV z podpisem kryptograficznym oraz przygotować
+2. Rozszerzyć system alertów o kolejne kanały komunikatorów (Signal/WhatsApp/Messenger) oraz mechanizm
+   throttle/acknowledgement dla krytycznych incydentów.
+3. Podłączyć metryki Prometheus (latencja wysyłek, error rate) i dashboard zgodny z wymaganiami SLO.
+4. Ustandaryzować eksport audytu do formatu Parquet/CSV z podpisem kryptograficznym oraz przygotować
    rotację logów zgodną z polityką 24–60 miesięcy.
-4. Zintegrować alerty z planowanym modułem raportowania dziennego/tygodniowego.
+5. Zintegrować alerty z planowanym modułem raportowania dziennego/tygodniowego.
 
 Dokument będzie aktualizowany wraz z postępem implementacji kolejnych modułów.

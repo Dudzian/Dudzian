@@ -141,7 +141,6 @@ def test_bootstrap_environment_initialises_components(tmp_path: Path) -> None:
     assert context.risk_engine.should_liquidate(profile_name="balanced") is False
 
 
-
 def test_bootstrap_environment_supports_zonda(tmp_path: Path) -> None:
     storage = _MemorySecretStorage()
     manager = SecretManager(storage, namespace="tests")

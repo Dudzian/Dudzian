@@ -70,7 +70,6 @@ def bootstrap_environment(
     adapter_factories: Mapping[str, ExchangeAdapterFactory] | None = None,
 ) -> BootstrapContext:
     """Tworzy kompletny kontekst uruchomieniowy dla wskazanego środowiska."""
-
     core_config = load_core_config(config_path)
     if environment_name not in core_config.environments:
         raise KeyError(f"Środowisko '{environment_name}' nie istnieje w konfiguracji")

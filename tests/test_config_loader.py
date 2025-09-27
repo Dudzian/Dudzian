@@ -89,6 +89,7 @@ def test_load_core_config_reads_sms_providers(tmp_path: Path) -> None:
 
     config = load_core_config(config_path)
 
+    # SMS providers
     assert "orange_local" in config.sms_providers
     provider = config.sms_providers["orange_local"]
     assert isinstance(provider, SMSProviderSettings)
@@ -97,25 +98,40 @@ def test_load_core_config_reads_sms_providers(tmp_path: Path) -> None:
     assert provider.allow_alphanumeric_sender is True
     assert provider.sender_id == "BOT-ORANGE"
     assert provider.credential_key == "orange_sms_credentials"
-    assert isinstance(config.telegram_channels["primary"], TelegramChannelSettings)
+
+    # Telegram
+    assert "primary" in config.telegram_channels
     telegram = config.telegram_channels["primary"]
+    assert isinstance(telegram, TelegramChannelSettings)
     assert telegram.chat_id == "123456789"
     assert telegram.token_secret == "telegram_primary_token"
     assert telegram.parse_mode == "MarkdownV2"
+
+    # Signal
+    assert "workstation" in config.signal_channels
     signal = config.signal_channels["workstation"]
     assert isinstance(signal, SignalChannelSettings)
     assert signal.service_url == "https://signal-gateway.local"
     assert signal.sender_number == "+48500100999"
     assert signal.credential_secret == "signal_cli_token"
+    assert signal.verify_tls is True
+
+    # WhatsApp
+    assert "business" in config.whatsapp_channels
     whatsapp = config.whatsapp_channels["business"]
     assert isinstance(whatsapp, WhatsAppChannelSettings)
     assert whatsapp.phone_number_id == "10987654321"
     assert whatsapp.token_secret == "whatsapp_primary_token"
     assert whatsapp.api_version == "v16.0"
+
+    # Messenger
+    assert "ops" in config.messenger_channels
     messenger = config.messenger_channels["ops"]
     assert isinstance(messenger, MessengerChannelSettings)
     assert messenger.page_id == "1357924680"
     assert messenger.token_secret == "messenger_page_token"
+
+    # Email
     email = config.email_channels["ops"]
     assert isinstance(email, EmailChannelSettings)
     assert email.host == "smtp.example.com"
@@ -124,6 +140,8 @@ def test_load_core_config_reads_sms_providers(tmp_path: Path) -> None:
     assert email.recipients == ("ops@example.com",)
     assert email.credential_secret == "smtp_ops_credentials"
     assert email.use_tls is True
+
+    # Instrument universes
     universe = config.instrument_universes["core_multi_exchange"]
     assert universe.description == "Testowe uniwersum"
     assert len(universe.instruments) == 1
@@ -134,9 +152,8 @@ def test_load_core_config_reads_sms_providers(tmp_path: Path) -> None:
     assert instrument.backfill_windows[0].lookback_days == 3650
 
 
-
 def test_load_core_config_loads_strategies(tmp_path: Path) -> None:
-    config_path = tmp_path / 'core.yaml'
+    config_path = tmp_path / "core.yaml"
     config_path.write_text(
         """
         risk_profiles: {}
@@ -157,13 +174,13 @@ def test_load_core_config_loads_strategies(tmp_path: Path) -> None:
         reporting: {}
         alerts: {}
         """,
-        encoding='utf-8',
+        encoding="utf-8",
     )
 
     config = load_core_config(config_path)
 
-    assert 'core_daily_trend' in config.strategies
-    strategy = config.strategies['core_daily_trend']
+    assert "core_daily_trend" in config.strategies
+    strategy = config.strategies["core_daily_trend"]
     assert strategy.fast_ma == 30
     assert strategy.slow_ma == 120
     assert strategy.breakout_lookback == 60

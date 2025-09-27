@@ -45,7 +45,6 @@ class _InMemoryKeyring:
 @pytest.fixture(autouse=True)
 def fake_keyring() -> types.ModuleType:
     """Podmienia moduł ``keyring`` na wariant in-memory, aby testy były deterministyczne."""
-
     module = types.ModuleType("keyring")
     backend = _InMemoryKeyring()
     module.get_password = backend.get_password
