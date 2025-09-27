@@ -34,7 +34,8 @@ module = ["yaml"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
-testpaths = ["KryptoLowca/tests"]
+addopts = "--cov=bot_core --cov-report=xml --cov-report=term-missing"
+testpaths = ["tests"]
 filterwarnings = [
   "ignore::DeprecationWarning",
 ]
