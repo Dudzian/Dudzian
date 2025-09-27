@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import json
 from email.message import EmailMessage
 from pathlib import Path
 from typing import List
@@ -19,8 +20,11 @@ from bot_core.alerts import (
     DefaultAlertRouter,
     EmailChannel,
     InMemoryAlertAuditLog,
+    MessengerChannel,
     SMSChannel,
+    SignalChannel,
     TelegramChannel,
+    WhatsAppChannel,
     DEFAULT_SMS_PROVIDERS,
     get_sms_provider,
 )
@@ -240,3 +244,77 @@ def test_sms_channel_uses_provider_metadata(sample_message: AlertMessage) -> Non
     health = channel.health_check()
     assert health["provider"] == "orange_pl"
     assert health["country"] == "PL"
+
+
+def test_signal_channel_builds_payload(sample_message: AlertMessage) -> None:
+    captured: dict[str, request.Request] = {}
+
+    def opener(req: request.Request, *, timeout: float, context):  # noqa: ANN001
+        captured["request"] = req
+        assert context is not None
+        return _FakeHTTPResponse(200, b"{}")
+
+    channel = SignalChannel(
+        service_url="https://signal-gateway.local",
+        sender_number="+48500100999",
+        recipients=("+48555111222",),
+        auth_token="secret",
+        _opener=opener,
+    )
+
+    channel.send(sample_message)
+
+    req = captured["request"]
+    assert req.full_url.endswith("/v2/send")
+    body = json.loads(req.data.decode("utf-8"))
+    assert body["number"] == "+48500100999"
+    assert body["recipients"] == ["+48555111222"]
+    assert "Authorization" in req.headers
+    assert channel.health_check()["status"] == "ok"
+
+
+def test_whatsapp_channel_formats_messages(sample_message: AlertMessage) -> None:
+    captured: list[request.Request] = []
+
+    def opener(req: request.Request, *, timeout: float):  # noqa: ANN001
+        captured.append(req)
+        return _FakeHTTPResponse(200, b"{}")
+
+    channel = WhatsAppChannel(
+        phone_number_id="10987654321",
+        access_token="token",
+        recipients=("48555111222", "48555111333"),
+        _opener=opener,
+    )
+
+    channel.send(sample_message)
+
+    assert len(captured) == 2
+    payload = json.loads(captured[0].data.decode("utf-8"))
+    assert payload["messaging_product"] == "whatsapp"
+    assert payload["to"] == "48555111222"
+    assert "Authorization" in captured[0].headers
+    assert channel.health_check()["status"] == "ok"
+
+
+def test_messenger_channel_sends_text(sample_message: AlertMessage) -> None:
+    captured: list[request.Request] = []
+
+    def opener(req: request.Request, *, timeout: float):  # noqa: ANN001
+        captured.append(req)
+        return _FakeHTTPResponse(200, b"{}")
+
+    channel = MessengerChannel(
+        page_id="1357924680",
+        access_token="token",
+        recipients=("2468013579",),
+        _opener=opener,
+    )
+
+    channel.send(sample_message)
+
+    assert captured
+    payload = json.loads(captured[0].data.decode("utf-8"))
+    assert payload["recipient"]["id"] == "2468013579"
+    assert payload["message"]["text"]
+    assert channel.health_check()["status"] == "ok"

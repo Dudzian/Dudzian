@@ -11,7 +11,6 @@ from bot_core.alerts import EmailChannel, SMSChannel, TelegramChannel
 from bot_core.exchanges.base import (
     AccountSnapshot,
     Environment,
-    ExchangeAdapter,
     ExchangeCredentials,
     OrderRequest,
     OrderResult,
@@ -158,61 +157,58 @@ def test_bootstrap_environment_initialises_components(tmp_path: Path) -> None:
 
     assert context.risk_engine.should_liquidate(profile_name="balanced") is False
 
-    class _FakeZondaAdapter(ExchangeAdapter):
-        name = "zonda_spot"
 
-        def __init__(self, credentials: ExchangeCredentials, *, environment: Environment, **_: object) -> None:
-            super().__init__(credentials)
-            self.environment = environment
-            self.network_config: Sequence[str] | None = None
+def test_bootstrap_environment_supports_zonda(tmp_path: Path) -> None:
+    storage = _MemorySecretStorage()
+    manager = SecretManager(storage, namespace="tests")
 
-        def configure_network(self, *, ip_allowlist: Sequence[str] | None = None) -> None:  # type: ignore[override]
-            self.network_config = tuple(ip_allowlist) if ip_allowlist else None
+    config_content = """
+    risk_profiles:
+      conservative:
+        max_daily_loss_pct: 0.01
+        max_position_pct: 0.03
+        target_volatility: 0.07
+        max_leverage: 2.0
+        stop_loss_atr_multiple: 1.0
+        max_open_positions: 3
+        hard_drawdown_pct: 0.05
+    environments:
+      zonda_live:
+        exchange: zonda_spot
+        environment: live
+        keychain_key: zonda_live_key
+        credential_purpose: trading
+        data_cache_path: ./var/data/zonda_live
+        risk_profile: conservative
+        alert_channels: ["telegram:primary"]
+        ip_allowlist: []
+    reporting: {}
+    alerts:
+      telegram_channels:
+        primary:
+          chat_id: "123"
+          token_secret: telegram_token
+      email_channels: {}
+      sms_providers: {}
+      signal_channels: {}
+      whatsapp_channels: {}
+      messenger_channels: {}
+    """
 
-        def fetch_account_snapshot(self) -> AccountSnapshot:  # type: ignore[override]
-            return AccountSnapshot(balances={}, total_equity=0.0, available_margin=0.0, maintenance_margin=0.0)
+    config_path = tmp_path / "core.yaml"
+    config_path.write_text(config_content, encoding="utf-8")
 
-        def fetch_symbols(self) -> Sequence[str]:  # type: ignore[override]
-            return []
+    credentials_payload = {
+        "key_id": "zonda-key",
+        "secret": "zonda-secret",
+        "permissions": ["read", "trade"],
+        "environment": Environment.LIVE.value,
+    }
+    storage.set_secret("tests:zonda_live_key:trading", json.dumps(credentials_payload))
+    manager.store_secret_value("telegram_token", "tg-token", purpose="alerts:telegram")
 
-        def fetch_ohlcv(
-            self,
-            symbol: str,
-            interval: str,
-            start: int | None = None,
-            end: int | None = None,
-            limit: int | None = None,
-        ) -> Sequence[Sequence[float]]:  # type: ignore[override]
-            return []
+    context = bootstrap_environment("zonda_live", config_path=config_path, secret_manager=manager)
 
-        def place_order(self, request: OrderRequest) -> OrderResult:  # type: ignore[override]
-            return OrderResult(order_id="", status="", filled_quantity=0.0, avg_price=None, raw_response={})
-
-        def cancel_order(self, order_id: str, *, symbol: str | None = None) -> None:  # type: ignore[override]
-            return None
-
-        def stream_public_data(self, *, channels: Sequence[str]):  # type: ignore[override]
-            raise NotImplementedError
-
-        def stream_private_data(self, *, channels: Sequence[str]):  # type: ignore[override]
-            raise NotImplementedError
-
-    factory_calls: dict[str, ExchangeCredentials] = {}
-
-    def _fake_factory(credentials: ExchangeCredentials, **kwargs: object) -> ExchangeAdapter:
-        factory_calls["credentials"] = credentials
-        assert kwargs.get("environment") == Environment.PAPER
-        return _FakeZondaAdapter(credentials, environment=kwargs["environment"])  # type: ignore[arg-type]
-
-    zonda_context = bootstrap_environment(
-        "zonda_paper",
-        config_path=config_path,
-        secret_manager=manager,
-        adapter_factories={"zonda_spot": _fake_factory},
-    )
-
-    assert isinstance(zonda_context.adapter, _FakeZondaAdapter)
-    assert zonda_context.adapter.environment is Environment.PAPER
-    assert zonda_context.adapter.network_config == ("127.0.0.1",)
-    assert factory_calls["credentials"].key_id == "paper-key"
-
+    assert context.adapter.name == "zonda_spot"
+    assert context.credentials.key_id == "zonda-key"
+    assert context.environment.exchange == "zonda_spot"

@@ -10,8 +10,11 @@ from bot_core.alerts import (
     DefaultAlertRouter,
     EmailChannel,
     InMemoryAlertAuditLog,
+    MessengerChannel,
     SMSChannel,
+    SignalChannel,
     TelegramChannel,
+    WhatsAppChannel,
     get_sms_provider,
 )
 from bot_core.alerts.base import AlertChannel
@@ -21,13 +24,16 @@ from bot_core.config.models import (
     CoreConfig,
     EmailChannelSettings,
     EnvironmentConfig,
+    MessengerChannelSettings,
     RiskProfileConfig,
     SMSProviderSettings,
+    SignalChannelSettings,
     TelegramChannelSettings,
+    WhatsAppChannelSettings,
 )
 from bot_core.exchanges.base import Environment, ExchangeAdapter, ExchangeAdapterFactory, ExchangeCredentials
 from bot_core.exchanges.binance import BinanceFuturesAdapter, BinanceSpotAdapter
-from bot_core.exchanges.kraken import KrakenSpotAdapter
+from bot_core.exchanges.kraken import KrakenFuturesAdapter, KrakenSpotAdapter
 from bot_core.exchanges.zonda import ZondaSpotAdapter
 from bot_core.risk.engine import ThresholdRiskEngine
 from bot_core.risk.profiles.manual import ManualProfile
@@ -37,6 +43,7 @@ _DEFAULT_ADAPTERS: Mapping[str, ExchangeAdapterFactory] = {
     "binance_spot": BinanceSpotAdapter,
     "binance_futures": BinanceFuturesAdapter,
     "kraken_spot": KrakenSpotAdapter,
+    "kraken_futures": KrakenFuturesAdapter,
     "zonda_spot": ZondaSpotAdapter,
 }
 
@@ -63,7 +70,6 @@ def bootstrap_environment(
     adapter_factories: Mapping[str, ExchangeAdapterFactory] | None = None,
 ) -> BootstrapContext:
     """Tworzy kompletny kontekst uruchomieniowy dla wskazanego środowiska."""
-
     core_config = load_core_config(config_path)
     if environment_name not in core_config.environments:
         raise KeyError(f"Środowisko '{environment_name}' nie istnieje w konfiguracji")
@@ -158,6 +164,12 @@ def _build_alert_channels(
             channel = _build_email_channel(core_config.email_channels, channel_key, secret_manager)
         elif channel_type == "sms":
             channel = _build_sms_channel(core_config.sms_providers, channel_key, secret_manager)
+        elif channel_type == "signal":
+            channel = _build_signal_channel(core_config.signal_channels, channel_key, secret_manager)
+        elif channel_type == "whatsapp":
+            channel = _build_whatsapp_channel(core_config.whatsapp_channels, channel_key, secret_manager)
+        elif channel_type == "messenger":
+            channel = _build_messenger_channel(core_config.messenger_channels, channel_key, secret_manager)
         else:
             raise KeyError(f"Nieobsługiwany typ kanału alertów: {channel_type}")
 
@@ -203,7 +215,7 @@ def _build_email_channel(
         raw_secret = secret_manager.load_secret_value(settings.credential_secret, purpose="alerts:email")
         try:
             parsed = json.loads(raw_secret) if raw_secret else {}
-        except json.JSONDecodeError as exc:  # pragma: no cover
+        except json.JSONDecodeError as exc:  # pragma: no cover - uszkodzony sekret to błąd konfiguracji
             raise SecretStorageError(
                 "Sekret dla kanału e-mail musi zawierać poprawny JSON z polami 'username' i 'password'."
             ) from exc
@@ -240,7 +252,7 @@ def _build_sms_channel(
     raw_secret = secret_manager.load_secret_value(settings.credential_key, purpose="alerts:sms")
     try:
         payload = json.loads(raw_secret)
-    except json.JSONDecodeError as exc:  # pragma: no cover
+    except json.JSONDecodeError as exc:  # pragma: no cover - uszkodzone dane w magazynie
         raise SecretStorageError(
             "Sekret dostawcy SMS powinien zawierać JSON z polami 'account_sid' i 'auth_token'."
         ) from exc
@@ -276,6 +288,74 @@ def _build_sms_channel(
         recipients=recipients,
         provider=provider_config,
         name=f"sms:{channel_key}",
+    )
+
+
+def _build_signal_channel(
+    definitions: Mapping[str, SignalChannelSettings],
+    channel_key: str,
+    secret_manager: SecretManager,
+) -> SignalChannel:
+    try:
+        settings = definitions[channel_key]
+    except KeyError as exc:
+        raise KeyError(f"Brak definicji kanału Signal '{channel_key}'") from exc
+
+    token: str | None = None
+    if settings.credential_secret:
+        token = secret_manager.load_secret_value(settings.credential_secret, purpose="alerts:signal")
+
+    return SignalChannel(
+        service_url=settings.service_url,
+        sender_number=settings.sender_number,
+        recipients=settings.recipients,
+        auth_token=token,
+        verify_tls=settings.verify_tls,
+        name=f"signal:{channel_key}",
+    )
+
+
+def _build_whatsapp_channel(
+    definitions: Mapping[str, WhatsAppChannelSettings],
+    channel_key: str,
+    secret_manager: SecretManager,
+) -> WhatsAppChannel:
+    try:
+        settings = definitions[channel_key]
+    except KeyError as exc:
+        raise KeyError(f"Brak definicji kanału WhatsApp '{channel_key}'") from exc
+
+    token = secret_manager.load_secret_value(settings.token_secret, purpose="alerts:whatsapp")
+
+    return WhatsAppChannel(
+        phone_number_id=settings.phone_number_id,
+        access_token=token,
+        recipients=settings.recipients,
+        api_base_url=settings.api_base_url,
+        api_version=settings.api_version,
+        name=f"whatsapp:{channel_key}",
+    )
+
+
+def _build_messenger_channel(
+    definitions: Mapping[str, MessengerChannelSettings],
+    channel_key: str,
+    secret_manager: SecretManager,
+) -> MessengerChannel:
+    try:
+        settings = definitions[channel_key]
+    except KeyError as exc:
+        raise KeyError(f"Brak definicji kanału Messenger '{channel_key}'") from exc
+
+    token = secret_manager.load_secret_value(settings.token_secret, purpose="alerts:messenger")
+
+    return MessengerChannel(
+        page_id=settings.page_id,
+        access_token=token,
+        recipients=settings.recipients,
+        api_base_url=settings.api_base_url,
+        api_version=settings.api_version,
+        name=f"messenger:{channel_key}",
     )
 
 
