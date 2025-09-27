@@ -33,9 +33,9 @@ from bot_core.risk.profiles.manual import ManualProfile
 from bot_core.security import SecretManager, SecretStorageError
 
 _DEFAULT_ADAPTERS: Mapping[str, ExchangeAdapterFactory] = {
-    "binance_spot": BinanceSpotAdapter,
+    "binance_spot":   BinanceSpotAdapter,
     "binance_futures": BinanceFuturesAdapter,
-    "kraken_spot": KrakenSpotAdapter,
+    "kraken_spot":    KrakenSpotAdapter,
 }
 
 
@@ -201,7 +201,7 @@ def _build_email_channel(
         raw_secret = secret_manager.load_secret_value(settings.credential_secret, purpose="alerts:email")
         try:
             parsed = json.loads(raw_secret) if raw_secret else {}
-        except json.JSONDecodeError as exc:  # pragma: no cover - uszkodzony sekret to błąd konfiguracji
+        except json.JSONDecodeError as exc:  # pragma: no cover
             raise SecretStorageError(
                 "Sekret dla kanału e-mail musi zawierać poprawny JSON z polami 'username' i 'password'."
             ) from exc
@@ -238,7 +238,7 @@ def _build_sms_channel(
     raw_secret = secret_manager.load_secret_value(settings.credential_key, purpose="alerts:sms")
     try:
         payload = json.loads(raw_secret)
-    except json.JSONDecodeError as exc:  # pragma: no cover - uszkodzone dane w magazynie
+    except json.JSONDecodeError as exc:  # pragma: no cover
         raise SecretStorageError(
             "Sekret dostawcy SMS powinien zawierać JSON z polami 'account_sid' i 'auth_token'."
         ) from exc

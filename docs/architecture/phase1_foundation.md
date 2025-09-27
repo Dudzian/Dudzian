@@ -8,6 +8,7 @@ zewnętrznych, z jasnym podziałem na warstwy i środowiska.
 
 | Moduł | Odpowiedzialność | Kluczowe klasy/interfejsy |
 | --- | --- | --- |
+
 | `bot_core/exchanges` | Adaptery giełdowe z rozdzieleniem środowisk i uprawnień | `ExchangeAdapter`, `ExchangeCredentials`, `BinanceSpotAdapter`, `BinanceFuturesAdapter`, `KrakenSpotAdapter` |
 | `bot_core/data` | Pobieranie, normalizacja i cache danych OHLCV | `DataSource`, `CachedOHLCVSource`, `PublicAPIDataSource` |
 | `bot_core/strategies` | Silnik strategii i walk-forward | `StrategyEngine`, `MarketSnapshot`, `StrategySignal`, `WalkForwardOptimizer` |
@@ -47,6 +48,7 @@ Loader `load_core_config` mapuje YAML na dataclasses i zapewnia konwersję pól 
 walidację środowiska poprzez `Environment` enum. Dzięki temu logika aplikacji otrzymuje w pełni
 ustrukturyzowany obiekt konfiguracyjny wraz z kompletną definicją uniwersum instrumentów, co
 upraszcza backfill danych oraz konfigurację strategii.
+ustrukturyzowany obiekt konfiguracyjny.
 
 ### Bootstrap środowiska
 
@@ -75,6 +77,7 @@ końcowego przygotowano skrypt `scripts/backfill_ohlcv.py`, który na podstawie 
 pobiera świece z Binance i aktualizuje lokalny cache w trybie bezkosztowym.
 
 ## Strategie i walk-forward
+
 
 `StrategyEngine` definiuje kontrakt odbierania snapshotów rynkowych oraz generowania sygnałów.
 Pierwszą ukończoną implementacją jest `DailyTrendMomentumStrategy`, która łączy średnie kroczące,

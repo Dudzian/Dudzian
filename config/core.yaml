@@ -214,6 +214,7 @@ environments:
     alert_channels: ["telegram:primary", "email:ops"]
     ip_allowlist: []
     instrument_universe: core_multi_exchange
+
   binance_live:
     exchange: binance_spot
     environment: live
@@ -223,6 +224,7 @@ environments:
     alert_channels: ["telegram:primary", "sms:orange_local", "email:ops"]
     ip_allowlist: []
     instrument_universe: core_multi_exchange
+
   binance_futures_paper:
     exchange: binance_futures
     environment: paper
@@ -232,6 +234,7 @@ environments:
     alert_channels: ["telegram:primary", "email:ops"]
     ip_allowlist: []
     instrument_universe: core_multi_exchange
+
   binance_futures_live:
     exchange: binance_futures
     environment: live
@@ -241,6 +244,7 @@ environments:
     alert_channels: ["telegram:primary", "sms:orange_local", "email:ops"]
     ip_allowlist: []
     instrument_universe: core_multi_exchange
+
   kraken_paper:
     exchange: kraken_spot
     environment: paper
@@ -250,6 +254,7 @@ environments:
     alert_channels: ["telegram:primary", "email:ops"]
     ip_allowlist: []
     instrument_universe: core_multi_exchange
+
   kraken_live:
     exchange: kraken_spot
     environment: live
@@ -259,6 +264,7 @@ environments:
     alert_channels: ["telegram:primary", "sms:orange_local", "email:ops"]
     ip_allowlist: []
     instrument_universe: core_multi_exchange
+
   zonda_paper:
     exchange: zonda_spot
     environment: paper
@@ -273,7 +279,6 @@ reporting:
   daily_report_time_utc: "21:00"
   weekly_report_day: "sunday"
   retention_months: "24"
-
 
 alerts:
   telegram_channels:

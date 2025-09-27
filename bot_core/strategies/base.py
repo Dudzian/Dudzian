@@ -17,7 +17,7 @@ class MarketSnapshot:
     """
 
     symbol: str
-    timestamp: int
+    timestamp: int  # unix epoch ms/s (w projekcie: ujednolicone po stronie loadera)
     open: float
     high: float
     low: float
@@ -31,9 +31,9 @@ class StrategySignal:
     """Rezultat działania strategii (np. sygnał wejścia/wyjścia)."""
 
     symbol: str
-    side: str
-    confidence: float
-    metadata: Mapping[str, float]
+    side: str              # "BUY" / "SELL" / "FLAT" itp.
+    confidence: float      # 0.0–1.0
+    metadata: Mapping[str, float] = field(default_factory=dict)
 
 
 class StrategyEngine(abc.ABC):
@@ -51,9 +51,7 @@ class StrategyEngine(abc.ABC):
 class WalkForwardOptimizer(Protocol):
     """Kontrakt dla optymalizatorów walk-forward."""
 
-    def split(
-        self, data: Sequence[MarketSnapshot]
-    ) -> Sequence[tuple[Sequence[MarketSnapshot], Sequence[MarketSnapshot]]]:
+    def split(self, data: Sequence[MarketSnapshot]) -> Sequence[tuple[Sequence[MarketSnapshot], Sequence[MarketSnapshot]]]:
         ...
 
     def select_parameters(self, in_sample: Sequence[MarketSnapshot]) -> Mapping[str, float]:

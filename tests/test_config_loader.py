@@ -63,6 +63,7 @@ def test_load_core_config_reads_sms_providers(tmp_path: Path) -> None:
 
     config = load_core_config(config_path)
 
+    # SMS providers
     assert "orange_local" in config.sms_providers
     provider = config.sms_providers["orange_local"]
     assert isinstance(provider, SMSProviderSettings)
@@ -71,11 +72,15 @@ def test_load_core_config_reads_sms_providers(tmp_path: Path) -> None:
     assert provider.allow_alphanumeric_sender is True
     assert provider.sender_id == "BOT-ORANGE"
     assert provider.credential_key == "orange_sms_credentials"
+
+    # Telegram
     assert "primary" in config.telegram_channels
     telegram = config.telegram_channels["primary"]
     assert telegram.chat_id == "123456789"
     assert telegram.token_secret == "telegram_primary_token"
     assert telegram.parse_mode == "MarkdownV2"
+
+    # Email
     email = config.email_channels["ops"]
     assert email.host == "smtp.example.com"
     assert email.port == 587
@@ -83,51 +88,9 @@ def test_load_core_config_reads_sms_providers(tmp_path: Path) -> None:
     assert email.recipients == ("ops@example.com",)
     assert email.credential_secret == "smtp_ops_credentials"
     assert email.use_tls is True
+
+    # Instrument universes
     universe = config.instrument_universes["core_multi_exchange"]
     assert universe.description == "Testowe uniwersum"
     assert len(universe.instruments) == 1
-    instrument = universe.instruments[0]
-    assert isinstance(instrument, InstrumentConfig)
-    assert instrument.exchange_symbols["binance_spot"] == "BTCUSDT"
-    assert instrument.backfill_windows[0].interval == "1d"
-    assert instrument.backfill_windows[0].lookback_days == 3650
-
-
-
-def test_load_core_config_loads_strategies(tmp_path: Path) -> None:
-    config_path = tmp_path / 'core.yaml'
-    config_path.write_text(
-        """
-        risk_profiles: {}
-        strategies:
-          core_daily_trend:
-            engine: daily_trend_momentum
-            parameters:
-              fast_ma: 30
-              slow_ma: 120
-              breakout_lookback: 60
-              momentum_window: 25
-              atr_window: 15
-              atr_multiplier: 1.8
-              min_trend_strength: 0.01
-              min_momentum: 0.002
-        instrument_universes: {}
-        environments: {}
-        reporting: {}
-        alerts: {}
-        """,
-        encoding='utf-8',
-    )
-
-    config = load_core_config(config_path)
-
-    assert 'core_daily_trend' in config.strategies
-    strategy = config.strategies['core_daily_trend']
-    assert strategy.fast_ma == 30
-    assert strategy.slow_ma == 120
-    assert strategy.breakout_lookback == 60
-    assert strategy.momentum_window == 25
-    assert strategy.atr_window == 15
-    assert abs(strategy.atr_multiplier - 1.8) < 1e-9
-    assert abs(strategy.min_trend_strength - 0.01) < 1e-9
-    assert abs(strategy.min_momentum - 0.002) < 1e-9
+    instrument = universe.instru

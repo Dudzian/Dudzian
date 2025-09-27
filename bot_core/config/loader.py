@@ -94,7 +94,6 @@ def _load_strategies(raw: Mapping[str, Any]) -> Mapping[str, DailyTrendMomentumS
 
 def load_core_config(path: str | Path) -> CoreConfig:
     """Wczytuje plik YAML i mapuje go na dataclasses."""
-
     with Path(path).open("r", encoding="utf-8") as handle:
         raw: dict[str, Any] = yaml.safe_load(handle) or {}
 
@@ -131,6 +130,7 @@ def load_core_config(path: str | Path) -> CoreConfig:
     }
 
     strategies = _load_strategies(raw)
+
     reporting = raw.get("reporting", {})
     alerts = raw.get("alerts", {})
     sms_providers = _load_sms_providers(alerts)
