@@ -14,6 +14,8 @@ import yaml
 from cryptography.fernet import Fernet, InvalidToken
 import pandas as pd
 
+from KryptoLowca.security.api_key_manager import APIKeyManager
+
 if TYPE_CHECKING:  # pragma: no cover - tylko dla typowania
     from KryptoLowca.backtest.simulation import BacktestReport, MatchingConfig
     from KryptoLowca.data.market_data import MarketDataProvider, MarketDataRequest
@@ -440,6 +442,11 @@ class ConfigManager:
         self._current_config: Dict[str, Any] = self._default_config()
         self._marketplace_dir: Optional[Path] = None
         self._versions_dir: Path = self.config_path.parent / "versions"
+        self.api_key_manager = APIKeyManager(
+            self.config_path.parent / "api_keys_store.json",
+            encryptor=self._encrypt_section,
+            decryptor=self._decrypt_section,
+        )
 
     @classmethod
     async def create(
