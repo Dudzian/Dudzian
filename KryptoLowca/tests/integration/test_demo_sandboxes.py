@@ -26,6 +26,12 @@ class ExchangeAuthConfig:
     manager_account: str
 
 
+@dataclass(slots=True)
+class DemoModeDecision:
+    demo_mode: bool
+    compliance_ack: bool = False
+
+
 EXCHANGES = {
     "binance-testnet": ExchangeAuthConfig(
         env_prefix="BINANCE_TESTNET",
@@ -56,26 +62,29 @@ def _is_truthy(value: str) -> Optional[bool]:
     return None
 
 
-def resolve_demo_mode(exchange_name: str) -> bool:
+def resolve_demo_mode(exchange_name: str) -> DemoModeDecision:
     config = EXCHANGES[exchange_name]
     requested_mode = os.getenv(f"{config.env_prefix}_DEMO_MODE")
     if not requested_mode:
-        return True
+        return DemoModeDecision(demo_mode=True)
 
     parsed = _is_truthy(requested_mode)
-    if parsed is None:
-        return True
-
-    if parsed:
-        return True
+    if parsed is None or parsed:
+        return DemoModeDecision(demo_mode=True)
 
     ack = os.getenv(f"{config.env_prefix}_COMPLIANCE_ACK")
-    if ack and _is_truthy(ack) is not False:
-        return False
+    if not ack:
+        pytest.skip(
+            "Wymagane jest ustawienie compliance_ack dla uruchomienia testu w trybie live"
+        )
 
-    pytest.skip(
-        "Wymagane jest ustawienie compliance_ack dla uruchomienia testu w trybie live"
-    )
+    ack_value = _is_truthy(ack)
+    if ack_value is not True:
+        pytest.skip(
+            "Wymagane jest potwierdzenie compliance_ack (wartość True) dla testu live"
+        )
+
+    return DemoModeDecision(demo_mode=False, compliance_ack=True)
 
 
 def _transform(section: str, data: dict, transform_value) -> dict:
@@ -161,8 +170,11 @@ async def test_binance_testnet_order_lifecycle():
     except MissingCredentials:
         pytest.skip("Brak poświadczeń Binance Testnet")
 
-    demo_mode = resolve_demo_mode("binance-testnet")
-    adapter = BinanceTestnetAdapter(demo_mode=demo_mode)
+    demo_decision = resolve_demo_mode("binance-testnet")
+    adapter = BinanceTestnetAdapter(
+        demo_mode=demo_decision.demo_mode,
+        compliance_ack=demo_decision.compliance_ack,
+    )
 
     try:
         await adapter.connect()
@@ -202,8 +214,11 @@ async def test_kraken_demo_order_lifecycle():
     except MissingCredentials:
         pytest.skip("Brak poświadczeń Kraken Demo")
 
-    demo_mode = resolve_demo_mode("kraken-demo")
-    adapter = KrakenDemoAdapter(demo_mode=demo_mode)
+    demo_decision = resolve_demo_mode("kraken-demo")
+    adapter = KrakenDemoAdapter(
+        demo_mode=demo_decision.demo_mode,
+        compliance_ack=demo_decision.compliance_ack,
+    )
 
     try:
         await adapter.connect()
