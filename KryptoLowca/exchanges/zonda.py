@@ -287,6 +287,37 @@ class ZondaAdapter(RESTWebSocketAdapter):
             "Request-Timestamp": timestamp,
         }
 
+    _STATUS_ALIASES = {
+        "ok": "OK",
+        "new": "NEW",
+        "active": "ACTIVE",
+        "pending": "PENDING",
+        "waiting": "PENDING",
+        "post_only": "PENDING",
+        "postonly": "PENDING",
+        "partially_filled": "PARTIALLY_FILLED",
+        "partiallyfilled": "PARTIALLY_FILLED",
+        "partially-filled": "PARTIALLY_FILLED",
+        "partially": "PARTIALLY_FILLED",
+        "cancelled": "CANCELLED",
+        "canceled": "CANCELED",
+        "filled": "FILLED",
+        "closed": "FILLED",
+        "completed": "FILLED",
+        "rejected": "REJECTED",
+        "expired": "EXPIRED",
+        "failed": "REJECTED",
+    }
+
+    def _normalize_status(self, status: Any, default_status: str) -> str:
+        if not status:
+            return default_status
+        text = str(status).strip()
+        if not text:
+            return default_status
+        key = text.replace(" ", "_").replace("-", "_").lower()
+        return self._STATUS_ALIASES.get(key, text.upper())
+
     def _order_status_from_payload(
         self,
         payload: Dict[str, Any],
@@ -301,7 +332,7 @@ class ZondaAdapter(RESTWebSocketAdapter):
             or payload.get("clientOrderId")
             or ""
         )
-        status = str(payload.get("status", default_status)).upper()
+        status = self._normalize_status(payload.get("status"), default_status)
         filled = self._to_float(
             payload.get("filled")
             or payload.get("filledAmount")

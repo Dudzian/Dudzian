@@ -784,7 +784,7 @@ class ConfigManager:
             key: ("" if key in self.ENCRYPTED_FIELDS.get("exchange", set()) else value)
             for key, value in template["exchange"].items()
         }
-        with self.config_path.open("w", encoding="utf-8") as fh):
+        with self.config_path.open("w", encoding="utf-8") as fh:
             yaml.safe_dump(template, fh, sort_keys=True)
         return self.config_path
 
