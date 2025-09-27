@@ -513,6 +513,33 @@ class BacktestEngine:
 
         open_trade: Dict[str, object] | None = None
 
+        zero_volume_start_idx: int | None = None
+        zero_volume_start_ts: datetime | None = None
+        zero_volume_last_ts: datetime | None = None
+        zero_volume_count = 0
+        zero_volume_threshold = 3 if timeframe_s else 10
+
+        def _finalize_zero_volume_warning() -> None:
+            nonlocal zero_volume_start_idx, zero_volume_start_ts, zero_volume_last_ts, zero_volume_count
+            if zero_volume_count >= zero_volume_threshold and zero_volume_start_idx is not None:
+                duration_s: int | None = None
+                if zero_volume_start_ts and zero_volume_last_ts:
+                    duration_s = int((zero_volume_last_ts - zero_volume_start_ts).total_seconds())
+                start_ts = zero_volume_start_ts.isoformat() if zero_volume_start_ts else "?"
+                end_ts = zero_volume_last_ts.isoformat() if zero_volume_last_ts else "?"
+                duration_fragment = (
+                    f", łączny czas ok. {duration_s}s" if duration_s is not None and duration_s > 0 else ""
+                )
+                warnings.append(
+                    "Wykryto długą sekwencję zerowego wolumenu: "
+                    f"od indeksu {zero_volume_start_idx} ({start_ts}) do {end_ts} "
+                    f"({zero_volume_count} świec{duration_fragment})."
+                )
+            zero_volume_start_idx = None
+            zero_volume_start_ts = None
+            zero_volume_last_ts = None
+            zero_volume_count = 0
+
         def apply_fill(fill: BacktestFill, *, bar_close: float) -> None:
             nonlocal cash, position, total_fees, total_slippage, open_trade
             fee_paid = float(fill.fee)
@@ -623,6 +650,16 @@ class BacktestEngine:
                 "close": float(closes[idx]),
                 "volume": float(volumes[idx]),
             }
+
+            if bar["volume"] <= 0.0:
+                if zero_volume_start_idx is None:
+                    zero_volume_start_idx = idx
+                    zero_volume_start_ts = timestamp
+                zero_volume_last_ts = timestamp
+                zero_volume_count += 1
+            else:
+                _finalize_zero_volume_warning()
+
             last_bar_idx = idx
             last_bar = bar
             last_ts = timestamp
@@ -688,6 +725,8 @@ class BacktestEngine:
                 if previous_equity:
                     returns.append((final_equity - previous_equity) / previous_equity)
                 previous_equity = final_equity
+
+        _finalize_zero_volume_warning()
 
         self._session.close()
         metrics = self._compute_metrics(
