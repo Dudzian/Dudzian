@@ -24,7 +24,7 @@ from KryptoLowca.managers.exchange_manager import ExchangeManager
 from KryptoLowca.managers.ai_manager import AIManager
 from KryptoLowca.managers.risk_manager_adapter import RiskManager
 from KryptoLowca.managers.database_manager import DatabaseManager
-from KryptoLowca.trading_strategies import TradingStrategies, TradingParameters, EngineConfig
+from KryptoLowca.strategies import TradingStrategies, TradingParameters, EngineConfig
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:

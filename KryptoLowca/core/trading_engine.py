@@ -29,7 +29,7 @@ try:  # pragma: no cover
     from KryptoLowca.managers.database_manager import DatabaseManager  # type: ignore
     from KryptoLowca.managers.exchange_manager import ExchangeManager  # type: ignore
     from KryptoLowca.managers.risk_manager_adapter import RiskManager  # type: ignore
-    from KryptoLowca.trading_strategies import (  # type: ignore
+    from KryptoLowca.strategies import (  # type: ignore
         EngineConfig,
         TradingParameters,
         TradingStrategies,
@@ -40,7 +40,7 @@ except Exception:  # pragma: no cover
     from managers.database_manager import DatabaseManager
     from managers.exchange_manager import ExchangeManager
     from managers.risk_manager_adapter import RiskManager
-    from trading_strategies import EngineConfig, TradingParameters, TradingStrategies
+    from strategies import EngineConfig, TradingParameters, TradingStrategies
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:

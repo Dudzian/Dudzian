@@ -9,7 +9,7 @@ import pandas as pd
 import numpy as np
 from unittest.mock import AsyncMock
 from KryptoLowca.core.trading_engine import TradingEngine, TradingError
-from KryptoLowca.trading_strategies import TradingParameters, EngineConfig, TradingStrategies
+from KryptoLowca.strategies import TradingParameters, EngineConfig, TradingStrategies
 
 class MockExchange:
     async def fetch_balance(self):

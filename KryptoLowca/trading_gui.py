@@ -102,7 +102,7 @@ from KryptoLowca.managers.risk_manager_adapter import RiskManager
 from KryptoLowca.core.trading_engine import TradingEngine
 
 # istniejące moduły w repo
-from KryptoLowca.trading_strategies import TradingStrategies
+from KryptoLowca.strategies import TradingStrategies
 from reporting import TradeInfo
 from KryptoLowca.database_manager import DatabaseManager  # klasyczny (bezargumentowy) konstruktor
 

@@ -15,7 +15,7 @@ from pathlib import Path
 sys.path.append(os.getcwd())
 
 from KryptoLowca.trading_gui import TradingGUI
-from KryptoLowca.trading_strategies import TradingParameters, EngineConfig
+from KryptoLowca.strategies import TradingParameters, EngineConfig
 from KryptoLowca.managers.exchange_manager import ExchangeManager
 from KryptoLowca.managers.exchange_core import Mode
 from KryptoLowca.managers.config_manager import ConfigManager

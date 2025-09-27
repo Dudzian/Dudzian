@@ -21,9 +21,12 @@ import pandas as pd
 
 # Opcjonalnie do typów (nie wymagane do działania)
 try:
-    from KryptoLowca.trading_strategies import TradingParameters  # noqa: F401
+    from KryptoLowca.strategies import TradingParameters  # type: ignore
 except Exception:  # pragma: no cover
-    TradingParameters = object  # type: ignore
+    try:
+        from strategies import TradingParameters  # type: ignore
+    except Exception:
+        TradingParameters = object  # type: ignore
 
 REQUIRED_COLS = ["open", "high", "low", "close", "volume"]
 

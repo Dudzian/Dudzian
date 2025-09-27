@@ -26,11 +26,11 @@ try:  # pragma: no cover
         OrderStatus,
         OrderType,
     )
-    from KryptoLowca.trading_strategies import EngineConfig, TradingParameters  # type: ignore
+    from KryptoLowca.strategies import EngineConfig, TradingParameters  # type: ignore
 except Exception:  # pragma: no cover
     from core.trading_engine import TradingEngine
     from managers.exchange_core import Mode, OrderDTO, OrderSide, OrderStatus, OrderType
-    from trading_strategies import EngineConfig, TradingParameters
+    from strategies import EngineConfig, TradingParameters
 
 
 class MockExchange:

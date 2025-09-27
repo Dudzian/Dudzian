@@ -21,4 +21,4 @@ if __package__ in (None, ""):
     _ensure_repo_root()
 
 
-from KryptoLowca.trading_strategies import *  # noqa: F401,F403
+from KryptoLowca.strategies import *  # noqa: F401,F403
