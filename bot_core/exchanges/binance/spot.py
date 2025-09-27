@@ -63,6 +63,62 @@ def _stringify_params(params: Mapping[str, object]) -> list[tuple[str, str]]:
     return normalized
 
 
+def _direct_conversion_rate(
+    base: str, quote: str, prices: Mapping[str, float]
+) -> Optional[float]:
+    """Zwraca kurs wymiany dla pary base/quote na podstawie tickerów."""
+
+    if base == quote:
+        return 1.0
+
+    direct_symbol = f"{base}{quote}"
+    if direct_symbol in prices:
+        return prices[direct_symbol]
+
+    reverse_symbol = f"{quote}{base}"
+    reverse_price = prices.get(reverse_symbol)
+    if reverse_price:
+        if reverse_price == 0:
+            return None
+        return 1.0 / reverse_price
+    return None
+
+
+def _determine_intermediaries(target: str, prices: Mapping[str, float]) -> set[str]:
+    """Wyszukuje aktywa, które mają notowania z daną walutą docelową."""
+
+    intermediaries: set[str] = set()
+    target_len = len(target)
+    for symbol in prices.keys():
+        if symbol.endswith(target) and len(symbol) > target_len:
+            intermediaries.add(symbol[: -target_len])
+        elif symbol.startswith(target) and len(symbol) > target_len:
+            intermediaries.add(symbol[target_len:])
+    return intermediaries
+
+
+def _convert_to_target(
+    asset: str, target: str, prices: Mapping[str, float]
+) -> Optional[float]:
+    """Próbuje przeliczyć aktywo na walutę docelową przy użyciu triangulacji."""
+
+    direct_rate = _direct_conversion_rate(asset, target, prices)
+    if direct_rate is not None:
+        return direct_rate
+
+    for intermediary in _determine_intermediaries(target, prices):
+        if intermediary == asset:
+            continue
+        first_leg = _direct_conversion_rate(asset, intermediary, prices)
+        if first_leg is None:
+            continue
+        second_leg = _direct_conversion_rate(intermediary, target, prices)
+        if second_leg is None:
+            continue
+        return first_leg * second_leg
+    return None
+
+
 class BinanceSpotAdapter(ExchangeAdapter):
     """Adapter dla rynku spot Binance z obsługą danych publicznych i podpisanych."""
 
@@ -179,7 +235,7 @@ class BinanceSpotAdapter(ExchangeAdapter):
 
         balances_section = payload.get("balances", [])
         balances: dict[str, float] = {}
-        available_margin = 0.0
+        free_balances: dict[str, float] = {}
         if isinstance(balances_section, list):
             for entry in balances_section:
                 if not isinstance(entry, Mapping):
@@ -190,9 +246,40 @@ class BinanceSpotAdapter(ExchangeAdapter):
                 if not isinstance(asset, str):
                     continue
                 balances[asset] = free + locked
-                available_margin += free
+                free_balances[asset] = free
 
-        total_equity = sum(balances.values())
+        ticker_payload = self._public_request("/api/v3/ticker/price")
+        prices: dict[str, float] = {}
+        if isinstance(ticker_payload, list):
+            for entry in ticker_payload:
+                if not isinstance(entry, Mapping):
+                    continue
+                symbol = entry.get("symbol")
+                price = _to_float(entry.get("price", 0.0))
+                if isinstance(symbol, str):
+                    prices[symbol] = price
+
+        valuation_currency = "USDT"
+        secondary_currencies = ("USDX",)
+        total_equity = 0.0
+        available_margin = 0.0
+        for asset, total_balance in balances.items():
+            conversion = _convert_to_target(asset, valuation_currency, prices)
+            if conversion is None:
+                for secondary in secondary_currencies:
+                    first_leg = _convert_to_target(asset, secondary, prices)
+                    if first_leg is None:
+                        continue
+                    second_leg = _convert_to_target(secondary, valuation_currency, prices)
+                    if second_leg is None:
+                        continue
+                    conversion = first_leg * second_leg
+                    break
+            if conversion is None:
+                continue
+            total_equity += total_balance * conversion
+            available_margin += free_balances.get(asset, 0.0) * conversion
+
         maintenance_margin = _to_float(
             payload.get("maintMarginBalance", payload.get("totalMarginBalance", 0.0))
         )
