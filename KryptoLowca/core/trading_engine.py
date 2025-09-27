@@ -35,12 +35,16 @@ try:  # pragma: no cover
         TradingStrategies,
     )
 except Exception:  # pragma: no cover
-    from core.order_executor import ExecutionResult, OrderExecutor
-    from managers.ai_manager import AIManager
-    from managers.database_manager import DatabaseManager
-    from managers.exchange_manager import ExchangeManager
-    from managers.risk_manager_adapter import RiskManager
-    from trading_strategies import EngineConfig, TradingParameters, TradingStrategies
+    from legacy_bridge.core.order_executor import ExecutionResult, OrderExecutor
+    from legacy_bridge.managers.ai_manager import AIManager
+    from legacy_bridge.managers.database_manager import DatabaseManager
+    from legacy_bridge.managers.exchange_manager import ExchangeManager
+    from legacy_bridge.managers.risk_manager_adapter import RiskManager
+    from legacy_bridge.trading_strategies import (
+        EngineConfig,
+        TradingParameters,
+        TradingStrategies,
+    )
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:

@@ -1,4 +1,4 @@
-"""Wejściowy moduł zgodności dla ``risk_management``."""
+"""Wejściowy moduł zgodności dla ``managers.risk_manager_adapter``. (READ ONLY: przekierowuje do pakietu `KryptoLowca`)."""
 
 from __future__ import annotations
 
@@ -21,4 +21,4 @@ if __package__ in (None, ""):
     _ensure_repo_root()
 
 
-from KryptoLowca.risk_management import *  # noqa: F401,F403
+from KryptoLowca.managers.risk_manager_adapter import *  # noqa: F401,F403

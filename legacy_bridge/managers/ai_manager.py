@@ -1,4 +1,4 @@
-"""Wejściowy moduł zgodności dla ``managers.ai_manager``."""
+"""Wejściowy moduł zgodności dla ``managers.ai_manager``. (READ ONLY: przekierowuje do pakietu `KryptoLowca`)."""
 
 from __future__ import annotations
 

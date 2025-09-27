@@ -1,4 +1,4 @@
-"""Wejściowy moduł zgodności dla ``config_manager``."""
+"""Wejściowy moduł zgodności dla ``trading_strategies``. (READ ONLY: przekierowuje do pakietu `KryptoLowca`)."""
 
 from __future__ import annotations
 
@@ -21,4 +21,4 @@ if __package__ in (None, ""):
     _ensure_repo_root()
 
 
-from KryptoLowca.config_manager import *  # noqa: F401,F403
+from KryptoLowca.trading_strategies import *  # noqa: F401,F403

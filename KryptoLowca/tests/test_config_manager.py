@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 try:  # pragma: no cover
     from KryptoLowca.managers.config_manager import ConfigManager  # type: ignore
 except Exception:  # pragma: no cover
-    from managers.config_manager import ConfigManager
+    from legacy_bridge.managers.config_manager import ConfigManager
 
 
 @pytest.fixture()

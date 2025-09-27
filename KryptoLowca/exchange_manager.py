@@ -84,7 +84,7 @@ except Exception:  # pragma: no cover - starsze wersje ccxt
 try:  # pragma: no cover
     from KryptoLowca.managers.exchange_core import Mode  # type: ignore
 except Exception:  # pragma: no cover
-    from managers.exchange_core import Mode  # type: ignore
+    from legacy_bridge.managers.exchange_core import Mode  # type: ignore
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:

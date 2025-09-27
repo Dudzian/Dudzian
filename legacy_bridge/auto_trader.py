@@ -1,4 +1,4 @@
-"""Wejściowy moduł zgodności dla ``ai_manager``."""
+"""Wejściowy moduł zgodności dla ``auto_trader``. (READ ONLY: przekierowuje do pakietu `KryptoLowca`)."""
 
 from __future__ import annotations
 
@@ -21,4 +21,4 @@ if __package__ in (None, ""):
     _ensure_repo_root()
 
 
-from KryptoLowca.ai_manager import *  # noqa: F401,F403
+from KryptoLowca.auto_trader import *  # noqa: F401,F403

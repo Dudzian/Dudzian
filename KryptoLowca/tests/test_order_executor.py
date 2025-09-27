@@ -19,8 +19,14 @@ try:  # pragma: no cover
         OrderType,
     )
 except Exception:  # pragma: no cover
-    from core.order_executor import OrderExecutor
-    from managers.exchange_core import Mode, OrderDTO, OrderSide, OrderStatus, OrderType
+    from legacy_bridge.core.order_executor import OrderExecutor
+    from legacy_bridge.managers.exchange_core import (
+        Mode,
+        OrderDTO,
+        OrderSide,
+        OrderStatus,
+        OrderType,
+    )
 
 
 class DummyExchange:
