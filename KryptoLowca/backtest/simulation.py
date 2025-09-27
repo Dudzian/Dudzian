@@ -492,17 +492,7 @@ class BacktestEngine:
                 timestamps.append(datetime.fromtimestamp(float(ts) / 1000.0, tz=timezone.utc))
 
         timeframe_s = _safe_timeframe_to_seconds(self._timeframe)
-        if timeframe_s and len(timestamps) >= 2:
-            gap_threshold = timeframe_s * 1.5
-            for prev_ts, current_ts in zip(timestamps, timestamps[1:]):
-                delta_s = (current_ts - prev_ts).total_seconds()
-                if delta_s > gap_threshold:
-                    missing = max(1, int(round(delta_s / timeframe_s)) - 1)
-                    warnings.append(
-                        "Wykryto lukę danych: brak "
-                        f"{missing} świec pomiędzy {prev_ts.isoformat()} a {current_ts.isoformat()} "
-                        f"(odstęp {int(delta_s)}s, timeframe {self._timeframe})."
-                    )
+        gap_threshold = timeframe_s * 1.5 if timeframe_s else None
 
         invalid_volume_indices: List[int] = []
         for idx, vol in enumerate(volumes):
@@ -611,6 +601,19 @@ class BacktestEngine:
         last_ts: datetime | None = None
 
         for idx, timestamp in enumerate(timestamps):
+            if (
+                gap_threshold is not None
+                and last_ts is not None
+                and timestamp > last_ts
+            ):
+                delta_s = (timestamp - last_ts).total_seconds()
+                if delta_s > gap_threshold and timeframe_s:
+                    missing = max(1, int(round(delta_s / timeframe_s)) - 1)
+                    warnings.append(
+                        "Wykryto lukę danych: brak "
+                        f"{missing} świec pomiędzy {last_ts.isoformat()} a {timestamp.isoformat()} "
+                        f"(odstęp {int(delta_s)}s, timeframe {self._timeframe})."
+                    )
             bar = {
                 "open": float(opens[idx]),
                 "high": float(highs[idx]),
