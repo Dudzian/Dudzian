@@ -77,6 +77,8 @@ def test_router_dispatch_records_audit(sample_message: AlertMessage) -> None:
     exported = tuple(audit.export())
     assert len(exported) == 1
     assert exported[0]["channel"] == "dummy"
+    assert channel.messages[0].severity == "critical"
+    assert exported[0]["severity"] == "critical"
 
 
 def test_router_continues_on_error(sample_message: AlertMessage, caplog: pytest.LogCaptureFixture) -> None:
