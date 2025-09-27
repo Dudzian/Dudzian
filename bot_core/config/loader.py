@@ -50,6 +50,12 @@ try:
 except Exception:
     MessengerChannelSettings = None  # type: ignore
 
+# Opcjonalna konfiguracja kontrolerów runtime
+try:
+    from bot_core.config.models import ControllerRuntimeConfig  # type: ignore
+except Exception:
+    ControllerRuntimeConfig = None  # type: ignore
+
 
 def _core_has(field_name: str) -> bool:
     """Sprawdza, czy CoreConfig posiada dane pole (bezpiecznie dla różnych gałęzi)."""
@@ -195,8 +201,6 @@ def load_core_config(path: str | Path) -> CoreConfig:
             alert_channels=tuple(entry.get("alert_channels", ()) or ()),
             ip_allowlist=tuple(entry.get("ip_allowlist", ()) or ()),
             credential_purpose=str(entry.get("credential_purpose", "trading")),
-            # to pole istnieje tylko w rozszerzonej wersji models.py – ale przekazanie nadmiarowego
-            # argumentu do dataclass wywoła błąd, więc ustawiamy je tu bezpiecznie na etapie budowy env
             instrument_universe=entry.get("instrument_universe"),
         )
         for name, entry in raw.get("environments", {}).items()
@@ -266,6 +270,15 @@ def load_core_config(path: str | Path) -> CoreConfig:
         core_kwargs["whatsapp_channels"] = whatsapp_channels
     if _core_has("messenger_channels"):
         core_kwargs["messenger_channels"] = messenger_channels
+    if _core_has("runtime_controllers") and ControllerRuntimeConfig is not None:
+        controllers_raw = (raw.get("runtime", {}) or {}).get("controllers", {}) or {}
+        core_kwargs["runtime_controllers"] = {
+            name: ControllerRuntimeConfig(
+                tick_seconds=float(entry.get("tick_seconds", entry.get("tick", 60.0))),
+                interval=str(entry.get("interval", "1d")),
+            )
+            for name, entry in controllers_raw.items()
+        }
 
     return CoreConfig(**core_kwargs)  # type: ignore[arg-type]
 

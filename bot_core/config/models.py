@@ -155,6 +155,14 @@ class MessengerChannelSettings:
 
 
 @dataclass(slots=True)
+class ControllerRuntimeConfig:
+    """Parametry sterujące cyklem pracy kontrolerów runtime."""
+
+    tick_seconds: float
+    interval: str
+
+
+@dataclass(slots=True)
 class CoreConfig:
     """Najwyższego poziomu konfiguracja aplikacji."""
 
@@ -169,6 +177,7 @@ class CoreConfig:
     signal_channels: Mapping[str, SignalChannelSettings]
     whatsapp_channels: Mapping[str, WhatsAppChannelSettings]
     messenger_channels: Mapping[str, MessengerChannelSettings]
+    runtime_controllers: Mapping[str, ControllerRuntimeConfig] = field(default_factory=dict)
 
 
 __all__ = [
@@ -184,5 +193,6 @@ __all__ = [
     "SignalChannelSettings",
     "WhatsAppChannelSettings",
     "MessengerChannelSettings",
+    "ControllerRuntimeConfig",
     "CoreConfig",
 ]
