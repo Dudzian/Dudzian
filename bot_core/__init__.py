@@ -17,6 +17,13 @@ from bot_core.security import (
 )
 from bot_core.runtime import BootstrapContext, bootstrap_environment
 
+# Observability is optional; expose when available.
+try:  # pragma: no cover - optional dependency
+    from bot_core.observability import MetricsRegistry, get_global_metrics_registry  # type: ignore
+except Exception:  # pragma: no cover - keep package import-safe without observability
+    MetricsRegistry = None  # type: ignore[assignment]
+    get_global_metrics_registry = None  # type: ignore[assignment]
+
 __all__ = [
     "AlertChannel",
     "AlertMessage",
@@ -32,3 +39,7 @@ __all__ = [
     "bootstrap_environment",
     "load_core_config",
 ]
+
+# Add observability symbols only if successfully imported
+if MetricsRegistry is not None and get_global_metrics_registry is not None:  # pragma: no cover
+    __all__ += ["MetricsRegistry", "get_global_metrics_registry"]

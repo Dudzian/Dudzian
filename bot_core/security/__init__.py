@@ -6,6 +6,8 @@ from bot_core.security.base import (
     SecretStorage,
     SecretStorageError,
 )
+from bot_core.security.factory import create_default_secret_storage
+from bot_core.security.file_storage import EncryptedFileSecretStorage
 from bot_core.security.keyring_storage import KeyringSecretStorage
 
 __all__ = [
@@ -14,4 +16,6 @@ __all__ = [
     "SecretStorage",
     "SecretStorageError",
     "KeyringSecretStorage",
+    "EncryptedFileSecretStorage",
+    "create_default_secret_storage",
 ]

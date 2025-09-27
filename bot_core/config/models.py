@@ -119,6 +119,42 @@ class EmailChannelSettings:
 
 
 @dataclass(slots=True)
+class SignalChannelSettings:
+    """Konfiguracja kanału Signal opartego o usługę signal-cli."""
+
+    name: str
+    service_url: str
+    sender_number: str
+    recipients: Sequence[str]
+    credential_secret: str | None = None
+    verify_tls: bool = True
+
+
+@dataclass(slots=True)
+class WhatsAppChannelSettings:
+    """Konfiguracja kanału WhatsApp wykorzystującego Graph API."""
+
+    name: str
+    phone_number_id: str
+    recipients: Sequence[str]
+    token_secret: str
+    api_base_url: str = "https://graph.facebook.com"
+    api_version: str = "v16.0"
+
+
+@dataclass(slots=True)
+class MessengerChannelSettings:
+    """Konfiguracja kanału Facebook Messenger."""
+
+    name: str
+    page_id: str
+    recipients: Sequence[str]
+    token_secret: str
+    api_base_url: str = "https://graph.facebook.com"
+    api_version: str = "v16.0"
+
+
+@dataclass(slots=True)
 class ControllerRuntimeConfig:
     """Parametry sterujące cyklem pracy kontrolerów runtime."""
 
@@ -138,6 +174,9 @@ class CoreConfig:
     sms_providers: Mapping[str, SMSProviderSettings]
     telegram_channels: Mapping[str, TelegramChannelSettings]
     email_channels: Mapping[str, EmailChannelSettings]
+    signal_channels: Mapping[str, SignalChannelSettings]
+    whatsapp_channels: Mapping[str, WhatsAppChannelSettings]
+    messenger_channels: Mapping[str, MessengerChannelSettings]
     runtime_controllers: Mapping[str, ControllerRuntimeConfig] = field(default_factory=dict)
 
 
@@ -151,6 +190,9 @@ __all__ = [
     "SMSProviderSettings",
     "TelegramChannelSettings",
     "EmailChannelSettings",
+    "SignalChannelSettings",
+    "WhatsAppChannelSettings",
+    "MessengerChannelSettings",
     "ControllerRuntimeConfig",
     "CoreConfig",
 ]

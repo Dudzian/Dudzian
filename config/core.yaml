@@ -68,6 +68,7 @@ instrument_universes:
           binance_spot: BTCUSDT
           binance_futures: BTCUSDT
           kraken_spot: XBTUSDT
+          kraken_futures: pi_xbtusd
           zonda_spot: BTC-USDT
         backfill:
           - interval: 1d
@@ -82,6 +83,7 @@ instrument_universes:
           binance_spot: ETHUSDT
           binance_futures: ETHUSDT
           kraken_spot: ETHUSDT
+          kraken_futures: pi_ethusd
           zonda_spot: ETH-USDT
         backfill:
           - interval: 1d
@@ -95,6 +97,7 @@ instrument_universes:
         exchanges:
           binance_spot: BTCEUR
           kraken_spot: XBTEUR
+          kraken_futures: pi_xbteur
           zonda_spot: BTC-EUR
         backfill:
           - interval: 1d
@@ -108,6 +111,7 @@ instrument_universes:
         exchanges:
           binance_spot: ETHEUR
           kraken_spot: ETHEUR
+          kraken_futures: pi_etheur
           zonda_spot: ETH-EUR
         backfill:
           - interval: 1d
@@ -271,6 +275,26 @@ environments:
     ip_allowlist: []
     instrument_universe: core_multi_exchange
 
+  kraken_futures_paper:
+    exchange: kraken_futures
+    environment: paper
+    keychain_key: kraken_futures_paper_trading
+    data_cache_path: ./var/data/kraken_futures_paper
+    risk_profile: balanced
+    alert_channels: ["telegram:primary", "email:ops"]
+    ip_allowlist: []
+    instrument_universe: core_multi_exchange
+
+  kraken_futures_live:
+    exchange: kraken_futures
+    environment: live
+    keychain_key: kraken_futures_live_trading
+    data_cache_path: ./var/data/kraken_futures_live
+    risk_profile: conservative
+    alert_channels: ["telegram:primary", "sms:orange_local", "email:ops"]
+    ip_allowlist: []
+    instrument_universe: core_multi_exchange
+
   zonda_paper:
     exchange: zonda_spot
     environment: paper
@@ -278,6 +302,16 @@ environments:
     data_cache_path: ./var/data/zonda_paper
     risk_profile: conservative
     alert_channels: ["telegram:primary"]
+    ip_allowlist: []
+    instrument_universe: core_multi_exchange
+
+  zonda_live:
+    exchange: zonda_spot
+    environment: live
+    keychain_key: zonda_live_trading
+    data_cache_path: ./var/data/zonda_live
+    risk_profile: conservative
+    alert_channels: ["telegram:primary", "sms:nova_is", "email:ops"]
     ip_allowlist: []
     instrument_universe: core_multi_exchange
 
@@ -292,6 +326,30 @@ alerts:
       chat_id: "123456789"
       token_secret: telegram_primary_token
       parse_mode: MarkdownV2
+  signal_channels:
+    primary_signal:
+      service_url: https://signal-gateway.local
+      sender_number: "+48500100999"
+      recipients:
+        - "+48555111222"
+      credential_secret: signal_cli_token
+      verify_tls: true
+  whatsapp_channels:
+    primary_whatsapp:
+      phone_number_id: "10987654321"
+      recipients:
+        - "48555111222"
+      token_secret: whatsapp_primary_token
+      api_base_url: https://graph.facebook.com
+      api_version: v16.0
+  messenger_channels:
+    ops_messenger:
+      page_id: "1357924680"
+      recipients:
+        - "2468013579"
+      token_secret: messenger_page_token
+      api_base_url: https://graph.facebook.com
+      api_version: v16.0
   email_channels:
     ops:
       host: smtp.example.com
