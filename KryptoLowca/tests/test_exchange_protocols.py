@@ -7,16 +7,21 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from cryptography.fernet import Fernet
+import websockets
 
 from KryptoLowca.config_manager import ConfigManager
 from KryptoLowca.exchanges import (
     BinanceTestnetAdapter,
     ExchangeCredentials,
+    MarketSubscription,
     KrakenDemoAdapter,
     OrderRequest,
     OrderStatus,
 )
 from KryptoLowca.managers.multi_account_manager import MultiExchangeAccountManager
+
+import KryptoLowca.exchanges.binance as binance_module
+import KryptoLowca.exchanges.kraken as kraken_module
 
 
 class StubResponse:
@@ -119,6 +124,159 @@ async def test_kraken_headers_signed():
     detail = await adapter.fetch_order_status("ABC")
     assert detail.status == "CLOSED"
     assert len(http.requests) == 2
+
+
+@pytest.mark.asyncio
+async def test_binance_websocket_subscription(monkeypatch):
+    events: list[dict] = []
+    received_messages: list[dict] = []
+    received_event = asyncio.Event()
+
+    async def handler(websocket):
+        subscribe = json.loads(await websocket.recv())
+        received_messages.append(subscribe)
+        await websocket.send(json.dumps({"stream": "btcusdt@trade", "data": {"p": "100"}}))
+        try:
+            unsub = await asyncio.wait_for(websocket.recv(), timeout=1.0)
+            received_messages.append(json.loads(unsub))
+        except asyncio.TimeoutError:
+            pass
+
+    server = await websockets.serve(handler, "localhost", 0)
+    port = server.sockets[0].getsockname()[1]
+    endpoint = f"ws://localhost:{port}"
+    monkeypatch.setattr(binance_module, "_BINANCE_WS_ENDPOINT", endpoint)
+    monkeypatch.setattr(binance_module, "_BINANCE_WS_INITIAL_BACKOFF", 0.05)
+    monkeypatch.setattr(binance_module, "_BINANCE_WS_MAX_BACKOFF", 0.1)
+
+    adapter = BinanceTestnetAdapter(http_client=RecordingHTTPClient([]))
+    await adapter.connect()
+
+    async def callback(payload):
+        events.append(payload)
+        received_event.set()
+
+    subscription = MarketSubscription(channel="trade", symbols=["BTCUSDT"])
+    context = await adapter.stream_market_data([subscription], callback)
+    try:
+        async with context:
+            await asyncio.wait_for(received_event.wait(), timeout=1.0)
+    finally:
+        server.close()
+        await server.wait_closed()
+        await adapter.close()
+
+    assert events and events[0]["stream"] == "btcusdt@trade"
+    assert received_messages[0]["method"] == "SUBSCRIBE"
+    assert "btcusdt@trade" in received_messages[0]["params"]
+    if len(received_messages) > 1:
+        assert received_messages[1]["method"] == "UNSUBSCRIBE"
+
+
+@pytest.mark.asyncio
+async def test_binance_websocket_reconnect(monkeypatch):
+    connection_count = 0
+    events: list[dict] = []
+    ready = asyncio.Event()
+
+    async def handler(websocket):
+        nonlocal connection_count
+        connection_count += 1
+        await websocket.recv()
+        await websocket.send(
+            json.dumps(
+                {
+                    "stream": "btcusdt@trade",
+                    "data": {"p": "100", "connection": connection_count},
+                }
+            )
+        )
+        if connection_count == 1:
+            await websocket.close()
+        else:
+            await asyncio.sleep(0.1)
+
+    server = await websockets.serve(handler, "localhost", 0)
+    port = server.sockets[0].getsockname()[1]
+    endpoint = f"ws://localhost:{port}"
+    monkeypatch.setattr(binance_module, "_BINANCE_WS_ENDPOINT", endpoint)
+    monkeypatch.setattr(binance_module, "_BINANCE_WS_INITIAL_BACKOFF", 0.05)
+    monkeypatch.setattr(binance_module, "_BINANCE_WS_MAX_BACKOFF", 0.1)
+
+    adapter = BinanceTestnetAdapter(http_client=RecordingHTTPClient([]))
+    await adapter.connect()
+
+    async def callback(payload):
+        events.append(payload)
+        if len(events) >= 2:
+            ready.set()
+
+    subscription = MarketSubscription(channel="trade", symbols=["BTCUSDT"])
+    context = await adapter.stream_market_data([subscription], callback)
+    try:
+        async with context:
+            await asyncio.wait_for(ready.wait(), timeout=2.0)
+    finally:
+        server.close()
+        await server.wait_closed()
+        await adapter.close()
+
+    assert connection_count >= 2
+    assert len(events) >= 2
+    assert {event["data"]["connection"] for event in events} >= {1, 2}
+
+
+@pytest.mark.asyncio
+async def test_kraken_websocket_subscription(monkeypatch):
+    events: list[dict] = []
+    received: list[dict] = []
+    received_event = asyncio.Event()
+
+    async def handler(websocket):
+        subscribe = json.loads(await websocket.recv())
+        received.append(subscribe)
+        await websocket.send(json.dumps({"channel": "ticker", "data": {"price": "100"}}))
+        try:
+            unsub = await asyncio.wait_for(websocket.recv(), timeout=1.0)
+            received.append(json.loads(unsub))
+        except asyncio.TimeoutError:
+            pass
+
+    server = await websockets.serve(handler, "localhost", 0)
+    port = server.sockets[0].getsockname()[1]
+    endpoint = f"ws://localhost:{port}"
+    monkeypatch.setattr(kraken_module, "_KRAKEN_WS_ENDPOINT", endpoint)
+    monkeypatch.setattr(kraken_module, "_KRAKEN_WS_INITIAL_BACKOFF", 0.05)
+    monkeypatch.setattr(kraken_module, "_KRAKEN_WS_MAX_BACKOFF", 0.1)
+
+    adapter = KrakenDemoAdapter(http_client=RecordingHTTPClient([]))
+    await adapter.connect()
+
+    async def callback(payload):
+        events.append(payload)
+        received_event.set()
+
+    subscription = MarketSubscription(
+        channel="ticker",
+        symbols=["XBT/USD"],
+        params={"subscription": {"interval": 2}},
+    )
+    context = await adapter.stream_market_data([subscription], callback)
+    try:
+        async with context:
+            await asyncio.wait_for(received_event.wait(), timeout=1.0)
+    finally:
+        server.close()
+        await server.wait_closed()
+        await adapter.close()
+
+    assert events and events[0]["channel"] == "ticker"
+    assert received[0]["event"] == "subscribe"
+    assert received[0]["pair"] == ["XBT/USD"]
+    assert received[0]["subscription"]["name"] == "ticker"
+    assert received[0]["subscription"]["interval"] == 2
+    if len(received) > 1:
+        assert received[1]["event"] == "unsubscribe"
 
 
 @pytest.mark.asyncio

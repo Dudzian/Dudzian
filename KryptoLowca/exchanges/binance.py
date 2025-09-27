@@ -1,11 +1,15 @@
 """Adapter Binance Testnet zgodny z RESTWebSocketAdapter."""
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import hashlib
 import hmac
+import json
+import logging
 import time
 import urllib.parse
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 from typing import Any, Dict, Optional
 
 from .interfaces import (
@@ -19,19 +23,149 @@ from .interfaces import (
 )
 
 
-class _DummySubscription:
-    """Prosta implementacja kontekstu WebSocket dla testów."""
+try:  # pragma: no cover - zależność opcjonalna w środowisku runtime
+    import websockets
+    from websockets.protocol import State as _WSState
+except Exception:  # pragma: no cover - środowiska bez websocketów
+    websockets = None  # type: ignore[assignment]
+    _WSState = None  # type: ignore[assignment]
 
-    def __init__(self, callback: Callable[[], None] | None = None) -> None:
+
+logger = logging.getLogger(__name__)
+
+
+_BINANCE_WS_ENDPOINT = "wss://testnet.binance.vision/ws"
+_BINANCE_WS_INITIAL_BACKOFF = 1.0
+_BINANCE_WS_MAX_BACKOFF = 30.0
+
+
+class _BinanceWebSocketSubscription(WebSocketSubscription):
+    """Zarządza subskrypcjami websocket Binance z automatycznym reconnectem."""
+
+    def __init__(
+        self,
+        *,
+        endpoint: str,
+        subscriptions: Sequence[str],
+        callback: Callable[[MarketPayload], Awaitable[None]],
+        initial_backoff: float = _BINANCE_WS_INITIAL_BACKOFF,
+        max_backoff: float = _BINANCE_WS_MAX_BACKOFF,
+    ) -> None:
+        if not subscriptions:
+            raise ValueError("Wymagana jest co najmniej jedna subskrypcja Binance")
+        if websockets is None:  # pragma: no cover - ochrona przed brakiem zależności
+            raise RuntimeError("Pakiet 'websockets' jest wymagany do streamingu Binance")
+        self._endpoint = endpoint
+        self._subscriptions = list(dict.fromkeys(subscriptions))
         self._callback = callback
+        self._initial_backoff = max(0.1, initial_backoff)
+        self._max_backoff = max(self._initial_backoff, max_backoff)
+        self._task: Optional[asyncio.Task[None]] = None
+        self._ws: Optional[websockets.WebSocketClientProtocol] = None
+        self._closed = False
+        self._id_counter = 1
 
-    async def __aenter__(self) -> "_DummySubscription":
-        if self._callback:
-            self._callback()
+    async def __aenter__(self) -> "_BinanceWebSocketSubscription":
+        self._task = asyncio.create_task(self._runner(), name="binance-ws-runner")
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> Optional[bool]:  # type: ignore[override]
+        self._closed = True
+        if self._ws:
+            with contextlib.suppress(Exception):
+                await self._send_unsubscribe()
+            with contextlib.suppress(Exception):
+                await self._ws.close()
+            self._ws = None
+        if self._task:
+            self._task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._task
         return None
+
+    async def _runner(self) -> None:
+        attempt = 0
+        while not self._closed:
+            try:
+                self._ws = await websockets.connect(self._endpoint, ping_interval=20)
+                try:
+                    await self._send_subscribe()
+                    attempt = 0
+                    async for message in self._ws:
+                        await self._handle_message(message)
+                finally:
+                    if self._ws:
+                        with contextlib.suppress(Exception):
+                            await self._ws.close()
+                    self._ws = None
+            except asyncio.CancelledError:  # pragma: no cover - kontrola zamknięcia
+                raise
+            except Exception as exc:
+                if self._closed:
+                    break
+                attempt += 1
+                wait_for = min(self._initial_backoff * (2 ** (attempt - 1)), self._max_backoff)
+                logger.debug("Binance WS reconnect in %.2fs after error: %s", wait_for, exc)
+                await asyncio.sleep(wait_for)
+            else:
+                if not self._closed:
+                    # Po naturalnym zamknięciu również próbujemy wznowić połączenie
+                    attempt += 1
+                    wait_for = min(self._initial_backoff * (2 ** (attempt - 1)), self._max_backoff)
+                    logger.debug("Binance WS reconnect in %.2fs after close", wait_for)
+                    await asyncio.sleep(wait_for)
+
+    async def _send_subscribe(self) -> None:
+        if not self._ws:
+            return
+        payload = {"method": "SUBSCRIBE", "params": self._subscriptions, "id": self._next_id()}
+        await self._ws.send(json.dumps(payload))
+
+    async def _send_unsubscribe(self) -> None:
+        if not self._ws:
+            return
+        state = getattr(self._ws, "state", None)
+        name = getattr(state, "name", None)
+        if name == "CLOSED" or (state is not None and _WSState is not None and state == getattr(_WSState, "CLOSED", None)):
+            return
+        payload = {"method": "UNSUBSCRIBE", "params": self._subscriptions, "id": self._next_id()}
+        await self._ws.send(json.dumps(payload))
+
+    def _next_id(self) -> int:
+        self._id_counter += 1
+        return self._id_counter
+
+    async def _handle_message(self, message: str | bytes) -> None:
+        if isinstance(message, bytes):
+            message = message.decode("utf-8", "ignore")
+        try:
+            payload: MarketPayload = json.loads(message)
+        except json.JSONDecodeError:
+            logger.debug("Binance WS otrzymał nieprawidłowy JSON: %s", message)
+            return
+        try:
+            await self._callback(payload)
+        except Exception as exc:  # pragma: no cover - callback użytkownika
+            logger.exception("Błąd callbacka Binance WS: %s", exc)
+
+
+def _build_binance_streams(subscriptions: Iterable[MarketSubscription]) -> list[str]:
+    streams: list[str] = []
+    for subscription in subscriptions:
+        if subscription.params.get("stream"):
+            template = subscription.params["stream"]
+            if "{symbol}" in template:
+                for symbol in subscription.symbols or [""]:
+                    streams.append(template.format(symbol=symbol.lower()))
+            else:
+                streams.append(str(template))
+            continue
+        if not subscription.symbols:
+            streams.append(subscription.channel)
+            continue
+        for symbol in subscription.symbols:
+            streams.append(f"{symbol.lower()}@{subscription.channel}")
+    return streams
 
 
 class BinanceTestnetAdapter(RESTWebSocketAdapter):
@@ -166,8 +300,14 @@ class BinanceTestnetAdapter(RESTWebSocketAdapter):
         subscriptions: Iterable[MarketSubscription],
         callback: Callable[[MarketPayload], Awaitable[None]],
     ) -> WebSocketSubscription:
-        # Domyślnie zwracamy atrapę – umożliwia wstrzyknięcie mocków w testach.
-        return _DummySubscription()
+        streams = _build_binance_streams(subscriptions)
+        return _BinanceWebSocketSubscription(
+            endpoint=_BINANCE_WS_ENDPOINT,
+            subscriptions=streams,
+            callback=callback,
+            initial_backoff=_BINANCE_WS_INITIAL_BACKOFF,
+            max_backoff=_BINANCE_WS_MAX_BACKOFF,
+        )
 
 
 __all__ = ["BinanceTestnetAdapter"]
