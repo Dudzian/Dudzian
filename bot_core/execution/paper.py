@@ -38,6 +38,8 @@ class LedgerEntry:
     fee: float
     fee_asset: str
     status: str
+    leverage: float
+    position_value: float
 
     def to_mapping(self) -> Mapping[str, object]:
         return {
@@ -50,11 +52,31 @@ class LedgerEntry:
             "fee": self.fee,
             "fee_asset": self.fee_asset,
             "status": self.status,
+            "leverage": self.leverage,
+            "position_value": self.position_value,
         }
 
 
 class InsufficientBalanceError(RuntimeError):
     """Rzucany, gdy na rachunku brakuje środków na realizację zlecenia."""
+
+
+@dataclass(slots=True)
+class ShortPosition:
+    """Reprezentacja pozycji krótkiej wraz z depozytem zabezpieczającym."""
+
+    quantity: float
+    entry_price: float
+    margin: float
+    leverage: float
+
+    def to_mapping(self) -> Mapping[str, float]:
+        return {
+            "quantity": self.quantity,
+            "entry_price": self.entry_price,
+            "margin": self.margin,
+            "leverage": self.leverage,
+        }
 
 
 class PaperTradingExecutionService(ExecutionService):
@@ -80,6 +102,13 @@ class PaperTradingExecutionService(ExecutionService):
         self._time = time_source or time.time
         self._order_counter = itertools.count(1)
         self._ledger: List[LedgerEntry] = []
+        self._short_positions: Dict[str, ShortPosition] = {}
+        self._maintenance_profiles: Mapping[str, float] = {
+            "conservative": 0.3,
+            "balanced": 0.2,
+            "aggressive": 0.1,
+        }
+        self._default_maintenance_margin = 0.25
 
     # --- API ExecutionService -------------------------------------------------
     def execute(self, request: OrderRequest, context: ExecutionContext) -> OrderResult:
@@ -108,10 +137,14 @@ class PaperTradingExecutionService(ExecutionService):
         fee_rate = self._taker_fee if request.order_type.lower() == "market" else self._maker_fee
         fee = request.quantity * fill_price * fee_rate
 
+        leverage = self._extract_leverage(context)
         if side == "buy":
-            self._process_buy(symbol, market, request.quantity, fill_price, fee)
+            self._process_buy(symbol, market, request.quantity, fill_price, fee, context.risk_profile)
         else:
-            self._process_sell(symbol, market, request.quantity, fill_price, fee)
+            self._process_sell(symbol, market, request.quantity, fill_price, fee, leverage, context.risk_profile)
+
+        position_value = self._position_value(symbol, market, fill_price)
+        ledger_leverage = self._short_positions.get(symbol).leverage if symbol in self._short_positions else 1.0
 
         order_id = f"paper-{next(self._order_counter)}"
         result = OrderResult(
@@ -138,6 +171,8 @@ class PaperTradingExecutionService(ExecutionService):
                 fee=fee,
                 fee_asset=market.quote_asset,
                 status=result.status,
+                leverage=ledger_leverage,
+                position_value=position_value,
             )
         )
         _LOGGER.debug(
@@ -164,6 +199,8 @@ class PaperTradingExecutionService(ExecutionService):
                 fee=0.0,
                 fee_asset="",
                 status="cancelled",
+                leverage=1.0,
+                position_value=0.0,
             )
         )
         _LOGGER.info("Zarejestrowano anulację %s w symulatorze paper trading (brak otwartych zleceń).", order_id)
@@ -205,15 +242,40 @@ class PaperTradingExecutionService(ExecutionService):
         quantity: float,
         price: float,
         fee: float,
+        risk_profile: str,
     ) -> None:
         cost = quantity * price + fee
         quote_balance = self._balances.get(market.quote_asset, 0.0)
-        if quote_balance + 1e-12 < cost:
+
+        short_position = self._short_positions.get(symbol)
+        cover_quantity = 0.0
+        margin_release = 0.0
+        if short_position and short_position.quantity > 0:
+            prev_quantity = short_position.quantity
+            cover_quantity = min(quantity, prev_quantity)
+            if cover_quantity > 0:
+                proportion = cover_quantity / prev_quantity if prev_quantity else 0.0
+                margin_release = short_position.margin * proportion
+                short_position.margin -= margin_release
+                short_position.quantity = prev_quantity - cover_quantity
+                if short_position.quantity <= 1e-12:
+                    self._short_positions.pop(symbol, None)
+                else:
+                    short_position.leverage = self._recalculate_leverage(short_position, price)
+
+        new_quote_balance = quote_balance - cost + margin_release
+        if new_quote_balance + 1e-12 < 0.0:
             raise InsufficientBalanceError(
-                f"Brak środków {market.quote_asset}. Dostępne {quote_balance:.8f}, wymagane {cost:.8f}."
+                f"Brak środków {market.quote_asset}. Dostępne {quote_balance:.8f}, wymagane {cost - margin_release:.8f}."
             )
-        self._balances[market.quote_asset] = quote_balance - cost
-        self._balances[market.base_asset] = self._balances.get(market.base_asset, 0.0) + quantity
+        self._balances[market.quote_asset] = new_quote_balance
+
+        remaining_quantity = quantity - cover_quantity
+        if remaining_quantity > 0:
+            self._balances[market.base_asset] = self._balances.get(market.base_asset, 0.0) + remaining_quantity
+
+        if symbol in self._short_positions:
+            self._enforce_maintenance_margin(symbol, market, price, risk_profile)
         _LOGGER.debug(
             "BUY %s: -%s %s, +%s %s (fee=%s)",
             symbol,
@@ -231,23 +293,67 @@ class PaperTradingExecutionService(ExecutionService):
         quantity: float,
         price: float,
         fee: float,
+        leverage: float,
+        risk_profile: str,
     ) -> None:
         base_balance = self._balances.get(market.base_asset, 0.0)
-        if base_balance + 1e-12 < quantity:
-            raise InsufficientBalanceError(
-                f"Brak pozycji {market.base_asset}. Dostępne {base_balance:.8f}, wymagane {quantity:.8f}."
-            )
-        proceed = quantity * price - fee
-        if proceed < 0:
-            proceed = 0.0
-        self._balances[market.base_asset] = base_balance - quantity
-        self._balances[market.quote_asset] = self._balances.get(market.quote_asset, 0.0) + proceed
+        quote_balance = self._balances.get(market.quote_asset, 0.0)
+        fee_per_unit = fee / quantity if quantity > 0 else 0.0
+
+        spot_quantity = min(base_balance, quantity)
+        spot_fee = spot_quantity * fee_per_unit
+        spot_proceeds = spot_quantity * price - spot_fee
+        new_base_balance = base_balance
+        new_quote_balance = quote_balance
+        if spot_quantity > 0:
+            new_base_balance = base_balance - spot_quantity
+            new_quote_balance += max(0.0, spot_proceeds)
+
+        remaining = quantity - spot_quantity
+        short_proceeds = 0.0
+        short_position = None
+        required_margin = 0.0
+        if remaining > 0:
+            leverage = max(1.0, leverage)
+            short_fee = remaining * fee_per_unit
+            short_proceeds = remaining * price - short_fee
+            new_quote_balance += max(0.0, short_proceeds)
+            required_margin = (remaining * price) / leverage
+            if new_quote_balance + 1e-12 < required_margin:
+                raise InsufficientBalanceError(
+                    f"Brak środków {market.quote_asset} na depozyt zabezpieczający. Dostępne {new_quote_balance:.8f}, wymagane {required_margin:.8f}."
+                )
+            new_quote_balance -= required_margin
+            short_position = self._short_positions.get(symbol)
+
+        self._balances[market.base_asset] = new_base_balance
+        self._balances[market.quote_asset] = new_quote_balance
+
+        if remaining > 0:
+            if short_position is None:
+                short_position = ShortPosition(quantity=0.0, entry_price=price, margin=0.0, leverage=leverage)
+                self._short_positions[symbol] = short_position
+            prev_quantity = short_position.quantity
+            total_quantity = prev_quantity + remaining
+            if total_quantity > 0:
+                short_position.entry_price = (
+                    (short_position.entry_price * prev_quantity + price * remaining) / total_quantity
+                    if prev_quantity > 0
+                    else price
+                )
+            short_position.quantity = total_quantity
+            short_position.margin += required_margin
+            short_position.leverage = self._recalculate_leverage(short_position, price)
+
+        if symbol in self._short_positions:
+            self._enforce_maintenance_margin(symbol, market, price, risk_profile)
+
         _LOGGER.debug(
             "SELL %s: -%s %s, +%s %s (fee=%s)",
             symbol,
             quantity,
             market.base_asset,
-            proceed,
+            spot_proceeds + short_proceeds,
             market.quote_asset,
             fee,
         )
@@ -263,10 +369,77 @@ class PaperTradingExecutionService(ExecutionService):
 
         return [entry.to_mapping() for entry in self._ledger]
 
+    def short_positions(self) -> Mapping[str, Mapping[str, float]]:
+        """Zwraca aktualne pozycje krótkie wraz z depozytem zabezpieczającym."""
+
+        return {symbol: position.to_mapping() for symbol, position in self._short_positions.items()}
+
+    # --- Obsługa dźwigni i margin --------------------------------------------
+    def _extract_leverage(self, context: ExecutionContext) -> float:
+        raw = context.metadata.get("leverage") if context.metadata else None
+        try:
+            leverage = float(raw) if raw is not None else 1.0
+        except (TypeError, ValueError):
+            leverage = 1.0
+        return max(1.0, leverage)
+
+    def _position_value(self, symbol: str, market: MarketMetadata, price: float) -> float:
+        base_quantity = self._balances.get(market.base_asset, 0.0)
+        short_quantity = self._short_positions.get(symbol).quantity if symbol in self._short_positions else 0.0
+        return (base_quantity + short_quantity) * price
+
+    def _maintenance_margin_ratio(self, risk_profile: str) -> float:
+        return self._maintenance_profiles.get(risk_profile, self._default_maintenance_margin)
+
+    def _recalculate_leverage(self, position: ShortPosition, price: float) -> float:
+        if position.margin <= 0:
+            return 0.0
+        return max(1.0, (position.quantity * price) / position.margin)
+
+    def _enforce_maintenance_margin(
+        self,
+        symbol: str,
+        market: MarketMetadata,
+        price: float,
+        risk_profile: str,
+    ) -> None:
+        position = self._short_positions.get(symbol)
+        if not position or position.quantity <= 0:
+            return
+        maintenance_ratio = self._maintenance_margin_ratio(risk_profile)
+        position_value = position.quantity * price
+        maintenance_requirement = position_value * maintenance_ratio
+        unrealized_pnl = (position.entry_price - price) * position.quantity
+        equity = position.margin + unrealized_pnl
+        if equity + 1e-12 < maintenance_requirement:
+            self._liquidate_short(symbol, market, price)
+
+    def _liquidate_short(self, symbol: str, market: MarketMetadata, price: float) -> None:
+        position = self._short_positions.pop(symbol, None)
+        if position is None:
+            return
+        quantity = position.quantity
+        if quantity <= 0:
+            return
+        cost = quantity * price
+        quote_balance = self._balances.get(market.quote_asset, 0.0)
+        available = quote_balance + position.margin
+        if available + 1e-12 < cost:
+            raise InsufficientBalanceError(
+                f"Brak środków {market.quote_asset} do likwidacji pozycji short {symbol}."
+            )
+        self._balances[market.quote_asset] = available - cost
+        _LOGGER.warning(
+            "Pozycja short %s została zlikwidowana przy cenie %s (maintenance margin).",
+            symbol,
+            price,
+        )
+
 
 __all__ = [
     "PaperTradingExecutionService",
     "MarketMetadata",
     "LedgerEntry",
     "InsufficientBalanceError",
+    "ShortPosition",
 ]
