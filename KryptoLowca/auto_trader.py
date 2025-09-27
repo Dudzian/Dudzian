@@ -920,6 +920,31 @@ class AutoTrader:
                 except Exception:
                     # Jeśli pętla nie działa lub zgłosi błąd – fallback do lokalnego wykonania
                     pass
+
+            try:
+                running_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                running_loop = None
+
+            if running_loop is not None:
+                container: Dict[str, Any] = {}
+                errors: List[BaseException] = []
+
+                def _execute_in_thread() -> None:
+                    try:
+                        container["value"] = asyncio.run(_await_result(result))
+                    except BaseException as thread_exc:  # pragma: no cover - propagacja błędu
+                        errors.append(thread_exc)
+
+                thread = threading.Thread(target=_execute_in_thread, daemon=True)
+                thread.start()
+                thread.join(timeout=30.0)
+                if thread.is_alive():
+                    raise TimeoutError("Timed out waiting for coroutine result")
+                if errors:
+                    raise errors[0]
+                return container.get("value")
+
             return asyncio.run(_await_result(result))
         except Exception as exc:
             message = f"{context} coroutine failed: {exc!r}"
