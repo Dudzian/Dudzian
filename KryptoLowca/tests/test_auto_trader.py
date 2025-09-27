@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple
 
 import pytest
 
 from KryptoLowca.auto_trader import AutoTrader
+from KryptoLowca.backtest.simulation import BacktestFill
 from KryptoLowca.config_manager import StrategyConfig
 from KryptoLowca.core.services import ExecutionService, PaperTradingAdapter, RiskAssessment, SignalService
 from KryptoLowca.core.services.data_provider import ExchangeDataProvider  # noqa: F401 - ensures module importable
@@ -271,6 +273,48 @@ def test_paper_trading_mode_switch(strategy_harness: StrategyHarness) -> None:
     trader.configure(exchange={"testnet": False})
     assert trader._paper_enabled
     assert isinstance(getattr(trader._execution_service, "_adapter", None), PaperTradingAdapter)
+
+
+def test_paper_trading_adapter_apply_fill_charges_fees() -> None:
+    adapter = PaperTradingAdapter(initial_balance=1_000.0)
+    state = adapter._ensure_state("BTC/USDT")
+    timestamp = datetime.now(timezone.utc)
+
+    buy_fill = BacktestFill(
+        order_id=1,
+        side="buy",
+        size=0.5,
+        price=100.0,
+        fee=0.25,
+        slippage=0.0,
+        timestamp=timestamp,
+        partial=False,
+    )
+    adapter._apply_fill(state, buy_fill)
+
+    expected_cash = adapter._initial_balance - (buy_fill.price * buy_fill.size) - buy_fill.fee
+    assert state.cash == pytest.approx(expected_cash)
+    assert state.position == pytest.approx(0.5)
+
+    sell_fill = BacktestFill(
+        order_id=2,
+        side="sell",
+        size=0.5,
+        price=110.0,
+        fee=0.3,
+        slippage=0.0,
+        timestamp=timestamp,
+        partial=False,
+    )
+    adapter._apply_fill(state, sell_fill)
+
+    expected_cash += (sell_fill.price * sell_fill.size) - sell_fill.fee
+    assert state.cash == pytest.approx(expected_cash)
+    assert state.position == pytest.approx(0.0, abs=1e-9)
+    assert state.avg_price == pytest.approx(0.0)
+
+    total_fees = sum(fill.fee for fill in state.fills)
+    assert total_fees == pytest.approx(buy_fill.fee + sell_fill.fee)
 
 
 def test_risk_rejection_applies_cooldown(strategy_harness: StrategyHarness) -> None:

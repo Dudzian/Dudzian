@@ -391,14 +391,18 @@ def test_forced_closure_uses_matching_costs() -> None:
     for fill in report.fills:
         direction = 1 if fill.side == "buy" else -1
         trade_notional = fill.price * fill.size
-        reconstructed_cash -= direction * trade_notional
         cash_without_fees -= direction * trade_notional
-        reconstructed_cash -= fill.fee
+        cash_after_notional = reconstructed_cash - direction * trade_notional
+        reconstructed_cash = cash_after_notional - fill.fee
+        if fill.side == "sell":
+            assert cash_after_notional - reconstructed_cash == pytest.approx(fill.fee)
         reconstructed_position += direction * fill.size
 
     assert reconstructed_position == pytest.approx(0.0, abs=1e-9)
     assert reconstructed_cash == pytest.approx(report.final_balance)
     assert (cash_without_fees - reconstructed_cash) == pytest.approx(total_fees)
+    sell_fees = sum(fill.fee for fill in report.fills if fill.side == "sell")
+    assert sell_fees > 0
     assert report.equity_curve
     assert reconstructed_cash == pytest.approx(report.equity_curve[-1])
 
@@ -571,9 +575,11 @@ def test_paper_trading_adapter_multi_symbol_multi_timeframe() -> None:
         for fill in state.fills:
             direction = 1 if fill.side == "buy" else -1
             trade_notional = fill.price * fill.size
-            expected_cash -= direction * trade_notional
             cash_without_fees -= direction * trade_notional
-            expected_cash -= fill.fee
+            cash_after_notional = expected_cash - direction * trade_notional
+            expected_cash = cash_after_notional - fill.fee
+            if fill.side == "sell":
+                assert cash_after_notional - expected_cash == pytest.approx(fill.fee)
             expected_position += direction * fill.size
 
         assert expected_cash == pytest.approx(state.cash)
