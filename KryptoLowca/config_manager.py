@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass, field, asdict, fields
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, TYPE_CHECKING, ClassVar
 
 import yaml
 from cryptography.fernet import Fernet, InvalidToken
@@ -18,11 +18,20 @@ if TYPE_CHECKING:  # pragma: no cover - tylko dla typowania
     from KryptoLowca.backtest.mini_backtester import BacktestReport
     from KryptoLowca.data.market_data import MarketDataProvider, MarketDataRequest
 
-from KryptoLowca.strategies.marketplace import (
-    StrategyPreset,
-    load_marketplace_presets,
-    load_preset,
-)
+try:  # pragma: no cover - zależność opcjonalna w środowisku testowym
+    from KryptoLowca.strategies.marketplace import (
+        StrategyPreset,
+        load_marketplace_presets,
+        load_preset,
+    )
+except Exception:  # pragma: no cover - fallback dla testów bez marketplace
+    StrategyPreset = Any  # type: ignore
+
+    def load_marketplace_presets(*_, **__) -> List[Any]:
+        return []
+
+    def load_preset(*_, **__) -> Any:
+        raise RuntimeError("Marketplace presets are unavailable in this environment")
 
 __all__ = [
     "ConfigManager",
@@ -33,7 +42,11 @@ __all__ = [
     "TradeConfig",
     "ExchangeConfig",
     "StrategyConfig",
+    "BACKTEST_VALIDITY_WINDOW_S",
 ]
+
+
+BACKTEST_VALIDITY_WINDOW_S = 24 * 60 * 60  # 24h
 
 
 class ConfigError(RuntimeError):
@@ -176,6 +189,8 @@ class ExchangeConfig:
 @dataclass(slots=True)
 class StrategyConfig:
     """Parametry strategii oraz sztywne limity ryzyka dla auto-tradingu."""
+
+    BACKTEST_VALIDITY_WINDOW_S: ClassVar[float] = BACKTEST_VALIDITY_WINDOW_S
 
     preset: str = "SAFE"
     mode: str = "demo"
@@ -326,6 +341,21 @@ class StrategyConfig:
         evaluate_strategy_backtest(asdict(self), report)
         self.backtest_passed_at = time.time()
         return self
+
+    def has_fresh_backtest(
+        self,
+        *,
+        freshness_window: Optional[float] = None,
+        now: Optional[float] = None,
+    ) -> bool:
+        """Zwraca True, jeśli konfiguracja posiada aktualne potwierdzenie backtestu."""
+        if not self.backtest_passed_at:
+            return False
+        window = self.BACKTEST_VALIDITY_WINDOW_S if freshness_window is None else float(freshness_window)
+        if window <= 0:
+            return True
+        reference_ts = float(now if now is not None else time.time())
+        return (reference_ts - float(self.backtest_passed_at)) <= window
 
 
 _STRATEGY_FIELD_NAMES = {f.name for f in fields(StrategyConfig)}
@@ -515,6 +545,17 @@ class ConfigManager:
                 "Tryb LIVE wymaga potwierdzonych flag zgodności: "
                 + ", ".join(missing)
             )
+        backtest_ts = strategy_section.get("backtest_passed_at")
+        if not isinstance(backtest_ts, (int, float)) or backtest_ts <= 0:
+            raise ValidationError(
+                "Tryb LIVE wymaga aktualnego potwierdzenia backtestu (brak wpisu)."
+            )
+        freshness_window = StrategyConfig.BACKTEST_VALIDITY_WINDOW_S
+        if freshness_window > 0:
+            if (time.time() - float(backtest_ts)) > float(freshness_window):
+                raise ValidationError(
+                    "Wynik backtestu jest przeterminowany – uruchom backtest ponownie."
+                )
         if not user_confirmed:
             raise ValidationError(
                 "Aktywacja trybu LIVE wymaga potwierdzenia użytkownika (ustaw opcję confirm)."
