@@ -468,9 +468,66 @@ class AutoTrader:
                 symbol, timeframe = entry
                 if not symbol:
                     continue
-                self._service_tasks[entry] = asyncio.create_task(
-                    self._symbol_service_loop(symbol, timeframe)
+                self._service_tasks[entry] = self._create_service_task(symbol, timeframe)
+
+    def _create_service_task(self, symbol: str, timeframe: str) -> asyncio.Task[Any]:
+        task = asyncio.create_task(self._symbol_service_loop(symbol, timeframe))
+        entry = (symbol, timeframe)
+
+        def _handle_completion(completed: asyncio.Task[Any]) -> None:
+            self._service_tasks.pop(entry, None)
+            if completed.cancelled():
+                return
+            try:
+                exc = completed.exception()
+            except asyncio.CancelledError:
+                return
+            except Exception:  # pragma: no cover - defensywne logowanie callbacku
+                logger.exception(
+                    "Failed to inspect service task exception for %s@%s",
+                    symbol,
+                    timeframe,
                 )
+                return
+            if exc is None:
+                return
+
+            message = (
+                f"Service task for {symbol}@{timeframe} crashed: {exc!r}"
+            )
+            try:
+                self.emitter.log(message, level="ERROR", component="AutoTrader")
+            except Exception:  # pragma: no cover - nie przerywamy callbacku
+                logger.exception("Failed to forward service task crash to emitter")
+
+            logger.error(
+                "Service task for %s@%s crashed",
+                symbol,
+                timeframe,
+                exc_info=exc,
+            )
+
+            try:
+                emit_alert(
+                    message,
+                    severity=AlertSeverity.ERROR,
+                    source="autotrader",
+                    context={
+                        "symbol": symbol,
+                        "timeframe": timeframe,
+                    },
+                    exception=exc if isinstance(exc, BaseException) else None,
+                )
+            except Exception:  # pragma: no cover - nie przerywamy callbacku
+                logger.exception("Failed to emit alert for service task crash")
+
+            try:
+                self._register_cooldown(symbol, "service_task_crash")
+            except Exception:  # pragma: no cover - nie przerywamy callbacku
+                logger.exception("Failed to register cooldown after service task crash")
+
+        task.add_done_callback(_handle_completion)
+        return task
 
     async def _cancel_service_tasks(self) -> None:
         if not self._service_tasks:
