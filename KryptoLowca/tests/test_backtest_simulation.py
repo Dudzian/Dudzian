@@ -380,6 +380,23 @@ def test_forced_closure_uses_matching_costs() -> None:
     last_fill = report.fills[-1]
     assert last_fill.fee > 0
     assert abs(last_fill.slippage) > 0
+    assert report.metrics is not None
+
+    total_fees = sum(fill.fee for fill in report.fills)
+    assert total_fees == pytest.approx(report.metrics.fees_paid)
+
+    reconstructed_cash = report.starting_balance
+    reconstructed_position = 0.0
+    for fill in report.fills:
+        direction = 1 if fill.side == "buy" else -1
+        reconstructed_cash -= direction * fill.price * fill.size
+        reconstructed_cash -= fill.fee
+        reconstructed_position += direction * fill.size
+
+    assert reconstructed_position == pytest.approx(0.0, abs=1e-9)
+    assert reconstructed_cash == pytest.approx(report.final_balance)
+    assert report.equity_curve
+    assert reconstructed_cash == pytest.approx(report.equity_curve[-1])
 
 
 def test_backtest_handles_zero_volume_bars() -> None:
@@ -467,3 +484,20 @@ def test_paper_trading_adapter_multi_symbol_multi_timeframe() -> None:
     assert btc_snapshot["value"] != eth_snapshot["value"]
     assert btc_snapshot["position"] > 0
     assert eth_snapshot["position"] < 0
+
+    for symbol, snapshot in (("BTC/USDT", btc_snapshot), ("ETH/USDT", eth_snapshot)):
+        state = adapter._portfolios[symbol]
+        total_fees = sum(fill.fee for fill in state.fills)
+        assert total_fees > 0
+
+        expected_cash = adapter._initial_balance
+        expected_position = 0.0
+        for fill in state.fills:
+            direction = 1 if fill.side == "buy" else -1
+            expected_cash -= direction * fill.price * fill.size
+            expected_cash -= fill.fee
+            expected_position += direction * fill.size
+
+        assert expected_cash == pytest.approx(state.cash)
+        assert expected_position == pytest.approx(state.position)
+        assert snapshot["value"] == pytest.approx(state.cash + state.position * state.last_price)
