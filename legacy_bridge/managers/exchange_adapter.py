@@ -1,4 +1,4 @@
-"""Wejściowy moduł zgodności dla ``trading_gui``."""
+"""Wejściowy moduł zgodności dla ``managers.exchange_adapter``. (READ ONLY: przekierowuje do pakietu `KryptoLowca`)."""
 
 from __future__ import annotations
 
@@ -21,4 +21,4 @@ if __package__ in (None, ""):
     _ensure_repo_root()
 
 
-from KryptoLowca.trading_gui import *  # noqa: F401,F403
+from KryptoLowca.managers.exchange_adapter import *  # noqa: F401,F403

@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional, Tuple
 try:  # pragma: no cover
     from KryptoLowca.managers.exchange_core import Mode, OrderStatus  # type: ignore
 except Exception:  # pragma: no cover
-    from managers.exchange_core import Mode, OrderStatus  # type: ignore
+    from legacy_bridge.managers.exchange_core import Mode, OrderStatus  # type: ignore
 
 try:  # pragma: no cover - opcjonalne
     import ccxt  # type: ignore

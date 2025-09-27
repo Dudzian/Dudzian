@@ -28,8 +28,14 @@ try:  # pragma: no cover
     )
     from KryptoLowca.trading_strategies import EngineConfig, TradingParameters  # type: ignore
 except Exception:  # pragma: no cover
-    from core.trading_engine import TradingEngine
-    from managers.exchange_core import Mode, OrderDTO, OrderSide, OrderStatus, OrderType
+    from legacy_bridge.core.trading_engine import TradingEngine
+    from legacy_bridge.managers.exchange_core import (
+        Mode,
+        OrderDTO,
+        OrderSide,
+        OrderStatus,
+        OrderType,
+    )
     from trading_strategies import EngineConfig, TradingParameters
 
 

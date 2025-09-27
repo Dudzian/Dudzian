@@ -5,6 +5,11 @@ KryptoŁowca is a production-grade cryptocurrency trading bot with a graphical u
 > **Important:** Legacy source code that previously lived under `KryptoLowca/bot` has been archived in `archive/legacy_bot/`.
 > The archived snapshot is kept for reference only and must not be executed in new environments. Always use the modules from
 > the top-level `KryptoLowca` package when developing, deploying, or testing the bot.
+>
+> **Warning:** Nowe moduły (np. w `bot_core/`) nie mogą importować `KryptoLowca`
+> – w razie potrzeby należy użyć gotowych wrapperów z katalogu
+> `legacy_bridge/`. Pakiet `legacy_bridge/` jest oznaczony jako read-only i
+> służy wyłącznie do utrzymania kompatybilności z historycznym API.
 
 ## Project Structure
 

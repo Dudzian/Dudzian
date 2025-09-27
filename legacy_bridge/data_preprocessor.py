@@ -1,4 +1,4 @@
-"""Wejściowy moduł zgodności dla ``managers``."""
+"""Wejściowy moduł zgodności dla ``data_preprocessor``. (READ ONLY: przekierowuje do pakietu `KryptoLowca`)."""
 
 from __future__ import annotations
 
@@ -21,4 +21,4 @@ if __package__ in (None, ""):
     _ensure_repo_root()
 
 
-from KryptoLowca.managers import *  # noqa: F401,F403
+from KryptoLowca.data_preprocessor import *  # noqa: F401,F403

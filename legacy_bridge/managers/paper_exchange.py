@@ -1,4 +1,4 @@
-"""Wejściowy moduł zgodności dla ``event_emitter_adapter``."""
+"""Wejściowy moduł zgodności dla ``managers.paper_exchange``. (READ ONLY: przekierowuje do pakietu `KryptoLowca`)."""
 
 from __future__ import annotations
 
@@ -21,4 +21,4 @@ if __package__ in (None, ""):
     _ensure_repo_root()
 
 
-from KryptoLowca.event_emitter_adapter import *  # noqa: F401,F403
+from KryptoLowca.managers.paper_exchange import *  # noqa: F401,F403

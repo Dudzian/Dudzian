@@ -22,8 +22,8 @@ try:  # pragma: no cover
         DatabaseManager as _CoreDatabaseManager,
     )
 except Exception:  # pragma: no cover
-    from managers import database_manager as _core
-    from managers.database_manager import DatabaseManager as _CoreDatabaseManager
+    from legacy_bridge import database_manager as _core
+    from legacy_bridge.database_manager import DatabaseManager as _CoreDatabaseManager
 
 from sqlalchemy import DateTime, Integer, String, Text, UniqueConstraint, select
 from sqlalchemy.engine import make_url

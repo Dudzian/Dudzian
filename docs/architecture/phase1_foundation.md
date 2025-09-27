@@ -4,6 +4,12 @@ Dokument opisuje modularną architekturę przygotowującą bota do integracji z 
 Krakenem i Zondą. W pierwszym etapie budujemy szkielet umożliwiający bezpieczny rozwój bez licencji
 zewnętrznych, z jasnym podziałem na warstwy i środowiska.
 
+> **Zasada etapu 1:** wszystkie nowe moduły aplikacji korzystają wyłącznie z
+> przestrzeni nazw `bot_core`. Kod znajdujący się w `legacy_bridge/` jest
+> wyłącznie mostkiem zgodności do historycznego pakietu `KryptoLowca` i ma
+> charakter read-only – nie wolno go rozszerzać ani modyfikować przy pracach nad
+> fundamentem architektury.
+
 ## Podział na moduły
 
 | Moduł | Odpowiedzialność | Kluczowe klasy/interfejsy |
