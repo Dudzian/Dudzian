@@ -404,6 +404,26 @@ def test_backtest_handles_zero_volume_bars() -> None:
     assert all(fill.timestamp != zero_ts for fill in report.fills)
 
 
+def test_backtest_warns_about_missing_candles() -> None:
+    df = _build_dataframe(periods=60)
+    df = df.drop(df.index[30])
+    engine = BacktestEngine(
+        strategy_name="TestTrendStrategy",
+        data=df,
+        symbol="BTC/USDT",
+        timeframe="1m",
+        initial_balance=1_000.0,
+        matching=MatchingConfig(latency_bars=1, slippage_bps=1.0, fee_bps=5.0, liquidity_share=1.0),
+        context_extra={
+            "trade_risk_pct": 0.1,
+            "max_position_notional_pct": 0.5,
+            "max_leverage": 2.0,
+        },
+    )
+    report = engine.run()
+    assert any("lukę danych" in warning for warning in report.warnings)
+
+
 def test_reporting_snapshot_export(tmp_path: Path) -> None:
     # Ten test wykona się tylko jeśli reporting jest dostępny
     if render_html_report is None or export_report is None:

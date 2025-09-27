@@ -24,6 +24,32 @@ from KryptoLowca.strategies.base import (
 logger = get_logger(__name__)
 
 
+_TIMEFRAME_UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
+
+
+def _safe_timeframe_to_seconds(value: str) -> int | None:
+    """Próbuje sparsować timeframe (np. '1m', '5m', '1h') na liczbę sekund.
+
+    Funkcja jest defensywna – w razie niepoprawnego formatu zwraca ``None``
+    zamiast podnosić wyjątek, aby nie przerywać symulacji.
+    """
+
+    if not value:
+        return None
+    value = value.strip()
+    unit = value[-1].lower()
+    factor = _TIMEFRAME_UNITS.get(unit)
+    if factor is None:
+        return None
+    try:
+        amount = int(value[:-1])
+    except ValueError:
+        return None
+    if amount <= 0:
+        return None
+    return amount * factor
+
+
 @dataclass(slots=True)
 class BacktestFill:
     order_id: int
@@ -464,6 +490,36 @@ class BacktestEngine:
                 timestamps.append(ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc))
             else:
                 timestamps.append(datetime.fromtimestamp(float(ts) / 1000.0, tz=timezone.utc))
+
+        timeframe_s = _safe_timeframe_to_seconds(self._timeframe)
+        if timeframe_s and len(timestamps) >= 2:
+            gap_threshold = timeframe_s * 1.5
+            for prev_ts, current_ts in zip(timestamps, timestamps[1:]):
+                delta_s = (current_ts - prev_ts).total_seconds()
+                if delta_s > gap_threshold:
+                    missing = max(1, int(round(delta_s / timeframe_s)) - 1)
+                    warnings.append(
+                        "Wykryto lukę danych: brak "
+                        f"{missing} świec pomiędzy {prev_ts.isoformat()} a {current_ts.isoformat()} "
+                        f"(odstęp {int(delta_s)}s, timeframe {self._timeframe})."
+                    )
+
+        invalid_volume_indices: List[int] = []
+        for idx, vol in enumerate(volumes):
+            try:
+                value = float(vol)
+            except (TypeError, ValueError):
+                invalid_volume_indices.append(idx)
+                continue
+            if not math.isfinite(value) or value < 0:
+                invalid_volume_indices.append(idx)
+        if invalid_volume_indices:
+            sample_idx = invalid_volume_indices[:3]
+            sample_ts = [timestamps[i].isoformat() for i in sample_idx if i < len(timestamps)]
+            warnings.append(
+                "Wykryto nieprawidłowe wartości wolumenu na świecach: "
+                f"indeksy {sample_idx} (czas: {', '.join(sample_ts)})."
+            )
 
         open_trade: Dict[str, object] | None = None
 
