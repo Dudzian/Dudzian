@@ -523,7 +523,8 @@ class BacktestEngine:
             direction = 1 if fill.side == "buy" else -1
             position_before = position
             equity_before = cash + position_before * bar_close
-            cash -= direction * fill.price * fill.size
+            trade_notional = fill.price * fill.size
+            cash -= direction * trade_notional
             # prowizja zawsze zmniejsza ilość dostępnej gotówki, niezależnie od kierunku
             cash -= fee_paid
             position = position_before + direction * fill.size
