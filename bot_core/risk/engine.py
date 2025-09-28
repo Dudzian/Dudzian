@@ -262,6 +262,25 @@ class ThresholdRiskEngine(RiskEngine):
                     reason="Limit liczby równoległych pozycji został osiągnięty.",
                 )
 
+        incremental_notional = max(0.0, new_notional - current_notional)
+        if not is_reducing and incremental_notional > 0:
+            effective_leverage = profile.max_leverage()
+            if effective_leverage <= 0:
+                effective_leverage = 1.0
+            effective_leverage = max(1.0, effective_leverage)
+            usable_margin = max(0.0, account.available_margin - account.maintenance_margin)
+            required_margin = incremental_notional / effective_leverage
+            if required_margin > usable_margin:
+                allowed_additional_notional = usable_margin * effective_leverage
+                allowed_notional = current_notional + allowed_additional_notional
+                allowed_quantity = max(0.0, allowed_notional - current_notional) / price
+                self._persist_state(profile_name)
+                return RiskCheckResult(
+                    allowed=False,
+                    reason="Niewystarczający wolny margines na otwarcie lub powiększenie pozycji.",
+                    adjustments={"max_quantity": max(0.0, allowed_quantity)},
+                )
+
         max_position_pct = profile.max_position_exposure()
         if not is_reducing and max_position_pct > 0:
             max_notional = max_position_pct * account.total_equity
