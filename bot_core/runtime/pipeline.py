@@ -3,11 +3,10 @@ from __future__ import annotations
 
 from collections import defaultdict, deque
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Callable, Mapping, MutableMapping
 
-from bot_core.alerts import DefaultAlertRouter
 from bot_core.config.models import (
     ControllerRuntimeConfig,
     CoreConfig,
@@ -26,9 +25,21 @@ from bot_core.execution.base import ExecutionContext, ExecutionService
 from bot_core.execution.paper import MarketMetadata, PaperTradingExecutionService
 from bot_core.exchanges.base import AccountSnapshot, Environment, ExchangeAdapterFactory
 from bot_core.runtime.bootstrap import BootstrapContext, bootstrap_environment
-from bot_core.runtime.controller import DailyTrendController, TradingController
+from bot_core.runtime.controller import DailyTrendController
 from bot_core.security import SecretManager
 from bot_core.strategies.daily_trend import DailyTrendMomentumSettings, DailyTrendMomentumStrategy
+
+# Opcjonalny kontroler handlu – może nie istnieć w starszych gałęziach.
+try:
+    from bot_core.runtime.controller import TradingController  # type: ignore
+except Exception:  # pragma: no cover
+    TradingController = None  # type: ignore
+
+# Dla zgodności typów w create_trading_controller
+try:
+    from bot_core.alerts import DefaultAlertRouter  # type: ignore
+except Exception:  # pragma: no cover
+    DefaultAlertRouter = object  # type: ignore[misc,assignment]
 
 
 @dataclass(slots=True)
@@ -53,7 +64,6 @@ def build_daily_trend_pipeline(
     adapter_factories: Mapping[str, ExchangeAdapterFactory] | None = None,
 ) -> DailyTrendPipeline:
     """Tworzy kompletny pipeline strategii trend-following D1 dla środowiska paper/testnet."""
-
     bootstrap_ctx = bootstrap_environment(
         environment_name,
         config_path=config_path,
@@ -144,12 +154,14 @@ def build_daily_trend_pipeline(
 
 def create_trading_controller(
     pipeline: DailyTrendPipeline,
-    alert_router: DefaultAlertRouter,
+    alert_router: "DefaultAlertRouter",
     *,
     health_check_interval: float | int | timedelta = 3600,
     order_metadata_defaults: Mapping[str, str] | None = None,
-) -> TradingController:
+) -> "TradingController":
     """Buduje TradingController spięty z komponentami pipeline'u."""
+    if TradingController is None:
+        raise RuntimeError("TradingController nie jest dostępny w tej gałęzi.")
 
     controller = pipeline.controller
     execution_context = controller.execution_context
@@ -208,7 +220,10 @@ def _normalize_paper_settings(environment: EnvironmentConfig) -> MutableMapping[
     if environment.environment not in {Environment.PAPER, Environment.TESTNET}:
         raise ValueError("Pipeline paper trading jest dostępny wyłącznie dla środowisk paper/testnet.")
 
-    raw_settings = environment.adapter_settings.get("paper_trading", {})
+    # adapter_settings może nie istnieć w danej gałęzi modeli – użyj bezpiecznego getattr
+    raw_adapter = getattr(environment, "adapter_settings", {}) or {}
+    raw_settings = raw_adapter.get("paper_trading", {}) or {}
+
     valuation_asset = str(raw_settings.get("valuation_asset", "USDT")).upper()
     position_size = max(0.0, float(raw_settings.get("position_size", 0.1)))
     default_leverage = max(1.0, float(raw_settings.get("default_leverage", 1.0)))
@@ -370,7 +385,7 @@ def _build_account_loader(
             queue = deque([(src, 1.0)])
             while queue:
                 asset, rate = queue.popleft()
-                for neighbor, weight in adjacency.get(asset, ()):  # pragma: no branch - pusta lista => brak iteracji
+                for neighbor, weight in adjacency.get(asset, ()):
                     if neighbor in visited:
                         continue
                     new_rate = rate * weight

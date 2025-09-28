@@ -34,7 +34,12 @@ from bot_core.config.models import (
     TelegramChannelSettings,
     WhatsAppChannelSettings,
 )
-from bot_core.exchanges.base import Environment, ExchangeAdapter, ExchangeAdapterFactory, ExchangeCredentials
+from bot_core.exchanges.base import (
+    Environment,
+    ExchangeAdapter,
+    ExchangeAdapterFactory,
+    ExchangeCredentials,
+)
 from bot_core.exchanges.binance import BinanceFuturesAdapter, BinanceSpotAdapter
 from bot_core.exchanges.kraken import KrakenFuturesAdapter, KrakenSpotAdapter
 from bot_core.exchanges.zonda import ZondaSpotAdapter
@@ -164,7 +169,7 @@ def _build_alert_channels(
     environment: EnvironmentConfig,
     secret_manager: SecretManager,
 ) -> tuple[Mapping[str, AlertChannel], DefaultAlertRouter, AlertAuditLog]:
-    audit_config = environment.alert_audit
+    audit_config = getattr(environment, "alert_audit", None)
     if audit_config and audit_config.backend == "file":
         directory = Path(audit_config.directory) if audit_config.directory else Path("alerts")
         if not directory.is_absolute():
@@ -178,6 +183,7 @@ def _build_alert_channels(
         )
     else:
         audit_log = InMemoryAlertAuditLog()
+
     throttle_cfg = getattr(environment, "alert_throttle", None)
     throttle: AlertThrottle | None = None
     if throttle_cfg is not None:
@@ -253,7 +259,7 @@ def _build_email_channel(
         raw_secret = secret_manager.load_secret_value(settings.credential_secret, purpose="alerts:email")
         try:
             parsed = json.loads(raw_secret) if raw_secret else {}
-        except json.JSONDecodeError as exc:  # pragma: no cover - uszkodzony sekret to błąd konfiguracji
+        except json.JSONDecodeError as exc:  # pragma: no cover
             raise SecretStorageError(
                 "Sekret dla kanału e-mail musi zawierać poprawny JSON z polami 'username' i 'password'."
             ) from exc
@@ -290,7 +296,7 @@ def _build_sms_channel(
     raw_secret = secret_manager.load_secret_value(settings.credential_key, purpose="alerts:sms")
     try:
         payload = json.loads(raw_secret)
-    except json.JSONDecodeError as exc:  # pragma: no cover - uszkodzone dane w magazynie
+    except json.JSONDecodeError as exc:  # pragma: no cover
         raise SecretStorageError(
             "Sekret dostawcy SMS powinien zawierać JSON z polami 'account_sid' i 'auth_token'."
         ) from exc
