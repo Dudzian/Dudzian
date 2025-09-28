@@ -82,10 +82,43 @@ def test_dual_cache_storage_updates_manifest(tmp_path) -> None:
 
     # Manifest przechowuje ostatni znacznik czasu oraz liczbę świec.
     manifest_metadata = manifest_storage.metadata()
-    assert manifest_metadata.get(f"row_count::BTCPLN::1d") == "1"
+    assert manifest_metadata.get("row_count::BTCPLN::1d") == "1"
     assert storage.latest_timestamp(key) == ts
 
     # Plik Parquet istnieje i zawiera pojedynczy rekord.
     parquet_file = tmp_path / "parquet" / "zonda_spot" / "BTCPLN" / "1d" / "year=2024" / "month=05" / "data.parquet"
     table = pq.read_table(parquet_file)
     assert table.num_rows == 1
+
+
+def test_manifest_row_count_accumulates_incremental_batches(tmp_path) -> None:
+    storage = SQLiteCacheStorage(tmp_path / "manifest.sqlite3", store_rows=False)
+    key = "BTCUSDT::1d"
+    ts1 = _timestamp(2024, 1, 1)
+    ts2 = _timestamp(2024, 1, 2)
+
+    storage.write(key, _payload(ts1))
+    metadata = storage.metadata()
+    assert metadata.get("row_count::BTCUSDT::1d") == "1"
+
+    storage.write(key, _payload(ts2))
+    metadata = storage.metadata()
+    assert metadata.get("row_count::BTCUSDT::1d") == "2"
+
+
+def test_sqlite_row_count_reflects_total_after_updates(tmp_path) -> None:
+    storage = SQLiteCacheStorage(tmp_path / "ohlcv.sqlite3", store_rows=True)
+    key = "ETHUSDT::1h"
+    ts1 = _timestamp(2023, 12, 1)
+    ts2 = _timestamp(2023, 12, 2)
+
+    storage.write(key, _payload(ts1, ts2))
+    metadata = storage.metadata()
+    assert metadata.get("row_count::ETHUSDT::1h") == "2"
+
+    update_payload = _payload(ts2)
+    update_payload["rows"][0][4] = 42.0
+    storage.write(key, update_payload)
+
+    metadata = storage.metadata()
+    assert metadata.get("row_count::ETHUSDT::1h") == "2"
