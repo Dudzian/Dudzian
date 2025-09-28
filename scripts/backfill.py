@@ -31,7 +31,7 @@ _LOGGER = logging.getLogger(__name__)
 
 _MILLISECONDS_IN_DAY = 86_400_000
 
-
+# domyślne częstotliwości odświeżania per interwał (sekundy)
 _DEFAULT_REFRESH_SECONDS: Mapping[str, int] = {
     "1d": 24 * 60 * 60,
     "1h": 15 * 60,
@@ -44,7 +44,7 @@ class _IntervalPlan:
     symbols: set[str]
     backfill_start_ms: int
     incremental_lookback_ms: int
-    refresh_seconds: int
+    refresh_seconds: int  # 0 => użyj wartości z CLI
 
 
 def _build_public_source(exchange: str, environment: Environment) -> PublicAPIDataSource:
@@ -73,7 +73,7 @@ def _build_public_source(exchange: str, environment: Environment) -> PublicAPIDa
     }
     try:
         builder = builders[exchange]
-    except KeyError as exc:  # pragma: no cover - zabezpieczenie przed przyszłymi giełdami
+    except KeyError as exc:  # pragma: no cover
         raise ValueError(f"Brak obsługi exchange={exchange} dla backfillu") from exc
     return builder(environment)
 
@@ -100,13 +100,22 @@ def _build_interval_plans(
     universe: InstrumentUniverseConfig,
     exchange_name: str,
     incremental_lookback_days: int,
-    refresh_overrides: Mapping[str, int] | None = None,
+    interval_refresh_overrides: Mapping[str, int] | None = None,
 ) -> tuple[dict[str, _IntervalPlan], set[str]]:
+    # przefiltruj override’y do dodatnich intów
+    overrides: dict[str, int] = {}
+    if interval_refresh_overrides:
+        for interval, value in interval_refresh_overrides.items():
+            try:
+                seconds = int(value)
+            except (TypeError, ValueError):
+                continue
+            if seconds > 0:
+                overrides[interval] = seconds
+
     plans: dict[str, _IntervalPlan] = {}
     symbols: set[str] = set()
     now_ms = _utc_now_ms()
-
-    overrides = {key: int(value) for key, value in (refresh_overrides or {}).items() if int(value) > 0}
 
     for instrument in universe.instruments:
         symbol = instrument.exchange_symbols.get(exchange_name)
@@ -118,9 +127,7 @@ def _build_interval_plans(
             start = now_ms - window.lookback_days * _MILLISECONDS_IN_DAY
             plan = plans.get(window.interval)
             if plan is None:
-                refresh_seconds = overrides.get(
-                    window.interval, _DEFAULT_REFRESH_SECONDS.get(window.interval, 0)
-                )
+                refresh_seconds = overrides.get(window.interval, _DEFAULT_REFRESH_SECONDS.get(window.interval, 0))
                 plan = _IntervalPlan(
                     symbols=set(),
                     backfill_start_ms=start,
@@ -210,8 +217,18 @@ async def _run_scheduler(
             frequency_seconds=frequency,
             name=f"{interval}:{len(plan.symbols)}",
         )
+        _LOGGER.debug(
+            "Zarejestrowano zadanie interval=%s, refresh_seconds=%s, lookback_ms=%s",
+            interval,
+            frequency,
+            plan.incremental_lookback_ms,
+        )
 
-    _LOGGER.info("Uruchamiam harmonogram odświeżania (domyślnie co %s sekund)", refresh_seconds)
+    _LOGGER.info(
+        "Uruchamiam harmonogram odświeżania (%s zadań, domyślna częstotliwość %s sekund)",
+        len(plans),
+        refresh_seconds,
+    )
     try:
         await scheduler.run_forever()
     finally:
@@ -230,17 +247,18 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     universe = _resolve_universe(config, environment)
 
-    refresh_overrides = {}
-    if isinstance(environment.adapter_settings, Mapping):
-        candidate = environment.adapter_settings.get("ohlcv_refresh_overrides")
-        if isinstance(candidate, Mapping):
-            refresh_overrides = candidate
+    # odczyt override’ów częstotliwości z adapter_settings (opcjonalnie)
+    adapter_settings = getattr(environment, "adapter_settings", {}) or {}
+    raw_interval_overrides = adapter_settings.get("ohlcv_refresh_seconds", {})
+    interval_refresh_overrides: Mapping[str, int] | None = None
+    if isinstance(raw_interval_overrides, Mapping):
+        interval_refresh_overrides = raw_interval_overrides
 
     plans, symbols = _build_interval_plans(
         universe=universe,
         exchange_name=environment.exchange,
         incremental_lookback_days=max(1, args.incremental_lookback_days),
-        refresh_overrides=refresh_overrides,
+        interval_refresh_overrides=interval_refresh_overrides,
     )
     if not plans:
         _LOGGER.warning("Brak instrumentów z zakresem backfill dla giełdy %s", environment.exchange)
@@ -274,12 +292,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 refresh_seconds=args.refresh_seconds,
             )
         )
-    except KeyboardInterrupt:  # pragma: no cover - obsługa CLI
+    except KeyboardInterrupt:  # pragma: no cover
         _LOGGER.info("Przerwano przez użytkownika – zamykam harmonogram")
 
     return 0
 
 
-if __name__ == "__main__":  # pragma: no cover - punkt wejścia CLI
+if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main())
-
