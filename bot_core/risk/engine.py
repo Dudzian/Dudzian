@@ -341,6 +341,106 @@ class ThresholdRiskEngine(RiskEngine):
                     adjustments={"max_quantity": max(0.0, allowed_quantity)},
                 )
 
+        if not is_reducing:
+            target_vol = profile.target_volatility()
+            stop_multiple = profile.stop_loss_atr_multiple()
+            if target_vol > 0 and stop_multiple > 0:
+                atr_raw = request.atr
+                try:
+                    atr_value = float(atr_raw) if atr_raw is not None else None
+                except (TypeError, ValueError):  # pragma: no cover - defensywnie
+                    atr_value = None
+                if atr_value is None or atr_value <= 0:
+                    self._persist_state(profile_name)
+                    return RiskCheckResult(
+                        allowed=False,
+                        reason=(
+                            "Brak wartości ATR uniemożliwia wyznaczenie wielkości pozycji w oparciu o profil ryzyka."
+                        ),
+                    )
+
+                stop_raw = request.stop_price
+                try:
+                    stop_price = float(stop_raw) if stop_raw is not None else None
+                except (TypeError, ValueError):  # pragma: no cover - defensywnie
+                    stop_price = None
+                if stop_price is None or stop_price <= 0:
+                    self._persist_state(profile_name)
+                    return RiskCheckResult(
+                        allowed=False,
+                        reason=(
+                            "Zlecenie wymaga ustawienia stop loss opartego o ATR zgodnie z profilem ryzyka."
+                        ),
+                    )
+
+                entering_long = is_buy and current_side == "long"
+                entering_short = (not is_buy) and current_side == "short"
+
+                if not entering_long and not entering_short:
+                    entering_long = is_buy
+                    entering_short = not is_buy
+
+                expected_stop_distance = atr_value * stop_multiple
+                if expected_stop_distance <= 0:
+                    self._persist_state(profile_name)
+                    return RiskCheckResult(
+                        allowed=False,
+                        reason=(
+                            "Parametry ATR i mnożnik stop loss prowadzą do nieprawidłowego dystansu zabezpieczenia."
+                        ),
+                    )
+
+                if entering_long:
+                    actual_distance = price - stop_price
+                else:
+                    actual_distance = stop_price - price
+
+                if actual_distance <= 0:
+                    self._persist_state(profile_name)
+                    return RiskCheckResult(
+                        allowed=False,
+                        reason="Cena stop loss musi znajdować się po właściwej stronie ceny wejścia.",
+                    )
+
+                tolerance = max(expected_stop_distance * 1e-4, 1e-8)
+                if abs(actual_distance - expected_stop_distance) > tolerance:
+                    self._persist_state(profile_name)
+                    return RiskCheckResult(
+                        allowed=False,
+                        reason=(
+                            "Cena stop loss musi odpowiadać wielokrotności ATR określonej w profilu ryzyka."
+                        ),
+                    )
+
+                risk_budget = target_vol * account.total_equity
+                if risk_budget <= 0:
+                    self._persist_state(profile_name)
+                    return RiskCheckResult(
+                        allowed=False,
+                        reason=(
+                            "Kapitał lub docelowa zmienność profilu uniemożliwiają otwarcie nowej pozycji."
+                        ),
+                    )
+
+                allowed_total_quantity = risk_budget / expected_stop_distance
+                if allowed_total_quantity <= 0:
+                    self._persist_state(profile_name)
+                    return RiskCheckResult(
+                        allowed=False,
+                        reason="Docelowa zmienność profilu ogranicza wielkość pozycji do zera.",
+                    )
+
+                current_quantity = current_notional / price if price > 0 else 0.0
+                new_quantity = new_notional / price if price > 0 else 0.0
+                if new_quantity > allowed_total_quantity + 1e-9:
+                    allowed_additional_quantity = max(0.0, allowed_total_quantity - current_quantity)
+                    self._persist_state(profile_name)
+                    return RiskCheckResult(
+                        allowed=False,
+                        reason="Wielkość zlecenia przekracza limit wynikający z docelowej zmienności profilu.",
+                        adjustments={"max_quantity": max(0.0, allowed_additional_quantity)},
+                    )
+
         self._persist_state(profile_name)
 
         return RiskCheckResult(allowed=True)
