@@ -8,6 +8,8 @@ from typing import Any, Mapping
 import yaml
 
 from bot_core.config.models import (
+    AlertAuditConfig,
+    AlertThrottleConfig,
     CoreConfig,
     EmailChannelSettings,
     EnvironmentConfig,
@@ -183,6 +185,50 @@ def _load_strategies(raw: Mapping[str, Any]):
     return strategies
 
 
+def _load_alert_throttle(entry: Mapping[str, Any] | None) -> AlertThrottleConfig | None:
+    if not entry:
+        return None
+    window_seconds = float(entry.get("window_seconds", entry.get("window", 0.0)))
+    if window_seconds <= 0:
+        raise ValueError("alert_throttle.window_seconds musi być dodatnie")
+    exclude_severities = tuple(str(value).lower() for value in entry.get("exclude_severities", ()) or ())
+    exclude_categories = tuple(str(value).lower() for value in entry.get("exclude_categories", ()) or ())
+    max_entries = int(entry.get("max_entries", 2048))
+    return AlertThrottleConfig(
+        window_seconds=window_seconds,
+        exclude_severities=exclude_severities,
+        exclude_categories=exclude_categories,
+        max_entries=max_entries,
+    )
+
+
+def _load_alert_audit(entry: Mapping[str, Any] | None) -> AlertAuditConfig | None:
+    if not entry:
+        return None
+
+    backend = str(entry.get("backend", entry.get("type", "memory"))).strip().lower()
+    if backend not in {"memory", "file"}:
+        raise ValueError("alert_audit.backend musi mieć wartość 'memory' lub 'file'")
+
+    directory_value = entry.get("directory")
+    directory = str(directory_value) if directory_value is not None else None
+    filename_pattern = str(entry.get("filename_pattern", "alerts-%Y%m%d.jsonl"))
+    retention_value = entry.get("retention_days")
+    retention_days = None if retention_value in (None, "") else int(retention_value)
+    fsync = bool(entry.get("fsync", False))
+
+    if backend == "file" and not directory:
+        raise ValueError("alert_audit.directory jest wymagane dla backendu 'file'")
+
+    return AlertAuditConfig(
+        backend=backend,
+        directory=directory,
+        filename_pattern=filename_pattern,
+        retention_days=retention_days,
+        fsync=fsync,
+    )
+
+
 def load_core_config(path: str | Path) -> CoreConfig:
     """Wczytuje plik YAML i mapuje go na dataclasses."""
     with Path(path).open("r", encoding="utf-8") as handle:
@@ -202,6 +248,12 @@ def load_core_config(path: str | Path) -> CoreConfig:
             ip_allowlist=tuple(entry.get("ip_allowlist", ()) or ()),
             credential_purpose=str(entry.get("credential_purpose", "trading")),
             instrument_universe=entry.get("instrument_universe"),
+            adapter_settings={
+                str(key): value
+                for key, value in (entry.get("adapter_settings", {}) or {}).items()
+            },
+            alert_throttle=_load_alert_throttle(entry.get("alert_throttle")),
+            alert_audit=_load_alert_audit(entry.get("alert_audit")),
         )
         for name, entry in raw.get("environments", {}).items()
     }

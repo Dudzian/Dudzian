@@ -1,6 +1,6 @@
 """Pakiet kanałów alertów i routera."""
 
-from bot_core.alerts.audit import AlertAuditEntry, InMemoryAlertAuditLog
+from bot_core.alerts.audit import AlertAuditEntry, FileAlertAuditLog, InMemoryAlertAuditLog
 from bot_core.alerts.base import (
     AlertAuditLog,
     AlertChannel,
@@ -17,6 +17,7 @@ from bot_core.alerts.channels import (
     get_sms_provider,
 )
 from bot_core.alerts.router import DefaultAlertRouter
+from bot_core.alerts.throttle import AlertThrottle
 
 # Optional messenger channels (keep package import-safe if not installed/implemented)
 try:  # pragma: no cover
@@ -43,6 +44,7 @@ __all__ = [
     "AlertMessage",
     "AlertRouter",
     "DefaultAlertRouter",
+    "AlertThrottle",
     "EmailChannel",
     "SMSChannel",
     "SmsProviderConfig",
@@ -50,6 +52,7 @@ __all__ = [
     "DEFAULT_SMS_PROVIDERS",
     "get_sms_provider",
     "InMemoryAlertAuditLog",
+    "FileAlertAuditLog",
 ]
 
 # Expose optional channels only when available

@@ -50,7 +50,13 @@ class KrakenSpotAdapter(ExchangeAdapter):
 
     name = "kraken_spot"
 
-    def __init__(self, credentials: ExchangeCredentials, *, environment: Environment) -> None:
+    def __init__(
+        self,
+        credentials: ExchangeCredentials,
+        *,
+        environment: Environment,
+        settings: Mapping[str, object] | None = None,
+    ) -> None:
         super().__init__(credentials)
         self._environment = environment
         try:
@@ -61,6 +67,11 @@ class KrakenSpotAdapter(ExchangeAdapter):
         self._permission_set = set(credentials.permissions)
         self._ip_allowlist: Sequence[str] | None = None
         self._last_nonce = 0
+        self._settings = dict(settings or {})
+        asset = str(self._settings.get("valuation_asset", "ZUSD") or "ZUSD").strip().upper()
+        if asset and not asset.startswith("Z") and len(asset) <= 4:
+            asset = f"Z{asset}"
+        self._valuation_asset = asset or "ZUSD"
 
     # ------------------------------------------------------------------
     # Konfiguracja sieciowa
@@ -76,7 +87,7 @@ class KrakenSpotAdapter(ExchangeAdapter):
             raise PermissionError("Poświadczenia Kraken nie mają uprawnień do odczytu.")
         balances_payload = self._private_request(_RequestContext(path="/0/private/Balance", params={}))
         trade_balance_payload = self._private_request(
-            _RequestContext(path="/0/private/TradeBalance", params={"asset": "ZUSD"})
+            _RequestContext(path="/0/private/TradeBalance", params={"asset": self._valuation_asset})
         )
 
         balances_data = balances_payload.get("result", {}) if isinstance(balances_payload, Mapping) else {}

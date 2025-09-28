@@ -224,6 +224,17 @@ environments:
     alert_channels: ["telegram:primary", "email:ops"]
     ip_allowlist: []
     instrument_universe: core_multi_exchange
+    alert_throttle:
+      window_seconds: 300
+      exclude_severities: [critical]
+      exclude_categories: [health]
+      max_entries: 4096
+    alert_audit:
+      backend: file
+      directory: audit/alerts
+      filename_pattern: alerts-%Y%m%d.jsonl
+      retention_days: 730
+      fsync: true
 
   binance_live:
     exchange: binance_spot
@@ -234,6 +245,17 @@ environments:
     alert_channels: ["telegram:primary", "sms:orange_local", "email:ops"]
     ip_allowlist: []
     instrument_universe: core_multi_exchange
+    alert_throttle:
+      window_seconds: 180
+      exclude_severities: [critical]
+      exclude_categories: [health]
+      max_entries: 4096
+    alert_audit:
+      backend: file
+      directory: audit/alerts
+      filename_pattern: alerts-%Y%m%d.jsonl
+      retention_days: 730
+      fsync: true
 
   binance_futures_paper:
     exchange: binance_futures
@@ -244,6 +266,17 @@ environments:
     alert_channels: ["telegram:primary", "email:ops"]
     ip_allowlist: []
     instrument_universe: core_multi_exchange
+    alert_throttle:
+      window_seconds: 300
+      exclude_severities: [critical]
+      exclude_categories: [health]
+      max_entries: 4096
+    alert_audit:
+      backend: file
+      directory: audit/alerts
+      filename_pattern: alerts-%Y%m%d.jsonl
+      retention_days: 730
+      fsync: true
 
   binance_futures_live:
     exchange: binance_futures
@@ -254,6 +287,17 @@ environments:
     alert_channels: ["telegram:primary", "sms:orange_local", "email:ops"]
     ip_allowlist: []
     instrument_universe: core_multi_exchange
+    alert_throttle:
+      window_seconds: 180
+      exclude_severities: [critical]
+      exclude_categories: [health]
+      max_entries: 4096
+    alert_audit:
+      backend: file
+      directory: audit/alerts
+      filename_pattern: alerts-%Y%m%d.jsonl
+      retention_days: 730
+      fsync: true
 
   kraken_paper:
     exchange: kraken_spot
@@ -264,6 +308,19 @@ environments:
     alert_channels: ["telegram:primary", "email:ops"]
     ip_allowlist: []
     instrument_universe: core_multi_exchange
+    adapter_settings:
+      valuation_asset: ZUSD
+    alert_throttle:
+      window_seconds: 300
+      exclude_severities: [critical]
+      exclude_categories: [health]
+      max_entries: 4096
+    alert_audit:
+      backend: file
+      directory: audit/alerts
+      filename_pattern: alerts-%Y%m%d.jsonl
+      retention_days: 730
+      fsync: true
 
   kraken_live:
     exchange: kraken_spot
@@ -274,6 +331,19 @@ environments:
     alert_channels: ["telegram:primary", "sms:orange_local", "email:ops"]
     ip_allowlist: []
     instrument_universe: core_multi_exchange
+    adapter_settings:
+      valuation_asset: ZEUR
+    alert_throttle:
+      window_seconds: 180
+      exclude_severities: [critical]
+      exclude_categories: [health]
+      max_entries: 4096
+    alert_audit:
+      backend: file
+      directory: audit/alerts
+      filename_pattern: alerts-%Y%m%d.jsonl
+      retention_days: 730
+      fsync: true
 
   kraken_futures_paper:
     exchange: kraken_futures
@@ -284,6 +354,17 @@ environments:
     alert_channels: ["telegram:primary", "email:ops"]
     ip_allowlist: []
     instrument_universe: core_multi_exchange
+    alert_throttle:
+      window_seconds: 300
+      exclude_severities: [critical]
+      exclude_categories: [health]
+      max_entries: 4096
+    alert_audit:
+      backend: file
+      directory: audit/alerts
+      filename_pattern: alerts-%Y%m%d.jsonl
+      retention_days: 730
+      fsync: true
 
   kraken_futures_live:
     exchange: kraken_futures
@@ -294,6 +375,17 @@ environments:
     alert_channels: ["telegram:primary", "sms:orange_local", "email:ops"]
     ip_allowlist: []
     instrument_universe: core_multi_exchange
+    alert_throttle:
+      window_seconds: 180
+      exclude_severities: [critical]
+      exclude_categories: [health]
+      max_entries: 4096
+    alert_audit:
+      backend: file
+      directory: audit/alerts
+      filename_pattern: alerts-%Y%m%d.jsonl
+      retention_days: 730
+      fsync: true
 
   zonda_paper:
     exchange: zonda_spot
@@ -304,6 +396,20 @@ environments:
     alert_channels: ["telegram:primary"]
     ip_allowlist: []
     instrument_universe: core_multi_exchange
+    adapter_settings:
+      valuation_asset: PLN
+      secondary_valuation_assets: [USDT, EUR, USD]
+    alert_throttle:
+      window_seconds: 420
+      exclude_severities: [critical]
+      exclude_categories: [health]
+      max_entries: 4096
+    alert_audit:
+      backend: file
+      directory: audit/alerts
+      filename_pattern: alerts-%Y%m%d.jsonl
+      retention_days: 730
+      fsync: true
 
   zonda_live:
     exchange: zonda_spot
@@ -314,6 +420,20 @@ environments:
     alert_channels: ["telegram:primary", "sms:nova_is", "email:ops"]
     ip_allowlist: []
     instrument_universe: core_multi_exchange
+    adapter_settings:
+      valuation_asset: PLN
+      secondary_valuation_assets: [USDT, EUR, USD]
+    alert_throttle:
+      window_seconds: 240
+      exclude_severities: [critical]
+      exclude_categories: [health]
+      max_entries: 4096
+    alert_audit:
+      backend: file
+      directory: audit/alerts
+      filename_pattern: alerts-%Y%m%d.jsonl
+      retention_days: 730
+      fsync: true
 
 reporting:
   daily_report_time_utc: "21:00"
