@@ -23,6 +23,7 @@ zewnętrznych, z jasnym podziałem na warstwy i środowiska.
 | `bot_core/alerts` | Wspólne API alertów i kanały powiadomień | `AlertChannel`, `AlertRouter`, kanały `TelegramChannel`, `EmailChannel`, `SMSChannel`, `SignalChannel`, `WhatsAppChannel`, `MessengerChannel` |
 | `bot_core/config` | Ładowanie konfiguracji i mapowanie na dataclasses | `CoreConfig`, `EnvironmentConfig`, `RiskProfileConfig`, `load_core_config` |
 | `bot_core/security` | Bezpieczne przechowywanie kluczy API i integracja z keychainami | `SecretManager`, `KeyringSecretStorage` |
+| `bot_core/reporting` | Generowanie dziennych pakietów audytowych | `generate_daily_paper_report`, `PaperReportArtifacts` |
 
 Adaptery `BinanceSpotAdapter` oraz `BinanceFuturesAdapter` obsługują dane publiczne (lista symboli,
 świece OHLCV) oraz podpisane wywołania konta i składania/anulowania zleceń. Wspierają separację
@@ -83,14 +84,25 @@ przekazywać parametry specyficzne dla danej giełdy bez łamania ogólnego kont
 `kraken_live` korzysta z `valuation_asset: ZEUR`, co powoduje, że `KrakenSpotAdapter` raportuje kapitał
 w walucie referencyjnej EUR zgodnie z wymaganiami risk engine'u i raportowania P&L.
 
+Konfiguracja każdego środowiska zawiera także sekcje `required_permissions` i `forbidden_permissions`.
+`SecretManager.load_exchange_credentials` odczytuje te listy i blokuje start, jeżeli klucz API nie ma
+kompletu minimalnych uprawnień (np. `trade`) lub posiada zabronione możliwości (`withdraw`). Dzięki
+temu wymuszamy model najmniejszych uprawnień zanim kontroler runtime połączy się z adapterem.
+
 ## Dane rynkowe
 
 `PublicAPIDataSource` zostanie połączony z adapterami do pobierania danych OHLCV z publicznych API.
 `CachedOHLCVSource` w połączeniu z `OHLCVBackfillService` obsługuje proces „backfill + cache” z
-podziałem na okna czasowe oraz deduplikacją zapisów. Domyślny backend `SQLiteCacheStorage`
-przechowuje dane w pliku `ohlcv.sqlite` (tryb WAL) i udostępnia metadane do audytu. Dla użytkownika
-końcowego przygotowano skrypt `scripts/backfill_ohlcv.py`, który na podstawie `config/core.yaml`
-pobiera świece z Binance lub Zondy (w zależności od środowiska) i aktualizuje lokalny cache w trybie bezkosztowym.
+podziałem na okna czasowe oraz deduplikacją zapisów. Domyślna konfiguracja wykorzystuje
+`DualCacheStorage`, które łączy `ParquetCacheStorage` (partycjonowane katalogi
+`exchange/symbol/granularity/year=YYYY/month=MM/`) z lekkim manifestem w `SQLiteCacheStorage`
+(`ohlcv_manifest.sqlite`). Dzięki temu Parquet jest „źródłem prawdy” dla świeczek, a manifest
+przechowuje metadane (ostatni timestamp, liczba rekordów) bez konieczności otwierania wszystkich
+plików. Zarówno nowy skrypt `scripts/backfill.py`, jak i uproszczony `scripts/backfill_ohlcv.py`
+wykorzystują tę samą warstwę storage, dzięki czemu backtesty i runtime paper/live czytają identyczne dane.
+`OHLCVBackfillService` domyślnie wprowadza throttling zapytań (konfigurowalny interwał, jitter i limit
+retry z wykładniczym backoffem), co pozwala realizować długie zasypy historii w duchu „good citizen” wobec
+publicznych API giełd – bez przekraczania limitów i bez konieczności manualnego wstawiania pauz w skryptach.
 
 ## Strategie i walk-forward
 
@@ -119,6 +131,13 @@ Manager pilnuje zgodności środowiska (paper/live/testnet) oraz pozwala na wiel
 zapisanie/rotację kluczy bez ręcznych zmian w konfiguracji YAML. W środowiskach headless można
 docelowo podmienić implementację `SecretStorage` na wariant oparty o zaszyfrowany plik (np. `age`).
 
+Uzupełniająco moduł `security.rotation` utrzymuje rejestr dat wymiany kluczy w pliku
+`security/rotation_log.json` (per środowisko) i udostępnia API do obliczania, ile czasu pozostało do
+kolejnej rotacji. Skrypt `scripts/check_key_rotation.py` korzysta z `core.yaml`, generuje raport dla
+wszystkich środowisk oraz – opcjonalnie – zapisuje nową datę rotacji po zakończeniu procedury
+„bez-downtime”. Dzięki temu proces wymiany co 90 dni posiada mierzalne wsparcie operacyjne i łatwo
+go audytować.
+
 ## Egzekucja
 
 `ExecutionService` definiuje pełny cykl życia zlecenia z kontekstem (`ExecutionContext`) zawierającym
@@ -126,7 +145,16 @@ informacje o profilu ryzyka i środowisku. Interfejs `RetryPolicy` pozwoli na po
 błędów API (np. exponential backoff, circuit breaker). Pierwszą implementacją jest
 `PaperTradingExecutionService`, który symuluje egzekucję z natychmiastowym fill'em,
 uwzględnia prowizje maker/taker, poślizg (w punktach bazowych), walidację wielkości zlecenia oraz
-prowadzi dziennik audytowy transakcji.
+prowadzi dziennik audytowy transakcji – zarówno w pamięci na potrzeby bieżącej sesji, jak i
+w trwałych plikach JSONL rotowanych zgodnie z polityką retencji.
+
+## Raportowanie i audyt
+
+`bot_core/reporting` dostarcza funkcję `generate_daily_paper_report`, która tworzy dzienne archiwum ZIP z
+blotterem (`ledger.csv`), zdarzeniami decyzyjnymi (`decisions.jsonl`) oraz zwięzłym podsumowaniem (`summary.json`).
+Raport filtruje wpisy według strefy czasowej środowiska, wspiera retencję 24 miesięcy i przygotowuje pakiety do
+podpisu kryptograficznego oraz szyfrowania w kolejnych etapach. Pakiet stanowi bazę do dziennych raportów P&L oraz
+audytów KYC/AML.
 
 ## Alerty i obserwowalność
 
@@ -141,6 +169,13 @@ polityką retencji zgodną z wymaganiami (domyślnie 24 miesiące). Ścieżka or
 są definiowane w konfiguracji środowiska (`alert_audit`), a bootstrap automatycznie wybiera backend
 plikowy lub pamięciowy zależnie od ustawień. Dzięki temu logi alertów spełniają wymogi audytu i
 mogą być w prosty sposób archiwizowane lub agregowane do raportów.
+
+Moduł `runtime.journal` dodaje `TradingDecisionJournal`, który zapisuje w formacie JSONL pełną
+historię decyzji (przyjęte/odrzucone sygnały, korekty ryzyka, egzekucje, błędy) wraz z metadanymi
+środowiska i portfela. Domyślna konfiguracja `decision_journal` w `core.yaml` wskazuje katalog
+`audit/decisions` z retencją 24 miesięcy i opcją `fsync` dla środowisk produkcyjnych. Dziennik jest
+wykorzystywany przy raportach compliance, ponieważ pozwala odtworzyć dokładny powód każdej decyzji
+silnika ryzyka lub modułu egzekucji.
 
 Nowy mechanizm throttlingu pozwala dodatkowo ograniczyć powtarzalne alerty informacyjne: dla każdego
 środowiska w `core.yaml` można zdefiniować długość okna, wykluczone kategorie lub poziomy `severity`

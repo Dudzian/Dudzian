@@ -2,9 +2,14 @@
 from __future__ import annotations
 
 import itertools
+import json
 import logging
+import os
+import threading
 import time
 from dataclasses import dataclass
+from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Mapping, MutableMapping, Optional
 
 from bot_core.execution.base import ExecutionContext, ExecutionService
@@ -115,6 +120,11 @@ class PaperTradingExecutionService(ExecutionService):
         slippage_bps: float = 5.0,
         time_source: Optional[Callable[[], float]] = None,
         metrics: MetricsRegistry | None = None,
+        ledger_directory: str | Path | None = None,
+        ledger_filename_pattern: str = "ledger-%Y%m%d.jsonl",
+        ledger_retention_days: int | None = 730,
+        ledger_fsync: bool = False,
+        ledger_encoding: str = "utf-8",
     ) -> None:
         if not markets:
             raise ValueError("Wymagana jest co najmniej jedna definicja rynku.")
@@ -135,6 +145,19 @@ class PaperTradingExecutionService(ExecutionService):
             "aggressive": 0.1,
         }
         self._default_maintenance_margin = 0.25
+
+        self._ledger_directory: Path | None = None
+        self._ledger_filename_pattern = ledger_filename_pattern
+        self._ledger_retention_days = ledger_retention_days
+        self._ledger_fsync = ledger_fsync
+        self._ledger_encoding = ledger_encoding
+        self._ledger_lock: threading.Lock | None = None
+
+        if ledger_directory:
+            self._ledger_directory = Path(ledger_directory)
+            self._ledger_directory.mkdir(parents=True, exist_ok=True)
+            datetime.now(timezone.utc).strftime(self._ledger_filename_pattern)
+            self._ledger_lock = threading.Lock()
 
         # metrics
         self._metrics = metrics or get_global_metrics_registry()
@@ -247,6 +270,7 @@ class PaperTradingExecutionService(ExecutionService):
                 position_value=position_value,
             )
         )
+        self._persist_ledger_entry(self._ledger[-1])
         _LOGGER.debug(
             "Paper trade %s %s qty=%s price=%s fee=%s (env=%s)",
             side,
@@ -276,6 +300,7 @@ class PaperTradingExecutionService(ExecutionService):
             )
         )
         _LOGGER.info("Zarejestrowano anulację %s w symulatorze paper trading (brak otwartych zleceń).", order_id)
+        self._persist_ledger_entry(self._ledger[-1])
 
     def flush(self) -> None:
         # Symulator realizuje zlecenia natychmiast – flush nie musi nic robić.
@@ -439,6 +464,13 @@ class PaperTradingExecutionService(ExecutionService):
         """Zwraca kopię wpisów audytowych (do raportów compliance)."""
         return [entry.to_mapping() for entry in self._ledger]
 
+    def ledger_files(self) -> Iterable[Path]:
+        """Zwraca uporządkowaną listę plików ledger, jeśli trwały zapis jest włączony."""
+
+        if not self._ledger_directory:
+            return ()
+        return tuple(sorted(self._ledger_directory.glob("*")))
+
     def short_positions(self) -> Mapping[str, Mapping[str, float]]:
         """Zwraca aktualne pozycje krótkie wraz z depozytem zabezpieczającym."""
 
@@ -457,6 +489,45 @@ class PaperTradingExecutionService(ExecutionService):
         base_quantity = self._balances.get(market.base_asset, 0.0)
         short_quantity = self._short_positions.get(symbol).quantity if symbol in self._short_positions else 0.0
         return (base_quantity + short_quantity) * price
+
+    def _persist_ledger_entry(self, entry: LedgerEntry) -> None:
+        if not self._ledger_directory or not self._ledger_lock:
+            return
+
+        timestamp = datetime.fromtimestamp(entry.timestamp, timezone.utc)
+        filename = timestamp.strftime(self._ledger_filename_pattern)
+        target = self._ledger_directory / filename
+        payload = json.dumps(entry.to_mapping(), ensure_ascii=False, separators=(",", ":"))
+
+        with self._ledger_lock:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with target.open("a", encoding=self._ledger_encoding) as handle:
+                handle.write(payload)
+                handle.write("\n")
+                handle.flush()
+                if self._ledger_fsync:
+                    os.fsync(handle.fileno())
+            self._purge_ledger_files(current_date=timestamp.date())
+
+    def _purge_ledger_files(self, *, current_date: date) -> None:
+        if not self._ledger_directory:
+            return
+        if not self._ledger_retention_days or self._ledger_retention_days <= 0:
+            return
+
+        cutoff = current_date - timedelta(days=self._ledger_retention_days - 1)
+        for file_path in self._ledger_directory.glob("*"):
+            if not file_path.is_file():
+                continue
+            try:
+                file_date = datetime.strptime(file_path.name, self._ledger_filename_pattern).date()
+            except ValueError:
+                continue
+            if file_date < cutoff:
+                try:
+                    file_path.unlink()
+                except OSError:
+                    continue
 
     def _maintenance_margin_ratio(self, risk_profile: str) -> float:
         return self._maintenance_profiles.get(risk_profile, self._default_maintenance_margin)
