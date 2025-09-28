@@ -32,6 +32,14 @@ except Exception:  # pragma: no cover - starsze gałęzie mogą nie mieć moduł
 __all__ = ["BootstrapContext", "bootstrap_environment"]
 
 # Eksportuj tylko te kontrolery, które są dostępne w danej gałęzi.
+if _TradingController is None:
+    try:  # pragma: no cover - defensywny fallback, gdy pierwszy import się nie powiedzie
+        from bot_core.runtime import controller as _controller_module  # type: ignore
+
+        _TradingController = getattr(_controller_module, "TradingController", None)
+    except Exception:  # pragma: no cover - brak dostępnego kontrolera w starszej gałęzi
+        _TradingController = None  # type: ignore
+
 if _TradingController is not None:
     TradingController = _TradingController  # type: ignore
     __all__.append("TradingController")
