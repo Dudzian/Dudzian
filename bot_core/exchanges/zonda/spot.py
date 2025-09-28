@@ -262,7 +262,7 @@ class ZondaSpotAdapter(ExchangeAdapter):
         method: str,
         path: str,
         *,
-        params: Optional[Mapping[str, object]] = None,
+        params: Optional[mapping[str, object]] = None,  # type: ignore[name-defined]
         data: Optional[Mapping[str, object]] = None,
     ) -> dict[str, object] | list[object]:
         if not self._credentials.secret:

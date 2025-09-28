@@ -276,8 +276,7 @@ def test_account_loader_handles_multi_currency_and_shorts(tmp_path: Path) -> Non
 
     adapter = FakeExchangeAdapter(
         ExchangeCredentials(key_id="public", environment=Environment.PAPER),
-        fixtures=
-        (
+        fixtures=(
             _OhlcvFixture(symbol="BTCUSDT", rows=candles_btc_usdt),
             _OhlcvFixture(symbol="ETHUSDT", rows=candles_eth_usdt),
             _OhlcvFixture(symbol="BTCEUR", rows=candles_btc_eur),

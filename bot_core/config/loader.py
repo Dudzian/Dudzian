@@ -63,6 +63,11 @@ def _core_has(field_name: str) -> bool:
     return any(f.name == field_name for f in fields(CoreConfig))
 
 
+def _env_has(field_name: str) -> bool:
+    """Sprawdza, czy EnvironmentConfig posiada dane pole (bezpiecznie dla różnych gałęzi)."""
+    return any(f.name == field_name for f in fields(EnvironmentConfig))
+
+
 def _load_instrument_universes(raw: Mapping[str, Any]):
     if InstrumentUniverseConfig is None or InstrumentConfig is None or InstrumentBackfillWindow is None:
         return {}
@@ -208,26 +213,28 @@ def load_core_config(path: str | Path) -> CoreConfig:
 
     instrument_universes = _load_instrument_universes(raw)
 
-    environments = {
-        name: EnvironmentConfig(
-            name=name,
-            exchange=entry["exchange"],
-            environment=Environment(entry["environment"]),
-            keychain_key=entry["keychain_key"],
-            data_cache_path=entry["data_cache_path"],
-            risk_profile=entry["risk_profile"],
-            alert_channels=tuple(entry.get("alert_channels", ()) or ()),
-            ip_allowlist=tuple(entry.get("ip_allowlist", ()) or ()),
-            credential_purpose=str(entry.get("credential_purpose", "trading")),
-            instrument_universe=entry.get("instrument_universe"),
-            adapter_settings={
+    # Środowiska – budujemy kwargs dynamicznie, aby działało w gałęziach bez alert_throttle.
+    environments: dict[str, EnvironmentConfig] = {}
+    for name, entry in raw.get("environments", {}).items():
+        env_kwargs: dict[str, Any] = {
+            "name": name,
+            "exchange": entry["exchange"],
+            "environment": Environment(entry["environment"]),
+            "keychain_key": entry["keychain_key"],
+            "data_cache_path": entry["data_cache_path"],
+            "risk_profile": entry["risk_profile"],
+            "alert_channels": tuple(entry.get("alert_channels", ()) or ()),
+            "ip_allowlist": tuple(entry.get("ip_allowlist", ()) or ()),
+            "credential_purpose": str(entry.get("credential_purpose", "trading")),
+            "instrument_universe": entry.get("instrument_universe"),
+            "adapter_settings": {
                 str(key): value
                 for key, value in (entry.get("adapter_settings", {}) or {}).items()
             },
-            alert_throttle=_load_alert_throttle(entry.get("alert_throttle")),
-        )
-        for name, entry in raw.get("environments", {}).items()
-    }
+        }
+        if _env_has("alert_throttle"):
+            env_kwargs["alert_throttle"] = _load_alert_throttle(entry.get("alert_throttle"))
+        environments[name] = EnvironmentConfig(**env_kwargs)
 
     risk_profiles = {
         name: RiskProfileConfig(
