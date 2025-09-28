@@ -66,7 +66,6 @@ _DEFAULT_ADAPTERS: Mapping[str, ExchangeAdapterFactory] = {
     "zonda_spot": ZondaSpotAdapter,
 }
 
-
 _PROFILE_CLASS_BY_NAME: Mapping[str, type[RiskProfile]] = {
     "conservative": ConservativeProfile,
     "balanced": BalancedProfile,
@@ -132,7 +131,7 @@ def bootstrap_environment(
     )
     adapter.configure_network(ip_allowlist=environment.ip_allowlist or None)
 
-    alert_channels, alert_router, audit_log = _build_alert_channels(
+    alert_channels, alert_router, audit_log = build_alert_channels(
         core_config=core_config,
         environment=environment,
         secret_manager=secret_manager,
@@ -200,6 +199,7 @@ def _build_risk_profile(config: RiskProfileConfig) -> RiskProfile:
     if profile_class is not None:
         return profile_class()
 
+    # fallback: z konfiguracji jako „manual”
     return ManualProfile(
         name=config.name,
         max_positions=config.max_open_positions,
@@ -212,7 +212,7 @@ def _build_risk_profile(config: RiskProfileConfig) -> RiskProfile:
     )
 
 
-def _build_alert_channels(
+def build_alert_channels(
     *,
     core_config: CoreConfig,
     environment: EnvironmentConfig,
@@ -333,7 +333,7 @@ def _build_email_channel(
         raw_secret = secret_manager.load_secret_value(settings.credential_secret, purpose="alerts:email")
         try:
             parsed = json.loads(raw_secret) if raw_secret else {}
-        except json.JSONDecodeError as exc:  # pragma: no cover - uszkodzony sekret to błąd konfiguracji
+        except json.JSONDecodeError as exc:  # pragma: no cover
             raise SecretStorageError(
                 "Sekret dla kanału e-mail musi zawierać poprawny JSON z polami 'username' i 'password'."
             ) from exc
@@ -370,7 +370,7 @@ def _build_sms_channel(
     raw_secret = secret_manager.load_secret_value(settings.credential_key, purpose="alerts:sms")
     try:
         payload = json.loads(raw_secret)
-    except json.JSONDecodeError as exc:  # pragma: no cover - uszkodzone dane w magazynie
+    except json.JSONDecodeError as exc:  # pragma: no cover
         raise SecretStorageError(
             "Sekret dostawcy SMS powinien zawierać JSON z polami 'account_sid' i 'auth_token'."
         ) from exc
@@ -490,4 +490,4 @@ def _resolve_sms_provider(settings: SMSProviderSettings) -> SmsProviderConfig:
     )
 
 
-__all__ = ["BootstrapContext", "bootstrap_environment"]
+__all__ = ["BootstrapContext", "bootstrap_environment", "build_alert_channels"]
