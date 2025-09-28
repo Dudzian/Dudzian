@@ -70,7 +70,10 @@ def test_roundtrip_store_and_load_credentials() -> None:
 
     manager.store_exchange_credentials("binance_paper_trading", credentials)
     loaded = manager.load_exchange_credentials(
-        "binance_paper_trading", expected_environment=Environment.PAPER
+        "binance_paper_trading",
+        expected_environment=Environment.PAPER,
+        required_permissions=("read", "trade"),
+        forbidden_permissions=("withdraw",),
     )
 
     assert loaded.key_id == credentials.key_id
@@ -106,6 +109,54 @@ def test_environment_mismatch_detected() -> None:
         manager.load_exchange_credentials("binance_paper", expected_environment=Environment.LIVE)
 
     assert "nie pasuje" in str(excinfo.value)
+
+
+def test_required_permissions_are_enforced() -> None:
+    storage = KeyringSecretStorage(service_name="unit.test")
+    manager = SecretManager(storage)
+
+    credentials = ExchangeCredentials(
+        key_id="abc",
+        secret="sekret",
+        passphrase=None,
+        environment=Environment.PAPER,
+        permissions=("read",),
+    )
+
+    manager.store_exchange_credentials("binance_paper", credentials)
+
+    with pytest.raises(SecretStorageError) as excinfo:
+        manager.load_exchange_credentials(
+            "binance_paper",
+            expected_environment=Environment.PAPER,
+            required_permissions=("read", "trade"),
+        )
+
+    assert "wymaganych uprawnień" in str(excinfo.value)
+
+
+def test_forbidden_permissions_are_detected() -> None:
+    storage = KeyringSecretStorage(service_name="unit.test")
+    manager = SecretManager(storage)
+
+    credentials = ExchangeCredentials(
+        key_id="abc",
+        secret="sekret",
+        passphrase=None,
+        environment=Environment.PAPER,
+        permissions=("read", "trade", "withdraw"),
+    )
+
+    manager.store_exchange_credentials("binance_live", credentials)
+
+    with pytest.raises(SecretStorageError) as excinfo:
+        manager.load_exchange_credentials(
+            "binance_live",
+            expected_environment=Environment.PAPER,
+            forbidden_permissions=("withdraw",),
+        )
+
+    assert "zabronione uprawnienia" in str(excinfo.value)
 
 
 def test_store_and_load_generic_secret() -> None:

@@ -18,8 +18,9 @@ from bot_core.exchanges.base import (
     OrderResult,
 )
 from bot_core.risk.engine import ThresholdRiskEngine
+from bot_core.risk.repository import FileRiskRepository
 from bot_core.runtime import BootstrapContext, bootstrap_environment
-from bot_core.security import SecretManager, SecretStorage
+from bot_core.security import SecretManager, SecretStorage, SecretStorageError
 
 
 class _MemorySecretStorage(SecretStorage):
@@ -57,6 +58,8 @@ def _write_config(tmp_path: Path) -> Path:
         risk_profile: balanced
         alert_channels: ["telegram:primary", "email:ops", "sms:orange_local"]
         ip_allowlist: ["127.0.0.1"]
+        required_permissions: [read, trade]
+        forbidden_permissions: [withdraw]
         alert_throttle:
           window_seconds: 60
           exclude_severities: [critical]
@@ -71,6 +74,8 @@ def _write_config(tmp_path: Path) -> Path:
         risk_profile: balanced
         alert_channels: ["telegram:primary"]
         ip_allowlist: ["127.0.0.1"]
+        required_permissions: [read, trade]
+        forbidden_permissions: [withdraw]
         alert_throttle:
           window_seconds: 120
           exclude_severities: [critical]
@@ -140,6 +145,7 @@ def test_bootstrap_environment_initialises_components(tmp_path: Path) -> None:
     assert context.adapter.credentials.key_id == "paper-key"
 
     assert isinstance(context.risk_engine, ThresholdRiskEngine)
+    assert isinstance(context.risk_repository, FileRiskRepository)
     result = context.risk_engine.apply_pre_trade_checks(
         OrderRequest(symbol="BTCUSDT", side="buy", quantity=0.2, order_type="limit", price=100.0),
         account=AccountSnapshot(
@@ -172,6 +178,37 @@ def test_bootstrap_environment_initialises_components(tmp_path: Path) -> None:
 
     assert context.risk_engine.should_liquidate(profile_name="balanced") is False
     assert context.adapter_settings == {}
+    risk_state_path = Path("./var/data/binance_paper/risk_state/balanced.json")
+    assert risk_state_path.parent.exists()
+
+
+def test_bootstrap_environment_detects_missing_permissions(tmp_path: Path) -> None:
+    storage = _MemorySecretStorage()
+    manager = SecretManager(storage, namespace="tests")
+
+    config_path = _write_config(tmp_path)
+    credentials_payload = {
+        "key_id": "paper-key",
+        "secret": "paper-secret",
+        "passphrase": None,
+        "permissions": ["read"],
+        "environment": Environment.PAPER.value,
+    }
+    storage.set_secret("tests:binance_paper_key:trading", json.dumps(credentials_payload))
+    manager.store_secret_value("telegram_token", "telegram-secret", purpose="alerts:telegram")
+    manager.store_secret_value(
+        "smtp_credentials",
+        json.dumps({"username": "bot", "password": "secret"}),
+        purpose="alerts:email",
+    )
+    manager.store_secret_value(
+        "sms_orange",
+        json.dumps({"account_sid": "AC123", "auth_token": "token"}),
+        purpose="alerts:sms",
+    )
+
+    with pytest.raises(SecretStorageError):
+        bootstrap_environment("binance_paper", config_path=config_path, secret_manager=manager)
 
 
 def test_bootstrap_environment_supports_zonda(tmp_path: Path) -> None:
@@ -198,6 +235,8 @@ def test_bootstrap_environment_supports_zonda(tmp_path: Path) -> None:
         risk_profile: conservative
         alert_channels: ["telegram:primary"]
         ip_allowlist: []
+        required_permissions: [read, trade]
+        forbidden_permissions: [withdraw]
     reporting: {}
     alerts:
       telegram_channels:

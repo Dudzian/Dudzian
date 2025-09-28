@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping, Sequence
 
@@ -231,6 +231,17 @@ class _StubTradingController:
         return []
 
 
+class _FailingRealtimeController(_StubRealtimeController):
+    def __init__(self, interval: str, tick_seconds: float) -> None:
+        super().__init__(interval, tick_seconds)
+        self.failures = 0
+
+    def collect_signals(self, *, start: int, end: int) -> Sequence[ControllerSignal]:
+        del start, end
+        self.failures += 1
+        raise RuntimeError("boom")
+
+
 def test_realtime_runner_uses_monthly_interval_lookback() -> None:
     now = datetime(2024, 1, 1, tzinfo=timezone.utc)
     controller = _StubRealtimeController(interval="1M", tick_seconds=60.0)
@@ -294,3 +305,66 @@ def test_realtime_runner_triggers_alerts_and_execution() -> None:
 
     balances = execution_service.balances()
     assert balances["USDT"] < account_snapshot.available_margin
+
+
+def test_run_forever_respects_stop_condition_and_sleep() -> None:
+    controller = _StubRealtimeController(interval="1d", tick_seconds=180.0)
+    trading_controller = _StubTradingController()
+
+    class _Clock:
+        def __init__(self) -> None:
+            self.current = datetime(2024, 1, 1, tzinfo=timezone.utc)
+
+        def __call__(self) -> datetime:
+            value = self.current
+            self.current = value + timedelta(seconds=60)
+            return value
+
+    sleep_calls: list[float] = []
+
+    runner = DailyTrendRealtimeRunner(
+        controller=controller,
+        trading_controller=trading_controller,
+        clock=_Clock(),
+        sleep=lambda seconds: sleep_calls.append(seconds),
+        history_bars=3,
+    )
+
+    runner.run_forever(stop_condition=lambda: len(controller.calls) >= 2)
+
+    assert len(controller.calls) == 2
+    assert trading_controller.health_checks == 2
+    assert sleep_calls == [pytest.approx(60.0)]
+
+
+def test_run_forever_uses_error_handler_and_continues() -> None:
+    controller = _FailingRealtimeController(interval="1d", tick_seconds=180.0)
+    trading_controller = _StubTradingController()
+
+    class _Clock:
+        def __init__(self) -> None:
+            self.current = datetime(2024, 1, 1, tzinfo=timezone.utc)
+
+        def __call__(self) -> datetime:
+            value = self.current
+            self.current = value + timedelta(seconds=60)
+            return value
+
+    sleep_calls: list[float] = []
+    captured: list[Exception] = []
+
+    runner = DailyTrendRealtimeRunner(
+        controller=controller,
+        trading_controller=trading_controller,
+        clock=_Clock(),
+        sleep=lambda seconds: sleep_calls.append(seconds),
+        on_cycle_error=lambda exc: captured.append(exc),
+        min_sleep_seconds=5.0,
+    )
+
+    runner.run_forever(max_cycles=2)
+
+    assert controller.failures == 2
+    assert len(captured) == 2
+    assert all(isinstance(exc, RuntimeError) for exc in captured)
+    assert sleep_calls == [pytest.approx(60.0)]

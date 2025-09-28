@@ -32,6 +32,7 @@ from bot_core.alerts import (
     get_sms_provider,
 )
 from bot_core.alerts.base import AlertChannel
+from bot_core.observability.metrics import MetricsRegistry
 
 
 class DummyChannel(AlertChannel):
@@ -55,6 +56,19 @@ class FailingChannel(AlertChannel):
 
     def health_check(self) -> dict[str, str]:
         return {"status": "error"}
+
+
+class HealthFailingChannel(AlertChannel):
+    name = "health-failing"
+
+    def __init__(self) -> None:
+        self.messages: List[AlertMessage] = []
+
+    def send(self, message: AlertMessage) -> None:
+        self.messages.append(message)
+
+    def health_check(self) -> dict[str, str]:  # noqa: D401
+        raise RuntimeError("boom")
 
 
 @pytest.fixture()
@@ -84,6 +98,25 @@ def test_router_dispatch_records_audit(sample_message: AlertMessage) -> None:
     assert exported[0]["severity"] == "critical"
 
 
+def test_router_dispatch_updates_metrics(sample_message: AlertMessage) -> None:
+    audit = InMemoryAlertAuditLog()
+    registry = MetricsRegistry()
+    router = DefaultAlertRouter(
+        audit_log=audit,
+        metrics_registry=registry,
+        metric_labels={"environment": "paper"},
+    )
+    channel = DummyChannel()
+    router.register(channel)
+
+    router.dispatch(sample_message)
+
+    sent_metric = registry.get("alerts_sent_total")
+    assert sent_metric.value(
+        labels={"environment": "paper", "channel": "dummy", "severity": "critical"}
+    ) == pytest.approx(1.0)
+
+
 def test_router_continues_on_error(sample_message: AlertMessage, caplog: pytest.LogCaptureFixture) -> None:
     audit = InMemoryAlertAuditLog()
     router = DefaultAlertRouter(audit_log=audit)
@@ -96,6 +129,30 @@ def test_router_continues_on_error(sample_message: AlertMessage, caplog: pytest.
     assert len(exported) == 1
     assert exported[0]["channel"] == "dummy"
     assert any("Część kanałów zgłosiła błędy" in record.message for record in caplog.records)
+
+
+def test_router_records_failure_metric(sample_message: AlertMessage) -> None:
+    audit = InMemoryAlertAuditLog()
+    registry = MetricsRegistry()
+    router = DefaultAlertRouter(
+        audit_log=audit,
+        metrics_registry=registry,
+        metric_labels={"environment": "paper"},
+    )
+    router.register(FailingChannel())
+    router.register(DummyChannel())
+
+    router.dispatch(sample_message)
+
+    failures = registry.get("alerts_failed_total")
+    assert failures.value(
+        labels={"environment": "paper", "channel": "failing", "severity": "critical"}
+    ) == pytest.approx(1.0)
+
+    sent_metric = registry.get("alerts_sent_total")
+    assert sent_metric.value(
+        labels={"environment": "paper", "channel": "dummy", "severity": "critical"}
+    ) == pytest.approx(1.0)
 
 
 def test_file_alert_audit_log_writes_entries(tmp_path: Path, sample_message: AlertMessage) -> None:
@@ -284,6 +341,58 @@ def test_router_throttles_repeated_alerts(sample_message: AlertMessage, caplog: 
     assert len(channel.messages) == 2
     exported = tuple(audit.export())
     assert exported[-1]["channel"] == "dummy"
+
+
+def test_router_records_suppressed_metric() -> None:
+    audit = InMemoryAlertAuditLog()
+    registry = MetricsRegistry()
+    clock = _MutableClock(start=datetime(2024, 1, 1, tzinfo=timezone.utc))
+    throttle = AlertThrottle(window=timedelta(seconds=60), clock=clock, exclude_severities=frozenset())
+    router = DefaultAlertRouter(
+        audit_log=audit,
+        throttle=throttle,
+        metrics_registry=registry,
+        metric_labels={"environment": "paper"},
+    )
+    channel = DummyChannel()
+    router.register(channel)
+
+    message = AlertMessage(
+        category="system",
+        title="Info",
+        body="Powtarzający się alert",
+        severity="info",
+        context={},
+        timestamp=clock(),
+    )
+
+    router.dispatch(message)
+    clock.advance(10)
+    router.dispatch(message)
+
+    suppressed = registry.get("alerts_suppressed_total")
+    assert suppressed.value(
+        labels={"environment": "paper", "channel": "__suppressed__", "severity": "info"}
+    ) == pytest.approx(1.0)
+
+
+def test_router_health_snapshot_records_metric(sample_message: AlertMessage) -> None:
+    audit = InMemoryAlertAuditLog()
+    registry = MetricsRegistry()
+    router = DefaultAlertRouter(
+        audit_log=audit,
+        metrics_registry=registry,
+        metric_labels={"environment": "paper"},
+    )
+    channel = HealthFailingChannel()
+    router.register(channel)
+
+    router.dispatch(sample_message)
+    snapshot = router.health_snapshot()
+
+    assert snapshot[channel.name]["status"] == "error"
+    health_errors = registry.get("alert_healthcheck_errors_total")
+    assert health_errors.value(labels={"environment": "paper", "channel": channel.name}) == pytest.approx(1.0)
 
 
 def test_sms_channel_sends_to_all_recipients(sample_message: AlertMessage) -> None:
