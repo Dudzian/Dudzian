@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Mapping
+
+import sys
+
+import pytest
+
+sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from bot_core.alerts import AlertMessage, DefaultAlertRouter, InMemoryAlertAuditLog
 from bot_core.alerts.base import AlertChannel
 from bot_core.execution import ExecutionService
+
 from bot_core.exchanges.base import AccountSnapshot, OrderRequest, OrderResult
 from bot_core.risk import RiskCheckResult, RiskEngine, RiskProfile
 from bot_core.runtime import TradingController
@@ -130,10 +138,10 @@ def test_controller_emits_alert_on_buy_signal() -> None:
 
     assert len(results) == 1
     assert execution.requests[0].side == "BUY"
-    assert channel.messages[0].category == "strategy"
-    assert channel.messages[0].severity == "info"
+    assert [message.category for message in channel.messages] == ["strategy", "execution"]
+    assert channel.messages[1].severity == "info"
     exported = tuple(audit.export())
-    assert len(exported) >= 1
+    assert len(exported) >= 2
 
 
 def test_controller_alerts_on_risk_rejection_and_limit() -> None:
@@ -194,3 +202,40 @@ def test_controller_runs_health_report() -> None:
     assert message.category == "health"
     assert message.severity == "info"
     assert message.context["channel_count"] == "1"
+
+
+class FailingExecutionService(ExecutionService):
+    def execute(self, request: OrderRequest, context) -> OrderResult:  # type: ignore[override]
+        raise RuntimeError("API niedostępne")
+
+    def cancel(self, order_id: str, context) -> None:  # type: ignore[override]
+        return None
+
+    def flush(self) -> None:
+        return None
+
+
+def test_controller_emits_alert_on_execution_error() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = FailingExecutionService()
+    router, channel, audit = _router_with_channel()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        health_check_interval=timedelta(hours=1),
+    )
+
+    with pytest.raises(RuntimeError):
+        controller.process_signals([_signal("SELL")])
+
+    categories = [message.category for message in channel.messages]
+    assert categories == ["strategy", "execution"]
+    assert channel.messages[1].severity == "critical"
+    exported = tuple(audit.export())
+    assert len(exported) == 2
+    assert exported[1]["severity"] == "critical"

@@ -208,7 +208,14 @@ class TradingController:
             self._handle_liquidation_state(risk_result)
             return None
 
-        result = self.execution_service.execute(request, self._execution_context)
+        try:
+            result = self.execution_service.execute(request, self._execution_context)
+        except Exception as exc:  # noqa: BLE001
+            self._emit_execution_error_alert(signal, request, exc)
+            self._handle_liquidation_state(risk_result)
+            raise
+
+        self._emit_order_filled_alert(signal, request, result)
         self._handle_liquidation_state(risk_result)
         return result
 
@@ -324,6 +331,75 @@ class TradingController:
         _LOGGER.error("Profil %s przekroczył limity – wysyłam alert krytyczny", self.risk_profile)
         self.alert_router.dispatch(message)
         self._liquidation_alerted = True
+
+    def _emit_order_filled_alert(
+        self,
+        signal: StrategySignal,
+        request: OrderRequest,
+        result: OrderResult,
+    ) -> None:
+        order_id = result.order_id or ""
+        avg_price = result.avg_price or request.price or 0.0
+        filled_qty = result.filled_quantity or request.quantity
+
+        context = {
+            "symbol": request.symbol,
+            "side": request.side,
+            "order_id": order_id,
+            "avg_price": f"{avg_price:.8f}",
+            "filled_quantity": f"{filled_qty:.8f}",
+            "status": result.status or "unknown",
+            "environment": self.environment,
+            "risk_profile": self.risk_profile,
+        }
+
+        for key, value in signal.metadata.items():
+            context.setdefault(f"meta_{key}", str(value))
+
+        message = AlertMessage(
+            category="execution",
+            title=f"Zlecenie {request.side} {request.symbol} zrealizowane",
+            body="Zlecenie zostało wykonane w symulatorze/na giełdzie.",
+            severity="info",
+            context=context,
+        )
+        _LOGGER.info(
+            "Zlecenie %s %s zostało zrealizowane (order_id=%s, qty=%s, price=%s)",
+            request.side,
+            request.symbol,
+            order_id,
+            filled_qty,
+            avg_price,
+        )
+        self.alert_router.dispatch(message)
+
+    def _emit_execution_error_alert(
+        self,
+        signal: StrategySignal,
+        request: OrderRequest,
+        error: Exception,
+    ) -> None:
+        context = {
+            "symbol": request.symbol,
+            "side": request.side,
+            "environment": self.environment,
+            "risk_profile": self.risk_profile,
+            "error_type": type(error).__name__,
+        }
+        for key, value in signal.metadata.items():
+            context.setdefault(f"meta_{key}", str(value))
+
+        message = AlertMessage(
+            category="execution",
+            title=f"Błąd egzekucji zlecenia {request.side} {request.symbol}",
+            body=str(error) or "Nieznany błąd egzekucji.",
+            severity="critical",
+            context=context,
+        )
+        _LOGGER.exception(
+            "Błąd egzekucji zlecenia %s %s: %s", request.side, request.symbol, error
+        )
+        self.alert_router.dispatch(message)
 
 
 # =============================================================================

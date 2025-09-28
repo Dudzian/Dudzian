@@ -213,6 +213,7 @@ def load_core_config(path: str | Path) -> CoreConfig:
 
     instrument_universes = _load_instrument_universes(raw)
 
+    # Środowiska – budujemy kwargs dynamicznie, aby działało w gałęziach bez alert_throttle.
     environments: dict[str, EnvironmentConfig] = {}
     for name, entry in raw.get("environments", {}).items():
         env_kwargs: dict[str, Any] = {
