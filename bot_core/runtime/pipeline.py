@@ -3,10 +3,11 @@ from __future__ import annotations
 
 from collections import defaultdict, deque
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Mapping, MutableMapping
 
+from bot_core.alerts import DefaultAlertRouter
 from bot_core.config.models import (
     ControllerRuntimeConfig,
     CoreConfig,
@@ -25,7 +26,7 @@ from bot_core.execution.base import ExecutionContext, ExecutionService
 from bot_core.execution.paper import MarketMetadata, PaperTradingExecutionService
 from bot_core.exchanges.base import AccountSnapshot, Environment, ExchangeAdapterFactory
 from bot_core.runtime.bootstrap import BootstrapContext, bootstrap_environment
-from bot_core.runtime.controller import DailyTrendController
+from bot_core.runtime.controller import DailyTrendController, TradingController
 from bot_core.security import SecretManager
 from bot_core.strategies.daily_trend import DailyTrendMomentumSettings, DailyTrendMomentumStrategy
 
@@ -138,6 +139,36 @@ def build_daily_trend_pipeline(
         data_source=cached_source,
         execution_service=execution_service,
         strategy=strategy,
+    )
+
+
+def create_trading_controller(
+    pipeline: DailyTrendPipeline,
+    alert_router: DefaultAlertRouter,
+    *,
+    health_check_interval: float | int | timedelta = 3600,
+    order_metadata_defaults: Mapping[str, str] | None = None,
+) -> TradingController:
+    """Buduje TradingController spięty z komponentami pipeline'u."""
+
+    controller = pipeline.controller
+    execution_context = controller.execution_context
+    environment_cfg = pipeline.bootstrap.environment
+
+    defaults = dict(order_metadata_defaults or {})
+    defaults.setdefault("order_type", "market")
+
+    return TradingController(
+        risk_engine=pipeline.bootstrap.risk_engine,
+        execution_service=pipeline.execution_service,
+        alert_router=alert_router,
+        account_snapshot_provider=controller.account_loader,
+        portfolio_id=execution_context.portfolio_id,
+        environment=environment_cfg.environment.value,
+        risk_profile=environment_cfg.risk_profile,
+        order_metadata_defaults=defaults,
+        health_check_interval=health_check_interval,
+        execution_metadata=execution_context.metadata,
     )
 
 
@@ -394,4 +425,4 @@ def _build_account_loader(
     return loader
 
 
-__all__ = ["DailyTrendPipeline", "build_daily_trend_pipeline"]
+__all__ = ["DailyTrendPipeline", "build_daily_trend_pipeline", "create_trading_controller"]
