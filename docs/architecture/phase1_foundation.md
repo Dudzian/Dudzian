@@ -122,6 +122,13 @@ Manager pilnuje zgodności środowiska (paper/live/testnet) oraz pozwala na wiel
 zapisanie/rotację kluczy bez ręcznych zmian w konfiguracji YAML. W środowiskach headless można
 docelowo podmienić implementację `SecretStorage` na wariant oparty o zaszyfrowany plik (np. `age`).
 
+Uzupełniająco moduł `security.rotation` utrzymuje rejestr dat wymiany kluczy w pliku
+`security/rotation_log.json` (per środowisko) i udostępnia API do obliczania, ile czasu pozostało do
+kolejnej rotacji. Skrypt `scripts/check_key_rotation.py` korzysta z `core.yaml`, generuje raport dla
+wszystkich środowisk oraz – opcjonalnie – zapisuje nową datę rotacji po zakończeniu procedury
+„bez-downtime”. Dzięki temu proces wymiany co 90 dni posiada mierzalne wsparcie operacyjne i łatwo
+go audytować.
+
 ## Egzekucja
 
 `ExecutionService` definiuje pełny cykl życia zlecenia z kontekstem (`ExecutionContext`) zawierającym
