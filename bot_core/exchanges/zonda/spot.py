@@ -44,10 +44,15 @@ def _extract_pair(symbol: str, entry: Mapping[str, object]) -> tuple[str, str] |
 
     market_info = entry.get("market")
     if isinstance(market_info, Mapping):
-        base = market_info.get("first") or market_info.get("base")
-        quote = market_info.get("second") or market_info.get("quote")
-        if isinstance(base, str) and isinstance(quote, str) and base and quote:
-            return base.upper(), quote.upper()
+        base_value = market_info.get("first") or market_info.get("base")
+        quote_value = market_info.get("second") or market_info.get("quote")
+        if (
+            isinstance(base_value, str)
+            and isinstance(quote_value, str)
+            and base_value
+            and quote_value
+        ):
+            return base_value.upper(), quote_value.upper()
     return None
 
 
@@ -240,11 +245,18 @@ class ZondaSpotAdapter(ExchangeAdapter):
             raise RuntimeError("Nie udało się połączyć z API Zonda") from exc
 
         try:
-            data = json.loads(payload)
+            parsed: object = json.loads(payload)
         except json.JSONDecodeError as exc:  # pragma: no cover
             _LOGGER.error("Niepoprawna odpowiedź JSON od Zonda: %s", exc)
             raise RuntimeError("Niepoprawna odpowiedź API Zonda") from exc
-        return data
+
+        if isinstance(parsed, dict):
+            return parsed
+        if isinstance(parsed, list):
+            return parsed
+
+        _LOGGER.error("Nieoczekiwany format odpowiedzi API Zonda: %r", parsed)
+        raise RuntimeError("Nieoczekiwany format odpowiedzi API Zonda")
 
     def _public_request(
         self,
@@ -262,7 +274,7 @@ class ZondaSpotAdapter(ExchangeAdapter):
         method: str,
         path: str,
         *,
-        params: Optional[mapping[str, object]] = None,  # type: ignore[name-defined]
+        params: Optional[Mapping[str, object]] = None,
         data: Optional[Mapping[str, object]] = None,
     ) -> dict[str, object] | list[object]:
         if not self._credentials.secret:
