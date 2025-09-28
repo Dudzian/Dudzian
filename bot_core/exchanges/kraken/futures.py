@@ -50,7 +50,13 @@ class KrakenFuturesAdapter(ExchangeAdapter):
 
     name = "kraken_futures"
 
-    def __init__(self, credentials: ExchangeCredentials, *, environment: Environment) -> None:
+    def __init__(
+        self,
+        credentials: ExchangeCredentials,
+        *,
+        environment: Environment,
+        settings: Mapping[str, object] | None = None,
+    ) -> None:
         super().__init__(credentials)
         self._environment = environment
         try:
@@ -60,6 +66,7 @@ class KrakenFuturesAdapter(ExchangeAdapter):
         self._permission_set = frozenset(str(perm).lower() for perm in credentials.permissions)
         self._ip_allowlist: Sequence[str] | None = None
         self._http_timeout = 20
+        self._settings = dict(settings or {})
 
     # ------------------------------------------------------------------
     # Konfiguracja sieci

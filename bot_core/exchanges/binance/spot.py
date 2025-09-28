@@ -128,17 +128,67 @@ class BinanceSpotAdapter(ExchangeAdapter):
         "_trading_base",
         "_ip_allowlist",
         "_permission_set",
+        "_settings",
+        "_valuation_asset",
+        "_secondary_valuation_assets",
     )
 
     name: str = "binance_spot"
 
-    def __init__(self, credentials: ExchangeCredentials, *, environment: Environment | None = None) -> None:
+    def __init__(
+        self,
+        credentials: ExchangeCredentials,
+        *,
+        environment: Environment | None = None,
+        settings: Mapping[str, object] | None = None,
+    ) -> None:
         super().__init__(credentials)
         self._environment = environment or credentials.environment
         self._public_base = _determine_public_base(self._environment)
         self._trading_base = _determine_trading_base(self._environment)
         self._ip_allowlist: tuple[str, ...] = ()
         self._permission_set = frozenset(perm.lower() for perm in self._credentials.permissions)
+        self._settings = dict(settings or {})
+        self._valuation_asset = self._extract_valuation_asset()
+        self._secondary_valuation_assets = self._extract_secondary_assets()
+
+    # ----------------------------------------------------------------------------------
+    # Konfiguracja wyceny sald
+    # ----------------------------------------------------------------------------------
+
+    def _extract_valuation_asset(self) -> str:
+        raw = self._settings.get("valuation_asset", "USDT")
+        if isinstance(raw, str):
+            asset = raw.strip().upper()
+            return asset or "USDT"
+        return "USDT"
+
+    def _extract_secondary_assets(self) -> tuple[str, ...]:
+        raw = self._settings.get("secondary_valuation_assets")
+        defaults = ("USDX", "BUSD", "USDC")
+
+        def _append(container: list[str], value: object) -> None:
+            asset = str(value).strip().upper()
+            if not asset:
+                return
+            if asset == self._valuation_asset:
+                return
+            if asset not in container:
+                container.append(asset)
+
+        assets: list[str] = []
+        if raw is None:
+            for entry in defaults:
+                _append(assets, entry)
+        elif isinstance(raw, str):
+            _append(assets, raw)
+        elif isinstance(raw, Iterable):
+            for entry in raw:
+                _append(assets, entry)
+        else:  # pragma: no cover - ochrona przed nietypową konfiguracją
+            for entry in defaults:
+                _append(assets, entry)
+        return tuple(assets)
 
     def _public_request(
         self,
@@ -259,8 +309,8 @@ class BinanceSpotAdapter(ExchangeAdapter):
                 if isinstance(symbol, str):
                     prices[symbol] = price
 
-        valuation_currency = "USDT"
-        secondary_currencies = ("USDX",)
+        valuation_currency = self._valuation_asset
+        secondary_currencies = self._secondary_valuation_assets or ("USDX",)
         total_equity = 0.0
         available_margin = 0.0
         for asset, total_balance in balances.items():

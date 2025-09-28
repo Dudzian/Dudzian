@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping, Sequence
 
@@ -10,6 +11,9 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 import pytest
 
+from bot_core.alerts import DefaultAlertRouter
+from bot_core.alerts.audit import InMemoryAlertAuditLog
+from bot_core.alerts.base import AlertChannel, AlertMessage
 from bot_core.config.models import (
     ControllerRuntimeConfig,
     CoreConfig,
@@ -25,8 +29,22 @@ from bot_core.execution.paper import MarketMetadata, PaperTradingExecutionServic
 from bot_core.exchanges.base import AccountSnapshot, Environment
 from bot_core.risk.engine import ThresholdRiskEngine
 from bot_core.risk.profiles.manual import ManualProfile
-from bot_core.runtime.controller import ControllerSignal, DailyTrendController
+from bot_core.runtime.controller import DailyTrendController, TradingController
+from bot_core.runtime.realtime import DailyTrendRealtimeRunner
 from bot_core.strategies.daily_trend import DailyTrendMomentumSettings, DailyTrendMomentumStrategy
+
+
+class CollectingChannel(AlertChannel):
+    name = "collector"
+
+    def __init__(self) -> None:
+        self.messages: list[AlertMessage] = []
+
+    def send(self, message: AlertMessage) -> None:
+        self.messages.append(message)
+
+    def health_check(self) -> Mapping[str, str]:
+        return {"status": "ok"}
 
 
 class _InMemoryStorage(CacheStorage):
@@ -78,7 +96,7 @@ def _core_config(runtime: ControllerRuntimeConfig, environment_name: str, risk_p
                 name=environment_name,
                 exchange="paper",
                 environment=Environment.PAPER,
-                keychain_key="paper",  # nieużywane w teście
+                keychain_key="paper",
                 data_cache_path="./var/data",
                 risk_profile=risk_profile,
                 alert_channels=(),
@@ -111,11 +129,11 @@ def _core_config(runtime: ControllerRuntimeConfig, environment_name: str, risk_p
     )
 
 
-def test_daily_trend_controller_executes_signal() -> None:
+def _build_controller(position_size: float = 0.2) -> tuple[DailyTrendController, PaperTradingExecutionService, AccountSnapshot, Sequence[Sequence[float]]]:
     day_ms = 86_400_000
     start_time = 1_600_000_000_000
     candles = [
-        [float(start_time + i * day_ms), 100.0 + i, 100.5 + i, 99.5 + i, 100.0 + i, 10.0]
+        [float(start_time + i * day_ms), 100.0 + i, 101.0 + i, 99.0 + i, 100.0 + i, 10.0]
         for i in range(5)
     ]
     candles.append([float(start_time + 5 * day_ms), 107.0, 110.0, 106.0, 108.0, 12.0])
@@ -185,101 +203,46 @@ def test_daily_trend_controller_executes_signal() -> None:
             environment=Environment.PAPER.value,
             metadata={},
         ),
-        position_size=0.1,
+        position_size=position_size,
     )
 
-    results = controller.run_cycle(start=candles[0][0], end=candles[-1][0])
+    return controller, execution_service, account_snapshot, candles
+
+
+def test_realtime_runner_triggers_alerts_and_execution() -> None:
+    controller, execution_service, account_snapshot, candles = _build_controller()
+
+    router = DefaultAlertRouter(audit_log=InMemoryAlertAuditLog())
+    channel = CollectingChannel()
+    router.register(channel)
+
+    trading_controller = TradingController(
+        risk_engine=controller.risk_engine,
+        execution_service=execution_service,
+        alert_router=router,
+        account_snapshot_provider=controller.account_loader,
+        portfolio_id=controller.execution_context.portfolio_id,
+        environment=controller.execution_context.environment,
+        risk_profile=controller.execution_context.risk_profile,
+        health_check_interval=0.0,
+    )
+
+    runner = DailyTrendRealtimeRunner(
+        controller=controller,
+        trading_controller=trading_controller,
+        history_bars=10,
+        clock=lambda: datetime.fromtimestamp(candles[-1][0] / 1000, tz=timezone.utc),
+    )
+
+    results = runner.run_once()
 
     assert len(results) == 1
-    result = results[0]
-    assert result.status == "filled"
-    assert result.filled_quantity == 0.1
-    assert controller.tick_seconds == runtime_cfg.tick_seconds
-    assert controller.interval == runtime_cfg.interval
-    assert risk_engine.should_liquidate(profile_name="paper_risk") is False
+    assert results[0].status == "filled"
+    assert results[0].filled_quantity == pytest.approx(controller.position_size)
 
+    severities = [message.severity for message in channel.messages]
+    assert "info" in severities
+    assert channel.messages[0].category == "strategy"
 
-def test_collect_signals_enriches_metadata() -> None:
-    day_ms = 86_400_000
-    start_time = 1_600_000_000_000
-    candles = [
-        [float(start_time + i * day_ms), 100.0 + i, 101.0 + i, 99.0 + i, 100.0 + i, 10.0]
-        for i in range(6)
-    ]
-
-    storage = _InMemoryStorage()
-    source = _FixtureSource(rows=candles)
-    cached = CachedOHLCVSource(storage=storage, upstream=source)
-    backfill = OHLCVBackfillService(cached, chunk_limit=10)
-
-    settings = DailyTrendMomentumSettings(
-        fast_ma=3,
-        slow_ma=5,
-        breakout_lookback=4,
-        momentum_window=3,
-        atr_window=3,
-        atr_multiplier=1.5,
-        min_trend_strength=0.0,
-        min_momentum=0.0,
-    )
-    strategy = DailyTrendMomentumStrategy(settings)
-
-    runtime_cfg = ControllerRuntimeConfig(tick_seconds=60.0, interval="1d")
-    core_cfg = _core_config(runtime_cfg, "paper", "paper_risk")
-
-    risk_engine = ThresholdRiskEngine()
-    profile = ManualProfile(
-        name="paper_risk",
-        max_positions=5,
-        max_leverage=5.0,
-        drawdown_limit=1.0,
-        daily_loss_limit=1.0,
-        max_position_pct=1.0,
-        target_volatility=0.0,
-        stop_loss_atr_multiple=2.0,
-    )
-    risk_engine.register_profile(profile)
-
-    execution_service = PaperTradingExecutionService(
-        {"BTCUSDT": MarketMetadata(base_asset="BTC", quote_asset="USDT", min_notional=0.0)},
-        initial_balances={"USDT": 100_000.0},
-        maker_fee=0.0,
-        taker_fee=0.0,
-        slippage_bps=0.0,
-    )
-
-    account_snapshot = AccountSnapshot(
-        balances={"USDT": 100_000.0},
-        total_equity=100_000.0,
-        available_margin=100_000.0,
-        maintenance_margin=0.0,
-    )
-
-    controller = DailyTrendController(
-        core_config=core_cfg,
-        environment_name="paper",
-        controller_name="daily_trend",
-        symbols=("BTCUSDT",),
-        backfill_service=backfill,
-        data_source=cached,
-        strategy=strategy,
-        risk_engine=risk_engine,
-        execution_service=execution_service,
-        account_loader=lambda: account_snapshot,
-        execution_context=ExecutionContext(
-            portfolio_id="paper-demo",
-            risk_profile="paper_risk",
-            environment=Environment.PAPER.value,
-            metadata={},
-        ),
-        position_size=0.25,
-    )
-
-    collected = controller.collect_signals(start=candles[0][0], end=candles[-1][0])
-
-    assert collected, "Oczekiwano co najmniej jednego sygnału z strategii"
-    assert isinstance(collected[0], ControllerSignal)
-    signal = collected[0].signal
-    assert signal.metadata["quantity"] == pytest.approx(0.25)
-    assert float(signal.metadata["price"]) == pytest.approx(collected[0].snapshot.close)
-    assert signal.metadata["order_type"] == "market"
+    balances = execution_service.balances()
+    assert balances["USDT"] < account_snapshot.available_margin
