@@ -55,8 +55,8 @@ Moduł ryzyka (`RiskProfile`, `ThresholdRiskEngine`, `RiskRepository`) wymusza l
 ### `bot_core/security`
 
 `SecretManager` i `KeyringSecretStorage` przechowują poświadczenia poza repozytorium, rozdzielając klucze `read` i `trade` dla każdego środowiska. Moduł implementuje rotację kluczy co 90 dni (z natychmiastową wymianą po zmianie uprawnień lub incydencie), walidację środowisk (paper/live/testnet) oraz integruje się z politykami IP allowlist. Klucze przechowujemy natywnie (Windows Credential Manager, macOS Keychain, GNOME Keyring/zaszyfrowany magazyn `age` w trybie headless). Wszystkie operacje są logowane i dostępne w dziennikach audytu wykorzystywanych przez compliance.
-
 Nowy moduł `security.rotation` wprowadza rejestr rotacji zapisany w pliku `security/rotation_log.json` w katalogu danych środowiska. Klasa `RotationRegistry` pozwala oznaczać datę wymiany klucza i wyliczać ile dni pozostało do kolejnej rotacji, a skrypt `scripts/check_key_rotation.py` raportuje środowiska zbliżające się do terminu oraz – opcjonalnie – zapisuje nową datę po wykonaniu procedury „bez-downtime”. Dzięki temu polityka 90‑dniowej rotacji ma techniczne wsparcie, a status każdego wpisu jest łatwy do audytowania.
+
 
 ## Mechanizmy bezpieczeństwa i compliance
 
