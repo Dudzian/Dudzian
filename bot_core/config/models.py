@@ -22,7 +22,7 @@ class EnvironmentConfig:
     credential_purpose: str = "trading"
     instrument_universe: str | None = None
     adapter_settings: Mapping[str, Any] = field(default_factory=dict)
-    alert_throttle: "AlertThrottleConfig | None" = None
+    alert_throttle: AlertThrottleConfig | None = None
 
 
 @dataclass(slots=True)
