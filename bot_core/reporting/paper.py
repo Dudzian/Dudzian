@@ -17,24 +17,21 @@ from bot_core.runtime.journal import TradingDecisionJournal
 @dataclass(slots=True)
 class PaperReportArtifacts:
     """Ścieżki do wygenerowanych plików w archiwum raportu."""
-
     archive_path: Path
     ledger_rows: int
     decision_events: int
 
 
 def _ensure_timezone(value: tzinfo | None) -> tzinfo:
-    if value is None:
-        return timezone.utc
-    return value
+    return value or timezone.utc
 
 
 def _normalize_timestamp(value: object) -> datetime | None:
     try:
-        timestamp = float(value)  # type: ignore[arg-type]
+        ts = float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return None
-    return datetime.fromtimestamp(timestamp, timezone.utc)
+    return datetime.fromtimestamp(ts, timezone.utc)
 
 
 def _parse_iso_timestamp(value: object) -> datetime | None:
@@ -49,17 +46,13 @@ def _parse_iso_timestamp(value: object) -> datetime | None:
         parsed = datetime.fromisoformat(text)
     except ValueError:
         return None
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
+    return parsed.replace(tzinfo=parsed.tzinfo or timezone.utc).astimezone(timezone.utc)
 
 
 def _time_window(report_date: date, tz: tzinfo) -> tuple[datetime, datetime]:
     start_local = datetime.combine(report_date, dt_time.min, tzinfo=tz)
     end_local = start_local + timedelta(days=1)
-    start_utc = start_local.astimezone(timezone.utc)
-    end_utc = end_local.astimezone(timezone.utc)
-    return start_utc, end_utc
+    return start_local.astimezone(timezone.utc), end_local.astimezone(timezone.utc)
 
 
 def _ledger_header() -> Sequence[str]:
@@ -125,9 +118,7 @@ def _filter_ledger(
     filtered: list[tuple[Mapping[str, object], datetime]] = []
     for entry in entries:
         timestamp = _normalize_timestamp(entry.get("timestamp"))
-        if timestamp is None:
-            continue
-        if not (start <= timestamp < end):
+        if timestamp is None or not (start <= timestamp < end):
             continue
         filtered.append((entry, timestamp))
     filtered.sort(key=lambda item: item[1])
@@ -145,9 +136,7 @@ def _filter_decisions(
         if not isinstance(record, Mapping):
             continue
         timestamp = _parse_iso_timestamp(record.get("timestamp"))
-        if timestamp is None:
-            continue
-        if not (start <= timestamp < end):
+        if timestamp is None or not (start <= timestamp < end):
             continue
         selected.append(record)
     selected.sort(key=lambda item: _parse_iso_timestamp(item.get("timestamp")) or start)
@@ -179,9 +168,7 @@ def _summary_payload(
         total_notional += quantity * price
         total_fees += fee
 
-    timezone_name = tz.tzname(datetime.combine(report_date, dt_time.min, tzinfo=tz))
-    if not timezone_name:
-        timezone_name = str(tz)
+    timezone_name = tz.tzname(datetime.combine(report_date, dt_time.min, tzinfo=tz)) or str(tz)
 
     return {
         "report_date": report_date.isoformat(),
@@ -203,15 +190,7 @@ def generate_daily_paper_report(
     include_summary: bool = True,
     ledger_entries: Iterable[Mapping[str, object]] | None = None,
 ) -> PaperReportArtifacts:
-    """Generuje archiwum ZIP z dziennym blotterem i (opcjonalnie) dziennikiem decyzji.
-
-    Raport obejmuje wyłącznie wpisy z danego dnia (wg podanej strefy czasowej).
-    Wynikowy plik zawiera:
-    - `ledger.csv` – zrealizowane transakcje z symulatora paper tradingu,
-    - `decisions.jsonl` – zdarzenia dziennika decyzji (jeśli dostarczono),
-    - `summary.json` – zagregowane metryki dnia (jeśli ``include_summary`` to ``True``).
-    """
-
+    """Generuje archiwum ZIP z dziennym blotterem i (opcjonalnie) dziennikiem decyzji."""
     tzinfo_obj = _ensure_timezone(tz)
     report_day = report_date or datetime.now(tzinfo_obj).date()
     output_path = Path(output_dir)
@@ -219,11 +198,8 @@ def generate_daily_paper_report(
 
     window_start, window_end = _time_window(report_day, tzinfo_obj)
 
-    if ledger_entries is None:
-        ledger_source = execution_service.ledger()
-    else:
-        ledger_source = ledger_entries
-
+    # Pozwala wstrzyknąć wpisy ledgeru (np. w testach) lub pobrać je z serwisu wykonawczego.
+    ledger_source = execution_service.ledger() if ledger_entries is None else ledger_entries
     ledger_filtered = _filter_ledger(ledger_source, start=window_start, end=window_end)
 
     decisions_filtered: list[Mapping[str, object]] = []
@@ -238,7 +214,10 @@ def generate_daily_paper_report(
     with ZipFile(archive_path, "w", compression=ZIP_DEFLATED) as archive:
         archive.writestr("ledger.csv", csv_payload)
         if decisions_filtered:
-            jsonl_payload = "\n".join(json.dumps(entry, separators=(",", ":"), ensure_ascii=False) for entry in decisions_filtered)
+            jsonl_payload = "\n".join(
+                json.dumps(entry, separators=(",", ":"), ensure_ascii=False)
+                for entry in decisions_filtered
+            )
             archive.writestr("decisions.jsonl", jsonl_payload + "\n")
         if include_summary:
             summary = _summary_payload(
@@ -247,7 +226,10 @@ def generate_daily_paper_report(
                 ledger_rows=ledger_filtered,
                 decision_events=decisions_filtered,
             )
-            archive.writestr("summary.json", json.dumps(summary, ensure_ascii=False, separators=(",", ":")))
+            archive.writestr(
+                "summary.json",
+                json.dumps(summary, ensure_ascii=False, separators=(",", ":")),
+            )
 
     return PaperReportArtifacts(
         archive_path=archive_path,
