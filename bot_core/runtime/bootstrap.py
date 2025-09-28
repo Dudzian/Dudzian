@@ -131,7 +131,7 @@ def bootstrap_environment(
     )
     adapter.configure_network(ip_allowlist=environment.ip_allowlist or None)
 
-    alert_channels, alert_router, audit_log = _build_alert_channels(
+    alert_channels, alert_router, audit_log = build_alert_channels(
         core_config=core_config,
         environment=environment,
         secret_manager=secret_manager,
@@ -181,7 +181,7 @@ def _resolve_risk_profile(
         raise KeyError(f"Profil ryzyka '{profile_name}' nie istnieje w konfiguracji") from exc
 
 
-def _build_alert_channels(
+def build_alert_channels(
     *,
     core_config: CoreConfig,
     environment: EnvironmentConfig,
@@ -459,4 +459,4 @@ def _resolve_sms_provider(settings: SMSProviderSettings) -> SmsProviderConfig:
     )
 
 
-__all__ = ["BootstrapContext", "bootstrap_environment"]
+__all__ = ["BootstrapContext", "bootstrap_environment", "build_alert_channels"]
