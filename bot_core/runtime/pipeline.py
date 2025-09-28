@@ -7,6 +7,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Callable, Mapping, MutableMapping
 
+from bot_core.alerts import DefaultAlertRouter
 from bot_core.config.models import (
     ControllerRuntimeConfig,
     CoreConfig,
@@ -34,12 +35,6 @@ try:
     from bot_core.runtime.controller import TradingController  # type: ignore
 except Exception:  # pragma: no cover
     TradingController = None  # type: ignore
-
-# Dla zgodności typów w create_trading_controller
-try:
-    from bot_core.alerts import DefaultAlertRouter  # type: ignore
-except Exception:  # pragma: no cover
-    DefaultAlertRouter = object  # type: ignore[misc,assignment]
 
 
 @dataclass(slots=True)
@@ -154,7 +149,7 @@ def build_daily_trend_pipeline(
 
 def create_trading_controller(
     pipeline: DailyTrendPipeline,
-    alert_router: "DefaultAlertRouter",
+    alert_router: DefaultAlertRouter,
     *,
     health_check_interval: float | int | timedelta = 3600,
     order_metadata_defaults: Mapping[str, str] | None = None,

@@ -2,6 +2,7 @@
 
 from bot_core.config.loader import load_core_config
 from bot_core.config.models import (
+    AlertAuditConfig,
     CoreConfig,
     EmailChannelSettings,
     EnvironmentConfig,
@@ -27,5 +28,6 @@ __all__ = [
     "SignalChannelSettings",
     "TelegramChannelSettings",
     "WhatsAppChannelSettings",
+    "AlertAuditConfig",
     "load_core_config",
 ]

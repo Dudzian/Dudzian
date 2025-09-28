@@ -169,8 +169,10 @@ def _build_alert_channels(
     environment: EnvironmentConfig,
     secret_manager: SecretManager,
 ) -> tuple[Mapping[str, AlertChannel], DefaultAlertRouter, AlertAuditLog]:
+    """Tworzy i rejestruje kanały alertów + router + backend audytu."""
+    # audit_log: InMemory (domyślnie) albo FileAlertAuditLog, jeśli skonfigurowano alert_audit
     audit_config = getattr(environment, "alert_audit", None)
-    if audit_config and audit_config.backend == "file":
+    if audit_config and getattr(audit_config, "backend", "memory") == "file":
         directory = Path(audit_config.directory) if audit_config.directory else Path("alerts")
         if not directory.is_absolute():
             base = Path(environment.data_cache_path)
@@ -184,6 +186,7 @@ def _build_alert_channels(
     else:
         audit_log = InMemoryAlertAuditLog()
 
+    # throttle (opcjonalny)
     throttle_cfg = getattr(environment, "alert_throttle", None)
     throttle: AlertThrottle | None = None
     if throttle_cfg is not None:
@@ -259,7 +262,7 @@ def _build_email_channel(
         raw_secret = secret_manager.load_secret_value(settings.credential_secret, purpose="alerts:email")
         try:
             parsed = json.loads(raw_secret) if raw_secret else {}
-        except json.JSONDecodeError as exc:  # pragma: no cover
+        except json.JSONDecodeError as exc:  # pragma: no cover - uszkodzony sekret to błąd konfiguracji
             raise SecretStorageError(
                 "Sekret dla kanału e-mail musi zawierać poprawny JSON z polami 'username' i 'password'."
             ) from exc
@@ -296,7 +299,7 @@ def _build_sms_channel(
     raw_secret = secret_manager.load_secret_value(settings.credential_key, purpose="alerts:sms")
     try:
         payload = json.loads(raw_secret)
-    except json.JSONDecodeError as exc:  # pragma: no cover
+    except json.JSONDecodeError as exc:  # pragma: no cover - uszkodzone dane w magazynie
         raise SecretStorageError(
             "Sekret dostawcy SMS powinien zawierać JSON z polami 'account_sid' i 'auth_token'."
         ) from exc

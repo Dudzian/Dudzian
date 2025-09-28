@@ -52,7 +52,6 @@ class EnvironmentConfig:
 @dataclass(slots=True)
 class RiskProfileConfig:
     """Parametry wykorzystywane do inicjalizacji profili ryzyka."""
-
     name: str
     max_daily_loss_pct: float
     max_position_pct: float
@@ -188,7 +187,6 @@ class ControllerRuntimeConfig:
 @dataclass(slots=True)
 class CoreConfig:
     """Najwyższego poziomu konfiguracja aplikacji."""
-
     environments: Mapping[str, EnvironmentConfig]
     risk_profiles: Mapping[str, RiskProfileConfig]
     instrument_universes: Mapping[str, InstrumentUniverseConfig]

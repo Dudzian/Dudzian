@@ -136,7 +136,6 @@ kontynuuje wysyłkę pomimo błędów pojedynczych kanałów i zwraca migawkę `
 Adaptery kanałów posiadają zabezpieczenia (timeouty, logowanie błędów, walidację odpowiedzi API) oraz
 formatowanie wiadomości z kontekstem ryzyka i znacznikami czasu UTC.
 
-
 Nowy `FileAlertAuditLog` pozwala utrzymywać dziennik zdarzeń w formacie JSONL z rotacją dobową i
 polityką retencji zgodną z wymaganiami (domyślnie 24 miesiące). Ścieżka oraz wzorzec nazw plików
 są definiowane w konfiguracji środowiska (`alert_audit`), a bootstrap automatycznie wybiera backend
