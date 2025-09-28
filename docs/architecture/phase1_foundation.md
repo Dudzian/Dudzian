@@ -152,6 +152,13 @@ są definiowane w konfiguracji środowiska (`alert_audit`), a bootstrap automaty
 plikowy lub pamięciowy zależnie od ustawień. Dzięki temu logi alertów spełniają wymogi audytu i
 mogą być w prosty sposób archiwizowane lub agregowane do raportów.
 
+Moduł `runtime.journal` dodaje `TradingDecisionJournal`, który zapisuje w formacie JSONL pełną
+historię decyzji (przyjęte/odrzucone sygnały, korekty ryzyka, egzekucje, błędy) wraz z metadanymi
+środowiska i portfela. Domyślna konfiguracja `decision_journal` w `core.yaml` wskazuje katalog
+`audit/decisions` z retencją 24 miesięcy i opcją `fsync` dla środowisk produkcyjnych. Dziennik jest
+wykorzystywany przy raportach compliance, ponieważ pozwala odtworzyć dokładny powód każdej decyzji
+silnika ryzyka lub modułu egzekucji.
+
 Nowy mechanizm throttlingu pozwala dodatkowo ograniczyć powtarzalne alerty informacyjne: dla każdego
 środowiska w `core.yaml` można zdefiniować długość okna, wykluczone kategorie lub poziomy `severity`
 oraz limit bufora. Router zapisuje wstrzymane komunikaty w audycie (`channel="__suppressed__"`),

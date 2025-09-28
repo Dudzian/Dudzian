@@ -187,6 +187,7 @@ def create_trading_controller(
         order_metadata_defaults=defaults,
         health_check_interval=health_check_interval,
         execution_metadata=execution_context.metadata,
+        decision_journal=pipeline.bootstrap.decision_journal,
     )
 
 

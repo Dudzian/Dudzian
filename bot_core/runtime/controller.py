@@ -29,6 +29,7 @@ except Exception:  # pragma: no cover
 
 # Exchanges commons
 from bot_core.exchanges.base import AccountSnapshot, OrderRequest, OrderResult
+from bot_core.runtime.journal import TradingDecisionEvent, TradingDecisionJournal
 
 # Risk
 try:
@@ -168,6 +169,7 @@ class TradingController:
     health_check_interval: timedelta | float | int = timedelta(hours=1)
     execution_metadata: Mapping[str, str] | None = None
     metrics_registry: MetricsRegistry | None = None
+    decision_journal: TradingDecisionJournal | None = None
 
     _clock: Callable[[], datetime] = field(init=False, repr=False)
     _health_interval: timedelta = field(init=False, repr=False)
@@ -181,6 +183,7 @@ class TradingController:
     _metric_orders_total: Any = field(init=False, repr=False)
     _metric_health_reports: Any = field(init=False, repr=False)
     _metric_liquidation_state: Any = field(init=False, repr=False)
+    _decision_journal: TradingDecisionJournal | None = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._clock = self.clock
@@ -198,6 +201,7 @@ class TradingController:
         self._last_health_report = self._clock()
         self._liquidation_alerted = False
         self._metrics = self.metrics_registry or get_global_metrics_registry()
+        self._decision_journal = self.decision_journal
         self._metric_labels = {
             "environment": self.environment,
             "portfolio": self.portfolio_id,
@@ -221,6 +225,59 @@ class TradingController:
         )
         self._metric_liquidation_state.set(0.0, labels=self._metric_labels)
 
+    def _record_decision_event(
+        self,
+        event_type: str,
+        *,
+        signal: StrategySignal | None = None,
+        request: OrderRequest | None = None,
+        status: str | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> None:
+        if self._decision_journal is None:
+            return
+
+        meta: dict[str, str] = {}
+        if metadata:
+            meta.update({str(k): str(v) for k, v in metadata.items()})
+        if signal is not None:
+            meta.setdefault("signal_confidence", f"{signal.confidence:.6f}")
+            for key, value in signal.metadata.items():
+                meta.setdefault(f"signal_{key}", str(value))
+        if request is not None:
+            meta.setdefault("order_type", request.order_type)
+            if request.time_in_force:
+                meta.setdefault("time_in_force", request.time_in_force)
+            if request.client_order_id:
+                meta.setdefault("client_order_id", request.client_order_id)
+
+        symbol = request.symbol if request else (signal.symbol if signal else None)
+        side = None
+        if signal is not None:
+            side = signal.side.upper()
+        elif request is not None:
+            side = request.side
+        quantity = request.quantity if request else None
+        price = request.price if request else None
+
+        event = TradingDecisionEvent(
+            event_type=event_type,
+            timestamp=self._clock(),
+            environment=self.environment,
+            portfolio=self.portfolio_id,
+            risk_profile=self.risk_profile,
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+            price=price,
+            status=status,
+            metadata=meta,
+        )
+        try:
+            self._decision_journal.record(event)
+        except Exception:  # pragma: no cover - błąd w dzienniku nie powinien zatrzymać handlu
+            _LOGGER.exception("Nie udało się zapisać zdarzenia audytu decyzji: %s", event_type)
+
     # ----------------------------------------------- API -----------------------------------------------
     def process_signals(self, signals: Sequence[StrategySignal]) -> list[OrderResult]:
         """Przetwarza listę sygnałów strategii i zarządza alertami."""
@@ -232,6 +289,11 @@ class TradingController:
             metric_labels = dict(self._metric_labels)
             metric_labels["symbol"] = signal.symbol
             self._metric_signals_total.inc(labels={**metric_labels, "status": "received"})
+            self._record_decision_event(
+                "signal_received",
+                signal=signal,
+                status="received",
+            )
             try:
                 result = self._handle_signal(signal)
             except Exception:  # noqa: BLE001
@@ -299,19 +361,64 @@ class TradingController:
         metric_labels["symbol"] = signal.symbol
 
         adjusted_request = request
+        rejection_reason = risk_result.reason
         if not risk_result.allowed:
             adjusted = self._maybe_adjust_request(signal, request, risk_result, account)
             if adjusted is None:
                 self._emit_order_rejected_alert(signal, request, risk_result)
                 self._handle_liquidation_state(risk_result)
                 self._metric_signals_total.inc(labels={**metric_labels, "status": "rejected"})
+                adjustments = risk_result.adjustments or {}
+                metadata = {
+                    "reason": rejection_reason or "",
+                    "available_margin": f"{account.available_margin:.8f}",
+                    "total_equity": f"{account.total_equity:.8f}",
+                    "maintenance_margin": f"{account.maintenance_margin:.8f}",
+                }
+                metadata.update({f"adjust_{k}": v for k, v in adjustments.items()})
+                self._record_decision_event(
+                    "risk_rejected",
+                    signal=signal,
+                    request=request,
+                    status="rejected",
+                    metadata=metadata,
+                )
                 return None
-            adjusted_request, risk_result = adjusted
+            adjusted_request, new_result = adjusted
+            self._record_decision_event(
+                "risk_adjusted",
+                signal=signal,
+                request=adjusted_request,
+                status="adjusted",
+                metadata={
+                    "original_quantity": f"{request.quantity:.8f}",
+                    "adjusted_quantity": f"{adjusted_request.quantity:.8f}",
+                    "reason": rejection_reason or "",
+                },
+            )
+            risk_result = new_result
             self._metric_signals_total.inc(labels={**metric_labels, "status": "adjusted"})
 
         self._metric_signals_total.inc(labels={**metric_labels, "status": "accepted"})
+        self._record_decision_event(
+            "risk_check_passed",
+            signal=signal,
+            request=adjusted_request,
+            status="allowed",
+            metadata={
+                "available_margin": f"{account.available_margin:.8f}",
+                "total_equity": f"{account.total_equity:.8f}",
+                "maintenance_margin": f"{account.maintenance_margin:.8f}",
+            },
+        )
         self._metric_orders_total.inc(
             labels={**metric_labels, "result": "submitted", "side": adjusted_request.side}
+        )
+        self._record_decision_event(
+            "order_submitted",
+            signal=signal,
+            request=adjusted_request,
+            status="submitted",
         )
         try:
             result = self.execution_service.execute(adjusted_request, self._execution_context)
@@ -321,9 +428,39 @@ class TradingController:
             self._metric_orders_total.inc(
                 labels={**metric_labels, "result": "failed", "side": adjusted_request.side},
             )
+            self._record_decision_event(
+                "order_failed",
+                signal=signal,
+                request=adjusted_request,
+                status="failed",
+                metadata={"error": str(exc)},
+            )
             raise
 
         self._emit_order_filled_alert(signal, adjusted_request, result)
+        order_id = result.order_id or ""
+        avg_price = result.avg_price or adjusted_request.price or 0.0
+        filled_qty = result.filled_quantity or adjusted_request.quantity
+        metadata: dict[str, object] = {
+            "order_id": order_id,
+            "filled_quantity": f"{filled_qty:.8f}",
+            "avg_price": f"{avg_price:.8f}",
+            "status": result.status or "filled",
+        }
+        if isinstance(result.raw_response, TypingMapping):
+            fee = result.raw_response.get("fee")
+            fee_asset = result.raw_response.get("fee_asset")
+            if fee is not None:
+                metadata["fee"] = fee
+            if fee_asset:
+                metadata["fee_asset"] = fee_asset
+        self._record_decision_event(
+            "order_executed",
+            signal=signal,
+            request=adjusted_request,
+            status=result.status or "filled",
+            metadata=metadata,
+        )
         self._handle_liquidation_state(risk_result)
         return result
 

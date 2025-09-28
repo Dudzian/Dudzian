@@ -25,6 +25,7 @@ from bot_core.alerts.channels.providers import SmsProviderConfig
 from bot_core.config.loader import load_core_config
 from bot_core.config.models import (
     CoreConfig,
+    DecisionJournalConfig,
     EmailChannelSettings,
     EnvironmentConfig,
     MessengerChannelSettings,
@@ -48,6 +49,11 @@ from bot_core.risk.engine import ThresholdRiskEngine
 from bot_core.risk.profiles.manual import ManualProfile
 from bot_core.risk.repository import FileRiskRepository
 from bot_core.security import SecretManager, SecretStorageError
+from bot_core.runtime.journal import (
+    InMemoryTradingDecisionJournal,
+    JsonlTradingDecisionJournal,
+    TradingDecisionJournal,
+)
 
 _DEFAULT_ADAPTERS: Mapping[str, ExchangeAdapterFactory] = {
     "binance_spot": BinanceSpotAdapter,
@@ -72,6 +78,7 @@ class BootstrapContext:
     alert_channels: Mapping[str, AlertChannel]
     audit_log: AlertAuditLog
     adapter_settings: Mapping[str, Any]
+    decision_journal: TradingDecisionJournal | None
 
 
 def bootstrap_environment(
@@ -128,6 +135,8 @@ def bootstrap_environment(
         secret_manager=secret_manager,
     )
 
+    decision_journal = _build_decision_journal(environment)
+
     return BootstrapContext(
         core_config=core_config,
         environment=environment,
@@ -139,6 +148,7 @@ def bootstrap_environment(
         alert_channels=alert_channels,
         audit_log=audit_log,
         adapter_settings=environment.adapter_settings,
+        decision_journal=decision_journal,
     )
 
 
@@ -230,6 +240,28 @@ def _build_alert_channels(
         channels[channel.name] = channel
 
     return channels, router, audit_log
+
+
+def _build_decision_journal(environment: EnvironmentConfig) -> TradingDecisionJournal | None:
+    config: DecisionJournalConfig | None = getattr(environment, "decision_journal", None)
+    if config is None:
+        return None
+
+    backend = getattr(config, "backend", "memory").lower()
+    if backend == "memory":
+        return InMemoryTradingDecisionJournal()
+    if backend == "file":
+        directory = Path(config.directory) if config.directory else Path("decisions")
+        if not directory.is_absolute():
+            base = Path(environment.data_cache_path)
+            directory = base / directory
+        return JsonlTradingDecisionJournal(
+            directory=directory,
+            filename_pattern=config.filename_pattern,
+            retention_days=config.retention_days,
+            fsync=config.fsync,
+        )
+    return None
 
 
 def _build_telegram_channel(

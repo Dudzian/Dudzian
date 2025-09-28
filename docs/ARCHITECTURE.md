@@ -47,6 +47,8 @@ Moduł ryzyka (`RiskProfile`, `ThresholdRiskEngine`, `RiskRepository`) wymusza l
 ### `bot_core/alerts`
 
 `AlertRouter`, `AlertChannel` i `FileAlertAuditLog` obsługują powiadomienia (Telegram, e-mail, SMS, Signal, WhatsApp, Messenger) z kontrolą throttlingu i pełnym audytem zdarzeń (`channel="__suppressed__"` dla zdławionych komunikatów). Warstwa SMS jest modułowa: na starcie korzystamy z lokalnych operatorów (Orange Polska jako referencyjny, następnie inni dostawcy w PL i IS), a globalny agregator (Twilio/Vonage/MessageBird) działa jako fallback ciągłości działania. Alerty są elementem procesów bezpieczeństwa – incydenty krytyczne muszą zostać potwierdzone i przekazane do zespołu bezpieczeństwa w ciągu 24h.
+`TradingDecisionJournal` w `bot_core/runtime/journal.py` uzupełnia audyt o ścieżkę decyzyjną strategii. `JsonlTradingDecisionJournal` zapisuje zdarzenia `signal_received`, `risk_rejected`, `risk_adjusted`, `order_submitted`, `order_executed` (oraz błędy) w plikach JSONL z retencją zgodną z polityką compliance (domyślnie 24 miesiące). `TradingController` automatycznie rejestruje powody odrzuceń, rekomendowane korekty wielkości, identyfikatory zleceń i koszty egzekucji, dzięki czemu raporty KYC/AML mogą odtworzyć pełny kontekst decyzji.
+
 
 ### `bot_core/runtime`
 
@@ -57,7 +59,6 @@ Moduł ryzyka (`RiskProfile`, `ThresholdRiskEngine`, `RiskRepository`) wymusza l
 `SecretManager` i `KeyringSecretStorage` przechowują poświadczenia poza repozytorium, rozdzielając klucze `read` i `trade` dla każdego środowiska. Moduł implementuje rotację kluczy co 90 dni (z natychmiastową wymianą po zmianie uprawnień lub incydencie), walidację środowisk (paper/live/testnet) oraz integruje się z politykami IP allowlist. Klucze przechowujemy natywnie (Windows Credential Manager, macOS Keychain, GNOME Keyring/zaszyfrowany magazyn `age` w trybie headless). Wszystkie operacje są logowane i dostępne w dziennikach audytu wykorzystywanych przez compliance.
 
 Nowy moduł `security.rotation` wprowadza rejestr rotacji zapisany w pliku `security/rotation_log.json` w katalogu danych środowiska. Klasa `RotationRegistry` pozwala oznaczać datę wymiany klucza i wyliczać ile dni pozostało do kolejnej rotacji, a skrypt `scripts/check_key_rotation.py` raportuje środowiska zbliżające się do terminu oraz – opcjonalnie – zapisuje nową datę po wykonaniu procedury „bez-downtime”. Dzięki temu polityka 90‑dniowej rotacji ma techniczne wsparcie, a status każdego wpisu jest łatwy do audytowania.
-
 
 ## Mechanizmy bezpieczeństwa i compliance
 

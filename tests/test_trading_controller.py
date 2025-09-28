@@ -18,6 +18,7 @@ from bot_core.observability import MetricsRegistry
 from bot_core.exchanges.base import AccountSnapshot, OrderRequest, OrderResult
 from bot_core.risk import RiskCheckResult, RiskEngine, RiskProfile
 from bot_core.runtime import TradingController
+from bot_core.runtime.journal import TradingDecisionEvent
 from bot_core.strategies import StrategySignal
 
 
@@ -32,6 +33,17 @@ class CollectingChannel(AlertChannel):
 
     def health_check(self) -> Mapping[str, str]:
         return {"status": "ok", "latency_ms": "5"}
+
+
+class CollectingDecisionJournal:
+    def __init__(self) -> None:
+        self.events: list[TradingDecisionEvent] = []
+
+    def record(self, event: TradingDecisionEvent) -> None:
+        self.events.append(event)
+
+    def export(self) -> Sequence[Mapping[str, str]]:
+        return tuple(event.as_dict() for event in self.events)
 
 
 class DummyRiskEngine(RiskEngine):
@@ -134,6 +146,7 @@ def test_controller_emits_alert_on_buy_signal() -> None:
     risk_engine = DummyRiskEngine()
     execution = DummyExecutionService()
     router, channel, audit = _router_with_channel()
+    journal = CollectingDecisionJournal()
     controller = TradingController(
         risk_engine=risk_engine,
         execution_service=execution,
@@ -143,6 +156,7 @@ def test_controller_emits_alert_on_buy_signal() -> None:
         environment="paper",
         risk_profile="balanced",
         health_check_interval=timedelta(hours=1),
+        decision_journal=journal,
     )
 
     results = controller.process_signals([_signal("BUY")])
@@ -153,6 +167,7 @@ def test_controller_emits_alert_on_buy_signal() -> None:
     assert channel.messages[1].severity == "info"
     exported = tuple(audit.export())
     assert len(exported) >= 2
+    assert any(event["event"] == "order_executed" for event in journal.export())
 
 
 def test_controller_alerts_on_risk_rejection_and_limit() -> None:
@@ -163,6 +178,7 @@ def test_controller_alerts_on_risk_rejection_and_limit() -> None:
     )
     execution = DummyExecutionService()
     router, channel, audit = _router_with_channel()
+    journal = CollectingDecisionJournal()
     controller = TradingController(
         risk_engine=risk_engine,
         execution_service=execution,
@@ -172,6 +188,7 @@ def test_controller_alerts_on_risk_rejection_and_limit() -> None:
         environment="paper",
         risk_profile="balanced",
         health_check_interval=timedelta(hours=1),
+        decision_journal=journal,
     )
 
     results = controller.process_signals([_signal("SELL")])
@@ -184,6 +201,8 @@ def test_controller_alerts_on_risk_rejection_and_limit() -> None:
     exported = tuple(audit.export())
     assert len(exported) == 3
     assert exported[2]["severity"] == "critical"
+    events = [event["event"] for event in journal.export()]
+    assert "risk_rejected" in events
 
 
 def test_controller_runs_health_report() -> None:
@@ -204,6 +223,7 @@ def test_controller_runs_health_report() -> None:
         risk_profile="balanced",
         health_check_interval=timedelta(seconds=0),
         clock=clock,
+        decision_journal=CollectingDecisionJournal(),
     )
 
     controller.maybe_report_health(force=True)
@@ -223,6 +243,7 @@ def test_controller_scales_quantity_when_risk_suggests_limit() -> None:
 
     execution = DummyExecutionService()
     router, channel, audit = _router_with_channel()
+    journal = CollectingDecisionJournal()
     controller = TradingController(
         risk_engine=risk_engine,
         execution_service=execution,
@@ -232,6 +253,7 @@ def test_controller_scales_quantity_when_risk_suggests_limit() -> None:
         environment="paper",
         risk_profile="balanced",
         health_check_interval=timedelta(hours=1),
+        decision_journal=journal,
     )
 
     results = controller.process_signals([_signal("BUY", quantity=1.0, price=100.0)])
@@ -243,6 +265,33 @@ def test_controller_scales_quantity_when_risk_suggests_limit() -> None:
     exported = tuple(audit.export())
     assert any(entry["channel"] == "collector" and entry["category"] == "strategy" for entry in exported)
     assert channel.messages[-1].category == "execution"
+    events = [event["event"] for event in journal.export()]
+    assert "risk_adjusted" in events
+
+
+def test_decision_journal_event_order() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    router, _, _ = _router_with_channel()
+    journal = CollectingDecisionJournal()
+
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        health_check_interval=timedelta(hours=1),
+        decision_journal=journal,
+    )
+
+    controller.process_signals([_signal("BUY")])
+
+    events = [event["event"] for event in journal.export()]
+    assert events[:3] == ["signal_received", "risk_check_passed", "order_submitted"]
+    assert "order_executed" in events
 
 
 def test_controller_updates_metrics_counters_and_gauge() -> None:
