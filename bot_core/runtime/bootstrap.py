@@ -43,8 +43,10 @@ from bot_core.exchanges.base import (
 from bot_core.exchanges.binance import BinanceFuturesAdapter, BinanceSpotAdapter
 from bot_core.exchanges.kraken import KrakenFuturesAdapter, KrakenSpotAdapter
 from bot_core.exchanges.zonda import ZondaSpotAdapter
+from bot_core.risk.base import RiskRepository
 from bot_core.risk.engine import ThresholdRiskEngine
 from bot_core.risk.profiles.manual import ManualProfile
+from bot_core.risk.repository import FileRiskRepository
 from bot_core.security import SecretManager, SecretStorageError
 
 _DEFAULT_ADAPTERS: Mapping[str, ExchangeAdapterFactory] = {
@@ -65,6 +67,7 @@ class BootstrapContext:
     credentials: ExchangeCredentials
     adapter: ExchangeAdapter
     risk_engine: ThresholdRiskEngine
+    risk_repository: RiskRepository
     alert_router: DefaultAlertRouter
     alert_channels: Mapping[str, AlertChannel]
     audit_log: AlertAuditLog
@@ -86,7 +89,9 @@ def bootstrap_environment(
     environment = core_config.environments[environment_name]
     risk_profile_config = _resolve_risk_profile(core_config.risk_profiles, environment.risk_profile)
 
-    risk_engine = ThresholdRiskEngine()
+    risk_repository_path = Path(environment.data_cache_path) / "risk_state"
+    risk_repository = FileRiskRepository(risk_repository_path)
+    risk_engine = ThresholdRiskEngine(repository=risk_repository)
     profile = ManualProfile(
         name=risk_profile_config.name,
         max_positions=risk_profile_config.max_open_positions,
@@ -129,6 +134,7 @@ def bootstrap_environment(
         credentials=credentials,
         adapter=adapter,
         risk_engine=risk_engine,
+        risk_repository=risk_repository,
         alert_router=alert_router,
         alert_channels=alert_channels,
         audit_log=audit_log,

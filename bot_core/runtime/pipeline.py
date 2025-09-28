@@ -18,7 +18,9 @@ from bot_core.config.models import (
 from bot_core.data.base import OHLCVRequest
 from bot_core.data.ohlcv import (
     CachedOHLCVSource,
+    DualCacheStorage,
     OHLCVBackfillService,
+    ParquetCacheStorage,
     PublicAPIDataSource,
     SQLiteCacheStorage,
 )
@@ -81,8 +83,16 @@ def build_daily_trend_pipeline(
             "Brak instrumentów spełniających kryteria paper tradingu – skonfiguruj quote_assets/valuation_asset."
         )
 
-    storage_path = Path(environment.data_cache_path) / "ohlcv.sqlite"
-    storage = SQLiteCacheStorage(storage_path)
+    cache_root = Path(environment.data_cache_path)
+    parquet_storage = ParquetCacheStorage(
+        cache_root / "ohlcv_parquet",
+        namespace=environment.exchange,
+    )
+    manifest_storage = SQLiteCacheStorage(
+        cache_root / "ohlcv_manifest.sqlite",
+        store_rows=False,
+    )
+    storage = DualCacheStorage(primary=parquet_storage, manifest=manifest_storage)
 
     public_source = PublicAPIDataSource(exchange_adapter=bootstrap_ctx.adapter)
     cached_source = CachedOHLCVSource(storage=storage, upstream=public_source)
@@ -120,6 +130,7 @@ def build_daily_trend_pipeline(
         markets=markets,
         interval=runtime_cfg.interval,
         valuation_asset=paper_settings["valuation_asset"],
+        cash_assets=allowed_quotes,
     )
 
     controller = DailyTrendController(
@@ -312,6 +323,7 @@ def _build_account_loader(
     markets: Mapping[str, MarketMetadata],
     interval: str,
     valuation_asset: str,
+    cash_assets: set[str],
 ) -> Callable[[], AccountSnapshot]:
     storage = data_source.storage
     price_cache: MutableMapping[str, tuple[float, float]] = {}
@@ -346,6 +358,8 @@ def _build_account_loader(
         return close_price
 
     valuation_target = valuation_asset.upper()
+    cash_like_assets = {valuation_target}
+    cash_like_assets.update(asset.upper() for asset in cash_assets)
 
     def loader() -> AccountSnapshot:
         raw_balances = execution_service.balances()
@@ -423,7 +437,12 @@ def _build_account_loader(
             liability = current_price * quantity
             total_equity -= convert_amount(market.quote_asset, liability)
 
-        available_margin = balances.get(valuation_target, 0.0)
+        available_margin = 0.0
+        for asset, amount in balances.items():
+            if amount <= 0:
+                continue
+            if asset in cash_like_assets:
+                available_margin += convert_amount(asset, amount)
 
         return AccountSnapshot(
             balances=dict(balances),
