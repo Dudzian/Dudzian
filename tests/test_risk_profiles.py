@@ -87,7 +87,15 @@ def test_risk_engine_accepts_atr_informed_order(btc_daily_atr_series: list[float
     )
 
     quantity = _recommended_quantity(profile=profile, atr=atr, equity=equity, price=price, risk_pct=0.012)
-    order = OrderRequest(symbol="BTCUSDT", side="buy", quantity=quantity, order_type="market", price=price)
+    order = OrderRequest(
+        symbol="BTCUSDT",
+        side="buy",
+        quantity=quantity,
+        order_type="market",
+        price=price,
+        stop_price=price - atr * profile.stop_loss_atr_multiple(),
+        atr=atr,
+    )
 
     check = engine.apply_pre_trade_checks(order, account=account, profile_name=profile.name)
     assert check.allowed, check.reason
@@ -99,6 +107,8 @@ def test_risk_engine_accepts_atr_informed_order(btc_daily_atr_series: list[float
         quantity=oversized_quantity,
         order_type="market",
         price=price,
+        stop_price=price - atr * profile.stop_loss_atr_multiple(),
+        atr=atr,
     )
 
     denial = engine.apply_pre_trade_checks(oversized_order, account=account, profile_name=profile.name)

@@ -147,7 +147,15 @@ def test_bootstrap_environment_initialises_components(tmp_path: Path) -> None:
     assert isinstance(context.risk_engine, ThresholdRiskEngine)
     assert isinstance(context.risk_repository, FileRiskRepository)
     result = context.risk_engine.apply_pre_trade_checks(
-        OrderRequest(symbol="BTCUSDT", side="buy", quantity=0.2, order_type="limit", price=100.0),
+        OrderRequest(
+            symbol="BTCUSDT",
+            side="buy",
+            quantity=0.2,
+            order_type="limit",
+            price=100.0,
+            stop_price=100.0 - 1.0 * 1.5,
+            atr=1.0,
+        ),
         account=AccountSnapshot(
             balances={"USDT": 1000.0},
             total_equity=1000.0,

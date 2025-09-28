@@ -243,6 +243,8 @@ def test_paper_pipeline_executes_and_alerts(tmp_path: Path) -> None:
         quantity=quantity,
         order_type="market",
         price=price,
+        stop_price=price - atr * profile.stop_loss_atr_multiple(),
+        atr=atr,
     )
 
     check = risk_engine.apply_pre_trade_checks(order, account=account, profile_name=profile.name)
