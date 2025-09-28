@@ -3,12 +3,15 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
-from typing import Mapping, MutableMapping, Sequence
+from typing import Any, Mapping, MutableMapping, Sequence
 
 from bot_core.alerts import (
+    AlertThrottle,
     DefaultAlertRouter,
     EmailChannel,
+    FileAlertAuditLog,
     InMemoryAlertAuditLog,
     MessengerChannel,
     SMSChannel,
@@ -17,7 +20,7 @@ from bot_core.alerts import (
     WhatsAppChannel,
     get_sms_provider,
 )
-from bot_core.alerts.base import AlertChannel
+from bot_core.alerts.base import AlertAuditLog, AlertChannel
 from bot_core.alerts.channels.providers import SmsProviderConfig
 from bot_core.config.loader import load_core_config
 from bot_core.config.models import (
@@ -59,7 +62,8 @@ class BootstrapContext:
     risk_engine: ThresholdRiskEngine
     alert_router: DefaultAlertRouter
     alert_channels: Mapping[str, AlertChannel]
-    audit_log: InMemoryAlertAuditLog
+    audit_log: AlertAuditLog
+    adapter_settings: Mapping[str, Any]
 
 
 def bootstrap_environment(
@@ -99,7 +103,13 @@ def bootstrap_environment(
     factories = dict(_DEFAULT_ADAPTERS)
     if adapter_factories:
         factories.update(adapter_factories)
-    adapter = _instantiate_adapter(environment.exchange, credentials, factories, environment.environment)
+    adapter = _instantiate_adapter(
+        environment.exchange,
+        credentials,
+        factories,
+        environment.environment,
+        settings=environment.adapter_settings,
+    )
     adapter.configure_network(ip_allowlist=environment.ip_allowlist or None)
 
     alert_channels, alert_router, audit_log = _build_alert_channels(
@@ -117,6 +127,7 @@ def bootstrap_environment(
         alert_router=alert_router,
         alert_channels=alert_channels,
         audit_log=audit_log,
+        adapter_settings=environment.adapter_settings,
     )
 
 
@@ -125,11 +136,15 @@ def _instantiate_adapter(
     credentials: ExchangeCredentials,
     factories: Mapping[str, ExchangeAdapterFactory],
     environment: Environment,
+    *,
+    settings: Mapping[str, Any] | None = None,
 ) -> ExchangeAdapter:
     try:
         factory = factories[exchange_name]
     except KeyError as exc:
         raise KeyError(f"Brak fabryki adaptera dla giełdy '{exchange_name}'") from exc
+    if settings:
+        return factory(credentials, environment=environment, settings=settings)
     return factory(credentials, environment=environment)
 
 
@@ -148,9 +163,32 @@ def _build_alert_channels(
     core_config: CoreConfig,
     environment: EnvironmentConfig,
     secret_manager: SecretManager,
-) -> tuple[Mapping[str, AlertChannel], DefaultAlertRouter, InMemoryAlertAuditLog]:
-    audit_log = InMemoryAlertAuditLog()
-    router = DefaultAlertRouter(audit_log=audit_log)
+) -> tuple[Mapping[str, AlertChannel], DefaultAlertRouter, AlertAuditLog]:
+    audit_config = environment.alert_audit
+    if audit_config and audit_config.backend == "file":
+        directory = Path(audit_config.directory) if audit_config.directory else Path("alerts")
+        if not directory.is_absolute():
+            base = Path(environment.data_cache_path)
+            directory = base / directory
+        audit_log: AlertAuditLog = FileAlertAuditLog(
+            directory=directory,
+            filename_pattern=audit_config.filename_pattern,
+            retention_days=audit_config.retention_days,
+            fsync=audit_config.fsync,
+        )
+    else:
+        audit_log = InMemoryAlertAuditLog()
+    throttle_cfg = getattr(environment, "alert_throttle", None)
+    throttle: AlertThrottle | None = None
+    if throttle_cfg is not None:
+        throttle = AlertThrottle(
+            window=timedelta(seconds=float(throttle_cfg.window_seconds)),
+            exclude_severities=frozenset(throttle_cfg.exclude_severities),
+            exclude_categories=frozenset(throttle_cfg.exclude_categories),
+            max_entries=int(throttle_cfg.max_entries),
+        )
+
+    router = DefaultAlertRouter(audit_log=audit_log, throttle=throttle)
     channels: MutableMapping[str, AlertChannel] = {}
 
     for entry in environment.alert_channels:

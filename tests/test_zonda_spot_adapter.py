@@ -32,8 +32,14 @@ def test_fetch_account_snapshot_builds_signature(monkeypatch: pytest.MonkeyPatch
 
     def fake_urlopen(request: Request, timeout: int = 15):  # type: ignore[override]
         nonlocal captured
-        captured = request
-        payload = {"status": "Ok", "balances": []}
+        url = request.full_url
+        if url.endswith("/trading/balance"):
+            captured = request
+            payload = {"status": "Ok", "balances": []}
+        elif url.endswith("/trading/ticker"):
+            payload = {"status": "Ok", "items": {}}
+        else:  # pragma: no cover - zabezpieczenie przed nieoczekiwanym endpointem
+            raise AssertionError(f"Unexpected endpoint {url}")
         return _FakeResponse(payload)
 
     monkeypatch.setattr("bot_core.exchanges.zonda.spot.urlopen", fake_urlopen)
@@ -154,3 +160,53 @@ def test_cancel_order_accepts_cancelled_status(monkeypatch: pytest.MonkeyPatch) 
     adapter = ZondaSpotAdapter(credentials)
 
     adapter.cancel_order("XYZ")
+
+
+def test_fetch_account_snapshot_converts_balances(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_signed_request(self, method: str, path: str, *, params=None, data=None):
+        assert method == "POST"
+        assert path == "/trading/balance"
+        return {
+            "status": "Ok",
+            "balances": [
+                {"currency": "BTC", "available": "0.5", "locked": "0.1"},
+                {"currency": "PLN", "available": "1000", "locked": "0"},
+                {"currency": "USDT", "available": "200", "locked": "0"},
+            ],
+        }
+
+    def fake_public_request(self, path: str, *, params=None, method="GET"):
+        assert path == "/trading/ticker"
+        return {
+            "status": "Ok",
+            "items": {
+                "BTC-PLN": {"rate": "100000"},
+                "USDT-PLN": {"rate": "4.2"},
+                "EUR-PLN": {"rate": "4.5"},
+            },
+        }
+
+    monkeypatch.setattr(ZondaSpotAdapter, "_signed_request", fake_signed_request)
+    monkeypatch.setattr(ZondaSpotAdapter, "_public_request", fake_public_request)
+
+    credentials = ExchangeCredentials(
+        key_id="paper",
+        secret="secret",
+        permissions=("read", "trade"),
+        environment=Environment.LIVE,
+    )
+
+    adapter = ZondaSpotAdapter(
+        credentials,
+        settings={"valuation_asset": "EUR", "secondary_valuation_assets": ["PLN", "USDT"]},
+    )
+
+    snapshot = adapter.fetch_account_snapshot()
+
+    assert snapshot.balances == {
+        "BTC": pytest.approx(0.6),
+        "PLN": pytest.approx(1000.0),
+        "USDT": pytest.approx(200.0),
+    }
+    assert snapshot.total_equity == pytest.approx(13742.222222, rel=1e-6)
+    assert snapshot.available_margin == pytest.approx(11519.999999, rel=1e-6)

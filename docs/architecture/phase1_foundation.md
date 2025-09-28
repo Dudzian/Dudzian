@@ -40,7 +40,7 @@ korzysta z endpointów `derivatives/api/v3`, generuje podpis HMAC-SHA256 wymagan
 Futures (nagłówki `APIKey`, `Authent`, `Nonce`), mapuje wartości marginesu oraz bilansów na
 `AccountSnapshot`, wspiera składanie zleceń `mkt`/`lmt` i anulowanie przez `DELETE /orders/{id}`.
 Wzbogacone testy jednostkowe potwierdzają budowę podpisu i serializację ciała żądania.
-`ZondaSpotAdapter` wykorzystuje REST API Zondy do pobierania świec (endpoint `trading/candle/history`) oraz danych konta (`trading/balance`). Implementacja korzysta z podpisu HMAC-SHA512 zgodnie z nagłówkiem `API-Hash`, obsługuje mapowanie statusów zleceń i zabezpiecza się przed brakiem uprawnień (`read`/`trade`). Adapter został dodany do domyślnych fabryk bootstrapa, dzięki czemu środowiska paper/live mogą korzystać z Zondy bez modyfikacji logiki strategii czy ryzyka.
+`ZondaSpotAdapter` wykorzystuje REST API Zondy do pobierania świec (endpoint `trading/candle/history`) oraz danych konta (`trading/balance`). Implementacja korzysta z podpisu HMAC-SHA512 zgodnie z nagłówkiem `API-Hash`, obsługuje mapowanie statusów zleceń, zabezpiecza się przed brakiem uprawnień (`read`/`trade`) oraz przelicza wszystkie salda na walutę referencyjną zdefiniowaną w `adapter_settings.valuation_asset` (np. PLN lub EUR) z wykorzystaniem kursów `trading/ticker` i triangulacji przez aktywa pomocnicze (`secondary_valuation_assets`). Adapter został dodany do domyślnych fabryk bootstrapa, dzięki czemu środowiska paper/live mogą korzystać z Zondy bez modyfikacji logiki strategii czy ryzyka.
 
 ## Warstwa konfiguracji
 
@@ -77,6 +77,11 @@ Każdy adapter giełdowy otrzymuje `ExchangeCredentials` z informacją o środow
 oraz zakresem uprawnień. Struktura przygotowuje grunt pod rozdzielenie kluczy `read-only` i `trading`
 w Windows Credential Manager/macOS Keychain/Linux keyring (`keychain_key` w konfiguracji). Metoda
 `configure_network` umożliwi egzekwowanie IP allowlist.
+
+Sekcja środowisk w `core.yaml` została rozszerzona o pole `adapter_settings`, dzięki któremu możemy
+przekazywać parametry specyficzne dla danej giełdy bez łamania ogólnego kontraktu adapterów. Przykład:
+`kraken_live` korzysta z `valuation_asset: ZEUR`, co powoduje, że `KrakenSpotAdapter` raportuje kapitał
+w walucie referencyjnej EUR zgodnie z wymaganiami risk engine'u i raportowania P&L.
 
 ## Dane rynkowe
 
@@ -130,6 +135,18 @@ przyszłości Signal/WhatsApp/Messenger). Implementacja `DefaultAlertRouter` obs
 kontynuuje wysyłkę pomimo błędów pojedynczych kanałów i zwraca migawkę `health_check` do monitoringu SLO.
 Adaptery kanałów posiadają zabezpieczenia (timeouty, logowanie błędów, walidację odpowiedzi API) oraz
 formatowanie wiadomości z kontekstem ryzyka i znacznikami czasu UTC.
+
+Nowy `FileAlertAuditLog` pozwala utrzymywać dziennik zdarzeń w formacie JSONL z rotacją dobową i
+polityką retencji zgodną z wymaganiami (domyślnie 24 miesiące). Ścieżka oraz wzorzec nazw plików
+są definiowane w konfiguracji środowiska (`alert_audit`), a bootstrap automatycznie wybiera backend
+plikowy lub pamięciowy zależnie od ustawień. Dzięki temu logi alertów spełniają wymogi audytu i
+mogą być w prosty sposób archiwizowane lub agregowane do raportów.
+
+Nowy mechanizm throttlingu pozwala dodatkowo ograniczyć powtarzalne alerty informacyjne: dla każdego
+środowiska w `core.yaml` można zdefiniować długość okna, wykluczone kategorie lub poziomy `severity`
+oraz limit bufora. Router zapisuje wstrzymane komunikaty w audycie (`channel="__suppressed__"`),
+dzięki czemu zachowujemy pełną ścieżkę zgodności i możemy analizować historię incydentów bez zalewania
+powiadomień produkcyjnych.
 
 ## Kolejne kroki implementacyjne
 

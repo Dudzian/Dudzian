@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 from bot_core.exchanges.base import Environment
 
@@ -21,6 +21,9 @@ class EnvironmentConfig:
     ip_allowlist: Sequence[str] = field(default_factory=tuple)
     credential_purpose: str = "trading"
     instrument_universe: str | None = None
+    adapter_settings: Mapping[str, Any] = field(default_factory=dict)
+    alert_throttle: "AlertThrottleConfig | None" = None
+    alert_audit: "AlertAuditConfig | None" = None
 
 
 @dataclass(slots=True)
@@ -180,6 +183,27 @@ class CoreConfig:
     runtime_controllers: Mapping[str, ControllerRuntimeConfig] = field(default_factory=dict)
 
 
+@dataclass(slots=True)
+class AlertThrottleConfig:
+    """Parametry okna tłumienia powtarzających się alertów."""
+
+    window_seconds: float
+    exclude_severities: Sequence[str] = field(default_factory=tuple)
+    exclude_categories: Sequence[str] = field(default_factory=tuple)
+    max_entries: int = 2048
+
+
+@dataclass(slots=True)
+class AlertAuditConfig:
+    """Konfiguracja repozytorium audytowego alertów."""
+
+    backend: str
+    directory: str | None = None
+    filename_pattern: str = "alerts-%Y%m%d.jsonl"
+    retention_days: int | None = 730
+    fsync: bool = False
+
+
 __all__ = [
     "EnvironmentConfig",
     "RiskProfileConfig",
@@ -195,4 +219,6 @@ __all__ = [
     "MessengerChannelSettings",
     "ControllerRuntimeConfig",
     "CoreConfig",
+    "AlertThrottleConfig",
+    "AlertAuditConfig",
 ]
