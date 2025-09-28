@@ -47,6 +47,8 @@ class OrderRequest:
     price: Optional[float] = None
     time_in_force: Optional[str] = None
     client_order_id: Optional[str] = None
+    stop_price: Optional[float] = None
+    atr: Optional[float] = None
 
 
 @dataclass(slots=True)
