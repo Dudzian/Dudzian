@@ -18,7 +18,9 @@ from bot_core.config.models import (
 from bot_core.data.base import OHLCVRequest
 from bot_core.data.ohlcv import (
     CachedOHLCVSource,
+    DualCacheStorage,
     OHLCVBackfillService,
+    ParquetCacheStorage,
     PublicAPIDataSource,
     SQLiteCacheStorage,
 )
@@ -81,8 +83,16 @@ def build_daily_trend_pipeline(
             "Brak instrumentów spełniających kryteria paper tradingu – skonfiguruj quote_assets/valuation_asset."
         )
 
-    storage_path = Path(environment.data_cache_path) / "ohlcv.sqlite"
-    storage = SQLiteCacheStorage(storage_path)
+    cache_root = Path(environment.data_cache_path)
+    parquet_storage = ParquetCacheStorage(
+        cache_root / "ohlcv_parquet",
+        namespace=environment.exchange,
+    )
+    manifest_storage = SQLiteCacheStorage(
+        cache_root / "ohlcv_manifest.sqlite",
+        store_rows=False,
+    )
+    storage = DualCacheStorage(primary=parquet_storage, manifest=manifest_storage)
 
     public_source = PublicAPIDataSource(exchange_adapter=bootstrap_ctx.adapter)
     cached_source = CachedOHLCVSource(storage=storage, upstream=public_source)

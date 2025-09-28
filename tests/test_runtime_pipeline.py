@@ -229,6 +229,13 @@ def test_build_daily_trend_pipeline(pipeline_fixture: tuple[Path, FakeExchangeAd
     balances = pipeline.execution_service.balances()
     assert balances["USDT"] == 10_000.0
 
+    data_root = config_path.parent / "data"
+    parquet_root = data_root / "ohlcv_parquet" / "fake_exchange"
+    manifest_path = data_root / "ohlcv_manifest.sqlite"
+    assert manifest_path.exists()
+    parquet_files = list(parquet_root.rglob("data.parquet"))
+    assert parquet_files, "Backfill pipeline powinien zapisać dane OHLCV w Parquet"
+
 
 def test_create_trading_controller_executes_signal(
     pipeline_fixture: tuple[Path, FakeExchangeAdapter, SecretManager]

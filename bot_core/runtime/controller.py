@@ -61,6 +61,31 @@ except Exception:  # pragma: no cover
     CoreConfig = Any  # type: ignore
     ControllerRuntimeConfig = Any  # type: ignore
 
+# Observability (metryki są opcjonalne)
+try:  # pragma: no cover - fallback dla gałęzi bez modułu metrics
+    from bot_core.observability.metrics import (  # type: ignore
+        MetricsRegistry,
+        get_global_metrics_registry,
+    )
+except Exception:  # pragma: no cover
+    class _NoopCounter:
+        def inc(self, *_args, **_kwargs) -> None:
+            return None
+
+    class _NoopGauge:
+        def set(self, *_args, **_kwargs) -> None:
+            return None
+
+    class MetricsRegistry:  # type: ignore[override]
+        def counter(self, *_args, **_kwargs) -> _NoopCounter:
+            return _NoopCounter()
+
+        def gauge(self, *_args, **_kwargs) -> _NoopGauge:
+            return _NoopGauge()
+
+    def get_global_metrics_registry() -> MetricsRegistry:  # type: ignore[override]
+        return MetricsRegistry()
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -111,6 +136,7 @@ class TradingController:
     clock: Callable[[], datetime] = _now
     health_check_interval: timedelta | float | int = timedelta(hours=1)
     execution_metadata: Mapping[str, str] | None = None
+    metrics_registry: MetricsRegistry | None = None
 
     _clock: Callable[[], datetime] = field(init=False, repr=False)
     _health_interval: timedelta = field(init=False, repr=False)
@@ -118,6 +144,12 @@ class TradingController:
     _order_defaults: dict[str, str] = field(init=False, repr=False)
     _last_health_report: datetime = field(init=False, repr=False)
     _liquidation_alerted: bool = field(init=False, repr=False)
+    _metrics: MetricsRegistry = field(init=False, repr=False)
+    _metric_labels: Mapping[str, str] = field(init=False, repr=False)
+    _metric_signals_total: Any = field(init=False, repr=False)
+    _metric_orders_total: Any = field(init=False, repr=False)
+    _metric_health_reports: Any = field(init=False, repr=False)
+    _metric_liquidation_state: Any = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._clock = self.clock
@@ -134,6 +166,29 @@ class TradingController:
         self._order_defaults = {str(k): str(v) for k, v in (self.order_metadata_defaults or {}).items()}
         self._last_health_report = self._clock()
         self._liquidation_alerted = False
+        self._metrics = self.metrics_registry or get_global_metrics_registry()
+        self._metric_labels = {
+            "environment": self.environment,
+            "portfolio": self.portfolio_id,
+            "risk_profile": self.risk_profile,
+        }
+        self._metric_signals_total = self._metrics.counter(
+            "trading_signals_total",
+            "Liczba sygnałów przetworzonych w TradingController (status=received/accepted/rejected).",
+        )
+        self._metric_orders_total = self._metrics.counter(
+            "trading_orders_total",
+            "Liczba zleceń obsłużonych przez TradingController (result=submitted/executed/failed).",
+        )
+        self._metric_health_reports = self._metrics.counter(
+            "trading_health_reports_total",
+            "Liczba wysłanych raportów health-check przez TradingController.",
+        )
+        self._metric_liquidation_state = self._metrics.gauge(
+            "trading_liquidation_state",
+            "Stan trybu awaryjnego profilu ryzyka (1=liquidation, 0=normal).",
+        )
+        self._metric_liquidation_state.set(0.0, labels=self._metric_labels)
 
     # ----------------------------------------------- API -----------------------------------------------
     def process_signals(self, signals: Sequence[StrategySignal]) -> list[OrderResult]:
@@ -143,6 +198,9 @@ class TradingController:
             if signal.side.upper() not in {"BUY", "SELL"}:
                 _LOGGER.debug("Pomijam sygnał %s o kierunku %s", signal.symbol, signal.side)
                 continue
+            metric_labels = dict(self._metric_labels)
+            metric_labels["symbol"] = signal.symbol
+            self._metric_signals_total.inc(labels={**metric_labels, "status": "received"})
             try:
                 result = self._handle_signal(signal)
             except Exception:  # noqa: BLE001
@@ -150,6 +208,9 @@ class TradingController:
                 raise
             if result is not None:
                 results.append(result)
+                self._metric_orders_total.inc(
+                    labels={**metric_labels, "result": "executed", "side": signal.side.upper()},
+                )
 
         self.maybe_report_health()
         return results
@@ -191,6 +252,7 @@ class TradingController:
         _LOGGER.info("Publikuję raport health-check (%s kanałów)", len(snapshot))
         self.alert_router.dispatch(message)
         self._last_health_report = now
+        self._metric_health_reports.inc(labels=self._metric_labels)
 
     # ------------------------------------------- internals ----------------------------------------------
     def _handle_signal(self, signal: StrategySignal) -> OrderResult | None:
@@ -202,17 +264,25 @@ class TradingController:
             account=account,
             profile_name=self.risk_profile,
         )
+        metric_labels = dict(self._metric_labels)
+        metric_labels["symbol"] = signal.symbol
 
         if not risk_result.allowed:
             self._emit_order_rejected_alert(signal, request, risk_result)
             self._handle_liquidation_state(risk_result)
+            self._metric_signals_total.inc(labels={**metric_labels, "status": "rejected"})
             return None
 
+        self._metric_signals_total.inc(labels={**metric_labels, "status": "accepted"})
+        self._metric_orders_total.inc(labels={**metric_labels, "result": "submitted", "side": request.side})
         try:
             result = self.execution_service.execute(request, self._execution_context)
         except Exception as exc:  # noqa: BLE001
             self._emit_execution_error_alert(signal, request, exc)
             self._handle_liquidation_state(risk_result)
+            self._metric_orders_total.inc(
+                labels={**metric_labels, "result": "failed", "side": request.side},
+            )
             raise
 
         self._emit_order_filled_alert(signal, request, result)
@@ -306,7 +376,9 @@ class TradingController:
         self.alert_router.dispatch(message)
 
     def _handle_liquidation_state(self, risk_result: RiskCheckResult) -> None:
-        if not self.risk_engine.should_liquidate(profile_name=self.risk_profile):
+        in_liquidation = self.risk_engine.should_liquidate(profile_name=self.risk_profile)
+        self._metric_liquidation_state.set(1.0 if in_liquidation else 0.0, labels=self._metric_labels)
+        if not in_liquidation:
             if self._liquidation_alerted:
                 _LOGGER.info("Profil %s wyszedł z trybu awaryjnego", self.risk_profile)
             self._liquidation_alerted = False
