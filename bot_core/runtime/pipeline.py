@@ -1,6 +1,7 @@
 """Budowanie gotowych pipeline'ów strategii trend-following na podstawie konfiguracji."""
 from __future__ import annotations
 
+from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -176,7 +177,10 @@ def _normalize_paper_settings(environment: EnvironmentConfig) -> MutableMapping[
     if environment.environment not in {Environment.PAPER, Environment.TESTNET}:
         raise ValueError("Pipeline paper trading jest dostępny wyłącznie dla środowisk paper/testnet.")
 
-    raw_settings = environment.adapter_settings.get("paper_trading", {})
+    # adapter_settings może nie istnieć w danej gałęzi modeli – użyj bezpiecznego getattr
+    raw_adapter = getattr(environment, "adapter_settings", {}) or {}
+    raw_settings = raw_adapter.get("paper_trading", {}) or {}
+
     valuation_asset = str(raw_settings.get("valuation_asset", "USDT")).upper()
     position_size = max(0.0, float(raw_settings.get("position_size", 0.1)))
     default_leverage = max(1.0, float(raw_settings.get("default_leverage", 1.0)))
@@ -303,34 +307,88 @@ def _build_account_loader(
         price_cache[symbol] = (timestamp, close_price)
         return close_price
 
+    valuation_target = valuation_asset.upper()
+
     def loader() -> AccountSnapshot:
-        balances = dict(execution_service.balances())
+        raw_balances = execution_service.balances()
+        balances: MutableMapping[str, float] = {
+            str(asset).upper(): float(amount) for asset, amount in raw_balances.items()
+        }
         short_positions = execution_service.short_positions()
 
-        total_equity = 0.0
-        available_margin = balances.get(valuation_asset, 0.0)
-
+        pair_prices: dict[tuple[str, str], float] = {}
         for symbol, market in markets.items():
-            base_balance = balances.get(market.base_asset, 0.0)
-            if base_balance:
-                price = latest_price(symbol)
-                total_equity += base_balance * price
-            quote_balance = balances.get(market.quote_asset, 0.0)
-            if quote_balance:
-                total_equity += quote_balance
+            price = latest_price(symbol)
+            pair_prices[(market.base_asset.upper(), market.quote_asset.upper())] = price
+
+        adjacency: defaultdict[str, list[tuple[str, float]]] = defaultdict(list)
+        for (base, quote), price in pair_prices.items():
+            if price <= 0:
+                continue
+            adjacency[base].append((quote, price))
+            adjacency[quote].append((base, 1.0 / price))
+        adjacency.setdefault(valuation_target, [])
+
+        def _conversion_rate(source: str, target: str) -> float:
+            src = source.upper()
+            dst = target.upper()
+            if src == dst:
+                return 1.0
+            if src not in adjacency:
+                raise RuntimeError(
+                    f"Brak ścieżki konwersji dla aktywa {src} – rozszerz quote_assets lub dodaj parę referencyjną."
+                )
+            visited = {src}
+            queue = deque([(src, 1.0)])
+            while queue:
+                asset, rate = queue.popleft()
+                for neighbor, weight in adjacency.get(asset, ()):
+                    if neighbor in visited:
+                        continue
+                    new_rate = rate * weight
+                    if neighbor == dst:
+                        return new_rate
+                    visited.add(neighbor)
+                    queue.append((neighbor, new_rate))
+            raise RuntimeError(
+                f"Nie udało się przeliczyć {source} na {target}. Dodaj brakujące instrumenty triangulacyjne."
+            )
+
+        def convert_amount(asset: str, amount: float) -> float:
+            if abs(amount) < 1e-18:
+                return 0.0
+            if asset.upper() == valuation_target:
+                return amount
+            rate = _conversion_rate(asset, valuation_target)
+            return amount * rate
+
+        total_equity = 0.0
+        for asset, amount in balances.items():
+            total_equity += convert_amount(asset, amount)
 
         for symbol, details in short_positions.items():
             quantity = float(details.get("quantity", 0.0))
             if quantity <= 0:
                 continue
             margin = float(details.get("margin", 0.0))
-            entry_price = float(details.get("entry_price", 0.0))
-            price = latest_price(symbol)
-            unrealized = (entry_price - price) * quantity
-            total_equity += margin + unrealized
+            market = markets.get(symbol)
+            if market is None:
+                continue
+            current_price = pair_prices.get((market.base_asset.upper(), market.quote_asset.upper()))
+            if current_price is None:
+                current_price = latest_price(symbol)
+                pair_prices[(market.base_asset.upper(), market.quote_asset.upper())] = current_price
+                if current_price > 0:
+                    adjacency[market.base_asset.upper()].append((market.quote_asset.upper(), current_price))
+                    adjacency[market.quote_asset.upper()].append((market.base_asset.upper(), 1.0 / current_price))
+            total_equity += convert_amount(market.quote_asset, margin)
+            liability = current_price * quantity
+            total_equity -= convert_amount(market.quote_asset, liability)
+
+        available_margin = balances.get(valuation_target, 0.0)
 
         return AccountSnapshot(
-            balances=balances,
+            balances=dict(balances),
             total_equity=total_equity,
             available_margin=available_margin,
             maintenance_margin=0.0,

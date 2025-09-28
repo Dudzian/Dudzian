@@ -6,9 +6,17 @@ from typing import Iterable, Mapping, Optional, Protocol, Sequence
 
 import pytest
 
+from bot_core.execution.base import ExecutionContext
 from bot_core.execution.paper import PaperTradingExecutionService
-from bot_core.exchanges.base import AccountSnapshot, Environment, ExchangeAdapter, ExchangeCredentials, OrderRequest, OrderResult
-from bot_core.runtime import build_daily_trend_pipeline
+from bot_core.exchanges.base import (
+    AccountSnapshot,
+    Environment,
+    ExchangeAdapter,
+    ExchangeCredentials,
+    OrderRequest,
+    OrderResult,
+)
+from bot_core.runtime.pipeline import build_daily_trend_pipeline
 from bot_core.security import SecretManager, SecretStorage
 from bot_core.strategies.daily_trend import DailyTrendMomentumStrategy
 
@@ -203,3 +211,163 @@ def test_build_daily_trend_pipeline(pipeline_fixture: tuple[Path, FakeExchangeAd
 
     balances = pipeline.execution_service.balances()
     assert balances["USDT"] == 10_000.0
+
+
+def test_account_loader_handles_multi_currency_and_shorts(tmp_path: Path) -> None:
+    candles_btc_usdt = [[1_600_000_000_000, 20_000.0, 20_000.0, 20_000.0, 20_000.0, 15.0]]
+    candles_eth_usdt = [[1_600_000_000_000, 1_500.0, 1_500.0, 1_500.0, 1_500.0, 12.0]]
+    candles_btc_eur = [[1_600_000_000_000, 18_000.0, 18_000.0, 18_000.0, 18_000.0, 11.0]]
+
+    adapter = FakeExchangeAdapter(
+        ExchangeCredentials(key_id="public", environment=Environment.PAPER),
+        fixtures=(
+            _OhlcvFixture(symbol="BTCUSDT", rows=candles_btc_usdt),
+            _OhlcvFixture(symbol="ETHUSDT", rows=candles_eth_usdt),
+            _OhlcvFixture(symbol="BTCEUR", rows=candles_btc_eur),
+        ),
+    )
+
+    config = {
+        "risk_profiles": {
+            "balanced": {
+                "max_daily_loss_pct": 0.015,
+                "max_position_pct": 0.05,
+                "target_volatility": 0.11,
+                "max_leverage": 3.0,
+                "stop_loss_atr_multiple": 1.5,
+                "max_open_positions": 5,
+                "hard_drawdown_pct": 0.1,
+            }
+        },
+        "runtime": {"controllers": {"daily_trend_core": {"tick_seconds": 86400, "interval": "1d"}}},
+        "strategies": {
+            "core_daily_trend": {
+                "engine": "daily_trend_momentum",
+                "parameters": {
+                    "fast_ma": 3,
+                    "slow_ma": 5,
+                    "breakout_lookback": 4,
+                    "momentum_window": 3,
+                    "atr_window": 3,
+                    "atr_multiplier": 1.5,
+                    "min_trend_strength": 0.0,
+                    "min_momentum": 0.0,
+                },
+            }
+        },
+        "instrument_universes": {
+            "multi_quote": {
+                "description": "fixture",
+                "instruments": {
+                    "BTC_USDT": {
+                        "base_asset": "BTC",
+                        "quote_asset": "USDT",
+                        "categories": [],
+                        "exchanges": {"fake_exchange": "BTCUSDT"},
+                        "backfill": [{"interval": "1d", "lookback_days": 10}],
+                    },
+                    "ETH_USDT": {
+                        "base_asset": "ETH",
+                        "quote_asset": "USDT",
+                        "categories": [],
+                        "exchanges": {"fake_exchange": "ETHUSDT"},
+                        "backfill": [{"interval": "1d", "lookback_days": 10}],
+                    },
+                    "BTC_EUR": {
+                        "base_asset": "BTC",
+                        "quote_asset": "EUR",
+                        "categories": [],
+                        "exchanges": {"fake_exchange": "BTCEUR"},
+                        "backfill": [{"interval": "1d", "lookback_days": 10}],
+                    },
+                },
+            }
+        },
+        "environments": {
+            "fake_multi": {
+                "exchange": "fake_exchange",
+                "environment": "paper",
+                "keychain_key": "fake_key",
+                "data_cache_path": str(tmp_path / "data"),
+                "risk_profile": "balanced",
+                "alert_channels": [],
+                "instrument_universe": "multi_quote",
+                "adapter_settings": {
+                    "paper_trading": {
+                        "valuation_asset": "USDT",
+                        "quote_assets": ["USDT", "EUR"],
+                        "position_size": 0.1,
+                        "initial_balances": {"USDT": 0.0, "EUR": 0.0, "BTC": 0.0},
+                        "default_market": {"min_quantity": 0.001, "min_notional": 10.0},
+                    }
+                },
+            }
+        },
+        "alerts": {},
+    }
+
+    config_path = tmp_path / "core_multi.yaml"
+    import yaml  # type: ignore
+
+    config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+
+    storage = _InMemorySecretStorage()
+    manager = SecretManager(storage)
+    manager.store_exchange_credentials(
+        "fake_key",
+        ExchangeCredentials(key_id="public", secret="sekret", environment=Environment.PAPER),
+    )
+
+    pipeline = build_daily_trend_pipeline(
+        environment_name="fake_multi",
+        strategy_name="core_daily_trend",
+        controller_name="daily_trend_core",
+        config_path=config_path,
+        secret_manager=manager,
+        adapter_factories={"fake_exchange": lambda credentials, **_: adapter},
+    )
+
+    # Ustawiamy stany konta paper tradingu.
+    execution_service = pipeline.execution_service
+    assert isinstance(execution_service, PaperTradingExecutionService)
+    execution_service._balances.clear()  # type: ignore[attr-defined]
+    execution_service._balances.update({  # type: ignore[attr-defined]
+        "USDT": 8_000.0,
+        "EUR": 5_000.0,
+        "BTC": 0.1,
+    })
+
+    snapshot = pipeline.controller.account_loader()
+    btc_usdt_close = candles_btc_usdt[-1][4]
+    btc_eur_close = candles_btc_eur[-1][4]
+    eur_to_usdt = btc_usdt_close / btc_eur_close
+    expected_initial = (
+        execution_service._balances["USDT"]  # type: ignore[attr-defined]
+        + execution_service._balances["BTC"] * btc_usdt_close  # type: ignore[attr-defined]
+        + execution_service._balances["EUR"] * eur_to_usdt  # type: ignore[attr-defined]
+    )
+    assert snapshot.total_equity == pytest.approx(expected_initial, rel=1e-4)
+    assert snapshot.available_margin == pytest.approx(execution_service._balances["USDT"])  # type: ignore[attr-defined]
+
+    context = ExecutionContext(
+        portfolio_id="test",
+        risk_profile="balanced",
+        environment="paper",
+        metadata={"leverage": "3"},
+    )
+    execution_service.execute(
+        OrderRequest(symbol="ETHUSDT", side="sell", quantity=1.0, order_type="market", price=1_500.0),
+        context,
+    )
+
+    snapshot_after = pipeline.controller.account_loader()
+    usdt_after = execution_service._balances["USDT"]  # type: ignore[attr-defined]
+    short_state = execution_service._short_positions["ETHUSDT"]  # type: ignore[attr-defined]
+    converted_balances = (
+        usdt_after
+        + execution_service._balances["BTC"] * btc_usdt_close  # type: ignore[attr-defined]
+        + execution_service._balances["EUR"] * eur_to_usdt  # type: ignore[attr-defined]
+    )
+    expected_after = converted_balances + short_state.margin - candles_eth_usdt[-1][4] * short_state.quantity
+    assert snapshot_after.total_equity == pytest.approx(expected_after, rel=1e-4)
+    assert snapshot_after.available_margin == pytest.approx(usdt_after)
