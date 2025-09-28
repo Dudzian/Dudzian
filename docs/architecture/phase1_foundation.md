@@ -87,10 +87,13 @@ w walucie referencyjnej EUR zgodnie z wymaganiami risk engine'u i raportowania P
 
 `PublicAPIDataSource` zostanie połączony z adapterami do pobierania danych OHLCV z publicznych API.
 `CachedOHLCVSource` w połączeniu z `OHLCVBackfillService` obsługuje proces „backfill + cache” z
-podziałem na okna czasowe oraz deduplikacją zapisów. Domyślny backend `SQLiteCacheStorage`
-przechowuje dane w pliku `ohlcv.sqlite` (tryb WAL) i udostępnia metadane do audytu. Dla użytkownika
-końcowego przygotowano skrypt `scripts/backfill_ohlcv.py`, który na podstawie `config/core.yaml`
-pobiera świece z Binance lub Zondy (w zależności od środowiska) i aktualizuje lokalny cache w trybie bezkosztowym.
+podziałem na okna czasowe oraz deduplikacją zapisów. Domyślna konfiguracja wykorzystuje
+`DualCacheStorage`, które łączy `ParquetCacheStorage` (partycjonowane katalogi
+`exchange/symbol/granularity/year=YYYY/month=MM/`) z lekkim manifestem w `SQLiteCacheStorage`
+(`ohlcv_manifest.sqlite`). Dzięki temu Parquet jest „źródłem prawdy” dla świeczek, a manifest
+przechowuje metadane (ostatni timestamp, liczba rekordów) bez konieczności otwierania wszystkich
+plików. Zarówno nowy skrypt `scripts/backfill.py`, jak i uproszczony `scripts/backfill_ohlcv.py`
+wykorzystują tę samą warstwę storage, dzięki czemu backtesty i runtime paper/live czytają identyczne dane.
 
 ## Strategie i walk-forward
 
@@ -118,6 +121,13 @@ temu klucze API są składowane poza repozytorium kodu, z rozdzieleniem środowi
 Manager pilnuje zgodności środowiska (paper/live/testnet) oraz pozwala na wielokrotne
 zapisanie/rotację kluczy bez ręcznych zmian w konfiguracji YAML. W środowiskach headless można
 docelowo podmienić implementację `SecretStorage` na wariant oparty o zaszyfrowany plik (np. `age`).
+
+Uzupełniająco moduł `security.rotation` utrzymuje rejestr dat wymiany kluczy w pliku
+`security/rotation_log.json` (per środowisko) i udostępnia API do obliczania, ile czasu pozostało do
+kolejnej rotacji. Skrypt `scripts/check_key_rotation.py` korzysta z `core.yaml`, generuje raport dla
+wszystkich środowisk oraz – opcjonalnie – zapisuje nową datę rotacji po zakończeniu procedury
+„bez-downtime”. Dzięki temu proces wymiany co 90 dni posiada mierzalne wsparcie operacyjne i łatwo
+go audytować.
 
 ## Egzekucja
 

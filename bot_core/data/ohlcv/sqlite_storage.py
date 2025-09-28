@@ -48,14 +48,15 @@ class _SQLiteMetadata(MutableMapping[str, str]):
 
 
 class SQLiteCacheStorage(CacheStorage):
-    """Przechowuje dane OHLCV w lokalnej bazie SQLite."""
+    """Przechowuje dane OHLCV lub pełni rolę manifestu metadanych."""
 
-    def __init__(self, database_path: str | Path) -> None:
+    def __init__(self, database_path: str | Path, *, store_rows: bool = True) -> None:
         path = Path(database_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         self._connection = sqlite3.connect(path, detect_types=sqlite3.PARSE_DECLTYPES)
         self._connection.execute("PRAGMA journal_mode=WAL")
         self._connection.execute("PRAGMA synchronous=NORMAL")
+        self._store_rows = store_rows
         self._initialize()
 
     def _initialize(self) -> None:
@@ -85,6 +86,8 @@ class SQLiteCacheStorage(CacheStorage):
             )
 
     def read(self, key: str) -> Mapping[str, Sequence[Sequence[float]]]:
+        if not self._store_rows:
+            raise KeyError(key)
         symbol, interval = key.split("::", maxsplit=1)
         cursor = self._connection.execute(
             """
@@ -100,8 +103,15 @@ class SQLiteCacheStorage(CacheStorage):
 
     def write(self, key: str, payload: Mapping[str, Sequence[Sequence[float]]]) -> None:
         symbol, interval = key.split("::", maxsplit=1)
-        rows = payload.get("rows", [])
+        rows = [tuple(row) for row in payload.get("rows", []) if row]
         if not rows:
+            return
+        # Aktualizujemy metadane manifestu niezależnie od tego, czy przechowujemy świeczki.
+        max_timestamp = max(float(row[0]) for row in rows)
+        metadata = self.metadata()
+        metadata[f"last_timestamp::{symbol}::{interval}"] = str(int(max_timestamp))
+        metadata[f"row_count::{symbol}::{interval}"] = str(len(rows))
+        if not self._store_rows:
             return
         with self._connection:
             self._connection.executemany(
@@ -135,6 +145,15 @@ class SQLiteCacheStorage(CacheStorage):
 
     def latest_timestamp(self, key: str) -> float | None:
         symbol, interval = key.split("::", maxsplit=1)
+        if not self._store_rows:
+            metadata = self.metadata()
+            value = metadata.get(f"last_timestamp::{symbol}::{interval}")
+            if value is None:
+                return None
+            try:
+                return float(value)
+            except (TypeError, ValueError):  # pragma: no cover - niepoprawny wpis metadanych
+                return None
         cursor = self._connection.execute(
             """
             SELECT MAX(open_time) FROM ohlcv

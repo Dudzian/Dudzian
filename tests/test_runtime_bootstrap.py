@@ -18,6 +18,7 @@ from bot_core.exchanges.base import (
     OrderResult,
 )
 from bot_core.risk.engine import ThresholdRiskEngine
+from bot_core.risk.repository import FileRiskRepository
 from bot_core.runtime import BootstrapContext, bootstrap_environment
 from bot_core.security import SecretManager, SecretStorage
 
@@ -140,6 +141,7 @@ def test_bootstrap_environment_initialises_components(tmp_path: Path) -> None:
     assert context.adapter.credentials.key_id == "paper-key"
 
     assert isinstance(context.risk_engine, ThresholdRiskEngine)
+    assert isinstance(context.risk_repository, FileRiskRepository)
     result = context.risk_engine.apply_pre_trade_checks(
         OrderRequest(symbol="BTCUSDT", side="buy", quantity=0.2, order_type="limit", price=100.0),
         account=AccountSnapshot(
@@ -172,6 +174,8 @@ def test_bootstrap_environment_initialises_components(tmp_path: Path) -> None:
 
     assert context.risk_engine.should_liquidate(profile_name="balanced") is False
     assert context.adapter_settings == {}
+    risk_state_path = Path("./var/data/binance_paper/risk_state/balanced.json")
+    assert risk_state_path.parent.exists()
 
 
 def test_bootstrap_environment_supports_zonda(tmp_path: Path) -> None:

@@ -75,6 +75,13 @@ class OHLCVBackfillService:
     def _count_cached_rows(self, symbol: str, interval: str) -> int:
         key = self._source._cache_key(symbol, interval)  # pylint: disable=protected-access
         try:
+            metadata = self._storage.metadata()
+            stored = metadata.get(f"row_count::{symbol}::{interval}")
+            if stored is not None:
+                return int(stored)
+        except Exception:  # pragma: no cover - wspieramy różne implementacje storage
+            pass
+        try:
             rows = self._storage.read(key)["rows"]
         except KeyError:
             return 0
