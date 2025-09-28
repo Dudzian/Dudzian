@@ -1,95 +1,74 @@
-# Architektura KryptoLowca
+# Architektura bot_core
 
 ## Przegląd systemu
 
-KryptoLowca jest modularnym środowiskiem do tworzenia i uruchamiania strategii
-handlowych na giełdach krypto. Cały pipeline operacyjny działa **obowiązkowo w
-trybie demo/testnet** do momentu zakończenia audytu bezpieczeństwa i zgodności.
-Przed włączeniem trybu LIVE wymagane jest udokumentowane przejście scenariuszy
-papier trading oraz zatwierdzenie przez dział compliance.
+`bot_core` to modularna platforma do budowania i uruchamiania strategii krypto zgodna z etapem "foundation" opisanym w `docs/architecture/phase1_foundation.md`. Cały pipeline operacyjny działa **obowiązkowo w trybie demo/paper** do momentu przejścia pełnego cyklu bezpieczeństwa i zgodności. Dopiero po pozytywnym audycie kodu, potwierdzeniu kontroli ryzyka i podpisaniu akceptacji przez compliance możliwe jest przejście do środowiska LIVE.
 
-> **Kod legacy:** dawna implementacja pakietu (`KryptoLowca/bot`) została przeniesiona do
-> `archive/legacy_bot/`. Utrzymujemy ją jedynie w celach historycznych – wszystkie nowe
-> wdrożenia i testy muszą korzystać z bieżącego pakietu `KryptoLowca/`.
+Przepływ danych przebiega następująco:
 
-Centralny przepływ danych wygląda następująco:
+1. Warstwa strategii (lifecycle `prepare` → `handle_market_data` → `generate_signal`) działa na danych dostarczonych przez `bot_core/data`.
+2. Wygenerowane sygnały trafiają do `bot_core/risk`, gdzie przechodzą weryfikację profili ryzyka oraz limitów ekspozycji.
+3. Zatwierdzone sygnały są przekazywane do `bot_core/execution`, które realizuje zlecenia przy wsparciu adapterów z `bot_core/exchanges`.
+4. Całość nadzoruje `bot_core/runtime`, łączące konfigurację, zarządzanie środowiskami i raportowanie alertów z `bot_core/alerts`.
 
-1. **Serwis sygnałów** (`KryptoLowca/core/services/signal_service.py`) ładuje
-   strategię z rejestru, buduje kontekst (wymuszając tryb demo) i deleguje
-   przygotowanie oraz generowanie sygnałów.
-2. **Serwis ryzyka** (`KryptoLowca/core/services/risk_service.py`) wykonuje
-   kontrolę limitów ekspozycji, ostatnich strat i wymusza blokady ochronne.
-3. **Serwis egzekucji** (`KryptoLowca/core/services/execution_service.py`) zamienia
-   zatwierdzone sygnały na zlecenia API giełdy poprzez adaptery.
+## Proces demo → paper → live
 
-Każda warstwa jest odseparowana kontraktami bazowymi, a komunikacja przebiega w
-układzie sygnał → ocena ryzyka → wykonanie. Poniższe sekcje opisują moduły,
-które wchodzą w skład tej architektury.
+Proces przejścia środowisk jest sekwencyjny i wymusza blokady bezpieczeństwa na każdym etapie:
 
-## Strategie bazowe (`KryptoLowca/strategies/base/`)
+- **Demo/Testnet:** domyślny tryb uruchomieniowy. `StrategyContext.require_demo_mode` blokuje wykonanie w środowisku innym niż demo, dopóki nie zostaną spełnione wymagania bezpieczeństwa.
+- **Paper:** po udokumentowanych wynikach testów demo pipeline przechodzi w tryb paper trading. `bot_core/runtime.bootstrap_environment` weryfikuje konfigurację (`core.yaml`), podpisane poświadczenia, kanały alertów i profile ryzyka przed startem.
+- **Live:** aktywacja możliwa wyłącznie po przedstawieniu raportów z testów paper, przeglądu kodu bezpieczeństwa (`bot_core/security`) oraz zatwierdzenia compliance. `bot_core/execution` korzysta wówczas z adapterów `live`, włączane są rozszerzone alerty (kanały krytyczne + throttling) oraz automatyczne eskalacje do zespołu bezpieczeństwa.
 
-- `engine.py` zawiera klasę `BaseStrategy`, struktury danych (`StrategyContext`,
-  `StrategySignal`) oraz `DataProvider`. Kontekst posiada metodę
-  `require_demo_mode`, która blokuje handel LIVE bez formalnego audytu.
-  Strategia ma lifecycle: `prepare()` (z wymuszeniem trybu demo),
-  `generate_signal()` (zaimplementowana w presetach) oraz hooki na fill/shutdown.
-- `registry.py` implementuje prosty rejestr (`StrategyRegistry`) oraz dekorator
-  `@strategy` do automatycznej rejestracji presetów. Rejestr jest wykorzystywany
-  zarówno przez marketplace jak i silnik auto-tradingu/tests.
+Każdy etap wymaga aktualnych podpisów KYC/AML, potwierdzenia limitów w `RiskProfile` i rejestrowania zdarzeń audytowych. Przejście na wyższy poziom bez kompletu dokumentacji jest blokowane przez `runtime` (flagi `require_demo_mode`, `compliance_confirmed`) i walidację konfiguracji.
 
-## Usługi rdzeniowe (`KryptoLowca/core/services/`)
+## Moduły `bot_core`
 
-- `signal_service.py` odpowiada za odszukanie strategii w rejestrze, zbudowanie
-  `StrategyContext` z wymuszonym trybem demo oraz wywołanie lifecycle'u
-  `prepare()`/`handle_market_data()`.
-- `risk_service.py` przeprowadza politykę zarządzania ryzykiem – limity
-  notional, kontrolę strat dziennych, odrzucanie sygnałów `HOLD`.
-- `execution_service.py` izoluje logikę wysyłania zleceń. Wymaga adaptera giełdy
-  implementującego `submit_order` i respektuje ograniczenia (np. brak rozmiaru).
+### `bot_core/exchanges`
 
-## Adaptery giełdowe i zarządzanie kontami
+Adaptery giełdowe (`BinanceSpotAdapter`, `BinanceFuturesAdapter`, `KrakenSpotAdapter`, `KrakenFuturesAdapter`, `ZondaSpotAdapter`) rozdzielają środowiska `demo`/`paper`/`live`, kontrolują uprawnienia (`read`/`trade`) i egzekwują podpisy HMAC wymagane przez API. Każdy adapter mapuje odpowiedzi na wspólne struktury (`AccountSnapshot`, `OrderStatus`) oraz obsługuje streaming danych, retry i walidację limitów notional.
 
-- `KryptoLowca/exchanges/binance.py`, `kraken.py` oraz `zonda.py` implementują
-  adaptery REST/WebSocket dla środowisk demo/testnet. Każdy adapter wspiera
-  podpisy specyficzne dla giełdy (np. HMAC SHA512 na Zondzie) oraz streaming
-  danych rynkowych poprzez kanały WebSocket.
-- `MultiExchangeAccountManager` (`KryptoLowca/managers/multi_account_manager.py`)
-  potrafi równoważyć zlecenia pomiędzy kontami na giełdach `binance`, `kraken`
-  i `zonda`, pamiętając kontekst zamówień oraz zarządzając subskrypcjami danych
-  rynkowych.
+### `bot_core/data`
 
-## Konfiguracja (`KryptoLowca/config_manager.py`)
+Warstwa danych obejmuje `PublicAPIDataSource`, `CachedOHLCVSource` i usługi backfillu. Źródła potrafią normalizować świeczki OHLCV, deduplikować zapisy oraz synchronizować się z cache (domyślnie `SQLiteCacheStorage` w trybie WAL). Dane są indeksowane per środowisko i giełdę, co umożliwia równoległe testy demo/paper oraz szybkie odtwarzanie historii na potrzeby kontroli ryzyka.
 
-`ConfigManager` spina konfigurację aplikacji i integruje się z marketplace
-strategii. Obsługuje szyfrowanie kluczy API, waliduje sekcje (AI, bazy danych,
-parametry handlu, giełdy, strategii) oraz pilnuje flag związanych z compliance
-(m.in. `require_demo_mode`, `compliance_confirmed`). Każda zmiana konfiguracji
-musi uwzględniać zasady KYC/AML i przejść walidację `validate()`.
+### `bot_core/risk`
 
-## Marketplace presetów (`KryptoLowca/strategies/marketplace.py`, `presets/`)
+Moduł ryzyka (`RiskProfile`, `ThresholdRiskEngine`, `RiskRepository`) wymusza limity dziennych strat, liczbę pozycji, maksymalną ekspozycję per instrument i hard-stop drawdown. Silnik resetuje limity w UTC, blokuje sygnały przekraczające polityki, eskaluje incydenty do alertów oraz aktywuje tryb awaryjny po przekroczeniu progów ochronnych. Profile konfiguruje się w `config/core.yaml`, a walidacja odbywa się w runtime.
 
-Marketplace udostępnia gotowe presety strategii wraz z metadanymi marketingowymi.
-Moduł `marketplace.py` ładuje builtin presety oraz JSON-y z katalogu
-`KryptoLowca/strategies/presets/`. Preset (`StrategyPreset`) zawiera parametry do
-konfiguracji strategii, rekomendowany balans i tagi. Rejestr strategii oraz
-manager konfiguracji korzystają z presetów, aby publikować strategie w GUI i
-uruchamiać pipeline demo.
+### `bot_core/execution`
 
-## Bezpieczeństwo, compliance i zgłaszanie incydentów
+`ExecutionService` i `ExecutionContext` zamieniają zatwierdzone sygnały na zlecenia, uwzględniając prowizje, poślizg i zasady retry/backoff (`RetryPolicy`). `PaperTradingExecutionService` symuluje fill'e, zapisuje dziennik audytowy i dostarcza metryki do alertów. W trybie live usługa współpracuje z adapterami giełd z segmentu `live` oraz wymaga potwierdzonych uprawnień tradingowych.
 
-- **Tryb demo/testnet** jest obowiązkowy aż do przejścia pełnego procesu KYC/AML,
-  audytu kodu oraz podpisania akceptacji ryzyka. Wszystkie testy i review muszą
-  wykonywać zlecenia na kontach paper-trading.
-- KYC/AML: każdy adapter giełdowy musi być skonfigurowany z kontem spełniającym
-  wymagania regulacyjne. Zmiany kluczy API wymagają zatwierdzenia przez dział
-  compliance i aktualizacji metadanych w `ConfigManager`.
-- Zgłaszanie incydentów: incydenty bezpieczeństwa i anomalie handlowe należy
-  natychmiast zgłosić do zespołu bezpieczeństwa poprzez kanał `#sec-alerts` oraz
-  wypełnić formularz post-incident w ciągu 24h. Logi z usług rdzeniowych i
-  dashboardów muszą zostać zabezpieczone na potrzeby analizy.
+### `bot_core/alerts`
+
+`AlertRouter`, `AlertChannel` i `FileAlertAuditLog` obsługują powiadomienia (Telegram, e-mail, SMS, Signal, WhatsApp, Messenger) z kontrolą throttlingu i pełnym audytem zdarzeń (`channel="__suppressed__"` dla zdławionych komunikatów). Alerty są elementem procesów bezpieczeństwa – incydenty krytyczne muszą zostać potwierdzone i przekazane do zespołu bezpieczeństwa w ciągu 24h.
+
+### `bot_core/runtime`
+
+`bootstrap_environment` integruje konfigurację (`load_core_config`), adaptery giełdowe, profile ryzyka, alerty i manager sekretów w `BootstrapContext`. Runtime odpowiada za sekwencjonowanie przejść demo → paper → live, walidację flag compliance, rejestrację kontrolnych checklist oraz inicjalizację repozytoriów danych. Mechanizmy ochronne blokują start środowiska, jeśli brakuje kluczy API, audytów lub aktualnych podpisów regulacyjnych.
+
+### `bot_core/security`
+
+`SecretManager` i `KeyringSecretStorage` przechowują poświadczenia poza repozytorium, rozdzielając klucze `read` i `trade` dla każdego środowiska. Moduł implementuje rotację kluczy, walidację środowisk (paper/live/testnet) oraz integruje się z politykami IP allowlist. Wszystkie operacje są logowane i dostępne w dziennikach audytu wykorzystywanych przez compliance.
+
+## Mechanizmy bezpieczeństwa i compliance
+
+- **Wymuszenie trybu demo/paper:** `StrategyContext.require_demo_mode` oraz walidacja konfiguracji w runtime zapobiegają uruchomieniu strategii live bez akceptacji ryzyka.
+- **Separacja uprawnień:** adaptery giełdowe stosują osobne klucze API dla `read`/`trade`, a `SecretManager` pilnuje środowisk i rotacji kluczy.
+- **Kontrola ryzyka:** `RiskEngine` blokuje sygnały przekraczające limity ekspozycji, liczbę pozycji, dzienny drawdown i wymagania margin.
+- **Alerty i audyt:** `AlertRouter` utrzymuje kanały eskalacji, logi audytowe, throttling powiadomień oraz politykę retencji (24 miesiące).
+- **Zgłaszanie incydentów:** każde naruszenie bezpieczeństwa lub anomalia handlowa musi być zgłoszona do zespołu bezpieczeństwa (`#sec-alerts`) i opisana w raporcie post-incident w ciągu 24h. Dzienniki danych i alertów są zabezpieczane do analizy.
+
+## Spójność z dokumentacją etapu 1
+
+Dokument został zaktualizowany zgodnie z zakresem `docs/architecture/phase1_foundation.md`. Najważniejsze założenia – modularny podział `bot_core`, separacja środowisk, profile ryzyka, centralny bootstrap oraz audyt alertów – są odzwierciedlone w powyższych sekcjach. Zalecane jest cykliczne review z zespołem architektury po każdej istotnej zmianie modułów.
+
+## Materiały onboardingowe
+
+`docs/ARCHITECTURE.md` dodajemy do listy materiałów startowych dla nowych członków zespołu (obok `docs/architecture/phase1_foundation.md` i checklist bezpieczeństwa). Dokument stanowi punkt wejścia do zrozumienia przepływu demo → paper → live oraz powiązanych mechanizmów ochronnych.
 
 ## Kolejne kroki
 
-- Rozbudowa dokumentacji o szczegółowe diagramy przepływu danych.
-- Dodanie testów integracyjnych pipeline'u (sygnał → ryzyko → egzekucja).
-- Przygotowanie checklisty audytu LIVE (compliance + ryzyko technologiczne).
+- Rozbudowa dokumentacji o diagramy przepływu danych i interakcji pomiędzy modułami.
+- Dodanie testów integracyjnych pipeline'u (sygnał → ryzyko → egzekucja) z wykorzystaniem środowisk demo i paper.
+- Przygotowanie checklisty audytu LIVE (compliance + ryzyko technologiczne) wraz z kryteriami przejścia do produkcji.
