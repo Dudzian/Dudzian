@@ -8,8 +8,15 @@ import pytest
 
 from bot_core.execution.base import ExecutionContext
 from bot_core.execution.paper import PaperTradingExecutionService
-from bot_core.exchanges.base import AccountSnapshot, Environment, ExchangeAdapter, ExchangeCredentials, OrderRequest, OrderResult
-from bot_core.runtime import build_daily_trend_pipeline
+from bot_core.exchanges.base import (
+    AccountSnapshot,
+    Environment,
+    ExchangeAdapter,
+    ExchangeCredentials,
+    OrderRequest,
+    OrderResult,
+)
+from bot_core.runtime.pipeline import build_daily_trend_pipeline
 from bot_core.security import SecretManager, SecretStorage
 from bot_core.strategies.daily_trend import DailyTrendMomentumStrategy
 
@@ -213,8 +220,7 @@ def test_account_loader_handles_multi_currency_and_shorts(tmp_path: Path) -> Non
 
     adapter = FakeExchangeAdapter(
         ExchangeCredentials(key_id="public", environment=Environment.PAPER),
-        fixtures=
-        (
+        fixtures=(
             _OhlcvFixture(symbol="BTCUSDT", rows=candles_btc_usdt),
             _OhlcvFixture(symbol="ETHUSDT", rows=candles_eth_usdt),
             _OhlcvFixture(symbol="BTCEUR", rows=candles_btc_eur),
@@ -362,10 +368,6 @@ def test_account_loader_handles_multi_currency_and_shorts(tmp_path: Path) -> Non
         + execution_service._balances["BTC"] * btc_usdt_close  # type: ignore[attr-defined]
         + execution_service._balances["EUR"] * eur_to_usdt  # type: ignore[attr-defined]
     )
-    expected_after = (
-        converted_balances
-        + short_state.margin
-        - candles_eth_usdt[-1][4] * short_state.quantity
-    )
+    expected_after = converted_balances + short_state.margin - candles_eth_usdt[-1][4] * short_state.quantity
     assert snapshot_after.total_equity == pytest.approx(expected_after, rel=1e-4)
     assert snapshot_after.available_margin == pytest.approx(usdt_after)

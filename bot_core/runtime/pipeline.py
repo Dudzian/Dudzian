@@ -177,7 +177,10 @@ def _normalize_paper_settings(environment: EnvironmentConfig) -> MutableMapping[
     if environment.environment not in {Environment.PAPER, Environment.TESTNET}:
         raise ValueError("Pipeline paper trading jest dostępny wyłącznie dla środowisk paper/testnet.")
 
-    raw_settings = environment.adapter_settings.get("paper_trading", {})
+    # adapter_settings może nie istnieć w danej gałęzi modeli – użyj bezpiecznego getattr
+    raw_adapter = getattr(environment, "adapter_settings", {}) or {}
+    raw_settings = raw_adapter.get("paper_trading", {}) or {}
+
     valuation_asset = str(raw_settings.get("valuation_asset", "USDT")).upper()
     position_size = max(0.0, float(raw_settings.get("position_size", 0.1)))
     default_leverage = max(1.0, float(raw_settings.get("default_leverage", 1.0)))
@@ -339,7 +342,7 @@ def _build_account_loader(
             queue = deque([(src, 1.0)])
             while queue:
                 asset, rate = queue.popleft()
-                for neighbor, weight in adjacency.get(asset, ()):  # pragma: no branch - pusta lista => brak iteracji
+                for neighbor, weight in adjacency.get(asset, ()):
                     if neighbor in visited:
                         continue
                     new_rate = rate * weight
