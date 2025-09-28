@@ -270,4 +270,3 @@ def test_file_risk_repository_persists_state(tmp_path: Path, manual_profile: Man
     btc_position = state.positions["BTCUSDT"]
     assert btc_position.side == "long"
     assert btc_position.notional == pytest.approx(500.0)
-
