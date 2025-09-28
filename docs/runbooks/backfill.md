@@ -6,6 +6,12 @@ z publicznych API giełd obsługiwanych przez platformę. Mechanizm korzysta z
 harmonogramu `OHLCVRefreshScheduler`, dzięki czemu po pierwszym backfillu
 możliwe jest cykliczne dogrywanie świeżych danych.
 
+Domyślne częstotliwości odświeżania zależą od interwału (np. `1d` co 24 h,
+`1h` co 15 min, `15m` co 5 min). W razie potrzeby można je nadpisać poprzez
+sekcję `environments.*.adapter_settings.ohlcv_refresh_overrides` w
+`config/core.yaml`, podając mapowanie `interwał -> sekundy` dla konkretnego
+środowiska.
+
 ## Obsługiwane giełdy
 
 Aktualna konfiguracja `core_multi_exchange` obejmuje następujące adaptery
