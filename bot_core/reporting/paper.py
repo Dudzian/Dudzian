@@ -17,7 +17,6 @@ from bot_core.runtime.journal import TradingDecisionJournal
 @dataclass(slots=True)
 class PaperReportArtifacts:
     """Ścieżki do wygenerowanych plików w archiwum raportu."""
-
     archive_path: Path
     ledger_rows: int
     decision_events: int

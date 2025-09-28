@@ -154,7 +154,8 @@ w trwałych plikach JSONL rotowanych zgodnie z polityką retencji.
 blotterem (`ledger.csv`), zdarzeniami decyzyjnymi (`decisions.jsonl`) oraz zwięzłym podsumowaniem (`summary.json`).
 Raport filtruje wpisy według strefy czasowej środowiska, wspiera retencję 24 miesięcy i przygotowuje pakiety do
 podpisu kryptograficznego oraz szyfrowania w kolejnych etapach. Pakiet stanowi bazę do dziennych raportów P&L oraz
-audytów KYC/AML.
+audytów KYC/AML. Operacyjny proces paper tradingu opisuje runbook `docs/runbooks/paper_trading.md`, a
+append-only log audytowy prowadzimy w `docs/audit/paper_trading_log.md`.
 
 ## Alerty i obserwowalność
 

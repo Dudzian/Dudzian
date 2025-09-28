@@ -71,10 +71,10 @@ class SQLiteCacheStorage(CacheStorage):
     """Przechowuje dane OHLCV lub pełni rolę manifestu metadanych.
 
     Jeżeli `store_rows=False`, instancja zachowuje się jak manifest:
-    - nie zapisuje samych świec do tabeli `ohlcv`,
+    - nie zapisuje świec do tabeli `ohlcv`,
     - utrzymuje w tabeli `metadata` klucze:
         - `last_timestamp::{symbol}::{interval}` – ostatni znany timestamp,
-        - `row_count::{symbol}::{interval}` – przybliżona liczba wierszy.
+        - `row_count::{symbol}::{interval}` – przybliżona liczba wierszy (kumulowana).
     """
 
     def __init__(self, database_path: str | Path, *, store_rows: bool = True) -> None:
@@ -134,28 +134,26 @@ class SQLiteCacheStorage(CacheStorage):
         if not rows:
             return
 
-        # Przygotuj metadane
+        # Przygotuj metadane (wspólne klucze)
         metadata = self.metadata()
         last_key = f"last_timestamp::{symbol}::{interval}"
         count_key = f"row_count::{symbol}::{interval}"
 
-        # Wyznacz unikalne stemple czasu z partii
+        # Unikalne stemple czasu w partii
         unique_timestamps = sorted({float(r[0]) for r in rows})
         latest_batch_ts = unique_timestamps[-1]
 
         prev_last = _parse_float(metadata.get(last_key))
         prev_count = _parse_int(metadata.get(count_key))
 
-        # Aktualizacja metadanych zależna od trybu
         if not self._store_rows:
-            # Manifest-only: nie zapisujemy wierszy, tylko aktualizujemy licznik i ostatni timestamp.
+            # Tryb manifestu: aktualizujemy last_timestamp i licznik kumulacyjnie.
             updated_last = latest_batch_ts if prev_last is None else max(prev_last, latest_batch_ts)
             metadata[last_key] = str(int(updated_last))
 
             if prev_count is None and prev_last is None:
                 total_rows = len(unique_timestamps)
             elif prev_count is None:
-                # Brak wiarygodnej historii liczby świec – przyjmij długość partii jako minimum.
                 total_rows = max(len(unique_timestamps), 0)
             else:
                 incremental = sum(1 for ts in unique_timestamps if prev_last is None or ts > prev_last)
@@ -164,7 +162,7 @@ class SQLiteCacheStorage(CacheStorage):
             metadata[count_key] = str(total_rows)
             return
 
-        # Pełny tryb: zapisujemy/aktualizujemy wiersze i wyznaczamy metadane na podstawie tabeli
+        # Tryb pełny: upsert do tabeli i odczyt metadanych z bazy
         with self._connection:
             self._connection.executemany(
                 """
@@ -192,14 +190,14 @@ class SQLiteCacheStorage(CacheStorage):
                 ],
             )
 
-        # Zaktualizuj liczbę wierszy i ostatni timestamp na podstawie bazy
+        # Zaktualizuj metadane na podstawie bazy (pełne, dokładne wartości)
         cursor = self._connection.execute(
             "SELECT COUNT(1), MAX(open_time) FROM ohlcv WHERE symbol = ? AND interval = ?",
             (symbol, interval),
         )
-        row = cursor.fetchone() or (0, None)
-        total_rows = int(row[0] or 0)
-        max_ts = float(row[1]) if row[1] is not None else latest_batch_ts
+        count_val, max_ts_val = cursor.fetchone() or (0, None)
+        total_rows = int(count_val or 0)
+        max_ts = float(max_ts_val) if max_ts_val is not None else latest_batch_ts
 
         metadata[count_key] = str(total_rows)
         metadata[last_key] = str(int(max_ts))
@@ -216,7 +214,7 @@ class SQLiteCacheStorage(CacheStorage):
                 return None
             try:
                 return float(value)
-            except (TypeError, ValueError):  # pragma: no cover - niepoprawny wpis metadanych
+            except (TypeError, ValueError):  # defensywnie
                 return None
 
         cursor = self._connection.execute(
