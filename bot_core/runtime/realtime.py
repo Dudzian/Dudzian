@@ -33,7 +33,12 @@ _INTERVAL_SECONDS: dict[str, float] = {
 
 
 def _interval_seconds(interval: str, fallback: float) -> float:
-    return max(fallback, _INTERVAL_SECONDS.get(interval.lower(), fallback))
+    seconds = _INTERVAL_SECONDS.get(interval)
+    if seconds is None:
+        seconds = _INTERVAL_SECONDS.get(interval.lower())
+    if seconds is None:
+        seconds = fallback
+    return max(fallback, seconds)
 
 
 @dataclass(slots=True)

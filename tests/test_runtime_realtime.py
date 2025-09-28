@@ -26,7 +26,7 @@ from bot_core.data.ohlcv.backfill import OHLCVBackfillService
 from bot_core.data.ohlcv.cache import CachedOHLCVSource
 from bot_core.execution.base import ExecutionContext
 from bot_core.execution.paper import MarketMetadata, PaperTradingExecutionService
-from bot_core.exchanges.base import AccountSnapshot, Environment
+from bot_core.exchanges.base import AccountSnapshot, Environment, OrderResult
 from bot_core.risk.engine import ThresholdRiskEngine
 from bot_core.risk.profiles.manual import ManualProfile
 from bot_core.runtime.controller import DailyTrendController, TradingController
@@ -207,6 +207,54 @@ def _build_controller(position_size: float = 0.2) -> tuple[DailyTrendController,
     )
 
     return controller, execution_service, account_snapshot, candles
+
+
+class _StubRealtimeController:
+    def __init__(self, interval: str, tick_seconds: float) -> None:
+        self.interval = interval
+        self.tick_seconds = tick_seconds
+        self.calls: list[tuple[int, int]] = []
+
+    def collect_signals(self, *, start: int, end: int) -> Sequence[ControllerSignal]:
+        self.calls.append((start, end))
+        return []
+
+
+class _StubTradingController:
+    def __init__(self) -> None:
+        self.health_checks = 0
+
+    def maybe_report_health(self) -> None:
+        self.health_checks += 1
+
+    def process_signals(self, signals: Sequence[ControllerSignal]) -> list[OrderResult]:
+        return []
+
+
+def test_realtime_runner_uses_monthly_interval_lookback() -> None:
+    now = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    controller = _StubRealtimeController(interval="1M", tick_seconds=60.0)
+    trading_controller = _StubTradingController()
+
+    runner = DailyTrendRealtimeRunner(
+        controller=controller,
+        trading_controller=trading_controller,
+        history_bars=5,
+        clock=lambda: now,
+    )
+
+    results = runner.run_once()
+
+    assert results == []
+    assert trading_controller.health_checks == 1
+    assert controller.calls
+
+    start_ms, end_ms = controller.calls[0]
+    expected_end_ms = int(now.timestamp() * 1000)
+    expected_lookback_ms = int(2_592_000.0 * 5 * 1000)
+
+    assert end_ms == expected_end_ms
+    assert end_ms - start_ms == expected_lookback_ms
 
 
 def test_realtime_runner_triggers_alerts_and_execution() -> None:
