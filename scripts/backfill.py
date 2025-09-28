@@ -32,11 +32,19 @@ _LOGGER = logging.getLogger(__name__)
 _MILLISECONDS_IN_DAY = 86_400_000
 
 
+_DEFAULT_REFRESH_SECONDS: Mapping[str, int] = {
+    "1d": 24 * 60 * 60,
+    "1h": 15 * 60,
+    "15m": 5 * 60,
+}
+
+
 @dataclass(slots=True)
 class _IntervalPlan:
     symbols: set[str]
     backfill_start_ms: int
     incremental_lookback_ms: int
+    refresh_seconds: int
 
 
 def _build_public_source(exchange: str, environment: Environment) -> PublicAPIDataSource:
@@ -92,10 +100,13 @@ def _build_interval_plans(
     universe: InstrumentUniverseConfig,
     exchange_name: str,
     incremental_lookback_days: int,
+    refresh_overrides: Mapping[str, int] | None = None,
 ) -> tuple[dict[str, _IntervalPlan], set[str]]:
     plans: dict[str, _IntervalPlan] = {}
     symbols: set[str] = set()
     now_ms = _utc_now_ms()
+
+    overrides = {key: int(value) for key, value in (refresh_overrides or {}).items() if int(value) > 0}
 
     for instrument in universe.instruments:
         symbol = instrument.exchange_symbols.get(exchange_name)
@@ -107,7 +118,15 @@ def _build_interval_plans(
             start = now_ms - window.lookback_days * _MILLISECONDS_IN_DAY
             plan = plans.get(window.interval)
             if plan is None:
-                plan = _IntervalPlan(symbols=set(), backfill_start_ms=start, incremental_lookback_ms=0)
+                refresh_seconds = overrides.get(
+                    window.interval, _DEFAULT_REFRESH_SECONDS.get(window.interval, 0)
+                )
+                plan = _IntervalPlan(
+                    symbols=set(),
+                    backfill_start_ms=start,
+                    incremental_lookback_ms=0,
+                    refresh_seconds=refresh_seconds,
+                )
                 plans[window.interval] = plan
             plan.symbols.add(symbol)
             plan.backfill_start_ms = min(plan.backfill_start_ms, start)
@@ -183,15 +202,16 @@ async def _run_scheduler(
     refresh_seconds: int,
 ) -> None:
     for interval, plan in plans.items():
+        frequency = plan.refresh_seconds or refresh_seconds
         scheduler.add_job(
             symbols=tuple(sorted(plan.symbols)),
             interval=interval,
             lookback_ms=plan.incremental_lookback_ms or (_MILLISECONDS_IN_DAY * 1),
-            frequency_seconds=refresh_seconds,
+            frequency_seconds=frequency,
             name=f"{interval}:{len(plan.symbols)}",
         )
 
-    _LOGGER.info("Uruchamiam harmonogram odświeżania (co %s sekund)", refresh_seconds)
+    _LOGGER.info("Uruchamiam harmonogram odświeżania (domyślnie co %s sekund)", refresh_seconds)
     try:
         await scheduler.run_forever()
     finally:
@@ -210,10 +230,17 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     universe = _resolve_universe(config, environment)
 
+    refresh_overrides = {}
+    if isinstance(environment.adapter_settings, Mapping):
+        candidate = environment.adapter_settings.get("ohlcv_refresh_overrides")
+        if isinstance(candidate, Mapping):
+            refresh_overrides = candidate
+
     plans, symbols = _build_interval_plans(
         universe=universe,
         exchange_name=environment.exchange,
         incremental_lookback_days=max(1, args.incremental_lookback_days),
+        refresh_overrides=refresh_overrides,
     )
     if not plans:
         _LOGGER.warning("Brak instrumentów z zakresem backfill dla giełdy %s", environment.exchange)
