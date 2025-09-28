@@ -12,12 +12,27 @@ from bot_core.risk.base import RiskCheckResult, RiskEngine, RiskProfile, RiskRep
 _LOGGER = logging.getLogger(__name__)
 
 
+def _normalize_position_side(side: str, *, default: str = "long") -> str:
+    """Sprowadza oznaczenie strony pozycji do wartości "long"/"short"."""
+
+    normalized = str(side or "").strip().lower()
+    if normalized in {"long", "buy"}:
+        return "long"
+    if normalized in {"short", "sell"}:
+        return "short"
+    return default
+
+
 @dataclass(slots=True)
 class PositionState:
     """Stan pojedynczej pozycji wykorzystywany przez silnik ryzyka."""
 
     side: str
     notional: float
+
+    def __post_init__(self) -> None:
+        self.side = _normalize_position_side(self.side)
+        self.notional = max(0.0, float(self.notional))
 
     def to_mapping(self) -> Mapping[str, object]:
         return {"side": self.side, "notional": self.notional}
@@ -26,7 +41,7 @@ class PositionState:
     def from_mapping(cls, data: Mapping[str, object]) -> "PositionState":
         side = str(data.get("side", "long"))
         notional = float(data.get("notional", 0.0))
-        return cls(side=side, notional=max(0.0, notional))
+        return cls(side=side, notional=notional)
 
 
 @dataclass(slots=True)
@@ -208,10 +223,15 @@ class ThresholdRiskEngine(RiskEngine):
         is_buy = request.side.lower() == "buy"
         notional = abs(request.quantity) * price
         current_notional = position.notional if position else 0.0
-        current_side = position.side if position else ("long" if is_buy else "short")
+        current_side = (
+            _normalize_position_side(position.side)
+            if position
+            else ("long" if is_buy else "short")
+        )
 
         if position:
-            if position.side == "long" and not is_buy and notional > current_notional:
+            position_side = _normalize_position_side(position.side)
+            if position_side == "long" and not is_buy and notional > current_notional:
                 self._persist_state(profile_name)
                 return RiskCheckResult(
                     allowed=False,
@@ -219,7 +239,7 @@ class ThresholdRiskEngine(RiskEngine):
                         "Zlecenie sprzedaży przekracza wielkość istniejącej pozycji. Zamknij pozycję przed odwróceniem kierunku."
                     ),
                 )
-            if position.side == "short" and is_buy and notional > current_notional:
+            if position_side == "short" and is_buy and notional > current_notional:
                 self._persist_state(profile_name)
                 return RiskCheckResult(
                     allowed=False,
@@ -260,6 +280,25 @@ class ThresholdRiskEngine(RiskEngine):
                 return RiskCheckResult(
                     allowed=False,
                     reason="Limit liczby równoległych pozycji został osiągnięty.",
+                )
+
+        incremental_notional = max(0.0, new_notional - current_notional)
+        if not is_reducing and incremental_notional > 0:
+            effective_leverage = profile.max_leverage()
+            if effective_leverage <= 0:
+                effective_leverage = 1.0
+            effective_leverage = max(1.0, effective_leverage)
+            usable_margin = max(0.0, account.available_margin - account.maintenance_margin)
+            required_margin = incremental_notional / effective_leverage
+            if required_margin > usable_margin:
+                allowed_additional_notional = usable_margin * effective_leverage
+                allowed_notional = current_notional + allowed_additional_notional
+                allowed_quantity = max(0.0, allowed_notional - current_notional) / price
+                self._persist_state(profile_name)
+                return RiskCheckResult(
+                    allowed=False,
+                    reason="Niewystarczający wolny margines na otwarcie lub powiększenie pozycji.",
+                    adjustments={"max_quantity": max(0.0, allowed_quantity)},
                 )
 
         max_position_pct = profile.max_position_exposure()
@@ -330,7 +369,8 @@ class ThresholdRiskEngine(RiskEngine):
             state.reset_for_new_day(equity=state.last_equity, day=current_day)
 
         state.daily_realized_pnl += pnl
-        state.update_position(symbol, side=side, notional=max(0.0, position_value))
+        normalized_side = _normalize_position_side(side, default="long")
+        state.update_position(symbol, side=normalized_side, notional=max(0.0, position_value))
         self._persist_state(profile_name)
 
     def should_liquidate(self, *, profile_name: str) -> bool:

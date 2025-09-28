@@ -236,6 +236,12 @@ environments:
       filename_pattern: alerts-%Y%m%d.jsonl
       retention_days: 730
       fsync: true
+    decision_journal:
+      backend: file
+      directory: audit/decisions
+      filename_pattern: decisions-%Y%m%d.jsonl
+      retention_days: 730
+      fsync: true
 
   binance_live:
     exchange: binance_spot
@@ -255,6 +261,12 @@ environments:
       backend: file
       directory: audit/alerts
       filename_pattern: alerts-%Y%m%d.jsonl
+      retention_days: 730
+      fsync: true
+    decision_journal:
+      backend: file
+      directory: audit/decisions
+      filename_pattern: decisions-%Y%m%d.jsonl
       retention_days: 730
       fsync: true
 
@@ -278,6 +290,12 @@ environments:
       filename_pattern: alerts-%Y%m%d.jsonl
       retention_days: 730
       fsync: true
+    decision_journal:
+      backend: file
+      directory: audit/decisions
+      filename_pattern: decisions-%Y%m%d.jsonl
+      retention_days: 730
+      fsync: true
 
   binance_futures_live:
     exchange: binance_futures
@@ -297,6 +315,12 @@ environments:
       backend: file
       directory: audit/alerts
       filename_pattern: alerts-%Y%m%d.jsonl
+      retention_days: 730
+      fsync: true
+    decision_journal:
+      backend: file
+      directory: audit/decisions
+      filename_pattern: decisions-%Y%m%d.jsonl
       retention_days: 730
       fsync: true
 
@@ -322,6 +346,12 @@ environments:
       filename_pattern: alerts-%Y%m%d.jsonl
       retention_days: 730
       fsync: true
+    decision_journal:
+      backend: file
+      directory: audit/decisions
+      filename_pattern: decisions-%Y%m%d.jsonl
+      retention_days: 730
+      fsync: true
 
   kraken_live:
     exchange: kraken_spot
@@ -345,6 +375,12 @@ environments:
       filename_pattern: alerts-%Y%m%d.jsonl
       retention_days: 730
       fsync: true
+    decision_journal:
+      backend: file
+      directory: audit/decisions
+      filename_pattern: decisions-%Y%m%d.jsonl
+      retention_days: 730
+      fsync: true
 
   kraken_futures_paper:
     exchange: kraken_futures
@@ -366,6 +402,12 @@ environments:
       filename_pattern: alerts-%Y%m%d.jsonl
       retention_days: 730
       fsync: true
+    decision_journal:
+      backend: file
+      directory: audit/decisions
+      filename_pattern: decisions-%Y%m%d.jsonl
+      retention_days: 730
+      fsync: true
 
   kraken_futures_live:
     exchange: kraken_futures
@@ -385,6 +427,12 @@ environments:
       backend: file
       directory: audit/alerts
       filename_pattern: alerts-%Y%m%d.jsonl
+      retention_days: 730
+      fsync: true
+    decision_journal:
+      backend: file
+      directory: audit/decisions
+      filename_pattern: decisions-%Y%m%d.jsonl
       retention_days: 730
       fsync: true
 
@@ -411,6 +459,12 @@ environments:
       filename_pattern: alerts-%Y%m%d.jsonl
       retention_days: 730
       fsync: true
+    decision_journal:
+      backend: file
+      directory: audit/decisions
+      filename_pattern: decisions-%Y%m%d.jsonl
+      retention_days: 730
+      fsync: true
 
   zonda_live:
     exchange: zonda_spot
@@ -433,6 +487,12 @@ environments:
       backend: file
       directory: audit/alerts
       filename_pattern: alerts-%Y%m%d.jsonl
+      retention_days: 730
+      fsync: true
+    decision_journal:
+      backend: file
+      directory: audit/decisions
+      filename_pattern: decisions-%Y%m%d.jsonl
       retention_days: 730
       fsync: true
 
