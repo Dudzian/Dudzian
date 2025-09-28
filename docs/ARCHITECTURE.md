@@ -29,11 +29,16 @@ Adaptery giełdowe (`BinanceSpotAdapter`, `BinanceFuturesAdapter`, `KrakenSpotAd
 
 ### `bot_core/data`
 
-Warstwa danych obejmuje `PublicAPIDataSource`, `CachedOHLCVSource` i usługi backfillu. Źródła potrafią normalizować świeczki OHLCV, deduplikować zapisy oraz synchronizować się z cache (domyślnie `SQLiteCacheStorage` w trybie WAL). Dane są indeksowane per środowisko i giełdę, co umożliwia równoległe testy demo/paper oraz szybkie odtwarzanie historii na potrzeby kontroli ryzyka.
+Warstwa danych obejmuje `PublicAPIDataSource`, `CachedOHLCVSource` i usługi backfillu. Moduł pracuje dwuwarstwowo:
+
+1. **Parquet jako źródło prawdy** – backfill zapisuje świeczki OHLCV do plików partycjonowanych według `exchange/symbol/granularity/year/month`. Format kolumnowy zapewnia dobrą kompresję, szybkie skany dla backtestów i łatwą integrację z Pandas/Polars.
+2. **Manifest w SQLite** – lekka baza (`SQLiteCacheStorage`) przechowuje indeks metadanych (zakresy czasowe, wersje paczek, stany backfillu). Dzięki temu runtime odnajduje właściwe segmenty Parquet bez konieczności wczytywania wszystkich plików.
+
+Źródła normalizują świeczki do UTC, deduplikują zapisy i stosują kontrolowany backoff, aby nie przekraczać limitów publicznych API giełd. Dane są indeksowane per środowisko i giełdę, co umożliwia równoległe testy demo/paper oraz szybkie odtwarzanie historii na potrzeby kontroli ryzyka.
 
 ### `bot_core/risk`
 
-Moduł ryzyka (`RiskProfile`, `ThresholdRiskEngine`, `RiskRepository`) wymusza limity dziennych strat, liczbę pozycji, maksymalną ekspozycję per instrument i hard-stop drawdown. Silnik resetuje limity w UTC, blokuje sygnały przekraczające polityki, eskaluje incydenty do alertów oraz aktywuje tryb awaryjny po przekroczeniu progów ochronnych. Profile konfiguruje się w `config/core.yaml`, a walidacja odbywa się w runtime.
+Moduł ryzyka (`RiskProfile`, `ThresholdRiskEngine`, `RiskRepository`) wymusza limity dziennych strat, liczbę pozycji, maksymalną ekspozycję per instrument i hard-stop drawdown. Silnik resetuje limity w UTC, blokuje sygnały przekraczające polityki, eskaluje incydenty do alertów oraz aktywuje tryb awaryjny po przekroczeniu progów ochronnych. Profile konfiguruje się w `config/core.yaml`, a walidacja odbywa się w runtime. Trwałość zapewnia `FileRiskRepository`, które zapisuje stan profilu w katalogu `var/data/<środowisko>/risk_state`, dzięki czemu restart aplikacji nie zdejmuje blokad bezpieczeństwa ani limitów dziennych.
 
 ### `bot_core/execution`
 
@@ -41,7 +46,7 @@ Moduł ryzyka (`RiskProfile`, `ThresholdRiskEngine`, `RiskRepository`) wymusza l
 
 ### `bot_core/alerts`
 
-`AlertRouter`, `AlertChannel` i `FileAlertAuditLog` obsługują powiadomienia (Telegram, e-mail, SMS, Signal, WhatsApp, Messenger) z kontrolą throttlingu i pełnym audytem zdarzeń (`channel="__suppressed__"` dla zdławionych komunikatów). Alerty są elementem procesów bezpieczeństwa – incydenty krytyczne muszą zostać potwierdzone i przekazane do zespołu bezpieczeństwa w ciągu 24h.
+`AlertRouter`, `AlertChannel` i `FileAlertAuditLog` obsługują powiadomienia (Telegram, e-mail, SMS, Signal, WhatsApp, Messenger) z kontrolą throttlingu i pełnym audytem zdarzeń (`channel="__suppressed__"` dla zdławionych komunikatów). Warstwa SMS jest modułowa: na starcie korzystamy z lokalnych operatorów (Orange Polska jako referencyjny, następnie inni dostawcy w PL i IS), a globalny agregator (Twilio/Vonage/MessageBird) działa jako fallback ciągłości działania. Alerty są elementem procesów bezpieczeństwa – incydenty krytyczne muszą zostać potwierdzone i przekazane do zespołu bezpieczeństwa w ciągu 24h.
 
 ### `bot_core/runtime`
 
@@ -49,7 +54,7 @@ Moduł ryzyka (`RiskProfile`, `ThresholdRiskEngine`, `RiskRepository`) wymusza l
 
 ### `bot_core/security`
 
-`SecretManager` i `KeyringSecretStorage` przechowują poświadczenia poza repozytorium, rozdzielając klucze `read` i `trade` dla każdego środowiska. Moduł implementuje rotację kluczy, walidację środowisk (paper/live/testnet) oraz integruje się z politykami IP allowlist. Wszystkie operacje są logowane i dostępne w dziennikach audytu wykorzystywanych przez compliance.
+`SecretManager` i `KeyringSecretStorage` przechowują poświadczenia poza repozytorium, rozdzielając klucze `read` i `trade` dla każdego środowiska. Moduł implementuje rotację kluczy co 90 dni (z natychmiastową wymianą po zmianie uprawnień lub incydencie), walidację środowisk (paper/live/testnet) oraz integruje się z politykami IP allowlist. Klucze przechowujemy natywnie (Windows Credential Manager, macOS Keychain, GNOME Keyring/zaszyfrowany magazyn `age` w trybie headless). Wszystkie operacje są logowane i dostępne w dziennikach audytu wykorzystywanych przez compliance.
 
 ## Mechanizmy bezpieczeństwa i compliance
 

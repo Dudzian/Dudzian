@@ -10,8 +10,10 @@ from typing import Callable, Sequence
 from bot_core.config.loader import load_core_config
 from bot_core.config.models import InstrumentUniverseConfig
 from bot_core.data.ohlcv import (
-    OHLCVBackfillService,
     CachedOHLCVSource,
+    DualCacheStorage,
+    OHLCVBackfillService,
+    ParquetCacheStorage,
     PublicAPIDataSource,
     SQLiteCacheStorage,
 )
@@ -178,8 +180,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     symbols = _resolve_symbols(universe, env_cfg.exchange, args.symbols)
 
-    storage_path = Path(env_cfg.data_cache_path) / "ohlcv.sqlite"
-    storage = SQLiteCacheStorage(storage_path)
+    cache_root = Path(env_cfg.data_cache_path)
+    parquet_storage = ParquetCacheStorage(cache_root / "ohlcv_parquet", namespace=env_cfg.exchange)
+    manifest_storage = SQLiteCacheStorage(cache_root / "ohlcv_manifest.sqlite", store_rows=False)
+    storage = DualCacheStorage(primary=parquet_storage, manifest=manifest_storage)
 
     upstream_source = _build_adapter(env_cfg.exchange, env_cfg.environment)
     upstream_source.exchange_adapter.configure_network(ip_allowlist=env_cfg.ip_allowlist)
