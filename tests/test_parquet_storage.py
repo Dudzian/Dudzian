@@ -82,7 +82,7 @@ def test_dual_cache_storage_updates_manifest(tmp_path) -> None:
 
     # Manifest przechowuje ostatni znacznik czasu oraz liczbę świec.
     manifest_metadata = manifest_storage.metadata()
-    assert manifest_metadata.get(f"row_count::BTCPLN::1d") == "1"
+    assert manifest_metadata.get("row_count::BTCPLN::1d") == "1"
     assert storage.latest_timestamp(key) == ts
 
     # Plik Parquet istnieje i zawiera pojedynczy rekord.

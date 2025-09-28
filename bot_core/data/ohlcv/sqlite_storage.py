@@ -26,6 +26,7 @@ def _parse_int(value: object | None) -> int | None:
     except (TypeError, ValueError):
         return None
 
+
 _COLUMNS = ("open_time", "open", "high", "low", "close", "volume")
 
 
@@ -45,7 +46,8 @@ class _SQLiteMetadata(MutableMapping[str, str]):
     def __setitem__(self, key: str, value: str) -> None:
         with self._connection:
             self._connection.execute(
-                "INSERT INTO metadata(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                "INSERT INTO metadata(key, value) VALUES(?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 (key, value),
             )
 
@@ -66,7 +68,14 @@ class _SQLiteMetadata(MutableMapping[str, str]):
 
 
 class SQLiteCacheStorage(CacheStorage):
-    """Przechowuje dane OHLCV lub pełni rolę manifestu metadanych."""
+    """Przechowuje dane OHLCV lub pełni rolę manifestu metadanych.
+
+    Jeżeli `store_rows=False`, instancja zachowuje się jak manifest:
+    - nie zapisuje samych świec do tabeli `ohlcv`,
+    - utrzymuje w tabeli `metadata` klucze:
+        - `last_timestamp::{symbol}::{interval}` – ostatni znany timestamp,
+        - `row_count::{symbol}::{interval}` – przybliżona liczba wierszy.
+    """
 
     def __init__(self, database_path: str | Path, *, store_rows: bool = True) -> None:
         path = Path(database_path)
@@ -124,33 +133,38 @@ class SQLiteCacheStorage(CacheStorage):
         rows = [tuple(row) for row in payload.get("rows", []) if row]
         if not rows:
             return
+
+        # Przygotuj metadane
         metadata = self.metadata()
         last_key = f"last_timestamp::{symbol}::{interval}"
         count_key = f"row_count::{symbol}::{interval}"
 
-        previous_last = _parse_float(metadata.get(last_key))
-        previous_count = _parse_int(metadata.get(count_key))
+        # Wyznacz unikalne stemple czasu z partii
+        unique_timestamps = sorted({float(r[0]) for r in rows})
+        latest_batch_ts = unique_timestamps[-1]
 
-        unique_timestamps = sorted({float(row[0]) for row in rows})
-        latest_batch_timestamp = unique_timestamps[-1]
+        prev_last = _parse_float(metadata.get(last_key))
+        prev_count = _parse_int(metadata.get(count_key))
 
-        if previous_last is None:
-            updated_last = latest_batch_timestamp
-        else:
-            updated_last = max(previous_last, latest_batch_timestamp)
-        metadata[last_key] = str(int(updated_last))
-
+        # Aktualizacja metadanych zależna od trybu
         if not self._store_rows:
-            if previous_count is None and previous_last is None:
+            # Manifest-only: nie zapisujemy wierszy, tylko aktualizujemy licznik i ostatni timestamp.
+            updated_last = latest_batch_ts if prev_last is None else max(prev_last, latest_batch_ts)
+            metadata[last_key] = str(int(updated_last))
+
+            if prev_count is None and prev_last is None:
                 total_rows = len(unique_timestamps)
-            elif previous_count is None:
-                # Brak wiarygodnej historii liczby świec – przyjmujemy długość partii jako minimum.
+            elif prev_count is None:
+                # Brak wiarygodnej historii liczby świec – przyjmij długość partii jako minimum.
                 total_rows = max(len(unique_timestamps), 0)
             else:
-                incremental = sum(1 for ts in unique_timestamps if previous_last is None or ts > previous_last)
-                total_rows = max(previous_count, previous_count + incremental)
+                incremental = sum(1 for ts in unique_timestamps if prev_last is None or ts > prev_last)
+                total_rows = max(prev_count, prev_count + incremental)
+
             metadata[count_key] = str(total_rows)
             return
+
+        # Pełny tryb: zapisujemy/aktualizujemy wiersze i wyznaczamy metadane na podstawie tabeli
         with self._connection:
             self._connection.executemany(
                 """
@@ -177,16 +191,18 @@ class SQLiteCacheStorage(CacheStorage):
                     for row in rows
                 ],
             )
+
+        # Zaktualizuj liczbę wierszy i ostatni timestamp na podstawie bazy
         cursor = self._connection.execute(
-            """
-            SELECT COUNT(1) FROM ohlcv
-            WHERE symbol = ? AND interval = ?
-            """,
+            "SELECT COUNT(1), MAX(open_time) FROM ohlcv WHERE symbol = ? AND interval = ?",
             (symbol, interval),
         )
-        row = cursor.fetchone()
-        total_rows = int(row[0] if row and row[0] is not None else 0)
+        row = cursor.fetchone() or (0, None)
+        total_rows = int(row[0] or 0)
+        max_ts = float(row[1]) if row[1] is not None else latest_batch_ts
+
         metadata[count_key] = str(total_rows)
+        metadata[last_key] = str(int(max_ts))
 
     def metadata(self) -> MutableMapping[str, str]:
         return _SQLiteMetadata(self._connection)
@@ -202,6 +218,7 @@ class SQLiteCacheStorage(CacheStorage):
                 return float(value)
             except (TypeError, ValueError):  # pragma: no cover - niepoprawny wpis metadanych
                 return None
+
         cursor = self._connection.execute(
             """
             SELECT MAX(open_time) FROM ohlcv
