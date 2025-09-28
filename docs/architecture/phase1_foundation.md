@@ -23,6 +23,7 @@ zewnętrznych, z jasnym podziałem na warstwy i środowiska.
 | `bot_core/alerts` | Wspólne API alertów i kanały powiadomień | `AlertChannel`, `AlertRouter`, kanały `TelegramChannel`, `EmailChannel`, `SMSChannel`, `SignalChannel`, `WhatsAppChannel`, `MessengerChannel` |
 | `bot_core/config` | Ładowanie konfiguracji i mapowanie na dataclasses | `CoreConfig`, `EnvironmentConfig`, `RiskProfileConfig`, `load_core_config` |
 | `bot_core/security` | Bezpieczne przechowywanie kluczy API i integracja z keychainami | `SecretManager`, `KeyringSecretStorage` |
+| `bot_core/reporting` | Generowanie dziennych pakietów audytowych | `generate_daily_paper_report`, `PaperReportArtifacts` |
 
 Adaptery `BinanceSpotAdapter` oraz `BinanceFuturesAdapter` obsługują dane publiczne (lista symboli,
 świece OHLCV) oraz podpisane wywołania konta i składania/anulowania zleceń. Wspierają separację
@@ -137,6 +138,14 @@ błędów API (np. exponential backoff, circuit breaker). Pierwszą implementacj
 `PaperTradingExecutionService`, który symuluje egzekucję z natychmiastowym fill'em,
 uwzględnia prowizje maker/taker, poślizg (w punktach bazowych), walidację wielkości zlecenia oraz
 prowadzi dziennik audytowy transakcji.
+
+## Raportowanie i audyt
+
+`bot_core/reporting` dostarcza funkcję `generate_daily_paper_report`, która tworzy dzienne archiwum ZIP z
+blotterem (`ledger.csv`), zdarzeniami decyzyjnymi (`decisions.jsonl`) oraz zwięzłym podsumowaniem (`summary.json`).
+Raport filtruje wpisy według strefy czasowej środowiska, wspiera retencję 24 miesięcy i przygotowuje pakiety do
+podpisu kryptograficznego oraz szyfrowania w kolejnych etapach. Pakiet stanowi bazę do dziennych raportów P&L oraz
+audytów KYC/AML.
 
 ## Alerty i obserwowalność
 
