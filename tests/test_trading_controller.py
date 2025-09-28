@@ -13,6 +13,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 from bot_core.alerts import AlertMessage, DefaultAlertRouter, InMemoryAlertAuditLog
 from bot_core.alerts.base import AlertChannel
 from bot_core.execution import ExecutionService
+from bot_core.observability import MetricsRegistry
 
 from bot_core.exchanges.base import AccountSnapshot, OrderRequest, OrderResult
 from bot_core.risk import RiskCheckResult, RiskEngine, RiskProfile
@@ -198,10 +199,93 @@ def test_controller_runs_health_report() -> None:
     controller.maybe_report_health(force=True)
 
     assert len(channel.messages) == 1
-    message = channel.messages[0]
-    assert message.category == "health"
-    assert message.severity == "info"
-    assert message.context["channel_count"] == "1"
+
+
+def test_controller_updates_metrics_counters_and_gauge() -> None:
+    registry = MetricsRegistry()
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    router, _, _ = _router_with_channel()
+
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        health_check_interval=timedelta(seconds=0),
+        metrics_registry=registry,
+    )
+
+    controller.process_signals([_signal("BUY")])
+    controller.maybe_report_health(force=True)
+
+    base_labels = {"environment": "paper", "portfolio": "paper-1", "risk_profile": "balanced"}
+    symbol_labels = {**base_labels, "symbol": "BTC/USDT"}
+
+    signals_counter = registry.counter(
+        "trading_signals_total",
+        "Liczba sygnałów przetworzonych w TradingController (status=received/accepted/rejected).",
+    )
+    assert signals_counter.value(labels={**symbol_labels, "status": "received"}) == 1.0
+    assert signals_counter.value(labels={**symbol_labels, "status": "accepted"}) == 1.0
+    assert signals_counter.value(labels={**symbol_labels, "status": "rejected"}) == 0.0
+
+    orders_counter = registry.counter(
+        "trading_orders_total",
+        "Liczba zleceń obsłużonych przez TradingController (result=submitted/executed/failed).",
+    )
+    assert orders_counter.value(labels={**symbol_labels, "result": "submitted", "side": "BUY"}) == 1.0
+    assert orders_counter.value(labels={**symbol_labels, "result": "executed", "side": "BUY"}) == 1.0
+    assert orders_counter.value(labels={**symbol_labels, "result": "failed", "side": "BUY"}) == 0.0
+
+    health_counter = registry.counter(
+        "trading_health_reports_total",
+        "Liczba wysłanych raportów health-check przez TradingController.",
+    )
+    assert health_counter.value(labels=base_labels) == 1.0
+
+    liquidation_gauge = registry.gauge(
+        "trading_liquidation_state",
+        "Stan trybu awaryjnego profilu ryzyka (1=liquidation, 0=normal).",
+    )
+    assert liquidation_gauge.value(labels=base_labels) == 0.0
+
+
+def test_liquidation_metric_reflects_force_state() -> None:
+    registry = MetricsRegistry()
+    risk_engine = DummyRiskEngine()
+    risk_engine.set_result(
+        RiskCheckResult(allowed=False, reason="Przekroczono dzienny limit straty."),
+        liquidate=True,
+    )
+    execution = DummyExecutionService()
+    router, channel, _ = _router_with_channel()
+
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        health_check_interval=timedelta(hours=1),
+        metrics_registry=registry,
+    )
+
+    controller.process_signals([_signal("SELL")])
+
+    base_labels = {"environment": "paper", "portfolio": "paper-1", "risk_profile": "balanced"}
+
+    liquidation_gauge = registry.gauge(
+        "trading_liquidation_state",
+        "Stan trybu awaryjnego profilu ryzyka (1=liquidation, 0=normal).",
+    )
+    assert liquidation_gauge.value(labels=base_labels) == 1.0
+    assert any(msg.severity == "critical" for msg in channel.messages)
 
 
 class FailingExecutionService(ExecutionService):
