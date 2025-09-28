@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import (
@@ -61,7 +62,62 @@ except Exception:  # pragma: no cover
     CoreConfig = Any  # type: ignore
     ControllerRuntimeConfig = Any  # type: ignore
 
+# Observability (metryki są opcjonalne)
+try:  # pragma: no cover - fallback dla gałęzi bez modułu metrics
+    from bot_core.observability.metrics import (  # type: ignore
+        MetricsRegistry,
+        get_global_metrics_registry,
+    )
+except Exception:  # pragma: no cover
+    class _NoopCounter:
+        def inc(self, *_args, **_kwargs) -> None:
+            return None
+
+    class _NoopGauge:
+        def set(self, *_args, **_kwargs) -> None:
+            return None
+
+    class MetricsRegistry:  # type: ignore[override]
+        def counter(self, *_args, **_kwargs) -> _NoopCounter:
+            return _NoopCounter()
+
+        def gauge(self, *_args, **_kwargs) -> _NoopGauge:
+            return _NoopGauge()
+
+    def get_global_metrics_registry() -> MetricsRegistry:  # type: ignore[override]
+        return MetricsRegistry()
+
 _LOGGER = logging.getLogger(__name__)
+
+
+def _extract_adjusted_quantity(
+    original_quantity: float,
+    adjustments: Mapping[str, float] | None,
+) -> float | None:
+    """Zwraca dopuszczalną wielkość zlecenia zasugerowaną przez silnik ryzyka."""
+
+    if not adjustments:
+        return None
+
+    raw_value = adjustments.get("quantity")
+    if raw_value is None:
+        raw_value = adjustments.get("max_quantity")
+    if raw_value is None:
+        return None
+
+    try:
+        candidate = float(raw_value)
+    except (TypeError, ValueError):  # pragma: no cover - defensywny fallback
+        return None
+
+    candidate = max(0.0, min(candidate, original_quantity))
+    if candidate <= 0.0:
+        return None
+
+    if math.isclose(candidate, original_quantity, rel_tol=1e-9, abs_tol=1e-12):
+        return None
+
+    return candidate
 
 
 # =============================================================================
@@ -111,6 +167,7 @@ class TradingController:
     clock: Callable[[], datetime] = _now
     health_check_interval: timedelta | float | int = timedelta(hours=1)
     execution_metadata: Mapping[str, str] | None = None
+    metrics_registry: MetricsRegistry | None = None
 
     _clock: Callable[[], datetime] = field(init=False, repr=False)
     _health_interval: timedelta = field(init=False, repr=False)
@@ -118,6 +175,12 @@ class TradingController:
     _order_defaults: dict[str, str] = field(init=False, repr=False)
     _last_health_report: datetime = field(init=False, repr=False)
     _liquidation_alerted: bool = field(init=False, repr=False)
+    _metrics: MetricsRegistry = field(init=False, repr=False)
+    _metric_labels: Mapping[str, str] = field(init=False, repr=False)
+    _metric_signals_total: Any = field(init=False, repr=False)
+    _metric_orders_total: Any = field(init=False, repr=False)
+    _metric_health_reports: Any = field(init=False, repr=False)
+    _metric_liquidation_state: Any = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._clock = self.clock
@@ -134,6 +197,29 @@ class TradingController:
         self._order_defaults = {str(k): str(v) for k, v in (self.order_metadata_defaults or {}).items()}
         self._last_health_report = self._clock()
         self._liquidation_alerted = False
+        self._metrics = self.metrics_registry or get_global_metrics_registry()
+        self._metric_labels = {
+            "environment": self.environment,
+            "portfolio": self.portfolio_id,
+            "risk_profile": self.risk_profile,
+        }
+        self._metric_signals_total = self._metrics.counter(
+            "trading_signals_total",
+            "Liczba sygnałów przetworzonych w TradingController (status=received/accepted/rejected).",
+        )
+        self._metric_orders_total = self._metrics.counter(
+            "trading_orders_total",
+            "Liczba zleceń obsłużonych przez TradingController (result=submitted/executed/failed).",
+        )
+        self._metric_health_reports = self._metrics.counter(
+            "trading_health_reports_total",
+            "Liczba wysłanych raportów health-check przez TradingController.",
+        )
+        self._metric_liquidation_state = self._metrics.gauge(
+            "trading_liquidation_state",
+            "Stan trybu awaryjnego profilu ryzyka (1=liquidation, 0=normal).",
+        )
+        self._metric_liquidation_state.set(0.0, labels=self._metric_labels)
 
     # ----------------------------------------------- API -----------------------------------------------
     def process_signals(self, signals: Sequence[StrategySignal]) -> list[OrderResult]:
@@ -143,6 +229,9 @@ class TradingController:
             if signal.side.upper() not in {"BUY", "SELL"}:
                 _LOGGER.debug("Pomijam sygnał %s o kierunku %s", signal.symbol, signal.side)
                 continue
+            metric_labels = dict(self._metric_labels)
+            metric_labels["symbol"] = signal.symbol
+            self._metric_signals_total.inc(labels={**metric_labels, "status": "received"})
             try:
                 result = self._handle_signal(signal)
             except Exception:  # noqa: BLE001
@@ -150,6 +239,9 @@ class TradingController:
                 raise
             if result is not None:
                 results.append(result)
+                self._metric_orders_total.inc(
+                    labels={**metric_labels, "result": "executed", "side": signal.side.upper()},
+                )
 
         self.maybe_report_health()
         return results
@@ -191,6 +283,7 @@ class TradingController:
         _LOGGER.info("Publikuję raport health-check (%s kanałów)", len(snapshot))
         self.alert_router.dispatch(message)
         self._last_health_report = now
+        self._metric_health_reports.inc(labels=self._metric_labels)
 
     # ------------------------------------------- internals ----------------------------------------------
     def _handle_signal(self, signal: StrategySignal) -> OrderResult | None:
@@ -202,22 +295,74 @@ class TradingController:
             account=account,
             profile_name=self.risk_profile,
         )
+        metric_labels = dict(self._metric_labels)
+        metric_labels["symbol"] = signal.symbol
 
+        adjusted_request = request
         if not risk_result.allowed:
-            self._emit_order_rejected_alert(signal, request, risk_result)
-            self._handle_liquidation_state(risk_result)
-            return None
+            adjusted = self._maybe_adjust_request(signal, request, risk_result, account)
+            if adjusted is None:
+                self._emit_order_rejected_alert(signal, request, risk_result)
+                self._handle_liquidation_state(risk_result)
+                self._metric_signals_total.inc(labels={**metric_labels, "status": "rejected"})
+                return None
+            adjusted_request, risk_result = adjusted
+            self._metric_signals_total.inc(labels={**metric_labels, "status": "adjusted"})
 
+        self._metric_signals_total.inc(labels={**metric_labels, "status": "accepted"})
+        self._metric_orders_total.inc(
+            labels={**metric_labels, "result": "submitted", "side": adjusted_request.side}
+        )
         try:
-            result = self.execution_service.execute(request, self._execution_context)
+            result = self.execution_service.execute(adjusted_request, self._execution_context)
         except Exception as exc:  # noqa: BLE001
-            self._emit_execution_error_alert(signal, request, exc)
+            self._emit_execution_error_alert(signal, adjusted_request, exc)
             self._handle_liquidation_state(risk_result)
+            self._metric_orders_total.inc(
+                labels={**metric_labels, "result": "failed", "side": adjusted_request.side},
+            )
             raise
 
-        self._emit_order_filled_alert(signal, request, result)
+        self._emit_order_filled_alert(signal, adjusted_request, result)
         self._handle_liquidation_state(risk_result)
         return result
+
+    def _maybe_adjust_request(
+        self,
+        signal: StrategySignal,
+        request: OrderRequest,
+        risk_result: RiskCheckResult,
+        account: AccountSnapshot,
+    ) -> tuple[OrderRequest, RiskCheckResult] | None:
+        quantity = _extract_adjusted_quantity(request.quantity, risk_result.adjustments)
+        if quantity is None:
+            return None
+
+        adjusted_request = OrderRequest(
+            symbol=request.symbol,
+            side=request.side,
+            quantity=quantity,
+            order_type=request.order_type,
+            price=request.price,
+            time_in_force=request.time_in_force,
+            client_order_id=request.client_order_id,
+        )
+        new_result = self.risk_engine.apply_pre_trade_checks(
+            adjusted_request,
+            account=account,
+            profile_name=self.risk_profile,
+        )
+        if not new_result.allowed:
+            return None
+
+        _LOGGER.info(
+            "Dostosowuję sygnał %s %s: qty %.8f -> %.8f po rekomendacji risk engine.",
+            signal.side.upper(),
+            signal.symbol,
+            request.quantity,
+            quantity,
+        )
+        return adjusted_request, new_result
 
     def _build_order_request(self, signal: StrategySignal) -> OrderRequest:
         metadata = dict(self._order_defaults)
@@ -306,7 +451,9 @@ class TradingController:
         self.alert_router.dispatch(message)
 
     def _handle_liquidation_state(self, risk_result: RiskCheckResult) -> None:
-        if not self.risk_engine.should_liquidate(profile_name=self.risk_profile):
+        in_liquidation = self.risk_engine.should_liquidate(profile_name=self.risk_profile)
+        self._metric_liquidation_state.set(1.0 if in_liquidation else 0.0, labels=self._metric_labels)
+        if not in_liquidation:
             if self._liquidation_alerted:
                 _LOGGER.info("Profil %s wyszedł z trybu awaryjnego", self.risk_profile)
             self._liquidation_alerted = False
@@ -515,36 +662,51 @@ class DailyTrendController:
                 account=account_snapshot,
                 profile_name=self._risk_profile,
             )
+            request = base_request
             if not risk_result.allowed:
-                _LOGGER.info(
-                    "Kontroler %s: sygnał %s dla %s odrzucony przez silnik ryzyka (%s)",
-                    self.controller_name,
-                    signal.side,
-                    snapshot.symbol,
-                    risk_result.reason,
-                )
-                continue
-
-            quantity = base_request.quantity
-            if risk_result.adjustments and "quantity" in risk_result.adjustments:
-                quantity = float(risk_result.adjustments["quantity"])
-            if quantity <= 0:
-                _LOGGER.debug(
-                    "Kontroler %s: dostosowana wielkość <= 0 dla %s – pomijam egzekucję.",
-                    self.controller_name,
-                    snapshot.symbol,
-                )
-                continue
-
-            request = OrderRequest(
-                symbol=base_request.symbol,
-                side=base_request.side,
-                quantity=quantity,
-                order_type=base_request.order_type,
-                price=base_request.price,
-                time_in_force=base_request.time_in_force,
-                client_order_id=base_request.client_order_id,
-            )
+                adjusted_qty = _extract_adjusted_quantity(base_request.quantity, risk_result.adjustments)
+                if adjusted_qty is not None:
+                    adjusted_request = OrderRequest(
+                        symbol=base_request.symbol,
+                        side=base_request.side,
+                        quantity=adjusted_qty,
+                        order_type=base_request.order_type,
+                        price=base_request.price,
+                        time_in_force=base_request.time_in_force,
+                        client_order_id=base_request.client_order_id,
+                    )
+                    second_result = self.risk_engine.apply_pre_trade_checks(
+                        adjusted_request,
+                        account=account_snapshot,
+                        profile_name=self._risk_profile,
+                    )
+                    if second_result.allowed:
+                        _LOGGER.info(
+                            "Kontroler %s: dostosowuję qty %s z %.8f do %.8f po rekomendacji ryzyka.",
+                            self.controller_name,
+                            snapshot.symbol,
+                            base_request.quantity,
+                            adjusted_qty,
+                        )
+                        request = adjusted_request
+                        risk_result = second_result
+                    else:
+                        _LOGGER.info(
+                            "Kontroler %s: silnik ryzyka nadal blokuje zlecenie %s mimo korekty (powód: %s)",
+                            self.controller_name,
+                            snapshot.symbol,
+                            second_result.reason,
+                        )
+                        continue
+                else:
+                    _LOGGER.info(
+                        "Kontroler %s: sygnał %s dla %s odrzucony przez silnik ryzyka (%s)",
+                        self.controller_name,
+                        signal.side,
+                        snapshot.symbol,
+                        risk_result.reason,
+                    )
+                    continue
             result = self.execution_service.execute(request, self.execution_context)
             self._post_fill(signal.side, snapshot.symbol, request, result)
             results.append(result)
