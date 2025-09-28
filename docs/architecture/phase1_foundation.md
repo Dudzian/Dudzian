@@ -84,6 +84,11 @@ przekazywać parametry specyficzne dla danej giełdy bez łamania ogólnego kont
 `kraken_live` korzysta z `valuation_asset: ZEUR`, co powoduje, że `KrakenSpotAdapter` raportuje kapitał
 w walucie referencyjnej EUR zgodnie z wymaganiami risk engine'u i raportowania P&L.
 
+Konfiguracja każdego środowiska zawiera także sekcje `required_permissions` i `forbidden_permissions`.
+`SecretManager.load_exchange_credentials` odczytuje te listy i blokuje start, jeżeli klucz API nie ma
+kompletu minimalnych uprawnień (np. `trade`) lub posiada zabronione możliwości (`withdraw`). Dzięki
+temu wymuszamy model najmniejszych uprawnień zanim kontroler runtime połączy się z adapterem.
+
 ## Dane rynkowe
 
 `PublicAPIDataSource` zostanie połączony z adapterami do pobierania danych OHLCV z publicznych API.

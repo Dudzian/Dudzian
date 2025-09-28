@@ -224,6 +224,8 @@ environments:
     risk_profile: balanced
     alert_channels: ["telegram:primary", "email:ops"]
     ip_allowlist: []
+    required_permissions: [read, trade]
+    forbidden_permissions: [withdraw]
     instrument_universe: core_multi_exchange
     alert_throttle:
       window_seconds: 300
@@ -251,6 +253,8 @@ environments:
     risk_profile: conservative
     alert_channels: ["telegram:primary", "sms:orange_local", "email:ops"]
     ip_allowlist: []
+    required_permissions: [read, trade]
+    forbidden_permissions: [withdraw]
     instrument_universe: core_multi_exchange
     alert_throttle:
       window_seconds: 180
@@ -278,6 +282,8 @@ environments:
     risk_profile: balanced
     alert_channels: ["telegram:primary", "email:ops"]
     ip_allowlist: []
+    required_permissions: [read, trade]
+    forbidden_permissions: [withdraw]
     instrument_universe: core_multi_exchange
     alert_throttle:
       window_seconds: 300
@@ -305,6 +311,8 @@ environments:
     risk_profile: conservative
     alert_channels: ["telegram:primary", "sms:orange_local", "email:ops"]
     ip_allowlist: []
+    required_permissions: [read, trade]
+    forbidden_permissions: [withdraw]
     instrument_universe: core_multi_exchange
     alert_throttle:
       window_seconds: 180
@@ -332,6 +340,8 @@ environments:
     risk_profile: balanced
     alert_channels: ["telegram:primary", "email:ops"]
     ip_allowlist: []
+    required_permissions: [read, trade]
+    forbidden_permissions: [withdraw]
     instrument_universe: core_multi_exchange
     adapter_settings:
       valuation_asset: ZUSD
@@ -361,6 +371,8 @@ environments:
     risk_profile: conservative
     alert_channels: ["telegram:primary", "sms:orange_local", "email:ops"]
     ip_allowlist: []
+    required_permissions: [read, trade]
+    forbidden_permissions: [withdraw]
     instrument_universe: core_multi_exchange
     adapter_settings:
       valuation_asset: ZEUR
@@ -390,6 +402,8 @@ environments:
     risk_profile: balanced
     alert_channels: ["telegram:primary", "email:ops"]
     ip_allowlist: []
+    required_permissions: [read, trade]
+    forbidden_permissions: [withdraw]
     instrument_universe: core_multi_exchange
     alert_throttle:
       window_seconds: 300
@@ -417,6 +431,8 @@ environments:
     risk_profile: conservative
     alert_channels: ["telegram:primary", "sms:orange_local", "email:ops"]
     ip_allowlist: []
+    required_permissions: [read, trade]
+    forbidden_permissions: [withdraw]
     instrument_universe: core_multi_exchange
     alert_throttle:
       window_seconds: 180
@@ -444,6 +460,8 @@ environments:
     risk_profile: conservative
     alert_channels: ["telegram:primary"]
     ip_allowlist: []
+    required_permissions: [read, trade]
+    forbidden_permissions: [withdraw]
     instrument_universe: core_multi_exchange
     adapter_settings:
       valuation_asset: PLN
@@ -474,6 +492,8 @@ environments:
     risk_profile: conservative
     alert_channels: ["telegram:primary", "sms:nova_is", "email:ops"]
     ip_allowlist: []
+    required_permissions: [read, trade]
+    forbidden_permissions: [withdraw]
     instrument_universe: core_multi_exchange
     adapter_settings:
       valuation_asset: PLN

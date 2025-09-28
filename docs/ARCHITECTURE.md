@@ -67,7 +67,7 @@ Nowy moduł `security.rotation` wprowadza rejestr rotacji zapisany w pliku `secu
 ## Mechanizmy bezpieczeństwa i compliance
 
 - **Wymuszenie trybu demo/paper:** `StrategyContext.require_demo_mode` oraz walidacja konfiguracji w runtime zapobiegają uruchomieniu strategii live bez akceptacji ryzyka.
-- **Separacja uprawnień:** adaptery giełdowe stosują osobne klucze API dla `read`/`trade`, a `SecretManager` pilnuje środowisk i rotacji kluczy.
+- **Separacja uprawnień:** adaptery giełdowe stosują osobne klucze API dla `read`/`trade`, konfiguracja środowisk wymaga explicite zdefiniowanych `required_permissions` i `forbidden_permissions`, a `SecretManager` pilnuje środowisk, rotacji kluczy i blokuje start, gdy klucz posiada niewłaściwe uprawnienia.
 - **Kontrola ryzyka:** `RiskEngine` blokuje sygnały przekraczające limity ekspozycji, liczbę pozycji, dzienny drawdown i wymagania margin.
 - **Alerty i audyt:** `AlertRouter` utrzymuje kanały eskalacji, logi audytowe, throttling powiadomień oraz politykę retencji (24 miesiące).
 - **Zgłaszanie incydentów:** każde naruszenie bezpieczeństwa lub anomalia handlowa musi być zgłoszona do zespołu bezpieczeństwa (`#sec-alerts`) i opisana w raporcie post-incident w ciągu 24h. Dzienniki danych i alertów są zabezpieczane do analizy.

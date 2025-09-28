@@ -115,6 +115,8 @@ def bootstrap_environment(
         environment.keychain_key,
         expected_environment=environment.environment,
         purpose=environment.credential_purpose,
+        required_permissions=environment.required_permissions,
+        forbidden_permissions=environment.forbidden_permissions,
     )
 
     factories = dict(_DEFAULT_ADAPTERS)

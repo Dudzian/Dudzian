@@ -56,6 +56,8 @@ class EnvironmentConfig:
     credential_purpose: str = "trading"
     instrument_universe: str | None = None
     adapter_settings: Mapping[str, Any] = field(default_factory=dict)
+    required_permissions: Sequence[str] = field(default_factory=tuple)
+    forbidden_permissions: Sequence[str] = field(default_factory=tuple)
     alert_throttle: AlertThrottleConfig | None = None
     alert_audit: AlertAuditConfig | None = None
     decision_journal: DecisionJournalConfig | None = None

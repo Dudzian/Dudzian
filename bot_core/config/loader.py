@@ -298,6 +298,12 @@ def load_core_config(path: str | Path) -> CoreConfig:
                 str(key): value
                 for key, value in (entry.get("adapter_settings", {}) or {}).items()
             },
+            "required_permissions": tuple(
+                str(value).lower() for value in (entry.get("required_permissions", ()) or ())
+            ),
+            "forbidden_permissions": tuple(
+                str(value).lower() for value in (entry.get("forbidden_permissions", ()) or ())
+            ),
         }
         if _env_has("alert_throttle"):
             env_kwargs["alert_throttle"] = _load_alert_throttle(entry.get("alert_throttle"))
