@@ -244,6 +244,7 @@ class BinanceSpotAdapter(ExchangeAdapter):
         try:
             with urlopen(request, timeout=15) as response:  # nosec: B310 - endpoint zaufany
                 payload = response.read()
+    ...
         except HTTPError as exc:  # pragma: no cover - zależne od API i środowiska sieciowego
             _LOGGER.error("Błąd HTTP podczas komunikacji z Binance: %s", exc)
             raise RuntimeError(f"Binance API zwróciło błąd HTTP: {exc}") from exc

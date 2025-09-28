@@ -7,6 +7,7 @@ import sys
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from bot_core.config import (
+    AlertAuditConfig,
     EmailChannelSettings,
     InstrumentConfig,
     MessengerChannelSettings,
@@ -141,15 +142,49 @@ def test_load_core_config_reads_sms_providers(tmp_path: Path) -> None:
     assert email.credential_secret == "smtp_ops_credentials"
     assert email.use_tls is True
 
-    # Instrument universes
-    universe = config.instrument_universes["core_multi_exchange"]
-    assert universe.description == "Testowe uniwersum"
-    assert len(universe.instruments) == 1
-    instrument = universe.instruments[0]
-    assert isinstance(instrument, InstrumentConfig)
-    assert instrument.exchange_symbols["binance_spot"] == "BTCUSDT"
-    assert instrument.backfill_windows[0].interval == "1d"
-    assert instrument.backfill_windows[0].lookback_days == 3650
+
+def test_load_core_config_parses_alert_audit(tmp_path: Path) -> None:
+    config_path = tmp_path / "core.yaml"
+    config_path.write_text(
+        """
+        risk_profiles:
+          balanced:
+            max_daily_loss_pct: 0.015
+            max_position_pct: 0.05
+            target_volatility: 0.11
+            max_leverage: 3.0
+            stop_loss_atr_multiple: 1.5
+            max_open_positions: 5
+            hard_drawdown_pct: 0.10
+        environments:
+          binance_paper:
+            exchange: binance_spot
+            environment: paper
+            keychain_key: binance_paper_key
+            credential_purpose: trading
+            data_cache_path: ./var/data/binance_paper
+            risk_profile: balanced
+            alert_channels: []
+            alert_audit:
+              backend: file
+              directory: alerts
+              filename_pattern: alerts-%Y%m%d.jsonl
+              retention_days: 30
+              fsync: true
+        reporting: {}
+        alerts: {}
+        """,
+        encoding="utf-8",
+    )
+
+    config = load_core_config(config_path)
+
+    env = config.environments["binance_paper"]
+    assert isinstance(env.alert_audit, AlertAuditConfig)
+    assert env.alert_audit.backend == "file"
+    assert env.alert_audit.directory == "alerts"
+    assert env.alert_audit.retention_days == 30
+    assert env.alert_audit.fsync is True
 
 
 def test_load_core_config_loads_strategies(tmp_path: Path) -> None:

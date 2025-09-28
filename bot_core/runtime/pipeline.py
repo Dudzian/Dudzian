@@ -35,6 +35,12 @@ try:
 except Exception:  # pragma: no cover
     TradingController = None  # type: ignore
 
+# Dla zgodności typów w create_trading_controller
+try:
+    from bot_core.alerts import DefaultAlertRouter  # type: ignore
+except Exception:  # pragma: no cover
+    DefaultAlertRouter = object  # type: ignore[misc,assignment]
+
 
 @dataclass(slots=True)
 class DailyTrendPipeline:
@@ -58,7 +64,6 @@ def build_daily_trend_pipeline(
     adapter_factories: Mapping[str, ExchangeAdapterFactory] | None = None,
 ) -> DailyTrendPipeline:
     """Tworzy kompletny pipeline strategii trend-following D1 dla środowiska paper/testnet."""
-
     bootstrap_ctx = bootstrap_environment(
         environment_name,
         config_path=config_path,

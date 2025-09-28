@@ -11,6 +11,7 @@ from bot_core.alerts import (
     AlertThrottle,
     DefaultAlertRouter,
     EmailChannel,
+    FileAlertAuditLog,
     InMemoryAlertAuditLog,
     MessengerChannel,
     SMSChannel,
@@ -19,7 +20,7 @@ from bot_core.alerts import (
     WhatsAppChannel,
     get_sms_provider,
 )
-from bot_core.alerts.base import AlertChannel
+from bot_core.alerts.base import AlertAuditLog, AlertChannel
 from bot_core.alerts.channels.providers import SmsProviderConfig
 from bot_core.config.loader import load_core_config
 from bot_core.config.models import (
@@ -33,7 +34,12 @@ from bot_core.config.models import (
     TelegramChannelSettings,
     WhatsAppChannelSettings,
 )
-from bot_core.exchanges.base import Environment, ExchangeAdapter, ExchangeAdapterFactory, ExchangeCredentials
+from bot_core.exchanges.base import (
+    Environment,
+    ExchangeAdapter,
+    ExchangeAdapterFactory,
+    ExchangeCredentials,
+)
 from bot_core.exchanges.binance import BinanceFuturesAdapter, BinanceSpotAdapter
 from bot_core.exchanges.kraken import KrakenFuturesAdapter, KrakenSpotAdapter
 from bot_core.exchanges.zonda import ZondaSpotAdapter
@@ -61,7 +67,7 @@ class BootstrapContext:
     risk_engine: ThresholdRiskEngine
     alert_router: DefaultAlertRouter
     alert_channels: Mapping[str, AlertChannel]
-    audit_log: InMemoryAlertAuditLog
+    audit_log: AlertAuditLog
     adapter_settings: Mapping[str, Any]
 
 
@@ -162,8 +168,22 @@ def _build_alert_channels(
     core_config: CoreConfig,
     environment: EnvironmentConfig,
     secret_manager: SecretManager,
-) -> tuple[Mapping[str, AlertChannel], DefaultAlertRouter, InMemoryAlertAuditLog]:
-    audit_log = InMemoryAlertAuditLog()
+) -> tuple[Mapping[str, AlertChannel], DefaultAlertRouter, AlertAuditLog]:
+    audit_config = getattr(environment, "alert_audit", None)
+    if audit_config and audit_config.backend == "file":
+        directory = Path(audit_config.directory) if audit_config.directory else Path("alerts")
+        if not directory.is_absolute():
+            base = Path(environment.data_cache_path)
+            directory = base / directory
+        audit_log: AlertAuditLog = FileAlertAuditLog(
+            directory=directory,
+            filename_pattern=audit_config.filename_pattern,
+            retention_days=audit_config.retention_days,
+            fsync=audit_config.fsync,
+        )
+    else:
+        audit_log = InMemoryAlertAuditLog()
+
     throttle_cfg = getattr(environment, "alert_throttle", None)
     throttle: AlertThrottle | None = None
     if throttle_cfg is not None:
@@ -239,7 +259,7 @@ def _build_email_channel(
         raw_secret = secret_manager.load_secret_value(settings.credential_secret, purpose="alerts:email")
         try:
             parsed = json.loads(raw_secret) if raw_secret else {}
-        except json.JSONDecodeError as exc:  # pragma: no cover - uszkodzony sekret to błąd konfiguracji
+        except json.JSONDecodeError as exc:  # pragma: no cover
             raise SecretStorageError(
                 "Sekret dla kanału e-mail musi zawierać poprawny JSON z polami 'username' i 'password'."
             ) from exc
@@ -276,7 +296,7 @@ def _build_sms_channel(
     raw_secret = secret_manager.load_secret_value(settings.credential_key, purpose="alerts:sms")
     try:
         payload = json.loads(raw_secret)
-    except json.JSONDecodeError as exc:  # pragma: no cover - uszkodzone dane w magazynie
+    except json.JSONDecodeError as exc:  # pragma: no cover
         raise SecretStorageError(
             "Sekret dostawcy SMS powinien zawierać JSON z polami 'account_sid' i 'auth_token'."
         ) from exc

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import fields
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Optional
 
 import yaml
 
@@ -57,6 +57,12 @@ try:
 except Exception:
     ControllerRuntimeConfig = None  # type: ignore
 
+# Opcjonalna konfiguracja audytu alertów (w nowszych gałęziach)
+try:
+    from bot_core.config.models import AlertAuditConfig  # type: ignore
+except Exception:
+    AlertAuditConfig = None  # type: ignore
+
 
 def _core_has(field_name: str) -> bool:
     """Sprawdza, czy CoreConfig posiada dane pole (bezpiecznie dla różnych gałęzi)."""
@@ -72,7 +78,7 @@ def _load_instrument_universes(raw: Mapping[str, Any]):
     if InstrumentUniverseConfig is None or InstrumentConfig is None or InstrumentBackfillWindow is None:
         return {}
     universes: dict[str, InstrumentUniverseConfig] = {}
-    for name, entry in raw.get("instrument_universes", {}).items():
+    for name, entry in (raw.get("instrument_universes", {}) or {}).items():
         instruments: list[InstrumentConfig] = []
         for instrument_name, instrument_data in (entry.get("instruments", {}) or {}).items():
             backfill_windows = tuple(
@@ -80,7 +86,7 @@ def _load_instrument_universes(raw: Mapping[str, Any]):
                     interval=str(window["interval"]),
                     lookback_days=int(window["lookback_days"]),
                 )
-                for window in instrument_data.get("backfill", ()) or ()
+                for window in (instrument_data.get("backfill", ()) or ())
             )
             instruments.append(
                 InstrumentConfig(
@@ -105,7 +111,7 @@ def _load_instrument_universes(raw: Mapping[str, Any]):
 
 def _load_sms_providers(raw_alerts: Mapping[str, Any]) -> Mapping[str, SMSProviderSettings]:
     providers: dict[str, SMSProviderSettings] = {}
-    for name, entry in raw_alerts.get("sms_providers", {}).items():
+    for name, entry in (raw_alerts.get("sms_providers", {}) or {}).items():
         providers[name] = SMSProviderSettings(
             name=name,
             provider_key=str(entry["provider"]),
@@ -123,7 +129,7 @@ def _load_signal_channels(raw_alerts: Mapping[str, Any]):
     if SignalChannelSettings is None:
         return {}
     channels: dict[str, SignalChannelSettings] = {}
-    for name, entry in raw_alerts.get("signal_channels", {}).items():
+    for name, entry in (raw_alerts.get("signal_channels", {}) or {}).items():
         channels[name] = SignalChannelSettings(
             name=name,
             service_url=str(entry["service_url"]),
@@ -139,7 +145,7 @@ def _load_whatsapp_channels(raw_alerts: Mapping[str, Any]):
     if WhatsAppChannelSettings is None:
         return {}
     channels: dict[str, WhatsAppChannelSettings] = {}
-    for name, entry in raw_alerts.get("whatsapp_channels", {}).items():
+    for name, entry in (raw_alerts.get("whatsapp_channels", {}) or {}).items():
         channels[name] = WhatsAppChannelSettings(
             name=name,
             phone_number_id=str(entry["phone_number_id"]),
@@ -155,7 +161,7 @@ def _load_messenger_channels(raw_alerts: Mapping[str, Any]):
     if MessengerChannelSettings is None:
         return {}
     channels: dict[str, MessengerChannelSettings] = {}
-    for name, entry in raw_alerts.get("messenger_channels", {}).items():
+    for name, entry in (raw_alerts.get("messenger_channels", {}) or {}).items():
         channels[name] = MessengerChannelSettings(
             name=name,
             page_id=str(entry["page_id"]),
@@ -171,7 +177,7 @@ def _load_strategies(raw: Mapping[str, Any]):
     if DailyTrendMomentumStrategyConfig is None:
         return {}
     strategies: dict[str, DailyTrendMomentumStrategyConfig] = {}
-    for name, entry in raw.get("strategies", {}).items():
+    for name, entry in (raw.get("strategies", {}) or {}).items():
         if str(entry.get("engine", "")) != "daily_trend_momentum":
             continue
         params = entry.get("parameters", {}) or {}
@@ -189,20 +195,47 @@ def _load_strategies(raw: Mapping[str, Any]):
     return strategies
 
 
-def _load_alert_throttle(entry: Mapping[str, Any] | None) -> AlertThrottleConfig | None:
+def _load_alert_throttle(entry: Optional[Mapping[str, Any]]) -> AlertThrottleConfig | None:
     if not entry:
         return None
     window_seconds = float(entry.get("window_seconds", entry.get("window", 0.0)))
     if window_seconds <= 0:
         raise ValueError("alert_throttle.window_seconds musi być dodatnie")
-    exclude_severities = tuple(str(value).lower() for value in entry.get("exclude_severities", ()) or ())
-    exclude_categories = tuple(str(value).lower() for value in entry.get("exclude_categories", ()) or ())
+    exclude_severities = tuple(str(value).lower() for value in (entry.get("exclude_severities", ()) or ()))
+    exclude_categories = tuple(str(value).lower() for value in (entry.get("exclude_categories", ()) or ()))
     max_entries = int(entry.get("max_entries", 2048))
     return AlertThrottleConfig(
         window_seconds=window_seconds,
         exclude_severities=exclude_severities,
         exclude_categories=exclude_categories,
         max_entries=max_entries,
+    )
+
+
+def _load_alert_audit(entry: Optional[Mapping[str, Any]]):
+    """Ładuje konfigurację audytu alertów – tylko jeśli klasa istnieje w danej gałęzi."""
+    if AlertAuditConfig is None or not entry:
+        return None
+    backend = str(entry.get("backend", entry.get("type", "memory"))).strip().lower()
+    if backend not in {"memory", "file"}:
+        raise ValueError("alert_audit.backend musi mieć wartość 'memory' lub 'file'")
+
+    directory_value = entry.get("directory")
+    directory = str(directory_value) if directory_value is not None else None
+    filename_pattern = str(entry.get("filename_pattern", "alerts-%Y%m%d.jsonl"))
+    retention_value = entry.get("retention_days")
+    retention_days = None if retention_value in (None, "") else int(retention_value)
+    fsync = bool(entry.get("fsync", False))
+
+    if backend == "file" and not directory:
+        raise ValueError("alert_audit.directory jest wymagane dla backendu 'file'")
+
+    return AlertAuditConfig(  # type: ignore[call-arg]
+        backend=backend,
+        directory=directory,
+        filename_pattern=filename_pattern,
+        retention_days=retention_days,
+        fsync=fsync,
     )
 
 
@@ -213,9 +246,9 @@ def load_core_config(path: str | Path) -> CoreConfig:
 
     instrument_universes = _load_instrument_universes(raw)
 
-    # Środowiska – budujemy kwargs dynamicznie, aby działało w gałęziach bez alert_throttle.
+    # Środowiska – budujemy kwargs dynamicznie, tak by działało na różnych gałęziach modeli.
     environments: dict[str, EnvironmentConfig] = {}
-    for name, entry in raw.get("environments", {}).items():
+    for name, entry in (raw.get("environments", {}) or {}).items():
         env_kwargs: dict[str, Any] = {
             "name": name,
             "exchange": entry["exchange"],
@@ -234,6 +267,8 @@ def load_core_config(path: str | Path) -> CoreConfig:
         }
         if _env_has("alert_throttle"):
             env_kwargs["alert_throttle"] = _load_alert_throttle(entry.get("alert_throttle"))
+        if _env_has("alert_audit"):
+            env_kwargs["alert_audit"] = _load_alert_audit(entry.get("alert_audit"))
         environments[name] = EnvironmentConfig(**env_kwargs)
 
     risk_profiles = {
@@ -247,13 +282,13 @@ def load_core_config(path: str | Path) -> CoreConfig:
             max_open_positions=int(entry["max_open_positions"]),
             hard_drawdown_pct=float(entry["hard_drawdown_pct"]),
         )
-        for name, entry in raw.get("risk_profiles", {}).items()
+        for name, entry in (raw.get("risk_profiles", {}) or {}).items()
     }
 
     strategies = _load_strategies(raw)
 
-    reporting = raw.get("reporting", {}) or {}
-    alerts = raw.get("alerts", {}) or {}
+    reporting = (raw.get("reporting", {}) or {})
+    alerts = (raw.get("alerts", {}) or {})
     sms_providers = _load_sms_providers(alerts)
     signal_channels = _load_signal_channels(alerts)
     whatsapp_channels = _load_whatsapp_channels(alerts)
@@ -266,7 +301,7 @@ def load_core_config(path: str | Path) -> CoreConfig:
             token_secret=str(entry["token_secret"]),
             parse_mode=str(entry.get("parse_mode", "MarkdownV2")),
         )
-        for name, entry in alerts.get("telegram_channels", {}).items()
+        for name, entry in (alerts.get("telegram_channels", {}) or {}).items()
     }
     email_channels = {
         name: EmailChannelSettings(
@@ -278,7 +313,7 @@ def load_core_config(path: str | Path) -> CoreConfig:
             credential_secret=entry.get("credential_secret"),
             use_tls=bool(entry.get("use_tls", True)),
         )
-        for name, entry in alerts.get("email_channels", {}).items()
+        for name, entry in (alerts.get("email_channels", {}) or {}).items()
     }
 
     # Budujemy kwargs dynamicznie, tylko z polami obecnymi w CoreConfig

@@ -1,6 +1,6 @@
 """Pakiet kanałów alertów i routera."""
 
-from bot_core.alerts.audit import AlertAuditEntry, InMemoryAlertAuditLog
+from bot_core.alerts.audit import AlertAuditEntry, FileAlertAuditLog, InMemoryAlertAuditLog
 from bot_core.alerts.base import (
     AlertAuditLog,
     AlertChannel,
@@ -52,6 +52,7 @@ __all__ = [
     "DEFAULT_SMS_PROVIDERS",
     "get_sms_provider",
     "InMemoryAlertAuditLog",
+    "FileAlertAuditLog",
 ]
 
 # Expose optional channels only when available

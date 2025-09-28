@@ -3,13 +3,12 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 from email.message import EmailMessage
 from pathlib import Path
 from typing import List
-import logging
 from datetime import datetime, timedelta, timezone
 from urllib import request
-
 import sys
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
@@ -22,6 +21,7 @@ from bot_core.alerts import (
     AlertMessage,
     DefaultAlertRouter,
     EmailChannel,
+    FileAlertAuditLog,
     InMemoryAlertAuditLog,
     MessengerChannel,
     SMSChannel,
@@ -98,6 +98,56 @@ def test_router_continues_on_error(sample_message: AlertMessage, caplog: pytest.
     assert any("Część kanałów zgłosiła błędy" in record.message for record in caplog.records)
 
 
+def test_file_alert_audit_log_writes_entries(tmp_path: Path, sample_message: AlertMessage) -> None:
+    log_dir = tmp_path / "audit"
+    audit = FileAlertAuditLog(directory=log_dir, filename_pattern="alerts-%Y%m%d.jsonl", retention_days=30)
+
+    audit.append(sample_message, channel="telegram")
+
+    expected_file = log_dir / sample_message.timestamp.astimezone(timezone.utc).strftime("alerts-%Y%m%d.jsonl")
+    assert expected_file.exists()
+    contents = expected_file.read_text("utf-8").strip().splitlines()
+    assert contents
+    record = json.loads(contents[0])
+    assert record["channel"] == "telegram"
+    assert record["title"] == sample_message.title
+    exported = tuple(audit.export())
+    assert len(exported) == 1
+    assert exported[0]["severity"] == sample_message.severity
+
+
+def test_file_alert_audit_log_respects_retention(tmp_path: Path) -> None:
+    audit = FileAlertAuditLog(directory=tmp_path / "audit", retention_days=3)
+
+    old_ts = datetime(2023, 1, 1, tzinfo=timezone.utc)
+    new_ts = datetime(2023, 1, 5, tzinfo=timezone.utc)
+    old_message = AlertMessage(
+        category="risk",
+        title="Old",
+        body="Old alert",
+        severity="info",
+        context={},
+        timestamp=old_ts,
+    )
+    new_message = AlertMessage(
+        category="risk",
+        title="New",
+        body="New alert",
+        severity="info",
+        context={},
+        timestamp=new_ts,
+    )
+
+    audit.append(old_message, channel="email")
+    old_file = (tmp_path / "audit") / "alerts-20230101.jsonl"
+    assert old_file.exists()
+
+    audit.append(new_message, channel="telegram")
+    assert not old_file.exists()
+    files = list((tmp_path / "audit").glob("alerts-*.jsonl"))
+    assert len(files) == 1
+
+
 class _FakeHTTPResponse:
     def __init__(self, status: int, payload: bytes) -> None:
         self.status = status
@@ -132,7 +182,7 @@ def test_telegram_channel_sends_payload(sample_message: AlertMessage) -> None:
 
     def opener(req: request.Request, *, timeout: float):  # noqa: ANN001
         captured["request"] = req
-        return _FakeHTTPResponse(200, b"{\"ok\": true}")
+        return _FakeHTTPResponse(200, b'{"ok": true}')
 
     channel = TelegramChannel(bot_token="token", chat_id="chat", _opener=opener)
     channel.send(sample_message)
