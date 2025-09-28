@@ -50,6 +50,7 @@ Moduł ryzyka (`RiskProfile`, `ThresholdRiskEngine`, `RiskRepository`) wymusza l
 
 `TradingDecisionJournal` w `bot_core/runtime/journal.py` uzupełnia audyt o ścieżkę decyzyjną strategii. `JsonlTradingDecisionJournal` zapisuje zdarzenia `signal_received`, `risk_rejected`, `risk_adjusted`, `order_submitted`, `order_executed` (oraz błędy) w plikach JSONL z retencją zgodną z polityką compliance (domyślnie 24 miesiące). `TradingController` automatycznie rejestruje powody odrzuceń, rekomendowane korekty wielkości, identyfikatory zleceń i koszty egzekucji, dzięki czemu raporty KYC/AML mogą odtworzyć pełny kontekst decyzji.
 
+
 ### `bot_core/runtime`
 
 `bootstrap_environment` integruje konfigurację (`load_core_config`), adaptery giełdowe, profile ryzyka, alerty i manager sekretów w `BootstrapContext`. Runtime odpowiada za sekwencjonowanie przejść demo → paper → live, walidację flag compliance, rejestrację kontrolnych checklist oraz inicjalizację repozytoriów danych. Mechanizmy ochronne blokują start środowiska, jeśli brakuje kluczy API, audytów lub aktualnych podpisów regulacyjnych.
