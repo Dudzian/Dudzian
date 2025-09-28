@@ -153,6 +153,14 @@ Raport filtruje wpisy według strefy czasowej środowiska, wspiera retencję 24 
 podpisu kryptograficznego oraz szyfrowania w kolejnych etapach. Pakiet stanowi bazę do dziennych raportów P&L oraz
 audytów KYC/AML.
 
+## Raportowanie i audyt
+
+`bot_core/reporting` dostarcza funkcję `generate_daily_paper_report`, która tworzy dzienne archiwum ZIP z
+blotterem (`ledger.csv`), zdarzeniami decyzyjnymi (`decisions.jsonl`) oraz zwięzłym podsumowaniem (`summary.json`).
+Raport filtruje wpisy według strefy czasowej środowiska, wspiera retencję 24 miesięcy i przygotowuje pakiety do
+podpisu kryptograficznego oraz szyfrowania w kolejnych etapach. Pakiet stanowi bazę do dziennych raportów P&L oraz
+audytów KYC/AML.
+
 ## Alerty i obserwowalność
 
 `AlertChannel` i `AlertRouter` zapewniają jednolite API dla powiadomień (Telegram, e-mail, SMS, a w

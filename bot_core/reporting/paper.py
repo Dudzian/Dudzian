@@ -219,6 +219,7 @@ def generate_daily_paper_report(
 
     window_start, window_end = _time_window(report_day, tzinfo_obj)
 
+    # Pozwala wstrzyknąć wpisy ledgeru (np. w testach) lub pobrać je z serwisu wykonawczego.
     if ledger_entries is None:
         ledger_source = execution_service.ledger()
     else:
@@ -238,7 +239,9 @@ def generate_daily_paper_report(
     with ZipFile(archive_path, "w", compression=ZIP_DEFLATED) as archive:
         archive.writestr("ledger.csv", csv_payload)
         if decisions_filtered:
-            jsonl_payload = "\n".join(json.dumps(entry, separators=(",", ":"), ensure_ascii=False) for entry in decisions_filtered)
+            jsonl_payload = "\n".join(
+                json.dumps(entry, separators=(",", ":"), ensure_ascii=False) for entry in decisions_filtered
+            )
             archive.writestr("decisions.jsonl", jsonl_payload + "\n")
         if include_summary:
             summary = _summary_payload(

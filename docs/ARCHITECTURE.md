@@ -48,6 +48,10 @@ Moduł ryzyka (`RiskProfile`, `ThresholdRiskEngine`, `RiskRepository`) wymusza l
 
 Moduł raportowania buduje archiwa dziennego blottera z symulatora paper tradingu. Funkcja `generate_daily_paper_report` filtruje wpisy `PaperTradingExecutionService` i zdarzenia `TradingDecisionJournal` po strefie czasowej środowiska, a następnie zapisuje je jako `ledger.csv`, `decisions.jsonl` oraz `summary.json` w katalogu danych środowiska (domyślna retencja 24 miesiące). Archiwa są przygotowane pod dalsze podpisy kryptograficzne oraz pakowanie do zaszyfrowanych paczek w kolejnych etapach, dzięki czemu proces compliance otrzymuje gotowy pakiet audytowy.
 
+### `bot_core/reporting`
+
+Moduł raportowania buduje archiwa dziennego blottera z symulatora paper tradingu. Funkcja `generate_daily_paper_report` filtruje wpisy `PaperTradingExecutionService` i zdarzenia `TradingDecisionJournal` po strefie czasowej środowiska, a następnie zapisuje je jako `ledger.csv`, `decisions.jsonl` oraz `summary.json` w katalogu danych środowiska (domyślna retencja 24 miesiące). Archiwa są przygotowane pod dalsze podpisy kryptograficzne oraz pakowanie do zaszyfrowanych paczek w kolejnych etapach, dzięki czemu proces compliance otrzymuje gotowy pakiet audytowy.
+
 ### `bot_core/alerts`
 
 `AlertRouter`, `AlertChannel` i `FileAlertAuditLog` obsługują powiadomienia (Telegram, e-mail, SMS, Signal, WhatsApp, Messenger) z kontrolą throttlingu i pełnym audytem zdarzeń (`channel="__suppressed__"` dla zdławionych komunikatów). Warstwa SMS jest modułowa: na starcie korzystamy z lokalnych operatorów (Orange Polska jako referencyjny, następnie inni dostawcy w PL i IS), a globalny agregator (Twilio/Vonage/MessageBird) działa jako fallback ciągłości działania. Alerty są elementem procesów bezpieczeństwa – incydenty krytyczne muszą zostać potwierdzone i przekazane do zespołu bezpieczeństwa w ciągu 24h.
