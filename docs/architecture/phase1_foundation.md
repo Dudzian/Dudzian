@@ -100,6 +100,9 @@ podziałem na okna czasowe oraz deduplikacją zapisów. Domyślna konfiguracja w
 przechowuje metadane (ostatni timestamp, liczba rekordów) bez konieczności otwierania wszystkich
 plików. Zarówno nowy skrypt `scripts/backfill.py`, jak i uproszczony `scripts/backfill_ohlcv.py`
 wykorzystują tę samą warstwę storage, dzięki czemu backtesty i runtime paper/live czytają identyczne dane.
+`OHLCVBackfillService` domyślnie wprowadza throttling zapytań (konfigurowalny interwał, jitter i limit
+retry z wykładniczym backoffem), co pozwala realizować długie zasypy historii w duchu „good citizen” wobec
+publicznych API giełd – bez przekraczania limitów i bez konieczności manualnego wstawiania pauz w skryptach.
 
 ## Strategie i walk-forward
 
@@ -144,14 +147,6 @@ błędów API (np. exponential backoff, circuit breaker). Pierwszą implementacj
 uwzględnia prowizje maker/taker, poślizg (w punktach bazowych), walidację wielkości zlecenia oraz
 prowadzi dziennik audytowy transakcji – zarówno w pamięci na potrzeby bieżącej sesji, jak i
 w trwałych plikach JSONL rotowanych zgodnie z polityką retencji.
-
-## Raportowanie i audyt
-
-`bot_core/reporting` dostarcza funkcję `generate_daily_paper_report`, która tworzy dzienne archiwum ZIP z
-blotterem (`ledger.csv`), zdarzeniami decyzyjnymi (`decisions.jsonl`) oraz zwięzłym podsumowaniem (`summary.json`).
-Raport filtruje wpisy według strefy czasowej środowiska, wspiera retencję 24 miesięcy i przygotowuje pakiety do
-podpisu kryptograficznego oraz szyfrowania w kolejnych etapach. Pakiet stanowi bazę do dziennych raportów P&L oraz
-audytów KYC/AML.
 
 ## Raportowanie i audyt
 

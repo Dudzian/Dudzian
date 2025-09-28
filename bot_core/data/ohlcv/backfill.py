@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import logging
+import random
+import time
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Callable, Sequence
 
-from bot_core.data.base import CacheStorage, OHLCVRequest
+from bot_core.data.base import CacheStorage, OHLCVRequest, OHLCVResponse
 from bot_core.data.ohlcv.cache import CachedOHLCVSource
 
 _LOGGER = logging.getLogger(__name__)
@@ -42,14 +44,39 @@ class BackfillSummary:
 
 
 class OHLCVBackfillService:
-    """Synchronizuje lokalny cache z publicznymi danymi giełdowymi."""
+    """Synchronizuje lokalny cache z publicznymi danymi giełdowymi.
 
-    def __init__(self, source: CachedOHLCVSource, *, chunk_limit: int = 1000) -> None:
+    Wbudowane ograniczanie częstotliwości zapytań, losowy jitter i kontrola retry
+    pozwalają respektować limity giełd i rekomendacje dotyczące „dobrego sąsiedztwa”
+    podczas długich backfilli historii.
+    """
+
+    def __init__(
+        self,
+        source: CachedOHLCVSource,
+        *,
+        chunk_limit: int = 1000,
+        min_request_interval: float = 0.0,
+        max_retries: int = 3,
+        backoff_factor: float = 2.0,
+        max_jitter_seconds: float = 0.0,
+        sleep: Callable[[float], None] | None = None,
+        time_source: Callable[[], float] | None = None,
+        rng: Callable[[], float] | None = None,
+    ) -> None:
         if chunk_limit <= 0:
             raise ValueError("chunk_limit musi być dodatni")
         self._source = source
         self._storage: CacheStorage = source.storage
         self._chunk_limit = chunk_limit
+        self._sleep = sleep or time.sleep
+        self._time = time_source or time.monotonic
+        self._random = rng or random.random
+        self._min_request_interval = max(0.0, float(min_request_interval))
+        self._backoff_factor = max(1.0, float(backoff_factor))
+        self._max_retries = max(0, int(max_retries))
+        self._max_jitter = max(0.0, float(max_jitter_seconds))
+        self._last_request_ts: float | None = None
 
     def _interval_milliseconds(self, interval: str) -> int:
         try:
@@ -141,7 +168,7 @@ class OHLCVBackfillService:
                     end=window_end,
                     limit=self._chunk_limit,
                 )
-                response = self._source.fetch_ohlcv(request)
+                response = self._fetch_with_retry(request)
                 if not response.rows:
                     _LOGGER.warning(
                         "Brak danych OHLCV dla %s (%s) w przedziale %s-%s.",
@@ -181,6 +208,62 @@ class OHLCVBackfillService:
             )
 
         return summaries
+
+    # ----------------------------------------------------------------------------------------------
+    def _throttle(self) -> None:
+        if self._min_request_interval <= 0 and self._max_jitter <= 0:
+            return
+
+        now = self._time()
+        delay = 0.0
+        if self._last_request_ts is not None:
+            elapsed = now - self._last_request_ts
+            if elapsed < self._min_request_interval:
+                delay = self._min_request_interval - elapsed
+
+        jitter = self._random() * self._max_jitter if self._max_jitter > 0 else 0.0
+        total_delay = delay + jitter
+        if total_delay > 0:
+            self._sleep(total_delay)
+
+        self._last_request_ts = self._time()
+
+    def _fetch_with_retry(self, request: OHLCVRequest) -> OHLCVResponse:
+        attempt = 0
+        while True:
+            self._throttle()
+            try:
+                response = self._source.fetch_ohlcv(request)
+            except Exception as exc:  # noqa: BLE001
+                attempt += 1
+                if attempt > self._max_retries:
+                    _LOGGER.error(
+                        "Backfill: nie udało się pobrać danych dla %s (%s) po %s próbach.",
+                        request.symbol,
+                        request.interval,
+                        attempt,
+                        exc_info=exc,
+                    )
+                    raise
+
+                base_delay = max(self._min_request_interval, 0.1)
+                backoff_delay = base_delay * (self._backoff_factor ** (attempt - 1))
+                jitter = self._random() * self._max_jitter if self._max_jitter > 0 else 0.0
+                total_delay = backoff_delay + jitter
+                _LOGGER.warning(
+                    "Backfill: próba %s dla %s (%s) nieudana – retry za %.3fs.",
+                    attempt,
+                    request.symbol,
+                    request.interval,
+                    total_delay,
+                    exc_info=exc,
+                )
+                if total_delay > 0:
+                    self._sleep(total_delay)
+                continue
+
+            self._last_request_ts = self._time()
+            return response
 
 
 __all__ = ["OHLCVBackfillService", "BackfillSummary"]
