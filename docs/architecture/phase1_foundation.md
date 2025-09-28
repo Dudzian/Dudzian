@@ -136,6 +136,12 @@ kontynuuje wysyłkę pomimo błędów pojedynczych kanałów i zwraca migawkę `
 Adaptery kanałów posiadają zabezpieczenia (timeouty, logowanie błędów, walidację odpowiedzi API) oraz
 formatowanie wiadomości z kontekstem ryzyka i znacznikami czasu UTC.
 
+Nowy mechanizm throttlingu pozwala dodatkowo ograniczyć powtarzalne alerty informacyjne: dla każdego
+środowiska w `core.yaml` można zdefiniować długość okna, wykluczone kategorie lub poziomy `severity`
+oraz limit bufora. Router zapisuje wstrzymane komunikaty w audycie (`channel="__suppressed__"`),
+dzięki czemu zachowujemy pełną ścieżkę zgodności i możemy analizować historię incydentów bez zalewania
+powiadomień produkcyjnych.
+
 ## Kolejne kroki implementacyjne
 
 1. Rozszerzyć testy integracyjne kanałów komunikatorów o scenariusze awarii i fallback do alternatywnych

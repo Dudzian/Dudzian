@@ -5,6 +5,8 @@ import sys
 from pathlib import Path
 from typing import Sequence
 
+import pytest
+
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from bot_core.alerts import EmailChannel, SMSChannel, TelegramChannel
@@ -55,6 +57,11 @@ def _write_config(tmp_path: Path) -> Path:
         risk_profile: balanced
         alert_channels: ["telegram:primary", "email:ops", "sms:orange_local"]
         ip_allowlist: ["127.0.0.1"]
+        alert_throttle:
+          window_seconds: 60
+          exclude_severities: [critical]
+          exclude_categories: [health]
+          max_entries: 32
       zonda_paper:
         exchange: zonda_spot
         environment: paper
@@ -64,6 +71,11 @@ def _write_config(tmp_path: Path) -> Path:
         risk_profile: balanced
         alert_channels: ["telegram:primary"]
         ip_allowlist: ["127.0.0.1"]
+        alert_throttle:
+          window_seconds: 120
+          exclude_severities: [critical]
+          exclude_categories: [health]
+          max_entries: 32
     reporting: {}
     alerts:
       telegram_channels:
@@ -150,6 +162,9 @@ def test_bootstrap_environment_initialises_components(tmp_path: Path) -> None:
     assert isinstance(context.alert_channels["sms:orange_local"], SMSChannel)
     assert len(context.alert_router.channels) == 3
     assert context.alert_router.audit_log is context.audit_log
+    assert context.alert_router.throttle is not None
+    assert context.alert_router.throttle.window.total_seconds() == pytest.approx(60.0)
+    assert "critical" in context.alert_router.throttle.exclude_severities
 
     # Health check nie powinien zgłaszać wyjątków dla świeżo zainicjalizowanych kanałów.
     snapshot = context.alert_router.health_snapshot()

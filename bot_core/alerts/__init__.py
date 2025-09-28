@@ -17,6 +17,7 @@ from bot_core.alerts.channels import (
     get_sms_provider,
 )
 from bot_core.alerts.router import DefaultAlertRouter
+from bot_core.alerts.throttle import AlertThrottle
 
 # Optional messenger channels (keep package import-safe if not installed/implemented)
 try:  # pragma: no cover
@@ -43,6 +44,7 @@ __all__ = [
     "AlertMessage",
     "AlertRouter",
     "DefaultAlertRouter",
+    "AlertThrottle",
     "EmailChannel",
     "SMSChannel",
     "SmsProviderConfig",

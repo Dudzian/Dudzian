@@ -22,6 +22,7 @@ class EnvironmentConfig:
     credential_purpose: str = "trading"
     instrument_universe: str | None = None
     adapter_settings: Mapping[str, Any] = field(default_factory=dict)
+    alert_throttle: AlertThrottleConfig | None = None
 
 
 @dataclass(slots=True)
@@ -181,6 +182,16 @@ class CoreConfig:
     runtime_controllers: Mapping[str, ControllerRuntimeConfig] = field(default_factory=dict)
 
 
+@dataclass(slots=True)
+class AlertThrottleConfig:
+    """Parametry okna tłumienia powtarzających się alertów."""
+
+    window_seconds: float
+    exclude_severities: Sequence[str] = field(default_factory=tuple)
+    exclude_categories: Sequence[str] = field(default_factory=tuple)
+    max_entries: int = 2048
+
+
 __all__ = [
     "EnvironmentConfig",
     "RiskProfileConfig",
@@ -196,4 +207,5 @@ __all__ = [
     "MessengerChannelSettings",
     "ControllerRuntimeConfig",
     "CoreConfig",
+    "AlertThrottleConfig",
 ]

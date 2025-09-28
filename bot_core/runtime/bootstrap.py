@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, Mapping, MutableMapping, Sequence
 
 from bot_core.alerts import (
+    AlertThrottle,
     DefaultAlertRouter,
     EmailChannel,
     InMemoryAlertAuditLog,
@@ -162,7 +164,17 @@ def _build_alert_channels(
     secret_manager: SecretManager,
 ) -> tuple[Mapping[str, AlertChannel], DefaultAlertRouter, InMemoryAlertAuditLog]:
     audit_log = InMemoryAlertAuditLog()
-    router = DefaultAlertRouter(audit_log=audit_log)
+    throttle_cfg = getattr(environment, "alert_throttle", None)
+    throttle: AlertThrottle | None = None
+    if throttle_cfg is not None:
+        throttle = AlertThrottle(
+            window=timedelta(seconds=float(throttle_cfg.window_seconds)),
+            exclude_severities=frozenset(throttle_cfg.exclude_severities),
+            exclude_categories=frozenset(throttle_cfg.exclude_categories),
+            max_entries=int(throttle_cfg.max_entries),
+        )
+
+    router = DefaultAlertRouter(audit_log=audit_log, throttle=throttle)
     channels: MutableMapping[str, AlertChannel] = {}
 
     for entry in environment.alert_channels:

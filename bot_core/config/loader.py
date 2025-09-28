@@ -8,6 +8,7 @@ from typing import Any, Mapping
 import yaml
 
 from bot_core.config.models import (
+    AlertThrottleConfig,
     CoreConfig,
     EmailChannelSettings,
     EnvironmentConfig,
@@ -60,6 +61,11 @@ except Exception:
 def _core_has(field_name: str) -> bool:
     """Sprawdza, czy CoreConfig posiada dane pole (bezpiecznie dla różnych gałęzi)."""
     return any(f.name == field_name for f in fields(CoreConfig))
+
+
+def _env_has(field_name: str) -> bool:
+    """Sprawdza, czy EnvironmentConfig posiada dane pole (bezpiecznie dla różnych gałęzi)."""
+    return any(f.name == field_name for f in fields(EnvironmentConfig))
 
 
 def _load_instrument_universes(raw: Mapping[str, Any]):
@@ -183,6 +189,23 @@ def _load_strategies(raw: Mapping[str, Any]):
     return strategies
 
 
+def _load_alert_throttle(entry: Mapping[str, Any] | None) -> AlertThrottleConfig | None:
+    if not entry:
+        return None
+    window_seconds = float(entry.get("window_seconds", entry.get("window", 0.0)))
+    if window_seconds <= 0:
+        raise ValueError("alert_throttle.window_seconds musi być dodatnie")
+    exclude_severities = tuple(str(value).lower() for value in entry.get("exclude_severities", ()) or ())
+    exclude_categories = tuple(str(value).lower() for value in entry.get("exclude_categories", ()) or ())
+    max_entries = int(entry.get("max_entries", 2048))
+    return AlertThrottleConfig(
+        window_seconds=window_seconds,
+        exclude_severities=exclude_severities,
+        exclude_categories=exclude_categories,
+        max_entries=max_entries,
+    )
+
+
 def load_core_config(path: str | Path) -> CoreConfig:
     """Wczytuje plik YAML i mapuje go na dataclasses."""
     with Path(path).open("r", encoding="utf-8") as handle:
@@ -190,25 +213,27 @@ def load_core_config(path: str | Path) -> CoreConfig:
 
     instrument_universes = _load_instrument_universes(raw)
 
-    environments = {
-        name: EnvironmentConfig(
-            name=name,
-            exchange=entry["exchange"],
-            environment=Environment(entry["environment"]),
-            keychain_key=entry["keychain_key"],
-            data_cache_path=entry["data_cache_path"],
-            risk_profile=entry["risk_profile"],
-            alert_channels=tuple(entry.get("alert_channels", ()) or ()),
-            ip_allowlist=tuple(entry.get("ip_allowlist", ()) or ()),
-            credential_purpose=str(entry.get("credential_purpose", "trading")),
-            instrument_universe=entry.get("instrument_universe"),
-            adapter_settings={
+    environments: dict[str, EnvironmentConfig] = {}
+    for name, entry in raw.get("environments", {}).items():
+        env_kwargs: dict[str, Any] = {
+            "name": name,
+            "exchange": entry["exchange"],
+            "environment": Environment(entry["environment"]),
+            "keychain_key": entry["keychain_key"],
+            "data_cache_path": entry["data_cache_path"],
+            "risk_profile": entry["risk_profile"],
+            "alert_channels": tuple(entry.get("alert_channels", ()) or ()),
+            "ip_allowlist": tuple(entry.get("ip_allowlist", ()) or ()),
+            "credential_purpose": str(entry.get("credential_purpose", "trading")),
+            "instrument_universe": entry.get("instrument_universe"),
+            "adapter_settings": {
                 str(key): value
                 for key, value in (entry.get("adapter_settings", {}) or {}).items()
             },
-        )
-        for name, entry in raw.get("environments", {}).items()
-    }
+        }
+        if _env_has("alert_throttle"):
+            env_kwargs["alert_throttle"] = _load_alert_throttle(entry.get("alert_throttle"))
+        environments[name] = EnvironmentConfig(**env_kwargs)
 
     risk_profiles = {
         name: RiskProfileConfig(
