@@ -23,7 +23,9 @@ from bot_core.data.ohlcv import (
 from bot_core.exchanges.base import Environment, ExchangeCredentials
 from bot_core.exchanges.binance.futures import BinanceFuturesAdapter
 from bot_core.exchanges.binance.spot import BinanceSpotAdapter
+from bot_core.exchanges.kraken.futures import KrakenFuturesAdapter
 from bot_core.exchanges.kraken.spot import KrakenSpotAdapter
+from bot_core.exchanges.zonda.spot import ZondaSpotAdapter
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -47,6 +49,18 @@ def _build_public_source(exchange: str, environment: Environment) -> PublicAPIDa
         ),
         "kraken_spot": lambda env: PublicAPIDataSource(
             exchange_adapter=KrakenSpotAdapter(ExchangeCredentials(key_id="public", environment=env), environment=env)
+        ),
+        "kraken_futures": lambda env: PublicAPIDataSource(
+            exchange_adapter=KrakenFuturesAdapter(
+                ExchangeCredentials(key_id="public", environment=env),
+                environment=env,
+            )
+        ),
+        "zonda_spot": lambda env: PublicAPIDataSource(
+            exchange_adapter=ZondaSpotAdapter(
+                ExchangeCredentials(key_id="public", environment=env),
+                environment=env,
+            )
         ),
     }
     try:
