@@ -14,10 +14,20 @@ except Exception:
     _DailyTrendController = None  # type: ignore
 
 try:
-    from bot_core.runtime.pipeline import DailyTrendPipeline, build_daily_trend_pipeline  # type: ignore
+    from bot_core.runtime.realtime import DailyTrendRealtimeRunner as _DailyTrendRealtimeRunner  # type: ignore
+except Exception:  # pragma: no cover - starsze gałęzie mogą nie mieć modułu realtime
+    _DailyTrendRealtimeRunner = None  # type: ignore
+
+try:
+    from bot_core.runtime.pipeline import (  # type: ignore
+        DailyTrendPipeline,
+        build_daily_trend_pipeline,
+        create_trading_controller,
+    )
 except Exception:  # pragma: no cover - starsze gałęzie mogą nie mieć modułu pipeline
     DailyTrendPipeline = None  # type: ignore
     build_daily_trend_pipeline = None  # type: ignore
+    create_trading_controller = None  # type: ignore
 
 __all__ = ["BootstrapContext", "bootstrap_environment"]
 
@@ -30,5 +40,11 @@ if _DailyTrendController is not None:
     DailyTrendController = _DailyTrendController  # type: ignore
     __all__.append("DailyTrendController")
 
+if _DailyTrendRealtimeRunner is not None:
+    DailyTrendRealtimeRunner = _DailyTrendRealtimeRunner  # type: ignore
+    __all__.append("DailyTrendRealtimeRunner")
+
 if DailyTrendPipeline is not None and build_daily_trend_pipeline is not None:
     __all__.extend(["DailyTrendPipeline", "build_daily_trend_pipeline"])
+    if create_trading_controller is not None:
+        __all__.append("create_trading_controller")

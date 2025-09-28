@@ -5,7 +5,15 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Callable, Mapping, MutableMapping, Sequence, Optional, Any, Mapping as TypingMapping
+from typing import (
+    Any,
+    Callable,
+    Mapping,
+    MutableMapping,
+    Optional,
+    Sequence,
+    Mapping as TypingMapping,
+)
 
 # --- elastyczne importy (różne gałęzie mogą mieć różne ścieżki modułów) -----
 
@@ -71,6 +79,14 @@ def _as_timedelta(value: timedelta | float | int) -> timedelta:
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+@dataclass(slots=True)
+class ControllerSignal:
+    """Zbiera sygnał strategii wraz ze snapshotem rynku."""
+
+    snapshot: MarketSnapshot
+    signal: StrategySignal
 
 
 @dataclass(slots=True, kw_only=True)
@@ -361,8 +377,9 @@ class DailyTrendController:
     def interval(self) -> str:
         return str(self._runtime.interval)
 
-    def run_cycle(self, *, start: int, end: int) -> list[OrderResult]:
-        """Przeprowadza pojedynczy cykl przetwarzania danych i składania zleceń."""
+    def collect_signals(self, *, start: int, end: int) -> list[ControllerSignal]:
+        """Zwraca sygnały strategii wzbogacone o parametry egzekucyjne."""
+
         if start > end:
             raise ValueError("Parametr start nie może być większy niż end")
 
@@ -373,9 +390,8 @@ class DailyTrendController:
             end=end,
         )
 
-        executed: list[OrderResult] = []
+        collected: list[ControllerSignal] = []
         for symbol in self.symbols:
-            # Wspieramy zarówno interfejs z OHLCVRequest, jak i prosty fetch_ohlcv
             try:
                 response = self.data_source.fetch_ohlcv(  # type: ignore[attr-defined]
                     OHLCVRequest(symbol=symbol, interval=self.interval, start=start, end=end)
@@ -383,14 +399,29 @@ class DailyTrendController:
                 columns: Sequence[str] = response.columns  # type: ignore[attr-defined]
                 rows: Sequence[Sequence[float]] = response.rows  # type: ignore[attr-defined]
             except Exception:
-                # fallback: funkcja zwracająca listę list
                 rows = self.data_source.fetch_ohlcv(symbol, self.interval, start=start, end=end)  # type: ignore[misc]
                 columns = ("open_time", "open", "high", "low", "close", "volume")
 
             snapshots = self._to_snapshots(symbol, columns, rows)
             for snapshot in snapshots:
-                signals: Sequence[StrategySignal] = self.strategy.on_data(snapshot)
-                executed.extend(self._handle_signals(snapshot, signals))
+                strategy_signals: Sequence[StrategySignal] = self.strategy.on_data(snapshot)
+                for raw_signal in strategy_signals:
+                    enriched = self._enrich_signal(raw_signal, snapshot)
+                    if enriched is None:
+                        continue
+                    collected.append(ControllerSignal(snapshot=snapshot, signal=enriched))
+        return collected
+
+    def run_cycle(self, *, start: int, end: int) -> list[OrderResult]:
+        """Przeprowadza pojedynczy cykl przetwarzania danych i składania zleceń."""
+
+        collected = self.collect_signals(start=start, end=end)
+
+        executed: list[OrderResult] = []
+        for controller_signal in collected:
+            executed.extend(
+                self._handle_signals(controller_signal.snapshot, (controller_signal.signal,))
+            )
         return executed
 
     # ----------------------------------------- helpers -----------------------------------------
@@ -445,13 +476,24 @@ class DailyTrendController:
 
     def _build_order_request(self, snapshot: MarketSnapshot, signal: StrategySignal) -> OrderRequest:
         side = signal.side.lower()
-        price = snapshot.close
+        metadata = dict(signal.metadata)
+        quantity = float(metadata.get("quantity", self.position_size))
+        price = float(metadata.get("price", snapshot.close))
+        order_type = str(metadata.get("order_type", "market"))
+        time_in_force = metadata.get("time_in_force")
+        client_order_id = metadata.get("client_order_id")
+
+        tif_str = str(time_in_force) if time_in_force is not None else None
+        client_id_str = str(client_order_id) if client_order_id is not None else None
+
         return OrderRequest(
             symbol=snapshot.symbol,
             side=side,
-            quantity=self.position_size,
-            order_type="market",
+            quantity=quantity,
+            order_type=order_type,
             price=price,
+            time_in_force=tif_str,
+            client_order_id=client_id_str,
         )
 
     def _to_snapshots(
@@ -497,6 +539,25 @@ class DailyTrendController:
         snapshots.sort(key=lambda item: item.timestamp)
         return snapshots
 
+    def _enrich_signal(
+        self, signal: StrategySignal, snapshot: MarketSnapshot
+    ) -> StrategySignal | None:
+        side = signal.side.upper()
+        if side not in {"BUY", "SELL"}:
+            return None
+
+        metadata: dict[str, object] = dict(signal.metadata)
+        metadata.setdefault("quantity", float(self.position_size))
+        metadata.setdefault("price", float(snapshot.close))
+        metadata.setdefault("order_type", "market")
+
+        return StrategySignal(
+            symbol=snapshot.symbol,
+            side=side,
+            confidence=signal.confidence,
+            metadata=metadata,
+        )
+
     def _post_fill(
         self,
         side: str,
@@ -533,4 +594,4 @@ class DailyTrendController:
         )
 
 
-__all__ = ["TradingController", "DailyTrendController"]
+__all__ = ["TradingController", "DailyTrendController", "ControllerSignal"]

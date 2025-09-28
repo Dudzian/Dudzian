@@ -6,6 +6,9 @@ from typing import Iterable, Mapping, Optional, Protocol, Sequence
 
 import pytest
 
+from bot_core.alerts import DefaultAlertRouter
+from bot_core.alerts.audit import InMemoryAlertAuditLog
+from bot_core.alerts.base import AlertChannel, AlertMessage
 from bot_core.execution.base import ExecutionContext
 from bot_core.execution.paper import PaperTradingExecutionService
 from bot_core.exchanges.base import (
@@ -16,8 +19,9 @@ from bot_core.exchanges.base import (
     OrderRequest,
     OrderResult,
 )
-from bot_core.runtime.pipeline import build_daily_trend_pipeline
+from bot_core.runtime import build_daily_trend_pipeline, create_trading_controller
 from bot_core.security import SecretManager, SecretStorage
+from bot_core.strategies import StrategySignal
 from bot_core.strategies.daily_trend import DailyTrendMomentumStrategy
 
 
@@ -95,6 +99,19 @@ class FakeExchangeAdapter(ExchangeAdapter):
 
     def stream_private_data(self, *, channels: Sequence[str]) -> _FakeStream:  # pragma: no cover - nieużywane
         raise NotImplementedError
+
+
+class CollectingChannel(AlertChannel):
+    name = "collector"
+
+    def __init__(self) -> None:
+        self.messages: list[AlertMessage] = []
+
+    def send(self, message: AlertMessage) -> None:
+        self.messages.append(message)
+
+    def health_check(self) -> Mapping[str, str]:
+        return {"status": "ok"}
 
 
 @pytest.fixture()
@@ -211,6 +228,45 @@ def test_build_daily_trend_pipeline(pipeline_fixture: tuple[Path, FakeExchangeAd
 
     balances = pipeline.execution_service.balances()
     assert balances["USDT"] == 10_000.0
+
+
+def test_create_trading_controller_executes_signal(
+    pipeline_fixture: tuple[Path, FakeExchangeAdapter, SecretManager]
+) -> None:
+    config_path, adapter, manager = pipeline_fixture
+
+    pipeline = build_daily_trend_pipeline(
+        environment_name="fake_paper",
+        strategy_name="core_daily_trend",
+        controller_name="daily_trend_core",
+        config_path=config_path,
+        secret_manager=manager,
+        adapter_factories={"fake_exchange": lambda credentials, **_: adapter},
+    )
+
+    router = DefaultAlertRouter(audit_log=InMemoryAlertAuditLog())
+    channel = CollectingChannel()
+    router.register(channel)
+
+    trading_controller = create_trading_controller(
+        pipeline,
+        router,
+        health_check_interval=0.0,
+    )
+
+    signal = StrategySignal(
+        symbol="BTCUSDT",
+        side="BUY",
+        confidence=0.9,
+        metadata={"quantity": 0.2, "price": 102.0},
+    )
+
+    results = trading_controller.process_signals([signal])
+
+    assert len(results) == 1
+    assert results[0].status == "filled"
+    assert channel.messages
+    assert channel.messages[0].category == "strategy"
 
 
 def test_account_loader_handles_multi_currency_and_shorts(tmp_path: Path) -> None:
