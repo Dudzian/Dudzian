@@ -40,7 +40,7 @@ korzysta z endpointów `derivatives/api/v3`, generuje podpis HMAC-SHA256 wymagan
 Futures (nagłówki `APIKey`, `Authent`, `Nonce`), mapuje wartości marginesu oraz bilansów na
 `AccountSnapshot`, wspiera składanie zleceń `mkt`/`lmt` i anulowanie przez `DELETE /orders/{id}`.
 Wzbogacone testy jednostkowe potwierdzają budowę podpisu i serializację ciała żądania.
-`ZondaSpotAdapter` wykorzystuje REST API Zondy do pobierania świec (endpoint `trading/candle/history`) oraz danych konta (`trading/balance`). Implementacja korzysta z podpisu HMAC-SHA512 zgodnie z nagłówkiem `API-Hash`, obsługuje mapowanie statusów zleceń i zabezpiecza się przed brakiem uprawnień (`read`/`trade`). Adapter został dodany do domyślnych fabryk bootstrapa, dzięki czemu środowiska paper/live mogą korzystać z Zondy bez modyfikacji logiki strategii czy ryzyka.
+`ZondaSpotAdapter` wykorzystuje REST API Zondy do pobierania świec (endpoint `trading/candle/history`) oraz danych konta (`trading/balance`). Implementacja korzysta z podpisu HMAC-SHA512 zgodnie z nagłówkiem `API-Hash`, obsługuje mapowanie statusów zleceń, zabezpiecza się przed brakiem uprawnień (`read`/`trade`) oraz przelicza wszystkie salda na walutę referencyjną zdefiniowaną w `adapter_settings.valuation_asset` (np. PLN lub EUR) z wykorzystaniem kursów `trading/ticker` i triangulacji przez aktywa pomocnicze (`secondary_valuation_assets`). Adapter został dodany do domyślnych fabryk bootstrapa, dzięki czemu środowiska paper/live mogą korzystać z Zondy bez modyfikacji logiki strategii czy ryzyka.
 
 ## Warstwa konfiguracji
 

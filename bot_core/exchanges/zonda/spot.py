@@ -34,6 +34,73 @@ _BASE_URLS: Mapping[Environment, str] = {
 _DEFAULT_HEADERS = {"User-Agent": "bot-core/1.0 (+https://github.com/)"}
 
 
+def _extract_pair(symbol: str, entry: Mapping[str, object]) -> tuple[str, str] | None:
+    """Zwraca bazę i kwotowanie dla pary handlowej."""
+
+    if "-" in symbol:
+        base, quote = symbol.split("-", 1)
+        if base and quote:
+            return base.upper(), quote.upper()
+
+    market_info = entry.get("market")
+    if isinstance(market_info, Mapping):
+        base = market_info.get("first") or market_info.get("base")
+        quote = market_info.get("second") or market_info.get("quote")
+        if isinstance(base, str) and isinstance(quote, str) and base and quote:
+            return base.upper(), quote.upper()
+    return None
+
+
+def _direct_rate(
+    base: str,
+    quote: str,
+    prices: Mapping[tuple[str, str], float],
+) -> float | None:
+    """Zwraca bezpośredni kurs dla pary base/quote lub jego odwrotność."""
+
+    base = base.upper()
+    quote = quote.upper()
+    if base == quote:
+        return 1.0
+
+    direct = prices.get((base, quote))
+    if direct is not None and direct > 0:
+        return direct
+
+    reverse = prices.get((quote, base))
+    if reverse is not None and reverse > 0:
+        return 1.0 / reverse
+    return None
+
+
+def _convert_with_intermediaries(
+    asset: str,
+    target: str,
+    prices: Mapping[tuple[str, str], float],
+    intermediaries: Sequence[str],
+) -> float | None:
+    """Próbuje przeliczyć aktywo na walutę docelową przy użyciu kursów pośrednich."""
+
+    asset = asset.upper()
+    target = target.upper()
+    rate = _direct_rate(asset, target, prices)
+    if rate is not None:
+        return rate
+
+    for intermediary in intermediaries:
+        intermediate = intermediary.upper()
+        if intermediate in {asset, target}:
+            continue
+        first_leg = _direct_rate(asset, intermediate, prices)
+        if first_leg is None:
+            continue
+        second_leg = _direct_rate(intermediate, target, prices)
+        if second_leg is None:
+            continue
+        return first_leg * second_leg
+    return None
+
+
 # --- Funkcje pomocnicze ------------------------------------------------------
 
 def _normalize_interval(interval: str) -> int:
@@ -89,7 +156,15 @@ class _OrderPayload:
 class ZondaSpotAdapter(ExchangeAdapter):
     """Adapter REST obsługujący podstawowe operacje tradingowe Zonda."""
 
-    __slots__ = ("_environment", "_base_url", "_ip_allowlist", "_permission_set", "_settings")
+    __slots__ = (
+        "_environment",
+        "_base_url",
+        "_ip_allowlist",
+        "_permission_set",
+        "_settings",
+        "_valuation_asset",
+        "_secondary_valuation_assets",
+    )
     name: str = "zonda_spot"
 
     def __init__(
@@ -108,6 +183,43 @@ class ZondaSpotAdapter(ExchangeAdapter):
         self._ip_allowlist: tuple[str, ...] = ()
         self._permission_set = frozenset(perm.lower() for perm in credentials.permissions)
         self._settings = dict(settings or {})
+        self._valuation_asset = self._extract_valuation_asset()
+        self._secondary_valuation_assets = self._extract_secondary_assets()
+
+    # --- Konfiguracja wyceny -------------------------------------------------
+
+    def _extract_valuation_asset(self) -> str:
+        raw = self._settings.get("valuation_asset", "PLN")
+        if isinstance(raw, str):
+            asset = raw.strip().upper()
+            return asset or "PLN"
+        return "PLN"
+
+    def _extract_secondary_assets(self) -> tuple[str, ...]:
+        raw = self._settings.get("secondary_valuation_assets")
+        defaults = ("PLN", "USDT", "USD", "EUR")
+
+        def _append(container: list[str], value: object) -> None:
+            text = str(value).strip().upper()
+            if not text or text == self._valuation_asset:
+                return
+            if text not in container:
+                container.append(text)
+
+        assets: list[str] = []
+        if raw is None:
+            for entry in defaults:
+                _append(assets, entry)
+        elif isinstance(raw, str):
+            for token in raw.split(","):
+                _append(assets, token)
+        elif isinstance(raw, Sequence):
+            for entry in raw:
+                _append(assets, entry)
+        else:  # pragma: no cover - zabezpieczenie nietypowych konfiguracji
+            for entry in defaults:
+                _append(assets, entry)
+        return tuple(assets)
 
     # --- HTTP ----------------------------------------------------------------
 
@@ -150,7 +262,7 @@ class ZondaSpotAdapter(ExchangeAdapter):
         method: str,
         path: str,
         *,
-        params: Optional[Mapping[str, object]] = None,
+        params: Optional[mapping[str, object]] = None,  # type: ignore[name-defined]
         data: Optional[Mapping[str, object]] = None,
     ) -> dict[str, object] | list[object]:
         if not self._credentials.secret:
@@ -187,6 +299,31 @@ class ZondaSpotAdapter(ExchangeAdapter):
             method=method,
         )
         return self._execute_request(request)
+
+    def _fetch_price_map(self) -> Mapping[tuple[str, str], float]:
+        response = self._public_request("/trading/ticker")
+        prices: dict[tuple[str, str], float] = {}
+        if isinstance(response, Mapping):
+            items = response.get("items")
+            if isinstance(items, Mapping):
+                for symbol, raw in items.items():
+                    if not isinstance(symbol, str) or not isinstance(raw, Mapping):
+                        continue
+                    pair = _extract_pair(symbol, raw)
+                    if pair is None:
+                        continue
+                    rate = _to_float(
+                        raw.get("rate")
+                        or raw.get("last")
+                        or raw.get("average")
+                        or raw.get("averagePrice")
+                    )
+                    if rate <= 0 and isinstance(raw.get("ticker"), Mapping):
+                        rate = _to_float(raw["ticker"].get("rate"))
+                    if rate <= 0:
+                        continue
+                    prices[pair] = rate
+        return prices
 
     # --- ExchangeAdapter API --------------------------------------------------
 
@@ -254,8 +391,7 @@ class ZondaSpotAdapter(ExchangeAdapter):
 
         balances_section = response.get("balances", [])
         balances: dict[str, float] = {}
-        available_total = 0.0
-        total_equity = 0.0
+        free_balances: dict[str, float] = {}
         if isinstance(balances_section, list):
             for entry in balances_section:
                 if not isinstance(entry, Mapping):
@@ -263,15 +399,36 @@ class ZondaSpotAdapter(ExchangeAdapter):
                 currency = entry.get("currency") or entry.get("code")
                 available = _to_float(entry.get("available"))
                 locked = _to_float(entry.get("locked") or entry.get("reserved"))
-                if isinstance(currency, str):
-                    balances[currency] = available + locked
-                    available_total += available
-                    total_equity += available + locked
+                if not isinstance(currency, str):
+                    continue
+                asset = currency.strip().upper()
+                if not asset:
+                    continue
+                total_balance = available + locked
+                balances[asset] = total_balance
+                free_balances[asset] = available
+
+        prices = self._fetch_price_map()
+        valuation_currency = self._valuation_asset
+        intermediaries = self._secondary_valuation_assets
+        total_equity = 0.0
+        available_margin = 0.0
+        for asset, total_balance in balances.items():
+            conversion = _convert_with_intermediaries(asset, valuation_currency, prices, intermediaries)
+            if conversion is None:
+                _LOGGER.debug(
+                    "Pomijam aktywo %s – brak kursu do %s w danych ticker.",
+                    asset,
+                    valuation_currency,
+                )
+                continue
+            total_equity += total_balance * conversion
+            available_margin += free_balances.get(asset, 0.0) * conversion
 
         return AccountSnapshot(
             balances=balances,
             total_equity=total_equity,
-            available_margin=available_total,
+            available_margin=available_margin,
             maintenance_margin=0.0,
         )
 

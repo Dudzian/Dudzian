@@ -29,7 +29,7 @@ from bot_core.runtime.controller import DailyTrendController
 from bot_core.security import SecretManager
 from bot_core.strategies.daily_trend import DailyTrendMomentumSettings, DailyTrendMomentumStrategy
 
-# Opcjonalny kontroler handlu – może nie istnieć w starszych gałęziach
+# Opcjonalny kontroler handlu – może nie istnieć w starszych gałęziach.
 try:
     from bot_core.runtime.controller import TradingController  # type: ignore
 except Exception:  # pragma: no cover

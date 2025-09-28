@@ -1,3 +1,4 @@
+# config/core.yaml
 # Konfiguracja bazowa etapu 1 – wartości placeholder do dalszego dostosowania.
 
 risk_profiles:
@@ -348,6 +349,9 @@ environments:
     alert_channels: ["telegram:primary"]
     ip_allowlist: []
     instrument_universe: core_multi_exchange
+    adapter_settings:
+      valuation_asset: PLN
+      secondary_valuation_assets: [USDT, EUR, USD]
     alert_throttle:
       window_seconds: 420
       exclude_severities: [critical]
@@ -363,6 +367,9 @@ environments:
     alert_channels: ["telegram:primary", "sms:nova_is", "email:ops"]
     ip_allowlist: []
     instrument_universe: core_multi_exchange
+    adapter_settings:
+      valuation_asset: PLN
+      secondary_valuation_assets: [USDT, EUR, USD]
     alert_throttle:
       window_seconds: 240
       exclude_severities: [critical]
