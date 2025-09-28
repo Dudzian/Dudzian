@@ -58,6 +58,7 @@ Moduł ryzyka (`RiskProfile`, `ThresholdRiskEngine`, `RiskRepository`) wymusza l
 
 Nowy moduł `security.rotation` wprowadza rejestr rotacji zapisany w pliku `security/rotation_log.json` w katalogu danych środowiska. Klasa `RotationRegistry` pozwala oznaczać datę wymiany klucza i wyliczać ile dni pozostało do kolejnej rotacji, a skrypt `scripts/check_key_rotation.py` raportuje środowiska zbliżające się do terminu oraz – opcjonalnie – zapisuje nową datę po wykonaniu procedury „bez-downtime”. Dzięki temu polityka 90‑dniowej rotacji ma techniczne wsparcie, a status każdego wpisu jest łatwy do audytowania.
 
+
 ## Mechanizmy bezpieczeństwa i compliance
 
 - **Wymuszenie trybu demo/paper:** `StrategyContext.require_demo_mode` oraz walidacja konfiguracji w runtime zapobiegają uruchomieniu strategii live bez akceptacji ryzyka.
