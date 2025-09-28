@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Mapping
+from typing import Mapping, Sequence
 
 import sys
 
@@ -39,6 +39,7 @@ class DummyRiskEngine(RiskEngine):
         self._result = RiskCheckResult(allowed=True)
         self._liquidate = False
         self.last_checks: list[tuple[OrderRequest, AccountSnapshot, str]] = []
+        self._result_queue: list[RiskCheckResult] = []
 
     def register_profile(self, profile: RiskProfile) -> None:  # pragma: no cover - nieużywane
         return None
@@ -51,6 +52,8 @@ class DummyRiskEngine(RiskEngine):
         profile_name: str,
     ) -> RiskCheckResult:
         self.last_checks.append((request, account, profile_name))
+        if self._result_queue:
+            self._result = self._result_queue.pop(0)
         return self._result
 
     def on_fill(
@@ -70,6 +73,13 @@ class DummyRiskEngine(RiskEngine):
 
     def set_result(self, result: RiskCheckResult, *, liquidate: bool = False) -> None:
         self._result = result
+        self._liquidate = liquidate
+        self._result_queue.clear()
+
+    def set_result_sequence(self, results: Sequence[RiskCheckResult], *, liquidate: bool = False) -> None:
+        self._result_queue = list(results)
+        if results:
+            self._result = results[-1]
         self._liquidate = liquidate
 
 
@@ -199,6 +209,40 @@ def test_controller_runs_health_report() -> None:
     controller.maybe_report_health(force=True)
 
     assert len(channel.messages) == 1
+
+
+def test_controller_scales_quantity_when_risk_suggests_limit() -> None:
+    risk_engine = DummyRiskEngine()
+    disallowed = RiskCheckResult(
+        allowed=False,
+        reason="Limit ekspozycji przekroczony",
+        adjustments={"max_quantity": 0.25},
+    )
+    allowed = RiskCheckResult(allowed=True)
+    risk_engine.set_result_sequence([disallowed, allowed])
+
+    execution = DummyExecutionService()
+    router, channel, audit = _router_with_channel()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        health_check_interval=timedelta(hours=1),
+    )
+
+    results = controller.process_signals([_signal("BUY", quantity=1.0, price=100.0)])
+
+    assert len(results) == 1
+    assert execution.requests[0].quantity == pytest.approx(0.25)
+    assert risk_engine.last_checks[0][0].quantity == pytest.approx(1.0)
+    assert risk_engine.last_checks[1][0].quantity == pytest.approx(0.25)
+    exported = tuple(audit.export())
+    assert any(entry["channel"] == "collector" and entry["category"] == "strategy" for entry in exported)
+    assert channel.messages[-1].category == "execution"
 
 
 def test_controller_updates_metrics_counters_and_gauge() -> None:
