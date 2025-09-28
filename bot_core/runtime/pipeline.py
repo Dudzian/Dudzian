@@ -18,7 +18,9 @@ from bot_core.config.models import (
 from bot_core.data.base import OHLCVRequest
 from bot_core.data.ohlcv import (
     CachedOHLCVSource,
+    DualCacheStorage,
     OHLCVBackfillService,
+    ParquetCacheStorage,
     PublicAPIDataSource,
     SQLiteCacheStorage,
 )
@@ -29,6 +31,8 @@ from bot_core.runtime.bootstrap import BootstrapContext, bootstrap_environment
 from bot_core.runtime.controller import DailyTrendController
 from bot_core.security import SecretManager
 from bot_core.strategies.daily_trend import DailyTrendMomentumSettings, DailyTrendMomentumStrategy
+
+_DEFAULT_LEDGER_SUBDIR = Path("audit/ledger")
 
 # Opcjonalny kontroler handlu – może nie istnieć w starszych gałęziach.
 try:
@@ -81,8 +85,16 @@ def build_daily_trend_pipeline(
             "Brak instrumentów spełniających kryteria paper tradingu – skonfiguruj quote_assets/valuation_asset."
         )
 
-    storage_path = Path(environment.data_cache_path) / "ohlcv.sqlite"
-    storage = SQLiteCacheStorage(storage_path)
+    cache_root = Path(environment.data_cache_path)
+    parquet_storage = ParquetCacheStorage(
+        cache_root / "ohlcv_parquet",
+        namespace=environment.exchange,
+    )
+    manifest_storage = SQLiteCacheStorage(
+        cache_root / "ohlcv_manifest.sqlite",
+        store_rows=False,
+    )
+    storage = DualCacheStorage(primary=parquet_storage, manifest=manifest_storage)
 
     public_source = PublicAPIDataSource(exchange_adapter=bootstrap_ctx.adapter)
     cached_source = CachedOHLCVSource(storage=storage, upstream=public_source)
@@ -120,6 +132,7 @@ def build_daily_trend_pipeline(
         markets=markets,
         interval=runtime_cfg.interval,
         valuation_asset=paper_settings["valuation_asset"],
+        cash_assets=allowed_quotes,
     )
 
     controller = DailyTrendController(
@@ -176,6 +189,7 @@ def create_trading_controller(
         order_metadata_defaults=defaults,
         health_check_interval=health_check_interval,
         execution_metadata=execution_context.metadata,
+        decision_journal=pipeline.bootstrap.decision_journal,
     )
 
 
@@ -219,6 +233,8 @@ def _normalize_paper_settings(environment: EnvironmentConfig) -> MutableMapping[
     raw_adapter = getattr(environment, "adapter_settings", {}) or {}
     raw_settings = raw_adapter.get("paper_trading", {}) or {}
 
+    base_path = Path(environment.data_cache_path)
+
     valuation_asset = str(raw_settings.get("valuation_asset", "USDT")).upper()
     position_size = max(0.0, float(raw_settings.get("position_size", 0.1)))
     default_leverage = max(1.0, float(raw_settings.get("default_leverage", 1.0)))
@@ -239,6 +255,27 @@ def _normalize_paper_settings(environment: EnvironmentConfig) -> MutableMapping[
         for symbol, entry in (raw_settings.get("markets", {}) or {}).items()
     }
 
+    ledger_directory_setting = raw_settings.get("ledger_directory")
+    ledger_directory: Path | None
+    if ledger_directory_setting is None:
+        ledger_directory = base_path / _DEFAULT_LEDGER_SUBDIR
+    else:
+        text = str(ledger_directory_setting).strip()
+        if not text:
+            ledger_directory = None
+        else:
+            candidate = Path(text)
+            ledger_directory = candidate if candidate.is_absolute() else base_path / candidate
+
+    ledger_filename_pattern = str(raw_settings.get("ledger_filename_pattern", "ledger-%Y%m%d.jsonl"))
+    ledger_retention_days_raw = raw_settings.get("ledger_retention_days", 730)
+    if ledger_retention_days_raw is None:
+        ledger_retention_days = None
+    else:
+        text_value = str(ledger_retention_days_raw).strip()
+        ledger_retention_days = None if not text_value else int(float(text_value))
+    ledger_fsync = bool(raw_settings.get("ledger_fsync", False))
+
     return {
         "valuation_asset": valuation_asset,
         "position_size": position_size,
@@ -251,6 +288,10 @@ def _normalize_paper_settings(environment: EnvironmentConfig) -> MutableMapping[
         "maker_fee": float(raw_settings.get("maker_fee", 0.0004)),
         "taker_fee": float(raw_settings.get("taker_fee", 0.0006)),
         "slippage_bps": float(raw_settings.get("slippage_bps", 5.0)),
+        "ledger_directory": ledger_directory,
+        "ledger_filename_pattern": ledger_filename_pattern,
+        "ledger_retention_days": ledger_retention_days,
+        "ledger_fsync": ledger_fsync,
     }
 
 
@@ -296,6 +337,10 @@ def _build_execution_service(
         maker_fee=float(paper_settings["maker_fee"]),
         taker_fee=float(paper_settings["taker_fee"]),
         slippage_bps=float(paper_settings["slippage_bps"]),
+        ledger_directory=paper_settings["ledger_directory"],
+        ledger_filename_pattern=str(paper_settings["ledger_filename_pattern"]),
+        ledger_retention_days=paper_settings["ledger_retention_days"],  # type: ignore[arg-type]
+        ledger_fsync=bool(paper_settings["ledger_fsync"]),
     )
 
 
@@ -312,6 +357,7 @@ def _build_account_loader(
     markets: Mapping[str, MarketMetadata],
     interval: str,
     valuation_asset: str,
+    cash_assets: set[str],
 ) -> Callable[[], AccountSnapshot]:
     storage = data_source.storage
     price_cache: MutableMapping[str, tuple[float, float]] = {}
@@ -346,6 +392,8 @@ def _build_account_loader(
         return close_price
 
     valuation_target = valuation_asset.upper()
+    cash_like_assets = {valuation_target}
+    cash_like_assets.update(asset.upper() for asset in cash_assets)
 
     def loader() -> AccountSnapshot:
         raw_balances = execution_service.balances()
@@ -423,7 +471,12 @@ def _build_account_loader(
             liability = current_price * quantity
             total_equity -= convert_amount(market.quote_asset, liability)
 
-        available_margin = balances.get(valuation_target, 0.0)
+        available_margin = 0.0
+        for asset, amount in balances.items():
+            if amount <= 0:
+                continue
+            if asset in cash_like_assets:
+                available_margin += convert_amount(asset, amount)
 
         return AccountSnapshot(
             balances=dict(balances),

@@ -13,8 +13,10 @@ from bot_core.config.loader import load_core_config
 from bot_core.config.models import CoreConfig, EnvironmentConfig, InstrumentUniverseConfig
 from bot_core.data.ohlcv import (
     CachedOHLCVSource,
+    DualCacheStorage,
     OHLCVBackfillService,
     OHLCVRefreshScheduler,
+    ParquetCacheStorage,
     PublicAPIDataSource,
     SQLiteCacheStorage,
 )
@@ -203,13 +205,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         _LOGGER.warning("Brak instrumentów z zakresem backfill dla giełdy %s", environment.exchange)
         return 0
 
-    storage_path = Path(environment.data_cache_path) / "ohlcv.sqlite"
-    storage = SQLiteCacheStorage(storage_path)
+    cache_root = Path(environment.data_cache_path)
+    parquet_storage = ParquetCacheStorage(cache_root / "ohlcv_parquet", namespace=environment.exchange)
+    manifest_storage = SQLiteCacheStorage(cache_root / "ohlcv_manifest.sqlite", store_rows=False)
+    storage = DualCacheStorage(primary=parquet_storage, manifest=manifest_storage)
 
-    source = _build_public_source(environment.exchange, environment.environment)
-    source.exchange_adapter.configure_network(ip_allowlist=environment.ip_allowlist)
+    upstream_source = _build_public_source(environment.exchange, environment.environment)
+    upstream_source.exchange_adapter.configure_network(ip_allowlist=environment.ip_allowlist)
 
-    cached_source = CachedOHLCVSource(storage=storage, upstream=source)
+    cached_source = CachedOHLCVSource(storage=storage, upstream=upstream_source)
     cached_source.warm_cache(symbols, plans.keys())
 
     backfill_service = OHLCVBackfillService(cached_source)

@@ -25,6 +25,7 @@ from bot_core.alerts.channels.providers import SmsProviderConfig
 from bot_core.config.loader import load_core_config
 from bot_core.config.models import (
     CoreConfig,
+    DecisionJournalConfig,
     EmailChannelSettings,
     EnvironmentConfig,
     MessengerChannelSettings,
@@ -43,9 +44,16 @@ from bot_core.exchanges.base import (
 from bot_core.exchanges.binance import BinanceFuturesAdapter, BinanceSpotAdapter
 from bot_core.exchanges.kraken import KrakenFuturesAdapter, KrakenSpotAdapter
 from bot_core.exchanges.zonda import ZondaSpotAdapter
+from bot_core.risk.base import RiskRepository
 from bot_core.risk.engine import ThresholdRiskEngine
 from bot_core.risk.profiles.manual import ManualProfile
+from bot_core.risk.repository import FileRiskRepository
 from bot_core.security import SecretManager, SecretStorageError
+from bot_core.runtime.journal import (
+    InMemoryTradingDecisionJournal,
+    JsonlTradingDecisionJournal,
+    TradingDecisionJournal,
+)
 
 _DEFAULT_ADAPTERS: Mapping[str, ExchangeAdapterFactory] = {
     "binance_spot": BinanceSpotAdapter,
@@ -65,10 +73,12 @@ class BootstrapContext:
     credentials: ExchangeCredentials
     adapter: ExchangeAdapter
     risk_engine: ThresholdRiskEngine
+    risk_repository: RiskRepository
     alert_router: DefaultAlertRouter
     alert_channels: Mapping[str, AlertChannel]
     audit_log: AlertAuditLog
     adapter_settings: Mapping[str, Any]
+    decision_journal: TradingDecisionJournal | None
 
 
 def bootstrap_environment(
@@ -86,7 +96,9 @@ def bootstrap_environment(
     environment = core_config.environments[environment_name]
     risk_profile_config = _resolve_risk_profile(core_config.risk_profiles, environment.risk_profile)
 
-    risk_engine = ThresholdRiskEngine()
+    risk_repository_path = Path(environment.data_cache_path) / "risk_state"
+    risk_repository = FileRiskRepository(risk_repository_path)
+    risk_engine = ThresholdRiskEngine(repository=risk_repository)
     profile = ManualProfile(
         name=risk_profile_config.name,
         max_positions=risk_profile_config.max_open_positions,
@@ -103,6 +115,8 @@ def bootstrap_environment(
         environment.keychain_key,
         expected_environment=environment.environment,
         purpose=environment.credential_purpose,
+        required_permissions=environment.required_permissions,
+        forbidden_permissions=environment.forbidden_permissions,
     )
 
     factories = dict(_DEFAULT_ADAPTERS)
@@ -123,16 +137,20 @@ def bootstrap_environment(
         secret_manager=secret_manager,
     )
 
+    decision_journal = _build_decision_journal(environment)
+
     return BootstrapContext(
         core_config=core_config,
         environment=environment,
         credentials=credentials,
         adapter=adapter,
         risk_engine=risk_engine,
+        risk_repository=risk_repository,
         alert_router=alert_router,
         alert_channels=alert_channels,
         audit_log=audit_log,
         adapter_settings=environment.adapter_settings,
+        decision_journal=decision_journal,
     )
 
 
@@ -224,6 +242,28 @@ def _build_alert_channels(
         channels[channel.name] = channel
 
     return channels, router, audit_log
+
+
+def _build_decision_journal(environment: EnvironmentConfig) -> TradingDecisionJournal | None:
+    config: DecisionJournalConfig | None = getattr(environment, "decision_journal", None)
+    if config is None:
+        return None
+
+    backend = getattr(config, "backend", "memory").lower()
+    if backend == "memory":
+        return InMemoryTradingDecisionJournal()
+    if backend == "file":
+        directory = Path(config.directory) if config.directory else Path("decisions")
+        if not directory.is_absolute():
+            base = Path(environment.data_cache_path)
+            directory = base / directory
+        return JsonlTradingDecisionJournal(
+            directory=directory,
+            filename_pattern=config.filename_pattern,
+            retention_days=config.retention_days,
+            fsync=config.fsync,
+        )
+    return None
 
 
 def _build_telegram_channel(

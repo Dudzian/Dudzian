@@ -1,12 +1,16 @@
 """Pętla czasu rzeczywistego dla strategii dziennych."""
 from __future__ import annotations
 
+import logging
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Callable, Sequence
+from typing import Callable, Optional, Sequence
 
 from bot_core.exchanges.base import OrderResult
 from bot_core.runtime.controller import ControllerSignal, DailyTrendController, TradingController
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _utc_now() -> datetime:
@@ -33,10 +37,20 @@ _INTERVAL_SECONDS: dict[str, float] = {
 
 
 def _interval_seconds(interval: str, fallback: float) -> float:
-    seconds = _INTERVAL_SECONDS.get(interval)
+    """Mapuje tekstowy interwał na liczbę sekund respektując wielkość liter."""
+
+    key = interval.strip()
+    seconds = _INTERVAL_SECONDS.get(key)
     if seconds is None:
-        seconds = _INTERVAL_SECONDS.get(interval.lower())
+        lowered = key.lower()
+        if lowered != key:
+            seconds = _INTERVAL_SECONDS.get(lowered)
     if seconds is None:
+        _LOGGER.warning(
+            "Nieznany interwał %s – używam wartości zapasowej %.2f s.",
+            interval,
+            fallback,
+        )
         seconds = fallback
     return max(fallback, seconds)
 
@@ -49,6 +63,10 @@ class DailyTrendRealtimeRunner:
     trading_controller: TradingController
     history_bars: int = 120
     clock: Callable[[], datetime] = _utc_now
+    sleep: Callable[[float], None] = time.sleep
+    on_cycle_error: Callable[[Exception], None] | None = None
+    on_cycle_complete: Callable[[Sequence[OrderResult]], None] | None = None
+    min_sleep_seconds: float = 1.0
 
     def run_once(self) -> list[OrderResult]:
         """Wykonuje pojedynczą iterację strategii w oparciu o aktualny czas."""
@@ -67,6 +85,71 @@ class DailyTrendRealtimeRunner:
             return []
 
         return self.trading_controller.process_signals(signals)
+
+    def run_forever(
+        self,
+        *,
+        stop_condition: Optional[Callable[[], bool]] = None,
+        max_cycles: Optional[int] = None,
+    ) -> None:
+        """Uruchamia pętlę w trybie ciągłym respektując limity czasu i obsługę błędów."""
+
+        if max_cycles is not None and max_cycles <= 0:
+            return
+
+        cycles = 0
+        min_sleep = max(0.0, float(self.min_sleep_seconds))
+
+        while True:
+            if stop_condition and stop_condition():
+                break
+
+            cycle_start = self.clock()
+            success = False
+
+            try:
+                results = self.run_once()
+            except Exception as exc:  # pragma: no cover - ścieżka zależna od strategii
+                _LOGGER.exception("Błąd podczas cyklu realtime", exc_info=exc)
+                if self.on_cycle_error:
+                    self.on_cycle_error(exc)
+                else:
+                    raise
+            else:
+                success = True
+                if self.on_cycle_complete:
+                    try:
+                        self.on_cycle_complete(results)
+                    except Exception as exc:  # pragma: no cover - zależy od handlera
+                        success = False
+                        _LOGGER.exception("Błąd handlera on_cycle_complete", exc_info=exc)
+                        if self.on_cycle_error:
+                            self.on_cycle_error(exc)
+                        else:
+                            raise
+
+            cycles += 1
+            if max_cycles is not None and cycles >= max_cycles:
+                break
+
+            if stop_condition and stop_condition():
+                break
+
+            interval_seconds = max(1.0, float(self.controller.tick_seconds))
+            elapsed = (self.clock() - cycle_start).total_seconds()
+            sleep_seconds = max(0.0, interval_seconds - elapsed)
+            if not success:
+                sleep_seconds = max(min_sleep, sleep_seconds)
+
+            if sleep_seconds > 0:
+                try:
+                    self.sleep(sleep_seconds)
+                except Exception as exc:  # pragma: no cover - zależne od środowiska
+                    _LOGGER.exception("Błąd podczas usypiania pętli realtime", exc_info=exc)
+                    if self.on_cycle_error:
+                        self.on_cycle_error(exc)
+                    else:
+                        raise
 
 
 __all__ = ["DailyTrendRealtimeRunner"]
