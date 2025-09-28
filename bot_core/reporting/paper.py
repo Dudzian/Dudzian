@@ -201,6 +201,7 @@ def generate_daily_paper_report(
     report_date: date | None = None,
     tz: tzinfo | None = None,
     include_summary: bool = True,
+    ledger_entries: Iterable[Mapping[str, object]] | None = None,
 ) -> PaperReportArtifacts:
     """Generuje archiwum ZIP z dziennym blotterem i (opcjonalnie) dziennikiem decyzji.
 
@@ -218,8 +219,13 @@ def generate_daily_paper_report(
 
     window_start, window_end = _time_window(report_day, tzinfo_obj)
 
-    ledger_entries = execution_service.ledger()
-    ledger_filtered = _filter_ledger(ledger_entries, start=window_start, end=window_end)
+    # Pozwala wstrzyknąć wpisy ledgeru (np. w testach) lub pobrać je z serwisu wykonawczego.
+    if ledger_entries is None:
+        ledger_source = execution_service.ledger()
+    else:
+        ledger_source = ledger_entries
+
+    ledger_filtered = _filter_ledger(ledger_source, start=window_start, end=window_end)
 
     decisions_filtered: list[Mapping[str, object]] = []
     if decision_journal is not None:
@@ -233,7 +239,9 @@ def generate_daily_paper_report(
     with ZipFile(archive_path, "w", compression=ZIP_DEFLATED) as archive:
         archive.writestr("ledger.csv", csv_payload)
         if decisions_filtered:
-            jsonl_payload = "\n".join(json.dumps(entry, separators=(",", ":"), ensure_ascii=False) for entry in decisions_filtered)
+            jsonl_payload = "\n".join(
+                json.dumps(entry, separators=(",", ":"), ensure_ascii=False) for entry in decisions_filtered
+            )
             archive.writestr("decisions.jsonl", jsonl_payload + "\n")
         if include_summary:
             summary = _summary_payload(

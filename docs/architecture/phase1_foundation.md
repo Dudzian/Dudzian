@@ -142,7 +142,16 @@ informacje o profilu ryzyka i środowisku. Interfejs `RetryPolicy` pozwoli na po
 błędów API (np. exponential backoff, circuit breaker). Pierwszą implementacją jest
 `PaperTradingExecutionService`, który symuluje egzekucję z natychmiastowym fill'em,
 uwzględnia prowizje maker/taker, poślizg (w punktach bazowych), walidację wielkości zlecenia oraz
-prowadzi dziennik audytowy transakcji.
+prowadzi dziennik audytowy transakcji – zarówno w pamięci na potrzeby bieżącej sesji, jak i
+w trwałych plikach JSONL rotowanych zgodnie z polityką retencji.
+
+## Raportowanie i audyt
+
+`bot_core/reporting` dostarcza funkcję `generate_daily_paper_report`, która tworzy dzienne archiwum ZIP z
+blotterem (`ledger.csv`), zdarzeniami decyzyjnymi (`decisions.jsonl`) oraz zwięzłym podsumowaniem (`summary.json`).
+Raport filtruje wpisy według strefy czasowej środowiska, wspiera retencję 24 miesięcy i przygotowuje pakiety do
+podpisu kryptograficznego oraz szyfrowania w kolejnych etapach. Pakiet stanowi bazę do dziennych raportów P&L oraz
+audytów KYC/AML.
 
 ## Raportowanie i audyt
 

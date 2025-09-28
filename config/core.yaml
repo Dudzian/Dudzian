@@ -227,6 +227,18 @@ environments:
     required_permissions: [read, trade]
     forbidden_permissions: [withdraw]
     instrument_universe: core_multi_exchange
+    adapter_settings:
+      paper_trading:
+        valuation_asset: USDT
+        position_size: 0.1
+        initial_balances:
+          USDT: 100000.0
+        default_market:
+          min_quantity: 0.001
+          min_notional: 10.0
+        ledger_directory: audit/ledger
+        ledger_retention_days: 730
+        ledger_fsync: true
     alert_throttle:
       window_seconds: 300
       exclude_severities: [critical]

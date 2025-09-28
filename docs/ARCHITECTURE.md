@@ -42,7 +42,11 @@ Moduł ryzyka (`RiskProfile`, `ThresholdRiskEngine`, `RiskRepository`) wymusza l
 
 ### `bot_core/execution`
 
-`ExecutionService` i `ExecutionContext` zamieniają zatwierdzone sygnały na zlecenia, uwzględniając prowizje, poślizg i zasady retry/backoff (`RetryPolicy`). `PaperTradingExecutionService` symuluje fill'e, zapisuje dziennik audytowy i dostarcza metryki do alertów. W trybie live usługa współpracuje z adapterami giełd z segmentu `live` oraz wymaga potwierdzonych uprawnień tradingowych.
+`ExecutionService` i `ExecutionContext` zamieniają zatwierdzone sygnały na zlecenia, uwzględniając prowizje, poślizg i zasady retry/backoff (`RetryPolicy`). `PaperTradingExecutionService` symuluje fill'e, zapisuje dziennik audytowy (zarówno w pamięci, jak i w trwałych plikach JSONL z rotacją wg polityki retencji) i dostarcza metryki do alertów. W trybie live usługa współpracuje z adapterami giełd z segmentu `live` oraz wymaga potwierdzonych uprawnień tradingowych.
+
+### `bot_core/reporting`
+
+Moduł raportowania buduje archiwa dziennego blottera z symulatora paper tradingu. Funkcja `generate_daily_paper_report` filtruje wpisy `PaperTradingExecutionService` i zdarzenia `TradingDecisionJournal` po strefie czasowej środowiska, a następnie zapisuje je jako `ledger.csv`, `decisions.jsonl` oraz `summary.json` w katalogu danych środowiska (domyślna retencja 24 miesiące). Archiwa są przygotowane pod dalsze podpisy kryptograficzne oraz pakowanie do zaszyfrowanych paczek w kolejnych etapach, dzięki czemu proces compliance otrzymuje gotowy pakiet audytowy.
 
 ### `bot_core/reporting`
 
