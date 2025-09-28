@@ -47,6 +47,7 @@ Moduł ryzyka (`RiskProfile`, `ThresholdRiskEngine`, `RiskRepository`) wymusza l
 ### `bot_core/alerts`
 
 `AlertRouter`, `AlertChannel` i `FileAlertAuditLog` obsługują powiadomienia (Telegram, e-mail, SMS, Signal, WhatsApp, Messenger) z kontrolą throttlingu i pełnym audytem zdarzeń (`channel="__suppressed__"` dla zdławionych komunikatów). Warstwa SMS jest modułowa: na starcie korzystamy z lokalnych operatorów (Orange Polska jako referencyjny, następnie inni dostawcy w PL i IS), a globalny agregator (Twilio/Vonage/MessageBird) działa jako fallback ciągłości działania. Alerty są elementem procesów bezpieczeństwa – incydenty krytyczne muszą zostać potwierdzone i przekazane do zespołu bezpieczeństwa w ciągu 24h.
+
 `TradingDecisionJournal` w `bot_core/runtime/journal.py` uzupełnia audyt o ścieżkę decyzyjną strategii. `JsonlTradingDecisionJournal` zapisuje zdarzenia `signal_received`, `risk_rejected`, `risk_adjusted`, `order_submitted`, `order_executed` (oraz błędy) w plikach JSONL z retencją zgodną z polityką compliance (domyślnie 24 miesiące). `TradingController` automatycznie rejestruje powody odrzuceń, rekomendowane korekty wielkości, identyfikatory zleceń i koszty egzekucji, dzięki czemu raporty KYC/AML mogą odtworzyć pełny kontekst decyzji.
 
 
