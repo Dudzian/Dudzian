@@ -63,6 +63,11 @@ try:
 except Exception:
     AlertAuditConfig = None  # type: ignore
 
+try:
+    from bot_core.config.models import DecisionJournalConfig  # type: ignore
+except Exception:
+    DecisionJournalConfig = None  # type: ignore
+
 
 def _core_has(field_name: str) -> bool:
     """Sprawdza, czy CoreConfig posiada dane pole (bezpiecznie dla różnych gałęzi)."""
@@ -239,6 +244,35 @@ def _load_alert_audit(entry: Optional[Mapping[str, Any]]):
     )
 
 
+def _load_decision_journal(entry: Optional[Mapping[str, Any]]):
+    if DecisionJournalConfig is None or not entry:
+        return None
+
+    backend = str(entry.get("backend", entry.get("type", "memory"))).strip().lower()
+    if backend in {"disabled", "none"}:
+        return None
+    if backend not in {"memory", "file"}:
+        raise ValueError("decision_journal.backend musi być 'memory', 'file' lub 'disabled'")
+
+    directory_value = entry.get("directory")
+    directory = str(directory_value) if directory_value is not None else None
+    filename_pattern = str(entry.get("filename_pattern", "decisions-%Y%m%d.jsonl"))
+    retention_value = entry.get("retention_days")
+    retention_days = None if retention_value in (None, "") else int(retention_value)
+    fsync = bool(entry.get("fsync", False))
+
+    if backend == "file" and not directory:
+        raise ValueError("decision_journal.directory jest wymagane dla backendu 'file'")
+
+    return DecisionJournalConfig(  # type: ignore[call-arg]
+        backend=backend,
+        directory=directory,
+        filename_pattern=filename_pattern,
+        retention_days=retention_days,
+        fsync=fsync,
+    )
+
+
 def load_core_config(path: str | Path) -> CoreConfig:
     """Wczytuje plik YAML i mapuje go na dataclasses."""
     with Path(path).open("r", encoding="utf-8") as handle:
@@ -264,11 +298,19 @@ def load_core_config(path: str | Path) -> CoreConfig:
                 str(key): value
                 for key, value in (entry.get("adapter_settings", {}) or {}).items()
             },
+            "required_permissions": tuple(
+                str(value).lower() for value in (entry.get("required_permissions", ()) or ())
+            ),
+            "forbidden_permissions": tuple(
+                str(value).lower() for value in (entry.get("forbidden_permissions", ()) or ())
+            ),
         }
         if _env_has("alert_throttle"):
             env_kwargs["alert_throttle"] = _load_alert_throttle(entry.get("alert_throttle"))
         if _env_has("alert_audit"):
             env_kwargs["alert_audit"] = _load_alert_audit(entry.get("alert_audit"))
+        if _env_has("decision_journal"):
+            env_kwargs["decision_journal"] = _load_decision_journal(entry.get("decision_journal"))
         environments[name] = EnvironmentConfig(**env_kwargs)
 
     risk_profiles = {

@@ -29,19 +29,30 @@ Adaptery giełdowe (`BinanceSpotAdapter`, `BinanceFuturesAdapter`, `KrakenSpotAd
 
 ### `bot_core/data`
 
-Warstwa danych obejmuje `PublicAPIDataSource`, `CachedOHLCVSource` i usługi backfillu. Źródła potrafią normalizować świeczki OHLCV, deduplikować zapisy oraz synchronizować się z cache (domyślnie `SQLiteCacheStorage` w trybie WAL). Dane są indeksowane per środowisko i giełdę, co umożliwia równoległe testy demo/paper oraz szybkie odtwarzanie historii na potrzeby kontroli ryzyka.
+Warstwa danych obejmuje `PublicAPIDataSource`, `CachedOHLCVSource` i usługi backfillu. Moduł pracuje dwuwarstwowo:
+
+1. **Parquet jako źródło prawdy** – backfill zapisuje świeczki OHLCV do plików partycjonowanych według `exchange/symbol/granularity/year/month`. Format kolumnowy zapewnia dobrą kompresję, szybkie skany dla backtestów i łatwą integrację z Pandas/Polars.
+2. **Manifest w SQLite** – lekka baza (`SQLiteCacheStorage`) przechowuje indeks metadanych (zakresy czasowe, wersje paczek, stany backfillu). Dzięki temu runtime odnajduje właściwe segmenty Parquet bez konieczności wczytywania wszystkich plików.
+
+Źródła normalizują świeczki do UTC, deduplikują zapisy i stosują kontrolowany backoff, aby nie przekraczać limitów publicznych API giełd. Dane są indeksowane per środowisko i giełdę, co umożliwia równoległe testy demo/paper oraz szybkie odtwarzanie historii na potrzeby kontroli ryzyka.
 
 ### `bot_core/risk`
 
-Moduł ryzyka (`RiskProfile`, `ThresholdRiskEngine`, `RiskRepository`) wymusza limity dziennych strat, liczbę pozycji, maksymalną ekspozycję per instrument i hard-stop drawdown. Silnik resetuje limity w UTC, blokuje sygnały przekraczające polityki, eskaluje incydenty do alertów oraz aktywuje tryb awaryjny po przekroczeniu progów ochronnych. Profile konfiguruje się w `config/core.yaml`, a walidacja odbywa się w runtime.
+Moduł ryzyka (`RiskProfile`, `ThresholdRiskEngine`, `RiskRepository`) wymusza limity dziennych strat, liczbę pozycji, maksymalną ekspozycję per instrument i hard-stop drawdown. Silnik resetuje limity w UTC, blokuje sygnały przekraczające polityki, eskaluje incydenty do alertów oraz aktywuje tryb awaryjny po przekroczeniu progów ochronnych. Profile konfiguruje się w `config/core.yaml`, a walidacja odbywa się w runtime. Trwałość zapewnia `FileRiskRepository`, które zapisuje stan profilu w katalogu `var/data/<środowisko>/risk_state`, dzięki czemu restart aplikacji nie zdejmuje blokad bezpieczeństwa ani limitów dziennych.
 
 ### `bot_core/execution`
 
 `ExecutionService` i `ExecutionContext` zamieniają zatwierdzone sygnały na zlecenia, uwzględniając prowizje, poślizg i zasady retry/backoff (`RetryPolicy`). `PaperTradingExecutionService` symuluje fill'e, zapisuje dziennik audytowy i dostarcza metryki do alertów. W trybie live usługa współpracuje z adapterami giełd z segmentu `live` oraz wymaga potwierdzonych uprawnień tradingowych.
 
+### `bot_core/reporting`
+
+Moduł raportowania buduje archiwa dziennego blottera z symulatora paper tradingu. Funkcja `generate_daily_paper_report` filtruje wpisy `PaperTradingExecutionService` i zdarzenia `TradingDecisionJournal` po strefie czasowej środowiska, a następnie zapisuje je jako `ledger.csv`, `decisions.jsonl` oraz `summary.json` w katalogu danych środowiska (domyślna retencja 24 miesiące). Archiwa są przygotowane pod dalsze podpisy kryptograficzne oraz pakowanie do zaszyfrowanych paczek w kolejnych etapach, dzięki czemu proces compliance otrzymuje gotowy pakiet audytowy.
+
 ### `bot_core/alerts`
 
-`AlertRouter`, `AlertChannel` i `FileAlertAuditLog` obsługują powiadomienia (Telegram, e-mail, SMS, Signal, WhatsApp, Messenger) z kontrolą throttlingu i pełnym audytem zdarzeń (`channel="__suppressed__"` dla zdławionych komunikatów). Alerty są elementem procesów bezpieczeństwa – incydenty krytyczne muszą zostać potwierdzone i przekazane do zespołu bezpieczeństwa w ciągu 24h.
+`AlertRouter`, `AlertChannel` i `FileAlertAuditLog` obsługują powiadomienia (Telegram, e-mail, SMS, Signal, WhatsApp, Messenger) z kontrolą throttlingu i pełnym audytem zdarzeń (`channel="__suppressed__"` dla zdławionych komunikatów). Warstwa SMS jest modułowa: na starcie korzystamy z lokalnych operatorów (Orange Polska jako referencyjny, następnie inni dostawcy w PL i IS), a globalny agregator (Twilio/Vonage/MessageBird) działa jako fallback ciągłości działania. Alerty są elementem procesów bezpieczeństwa – incydenty krytyczne muszą zostać potwierdzone i przekazane do zespołu bezpieczeństwa w ciągu 24h.
+
+`TradingDecisionJournal` w `bot_core/runtime/journal.py` uzupełnia audyt o ścieżkę decyzyjną strategii. `JsonlTradingDecisionJournal` zapisuje zdarzenia `signal_received`, `risk_rejected`, `risk_adjusted`, `order_submitted`, `order_executed` (oraz błędy) w plikach JSONL z retencją zgodną z polityką compliance (domyślnie 24 miesiące). `TradingController` automatycznie rejestruje powody odrzuceń, rekomendowane korekty wielkości, identyfikatory zleceń i koszty egzekucji, dzięki czemu raporty KYC/AML mogą odtworzyć pełny kontekst decyzji.
 
 ### `bot_core/runtime`
 
@@ -49,12 +60,14 @@ Moduł ryzyka (`RiskProfile`, `ThresholdRiskEngine`, `RiskRepository`) wymusza l
 
 ### `bot_core/security`
 
-`SecretManager` i `KeyringSecretStorage` przechowują poświadczenia poza repozytorium, rozdzielając klucze `read` i `trade` dla każdego środowiska. Moduł implementuje rotację kluczy, walidację środowisk (paper/live/testnet) oraz integruje się z politykami IP allowlist. Wszystkie operacje są logowane i dostępne w dziennikach audytu wykorzystywanych przez compliance.
+`SecretManager` i `KeyringSecretStorage` przechowują poświadczenia poza repozytorium, rozdzielając klucze `read` i `trade` dla każdego środowiska. Moduł implementuje rotację kluczy co 90 dni (z natychmiastową wymianą po zmianie uprawnień lub incydencie), walidację środowisk (paper/live/testnet) oraz integruje się z politykami IP allowlist. Klucze przechowujemy natywnie (Windows Credential Manager, macOS Keychain, GNOME Keyring/zaszyfrowany magazyn `age` w trybie headless). Wszystkie operacje są logowane i dostępne w dziennikach audytu wykorzystywanych przez compliance.
+
+Nowy moduł `security.rotation` wprowadza rejestr rotacji zapisany w pliku `security/rotation_log.json` w katalogu danych środowiska. Klasa `RotationRegistry` pozwala oznaczać datę wymiany klucza i wyliczać ile dni pozostało do kolejnej rotacji, a skrypt `scripts/check_key_rotation.py` raportuje środowiska zbliżające się do terminu oraz – opcjonalnie – zapisuje nową datę po wykonaniu procedury „bez-downtime”. Dzięki temu polityka 90‑dniowej rotacji ma techniczne wsparcie, a status każdego wpisu jest łatwy do audytowania.
 
 ## Mechanizmy bezpieczeństwa i compliance
 
 - **Wymuszenie trybu demo/paper:** `StrategyContext.require_demo_mode` oraz walidacja konfiguracji w runtime zapobiegają uruchomieniu strategii live bez akceptacji ryzyka.
-- **Separacja uprawnień:** adaptery giełdowe stosują osobne klucze API dla `read`/`trade`, a `SecretManager` pilnuje środowisk i rotacji kluczy.
+- **Separacja uprawnień:** adaptery giełdowe stosują osobne klucze API dla `read`/`trade`, konfiguracja środowisk wymaga explicite zdefiniowanych `required_permissions` i `forbidden_permissions`, a `SecretManager` pilnuje środowisk, rotacji kluczy i blokuje start, gdy klucz posiada niewłaściwe uprawnienia.
 - **Kontrola ryzyka:** `RiskEngine` blokuje sygnały przekraczające limity ekspozycji, liczbę pozycji, dzienny drawdown i wymagania margin.
 - **Alerty i audyt:** `AlertRouter` utrzymuje kanały eskalacji, logi audytowe, throttling powiadomień oraz politykę retencji (24 miesiące).
 - **Zgłaszanie incydentów:** każde naruszenie bezpieczeństwa lub anomalia handlowa musi być zgłoszona do zespołu bezpieczeństwa (`#sec-alerts`) i opisana w raporcie post-incident w ciągu 24h. Dzienniki danych i alertów są zabezpieczane do analizy.

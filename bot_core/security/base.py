@@ -46,7 +46,7 @@ class SecretPayload:
             key_id=credentials.key_id,
             secret=credentials.secret or "",
             passphrase=credentials.passphrase,
-            permissions=tuple(credentials.permissions),
+            permissions=tuple(str(permission).lower() for permission in credentials.permissions),
             environment=credentials.environment,
         )
 
@@ -67,6 +67,8 @@ class SecretManager:
         *,
         expected_environment: Environment,
         purpose: str = "trading",
+        required_permissions: Sequence[str] | None = None,
+        forbidden_permissions: Sequence[str] | None = None,
     ) -> ExchangeCredentials:
         """Ładuje poświadczenia i weryfikuje zgodność środowiska."""
 
@@ -90,6 +92,28 @@ class SecretManager:
                 f"{payload.environment.value}) nie pasuje do oczekiwanego "
                 f"({expected_environment.value})."
             )
+
+        stored_permissions = {str(permission).lower() for permission in payload.permissions}
+
+        if required_permissions:
+            required = {str(permission).lower() for permission in required_permissions}
+            missing = sorted(permission for permission in required if permission not in stored_permissions)
+            if missing:
+                missing_str = ", ".join(missing)
+                raise SecretStorageError(
+                    "Klucz API zapisany w magazynie nie posiada wymaganych uprawnień: "
+                    f"{missing_str}. Zaktualizuj uprawnienia w panelu giełdy i ponownie zapisz sekret."
+                )
+
+        if forbidden_permissions:
+            forbidden = {str(permission).lower() for permission in forbidden_permissions}
+            present = sorted(permission for permission in stored_permissions if permission in forbidden)
+            if present:
+                present_str = ", ".join(present)
+                raise SecretStorageError(
+                    "Klucz API zapisany w magazynie posiada zabronione uprawnienia: "
+                    f"{present_str}. Usuń klucz lub odepnij zbędne uprawnienia przed dalszym użyciem."
+                )
 
         return ExchangeCredentials(
             key_id=payload.key_id,
@@ -167,7 +191,7 @@ class SecretManager:
             key_id=str(data["key_id"]),
             secret=str(data.get("secret", "")),
             passphrase=data.get("passphrase"),
-            permissions=tuple(data.get("permissions", ())),
+            permissions=tuple(str(permission).lower() for permission in data.get("permissions", ()) or ()),
             environment=Environment(data["environment"]),
         )
 
