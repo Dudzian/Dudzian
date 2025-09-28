@@ -33,9 +33,14 @@ _INTERVAL_SECONDS: dict[str, float] = {
 
 
 def _interval_seconds(interval: str, fallback: float) -> float:
-    seconds = _INTERVAL_SECONDS.get(interval)
+    """Mapuje tekstowy interwał na liczbę sekund respektując wielkość liter."""
+
+    key = interval.strip()
+    seconds = _INTERVAL_SECONDS.get(key)
     if seconds is None:
-        seconds = _INTERVAL_SECONDS.get(interval.lower())
+        lowered = key.lower()
+        if lowered != key:
+            seconds = _INTERVAL_SECONDS.get(lowered)
     if seconds is None:
         seconds = fallback
     return max(fallback, seconds)
