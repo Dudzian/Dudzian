@@ -87,10 +87,13 @@ w walucie referencyjnej EUR zgodnie z wymaganiami risk engine'u i raportowania P
 
 `PublicAPIDataSource` zostanie połączony z adapterami do pobierania danych OHLCV z publicznych API.
 `CachedOHLCVSource` w połączeniu z `OHLCVBackfillService` obsługuje proces „backfill + cache” z
-podziałem na okna czasowe oraz deduplikacją zapisów. Domyślny backend `SQLiteCacheStorage`
-przechowuje dane w pliku `ohlcv.sqlite` (tryb WAL) i udostępnia metadane do audytu. Dla użytkownika
-końcowego przygotowano skrypt `scripts/backfill_ohlcv.py`, który na podstawie `config/core.yaml`
-pobiera świece z Binance lub Zondy (w zależności od środowiska) i aktualizuje lokalny cache w trybie bezkosztowym.
+podziałem na okna czasowe oraz deduplikacją zapisów. Domyślna konfiguracja wykorzystuje
+`DualCacheStorage`, które łączy `ParquetCacheStorage` (partycjonowane katalogi
+`exchange/symbol/granularity/year=YYYY/month=MM/`) z lekkim manifestem w `SQLiteCacheStorage`
+(`ohlcv_manifest.sqlite`). Dzięki temu Parquet jest „źródłem prawdy” dla świeczek, a manifest
+przechowuje metadane (ostatni timestamp, liczba rekordów) bez konieczności otwierania wszystkich
+plików. Zarówno nowy skrypt `scripts/backfill.py`, jak i uproszczony `scripts/backfill_ohlcv.py`
+wykorzystują tę samą warstwę storage, dzięki czemu backtesty i runtime paper/live czytają identyczne dane.
 
 ## Strategie i walk-forward
 
