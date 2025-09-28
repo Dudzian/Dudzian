@@ -80,6 +80,36 @@ def test_fetch_account_snapshot_uses_private_signed_calls(monkeypatch: pytest.Mo
         secret=_build_credentials().secret or "",
     )
     assert signature == expected_signature
+    trade_params = dict(parse_qsl(captured_requests[1].data.decode("utf-8")))
+    assert trade_params.get("asset") == "ZUSD"
+
+
+def test_fetch_account_snapshot_respects_custom_valuation_asset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_requests: list[Request] = []
+
+    def fake_urlopen(request: Request, timeout: int = 15):  # type: ignore[override]
+        captured_requests.append(request)
+        if request.full_url.endswith("TradeBalance"):
+            payload = {"error": [], "result": {"eb": "100.0", "mf": "80.0", "m": "20.0"}}
+        else:
+            payload = {"error": [], "result": {"ZEUR": "50.0"}}
+        return _FakeResponse(payload)
+
+    monkeypatch.setattr("bot_core.exchanges.kraken.spot.urlopen", fake_urlopen)
+    monkeypatch.setattr("bot_core.exchanges.kraken.spot.time.time", lambda: 1_700_000_000.0)
+
+    adapter = KrakenSpotAdapter(
+        _build_credentials(),
+        environment=Environment.LIVE,
+        settings={"valuation_asset": "eur"},
+    )
+
+    adapter.fetch_account_snapshot()
+    assert len(captured_requests) == 2
+    trade_params = dict(parse_qsl(captured_requests[1].data.decode("utf-8")))
+    assert trade_params.get("asset") == "ZEUR"
 
 
 def test_place_order_builds_payload_with_signature(monkeypatch: pytest.MonkeyPatch) -> None:

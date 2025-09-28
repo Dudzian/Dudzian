@@ -202,6 +202,10 @@ def load_core_config(path: str | Path) -> CoreConfig:
             ip_allowlist=tuple(entry.get("ip_allowlist", ()) or ()),
             credential_purpose=str(entry.get("credential_purpose", "trading")),
             instrument_universe=entry.get("instrument_universe"),
+            adapter_settings={
+                str(key): value
+                for key, value in (entry.get("adapter_settings", {}) or {}).items()
+            },
         )
         for name, entry in raw.get("environments", {}).items()
     }

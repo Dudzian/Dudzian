@@ -156,6 +156,7 @@ def test_bootstrap_environment_initialises_components(tmp_path: Path) -> None:
     assert snapshot["telegram:primary"]["status"] == "ok"
 
     assert context.risk_engine.should_liquidate(profile_name="balanced") is False
+    assert context.adapter_settings == {}
 
 
 def test_bootstrap_environment_supports_zonda(tmp_path: Path) -> None:
@@ -212,3 +213,4 @@ def test_bootstrap_environment_supports_zonda(tmp_path: Path) -> None:
     assert context.adapter.name == "zonda_spot"
     assert context.credentials.key_id == "zonda-key"
     assert context.environment.exchange == "zonda_spot"
+    assert context.adapter_settings == {}

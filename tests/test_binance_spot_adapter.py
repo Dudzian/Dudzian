@@ -125,6 +125,49 @@ def test_fetch_account_snapshot_values_mixed_portfolio(monkeypatch: pytest.Monke
     assert signed_request is not None
 
 
+def test_fetch_account_snapshot_respects_custom_valuation_asset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_urlopen(request: Request, timeout: int = 15):  # type: ignore[override]
+        if "/api/v3/account" in request.full_url:
+            payload: dict[str, Any] = {
+                "balances": [
+                    {"asset": "BTC", "free": "0.1", "locked": "0"},
+                    {"asset": "USDT", "free": "100", "locked": "0"},
+                ],
+            }
+        elif "/api/v3/ticker/price" in request.full_url:
+            payload = [
+                {"symbol": "BTCEUR", "price": "26000"},
+                {"symbol": "EURUSDT", "price": "1.1"},
+            ]
+        else:  # pragma: no cover - zabezpieczenie dodatkowych endpointów
+            raise AssertionError(f"Unexpected endpoint requested: {request.full_url}")
+        return _FakeResponse(payload)
+
+    monkeypatch.setattr("bot_core.exchanges.binance.spot.urlopen", fake_urlopen)
+    monkeypatch.setattr("bot_core.exchanges.binance.spot.time.time", lambda: 1_700_000_000.0)
+
+    credentials = ExchangeCredentials(
+        key_id="test-key",
+        secret="secret",
+        permissions=("read", "trade"),
+        environment=Environment.LIVE,
+    )
+    adapter = BinanceSpotAdapter(
+        credentials,
+        settings={
+            "valuation_asset": "eur",
+            "secondary_valuation_assets": ["USDT"],
+        },
+    )
+
+    snapshot = adapter.fetch_account_snapshot()
+
+    assert snapshot.total_equity == pytest.approx(2690.90909, rel=1e-6)
+    assert snapshot.available_margin == pytest.approx(2690.90909, rel=1e-6)
+
+
 def test_place_order_builds_signed_payload(monkeypatch: pytest.MonkeyPatch) -> None:
     captured_request: Request | None = None
 
