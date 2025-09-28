@@ -38,7 +38,7 @@ Warstwa danych obejmuje `PublicAPIDataSource`, `CachedOHLCVSource` i usługi bac
 
 ### `bot_core/risk`
 
-Moduł ryzyka (`RiskProfile`, `ThresholdRiskEngine`, `RiskRepository`) wymusza limity dziennych strat, liczbę pozycji, maksymalną ekspozycję per instrument i hard-stop drawdown. Silnik resetuje limity w UTC, blokuje sygnały przekraczające polityki, eskaluje incydenty do alertów oraz aktywuje tryb awaryjny po przekroczeniu progów ochronnych. Profile konfiguruje się w `config/core.yaml`, a walidacja odbywa się w runtime.
+Moduł ryzyka (`RiskProfile`, `ThresholdRiskEngine`, `RiskRepository`) wymusza limity dziennych strat, liczbę pozycji, maksymalną ekspozycję per instrument i hard-stop drawdown. Silnik resetuje limity w UTC, blokuje sygnały przekraczające polityki, eskaluje incydenty do alertów oraz aktywuje tryb awaryjny po przekroczeniu progów ochronnych. Profile konfiguruje się w `config/core.yaml`, a walidacja odbywa się w runtime. Trwałość zapewnia `FileRiskRepository`, które zapisuje stan profilu w katalogu `var/data/<środowisko>/risk_state`, dzięki czemu restart aplikacji nie zdejmuje blokad bezpieczeństwa ani limitów dziennych.
 
 ### `bot_core/execution`
 

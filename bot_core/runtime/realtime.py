@@ -1,12 +1,15 @@
 """Pętla czasu rzeczywistego dla strategii dziennych."""
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable, Sequence
 
 from bot_core.exchanges.base import OrderResult
 from bot_core.runtime.controller import ControllerSignal, DailyTrendController, TradingController
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _utc_now() -> datetime:
@@ -42,6 +45,11 @@ def _interval_seconds(interval: str, fallback: float) -> float:
         if lowered != key:
             seconds = _INTERVAL_SECONDS.get(lowered)
     if seconds is None:
+        _LOGGER.warning(
+            "Nieznany interwał %s – używam wartości zapasowej %.2f s.",
+            interval,
+            fallback,
+        )
         seconds = fallback
     return max(fallback, seconds)
 
