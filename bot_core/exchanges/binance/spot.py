@@ -34,7 +34,6 @@ def _to_float(value: object, default: float = 0.0) -> float:
 
 def _determine_public_base(environment: Environment) -> str:
     """Zwraca właściwy punkt końcowy REST dla danych publicznych."""
-
     # Binance nie udostępnia pełnych danych historycznych na testnecie,
     # dlatego zarówno środowisko PAPER, jak i TESTNET wykorzystują publiczny endpoint produkcyjny.
     return "https://api.binance.com"
@@ -42,7 +41,6 @@ def _determine_public_base(environment: Environment) -> str:
 
 def _determine_trading_base(environment: Environment) -> str:
     """Zwraca punkt końcowy dla operacji wymagających podpisu."""
-
     if environment is Environment.TESTNET or environment is Environment.PAPER:
         # Oficjalny testnet Binance udostępnia podpisane endpointy pod domeną testnet.binance.vision.
         return "https://testnet.binance.vision"
@@ -51,7 +49,6 @@ def _determine_trading_base(environment: Environment) -> str:
 
 def _stringify_params(params: Mapping[str, object]) -> list[tuple[str, str]]:
     """Konwertuje wartości parametrów na tekst wymagany przez API Binance."""
-
     normalized: list[tuple[str, str]] = []
     for key, value in params.items():
         if isinstance(value, bool):
@@ -67,7 +64,6 @@ def _direct_conversion_rate(
     base: str, quote: str, prices: Mapping[str, float]
 ) -> Optional[float]:
     """Zwraca kurs wymiany dla pary base/quote na podstawie tickerów."""
-
     if base == quote:
         return 1.0
 
@@ -86,7 +82,6 @@ def _direct_conversion_rate(
 
 def _determine_intermediaries(target: str, prices: Mapping[str, float]) -> set[str]:
     """Wyszukuje aktywa, które mają notowania z daną walutą docelową."""
-
     intermediaries: set[str] = set()
     target_len = len(target)
     for symbol in prices.keys():
@@ -101,7 +96,6 @@ def _convert_to_target(
     asset: str, target: str, prices: Mapping[str, float]
 ) -> Optional[float]:
     """Próbuje przeliczyć aktywo na walutę docelową przy użyciu triangulacji."""
-
     direct_rate = _direct_conversion_rate(asset, target, prices)
     if direct_rate is not None:
         return direct_rate
@@ -129,6 +123,8 @@ class BinanceSpotAdapter(ExchangeAdapter):
         "_ip_allowlist",
         "_permission_set",
         "_settings",
+        "_valuation_asset",
+        "_secondary_valuation_assets",
     )
 
     name: str = "binance_spot"
@@ -147,7 +143,49 @@ class BinanceSpotAdapter(ExchangeAdapter):
         self._ip_allowlist: tuple[str, ...] = ()
         self._permission_set = frozenset(perm.lower() for perm in self._credentials.permissions)
         self._settings = dict(settings or {})
+        self._valuation_asset = self._extract_valuation_asset()
+        self._secondary_valuation_assets = self._extract_secondary_assets()
 
+    # ----------------------------------------------------------------------------------
+    # Konfiguracja wyceny sald
+    # ----------------------------------------------------------------------------------
+    def _extract_valuation_asset(self) -> str:
+        raw = self._settings.get("valuation_asset", "USDT")
+        if isinstance(raw, str):
+            asset = raw.strip().upper()
+            return asset or "USDT"
+        return "USDT"
+
+    def _extract_secondary_assets(self) -> tuple[str, ...]:
+        raw = self._settings.get("secondary_valuation_assets")
+        defaults = ("USDX", "BUSD", "USDC")
+
+        def _append(container: list[str], value: object) -> None:
+            asset = str(value).strip().upper()
+            if not asset:
+                return
+            if asset == self._valuation_asset:
+                return
+            if asset not in container:
+                container.append(asset)
+
+        assets: list[str] = []
+        if raw is None:
+            for entry in defaults:
+                _append(assets, entry)
+        elif isinstance(raw, str):
+            _append(assets, raw)
+        elif isinstance(raw, Iterable):
+            for entry in raw:
+                _append(assets, entry)
+        else:  # pragma: no cover - ochrona przed nietypową konfiguracją
+            for entry in defaults:
+                _append(assets, entry)
+        return tuple(assets)
+
+    # ----------------------------------------------------------------------------------
+    # HTTP helpers
+    # ----------------------------------------------------------------------------------
     def _public_request(
         self,
         path: str,
@@ -191,7 +229,6 @@ class BinanceSpotAdapter(ExchangeAdapter):
         headers = dict(_DEFAULT_HEADERS)
         headers["X-MBX-APIKEY"] = self._credentials.key_id
 
-        data: Optional[bytes]
         if method in {"POST", "PUT"}:
             headers["Content-Type"] = "application/x-www-form-urlencoded"
             data = signed_query.encode("utf-8")
@@ -199,7 +236,6 @@ class BinanceSpotAdapter(ExchangeAdapter):
         else:
             separator = "?" if "?" not in url else "&"
             request = Request(f"{url}{separator}{signed_query}", headers=headers, method=method)
-            data = None
 
         return self._execute_request(request)
 
@@ -222,9 +258,11 @@ class BinanceSpotAdapter(ExchangeAdapter):
             raise RuntimeError("Niepoprawna odpowiedź JSON od API Binance") from exc
         return data
 
+    # ----------------------------------------------------------------------------------
+    # ExchangeAdapter API
+    # ----------------------------------------------------------------------------------
     def configure_network(self, *, ip_allowlist: Optional[Sequence[str]] = None) -> None:
         """Zachowuje konfigurację allowlisty, aby risk engine mógł ją audytować."""
-
         if ip_allowlist is None:
             self._ip_allowlist = ()
         else:
@@ -233,7 +271,6 @@ class BinanceSpotAdapter(ExchangeAdapter):
 
     def fetch_account_snapshot(self) -> AccountSnapshot:
         """Pobiera podstawowe dane o stanie rachunku do oceny limitów ryzyka."""
-
         if not ({"read", "trade"} & self._permission_set):
             raise PermissionError("Poświadczenia nie pozwalają na odczyt danych konta Binance.")
 
@@ -267,8 +304,8 @@ class BinanceSpotAdapter(ExchangeAdapter):
                 if isinstance(symbol, str):
                     prices[symbol] = price
 
-        valuation_currency = "USDT"
-        secondary_currencies = ("USDX",)
+        valuation_currency = self._valuation_asset
+        secondary_currencies = self._secondary_valuation_assets or ("USDX",)
         total_equity = 0.0
         available_margin = 0.0
         for asset, total_balance in balances.items():
@@ -301,7 +338,6 @@ class BinanceSpotAdapter(ExchangeAdapter):
 
     def fetch_symbols(self) -> Iterable[str]:
         """Pobiera listę aktywnych symboli spot z Binance."""
-
         payload = self._public_request("/api/v3/exchangeInfo")
         if not isinstance(payload, dict) or "symbols" not in payload:
             raise RuntimeError("Niepoprawna odpowiedź exchangeInfo z Binance")
@@ -330,7 +366,6 @@ class BinanceSpotAdapter(ExchangeAdapter):
         limit: Optional[int] = None,
     ) -> Sequence[Sequence[float]]:
         """Pobiera świece OHLCV w formacie zgodnym z modułem danych."""
-
         params: dict[str, object] = {"symbol": symbol, "interval": interval}
         if start is not None:
             params["startTime"] = int(start)
@@ -358,7 +393,6 @@ class BinanceSpotAdapter(ExchangeAdapter):
 
     def place_order(self, request: OrderRequest) -> OrderResult:
         """Składa podpisane zlecenie typu limit/market na rynku spot."""
-
         if "trade" not in self._permission_set:
             raise PermissionError("Aktualne poświadczenia nie mają uprawnień tradingowych.")
 
@@ -406,8 +440,6 @@ class BinanceSpotAdapter(ExchangeAdapter):
             response_map = dict(response)
             if response_map.get("status") in {"CANCELED", "PENDING_CANCEL"}:
                 return
-        # Jeśli API zwróciło błąd, `urlopen` podniesie wyjątek HTTPError; jeśli odpowiedź jest dziwna,
-        # sygnalizujemy to wyjątkiem, aby egzekucja mogła przejść w tryb bezpieczny.
             raise RuntimeError(f"Nieoczekiwana odpowiedź anulowania z Binance: {response_map}")
         raise RuntimeError("Niepoprawna odpowiedź anulowania z Binance")
 
