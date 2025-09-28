@@ -262,7 +262,7 @@ class ZondaSpotAdapter(ExchangeAdapter):
         self,
         path: str,
         *,
-        params: Optional[Mapping[str, object]] = None,
+        params: Mapping[str, object] | None = None,
         method: str = "GET",
     ) -> dict[str, object] | list[object]:
         query = f"?{urlencode(params or {})}" if params else ""
@@ -274,8 +274,8 @@ class ZondaSpotAdapter(ExchangeAdapter):
         method: str,
         path: str,
         *,
-        params: Optional[Mapping[str, object]] = None,
-        data: Optional[Mapping[str, object]] = None,
+        params: Mapping[str, object] | None = None,
+        data: Mapping[str, object] | None = None,
     ) -> dict[str, object] | list[object]:
         if not self._credentials.secret:
             raise RuntimeError("Poświadczenia Zonda wymagają secret do podpisywania żądań prywatnych.")
@@ -299,7 +299,7 @@ class ZondaSpotAdapter(ExchangeAdapter):
         )
 
         query = f"?{urlencode(params)}" if params else ""
-        data_bytes: Optional[bytes] = None
+        data_bytes: bytes | None = None
         if body:
             data_bytes = body.encode("utf-8")
             headers["Content-Type"] = "application/json"
