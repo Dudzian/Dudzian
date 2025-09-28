@@ -2,15 +2,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Mapping, Optional, Protocol, Sequence
+from typing import Iterable, Mapping, MutableMapping, Optional, Protocol, Sequence
 
 import pytest
 
 from bot_core.alerts import DefaultAlertRouter
 from bot_core.alerts.audit import InMemoryAlertAuditLog
 from bot_core.alerts.base import AlertChannel, AlertMessage
+from bot_core.data.base import CacheStorage, DataSource, OHLCVRequest, OHLCVResponse
+from bot_core.data.ohlcv.cache import CachedOHLCVSource
 from bot_core.execution.base import ExecutionContext
-from bot_core.execution.paper import PaperTradingExecutionService
+from bot_core.execution.paper import MarketMetadata, PaperTradingExecutionService
 from bot_core.exchanges.base import (
     AccountSnapshot,
     Environment,
@@ -20,6 +22,7 @@ from bot_core.exchanges.base import (
     OrderResult,
 )
 from bot_core.runtime import build_daily_trend_pipeline, create_trading_controller
+from bot_core.runtime.pipeline import _build_account_loader
 from bot_core.security import SecretManager, SecretStorage
 from bot_core.strategies import StrategySignal
 from bot_core.strategies.daily_trend import DailyTrendMomentumStrategy
@@ -37,6 +40,45 @@ class _InMemorySecretStorage(SecretStorage):
 
     def delete_secret(self, key: str) -> None:
         self._store.pop(key, None)
+
+
+class _MemoryCacheStorage(CacheStorage):
+    def __init__(self) -> None:
+        self._payloads: dict[str, Mapping[str, Sequence[Sequence[float]]]] = {}
+        self._metadata: dict[str, str] = {}
+
+    def read(self, key: str) -> Mapping[str, Sequence[Sequence[float]]]:
+        if key not in self._payloads:
+            raise KeyError(key)
+        return self._payloads[key]
+
+    def write(self, key: str, payload: Mapping[str, Sequence[Sequence[float]]]) -> None:
+        rows = [tuple(row) for row in payload.get("rows", ())]
+        columns = tuple(payload.get("columns", ()))
+        self._payloads[key] = {"columns": columns, "rows": rows}
+
+    def metadata(self) -> MutableMapping[str, str]:
+        return self._metadata
+
+    def latest_timestamp(self, key: str) -> float | None:
+        payload = self._payloads.get(key)
+        if not payload:
+            raise KeyError(key)
+        rows = payload.get("rows", ())
+        if not rows:
+            return None
+        return float(rows[-1][0])
+
+
+class _NoopSource(DataSource):
+    def fetch_ohlcv(self, request: OHLCVRequest) -> OHLCVResponse:  # noqa: D401, ARG002
+        return OHLCVResponse(
+            columns=("open_time", "open", "high", "low", "close", "volume"),
+            rows=(),
+        )
+
+    def warm_cache(self, symbols: Iterable[str], intervals: Iterable[str]) -> None:  # noqa: D401, ARG002
+        return None
 
 
 @dataclass(slots=True)
@@ -229,6 +271,13 @@ def test_build_daily_trend_pipeline(pipeline_fixture: tuple[Path, FakeExchangeAd
     balances = pipeline.execution_service.balances()
     assert balances["USDT"] == 10_000.0
 
+    data_root = config_path.parent / "data"
+    parquet_root = data_root / "ohlcv_parquet" / "fake_exchange"
+    manifest_path = data_root / "ohlcv_manifest.sqlite"
+    assert manifest_path.exists()
+    parquet_files = list(parquet_root.rglob("data.parquet"))
+    assert parquet_files, "Backfill pipeline powinien zapisać dane OHLCV w Parquet"
+
 
 def test_create_trading_controller_executes_signal(
     pipeline_fixture: tuple[Path, FakeExchangeAdapter, SecretManager]
@@ -403,7 +452,11 @@ def test_account_loader_handles_multi_currency_and_shorts(tmp_path: Path) -> Non
         + execution_service._balances["EUR"] * eur_to_usdt  # type: ignore[attr-defined]
     )
     assert snapshot.total_equity == pytest.approx(expected_initial, rel=1e-4)
-    assert snapshot.available_margin == pytest.approx(execution_service._balances["USDT"])  # type: ignore[attr-defined]
+    expected_margin = (
+        execution_service._balances["USDT"]  # type: ignore[attr-defined]
+        + execution_service._balances["EUR"] * eur_to_usdt  # type: ignore[attr-defined]
+    )
+    assert snapshot.available_margin == pytest.approx(expected_margin, rel=1e-4)
 
     context = ExecutionContext(
         portfolio_id="test",
@@ -430,4 +483,49 @@ def test_account_loader_handles_multi_currency_and_shorts(tmp_path: Path) -> Non
         - candles_eth_usdt[-1][4] * short_state.quantity
     )
     assert snapshot_after.total_equity == pytest.approx(expected_after, rel=1e-4)
-    assert snapshot_after.available_margin == pytest.approx(usdt_after)
+    available_after = usdt_after + execution_service._balances["EUR"] * eur_to_usdt  # type: ignore[attr-defined]
+    assert snapshot_after.available_margin == pytest.approx(available_after, rel=1e-4)
+
+
+def test_build_account_loader_converts_additional_cash_assets() -> None:
+    storage = _MemoryCacheStorage()
+    source = CachedOHLCVSource(storage=storage, upstream=_NoopSource())
+
+    rows_usdt = [[1_600_000_000_000.0, 20_000.0, 20_000.0, 20_000.0, 20_000.0, 10.0]]
+    rows_eur = [[1_600_000_000_000.0, 18_000.0, 18_000.0, 18_000.0, 18_000.0, 8.0]]
+    storage.write(
+        "BTCUSDT::1d",
+        {"columns": ("open_time", "open", "high", "low", "close", "volume"), "rows": rows_usdt},
+    )
+    storage.write(
+        "BTCEUR::1d",
+        {"columns": ("open_time", "open", "high", "low", "close", "volume"), "rows": rows_eur},
+    )
+
+    markets = {
+        "BTCUSDT": MarketMetadata(base_asset="BTC", quote_asset="USDT"),
+        "BTCEUR": MarketMetadata(base_asset="BTC", quote_asset="EUR"),
+    }
+    execution = PaperTradingExecutionService(
+        markets,
+        initial_balances={"USDT": 500.0, "EUR": 1_000.0},
+        maker_fee=0.0,
+        taker_fee=0.0,
+        slippage_bps=0.0,
+    )
+
+    loader = _build_account_loader(
+        execution_service=execution,
+        data_source=source,
+        markets=markets,
+        interval="1d",
+        valuation_asset="USDT",
+        cash_assets={"USDT", "EUR"},
+    )
+
+    snapshot = loader()
+    eur_to_usdt = rows_usdt[0][4] / rows_eur[0][4]
+    expected_margin = 500.0 + 1_000.0 * eur_to_usdt
+    assert snapshot.available_margin == pytest.approx(expected_margin, rel=1e-6)
+    expected_equity = expected_margin
+    assert snapshot.total_equity == pytest.approx(expected_equity, rel=1e-6)

@@ -28,6 +28,17 @@ class AlertAuditConfig:
     fsync: bool = False
 
 
+@dataclass(slots=True)
+class DecisionJournalConfig:
+    """Konfiguracja dziennika decyzji tradingowych."""
+
+    backend: str
+    directory: str | None = None
+    filename_pattern: str = "decisions-%Y%m%d.jsonl"
+    retention_days: int | None = 730
+    fsync: bool = False
+
+
 # --- Środowiska / rdzeń ------------------------------------------------------
 
 @dataclass(slots=True)
@@ -47,6 +58,7 @@ class EnvironmentConfig:
     adapter_settings: Mapping[str, Any] = field(default_factory=dict)
     alert_throttle: AlertThrottleConfig | None = None
     alert_audit: AlertAuditConfig | None = None
+    decision_journal: DecisionJournalConfig | None = None
 
 
 @dataclass(slots=True)
