@@ -34,7 +34,12 @@ from bot_core.config.models import (
     TelegramChannelSettings,
     WhatsAppChannelSettings,
 )
-from bot_core.exchanges.base import Environment, ExchangeAdapter, ExchangeAdapterFactory, ExchangeCredentials
+from bot_core.exchanges.base import (
+    Environment,
+    ExchangeAdapter,
+    ExchangeAdapterFactory,
+    ExchangeCredentials,
+)
 from bot_core.exchanges.binance import BinanceFuturesAdapter, BinanceSpotAdapter
 from bot_core.exchanges.kraken import KrakenFuturesAdapter, KrakenSpotAdapter
 from bot_core.exchanges.zonda import ZondaSpotAdapter
@@ -164,8 +169,10 @@ def _build_alert_channels(
     environment: EnvironmentConfig,
     secret_manager: SecretManager,
 ) -> tuple[Mapping[str, AlertChannel], DefaultAlertRouter, AlertAuditLog]:
-    audit_config = environment.alert_audit
-    if audit_config and audit_config.backend == "file":
+    """Tworzy i rejestruje kanały alertów + router + backend audytu."""
+    # audit_log: InMemory (domyślnie) albo FileAlertAuditLog, jeśli skonfigurowano alert_audit
+    audit_config = getattr(environment, "alert_audit", None)
+    if audit_config and getattr(audit_config, "backend", "memory") == "file":
         directory = Path(audit_config.directory) if audit_config.directory else Path("alerts")
         if not directory.is_absolute():
             base = Path(environment.data_cache_path)
@@ -178,6 +185,8 @@ def _build_alert_channels(
         )
     else:
         audit_log = InMemoryAlertAuditLog()
+
+    # throttle (opcjonalny)
     throttle_cfg = getattr(environment, "alert_throttle", None)
     throttle: AlertThrottle | None = None
     if throttle_cfg is not None:

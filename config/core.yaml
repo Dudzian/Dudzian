@@ -1,3 +1,4 @@
+# config/core.yaml
 # Konfiguracja bazowa etapu 1 – wartości placeholder do dalszego dostosowania.
 
 risk_profiles:
@@ -38,7 +39,7 @@ runtime:
   controllers:
     daily_trend_core:
       tick_seconds: 86400
-      interval: 1d
+      interval: "1d"
 
 strategies:
   core_daily_trend:
@@ -71,9 +72,9 @@ instrument_universes:
           kraken_futures: pi_xbtusd
           zonda_spot: BTC-USDT
         backfill:
-          - interval: 1d
+          - interval: "1d"
             lookback_days: 3650
-          - interval: 1h
+          - interval: "1h"
             lookback_days: 1095
       ETH_USDT:
         base_asset: ETH
@@ -86,9 +87,9 @@ instrument_universes:
           kraken_futures: pi_ethusd
           zonda_spot: ETH-USDT
         backfill:
-          - interval: 1d
+          - interval: "1d"
             lookback_days: 3650
-          - interval: 1h
+          - interval: "1h"
             lookback_days: 1095
       BTC_EUR:
         base_asset: BTC
@@ -100,9 +101,9 @@ instrument_universes:
           kraken_futures: pi_xbteur
           zonda_spot: BTC-EUR
         backfill:
-          - interval: 1d
+          - interval: "1d"
             lookback_days: 3650
-          - interval: 1h
+          - interval: "1h"
             lookback_days: 730
       ETH_EUR:
         base_asset: ETH
@@ -114,9 +115,9 @@ instrument_universes:
           kraken_futures: pi_etheur
           zonda_spot: ETH-EUR
         backfill:
-          - interval: 1d
+          - interval: "1d"
             lookback_days: 3650
-          - interval: 1h
+          - interval: "1h"
             lookback_days: 730
       SOL_USDT:
         base_asset: SOL
@@ -127,9 +128,9 @@ instrument_universes:
           binance_futures: SOLUSDT
           kraken_spot: SOLUSDT
         backfill:
-          - interval: 1d
+          - interval: "1d"
             lookback_days: 1825
-          - interval: 1h
+          - interval: "1h"
             lookback_days: 730
       BNB_USDT:
         base_asset: BNB
@@ -139,9 +140,9 @@ instrument_universes:
           binance_spot: BNBUSDT
           binance_futures: BNBUSDT
         backfill:
-          - interval: 1d
+          - interval: "1d"
             lookback_days: 1825
-          - interval: 1h
+          - interval: "1h"
             lookback_days: 730
       XRP_USDT:
         base_asset: XRP
@@ -151,9 +152,9 @@ instrument_universes:
           binance_spot: XRPUSDT
           kraken_spot: XRPUSDT
         backfill:
-          - interval: 1d
+          - interval: "1d"
             lookback_days: 1825
-          - interval: 1h
+          - interval: "1h"
             lookback_days: 730
       ADA_USDT:
         base_asset: ADA
@@ -164,9 +165,9 @@ instrument_universes:
           binance_futures: ADAUSDT
           kraken_spot: ADAUSDT
         backfill:
-          - interval: 1d
+          - interval: "1d"
             lookback_days: 1825
-          - interval: 1h
+          - interval: "1h"
             lookback_days: 730
       LTC_USDT:
         base_asset: LTC
@@ -177,9 +178,9 @@ instrument_universes:
           binance_futures: LTCUSDT
           kraken_spot: LTCUSDT
         backfill:
-          - interval: 1d
+          - interval: "1d"
             lookback_days: 1825
-          - interval: 1h
+          - interval: "1h"
             lookback_days: 730
       MATIC_USDT:
         base_asset: MATIC
@@ -190,9 +191,9 @@ instrument_universes:
           binance_futures: MATICUSDT
           kraken_spot: MATICUSDT
         backfill:
-          - interval: 1d
+          - interval: "1d"
             lookback_days: 1825
-          - interval: 1h
+          - interval: "1h"
             lookback_days: 730
       BTC_PLN:
         base_asset: BTC
@@ -201,7 +202,7 @@ instrument_universes:
         exchanges:
           zonda_spot: BTC-PLN
         backfill:
-          - interval: 1d
+          - interval: "1d"
             lookback_days: 3650
       ETH_PLN:
         base_asset: ETH
@@ -210,7 +211,7 @@ instrument_universes:
         exchanges:
           zonda_spot: ETH-PLN
         backfill:
-          - interval: 1d
+          - interval: "1d"
             lookback_days: 3650
 
 environments:

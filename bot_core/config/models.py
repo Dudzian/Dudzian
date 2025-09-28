@@ -7,6 +7,29 @@ from typing import Any, Mapping, Sequence
 from bot_core.exchanges.base import Environment
 
 
+# --- Alerty / audyt ----------------------------------------------------------
+
+@dataclass(slots=True)
+class AlertThrottleConfig:
+    """Parametry okna tłumienia powtarzających się alertów."""
+    window_seconds: float
+    exclude_severities: Sequence[str] = field(default_factory=tuple)
+    exclude_categories: Sequence[str] = field(default_factory=tuple)
+    max_entries: int = 2048
+
+
+@dataclass(slots=True)
+class AlertAuditConfig:
+    """Konfiguracja repozytorium audytowego alertów."""
+    backend: str
+    directory: str | None = None
+    filename_pattern: str = "alerts-%Y%m%d.jsonl"
+    retention_days: int | None = 730
+    fsync: bool = False
+
+
+# --- Środowiska / rdzeń ------------------------------------------------------
+
 @dataclass(slots=True)
 class EnvironmentConfig:
     """Konfiguracja środowiska (np. live, paper, testnet)."""
@@ -22,14 +45,13 @@ class EnvironmentConfig:
     credential_purpose: str = "trading"
     instrument_universe: str | None = None
     adapter_settings: Mapping[str, Any] = field(default_factory=dict)
-    alert_throttle: "AlertThrottleConfig | None" = None
-    alert_audit: "AlertAuditConfig | None" = None
+    alert_throttle: AlertThrottleConfig | None = None
+    alert_audit: AlertAuditConfig | None = None
 
 
 @dataclass(slots=True)
 class RiskProfileConfig:
     """Parametry wykorzystywane do inicjalizacji profili ryzyka."""
-
     name: str
     max_daily_loss_pct: float
     max_position_pct: float
@@ -40,10 +62,11 @@ class RiskProfileConfig:
     hard_drawdown_pct: float
 
 
+# --- Instrumenty / uniwersa --------------------------------------------------
+
 @dataclass(slots=True)
 class InstrumentBackfillWindow:
     """Definicja zakresu danych historycznych dla danego interwału."""
-
     interval: str
     lookback_days: int
 
@@ -51,7 +74,6 @@ class InstrumentBackfillWindow:
 @dataclass(slots=True)
 class InstrumentConfig:
     """Opis pojedynczego instrumentu w uniwersum."""
-
     name: str
     base_asset: str
     quote_asset: str
@@ -63,16 +85,16 @@ class InstrumentConfig:
 @dataclass(slots=True)
 class InstrumentUniverseConfig:
     """Zbiór instrumentów przypisany do środowisk."""
-
     name: str
     description: str
     instruments: Sequence[InstrumentConfig]
 
 
+# --- Strategie ----------------------------------------------------------------
+
 @dataclass(slots=True)
 class DailyTrendMomentumStrategyConfig:
     """Konfiguracja strategii trend/momentum."""
-
     name: str
     fast_ma: int
     slow_ma: int
@@ -84,10 +106,11 @@ class DailyTrendMomentumStrategyConfig:
     min_momentum: float
 
 
+# --- Kanały alertów -----------------------------------------------------------
+
 @dataclass(slots=True)
 class SMSProviderSettings:
     """Definicja lokalnego dostawcy SMS z konfiguracji."""
-
     name: str
     provider_key: str
     api_base_url: str
@@ -101,7 +124,6 @@ class SMSProviderSettings:
 @dataclass(slots=True)
 class TelegramChannelSettings:
     """Konfiguracja kanału Telegram."""
-
     name: str
     chat_id: str
     token_secret: str
@@ -111,7 +133,6 @@ class TelegramChannelSettings:
 @dataclass(slots=True)
 class EmailChannelSettings:
     """Konfiguracja kanału e-mail."""
-
     name: str
     host: str
     port: int
@@ -124,7 +145,6 @@ class EmailChannelSettings:
 @dataclass(slots=True)
 class SignalChannelSettings:
     """Konfiguracja kanału Signal opartego o usługę signal-cli."""
-
     name: str
     service_url: str
     sender_number: str
@@ -136,7 +156,6 @@ class SignalChannelSettings:
 @dataclass(slots=True)
 class WhatsAppChannelSettings:
     """Konfiguracja kanału WhatsApp wykorzystującego Graph API."""
-
     name: str
     phone_number_id: str
     recipients: Sequence[str]
@@ -148,7 +167,6 @@ class WhatsAppChannelSettings:
 @dataclass(slots=True)
 class MessengerChannelSettings:
     """Konfiguracja kanału Facebook Messenger."""
-
     name: str
     page_id: str
     recipients: Sequence[str]
@@ -157,10 +175,11 @@ class MessengerChannelSettings:
     api_version: str = "v16.0"
 
 
+# --- Runtime ------------------------------------------------------------------
+
 @dataclass(slots=True)
 class ControllerRuntimeConfig:
     """Parametry sterujące cyklem pracy kontrolerów runtime."""
-
     tick_seconds: float
     interval: str
 
@@ -168,7 +187,6 @@ class ControllerRuntimeConfig:
 @dataclass(slots=True)
 class CoreConfig:
     """Najwyższego poziomu konfiguracja aplikacji."""
-
     environments: Mapping[str, EnvironmentConfig]
     risk_profiles: Mapping[str, RiskProfileConfig]
     instrument_universes: Mapping[str, InstrumentUniverseConfig]
@@ -181,27 +199,6 @@ class CoreConfig:
     whatsapp_channels: Mapping[str, WhatsAppChannelSettings]
     messenger_channels: Mapping[str, MessengerChannelSettings]
     runtime_controllers: Mapping[str, ControllerRuntimeConfig] = field(default_factory=dict)
-
-
-@dataclass(slots=True)
-class AlertThrottleConfig:
-    """Parametry okna tłumienia powtarzających się alertów."""
-
-    window_seconds: float
-    exclude_severities: Sequence[str] = field(default_factory=tuple)
-    exclude_categories: Sequence[str] = field(default_factory=tuple)
-    max_entries: int = 2048
-
-
-@dataclass(slots=True)
-class AlertAuditConfig:
-    """Konfiguracja repozytorium audytowego alertów."""
-
-    backend: str
-    directory: str | None = None
-    filename_pattern: str = "alerts-%Y%m%d.jsonl"
-    retention_days: int | None = 730
-    fsync: bool = False
 
 
 __all__ = [

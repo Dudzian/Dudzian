@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import List
 from datetime import datetime, timedelta, timezone
 from urllib import request
-
 import sys
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
@@ -183,7 +182,7 @@ def test_telegram_channel_sends_payload(sample_message: AlertMessage) -> None:
 
     def opener(req: request.Request, *, timeout: float):  # noqa: ANN001
         captured["request"] = req
-        return _FakeHTTPResponse(200, b"{\"ok\": true}")
+        return _FakeHTTPResponse(200, b'{"ok": true}')
 
     channel = TelegramChannel(bot_token="token", chat_id="chat", _opener=opener)
     channel.send(sample_message)
