@@ -78,6 +78,11 @@ oraz zakresem uprawnień. Struktura przygotowuje grunt pod rozdzielenie kluczy `
 w Windows Credential Manager/macOS Keychain/Linux keyring (`keychain_key` w konfiguracji). Metoda
 `configure_network` umożliwi egzekwowanie IP allowlist.
 
+Sekcja środowisk w `core.yaml` została rozszerzona o pole `adapter_settings`, dzięki któremu możemy
+przekazywać parametry specyficzne dla danej giełdy bez łamania ogólnego kontraktu adapterów. Przykład:
+`kraken_live` korzysta z `valuation_asset: ZEUR`, co powoduje, że `KrakenSpotAdapter` raportuje kapitał
+w walucie referencyjnej EUR zgodnie z wymaganiami risk engine'u i raportowania P&L.
+
 ## Dane rynkowe
 
 `PublicAPIDataSource` zostanie połączony z adapterami do pobierania danych OHLCV z publicznych API.
@@ -130,6 +135,12 @@ przyszłości Signal/WhatsApp/Messenger). Implementacja `DefaultAlertRouter` obs
 kontynuuje wysyłkę pomimo błędów pojedynczych kanałów i zwraca migawkę `health_check` do monitoringu SLO.
 Adaptery kanałów posiadają zabezpieczenia (timeouty, logowanie błędów, walidację odpowiedzi API) oraz
 formatowanie wiadomości z kontekstem ryzyka i znacznikami czasu UTC.
+
+Nowy mechanizm throttlingu pozwala dodatkowo ograniczyć powtarzalne alerty informacyjne: dla każdego
+środowiska w `core.yaml` można zdefiniować długość okna, wykluczone kategorie lub poziomy `severity`
+oraz limit bufora. Router zapisuje wstrzymane komunikaty w audycie (`channel="__suppressed__"`),
+dzięki czemu zachowujemy pełną ścieżkę zgodności i możemy analizować historię incydentów bez zalewania
+powiadomień produkcyjnych.
 
 ## Kolejne kroki implementacyjne
 

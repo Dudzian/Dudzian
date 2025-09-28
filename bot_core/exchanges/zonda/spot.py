@@ -89,10 +89,16 @@ class _OrderPayload:
 class ZondaSpotAdapter(ExchangeAdapter):
     """Adapter REST obsługujący podstawowe operacje tradingowe Zonda."""
 
-    __slots__ = ("_environment", "_base_url", "_ip_allowlist", "_permission_set")
+    __slots__ = ("_environment", "_base_url", "_ip_allowlist", "_permission_set", "_settings")
     name: str = "zonda_spot"
 
-    def __init__(self, credentials: ExchangeCredentials, *, environment: Environment | None = None) -> None:
+    def __init__(
+        self,
+        credentials: ExchangeCredentials,
+        *,
+        environment: Environment | None = None,
+        settings: Mapping[str, object] | None = None,
+    ) -> None:
         super().__init__(credentials)
         self._environment = environment or credentials.environment
         try:
@@ -101,6 +107,7 @@ class ZondaSpotAdapter(ExchangeAdapter):
             raise ValueError(f"Nieobsługiwane środowisko Zonda: {self._environment}") from exc
         self._ip_allowlist: tuple[str, ...] = ()
         self._permission_set = frozenset(perm.lower() for perm in credentials.permissions)
+        self._settings = dict(settings or {})
 
     # --- HTTP ----------------------------------------------------------------
 

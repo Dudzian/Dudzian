@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
-from typing import Mapping, MutableMapping, Sequence
+from typing import Any, Mapping, MutableMapping, Sequence
 
 from bot_core.alerts import (
+    AlertThrottle,
     DefaultAlertRouter,
     EmailChannel,
     InMemoryAlertAuditLog,
@@ -60,6 +62,7 @@ class BootstrapContext:
     alert_router: DefaultAlertRouter
     alert_channels: Mapping[str, AlertChannel]
     audit_log: InMemoryAlertAuditLog
+    adapter_settings: Mapping[str, Any]
 
 
 def bootstrap_environment(
@@ -99,7 +102,13 @@ def bootstrap_environment(
     factories = dict(_DEFAULT_ADAPTERS)
     if adapter_factories:
         factories.update(adapter_factories)
-    adapter = _instantiate_adapter(environment.exchange, credentials, factories, environment.environment)
+    adapter = _instantiate_adapter(
+        environment.exchange,
+        credentials,
+        factories,
+        environment.environment,
+        settings=environment.adapter_settings,
+    )
     adapter.configure_network(ip_allowlist=environment.ip_allowlist or None)
 
     alert_channels, alert_router, audit_log = _build_alert_channels(
@@ -117,6 +126,7 @@ def bootstrap_environment(
         alert_router=alert_router,
         alert_channels=alert_channels,
         audit_log=audit_log,
+        adapter_settings=environment.adapter_settings,
     )
 
 
@@ -125,11 +135,15 @@ def _instantiate_adapter(
     credentials: ExchangeCredentials,
     factories: Mapping[str, ExchangeAdapterFactory],
     environment: Environment,
+    *,
+    settings: Mapping[str, Any] | None = None,
 ) -> ExchangeAdapter:
     try:
         factory = factories[exchange_name]
     except KeyError as exc:
         raise KeyError(f"Brak fabryki adaptera dla giełdy '{exchange_name}'") from exc
+    if settings:
+        return factory(credentials, environment=environment, settings=settings)
     return factory(credentials, environment=environment)
 
 
@@ -150,7 +164,17 @@ def _build_alert_channels(
     secret_manager: SecretManager,
 ) -> tuple[Mapping[str, AlertChannel], DefaultAlertRouter, InMemoryAlertAuditLog]:
     audit_log = InMemoryAlertAuditLog()
-    router = DefaultAlertRouter(audit_log=audit_log)
+    throttle_cfg = getattr(environment, "alert_throttle", None)
+    throttle: AlertThrottle | None = None
+    if throttle_cfg is not None:
+        throttle = AlertThrottle(
+            window=timedelta(seconds=float(throttle_cfg.window_seconds)),
+            exclude_severities=frozenset(throttle_cfg.exclude_severities),
+            exclude_categories=frozenset(throttle_cfg.exclude_categories),
+            max_entries=int(throttle_cfg.max_entries),
+        )
+
+    router = DefaultAlertRouter(audit_log=audit_log, throttle=throttle)
     channels: MutableMapping[str, AlertChannel] = {}
 
     for entry in environment.alert_channels:
