@@ -7,6 +7,10 @@ from datetime import datetime, timezone
 from typing import Dict, MutableSequence
 
 from bot_core.alerts.base import AlertChannel, AlertMessage, AlertRouter, AlertAuditLog, AlertDeliveryError
+from bot_core.alerts.throttle import AlertThrottle
+
+
+_SUPPRESSED_CHANNEL = "__suppressed__"
 
 
 @dataclass(slots=True)
@@ -17,6 +21,7 @@ class DefaultAlertRouter(AlertRouter):
     logger: logging.Logger = field(default_factory=lambda: logging.getLogger("bot_core.alerts"))
     stop_on_error: bool = False
     channels: MutableSequence[AlertChannel] = field(default_factory=list)
+    throttle: AlertThrottle | None = None
 
     def register(self, channel: AlertChannel) -> None:
         if any(existing.name == channel.name for existing in self.channels):
@@ -24,7 +29,19 @@ class DefaultAlertRouter(AlertRouter):
         self.channels.append(channel)
 
     def dispatch(self, message: AlertMessage) -> None:
+        if self.throttle and not self.throttle.allow(message):
+            remaining = self.throttle.remaining_seconds(message)
+            self.logger.info(
+                "Tłumię powtarzający się alert %s/%s – kolejne wyślemy za %.1fs.",
+                message.category,
+                message.title,
+                remaining,
+            )
+            self.audit_log.append(message, channel=_SUPPRESSED_CHANNEL)
+            return
+
         failures: Dict[str, str] = {}
+        delivered = False
         for channel in list(self.channels):
             try:
                 channel.send(message)
@@ -41,10 +58,14 @@ class DefaultAlertRouter(AlertRouter):
                     raise AlertDeliveryError(error_msg) from exc
             else:
                 self.audit_log.append(message, channel=channel.name)
+                delivered = True
 
         if failures and not self.stop_on_error:
             summary = ", ".join(f"{name}: {reason}" for name, reason in failures.items())
             self.logger.warning("Część kanałów zgłosiła błędy: %s", summary)
+
+        if delivered and self.throttle:
+            self.throttle.record(message)
 
     def health_snapshot(self) -> Dict[str, Dict[str, str]]:
         snapshot: Dict[str, Dict[str, str]] = {}

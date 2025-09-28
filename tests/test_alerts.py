@@ -6,6 +6,8 @@ import json
 from email.message import EmailMessage
 from pathlib import Path
 from typing import List
+import logging
+from datetime import datetime, timedelta, timezone
 from urllib import request
 
 import sys
@@ -15,6 +17,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 import pytest
 
 from bot_core.alerts import (
+    AlertThrottle,
     AlertDeliveryError,
     AlertMessage,
     DefaultAlertRouter,
@@ -113,6 +116,17 @@ class _FakeHTTPResponse:
         return None
 
 
+class _MutableClock:
+    def __init__(self, *, start: datetime | None = None) -> None:
+        self._now = start or datetime(2024, 1, 1, tzinfo=timezone.utc)
+
+    def __call__(self) -> datetime:
+        return self._now
+
+    def advance(self, seconds: float) -> None:
+        self._now += timedelta(seconds=seconds)
+
+
 def test_telegram_channel_sends_payload(sample_message: AlertMessage) -> None:
     captured: dict[str, request.Request] = {}
 
@@ -186,6 +200,40 @@ def test_email_channel_builds_message(sample_message: AlertMessage) -> None:
     assert email["Subject"] == "[CRITICAL] Limit ryzyka osiągnięty"
     assert "Dzienne straty" in email.get_content()
     assert channel.health_check()["status"] == "ok"
+
+
+def test_router_throttles_repeated_alerts(sample_message: AlertMessage, caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO)
+    clock = _MutableClock()
+    throttle = AlertThrottle(
+        window=timedelta(seconds=120),
+        clock=clock,
+        exclude_severities=frozenset(),
+        exclude_categories=frozenset(),
+        max_entries=16,
+    )
+    audit = InMemoryAlertAuditLog()
+    router = DefaultAlertRouter(audit_log=audit, throttle=throttle)
+    channel = DummyChannel()
+    router.register(channel)
+
+    router.dispatch(sample_message)
+    assert len(channel.messages) == 1
+    exported = tuple(audit.export())
+    assert exported[-1]["channel"] == "dummy"
+
+    router.dispatch(sample_message)
+    assert len(channel.messages) == 1  # throttled
+    exported = tuple(audit.export())
+    assert exported[-1]["channel"] == "__suppressed__"
+    assert throttle.remaining_seconds(sample_message) > 0
+    assert any("Tłumię powtarzający się alert" in record.message for record in caplog.records)
+
+    clock.advance(180)
+    router.dispatch(sample_message)
+    assert len(channel.messages) == 2
+    exported = tuple(audit.export())
+    assert exported[-1]["channel"] == "dummy"
 
 
 def test_sms_channel_sends_to_all_recipients(sample_message: AlertMessage) -> None:

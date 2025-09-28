@@ -70,6 +70,7 @@ class BinanceFuturesAdapter(ExchangeAdapter):
         credentials: ExchangeCredentials,
         *,
         environment: Environment | None = None,
+        settings: Mapping[str, object] | None = None,
     ) -> None:
         super().__init__(credentials)
         self._environment = environment or credentials.environment
@@ -77,6 +78,7 @@ class BinanceFuturesAdapter(ExchangeAdapter):
         self._trading_base = _determine_trading_base(self._environment)
         self._permission_set = frozenset(perm.lower() for perm in self._credentials.permissions)
         self._ip_allowlist: tuple[str, ...] = ()
+        self._settings = dict(settings or {})
 
     def configure_network(self, *, ip_allowlist: Optional[Sequence[str]] = None) -> None:
         if ip_allowlist is None:
