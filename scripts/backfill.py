@@ -61,7 +61,9 @@ def _build_public_source(exchange: str, environment: Environment) -> PublicAPIDa
             exchange_adapter=BinanceSpotAdapter(ExchangeCredentials(key_id="public", environment=env))
         ),
         "binance_futures": lambda env: PublicAPIDataSource(
-            exchange_adapter=BinanceFuturesAdapter(ExchangeCredentials(key_id="public", environment=env), environment=env)
+            exchange_adapter=BinanceFuturesAdapter(
+                ExchangeCredentials(key_id="public", environment=env), environment=env
+            )
         ),
         "kraken_spot": lambda env: PublicAPIDataSource(
             exchange_adapter=KrakenSpotAdapter(ExchangeCredentials(key_id="public", environment=env), environment=env)

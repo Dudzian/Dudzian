@@ -50,7 +50,6 @@ class OrderRequest:
     price: Optional[float] = None
     time_in_force: Optional[str] = None
     client_order_id: Optional[str] = None
-    metadata: Mapping[str, object] | None = None
 
     # Dodatkowe, opcjonalne rozszerzenia:
     stop_price: Optional[float] = None   # np. stop/stop-limit

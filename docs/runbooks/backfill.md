@@ -79,3 +79,21 @@ Każdy przebieg backfillu zapisuje ponadto wpisy audytowe luk do pliku
 ostatni znany znacznik czasu, liczba świec oraz status (`ok`, `warning`,
 `incident`, `sms_escalated`). Plik jest w formacie JSONL i można go trzymać w
 retencji ≥24 miesięcy na potrzeby audytu operacyjnego.
+
+### Raportowanie luk z pliku audytu
+
+Do szybkiej inspekcji bieżącego stanu luk służy skrypt
+`scripts/gap_audit_report.py`, który wczytuje plik JSONL i agreguje wpisy po
+symbolu/interwale. Podstawowe użycie:
+
+```bash
+python scripts/gap_audit_report.py \
+  data/cache/audit/binance_paper_ohlcv_gaps.jsonl \
+  --environment binance_paper \
+  --since-hours 24
+```
+
+Wynik zawiera tabelę z ostatnim statusem, wielkością luki (minuty), liczbą
+wierszy w cache oraz liczbą ostrzeżeń/incydentów/SMS w zadanym oknie
+czasowym (domyślnie 24 h). Parametr `--window-hours` pozwala zmienić szerokość
+tego okna do własnych potrzeb operacyjnych.

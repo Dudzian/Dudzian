@@ -198,8 +198,8 @@ def _build_risk_profile(config: RiskProfileConfig) -> RiskProfile:
 
     profile_class = _PROFILE_CLASS_BY_NAME.get(profile_key)
     if profile_class is not None:
-        # Te klasy mają sensowne ustawienia domyślne;
-        # jeżeli potrzebujesz parametryzacji – użyj profilu "manual".
+        # Predefiniowane profile mają sensowne domyślne parametry.
+        # Jeśli potrzebujesz parametryzacji — użyj profilu "manual".
         return profile_class()
 
     # Fallback: parametry z konfiguracji jako profil "manual"
