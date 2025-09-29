@@ -153,7 +153,7 @@ def test_gap_tracker_escalates_sms_and_recovers() -> None:
     base_time = datetime(2024, 1, 1, tzinfo=timezone.utc)
     clock_times = [
         base_time,                              # warn #1
-        base_time + timedelta(minutes=2),       # warn #2 (throttled window not passed)
+        base_time + timedelta(minutes=2),       # warn #2 (wciąż w throttlingu)
         base_time + timedelta(minutes=4),       # warn #3 -> incident open
         base_time + timedelta(minutes=20),      # SMS escalate (>15m)
         base_time + timedelta(minutes=40),      # recovery

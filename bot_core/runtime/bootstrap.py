@@ -293,7 +293,7 @@ def _build_decision_journal(environment: EnvironmentConfig) -> TradingDecisionJo
         return InMemoryTradingDecisionJournal()
     if backend == "file":
         directory = Path(config.directory) if config.directory else Path("decisions")
-        if not directory is None and not directory.is_absolute():
+        if not directory.is_absolute():
             base = Path(environment.data_cache_path)
             directory = base / directory
         return JsonlTradingDecisionJournal(

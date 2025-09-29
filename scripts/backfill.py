@@ -48,6 +48,13 @@ _DEFAULT_REFRESH_SECONDS: Mapping[str, int] = {
     "15m": 5 * 60,
 }
 
+# Opcjonalny jitter (sekundy) – aby rozproszyć starty zadań w czasie
+_DEFAULT_JITTER_SECONDS: Mapping[str, int] = {
+    "1d": 15 * 60,
+    "1h": 2 * 60,
+    "15m": 45,
+}
+
 
 @dataclass(slots=True)
 class _IntervalPlan:
@@ -56,6 +63,7 @@ class _IntervalPlan:
     incremental_lookback_ms: int
     # 0 => użyj wartości przekazanej z CLI (--refresh-seconds)
     refresh_seconds: int
+    jitter_seconds: int = 0
 
 
 def _build_public_source(exchange: str, environment: Environment) -> PublicAPIDataSource:
@@ -113,22 +121,16 @@ def _build_interval_plans(
     universe: InstrumentUniverseConfig,
     exchange_name: str,
     incremental_lookback_days: int,
-    interval_refresh_overrides: Mapping[str, int] | None = None,
+    refresh_overrides: Mapping[str, int] | None = None,
+    jitter_overrides: Mapping[str, int] | None = None,
 ) -> tuple[dict[str, _IntervalPlan], set[str]]:
-    # przefiltruj override’y do dodatnich intów
-    overrides: dict[str, int] = {}
-    if interval_refresh_overrides:
-        for interval, value in interval_refresh_overrides.items():
-            try:
-                seconds = int(value)
-            except (TypeError, ValueError):
-                continue
-            if seconds > 0:
-                overrides[interval] = seconds
-
     plans: dict[str, _IntervalPlan] = {}
     symbols: set[str] = set()
     now_ms = _utc_now_ms()
+
+    # przefiltruj override’y do dodatnich intów
+    refresh_cfg = {k: int(v) for k, v in (refresh_overrides or {}).items() if isinstance(v, (int, float)) and int(v) > 0}
+    jitter_cfg = {k: max(0, int(v)) for k, v in (jitter_overrides or {}).items() if isinstance(v, (int, float)) and int(v) >= 0}
 
     for instrument in universe.instruments:
         symbol = instrument.exchange_symbols.get(exchange_name)
@@ -140,12 +142,14 @@ def _build_interval_plans(
             start = now_ms - window.lookback_days * _MILLISECONDS_IN_DAY
             plan = plans.get(window.interval)
             if plan is None:
-                refresh_seconds = overrides.get(window.interval, _DEFAULT_REFRESH_SECONDS.get(window.interval, 0))
+                refresh_seconds = refresh_cfg.get(window.interval, _DEFAULT_REFRESH_SECONDS.get(window.interval, 0))
+                jitter_seconds = jitter_cfg.get(window.interval, _DEFAULT_JITTER_SECONDS.get(window.interval, 0))
                 plan = _IntervalPlan(
                     symbols=set(),
                     backfill_start_ms=start,
                     incremental_lookback_ms=0,
                     refresh_seconds=refresh_seconds,
+                    jitter_seconds=jitter_seconds,
                 )
                 plans[window.interval] = plan
             plan.symbols.add(symbol)
@@ -154,6 +158,57 @@ def _build_interval_plans(
             plan.incremental_lookback_ms = max(plan.incremental_lookback_ms, effective_days * _MILLISECONDS_IN_DAY)
 
     return plans, symbols
+
+
+def _format_plan_summary(
+    plans: Mapping[str, _IntervalPlan],
+    *,
+    exchange_name: str,
+    environment_name: str,
+) -> str:
+    """Buduje czytelną reprezentację planu backfillu dla trybu plan-only."""
+    if not plans:
+        return (
+            f"Plan backfillu dla środowiska {environment_name} (exchange={exchange_name}):\n"
+            "Brak interwałów do synchronizacji."
+        )
+
+    all_symbols: list[str] = sorted({symbol for plan in plans.values() for symbol in plan.symbols})
+    preview = ", ".join(all_symbols[:10])
+    if len(all_symbols) > 10:
+        preview += f" … (+{len(all_symbols) - 10})"
+
+    lines = [
+        f"Plan backfillu dla środowiska {environment_name} (exchange={exchange_name}):",
+        f"- symbole w uniwersum: {len(all_symbols)} -> {preview or '-'}",
+    ]
+
+    for interval, plan in sorted(plans.items(), key=lambda item: item[0]):
+        start_dt = datetime.fromtimestamp(max(0, plan.backfill_start_ms) / 1000, tz=timezone.utc)
+        if plan.incremental_lookback_ms <= 0:
+            lookback_desc = "domyślny 1.0d"
+        else:
+            lookback_days = plan.incremental_lookback_ms / _MILLISECONDS_IN_DAY
+            lookback_desc = f"{lookback_days:.1f}d"
+
+        refresh_desc = f"{plan.refresh_seconds}s" if plan.refresh_seconds else "dziedziczy (--refresh-seconds)"
+        jitter_desc = f"{plan.jitter_seconds}s" if plan.jitter_seconds else "0s"
+
+        symbols_sorted = sorted(plan.symbols)
+        sample = ", ".join(symbols_sorted[:5])
+        if len(symbols_sorted) > 5:
+            sample += f" … (+{len(symbols_sorted) - 5})"
+
+        lines.append(
+            "- "
+            + (
+                f"{interval}: symbole={len(symbols_sorted)}, backfill_od={start_dt.isoformat()}, "
+                f"inkrementalny_lookback={lookback_desc}, refresh={refresh_desc}, jitter={jitter_desc}, "
+                f"przykłady=[{sample or '-'}]"
+            )
+        )
+
+    return "\n".join(lines)
 
 
 def _extract_gap_policy(environment: EnvironmentConfig) -> GapAlertPolicy:
@@ -360,6 +415,11 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         help="Wykonaj tylko pełny backfill i zakończ (bez harmonogramu)",
     )
     parser.add_argument(
+        "--plan-only",
+        action="store_true",
+        help="Wypisz plan backfillu i zakończ bez pobierania danych",
+    )
+    parser.add_argument(
         "--enable-alerts",
         action="store_true",
         help="Aktywuj wysyłkę alertów o lukach danych (wymaga skonfigurowanych sekretów)",
@@ -427,13 +487,15 @@ async def _run_scheduler(
             interval=interval,
             lookback_ms=plan.incremental_lookback_ms or (_MILLISECONDS_IN_DAY * 1),
             frequency_seconds=frequency,
+            jitter_seconds=plan.jitter_seconds,
             name=f"{interval}:{len(plan.symbols)}",
         )
         _LOGGER.debug(
-            "Zarejestrowano zadanie interval=%s, refresh_seconds=%s, lookback_ms=%s",
+            "Zarejestrowano zadanie interval=%s, refresh_seconds=%s, lookback_ms=%s, jitter_seconds=%s",
             interval,
             frequency,
             plan.incremental_lookback_ms,
+            plan.jitter_seconds,
         )
 
     _LOGGER.info(
@@ -459,24 +521,38 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     universe = _resolve_universe(config, environment)
 
-    # odczyt override’ów częstotliwości z adapter_settings (opcjonalnie)
-    adapter_settings = getattr(environment, "adapter_settings", {}) or {}
-    raw_interval_overrides = (
-        adapter_settings.get("ohlcv_refresh_seconds")  # nowe pole
-        or adapter_settings.get("ohlcv_refresh_overrides")  # wsteczna kompatybilność
-    )
-    interval_refresh_overrides: Mapping[str, int] | None = None
-    if isinstance(raw_interval_overrides, Mapping):
-        interval_refresh_overrides = raw_interval_overrides
+    # odczyt override’ów częstotliwości i jittera z adapter_settings (opcjonalnie)
+    refresh_overrides: Mapping[str, int] = {}
+    jitter_overrides: Mapping[str, int] = {}
+    if isinstance(environment.adapter_settings, Mapping):
+        raw_refresh = (
+            environment.adapter_settings.get("ohlcv_refresh_seconds")
+            or environment.adapter_settings.get("ohlcv_refresh_overrides")
+        )
+        if isinstance(raw_refresh, Mapping):
+            refresh_overrides = raw_refresh
+        raw_jitter = environment.adapter_settings.get("ohlcv_refresh_jitter")
+        if isinstance(raw_jitter, Mapping):
+            jitter_overrides = raw_jitter
 
     plans, symbols = _build_interval_plans(
         universe=universe,
         exchange_name=environment.exchange,
         incremental_lookback_days=max(1, args.incremental_lookback_days),
-        interval_refresh_overrides=interval_refresh_overrides,
+        refresh_overrides=refresh_overrides,
+        jitter_overrides=jitter_overrides,
     )
     if not plans:
         _LOGGER.warning("Brak instrumentów z zakresem backfill dla giełdy %s", environment.exchange)
+        return 0
+
+    if args.plan_only:
+        summary = _format_plan_summary(
+            plans,
+            exchange_name=environment.exchange,
+            environment_name=environment.name,
+        )
+        print(summary)
         return 0
 
     cache_root = Path(environment.data_cache_path)

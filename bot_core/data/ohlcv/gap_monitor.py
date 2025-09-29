@@ -54,7 +54,8 @@ class GapAlertPolicy:
     incident_threshold_count: int = 5
     incident_window_minutes: int = 10
     sms_escalation_minutes: int = 15
-    warning_throttle_minutes: int = 5  # minimalny odstęp pomiędzy kolejnymi alertami warning
+    # minimalny odstęp pomiędzy kolejnymi alertami warning
+    warning_throttle_minutes: int = 5
 
     def warning_threshold_minutes(self, interval: str) -> int:
         minutes = self.warning_gap_minutes.get(interval)
@@ -160,9 +161,7 @@ class DataGapIncidentTracker:
                 self._emit_alert(
                     severity="critical",
                     title=f"Brak danych OHLCV {symbol} {interval}",
-                    body=(
-                        "Manifest nie posiada wpisu last_timestamp – należy zweryfikować pipeline backfillu."
-                    ),
+                    body=("Manifest nie posiada wpisu last_timestamp – należy zweryfikować pipeline backfillu."),
                     context={
                         "environment": self.environment_name,
                         "exchange": self.exchange,
@@ -233,9 +232,7 @@ class DataGapIncidentTracker:
                     self._emit_alert(
                         severity="info",
                         title=f"Incydent zamknięty – luka danych {symbol} {interval}",
-                        body=(
-                            "Dane OHLCV zostały uzupełnione. Zamykam incydent i resetuję licznik ostrzeżeń."
-                        ),
+                        body=("Dane OHLCV zostały uzupełnione. Zamykam incydent i resetuję licznik ostrzeżeń."),
                         context={
                             "environment": self.environment_name,
                             "exchange": self.exchange,
@@ -364,9 +361,7 @@ class DataGapIncidentTracker:
             self._emit_alert(
                 severity="warning",
                 title=f"Luka danych {symbol} {interval}",
-                body=(
-                    "Brak świec OHLCV od ponad wyznaczonego progu. Monitoruję dalsze próby synchronizacji."
-                ),
+                body=("Brak świec OHLCV od ponad wyznaczonego progu. Monitoruję dalsze próby synchronizacji."),
                 context={**context, "warnings_in_window": str(warn_count)},
             )
             self._log_audit(

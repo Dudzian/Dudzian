@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable, Sequence
@@ -27,6 +28,19 @@ class _RefreshJob:
     interval: str
     lookback_ms: int
     frequency_seconds: int
+    jitter_seconds: int = 0
+
+
+def _compute_sleep_seconds(frequency_seconds: int, jitter_seconds: int) -> float:
+    """Zwraca czas oczekiwania pomiędzy cyklami z losową wariacją."""
+
+    base = max(1.0, float(frequency_seconds))
+    if jitter_seconds <= 0:
+        return base
+
+    jitter = random.uniform(-jitter_seconds, jitter_seconds)
+    candidate = base + jitter
+    return max(1.0, candidate)
 
 
 class OHLCVRefreshScheduler:
@@ -53,6 +67,7 @@ class OHLCVRefreshScheduler:
         interval: str,
         lookback_ms: int,
         frequency_seconds: int,
+        jitter_seconds: int = 0,
         name: str | None = None,
     ) -> None:
         """Rejestruje zadanie odświeżania danych w tle."""
@@ -63,6 +78,8 @@ class OHLCVRefreshScheduler:
             raise ValueError("lookback_ms musi być dodatni")
         if frequency_seconds <= 0:
             raise ValueError("frequency_seconds musi być dodatni")
+        if jitter_seconds < 0:
+            raise ValueError("jitter_seconds nie może być ujemny")
 
         job_name = name or f"{interval}:{','.join(sorted(symbols))}"
         job = _RefreshJob(
@@ -71,6 +88,7 @@ class OHLCVRefreshScheduler:
             interval=interval,
             lookback_ms=lookback_ms,
             frequency_seconds=frequency_seconds,
+            jitter_seconds=jitter_seconds,
         )
         self._jobs.append(job)
         _LOGGER.debug(
@@ -148,9 +166,10 @@ class OHLCVRefreshScheduler:
                 _LOGGER.exception("Błąd podczas odświeżania danych dla zadania %s", job.name)
 
             try:
+                sleep_seconds = _compute_sleep_seconds(job.frequency_seconds, job.jitter_seconds)
                 await asyncio.wait_for(
                     self._stop_event.wait(),
-                    timeout=job.frequency_seconds,
+                    timeout=sleep_seconds,
                 )
             except asyncio.TimeoutError:
                 continue

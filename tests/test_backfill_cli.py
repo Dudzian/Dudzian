@@ -61,6 +61,7 @@ def test_build_interval_plans_assigns_refresh_seconds_and_lookbacks():
                 backfill_windows=(
                     InstrumentBackfillWindow(interval="1d", lookback_days=365),
                     InstrumentBackfillWindow(interval="1h", lookback_days=30),
+                    InstrumentBackfillWindow(interval="15m", lookback_days=5),
                 ),
             ),
         ),
@@ -70,15 +71,54 @@ def test_build_interval_plans_assigns_refresh_seconds_and_lookbacks():
         universe=universe,
         exchange_name="binance_spot",
         incremental_lookback_days=7,
-        interval_refresh_overrides={"1h": 120},
+        refresh_overrides={"1h": 120, "15m": 60},
+        jitter_overrides={"1d": 900, "15m": 30},
     )
 
     assert symbols == {"BTCUSDT"}
+
     assert plans["1d"].refresh_seconds == backfill._DEFAULT_REFRESH_SECONDS["1d"]
     assert plans["1d"].incremental_lookback_ms == 7 * backfill._MILLISECONDS_IN_DAY
+    assert plans["1d"].jitter_seconds == backfill._DEFAULT_JITTER_SECONDS["1d"]
 
     assert plans["1h"].refresh_seconds == 120
     assert plans["1h"].incremental_lookback_ms == 7 * backfill._MILLISECONDS_IN_DAY
+    assert plans["1h"].jitter_seconds == backfill._DEFAULT_JITTER_SECONDS["1h"]
+
+    assert plans["15m"].refresh_seconds == 60
+    assert plans["15m"].incremental_lookback_ms == 5 * backfill._MILLISECONDS_IN_DAY
+    assert plans["15m"].jitter_seconds == 30
+
+
+def test_format_plan_summary_lists_intervals_and_symbols():
+    plans = {
+        "1d": backfill._IntervalPlan(
+            symbols={"BTCUSDT", "ETHUSDT"},
+            backfill_start_ms=1_600_000_000_000,
+            incremental_lookback_ms=3 * backfill._MILLISECONDS_IN_DAY,
+            refresh_seconds=backfill._DEFAULT_REFRESH_SECONDS["1d"],
+            jitter_seconds=backfill._DEFAULT_JITTER_SECONDS["1d"],
+        ),
+        "1h": backfill._IntervalPlan(
+            symbols={"BTCUSDT"},
+            backfill_start_ms=1_600_100_000_000,
+            incremental_lookback_ms=0,
+            refresh_seconds=0,  # dziedziczy z CLI
+            jitter_seconds=0,
+        ),
+    }
+
+    summary = backfill._format_plan_summary(
+        plans,
+        exchange_name="binance_spot",
+        environment_name="binance_paper",
+    )
+
+    assert "Plan backfillu" in summary
+    assert "symbole=2" in summary
+    assert "1d" in summary and "1h" in summary
+    assert "dziedziczy (--refresh-seconds)" in summary
+    assert "jitter=0s" in summary
 
 
 class _DummyScheduler:
@@ -104,12 +144,14 @@ def test_run_scheduler_uses_interval_specific_frequency():
             backfill_start_ms=0,
             incremental_lookback_ms=backfill._MILLISECONDS_IN_DAY,
             refresh_seconds=backfill._DEFAULT_REFRESH_SECONDS["1d"],
+            jitter_seconds=backfill._DEFAULT_JITTER_SECONDS["1d"],
         ),
         "1h": backfill._IntervalPlan(
             symbols={"ETHUSDT"},
             backfill_start_ms=0,
             incremental_lookback_ms=3 * backfill._MILLISECONDS_IN_DAY,
             refresh_seconds=900,
+            jitter_seconds=0,
         ),
     }
 
@@ -129,9 +171,11 @@ def test_run_scheduler_uses_interval_specific_frequency():
 
     assert job_daily["frequency_seconds"] == backfill._DEFAULT_REFRESH_SECONDS["1d"]
     assert job_daily["lookback_ms"] == backfill._MILLISECONDS_IN_DAY
+    assert job_daily["jitter_seconds"] == backfill._DEFAULT_JITTER_SECONDS["1d"]
 
     assert job_hourly["frequency_seconds"] == 900
     assert job_hourly["lookback_ms"] == 3 * backfill._MILLISECONDS_IN_DAY
+    assert job_hourly["jitter_seconds"] == 0
 
 
 # --------------------- manifest health tests ---------------------
@@ -251,3 +295,21 @@ def test_report_manifest_health_emits_critical_for_missing_metadata(tmp_path):
     message = router.messages[0]
     assert message.severity == "critical"
     assert "ETHUSDT" in message.body
+
+
+def test_main_plan_only_outputs_summary_and_skips_execution(monkeypatch, capsys):
+    def _fail(*_args, **_kwargs):
+        raise AssertionError("Nie powinno być wywołane w trybie plan-only")
+
+    # W trybie plan-only nie powinno instancjować źródła/uprawnień
+    monkeypatch.setattr(backfill, "_build_public_source", _fail)
+    monkeypatch.setattr(backfill, "create_default_secret_storage", _fail)
+
+    exit_code = backfill.main(
+        ["--environment", "binance_paper", "--plan-only", "--log-level", "ERROR"]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "Plan backfillu" in captured.out
