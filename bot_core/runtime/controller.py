@@ -873,9 +873,13 @@ class DailyTrendController:
         order_type = str(metadata.get("order_type", "market"))
         time_in_force = metadata.get("time_in_force")
         client_order_id = metadata.get("client_order_id")
+        stop_price_raw = metadata.get("stop_price")
+        atr_raw = metadata.get("atr")
 
         tif_str = str(time_in_force) if time_in_force is not None else None
         client_id_str = str(client_order_id) if client_order_id is not None else None
+        stop_price = float(stop_price_raw) if stop_price_raw is not None else None
+        atr = float(atr_raw) if atr_raw is not None else None
 
         return OrderRequest(
             symbol=snapshot.symbol,
@@ -885,6 +889,8 @@ class DailyTrendController:
             price=price,
             time_in_force=tif_str,
             client_order_id=client_id_str,
+            stop_price=stop_price,
+            atr=atr,
         )
 
     def _to_snapshots(

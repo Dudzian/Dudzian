@@ -19,22 +19,9 @@ from bot_core.risk.profiles.conservative import ConservativeProfile
 @pytest.fixture()
 def btc_daily_atr_series() -> list[float]:
     """Wycinek 14-dniowego ATR BTC/USDT z kwietnia 2024 (dzienny interwał)."""
-
     return [
-        727.61,
-        715.42,
-        708.33,
-        699.12,
-        684.55,
-        672.48,
-        665.91,
-        659.77,
-        648.35,
-        640.28,
-        633.14,
-        629.77,
-        624.83,
-        618.44,
+        727.61, 715.42, 708.33, 699.12, 684.55, 672.48, 665.91,
+        659.77, 648.35, 640.28, 633.14, 629.77, 624.83, 618.44,
     ]
 
 
@@ -87,19 +74,15 @@ def test_risk_engine_accepts_atr_informed_order(btc_daily_atr_series: list[float
     )
 
     quantity = _recommended_quantity(profile=profile, atr=atr, equity=equity, price=price, risk_pct=0.012)
-    stop_price = price - atr * profile.stop_loss_atr_multiple()
+
     order = OrderRequest(
         symbol="BTCUSDT",
         side="buy",
         quantity=quantity,
         order_type="market",
         price=price,
-        metadata={
-            "atr": atr,
-            "stop_price": stop_price,
-            "quantity": quantity,
-            "price": price,
-        },
+        stop_price=price - atr * profile.stop_loss_atr_multiple(),
+        atr=atr,
     )
 
     check = engine.apply_pre_trade_checks(order, account=account, profile_name=profile.name)
@@ -112,12 +95,8 @@ def test_risk_engine_accepts_atr_informed_order(btc_daily_atr_series: list[float
         quantity=oversized_quantity,
         order_type="market",
         price=price,
-        metadata={
-            "atr": atr,
-            "stop_price": stop_price,
-            "quantity": oversized_quantity,
-            "price": price,
-        },
+        stop_price=price - atr * profile.stop_loss_atr_multiple(),
+        atr=atr,
     )
 
     denial = engine.apply_pre_trade_checks(oversized_order, account=account, profile_name=profile.name)
