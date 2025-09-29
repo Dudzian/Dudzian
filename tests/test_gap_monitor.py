@@ -1,4 +1,5 @@
-from datetime import datetime, timedelta, timezone
+from __future__ import annotations
+
 from datetime import datetime, timedelta, timezone
 
 from bot_core.alerts import AlertMessage
@@ -119,11 +120,11 @@ def test_gap_tracker_escalates_sms_and_recovers() -> None:
     audit = DummyAuditLogger()
     base_time = datetime(2024, 1, 1, tzinfo=timezone.utc)
     clock_times = [
-        base_time,
-        base_time + timedelta(minutes=2),
-        base_time + timedelta(minutes=4),
-        base_time + timedelta(minutes=20),
-        base_time + timedelta(minutes=40),
+        base_time,                              # warn #1
+        base_time + timedelta(minutes=2),       # warn #2
+        base_time + timedelta(minutes=4),       # warn #3 -> incident open
+        base_time + timedelta(minutes=20),      # SMS escalate (>15m)
+        base_time + timedelta(minutes=40),      # recovery
     ]
 
     def clock() -> datetime:
@@ -150,6 +151,7 @@ def test_gap_tracker_escalates_sms_and_recovers() -> None:
         audit_logger=audit,
     )
 
+    # 3 ostrzeżenia -> incydent
     for _ in range(3):
         tracker.handle_summaries(
             interval="15m",
@@ -157,12 +159,14 @@ def test_gap_tracker_escalates_sms_and_recovers() -> None:
             as_of_ms=now_ms,
         )
 
+    # Upływ czasu aż do eskalacji SMS
     tracker.handle_summaries(
         interval="15m",
         summaries=[_summary("SOLUSDT", "15m", now_ms)],
         as_of_ms=now_ms,
     )
 
+    # Odzyskanie – zaktualizowany last_timestamp
     metadata["last_timestamp::SOLUSDT::15m"] = str(now_ms)
     tracker.handle_summaries(
         interval="15m",
@@ -199,4 +203,3 @@ def test_gap_tracker_audit_records_missing_metadata() -> None:
 
     assert router.messages[-1].severity == "critical"
     assert audit.records[-1].status == "missing_metadata"
-

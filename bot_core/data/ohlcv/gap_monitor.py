@@ -151,9 +151,9 @@ class DataGapIncidentTracker:
             row_count_raw = metadata.get(row_count_key)
 
             if last_ts_raw is None:
+                # brak danych – traktujemy jak incydent krytyczny
                 event_time = self.clock()
                 row_count = _safe_int(row_count_raw)
-                # brak danych – traktujemy jak incydent krytyczny
                 self._emit_alert(
                     severity="critical",
                     title=f"Brak danych OHLCV {symbol} {interval}",
@@ -343,7 +343,7 @@ class DataGapIncidentTracker:
                 )
                 continue
 
-            # Ostrzeżenie Telegram – pojedynczy alert o dłuższej luce
+            # Ostrzeżenie – pojedynczy alert o dłuższej luce
             self._emit_alert(
                 severity="warning",
                 title=f"Luka danych {symbol} {interval}",
@@ -383,4 +383,3 @@ class DataGapIncidentTracker:
 
 
 __all__ = ["GapAlertPolicy", "DataGapIncidentTracker"]
-

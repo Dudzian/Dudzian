@@ -45,12 +45,12 @@ class GapAuditRecord:
     @classmethod
     def from_dict(cls, payload: Mapping[str, object]) -> "GapAuditRecord":
         """Buduje wpis audytowy z danych JSON (np. z pliku JSONL)."""
-
         raw_timestamp = payload.get("timestamp")
         if not isinstance(raw_timestamp, str):
             raise ValueError("Pole 'timestamp' musi być tekstem w formacie ISO 8601")
 
         timestamp = datetime.fromisoformat(raw_timestamp)
+        # Wyrównanie do UTC, jeśli brak strefy czasowej
         if timestamp.tzinfo is None:
             timestamp = timestamp.replace(tzinfo=timezone.utc)
 
@@ -79,9 +79,7 @@ class GapAuditRecord:
         status = str(payload.get("status", ""))
 
         last_timestamp_raw = payload.get("last_timestamp")
-        last_timestamp = None
-        if last_timestamp_raw is not None:
-            last_timestamp = str(last_timestamp_raw)
+        last_timestamp = None if last_timestamp_raw is None else str(last_timestamp_raw)
 
         warnings_in_window = payload.get("warnings_in_window")
         warnings_value = None
@@ -108,7 +106,6 @@ class GapAuditRecord:
     @classmethod
     def from_json(cls, line: str) -> "GapAuditRecord":
         """Buduje wpis audytowy na podstawie pojedynczego wiersza JSONL."""
-
         try:
             payload = json.loads(line)
         except json.JSONDecodeError as exc:  # pragma: no cover - walidacja wejścia
@@ -143,4 +140,3 @@ class JSONLGapAuditLogger:
 
 
 __all__ = ["GapAuditRecord", "GapAuditLogger", "JSONLGapAuditLogger"]
-
