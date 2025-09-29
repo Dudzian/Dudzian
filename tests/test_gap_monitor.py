@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 from datetime import datetime, timedelta, timezone
 
 from bot_core.alerts import AlertMessage
+from bot_core.data.ohlcv.audit import GapAuditRecord
 from bot_core.data.ohlcv.backfill import BackfillSummary
 from bot_core.data.ohlcv.gap_monitor import DataGapIncidentTracker, GapAlertPolicy
 
@@ -11,6 +14,14 @@ class DummyRouter:
 
     def dispatch(self, message: AlertMessage) -> None:
         self.messages.append(message)
+
+
+class DummyAuditLogger:
+    def __init__(self) -> None:
+        self.records: list[GapAuditRecord] = []
+
+    def log(self, record: GapAuditRecord) -> None:
+        self.records.append(record)
 
 
 def _summary(symbol: str, interval: str, end: int) -> BackfillSummary:
@@ -26,6 +37,7 @@ def _summary(symbol: str, interval: str, end: int) -> BackfillSummary:
 
 def test_gap_tracker_sends_warning_on_threshold_exceeded() -> None:
     router = DummyRouter()
+    audit = DummyAuditLogger()
     now_ms = int(datetime(2024, 1, 1, tzinfo=timezone.utc).timestamp() * 1000)
     metadata = {
         "last_timestamp::BTCUSDT::1h": str(now_ms - 90 * 60_000),
@@ -39,6 +51,7 @@ def test_gap_tracker_sends_warning_on_threshold_exceeded() -> None:
         environment_name="test-env",
         exchange="binance_spot",
         clock=lambda: datetime(2024, 1, 1, tzinfo=timezone.utc),
+        audit_logger=audit,
     )
 
     tracker.handle_summaries(interval="1h", summaries=[_summary("BTCUSDT", "1h", now_ms)], as_of_ms=now_ms)
@@ -49,9 +62,16 @@ def test_gap_tracker_sends_warning_on_threshold_exceeded() -> None:
     assert message.context["symbol"] == "BTCUSDT"
     assert message.context["interval"] == "1h"
 
+    assert len(audit.records) == 1
+    record = audit.records[0]
+    assert record.status == "warning"
+    assert record.symbol == "BTCUSDT"
+    assert record.interval == "1h"
+
 
 def test_gap_tracker_opens_incident_after_repeated_warnings() -> None:
     router = DummyRouter()
+    audit = DummyAuditLogger()
     base_time = datetime(2024, 1, 1, tzinfo=timezone.utc)
     times = [base_time + timedelta(minutes=idx) for idx in range(3)]
 
@@ -76,6 +96,7 @@ def test_gap_tracker_opens_incident_after_repeated_warnings() -> None:
         environment_name="test-env",
         exchange="binance_spot",
         clock=clock,
+        audit_logger=audit,
     )
 
     for _ in range(3):
@@ -89,16 +110,21 @@ def test_gap_tracker_opens_incident_after_repeated_warnings() -> None:
     assert router.messages[-1].severity == "critical"
     assert "INCIDENT" in router.messages[-1].title
 
+    statuses = [record.status for record in audit.records]
+    assert statuses.count("warning") == 2
+    assert statuses[-1] == "incident"
+
 
 def test_gap_tracker_escalates_sms_and_recovers() -> None:
     router = DummyRouter()
+    audit = DummyAuditLogger()
     base_time = datetime(2024, 1, 1, tzinfo=timezone.utc)
     clock_times = [
-        base_time,
-        base_time + timedelta(minutes=2),
-        base_time + timedelta(minutes=4),
-        base_time + timedelta(minutes=20),
-        base_time + timedelta(minutes=40),
+        base_time,                              # warn #1
+        base_time + timedelta(minutes=2),       # warn #2
+        base_time + timedelta(minutes=4),       # warn #3 -> incident open
+        base_time + timedelta(minutes=20),      # SMS escalate (>15m)
+        base_time + timedelta(minutes=40),      # recovery
     ]
 
     def clock() -> datetime:
@@ -122,8 +148,10 @@ def test_gap_tracker_escalates_sms_and_recovers() -> None:
         environment_name="test-env",
         exchange="binance_spot",
         clock=clock,
+        audit_logger=audit,
     )
 
+    # 3 ostrzeżenia -> incydent
     for _ in range(3):
         tracker.handle_summaries(
             interval="15m",
@@ -131,12 +159,14 @@ def test_gap_tracker_escalates_sms_and_recovers() -> None:
             as_of_ms=now_ms,
         )
 
+    # Upływ czasu aż do eskalacji SMS
     tracker.handle_summaries(
         interval="15m",
         summaries=[_summary("SOLUSDT", "15m", now_ms)],
         as_of_ms=now_ms,
     )
 
+    # Odzyskanie – zaktualizowany last_timestamp
     metadata["last_timestamp::SOLUSDT::15m"] = str(now_ms)
     tracker.handle_summaries(
         interval="15m",
@@ -148,3 +178,28 @@ def test_gap_tracker_escalates_sms_and_recovers() -> None:
     assert router.messages[-1].severity == "info"
     assert "Incydent zamknięty" in router.messages[-1].title
 
+    statuses = [record.status for record in audit.records]
+    assert "sms_escalated" in statuses
+    assert statuses[-1] == "ok"
+
+
+def test_gap_tracker_audit_records_missing_metadata() -> None:
+    router = DummyRouter()
+    audit = DummyAuditLogger()
+    now_ms = int(datetime(2024, 1, 1, tzinfo=timezone.utc).timestamp() * 1000)
+    metadata: dict[str, str] = {"row_count::BTCPLN::1h": "42"}
+    policy = GapAlertPolicy(warning_gap_minutes={})
+    tracker = DataGapIncidentTracker(
+        router=router,
+        metadata_provider=lambda: metadata,
+        policy=policy,
+        environment_name="paper",
+        exchange="zonda_spot",
+        clock=lambda: datetime(2024, 1, 1, tzinfo=timezone.utc),
+        audit_logger=audit,
+    )
+
+    tracker.handle_summaries(interval="1h", summaries=[_summary("BTCPLN", "1h", now_ms)], as_of_ms=now_ms)
+
+    assert router.messages[-1].severity == "critical"
+    assert audit.records[-1].status == "missing_metadata"

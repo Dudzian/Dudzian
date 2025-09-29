@@ -15,7 +15,6 @@ from bot_core.exchanges.base import (
     Environment,
     ExchangeCredentials,
     OrderRequest,
-    OrderResult,
 )
 from bot_core.risk.engine import ThresholdRiskEngine
 from bot_core.risk.repository import FileRiskRepository

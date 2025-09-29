@@ -73,3 +73,9 @@ Domyślne progi bazują na dwukrotności długości interwału i są bezpieczne 
 środowiska demo/paper. Kanały alertowe (Telegram/e-mail/SMS) konfigurowane są
 tak jak dla runtime – wymagają obecności sekretów w natywnym keychainie lub
 zaszyfrowanym magazynie.
+
+Każdy przebieg backfillu zapisuje ponadto wpisy audytowe luk do pliku
+`<data_cache_path>/audit/<environment>_ohlcv_gaps.jsonl`, gdzie utrwalane są
+ostatni znany znacznik czasu, liczba świec oraz status (`ok`, `warning`,
+`incident`, `sms_escalated`). Plik jest w formacie JSONL i można go trzymać w
+retencji ≥24 miesięcy na potrzeby audytu operacyjnego.

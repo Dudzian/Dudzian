@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Callable, Mapping, MutableMapping, Sequence
 
 from bot_core.alerts import AlertMessage, AlertRouter
+from bot_core.data.ohlcv.audit import GapAuditLogger, GapAuditRecord
 
 _MILLISECONDS_IN_MINUTE = 60_000
 
@@ -36,6 +37,13 @@ def _interval_to_minutes(interval: str) -> int:
         return mapping[interval]
     except KeyError as exc:  # pragma: no cover - walidacja configu na starcie
         raise ValueError(f"Nieobsługiwany interwał: {interval}") from exc
+
+
+def _safe_int(value: object | None) -> int | None:
+    try:
+        return int(float(value))
+    except (TypeError, ValueError, OverflowError):
+        return None
 
 
 @dataclass(slots=True)
@@ -85,8 +93,42 @@ class DataGapIncidentTracker:
     environment_name: str
     exchange: str
     clock: Callable[[], datetime] = _utc_now
+    audit_logger: GapAuditLogger | None = None
 
     _states: dict[tuple[str, str], _GapState] = field(default_factory=dict, init=False, repr=False)
+
+    def _log_audit(
+        self,
+        *,
+        symbol: str,
+        interval: str,
+        status: str,
+        gap_minutes: float | None,
+        row_count: int | None,
+        last_timestamp_iso: str | None,
+        warnings_in_window: int | None,
+        incident_minutes: float | None,
+        event_time: datetime,
+    ) -> None:
+        if not self.audit_logger:
+            return
+        record = GapAuditRecord(
+            timestamp=event_time,
+            environment=self.environment_name,
+            exchange=self.exchange,
+            symbol=symbol,
+            interval=interval,
+            status=status,
+            gap_minutes=gap_minutes,
+            row_count=row_count,
+            last_timestamp=last_timestamp_iso,
+            warnings_in_window=warnings_in_window,
+            incident_minutes=incident_minutes,
+        )
+        try:
+            self.audit_logger.log(record)
+        except Exception:  # pragma: no cover - logowanie nie może zatrzymać pipeline'u
+            pass
 
     def handle_summaries(
         self,
@@ -110,6 +152,8 @@ class DataGapIncidentTracker:
 
             if last_ts_raw is None:
                 # brak danych – traktujemy jak incydent krytyczny
+                event_time = self.clock()
+                row_count = _safe_int(row_count_raw)
                 self._emit_alert(
                     severity="critical",
                     title=f"Brak danych OHLCV {symbol} {interval}",
@@ -124,11 +168,24 @@ class DataGapIncidentTracker:
                         "row_count": str(row_count_raw or "0"),
                     },
                 )
+                self._log_audit(
+                    symbol=symbol,
+                    interval=interval,
+                    status="missing_metadata",
+                    gap_minutes=None,
+                    row_count=row_count,
+                    last_timestamp_iso=None,
+                    warnings_in_window=None,
+                    incident_minutes=None,
+                    event_time=event_time,
+                )
                 continue
 
             try:
                 last_ts_ms = int(float(last_ts_raw))
             except (TypeError, ValueError):
+                event_time = self.clock()
+                row_count = _safe_int(row_count_raw)
                 self._emit_alert(
                     severity="critical",
                     title=f"Uszkodzona metadana OHLCV {symbol} {interval}",
@@ -141,6 +198,17 @@ class DataGapIncidentTracker:
                         "raw_value": str(last_ts_raw),
                     },
                 )
+                self._log_audit(
+                    symbol=symbol,
+                    interval=interval,
+                    status="invalid_metadata",
+                    gap_minutes=None,
+                    row_count=row_count,
+                    last_timestamp_iso=str(last_ts_raw),
+                    warnings_in_window=None,
+                    incident_minutes=None,
+                    event_time=event_time,
+                )
                 continue
 
             gap_ms = max(0, as_of_ms - last_ts_ms)
@@ -148,13 +216,17 @@ class DataGapIncidentTracker:
             warning_threshold = self.policy.warning_threshold_minutes(interval)
 
             now = self.clock()
+            row_count = _safe_int(row_count_raw)
+            last_timestamp_iso = datetime.fromtimestamp(last_ts_ms / 1000, tz=timezone.utc).isoformat()
+
             if gap_minutes < warning_threshold:
+                warnings_in_window = len(state.warnings)
+                incident_minutes = (
+                    (now - state.incident_open_at).total_seconds() / 60
+                    if state.incident_open and state.incident_open_at
+                    else None
+                )
                 if state.incident_open:
-                    duration = (
-                        (now - state.incident_open_at).total_seconds() / 60
-                        if state.incident_open_at
-                        else 0
-                    )
                     self._emit_alert(
                         severity="info",
                         title=f"Incydent zamknięty – luka danych {symbol} {interval}",
@@ -166,11 +238,22 @@ class DataGapIncidentTracker:
                             "exchange": self.exchange,
                             "symbol": symbol,
                             "interval": interval,
-                            "incident_minutes": f"{duration:.1f}",
+                            "incident_minutes": f"{incident_minutes:.1f}" if incident_minutes is not None else "0.0",
                             "gap_minutes": f"{gap_minutes:.1f}",
                             "row_count": str(row_count_raw or "0"),
                         },
                     )
+                self._log_audit(
+                    symbol=symbol,
+                    interval=interval,
+                    status="ok",
+                    gap_minutes=gap_minutes,
+                    row_count=row_count,
+                    last_timestamp_iso=last_timestamp_iso,
+                    warnings_in_window=warnings_in_window,
+                    incident_minutes=incident_minutes,
+                    event_time=now,
+                )
                 state.reset()
                 continue
 
@@ -184,7 +267,7 @@ class DataGapIncidentTracker:
                 "interval": interval,
                 "gap_minutes": f"{gap_minutes:.1f}",
                 "row_count": str(row_count_raw or "0"),
-                "last_timestamp": datetime.fromtimestamp(last_ts_ms / 1000, tz=timezone.utc).isoformat(),
+                "last_timestamp": last_timestamp_iso,
             }
 
             if not state.incident_open and warn_count >= self.policy.incident_threshold_count:
@@ -203,6 +286,17 @@ class DataGapIncidentTracker:
                         "warnings_in_window": str(warn_count),
                         "window_minutes": str(self.policy.incident_window_minutes),
                     },
+                )
+                self._log_audit(
+                    symbol=symbol,
+                    interval=interval,
+                    status="incident",
+                    gap_minutes=gap_minutes,
+                    row_count=row_count,
+                    last_timestamp_iso=last_timestamp_iso,
+                    warnings_in_window=warn_count,
+                    incident_minutes=0.0,
+                    event_time=now,
                 )
                 continue
 
@@ -223,9 +317,33 @@ class DataGapIncidentTracker:
                         ),
                         context={**context, "incident_minutes": f"{elapsed:.1f}"},
                     )
+                    self._log_audit(
+                        symbol=symbol,
+                        interval=interval,
+                        status="sms_escalated",
+                        gap_minutes=gap_minutes,
+                        row_count=row_count,
+                        last_timestamp_iso=last_timestamp_iso,
+                        warnings_in_window=warn_count,
+                        incident_minutes=elapsed,
+                        event_time=now,
+                    )
+                    continue
+
+                self._log_audit(
+                    symbol=symbol,
+                    interval=interval,
+                    status="incident",
+                    gap_minutes=gap_minutes,
+                    row_count=row_count,
+                    last_timestamp_iso=last_timestamp_iso,
+                    warnings_in_window=warn_count,
+                    incident_minutes=elapsed,
+                    event_time=now,
+                )
                 continue
 
-            # Ostrzeżenie Telegram – pojedynczy alert o dłuższej luce
+            # Ostrzeżenie – pojedynczy alert o dłuższej luce
             self._emit_alert(
                 severity="warning",
                 title=f"Luka danych {symbol} {interval}",
@@ -233,6 +351,17 @@ class DataGapIncidentTracker:
                     "Brak świec OHLCV od ponad wyznaczonego progu. Monitoruję dalsze próby synchronizacji."
                 ),
                 context={**context, "warnings_in_window": str(warn_count)},
+            )
+            self._log_audit(
+                symbol=symbol,
+                interval=interval,
+                status="warning",
+                gap_minutes=gap_minutes,
+                row_count=row_count,
+                last_timestamp_iso=last_timestamp_iso,
+                warnings_in_window=warn_count,
+                incident_minutes=None,
+                event_time=now,
             )
 
     def _emit_alert(
@@ -254,4 +383,3 @@ class DataGapIncidentTracker:
 
 
 __all__ = ["GapAlertPolicy", "DataGapIncidentTracker"]
-

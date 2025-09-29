@@ -60,7 +60,6 @@ class _InMemoryStorage(CacheStorage):
 @dataclass(slots=True)
 class _StaticStream:
     """Pusty stream spełniający minimalny kontrakt protokołu."""
-
     channels: Sequence[str]
 
 
@@ -153,7 +152,6 @@ def _position_size(
     step_size: float,
 ) -> float:
     """Wyznacza wielkość pozycji respektując limit ekspozycji profilu."""
-
     risk_amount = equity * risk_pct
     stop_distance = atr * profile.stop_loss_atr_multiple()
     raw_quantity = max(risk_amount / stop_distance, 0.0)
@@ -243,7 +241,7 @@ def test_paper_pipeline_executes_and_alerts(tmp_path: Path) -> None:
         quantity=quantity,
         order_type="market",
         price=price,
-        stop_price=price - atr * profile.stop_loss_atr_multiple(),
+        stop_price=float(signal.metadata["stop_price"]),
         atr=atr,
     )
 

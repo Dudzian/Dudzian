@@ -24,6 +24,7 @@ from bot_core.data.ohlcv import (
     PublicAPIDataSource,
     SQLiteCacheStorage,
 )
+from bot_core.data.ohlcv.audit import JSONLGapAuditLogger
 from bot_core.exchanges.base import Environment, ExchangeCredentials
 from bot_core.exchanges.binance.futures import BinanceFuturesAdapter
 from bot_core.exchanges.binance.spot import BinanceSpotAdapter
@@ -105,7 +106,7 @@ def _utc_now_ms() -> int:
 def _build_interval_plans(
     *,
     universe: InstrumentUniverseConfig,
-    exchange_name: string,
+    exchange_name: str,
     incremental_lookback_days: int,
     interval_refresh_overrides: Mapping[str, int] | None = None,
 ) -> tuple[dict[str, _IntervalPlan], set[str]]:
@@ -375,6 +376,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     manifest_storage = SQLiteCacheStorage(cache_root / "ohlcv_manifest.sqlite", store_rows=False)
     storage = DualCacheStorage(primary=parquet_storage, manifest=manifest_storage)
 
+    # Audyt luk danych (JSONL)
+    audit_logger = JSONLGapAuditLogger(cache_root / "audit" / f"{environment.name}_ohlcv_gaps.jsonl")
+
+    # Alerty + polityka luk
     alert_router, gap_policy, alert_message = _initialize_alerting(
         args=args,
         config=config,
@@ -388,6 +393,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             policy=gap_policy,
             environment_name=environment.name,
             exchange=environment.exchange,
+            audit_logger=audit_logger,
         )
         if alert_message:
             _LOGGER.info(alert_message)
