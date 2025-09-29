@@ -164,7 +164,7 @@ class TradingController:
     portfolio_id: str
     environment: str
     risk_profile: str
-    order_metadata_defaults: Mapping[str, str] | None = None
+    order_metadata_defaults: Mapping[str, object] | None = None
     clock: Callable[[], datetime] = _now
     health_check_interval: timedelta | float | int = timedelta(hours=1)
     execution_metadata: Mapping[str, str] | None = None
@@ -197,7 +197,7 @@ class TradingController:
             environment=self.environment,
             metadata=metadata,
         )
-        self._order_defaults = {str(k): str(v) for k, v in (self.order_metadata_defaults or {}).items()}
+        self._order_defaults = dict(self.order_metadata_defaults or {})
         self._last_health_report = self._clock()
         self._liquidation_alerted = False
         self._metrics = self.metrics_registry or get_global_metrics_registry()
@@ -502,13 +502,13 @@ class TradingController:
         return adjusted_request, new_result
 
     def _build_order_request(self, signal: StrategySignal) -> OrderRequest:
-        metadata = dict(self._order_defaults)
+        metadata_source: dict[str, object] = dict(self._order_defaults)
         # w StrategySignal.metadata spodziewamy się m.in. quantity/price/order_type/time_in_force/client_order_id
         for k, v in signal.metadata.items():
-            metadata[str(k)] = str(v)
+            metadata_source[str(k)] = v
 
         try:
-            quantity = float(metadata["quantity"])
+            quantity = float(metadata_source["quantity"])
         except KeyError as exc:
             raise ValueError("Sygnał nie zawiera wielkości zlecenia (quantity)") from exc
         except ValueError as exc:
@@ -517,12 +517,27 @@ class TradingController:
         if quantity <= 0:
             raise ValueError("Wielkość zlecenia musi być dodatnia")
 
-        price_value = metadata.get("price")
+        price_value = metadata_source.get("price")
         price = float(price_value) if price_value is not None else None
 
-        order_type = (metadata.get("order_type") or "market").upper()
-        time_in_force = metadata.get("time_in_force")
-        client_order_id = metadata.get("client_order_id")
+        order_type = str(metadata_source.get("order_type") or "market").upper()
+        time_in_force_raw = metadata_source.get("time_in_force")
+        client_order_id_raw = metadata_source.get("client_order_id")
+
+        order_metadata: dict[str, object] = dict(metadata_source)
+        order_metadata["quantity"] = quantity
+        if price is not None:
+            order_metadata["price"] = price
+        if "stop_price" in order_metadata:
+            try:
+                order_metadata["stop_price"] = float(order_metadata["stop_price"])
+            except (TypeError, ValueError):
+                raise ValueError("stop_price w metadanych musi być liczbą zmiennoprzecinkową")
+        if "atr" in order_metadata:
+            try:
+                order_metadata["atr"] = float(order_metadata["atr"])
+            except (TypeError, ValueError):
+                raise ValueError("atr w metadanych musi być liczbą zmiennoprzecinkową")
 
         return OrderRequest(
             symbol=signal.symbol,
@@ -530,8 +545,9 @@ class TradingController:
             quantity=quantity,
             order_type=order_type,
             price=price,
-            time_in_force=time_in_force,
-            client_order_id=client_order_id,
+            time_in_force=str(time_in_force_raw) if time_in_force_raw is not None else None,
+            client_order_id=str(client_order_id_raw) if client_order_id_raw is not None else None,
+            metadata=order_metadata,
         )
 
     def _emit_signal_alert(self, signal: StrategySignal) -> None:

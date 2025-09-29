@@ -23,6 +23,13 @@ def _normalize_position_side(side: str, *, default: str = "long") -> str:
     return default
 
 
+def _coerce_float(value: object) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 @dataclass(slots=True)
 class PositionState:
     """Stan pojedynczej pozycji wykorzystywany przez silnik ryzyka."""
@@ -248,6 +255,8 @@ class ThresholdRiskEngine(RiskEngine):
                     ),
                 )
 
+        metadata: Mapping[str, object] = request.metadata or {}
+
         if is_buy:
             if current_side == "long":
                 new_notional = current_notional + notional
@@ -273,6 +282,75 @@ class ThresholdRiskEngine(RiskEngine):
                     else "Profil w trybie awaryjnym – dozwolone są wyłącznie transakcje redukujące ekspozycję."
                 ),
             )
+
+        if not is_reducing:
+            atr_value = _coerce_float(metadata.get("atr")) if metadata else None
+            stop_price_value = _coerce_float(metadata.get("stop_price")) if metadata else None
+            target_vol = profile.target_volatility()
+            atr_multiple = profile.stop_loss_atr_multiple()
+
+            if target_vol > 0 and account.total_equity > 0:
+                if atr_value is None or atr_value <= 0:
+                    self._persist_state(profile_name)
+                    return RiskCheckResult(
+                        allowed=False,
+                        reason="Brak prawidłowego ATR w metadanych zlecenia – nie można wyznaczyć wielkości pozycji.",
+                    )
+
+                if stop_price_value is None:
+                    self._persist_state(profile_name)
+                    return RiskCheckResult(
+                        allowed=False,
+                        reason="Metadane zlecenia nie zawierają stop_price wymaganej do kontroli ryzyka.",
+                    )
+
+                if is_buy:
+                    stop_distance = price - stop_price_value
+                else:
+                    stop_distance = stop_price_value - price
+
+                if stop_distance <= 0:
+                    self._persist_state(profile_name)
+                    return RiskCheckResult(
+                        allowed=False,
+                        reason="Stop loss musi znajdować się po stronie ograniczającej stratę (nieprawidłowy stop_price).",
+                    )
+
+                minimum_distance = atr_value * max(atr_multiple, 1.0)
+                if minimum_distance > 0 and stop_distance + 1e-9 < minimum_distance:
+                    self._persist_state(profile_name)
+                    return RiskCheckResult(
+                        allowed=False,
+                        reason="Stop loss jest ciaśniejszy niż wymaga tego polityka profilu ryzyka.",
+                    )
+
+                max_risk_capital = target_vol * account.total_equity
+                if max_risk_capital <= 0:
+                    self._persist_state(profile_name)
+                    return RiskCheckResult(
+                        allowed=False,
+                        reason="Kapitał lub target volatility profilu uniemożliwia otwarcie pozycji.",
+                    )
+
+                allowed_total_quantity = max_risk_capital / max(stop_distance, 1e-12)
+                current_quantity = current_notional / price
+                new_quantity = new_notional / price if price > 0 else 0.0
+
+                if allowed_total_quantity <= 0:
+                    self._persist_state(profile_name)
+                    return RiskCheckResult(
+                        allowed=False,
+                        reason="Target volatility profilu blokuje otwarcie pozycji przy zadanych parametrach ATR/stop.",
+                    )
+
+                if new_quantity > allowed_total_quantity:
+                    allowed_increment = max(0.0, allowed_total_quantity - current_quantity)
+                    self._persist_state(profile_name)
+                    return RiskCheckResult(
+                        allowed=False,
+                        reason="Zlecenie przekracza limit wynikający z target volatility profilu ryzyka.",
+                        adjustments={"max_quantity": max(0.0, allowed_increment)},
+                    )
 
         if is_new_position:
             if state.active_positions() >= profile.max_positions():

@@ -48,10 +48,7 @@ def _order(
 ) -> OrderRequest:
     side_normalized = side.lower()
     stop_distance = atr * stop_multiple
-    if side_normalized == "buy":
-        stop_price = price - stop_distance
-    else:
-        stop_price = price + stop_distance
+    stop_price = price - stop_distance if side_normalized == "buy" else price + stop_distance
     return OrderRequest(
         symbol="BTCUSDT",
         side=side_normalized,
@@ -130,7 +127,7 @@ def test_margin_check_blocks_when_available_margin_is_too_low() -> None:
         quantity=0.05,
         order_type="limit",
         price=20_000.0,
-        stop_price=20_000.0 - 400.0,
+        stop_price=20_000.0 - 2.0 * 200.0,
         atr=200.0,
     )
 
@@ -177,7 +174,7 @@ def test_margin_check_passes_when_leverage_covers_notional() -> None:
         quantity=0.05,
         order_type="limit",
         price=20_000.0,
-        stop_price=20_000.0 - 400.0,
+        stop_price=20_000.0 - 2.0 * 200.0,
         atr=200.0,
     )
 
@@ -263,7 +260,7 @@ def test_stop_loss_must_match_atr_multiple(manual_profile: ManualProfile) -> Non
         quantity=0.05,
         order_type="limit",
         price=price,
-        stop_price=price - atr * manual_profile.stop_loss_atr_multiple() * 0.8,
+        stop_price=price - atr * manual_profile.stop_loss_atr_multiple() * 0.8,  # celowo za ciasny
         atr=atr,
     )
 
@@ -307,7 +304,7 @@ def test_on_fill_normalizes_position_side_and_allows_growth(manual_profile: Manu
         quantity=0.05,
         order_type="limit",
         price=30_000.0,
-        stop_price=30_000.0 - 400.0,
+        stop_price=30_000.0 - manual_profile.stop_loss_atr_multiple() * 200.0,
         atr=200.0,
     )
 
@@ -333,6 +330,74 @@ def test_on_fill_normalizes_position_side_and_allows_growth(manual_profile: Manu
     )
 
     assert second_check.allowed is True
+
+
+def test_target_volatility_caps_position_size() -> None:
+    profile = ManualProfile(
+        name="vol-profile",
+        max_positions=5,
+        max_leverage=5.0,
+        drawdown_limit=0.2,
+        daily_loss_limit=0.05,
+        max_position_pct=1.0,
+        target_volatility=0.02,
+        stop_loss_atr_multiple=2.0,
+    )
+
+    engine = ThresholdRiskEngine(clock=lambda: datetime(2024, 1, 1, 12, 0, 0))
+    engine.register_profile(profile)
+
+    snapshot = _snapshot(50_000.0)
+
+    order = OrderRequest(
+        symbol="BTCUSDT",
+        side="buy",
+        quantity=2.0,
+        order_type="limit",
+        price=25_000.0,
+        atr=500.0,
+        stop_price=24_000.0,
+    )
+
+    result = engine.apply_pre_trade_checks(order, account=snapshot, profile_name=profile.name)
+
+    assert result.allowed is False
+    assert "target volatility" in (result.reason or "").lower()
+    assert result.adjustments is not None
+    assert result.adjustments.get("max_quantity") == pytest.approx(1.0)
+
+
+def test_rejects_stop_loss_tighter_than_required() -> None:
+    profile = ManualProfile(
+        name="strict-stop",
+        max_positions=5,
+        max_leverage=3.0,
+        drawdown_limit=0.2,
+        daily_loss_limit=0.05,
+        max_position_pct=1.0,
+        target_volatility=0.05,
+        stop_loss_atr_multiple=3.0,
+    )
+
+    engine = ThresholdRiskEngine(clock=lambda: datetime(2024, 1, 1, 12, 0, 0))
+    engine.register_profile(profile)
+
+    snapshot = _snapshot(20_000.0)
+
+    order = OrderRequest(
+        symbol="BTCUSDT",
+        side="buy",
+        quantity=0.5,
+        order_type="limit",
+        price=30_000.0,
+        atr=200.0,
+        stop_price=30_000.0 - 200.0 * 2.0,  # < wymagane 3x ATR
+    )
+
+    result = engine.apply_pre_trade_checks(order, account=snapshot, profile_name=profile.name)
+
+    assert result.allowed is False
+    assert "stop loss" in (result.reason or "").lower()
 
 
 def test_register_profile_normalizes_persisted_state(manual_profile: ManualProfile) -> None:

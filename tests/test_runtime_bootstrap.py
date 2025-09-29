@@ -153,7 +153,7 @@ def test_bootstrap_environment_initialises_components(tmp_path: Path) -> None:
             quantity=0.2,
             order_type="limit",
             price=100.0,
-            stop_price=100.0 - 1.0 * 1.5,
+            stop_price=100.0 - 1.0 * 1.5,  # ATR=1.0, stop_loss_atr_multiple=1.5
             atr=1.0,
         ),
         account=AccountSnapshot(

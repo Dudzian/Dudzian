@@ -250,9 +250,7 @@ def test_paper_pipeline_executes_and_alerts(tmp_path: Path) -> None:
     check = risk_engine.apply_pre_trade_checks(order, account=account, profile_name=profile.name)
     assert check.allowed, f"Kontrola ryzyka powinna przepuścić zlecenie: {check.reason}"
 
-    markets = {
-        "BTCUSDT": market
-    }
+    markets = {"BTCUSDT": market}
     execution = PaperTradingExecutionService(markets, initial_balances={"USDT": 100_000.0, "BTC": 0.0})
     context = ExecutionContext(portfolio_id="paper-test", risk_profile=profile.name, environment="paper", metadata={})
 

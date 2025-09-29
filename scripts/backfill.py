@@ -105,7 +105,7 @@ def _utc_now_ms() -> int:
 def _build_interval_plans(
     *,
     universe: InstrumentUniverseConfig,
-    exchange_name: str,
+    exchange_name: string,
     incremental_lookback_days: int,
     interval_refresh_overrides: Mapping[str, int] | None = None,
 ) -> tuple[dict[str, _IntervalPlan], set[str]]:

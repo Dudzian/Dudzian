@@ -165,7 +165,7 @@ def create_trading_controller(
     alert_router: DefaultAlertRouter,
     *,
     health_check_interval: float | int | timedelta = 3600,
-    order_metadata_defaults: Mapping[str, str] | None = None,
+    order_metadata_defaults: Mapping[str, object] | None = None,
 ) -> "TradingController":
     """Buduje TradingController spięty z komponentami pipeline'u."""
     if TradingController is None:
