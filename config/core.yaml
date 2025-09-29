@@ -76,6 +76,8 @@ instrument_universes:
             lookback_days: 3650
           - interval: "1h"
             lookback_days: 1095
+          - interval: "15m"
+            lookback_days: 180
       ETH_USDT:
         base_asset: ETH
         quote_asset: USDT
@@ -91,6 +93,8 @@ instrument_universes:
             lookback_days: 3650
           - interval: "1h"
             lookback_days: 1095
+          - interval: "15m"
+            lookback_days: 180
       BTC_EUR:
         base_asset: BTC
         quote_asset: EUR
@@ -105,6 +109,8 @@ instrument_universes:
             lookback_days: 3650
           - interval: "1h"
             lookback_days: 730
+          - interval: "15m"
+            lookback_days: 180
       ETH_EUR:
         base_asset: ETH
         quote_asset: EUR
@@ -119,6 +125,8 @@ instrument_universes:
             lookback_days: 3650
           - interval: "1h"
             lookback_days: 730
+          - interval: "15m"
+            lookback_days: 180
       SOL_USDT:
         base_asset: SOL
         quote_asset: USDT
@@ -132,6 +140,8 @@ instrument_universes:
             lookback_days: 1825
           - interval: "1h"
             lookback_days: 730
+          - interval: "15m"
+            lookback_days: 180
       BNB_USDT:
         base_asset: BNB
         quote_asset: USDT
@@ -144,6 +154,8 @@ instrument_universes:
             lookback_days: 1825
           - interval: "1h"
             lookback_days: 730
+          - interval: "15m"
+            lookback_days: 180
       XRP_USDT:
         base_asset: XRP
         quote_asset: USDT
@@ -156,6 +168,8 @@ instrument_universes:
             lookback_days: 1825
           - interval: "1h"
             lookback_days: 730
+          - interval: "15m"
+            lookback_days: 180
       ADA_USDT:
         base_asset: ADA
         quote_asset: USDT
@@ -169,6 +183,8 @@ instrument_universes:
             lookback_days: 1825
           - interval: "1h"
             lookback_days: 730
+          - interval: "15m"
+            lookback_days: 180
       LTC_USDT:
         base_asset: LTC
         quote_asset: USDT
@@ -182,6 +198,8 @@ instrument_universes:
             lookback_days: 1825
           - interval: "1h"
             lookback_days: 730
+          - interval: "15m"
+            lookback_days: 180
       MATIC_USDT:
         base_asset: MATIC
         quote_asset: USDT
@@ -195,6 +213,8 @@ instrument_universes:
             lookback_days: 1825
           - interval: "1h"
             lookback_days: 730
+          - interval: "15m"
+            lookback_days: 180
       BTC_PLN:
         base_asset: BTC
         quote_asset: PLN
@@ -204,6 +224,10 @@ instrument_universes:
         backfill:
           - interval: "1d"
             lookback_days: 3650
+          - interval: "1h"
+            lookback_days: 1825
+          - interval: "15m"
+            lookback_days: 180
       ETH_PLN:
         base_asset: ETH
         quote_asset: PLN
@@ -213,6 +237,10 @@ instrument_universes:
         backfill:
           - interval: "1d"
             lookback_days: 3650
+          - interval: "1h"
+            lookback_days: 1825
+          - interval: "15m"
+            lookback_days: 180
 
 environments:
   binance_paper:

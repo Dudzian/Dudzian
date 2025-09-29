@@ -47,6 +47,7 @@ class OrderRequest:
     price: Optional[float] = None
     time_in_force: Optional[str] = None
     client_order_id: Optional[str] = None
+    metadata: Mapping[str, object] | None = None
 
 
 @dataclass(slots=True)

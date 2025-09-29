@@ -38,13 +38,15 @@ def _snapshot(equity: float) -> AccountSnapshot:
     )
 
 
-def _order(price: float) -> OrderRequest:
+def _order(price: float, *, quantity: float = 0.01, atr: float = 100.0, stop_price: float | None = None) -> OrderRequest:
+    stop = stop_price if stop_price is not None else price - atr * 2.0
     return OrderRequest(
         symbol="BTCUSDT",
         side="buy",
-        quantity=0.01,
+        quantity=quantity,
         order_type="limit",
         price=price,
+        metadata={"atr": atr, "stop_price": stop, "quantity": quantity, "price": price},
     )
 
 
@@ -115,6 +117,12 @@ def test_margin_check_blocks_when_available_margin_is_too_low() -> None:
         quantity=0.05,
         order_type="limit",
         price=20_000.0,
+        metadata={
+            "atr": 200.0,
+            "stop_price": 19_200.0,
+            "quantity": 0.05,
+            "price": 20_000.0,
+        },
     )
 
     result = engine.apply_pre_trade_checks(
@@ -160,6 +168,12 @@ def test_margin_check_passes_when_leverage_covers_notional() -> None:
         quantity=0.05,
         order_type="limit",
         price=20_000.0,
+        metadata={
+            "atr": 200.0,
+            "stop_price": 19_200.0,
+            "quantity": 0.05,
+            "price": 20_000.0,
+        },
     )
 
     result = engine.apply_pre_trade_checks(
@@ -182,6 +196,12 @@ def test_on_fill_normalizes_position_side_and_allows_growth(manual_profile: Manu
         quantity=0.05,
         order_type="limit",
         price=30_000.0,
+        metadata={
+            "atr": 150.0,
+            "stop_price": 30_000.0 - 150.0 * manual_profile.stop_loss_atr_multiple(),
+            "quantity": 0.05,
+            "price": 30_000.0,
+        },
     )
 
     first_check = engine.apply_pre_trade_checks(request, account=snapshot, profile_name=manual_profile.name)
@@ -206,6 +226,82 @@ def test_on_fill_normalizes_position_side_and_allows_growth(manual_profile: Manu
     )
 
     assert second_check.allowed is True
+
+
+def test_target_volatility_caps_position_size() -> None:
+    profile = ManualProfile(
+        name="vol-profile",
+        max_positions=5,
+        max_leverage=5.0,
+        drawdown_limit=0.2,
+        daily_loss_limit=0.05,
+        max_position_pct=1.0,
+        target_volatility=0.02,
+        stop_loss_atr_multiple=2.0,
+    )
+
+    engine = ThresholdRiskEngine(clock=lambda: datetime(2024, 1, 1, 12, 0, 0))
+    engine.register_profile(profile)
+
+    snapshot = _snapshot(50_000.0)
+
+    order = OrderRequest(
+        symbol="BTCUSDT",
+        side="buy",
+        quantity=2.0,
+        order_type="limit",
+        price=25_000.0,
+        metadata={
+            "atr": 500.0,
+            "stop_price": 24_000.0,
+            "quantity": 2.0,
+            "price": 25_000.0,
+        },
+    )
+
+    result = engine.apply_pre_trade_checks(order, account=snapshot, profile_name=profile.name)
+
+    assert result.allowed is False
+    assert "target volatility" in (result.reason or "").lower()
+    assert result.adjustments is not None
+    assert result.adjustments.get("max_quantity") == pytest.approx(1.0)
+
+
+def test_rejects_stop_loss_tighter_than_required() -> None:
+    profile = ManualProfile(
+        name="strict-stop",
+        max_positions=5,
+        max_leverage=3.0,
+        drawdown_limit=0.2,
+        daily_loss_limit=0.05,
+        max_position_pct=1.0,
+        target_volatility=0.05,
+        stop_loss_atr_multiple=3.0,
+    )
+
+    engine = ThresholdRiskEngine(clock=lambda: datetime(2024, 1, 1, 12, 0, 0))
+    engine.register_profile(profile)
+
+    snapshot = _snapshot(20_000.0)
+
+    order = OrderRequest(
+        symbol="BTCUSDT",
+        side="buy",
+        quantity=0.5,
+        order_type="limit",
+        price=30_000.0,
+        metadata={
+            "atr": 200.0,
+            "stop_price": 30_000.0 - 200.0 * 2.0,  # < wymagane 3x ATR
+            "quantity": 0.5,
+            "price": 30_000.0,
+        },
+    )
+
+    result = engine.apply_pre_trade_checks(order, account=snapshot, profile_name=profile.name)
+
+    assert result.allowed is False
+    assert "stop loss" in (result.reason or "").lower()
 
 
 def test_register_profile_normalizes_persisted_state(manual_profile: ManualProfile) -> None:
