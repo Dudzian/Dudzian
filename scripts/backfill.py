@@ -9,11 +9,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
+from bot_core.alerts import DefaultAlertRouter
 from bot_core.config.loader import load_core_config
 from bot_core.config.models import CoreConfig, EnvironmentConfig, InstrumentUniverseConfig
 from bot_core.data.ohlcv import (
+    BackfillSummary,
     CachedOHLCVSource,
+    DataGapIncidentTracker,
     DualCacheStorage,
+    JSONLGapAuditLogger,
+    GapAlertPolicy,
     OHLCVBackfillService,
     OHLCVRefreshScheduler,
     ParquetCacheStorage,
@@ -26,10 +31,19 @@ from bot_core.exchanges.binance.spot import BinanceSpotAdapter
 from bot_core.exchanges.kraken.futures import KrakenFuturesAdapter
 from bot_core.exchanges.kraken.spot import KrakenSpotAdapter
 from bot_core.exchanges.zonda.spot import ZondaSpotAdapter
+from bot_core.runtime.bootstrap import build_alert_channels
+from bot_core.security import SecretManager, SecretStorageError, create_default_secret_storage
 
 _LOGGER = logging.getLogger(__name__)
 
 _MILLISECONDS_IN_DAY = 86_400_000
+
+
+_DEFAULT_REFRESH_SECONDS: Mapping[str, int] = {
+    "1d": 24 * 60 * 60,
+    "1h": 15 * 60,
+    "15m": 5 * 60,
+}
 
 
 @dataclass(slots=True)
@@ -37,6 +51,7 @@ class _IntervalPlan:
     symbols: set[str]
     backfill_start_ms: int
     incremental_lookback_ms: int
+    refresh_seconds: int
 
 
 def _build_public_source(exchange: str, environment: Environment) -> PublicAPIDataSource:
@@ -92,10 +107,13 @@ def _build_interval_plans(
     universe: InstrumentUniverseConfig,
     exchange_name: str,
     incremental_lookback_days: int,
+    refresh_overrides: Mapping[str, int] | None = None,
 ) -> tuple[dict[str, _IntervalPlan], set[str]]:
     plans: dict[str, _IntervalPlan] = {}
     symbols: set[str] = set()
     now_ms = _utc_now_ms()
+
+    overrides = {key: int(value) for key, value in (refresh_overrides or {}).items() if int(value) > 0}
 
     for instrument in universe.instruments:
         symbol = instrument.exchange_symbols.get(exchange_name)
@@ -107,7 +125,15 @@ def _build_interval_plans(
             start = now_ms - window.lookback_days * _MILLISECONDS_IN_DAY
             plan = plans.get(window.interval)
             if plan is None:
-                plan = _IntervalPlan(symbols=set(), backfill_start_ms=start, incremental_lookback_ms=0)
+                refresh_seconds = overrides.get(
+                    window.interval, _DEFAULT_REFRESH_SECONDS.get(window.interval, 0)
+                )
+                plan = _IntervalPlan(
+                    symbols=set(),
+                    backfill_start_ms=start,
+                    incremental_lookback_ms=0,
+                    refresh_seconds=refresh_seconds,
+                )
                 plans[window.interval] = plan
             plan.symbols.add(symbol)
             plan.backfill_start_ms = min(plan.backfill_start_ms, start)
@@ -116,6 +142,81 @@ def _build_interval_plans(
 
     return plans, symbols
 
+
+def _extract_gap_policy(environment: EnvironmentConfig) -> GapAlertPolicy:
+    settings: Mapping[str, object] = {}
+    if isinstance(environment.adapter_settings, Mapping):
+        candidate = environment.adapter_settings.get("ohlcv_gap_alerts")
+        if isinstance(candidate, Mapping):
+            settings = candidate
+
+    warnings_cfg = {}
+    raw_warnings = settings.get("warning_gap_minutes") if settings else None
+    if isinstance(raw_warnings, Mapping):
+        warnings_cfg = {
+            str(interval): max(1, int(value))
+            for interval, value in raw_warnings.items()
+            if value is not None and int(value) > 0
+        }
+
+    def _safe_int(key: str, default: int) -> int:
+        value = settings.get(key) if settings else None
+        try:
+            return max(1, int(value))
+        except (TypeError, ValueError):
+            return default
+
+    return GapAlertPolicy(
+        warning_gap_minutes=warnings_cfg,
+        incident_threshold_count=_safe_int("incident_threshold_count", 5),
+        incident_window_minutes=_safe_int("incident_window_minutes", 10),
+        sms_escalation_minutes=_safe_int("sms_escalation_minutes", 15),
+    )
+
+
+def _build_gap_callback(
+    gap_tracker: DataGapIncidentTracker | None,
+) -> Callable[[str, Sequence[BackfillSummary], int], None] | None:
+    if gap_tracker is None:
+        return None
+
+    def _callback(interval: str, summaries: Sequence[BackfillSummary], as_of_ms: int) -> None:
+        gap_tracker.handle_summaries(interval=interval, summaries=summaries, as_of_ms=as_of_ms)
+
+    return _callback
+
+
+def _initialize_alerting(
+    *,
+    args: argparse.Namespace,
+    config: CoreConfig,
+    environment: EnvironmentConfig,
+) -> tuple[DefaultAlertRouter | None, GapAlertPolicy | None, str]:
+    if not args.enable_alerts:
+        return None, None, "Alerty wyłączone flagą CLI"
+
+    try:
+        storage = create_default_secret_storage(
+            namespace=args.secret_namespace,
+            headless_passphrase=args.headless_passphrase,
+            headless_path=args.headless_secrets_path,
+        )
+    except SecretStorageError as exc:
+        return None, None, f"Nie udało się przygotować magazynu sekretów: {exc}"
+
+    secret_manager = SecretManager(storage, namespace=args.secret_namespace)
+
+    try:
+        _, router, _ = build_alert_channels(
+            core_config=config,
+            environment=environment,
+            secret_manager=secret_manager,
+        )
+    except SecretStorageError as exc:
+        return None, None, f"Nie udało się zbudować kanałów alertów: {exc}"
+
+    policy = _extract_gap_policy(environment)
+    return router, policy, "Kanały alertowe zainicjalizowane"
 
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Backfill danych OHLCV zgodnie z config/core.yaml")
@@ -144,6 +245,26 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         action="store_true",
         help="Wykonaj tylko pełny backfill i zakończ (bez harmonogramu)",
     )
+    parser.add_argument(
+        "--enable-alerts",
+        action="store_true",
+        help="Aktywuj wysyłkę alertów o lukach danych (wymaga skonfigurowanych sekretów)",
+    )
+    parser.add_argument(
+        "--secret-namespace",
+        default="dudzian.trading",
+        help="Namespace używany przy odczycie sekretów (keychain / plik szyfrowany)",
+    )
+    parser.add_argument(
+        "--headless-passphrase",
+        default=None,
+        help="Hasło do magazynu sekretów w środowiskach headless (Linux).",
+    )
+    parser.add_argument(
+        "--headless-secrets-path",
+        default=None,
+        help="Ścieżka do zaszyfrowanego magazynu sekretów w trybie headless.",
+    )
     return parser.parse_args(argv)
 
 
@@ -152,6 +273,7 @@ def _perform_backfill(
     service: OHLCVBackfillService,
     plans: Mapping[str, _IntervalPlan],
     end_timestamp: int,
+    gap_tracker: DataGapIncidentTracker | None = None,
 ) -> None:
     for interval, plan in plans.items():
         start = max(0, plan.backfill_start_ms)
@@ -168,6 +290,8 @@ def _perform_backfill(
             start=start,
             end=end_timestamp,
         )
+        if gap_tracker:
+            gap_tracker.handle_summaries(interval=interval, summaries=summaries, as_of_ms=end_timestamp)
         total = sum(summary.fetched_candles for summary in summaries)
         _LOGGER.info(
             "Zakończono backfill dla interval=%s – pobrano %s nowych świec",
@@ -183,15 +307,16 @@ async def _run_scheduler(
     refresh_seconds: int,
 ) -> None:
     for interval, plan in plans.items():
+        frequency = plan.refresh_seconds or refresh_seconds
         scheduler.add_job(
             symbols=tuple(sorted(plan.symbols)),
             interval=interval,
             lookback_ms=plan.incremental_lookback_ms or (_MILLISECONDS_IN_DAY * 1),
-            frequency_seconds=refresh_seconds,
+            frequency_seconds=frequency,
             name=f"{interval}:{len(plan.symbols)}",
         )
 
-    _LOGGER.info("Uruchamiam harmonogram odświeżania (co %s sekund)", refresh_seconds)
+    _LOGGER.info("Uruchamiam harmonogram odświeżania (domyślnie co %s sekund)", refresh_seconds)
     try:
         await scheduler.run_forever()
     finally:
@@ -210,10 +335,17 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     universe = _resolve_universe(config, environment)
 
+    refresh_overrides = {}
+    if isinstance(environment.adapter_settings, Mapping):
+        candidate = environment.adapter_settings.get("ohlcv_refresh_overrides")
+        if isinstance(candidate, Mapping):
+            refresh_overrides = candidate
+
     plans, symbols = _build_interval_plans(
         universe=universe,
         exchange_name=environment.exchange,
         incremental_lookback_days=max(1, args.incremental_lookback_days),
+        refresh_overrides=refresh_overrides,
     )
     if not plans:
         _LOGGER.warning("Brak instrumentów z zakresem backfill dla giełdy %s", environment.exchange)
@@ -223,6 +355,28 @@ def main(argv: Sequence[str] | None = None) -> int:
     parquet_storage = ParquetCacheStorage(cache_root / "ohlcv_parquet", namespace=environment.exchange)
     manifest_storage = SQLiteCacheStorage(cache_root / "ohlcv_manifest.sqlite", store_rows=False)
     storage = DualCacheStorage(primary=parquet_storage, manifest=manifest_storage)
+    audit_logger = JSONLGapAuditLogger(cache_root / "audit" / f"{environment.name}_ohlcv_gaps.jsonl")
+
+    alert_router, gap_policy, alert_message = _initialize_alerting(
+        args=args,
+        config=config,
+        environment=environment,
+    )
+    gap_tracker: DataGapIncidentTracker | None = None
+    if alert_router and gap_policy:
+        gap_tracker = DataGapIncidentTracker(
+            router=alert_router,
+            metadata_provider=storage.metadata,
+            policy=gap_policy,
+            environment_name=environment.name,
+            exchange=environment.exchange,
+            audit_logger=audit_logger,
+        )
+        if alert_message:
+            _LOGGER.info(alert_message)
+    elif alert_message:
+        level = logging.INFO if not args.enable_alerts else logging.ERROR
+        _LOGGER.log(level, alert_message)
 
     upstream_source = _build_public_source(environment.exchange, environment.environment)
     upstream_source.exchange_adapter.configure_network(ip_allowlist=environment.ip_allowlist)
@@ -232,13 +386,21 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     backfill_service = OHLCVBackfillService(cached_source)
     now_ts = _utc_now_ms()
-    _perform_backfill(service=backfill_service, plans=plans, end_timestamp=now_ts)
+    _perform_backfill(
+        service=backfill_service,
+        plans=plans,
+        end_timestamp=now_ts,
+        gap_tracker=gap_tracker,
+    )
 
     if args.run_once:
         _LOGGER.info("Tryb run-once – kończę po pełnym backfillu")
         return 0
 
-    scheduler = OHLCVRefreshScheduler(backfill_service)
+    scheduler = OHLCVRefreshScheduler(
+        backfill_service,
+        on_job_complete=_build_gap_callback(gap_tracker),
+    )
     try:
         asyncio.run(
             _run_scheduler(
