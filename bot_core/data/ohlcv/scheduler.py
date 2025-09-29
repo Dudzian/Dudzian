@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable, Sequence
 
-from bot_core.data.ohlcv.backfill import OHLCVBackfillService
+from bot_core.data.ohlcv.backfill import BackfillSummary, OHLCVBackfillService
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -37,12 +37,14 @@ class OHLCVRefreshScheduler:
         service: OHLCVBackfillService,
         *,
         now_provider: Callable[[], int] | None = None,
+        on_job_complete: Callable[[str, Sequence[BackfillSummary], int], None] | None = None,
     ) -> None:
         self._service = service
         self._jobs: list[_RefreshJob] = []
         self._stop_event: asyncio.Event | None = None
         self._tasks: list[asyncio.Task[None]] = []
         self._now_provider = now_provider or _utc_now_ms
+        self._on_job_complete = on_job_complete
 
     def add_job(
         self,
@@ -121,6 +123,13 @@ class OHLCVRefreshScheduler:
                     start=start,
                     end=end,
                 )
+                if self._on_job_complete:
+                    try:
+                        self._on_job_complete(job.interval, summaries, end)
+                    except Exception:  # pragma: no cover - alerty nie mogą zatrzymać schedulera
+                        _LOGGER.exception(
+                            "Błąd podczas obsługi hooka on_job_complete dla zadania %s", job.name
+                        )
                 fetched = sum(summary.fetched_candles for summary in summaries)
                 if fetched:
                     _LOGGER.info(
