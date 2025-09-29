@@ -243,6 +243,12 @@ def test_paper_pipeline_executes_and_alerts(tmp_path: Path) -> None:
         quantity=quantity,
         order_type="market",
         price=price,
+        metadata={
+            "atr": atr,
+            "stop_price": float(signal.metadata["stop_price"]),
+            "quantity": quantity,
+            "price": price,
+        },
     )
 
     check = risk_engine.apply_pre_trade_checks(order, account=account, profile_name=profile.name)
