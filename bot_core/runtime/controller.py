@@ -11,7 +11,6 @@ from typing import (
     Callable,
     Mapping,
     MutableMapping,
-    Optional,
     Sequence,
     Mapping as TypingMapping,
 )
@@ -96,13 +95,10 @@ def _extract_adjusted_quantity(
     adjustments: Mapping[str, float] | None,
 ) -> float | None:
     """Zwraca dopuszczalną wielkość zlecenia zasugerowaną przez silnik ryzyka."""
-
     if not adjustments:
         return None
 
-    raw_value = adjustments.get("quantity")
-    if raw_value is None:
-        raw_value = adjustments.get("max_quantity")
+    raw_value = adjustments.get("quantity") or adjustments.get("max_quantity")
     if raw_value is None:
         return None
 
@@ -114,10 +110,8 @@ def _extract_adjusted_quantity(
     candidate = max(0.0, min(candidate, original_quantity))
     if candidate <= 0.0:
         return None
-
     if math.isclose(candidate, original_quantity, rel_tol=1e-9, abs_tol=1e-12):
         return None
-
     return candidate
 
 
@@ -141,7 +135,6 @@ def _now() -> datetime:
 @dataclass(slots=True)
 class ControllerSignal:
     """Zbiera sygnał strategii wraz ze snapshotem rynku."""
-
     snapshot: MarketSnapshot
     signal: StrategySignal
 
@@ -483,6 +476,9 @@ class TradingController:
             price=request.price,
             time_in_force=request.time_in_force,
             client_order_id=request.client_order_id,
+            stop_price=request.stop_price,
+            atr=request.atr,
+            metadata=request.metadata,
         )
         new_result = self.risk_engine.apply_pre_trade_checks(
             adjusted_request,
@@ -502,18 +498,16 @@ class TradingController:
         return adjusted_request, new_result
 
     def _build_order_request(self, signal: StrategySignal) -> OrderRequest:
+        # Metadane z sygnału + domyślne z kontrolera
         metadata_source: dict[str, object] = dict(self._order_defaults)
-        # w StrategySignal.metadata spodziewamy się m.in. quantity/price/order_type/time_in_force/client_order_id
         for k, v in signal.metadata.items():
             metadata_source[str(k)] = v
 
+        # Wymagane parametry
         try:
-            quantity = float(metadata_source["quantity"])
-        except KeyError as exc:
-            raise ValueError("Sygnał nie zawiera wielkości zlecenia (quantity)") from exc
-        except ValueError as exc:
-            raise ValueError("Wielkość zlecenia musi być liczbą zmiennoprzecinkową") from exc
-
+            quantity = float(metadata_source.get("quantity", 0.0))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Wielkość zlecenia (quantity) musi być liczbą zmiennoprzecinkową") from exc
         if quantity <= 0:
             raise ValueError("Wielkość zlecenia musi być dodatnia")
 
@@ -524,20 +518,21 @@ class TradingController:
         time_in_force_raw = metadata_source.get("time_in_force")
         client_order_id_raw = metadata_source.get("client_order_id")
 
-        order_metadata: dict[str, object] = dict(metadata_source)
-        order_metadata["quantity"] = quantity
-        if price is not None:
-            order_metadata["price"] = price
-        if "stop_price" in order_metadata:
+        # Opcjonalne rozszerzenia
+        stop_price_raw = metadata_source.get("stop_price")
+        atr_raw = metadata_source.get("atr")
+        stop_price = None
+        atr = None
+        if stop_price_raw is not None:
             try:
-                order_metadata["stop_price"] = float(order_metadata["stop_price"])
-            except (TypeError, ValueError):
-                raise ValueError("stop_price w metadanych musi być liczbą zmiennoprzecinkową")
-        if "atr" in order_metadata:
+                stop_price = float(stop_price_raw)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("stop_price w metadanych musi być liczbą zmiennoprzecinkową") from exc
+        if atr_raw is not None:
             try:
-                order_metadata["atr"] = float(order_metadata["atr"])
-            except (TypeError, ValueError):
-                raise ValueError("atr w metadanych musi być liczbą zmiennoprzecinkową")
+                atr = float(atr_raw)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("atr w metadanych musi być liczbą zmiennoprzecinkową") from exc
 
         return OrderRequest(
             symbol=signal.symbol,
@@ -547,7 +542,9 @@ class TradingController:
             price=price,
             time_in_force=str(time_in_force_raw) if time_in_force_raw is not None else None,
             client_order_id=str(client_order_id_raw) if client_order_id_raw is not None else None,
-            metadata=order_metadata,
+            stop_price=stop_price,
+            atr=atr,
+            metadata=metadata_source,
         )
 
     def _emit_signal_alert(self, signal: StrategySignal) -> None:
@@ -755,7 +752,6 @@ class DailyTrendController:
 
     def collect_signals(self, *, start: int, end: int) -> list[ControllerSignal]:
         """Zwraca sygnały strategii wzbogacone o parametry egzekucyjne."""
-
         if start > end:
             raise ValueError("Parametr start nie może być większy niż end")
 
@@ -790,9 +786,7 @@ class DailyTrendController:
 
     def run_cycle(self, *, start: int, end: int) -> list[OrderResult]:
         """Przeprowadza pojedynczy cykl przetwarzania danych i składania zleceń."""
-
         collected = self.collect_signals(start=start, end=end)
-
         executed: list[OrderResult] = []
         for controller_signal in collected:
             executed.extend(
@@ -829,6 +823,8 @@ class DailyTrendController:
                         price=base_request.price,
                         time_in_force=base_request.time_in_force,
                         client_order_id=base_request.client_order_id,
+                        stop_price=base_request.stop_price,
+                        atr=base_request.atr,
                         metadata=adjusted_metadata,
                     )
                     second_result = self.risk_engine.apply_pre_trade_checks(
@@ -870,38 +866,27 @@ class DailyTrendController:
 
     def _build_order_request(self, snapshot: MarketSnapshot, signal: StrategySignal) -> OrderRequest:
         side = signal.side.lower()
-        metadata_source: dict[str, object] = dict(signal.metadata)
-        metadata_source.setdefault("quantity", float(self.position_size))
-        metadata_source.setdefault("price", float(snapshot.close))
-        metadata_source.setdefault("order_type", "market")
+        metadata = dict(signal.metadata)
+        quantity = float(metadata.get("quantity", self.position_size))
+        price = float(metadata.get("price", snapshot.close))
+        order_type = str(metadata.get("order_type", "market"))
+        time_in_force = metadata.get("time_in_force")
+        client_order_id = metadata.get("client_order_id")
+        stop_price_raw = metadata.get("stop_price")
+        atr_raw = metadata.get("atr")
 
-        quantity_raw = metadata_source.get("quantity")
-        price_raw = metadata_source.get("price")
-        time_in_force_raw = metadata_source.get("time_in_force")
-        client_order_id_raw = metadata_source.get("client_order_id")
+        tif_str = str(time_in_force) if time_in_force is not None else None
+        client_id_str = str(client_order_id) if client_order_id is not None else None
+        stop_price = float(stop_price_raw) if stop_price_raw is not None else None
+        atr = float(atr_raw) if atr_raw is not None else None
 
-        quantity = float(quantity_raw) if quantity_raw is not None else float(self.position_size)
-        price = float(price_raw) if price_raw is not None else float(snapshot.close)
-        order_type = str(metadata_source.get("order_type") or "market")
-
-        tif_str = str(time_in_force_raw) if time_in_force_raw is not None else None
-        client_id_str = str(client_order_id_raw) if client_order_id_raw is not None else None
-
-        order_metadata: dict[str, object] = dict(metadata_source)
-        order_metadata["quantity"] = quantity
-        order_metadata["price"] = price
-
-        if "stop_price" in order_metadata:
-            try:
-                order_metadata["stop_price"] = float(order_metadata["stop_price"])
-            except (TypeError, ValueError):
-                order_metadata.pop("stop_price", None)
-
-        if "atr" in order_metadata:
-            try:
-                order_metadata["atr"] = float(order_metadata["atr"])
-            except (TypeError, ValueError):
-                order_metadata.pop("atr", None)
+        # Zapewnij spójność metadanych (analityka/telemetria)
+        metadata["quantity"] = quantity
+        metadata["price"] = price
+        if stop_price is not None:
+            metadata["stop_price"] = stop_price
+        if atr is not None:
+            metadata["atr"] = atr
 
         return OrderRequest(
             symbol=snapshot.symbol,
@@ -911,7 +896,9 @@ class DailyTrendController:
             price=price,
             time_in_force=tif_str,
             client_order_id=client_id_str,
-            metadata=order_metadata,
+            stop_price=stop_price,
+            atr=atr,
+            metadata=metadata,
         )
 
     def _to_snapshots(

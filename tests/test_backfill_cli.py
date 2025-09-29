@@ -77,6 +77,7 @@ def test_build_interval_plans_assigns_refresh_seconds_and_lookbacks():
     )
 
     assert symbols == {"BTCUSDT"}
+
     assert plans["1d"].refresh_seconds == backfill._DEFAULT_REFRESH_SECONDS["1d"]
     assert plans["1d"].incremental_lookback_ms == 7 * backfill._MILLISECONDS_IN_DAY
     assert plans["1d"].jitter_seconds == backfill._DEFAULT_JITTER_SECONDS["1d"]
@@ -97,12 +98,14 @@ def test_format_plan_summary_lists_intervals_and_symbols():
             backfill_start_ms=1_600_000_000_000,
             incremental_lookback_ms=3 * backfill._MILLISECONDS_IN_DAY,
             refresh_seconds=backfill._DEFAULT_REFRESH_SECONDS["1d"],
+            jitter_seconds=backfill._DEFAULT_JITTER_SECONDS["1d"],
         ),
         "1h": backfill._IntervalPlan(
             symbols={"BTCUSDT"},
             backfill_start_ms=1_600_100_000_000,
             incremental_lookback_ms=0,
-            refresh_seconds=0,
+            refresh_seconds=0,  # dziedziczy z CLI
+            jitter_seconds=0,
         ),
     }
 
@@ -175,6 +178,8 @@ def test_run_scheduler_uses_interval_specific_frequency():
     assert job_hourly["lookback_ms"] == 3 * backfill._MILLISECONDS_IN_DAY
     assert job_hourly["jitter_seconds"] == 0
 
+
+# --------------------- manifest health tests ---------------------
 
 class _CollectingRouter:
     def __init__(self) -> None:
@@ -297,6 +302,7 @@ def test_main_plan_only_outputs_summary_and_skips_execution(monkeypatch, capsys)
     def _fail(*_args, **_kwargs):
         raise AssertionError("Nie powinno być wywołane w trybie plan-only")
 
+    # W trybie plan-only nie powinno instancjować źródła/uprawnień
     monkeypatch.setattr(backfill, "_build_public_source", _fail)
     monkeypatch.setattr(backfill, "create_default_secret_storage", _fail)
 

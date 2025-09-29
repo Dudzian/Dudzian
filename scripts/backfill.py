@@ -18,9 +18,7 @@ from bot_core.data.ohlcv import (
     CachedOHLCVSource,
     DataGapIncidentTracker,
     DualCacheStorage,
-    JSONLGapAuditLogger,
     GapAlertPolicy,
-    ManifestEntry,
     OHLCVBackfillService,
     OHLCVRefreshScheduler,
     ParquetCacheStorage,
@@ -29,6 +27,7 @@ from bot_core.data.ohlcv import (
     generate_manifest_report,
     summarize_status,
 )
+from bot_core.data.ohlcv.audit import JSONLGapAuditLogger
 from bot_core.exchanges.base import Environment, ExchangeCredentials
 from bot_core.exchanges.binance.futures import BinanceFuturesAdapter
 from bot_core.exchanges.binance.spot import BinanceSpotAdapter
@@ -42,13 +41,14 @@ _LOGGER = logging.getLogger(__name__)
 
 _MILLISECONDS_IN_DAY = 86_400_000
 
-
+# Domyślne częstotliwości odświeżania per interwał (sekundy)
 _DEFAULT_REFRESH_SECONDS: Mapping[str, int] = {
     "1d": 24 * 60 * 60,
     "1h": 15 * 60,
     "15m": 5 * 60,
 }
 
+# Opcjonalny jitter (sekundy) – aby rozproszyć starty zadań w czasie
 _DEFAULT_JITTER_SECONDS: Mapping[str, int] = {
     "1d": 15 * 60,
     "1h": 2 * 60,
@@ -61,6 +61,7 @@ class _IntervalPlan:
     symbols: set[str]
     backfill_start_ms: int
     incremental_lookback_ms: int
+    # 0 => użyj wartości przekazanej z CLI (--refresh-seconds)
     refresh_seconds: int
     jitter_seconds: int = 0
 
@@ -71,7 +72,9 @@ def _build_public_source(exchange: str, environment: Environment) -> PublicAPIDa
             exchange_adapter=BinanceSpotAdapter(ExchangeCredentials(key_id="public", environment=env))
         ),
         "binance_futures": lambda env: PublicAPIDataSource(
-            exchange_adapter=BinanceFuturesAdapter(ExchangeCredentials(key_id="public", environment=env), environment=env)
+            exchange_adapter=BinanceFuturesAdapter(
+                ExchangeCredentials(key_id="public", environment=env), environment=env
+            )
         ),
         "kraken_spot": lambda env: PublicAPIDataSource(
             exchange_adapter=KrakenSpotAdapter(ExchangeCredentials(key_id="public", environment=env), environment=env)
@@ -91,7 +94,7 @@ def _build_public_source(exchange: str, environment: Environment) -> PublicAPIDa
     }
     try:
         builder = builders[exchange]
-    except KeyError as exc:  # pragma: no cover - zabezpieczenie przed przyszłymi giełdami
+    except KeyError as exc:  # pragma: no cover
         raise ValueError(f"Brak obsługi exchange={exchange} dla backfillu") from exc
     return builder(environment)
 
@@ -125,9 +128,16 @@ def _build_interval_plans(
     symbols: set[str] = set()
     now_ms = _utc_now_ms()
 
-    overrides = {key: int(value) for key, value in (refresh_overrides or {}).items() if int(value) > 0}
+    # przefiltruj override’y do dodatnich intów
+    refresh_cfg = {
+        k: int(v)
+        for k, v in (refresh_overrides or {}).items()
+        if isinstance(v, (int, float)) and int(v) > 0
+    }
     jitter_cfg = {
-        key: max(0, int(value)) for key, value in (jitter_overrides or {}).items() if int(value) >= 0
+        k: max(0, int(v))
+        for k, v in (jitter_overrides or {}).items()
+        if isinstance(v, (int, float)) and int(v) >= 0
     }
 
     for instrument in universe.instruments:
@@ -140,12 +150,8 @@ def _build_interval_plans(
             start = now_ms - window.lookback_days * _MILLISECONDS_IN_DAY
             plan = plans.get(window.interval)
             if plan is None:
-                refresh_seconds = overrides.get(
-                    window.interval, _DEFAULT_REFRESH_SECONDS.get(window.interval, 0)
-                )
-                jitter_seconds = jitter_cfg.get(
-                    window.interval, _DEFAULT_JITTER_SECONDS.get(window.interval, 0)
-                )
+                refresh_seconds = refresh_cfg.get(window.interval, _DEFAULT_REFRESH_SECONDS.get(window.interval, 0))
+                jitter_seconds = jitter_cfg.get(window.interval, _DEFAULT_JITTER_SECONDS.get(window.interval, 0))
                 plan = _IntervalPlan(
                     symbols=set(),
                     backfill_start_ms=start,
@@ -169,7 +175,6 @@ def _format_plan_summary(
     environment_name: str,
 ) -> str:
     """Buduje czytelną reprezentację planu backfillu dla trybu plan-only."""
-
     if not plans:
         return (
             f"Plan backfillu dla środowiska {environment_name} (exchange={exchange_name}):\n"
@@ -194,9 +199,7 @@ def _format_plan_summary(
             lookback_days = plan.incremental_lookback_ms / _MILLISECONDS_IN_DAY
             lookback_desc = f"{lookback_days:.1f}d"
 
-        refresh_desc = (
-            f"{plan.refresh_seconds}s" if plan.refresh_seconds else "dziedziczy (--refresh-seconds)"
-        )
+        refresh_desc = f"{plan.refresh_seconds}s" if plan.refresh_seconds else "dziedziczy (--refresh-seconds)"
         jitter_desc = f"{plan.jitter_seconds}s" if plan.jitter_seconds else "0s"
 
         symbols_sorted = sorted(plan.symbols)
@@ -260,49 +263,6 @@ def _build_gap_callback(
     return _callback
 
 
-def _format_manifest_table(
-    entries: Sequence[ManifestEntry],
-    summary: Mapping[str, int],
-) -> str:
-    headers = ["Symbol", "Interval", "Status", "Gap[min]", "Threshold[min]", "Rows", "Last UTC"]
-    rows: list[list[str]] = []
-
-    for entry in entries:
-        gap_display = "-" if entry.gap_minutes is None else f"{entry.gap_minutes:.1f}"
-        threshold_display = "-" if entry.threshold_minutes is None else str(entry.threshold_minutes)
-        row_display = "-" if entry.row_count is None else str(entry.row_count)
-        rows.append(
-            [
-                entry.symbol,
-                entry.interval,
-                entry.status,
-                gap_display,
-                threshold_display,
-                row_display,
-                entry.last_timestamp_iso or "-",
-            ]
-        )
-
-    widths = [len(header) for header in headers]
-    for row in rows:
-        for idx, value in enumerate(row):
-            widths[idx] = max(widths[idx], len(value))
-
-    def _format_row(row: Sequence[str]) -> str:
-        return "  ".join(value.ljust(widths[idx]) for idx, value in enumerate(row))
-
-    lines = [_format_row(headers)]
-    lines.append("  ".join("-" * width for width in widths))
-    lines.extend(_format_row(row) for row in rows)
-
-    if summary:
-        summary_items = ", ".join(f"{key}={value}" for key, value in sorted(summary.items()))
-        lines.append("")
-        lines.append(f"Podsumowanie statusów: {summary_items}")
-
-    return "\n".join(lines)
-
-
 def _report_manifest_health(
     *,
     manifest_path: Path,
@@ -312,9 +272,8 @@ def _report_manifest_health(
     alert_router: DefaultAlertRouter | None,
     as_of: datetime | None = None,
     output_format: str | None = None,
-) -> list[ManifestEntry]:
+) -> None:
     """Loguje stan manifestu i wysyła alerty o wykrytych lukach."""
-
     report_as_of = as_of or datetime.now(timezone.utc)
 
     entries = generate_manifest_report(
@@ -329,7 +288,7 @@ def _report_manifest_health(
             "Manifest OHLCV nie zawiera wpisów dla exchange=%s – pomijam raport",
             exchange_name,
         )
-        return []
+        return
 
     summary = summarize_status(entries)
     _LOGGER.info(
@@ -354,9 +313,9 @@ def _report_manifest_health(
         else:  # pragma: no cover - walidacja w parserze argumentów
             _LOGGER.warning("Nieobsługiwany format raportu manifestu: %s", output_format)
 
-    issues: list[ManifestEntry] = [entry for entry in entries if entry.status != "ok"]
+    issues = [entry for entry in entries if entry.status != "ok"]
     if not issues:
-        return entries
+        return
 
     for entry in issues:
         gap_display = "-" if entry.gap_minutes is None else f"{entry.gap_minutes:.1f} min"
@@ -371,18 +330,14 @@ def _report_manifest_health(
         )
 
     if not alert_router:
-        return entries
+        return
 
-    critical_entries = [
-        entry
-        for entry in issues
-        if entry.status in {"missing_metadata", "invalid_metadata"}
-    ]
-    warning_entries = [entry for entry in issues if entry.status == "warning"]
+    critical_entries = [e for e in issues if e.status in {"missing_metadata", "invalid_metadata"}]
+    warning_entries = [e for e in issues if e.status == "warning"]
 
-    def _build_body(entries: Sequence[ManifestEntry]) -> str:
+    def _build_body(entries_seq: Sequence[object]) -> str:
         lines = ["Problemy w manifeście OHLCV:"]
-        for entry in list(entries)[:10]:
+        for entry in list(entries_seq)[:10]:
             gap_display = "-" if entry.gap_minutes is None else f"{entry.gap_minutes:.1f} min"
             row_display = "-" if entry.row_count is None else str(entry.row_count)
             last_display = entry.last_timestamp_iso or "-"
@@ -390,15 +345,14 @@ def _report_manifest_health(
                 f"- {entry.symbol} {entry.interval} ({entry.status}) – ostatnia świeca: {last_display} UTC, "
                 f"luka: {gap_display}, wiersze: {row_display}"
             )
-        if len(entries) > 10:
-            lines.append(f"… oraz {len(entries) - 10} kolejnych wpisów.")
+        if len(entries_seq) > 10:
+            lines.append(f"… oraz {len(entries_seq) - 10} kolejnych wpisów.")
         lines.append("Szczegóły w logach backfillu oraz pliku manifestu.")
         return "\n".join(lines)
 
     context = {
         "environment": environment_name,
         "exchange": exchange_name,
-        "entries": str(len(entries)),
         "issues": str(len(issues)),
         "summary": json.dumps(summary, ensure_ascii=False),
     }
@@ -424,8 +378,6 @@ def _report_manifest_health(
                 context=context,
             )
         )
-
-    return entries
 
 
 def _initialize_alerting(
@@ -459,6 +411,7 @@ def _initialize_alerting(
 
     policy = _extract_gap_policy(environment)
     return router, policy, "Kanały alertowe zainicjalizowane"
+
 
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Backfill danych OHLCV zgodnie z config/core.yaml")
@@ -569,12 +522,66 @@ async def _run_scheduler(
             jitter_seconds=plan.jitter_seconds,
             name=f"{interval}:{len(plan.symbols)}",
         )
+        _LOGGER.debug(
+            "Zarejestrowano zadanie interval=%s, refresh_seconds=%s, lookback_ms=%s, jitter_seconds=%s",
+            interval,
+            frequency,
+            plan.incremental_lookback_ms,
+            plan.jitter_seconds,
+        )
 
-    _LOGGER.info("Uruchamiam harmonogram odświeżania (domyślnie co %s sekund)", refresh_seconds)
+    _LOGGER.info(
+        "Uruchamiam harmonogram odświeżania (%s zadań, domyślna częstotliwość %s sekund)",
+        len(plans),
+        refresh_seconds,
+    )
     try:
         await scheduler.run_forever()
     finally:
         scheduler.stop()
+
+
+def _format_manifest_table(
+    entries: Sequence[object],
+    summary: Mapping[str, int],
+) -> str:
+    headers = ["Symbol", "Interval", "Status", "Gap[min]", "Threshold[min]", "Rows", "Last UTC"]
+    rows: list[list[str]] = []
+
+    for entry in entries:
+        gap_display = "-" if entry.gap_minutes is None else f"{entry.gap_minutes:.1f}"
+        threshold_display = "-" if entry.threshold_minutes is None else str(entry.threshold_minutes)
+        row_display = "-" if entry.row_count is None else str(entry.row_count)
+        rows.append(
+            [
+                entry.symbol,
+                entry.interval,
+                entry.status,
+                gap_display,
+                threshold_display,
+                row_display,
+                entry.last_timestamp_iso or "-",
+            ]
+        )
+
+    widths = [len(header) for header in headers]
+    for row in rows:
+        for idx, value in enumerate(row):
+            widths[idx] = max(widths[idx], len(value))
+
+    def _format_row(row_vals: Sequence[str]) -> str:
+        return "  ".join(val.ljust(widths[idx]) for idx, val in enumerate(row_vals))
+
+    lines = [_format_row(headers)]
+    lines.append("  ".join("-" * width for width in widths))
+    lines.extend(_format_row(row) for row in rows)
+
+    if summary:
+        summary_items = ", ".join(f"{key}={value}" for key, value in sorted(summary.items()))
+        lines.append("")
+        lines.append(f"Podsumowanie statusów: {summary_items}")
+
+    return "\n".join(lines)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -589,15 +596,19 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     universe = _resolve_universe(config, environment)
 
-    refresh_overrides = {}
-    jitter_overrides = {}
+    # odczyt override’ów częstotliwości i jittera z adapter_settings (opcjonalnie)
+    refresh_overrides: Mapping[str, int] = {}
+    jitter_overrides: Mapping[str, int] = {}
     if isinstance(environment.adapter_settings, Mapping):
-        candidate = environment.adapter_settings.get("ohlcv_refresh_overrides")
-        if isinstance(candidate, Mapping):
-            refresh_overrides = candidate
-        jitter_candidate = environment.adapter_settings.get("ohlcv_refresh_jitter")
-        if isinstance(jitter_candidate, Mapping):
-            jitter_overrides = jitter_candidate
+        raw_refresh = (
+            environment.adapter_settings.get("ohlcv_refresh_seconds")
+            or environment.adapter_settings.get("ohlcv_refresh_overrides")
+        )
+        if isinstance(raw_refresh, Mapping):
+            refresh_overrides = raw_refresh
+        raw_jitter = environment.adapter_settings.get("ohlcv_refresh_jitter")
+        if isinstance(raw_jitter, Mapping):
+            jitter_overrides = raw_jitter
 
     plans, symbols = _build_interval_plans(
         universe=universe,
@@ -610,11 +621,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         _LOGGER.warning("Brak instrumentów z zakresem backfill dla giełdy %s", environment.exchange)
         return 0
 
+    # Tryb „plan only” — nie dotyka sekretów ani sieci
     if args.plan_only:
-        if args.manifest_report_format != "none":
-            _LOGGER.warning(
-                "Flaga --manifest-report-format wymaga wykonania backfillu – pomijam wydruk."
-            )
         summary = _format_plan_summary(
             plans,
             exchange_name=environment.exchange,
@@ -630,6 +638,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     storage = DualCacheStorage(primary=parquet_storage, manifest=manifest_storage)
     audit_logger = JSONLGapAuditLogger(cache_root / "audit" / f"{environment.name}_ohlcv_gaps.jsonl")
 
+    # Alerty + polityka luk
     alert_router, gap_policy, alert_message = _initialize_alerting(
         args=args,
         config=config,
@@ -667,7 +676,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
 
     manifest_format = None if args.manifest_report_format == "none" else args.manifest_report_format
-
     _report_manifest_health(
         manifest_path=manifest_path,
         universe=universe,
@@ -694,12 +702,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 refresh_seconds=args.refresh_seconds,
             )
         )
-    except KeyboardInterrupt:  # pragma: no cover - obsługa CLI
+    except KeyboardInterrupt:  # pragma: no cover
         _LOGGER.info("Przerwano przez użytkownika – zamykam harmonogram")
 
     return 0
 
 
-if __name__ == "__main__":  # pragma: no cover - punkt wejścia CLI
+if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main())
-
