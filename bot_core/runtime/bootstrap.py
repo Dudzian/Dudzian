@@ -182,7 +182,12 @@ def _resolve_risk_profile(
 
 
 def _build_risk_profile(config: RiskProfileConfig) -> RiskProfile:
-    """Tworzy profil ryzyka na podstawie konfiguracji."""
+    """Tworzy profil ryzyka na podstawie konfiguracji.
+
+    - Jeśli `name` = "manual" → użyj parametrów z configu (ManualProfile).
+    - Jeśli `name` w {conservative, balanced, aggressive} → użyj predefiniowanych profili (domyślne wartości).
+    - W innym przypadku fallback do ManualProfile z parametrami z configu.
+    """
     profile_key = config.name.lower()
     if profile_key == "manual":
         return ManualProfile(
@@ -198,8 +203,8 @@ def _build_risk_profile(config: RiskProfileConfig) -> RiskProfile:
 
     profile_class = _PROFILE_CLASS_BY_NAME.get(profile_key)
     if profile_class is not None:
-        # Predefiniowane profile mają sensowne domyślne parametry.
-        # Jeśli potrzebujesz parametryzacji — użyj profilu "manual".
+        # Predefiniowane profile mają sensowne domyślne parametry;
+        # jeśli potrzebujesz parametryzacji — użyj profilu "manual".
         return profile_class()
 
     # Fallback: parametry z konfiguracji jako profil "manual"
@@ -288,7 +293,7 @@ def _build_decision_journal(environment: EnvironmentConfig) -> TradingDecisionJo
         return InMemoryTradingDecisionJournal()
     if backend == "file":
         directory = Path(config.directory) if config.directory else Path("decisions")
-        if not directory.is_absolute():
+        if not directory is None and not directory.is_absolute():
             base = Path(environment.data_cache_path)
             directory = base / directory
         return JsonlTradingDecisionJournal(

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping, Sequence
+from unittest import mock
 
 import sys
 
@@ -371,3 +372,104 @@ def test_collect_signals_enriches_metadata() -> None:
     assert signal.metadata["quantity"] == pytest.approx(0.25)
     assert float(signal.metadata["price"]) == pytest.approx(collected[0].snapshot.close)
     assert signal.metadata["order_type"] == "market"
+
+
+def test_handle_signals_preserves_metadata_for_adjustments() -> None:
+    runtime_cfg = ControllerRuntimeConfig(tick_seconds=60.0, interval="1d")
+    core_cfg = _core_config(runtime_cfg, "paper", "paper_risk")
+
+    risk_engine = ThresholdRiskEngine()
+    profile = ManualProfile(
+        name="paper_risk",
+        max_positions=5,
+        max_leverage=5.0,
+        drawdown_limit=1.0,
+        daily_loss_limit=1.0,
+        max_position_pct=1.0,
+        target_volatility=0.02,
+        stop_loss_atr_multiple=1.5,
+    )
+    risk_engine.register_profile(profile)
+
+    execution_service = PaperTradingExecutionService(
+        {"BTCUSDT": MarketMetadata(base_asset="BTC", quote_asset="USDT", min_notional=0.0)},
+        initial_balances={"USDT": 100_000.0},
+        maker_fee=0.0,
+        taker_fee=0.0,
+        slippage_bps=0.0,
+    )
+
+    storage = _InMemoryStorage()
+    source = _FixtureSource(
+        rows=[
+            [1_700_000_000_000.0, 20_000.0, 20_100.0, 19_900.0, 20_050.0, 5.0],
+            [1_700_086_400_000.0, 20_050.0, 20_200.0, 19_950.0, 20_100.0, 6.0],
+        ]
+    )
+    cached = CachedOHLCVSource(storage=storage, upstream=source)
+    backfill = OHLCVBackfillService(cached, chunk_limit=10)
+
+    account_snapshot = AccountSnapshot(
+        balances={"USDT": 100_000.0},
+        total_equity=100_000.0,
+        available_margin=100_000.0,
+        maintenance_margin=0.0,
+    )
+
+    controller = DailyTrendController(
+        core_config=core_cfg,
+        environment_name="paper",
+        controller_name="daily_trend",
+        symbols=("BTCUSDT",),
+        backfill_service=backfill,
+        data_source=cached,
+        strategy=DailyTrendMomentumStrategy(DailyTrendMomentumSettings()),
+        risk_engine=risk_engine,
+        execution_service=execution_service,
+        account_loader=lambda: account_snapshot,
+        execution_context=ExecutionContext(
+            portfolio_id="paper-demo",
+            risk_profile="paper_risk",
+            environment=Environment.PAPER.value,
+            metadata={},
+        ),
+        position_size=1.0,
+    )
+
+    snapshot = MarketSnapshot(
+        symbol="BTCUSDT",
+        timestamp=1_700_086_400_000,
+        open=20_050.0,
+        high=20_200.0,
+        low=19_950.0,
+        close=20_100.0,
+        volume=5.0,
+    )
+    signal = StrategySignal(
+        symbol="BTCUSDT",
+        side="BUY",
+        confidence=0.9,
+        metadata={
+            "quantity": 5.0,
+            "price": 20_100.0,
+            "order_type": "market",
+            "atr": 500.0,
+            "stop_price": 19_100.0,
+        },
+    )
+
+    with mock.patch.object(risk_engine, "apply_pre_trade_checks", wraps=risk_engine.apply_pre_trade_checks) as patched:
+        results = controller._handle_signals(snapshot, (signal,))
+
+    assert patched.call_count == 2
+    first_request = patched.call_args_list[0].args[0]
+    second_request = patched.call_args_list[1].args[0]
+
+    assert first_request.metadata is not None
+    assert second_request.metadata is not None
+    assert first_request.metadata["atr"] == pytest.approx(500.0)
+    assert first_request.metadata["stop_price"] == pytest.approx(19_100.0)
+    assert second_request.metadata["atr"] == pytest.approx(500.0)
+    assert second_request.metadata["stop_price"] == pytest.approx(19_100.0)
+
+    assert results

@@ -67,6 +67,8 @@ ohlcv_gap_alerts:
   incident_threshold_count: 5   # liczba ostrzeżeń w oknie, po której otwieramy incydent
   incident_window_minutes: 10   # szerokość okna przesuwnego na eskalację (Telegram + e-mail)
   sms_escalation_minutes: 15    # czas trwania incydentu po którym uruchamiamy SMS
+  warning_throttle_minutes: 5   # minimalny odstęp pomiędzy ostrzeżeniami dla tego samego symbolu
+
 ```
 
 Domyślne progi bazują na dwukrotności długości interwału i są bezpieczne dla
@@ -77,6 +79,8 @@ zaszyfrowanym magazynie.
 Każdy przebieg backfillu zapisuje ponadto wpisy audytowe luk do pliku
 `<data_cache_path>/audit/<environment>_ohlcv_gaps.jsonl`, gdzie utrwalane są
 ostatni znany znacznik czasu, liczba świec oraz status (`ok`, `warning`,
+`warning_suppressed`, `incident`, `sms_escalated`). Plik jest w formacie JSONL
+i można go trzymać w retencji ≥24 miesięcy na potrzeby audytu operacyjnego.
 `incident`, `sms_escalated`). Plik jest w formacie JSONL i można go trzymać w
 retencji ≥24 miesięcy na potrzeby audytu operacyjnego.
 
@@ -96,4 +100,36 @@ python scripts/gap_audit_report.py \
 Wynik zawiera tabelę z ostatnim statusem, wielkością luki (minuty), liczbą
 wierszy w cache oraz liczbą ostrzeżeń/incydentów/SMS w zadanym oknie
 czasowym (domyślnie 24 h). Parametr `--window-hours` pozwala zmienić szerokość
+tego okna do własnych potrzeb operacyjnych.
+
+### Raport zdrowia manifestu SQLite
+
+W sytuacjach, gdy potrzebna jest szybka inspekcja aktualnego stanu cache bez
+sięgania do logów audytowych, można użyć skryptu
+`scripts/manifest_gap_report.py`. Narzędzie odczytuje manifest SQLite,
+porównuje ostatnie stemple czasowe z bieżącą godziną i stosuje progi ostrzeżeń
+zdefiniowane w `ohlcv_gap_alerts.warning_gap_minutes` (a w razie braku –
+domyślnie dwukrotność interwału). Raport można otrzymać jako tabelę tekstową
+lub JSON, np.:
+
+```bash
+python scripts/manifest_gap_report.py \
+  --environment binance_paper \
+  --as-of 2024-05-20T12:00:00Z
+```
+
+Wynik pokazuje każdy symbol/interwał wraz z liczbą wierszy, ostatnim
+timestampem, długością luki oraz statusem (`ok`, `warning`, `missing_metadata`,
+`invalid_metadata`). Dzięki temu łatwo wychwycić instrumenty pominięte w
+backfillu lub manifesty z uszkodzonymi danymi, zanim pipeline trafi na
+środowisko paper/live.
+
+Jeżeli backfill uruchomiono z flagą `--enable-alerts`, raport manifestu jest
+generowany automatycznie po zakończeniu synchronizacji. Wszelkie wykryte
+nieprawidłowości trafiają na kanały Telegram/e-mail/SMS zgodnie z polityką
+alertów: braki metadanych i uszkodzone wpisy eskalują się jako krytyczne
+powiadomienia, a długotrwałe luki (`warning`) wysyłane są jako ostrzeżenia z
+pełnym kontekstem (ostatni timestamp, liczba świec, długość luki). Dzięki temu
+operacje otrzymują komplet informacji o stanie cache natychmiast po
+backfillu – jeszcze zanim harmonogram odświeżania rozpocznie kolejne cykle.
 tego okna do własnych potrzeb operacyjnych.

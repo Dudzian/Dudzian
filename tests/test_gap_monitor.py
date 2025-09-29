@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 from datetime import datetime, timedelta, timezone
 
 from bot_core.alerts import AlertMessage
@@ -69,6 +68,39 @@ def test_gap_tracker_sends_warning_on_threshold_exceeded() -> None:
     assert record.interval == "1h"
 
 
+def test_gap_tracker_throttles_repeated_warnings() -> None:
+    router = DummyRouter()
+    audit = DummyAuditLogger()
+    base_time = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    clock_times = [base_time, base_time + timedelta(minutes=2)]
+
+    def clock() -> datetime:
+        return clock_times.pop(0)
+
+    now_ms = int((base_time + timedelta(hours=2)).timestamp() * 1000)
+    metadata = {
+        "last_timestamp::ETHUSDT::1h": str(now_ms - 180 * 60_000),
+        "row_count::ETHUSDT::1h": "900",
+    }
+    policy = GapAlertPolicy(warning_gap_minutes={"1h": 60}, warning_throttle_minutes=5)
+    tracker = DataGapIncidentTracker(
+        router=router,
+        metadata_provider=lambda: metadata,
+        policy=policy,
+        environment_name="paper",
+        exchange="binance_spot",
+        clock=clock,
+        audit_logger=audit,
+    )
+
+    tracker.handle_summaries(interval="1h", summaries=[_summary("ETHUSDT", "1h", now_ms)], as_of_ms=now_ms)
+    tracker.handle_summaries(interval="1h", summaries=[_summary("ETHUSDT", "1h", now_ms)], as_of_ms=now_ms)
+
+    assert len(router.messages) == 1
+    assert router.messages[0].severity == "warning"
+    assert [record.status for record in audit.records] == ["warning", "warning_suppressed"]
+
+
 def test_gap_tracker_opens_incident_after_repeated_warnings() -> None:
     router = DummyRouter()
     audit = DummyAuditLogger()
@@ -106,12 +138,12 @@ def test_gap_tracker_opens_incident_after_repeated_warnings() -> None:
             as_of_ms=now_ms,
         )
 
-    assert len(router.messages) == 3
-    assert router.messages[-1].severity == "critical"
+    assert [message.severity for message in router.messages] == ["warning", "critical"]
     assert "INCIDENT" in router.messages[-1].title
 
     statuses = [record.status for record in audit.records]
-    assert statuses.count("warning") == 2
+    assert statuses.count("warning") == 1
+    assert statuses.count("warning_suppressed") == 1
     assert statuses[-1] == "incident"
 
 
@@ -121,7 +153,7 @@ def test_gap_tracker_escalates_sms_and_recovers() -> None:
     base_time = datetime(2024, 1, 1, tzinfo=timezone.utc)
     clock_times = [
         base_time,                              # warn #1
-        base_time + timedelta(minutes=2),       # warn #2
+        base_time + timedelta(minutes=2),       # warn #2 (throttled window not passed)
         base_time + timedelta(minutes=4),       # warn #3 -> incident open
         base_time + timedelta(minutes=20),      # SMS escalate (>15m)
         base_time + timedelta(minutes=40),      # recovery

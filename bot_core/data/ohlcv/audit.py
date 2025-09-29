@@ -37,9 +37,7 @@ class GapAuditRecord:
             "row_count": self.row_count,
             "last_timestamp": self.last_timestamp,
             "warnings_in_window": self.warnings_in_window,
-            "incident_minutes": None
-            if self.incident_minutes is None
-            else round(self.incident_minutes, 3),
+            "incident_minutes": None if self.incident_minutes is None else round(self.incident_minutes, 3),
         }
 
     @classmethod

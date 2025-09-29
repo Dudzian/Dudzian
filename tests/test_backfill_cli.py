@@ -1,5 +1,6 @@
 import asyncio
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
@@ -10,6 +11,7 @@ from bot_core.config.models import (
     InstrumentConfig,
     InstrumentUniverseConfig,
 )
+from bot_core.data.ohlcv import SQLiteCacheStorage
 from bot_core.exchanges.base import Environment
 from bot_core.exchanges.binance.futures import BinanceFuturesAdapter
 from bot_core.exchanges.binance.spot import BinanceSpotAdapter
@@ -68,7 +70,7 @@ def test_build_interval_plans_assigns_refresh_seconds_and_lookbacks():
         universe=universe,
         exchange_name="binance_spot",
         incremental_lookback_days=7,
-        refresh_overrides={"1h": 120},
+        interval_refresh_overrides={"1h": 120},
     )
 
     assert symbols == {"BTCUSDT"}
@@ -130,3 +132,122 @@ def test_run_scheduler_uses_interval_specific_frequency():
 
     assert job_hourly["frequency_seconds"] == 900
     assert job_hourly["lookback_ms"] == 3 * backfill._MILLISECONDS_IN_DAY
+
+
+# --------------------- manifest health tests ---------------------
+
+class _CollectingRouter:
+    def __init__(self) -> None:
+        self.messages = []
+
+    def dispatch(self, message):
+        self.messages.append(message)
+
+
+def _build_universe(symbol: str, interval: str) -> InstrumentUniverseConfig:
+    return InstrumentUniverseConfig(
+        name="test",
+        description="test",
+        instruments=(
+            InstrumentConfig(
+                name=symbol,
+                base_asset=symbol.split("_")[0],
+                quote_asset=symbol.split("_")[1],
+                categories=("core",),
+                exchange_symbols={"binance_spot": symbol.replace("_", "")},
+                backfill_windows=(
+                    InstrumentBackfillWindow(interval=interval, lookback_days=30),
+                ),
+            ),
+        ),
+    )
+
+
+def test_report_manifest_health_does_not_alert_when_everything_ok(tmp_path):
+    manifest = tmp_path / "manifest.sqlite"
+    storage = SQLiteCacheStorage(manifest, store_rows=False)
+    universe = _build_universe("BTC_USDT", "1h")
+    router = _CollectingRouter()
+    as_of = datetime(2024, 1, 1, 12, 0, tzinfo=timezone.utc)
+
+    metadata = storage.metadata()
+    metadata["last_timestamp::BTCUSDT::1h"] = str(int((as_of - timedelta(minutes=30)).timestamp() * 1000))
+    metadata["row_count::BTCUSDT::1h"] = "120"
+
+    backfill._report_manifest_health(
+        manifest_path=manifest,
+        universe=universe,
+        exchange_name="binance_spot",
+        environment_name="binance_paper",
+        alert_router=router,
+        as_of=as_of,
+    )
+
+    assert router.messages == []
+
+
+def test_report_manifest_health_emits_warning_for_long_gap(tmp_path):
+    manifest = tmp_path / "manifest.sqlite"
+    storage = SQLiteCacheStorage(manifest, store_rows=False)
+    universe = InstrumentUniverseConfig(
+        name="test",
+        description="test",
+        instruments=(
+            InstrumentConfig(
+                name="BTC_USDT",
+                base_asset="BTC",
+                quote_asset="USDT",
+                categories=("core",),
+                exchange_symbols={"binance_spot": "BTCUSDT"},
+                backfill_windows=(
+                    InstrumentBackfillWindow(interval="1d", lookback_days=30),
+                    InstrumentBackfillWindow(interval="1h", lookback_days=30),
+                ),
+            ),
+        ),
+    )
+    router = _CollectingRouter()
+    as_of = datetime(2024, 1, 1, 12, 0, tzinfo=timezone.utc)
+
+    metadata = storage.metadata()
+    metadata["last_timestamp::BTCUSDT::1d"] = str(int((as_of - timedelta(hours=12)).timestamp() * 1000))
+    metadata["row_count::BTCUSDT::1d"] = "365"
+    metadata["last_timestamp::BTCUSDT::1h"] = str(int((as_of - timedelta(hours=3)).timestamp() * 1000))
+    metadata["row_count::BTCUSDT::1h"] = "720"
+
+    backfill._report_manifest_health(
+        manifest_path=manifest,
+        universe=universe,
+        exchange_name="binance_spot",
+        environment_name="binance_paper",
+        alert_router=router,
+        as_of=as_of,
+    )
+
+    assert len(router.messages) == 1
+    message = router.messages[0]
+    assert message.severity == "warning"
+    assert "BTCUSDT" in message.body
+    assert message.context["environment"] == "binance_paper"
+
+
+def test_report_manifest_health_emits_critical_for_missing_metadata(tmp_path):
+    manifest = tmp_path / "manifest.sqlite"
+    SQLiteCacheStorage(manifest, store_rows=False)
+    universe = _build_universe("ETH_USDT", "1h")
+    router = _CollectingRouter()
+    as_of = datetime(2024, 1, 1, 12, 0, tzinfo=timezone.utc)
+
+    backfill._report_manifest_health(
+        manifest_path=manifest,
+        universe=universe,
+        exchange_name="binance_spot",
+        environment_name="binance_paper",
+        alert_router=router,
+        as_of=as_of,
+    )
+
+    assert len(router.messages) == 1
+    message = router.messages[0]
+    assert message.severity == "critical"
+    assert "ETHUSDT" in message.body

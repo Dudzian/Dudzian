@@ -3,13 +3,14 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
-from bot_core.alerts import DefaultAlertRouter
+from bot_core.alerts import AlertMessage, DefaultAlertRouter
 from bot_core.config.loader import load_core_config
 from bot_core.config.models import CoreConfig, EnvironmentConfig, InstrumentUniverseConfig
 from bot_core.data.ohlcv import (
@@ -23,6 +24,8 @@ from bot_core.data.ohlcv import (
     ParquetCacheStorage,
     PublicAPIDataSource,
     SQLiteCacheStorage,
+    generate_manifest_report,
+    summarize_status,
 )
 from bot_core.data.ohlcv.audit import JSONLGapAuditLogger
 from bot_core.exchanges.base import Environment, ExchangeCredentials
@@ -181,6 +184,7 @@ def _extract_gap_policy(environment: EnvironmentConfig) -> GapAlertPolicy:
         incident_threshold_count=_safe_int("incident_threshold_count", 5),
         incident_window_minutes=_safe_int("incident_window_minutes", 10),
         sms_escalation_minutes=_safe_int("sms_escalation_minutes", 15),
+        warning_throttle_minutes=_safe_int("warning_throttle_minutes", 5),
     )
 
 
@@ -194,6 +198,105 @@ def _build_gap_callback(
         gap_tracker.handle_summaries(interval=interval, summaries=summaries, as_of_ms=as_of_ms)
 
     return _callback
+
+
+def _report_manifest_health(
+    *,
+    manifest_path: Path,
+    universe: InstrumentUniverseConfig,
+    exchange_name: str,
+    environment_name: str,
+    alert_router: DefaultAlertRouter | None,
+    as_of: datetime | None = None,
+) -> None:
+    """Loguje stan manifestu i wysyła alerty o wykrytych lukach."""
+    entries = generate_manifest_report(
+        manifest_path=manifest_path,
+        universe=universe,
+        exchange_name=exchange_name,
+        as_of=as_of,
+    )
+
+    if not entries:
+        _LOGGER.info(
+            "Manifest OHLCV nie zawiera wpisów dla exchange=%s – pomijam raport",
+            exchange_name,
+        )
+        return
+
+    summary = summarize_status(entries)
+    _LOGGER.info(
+        "Manifest OHLCV %s/%s – statusy: %s",
+        environment_name,
+        exchange_name,
+        summary,
+    )
+
+    issues = [entry for entry in entries if entry.status != "ok"]
+    if not issues:
+        return
+
+    for entry in issues:
+        gap_display = "-" if entry.gap_minutes is None else f"{entry.gap_minutes:.1f} min"
+        _LOGGER.warning(
+            "Manifest alert: %s %s status=%s gap=%s rows=%s last=%s",
+            entry.symbol,
+            entry.interval,
+            entry.status,
+            gap_display,
+            entry.row_count if entry.row_count is not None else "-",
+            entry.last_timestamp_iso or "-",
+        )
+
+    if not alert_router:
+        return
+
+    critical_entries = [e for e in issues if e.status in {"missing_metadata", "invalid_metadata"}]
+    warning_entries = [e for e in issues if e.status == "warning"]
+
+    def _build_body(entries: Sequence[object]) -> str:
+        lines = ["Problemy w manifeście OHLCV:"]
+        for entry in list(entries)[:10]:
+            gap_display = "-" if entry.gap_minutes is None else f"{entry.gap_minutes:.1f} min"
+            row_display = "-" if entry.row_count is None else str(entry.row_count)
+            last_display = entry.last_timestamp_iso or "-"
+            lines.append(
+                f"- {entry.symbol} {entry.interval} ({entry.status}) – ostatnia świeca: {last_display} UTC, "
+                f"luka: {gap_display}, wiersze: {row_display}"
+            )
+        if len(entries) > 10:
+            lines.append(f"… oraz {len(entries) - 10} kolejnych wpisów.")
+        lines.append("Szczegóły w logach backfillu oraz pliku manifestu.")
+        return "\n".join(lines)
+
+    context = {
+        "environment": environment_name,
+        "exchange": exchange_name,
+        "issues": str(len(issues)),
+        "summary": json.dumps(summary, ensure_ascii=False),
+    }
+
+    if critical_entries:
+        alert_router.dispatch(
+            AlertMessage(
+                category="data.ohlcv",
+                title=f"Krytyczne braki w manifeście OHLCV ({environment_name})",
+                body=_build_body(critical_entries),
+                severity="critical",
+                context=context,
+            )
+        )
+
+    if warning_entries:
+        alert_router.dispatch(
+            AlertMessage(
+                category="data.ohlcv",
+                title=f"Ostrzeżenia w manifeście OHLCV ({environment_name})",
+                body=_build_body(warning_entries),
+                severity="warning",
+                context=context,
+            )
+        )
 
 
 def _initialize_alerting(
@@ -358,7 +461,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     # odczyt override’ów częstotliwości z adapter_settings (opcjonalnie)
     adapter_settings = getattr(environment, "adapter_settings", {}) or {}
-    raw_interval_overrides = adapter_settings.get("ohlcv_refresh_seconds", {})
+    raw_interval_overrides = (
+        adapter_settings.get("ohlcv_refresh_seconds")  # nowe pole
+        or adapter_settings.get("ohlcv_refresh_overrides")  # wsteczna kompatybilność
+    )
     interval_refresh_overrides: Mapping[str, int] | None = None
     if isinstance(raw_interval_overrides, Mapping):
         interval_refresh_overrides = raw_interval_overrides
@@ -375,10 +481,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     cache_root = Path(environment.data_cache_path)
     parquet_storage = ParquetCacheStorage(cache_root / "ohlcv_parquet", namespace=environment.exchange)
-    manifest_storage = SQLiteCacheStorage(cache_root / "ohlcv_manifest.sqlite", store_rows=False)
+    manifest_path = cache_root / "ohlcv_manifest.sqlite"
+    manifest_storage = SQLiteCacheStorage(manifest_path, store_rows=False)
     storage = DualCacheStorage(primary=parquet_storage, manifest=manifest_storage)
-
-    # Audyt luk danych (JSONL)
     audit_logger = JSONLGapAuditLogger(cache_root / "audit" / f"{environment.name}_ohlcv_gaps.jsonl")
 
     # Alerty + polityka luk
@@ -416,6 +521,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         plans=plans,
         end_timestamp=now_ts,
         gap_tracker=gap_tracker,
+    )
+
+    _report_manifest_health(
+        manifest_path=manifest_path,
+        universe=universe,
+        exchange_name=environment.exchange,
+        environment_name=environment.name,
+        alert_router=alert_router,
+        as_of=datetime.fromtimestamp(now_ts / 1000, tz=timezone.utc),
     )
 
     if args.run_once:

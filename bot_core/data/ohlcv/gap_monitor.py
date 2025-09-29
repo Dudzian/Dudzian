@@ -54,6 +54,7 @@ class GapAlertPolicy:
     incident_threshold_count: int = 5
     incident_window_minutes: int = 10
     sms_escalation_minutes: int = 15
+    warning_throttle_minutes: int = 5  # minimalny odstęp pomiędzy kolejnymi alertami warning
 
     def warning_threshold_minutes(self, interval: str) -> int:
         minutes = self.warning_gap_minutes.get(interval)
@@ -69,6 +70,7 @@ class _GapState:
     incident_open: bool = False
     incident_open_at: datetime | None = None
     sms_escalated: bool = False
+    last_warning_alert: datetime | None = None
 
     def register_warning(self, timestamp: datetime, *, window: timedelta) -> int:
         self.warnings.append(timestamp)
@@ -81,6 +83,7 @@ class _GapState:
         self.incident_open = False
         self.incident_open_at = None
         self.sms_escalated = False
+        self.last_warning_alert = None
 
 
 @dataclass(slots=True)
@@ -274,6 +277,7 @@ class DataGapIncidentTracker:
                 state.incident_open = True
                 state.incident_open_at = now
                 state.sms_escalated = False
+                state.last_warning_alert = None
                 self._emit_alert(
                     severity="critical",
                     title=f"INCIDENT – luka danych {symbol} {interval}",
@@ -303,10 +307,7 @@ class DataGapIncidentTracker:
             if state.incident_open:
                 assert state.incident_open_at is not None
                 elapsed = (now - state.incident_open_at).total_seconds() / 60
-                if (
-                    not state.sms_escalated
-                    and elapsed >= max(1, self.policy.sms_escalation_minutes)
-                ):
+                if (not state.sms_escalated) and elapsed >= max(1, self.policy.sms_escalation_minutes):
                     state.sms_escalated = True
                     self._emit_alert(
                         severity="critical",
@@ -343,7 +344,23 @@ class DataGapIncidentTracker:
                 )
                 continue
 
-            # Ostrzeżenie – pojedynczy alert o dłuższej luce
+            # Ostrzeżenie – pojedynczy alert o dłuższej luce (z throttlingiem)
+            throttle_window = timedelta(minutes=max(1, self.policy.warning_throttle_minutes))
+            if state.last_warning_alert and (now - state.last_warning_alert) < throttle_window:
+                self._log_audit(
+                    symbol=symbol,
+                    interval=interval,
+                    status="warning_suppressed",
+                    gap_minutes=gap_minutes,
+                    row_count=row_count,
+                    last_timestamp_iso=last_timestamp_iso,
+                    warnings_in_window=warn_count,
+                    incident_minutes=None,
+                    event_time=now,
+                )
+                continue
+
+            state.last_warning_alert = now
             self._emit_alert(
                 severity="warning",
                 title=f"Luka danych {symbol} {interval}",
