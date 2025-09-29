@@ -18,9 +18,7 @@ from bot_core.data.ohlcv import (
     CachedOHLCVSource,
     DataGapIncidentTracker,
     DualCacheStorage,
-    JSONLGapAuditLogger,
     GapAlertPolicy,
-    ManifestEntry,
     OHLCVBackfillService,
     OHLCVRefreshScheduler,
     ParquetCacheStorage,
@@ -29,6 +27,7 @@ from bot_core.data.ohlcv import (
     generate_manifest_report,
     summarize_status,
 )
+from bot_core.data.ohlcv.audit import JSONLGapAuditLogger
 from bot_core.exchanges.base import Environment, ExchangeCredentials
 from bot_core.exchanges.binance.futures import BinanceFuturesAdapter
 from bot_core.exchanges.binance.spot import BinanceSpotAdapter
@@ -42,13 +41,14 @@ _LOGGER = logging.getLogger(__name__)
 
 _MILLISECONDS_IN_DAY = 86_400_000
 
-
+# Domyślne częstotliwości odświeżania per interwał (sekundy)
 _DEFAULT_REFRESH_SECONDS: Mapping[str, int] = {
     "1d": 24 * 60 * 60,
     "1h": 15 * 60,
     "15m": 5 * 60,
 }
 
+# Opcjonalny jitter (sekundy) – aby rozproszyć starty zadań w czasie
 _DEFAULT_JITTER_SECONDS: Mapping[str, int] = {
     "1d": 15 * 60,
     "1h": 2 * 60,
@@ -61,6 +61,7 @@ class _IntervalPlan:
     symbols: set[str]
     backfill_start_ms: int
     incremental_lookback_ms: int
+    # 0 => użyj wartości przekazanej z CLI (--refresh-seconds)
     refresh_seconds: int
     jitter_seconds: int = 0
 
@@ -71,7 +72,9 @@ def _build_public_source(exchange: str, environment: Environment) -> PublicAPIDa
             exchange_adapter=BinanceSpotAdapter(ExchangeCredentials(key_id="public", environment=env))
         ),
         "binance_futures": lambda env: PublicAPIDataSource(
-            exchange_adapter=BinanceFuturesAdapter(ExchangeCredentials(key_id="public", environment=env), environment=env)
+            exchange_adapter=BinanceFuturesAdapter(
+                ExchangeCredentials(key_id="public", environment=env), environment=env
+            )
         ),
         "kraken_spot": lambda env: PublicAPIDataSource(
             exchange_adapter=KrakenSpotAdapter(ExchangeCredentials(key_id="public", environment=env), environment=env)
@@ -91,7 +94,7 @@ def _build_public_source(exchange: str, environment: Environment) -> PublicAPIDa
     }
     try:
         builder = builders[exchange]
-    except KeyError as exc:  # pragma: no cover - zabezpieczenie przed przyszłymi giełdami
+    except KeyError as exc:  # pragma: no cover
         raise ValueError(f"Brak obsługi exchange={exchange} dla backfillu") from exc
     return builder(environment)
 
@@ -125,10 +128,9 @@ def _build_interval_plans(
     symbols: set[str] = set()
     now_ms = _utc_now_ms()
 
-    overrides = {key: int(value) for key, value in (refresh_overrides or {}).items() if int(value) > 0}
-    jitter_cfg = {
-        key: max(0, int(value)) for key, value in (jitter_overrides or {}).items() if int(value) >= 0
-    }
+    # przefiltruj override’y do dodatnich intów
+    refresh_cfg = {k: int(v) for k, v in (refresh_overrides or {}).items() if isinstance(v, (int, float)) and int(v) > 0}
+    jitter_cfg = {k: max(0, int(v)) for k, v in (jitter_overrides or {}).items() if isinstance(v, (int, float)) and int(v) >= 0}
 
     for instrument in universe.instruments:
         symbol = instrument.exchange_symbols.get(exchange_name)
@@ -140,12 +142,8 @@ def _build_interval_plans(
             start = now_ms - window.lookback_days * _MILLISECONDS_IN_DAY
             plan = plans.get(window.interval)
             if plan is None:
-                refresh_seconds = overrides.get(
-                    window.interval, _DEFAULT_REFRESH_SECONDS.get(window.interval, 0)
-                )
-                jitter_seconds = jitter_cfg.get(
-                    window.interval, _DEFAULT_JITTER_SECONDS.get(window.interval, 0)
-                )
+                refresh_seconds = refresh_cfg.get(window.interval, _DEFAULT_REFRESH_SECONDS.get(window.interval, 0))
+                jitter_seconds = jitter_cfg.get(window.interval, _DEFAULT_JITTER_SECONDS.get(window.interval, 0))
                 plan = _IntervalPlan(
                     symbols=set(),
                     backfill_start_ms=start,
@@ -169,7 +167,6 @@ def _format_plan_summary(
     environment_name: str,
 ) -> str:
     """Buduje czytelną reprezentację planu backfillu dla trybu plan-only."""
-
     if not plans:
         return (
             f"Plan backfillu dla środowiska {environment_name} (exchange={exchange_name}):\n"
@@ -194,9 +191,7 @@ def _format_plan_summary(
             lookback_days = plan.incremental_lookback_ms / _MILLISECONDS_IN_DAY
             lookback_desc = f"{lookback_days:.1f}d"
 
-        refresh_desc = (
-            f"{plan.refresh_seconds}s" if plan.refresh_seconds else "dziedziczy (--refresh-seconds)"
-        )
+        refresh_desc = f"{plan.refresh_seconds}s" if plan.refresh_seconds else "dziedziczy (--refresh-seconds)"
         jitter_desc = f"{plan.jitter_seconds}s" if plan.jitter_seconds else "0s"
 
         symbols_sorted = sorted(plan.symbols)
@@ -270,7 +265,6 @@ def _report_manifest_health(
     as_of: datetime | None = None,
 ) -> None:
     """Loguje stan manifestu i wysyła alerty o wykrytych lukach."""
-
     entries = generate_manifest_report(
         manifest_path=manifest_path,
         universe=universe,
@@ -293,7 +287,7 @@ def _report_manifest_health(
         summary,
     )
 
-    issues: list[ManifestEntry] = [entry for entry in entries if entry.status != "ok"]
+    issues = [entry for entry in entries if entry.status != "ok"]
     if not issues:
         return
 
@@ -312,14 +306,10 @@ def _report_manifest_health(
     if not alert_router:
         return
 
-    critical_entries = [
-        entry
-        for entry in issues
-        if entry.status in {"missing_metadata", "invalid_metadata"}
-    ]
-    warning_entries = [entry for entry in issues if entry.status == "warning"]
+    critical_entries = [e for e in issues if e.status in {"missing_metadata", "invalid_metadata"}]
+    warning_entries = [e for e in issues if e.status == "warning"]
 
-    def _build_body(entries: Sequence[ManifestEntry]) -> str:
+    def _build_body(entries: Sequence[object]) -> str:
         lines = ["Problemy w manifeście OHLCV:"]
         for entry in list(entries)[:10]:
             gap_display = "-" if entry.gap_minutes is None else f"{entry.gap_minutes:.1f} min"
@@ -337,7 +327,6 @@ def _report_manifest_health(
     context = {
         "environment": environment_name,
         "exchange": exchange_name,
-        "entries": str(len(entries)),
         "issues": str(len(issues)),
         "summary": json.dumps(summary, ensure_ascii=False),
     }
@@ -396,6 +385,7 @@ def _initialize_alerting(
 
     policy = _extract_gap_policy(environment)
     return router, policy, "Kanały alertowe zainicjalizowane"
+
 
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Backfill danych OHLCV zgodnie z config/core.yaml")
@@ -500,8 +490,19 @@ async def _run_scheduler(
             jitter_seconds=plan.jitter_seconds,
             name=f"{interval}:{len(plan.symbols)}",
         )
+        _LOGGER.debug(
+            "Zarejestrowano zadanie interval=%s, refresh_seconds=%s, lookback_ms=%s, jitter_seconds=%s",
+            interval,
+            frequency,
+            plan.incremental_lookback_ms,
+            plan.jitter_seconds,
+        )
 
-    _LOGGER.info("Uruchamiam harmonogram odświeżania (domyślnie co %s sekund)", refresh_seconds)
+    _LOGGER.info(
+        "Uruchamiam harmonogram odświeżania (%s zadań, domyślna częstotliwość %s sekund)",
+        len(plans),
+        refresh_seconds,
+    )
     try:
         await scheduler.run_forever()
     finally:
@@ -520,15 +521,19 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     universe = _resolve_universe(config, environment)
 
-    refresh_overrides = {}
-    jitter_overrides = {}
+    # odczyt override’ów częstotliwości i jittera z adapter_settings (opcjonalnie)
+    refresh_overrides: Mapping[str, int] = {}
+    jitter_overrides: Mapping[str, int] = {}
     if isinstance(environment.adapter_settings, Mapping):
-        candidate = environment.adapter_settings.get("ohlcv_refresh_overrides")
-        if isinstance(candidate, Mapping):
-            refresh_overrides = candidate
-        jitter_candidate = environment.adapter_settings.get("ohlcv_refresh_jitter")
-        if isinstance(jitter_candidate, Mapping):
-            jitter_overrides = jitter_candidate
+        raw_refresh = (
+            environment.adapter_settings.get("ohlcv_refresh_seconds")
+            or environment.adapter_settings.get("ohlcv_refresh_overrides")
+        )
+        if isinstance(raw_refresh, Mapping):
+            refresh_overrides = raw_refresh
+        raw_jitter = environment.adapter_settings.get("ohlcv_refresh_jitter")
+        if isinstance(raw_jitter, Mapping):
+            jitter_overrides = raw_jitter
 
     plans, symbols = _build_interval_plans(
         universe=universe,
@@ -557,6 +562,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     storage = DualCacheStorage(primary=parquet_storage, manifest=manifest_storage)
     audit_logger = JSONLGapAuditLogger(cache_root / "audit" / f"{environment.name}_ohlcv_gaps.jsonl")
 
+    # Alerty + polityka luk
     alert_router, gap_policy, alert_message = _initialize_alerting(
         args=args,
         config=config,
@@ -618,12 +624,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 refresh_seconds=args.refresh_seconds,
             )
         )
-    except KeyboardInterrupt:  # pragma: no cover - obsługa CLI
+    except KeyboardInterrupt:  # pragma: no cover
         _LOGGER.info("Przerwano przez użytkownika – zamykam harmonogram")
 
     return 0
 
 
-if __name__ == "__main__":  # pragma: no cover - punkt wejścia CLI
+if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main())
-

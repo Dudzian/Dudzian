@@ -38,15 +38,25 @@ def _snapshot(equity: float) -> AccountSnapshot:
     )
 
 
-def _order(price: float, *, quantity: float = 0.01, atr: float = 100.0, stop_price: float | None = None) -> OrderRequest:
-    stop = stop_price if stop_price is not None else price - atr * 2.0
+def _order(
+    price: float,
+    *,
+    atr: float = 100.0,
+    side: str = "buy",
+    stop_multiple: float = 2.0,
+    quantity: float = 0.01,
+) -> OrderRequest:
+    side_normalized = side.lower()
+    stop_distance = atr * stop_multiple
+    stop_price = price - stop_distance if side_normalized == "buy" else price + stop_distance
     return OrderRequest(
         symbol="BTCUSDT",
-        side="buy",
+        side=side_normalized,
         quantity=quantity,
         order_type="limit",
         price=price,
-        metadata={"atr": atr, "stop_price": stop, "quantity": quantity, "price": price},
+        stop_price=stop_price,
+        atr=atr,
     )
 
 
@@ -117,12 +127,8 @@ def test_margin_check_blocks_when_available_margin_is_too_low() -> None:
         quantity=0.05,
         order_type="limit",
         price=20_000.0,
-        metadata={
-            "atr": 200.0,
-            "stop_price": 19_200.0,
-            "quantity": 0.05,
-            "price": 20_000.0,
-        },
+        stop_price=20_000.0 - 2.0 * 200.0,
+        atr=200.0,
     )
 
     result = engine.apply_pre_trade_checks(
@@ -168,12 +174,8 @@ def test_margin_check_passes_when_leverage_covers_notional() -> None:
         quantity=0.05,
         order_type="limit",
         price=20_000.0,
-        metadata={
-            "atr": 200.0,
-            "stop_price": 19_200.0,
-            "quantity": 0.05,
-            "price": 20_000.0,
-        },
+        stop_price=20_000.0 - 2.0 * 200.0,
+        atr=200.0,
     )
 
     result = engine.apply_pre_trade_checks(
@@ -183,6 +185,112 @@ def test_margin_check_passes_when_leverage_covers_notional() -> None:
     )
 
     assert result.allowed is True
+
+
+@pytest.mark.parametrize(
+    ("atr", "target_vol", "equity", "price"),
+    [
+        (150.0, 0.02, 20_000.0, 28_000.0),
+        (250.0, 0.01, 15_000.0, 24_000.0),
+    ],
+)
+def test_target_volatility_limits_position_size(
+    atr: float, target_vol: float, equity: float, price: float
+) -> None:
+    profile = ManualProfile(
+        name="volatility-aware",
+        max_positions=5,
+        max_leverage=10.0,
+        drawdown_limit=0.5,
+        daily_loss_limit=0.5,
+        max_position_pct=5.0,
+        target_volatility=target_vol,
+        stop_loss_atr_multiple=2.0,
+    )
+
+    engine = ThresholdRiskEngine(clock=lambda: datetime(2024, 1, 1, 12, 0, 0))
+    engine.register_profile(profile)
+
+    snapshot = _snapshot(equity)
+    risk_budget = target_vol * equity
+    expected_quantity = risk_budget / (atr * profile.stop_loss_atr_multiple())
+
+    oversized_order = _order(
+        price,
+        atr=atr,
+        quantity=expected_quantity * 1.5,
+        stop_multiple=profile.stop_loss_atr_multiple(),
+    )
+    result = engine.apply_pre_trade_checks(
+        oversized_order,
+        account=snapshot,
+        profile_name=profile.name,
+    )
+
+    assert result.allowed is False
+    assert result.adjustments is not None
+    assert result.adjustments["max_quantity"] == pytest.approx(expected_quantity, rel=1e-6)
+
+    allowed_order = _order(
+        price,
+        atr=atr,
+        quantity=expected_quantity * 0.95,
+        stop_multiple=profile.stop_loss_atr_multiple(),
+    )
+    allowed_result = engine.apply_pre_trade_checks(
+        allowed_order,
+        account=snapshot,
+        profile_name=profile.name,
+    )
+
+    assert allowed_result.allowed is True
+
+
+def test_stop_loss_must_match_atr_multiple(manual_profile: ManualProfile) -> None:
+    engine = ThresholdRiskEngine(clock=lambda: datetime(2024, 1, 1, 12, 0, 0))
+    engine.register_profile(manual_profile)
+
+    snapshot = _snapshot(5_000.0)
+    price = 25_000.0
+    atr = 120.0
+
+    mismatched_stop = OrderRequest(
+        symbol="BTCUSDT",
+        side="buy",
+        quantity=0.05,
+        order_type="limit",
+        price=price,
+        stop_price=price - atr * manual_profile.stop_loss_atr_multiple() * 0.8,  # celowo za ciasny
+        atr=atr,
+    )
+
+    result = engine.apply_pre_trade_checks(
+        mismatched_stop,
+        account=snapshot,
+        profile_name=manual_profile.name,
+    )
+
+    assert result.allowed is False
+    assert "ATR" in (result.reason or "")
+
+    missing_stop = OrderRequest(
+        symbol="BTCUSDT",
+        side="buy",
+        quantity=0.05,
+        order_type="limit",
+        price=price,
+        stop_price=None,
+        atr=atr,
+    )
+
+    missing_result = engine.apply_pre_trade_checks(
+        missing_stop,
+        account=snapshot,
+        profile_name=manual_profile.name,
+    )
+
+    assert missing_result.allowed is False
+    assert "stop loss" in (missing_result.reason or "").lower()
 
 
 def test_on_fill_normalizes_position_side_and_allows_growth(manual_profile: ManualProfile) -> None:
@@ -196,12 +304,8 @@ def test_on_fill_normalizes_position_side_and_allows_growth(manual_profile: Manu
         quantity=0.05,
         order_type="limit",
         price=30_000.0,
-        metadata={
-            "atr": 150.0,
-            "stop_price": 30_000.0 - 150.0 * manual_profile.stop_loss_atr_multiple(),
-            "quantity": 0.05,
-            "price": 30_000.0,
-        },
+        stop_price=30_000.0 - manual_profile.stop_loss_atr_multiple() * 200.0,
+        atr=200.0,
     )
 
     first_check = engine.apply_pre_trade_checks(request, account=snapshot, profile_name=manual_profile.name)
@@ -251,12 +355,8 @@ def test_target_volatility_caps_position_size() -> None:
         quantity=2.0,
         order_type="limit",
         price=25_000.0,
-        metadata={
-            "atr": 500.0,
-            "stop_price": 24_000.0,
-            "quantity": 2.0,
-            "price": 25_000.0,
-        },
+        atr=500.0,
+        stop_price=24_000.0,
     )
 
     result = engine.apply_pre_trade_checks(order, account=snapshot, profile_name=profile.name)
@@ -290,12 +390,8 @@ def test_rejects_stop_loss_tighter_than_required() -> None:
         quantity=0.5,
         order_type="limit",
         price=30_000.0,
-        metadata={
-            "atr": 200.0,
-            "stop_price": 30_000.0 - 200.0 * 2.0,  # < wymagane 3x ATR
-            "quantity": 0.5,
-            "price": 30_000.0,
-        },
+        atr=200.0,
+        stop_price=30_000.0 - 200.0 * 2.0,  # < wymagane 3x ATR
     )
 
     result = engine.apply_pre_trade_checks(order, account=snapshot, profile_name=profile.name)
