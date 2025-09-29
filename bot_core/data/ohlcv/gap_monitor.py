@@ -54,7 +54,7 @@ class GapAlertPolicy:
     incident_threshold_count: int = 5
     incident_window_minutes: int = 10
     sms_escalation_minutes: int = 15
-    warning_throttle_minutes: int = 5
+    warning_throttle_minutes: int = 5  # minimalny odstęp pomiędzy kolejnymi alertami warning
 
     def warning_threshold_minutes(self, interval: str) -> int:
         minutes = self.warning_gap_minutes.get(interval)
@@ -154,9 +154,9 @@ class DataGapIncidentTracker:
             row_count_raw = metadata.get(row_count_key)
 
             if last_ts_raw is None:
+                # brak danych – traktujemy jak incydent krytyczny
                 event_time = self.clock()
                 row_count = _safe_int(row_count_raw)
-                # brak danych – traktujemy jak incydent krytyczny
                 self._emit_alert(
                     severity="critical",
                     title=f"Brak danych OHLCV {symbol} {interval}",
@@ -307,10 +307,7 @@ class DataGapIncidentTracker:
             if state.incident_open:
                 assert state.incident_open_at is not None
                 elapsed = (now - state.incident_open_at).total_seconds() / 60
-                if (
-                    not state.sms_escalated
-                    and elapsed >= max(1, self.policy.sms_escalation_minutes)
-                ):
+                if (not state.sms_escalated) and elapsed >= max(1, self.policy.sms_escalation_minutes):
                     state.sms_escalated = True
                     self._emit_alert(
                         severity="critical",
@@ -347,7 +344,7 @@ class DataGapIncidentTracker:
                 )
                 continue
 
-            # Ostrzeżenie Telegram – pojedynczy alert o dłuższej luce
+            # Ostrzeżenie – pojedynczy alert o dłuższej luce (z throttlingiem)
             throttle_window = timedelta(minutes=max(1, self.policy.warning_throttle_minutes))
             if state.last_warning_alert and (now - state.last_warning_alert) < throttle_window:
                 self._log_audit(
@@ -403,4 +400,3 @@ class DataGapIncidentTracker:
 
 
 __all__ = ["GapAlertPolicy", "DataGapIncidentTracker"]
-

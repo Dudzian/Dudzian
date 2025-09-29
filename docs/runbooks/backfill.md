@@ -68,6 +68,7 @@ ohlcv_gap_alerts:
   incident_window_minutes: 10   # szerokość okna przesuwnego na eskalację (Telegram + e-mail)
   sms_escalation_minutes: 15    # czas trwania incydentu po którym uruchamiamy SMS
   warning_throttle_minutes: 5   # minimalny odstęp pomiędzy ostrzeżeniami dla tego samego symbolu
+
 ```
 
 Domyślne progi bazują na dwukrotności długości interwału i są bezpieczne dla
@@ -80,6 +81,8 @@ Każdy przebieg backfillu zapisuje ponadto wpisy audytowe luk do pliku
 ostatni znany znacznik czasu, liczba świec oraz status (`ok`, `warning`,
 `warning_suppressed`, `incident`, `sms_escalated`). Plik jest w formacie JSONL
 i można go trzymać w retencji ≥24 miesięcy na potrzeby audytu operacyjnego.
+`incident`, `sms_escalated`). Plik jest w formacie JSONL i można go trzymać w
+retencji ≥24 miesięcy na potrzeby audytu operacyjnego.
 
 ### Raportowanie luk z pliku audytu
 
@@ -129,3 +132,4 @@ powiadomienia, a długotrwałe luki (`warning`) wysyłane są jako ostrzeżenia 
 pełnym kontekstem (ostatni timestamp, liczba świec, długość luki). Dzięki temu
 operacje otrzymują komplet informacji o stanie cache natychmiast po
 backfillu – jeszcze zanim harmonogram odświeżania rozpocznie kolejne cykle.
+tego okna do własnych potrzeb operacyjnych.

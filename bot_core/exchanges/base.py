@@ -38,7 +38,10 @@ class AccountSnapshot:
 
 @dataclass(slots=True)
 class OrderRequest:
-    """Znormalizowany model zlecenia przekazywany do modułu egzekucji."""
+    """Znormalizowany model zlecenia przekazywany do modułu egzekucji.
+
+    Pola opcjonalne są ignorowane przez adapter, jeśli nie są wspierane.
+    """
 
     symbol: str
     side: str
@@ -48,6 +51,11 @@ class OrderRequest:
     time_in_force: Optional[str] = None
     client_order_id: Optional[str] = None
     metadata: Mapping[str, object] | None = None
+
+    # Dodatkowe, opcjonalne rozszerzenia:
+    stop_price: Optional[float] = None   # np. stop/stop-limit
+    atr: Optional[float] = None          # referencyjne ATR do SL/TP, jeśli strategia je dostarcza
+    metadata: Mapping[str, object] | None = None  # dowolne metadane strategii (audyt/telemetria)
 
 
 @dataclass(slots=True)
@@ -72,7 +80,6 @@ class ExchangeAdapter(abc.ABC):
     @property
     def credentials(self) -> ExchangeCredentials:
         """Udostępnia referencję do aktualnych poświadczeń."""
-
         return self._credentials
 
     @abc.abstractmethod
@@ -120,3 +127,14 @@ class ExchangeAdapterFactory(Protocol):
 
     def __call__(self, credentials: ExchangeCredentials, **kwargs: Any) -> ExchangeAdapter:
         ...
+
+
+__all__ = [
+    "Environment",
+    "ExchangeCredentials",
+    "AccountSnapshot",
+    "OrderRequest",
+    "OrderResult",
+    "ExchangeAdapter",
+    "ExchangeAdapterFactory",
+]

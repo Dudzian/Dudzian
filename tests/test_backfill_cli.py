@@ -70,7 +70,7 @@ def test_build_interval_plans_assigns_refresh_seconds_and_lookbacks():
         universe=universe,
         exchange_name="binance_spot",
         incremental_lookback_days=7,
-        refresh_overrides={"1h": 120},
+        interval_refresh_overrides={"1h": 120},
     )
 
     assert symbols == {"BTCUSDT"}
@@ -133,6 +133,8 @@ def test_run_scheduler_uses_interval_specific_frequency():
     assert job_hourly["frequency_seconds"] == 900
     assert job_hourly["lookback_ms"] == 3 * backfill._MILLISECONDS_IN_DAY
 
+
+# --------------------- manifest health tests ---------------------
 
 class _CollectingRouter:
     def __init__(self) -> None:

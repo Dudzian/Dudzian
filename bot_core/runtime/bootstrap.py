@@ -46,12 +46,10 @@ from bot_core.exchanges.kraken import KrakenFuturesAdapter, KrakenSpotAdapter
 from bot_core.exchanges.zonda import ZondaSpotAdapter
 from bot_core.risk.base import RiskProfile, RiskRepository
 from bot_core.risk.engine import ThresholdRiskEngine
-from bot_core.risk.profiles import (
-    AggressiveProfile,
-    BalancedProfile,
-    ConservativeProfile,
-    ManualProfile,
-)
+from bot_core.risk.profiles.aggressive import AggressiveProfile
+from bot_core.risk.profiles.balanced import BalancedProfile
+from bot_core.risk.profiles.conservative import ConservativeProfile
+from bot_core.risk.profiles.manual import ManualProfile
 from bot_core.risk.repository import FileRiskRepository
 from bot_core.security import SecretManager, SecretStorageError
 from bot_core.runtime.journal import (
@@ -66,6 +64,12 @@ _DEFAULT_ADAPTERS: Mapping[str, ExchangeAdapterFactory] = {
     "kraken_spot": KrakenSpotAdapter,
     "kraken_futures": KrakenFuturesAdapter,
     "zonda_spot": ZondaSpotAdapter,
+}
+
+_PROFILE_CLASS_BY_NAME: Mapping[str, type[RiskProfile]] = {
+    "conservative": ConservativeProfile,
+    "balanced": BalancedProfile,
+    "aggressive": AggressiveProfile,
 }
 
 
@@ -178,26 +182,32 @@ def _resolve_risk_profile(
 
 
 def _build_risk_profile(config: RiskProfileConfig) -> RiskProfile:
-    """Tworzy profil ryzyka na podstawie konfiguracji."""
+    """Tworzy profil ryzyka na podstawie konfiguracji.
 
-    name = config.name.lower()
-    common_kwargs = {
-        "name": config.name,
-        "_max_positions": config.max_open_positions,
-        "_max_leverage": config.max_leverage,
-        "_drawdown_limit": config.hard_drawdown_pct,
-        "_daily_loss_limit": config.max_daily_loss_pct,
-        "_max_position_pct": config.max_position_pct,
-        "_target_volatility": config.target_volatility,
-        "_stop_loss_atr_multiple": config.stop_loss_atr_multiple,
-    }
+    - Jeśli `name` = "manual" → użyj parametrów z configu (ManualProfile).
+    - Jeśli `name` w {conservative, balanced, aggressive} → użyj predefiniowanych profili (domyślne wartości).
+    - W innym przypadku fallback do ManualProfile z parametrami z configu.
+    """
+    profile_key = config.name.lower()
+    if profile_key == "manual":
+        return ManualProfile(
+            name=config.name,
+            max_positions=config.max_open_positions,
+            max_leverage=config.max_leverage,
+            drawdown_limit=config.hard_drawdown_pct,
+            daily_loss_limit=config.max_daily_loss_pct,
+            max_position_pct=config.max_position_pct,
+            target_volatility=config.target_volatility,
+            stop_loss_atr_multiple=config.stop_loss_atr_multiple,
+        )
 
-    if name == "conservative":
-        return ConservativeProfile(**common_kwargs)
-    if name == "balanced":
-        return BalancedProfile(**common_kwargs)
-    if name == "aggressive":
-        return AggressiveProfile(**common_kwargs)
+    profile_class = _PROFILE_CLASS_BY_NAME.get(profile_key)
+    if profile_class is not None:
+        # Predefiniowane profile mają sensowne domyślne parametry;
+        # jeśli potrzebujesz parametryzacji — użyj profilu "manual".
+        return profile_class()
+
+    # Fallback: parametry z konfiguracji jako profil "manual"
     return ManualProfile(
         name=config.name,
         max_positions=config.max_open_positions,
@@ -283,7 +293,7 @@ def _build_decision_journal(environment: EnvironmentConfig) -> TradingDecisionJo
         return InMemoryTradingDecisionJournal()
     if backend == "file":
         directory = Path(config.directory) if config.directory else Path("decisions")
-        if not directory.is_absolute():
+        if not directory is None and not directory.is_absolute():
             base = Path(environment.data_cache_path)
             directory = base / directory
         return JsonlTradingDecisionJournal(
@@ -331,7 +341,7 @@ def _build_email_channel(
         raw_secret = secret_manager.load_secret_value(settings.credential_secret, purpose="alerts:email")
         try:
             parsed = json.loads(raw_secret) if raw_secret else {}
-        except json.JSONDecodeError as exc:  # pragma: no cover - uszkodzony sekret to błąd konfiguracji
+        except json.JSONDecodeError as exc:  # pragma: no cover
             raise SecretStorageError(
                 "Sekret dla kanału e-mail musi zawierać poprawny JSON z polami 'username' i 'password'."
             ) from exc
@@ -368,7 +378,7 @@ def _build_sms_channel(
     raw_secret = secret_manager.load_secret_value(settings.credential_key, purpose="alerts:sms")
     try:
         payload = json.loads(raw_secret)
-    except json.JSONDecodeError as exc:  # pragma: no cover - uszkodzone dane w magazynie
+    except json.JSONDecodeError as exc:  # pragma: no cover
         raise SecretStorageError(
             "Sekret dostawcy SMS powinien zawierać JSON z polami 'account_sid' i 'auth_token'."
         ) from exc
