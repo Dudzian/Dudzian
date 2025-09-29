@@ -11,7 +11,6 @@ from typing import (
     Callable,
     Mapping,
     MutableMapping,
-    Optional,
     Sequence,
     Mapping as TypingMapping,
 )

@@ -96,7 +96,7 @@ def _write_config(tmp_path: Path) -> Path:
       sms_providers:
         orange_local:
           provider: orange_pl
-        api_base_url: https://api.orange.pl/sms/v1
+          api_base_url: https://api.orange.pl/sms/v1
           from_number: BOT-ORANGE
           recipients: ["+48555111222"]
           allow_alphanumeric_sender: true

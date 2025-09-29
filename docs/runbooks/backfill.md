@@ -140,3 +140,9 @@ powiadomienia, a długotrwałe luki (`warning`) wysyłane są jako ostrzeżenia 
 pełnym kontekstem (ostatni timestamp, liczba świec, długość luki). Dzięki temu
 operacje otrzymują komplet informacji o stanie cache natychmiast po
 backfillu – jeszcze zanim harmonogram odświeżania rozpocznie kolejne cykle.
+
+W razie potrzeby można również poprosić skrypt o wydruk raportu manifestu do
+STDOUT, ustawiając flagę `--manifest-report-format` na `table` (tabelaryczny
+podgląd) lub `json` (struktura przyjazna automatyzacji). Opcja działa tylko w
+trybie wykonania backfillu (nie łączy się z `--plan-only`) i zawiera zarówno
+poszczególne wpisy manifestu, jak i zagregowane podsumowanie statusów.

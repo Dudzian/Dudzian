@@ -5,7 +5,7 @@ import argparse
 import asyncio
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
@@ -129,8 +129,16 @@ def _build_interval_plans(
     now_ms = _utc_now_ms()
 
     # przefiltruj override’y do dodatnich intów
-    refresh_cfg = {k: int(v) for k, v in (refresh_overrides or {}).items() if isinstance(v, (int, float)) and int(v) > 0}
-    jitter_cfg = {k: max(0, int(v)) for k, v in (jitter_overrides or {}).items() if isinstance(v, (int, float)) and int(v) >= 0}
+    refresh_cfg = {
+        k: int(v)
+        for k, v in (refresh_overrides or {}).items()
+        if isinstance(v, (int, float)) and int(v) > 0
+    }
+    jitter_cfg = {
+        k: max(0, int(v))
+        for k, v in (jitter_overrides or {}).items()
+        if isinstance(v, (int, float)) and int(v) >= 0
+    }
 
     for instrument in universe.instruments:
         symbol = instrument.exchange_symbols.get(exchange_name)
@@ -263,13 +271,16 @@ def _report_manifest_health(
     environment_name: str,
     alert_router: DefaultAlertRouter | None,
     as_of: datetime | None = None,
+    output_format: str | None = None,
 ) -> None:
     """Loguje stan manifestu i wysyła alerty o wykrytych lukach."""
+    report_as_of = as_of or datetime.now(timezone.utc)
+
     entries = generate_manifest_report(
         manifest_path=manifest_path,
         universe=universe,
         exchange_name=exchange_name,
-        as_of=as_of,
+        as_of=report_as_of,
     )
 
     if not entries:
@@ -286,6 +297,21 @@ def _report_manifest_health(
         exchange_name,
         summary,
     )
+
+    if output_format:
+        if output_format == "table":
+            print(_format_manifest_table(entries, summary))
+        elif output_format == "json":
+            payload = {
+                "environment": environment_name,
+                "exchange": exchange_name,
+                "generated_at": report_as_of.isoformat(),
+                "summary": summary,
+                "entries": [asdict(entry) for entry in entries],
+            }
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:  # pragma: no cover - walidacja w parserze argumentów
+            _LOGGER.warning("Nieobsługiwany format raportu manifestu: %s", output_format)
 
     issues = [entry for entry in entries if entry.status != "ok"]
     if not issues:
@@ -309,9 +335,9 @@ def _report_manifest_health(
     critical_entries = [e for e in issues if e.status in {"missing_metadata", "invalid_metadata"}]
     warning_entries = [e for e in issues if e.status == "warning"]
 
-    def _build_body(entries: Sequence[object]) -> str:
+    def _build_body(entries_seq: Sequence[object]) -> str:
         lines = ["Problemy w manifeście OHLCV:"]
-        for entry in list(entries)[:10]:
+        for entry in list(entries_seq)[:10]:
             gap_display = "-" if entry.gap_minutes is None else f"{entry.gap_minutes:.1f} min"
             row_display = "-" if entry.row_count is None else str(entry.row_count)
             last_display = entry.last_timestamp_iso or "-"
@@ -319,8 +345,8 @@ def _report_manifest_health(
                 f"- {entry.symbol} {entry.interval} ({entry.status}) – ostatnia świeca: {last_display} UTC, "
                 f"luka: {gap_display}, wiersze: {row_display}"
             )
-        if len(entries) > 10:
-            lines.append(f"… oraz {len(entries) - 10} kolejnych wpisów.")
+        if len(entries_seq) > 10:
+            lines.append(f"… oraz {len(entries_seq) - 10} kolejnych wpisów.")
         lines.append("Szczegóły w logach backfillu oraz pliku manifestu.")
         return "\n".join(lines)
 
@@ -439,6 +465,12 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         default=None,
         help="Ścieżka do zaszyfrowanego magazynu sekretów w trybie headless.",
     )
+    parser.add_argument(
+        "--manifest-report-format",
+        choices=["none", "table", "json"],
+        default="none",
+        help="Opcjonalny wydruk raportu manifestu po backfillu (tabela lub JSON).",
+    )
     return parser.parse_args(argv)
 
 
@@ -509,6 +541,49 @@ async def _run_scheduler(
         scheduler.stop()
 
 
+def _format_manifest_table(
+    entries: Sequence[object],
+    summary: Mapping[str, int],
+) -> str:
+    headers = ["Symbol", "Interval", "Status", "Gap[min]", "Threshold[min]", "Rows", "Last UTC"]
+    rows: list[list[str]] = []
+
+    for entry in entries:
+        gap_display = "-" if entry.gap_minutes is None else f"{entry.gap_minutes:.1f}"
+        threshold_display = "-" if entry.threshold_minutes is None else str(entry.threshold_minutes)
+        row_display = "-" if entry.row_count is None else str(entry.row_count)
+        rows.append(
+            [
+                entry.symbol,
+                entry.interval,
+                entry.status,
+                gap_display,
+                threshold_display,
+                row_display,
+                entry.last_timestamp_iso or "-",
+            ]
+        )
+
+    widths = [len(header) for header in headers]
+    for row in rows:
+        for idx, value in enumerate(row):
+            widths[idx] = max(widths[idx], len(value))
+
+    def _format_row(row_vals: Sequence[str]) -> str:
+        return "  ".join(val.ljust(widths[idx]) for idx, val in enumerate(row_vals))
+
+    lines = [_format_row(headers)]
+    lines.append("  ".join("-" * width for width in widths))
+    lines.extend(_format_row(row) for row in rows)
+
+    if summary:
+        summary_items = ", ".join(f"{key}={value}" for key, value in sorted(summary.items()))
+        lines.append("")
+        lines.append(f"Podsumowanie statusów: {summary_items}")
+
+    return "\n".join(lines)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
     logging.basicConfig(level=getattr(logging, args.log_level.upper()))
@@ -546,6 +621,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         _LOGGER.warning("Brak instrumentów z zakresem backfill dla giełdy %s", environment.exchange)
         return 0
 
+    # Tryb „plan only” — nie dotyka sekretów ani sieci
     if args.plan_only:
         summary = _format_plan_summary(
             plans,
@@ -599,6 +675,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         gap_tracker=gap_tracker,
     )
 
+    manifest_format = None if args.manifest_report_format == "none" else args.manifest_report_format
     _report_manifest_health(
         manifest_path=manifest_path,
         universe=universe,
@@ -606,6 +683,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         environment_name=environment.name,
         alert_router=alert_router,
         as_of=datetime.fromtimestamp(now_ts / 1000, tz=timezone.utc),
+        output_format=manifest_format,
     )
 
     if args.run_once:

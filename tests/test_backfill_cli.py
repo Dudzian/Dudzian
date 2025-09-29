@@ -1,4 +1,5 @@
 import asyncio
+import json
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -11,7 +12,7 @@ from bot_core.config.models import (
     InstrumentConfig,
     InstrumentUniverseConfig,
 )
-from bot_core.data.ohlcv import SQLiteCacheStorage
+from bot_core.data.ohlcv import ManifestEntry, SQLiteCacheStorage
 from bot_core.exchanges.base import Environment
 from bot_core.exchanges.binance.futures import BinanceFuturesAdapter
 from bot_core.exchanges.binance.spot import BinanceSpotAdapter
@@ -313,3 +314,87 @@ def test_main_plan_only_outputs_summary_and_skips_execution(monkeypatch, capsys)
 
     assert exit_code == 0
     assert "Plan backfillu" in captured.out
+
+
+def test_report_manifest_health_prints_table(monkeypatch, tmp_path, capsys):
+    entries = [
+        ManifestEntry(
+            symbol="BTCUSDT",
+            interval="1d",
+            row_count=3650,
+            last_timestamp_ms=1_700_000_000_000,
+            last_timestamp_iso="2023-11-14T00:00:00+00:00",
+            gap_minutes=90.0,
+            threshold_minutes=120,
+            status="ok",
+        ),
+        ManifestEntry(
+            symbol="ETHUSDT",
+            interval="1h",
+            row_count=1800,
+            last_timestamp_ms=1_700_000_900_000,
+            last_timestamp_iso="2023-11-14T00:15:00+00:00",
+            gap_minutes=240.0,
+            threshold_minutes=120,
+            status="warning",
+        ),
+    ]
+
+    monkeypatch.setattr(backfill, "generate_manifest_report", lambda **_: entries)
+
+    manifest = tmp_path / "manifest.sqlite"
+    manifest.touch()
+    universe = _build_universe("BTC_USDT", "1d")
+
+    backfill._report_manifest_health(
+        manifest_path=manifest,
+        universe=universe,
+        exchange_name="binance_spot",
+        environment_name="binance_paper",
+        alert_router=None,
+        as_of=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        output_format="table",
+    )
+
+    output = capsys.readouterr().out
+    assert "Symbol" in output
+    assert "BTCUSDT" in output and "ETHUSDT" in output
+    assert "Podsumowanie statusów:" in output
+
+
+def test_report_manifest_health_prints_json(monkeypatch, tmp_path, capsys):
+    entries = [
+        ManifestEntry(
+            symbol="BTCUSDT",
+            interval="1d",
+            row_count=3650,
+            last_timestamp_ms=1_700_000_000_000,
+            last_timestamp_iso="2023-11-14T00:00:00+00:00",
+            gap_minutes=30.0,
+            threshold_minutes=120,
+            status="ok",
+        )
+    ]
+
+    monkeypatch.setattr(backfill, "generate_manifest_report", lambda **_: entries)
+
+    manifest = tmp_path / "manifest.sqlite"
+    manifest.touch()
+    universe = _build_universe("BTC_USDT", "1d")
+
+    backfill._report_manifest_health(
+        manifest_path=manifest,
+        universe=universe,
+        exchange_name="binance_spot",
+        environment_name="binance_paper",
+        alert_router=None,
+        as_of=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        output_format="json",
+    )
+
+    output = capsys.readouterr().out
+    payload = json.loads(output)
+    assert payload["environment"] == "binance_paper"
+    assert payload["exchange"] == "binance_spot"
+    assert payload["summary"]["ok"] == 1
+    assert payload["entries"][0]["symbol"] == "BTCUSDT"
