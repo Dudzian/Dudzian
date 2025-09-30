@@ -214,7 +214,7 @@ def test_paper_smoke_uses_date_window(monkeypatch: pytest.MonkeyPatch, tmp_path:
             trading_controller: Any,
             history_bars: int,
             clock=None,
-            ) -> None:
+        ) -> None:
             captured_runner.update(
                 {
                     "controller": controller,
