@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
@@ -35,6 +36,7 @@ from bot_core.config.models import (
     TelegramChannelSettings,
     WhatsAppChannelSettings,
 )
+from bot_core.config.validation import assert_core_config_valid
 from bot_core.exchanges.base import (
     Environment,
     ExchangeAdapter,
@@ -73,6 +75,9 @@ _PROFILE_CLASS_BY_NAME: Mapping[str, type[RiskProfile]] = {
 }
 
 
+_LOGGER = logging.getLogger(__name__)
+
+
 @dataclass(slots=True)
 class BootstrapContext:
     """Zawiera wszystkie komponenty zainicjalizowane dla danego środowiska."""
@@ -99,6 +104,9 @@ def bootstrap_environment(
 ) -> BootstrapContext:
     """Tworzy kompletny kontekst uruchomieniowy dla wskazanego środowiska."""
     core_config = load_core_config(config_path)
+    validation = assert_core_config_valid(core_config)
+    for warning in validation.warnings:
+        _LOGGER.warning("Walidacja konfiguracji: %s", warning)
     if environment_name not in core_config.environments:
         raise KeyError(f"Środowisko '{environment_name}' nie istnieje w konfiguracji")
 

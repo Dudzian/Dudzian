@@ -560,6 +560,12 @@ reporting:
   daily_report_time_utc: "21:00"
   weekly_report_day: "sunday"
   retention_months: "24"
+  smoke_archive_upload:
+    backend: local
+    local:
+      directory: audit/smoke_archives
+      filename_pattern: "{environment}_{timestamp}_{hash}.zip"
+      fsync: true
 
 alerts:
   telegram_channels:

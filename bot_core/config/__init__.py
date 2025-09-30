@@ -1,6 +1,12 @@
 """Warstwa konfiguracji aplikacji."""
 
 from bot_core.config.loader import load_core_config
+from bot_core.config.validation import (
+    ConfigValidationError,
+    ConfigValidationResult,
+    assert_core_config_valid,
+    validate_core_config,
+)
 from bot_core.config.models import (
     AlertAuditConfig,
     CoreConfig,
@@ -29,5 +35,9 @@ __all__ = [
     "TelegramChannelSettings",
     "WhatsAppChannelSettings",
     "AlertAuditConfig",
+    "ConfigValidationError",
+    "ConfigValidationResult",
+    "assert_core_config_valid",
+    "validate_core_config",
     "load_core_config",
 ]
