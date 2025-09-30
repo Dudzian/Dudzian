@@ -54,6 +54,7 @@ Ten runbook opisuje, jak uruchomić, monitorować i bezpiecznie zatrzymać tryb 
        --date-window 2024-01-01:2024-02-15 \
        --run-once
    ```
+
    - Narzędzie wykona backfill ograniczony do podanego zakresu, uruchomi pojedynczą iterację i zapisze raport tymczasowy (`ledger.jsonl`, `summary.json`, `summary.txt`, `README.txt`).
     - `summary.txt` zawiera gotowe podsumowanie dla zespołu ryzyka (środowisko, okno dat, liczba zleceń, status kanałów alertowych, hash `summary.json`).
     - `README.txt` zawiera skróconą instrukcję audytu (co przepisać do logu, gdzie przechowywać ledger, jak długo archiwizować paczkę).
@@ -61,6 +62,7 @@ Ten runbook opisuje, jak uruchomić, monitorować i bezpiecznie zatrzymać tryb 
     - Jeżeli w keychainie znajdują się placeholderowe tokeny kanałów alertowych, komunikaty o błędach (403/DNS) zostaną zarejestrowane w logu, ale nie przerywają smoke testu; status kanałów należy odnotować w audycie.
    - Użycie flagi `--archive-smoke` tworzy dodatkowo archiwum ZIP z kompletem plików i instrukcją audytu. Ścieżka katalogu raportu i hash `summary.json` pojawią się w logu. Skopiuj hash, treść `summary.txt` oraz status kanałów alertowych do `docs/audit/paper_trading_log.md`. Archiwum ZIP przechowuj w sejfie audytu (retencja ≥ 24 miesiące).
    - Jeśli w `config/core.yaml` skonfigurowano sekcję `reporting.smoke_archive_upload`, CLI automatycznie wykona kopię archiwum (domyślnie do `audit/smoke_archives/`) oraz – w przypadku backendu S3/MinIO – prześle plik do zdefiniowanego koszyka. Ścieżka docelowa trafia do logu oraz kontekstu alertu w polach `archive_upload_backend` i `archive_upload_location`. Zweryfikuj obecność pliku w magazynie i odnotuj lokalizację w audycie.
+
 4. Uruchom tryb jednorazowy (dry-run) w celu sanity check konfiguracji:
    ```bash
    PYTHONPATH=. python scripts/run_daily_trend.py --config config/core.yaml --environment binance_paper --dry-run
