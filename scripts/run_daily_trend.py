@@ -13,7 +13,14 @@ from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
 from bot_core.alerts import AlertMessage
-from bot_core.exchanges.base import Environment, OrderResult
+from bot_core.exchanges.base import (
+    AccountSnapshot,
+    Environment,
+    ExchangeAdapter,
+    ExchangeAdapterFactory,
+    ExchangeCredentials,
+    OrderResult,
+)
 from bot_core.runtime.pipeline import build_daily_trend_pipeline, create_trading_controller
 from bot_core.runtime.realtime import DailyTrendRealtimeRunner
 from bot_core.security import SecretManager, SecretStorageError, create_default_secret_storage
@@ -205,6 +212,55 @@ def _export_smoke_report(
     return summary_path
 
 
+class _OfflineExchangeAdapter(ExchangeAdapter):
+    """Minimalny adapter giełdowy działający offline dla trybu paper-smoke."""
+
+    name = "offline"
+
+    def __init__(self, credentials: ExchangeCredentials, **_: object) -> None:
+        super().__init__(credentials)
+
+    def configure_network(self, *, ip_allowlist: tuple[str, ...] | None = None) -> None:  # noqa: D401, ARG002
+        return None
+
+    def fetch_account_snapshot(self) -> AccountSnapshot:
+        return AccountSnapshot(
+            balances={"USDT": 100_000.0},
+            total_equity=100_000.0,
+            available_margin=100_000.0,
+            maintenance_margin=0.0,
+        )
+
+    def fetch_symbols(self):  # pragma: no cover - nieużywane w trybie smoke
+        return ()
+
+    def fetch_ohlcv(  # noqa: D401, ARG002
+        self,
+        symbol: str,
+        interval: str,
+        start: int | None = None,
+        end: int | None = None,
+        limit: int | None = None,
+    ):
+        return []
+
+    def place_order(self, request):  # pragma: no cover - paper trading korzysta z symulatora
+        raise NotImplementedError
+
+    def cancel_order(self, order_id: str, *, symbol: str | None = None) -> None:  # pragma: no cover - nieużywane
+        raise NotImplementedError
+
+    def stream_public_data(self, *, channels):  # pragma: no cover - nieużywane
+        raise NotImplementedError
+
+    def stream_private_data(self, *, channels):  # pragma: no cover - nieużywane
+        raise NotImplementedError
+
+
+def _offline_adapter_factory(credentials: ExchangeCredentials, **kwargs: object) -> ExchangeAdapter:
+    return _OfflineExchangeAdapter(credentials, **kwargs)
+
+
 def _run_loop(runner: DailyTrendRealtimeRunner, poll_seconds: float) -> int:
     interval = max(1.0, poll_seconds)
     stop = False
@@ -249,6 +305,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         _LOGGER.error("Plik konfiguracyjny %s nie istnieje", config_path)
         return 1
 
+    adapter_factories: Mapping[str, ExchangeAdapterFactory] | None = None
+    if args.paper_smoke:
+        adapter_factories = {
+            "binance_spot": _offline_adapter_factory,
+            "binance_futures": _offline_adapter_factory,
+            "kraken_spot": _offline_adapter_factory,
+            "kraken_futures": _offline_adapter_factory,
+            "zonda_spot": _offline_adapter_factory,
+        }
+
     try:
         pipeline = build_daily_trend_pipeline(
             environment_name=args.environment,
@@ -256,6 +322,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             controller_name=args.controller,
             config_path=config_path,
             secret_manager=secret_manager,
+            adapter_factories=adapter_factories,
         )
     except Exception as exc:  # noqa: BLE001
         _LOGGER.exception("Nie udało się zbudować pipeline'u daily trend: %s", exc)
@@ -280,6 +347,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             _LOGGER.error("Niepoprawny zakres dat: %s", exc)
             return 1
 
+        end_dt = datetime.fromisoformat(window_meta["end"])
+        tick_seconds = float(getattr(pipeline.controller, "tick_seconds", 86400.0) or 86400.0)
+        tick_ms = max(1, int(tick_seconds * 1000))
+        window_duration_ms = max(0, end_ms - start_ms)
+        approx_bars = max(1, int(window_duration_ms / tick_ms) + 1)
+        history_bars = max(1, min(int(args.history_bars), approx_bars))
+        runner_start_ms = max(0, end_ms - history_bars * tick_ms)
+        sync_start = min(start_ms, runner_start_ms)
+
         _LOGGER.info(
             "Startuję smoke test paper trading dla %s w zakresie %s – %s.",
             args.environment,
@@ -290,7 +366,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         pipeline.backfill_service.synchronize(
             symbols=pipeline.controller.symbols,
             interval=pipeline.controller.interval,
-            start=start_ms,
+            start=sync_start,
             end=end_ms,
         )
 
@@ -303,7 +379,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         runner = DailyTrendRealtimeRunner(
             controller=pipeline.controller,
             trading_controller=trading_controller,
-            history_bars=max(1, args.history_bars),
+            history_bars=history_bars,
+            clock=lambda end=end_dt: end,
         )
 
         results = runner.run_once()
