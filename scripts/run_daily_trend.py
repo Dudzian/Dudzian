@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import hashlib
 import logging
 import signal
 import sys
@@ -10,10 +11,17 @@ import tempfile
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterable, Mapping, Sequence
+from typing import Iterable, Mapping, MutableMapping, Sequence
 
 from bot_core.alerts import AlertMessage
-from bot_core.exchanges.base import Environment, OrderResult
+from bot_core.exchanges.base import (
+    AccountSnapshot,
+    Environment,
+    ExchangeAdapter,
+    ExchangeAdapterFactory,
+    ExchangeCredentials,
+    OrderResult,
+)
 from bot_core.runtime.pipeline import build_daily_trend_pipeline, create_trading_controller
 from bot_core.runtime.realtime import DailyTrendRealtimeRunner
 from bot_core.security import SecretManager, SecretStorageError, create_default_secret_storage
@@ -167,6 +175,14 @@ def _resolve_date_window(arg: str | None, *, default_days: int = 30) -> tuple[in
     }
 
 
+def _hash_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(8192), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _export_smoke_report(
     *,
     report_dir: Path,
@@ -203,6 +219,160 @@ def _export_smoke_report(
     summary_path = report_dir / "summary.json"
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return summary_path
+
+
+def _ensure_smoke_cache(
+    *,
+    pipeline,
+    symbols: Sequence[str],
+    interval: str,
+    start_ms: int,
+    end_ms: int,
+    required_bars: int,
+    tick_ms: int,
+) -> None:
+    """Sprawdza, czy lokalny cache zawiera dane potrzebne do smoke testu."""
+
+    data_source = getattr(pipeline, "data_source", None)
+    storage = getattr(data_source, "storage", None)
+    if storage is None:
+        _LOGGER.warning(
+            "Nie mogę zweryfikować cache – pipeline nie udostępnia storage'u. Pomijam kontrolę.",
+        )
+        return
+
+    try:
+        metadata: MutableMapping[str, str] = storage.metadata()
+    except Exception as exc:  # noqa: BLE001
+        _LOGGER.warning("Nie udało się odczytać metadanych cache: %s", exc)
+        metadata = {}
+
+    issues: list[tuple[str, str]] = []
+
+    for symbol in symbols:
+        key = f"{symbol}::{interval}"
+        row_count: int | None = None
+        last_timestamp: int | None = None
+
+        if metadata:
+            raw_rows = metadata.get(f"row_count::{symbol}::{interval}")
+            if raw_rows is not None:
+                try:
+                    row_count = int(raw_rows)
+                except (TypeError, ValueError):
+                    _LOGGER.warning(
+                        "Nieprawidłowa wartość row_count dla %s (%s): %s",
+                        symbol,
+                        interval,
+                        raw_rows,
+                    )
+            raw_last = metadata.get(f"last_timestamp::{symbol}::{interval}")
+            if raw_last is not None:
+                try:
+                    last_timestamp = int(float(raw_last))
+                except (TypeError, ValueError):
+                    _LOGGER.warning(
+                        "Nieprawidłowa wartość last_timestamp dla %s (%s): %s",
+                        symbol,
+                        interval,
+                        raw_last,
+                    )
+
+        try:
+            payload = storage.read(key)
+        except KeyError:
+            issues.append((symbol, "brak wpisu w cache"))
+            continue
+
+        rows = list(payload.get("rows", []))
+        if not rows:
+            issues.append((symbol, "puste dane w cache"))
+            continue
+
+        if row_count is None:
+            row_count = len(rows)
+        if last_timestamp is None:
+            last_timestamp = int(float(rows[-1][0]))
+
+        first_timestamp = int(float(rows[0][0]))
+
+        if row_count < required_bars:
+            issues.append((symbol, f"za mało świec ({row_count} < {required_bars})"))
+            continue
+
+        if last_timestamp < end_ms:
+            issues.append((symbol, f"ostatnia świeca {last_timestamp} < wymaganego końca {end_ms}"))
+            continue
+
+        if first_timestamp > start_ms:
+            issues.append((symbol, f"pierwsza świeca {first_timestamp} > wymaganego startu {start_ms}"))
+            continue
+
+        coverage = ((last_timestamp - first_timestamp) // max(1, tick_ms)) + 1
+        if coverage < required_bars:
+            issues.append((symbol, f"pokrycie obejmuje {coverage} świec (wymagane {required_bars})"))
+
+    if issues:
+        for symbol, reason in issues:
+            _LOGGER.error(
+                "Cache offline dla symbolu %s (%s) nie spełnia wymagań smoke testu: %s",
+                symbol,
+                interval,
+                reason,
+            )
+        raise RuntimeError(
+            "Cache offline nie obejmuje wymaganego zakresu danych. Uruchom scripts/seed_paper_cache.py, "
+            "aby zbudować deterministyczny seed przed smoke testem.",
+        )
+
+
+class _OfflineExchangeAdapter(ExchangeAdapter):
+    """Minimalny adapter giełdowy działający offline dla trybu paper-smoke."""
+
+    name = "offline"
+
+    def __init__(self, credentials: ExchangeCredentials, **_: object) -> None:
+        super().__init__(credentials)
+
+    def configure_network(self, *, ip_allowlist: tuple[str, ...] | None = None) -> None:  # noqa: D401, ARG002
+        return None
+
+    def fetch_account_snapshot(self) -> AccountSnapshot:
+        return AccountSnapshot(
+            balances={"USDT": 100_000.0},
+            total_equity=100_000.0,
+            available_margin=100_000.0,
+            maintenance_margin=0.0,
+        )
+
+    def fetch_symbols(self):  # pragma: no cover - nieużywane w trybie smoke
+        return ()
+
+    def fetch_ohlcv(  # noqa: D401, ARG002
+        self,
+        symbol: str,
+        interval: str,
+        start: int | None = None,
+        end: int | None = None,
+        limit: int | None = None,
+    ):
+        return []
+
+    def place_order(self, request):  # pragma: no cover - paper trading korzysta z symulatora
+        raise NotImplementedError
+
+    def cancel_order(self, order_id: str, *, symbol: str | None = None) -> None:  # pragma: no cover - nieużywane
+        raise NotImplementedError
+
+    def stream_public_data(self, *, channels):  # pragma: no cover - nieużywane
+        raise NotImplementedError
+
+    def stream_private_data(self, *, channels):  # pragma: no cover - nieużywane
+        raise NotImplementedError
+
+
+def _offline_adapter_factory(credentials: ExchangeCredentials, **kwargs: object) -> ExchangeAdapter:
+    return _OfflineExchangeAdapter(credentials, **kwargs)
 
 
 def _run_loop(runner: DailyTrendRealtimeRunner, poll_seconds: float) -> int:
@@ -249,6 +419,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         _LOGGER.error("Plik konfiguracyjny %s nie istnieje", config_path)
         return 1
 
+    adapter_factories: Mapping[str, ExchangeAdapterFactory] | None = None
+    if args.paper_smoke:
+        adapter_factories = {
+            "binance_spot": _offline_adapter_factory,
+            "binance_futures": _offline_adapter_factory,
+            "kraken_spot": _offline_adapter_factory,
+            "kraken_futures": _offline_adapter_factory,
+            "zonda_spot": _offline_adapter_factory,
+        }
+
     try:
         pipeline = build_daily_trend_pipeline(
             environment_name=args.environment,
@@ -256,6 +436,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             controller_name=args.controller,
             config_path=config_path,
             secret_manager=secret_manager,
+            adapter_factories=adapter_factories,
         )
     except Exception as exc:  # noqa: BLE001
         _LOGGER.exception("Nie udało się zbudować pipeline'u daily trend: %s", exc)
@@ -280,6 +461,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             _LOGGER.error("Niepoprawny zakres dat: %s", exc)
             return 1
 
+        end_dt = datetime.fromisoformat(window_meta["end"])
+        tick_seconds = float(getattr(pipeline.controller, "tick_seconds", 86400.0) or 86400.0)
+        tick_ms = max(1, int(tick_seconds * 1000))
+        window_duration_ms = max(0, end_ms - start_ms)
+        approx_bars = max(1, int(window_duration_ms / tick_ms) + 1)
+        history_bars = max(1, min(int(args.history_bars), approx_bars))
+        runner_start_ms = max(0, end_ms - history_bars * tick_ms)
+        sync_start = min(start_ms, runner_start_ms)
+
         _LOGGER.info(
             "Startuję smoke test paper trading dla %s w zakresie %s – %s.",
             args.environment,
@@ -287,10 +477,28 @@ def main(argv: Sequence[str] | None = None) -> int:
             window_meta["end"],
         )
 
+        required_bars = max(
+            history_bars,
+            max(1, int((end_ms - sync_start) / tick_ms) + 1),
+        )
+        try:
+            _ensure_smoke_cache(
+                pipeline=pipeline,
+                symbols=pipeline.controller.symbols,
+                interval=pipeline.controller.interval,
+                start_ms=sync_start,
+                end_ms=end_ms,
+                required_bars=required_bars,
+                tick_ms=tick_ms,
+            )
+        except RuntimeError as exc:
+            _LOGGER.error("%s", exc)
+            return 1
+
         pipeline.backfill_service.synchronize(
             symbols=pipeline.controller.symbols,
             interval=pipeline.controller.interval,
-            start=start_ms,
+            start=sync_start,
             end=end_ms,
         )
 
@@ -303,7 +511,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         runner = DailyTrendRealtimeRunner(
             controller=pipeline.controller,
             trading_controller=trading_controller,
-            history_bars=max(1, args.history_bars),
+            history_bars=history_bars,
+            clock=lambda end=end_dt: end,
         )
 
         results = runner.run_once()
@@ -322,20 +531,27 @@ def main(argv: Sequence[str] | None = None) -> int:
             environment=args.environment,
             alert_snapshot=alert_snapshot,
         )
-        _LOGGER.info("Raport smoke testu zapisany w %s", report_dir)
+        summary_hash = _hash_file(summary_path)
+        _LOGGER.info(
+            "Raport smoke testu zapisany w %s (summary sha256=%s)",
+            report_dir,
+            summary_hash,
+        )
 
         message = AlertMessage(
             category="paper_smoke",
             title=f"Smoke test paper trading ({args.environment})",
             body=(
                 "Zakończono smoke test paper trading."
-                f" Zamówienia: {len(results)}, raport: {summary_path}"
+                f" Zamówienia: {len(results)}, raport: {summary_path},"
+                f" sha256: {summary_hash}"
             ),
             severity="info",
             context={
                 "environment": args.environment,
                 "report_dir": str(report_dir),
                 "orders": str(len(results)),
+                "summary_sha256": summary_hash,
             },
         )
         pipeline.bootstrap.alert_router.dispatch(message)
