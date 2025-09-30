@@ -15,6 +15,11 @@ import pytest
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
+from bot_core.config.models import (
+    CoreReportingConfig,
+    SmokeArchiveLocalConfig,
+    SmokeArchiveUploadConfig,
+)
 from bot_core.exchanges.base import Environment, OrderResult
 
 
@@ -22,12 +27,19 @@ from bot_core.exchanges.base import Environment, OrderResult
 def _patch_secret_manager(monkeypatch: pytest.MonkeyPatch) -> None:
     from scripts import run_daily_trend
 
-    monkeypatch.setattr(run_daily_trend, "_create_secret_manager", lambda args: SimpleNamespace())
+    secret_manager = SimpleNamespace(
+        load_secret_value=lambda key, **_: "",  # pragma: no cover - tylko stub
+    )
+    monkeypatch.setattr(run_daily_trend, "_create_secret_manager", lambda args: secret_manager)
 
 
 def _fake_pipeline(env: Environment) -> SimpleNamespace:
     environment = SimpleNamespace(environment=env, risk_profile="balanced")
-    bootstrap = SimpleNamespace(environment=environment, alert_router=SimpleNamespace())
+    bootstrap = SimpleNamespace(
+        environment=environment,
+        alert_router=SimpleNamespace(),
+        core_config=SimpleNamespace(reporting=None),
+    )
     controller = SimpleNamespace()
     return SimpleNamespace(bootstrap=bootstrap, controller=controller)
 
@@ -185,11 +197,28 @@ def test_paper_smoke_uses_date_window(
 
     environment_cfg = SimpleNamespace(environment=Environment.PAPER, risk_profile="balanced")
 
+    archive_store = tmp_path / "archives"
+    reporting_cfg = CoreReportingConfig(
+        smoke_archive_upload=SmokeArchiveUploadConfig(
+            backend="local",
+            credential_secret=None,
+            local=SmokeArchiveLocalConfig(
+                directory=str(archive_store),
+                filename_pattern="{environment}_{timestamp}_{hash}.zip",
+                fsync=False,
+            ),
+        ),
+    )
+
     pipeline = SimpleNamespace(
         controller=DummyController(),
         backfill_service=DummyBackfill(),
         execution_service=DummyExecutionService(),
-        bootstrap=SimpleNamespace(environment=environment_cfg, alert_router=DummyAlertRouter()),
+        bootstrap=SimpleNamespace(
+            environment=environment_cfg,
+            alert_router=DummyAlertRouter(),
+            core_config=reporting_cfg,
+        ),
         data_source=SimpleNamespace(storage=DummyStorage()),
     )
 
@@ -342,6 +371,12 @@ def test_paper_smoke_uses_date_window(
     archive_path = report_dir.with_suffix(".zip")
     assert archive_path.exists()
     assert alert_context["archive_path"] == str(archive_path)
+    assert alert_context["archive_upload_backend"] == "local"
+    upload_location = alert_context["archive_upload_location"]
+    assert upload_location.endswith(".zip")
+    uploaded_files = list(archive_store.glob("*.zip"))
+    assert uploaded_files, "Archiwum powinno zostać skopiowane do magazynu lokalnego"
+    assert uploaded_files[0].name in upload_location
     with zipfile.ZipFile(archive_path, "r") as archive:
         names = set(archive.namelist())
     assert {"summary.json", "summary.txt", "ledger.jsonl", "README.txt"}.issubset(names)
@@ -461,3 +496,110 @@ def test_render_smoke_summary_formats_alerts() -> None:
     assert "telegram: OK" in rendered
     assert "email: WARN (DNS failure)" in rendered
     assert rendered.endswith("SHA-256 summary.json: deadbeef")
+
+
+def test_export_smoke_report_includes_metrics(tmp_path: Path) -> None:
+    from scripts import run_daily_trend
+
+    report_dir = tmp_path / "report"
+    window = {
+        "start": "2024-01-01T00:00:00+00:00",
+        "end": "2024-01-08T23:59:59+00:00",
+    }
+
+    results = [
+        OrderResult(
+            order_id="OID-1",
+            status="filled",
+            filled_quantity=0.1,
+            avg_price=40000.0,
+            raw_response={},
+        ),
+        OrderResult(
+            order_id="OID-2",
+            status="filled",
+            filled_quantity=0.1,
+            avg_price=42000.0,
+            raw_response={},
+        ),
+    ]
+
+    ledger = [
+        {
+            "timestamp": 1704067200.0,
+            "order_id": "OID-1",
+            "symbol": "BTCUSDT",
+            "side": "buy",
+            "quantity": 0.1,
+            "price": 40000.0,
+            "fee": 1.2,
+            "fee_asset": "USDT",
+            "status": "filled",
+            "leverage": 1.0,
+            "position_value": 4000.0,
+        },
+        {
+            "timestamp": 1704672000.0,
+            "order_id": "OID-2",
+            "symbol": "BTCUSDT",
+            "side": "sell",
+            "quantity": 0.1,
+            "price": 42000.0,
+            "fee": 1.1,
+            "fee_asset": "USDT",
+            "status": "filled",
+            "leverage": 1.0,
+            "position_value": 0.0,
+        },
+    ]
+
+    summary_path = run_daily_trend._export_smoke_report(
+        report_dir=report_dir,
+        results=results,
+        ledger=ledger,
+        window=window,
+        environment="binance_paper",
+        alert_snapshot={"telegram": {"status": "ok"}},
+    )
+
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    metrics = summary["metrics"]
+
+    assert metrics["side_counts"]["buy"] == 1
+    assert metrics["side_counts"]["sell"] == 1
+    assert metrics["notional"]["buy"] == pytest.approx(4000.0)
+    assert metrics["notional"]["sell"] == pytest.approx(4200.0)
+    assert metrics["notional"]["total"] == pytest.approx(8200.0)
+    assert metrics["total_fees"] == pytest.approx(2.3)
+    assert metrics["last_position_value"] == pytest.approx(0.0)
+
+    ledger_path = report_dir / "ledger.jsonl"
+    assert ledger_path.exists()
+    lines = [line for line in ledger_path.read_text(encoding="utf-8").splitlines() if line]
+    assert len(lines) == 2
+
+
+def test_render_smoke_summary_with_metrics() -> None:
+    from scripts import run_daily_trend
+
+    summary = {
+        "environment": "binance_paper",
+        "window": {"start": "2024-01-01T00:00:00+00:00", "end": "2024-01-08T23:59:59+00:00"},
+        "orders": [],
+        "ledger_entries": 3,
+        "alert_snapshot": {},
+        "metrics": {
+            "side_counts": {"buy": 2, "sell": 1},
+            "notional": {"buy": 1234.5, "sell": 987.6, "total": 2222.1},
+            "total_fees": 0.987654,
+            "last_position_value": 4321.0,
+        },
+    }
+
+    text = run_daily_trend._render_smoke_summary(summary=summary, summary_sha256="abc123")
+
+    assert "Zlecenia BUY/SELL: 2/1" in text
+    assert "Wolumen BUY: 1 234.50 | SELL: 987.60 | Razem: 2 222.10" in text
+    assert "Łączne opłaty: 0.9877" in text
+    assert "Ostatnia wartość pozycji: 4 321.00" in text
+    assert "SHA-256 summary.json: abc123" in text
