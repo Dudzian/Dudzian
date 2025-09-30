@@ -55,7 +55,8 @@ Ten runbook opisuje, jak uruchomić, monitorować i bezpiecznie zatrzymać tryb 
    - Narzędzie wykona backfill ograniczony do podanego zakresu, uruchomi pojedynczą iterację i zapisze raport tymczasowy (`ledger.jsonl` + `summary.json`).
     - W trybie `--paper-smoke` skrypt podmienia adapter giełdowy na tryb offline i korzysta wyłącznie z lokalnego cache Parquet/SQLite, dlatego przed uruchomieniem wymagany jest kompletny seed danych z kroku wcześniejszego.
     - Jeżeli w keychainie znajdują się placeholderowe tokeny kanałów alertowych, komunikaty o błędach (403/DNS) zostaną zarejestrowane w logu, ale nie przerywają smoke testu; status kanałów należy odnotować w audycie.
-   - Ścieżka katalogu raportu pojawi się w logu – zanotuj hash `summary.json` w logu audytu (sekcja „Smoke test”).
+   - Ścieżka katalogu raportu pojawi się w logu razem z wyliczoną sumą SHA-256 pliku `summary.json` – skopiuj wartość i dopisz ją do `docs/audit/paper_trading_log.md` w sekcji „Smoke test”.
+
 4. Uruchom tryb jednorazowy (dry-run) w celu sanity check konfiguracji:
    ```bash
    PYTHONPATH=. python scripts/run_daily_trend.py --config config/core.yaml --environment binance_paper --dry-run

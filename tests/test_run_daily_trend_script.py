@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Iterable
@@ -120,6 +121,11 @@ def test_paper_smoke_uses_date_window(monkeypatch: pytest.MonkeyPatch, tmp_path:
     sync_calls: list[dict[str, Any]] = []
     collected_calls: list[dict[str, int]] = []
 
+    start_dt = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    end_dt = datetime(2024, 2, 15, 23, 59, 59, 999000, tzinfo=timezone.utc)
+    start_ms = int(start_dt.timestamp() * 1000)
+    end_ms = int(end_dt.timestamp() * 1000)
+
     class DummyController:
         symbols = ("BTCUSDT",)
         interval = "1d"
@@ -137,6 +143,31 @@ def test_paper_smoke_uses_date_window(monkeypatch: pytest.MonkeyPatch, tmp_path:
         def ledger(self) -> list[dict[str, Any]]:
             return []
 
+    history_bars_cap = 180
+    tick_ms = int(DummyController.tick_seconds * 1000)
+    window_duration_ms = max(0, end_ms - start_ms)
+    approx_bars = max(1, int(window_duration_ms / tick_ms) + 1)
+    expected_history = max(1, min(history_bars_cap, approx_bars))
+    runner_start_ms = max(0, end_ms - expected_history * tick_ms)
+    sync_start_ms = min(start_ms, runner_start_ms)
+    required_bars = max(expected_history, max(1, int((end_ms - sync_start_ms) / tick_ms) + 1))
+
+    class DummyStorage:
+        def metadata(self) -> dict[str, str]:
+            return {
+                f"row_count::BTCUSDT::1d": str(required_bars + 5),
+                f"last_timestamp::BTCUSDT::1d": str(end_ms + tick_ms),
+            }
+
+        def read(self, key: str) -> dict[str, Any]:
+            assert key == "BTCUSDT::1d"
+            return {
+                "rows": [
+                    [float(sync_start_ms - tick_ms), 0.0, 0.0, 0.0, 0.0, 0.0],
+                    [float(end_ms + tick_ms), 0.0, 0.0, 0.0, 0.0, 0.0],
+                ]
+            }
+
     class DummyAlertRouter:
         def dispatch(self, message: Any) -> None:
             dispatch_calls.append(message)
@@ -151,6 +182,7 @@ def test_paper_smoke_uses_date_window(monkeypatch: pytest.MonkeyPatch, tmp_path:
         backfill_service=DummyBackfill(),
         execution_service=DummyExecutionService(),
         bootstrap=SimpleNamespace(environment=environment_cfg, alert_router=DummyAlertRouter()),
+        data_source=SimpleNamespace(storage=DummyStorage()),
     )
 
     captured_args: dict[str, Any] = {}
@@ -182,7 +214,7 @@ def test_paper_smoke_uses_date_window(monkeypatch: pytest.MonkeyPatch, tmp_path:
             trading_controller: Any,
             history_bars: int,
             clock=None,
-            ) -> None:
+        ) -> None:
             captured_runner.update(
                 {
                     "controller": controller,
@@ -250,3 +282,88 @@ def test_paper_smoke_uses_date_window(monkeypatch: pytest.MonkeyPatch, tmp_path:
     assert collected_calls[0]["end"] >= end_ms
 
     assert dispatch_calls, "Kanał alertów powinien otrzymać powiadomienie smoke"
+    alert_message = dispatch_calls[0]
+    expected_hash = hashlib.sha256(b"{}").hexdigest()
+    assert getattr(alert_message, "context")["summary_sha256"] == expected_hash
+
+
+def test_paper_smoke_requires_seeded_cache(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from scripts import run_daily_trend
+
+    caplog.set_level("ERROR")
+
+    class DummyController:
+        symbols = ("BTCUSDT",)
+        interval = "1d"
+        tick_seconds = 86400.0
+
+        def collect_signals(self, *, start: int, end: int) -> list[Any]:  # pragma: no cover - nie powinno zostać wywołane
+            raise AssertionError("collect_signals nie powinno być wywołane przy braku cache")
+
+    class DummyBackfill:
+        def __init__(self) -> None:
+            self.called = False
+
+        def synchronize(self, **kwargs: Any) -> None:  # pragma: no cover - nie powinno zostać wywołane
+            self.called = True
+            raise AssertionError("backfill nie powinien być wywołany przy braku cache")
+
+    class DummyExecutionService:
+        def ledger(self) -> list[dict[str, Any]]:  # pragma: no cover - nie powinno zostać wywołane
+            raise AssertionError("ledger nie powinien być odczytany")
+
+    class EmptyStorage:
+        def metadata(self) -> dict[str, str]:
+            return {}
+
+        def read(self, key: str) -> dict[str, Any]:
+            raise KeyError(key)
+
+    class DummyAlertRouter:
+        def dispatch(self, message: Any) -> None:  # pragma: no cover - nie powinno zostać wywołane
+            raise AssertionError("dispatch nie powinien być wywołany")
+
+        def health_snapshot(self) -> dict[str, Any]:  # pragma: no cover - nie powinno zostać wywołane
+            return {}
+
+    environment_cfg = SimpleNamespace(environment=Environment.PAPER, risk_profile="balanced")
+    pipeline = SimpleNamespace(
+        controller=DummyController(),
+        backfill_service=DummyBackfill(),
+        execution_service=DummyExecutionService(),
+        bootstrap=SimpleNamespace(environment=environment_cfg, alert_router=DummyAlertRouter()),
+        data_source=SimpleNamespace(storage=EmptyStorage()),
+    )
+
+    def fake_build_pipeline(**kwargs: Any) -> SimpleNamespace:
+        assert kwargs["environment_name"] == "binance_paper"
+        return pipeline
+
+    monkeypatch.setattr(run_daily_trend, "build_daily_trend_pipeline", fake_build_pipeline)
+    monkeypatch.setattr(
+        run_daily_trend,
+        "create_trading_controller",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("create_trading_controller nie powinien być wywołany")),
+    )
+    monkeypatch.setattr(
+        run_daily_trend,
+        "DailyTrendRealtimeRunner",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("runner nie powinien być uruchomiony")),
+    )
+
+    exit_code = run_daily_trend.main(
+        [
+            "--config",
+            "config/core.yaml",
+            "--environment",
+            "binance_paper",
+            "--paper-smoke",
+            "--date-window",
+            "2024-01-01:2024-02-15",
+        ]
+    )
+
+    assert exit_code == 1
+    assert any("Cache offline" in record.message for record in caplog.records)
