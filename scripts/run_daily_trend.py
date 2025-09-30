@@ -4,14 +4,16 @@ from __future__ import annotations
 import argparse
 import json
 import hashlib
+import os
 import logging
 import signal
 import sys
+import shutil
 import tempfile
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterable, Mapping, MutableMapping, Sequence
+from collections.abc import Iterable, Mapping, MutableMapping, Sequence
 
 from bot_core.alerts import AlertMessage
 from bot_core.exchanges.base import (
@@ -97,6 +99,11 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         "--paper-smoke",
         action="store_true",
         help="Uruchom test dymny strategii paper trading (backfill + pojedyncza iteracja)",
+    )
+    parser.add_argument(
+        "--archive-smoke",
+        action="store_true",
+        help="Po zakończeniu smoke testu spakuj raport do archiwum ZIP z instrukcją audytu",
     )
     parser.add_argument(
         "--date-window",
@@ -219,6 +226,80 @@ def _export_smoke_report(
     summary_path = report_dir / "summary.json"
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return summary_path
+
+
+def _write_smoke_readme(report_dir: Path) -> Path:
+    readme_path = report_dir / "README.txt"
+    readme_text = (
+        "Daily Trend – smoke test paper trading\n"
+        "======================================\n\n"
+        "Ten katalog zawiera artefakty pojedynczego uruchomienia trybu --paper-smoke.\n"
+        "Na potrzeby audytu:"
+    )
+    readme_text += (
+        "\n\n"
+        "1. Zweryfikuj hash SHA-256 pliku summary.json zapisany w logu CLI oraz w alertach.\n"
+        "2. Przepisz treść summary.txt do dziennika audytowego (docs/audit/paper_trading_log.md).\n"
+        "3. Zabezpiecz ledger.jsonl (pełna historia decyzji) w repozytorium operacyjnym.\n"
+        "4. Zarchiwizowany plik ZIP można przechowywać w sejfie audytu przez min. 24 miesiące.\n"
+    )
+    readme_path.write_text(readme_text + "\n", encoding="utf-8")
+    return readme_path
+
+
+def _archive_smoke_report(report_dir: Path) -> Path:
+    archive_path_str = shutil.make_archive(str(report_dir), "zip", root_dir=report_dir)
+    return Path(archive_path_str)
+
+
+def _render_smoke_summary(*, summary: Mapping[str, object], summary_sha256: str) -> str:
+    environment = str(summary.get("environment", "unknown"))
+    window = summary.get("window", {})
+    if isinstance(window, Mapping):
+        start = str(window.get("start", "?"))
+        end = str(window.get("end", "?"))
+    else:  # pragma: no cover - obrona przed błędną strukturą
+        start = end = "?"
+
+    orders = summary.get("orders", [])
+    orders_count = len(orders) if isinstance(orders, Sequence) else 0
+    ledger_entries = summary.get("ledger_entries", 0)
+    try:
+        ledger_entries = int(ledger_entries)
+    except Exception:  # noqa: BLE001, pragma: no cover - fallback
+        ledger_entries = 0
+
+    alert_snapshot = summary.get("alert_snapshot", {})
+    alert_lines: list[str] = []
+    if isinstance(alert_snapshot, Mapping):
+        for channel, data in alert_snapshot.items():
+            status = "unknown"
+            detail: str | None = None
+            if isinstance(data, Mapping):
+                raw_status = data.get("status")
+                if raw_status is not None:
+                    status = str(raw_status).upper()
+                raw_detail = data.get("detail")
+                if raw_detail:
+                    detail = str(raw_detail)
+            channel_name = str(channel)
+            if detail:
+                alert_lines.append(f"{channel_name}: {status} ({detail})")
+            else:
+                alert_lines.append(f"{channel_name}: {status}")
+
+    if not alert_lines:
+        alert_lines.append("brak danych o kanałach alertów")
+
+    lines = [
+        f"Środowisko: {environment}",
+        f"Zakres dat: {start} → {end}",
+        f"Liczba zleceń: {orders_count}",
+        f"Liczba wpisów w ledgerze: {ledger_entries}",
+        "Alerty: " + "; ".join(alert_lines),
+        f"SHA-256 summary.json: {summary_sha256}",
+    ]
+    return "\n".join(lines)
 
 
 def _ensure_smoke_cache(
@@ -532,11 +613,36 @@ def main(argv: Sequence[str] | None = None) -> int:
             alert_snapshot=alert_snapshot,
         )
         summary_hash = _hash_file(summary_path)
+        try:
+            summary_payload = json.loads(summary_path.read_text(encoding="utf-8"))
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.error("Nie udało się odczytać summary.json: %s", exc)
+            summary_payload = {
+                "environment": args.environment,
+                "window": dict(window_meta),
+                "orders": [],
+                "ledger_entries": 0,
+                "alert_snapshot": alert_snapshot,
+            }
+
+        summary_text = _render_smoke_summary(
+            summary=summary_payload,
+            summary_sha256=summary_hash,
+        )
+        summary_txt_path = summary_path.with_suffix(".txt")
+        summary_txt_path.write_text(summary_text + "\n", encoding="utf-8")
+        readme_path = _write_smoke_readme(report_dir)
         _LOGGER.info(
             "Raport smoke testu zapisany w %s (summary sha256=%s)",
             report_dir,
             summary_hash,
         )
+        _LOGGER.info("Podsumowanie smoke testu:%s%s", os.linesep, summary_text)
+
+        archive_path: Path | None = None
+        if args.archive_smoke:
+            archive_path = _archive_smoke_report(report_dir)
+            _LOGGER.info("Utworzono archiwum smoke testu: %s", archive_path)
 
         message = AlertMessage(
             category="paper_smoke",
@@ -552,6 +658,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "report_dir": str(report_dir),
                 "orders": str(len(results)),
                 "summary_sha256": summary_hash,
+                "summary_text_path": str(summary_txt_path),
+                "readme_path": str(readme_path),
+                **({"archive_path": str(archive_path)} if archive_path else {}),
             },
         )
         pipeline.bootstrap.alert_router.dispatch(message)

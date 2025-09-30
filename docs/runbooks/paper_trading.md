@@ -49,13 +49,17 @@ Ten runbook opisuje, jak uruchomić, monitorować i bezpiecznie zatrzymać tryb 
        --config config/core.yaml \
        --environment binance_paper \
        --paper-smoke \
+       --archive-smoke \
        --date-window 2024-01-01:2024-02-15 \
        --run-once
    ```
-   - Narzędzie wykona backfill ograniczony do podanego zakresu, uruchomi pojedynczą iterację i zapisze raport tymczasowy (`ledger.jsonl` + `summary.json`).
+
+   - Narzędzie wykona backfill ograniczony do podanego zakresu, uruchomi pojedynczą iterację i zapisze raport tymczasowy (`ledger.jsonl`, `summary.json`, `summary.txt`, `README.txt`).
+    - `summary.txt` zawiera gotowe podsumowanie dla zespołu ryzyka (środowisko, okno dat, liczba zleceń, status kanałów alertowych, hash `summary.json`).
+    - `README.txt` zawiera skróconą instrukcję audytu (co przepisać do logu, gdzie przechowywać ledger, jak długo archiwizować paczkę).
     - W trybie `--paper-smoke` skrypt podmienia adapter giełdowy na tryb offline i korzysta wyłącznie z lokalnego cache Parquet/SQLite, dlatego przed uruchomieniem wymagany jest kompletny seed danych z kroku wcześniejszego.
     - Jeżeli w keychainie znajdują się placeholderowe tokeny kanałów alertowych, komunikaty o błędach (403/DNS) zostaną zarejestrowane w logu, ale nie przerywają smoke testu; status kanałów należy odnotować w audycie.
-   - Ścieżka katalogu raportu pojawi się w logu razem z wyliczoną sumą SHA-256 pliku `summary.json` – skopiuj wartość i dopisz ją do `docs/audit/paper_trading_log.md` w sekcji „Smoke test”.
+   - Użycie flagi `--archive-smoke` tworzy dodatkowo archiwum ZIP z kompletem plików i instrukcją audytu. Ścieżka katalogu raportu i hash `summary.json` pojawią się w logu. Skopiuj hash, treść `summary.txt` oraz status kanałów alertowych do `docs/audit/paper_trading_log.md`. Archiwum ZIP przechowuj w sejfie audytu (retencja ≥ 24 miesiące).
 
 4. Uruchom tryb jednorazowy (dry-run) w celu sanity check konfiguracji:
    ```bash

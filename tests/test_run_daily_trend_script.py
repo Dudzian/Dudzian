@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sys
+import tempfile
+import zipfile
+from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Iterable
+from typing import Any
 
 import pytest
 
@@ -93,7 +97,7 @@ def test_refuses_live_environment_without_flag(monkeypatch: pytest.MonkeyPatch) 
     def _fail_create(*_args: Any, **_kwargs: Any) -> None:
         nonlocal create_called
         create_called = True
-        raise AssertionError("create_trading_controller should not be invoked")
+        raise AssertionError("create_trading_controller powinien nie być wywołany")
 
     monkeypatch.setattr(run_daily_trend, "create_trading_controller", _fail_create)
 
@@ -114,7 +118,11 @@ def test_dry_run_returns_success(monkeypatch: pytest.MonkeyPatch) -> None:
     assert exit_code == 0
 
 
-def test_paper_smoke_uses_date_window(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_paper_smoke_uses_date_window(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     from scripts import run_daily_trend
 
     dispatch_calls: list[Any] = []
@@ -173,7 +181,7 @@ def test_paper_smoke_uses_date_window(monkeypatch: pytest.MonkeyPatch, tmp_path:
             dispatch_calls.append(message)
 
         def health_snapshot(self) -> dict[str, Any]:
-            return {}
+            return {"telegram": {"status": "ok"}}
 
     environment_cfg = SimpleNamespace(environment=Environment.PAPER, risk_profile="balanced")
 
@@ -228,21 +236,55 @@ def test_paper_smoke_uses_date_window(monkeypatch: pytest.MonkeyPatch, tmp_path:
             now = captured_runner["clock"]()
             captured_runner["now"] = now
             controller = captured_runner["controller"]
-            tick_ms = int(getattr(controller, "tick_seconds", 86400.0) * 1000)
+            tick_ms_local = int(getattr(controller, "tick_seconds", 86400.0) * 1000)
             history = int(captured_runner["history_bars"])
-            end_ms = int(now.timestamp() * 1000)
-            start_ms = max(0, end_ms - history * tick_ms)
-            controller.collect_signals(start=start_ms, end=end_ms)
+            end_ms_local = int(now.timestamp() * 1000)
+            start_ms_local = max(0, end_ms_local - history * tick_ms_local)
+            controller.collect_signals(start=start_ms_local, end=end_ms_local)
             return []
 
     monkeypatch.setattr(run_daily_trend, "DailyTrendRealtimeRunner", DummyRunner)
 
-    def fake_export_smoke_report(**kwargs: Any) -> Path:
-        summary_path = tmp_path / "summary.json"
-        summary_path.write_text("{}", encoding="utf-8")
+    report_dir = tmp_path / "smoke"
+
+    def fake_mkdtemp(*_args: Any, **_kwargs: Any) -> str:
+        report_dir.mkdir(parents=True, exist_ok=True)
+        return str(report_dir)
+
+    monkeypatch.setattr(tempfile, "mkdtemp", fake_mkdtemp)
+
+    def fake_export_smoke_report(
+        *,
+        report_dir: Path,
+        results: Iterable[Any],
+        ledger: Iterable[Mapping[str, Any]],
+        window: Mapping[str, str],
+        environment: str,
+        alert_snapshot: Mapping[str, Mapping[str, str]],
+    ) -> Path:
+        ledger_path = report_dir / "ledger.jsonl"
+        ledger_path.write_text("", encoding="utf-8")
+        summary = {
+            "environment": environment,
+            "window": dict(window),
+            "orders": [
+                {
+                    "order_id": "OID-1",
+                    "status": "filled",
+                    "filled_quantity": "0.10",
+                    "avg_price": "45000",
+                }
+            ],
+            "ledger_entries": len(list(ledger)),
+            "alert_snapshot": alert_snapshot,
+        }
+        summary_path = report_dir / "summary.json"
+        summary_path.write_text(json.dumps(summary), encoding="utf-8")
         return summary_path
 
     monkeypatch.setattr(run_daily_trend, "_export_smoke_report", fake_export_smoke_report)
+
+    caplog.set_level("INFO")
 
     exit_code = run_daily_trend.main(
         [
@@ -251,6 +293,7 @@ def test_paper_smoke_uses_date_window(monkeypatch: pytest.MonkeyPatch, tmp_path:
             "--environment",
             "binance_paper",
             "--paper-smoke",
+            "--archive-smoke",
             "--date-window",
             "2024-01-01:2024-02-15",
         ]
@@ -282,9 +325,32 @@ def test_paper_smoke_uses_date_window(monkeypatch: pytest.MonkeyPatch, tmp_path:
     assert collected_calls[0]["end"] >= end_ms
 
     assert dispatch_calls, "Kanał alertów powinien otrzymać powiadomienie smoke"
-    alert_message = dispatch_calls[0]
-    expected_hash = hashlib.sha256(b"{}").hexdigest()
-    assert getattr(alert_message, "context")["summary_sha256"] == expected_hash
+    summary_bytes = (report_dir / "summary.json").read_bytes()
+    expected_hash = hashlib.sha256(summary_bytes).hexdigest()
+    alert_context = getattr(dispatch_calls[0], "context")
+    assert alert_context["summary_sha256"] == expected_hash
+    assert alert_context["summary_text_path"] == str(report_dir / "summary.txt")
+    assert alert_context["readme_path"] == str(report_dir / "README.txt")
+
+    summary_txt = (report_dir / "summary.txt").read_text(encoding="utf-8")
+    assert "Zakres dat" in summary_txt
+    assert "SHA-256 summary.json" in summary_txt
+
+    readme_txt = (report_dir / "README.txt").read_text(encoding="utf-8")
+    assert "Daily Trend – smoke test" in readme_txt
+
+    archive_path = report_dir.with_suffix(".zip")
+    assert archive_path.exists()
+    assert alert_context["archive_path"] == str(archive_path)
+    with zipfile.ZipFile(archive_path, "r") as archive:
+        names = set(archive.namelist())
+    assert {"summary.json", "summary.txt", "ledger.jsonl", "README.txt"}.issubset(names)
+
+    log_messages = [record.message for record in caplog.records if "Podsumowanie smoke testu" in record.message]
+    assert log_messages
+    joined_log = "\n".join(log_messages)
+    assert "Środowisko: binance_paper" in joined_log
+    assert "Alerty:" in joined_log
 
 
 def test_paper_smoke_requires_seeded_cache(
@@ -367,3 +433,31 @@ def test_paper_smoke_requires_seeded_cache(
 
     assert exit_code == 1
     assert any("Cache offline" in record.message for record in caplog.records)
+
+
+def test_render_smoke_summary_formats_alerts() -> None:
+    from scripts import run_daily_trend
+
+    summary = {
+        "environment": "binance_paper",
+        "window": {"start": "2024-01-01T00:00:00+00:00", "end": "2024-02-01T23:59:59+00:00"},
+        "orders": [
+            {"order_id": "O1", "status": "filled", "filled_quantity": "0.1", "avg_price": "42000"},
+            {"order_id": "O2", "status": "cancelled", "filled_quantity": "0.0", "avg_price": None},
+        ],
+        "ledger_entries": 3,
+        "alert_snapshot": {
+            "telegram": {"status": "ok"},
+            "email": {"status": "warn", "detail": "DNS failure"},
+        },
+    }
+
+    rendered = run_daily_trend._render_smoke_summary(summary=summary, summary_sha256="deadbeef")
+
+    assert "Środowisko: binance_paper" in rendered
+    assert "Zakres dat: 2024-01-01T00:00:00+00:00 → 2024-02-01T23:59:59+00:00" in rendered
+    assert "Liczba zleceń: 2" in rendered
+    assert "Liczba wpisów w ledgerze: 3" in rendered
+    assert "telegram: OK" in rendered
+    assert "email: WARN (DNS failure)" in rendered
+    assert rendered.endswith("SHA-256 summary.json: deadbeef")
