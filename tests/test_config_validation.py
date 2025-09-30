@@ -5,8 +5,13 @@ from dataclasses import replace
 import pytest
 
 from bot_core.config.models import (
+    ControllerRuntimeConfig,
     CoreConfig,
     EnvironmentConfig,
+    InstrumentBackfillWindow,
+    InstrumentConfig,
+    InstrumentUniverseConfig,
+    DailyTrendMomentumStrategyConfig,
     RiskProfileConfig,
     TelegramChannelSettings,
 )
@@ -110,3 +115,119 @@ def test_validate_core_config_detects_negative_risk_values(base_config: CoreConf
     result = validate_core_config(config)
     assert not result.is_valid()
     assert "max_daily_loss_pct" in result.errors[0]
+
+
+def _config_with_universe(base_config: CoreConfig) -> CoreConfig:
+    instrument = InstrumentConfig(
+        name="BTC_USDT",
+        base_asset="BTC",
+        quote_asset="USDT",
+        categories=("core",),
+        exchange_symbols={"binance_spot": "BTCUSDT"},
+        backfill_windows=(InstrumentBackfillWindow(interval="1d", lookback_days=30),),
+    )
+    universe = InstrumentUniverseConfig(
+        name="core",
+        description="test universe",
+        instruments=(instrument,),
+    )
+    return replace(base_config, instrument_universes={"core": universe})
+
+
+def test_validate_core_config_detects_empty_instrument_list(base_config: CoreConfig) -> None:
+    empty_universe = InstrumentUniverseConfig(name="core", description="desc", instruments=())
+    config = replace(base_config, instrument_universes={"core": empty_universe})
+
+    result = validate_core_config(config)
+    assert not result.is_valid()
+    assert "musi zawierać co najmniej jeden instrument" in result.errors[0]
+
+
+def test_validate_core_config_detects_missing_exchange_symbols(base_config: CoreConfig) -> None:
+    universe_config = _config_with_universe(base_config)
+    instrument = replace(
+        next(iter(universe_config.instrument_universes["core"].instruments)),
+        exchange_symbols={},
+    )
+    broken_universe = replace(
+        universe_config.instrument_universes["core"], instruments=(instrument,)
+    )
+    config = replace(universe_config, instrument_universes={"core": broken_universe})
+
+    result = validate_core_config(config)
+    assert not result.is_valid()
+    assert "powiązanie giełdowe" in result.errors[0]
+
+
+def test_validate_core_config_detects_invalid_backfill_window(base_config: CoreConfig) -> None:
+    universe_config = _config_with_universe(base_config)
+    instrument = replace(
+        next(iter(universe_config.instrument_universes["core"].instruments)),
+        backfill_windows=(InstrumentBackfillWindow(interval="", lookback_days=-1),),
+    )
+    broken_universe = replace(
+        universe_config.instrument_universes["core"], instruments=(instrument,)
+    )
+    config = replace(universe_config, instrument_universes={"core": broken_universe})
+
+    result = validate_core_config(config)
+    assert not result.is_valid()
+    assert any("backfill" in err for err in result.errors)
+
+
+def test_validate_core_config_detects_universe_without_exchange_mapping(base_config: CoreConfig) -> None:
+    instrument = InstrumentConfig(
+        name="BTC_USDT",
+        base_asset="BTC",
+        quote_asset="USDT",
+        categories=("core",),
+        exchange_symbols={"kraken_spot": "XBTUSDT"},
+        backfill_windows=(InstrumentBackfillWindow(interval="1d", lookback_days=30),),
+    )
+    universe = InstrumentUniverseConfig(
+        name="core",
+        description="test universe",
+        instruments=(instrument,),
+    )
+    environment = replace(
+        base_config.environments["paper"],
+        instrument_universe="core",
+    )
+    config = replace(
+        base_config,
+        instrument_universes={"core": universe},
+        environments={"paper": environment},
+    )
+
+    result = validate_core_config(config)
+    assert not result.is_valid()
+    assert any("nie zawiera powiązań" in err for err in result.errors)
+
+
+def test_validate_core_config_detects_invalid_strategy_settings(base_config: CoreConfig) -> None:
+    strategy = DailyTrendMomentumStrategyConfig(
+        name="invalid",
+        fast_ma=20,
+        slow_ma=10,
+        breakout_lookback=5,
+        momentum_window=3,
+        atr_window=7,
+        atr_multiplier=2.0,
+        min_trend_strength=0.001,
+        min_momentum=0.001,
+    )
+    config = replace(base_config, strategies={"invalid": strategy})
+
+    result = validate_core_config(config)
+    assert not result.is_valid()
+    assert any("fast_ma" in err for err in result.errors)
+
+
+def test_validate_core_config_detects_invalid_runtime_controller(base_config: CoreConfig) -> None:
+    controller = ControllerRuntimeConfig(tick_seconds=0.0, interval=" ")
+    config = replace(base_config, runtime_controllers={"bad": controller})
+
+    result = validate_core_config(config)
+    assert not result.is_valid()
+    assert any("tick_seconds" in err for err in result.errors)
+    assert any("interval" in err for err in result.errors)
