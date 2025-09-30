@@ -2,13 +2,17 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import signal
 import sys
+import tempfile
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Iterable, Mapping, Sequence
 
+from bot_core.alerts import AlertMessage
 from bot_core.exchanges.base import Environment, OrderResult
 from bot_core.runtime.pipeline import build_daily_trend_pipeline, create_trading_controller
 from bot_core.runtime.realtime import DailyTrendRealtimeRunner
@@ -82,6 +86,16 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         help="Uruchom pojedynczą iterację i zakończ (np. do harmonogramu cron)",
     )
     parser.add_argument(
+        "--paper-smoke",
+        action="store_true",
+        help="Uruchom test dymny strategii paper trading (backfill + pojedyncza iteracja)",
+    )
+    parser.add_argument(
+        "--date-window",
+        default=None,
+        help="Zakres dat w formacie START:END (np. 2024-01-01:2024-02-15) dla trybu --paper-smoke",
+    )
+    parser.add_argument(
         "--allow-live",
         action="store_true",
         help="Zezwól na uruchomienie na środowisku LIVE (domyślnie blokowane)",
@@ -112,6 +126,83 @@ def _log_order_results(results: Iterable[OrderResult]) -> None:
             result.filled_quantity,
             result.avg_price,
         )
+
+
+def _parse_iso_date(value: str, *, is_end: bool) -> datetime:
+    text = value.strip()
+    if not text:
+        raise ValueError("wartość daty nie może być pusta")
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError as exc:  # pragma: no cover - walidacja argumentów CLI
+        raise ValueError(f"nieprawidłowy format daty: {text}") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    else:
+        parsed = parsed.astimezone(timezone.utc)
+    if "T" not in text and " " not in text:
+        # W przypadku zakresów dziennych interpretujemy datę końcową jako koniec dnia.
+        if is_end:
+            parsed = parsed + timedelta(days=1) - timedelta(milliseconds=1)
+    return parsed
+
+
+def _resolve_date_window(arg: str | None, *, default_days: int = 30) -> tuple[int, int, Mapping[str, str]]:
+    if not arg:
+        end_dt = datetime.now(timezone.utc)
+        start_dt = end_dt - timedelta(days=default_days)
+    else:
+        parts = arg.split(":", maxsplit=1)
+        if len(parts) != 2:
+            raise ValueError("zakres musi mieć format START:END")
+        start_dt = _parse_iso_date(parts[0], is_end=False)
+        end_dt = _parse_iso_date(parts[1], is_end=True)
+    if start_dt > end_dt:
+        raise ValueError("data początkowa jest późniejsza niż końcowa")
+    start_ms = int(start_dt.timestamp() * 1000)
+    end_ms = int(end_dt.timestamp() * 1000)
+    return start_ms, end_ms, {
+        "start": start_dt.isoformat(),
+        "end": end_dt.isoformat(),
+    }
+
+
+def _export_smoke_report(
+    *,
+    report_dir: Path,
+    results: Sequence[OrderResult],
+    ledger: Iterable[Mapping[str, object]],
+    window: Mapping[str, str],
+    environment: str,
+    alert_snapshot: Mapping[str, Mapping[str, str]],
+) -> Path:
+    report_dir.mkdir(parents=True, exist_ok=True)
+    ledger_entries = list(ledger)
+    ledger_path = report_dir / "ledger.jsonl"
+    with ledger_path.open("w", encoding="utf-8") as handle:
+        for entry in ledger_entries:
+            json.dump(entry, handle, ensure_ascii=False)
+            handle.write("\n")
+
+    summary = {
+        "environment": environment,
+        "window": dict(window),
+        "orders": [
+            {
+                "order_id": result.order_id,
+                "status": result.status,
+                "filled_quantity": result.filled_quantity,
+                "avg_price": result.avg_price,
+            }
+            for result in results
+        ],
+        "ledger_entries": len(ledger_entries),
+        "alert_snapshot": {channel: dict(data) for channel, data in alert_snapshot.items()},
+    }
+
+    summary_path = report_dir / "summary.json"
+    summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return summary_path
 
 
 def _run_loop(runner: DailyTrendRealtimeRunner, poll_seconds: float) -> int:
@@ -180,6 +271,74 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.dry_run:
         _LOGGER.info("Dry-run zakończony sukcesem. Pipeline gotowy do uruchomienia.")
+        return 0
+
+    if args.paper_smoke:
+        try:
+            start_ms, end_ms, window_meta = _resolve_date_window(args.date_window)
+        except ValueError as exc:
+            _LOGGER.error("Niepoprawny zakres dat: %s", exc)
+            return 1
+
+        _LOGGER.info(
+            "Startuję smoke test paper trading dla %s w zakresie %s – %s.",
+            args.environment,
+            window_meta["start"],
+            window_meta["end"],
+        )
+
+        pipeline.backfill_service.synchronize(
+            symbols=pipeline.controller.symbols,
+            interval=pipeline.controller.interval,
+            start=start_ms,
+            end=end_ms,
+        )
+
+        trading_controller = create_trading_controller(
+            pipeline,
+            pipeline.bootstrap.alert_router,
+            health_check_interval=0.0,
+        )
+
+        runner = DailyTrendRealtimeRunner(
+            controller=pipeline.controller,
+            trading_controller=trading_controller,
+            history_bars=max(1, args.history_bars),
+        )
+
+        results = runner.run_once()
+        if results:
+            _log_order_results(results)
+        else:
+            _LOGGER.info("Smoke test zakończony – brak sygnałów w zadanym oknie.")
+
+        report_dir = Path(tempfile.mkdtemp(prefix="daily_trend_smoke_"))
+        alert_snapshot = pipeline.bootstrap.alert_router.health_snapshot()
+        summary_path = _export_smoke_report(
+            report_dir=report_dir,
+            results=results,
+            ledger=pipeline.execution_service.ledger(),
+            window=window_meta,
+            environment=args.environment,
+            alert_snapshot=alert_snapshot,
+        )
+        _LOGGER.info("Raport smoke testu zapisany w %s", report_dir)
+
+        message = AlertMessage(
+            category="paper_smoke",
+            title=f"Smoke test paper trading ({args.environment})",
+            body=(
+                "Zakończono smoke test paper trading."
+                f" Zamówienia: {len(results)}, raport: {summary_path}"
+            ),
+            severity="info",
+            context={
+                "environment": args.environment,
+                "report_dir": str(report_dir),
+                "orders": str(len(results)),
+            },
+        )
+        pipeline.bootstrap.alert_router.dispatch(message)
         return 0
 
     trading_controller = create_trading_controller(

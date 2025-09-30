@@ -12,6 +12,11 @@ Dokument stanowi append-only rejestr zdarzeń operacyjnych związanych z trybem 
 |----|------------|----------|----------|--------------|-------------|-------|
 | R-0001 | YYYY-MM-DDThh:mm:ssZ | imię nazwisko | `data/reports/daily/2023-03-31/paper_binance.zip.age` | `<hash>` | 2025-03-31 | „Raport testowy” |
 
+## Sekcja B1 – Smoke testy paper tradingu
+| ID | Data (UTC) | Operator | Środowisko | Zakres dat | Raport (`summary.json`) | Hash SHA-256 | Status alertów | Uwagi |
+|----|------------|----------|------------|------------|-------------------------|--------------|----------------|-------|
+| S-TEST-0001 | YYYY-MM-DDThh:mm:ssZ | imię nazwisko | binance_paper | 2024-01-01 → 2024-02-15 | `/tmp/daily_trend_smoke_xxx/summary.json` | `<hash>` | OK | „Smoke test sanity” |
+
 ## Sekcja C – Incydenty i alerty krytyczne
 | ID | Data (UTC) | Operator | Kod alertu | Opis | Działanie naprawcze | Status |
 |----|------------|----------|------------|------|---------------------|--------|

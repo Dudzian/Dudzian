@@ -42,14 +42,25 @@ Ten runbook opisuje, jak uruchomić, monitorować i bezpiecznie zatrzymać tryb 
 ## 3. Uruchomienie pipeline’u paper trading
 1. Aktywuj wirtualne środowisko Pythona: `py -3.11 -m venv .venv && .venv\Scripts\activate` (Windows) lub `python3 -m venv .venv && source .venv/bin/activate` (macOS).
 2. Zainstaluj zależności: `pip install -e .[dev]` (pierwsze uruchomienie) lub `pip install -e .` dla aktualizacji.
-3. Uruchom tryb jednorazowy (dry-run) w celu sanity check:
+3. Wykonaj smoke test środowiska paper (sprawdzenie backfillu + egzekucji na krótkim oknie):
    ```bash
-   PYTHONPATH=. python scripts/run_daily_trend.py --environment paper_binance --mode dry-run --date-window 2023-01-01:2023-03-01
+   PYTHONPATH=. python scripts/run_daily_trend.py \
+       --config config/core.yaml \
+       --environment binance_paper \
+       --paper-smoke \
+       --date-window 2024-01-01:2024-02-15 \
+       --run-once
    ```
-   - Oczekiwany rezultat: brak wyjątków, raport z sygnałami w logu `logs/runtime/paper_binance.log`.
-4. Uruchom tryb ciągły:
+   - Narzędzie wykona backfill ograniczony do podanego zakresu, uruchomi pojedynczą iterację i zapisze raport tymczasowy (`ledger.jsonl` + `summary.json`).
+   - Ścieżka katalogu raportu pojawi się w logu – zanotuj hash `summary.json` w logu audytu (sekcja „Smoke test”).
+4. Uruchom tryb jednorazowy (dry-run) w celu sanity check konfiguracji:
    ```bash
-   PYTHONPATH=. python scripts/run_daily_trend.py --environment paper_binance --mode run-forever --sleep-seconds 300
+   PYTHONPATH=. python scripts/run_daily_trend.py --config config/core.yaml --environment binance_paper --dry-run
+   ```
+   - Oczekiwany rezultat: brak wyjątków, pipeline zbudowany i natychmiast zakończony.
+5. Uruchom tryb ciągły:
+   ```bash
+   PYTHONPATH=. python scripts/run_daily_trend.py --config config/core.yaml --environment binance_paper --poll-seconds 300
    ```
    - Proces monitoruje świeże świece D1, wykonuje risk checks, loguje decyzje oraz wysyła alerty.
    - Zaleca się uruchomienie w menedżerze procesów (np. `pm2`, `systemd --user`, Windows Task Scheduler) z automatycznym restartem.
