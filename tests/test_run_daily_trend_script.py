@@ -97,7 +97,7 @@ def test_refuses_live_environment_without_flag(monkeypatch: pytest.MonkeyPatch) 
     def _fail_create(*_args: Any, **_kwargs: Any) -> None:
         nonlocal create_called
         create_called = True
-        raise AssertionError("create_trading_controller should not be invoked")
+        raise AssertionError("create_trading_controller powinien nie być wywołany")
 
     monkeypatch.setattr(run_daily_trend, "create_trading_controller", _fail_create)
 
