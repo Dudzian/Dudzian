@@ -57,6 +57,7 @@ def _order(
         price=price,
         stop_price=stop_price,
         atr=atr,
+        metadata={"atr": atr, "stop_price": stop_price},
     )
 
 
@@ -271,7 +272,7 @@ def test_stop_loss_must_match_atr_multiple(manual_profile: ManualProfile) -> Non
     )
 
     assert result.allowed is False
-    assert "ATR" in (result.reason or "")
+    assert "stop loss" in (result.reason or "").lower()
 
     missing_stop = OrderRequest(
         symbol="BTCUSDT",
@@ -290,7 +291,7 @@ def test_stop_loss_must_match_atr_multiple(manual_profile: ManualProfile) -> Non
     )
 
     assert missing_result.allowed is False
-    assert "stop loss" in (missing_result.reason or "").lower()
+    assert "stop_price" in (missing_result.reason or "").lower()
 
 
 def test_on_fill_normalizes_position_side_and_allows_growth(manual_profile: ManualProfile) -> None:
@@ -462,3 +463,40 @@ def test_file_risk_repository_persists_state(tmp_path: Path, manual_profile: Man
     btc_position = state.positions["BTCUSDT"]
     assert btc_position.side == "long"
     assert btc_position.notional == pytest.approx(500.0)
+
+
+def test_snapshot_state_returns_enriched_metrics(manual_profile: ManualProfile) -> None:
+    clock_value = datetime(2024, 1, 1, 12, 0, 0)
+    engine = ThresholdRiskEngine(clock=lambda: clock_value)
+    engine.register_profile(manual_profile)
+
+    baseline = _snapshot(1_000.0)
+    order = _order(30_000.0)
+
+    engine.apply_pre_trade_checks(
+        order,
+        account=baseline,
+        profile_name=manual_profile.name,
+    )
+
+    engine.on_fill(
+        profile_name=manual_profile.name,
+        symbol=order.symbol,
+        side="buy",
+        position_value=6_000.0,
+        pnl=-50.0,
+        timestamp=clock_value,
+    )
+
+    snapshot = engine.snapshot_state(manual_profile.name)
+    assert snapshot is not None
+    assert snapshot["profile"] == manual_profile.name
+    assert snapshot["gross_notional"] == pytest.approx(6_000.0)
+    assert snapshot["active_positions"] == 1
+    assert snapshot["daily_loss_pct"] == pytest.approx(0.05)
+    limits = snapshot.get("limits")
+    assert isinstance(limits, dict)
+    assert limits["max_positions"] == manual_profile.max_positions()
+    assert limits["max_leverage"] == manual_profile.max_leverage()
+    assert limits["daily_loss_limit"] == manual_profile.daily_loss_limit()
+    assert limits["max_position_pct"] == manual_profile.max_position_exposure()
