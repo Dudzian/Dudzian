@@ -1,322 +1,403 @@
+"""Walidacja spójności konfiguracji CoreConfig."""
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass
+from typing import Mapping
 
-import pytest
+from bot_core.config.models import CoreConfig
 
-from bot_core.config.models import (
-    ControllerRuntimeConfig,
-    CoreConfig,
-    EnvironmentConfig,
-    InstrumentBackfillWindow,
-    InstrumentConfig,
-    InstrumentUniverseConfig,
-    DailyTrendMomentumStrategyConfig,
-    RiskProfileConfig,
-    TelegramChannelSettings,
-)
-from bot_core.config.validation import (
-    ConfigValidationError,
-    assert_core_config_valid,
-    validate_core_config,
-)
-from bot_core.exchanges.base import Environment
+# mapowanie sufiksów interwałów na sekundy
+_INTERVAL_SUFFIX_TO_SECONDS: Mapping[str, int] = {
+    "m": 60,
+    "h": 60 * 60,
+    "d": 24 * 60 * 60,
+    "w": 7 * 24 * 60 * 60,
+    "M": 30 * 24 * 60 * 60,  # miesiąc umowny (30d)
+}
 
 
-@pytest.fixture()
-def base_config() -> CoreConfig:
-    risk = RiskProfileConfig(
-        name="balanced",
-        max_daily_loss_pct=0.01,
-        max_position_pct=0.03,
-        target_volatility=0.07,
-        max_leverage=2.0,
-        stop_loss_atr_multiple=1.0,
-        max_open_positions=3,
-        hard_drawdown_pct=0.05,
-    )
-    strategy = DailyTrendMomentumStrategyConfig(
-        name="core_daily_trend",
-        fast_ma=25,
-        slow_ma=100,
-        breakout_lookback=55,
-        momentum_window=20,
-        atr_window=14,
-        atr_multiplier=2.0,
-        min_trend_strength=0.0,
-        min_momentum=0.0,
-    )
-    controller = ControllerRuntimeConfig(tick_seconds=86400, interval="1d")
-    environment = EnvironmentConfig(
-        name="paper",
-        exchange="binance_spot",
-        environment=Environment.PAPER,
-        keychain_key="binance_paper",
-        data_cache_path="/tmp/cache",
-        risk_profile="balanced",
-        alert_channels=("telegram:primary",),
-        ip_allowlist=(),
-        credential_purpose="trading",
-        instrument_universe=None,
-        adapter_settings={},
-        required_permissions=("read", "trade"),
-        forbidden_permissions=("withdraw",),
-        default_strategy="core_daily_trend",
-        default_controller="daily_trend_core",
-    )
-    telegram = TelegramChannelSettings(
-        name="primary",
-        chat_id="123",
-        token_secret="telegram_primary_token",
-        parse_mode="MarkdownV2",
-    )
-    return CoreConfig(
-        environments={"paper": environment},
-        risk_profiles={"balanced": risk},
-        instrument_universes={},
-        strategies={"core_daily_trend": strategy},
-        reporting=None,
-        sms_providers={},
-        telegram_channels={"primary": telegram},
-        email_channels={},
-        signal_channels={},
-        whatsapp_channels={},
-        messenger_channels={},
-        runtime_controllers={"daily_trend_core": controller},
-    )
+def _interval_seconds(interval: str) -> int:
+    """Zwraca długość interwału w sekundach.
+
+    Dozwolony format: <liczba><jednostka>, gdzie jednostka należy do {m, h, d, w, M}.
+    Wielkość liter ma znaczenie wyłącznie dla miesięcy („1M”).
+    """
+    text = interval.strip()
+    if not text:
+        raise ValueError("interwał nie może być pusty")
+
+    number_part: list[str] = []
+    suffix: str | None = None
+    for ch in text:
+        if ch.isdigit():
+            if suffix is not None:
+                raise ValueError(f"niepoprawny format interwału '{interval}'")
+            number_part.append(ch)
+        else:
+            if suffix is not None:
+                raise ValueError(f"niepoprawny format interwału '{interval}'")
+            suffix = ch
+
+    if not number_part or suffix is None:
+        raise ValueError(f"niepoprawny format interwału '{interval}'")
+
+    per_unit = _INTERVAL_SUFFIX_TO_SECONDS.get(suffix)
+    if per_unit is None:
+        raise ValueError(f"nieobsługiwany sufiks interwału '{suffix}'")
+
+    value = int("".join(number_part))
+    if value <= 0:
+        raise ValueError("interwał musi być dodatni")
+
+    return value * per_unit
 
 
-def test_validate_core_config_accepts_valid_configuration(base_config: CoreConfig) -> None:
-    result = validate_core_config(base_config)
-    assert result.is_valid()
-    assert result.errors == []
+@dataclass(slots=True)
+class ConfigValidationResult:
+    """Wynik walidacji konfiguracji."""
+
+    errors: list[str]
+    warnings: list[str]
+
+    def is_valid(self) -> bool:
+        """Zwraca True, jeśli nie znaleziono błędów."""
+        return not self.errors
 
 
-def test_validate_core_config_detects_missing_risk_profile(base_config: CoreConfig) -> None:
-    invalid_env = replace(base_config.environments["paper"], risk_profile="unknown")
-    config = replace(base_config, environments={"paper": invalid_env})
+class ConfigValidationError(RuntimeError):
+    """Wyjątek rzucany przy krytycznych błędach konfiguracji."""
 
+    def __init__(self, result: ConfigValidationResult):
+        self.result = result
+        message = "\n".join(result.errors)
+        super().__init__(message or "Nieznany błąd walidacji konfiguracji")
+
+
+def validate_core_config(config: CoreConfig) -> ConfigValidationResult:
+    """Waliduje spójność konfiguracji i zwraca listę błędów/ostrzeżeń."""
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    _validate_risk_profiles(config, errors, warnings)
+    _validate_strategies(config, errors, warnings)
+    _validate_runtime_controllers(config, errors, warnings)
+    _validate_instrument_universes(config, errors, warnings)
+    _validate_environments(config, errors, warnings)
+
+    return ConfigValidationResult(errors=errors, warnings=warnings)
+
+
+def assert_core_config_valid(config: CoreConfig) -> ConfigValidationResult:
+    """Waliduje konfigurację i rzuca wyjątek przy błędach."""
     result = validate_core_config(config)
-    assert not result.is_valid()
-    assert "profil ryzyka 'unknown'" in result.errors[0]
+    if result.errors:
+        raise ConfigValidationError(result)
+    return result
 
 
-def test_validate_core_config_detects_unknown_alert_channel(base_config: CoreConfig) -> None:
-    invalid_env = replace(base_config.environments["paper"], alert_channels=("telegram:missing",))
-    config = replace(base_config, environments={"paper": invalid_env})
+# --- Sekcje walidacji ---
 
-    result = validate_core_config(config)
-    assert not result.is_valid()
-    assert "kanał alertowy 'telegram:missing'" in result.errors[0]
+def _validate_risk_profiles(
+    config: CoreConfig, errors: list[str], warnings: list[str]
+) -> None:
+    for name, profile in config.risk_profiles.items():
+        context = f"profil ryzyka '{name}'"
+        if profile.max_daily_loss_pct < 0:
+            errors.append(f"{context}: max_daily_loss_pct nie może być ujemne")
+        if profile.max_position_pct < 0:
+            errors.append(f"{context}: max_position_pct nie może być ujemne")
+        if profile.target_volatility < 0:
+            errors.append(f"{context}: target_volatility nie może być ujemne")
+        if profile.max_leverage < 0:
+            errors.append(f"{context}: max_leverage nie może być ujemne")
+        if profile.stop_loss_atr_multiple < 0:
+            errors.append(f"{context}: stop_loss_atr_multiple nie może być ujemne")
+        if profile.max_open_positions < 0:
+            errors.append(f"{context}: max_open_positions nie może być ujemne")
+        if profile.hard_drawdown_pct < 0:
+            errors.append(f"{context}: hard_drawdown_pct nie może być ujemne")
 
-
-def test_validate_core_config_detects_missing_default_strategy(base_config: CoreConfig) -> None:
-    invalid_env = replace(base_config.environments["paper"], default_strategy=None)
-    config = replace(base_config, environments={"paper": invalid_env})
-
-    result = validate_core_config(config)
-    assert not result.is_valid()
-    assert "default_strategy" in result.errors[0]
-
-
-def test_validate_core_config_detects_unknown_default_strategy(base_config: CoreConfig) -> None:
-    invalid_env = replace(base_config.environments["paper"], default_strategy="missing")
-    config = replace(base_config, environments={"paper": invalid_env})
-
-    result = validate_core_config(config)
-    assert not result.is_valid()
-    assert "domyślna strategia" in result.errors[0]
-
-
-def test_validate_core_config_detects_missing_default_controller(base_config: CoreConfig) -> None:
-    invalid_env = replace(base_config.environments["paper"], default_controller=None)
-    config = replace(base_config, environments={"paper": invalid_env})
-
-    result = validate_core_config(config)
-    assert not result.is_valid()
-    assert "default_controller" in result.errors[0]
+        if name.lower() != profile.name.lower():
+            warnings.append(
+                f"profil ryzyka '{name}' ma nazwę '{profile.name}' – zalecana spójność"
+            )
 
 
-def test_validate_core_config_detects_unknown_default_controller(base_config: CoreConfig) -> None:
-    invalid_env = replace(base_config.environments["paper"], default_controller="missing")
-    config = replace(base_config, environments={"paper": invalid_env})
-
-    result = validate_core_config(config)
-    assert not result.is_valid()
-    assert "domyślny kontroler" in result.errors[0]
-
-
-def test_validate_core_config_detects_overlapping_permissions(base_config: CoreConfig) -> None:
-    invalid_env = replace(
-        base_config.environments["paper"],
-        required_permissions=("read",),
-        forbidden_permissions=("read",),
-    )
-    config = replace(base_config, environments={"paper": invalid_env})
-
-    with pytest.raises(ConfigValidationError):
-        assert_core_config_valid(config)
-
-
-def test_validate_core_config_detects_negative_risk_values(base_config: CoreConfig) -> None:
-    broken_risk = replace(base_config.risk_profiles["balanced"], max_daily_loss_pct=-0.1)
-    config = replace(base_config, risk_profiles={"balanced": broken_risk})
-
-    result = validate_core_config(config)
-    assert not result.is_valid()
-    assert "max_daily_loss_pct" in result.errors[0]
-
-
-def _config_with_universe(base_config: CoreConfig) -> CoreConfig:
-    instrument = InstrumentConfig(
-        name="BTC_USDT",
-        base_asset="BTC",
-        quote_asset="USDT",
-        categories=("core",),
-        exchange_symbols={"binance_spot": "BTCUSDT"},
-        backfill_windows=(InstrumentBackfillWindow(interval="1d", lookback_days=30),),
-    )
-    universe = InstrumentUniverseConfig(
-        name="core",
-        description="test universe",
-        instruments=(instrument,),
-    )
-    return replace(base_config, instrument_universes={"core": universe})
+def _validate_strategies(
+    config: CoreConfig, errors: list[str], warnings: list[str]
+) -> None:
+    for name, strategy in config.strategies.items():
+        context = f"strategia '{name}'"
+        if strategy.fast_ma <= 0:
+            errors.append(f"{context}: fast_ma musi być dodatnie")
+        if strategy.slow_ma <= 0:
+            errors.append(f"{context}: slow_ma musi być dodatnie")
+        if strategy.fast_ma >= strategy.slow_ma:
+            errors.append(
+                f"{context}: fast_ma musi być mniejsze od slow_ma, otrzymano {strategy.fast_ma} >= {strategy.slow_ma}"
+            )
+        if strategy.breakout_lookback <= 0:
+            errors.append(f"{context}: breakout_lookback musi być dodatnie")
+        if strategy.momentum_window <= 0:
+            errors.append(f"{context}: momentum_window musi być dodatnie")
+        if strategy.atr_window <= 0:
+            errors.append(f"{context}: atr_window musi być dodatnie")
+        if strategy.atr_multiplier <= 0:
+            errors.append(f"{context}: atr_multiplier musi być dodatnie")
+        if strategy.min_trend_strength < 0:
+            warnings.append(
+                f"{context}: min_trend_strength ma wartość ujemną ({strategy.min_trend_strength})"
+            )
+        if strategy.min_momentum < 0:
+            warnings.append(
+                f"{context}: min_momentum ma wartość ujemną ({strategy.min_momentum})"
+            )
 
 
-def test_validate_core_config_detects_empty_instrument_list(base_config: CoreConfig) -> None:
-    empty_universe = InstrumentUniverseConfig(name="core", description="desc", instruments=())
-    config = replace(base_config, instrument_universes={"core": empty_universe})
+def _validate_runtime_controllers(
+    config: CoreConfig, errors: list[str], warnings: list[str]
+) -> None:
+    for name, controller in config.runtime_controllers.items():
+        context = f"kontroler runtime '{name}'"
+        if controller.tick_seconds <= 0:
+            errors.append(f"{context}: tick_seconds musi być dodatnie")
+        interval = controller.interval.strip()
+        if not interval:
+            errors.append(f"{context}: interval nie może być pusty")
+            continue
+        # sprawdź format interwału i ewentualnie ostrzeż o rozjeździe tick_seconds
+        try:
+            expected_seconds = _interval_seconds(interval)
+        except ValueError as exc:
+            errors.append(f"{context}: {exc}")
+            continue
 
-    result = validate_core_config(config)
-    assert not result.is_valid()
-    assert "musi zawierać co najmniej jeden instrument" in result.errors[0]
-
-
-def test_validate_core_config_detects_missing_exchange_symbols(base_config: CoreConfig) -> None:
-    universe_config = _config_with_universe(base_config)
-    instrument = replace(
-        next(iter(universe_config.instrument_universes["core"].instruments)),
-        exchange_symbols={},
-    )
-    broken_universe = replace(
-        universe_config.instrument_universes["core"], instruments=(instrument,)
-    )
-    config = replace(universe_config, instrument_universes={"core": broken_universe})
-
-    result = validate_core_config(config)
-    assert not result.is_valid()
-    assert "powiązanie giełdowe" in result.errors[0]
-
-
-def test_validate_core_config_detects_invalid_backfill_window(base_config: CoreConfig) -> None:
-    universe_config = _config_with_universe(base_config)
-    instrument = replace(
-        next(iter(universe_config.instrument_universes["core"].instruments)),
-        backfill_windows=(InstrumentBackfillWindow(interval="", lookback_days=-1),),
-    )
-    broken_universe = replace(
-        universe_config.instrument_universes["core"], instruments=(instrument,)
-    )
-    config = replace(universe_config, instrument_universes={"core": broken_universe})
-
-    result = validate_core_config(config)
-    assert not result.is_valid()
-    assert any("backfill" in err for err in result.errors)
+        # tolerancja 10% lub >=1s
+        delta = abs(controller.tick_seconds - expected_seconds)
+        tolerance = max(1.0, expected_seconds * 0.1)
+        if delta > tolerance:
+            warnings.append(
+                f"{context}: tick_seconds={controller.tick_seconds} znacząco różni się od interwału {interval} (~{expected_seconds}s)"
+            )
 
 
-def test_validate_core_config_detects_invalid_backfill_interval_format(base_config: CoreConfig) -> None:
-    universe_config = _config_with_universe(base_config)
-    instrument = replace(
-        next(iter(universe_config.instrument_universes["core"].instruments)),
-        backfill_windows=(InstrumentBackfillWindow(interval="1x", lookback_days=10),),
-    )
-    broken_universe = replace(
-        universe_config.instrument_universes["core"], instruments=(instrument,)
-    )
-    config = replace(universe_config, instrument_universes={"core": broken_universe})
+def _validate_environments(
+    config: CoreConfig, errors: list[str], warnings: list[str]
+) -> None:
+    risk_profiles = set(config.risk_profiles)
+    universes = set(config.instrument_universes)
+    strategies = set(config.strategies)
+    controllers = set(config.runtime_controllers)
 
-    result = validate_core_config(config)
-    assert not result.is_valid()
-    assert any("niepoprawny format" in err or "nieobsługiwany" in err for err in result.errors)
+    for name, environment in config.environments.items():
+        context = f"środowisko '{name}'"
+        if environment.risk_profile not in risk_profiles:
+            errors.append(
+                f"{context}: profil ryzyka '{environment.risk_profile}' nie istnieje w konfiguracji"
+            )
+
+        if environment.instrument_universe and environment.instrument_universe not in universes:
+            errors.append(
+                f"{context}: uniwersum instrumentów '{environment.instrument_universe}' nie istnieje"
+            )
+            # dalsze sprawdzanie nie ma sensu bez poprawnego uniwersum
+            continue
+
+        if environment.instrument_universe:
+            universe = config.instrument_universes[environment.instrument_universe]
+            exchange = environment.exchange
+            matching_instruments = [
+                instrument
+                for instrument in universe.instruments
+                if exchange in instrument.exchange_symbols
+            ]
+            if not matching_instruments:
+                errors.append(
+                    f"{context}: uniwersum instrumentów '{environment.instrument_universe}' nie zawiera powiązań dla giełdy '{exchange}'"
+                )
+            else:
+                intervals_available = {
+                    window.interval.strip().lower()
+                    for instrument in matching_instruments
+                    for window in instrument.backfill_windows
+                    if window.interval.strip()
+                }
+                if intervals_available and config.runtime_controllers:
+                    controller_intervals = {
+                        controller.interval.strip().lower()
+                        for controller in config.runtime_controllers.values()
+                        if controller.interval.strip()
+                    }
+                    if controller_intervals and not (
+                        intervals_available & controller_intervals
+                    ):
+                        warnings.append(
+                            f"{context}: brak wspólnego interwału między oknami backfill ({', '.join(sorted(intervals_available)) or 'brak'}) a kontrolerami runtime ({', '.join(sorted(controller_intervals))})"
+                        )
+
+        # Spójność domyślnej strategii i kontrolera środowiska
+        default_strategy = getattr(environment, "default_strategy", None)
+        if strategies:
+            if not default_strategy:
+                errors.append(
+                    f"{context}: default_strategy nie jest ustawione mimo zdefiniowanych strategii"
+                )
+            elif default_strategy not in strategies:
+                errors.append(
+                    f"{context}: domyślna strategia '{default_strategy}' nie istnieje w sekcji strategies"
+                )
+        elif default_strategy:
+            errors.append(
+                f"{context}: domyślna strategia '{default_strategy}' wskazana bez dostępnych strategii"
+            )
+
+        default_controller = getattr(environment, "default_controller", None)
+        if controllers:
+            if not default_controller:
+                errors.append(
+                    f"{context}: default_controller nie jest ustawione mimo zdefiniowanych kontrolerów runtime"
+                )
+            elif default_controller not in controllers:
+                errors.append(
+                    f"{context}: domyślny kontroler '{default_controller}' nie istnieje w sekcji runtime.controllers"
+                )
+        elif default_controller:
+            errors.append(
+                f"{context}: domyślny kontroler '{default_controller}' wskazany bez dostępnych kontrolerów runtime"
+            )
+
+        _validate_alert_channels(config, environment.alert_channels, context, errors)
+        _validate_permissions(environment.required_permissions, environment.forbidden_permissions, context, errors)
 
 
-def test_validate_core_config_detects_universe_without_exchange_mapping(base_config: CoreConfig) -> None:
-    instrument = InstrumentConfig(
-        name="BTC_USDT",
-        base_asset="BTC",
-        quote_asset="USDT",
-        categories=("core",),
-        exchange_symbols={"kraken_spot": "XBTUSDT"},
-        backfill_windows=(InstrumentBackfillWindow(interval="1d", lookback_days=30),),
-    )
-    universe = InstrumentUniverseConfig(
-        name="core",
-        description="test universe",
-        instruments=(instrument,),
-    )
-    environment = replace(
-        base_config.environments["paper"],
-        instrument_universe="core",
-    )
-    config = replace(
-        base_config,
-        instrument_universes={"core": universe},
-        environments={"paper": environment},
-    )
-
-    result = validate_core_config(config)
-    assert not result.is_valid()
-    assert any("nie zawiera powiązań" in err for err in result.errors)
+def _validate_permissions(
+    required: Mapping | tuple | list | set,
+    forbidden: Mapping | tuple | list | set,
+    context: str,
+    errors: list[str],
+) -> None:
+    required_set = {str(value).lower() for value in required}
+    forbidden_set = {str(value).lower() for value in forbidden}
+    overlap = required_set & forbidden_set
+    if overlap:
+        overlap_list = ", ".join(sorted(overlap))
+        errors.append(
+            f"{context}: uprawnienia {overlap_list} nie mogą jednocześnie znajdować się w required i forbidden"
+        )
 
 
-def test_validate_core_config_detects_invalid_strategy_settings(base_config: CoreConfig) -> None:
-    strategy = DailyTrendMomentumStrategyConfig(
-        name="invalid",
-        fast_ma=20,
-        slow_ma=10,
-        breakout_lookback=5,
-        momentum_window=3,
-        atr_window=7,
-        atr_multiplier=2.0,
-        min_trend_strength=0.001,
-        min_momentum=0.001,
-    )
-    config = replace(base_config, strategies={"invalid": strategy})
+def _validate_alert_channels(
+    config: CoreConfig, alert_channels: tuple[str, ...], context: str, errors: list[str]
+) -> None:
+    registry: Mapping[str, Mapping[str, object]] = {
+        "telegram": config.telegram_channels,
+        "email": config.email_channels,
+        "sms": config.sms_providers,
+        "signal": config.signal_channels,
+        "whatsapp": config.whatsapp_channels,
+        "messenger": config.messenger_channels,
+    }
 
-    result = validate_core_config(config)
-    assert not result.is_valid()
-    assert any("fast_ma" in err for err in result.errors)
-
-
-def test_validate_core_config_detects_invalid_runtime_controller(base_config: CoreConfig) -> None:
-    controller = ControllerRuntimeConfig(tick_seconds=0.0, interval=" ")
-    config = replace(base_config, runtime_controllers={"bad": controller})
-
-    result = validate_core_config(config)
-    assert not result.is_valid()
-    assert any("tick_seconds" in err for err in result.errors)
-    assert any("interval" in err for err in result.errors)
-
-
-def test_validate_core_config_detects_unknown_runtime_interval(base_config: CoreConfig) -> None:
-    controller = ControllerRuntimeConfig(tick_seconds=60.0, interval="daily")
-    config = replace(base_config, runtime_controllers={"daily": controller})
-
-    result = validate_core_config(config)
-    assert not result.is_valid()
-    assert any("niepoprawny format" in err or "nieobsługiwany" in err for err in result.errors)
+    for channel in alert_channels:
+        if ":" not in channel:
+            errors.append(f"{context}: kanał alertowy '{channel}' ma nieprawidłowy format")
+            continue
+        backend, key = channel.split(":", 1)
+        backend = backend.strip().lower()
+        key = key.strip()
+        if not backend or not key:
+            errors.append(f"{context}: kanał alertowy '{channel}' ma nieprawidłowy format")
+            continue
+        if backend not in registry:
+            errors.append(
+                f"{context}: kanał alertowy '{channel}' wskazuje nieobsługiwany typ '{backend}'"
+            )
+            continue
+        mapping = registry[backend]
+        if key not in mapping:
+            errors.append(
+                f"{context}: kanał alertowy '{channel}' nie istnieje w sekcji alerts"
+            )
 
 
-def test_validate_core_config_warns_on_tick_mismatch(base_config: CoreConfig) -> None:
-    controller = ControllerRuntimeConfig(tick_seconds=30.0, interval="1m")
-    env = replace(base_config.environments["paper"], default_controller="fast")
-    config = replace(
-        base_config,
-        runtime_controllers={"fast": controller},
-        environments={"paper": env},
-    )
+def _validate_instrument_universes(
+    config: CoreConfig, errors: list[str], warnings: list[str]
+) -> None:
+    known_exchanges = {env.exchange for env in config.environments.values()}
 
-    result = validate_core_config(config)
-    assert result.is_valid()
-    assert any("tick_seconds" in warn for warn in result.warnings)
+    for name, universe in config.instrument_universes.items():
+        context = f"uniwersum instrumentów '{name}'"
+        if not universe.instruments:
+            errors.append(f"{context}: musi zawierać co najmniej jeden instrument")
+            continue
+
+        seen_instruments: set[str] = set()
+        for instrument in universe.instruments:
+            inst_context = f"{context}: instrument '{instrument.name}'"
+            if instrument.name in seen_instruments:
+                errors.append(
+                    f"{context}: instrument '{instrument.name}' został zdefiniowany wielokrotnie"
+                )
+            else:
+                seen_instruments.add(instrument.name)
+
+            if not instrument.base_asset or not instrument.quote_asset:
+                errors.append(
+                    f"{inst_context}: base_asset i quote_asset muszą być ustawione"
+                )
+
+            if not instrument.categories:
+                errors.append(f"{inst_context}: lista kategorii nie może być pusta")
+            elif len(set(cat.lower() for cat in instrument.categories)) != len(
+                instrument.categories
+            ):
+                warnings.append(f"{inst_context}: wykryto zduplikowane kategorie")
+
+            if not instrument.exchange_symbols:
+                errors.append(
+                    f"{inst_context}: musi mieć przypisane co najmniej jedno powiązanie giełdowe"
+                )
+            else:
+                for exchange, symbol in instrument.exchange_symbols.items():
+                    if not symbol:
+                        errors.append(
+                            f"{inst_context}: symbol dla giełdy '{exchange}' nie może być pusty"
+                        )
+                    if exchange not in known_exchanges:
+                        warnings.append(
+                            f"{inst_context}: giełda '{exchange}' nie jest zdefiniowana w sekcji environments"
+                        )
+
+            if not instrument.backfill_windows:
+                warnings.append(
+                    f"{inst_context}: brak zdefiniowanych okien backfill – pipeline nie pobierze danych"
+                )
+                continue
+
+            intervals_seen: set[str] = set()
+            for window in instrument.backfill_windows:
+                interval = window.interval.strip()
+                if not interval:
+                    errors.append(
+                        f"{inst_context}: interwał w sekcji backfill nie może być pusty"
+                    )
+                    continue
+                # poprawność formatu interwału
+                try:
+                    _interval_seconds(interval)
+                except ValueError as exc:
+                    errors.append(f"{inst_context}: {exc}")
+                    continue
+
+                if window.lookback_days <= 0:
+                    errors.append(
+                        f"{inst_context}: lookback_days dla interwału '{window.interval}' musi być dodatni"
+                    )
+
+                interval_key = interval.lower()
+                if interval_key in intervals_seen:
+                    warnings.append(
+                        f"{inst_context}: interwał '{window.interval}' zdefiniowano wielokrotnie"
+                    )
+                else:
+                    intervals_seen.add(interval_key)

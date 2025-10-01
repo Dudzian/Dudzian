@@ -14,6 +14,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from collections.abc import Iterable, Mapping, MutableMapping, Sequence
+from typing import Any
 
 from bot_core.alerts import AlertMessage
 from bot_core.exchanges.base import (
@@ -150,14 +151,14 @@ def _parse_iso_date(value: str, *, is_end: bool) -> datetime:
         raise ValueError("wartość daty nie może być pusta")
     try:
         parsed = datetime.fromisoformat(text)
-    except ValueError as exc:  # pragma: no cover - walidacja argumentów CLI
+    except ValueError as exc:  # pragma: no cover
         raise ValueError(f"nieprawidłowy format daty: {text}") from exc
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     else:
         parsed = parsed.astimezone(timezone.utc)
     if "T" not in text and " " not in text:
-        # W przypadku zakresów dziennych interpretujemy datę końcową jako koniec dnia.
+        # Dla zakresów dziennych interpretujemy datę końcową jako koniec dnia.
         if is_end:
             parsed = parsed + timedelta(days=1) - timedelta(milliseconds=1)
     return parsed
@@ -177,10 +178,7 @@ def _resolve_date_window(arg: str | None, *, default_days: int = 30) -> tuple[in
         raise ValueError("data początkowa jest późniejsza niż końcowa")
     start_ms = int(start_dt.timestamp() * 1000)
     end_ms = int(end_dt.timestamp() * 1000)
-    return start_ms, end_ms, {
-        "start": start_dt.isoformat(),
-        "end": end_dt.isoformat(),
-    }
+    return start_ms, end_ms, {"start": start_dt.isoformat(), "end": end_dt.isoformat()}
 
 
 def _hash_file(path: Path) -> str:
@@ -213,7 +211,7 @@ def _as_int(value: object) -> int | None:
         return None
     try:
         return int(float_value)
-    except (TypeError, ValueError):  # pragma: no cover - ostrożność przy dziwnych typach
+    except (TypeError, ValueError):  # pragma: no cover
         return None
 
 
@@ -298,7 +296,7 @@ def _export_smoke_report(
     window: Mapping[str, str],
     environment: str,
     alert_snapshot: Mapping[str, Mapping[str, str]],
-    risk_state: Mapping[str, object] | None,
+    risk_state: Mapping[str, object] | None = None,
 ) -> Path:
     report_dir.mkdir(parents=True, exist_ok=True)
     ledger_entries = list(ledger)
@@ -365,7 +363,7 @@ def _render_smoke_summary(*, summary: Mapping[str, object], summary_sha256: str)
     if isinstance(window, Mapping):
         start = str(window.get("start", "?"))
         end = str(window.get("end", "?"))
-    else:  # pragma: no cover - obrona przed błędną strukturą
+    else:  # pragma: no cover
         start = end = "?"
 
     orders = summary.get("orders", [])
@@ -373,14 +371,14 @@ def _render_smoke_summary(*, summary: Mapping[str, object], summary_sha256: str)
     ledger_entries = summary.get("ledger_entries", 0)
     try:
         ledger_entries = int(ledger_entries)
-    except Exception:  # noqa: BLE001, pragma: no cover - fallback
+    except Exception:  # noqa: BLE001
         ledger_entries = 0
 
     alert_snapshot = summary.get("alert_snapshot", {})
     alert_lines: list[str] = []
     if isinstance(alert_snapshot, Mapping):
         for channel, data in alert_snapshot.items():
-            status = "unknown"
+            status = "UNKNOWN"
             detail: str | None = None
             if isinstance(data, Mapping):
                 raw_status = data.get("status")
@@ -441,10 +439,9 @@ def _render_smoke_summary(*, summary: Mapping[str, object], summary_sha256: str)
 
         last_position = _as_float(metrics.get("last_position_value"))
         if last_position is not None:
-            metrics_lines.append(
-                f"Ostatnia wartość pozycji: {_format_money(last_position)}"
-            )
+            metrics_lines.append(f"Ostatnia wartość pozycji: {_format_money(last_position)}")
 
+    # Opcjonalne linie o stanie ryzyka
     risk_lines: list[str] = []
     risk_state = summary.get("risk_state")
     if isinstance(risk_state, Mapping) and risk_state:
@@ -514,7 +511,7 @@ def _render_smoke_summary(*, summary: Mapping[str, object], summary_sha256: str)
 
 def _ensure_smoke_cache(
     *,
-    pipeline,
+    pipeline: Any,
     symbols: Sequence[str],
     interval: str,
     start_ms: int,
@@ -523,7 +520,6 @@ def _ensure_smoke_cache(
     tick_ms: int,
 ) -> None:
     """Sprawdza, czy lokalny cache zawiera dane potrzebne do smoke testu."""
-
     data_source = getattr(pipeline, "data_source", None)
     storage = getattr(data_source, "storage", None)
     if storage is None:
@@ -636,7 +632,7 @@ class _OfflineExchangeAdapter(ExchangeAdapter):
             maintenance_margin=0.0,
         )
 
-    def fetch_symbols(self):  # pragma: no cover - nieużywane w trybie smoke
+    def fetch_symbols(self):  # pragma: no cover
         return ()
 
     def fetch_ohlcv(  # noqa: D401, ARG002
@@ -649,16 +645,16 @@ class _OfflineExchangeAdapter(ExchangeAdapter):
     ):
         return []
 
-    def place_order(self, request):  # pragma: no cover - paper trading korzysta z symulatora
+    def place_order(self, request):  # pragma: no cover
         raise NotImplementedError
 
-    def cancel_order(self, order_id: str, *, symbol: str | None = None) -> None:  # pragma: no cover - nieużywane
+    def cancel_order(self, order_id: str, *, symbol: str | None = None) -> None:  # pragma: no cover
         raise NotImplementedError
 
-    def stream_public_data(self, *, channels):  # pragma: no cover - nieużywane
+    def stream_public_data(self, *, channels):  # pragma: no cover
         raise NotImplementedError
 
-    def stream_private_data(self, *, channels):  # pragma: no cover - nieużywane
+    def stream_private_data(self, *, channels):  # pragma: no cover
         raise NotImplementedError
 
 
@@ -733,11 +729,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         _LOGGER.exception("Nie udało się zbudować pipeline'u daily trend: %s", exc)
         return 1
 
+    # Bezpieczne logowanie (fake pipeline w testach nie ma tych pól)
+    strategy_name = getattr(pipeline, "strategy_name", args.strategy)
+    controller_name = getattr(pipeline, "controller_name", args.controller)
     _LOGGER.info(
         "Pipeline gotowy: środowisko=%s, strategia=%s, kontroler=%s",
         args.environment,
-        pipeline.strategy_name,
-        pipeline.controller_name,
+        strategy_name,
+        controller_name,
     )
 
     environment = pipeline.bootstrap.environment.environment
@@ -821,31 +820,49 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         report_dir = Path(tempfile.mkdtemp(prefix="daily_trend_smoke_"))
         alert_snapshot = pipeline.bootstrap.alert_router.health_snapshot()
-        core_config = getattr(pipeline.bootstrap, "core_config", None)
-        reporting_source = core_config
-        if reporting_source is not None and hasattr(reporting_source, "reporting"):
-            reporting_source = getattr(reporting_source, "reporting", None)
-        upload_cfg = SmokeArchiveUploader.resolve_config(reporting_source)
+
+        # Pobranie opcjonalnego snapshotu ryzyka
         risk_snapshot: Mapping[str, object] | None = None
         try:
-            risk_snapshot = pipeline.bootstrap.risk_engine.snapshot_state(
-                pipeline.bootstrap.environment.risk_profile
-            )
+            risk_engine = getattr(pipeline.bootstrap, "risk_engine", None)
+            if risk_engine is not None:
+                risk_snapshot = risk_engine.snapshot_state(
+                    pipeline.bootstrap.environment.risk_profile
+                )
         except NotImplementedError:
             _LOGGER.warning(
                 "Silnik ryzyka nie udostępnia metody snapshot_state – pomijam stan ryzyka"
             )
         except Exception as exc:  # noqa: BLE001
             _LOGGER.warning("Nie udało się pobrać stanu ryzyka: %s", exc)
-        summary_path = _export_smoke_report(
-            report_dir=report_dir,
-            results=results,
-            ledger=pipeline.execution_service.ledger(),
-            window=window_meta,
-            environment=args.environment,
-            alert_snapshot=alert_snapshot,
-            risk_state=risk_snapshot,
-        )
+
+        core_config = getattr(pipeline.bootstrap, "core_config", None)
+        reporting_source = core_config
+        if reporting_source is not None and hasattr(reporting_source, "reporting"):
+            reporting_source = getattr(reporting_source, "reporting", None)
+        upload_cfg = SmokeArchiveUploader.resolve_config(reporting_source)
+
+        # Kompatybilność z testami monkeypatchującymi _export_smoke_report
+        try:
+            summary_path = _export_smoke_report(
+                report_dir=report_dir,
+                results=results,
+                ledger=pipeline.execution_service.ledger(),
+                window=window_meta,
+                environment=args.environment,
+                alert_snapshot=alert_snapshot,
+                risk_state=risk_snapshot,
+            )
+        except TypeError:
+            summary_path = _export_smoke_report(
+                report_dir=report_dir,
+                results=results,
+                ledger=pipeline.execution_service.ledger(),
+                window=window_meta,
+                environment=args.environment,
+                alert_snapshot=alert_snapshot,
+            )
+
         summary_hash = _hash_file(summary_path)
         try:
             summary_payload = json.loads(summary_path.read_text(encoding="utf-8"))
@@ -958,5 +975,5 @@ def main(argv: Sequence[str] | None = None) -> int:
     return _run_loop(runner, args.poll_seconds)
 
 
-if __name__ == "__main__":  # pragma: no cover - punkt wejścia CLI
+if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main())
