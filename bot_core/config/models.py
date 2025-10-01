@@ -199,19 +199,61 @@ class ControllerRuntimeConfig:
 
 
 @dataclass(slots=True)
+class SmokeArchiveLocalConfig:
+    """Konfiguracja lokalnego magazynu archiwów smoke testów."""
+
+    directory: str
+    filename_pattern: str = "{environment}_{date}_{hash}.zip"
+    fsync: bool = False
+
+
+@dataclass(slots=True)
+class SmokeArchiveS3Config:
+    """Konfiguracja wysyłki archiwów smoke testu do S3/MinIO."""
+
+    bucket: str
+    object_prefix: str | None = None
+    endpoint_url: str | None = None
+    region: str | None = None
+    use_ssl: bool = True
+    extra_args: Mapping[str, str] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class SmokeArchiveUploadConfig:
+    """Parametry wysyłki archiwum smoke testu po udanym przebiegu."""
+
+    backend: str
+    credential_secret: str | None = None
+    local: SmokeArchiveLocalConfig | None = None
+    s3: SmokeArchiveS3Config | None = None
+
+
+@dataclass(slots=True)
+class CoreReportingConfig:
+    """Konfiguracja sekcji reportingowej CoreConfig."""
+
+    daily_report_time_utc: str | None = None
+    weekly_report_day: str | None = None
+    retention_months: str | None = None
+    smoke_archive_upload: SmokeArchiveUploadConfig | None = None
+
+
+@dataclass(slots=True)
 class CoreConfig:
     """Najwyższego poziomu konfiguracja aplikacji."""
+
     environments: Mapping[str, EnvironmentConfig]
     risk_profiles: Mapping[str, RiskProfileConfig]
-    instrument_universes: Mapping[str, InstrumentUniverseConfig]
-    strategies: Mapping[str, DailyTrendMomentumStrategyConfig]
-    reporting: Mapping[str, str]
-    sms_providers: Mapping[str, SMSProviderSettings]
-    telegram_channels: Mapping[str, TelegramChannelSettings]
-    email_channels: Mapping[str, EmailChannelSettings]
-    signal_channels: Mapping[str, SignalChannelSettings]
-    whatsapp_channels: Mapping[str, WhatsAppChannelSettings]
-    messenger_channels: Mapping[str, MessengerChannelSettings]
+    instrument_universes: Mapping[str, InstrumentUniverseConfig] = field(default_factory=dict)
+    strategies: Mapping[str, DailyTrendMomentumStrategyConfig] = field(default_factory=dict)
+    reporting: CoreReportingConfig | None = None
+    sms_providers: Mapping[str, SMSProviderSettings] = field(default_factory=dict)
+    telegram_channels: Mapping[str, TelegramChannelSettings] = field(default_factory=dict)
+    email_channels: Mapping[str, EmailChannelSettings] = field(default_factory=dict)
+    signal_channels: Mapping[str, SignalChannelSettings] = field(default_factory=dict)
+    whatsapp_channels: Mapping[str, WhatsAppChannelSettings] = field(default_factory=dict)
+    messenger_channels: Mapping[str, MessengerChannelSettings] = field(default_factory=dict)
     runtime_controllers: Mapping[str, ControllerRuntimeConfig] = field(default_factory=dict)
 
 
@@ -229,7 +271,12 @@ __all__ = [
     "WhatsAppChannelSettings",
     "MessengerChannelSettings",
     "ControllerRuntimeConfig",
+    "SmokeArchiveLocalConfig",
+    "SmokeArchiveS3Config",
+    "SmokeArchiveUploadConfig",
+    "CoreReportingConfig",
     "CoreConfig",
     "AlertThrottleConfig",
     "AlertAuditConfig",
+    "DecisionJournalConfig",
 ]
