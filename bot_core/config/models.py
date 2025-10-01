@@ -61,6 +61,8 @@ class EnvironmentConfig:
     alert_throttle: AlertThrottleConfig | None = None
     alert_audit: AlertAuditConfig | None = None
     decision_journal: DecisionJournalConfig | None = None
+    default_strategy: str | None = None
+    default_controller: str | None = None
 
 
 @dataclass(slots=True)

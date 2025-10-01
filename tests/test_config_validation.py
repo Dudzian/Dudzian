@@ -186,6 +186,8 @@ def _validate_environments(
 ) -> None:
     risk_profiles = set(config.risk_profiles)
     universes = set(config.instrument_universes)
+    strategies = set(config.strategies)
+    controllers = set(config.runtime_controllers)
 
     for name, environment in config.environments.items():
         context = f"środowisko '{name}'"
@@ -198,6 +200,7 @@ def _validate_environments(
             errors.append(
                 f"{context}: uniwersum instrumentów '{environment.instrument_universe}' nie istnieje"
             )
+            # dalsze sprawdzanie nie ma sensu bez poprawnego uniwersum
             continue
 
         if environment.instrument_universe:
@@ -225,10 +228,43 @@ def _validate_environments(
                         for controller in config.runtime_controllers.values()
                         if controller.interval.strip()
                     }
-                    if controller_intervals and not (intervals_available & controller_intervals):
+                    if controller_intervals and not (
+                        intervals_available & controller_intervals
+                    ):
                         warnings.append(
                             f"{context}: brak wspólnego interwału między oknami backfill ({', '.join(sorted(intervals_available)) or 'brak'}) a kontrolerami runtime ({', '.join(sorted(controller_intervals))})"
                         )
+
+        # Spójność domyślnej strategii i kontrolera środowiska
+        default_strategy = getattr(environment, "default_strategy", None)
+        if strategies:
+            if not default_strategy:
+                errors.append(
+                    f"{context}: default_strategy nie jest ustawione mimo zdefiniowanych strategii"
+                )
+            elif default_strategy not in strategies:
+                errors.append(
+                    f"{context}: domyślna strategia '{default_strategy}' nie istnieje w sekcji strategies"
+                )
+        elif default_strategy:
+            errors.append(
+                f"{context}: domyślna strategia '{default_strategy}' wskazana bez dostępnych strategii"
+            )
+
+        default_controller = getattr(environment, "default_controller", None)
+        if controllers:
+            if not default_controller:
+                errors.append(
+                    f"{context}: default_controller nie jest ustawione mimo zdefiniowanych kontrolerów runtime"
+                )
+            elif default_controller not in controllers:
+                errors.append(
+                    f"{context}: domyślny kontroler '{default_controller}' nie istnieje w sekcji runtime.controllers"
+                )
+        elif default_controller:
+            errors.append(
+                f"{context}: domyślny kontroler '{default_controller}' wskazany bez dostępnych kontrolerów runtime"
+            )
 
         _validate_alert_channels(config, environment.alert_channels, context, errors)
         _validate_permissions(environment.required_permissions, environment.forbidden_permissions, context, errors)
@@ -279,7 +315,9 @@ def _validate_alert_channels(
             continue
         mapping = registry[backend]
         if key not in mapping:
-            errors.append(f"{context}: kanał alertowy '{channel}' nie istnieje w sekcji alerts")
+            errors.append(
+                f"{context}: kanał alertowy '{channel}' nie istnieje w sekcji alerts"
+            )
 
 
 def _validate_instrument_universes(
@@ -304,11 +342,15 @@ def _validate_instrument_universes(
                 seen_instruments.add(instrument.name)
 
             if not instrument.base_asset or not instrument.quote_asset:
-                errors.append(f"{inst_context}: base_asset i quote_asset muszą być ustawione")
+                errors.append(
+                    f"{inst_context}: base_asset i quote_asset muszą być ustawione"
+                )
 
             if not instrument.categories:
                 errors.append(f"{inst_context}: lista kategorii nie może być pusta")
-            elif len(set(cat.lower() for cat in instrument.categories)) != len(instrument.categories):
+            elif len(set(cat.lower() for cat in instrument.categories)) != len(
+                instrument.categories
+            ):
                 warnings.append(f"{inst_context}: wykryto zduplikowane kategorie")
 
             if not instrument.exchange_symbols:
@@ -336,7 +378,9 @@ def _validate_instrument_universes(
             for window in instrument.backfill_windows:
                 interval = window.interval.strip()
                 if not interval:
-                    errors.append(f"{inst_context}: interwał w sekcji backfill nie może być pusty")
+                    errors.append(
+                        f"{inst_context}: interwał w sekcji backfill nie może być pusty"
+                    )
                     continue
                 # poprawność formatu interwału
                 try:
@@ -352,6 +396,8 @@ def _validate_instrument_universes(
 
                 interval_key = interval.lower()
                 if interval_key in intervals_seen:
-                    warnings.append(f"{inst_context}: interwał '{window.interval}' zdefiniowano wielokrotnie")
+                    warnings.append(
+                        f"{inst_context}: interwał '{window.interval}' zdefiniowano wielokrotnie"
+                    )
                 else:
                     intervals_seen.add(interval_key)

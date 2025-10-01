@@ -4,6 +4,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Mapping
 
+from bot_core.config.models import CoreConfig
+
+# Mapowanie sufiksów interwałów na sekundy.
 _INTERVAL_SUFFIX_TO_SECONDS: Mapping[str, int] = {
     "m": 60,
     "h": 60 * 60,
@@ -17,16 +20,15 @@ def _interval_seconds(interval: str) -> int:
     """Zwraca długość interwału w sekundach.
 
     Akceptuje wartości w formacie ``<liczba><jednostka>``, gdzie jednostka należy do
-    zestawu {m, h, d, w, M}. Wielkość liter jest znacząca jedynie dla miesięcy
-    (``1M``). Przy błędnym formacie zgłaszamy :class:`ValueError`.
+    zestawu {m, h, d, w, M}. Wielkość liter jest znacząca jedynie dla miesięcy (``1M``).
+    Przy błędnym formacie zgłaszamy :class:`ValueError`.
     """
-
     text = interval.strip()
     if not text:
         raise ValueError("interwał nie może być pusty")
 
-    number_part = []
-    suffix = None
+    number_part: list[str] = []
+    suffix: str | None = None
     for char in text:
         if char.isdigit():
             if suffix is not None:
@@ -49,9 +51,6 @@ def _interval_seconds(interval: str) -> int:
         raise ValueError("interwał musi być dodatni")
 
     return value * seconds_per_unit
-
-
-from bot_core.config.models import CoreConfig
 
 
 @dataclass(slots=True)
@@ -77,7 +76,6 @@ class ConfigValidationError(RuntimeError):
 
 def validate_core_config(config: CoreConfig) -> ConfigValidationResult:
     """Waliduje spójność konfiguracji i zwraca listę błędów/ostrzeżeń."""
-
     errors: list[str] = []
     warnings: list[str] = []
 
@@ -92,7 +90,6 @@ def validate_core_config(config: CoreConfig) -> ConfigValidationResult:
 
 def assert_core_config_valid(config: CoreConfig) -> ConfigValidationResult:
     """Waliduje konfigurację i rzuca wyjątek przy błędach."""
-
     result = validate_core_config(config)
     if result.errors:
         raise ConfigValidationError(result)
@@ -186,6 +183,8 @@ def _validate_environments(
 ) -> None:
     risk_profiles = set(config.risk_profiles)
     universes = set(config.instrument_universes)
+    strategies = set(config.strategies)
+    controllers = set(config.runtime_controllers)
 
     for name, environment in config.environments.items():
         context = f"środowisko '{name}'"
@@ -232,8 +231,44 @@ def _validate_environments(
                             f"{context}: brak wspólnego interwału między oknami backfill ({', '.join(sorted(intervals_available)) or 'brak'}) a kontrolerami runtime ({', '.join(sorted(controller_intervals))})"
                         )
 
+        # Spójność default_* względem zdefiniowanych sekcji
+        default_strategy = getattr(environment, "default_strategy", None)
+        if strategies:
+            if not default_strategy:
+                errors.append(
+                    f"{context}: default_strategy nie jest ustawione mimo zdefiniowanych strategii"
+                )
+            elif default_strategy not in strategies:
+                errors.append(
+                    f"{context}: domyślna strategia '{default_strategy}' nie istnieje w sekcji strategies"
+                )
+        elif default_strategy:
+            errors.append(
+                f"{context}: domyślna strategia '{default_strategy}' wskazana bez dostępnych strategii"
+            )
+
+        default_controller = getattr(environment, "default_controller", None)
+        if controllers:
+            if not default_controller:
+                errors.append(
+                    f"{context}: default_controller nie jest ustawione mimo zdefiniowanych kontrolerów runtime"
+                )
+            elif default_controller not in controllers:
+                errors.append(
+                    f"{context}: domyślny kontroler '{default_controller}' nie istnieje w sekcji runtime.controllers"
+                )
+        elif default_controller:
+            errors.append(
+                f"{context}: domyślny kontroler '{default_controller}' wskazany bez dostępnych kontrolerów runtime"
+            )
+
         _validate_alert_channels(config, environment.alert_channels, context, errors)
-        _validate_permissions(environment.required_permissions, environment.forbidden_permissions, context, errors)
+        _validate_permissions(
+            environment.required_permissions,
+            environment.forbidden_permissions,
+            context,
+            errors,
+        )
 
 
 def _validate_permissions(

@@ -399,6 +399,16 @@ def load_core_config(path: str | Path) -> CoreConfig:
                 str(value).lower() for value in (entry.get("forbidden_permissions", ()) or ())
             ),
         }
+        if _env_has("default_strategy"):
+            strategy_value = entry.get("default_strategy")
+            env_kwargs["default_strategy"] = (
+                str(strategy_value) if strategy_value not in (None, "") else None
+            )
+        if _env_has("default_controller"):
+            controller_value = entry.get("default_controller")
+            env_kwargs["default_controller"] = (
+                str(controller_value) if controller_value not in (None, "") else None
+            )
         if _env_has("alert_throttle"):
             env_kwargs["alert_throttle"] = _load_alert_throttle(entry.get("alert_throttle"))
         if _env_has("alert_audit"):

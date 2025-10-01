@@ -34,5 +34,5 @@ Dokument stanowi append-only rejestr zdarzeń operacyjnych związanych z trybem 
 | C-0001 | YYYY-MM-DDThh:mm:ssZ | imię nazwisko | `strategies.daily_trend.momentum.window_fast` | 20 | 30 | „Optymalizacja walk-forward” |
 
 > **Instrukcja aktualizacji:** dodawaj nowe wiersze na końcu każdej sekcji, zachowując rosnącą numerację ID. Nie modyfikuj historycznych wpisów – w razie pomyłki dodaj nowy wiersz korygujący z referencją do oryginalnego ID.
-> Dla smoke testów kopiuj zarówno hash `summary.json`, jak i treść pliku `summary.txt` (skrót można dodać w kolumnie „Uwagi”). Jeśli skrypt utworzył archiwum ZIP (`--archive-smoke`), dopisz ścieżkę pliku w kolumnie „Uwagi” i zabezpiecz archiwum w sejfie audytu.
+> Dla smoke testów kopiuj zarówno hash `summary.json`, jak i treść pliku `summary.txt` (skrót można dodać w kolumnie „Uwagi”). Jeśli skrypt utworzył archiwum ZIP (`--archive-smoke`), dopisz ścieżkę pliku w kolumnie „Uwagi” i zabezpiecz archiwum w sejfie audytu. W razie wykonywania weryfikacji `scripts/check_data_coverage.py` dopisz status (`ok` / `error`) do kolumny „Uwagi”.
 > Gdy konfiguracja `reporting.smoke_archive_upload` wykona dodatkowy upload (np. do `audit/smoke_archives/` lub koszyka S3), dopisz docelową lokalizację z pola alertu `archive_upload_location` – ułatwi to odtworzenie pakietu podczas audytu.

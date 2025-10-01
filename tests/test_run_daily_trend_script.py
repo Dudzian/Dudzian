@@ -14,6 +14,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from collections.abc import Iterable, Mapping, MutableMapping, Sequence
+from typing import Any
 
 from bot_core.alerts import AlertMessage
 from bot_core.exchanges.base import (
@@ -44,13 +45,13 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--strategy",
-        default="core_daily_trend",
-        help="Nazwa strategii z sekcji strategies w configu",
+        default=None,
+        help="Nazwa strategii z sekcji strategies (domyślnie pobierana z konfiguracji środowiska)",
     )
     parser.add_argument(
         "--controller",
-        default="daily_trend_core",
-        help="Nazwa kontrolera runtime z sekcji runtime.controllers",
+        default=None,
+        help="Nazwa kontrolera runtime (domyślnie pobierana z konfiguracji środowiska)",
     )
     parser.add_argument(
         "--history-bars",
@@ -177,10 +178,7 @@ def _resolve_date_window(arg: str | None, *, default_days: int = 30) -> tuple[in
         raise ValueError("data początkowa jest późniejsza niż końcowa")
     start_ms = int(start_dt.timestamp() * 1000)
     end_ms = int(end_dt.timestamp() * 1000)
-    return start_ms, end_ms, {
-        "start": start_dt.isoformat(),
-        "end": end_dt.isoformat(),
-    }
+    return start_ms, end_ms, {"start": start_dt.isoformat(), "end": end_dt.isoformat()}
 
 
 def _hash_file(path: Path) -> str:
@@ -298,7 +296,7 @@ def _export_smoke_report(
     window: Mapping[str, str],
     environment: str,
     alert_snapshot: Mapping[str, Mapping[str, str]],
-    risk_state: Mapping[str, object] | None,
+    risk_state: Mapping[str, object] | None = None,
 ) -> Path:
     report_dir.mkdir(parents=True, exist_ok=True)
     ledger_entries = list(ledger)
@@ -373,14 +371,14 @@ def _render_smoke_summary(*, summary: Mapping[str, object], summary_sha256: str)
     ledger_entries = summary.get("ledger_entries", 0)
     try:
         ledger_entries = int(ledger_entries)
-    except Exception:  # noqa: BLE001, pragma: no cover - fallback
+    except Exception:  # noqa: BLE001
         ledger_entries = 0
 
     alert_snapshot = summary.get("alert_snapshot", {})
     alert_lines: list[str] = []
     if isinstance(alert_snapshot, Mapping):
         for channel, data in alert_snapshot.items():
-            status = "unknown"
+            status = "UNKNOWN"
             detail: str | None = None
             if isinstance(data, Mapping):
                 raw_status = data.get("status")
@@ -441,10 +439,9 @@ def _render_smoke_summary(*, summary: Mapping[str, object], summary_sha256: str)
 
         last_position = _as_float(metrics.get("last_position_value"))
         if last_position is not None:
-            metrics_lines.append(
-                f"Ostatnia wartość pozycji: {_format_money(last_position)}"
-            )
+            metrics_lines.append(f"Ostatnia wartość pozycji: {_format_money(last_position)}")
 
+    # Opcjonalne linie o stanie ryzyka (jeśli dodano do summary)
     risk_lines: list[str] = []
     risk_state = summary.get("risk_state")
     if isinstance(risk_state, Mapping) and risk_state:
@@ -514,7 +511,7 @@ def _render_smoke_summary(*, summary: Mapping[str, object], summary_sha256: str)
 
 def _ensure_smoke_cache(
     *,
-    pipeline,
+    pipeline: Any,
     symbols: Sequence[str],
     interval: str,
     start_ms: int,
@@ -523,7 +520,6 @@ def _ensure_smoke_cache(
     tick_ms: int,
 ) -> None:
     """Sprawdza, czy lokalny cache zawiera dane potrzebne do smoke testu."""
-
     data_source = getattr(pipeline, "data_source", None)
     storage = getattr(data_source, "storage", None)
     if storage is None:
@@ -815,6 +811,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         report_dir = Path(tempfile.mkdtemp(prefix="daily_trend_smoke_"))
         alert_snapshot = pipeline.bootstrap.alert_router.health_snapshot()
 
+        # konfiguracja uploadu
         core_config = getattr(pipeline.bootstrap, "core_config", None)
         reporting_source = core_config
         if reporting_source is not None and hasattr(reporting_source, "reporting"):

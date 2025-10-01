@@ -204,7 +204,7 @@ def pipeline_fixture(tmp_path: Path) -> tuple[Path, FakeExchangeAdapter, SecretM
                     "BTC_USDT": {
                         "base_asset": "BTC",
                         "quote_asset": "USDT",
-                        "categories": [],
+                        "categories": ["core"],
                         "exchanges": {"fake_exchange": "BTCUSDT"},
                         "backfill": [{"interval": "1d", "lookback_days": 10}],
                     }
@@ -218,6 +218,8 @@ def pipeline_fixture(tmp_path: Path) -> tuple[Path, FakeExchangeAdapter, SecretM
                 "keychain_key": "fake_key",
                 "data_cache_path": str(tmp_path / "data"),
                 "risk_profile": "balanced",
+                "default_strategy": "core_daily_trend",
+                "default_controller": "daily_trend_core",
                 "alert_channels": [],
                 "instrument_universe": "core_universe",
                 "adapter_settings": {
@@ -279,6 +281,24 @@ def test_build_daily_trend_pipeline(pipeline_fixture: tuple[Path, FakeExchangeAd
     assert parquet_files, "Backfill pipeline powinien zapisać dane OHLCV w Parquet"
 
 
+def test_build_daily_trend_pipeline_uses_environment_defaults(
+    pipeline_fixture: tuple[Path, FakeExchangeAdapter, SecretManager]
+) -> None:
+    config_path, adapter, manager = pipeline_fixture
+
+    pipeline = build_daily_trend_pipeline(
+        environment_name="fake_paper",
+        strategy_name=None,
+        controller_name=None,
+        config_path=config_path,
+        secret_manager=manager,
+        adapter_factories={"fake_exchange": lambda credentials, **_: adapter},
+    )
+
+    assert pipeline.strategy_name == "core_daily_trend"
+    assert pipeline.controller_name == "daily_trend_core"
+
+
 def test_create_trading_controller_executes_signal(
     pipeline_fixture: tuple[Path, FakeExchangeAdapter, SecretManager]
 ) -> None:
@@ -307,7 +327,7 @@ def test_create_trading_controller_executes_signal(
         symbol="BTCUSDT",
         side="BUY",
         confidence=0.9,
-        metadata={"quantity": 0.2, "price": 102.0},
+        metadata={"quantity": 0.2, "price": 102.0, "atr": 1.5, "stop_price": 99.75},
     )
 
     results = trading_controller.process_signals([signal])
@@ -364,27 +384,27 @@ def test_account_loader_handles_multi_currency_and_shorts(tmp_path: Path) -> Non
             "multi_quote": {
                 "description": "fixture",
                 "instruments": {
-                    "BTC_USDT": {
-                        "base_asset": "BTC",
-                        "quote_asset": "USDT",
-                        "categories": [],
-                        "exchanges": {"fake_exchange": "BTCUSDT"},
-                        "backfill": [{"interval": "1d", "lookback_days": 10}],
-                    },
-                    "ETH_USDT": {
-                        "base_asset": "ETH",
-                        "quote_asset": "USDT",
-                        "categories": [],
-                        "exchanges": {"fake_exchange": "ETHUSDT"},
-                        "backfill": [{"interval": "1d", "lookback_days": 10}],
-                    },
-                    "BTC_EUR": {
-                        "base_asset": "BTC",
-                        "quote_asset": "EUR",
-                        "categories": [],
-                        "exchanges": {"fake_exchange": "BTCEUR"},
-                        "backfill": [{"interval": "1d", "lookback_days": 10}],
-                    },
+                        "BTC_USDT": {
+                            "base_asset": "BTC",
+                            "quote_asset": "USDT",
+                            "categories": ["core"],
+                            "exchanges": {"fake_exchange": "BTCUSDT"},
+                            "backfill": [{"interval": "1d", "lookback_days": 10}],
+                        },
+                        "ETH_USDT": {
+                            "base_asset": "ETH",
+                            "quote_asset": "USDT",
+                            "categories": ["core"],
+                            "exchanges": {"fake_exchange": "ETHUSDT"},
+                            "backfill": [{"interval": "1d", "lookback_days": 10}],
+                        },
+                        "BTC_EUR": {
+                            "base_asset": "BTC",
+                            "quote_asset": "EUR",
+                            "categories": ["fiat"],
+                            "exchanges": {"fake_exchange": "BTCEUR"},
+                            "backfill": [{"interval": "1d", "lookback_days": 10}],
+                        },
                 },
             }
         },
@@ -395,6 +415,8 @@ def test_account_loader_handles_multi_currency_and_shorts(tmp_path: Path) -> Non
                 "keychain_key": "fake_key",
                 "data_cache_path": str(tmp_path / "data"),
                 "risk_profile": "balanced",
+                "default_strategy": "core_daily_trend",
+                "default_controller": "daily_trend_core",
                 "alert_channels": [],
                 "instrument_universe": "multi_quote",
                 "adapter_settings": {

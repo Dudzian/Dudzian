@@ -45,13 +45,13 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--strategy",
-        default="core_daily_trend",
-        help="Nazwa strategii z sekcji strategies w configu",
+        default=None,
+        help="Nazwa strategii z sekcji strategies (domyślnie pobierana z konfiguracji środowiska)",
     )
     parser.add_argument(
         "--controller",
-        default="daily_trend_core",
-        help="Nazwa kontrolera runtime z sekcji runtime.controllers",
+        default=None,
+        help="Nazwa kontrolera runtime (domyślnie pobierana z konfiguracji środowiska)",
     )
     parser.add_argument(
         "--history-bars",
@@ -151,14 +151,14 @@ def _parse_iso_date(value: str, *, is_end: bool) -> datetime:
         raise ValueError("wartość daty nie może być pusta")
     try:
         parsed = datetime.fromisoformat(text)
-    except ValueError as exc:  # pragma: no cover - walidacja argumentów CLI
+    except ValueError as exc:  # pragma: no cover
         raise ValueError(f"nieprawidłowy format daty: {text}") from exc
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     else:
         parsed = parsed.astimezone(timezone.utc)
     if "T" not in text and " " not in text:
-        # W przypadku zakresów dziennych interpretujemy datę końcową jako koniec dnia.
+        # Dla zakresów dziennych interpretujemy datę końcową jako koniec dnia.
         if is_end:
             parsed = parsed + timedelta(days=1) - timedelta(milliseconds=1)
     return parsed
@@ -211,7 +211,7 @@ def _as_int(value: object) -> int | None:
         return None
     try:
         return int(float_value)
-    except (TypeError, ValueError):  # pragma: no cover - ostrożność przy dziwnych typach
+    except (TypeError, ValueError):  # pragma: no cover
         return None
 
 
@@ -363,7 +363,7 @@ def _render_smoke_summary(*, summary: Mapping[str, object], summary_sha256: str)
     if isinstance(window, Mapping):
         start = str(window.get("start", "?"))
         end = str(window.get("end", "?"))
-    else:  # pragma: no cover - obrona przed błędną strukturą
+    else:  # pragma: no cover
         start = end = "?"
 
     orders = summary.get("orders", [])
@@ -441,7 +441,7 @@ def _render_smoke_summary(*, summary: Mapping[str, object], summary_sha256: str)
         if last_position is not None:
             metrics_lines.append(f"Ostatnia wartość pozycji: {_format_money(last_position)}")
 
-    # Opcjonalne linie o stanie ryzyka (jeśli dodano do summary)
+    # Opcjonalne linie o stanie ryzyka
     risk_lines: list[str] = []
     risk_state = summary.get("risk_state")
     if isinstance(risk_state, Mapping) and risk_state:
@@ -632,7 +632,7 @@ class _OfflineExchangeAdapter(ExchangeAdapter):
             maintenance_margin=0.0,
         )
 
-    def fetch_symbols(self):  # pragma: no cover - nieużywane w trybie smoke
+    def fetch_symbols(self):  # pragma: no cover
         return ()
 
     def fetch_ohlcv(  # noqa: D401, ARG002
@@ -645,16 +645,16 @@ class _OfflineExchangeAdapter(ExchangeAdapter):
     ):
         return []
 
-    def place_order(self, request):  # pragma: no cover - paper trading korzysta z symulatora
+    def place_order(self, request):  # pragma: no cover
         raise NotImplementedError
 
-    def cancel_order(self, order_id: str, *, symbol: str | None = None) -> None:  # pragma: no cover - nieużywane
+    def cancel_order(self, order_id: str, *, symbol: str | None = None) -> None:  # pragma: no cover
         raise NotImplementedError
 
-    def stream_public_data(self, *, channels):  # pragma: no cover - nieużywane
+    def stream_public_data(self, *, channels):  # pragma: no cover
         raise NotImplementedError
 
-    def stream_private_data(self, *, channels):  # pragma: no cover - nieużywane
+    def stream_private_data(self, *, channels):  # pragma: no cover
         raise NotImplementedError
 
 
@@ -728,6 +728,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     except Exception as exc:  # noqa: BLE001
         _LOGGER.exception("Nie udało się zbudować pipeline'u daily trend: %s", exc)
         return 1
+
+    # Bezpieczne logowanie (fake pipeline w testach nie ma tych pól)
+    strategy_name = getattr(pipeline, "strategy_name", args.strategy)
+    controller_name = getattr(pipeline, "controller_name", args.controller)
+    _LOGGER.info(
+        "Pipeline gotowy: środowisko=%s, strategia=%s, kontroler=%s",
+        args.environment,
+        strategy_name,
+        controller_name,
+    )
 
     environment = pipeline.bootstrap.environment.environment
     if environment is Environment.LIVE and not args.allow_live:
@@ -811,7 +821,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         report_dir = Path(tempfile.mkdtemp(prefix="daily_trend_smoke_"))
         alert_snapshot = pipeline.bootstrap.alert_router.health_snapshot()
 
-        # Pobranie opcjonalnego snapshotu ryzyka (jeśli silnik ryzyka jest dostępny)
+        # Pobranie opcjonalnego snapshotu ryzyka
         risk_snapshot: Mapping[str, object] | None = None
         try:
             risk_engine = getattr(pipeline.bootstrap, "risk_engine", None)
@@ -832,7 +842,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             reporting_source = getattr(reporting_source, "reporting", None)
         upload_cfg = SmokeArchiveUploader.resolve_config(reporting_source)
 
-        # Wywołanie kompatybilne z testami, które monkeypatchują funkcję bez argumentu risk_state
+        # Kompatybilność z testami monkeypatchującymi _export_smoke_report
         try:
             summary_path = _export_smoke_report(
                 report_dir=report_dir,
@@ -965,5 +975,5 @@ def main(argv: Sequence[str] | None = None) -> int:
     return _run_loop(runner, args.poll_seconds)
 
 
-if __name__ == "__main__":  # pragma: no cover - punkt wejścia CLI
+if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main())
