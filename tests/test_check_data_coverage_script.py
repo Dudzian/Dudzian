@@ -24,14 +24,16 @@ def _generate_rows(start: datetime, count: int) -> list[list[float]]:
     price = 40_000.0
     for index in range(count):
         timestamp = base_ts + index * day_ms
-        rows.append([
-            float(timestamp),
-            price + index * 10,
-            price + index * 15,
-            price + index * 5,
-            price + index * 12,
-            100 + index,
-        ])
+        rows.append(
+            [
+                float(timestamp),
+                price + index * 10,
+                price + index * 15,
+                price + index * 5,
+                price + index * 12,
+                100 + index,
+            ]
+        )
     return rows
 
 

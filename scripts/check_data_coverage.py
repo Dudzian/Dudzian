@@ -109,17 +109,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         as_of=as_of,
     )
 
+    # Filtrowanie po symbolach (opcjonalnie)
     if args.symbols:
         filter_tokens = [token.upper() for token in args.symbols]
+        # mapowanie aliasów z nazw instrumentów na symbole giełdowe
         alias_map: dict[str, str] = {}
         for instrument in universe.instruments:
             symbol = instrument.exchange_symbols.get(environment.exchange)
             if symbol:
                 alias_map[instrument.name.upper()] = symbol
 
-        available_symbols: dict[str, str] = {
-            status.symbol.upper(): status.symbol for status in statuses
-        }
+        available_symbols: dict[str, str] = {status.symbol.upper(): status.symbol for status in statuses}
 
         resolved: set[str] = set()
         unknown: list[str] = []
@@ -133,18 +133,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             resolved.add(symbol)
 
         if unknown:
-            print(
-                "Nieznane symbole: " + ", ".join(unknown),
-                file=sys.stderr,
-            )
+            print("Nieznane symbole: " + ", ".join(unknown), file=sys.stderr)
             return 2
 
         statuses = [status for status in statuses if status.symbol in resolved]
         if not statuses:
-            print(
-                "Brak wpisów w manifeście dla wskazanych symboli.",
-                file=sys.stderr,
-            )
+            print("Brak wpisów w manifeście dla wskazanych symboli.", file=sys.stderr)
             return 2
 
     issues = summarize_issues(statuses)
@@ -160,6 +154,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     serialized = json.dumps(payload, ensure_ascii=False, indent=2)
 
+    # Zapis do pliku, jeśli wskazano --output
     if args.output:
         output_path = Path(args.output)
         output_path.parent.mkdir(parents=True, exist_ok=True)
