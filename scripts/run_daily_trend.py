@@ -227,6 +227,21 @@ def _format_percentage(value: float | None, *, decimals: int = 2) -> str:
     return f"{value * 100:.{decimals}f}%"
 
 
+def _normalize_position_entry(
+    symbol: str,
+    payload: Mapping[str, object],
+) -> tuple[float, str] | None:
+    """Buduje opis pojedynczej pozycji do raportu tekstowego."""
+
+    notional = _as_float(payload.get("notional"))
+    if notional is None or notional <= 0:
+        return None
+
+    side = str(payload.get("side", "")).strip().upper() or "?"
+    description = f"{symbol}: {side} {_format_money(notional)}"
+    return notional, description
+
+
 def _compute_ledger_metrics(ledger_entries: Sequence[Mapping[str, object]]) -> Mapping[str, object]:
     counts: MutableMapping[str, int] = {"buy": 0, "sell": 0}
     other_counts: MutableMapping[str, int] = {}
@@ -234,6 +249,7 @@ def _compute_ledger_metrics(ledger_entries: Sequence[Mapping[str, object]]) -> M
     other_notionals: MutableMapping[str, float] = {}
     total_fees = 0.0
     last_position_value: float | None = None
+    per_symbol: dict[str, dict[str, float]] = {}
 
     for entry in ledger_entries:
         if not isinstance(entry, Mapping):
@@ -259,6 +275,54 @@ def _compute_ledger_metrics(ledger_entries: Sequence[Mapping[str, object]]) -> M
         position_value = _as_float(entry.get("position_value"))
         if position_value is not None:
             last_position_value = position_value
+
+        symbol = entry.get("symbol")
+        if symbol:
+            symbol_key = str(symbol)
+            stats = per_symbol.setdefault(
+                symbol_key,
+                {
+                    "orders": 0,
+                    "buy_orders": 0,
+                    "sell_orders": 0,
+                    "other_orders": 0,
+                    "buy_quantity": 0.0,
+                    "sell_quantity": 0.0,
+                    "other_quantity": 0.0,
+                    "buy_notional": 0.0,
+                    "sell_notional": 0.0,
+                    "other_notional": 0.0,
+                    "total_notional": 0.0,
+                    "net_quantity": 0.0,
+                    "fees": 0.0,
+                },
+            )
+
+            stats["orders"] += 1
+            if side == "buy":
+                stats["buy_orders"] += 1
+                stats["buy_quantity"] += quantity
+                stats["buy_notional"] += notional_value
+                stats["net_quantity"] += quantity
+            elif side == "sell":
+                stats["sell_orders"] += 1
+                stats["sell_quantity"] += quantity
+                stats["sell_notional"] += notional_value
+                stats["net_quantity"] -= quantity
+            else:
+                stats["other_orders"] += 1
+                stats["other_quantity"] += quantity
+                stats["other_notional"] += notional_value
+
+            stats["total_notional"] = (
+                stats["buy_notional"] + stats["sell_notional"] + stats["other_notional"]
+            )
+
+            if fee_value is not None:
+                stats["fees"] += fee_value
+
+            if position_value is not None:
+                stats["last_position_value"] = position_value
 
     total_notional = sum(notionals.values()) + sum(other_notionals.values())
 
@@ -286,6 +350,14 @@ def _compute_ledger_metrics(ledger_entries: Sequence[Mapping[str, object]]) -> M
     }
     if last_position_value is not None:
         metrics["last_position_value"] = last_position_value
+    if per_symbol:
+        metrics["per_symbol"] = {
+            symbol: {
+                key: (float(value) if isinstance(value, float) else value)
+                for key, value in stats.items()
+            }
+            for symbol, stats in per_symbol.items()
+        }
     return metrics
 
 
@@ -445,6 +517,45 @@ def _render_smoke_summary(*, summary: Mapping[str, object], summary_sha256: str)
         if last_position is not None:
             metrics_lines.append(f"Ostatnia wartość pozycji: {_format_money(last_position)}")
 
+        per_symbol = metrics.get("per_symbol")
+        if isinstance(per_symbol, Mapping):
+            symbol_lines: list[tuple[float, str]] = []
+            for symbol, payload in per_symbol.items():
+                if not isinstance(payload, Mapping):
+                    continue
+
+                total_notional = _as_float(payload.get("total_notional")) or 0.0
+                orders = _as_int(payload.get("orders")) or 0
+                fees_value = _as_float(payload.get("fees"))
+                net_quantity = _as_float(payload.get("net_quantity"))
+                last_symbol_value = _as_float(payload.get("last_position_value"))
+
+                if not (
+                    orders
+                    or total_notional
+                    or (fees_value is not None and fees_value)
+                    or (net_quantity is not None and abs(net_quantity) > 1e-9)
+                    or (last_symbol_value is not None and last_symbol_value > 0)
+                ):
+                    continue
+
+                parts = [f"{symbol}: zlecenia {orders}"]
+                if total_notional:
+                    parts.append(f"wolumen {_format_money(total_notional)}")
+                if fees_value is not None:
+                    parts.append(f"opłaty {_format_money(fees_value, decimals=4)}")
+                if net_quantity is not None and abs(net_quantity) > 1e-6:
+                    parts.append(f"netto {net_quantity:+.4f}")
+                if last_symbol_value is not None and last_symbol_value > 0:
+                    parts.append(f"wartość {_format_money(last_symbol_value)}")
+
+                symbol_lines.append((total_notional, ", ".join(parts)))
+
+            if symbol_lines:
+                symbol_lines.sort(key=lambda item: item[0], reverse=True)
+                top_lines = [item[1] for item in symbol_lines[:3]]
+                metrics_lines.append("Instrumenty: " + "; ".join(top_lines))
+
     # Opcjonalne linie o stanie ryzyka
     risk_lines: list[str] = []
     risk_state = summary.get("risk_state")
@@ -458,6 +569,21 @@ def _render_smoke_summary(*, summary: Mapping[str, object], summary_sha256: str)
         if gross_notional is not None:
             exposure_line += f" | Ekspozycja brutto: {_format_money(gross_notional)}"
         risk_lines.append(exposure_line)
+
+        positions_raw = risk_state.get("positions")
+        if isinstance(positions_raw, Mapping) and positions_raw:
+            formatted: list[tuple[float, str]] = []
+            for symbol, payload in positions_raw.items():
+                if not isinstance(payload, Mapping):
+                    continue
+                entry = _normalize_position_entry(str(symbol), payload)
+                if entry is not None:
+                    formatted.append(entry)
+
+            if formatted:
+                formatted.sort(key=lambda item: item[0], reverse=True)
+                formatted_lines = [text for _value, text in formatted[:5]]
+                risk_lines.append("Pozycje: " + "; ".join(formatted_lines))
 
         daily_loss_pct = _as_float(risk_state.get("daily_loss_pct"))
         drawdown_pct = _as_float(risk_state.get("drawdown_pct"))
