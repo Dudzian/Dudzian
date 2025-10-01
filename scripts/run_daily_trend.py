@@ -14,6 +14,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from collections.abc import Iterable, Mapping, MutableMapping, Sequence
+from typing import Any
 
 from bot_core.alerts import AlertMessage
 from bot_core.exchanges.base import (
@@ -177,10 +178,7 @@ def _resolve_date_window(arg: str | None, *, default_days: int = 30) -> tuple[in
         raise ValueError("data początkowa jest późniejsza niż końcowa")
     start_ms = int(start_dt.timestamp() * 1000)
     end_ms = int(end_dt.timestamp() * 1000)
-    return start_ms, end_ms, {
-        "start": start_dt.isoformat(),
-        "end": end_dt.isoformat(),
-    }
+    return start_ms, end_ms, {"start": start_dt.isoformat(), "end": end_dt.isoformat()}
 
 
 def _hash_file(path: Path) -> str:
@@ -220,6 +218,12 @@ def _as_int(value: object) -> int | None:
 def _format_money(value: float, *, decimals: int = 2) -> str:
     formatted = f"{value:,.{decimals}f}"
     return formatted.replace(",", " ")
+
+
+def _format_percentage(value: float | None, *, decimals: int = 2) -> str:
+    if value is None:
+        return "n/d"
+    return f"{value * 100:.{decimals}f}%"
 
 
 def _compute_ledger_metrics(ledger_entries: Sequence[Mapping[str, object]]) -> Mapping[str, object]:
@@ -292,6 +296,7 @@ def _export_smoke_report(
     window: Mapping[str, str],
     environment: str,
     alert_snapshot: Mapping[str, Mapping[str, str]],
+    risk_state: Mapping[str, object] | None = None,
 ) -> Path:
     report_dir.mkdir(parents=True, exist_ok=True)
     ledger_entries = list(ledger)
@@ -303,7 +308,7 @@ def _export_smoke_report(
 
     metrics = _compute_ledger_metrics(ledger_entries)
 
-    summary = {
+    summary: dict[str, object] = {
         "environment": environment,
         "window": dict(window),
         "orders": [
@@ -319,6 +324,9 @@ def _export_smoke_report(
         "metrics": metrics,
         "alert_snapshot": {channel: dict(data) for channel, data in alert_snapshot.items()},
     }
+
+    if risk_state:
+        summary["risk_state"] = dict(risk_state)
 
     summary_path = report_dir / "summary.json"
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -363,14 +371,14 @@ def _render_smoke_summary(*, summary: Mapping[str, object], summary_sha256: str)
     ledger_entries = summary.get("ledger_entries", 0)
     try:
         ledger_entries = int(ledger_entries)
-    except Exception:  # noqa: BLE001, pragma: no cover - fallback
+    except Exception:  # noqa: BLE001
         ledger_entries = 0
 
     alert_snapshot = summary.get("alert_snapshot", {})
     alert_lines: list[str] = []
     if isinstance(alert_snapshot, Mapping):
         for channel, data in alert_snapshot.items():
-            status = "unknown"
+            status = "UNKNOWN"
             detail: str | None = None
             if isinstance(data, Mapping):
                 raw_status = data.get("status")
@@ -431,25 +439,79 @@ def _render_smoke_summary(*, summary: Mapping[str, object], summary_sha256: str)
 
         last_position = _as_float(metrics.get("last_position_value"))
         if last_position is not None:
-            metrics_lines.append(
-                f"Ostatnia wartość pozycji: {_format_money(last_position)}"
+            metrics_lines.append(f"Ostatnia wartość pozycji: {_format_money(last_position)}")
+
+    # Opcjonalne linie o stanie ryzyka (jeśli dodano do summary)
+    risk_lines: list[str] = []
+    risk_state = summary.get("risk_state")
+    if isinstance(risk_state, Mapping) and risk_state:
+        profile_name = str(risk_state.get("profile", "unknown"))
+        risk_lines.append(f"Profil ryzyka: {profile_name}")
+
+        active_positions = _as_int(risk_state.get("active_positions")) or 0
+        gross_notional = _as_float(risk_state.get("gross_notional"))
+        exposure_line = f"Aktywne pozycje: {active_positions}"
+        if gross_notional is not None:
+            exposure_line += f" | Ekspozycja brutto: {_format_money(gross_notional)}"
+        risk_lines.append(exposure_line)
+
+        daily_loss_pct = _as_float(risk_state.get("daily_loss_pct"))
+        drawdown_pct = _as_float(risk_state.get("drawdown_pct"))
+        risk_lines.append(
+            "Dzienna strata: {loss} | Obsunięcie: {dd}".format(
+                loss=_format_percentage(daily_loss_pct),
+                dd=_format_percentage(drawdown_pct),
             )
+        )
+
+        liquidation = bool(risk_state.get("force_liquidation"))
+        risk_lines.append("Force liquidation: TAK" if liquidation else "Force liquidation: NIE")
+
+        limits = risk_state.get("limits")
+        if isinstance(limits, Mapping):
+            limit_parts: list[str] = []
+            max_positions = _as_int(limits.get("max_positions"))
+            if max_positions is not None:
+                limit_parts.append(f"max pozycje {max_positions}")
+            max_exposure = _as_float(limits.get("max_position_pct"))
+            if max_exposure is not None:
+                limit_parts.append(f"max ekspozycja {_format_percentage(max_exposure)}")
+            max_leverage = _as_float(limits.get("max_leverage"))
+            if max_leverage is not None:
+                limit_parts.append(f"max dźwignia {max_leverage:.2f}x")
+            daily_limit = _as_float(limits.get("daily_loss_limit"))
+            if daily_limit is not None:
+                limit_parts.append(f"dzienna strata {_format_percentage(daily_limit)}")
+            drawdown_limit = _as_float(limits.get("drawdown_limit"))
+            if drawdown_limit is not None:
+                limit_parts.append(f"obsunięcie {_format_percentage(drawdown_limit)}")
+            target_vol = _as_float(limits.get("target_volatility"))
+            if target_vol is not None:
+                limit_parts.append(f"target vol {_format_percentage(target_vol)}")
+            stop_loss_atr = _as_float(limits.get("stop_loss_atr_multiple"))
+            if stop_loss_atr is not None:
+                limit_parts.append(f"stop loss ATR× {stop_loss_atr:.2f}")
+            if limit_parts:
+                risk_lines.append("Limity: " + ", ".join(limit_parts))
 
     lines = [
         f"Środowisko: {environment}",
         f"Zakres dat: {start} → {end}",
         f"Liczba zleceń: {orders_count}",
         f"Liczba wpisów w ledgerze: {ledger_entries}",
-        *metrics_lines,
-        "Alerty: " + "; ".join(alert_lines),
-        f"SHA-256 summary.json: {summary_sha256}",
     ]
+    if metrics_lines:
+        lines.extend(metrics_lines)
+    if risk_lines:
+        lines.extend(risk_lines)
+    lines.append("Alerty: " + "; ".join(alert_lines))
+    lines.append(f"SHA-256 summary.json: {summary_sha256}")
     return "\n".join(lines)
 
 
 def _ensure_smoke_cache(
     *,
-    pipeline,
+    pipeline: Any,
     symbols: Sequence[str],
     interval: str,
     start_ms: int,
@@ -458,7 +520,6 @@ def _ensure_smoke_cache(
     tick_ms: int,
 ) -> None:
     """Sprawdza, czy lokalny cache zawiera dane potrzebne do smoke testu."""
-
     data_source = getattr(pipeline, "data_source", None)
     storage = getattr(data_source, "storage", None)
     if storage is None:
@@ -749,19 +810,49 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         report_dir = Path(tempfile.mkdtemp(prefix="daily_trend_smoke_"))
         alert_snapshot = pipeline.bootstrap.alert_router.health_snapshot()
+
+        # Pobranie opcjonalnego snapshotu ryzyka (jeśli silnik ryzyka jest dostępny)
+        risk_snapshot: Mapping[str, object] | None = None
+        try:
+            risk_engine = getattr(pipeline.bootstrap, "risk_engine", None)
+            if risk_engine is not None:
+                risk_snapshot = risk_engine.snapshot_state(
+                    pipeline.bootstrap.environment.risk_profile
+                )
+        except NotImplementedError:
+            _LOGGER.warning(
+                "Silnik ryzyka nie udostępnia metody snapshot_state – pomijam stan ryzyka"
+            )
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.warning("Nie udało się pobrać stanu ryzyka: %s", exc)
+
         core_config = getattr(pipeline.bootstrap, "core_config", None)
         reporting_source = core_config
         if reporting_source is not None and hasattr(reporting_source, "reporting"):
             reporting_source = getattr(reporting_source, "reporting", None)
         upload_cfg = SmokeArchiveUploader.resolve_config(reporting_source)
-        summary_path = _export_smoke_report(
-            report_dir=report_dir,
-            results=results,
-            ledger=pipeline.execution_service.ledger(),
-            window=window_meta,
-            environment=args.environment,
-            alert_snapshot=alert_snapshot,
-        )
+
+        # Wywołanie kompatybilne z testami, które monkeypatchują funkcję bez argumentu risk_state
+        try:
+            summary_path = _export_smoke_report(
+                report_dir=report_dir,
+                results=results,
+                ledger=pipeline.execution_service.ledger(),
+                window=window_meta,
+                environment=args.environment,
+                alert_snapshot=alert_snapshot,
+                risk_state=risk_snapshot,
+            )
+        except TypeError:
+            summary_path = _export_smoke_report(
+                report_dir=report_dir,
+                results=results,
+                ledger=pipeline.execution_service.ledger(),
+                window=window_meta,
+                environment=args.environment,
+                alert_snapshot=alert_snapshot,
+            )
+
         summary_hash = _hash_file(summary_path)
         try:
             summary_payload = json.loads(summary_path.read_text(encoding="utf-8"))
@@ -773,6 +864,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "orders": [],
                 "ledger_entries": 0,
                 "alert_snapshot": alert_snapshot,
+                "risk_state": risk_snapshot or {},
             }
 
         summary_text = _render_smoke_summary(

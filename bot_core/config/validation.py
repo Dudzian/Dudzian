@@ -4,6 +4,53 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Mapping
 
+_INTERVAL_SUFFIX_TO_SECONDS: Mapping[str, int] = {
+    "m": 60,
+    "h": 60 * 60,
+    "d": 24 * 60 * 60,
+    "w": 7 * 24 * 60 * 60,
+    "M": 30 * 24 * 60 * 60,
+}
+
+
+def _interval_seconds(interval: str) -> int:
+    """Zwraca długość interwału w sekundach.
+
+    Akceptuje wartości w formacie ``<liczba><jednostka>``, gdzie jednostka należy do
+    zestawu {m, h, d, w, M}. Wielkość liter jest znacząca jedynie dla miesięcy
+    (``1M``). Przy błędnym formacie zgłaszamy :class:`ValueError`.
+    """
+
+    text = interval.strip()
+    if not text:
+        raise ValueError("interwał nie może być pusty")
+
+    number_part = []
+    suffix = None
+    for char in text:
+        if char.isdigit():
+            if suffix is not None:
+                raise ValueError(f"niepoprawny format interwału '{interval}'")
+            number_part.append(char)
+        else:
+            if suffix is not None:
+                raise ValueError(f"niepoprawny format interwału '{interval}'")
+            suffix = char
+
+    if not number_part or suffix is None:
+        raise ValueError(f"niepoprawny format interwału '{interval}'")
+
+    seconds_per_unit = _INTERVAL_SUFFIX_TO_SECONDS.get(suffix)
+    if seconds_per_unit is None:
+        raise ValueError(f"nieobsługiwany sufiks interwału '{suffix}'")
+
+    value = int("".join(number_part))
+    if value <= 0:
+        raise ValueError("interwał musi być dodatni")
+
+    return value * seconds_per_unit
+
+
 from bot_core.config.models import CoreConfig
 
 
@@ -119,6 +166,19 @@ def _validate_runtime_controllers(
         interval = controller.interval.strip()
         if not interval:
             errors.append(f"{context}: interval nie może być pusty")
+            continue
+        try:
+            expected_seconds = _interval_seconds(interval)
+        except ValueError as exc:
+            errors.append(f"{context}: {exc}")
+            continue
+
+        delta = abs(controller.tick_seconds - expected_seconds)
+        tolerance = max(1.0, expected_seconds * 0.1)
+        if delta > tolerance:
+            warnings.append(
+                f"{context}: tick_seconds={controller.tick_seconds} znacząco różni się od interwału {interval} (~{expected_seconds}s)"
+            )
 
 
 def _validate_environments(
@@ -287,6 +347,12 @@ def _validate_instrument_universes(
                     errors.append(
                         f"{inst_context}: interwał w sekcji backfill nie może być pusty"
                     )
+                    continue
+                try:
+                    _interval_seconds(interval)
+                except ValueError as exc:
+                    errors.append(f"{inst_context}: {exc}")
+                    continue
                 if window.lookback_days <= 0:
                     errors.append(
                         f"{inst_context}: lookback_days dla interwału '{window.interval}' musi być dodatni"
