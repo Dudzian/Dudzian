@@ -4,6 +4,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Mapping
 
+from bot_core.config.models import CoreConfig
+
+# Mapowanie sufiksów interwałów na sekundy.
 _INTERVAL_SUFFIX_TO_SECONDS: Mapping[str, int] = {
     "m": 60,
     "h": 60 * 60,
@@ -17,16 +20,15 @@ def _interval_seconds(interval: str) -> int:
     """Zwraca długość interwału w sekundach.
 
     Akceptuje wartości w formacie ``<liczba><jednostka>``, gdzie jednostka należy do
-    zestawu {m, h, d, w, M}. Wielkość liter jest znacząca jedynie dla miesięcy
-    (``1M``). Przy błędnym formacie zgłaszamy :class:`ValueError`.
+    zestawu {m, h, d, w, M}. Wielkość liter jest znacząca jedynie dla miesięcy (``1M``).
+    Przy błędnym formacie zgłaszamy :class:`ValueError`.
     """
-
     text = interval.strip()
     if not text:
         raise ValueError("interwał nie może być pusty")
 
-    number_part = []
-    suffix = None
+    number_part: list[str] = []
+    suffix: str | None = None
     for char in text:
         if char.isdigit():
             if suffix is not None:
@@ -50,8 +52,6 @@ def _interval_seconds(interval: str) -> int:
 
     return value * seconds_per_unit
 
-from bot_core.config.models import CoreConfig
-
 
 @dataclass(slots=True)
 class ConfigValidationResult:
@@ -62,7 +62,6 @@ class ConfigValidationResult:
 
     def is_valid(self) -> bool:
         """Zwraca True, jeśli nie znaleziono błędów."""
-
         return not self.errors
 
 
@@ -77,7 +76,6 @@ class ConfigValidationError(RuntimeError):
 
 def validate_core_config(config: CoreConfig) -> ConfigValidationResult:
     """Waliduje spójność konfiguracji i zwraca listę błędów/ostrzeżeń."""
-
     errors: list[str] = []
     warnings: list[str] = []
 
@@ -92,7 +90,6 @@ def validate_core_config(config: CoreConfig) -> ConfigValidationResult:
 
 def assert_core_config_valid(config: CoreConfig) -> ConfigValidationResult:
     """Waliduje konfigurację i rzuca wyjątek przy błędach."""
-
     result = validate_core_config(config)
     if result.errors:
         raise ConfigValidationError(result)
@@ -235,6 +232,7 @@ def _validate_environments(
                             f"{context}: brak wspólnego interwału między oknami backfill ({', '.join(sorted(intervals_available)) or 'brak'}) a kontrolerami runtime ({', '.join(sorted(controller_intervals))})"
                         )
 
+        # Spójność default_* względem zdefiniowanych sekcji
         default_strategy = getattr(environment, "default_strategy", None)
         if strategies:
             if not default_strategy:
@@ -272,8 +270,14 @@ def _validate_environments(
             )
 
         _validate_alert_channels(config, environment.alert_channels, context, errors)
-        _validate_permissions(environment.required_permissions, environment.forbidden_permissions, context, errors)
+        _validate_permissions(
+            environment.required_permissions,
+            environment.forbidden_permissions,
+            context,
+            errors,
+        )
 
+        # Twardy błąd, jeśli domyślny kontroler ma interwał niedostępny w backfillu uniwersum
         if (
             default_controller
             and default_controller_interval
@@ -284,7 +288,8 @@ def _validate_environments(
             controller_cfg = config.runtime_controllers[default_controller]
             errors.append(
                 f"{context}: domyślny kontroler '{default_controller}' używa interwału '{controller_cfg.interval}'"
-                f" niedostępnego w oknach backfill uniwersum '{environment.instrument_universe}' dla giełdy '{environment.exchange}'"
+                f" niedostępnego w oknach backfill uniwersum '{environment.instrument_universe}'"
+                f" dla giełdy '{environment.exchange}'"
             )
 
 
@@ -333,9 +338,7 @@ def _validate_alert_channels(
             continue
         mapping = registry[backend]
         if key not in mapping:
-            errors.append(
-                f"{context}: kanał alertowy '{channel}' nie istnieje w sekcji alerts"
-            )
+            errors.append(f"{context}: kanał alertowy '{channel}' nie istnieje w sekcji alerts")
 
 
 def _validate_instrument_universes(
@@ -360,20 +363,12 @@ def _validate_instrument_universes(
                 seen_instruments.add(instrument.name)
 
             if not instrument.base_asset or not instrument.quote_asset:
-                errors.append(
-                    f"{inst_context}: base_asset i quote_asset muszą być ustawione"
-                )
+                errors.append(f"{inst_context}: base_asset i quote_asset muszą być ustawione")
 
             if not instrument.categories:
-                errors.append(
-                    f"{inst_context}: lista kategorii nie może być pusta"
-                )
-            elif len(set(cat.lower() for cat in instrument.categories)) != len(
-                instrument.categories
-            ):
-                warnings.append(
-                    f"{inst_context}: wykryto zduplikowane kategorie"
-                )
+                errors.append(f"{inst_context}: lista kategorii nie może być pusta")
+            elif len(set(cat.lower() for cat in instrument.categories)) != len(instrument.categories):
+                warnings.append(f"{inst_context}: wykryto zduplikowane kategorie")
 
             if not instrument.exchange_symbols:
                 errors.append(
@@ -400,9 +395,7 @@ def _validate_instrument_universes(
             for window in instrument.backfill_windows:
                 interval = window.interval.strip()
                 if not interval:
-                    errors.append(
-                        f"{inst_context}: interwał w sekcji backfill nie może być pusty"
-                    )
+                    errors.append(f"{inst_context}: interwał w sekcji backfill nie może być pusty")
                     continue
                 try:
                     _interval_seconds(interval)
@@ -415,9 +408,6 @@ def _validate_instrument_universes(
                     )
                 interval_key = interval.lower()
                 if interval_key in intervals_seen:
-                    warnings.append(
-                        f"{inst_context}: interwał '{window.interval}' zdefiniowano wielokrotnie"
-                    )
+                    warnings.append(f"{inst_context}: interwał '{window.interval}' zdefiniowano wielokrotnie")
                 else:
                     intervals_seen.add(interval_key)
-
