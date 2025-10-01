@@ -199,6 +199,8 @@ def _write_config(path: Path, *, cache_dir: Path, ledger_dir: Path) -> None:
                     "retention_days": 7,
                     "fsync": False,
                 },
+                "default_strategy": "smoke_daily_trend",
+                "default_controller": "daily_trend_smoke",
             }
         },
         "alerts": {},
@@ -273,6 +275,9 @@ def test_daily_trend_pipeline_smoke(tmp_path: Path, _fixture_cache: Path) -> Non
     ledger_files = list(pipeline.execution_service.ledger_files())
     assert ledger_files and ledger_files[0].exists()
 
-    profile_name = pipeline.bootstrap.environment.risk_profile
-    state = pipeline.bootstrap.risk_engine._states[profile_name]
-    assert not state.force_liquidation, "Profil ryzyka nie powinien przejść w tryb awaryjny."
+    profile_name = pipeline.risk_profile_name
+    risk_snapshot = pipeline.bootstrap.risk_engine.snapshot_state(profile_name)
+    assert risk_snapshot is not None
+    assert not bool(risk_snapshot.get("force_liquidation")), (
+        "Profil ryzyka nie powinien przejść w tryb awaryjny."
+    )
