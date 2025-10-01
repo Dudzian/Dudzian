@@ -32,6 +32,24 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         action="store_true",
         help="Zwróć wynik w formacie JSON (łatwy do integracji z CI)",
     )
+    parser.add_argument(
+        "--output",
+        help=(
+            "Ścieżka do pliku, w którym zostanie zapisany wynik w formacie JSON. "
+            "Katalogi zostaną utworzone automatycznie."
+        ),
+    )
+    parser.add_argument(
+        "--symbol",
+        dest="symbols",
+        action="append",
+        default=None,
+        help=(
+            "Filtruj wynik do wskazanego symbolu (można podać wiele razy). "
+            "Obsługiwane są zarówno nazwy instrumentów z konfiguracji (np. BTC_USDT), "
+            "jak i symbole giełdowe (np. BTCUSDT)."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -91,6 +109,38 @@ def main(argv: Sequence[str] | None = None) -> int:
         as_of=as_of,
     )
 
+    # Filtrowanie po symbolach (opcjonalnie)
+    if args.symbols:
+        filter_tokens = [token.upper() for token in args.symbols]
+        # mapowanie aliasów z nazw instrumentów na symbole giełdowe
+        alias_map: dict[str, str] = {}
+        for instrument in universe.instruments:
+            symbol = instrument.exchange_symbols.get(environment.exchange)
+            if symbol:
+                alias_map[instrument.name.upper()] = symbol
+
+        available_symbols: dict[str, str] = {status.symbol.upper(): status.symbol for status in statuses}
+
+        resolved: set[str] = set()
+        unknown: list[str] = []
+        for token, raw in zip(filter_tokens, args.symbols, strict=True):
+            symbol = alias_map.get(token)
+            if symbol is None:
+                symbol = available_symbols.get(token)
+            if symbol is None:
+                unknown.append(raw)
+                continue
+            resolved.add(symbol)
+
+        if unknown:
+            print("Nieznane symbole: " + ", ".join(unknown), file=sys.stderr)
+            return 2
+
+        statuses = [status for status in statuses if status.symbol in resolved]
+        if not statuses:
+            print("Brak wpisów w manifeście dla wskazanych symboli.", file=sys.stderr)
+            return 2
+
     issues = summarize_issues(statuses)
     payload = {
         "environment": environment.name,
@@ -102,8 +152,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         "status": "ok" if not issues else "error",
     }
 
+    serialized = json.dumps(payload, ensure_ascii=False, indent=2)
+
+    # Zapis do pliku, jeśli wskazano --output
+    if args.output:
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(serialized + "\n", encoding="utf-8")
+
     if args.json:
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        print(serialized)
     else:
         print(f"Manifest: {payload['manifest_path']}")
         print(f"Środowisko: {payload['environment']} ({payload['exchange']})")

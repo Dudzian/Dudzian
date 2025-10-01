@@ -13,6 +13,7 @@ import tempfile
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from collections import deque
 from collections.abc import Iterable, Mapping, MutableMapping, Sequence
 from typing import Any
 
@@ -159,6 +160,7 @@ def _parse_iso_date(value: str, *, is_end: bool) -> datetime:
     else:
         parsed = parsed.astimezone(timezone.utc)
     if "T" not in text and " " not in text:
+        # Dla zakresów dziennych interpretujemy datę końcową jako koniec dnia.
         if is_end:
             parsed = parsed + timedelta(days=1) - timedelta(milliseconds=1)
     return parsed
@@ -226,7 +228,11 @@ def _format_percentage(value: float | None, *, decimals: int = 2) -> str:
     return f"{value * 100:.{decimals}f}%"
 
 
-def _normalize_position_entry(symbol: str, payload: Mapping[str, object]) -> tuple[float, str] | None:
+def _normalize_position_entry(
+    symbol: str,
+    payload: Mapping[str, object],
+) -> tuple[float, str] | None:
+    """Buduje opis pojedynczej pozycji do raportu tekstowego."""
     notional = _as_float(payload.get("notional"))
     if notional is None or notional <= 0:
         return None
@@ -243,6 +249,9 @@ def _compute_ledger_metrics(ledger_entries: Sequence[Mapping[str, object]]) -> M
     total_fees = 0.0
     last_position_value: float | None = None
     per_symbol: dict[str, dict[str, float]] = {}
+    pnl_trackers: dict[str, dict[str, object]] = {}
+    realized_pnl_total = 0.0
+    eps = 1e-9
 
     for entry in ledger_entries:
         if not isinstance(entry, Mapping):
@@ -252,6 +261,7 @@ def _compute_ledger_metrics(ledger_entries: Sequence[Mapping[str, object]]) -> M
         quantity = _as_float(entry.get("quantity")) or 0.0
         price = _as_float(entry.get("price")) or 0.0
         notional_value = abs(quantity) * max(price, 0.0)
+        abs_quantity = abs(quantity)
 
         if side in ("buy", "sell"):
             counts[side] += 1
@@ -288,6 +298,7 @@ def _compute_ledger_metrics(ledger_entries: Sequence[Mapping[str, object]]) -> M
                     "total_notional": 0.0,
                     "net_quantity": 0.0,
                     "fees": 0.0,
+                    "realized_pnl": 0.0,
                 },
             )
 
@@ -310,14 +321,69 @@ def _compute_ledger_metrics(ledger_entries: Sequence[Mapping[str, object]]) -> M
             stats["total_notional"] = (
                 stats["buy_notional"] + stats["sell_notional"] + stats["other_notional"]
             )
+
             if fee_value is not None:
                 stats["fees"] += fee_value
+
             if position_value is not None:
                 stats["last_position_value"] = position_value
 
+            tracker = pnl_trackers.setdefault(
+                symbol_key,
+                {
+                    "long_lots": deque(),
+                    "short_lots": deque(),
+                    "realized_pnl": 0.0,
+                },
+            )
+
+            long_lots: deque[tuple[float, float]] = tracker["long_lots"]  # type: ignore[assignment]
+            short_lots: deque[tuple[float, float]] = tracker["short_lots"]  # type: ignore[assignment]
+            realized_symbol: float = tracker["realized_pnl"]  # type: ignore[assignment]
+
+            remaining_qty = abs_quantity
+
+            if side == "buy":
+                # Zamykamy pozycje krótkie (jeśli istnieją) przed dodaniem nowego long lotu.
+                while remaining_qty > eps and short_lots:
+                    lot_qty, lot_price = short_lots[0]
+                    matched = min(remaining_qty, lot_qty)
+                    realized_symbol += (lot_price - price) * matched
+                    lot_qty -= matched
+                    remaining_qty -= matched
+                    if lot_qty <= eps:
+                        short_lots.popleft()
+                    else:
+                        short_lots[0] = (lot_qty, lot_price)
+                if remaining_qty > eps:
+                    long_lots.append((remaining_qty, price))
+            elif side == "sell":
+                # Zamykamy pozycje długie przed otwarciem shorta.
+                while remaining_qty > eps and long_lots:
+                    lot_qty, lot_price = long_lots[0]
+                    matched = min(remaining_qty, lot_qty)
+                    realized_symbol += (price - lot_price) * matched
+                    lot_qty -= matched
+                    remaining_qty -= matched
+                    if lot_qty <= eps:
+                        long_lots.popleft()
+                    else:
+                        long_lots[0] = (lot_qty, lot_price)
+                if remaining_qty > eps:
+                    short_lots.append((remaining_qty, price))
+
+            tracker["realized_pnl"] = realized_symbol
+            stats["realized_pnl"] = realized_symbol
+            previous_realized = tracker.get("_realized_accumulator", 0.0)
+            realized_pnl_total += realized_symbol - float(previous_realized)
+            tracker["_realized_accumulator"] = realized_symbol
+
     total_notional = sum(notionals.values()) + sum(other_notionals.values())
 
-    side_counts: MutableMapping[str, int] = {"buy": counts.get("buy", 0), "sell": counts.get("sell", 0)}
+    side_counts: MutableMapping[str, int] = {
+        "buy": counts.get("buy", 0),
+        "sell": counts.get("sell", 0),
+    }
     for key, value in other_counts.items():
         if value:
             side_counts[key] = value
@@ -336,11 +402,15 @@ def _compute_ledger_metrics(ledger_entries: Sequence[Mapping[str, object]]) -> M
         "notional": dict(notional_payload),
         "total_fees": total_fees,
     }
+    metrics["realized_pnl_total"] = realized_pnl_total
     if last_position_value is not None:
         metrics["last_position_value"] = last_position_value
     if per_symbol:
         metrics["per_symbol"] = {
-            symbol: {k: (float(v) if isinstance(v, float) else v) for k, v in stats.items()}
+            symbol: {
+                key: (float(value) if isinstance(value, float) else value)
+                for key, value in stats.items()
+            }
             for symbol, stats in per_symbol.items()
         }
     return metrics
@@ -497,6 +567,10 @@ def _render_smoke_summary(*, summary: Mapping[str, object], summary_sha256: str)
         if total_fees is not None:
             metrics_lines.append(f"Łączne opłaty: {_format_money(total_fees, decimals=4)}")
 
+        realized_total = _as_float(metrics.get("realized_pnl_total"))
+        if realized_total is not None:
+            metrics_lines.append(f"Realizowany PnL (brutto): {_format_money(realized_total)}")
+
         last_position = _as_float(metrics.get("last_position_value"))
         if last_position is not None:
             metrics_lines.append(f"Ostatnia wartość pozycji: {_format_money(last_position)}")
@@ -507,19 +581,24 @@ def _render_smoke_summary(*, summary: Mapping[str, object], summary_sha256: str)
             for symbol, payload in per_symbol.items():
                 if not isinstance(payload, Mapping):
                     continue
+
                 total_notional = _as_float(payload.get("total_notional")) or 0.0
                 orders = _as_int(payload.get("orders")) or 0
                 fees_value = _as_float(payload.get("fees"))
                 net_quantity = _as_float(payload.get("net_quantity"))
                 last_symbol_value = _as_float(payload.get("last_position_value"))
+                realized_symbol = _as_float(payload.get("realized_pnl"))
+
                 if not (
                     orders
                     or total_notional
                     or (fees_value is not None and fees_value)
                     or (net_quantity is not None and abs(net_quantity) > 1e-9)
                     or (last_symbol_value is not None and last_symbol_value > 0)
+                    or (realized_symbol is not None and abs(realized_symbol) > 1e-9)
                 ):
                     continue
+
                 parts = [f"{symbol}: zlecenia {orders}"]
                 if total_notional:
                     parts.append(f"wolumen {_format_money(total_notional)}")
@@ -529,7 +608,11 @@ def _render_smoke_summary(*, summary: Mapping[str, object], summary_sha256: str)
                     parts.append(f"netto {net_quantity:+.4f}")
                 if last_symbol_value is not None and last_symbol_value > 0:
                     parts.append(f"wartość {_format_money(last_symbol_value)}")
+                if realized_symbol is not None and abs(realized_symbol) > 1e-6:
+                    parts.append(f"PnL {_format_money(realized_symbol)}")
+
                 symbol_lines.append((total_notional, ", ".join(parts)))
+
             if symbol_lines:
                 symbol_lines.sort(key=lambda item: item[0], reverse=True)
                 top_lines = [item[1] for item in symbol_lines[:3]]
@@ -558,6 +641,7 @@ def _render_smoke_summary(*, summary: Mapping[str, object], summary_sha256: str)
                 entry = _normalize_position_entry(str(symbol), payload)
                 if entry is not None:
                     formatted.append(entry)
+
             if formatted:
                 formatted.sort(key=lambda item: item[0], reverse=True)
                 formatted_lines = [text for _value, text in formatted[:5]]
@@ -571,6 +655,7 @@ def _render_smoke_summary(*, summary: Mapping[str, object], summary_sha256: str)
                 dd=_format_percentage(drawdown_pct),
             )
         )
+
         liquidation = bool(risk_state.get("force_liquidation"))
         risk_lines.append("Force liquidation: TAK" if liquidation else "Force liquidation: NIE")
 
@@ -691,7 +776,9 @@ def _ensure_smoke_cache(
     data_source = getattr(pipeline, "data_source", None)
     storage = getattr(data_source, "storage", None)
     if storage is None:
-        _LOGGER.warning("Nie mogę zweryfikować cache – pipeline nie udostępnia storage'u. Pomijam kontrolę.")
+        _LOGGER.warning(
+            "Nie mogę zweryfikować cache – pipeline nie udostępnia storage'u. Pomijam kontrolę.",
+        )
         cache_reports: dict[str, dict[str, object]] = {}
     else:
         try:
@@ -714,13 +801,23 @@ def _ensure_smoke_cache(
                     try:
                         row_count = int(raw_rows)
                     except (TypeError, ValueError):
-                        _LOGGER.warning("Nieprawidłowa wartość row_count dla %s (%s): %s", symbol, interval, raw_rows)
+                        _LOGGER.warning(
+                            "Nieprawidłowa wartość row_count dla %s (%s): %s",
+                            symbol,
+                            interval,
+                            raw_rows,
+                        )
                 raw_last = metadata.get(f"last_timestamp::{symbol}::{interval}")
                 if raw_last is not None:
                     try:
                         last_timestamp = int(float(raw_last))
                     except (TypeError, ValueError):
-                        _LOGGER.warning("Nieprawidłowa wartość last_timestamp dla %s (%s): %s", symbol, interval, raw_last)
+                        _LOGGER.warning(
+                            "Nieprawidłowa wartość last_timestamp dla %s (%s): %s",
+                            symbol,
+                            interval,
+                            raw_last,
+                        )
 
             try:
                 payload = storage.read(key)
@@ -737,34 +834,41 @@ def _ensure_smoke_cache(
                 row_count = len(rows)
             if last_timestamp is None:
                 last_timestamp = int(float(rows[-1][0]))
+
             first_timestamp = int(float(rows[0][0]))
 
             if row_count < required_bars:
                 issues.append((symbol, f"za mało świec ({row_count} < {required_bars})"))
                 continue
+
             if last_timestamp < end_ms:
                 issues.append((symbol, f"ostatnia świeca {last_timestamp} < wymaganego końca {end_ms}"))
                 continue
+
             if first_timestamp > start_ms:
                 issues.append((symbol, f"pierwsza świeca {first_timestamp} > wymaganego startu {start_ms}"))
-            else:
-                coverage = ((last_timestamp - first_timestamp) // max(1, tick_ms)) + 1
-                if coverage < required_bars:
-                    issues.append((symbol, f"pokrycie obejmuje {coverage} świec (wymagane {required_bars})"))
-                    continue
-                cache_reports[str(symbol)] = {
-                    "row_count": int(row_count),
-                    "first_timestamp_ms": first_timestamp,
-                    "last_timestamp_ms": last_timestamp,
-                    "coverage_bars": int(coverage),
-                    "required_bars": int(required_bars),
-                }
+                continue
+
+            coverage = ((last_timestamp - first_timestamp) // max(1, tick_ms)) + 1
+            if coverage < required_bars:
+                issues.append((symbol, f"pokrycie obejmuje {coverage} świec (wymagane {required_bars})"))
+                continue
+
+            cache_reports[str(symbol)] = {
+                "row_count": int(row_count),
+                "first_timestamp_ms": first_timestamp,
+                "last_timestamp_ms": last_timestamp,
+                "coverage_bars": int(coverage),
+                "required_bars": int(required_bars),
+            }
 
         if issues:
             for symbol, reason in issues:
                 _LOGGER.error(
                     "Cache offline dla symbolu %s (%s) nie spełnia wymagań smoke testu: %s",
-                    symbol, interval, reason,
+                    symbol,
+                    interval,
+                    reason,
                 )
             raise RuntimeError(
                 "Cache offline nie obejmuje wymaganego zakresu danych. Uruchom scripts/seed_paper_cache.py, "
@@ -802,6 +906,7 @@ def _verify_manifest_coverage(
     core_config = getattr(bootstrap, "core_config", None)
     if environment_cfg is None or core_config is None:
         return None
+
     if not hasattr(core_config, "instrument_universes"):
         return None
 
@@ -862,7 +967,9 @@ def _verify_manifest_coverage(
 
             row_count = entry.row_count
             if row_count is None:
-                issues.append(f"{status.symbol}/{interval}: manifest nie zawiera licznika świec (row_count)")
+                issues.append(
+                    f"{status.symbol}/{interval}: manifest nie zawiera licznika świec (row_count)"
+                )
             elif row_count < required_bars:
                 issues.append(
                     f"{status.symbol}/{interval}: manifest raportuje jedynie {row_count} świec (< {required_bars})"
@@ -870,7 +977,9 @@ def _verify_manifest_coverage(
 
             last_ts = entry.last_timestamp_ms
             if last_ts is None:
-                issues.append(f"{status.symbol}/{interval}: manifest nie zawiera ostatniego stempla czasowego")
+                issues.append(
+                    f"{status.symbol}/{interval}: manifest nie zawiera ostatniego stempla czasowego"
+                )
             elif last_ts < end_ms:
                 issues.append(
                     f"{status.symbol}/{interval}: ostatnia świeca w manifescie ({last_ts}) < wymaganego końca ({end_ms})"

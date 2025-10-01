@@ -13,6 +13,7 @@ import tempfile
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from collections import deque
 from collections.abc import Iterable, Mapping, MutableMapping, Sequence
 from typing import Any
 
@@ -159,7 +160,6 @@ def _parse_iso_date(value: str, *, is_end: bool) -> datetime:
     else:
         parsed = parsed.astimezone(timezone.utc)
     if "T" not in text and " " not in text:
-        # Dla zakresów dziennych interpretujemy datę końcową jako koniec dnia.
         if is_end:
             parsed = parsed + timedelta(days=1) - timedelta(milliseconds=1)
     return parsed
@@ -232,11 +232,9 @@ def _normalize_position_entry(
     payload: Mapping[str, object],
 ) -> tuple[float, str] | None:
     """Buduje opis pojedynczej pozycji do raportu tekstowego."""
-
     notional = _as_float(payload.get("notional"))
     if notional is None or notional <= 0:
         return None
-
     side = str(payload.get("side", "")).strip().upper() or "?"
     description = f"{symbol}: {side} {_format_money(notional)}"
     return notional, description
@@ -250,6 +248,9 @@ def _compute_ledger_metrics(ledger_entries: Sequence[Mapping[str, object]]) -> M
     total_fees = 0.0
     last_position_value: float | None = None
     per_symbol: dict[str, dict[str, float]] = {}
+    pnl_trackers: dict[str, dict[str, object]] = {}
+    realized_pnl_total = 0.0
+    eps = 1e-9
 
     for entry in ledger_entries:
         if not isinstance(entry, Mapping):
@@ -259,6 +260,7 @@ def _compute_ledger_metrics(ledger_entries: Sequence[Mapping[str, object]]) -> M
         quantity = _as_float(entry.get("quantity")) or 0.0
         price = _as_float(entry.get("price")) or 0.0
         notional_value = abs(quantity) * max(price, 0.0)
+        abs_quantity = abs(quantity)
 
         if side in ("buy", "sell"):
             counts[side] += 1
@@ -295,6 +297,7 @@ def _compute_ledger_metrics(ledger_entries: Sequence[Mapping[str, object]]) -> M
                     "total_notional": 0.0,
                     "net_quantity": 0.0,
                     "fees": 0.0,
+                    "realized_pnl": 0.0,
                 },
             )
 
@@ -324,6 +327,54 @@ def _compute_ledger_metrics(ledger_entries: Sequence[Mapping[str, object]]) -> M
             if position_value is not None:
                 stats["last_position_value"] = position_value
 
+            tracker = pnl_trackers.setdefault(
+                symbol_key,
+                {
+                    "long_lots": deque(),
+                    "short_lots": deque(),
+                    "realized_pnl": 0.0,
+                },
+            )
+
+            long_lots: deque[tuple[float, float]] = tracker["long_lots"]  # type: ignore[assignment]
+            short_lots: deque[tuple[float, float]] = tracker["short_lots"]  # type: ignore[assignment]
+            realized_symbol: float = tracker["realized_pnl"]  # type: ignore[assignment]
+
+            remaining_qty = abs_quantity
+
+            if side == "buy":
+                while remaining_qty > eps and short_lots:
+                    lot_qty, lot_price = short_lots[0]
+                    matched = min(remaining_qty, lot_qty)
+                    realized_symbol += (lot_price - price) * matched
+                    lot_qty -= matched
+                    remaining_qty -= matched
+                    if lot_qty <= eps:
+                        short_lots.popleft()
+                    else:
+                        short_lots[0] = (lot_qty, lot_price)
+                if remaining_qty > eps:
+                    long_lots.append((remaining_qty, price))
+            elif side == "sell":
+                while remaining_qty > eps and long_lots:
+                    lot_qty, lot_price = long_lots[0]
+                    matched = min(remaining_qty, lot_qty)
+                    realized_symbol += (price - lot_price) * matched
+                    lot_qty -= matched
+                    remaining_qty -= matched
+                    if lot_qty <= eps:
+                        long_lots.popleft()
+                    else:
+                        long_lots[0] = (lot_qty, lot_price)
+                if remaining_qty > eps:
+                    short_lots.append((remaining_qty, price))
+
+            tracker["realized_pnl"] = realized_symbol
+            stats["realized_pnl"] = realized_symbol
+            previous_realized = tracker.get("_realized_accumulator", 0.0)
+            realized_pnl_total += realized_symbol - float(previous_realized)
+            tracker["_realized_accumulator"] = realized_symbol
+
     total_notional = sum(notionals.values()) + sum(other_notionals.values())
 
     side_counts: MutableMapping[str, int] = {
@@ -348,6 +399,7 @@ def _compute_ledger_metrics(ledger_entries: Sequence[Mapping[str, object]]) -> M
         "notional": dict(notional_payload),
         "total_fees": total_fees,
     }
+    metrics["realized_pnl_total"] = realized_pnl_total
     if last_position_value is not None:
         metrics["last_position_value"] = last_position_value
     if per_symbol:
@@ -416,8 +468,6 @@ def _write_smoke_readme(report_dir: Path) -> Path:
         "======================================\n\n"
         "Ten katalog zawiera artefakty pojedynczego uruchomienia trybu --paper-smoke.\n"
         "Na potrzeby audytu:"
-    )
-    readme_text += (
         "\n\n"
         "1. Zweryfikuj hash SHA-256 pliku summary.json zapisany w logu CLI oraz w alertach.\n"
         "2. Przepisz treść summary.txt do dziennika audytowego (docs/audit/paper_trading_log.md).\n"
@@ -513,6 +563,10 @@ def _render_smoke_summary(*, summary: Mapping[str, object], summary_sha256: str)
         if total_fees is not None:
             metrics_lines.append(f"Łączne opłaty: {_format_money(total_fees, decimals=4)}")
 
+        realized_total = _as_float(metrics.get("realized_pnl_total"))
+        if realized_total is not None:
+            metrics_lines.append(f"Realizowany PnL (brutto): {_format_money(realized_total)}")
+
         last_position = _as_float(metrics.get("last_position_value"))
         if last_position is not None:
             metrics_lines.append(f"Ostatnia wartość pozycji: {_format_money(last_position)}")
@@ -524,32 +578,36 @@ def _render_smoke_summary(*, summary: Mapping[str, object], summary_sha256: str)
                 if not isinstance(payload, Mapping):
                     continue
 
-                total_notional = _as_float(payload.get("total_notional")) or 0.0
-                orders = _as_int(payload.get("orders")) or 0
+                total_notional_sym = _as_float(payload.get("total_notional")) or 0.0
+                orders_sym = _as_int(payload.get("orders")) or 0
                 fees_value = _as_float(payload.get("fees"))
                 net_quantity = _as_float(payload.get("net_quantity"))
                 last_symbol_value = _as_float(payload.get("last_position_value"))
+                realized_symbol = _as_float(payload.get("realized_pnl"))
 
                 if not (
-                    orders
-                    or total_notional
+                    orders_sym
+                    or total_notional_sym
                     or (fees_value is not None and fees_value)
                     or (net_quantity is not None and abs(net_quantity) > 1e-9)
                     or (last_symbol_value is not None and last_symbol_value > 0)
+                    or (realized_symbol is not None and abs(realized_symbol) > 1e-9)
                 ):
                     continue
 
-                parts = [f"{symbol}: zlecenia {orders}"]
-                if total_notional:
-                    parts.append(f"wolumen {_format_money(total_notional)}")
+                parts = [f"{symbol}: zlecenia {orders_sym}"]
+                if total_notional_sym:
+                    parts.append(f"wolumen {_format_money(total_notional_sym)}")
                 if fees_value is not None:
                     parts.append(f"opłaty {_format_money(fees_value, decimals=4)}")
                 if net_quantity is not None and abs(net_quantity) > 1e-6:
                     parts.append(f"netto {net_quantity:+.4f}")
                 if last_symbol_value is not None and last_symbol_value > 0:
                     parts.append(f"wartość {_format_money(last_symbol_value)}")
+                if realized_symbol is not None and abs(realized_symbol) > 1e-6:
+                    parts.append(f"PnL {_format_money(realized_symbol)}")
 
-                symbol_lines.append((total_notional, ", ".join(parts)))
+                symbol_lines.append((total_notional_sym, ", ".join(parts)))
 
             if symbol_lines:
                 symbol_lines.sort(key=lambda item: item[0], reverse=True)
@@ -703,7 +761,6 @@ def _ensure_smoke_cache(
     """Sprawdza, czy lokalny cache zawiera dane potrzebne do smoke testu.
     Zwraca raport (manifest/cache) do osadzenia w summary.
     """
-
     manifest_report = _verify_manifest_coverage(
         pipeline=pipeline,
         symbols=symbols,
