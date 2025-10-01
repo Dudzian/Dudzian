@@ -51,13 +51,15 @@ class DailyTrendPipeline:
     data_source: CachedOHLCVSource
     execution_service: ExecutionService
     strategy: DailyTrendMomentumStrategy
+    strategy_name: str
+    controller_name: str
 
 
 def build_daily_trend_pipeline(
     *,
     environment_name: str,
-    strategy_name: str,
-    controller_name: str,
+    strategy_name: str | None,
+    controller_name: str | None,
     config_path: str | Path,
     secret_manager: SecretManager,
     adapter_factories: Mapping[str, ExchangeAdapterFactory] | None = None,
@@ -72,8 +74,22 @@ def build_daily_trend_pipeline(
     core_config = bootstrap_ctx.core_config
     environment = bootstrap_ctx.environment
 
-    strategy_cfg = _resolve_strategy(core_config, strategy_name)
-    runtime_cfg = _resolve_runtime(core_config, controller_name)
+    resolved_strategy_name = strategy_name or getattr(environment, "default_strategy", None)
+    if not resolved_strategy_name:
+        raise ValueError(
+            "Środowisko '{environment}' nie ma zdefiniowanej domyślnej strategii, a parametr strategy_name nie został podany."
+            .format(environment=environment_name)
+        )
+
+    resolved_controller_name = controller_name or getattr(environment, "default_controller", None)
+    if not resolved_controller_name:
+        raise ValueError(
+            "Środowisko '{environment}' nie ma zdefiniowanego domyślnego kontrolera runtime, a parametr controller_name nie został podany."
+            .format(environment=environment_name)
+        )
+
+    strategy_cfg = _resolve_strategy(core_config, resolved_strategy_name)
+    runtime_cfg = _resolve_runtime(core_config, resolved_controller_name)
     universe = _resolve_universe(core_config, environment)
 
     paper_settings = _normalize_paper_settings(environment)
@@ -138,7 +154,7 @@ def build_daily_trend_pipeline(
     controller = DailyTrendController(
         core_config=core_config,
         environment_name=environment_name,
-        controller_name=controller_name,
+        controller_name=resolved_controller_name,
         symbols=tuple(markets.keys()),
         backfill_service=backfill_service,
         data_source=cached_source,
@@ -157,6 +173,8 @@ def build_daily_trend_pipeline(
         data_source=cached_source,
         execution_service=execution_service,
         strategy=strategy,
+        strategy_name=resolved_strategy_name,
+        controller_name=resolved_controller_name,
     )
 
 
