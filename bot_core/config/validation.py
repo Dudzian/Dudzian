@@ -199,6 +199,7 @@ def _validate_environments(
             )
             continue
 
+        intervals_available: set[str] = set()
         if environment.instrument_universe:
             universe = config.instrument_universes[environment.instrument_universe]
             exchange = environment.exchange
@@ -248,6 +249,7 @@ def _validate_environments(
             )
 
         default_controller = getattr(environment, "default_controller", None)
+        default_controller_interval: str | None = None
         if controllers:
             if not default_controller:
                 errors.append(
@@ -257,6 +259,11 @@ def _validate_environments(
                 errors.append(
                     f"{context}: domyślny kontroler '{default_controller}' nie istnieje w sekcji runtime.controllers"
                 )
+            else:
+                controller_cfg = config.runtime_controllers[default_controller]
+                interval_text = controller_cfg.interval.strip()
+                if interval_text:
+                    default_controller_interval = interval_text.lower()
         elif default_controller:
             errors.append(
                 f"{context}: domyślny kontroler '{default_controller}' wskazany bez dostępnych kontrolerów runtime"
@@ -269,6 +276,21 @@ def _validate_environments(
             context,
             errors,
         )
+
+        # Twardy błąd, jeśli domyślny kontroler ma interwał niedostępny w backfillu uniwersum
+        if (
+            default_controller
+            and default_controller_interval
+            and environment.instrument_universe
+            and intervals_available
+            and default_controller_interval not in intervals_available
+        ):
+            controller_cfg = config.runtime_controllers[default_controller]
+            errors.append(
+                f"{context}: domyślny kontroler '{default_controller}' używa interwału '{controller_cfg.interval}'"
+                f" niedostępnego w oknach backfill uniwersum '{environment.instrument_universe}'"
+                f" dla giełdy '{environment.exchange}'"
+            )
 
 
 def _validate_permissions(
@@ -316,9 +338,7 @@ def _validate_alert_channels(
             continue
         mapping = registry[backend]
         if key not in mapping:
-            errors.append(
-                f"{context}: kanał alertowy '{channel}' nie istnieje w sekcji alerts"
-            )
+            errors.append(f"{context}: kanał alertowy '{channel}' nie istnieje w sekcji alerts")
 
 
 def _validate_instrument_universes(
@@ -343,15 +363,11 @@ def _validate_instrument_universes(
                 seen_instruments.add(instrument.name)
 
             if not instrument.base_asset or not instrument.quote_asset:
-                errors.append(
-                    f"{inst_context}: base_asset i quote_asset muszą być ustawione"
-                )
+                errors.append(f"{inst_context}: base_asset i quote_asset muszą być ustawione")
 
             if not instrument.categories:
                 errors.append(f"{inst_context}: lista kategorii nie może być pusta")
-            elif len(set(cat.lower() for cat in instrument.categories)) != len(
-                instrument.categories
-            ):
+            elif len(set(cat.lower() for cat in instrument.categories)) != len(instrument.categories):
                 warnings.append(f"{inst_context}: wykryto zduplikowane kategorie")
 
             if not instrument.exchange_symbols:
@@ -379,9 +395,7 @@ def _validate_instrument_universes(
             for window in instrument.backfill_windows:
                 interval = window.interval.strip()
                 if not interval:
-                    errors.append(
-                        f"{inst_context}: interwał w sekcji backfill nie może być pusty"
-                    )
+                    errors.append(f"{inst_context}: interwał w sekcji backfill nie może być pusty")
                     continue
                 try:
                     _interval_seconds(interval)
@@ -394,8 +408,6 @@ def _validate_instrument_universes(
                     )
                 interval_key = interval.lower()
                 if interval_key in intervals_seen:
-                    warnings.append(
-                        f"{inst_context}: interwał '{window.interval}' zdefiniowano wielokrotnie"
-                    )
+                    warnings.append(f"{inst_context}: interwał '{window.interval}' zdefiniowano wielokrotnie")
                 else:
                     intervals_seen.add(interval_key)

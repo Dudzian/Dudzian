@@ -26,6 +26,7 @@ from bot_core.exchanges.base import (
     OrderResult,
 )
 from bot_core.reporting.upload import SmokeArchiveUploader
+from bot_core.data.ohlcv import evaluate_coverage
 from bot_core.runtime.pipeline import build_daily_trend_pipeline, create_trading_controller
 from bot_core.runtime.realtime import DailyTrendRealtimeRunner
 from bot_core.security import SecretManager, SecretStorageError, create_default_secret_storage
@@ -297,6 +298,7 @@ def _export_smoke_report(
     environment: str,
     alert_snapshot: Mapping[str, Mapping[str, str]],
     risk_state: Mapping[str, object] | None = None,
+    data_checks: Mapping[str, object] | None = None,
 ) -> Path:
     report_dir.mkdir(parents=True, exist_ok=True)
     ledger_entries = list(ledger)
@@ -327,6 +329,8 @@ def _export_smoke_report(
 
     if risk_state:
         summary["risk_state"] = dict(risk_state)
+    if data_checks:
+        summary["data_checks"] = json.loads(json.dumps(data_checks))
 
     summary_path = report_dir / "summary.json"
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -494,6 +498,55 @@ def _render_smoke_summary(*, summary: Mapping[str, object], summary_sha256: str)
             if limit_parts:
                 risk_lines.append("Limity: " + ", ".join(limit_parts))
 
+    # Dodatkowe linie o danych (manifest/cache), jeśli dołączono do summary
+    data_lines: list[str] = []
+    data_checks = summary.get("data_checks")
+    if isinstance(data_checks, Mapping):
+        manifest_info = data_checks.get("manifest")
+        if isinstance(manifest_info, Mapping):
+            entries = manifest_info.get("entries") or []
+            if isinstance(entries, list):
+                total_entries = len(entries)
+                issues_count = 0
+                for entry in entries:
+                    issues = entry.get("issues")
+                    if isinstance(issues, list) and any(issues):
+                        issues_count += 1
+                status_text = str(manifest_info.get("status", "n/a")).upper()
+                if total_entries:
+                    data_lines.append(
+                        f"Manifest OHLCV: {status_text} ({total_entries} wpisów, problemy: {issues_count})"
+                    )
+                else:
+                    data_lines.append(f"Manifest OHLCV: {status_text} (brak wpisów)")
+        cache_info = data_checks.get("cache")
+        if isinstance(cache_info, Mapping) and cache_info:
+            fragments: list[str] = []
+            for symbol, payload in sorted(cache_info.items()):
+                fragment = str(symbol)
+                coverage = payload.get("coverage_bars")
+                required = payload.get("required_bars")
+                row_count = payload.get("row_count")
+                try:
+                    coverage_int = int(coverage) if coverage is not None else None
+                except (TypeError, ValueError):
+                    coverage_int = None
+                try:
+                    required_int = int(required) if required is not None else None
+                except (TypeError, ValueError):
+                    required_int = None
+                try:
+                    row_count_int = int(row_count) if row_count is not None else None
+                except (TypeError, ValueError):
+                    row_count_int = None
+                if coverage_int is not None and required_int is not None:
+                    fragment += f": pokrycie {coverage_int}/{required_int}"
+                if row_count_int is not None:
+                    fragment += f", wiersze {row_count_int}"
+                fragments.append(fragment)
+            if fragments:
+                data_lines.append("Cache offline: " + "; ".join(fragments))
+
     lines = [
         f"Środowisko: {environment}",
         f"Zakres dat: {start} → {end}",
@@ -504,6 +557,8 @@ def _render_smoke_summary(*, summary: Mapping[str, object], summary_sha256: str)
         lines.extend(metrics_lines)
     if risk_lines:
         lines.extend(risk_lines)
+    if data_lines:
+        lines.extend(data_lines)
     lines.append("Alerty: " + "; ".join(alert_lines))
     lines.append(f"SHA-256 summary.json: {summary_sha256}")
     return "\n".join(lines)
@@ -518,99 +573,278 @@ def _ensure_smoke_cache(
     end_ms: int,
     required_bars: int,
     tick_ms: int,
-) -> None:
-    """Sprawdza, czy lokalny cache zawiera dane potrzebne do smoke testu."""
+) -> Mapping[str, object] | None:
+    """Sprawdza, czy lokalny cache zawiera dane potrzebne do smoke testu.
+    Zwraca raport (manifest/cache) do osadzenia w summary.
+    """
+
+    manifest_report = _verify_manifest_coverage(
+        pipeline=pipeline,
+        symbols=symbols,
+        interval=interval,
+        end_ms=end_ms,
+        required_bars=required_bars,
+    )
+
     data_source = getattr(pipeline, "data_source", None)
     storage = getattr(data_source, "storage", None)
     if storage is None:
         _LOGGER.warning(
             "Nie mogę zweryfikować cache – pipeline nie udostępnia storage'u. Pomijam kontrolę.",
         )
-        return
+        cache_reports: dict[str, dict[str, object]] = {}
+    else:
+        try:
+            metadata: MutableMapping[str, str] = storage.metadata()
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.warning("Nie udało się odczytać metadanych cache: %s", exc)
+            metadata = {}
+
+        issues: list[tuple[str, str]] = []
+        cache_reports = {}
+
+        for symbol in symbols:
+            key = f"{symbol}::{interval}"
+            row_count: int | None = None
+            last_timestamp: int | None = None
+
+            if metadata:
+                raw_rows = metadata.get(f"row_count::{symbol}::{interval}")
+                if raw_rows is not None:
+                    try:
+                        row_count = int(raw_rows)
+                    except (TypeError, ValueError):
+                        _LOGGER.warning(
+                            "Nieprawidłowa wartość row_count dla %s (%s): %s",
+                            symbol,
+                            interval,
+                            raw_rows,
+                        )
+                raw_last = metadata.get(f"last_timestamp::{symbol}::{interval}")
+                if raw_last is not None:
+                    try:
+                        last_timestamp = int(float(raw_last))
+                    except (TypeError, ValueError):
+                        _LOGGER.warning(
+                            "Nieprawidłowa wartość last_timestamp dla %s (%s): %s",
+                            symbol,
+                            interval,
+                            raw_last,
+                        )
+
+            try:
+                payload = storage.read(key)
+            except KeyError:
+                issues.append((symbol, "brak wpisu w cache"))
+                continue
+
+            rows = list(payload.get("rows", []))
+            if not rows:
+                issues.append((symbol, "puste dane w cache"))
+                continue
+
+            if row_count is None:
+                row_count = len(rows)
+            if last_timestamp is None:
+                last_timestamp = int(float(rows[-1][0]))
+
+            first_timestamp = int(float(rows[0][0]))
+
+            if row_count < required_bars:
+                issues.append((symbol, f"za mało świec ({row_count} < {required_bars})"))
+                continue
+
+            if last_timestamp < end_ms:
+                issues.append((symbol, f"ostatnia świeca {last_timestamp} < wymaganego końca {end_ms}"))
+                continue
+
+            if first_timestamp > start_ms:
+                issues.append((symbol, f"pierwsza świeca {first_timestamp} > wymaganego startu {start_ms}"))
+            else:
+                coverage = ((last_timestamp - first_timestamp) // max(1, tick_ms)) + 1
+                if coverage < required_bars:
+                    issues.append((symbol, f"pokrycie obejmuje {coverage} świec (wymagane {required_bars})"))
+                    continue
+
+                cache_reports[str(symbol)] = {
+                    "row_count": int(row_count),
+                    "first_timestamp_ms": first_timestamp,
+                    "last_timestamp_ms": last_timestamp,
+                    "coverage_bars": int(coverage),
+                    "required_bars": int(required_bars),
+                }
+
+        if issues:
+            for symbol, reason in issues:
+                _LOGGER.error(
+                    "Cache offline dla symbolu %s (%s) nie spełnia wymagań smoke testu: %s",
+                    symbol,
+                    interval,
+                    reason,
+                )
+            raise RuntimeError(
+                "Cache offline nie obejmuje wymaganego zakresu danych. Uruchom scripts/seed_paper_cache.py, "
+                "aby zbudować deterministyczny seed przed smoke testem.",
+            )
+
+    result: dict[str, object] = {
+        "interval": interval,
+        "symbols": [str(symbol) for symbol in symbols],
+        "required_bars": int(required_bars),
+        "tick_ms": int(max(1, tick_ms)),
+        "window_ms": {"start": int(start_ms), "end": int(end_ms)},
+    }
+    if manifest_report:
+        result["manifest"] = manifest_report
+    if cache_reports:
+        result["cache"] = cache_reports
+    return result
+
+
+def _verify_manifest_coverage(
+    *,
+    pipeline: Any,
+    symbols: Sequence[str],
+    interval: str,
+    end_ms: int,
+    required_bars: int,
+) -> Mapping[str, object] | None:
+    """Waliduje metadane manifestu przed uruchomieniem smoke testu."""
+    bootstrap = getattr(pipeline, "bootstrap", None)
+    if bootstrap is None:
+        return None
+
+    environment_cfg = getattr(bootstrap, "environment", None)
+    core_config = getattr(bootstrap, "core_config", None)
+    if environment_cfg is None or core_config is None:
+        return None
+
+    if not hasattr(core_config, "instrument_universes"):
+        return None
+
+    universe_name = getattr(environment_cfg, "instrument_universe", None)
+    cache_root = getattr(environment_cfg, "data_cache_path", None)
+    exchange_name = getattr(environment_cfg, "exchange", None)
+    if not universe_name or not cache_root or not exchange_name:
+        return None
+
+    manifest_path = Path(cache_root) / "ohlcv_manifest.sqlite"
+    if not manifest_path.exists():
+        _LOGGER.warning(
+            "Manifest %s nie istnieje – pomijam kontrolę metadanych i sprawdzam wyłącznie surowe pliki.",
+            manifest_path,
+        )
+        return None
 
     try:
-        metadata: MutableMapping[str, str] = storage.metadata()
+        universe = core_config.instrument_universes[universe_name]
     except Exception as exc:  # noqa: BLE001
-        _LOGGER.warning("Nie udało się odczytać metadanych cache: %s", exc)
-        metadata = {}
+        _LOGGER.warning(
+            "Nie udało się pobrać uniwersum instrumentów '%s' z konfiguracji: %s – pomijam kontrolę manifestu.",
+            universe_name,
+            exc,
+        )
+        return None
 
-    issues: list[tuple[str, str]] = []
+    as_of = datetime.fromtimestamp(end_ms / 1000, tz=timezone.utc)
+    try:
+        statuses = evaluate_coverage(
+            manifest_path=manifest_path,
+            universe=universe,
+            exchange_name=exchange_name,
+            as_of=as_of,
+        )
+    except Exception as exc:  # noqa: BLE001
+        _LOGGER.warning("Nie udało się ocenić pokrycia manifestu: %s", exc)
+        return None
 
-    for symbol in symbols:
-        key = f"{symbol}::{interval}"
-        row_count: int | None = None
-        last_timestamp: int | None = None
+    tracked_symbols = {str(symbol).lower() for symbol in symbols}
+    interval_key = interval.lower()
+    relevant = [
+        status
+        for status in statuses
+        if status.symbol.lower() in tracked_symbols and status.interval.lower() == interval_key
+    ]
 
-        if metadata:
-            raw_rows = metadata.get(f"row_count::{symbol}::{interval}")
-            if raw_rows is not None:
-                try:
-                    row_count = int(raw_rows)
-                except (TypeError, ValueError):
-                    _LOGGER.warning(
-                        "Nieprawidłowa wartość row_count dla %s (%s): %s",
-                        symbol,
-                        interval,
-                        raw_rows,
-                    )
-            raw_last = metadata.get(f"last_timestamp::{symbol}::{interval}")
-            if raw_last is not None:
-                try:
-                    last_timestamp = int(float(raw_last))
-                except (TypeError, ValueError):
-                    _LOGGER.warning(
-                        "Nieprawidłowa wartość last_timestamp dla %s (%s): %s",
-                        symbol,
-                        interval,
-                        raw_last,
-                    )
+    issues: list[str] = []
+    if not relevant:
+        issues.append(
+            "Manifest nie zawiera wpisów dla wymaganych symboli/interwałów – uruchom ponownie scripts/seed_paper_cache.py."
+        )
+    else:
+        for status in relevant:
+            entry = status.manifest_entry
+            if status.issues:
+                issues.extend(
+                    _render_manifest_issue(status.symbol, interval, issue)
+                    for issue in status.issues
+                )
 
-        try:
-            payload = storage.read(key)
-        except KeyError:
-            issues.append((symbol, "brak wpisu w cache"))
-            continue
+            row_count = entry.row_count
+            if row_count is None:
+                issues.append(
+                    f"{status.symbol}/{interval}: manifest nie zawiera licznika świec (row_count)"
+                )
+            elif row_count < required_bars:
+                issues.append(
+                    f"{status.symbol}/{interval}: manifest raportuje jedynie {row_count} świec (< {required_bars})"
+                )
 
-        rows = list(payload.get("rows", []))
-        if not rows:
-            issues.append((symbol, "puste dane w cache"))
-            continue
-
-        if row_count is None:
-            row_count = len(rows)
-        if last_timestamp is None:
-            last_timestamp = int(float(rows[-1][0]))
-
-        first_timestamp = int(float(rows[0][0]))
-
-        if row_count < required_bars:
-            issues.append((symbol, f"za mało świec ({row_count} < {required_bars})"))
-            continue
-
-        if last_timestamp < end_ms:
-            issues.append((symbol, f"ostatnia świeca {last_timestamp} < wymaganego końca {end_ms}"))
-            continue
-
-        if first_timestamp > start_ms:
-            issues.append((symbol, f"pierwsza świeca {first_timestamp} > wymaganego startu {start_ms}"))
-            continue
-
-        coverage = ((last_timestamp - first_timestamp) // max(1, tick_ms)) + 1
-        if coverage < required_bars:
-            issues.append((symbol, f"pokrycie obejmuje {coverage} świec (wymagane {required_bars})"))
+            last_ts = entry.last_timestamp_ms
+            if last_ts is None:
+                issues.append(
+                    f"{status.symbol}/{interval}: manifest nie zawiera ostatniego stempla czasowego"
+                )
+            elif last_ts < end_ms:
+                issues.append(
+                    f"{status.symbol}/{interval}: ostatnia świeca w manifescie ({last_ts}) < wymaganego końca ({end_ms})"
+                )
 
     if issues:
-        for symbol, reason in issues:
-            _LOGGER.error(
-                "Cache offline dla symbolu %s (%s) nie spełnia wymagań smoke testu: %s",
-                symbol,
-                interval,
-                reason,
-            )
+        for detail in issues:
+            _LOGGER.error("Manifest OHLCV: %s", detail)
         raise RuntimeError(
-            "Cache offline nie obejmuje wymaganego zakresu danych. Uruchom scripts/seed_paper_cache.py, "
-            "aby zbudować deterministyczny seed przed smoke testem.",
+            "Manifest danych OHLCV jest niekompletny dla smoke testu. Uruchom scripts/seed_paper_cache.py lub pełny backfill, "
+            "aby zaktualizować manifest."
         )
+
+    entries_payload: list[dict[str, object]] = []
+    for status in relevant:
+        entry = status.manifest_entry
+        entries_payload.append(
+            {
+                "symbol": status.symbol,
+                "interval": status.interval,
+                "status": status.status,
+                "issues": list(status.issues),
+                "row_count": entry.row_count,
+                "required_rows": status.required_rows,
+                "gap_minutes": entry.gap_minutes,
+                "last_timestamp_ms": entry.last_timestamp_ms,
+                "last_timestamp_iso": entry.last_timestamp_iso,
+            }
+        )
+
+    return {
+        "status": "ok",
+        "as_of": as_of.isoformat(),
+        "interval": interval,
+        "required_rows": int(required_bars),
+        "symbols": sorted(str(symbol) for symbol in symbols),
+        "entries": entries_payload,
+    }
+
+
+def _render_manifest_issue(symbol: str, interval: str, issue: str) -> str:
+    if issue.startswith("manifest_status:"):
+        status = issue.split(":", 1)[1]
+        return f"{symbol}/{interval}: status manifestu = {status}"
+    if issue == "missing_row_count":
+        return f"{symbol}/{interval}: manifest nie zawiera informacji o liczbie świec"
+    if issue.startswith("insufficient_rows:"):
+        payload = issue.split(":", 1)[1]
+        return f"{symbol}/{interval}: manifest raportuje zbyt mało świec ({payload})"
+    return f"{symbol}/{interval}: {issue}"
 
 
 class _OfflineExchangeAdapter(ExchangeAdapter):
@@ -729,7 +963,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         _LOGGER.exception("Nie udało się zbudować pipeline'u daily trend: %s", exc)
         return 1
 
-    # Bezpieczne logowanie (fake pipeline w testach nie ma tych pól)
+    # Bezpieczne logowanie (fake pipeline w testach może nie mieć pól)
     strategy_name = getattr(pipeline, "strategy_name", args.strategy)
     controller_name = getattr(pipeline, "controller_name", args.controller)
     _LOGGER.info(
@@ -778,8 +1012,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             history_bars,
             max(1, int((end_ms - sync_start) / tick_ms) + 1),
         )
+        data_checks: Mapping[str, object] | None = None
         try:
-            _ensure_smoke_cache(
+            data_checks = _ensure_smoke_cache(
                 pipeline=pipeline,
                 symbols=pipeline.controller.symbols,
                 interval=pipeline.controller.interval,
@@ -821,11 +1056,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         report_dir = Path(tempfile.mkdtemp(prefix="daily_trend_smoke_"))
         alert_snapshot = pipeline.bootstrap.alert_router.health_snapshot()
 
-        # Pobranie opcjonalnego snapshotu ryzyka
+        # Snapshot stanu ryzyka (opcjonalnie)
         risk_snapshot: Mapping[str, object] | None = None
         try:
             risk_engine = getattr(pipeline.bootstrap, "risk_engine", None)
-            if risk_engine is not None:
+            if risk_engine is not None and hasattr(risk_engine, "snapshot_state"):
                 risk_snapshot = risk_engine.snapshot_state(
                     pipeline.bootstrap.environment.risk_profile
                 )
@@ -842,7 +1077,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             reporting_source = getattr(reporting_source, "reporting", None)
         upload_cfg = SmokeArchiveUploader.resolve_config(reporting_source)
 
-        # Kompatybilność z testami monkeypatchującymi _export_smoke_report
+        # Wywołanie kompatybilne z testami monkeypatchującymi _export_smoke_report
         try:
             summary_path = _export_smoke_report(
                 report_dir=report_dir,
@@ -852,16 +1087,28 @@ def main(argv: Sequence[str] | None = None) -> int:
                 environment=args.environment,
                 alert_snapshot=alert_snapshot,
                 risk_state=risk_snapshot,
+                data_checks=data_checks,
             )
         except TypeError:
-            summary_path = _export_smoke_report(
-                report_dir=report_dir,
-                results=results,
-                ledger=pipeline.execution_service.ledger(),
-                window=window_meta,
-                environment=args.environment,
-                alert_snapshot=alert_snapshot,
-            )
+            try:
+                summary_path = _export_smoke_report(
+                    report_dir=report_dir,
+                    results=results,
+                    ledger=pipeline.execution_service.ledger(),
+                    window=window_meta,
+                    environment=args.environment,
+                    alert_snapshot=alert_snapshot,
+                    risk_state=risk_snapshot,
+                )
+            except TypeError:
+                summary_path = _export_smoke_report(
+                    report_dir=report_dir,
+                    results=results,
+                    ledger=pipeline.execution_service.ledger(),
+                    window=window_meta,
+                    environment=args.environment,
+                    alert_snapshot=alert_snapshot,
+                )
 
         summary_hash = _hash_file(summary_path)
         try:
