@@ -50,6 +50,7 @@ def _interval_seconds(interval: str) -> int:
 
     return value * seconds_per_unit
 
+
 from bot_core.config.models import CoreConfig
 
 
@@ -62,7 +63,6 @@ class ConfigValidationResult:
 
     def is_valid(self) -> bool:
         """Zwraca True, jeśli nie znaleziono błędów."""
-
         return not self.errors
 
 
@@ -313,15 +313,11 @@ def _validate_instrument_universes(
                 )
 
             if not instrument.categories:
-                errors.append(
-                    f"{inst_context}: lista kategorii nie może być pusta"
-                )
+                errors.append(f"{inst_context}: lista kategorii nie może być pusta")
             elif len(set(cat.lower() for cat in instrument.categories)) != len(
                 instrument.categories
             ):
-                warnings.append(
-                    f"{inst_context}: wykryto zduplikowane kategorie"
-                )
+                warnings.append(f"{inst_context}: wykryto zduplikowane kategorie")
 
             if not instrument.exchange_symbols:
                 errors.append(
@@ -368,4 +364,3 @@ def _validate_instrument_universes(
                     )
                 else:
                     intervals_seen.add(interval_key)
-
