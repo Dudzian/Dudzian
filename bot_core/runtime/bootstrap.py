@@ -93,6 +93,7 @@ class BootstrapContext:
     audit_log: AlertAuditLog
     adapter_settings: Mapping[str, Any]
     decision_journal: TradingDecisionJournal | None
+    risk_profile_name: str
 
 
 def bootstrap_environment(
@@ -101,6 +102,7 @@ def bootstrap_environment(
     config_path: str | Path,
     secret_manager: SecretManager,
     adapter_factories: Mapping[str, ExchangeAdapterFactory] | None = None,
+    risk_profile_name: str | None = None,
 ) -> BootstrapContext:
     """Tworzy kompletny kontekst uruchomieniowy dla wskazanego środowiska."""
     core_config = load_core_config(config_path)
@@ -111,13 +113,19 @@ def bootstrap_environment(
         raise KeyError(f"Środowisko '{environment_name}' nie istnieje w konfiguracji")
 
     environment = core_config.environments[environment_name]
-    risk_profile_config = _resolve_risk_profile(core_config.risk_profiles, environment.risk_profile)
+    selected_profile = risk_profile_name or environment.risk_profile
+    risk_profile_config = _resolve_risk_profile(core_config.risk_profiles, selected_profile)
 
     risk_repository_path = Path(environment.data_cache_path) / "risk_state"
     risk_repository = FileRiskRepository(risk_repository_path)
     risk_engine = ThresholdRiskEngine(repository=risk_repository)
     profile = _build_risk_profile(risk_profile_config)
     risk_engine.register_profile(profile)
+    # Aktualizujemy konfigurację środowiska, aby dalsze komponenty znały aktywny profil.
+    try:
+        environment.risk_profile = selected_profile
+    except Exception:  # pragma: no cover - defensywnie w razie zmian modelu
+        _LOGGER.debug("Nie można nadpisać risk_profile w konfiguracji środowiska", exc_info=True)
 
     credentials = secret_manager.load_exchange_credentials(
         environment.keychain_key,
@@ -159,6 +167,7 @@ def bootstrap_environment(
         audit_log=audit_log,
         adapter_settings=environment.adapter_settings,
         decision_journal=decision_journal,
+        risk_profile_name=selected_profile,
     )
 
 

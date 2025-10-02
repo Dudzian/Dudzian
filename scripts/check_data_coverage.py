@@ -88,7 +88,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if not environment.instrument_universe:
         print(
-            f"Środowisko {environment.name} nie ma przypisanego instrument_universe", file=sys.stderr
+            f"Środowisko {environment.name} nie ma przypisanego instrument_universe",
+            file=sys.stderr,
         )
         return 2
 
@@ -119,7 +120,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             if symbol:
                 alias_map[instrument.name.upper()] = symbol
 
-        available_symbols: dict[str, str] = {status.symbol.upper(): status.symbol for status in statuses}
+        available_symbols: dict[str, str] = {s.symbol.upper(): s.symbol for s in statuses}
 
         resolved: set[str] = set()
         unknown: list[str] = []
@@ -168,9 +169,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Ocena na: {payload['as_of']}")
         for entry in payload["entries"]:
             print(
-                " - {symbol} {interval}: status={status} row_count={row_count} required={required_rows} gap={gap_minutes}".format(
-                    **entry
-                )
+                " - {symbol} {interval}: status={status} row_count={row_count} "
+                "required={required_rows} gap={gap_minutes}".format(**entry)
             )
         if issues:
             print("Problemy:")

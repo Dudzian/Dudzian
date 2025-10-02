@@ -177,7 +177,16 @@ def pipeline_fixture(tmp_path: Path) -> tuple[Path, FakeExchangeAdapter, SecretM
                 "stop_loss_atr_multiple": 1.5,
                 "max_open_positions": 5,
                 "hard_drawdown_pct": 0.1,
-            }
+            },
+            "aggressive": {
+                "max_daily_loss_pct": 0.05,
+                "max_position_pct": 0.2,
+                "target_volatility": 0.35,
+                "max_leverage": 5.0,
+                "stop_loss_atr_multiple": 2.5,
+                "max_open_positions": 12,
+                "hard_drawdown_pct": 0.25,
+            },
         },
         "runtime": {
             "controllers": {"daily_trend_core": {"tick_seconds": 86400, "interval": "1d"}}
@@ -269,6 +278,7 @@ def test_build_daily_trend_pipeline(pipeline_fixture: tuple[Path, FakeExchangeAd
     assert snapshot.available_margin == pytest.approx(10_000.0)
     assert isinstance(pipeline.execution_service, PaperTradingExecutionService)
     assert isinstance(pipeline.strategy, DailyTrendMomentumStrategy)
+    assert pipeline.risk_profile_name == "balanced"
 
     balances = pipeline.execution_service.balances()
     assert balances["USDT"] == 10_000.0
@@ -297,6 +307,27 @@ def test_build_daily_trend_pipeline_uses_environment_defaults(
 
     assert pipeline.strategy_name == "core_daily_trend"
     assert pipeline.controller_name == "daily_trend_core"
+    assert pipeline.risk_profile_name == "balanced"
+
+
+def test_build_daily_trend_pipeline_allows_risk_profile_override(
+    pipeline_fixture: tuple[Path, FakeExchangeAdapter, SecretManager]
+) -> None:
+    config_path, adapter, manager = pipeline_fixture
+
+    pipeline = build_daily_trend_pipeline(
+        environment_name="fake_paper",
+        strategy_name="core_daily_trend",
+        controller_name="daily_trend_core",
+        config_path=config_path,
+        secret_manager=manager,
+        adapter_factories={"fake_exchange": lambda credentials, **_: adapter},
+        risk_profile_name="aggressive",
+    )
+
+    assert pipeline.risk_profile_name == "aggressive"
+    # powinno istnieć API risk_engine.should_liquidate; upewniamy się, że nie wymusza likwidacji
+    assert pipeline.bootstrap.risk_engine.should_liquidate(profile_name="aggressive") is False
 
 
 def test_create_trading_controller_executes_signal(

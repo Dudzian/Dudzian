@@ -53,6 +53,7 @@ class DailyTrendPipeline:
     strategy: DailyTrendMomentumStrategy
     strategy_name: str
     controller_name: str
+    risk_profile_name: str
 
 
 def build_daily_trend_pipeline(
@@ -63,6 +64,7 @@ def build_daily_trend_pipeline(
     config_path: str | Path,
     secret_manager: SecretManager,
     adapter_factories: Mapping[str, ExchangeAdapterFactory] | None = None,
+    risk_profile_name: str | None = None,
 ) -> DailyTrendPipeline:
     """Tworzy kompletny pipeline strategii trend-following D1 dla środowiska paper/testnet."""
     bootstrap_ctx = bootstrap_environment(
@@ -70,9 +72,11 @@ def build_daily_trend_pipeline(
         config_path=config_path,
         secret_manager=secret_manager,
         adapter_factories=adapter_factories,
+        risk_profile_name=risk_profile_name,
     )
     core_config = bootstrap_ctx.core_config
     environment = bootstrap_ctx.environment
+    effective_risk_profile = bootstrap_ctx.risk_profile_name
 
     resolved_strategy_name = strategy_name or getattr(environment, "default_strategy", None)
     if not resolved_strategy_name:
@@ -137,7 +141,7 @@ def build_daily_trend_pipeline(
 
     execution_context = ExecutionContext(
         portfolio_id=paper_settings["portfolio_id"],
-        risk_profile=environment.risk_profile,
+        risk_profile=effective_risk_profile,
         environment=environment.environment.value,
         metadata=execution_metadata,
     )
@@ -175,6 +179,7 @@ def build_daily_trend_pipeline(
         strategy=strategy,
         strategy_name=resolved_strategy_name,
         controller_name=resolved_controller_name,
+        risk_profile_name=effective_risk_profile,
     )
 
 
@@ -203,7 +208,7 @@ def create_trading_controller(
         account_snapshot_provider=controller.account_loader,
         portfolio_id=execution_context.portfolio_id,
         environment=environment_cfg.environment.value,
-        risk_profile=environment_cfg.risk_profile,
+        risk_profile=pipeline.risk_profile_name,
         order_metadata_defaults=defaults,
         health_check_interval=health_check_interval,
         execution_metadata=execution_context.metadata,

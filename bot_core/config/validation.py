@@ -170,6 +170,7 @@ def _validate_runtime_controllers(
             errors.append(f"{context}: {exc}")
             continue
 
+        # tolerancja 10% lub min. 1 sekunda
         delta = abs(controller.tick_seconds - expected_seconds)
         tolerance = max(1.0, expected_seconds * 0.1)
         if delta > tolerance:
@@ -225,9 +226,7 @@ def _validate_environments(
                         for controller in config.runtime_controllers.values()
                         if controller.interval.strip()
                     }
-                    if controller_intervals and not (
-                        intervals_available & controller_intervals
-                    ):
+                    if controller_intervals and not (intervals_available & controller_intervals):
                         warnings.append(
                             f"{context}: brak wspólnego interwału między oknami backfill ({', '.join(sorted(intervals_available)) or 'brak'}) a kontrolerami runtime ({', '.join(sorted(controller_intervals))})"
                         )

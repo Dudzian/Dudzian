@@ -35,6 +35,9 @@ from bot_core.security import SecretManager, SecretStorageError, create_default_
 _LOGGER = logging.getLogger(__name__)
 
 
+# --------------------------------------------------------------------------------------
+# Argumenty CLI
+# --------------------------------------------------------------------------------------
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Uruchamia strategię trend-following D1 w trybie paper/testnet."
@@ -54,6 +57,11 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         "--controller",
         default=None,
         help="Nazwa kontrolera runtime (domyślnie pobierana z konfiguracji środowiska)",
+    )
+    parser.add_argument(
+        "--risk-profile",
+        default=None,
+        help="Nazwa profilu ryzyka z sekcji risk_profiles (domyślnie używany profil przypisany do środowiska)",
     )
     parser.add_argument(
         "--history-bars",
@@ -110,6 +118,20 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         help="Po zakończeniu smoke testu spakuj raport do archiwum ZIP z instrukcją audytu",
     )
     parser.add_argument(
+        "--smoke-output",
+        default=None,
+        help="Opcjonalny katalog bazowy na raporty smoke testu; w środku powstanie podkatalog daily_trend_smoke_*.",
+    )
+    parser.add_argument(
+        "--smoke-min-free-mb",
+        type=float,
+        default=None,
+        help=(
+            "Minimalna ilość wolnego miejsca (w MB) wymagana w katalogu raportu smoke; "
+            "przy niższej wartości zgłosimy ostrzeżenie i oznaczymy raport."
+        ),
+    )
+    parser.add_argument(
         "--date-window",
         default=None,
         help="Zakres dat w formacie START:END (np. 2024-01-01:2024-02-15) dla trybu --paper-smoke",
@@ -127,6 +149,9 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+# --------------------------------------------------------------------------------------
+# Pomocnicze I/O, formaty i konwersje
+# --------------------------------------------------------------------------------------
 def _create_secret_manager(args: argparse.Namespace) -> SecretManager:
     storage = create_default_secret_storage(
         namespace=args.secret_namespace,
@@ -227,10 +252,7 @@ def _format_percentage(value: float | None, *, decimals: int = 2) -> str:
     return f"{value * 100:.{decimals}f}%"
 
 
-def _normalize_position_entry(
-    symbol: str,
-    payload: Mapping[str, object],
-) -> tuple[float, str] | None:
+def _normalize_position_entry(symbol: str, payload: Mapping[str, object]) -> tuple[float, str] | None:
     """Buduje opis pojedynczej pozycji do raportu tekstowego."""
     notional = _as_float(payload.get("notional"))
     if notional is None or notional <= 0:
@@ -240,6 +262,9 @@ def _normalize_position_entry(
     return notional, description
 
 
+# --------------------------------------------------------------------------------------
+# Metryki ledger / PnL FIFO long/short
+# --------------------------------------------------------------------------------------
 def _compute_ledger_metrics(ledger_entries: Sequence[Mapping[str, object]]) -> Mapping[str, object]:
     counts: MutableMapping[str, int] = {"buy": 0, "sell": 0}
     other_counts: MutableMapping[str, int] = {}
@@ -335,7 +360,6 @@ def _compute_ledger_metrics(ledger_entries: Sequence[Mapping[str, object]]) -> M
                     "realized_pnl": 0.0,
                 },
             )
-
             long_lots: deque[tuple[float, float]] = tracker["long_lots"]  # type: ignore[assignment]
             short_lots: deque[tuple[float, float]] = tracker["short_lots"]  # type: ignore[assignment]
             realized_symbol: float = tracker["realized_pnl"]  # type: ignore[assignment]
@@ -404,15 +428,15 @@ def _compute_ledger_metrics(ledger_entries: Sequence[Mapping[str, object]]) -> M
         metrics["last_position_value"] = last_position_value
     if per_symbol:
         metrics["per_symbol"] = {
-            symbol: {
-                key: (float(value) if isinstance(value, float) else value)
-                for key, value in stats.items()
-            }
+            symbol: {k: (float(v) if isinstance(v, float) else v) for k, v in stats.items()}
             for symbol, stats in per_symbol.items()
         }
     return metrics
 
 
+# --------------------------------------------------------------------------------------
+# Raport smoke
+# --------------------------------------------------------------------------------------
 def _export_smoke_report(
     *,
     report_dir: Path,
@@ -423,6 +447,7 @@ def _export_smoke_report(
     alert_snapshot: Mapping[str, Mapping[str, str]],
     risk_state: Mapping[str, object] | None = None,
     data_checks: Mapping[str, object] | None = None,
+    storage_info: Mapping[str, object] | None = None,
 ) -> Path:
     report_dir.mkdir(parents=True, exist_ok=True)
     ledger_entries = list(ledger)
@@ -450,11 +475,12 @@ def _export_smoke_report(
         "metrics": metrics,
         "alert_snapshot": {channel: dict(data) for channel, data in alert_snapshot.items()},
     }
-
     if risk_state:
         summary["risk_state"] = dict(risk_state)
     if data_checks:
         summary["data_checks"] = json.loads(json.dumps(data_checks))
+    if storage_info:
+        summary["storage"] = json.loads(json.dumps(storage_info))
 
     summary_path = report_dir / "summary.json"
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -467,8 +493,7 @@ def _write_smoke_readme(report_dir: Path) -> Path:
         "Daily Trend – smoke test paper trading\n"
         "======================================\n\n"
         "Ten katalog zawiera artefakty pojedynczego uruchomienia trybu --paper-smoke.\n"
-        "Na potrzeby audytu:"
-        "\n\n"
+        "Na potrzeby audytu:\n\n"
         "1. Zweryfikuj hash SHA-256 pliku summary.json zapisany w logu CLI oraz w alertach.\n"
         "2. Przepisz treść summary.txt do dziennika audytowego (docs/audit/paper_trading_log.md).\n"
         "3. Zabezpiecz ledger.jsonl (pełna historia decyzji) w repozytorium operacyjnym.\n"
@@ -481,6 +506,63 @@ def _write_smoke_readme(report_dir: Path) -> Path:
 def _archive_smoke_report(report_dir: Path) -> Path:
     archive_path_str = shutil.make_archive(str(report_dir), "zip", root_dir=report_dir)
     return Path(archive_path_str)
+
+
+_MEGABYTE = 1024 * 1024
+
+
+def _collect_storage_health(directory: Path, *, min_free_mb: float | None) -> Mapping[str, object]:
+    """Zwraca informacje o stanie przestrzeni dyskowej dla raportu smoke."""
+    info: dict[str, object] = {"directory": str(directory)}
+    threshold_mb = float(min_free_mb) if min_free_mb is not None else None
+    if threshold_mb is not None and threshold_mb < 0:
+        threshold_mb = 0.0
+    threshold_bytes = int(threshold_mb * _MEGABYTE) if threshold_mb is not None else None
+
+    try:
+        usage = shutil.disk_usage(directory)
+    except Exception as exc:  # noqa: BLE001
+        _LOGGER.warning("Nie udało się odczytać informacji o wolnym miejscu dla %s: %s", directory, exc)
+        info.update({"status": "unknown", "error": str(exc)})
+        if threshold_bytes is not None:
+            info["threshold_bytes"] = threshold_bytes
+            info["threshold_mb"] = threshold_bytes / _MEGABYTE
+        return info
+
+    free_bytes = int(usage.free)
+    total_bytes = int(usage.total)
+    info.update(
+        {
+            "status": "ok",
+            "free_bytes": free_bytes,
+            "total_bytes": total_bytes,
+            "free_mb": free_bytes / _MEGABYTE,
+            "total_mb": total_bytes / _MEGABYTE,
+        }
+    )
+
+    if threshold_bytes is not None:
+        info["threshold_bytes"] = threshold_bytes
+        info["threshold_mb"] = threshold_bytes / _MEGABYTE
+        if free_bytes < threshold_bytes:
+            info["status"] = "low"
+            _LOGGER.warning(
+                "Wolne miejsce w katalogu raportu %s: %.2f MB (< %.2f MB)",
+                directory,
+                free_bytes / _MEGABYTE,
+                threshold_bytes / _MEGABYTE,
+            )
+
+    return info
+
+
+def _prepare_smoke_report_directory(target: str | None) -> Path:
+    """Zwraca katalog na raport smoke testu, tworząc go jeśli potrzeba."""
+    if target:
+        base_dir = Path(target).expanduser()
+        base_dir.mkdir(parents=True, exist_ok=True)
+        return Path(tempfile.mkdtemp(prefix="daily_trend_smoke_", dir=str(base_dir)))
+    return Path(tempfile.mkdtemp(prefix="daily_trend_smoke_"))
 
 
 def _render_smoke_summary(*, summary: Mapping[str, object], summary_sha256: str) -> str:
@@ -518,7 +600,6 @@ def _render_smoke_summary(*, summary: Mapping[str, object], summary_sha256: str)
                 alert_lines.append(f"{channel_name}: {status} ({detail})")
             else:
                 alert_lines.append(f"{channel_name}: {status}")
-
     if not alert_lines:
         alert_lines.append("brak danych o kanałach alertów")
 
@@ -637,7 +718,6 @@ def _render_smoke_summary(*, summary: Mapping[str, object], summary_sha256: str)
                 entry = _normalize_position_entry(str(symbol), payload)
                 if entry is not None:
                     formatted.append(entry)
-
             if formatted:
                 formatted.sort(key=lambda item: item[0], reverse=True)
                 formatted_lines = [text for _value, text in formatted[:5]]
@@ -651,7 +731,6 @@ def _render_smoke_summary(*, summary: Mapping[str, object], summary_sha256: str)
                 dd=_format_percentage(drawdown_pct),
             )
         )
-
         liquidation = bool(risk_state.get("force_liquidation"))
         risk_lines.append("Force liquidation: TAK" if liquidation else "Force liquidation: NIE")
 
@@ -731,6 +810,23 @@ def _render_smoke_summary(*, summary: Mapping[str, object], summary_sha256: str)
             if fragments:
                 data_lines.append("Cache offline: " + "; ".join(fragments))
 
+    # Info o magazynie raportu
+    storage_lines: list[str] = []
+    storage_info = summary.get("storage")
+    if isinstance(storage_info, Mapping) and storage_info:
+        status = str(storage_info.get("status", "unknown")).upper()
+        free_mb = _as_float(storage_info.get("free_mb"))
+        total_mb = _as_float(storage_info.get("total_mb"))
+        threshold_mb = _as_float(storage_info.get("threshold_mb"))
+        parts = [f"status={status}"]
+        if free_mb is not None:
+            parts.append(f"wolne {free_mb:.2f} MB")
+        if total_mb is not None:
+            parts.append(f"całkowite {total_mb:.2f} MB")
+        if threshold_mb is not None:
+            parts.append(f"próg {threshold_mb:.2f} MB")
+        storage_lines.append("Magazyn raportu: " + ", ".join(parts))
+
     lines = [
         f"Środowisko: {environment}",
         f"Zakres dat: {start} → {end}",
@@ -743,11 +839,16 @@ def _render_smoke_summary(*, summary: Mapping[str, object], summary_sha256: str)
         lines.extend(risk_lines)
     if data_lines:
         lines.extend(data_lines)
+    if storage_lines:
+        lines.extend(storage_lines)
     lines.append("Alerty: " + "; ".join(alert_lines))
     lines.append(f"SHA-256 summary.json: {summary_sha256}")
     return "\n".join(lines)
 
 
+# --------------------------------------------------------------------------------------
+# Walidacja cache + manifest
+# --------------------------------------------------------------------------------------
 def _ensure_smoke_cache(
     *,
     pipeline: Any,
@@ -772,9 +873,7 @@ def _ensure_smoke_cache(
     data_source = getattr(pipeline, "data_source", None)
     storage = getattr(data_source, "storage", None)
     if storage is None:
-        _LOGGER.warning(
-            "Nie mogę zweryfikować cache – pipeline nie udostępnia storage'u. Pomijam kontrolę.",
-        )
+        _LOGGER.warning("Nie mogę zweryfikować cache – pipeline nie udostępnia storage'u. Pomijam kontrolę.")
         cache_reports: dict[str, dict[str, object]] = {}
     else:
         try:
@@ -797,23 +896,13 @@ def _ensure_smoke_cache(
                     try:
                         row_count = int(raw_rows)
                     except (TypeError, ValueError):
-                        _LOGGER.warning(
-                            "Nieprawidłowa wartość row_count dla %s (%s): %s",
-                            symbol,
-                            interval,
-                            raw_rows,
-                        )
+                        _LOGGER.warning("Nieprawidłowa wartość row_count dla %s (%s): %s", symbol, interval, raw_rows)
                 raw_last = metadata.get(f"last_timestamp::{symbol}::{interval}")
                 if raw_last is not None:
                     try:
                         last_timestamp = int(float(raw_last))
                     except (TypeError, ValueError):
-                        _LOGGER.warning(
-                            "Nieprawidłowa wartość last_timestamp dla %s (%s): %s",
-                            symbol,
-                            interval,
-                            raw_last,
-                        )
+                        _LOGGER.warning("Nieprawidłowa wartość last_timestamp dla %s (%s): %s", symbol, interval, raw_last)
 
             try:
                 payload = storage.read(key)
@@ -830,17 +919,14 @@ def _ensure_smoke_cache(
                 row_count = len(rows)
             if last_timestamp is None:
                 last_timestamp = int(float(rows[-1][0]))
-
             first_timestamp = int(float(rows[0][0]))
 
             if row_count < required_bars:
                 issues.append((symbol, f"za mało świec ({row_count} < {required_bars})"))
                 continue
-
             if last_timestamp < end_ms:
                 issues.append((symbol, f"ostatnia świeca {last_timestamp} < wymaganego końca {end_ms}"))
                 continue
-
             if first_timestamp > start_ms:
                 issues.append((symbol, f"pierwsza świeca {first_timestamp} > wymaganego startu {start_ms}"))
             else:
@@ -848,7 +934,6 @@ def _ensure_smoke_cache(
                 if coverage < required_bars:
                     issues.append((symbol, f"pokrycie obejmuje {coverage} świec (wymagane {required_bars})"))
                     continue
-
                 cache_reports[str(symbol)] = {
                     "row_count": int(row_count),
                     "first_timestamp_ms": first_timestamp,
@@ -859,12 +944,7 @@ def _ensure_smoke_cache(
 
         if issues:
             for symbol, reason in issues:
-                _LOGGER.error(
-                    "Cache offline dla symbolu %s (%s) nie spełnia wymagań smoke testu: %s",
-                    symbol,
-                    interval,
-                    reason,
-                )
+                _LOGGER.error("Cache offline dla symbolu %s (%s) nie spełnia wymagań smoke testu: %s", symbol, interval, reason)
             raise RuntimeError(
                 "Cache offline nie obejmuje wymaganego zakresu danych. Uruchom scripts/seed_paper_cache.py, "
                 "aby zbudować deterministyczny seed przed smoke testem.",
@@ -901,7 +981,6 @@ def _verify_manifest_coverage(
     core_config = getattr(bootstrap, "core_config", None)
     if environment_cfg is None or core_config is None:
         return None
-
     if not hasattr(core_config, "instrument_universes"):
         return None
 
@@ -958,26 +1037,18 @@ def _verify_manifest_coverage(
         for status in relevant:
             entry = status.manifest_entry
             if status.issues:
-                issues.extend(
-                    _render_manifest_issue(status.symbol, interval, issue)
-                    for issue in status.issues
-                )
+                for issue in status.issues:
+                    issues.append(_render_manifest_issue(status.symbol, interval, issue))
 
             row_count = entry.row_count
             if row_count is None:
-                issues.append(
-                    f"{status.symbol}/{interval}: manifest nie zawiera licznika świec (row_count)"
-                )
+                issues.append(f"{status.symbol}/{interval}: manifest nie zawiera licznika świec (row_count)")
             elif row_count < required_bars:
-                issues.append(
-                    f"{status.symbol}/{interval}: manifest raportuje jedynie {row_count} świec (< {required_bars})"
-                )
+                issues.append(f"{status.symbol}/{interval}: manifest raportuje jedynie {row_count} świec (< {required_bars})")
 
             last_ts = entry.last_timestamp_ms
             if last_ts is None:
-                issues.append(
-                    f"{status.symbol}/{interval}: manifest nie zawiera ostatniego stempla czasowego"
-                )
+                issues.append(f"{status.symbol}/{interval}: manifest nie zawiera ostatniego stempla czasowego")
             elif last_ts < end_ms:
                 issues.append(
                     f"{status.symbol}/{interval}: ostatnia świeca w manifescie ({last_ts}) < wymaganego końca ({end_ms})"
@@ -1030,6 +1101,9 @@ def _render_manifest_issue(symbol: str, interval: str, issue: str) -> str:
     return f"{symbol}/{interval}: {issue}"
 
 
+# --------------------------------------------------------------------------------------
+# Adapter offline dla smoke testu
+# --------------------------------------------------------------------------------------
 class _OfflineExchangeAdapter(ExchangeAdapter):
     """Minimalny adapter giełdowy działający offline dla trybu paper-smoke."""
 
@@ -1079,6 +1153,9 @@ def _offline_adapter_factory(credentials: ExchangeCredentials, **kwargs: object)
     return _OfflineExchangeAdapter(credentials, **kwargs)
 
 
+# --------------------------------------------------------------------------------------
+# Pętla realtime
+# --------------------------------------------------------------------------------------
 def _run_loop(runner: DailyTrendRealtimeRunner, poll_seconds: float) -> int:
     interval = max(1.0, poll_seconds)
     stop = False
@@ -1108,6 +1185,9 @@ def _run_loop(runner: DailyTrendRealtimeRunner, poll_seconds: float) -> int:
     return 0
 
 
+# --------------------------------------------------------------------------------------
+# Główna funkcja CLI
+# --------------------------------------------------------------------------------------
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
     logging.basicConfig(level=getattr(logging, args.log_level.upper()), stream=sys.stdout)
@@ -1141,12 +1221,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             config_path=config_path,
             secret_manager=secret_manager,
             adapter_factories=adapter_factories,
+            risk_profile_name=args.risk_profile,
         )
     except Exception as exc:  # noqa: BLE001
         _LOGGER.exception("Nie udało się zbudować pipeline'u daily trend: %s", exc)
         return 1
 
-    # Bezpieczne logowanie (fake pipeline w testach może nie mieć pól)
+    # Bezpieczne logowanie (mock w testach może nie mieć pól)
     strategy_name = getattr(pipeline, "strategy_name", args.strategy)
     controller_name = getattr(pipeline, "controller_name", args.controller)
     _LOGGER.info(
@@ -1191,10 +1272,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             window_meta["end"],
         )
 
-        required_bars = max(
-            history_bars,
-            max(1, int((end_ms - sync_start) / tick_ms) + 1),
-        )
+        required_bars = max(history_bars, max(1, int((end_ms - sync_start) / tick_ms) + 1))
         data_checks: Mapping[str, object] | None = None
         try:
             data_checks = _ensure_smoke_cache(
@@ -1218,9 +1296,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
 
         trading_controller = create_trading_controller(
-            pipeline,
-            pipeline.bootstrap.alert_router,
-            health_check_interval=0.0,
+            pipeline, pipeline.bootstrap.alert_router, health_check_interval=0.0,
         )
 
         runner = DailyTrendRealtimeRunner(
@@ -1236,7 +1312,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             _LOGGER.info("Smoke test zakończony – brak sygnałów w zadanym oknie.")
 
-        report_dir = Path(tempfile.mkdtemp(prefix="daily_trend_smoke_"))
+        report_dir = _prepare_smoke_report_directory(args.smoke_output)
+        storage_info = _collect_storage_health(report_dir, min_free_mb=args.smoke_min_free_mb)
         alert_snapshot = pipeline.bootstrap.alert_router.health_snapshot()
 
         # Snapshot stanu ryzyka (opcjonalnie)
@@ -1248,9 +1325,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     pipeline.bootstrap.environment.risk_profile
                 )
         except NotImplementedError:
-            _LOGGER.warning(
-                "Silnik ryzyka nie udostępnia metody snapshot_state – pomijam stan ryzyka"
-            )
+            _LOGGER.warning("Silnik ryzyka nie udostępnia metody snapshot_state – pomijam stan ryzyka")
         except Exception as exc:  # noqa: BLE001
             _LOGGER.warning("Nie udało się pobrać stanu ryzyka: %s", exc)
 
@@ -1260,7 +1335,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             reporting_source = getattr(reporting_source, "reporting", None)
         upload_cfg = SmokeArchiveUploader.resolve_config(reporting_source)
 
-        # Wywołanie kompatybilne z testami monkeypatchującymi _export_smoke_report
+        # Elastyczne wywołanie, kompatybilne z testami monkeypatchującymi _export_smoke_report
         try:
             summary_path = _export_smoke_report(
                 report_dir=report_dir,
@@ -1271,6 +1346,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 alert_snapshot=alert_snapshot,
                 risk_state=risk_snapshot,
                 data_checks=data_checks,
+                storage_info=storage_info,
             )
         except TypeError:
             try:
@@ -1282,6 +1358,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     environment=args.environment,
                     alert_snapshot=alert_snapshot,
                     risk_state=risk_snapshot,
+                    data_checks=data_checks,
                 )
             except TypeError:
                 summary_path = _export_smoke_report(
@@ -1291,6 +1368,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     window=window_meta,
                     environment=args.environment,
                     alert_snapshot=alert_snapshot,
+                    risk_state=risk_snapshot,
                 )
 
         summary_hash = _hash_file(summary_path)
@@ -1307,18 +1385,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "risk_state": risk_snapshot or {},
             }
 
-        summary_text = _render_smoke_summary(
-            summary=summary_payload,
-            summary_sha256=summary_hash,
-        )
+        summary_text = _render_smoke_summary(summary=summary_payload, summary_sha256=summary_hash)
         summary_txt_path = summary_path.with_suffix(".txt")
         summary_txt_path.write_text(summary_text + "\n", encoding="utf-8")
         readme_path = _write_smoke_readme(report_dir)
-        _LOGGER.info(
-            "Raport smoke testu zapisany w %s (summary sha256=%s)",
-            report_dir,
-            summary_hash,
-        )
+        _LOGGER.info("Raport smoke testu zapisany w %s (summary sha256=%s)", report_dir, summary_hash)
         _LOGGER.info("Podsumowanie smoke testu:%s%s", os.linesep, summary_text)
 
         archive_path: Path | None = None
@@ -1328,10 +1399,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.archive_smoke:
                 _LOGGER.info("Utworzono archiwum smoke testu: %s", archive_path)
             else:
-                _LOGGER.info(
-                    "Archiwum smoke testu wygenerowane automatycznie na potrzeby uploadu: %s",
-                    archive_path,
-                )
+                _LOGGER.info("Archiwum smoke testu wygenerowane automatycznie na potrzeby uploadu: %s", archive_path)
 
         upload_result = None
         if upload_cfg and archive_path:
@@ -1343,22 +1411,39 @@ def main(argv: Sequence[str] | None = None) -> int:
                     summary_sha256=summary_hash,
                     window=window_meta,
                 )
-                _LOGGER.info(
-                    "Przesłano archiwum smoke testu (%s) do %s",
-                    upload_result.backend,
-                    upload_result.location,
-                )
+                _LOGGER.info("Przesłano archiwum smoke testu (%s) do %s", upload_result.backend, upload_result.location)
             except Exception as exc:  # noqa: BLE001
                 _LOGGER.error("Nie udało się przesłać archiwum smoke testu: %s", exc)
+
+        storage_context: dict[str, str] = {}
+        storage_status = None
+        if isinstance(storage_info, Mapping):
+            storage_status = str(storage_info.get("status", ""))
+            storage_context = {"storage_status": storage_status}
+            free_mb = storage_info.get("free_mb")
+            if free_mb is not None:
+                storage_context["storage_free_mb"] = f"{float(free_mb):.2f}"
+            threshold_mb = storage_info.get("threshold_mb")
+            if threshold_mb is not None:
+                storage_context["storage_threshold_mb"] = f"{float(threshold_mb):.2f}"
+
+        body = (
+            "Zakończono smoke test paper trading."
+            f" Zamówienia: {len(results)}, raport: {summary_path},"
+            f" sha256: {summary_hash}"
+        )
+        if storage_status and storage_status.lower() == "low":
+            free_str = storage_context.get("storage_free_mb")
+            thresh_str = storage_context.get("storage_threshold_mb")
+            if free_str and thresh_str:
+                body += f" Ostrzeżenie: wolne miejsce {free_str} MB poniżej progu {thresh_str} MB."
+            elif free_str:
+                body += f" Ostrzeżenie: niskie wolne miejsce ({free_str} MB)."
 
         message = AlertMessage(
             category="paper_smoke",
             title=f"Smoke test paper trading ({args.environment})",
-            body=(
-                "Zakończono smoke test paper trading."
-                f" Zamówienia: {len(results)}, raport: {summary_path},"
-                f" sha256: {summary_hash}"
-            ),
+            body=body,
             severity="info",
             context={
                 "environment": args.environment,
@@ -1376,15 +1461,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                     if upload_result
                     else {}
                 ),
+                **storage_context,
             },
         )
         pipeline.bootstrap.alert_router.dispatch(message)
         return 0
 
+    # normalny tryb realtime / run-once
     trading_controller = create_trading_controller(
-        pipeline,
-        pipeline.bootstrap.alert_router,
-        health_check_interval=args.health_interval,
+        pipeline, pipeline.bootstrap.alert_router, health_check_interval=args.health_interval,
     )
 
     runner = DailyTrendRealtimeRunner(
