@@ -100,7 +100,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if not environment.instrument_universe:
         print(
-            f"Środowisko {environment.name} nie ma przypisanego instrument_universe", file=sys.stderr
+            f"Środowisko {environment.name} nie ma przypisanego instrument_universe",
+            file=sys.stderr,
         )
         return 2
 
@@ -121,17 +122,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         as_of=as_of,
     )
 
+    # Filtrowanie po symbolach (opcjonalnie)
     if args.symbols:
         filter_tokens = [token.upper() for token in args.symbols]
+        # mapowanie aliasów z nazw instrumentów na symbole giełdowe
         alias_map: dict[str, str] = {}
         for instrument in universe.instruments:
             symbol = instrument.exchange_symbols.get(environment.exchange)
             if symbol:
                 alias_map[instrument.name.upper()] = symbol
 
-        available_symbols: dict[str, str] = {
-            status.symbol.upper(): status.symbol for status in statuses
-        }
+        available_symbols: dict[str, str] = {s.symbol.upper(): s.symbol for s in statuses}
 
         resolved: set[str] = set()
         unknown: list[str] = []
@@ -145,20 +146,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             resolved.add(symbol)
 
         if unknown:
-            print(
-                "Nieznane symbole: " + ", ".join(unknown),
-                file=sys.stderr,
-            )
+            print("Nieznane symbole: " + ", ".join(unknown), file=sys.stderr)
             return 2
 
         statuses = [status for status in statuses if status.symbol in resolved]
         if not statuses:
-            print(
-                "Brak wpisów w manifeście dla wskazanych symboli.",
-                file=sys.stderr,
-            )
+            print("Brak wpisów w manifeście dla wskazanych symboli.", file=sys.stderr)
             return 2
 
+    # Filtrowanie po interwałach (opcjonalnie)
     if args.intervals:
         filter_tokens = [_normalize_interval_token(token) for token in args.intervals]
         available_map: dict[str, set[str]] = {}
@@ -181,18 +177,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             resolved.update(variants)
 
         if unknown:
-            print(
-                "Nieznane interwały: " + ", ".join(unknown),
-                file=sys.stderr,
-            )
+            print("Nieznane interwały: " + ", ".join(unknown), file=sys.stderr)
             return 2
 
         statuses = [status for status in statuses if status.interval in resolved]
         if not statuses:
-            print(
-                "Brak wpisów w manifeście dla wskazanych interwałów.",
-                file=sys.stderr,
-            )
+            print("Brak wpisów w manifeście dla wskazanych interwałów.", file=sys.stderr)
             return 2
 
     issues = summarize_issues(statuses)
@@ -208,6 +198,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     serialized = json.dumps(payload, ensure_ascii=False, indent=2)
 
+    # Zapis do pliku, jeśli wskazano --output
     if args.output:
         output_path = Path(args.output)
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -221,9 +212,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Ocena na: {payload['as_of']}")
         for entry in payload["entries"]:
             print(
-                " - {symbol} {interval}: status={status} row_count={row_count} required={required_rows} gap={gap_minutes}".format(
-                    **entry
-                )
+                " - {symbol} {interval}: status={status} row_count={row_count} "
+                "required={required_rows} gap={gap_minutes}".format(**entry)
             )
         if issues:
             print("Problemy:")
