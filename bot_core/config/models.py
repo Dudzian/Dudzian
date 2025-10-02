@@ -42,6 +42,14 @@ class DecisionJournalConfig:
 # --- Środowiska / rdzeń ------------------------------------------------------
 
 @dataclass(slots=True)
+class EnvironmentDataQualityConfig:
+    """Progi jakości danych używane przez środowisko."""
+
+    max_gap_minutes: float | None = None
+    min_ok_ratio: float | None = None
+
+
+@dataclass(slots=True)
 class EnvironmentConfig:
     """Konfiguracja środowiska (np. live, paper, testnet)."""
 
@@ -261,6 +269,7 @@ class CoreConfig:
 
 __all__ = [
     "EnvironmentConfig",
+    "EnvironmentDataQualityConfig",
     "RiskProfileConfig",
     "InstrumentBackfillWindow",
     "InstrumentConfig",

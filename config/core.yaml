@@ -257,6 +257,9 @@ environments:
     required_permissions: [read, trade]
     forbidden_permissions: [withdraw]
     instrument_universe: core_multi_exchange
+    data_quality:
+      max_gap_minutes: 240
+      min_ok_ratio: 0.95
     adapter_settings:
       paper_trading:
         valuation_asset: USDT
@@ -331,6 +334,9 @@ environments:
     required_permissions: [read, trade]
     forbidden_permissions: [withdraw]
     instrument_universe: core_multi_exchange
+    data_quality:
+      max_gap_minutes: 240
+      min_ok_ratio: 0.95
     alert_throttle:
       window_seconds: 300
       exclude_severities: [critical]
@@ -391,6 +397,8 @@ environments:
     required_permissions: [read, trade]
     forbidden_permissions: [withdraw]
     instrument_universe: core_multi_exchange
+    data_quality:
+      max_gap_minutes: 240
     adapter_settings:
       valuation_asset: ZUSD
     alert_throttle:
@@ -453,6 +461,9 @@ environments:
     required_permissions: [read, trade]
     forbidden_permissions: [withdraw]
     instrument_universe: core_multi_exchange
+    data_quality:
+      max_gap_minutes: 240
+      min_ok_ratio: 0.9
     alert_throttle:
       window_seconds: 300
       exclude_severities: [critical]
@@ -511,6 +522,9 @@ environments:
     required_permissions: [read, trade]
     forbidden_permissions: [withdraw]
     instrument_universe: core_multi_exchange
+    data_quality:
+      max_gap_minutes: 240
+      min_ok_ratio: 0.85
     adapter_settings:
       valuation_asset: PLN
       secondary_valuation_assets: [USDT, EUR, USD]

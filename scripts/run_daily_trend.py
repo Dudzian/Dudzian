@@ -503,6 +503,15 @@ def _export_smoke_report(
     if storage_info:
         summary["storage"] = json.loads(json.dumps(storage_info))
 
+    if risk_state:
+        summary["risk_state"] = dict(risk_state)
+
+    if data_checks:
+        summary["data_checks"] = json.loads(json.dumps(data_checks))
+
+    if storage_info:
+        summary["storage"] = json.loads(json.dumps(storage_info))
+
     summary_path = report_dir / "summary.json"
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return summary_path

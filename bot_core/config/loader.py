@@ -12,6 +12,7 @@ from bot_core.config.models import (
     CoreConfig,
     EmailChannelSettings,
     EnvironmentConfig,
+    EnvironmentDataQualityConfig,
     RiskProfileConfig,
     SMSProviderSettings,
     TelegramChannelSettings,
@@ -257,6 +258,29 @@ def _load_alert_audit(entry: Optional[Mapping[str, Any]]):
     )
 
 
+def _load_data_quality(entry: Optional[Mapping[str, Any]]):
+    """Mapuje ustawienia data_quality na dataclass środowiska."""
+    if EnvironmentDataQualityConfig is None or not entry:
+        return None
+
+    max_gap = entry.get("max_gap_minutes")
+    if max_gap in (None, ""):
+        max_gap_value = None
+    else:
+        max_gap_value = float(max_gap)
+
+    min_ok_ratio = entry.get("min_ok_ratio")
+    if min_ok_ratio in (None, ""):
+        min_ok_ratio_value = None
+    else:
+        min_ok_ratio_value = float(min_ok_ratio)
+
+    return EnvironmentDataQualityConfig(
+        max_gap_minutes=max_gap_value,
+        min_ok_ratio=min_ok_ratio_value,
+    )
+
+
 def _load_decision_journal(entry: Optional[Mapping[str, Any]]):
     if DecisionJournalConfig is None or not entry:
         return None
@@ -415,6 +439,8 @@ def load_core_config(path: str | Path) -> CoreConfig:
             env_kwargs["alert_audit"] = _load_alert_audit(entry.get("alert_audit"))
         if _env_has("decision_journal"):
             env_kwargs["decision_journal"] = _load_decision_journal(entry.get("decision_journal"))
+        if _env_has("data_quality"):
+            env_kwargs["data_quality"] = _load_data_quality(entry.get("data_quality"))
         environments[name] = EnvironmentConfig(**env_kwargs)
 
     risk_profiles = {

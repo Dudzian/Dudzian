@@ -12,6 +12,7 @@ from bot_core.config.models import (
     CoreConfig,
     EmailChannelSettings,
     EnvironmentConfig,
+    EnvironmentDataQualityConfig,
     InstrumentConfig,
     InstrumentUniverseConfig,
     MessengerChannelSettings,
@@ -25,6 +26,7 @@ from bot_core.config.models import (
 __all__ = [
     "CoreConfig",
     "EnvironmentConfig",
+    "EnvironmentDataQualityConfig",
     "EmailChannelSettings",
     "InstrumentConfig",
     "InstrumentUniverseConfig",
