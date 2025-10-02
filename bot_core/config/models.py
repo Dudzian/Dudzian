@@ -71,7 +71,6 @@ class EnvironmentConfig:
     decision_journal: DecisionJournalConfig | None = None
     default_strategy: str | None = None
     default_controller: str | None = None
-    data_quality: EnvironmentDataQualityConfig | None = None
 
 
 @dataclass(slots=True)
