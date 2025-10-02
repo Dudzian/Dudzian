@@ -10,12 +10,7 @@ from typing import Sequence
 
 from bot_core.config import load_core_config
 from bot_core.data.intervals import normalize_interval_token as _normalize_interval_token
-from bot_core.data.ohlcv import (
-    CoverageStatus,
-    evaluate_coverage,
-    summarize_coverage,
-    summarize_issues,
-)
+from bot_core.data.ohlcv import CoverageStatus, evaluate_coverage, summarize_issues
 
 
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
@@ -105,7 +100,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if not environment.instrument_universe:
         print(
-            f"Środowisko {environment.name} nie ma przypisanego instrument_universe", file=sys.stderr
+            f"Środowisko {environment.name} nie ma przypisanego instrument_universe",
+            file=sys.stderr,
         )
         return 2
 
@@ -119,44 +115,24 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     as_of = _parse_as_of(args.as_of)
     manifest_path = Path(environment.data_cache_path) / "ohlcv_manifest.sqlite"
-    interval_filters: list[tuple[str, str]] | None = None
-    interval_tokens: list[str] | None = None
-    if args.intervals:
-        interval_filters = []
-        invalid: list[str] = []
-        for raw in args.intervals:
-            normalized = _normalize_interval_token(raw)
-            if not normalized:
-                invalid.append(raw)
-                continue
-            interval_filters.append((raw, normalized))
-        if invalid:
-            print("Nieznane interwały: " + ", ".join(invalid), file=sys.stderr)
-            return 2
-        if not interval_filters:
-            print("Brak poprawnych interwałów w filtrze.", file=sys.stderr)
-            return 2
-        interval_tokens = [normalized for _, normalized in interval_filters]
-
     statuses = evaluate_coverage(
         manifest_path=manifest_path,
         universe=universe,
         exchange_name=environment.exchange,
         as_of=as_of,
-        intervals=interval_tokens,
     )
 
+    # Filtrowanie po symbolach (opcjonalnie)
     if args.symbols:
         filter_tokens = [token.upper() for token in args.symbols]
+        # mapowanie aliasów z nazw instrumentów na symbole giełdowe
         alias_map: dict[str, str] = {}
         for instrument in universe.instruments:
             symbol = instrument.exchange_symbols.get(environment.exchange)
             if symbol:
                 alias_map[instrument.name.upper()] = symbol
 
-        available_symbols: dict[str, str] = {
-            status.symbol.upper(): status.symbol for status in statuses
-        }
+        available_symbols: dict[str, str] = {s.symbol.upper(): s.symbol for s in statuses}
 
         resolved: set[str] = set()
         unknown: list[str] = []
@@ -170,21 +146,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             resolved.add(symbol)
 
         if unknown:
-            print(
-                "Nieznane symbole: " + ", ".join(unknown),
-                file=sys.stderr,
-            )
+            print("Nieznane symbole: " + ", ".join(unknown), file=sys.stderr)
             return 2
 
         statuses = [status for status in statuses if status.symbol in resolved]
         if not statuses:
-            print(
-                "Brak wpisów w manifeście dla wskazanych symboli.",
-                file=sys.stderr,
-            )
+            print("Brak wpisów w manifeście dla wskazanych symboli.", file=sys.stderr)
             return 2
 
-    if interval_filters is not None:
+    # Filtrowanie po interwałach (opcjonalnie)
+    if args.intervals:
+        filter_tokens = [_normalize_interval_token(token) for token in args.intervals]
         available_map: dict[str, set[str]] = {}
         for status in statuses:
             normalized = _normalize_interval_token(status.interval)
@@ -192,27 +164,28 @@ def main(argv: Sequence[str] | None = None) -> int:
                 continue
             available_map.setdefault(normalized, set()).add(status.interval)
 
+        unknown: list[str] = []
         resolved: set[str] = set()
-        missing: list[str] = []
-        for raw, normalized in interval_filters:
+        for raw, normalized in zip(args.intervals, filter_tokens, strict=True):
+            if not normalized:
+                unknown.append(raw)
+                continue
             variants = available_map.get(normalized)
             if not variants:
-                missing.append(raw)
+                unknown.append(raw)
                 continue
             resolved.update(variants)
 
-        if missing:
-            print(
-                "Brak wpisów w manifeście dla wskazanych interwałów: "
-                + ", ".join(missing),
-                file=sys.stderr,
-            )
+        if unknown:
+            print("Nieznane interwały: " + ", ".join(unknown), file=sys.stderr)
             return 2
 
         statuses = [status for status in statuses if status.interval in resolved]
+        if not statuses:
+            print("Brak wpisów w manifeście dla wskazanych interwałów.", file=sys.stderr)
+            return 2
 
     issues = summarize_issues(statuses)
-    summary_payload = summarize_coverage(statuses)
     payload = {
         "environment": environment.name,
         "exchange": environment.exchange,
@@ -221,11 +194,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         "entries": [_format_status(status) for status in statuses],
         "issues": issues,
         "status": "ok" if not issues else "error",
-        "summary": summary_payload,
     }
 
     serialized = json.dumps(payload, ensure_ascii=False, indent=2)
 
+    # Zapis do pliku, jeśli wskazano --output
     if args.output:
         output_path = Path(args.output)
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -237,31 +210,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Manifest: {payload['manifest_path']}")
         print(f"Środowisko: {payload['environment']} ({payload['exchange']})")
         print(f"Ocena na: {payload['as_of']}")
-        print(
-            "Podsumowanie: łącznie={total} OK={ok} błędy={error}".format(
-                **summary_payload
-            )
-        )
-        manifest_counts = summary_payload.get("manifest_status_counts", {})
-        if manifest_counts:
-            counts_str = ", ".join(
-                f"{status}={count}" for status, count in sorted(manifest_counts.items())
-            )
-            print(f"Statusy manifestu: {counts_str}")
-        worst_gap = summary_payload.get("worst_gap")
-        if isinstance(worst_gap, dict):
-            print(
-                "Największa luka: {symbol}/{interval} ({gap_minutes} min)".format(
-                    symbol=worst_gap.get("symbol", "?"),
-                    interval=worst_gap.get("interval", "?"),
-                    gap_minutes=worst_gap.get("gap_minutes", "?"),
-                )
-            )
         for entry in payload["entries"]:
             print(
-                " - {symbol} {interval}: status={status} row_count={row_count} required={required_rows} gap={gap_minutes}".format(
-                    **entry
-                )
+                " - {symbol} {interval}: status={status} row_count={row_count} "
+                "required={required_rows} gap={gap_minutes}".format(**entry)
             )
         if issues:
             print("Problemy:")

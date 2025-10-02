@@ -32,7 +32,9 @@ Ten runbook opisuje, jak uruchomić, monitorować i bezpiecznie zatrzymać tryb 
 2. **Aktualizacja danych**
    - Uruchom `scripts/backfill.py --environment paper --granularity 1d --since 2016-01-01`.
    - Sprawdź logi (`logs/backfill.log`) pod kątem błędów; w razie limitów API powtórz z większym interwałem throttlingu.
-  - Zweryfikuj pokrycie cache: `PYTHONPATH=. python scripts/check_data_coverage.py --config config/core.yaml --environment binance_paper --json`. Status `ok` oznacza komplet danych wymaganych przez backfill. W razie potrzeby możesz ograniczyć raport do wybranych symboli (`--symbol BTC_USDT`) lub interwałów (`--interval 1d`, `--interval D1`, aliasy np. `--interval D1`). Raport JSON zawiera sekcję `summary` (łączna liczba wpisów, statusy, największa luka) – zapisz ją w audycie wraz z opcjonalnym plikiem (`--output data/reports/coverage/binance_paper.json`).
+
+  - Zweryfikuj pokrycie cache: `PYTHONPATH=. python scripts/check_data_coverage.py --config config/core.yaml --environment binance_paper --json`. Status `ok` oznacza komplet danych wymaganych przez backfill. W razie potrzeby możesz ograniczyć raport do wybranych symboli (`--symbol BTC_USDT`) lub interwałów (`--interval 1d`, `--interval D1`) oraz zapisać wynik do pliku (`--output data/reports/coverage/binance_paper.json`).
+
 3. **Konfiguracja środowiska**
    - Plik `config/core.yaml` ma aktywne środowisko `paper_binance` i profil ryzyka `balanced` (domyślny).
    - `config/alerts.yaml` (jeśli używany) zawiera aktywne kanały Telegram + e-mail + SMS (Orange jako operator referencyjny).
@@ -56,6 +58,7 @@ Ten runbook opisuje, jak uruchomić, monitorować i bezpiecznie zatrzymać tryb 
        --date-window 2024-01-01:2024-02-15 \
        --run-once
    ```
+
    - Narzędzie wykona backfill ograniczony do podanego zakresu, uruchomi pojedynczą iterację i zapisze raport tymczasowy (`ledger.jsonl`, `summary.json`, `summary.txt`, `README.txt`).
    - `summary.txt` zawiera gotowe podsumowanie dla zespołu ryzyka (środowisko, okno dat, liczba zleceń, status kanałów alertowych, hash `summary.json`).
    - `README.txt` zawiera skróconą instrukcję audytu (co przepisać do logu, gdzie przechowywać ledger, jak długo archiwizować paczkę).
@@ -67,6 +70,7 @@ Ten runbook opisuje, jak uruchomić, monitorować i bezpiecznie zatrzymać tryb 
    - Parametr `--smoke-min-free-mb <wartość>` pozwala narzucić minimalną ilość wolnego miejsca w katalogu raportu. Gdy próg nie jest spełniony, CLI zapisze ostrzeżenie w logu, oznaczy raport w `summary.json` oraz dopisze ostrzeżenie w alercie `paper_smoke`.
    - Dodając `--smoke-fail-on-low-space` wymusisz traktowanie niskiego wolnego miejsca jako błędu operacyjnego – skrypt zakończy się kodem 4 po zapisaniu raportu i wyśle alert o poziomie `warning`.
    - Jeśli w `config/core.yaml` skonfigurowano sekcję `reporting.smoke_archive_upload`, CLI automatycznie wykona kopię archiwum (domyślnie do `audit/smoke_archives/`) oraz – w przypadku backendu S3/MinIO – prześle plik do zdefiniowanego koszyka. Ścieżka docelowa trafia do logu oraz kontekstu alertu w polach `archive_upload_backend` i `archive_upload_location`. Zweryfikuj obecność pliku w magazynie i odnotuj lokalizację w audycie.
+
 4. Uruchom tryb jednorazowy (dry-run) w celu sanity check konfiguracji:
    ```bash
    PYTHONPATH=. python scripts/run_daily_trend.py --config config/core.yaml --environment binance_paper --dry-run
