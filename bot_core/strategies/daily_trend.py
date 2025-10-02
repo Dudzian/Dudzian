@@ -51,6 +51,14 @@ class DailyTrendMomentumStrategy(StrategyEngine):
         self._states: Dict[str, _SymbolState] = {}
 
     # ------------------------------------------------------------------
+    # Deklaracja wymagań danych
+    # ------------------------------------------------------------------
+    def required_intervals(self) -> tuple[str, ...]:
+        """Zwraca interwały niezbędne do działania strategii."""
+
+        return ("1d",)
+
+    # ------------------------------------------------------------------
     # API strategii
     # ------------------------------------------------------------------
     def warm_up(self, history: Sequence[MarketSnapshot]) -> None:
