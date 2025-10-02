@@ -47,6 +47,14 @@ def _write_config(tmp_path: Path) -> Path:
         stop_loss_atr_multiple: 1.5
         max_open_positions: 5
         hard_drawdown_pct: 0.10
+      aggressive:
+        max_daily_loss_pct: 0.05
+        max_position_pct: 0.20
+        target_volatility: 0.35
+        max_leverage: 5.0
+        stop_loss_atr_multiple: 2.0
+        max_open_positions: 12
+        hard_drawdown_pct: 0.25
     environments:
       binance_paper:
         exchange: binance_spot
@@ -140,6 +148,7 @@ def test_bootstrap_environment_initialises_components(tmp_path: Path) -> None:
 
     assert isinstance(context, BootstrapContext)
     assert context.environment.name == "binance_paper"
+    assert context.risk_profile_name == "balanced"
     assert context.credentials.key_id == "paper-key"
     assert context.adapter.credentials.key_id == "paper-key"
 
@@ -188,6 +197,44 @@ def test_bootstrap_environment_initialises_components(tmp_path: Path) -> None:
     assert context.adapter_settings == {}
     risk_state_path = Path("./var/data/binance_paper/risk_state/balanced.json")
     assert risk_state_path.parent.exists()
+
+
+def test_bootstrap_environment_allows_risk_profile_override(tmp_path: Path) -> None:
+    storage = _MemorySecretStorage()
+    manager = SecretManager(storage, namespace="tests")
+
+    config_path = _write_config(tmp_path)
+    credentials_payload = {
+        "key_id": "paper-key",
+        "secret": "paper-secret",
+        "passphrase": None,
+        "permissions": ["read", "trade"],
+        "environment": Environment.PAPER.value,
+    }
+    storage.set_secret("tests:binance_paper_key:trading", json.dumps(credentials_payload))
+    storage.set_secret("tests:zonda_paper_key:trading", json.dumps(credentials_payload))
+    manager.store_secret_value("telegram_token", "telegram-secret", purpose="alerts:telegram")
+    manager.store_secret_value(
+        "smtp_credentials",
+        json.dumps({"username": "bot", "password": "secret"}),
+        purpose="alerts:email",
+    )
+    manager.store_secret_value(
+        "sms_orange",
+        json.dumps({"account_sid": "AC123", "auth_token": "token"}),
+        purpose="alerts:sms",
+    )
+
+    context = bootstrap_environment(
+        "binance_paper",
+        config_path=config_path,
+        secret_manager=manager,
+        risk_profile_name="aggressive",
+    )
+
+    assert context.risk_profile_name == "aggressive"
+    assert context.environment.risk_profile == "aggressive"
+    assert context.risk_engine.should_liquidate(profile_name="aggressive") is False
 
 
 def test_bootstrap_environment_detects_missing_permissions(tmp_path: Path) -> None:

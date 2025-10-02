@@ -86,6 +86,16 @@ class RiskEngine(abc.ABC):
     def should_liquidate(self, *, profile_name: str) -> bool:
         ...
 
+    def snapshot_state(self, profile_name: str) -> Mapping[str, object] | None:
+        """Zwraca bieżący stan profilu ryzyka do celów raportowych.
+
+        Domyślna implementacja pozostawia metodę niezaimplementowaną –
+        konkretne silniki powinny ją nadpisać, jeśli udostępniają możliwość
+        inspekcji stanu w trybie tylko do odczytu.
+        """
+
+        raise NotImplementedError
+
 
 class RiskRepository(Protocol):
     """Kontrakt dla repozytoriów stanu ryzyka (np. SQLite, Parquet)."""

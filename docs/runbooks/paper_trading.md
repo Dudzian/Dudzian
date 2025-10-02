@@ -8,6 +8,7 @@ Ten runbook opisuje, jak uruchomić, monitorować i bezpiecznie zatrzymać tryb 
 - System operacyjny: Windows 10/11 (primary) lub macOS 13+ (fallback). W obu przypadkach wymagany jest Python 3.11 oraz dostęp do Windows Credential Manager / macOS Keychain.
 - Repozytorium `Dudzian` w wersji zgodnej z `phase1_foundation` (aktualne testy `pytest` przechodzą bez błędów).
 - Pliki konfiguracyjne `config/core.yaml` oraz `config/credentials/` dopasowane do środowiska `paper`.
+- Każde środowisko w `config/core.yaml` ma ustawione pola `default_strategy` i `default_controller`, aby CLI automatycznie wybierało właściwą strategię i kontroler runtime.
 - Katalog roboczy danych: `data/ohlcv` (Parquet + manifest SQLite) oraz `data/reports` na raporty dzienne.
 
 ### Klucze API i bezpieczeństwo
@@ -20,15 +21,18 @@ Ten runbook opisuje, jak uruchomić, monitorować i bezpiecznie zatrzymać tryb 
 - Wykonany backfill OHLCV (D1 + 1h) dla koszyka: BTC/USDT, ETH/USDT, SOL/USDT, BNB/USDT, XRP/USDT, ADA/USDT, LTC/USDT, MATIC/USDT.
 - Dane zapisane w strukturze partycjonowanej Parquet: `exchange/symbol/granularity/year=YYYY/month=MM/`.
 - Manifest SQLite (`ohlcv_manifest.sqlite`) zawiera zaktualizowane liczniki świec i ostatnie znaczniki czasu.
+- **Tryb offline (brak dostępu do API):** uruchom `PYTHONPATH=. python scripts/seed_paper_cache.py --environment binance_paper --days 60 --start-date 2024-01-01`, aby wygenerować deterministyczny cache D1 w katalogu `var/data/binance_paper`.
 
 ## 2. Checklista przed startem sesji
 1. **Weryfikacja kodu i konfiguracji**
    - `git status` – brak lokalnych, niezatwierdzonych zmian.
+   - `python scripts/validate_config.py --config config/core.yaml` – potwierdzenie spójności sekcji środowisk, profili ryzyka i kanałów alertowych.
    - `pytest --override-ini=addopts= tests/test_runtime_pipeline.py` – potwierdzenie, że pipeline przechodzi testy integracyjne.
    - `scripts/check_key_rotation.py --dry-run` – upewnij się, że rotacja kluczy nie jest przeterminowana.
 2. **Aktualizacja danych**
    - Uruchom `scripts/backfill.py --environment paper --granularity 1d --since 2016-01-01`.
    - Sprawdź logi (`logs/backfill.log`) pod kątem błędów; w razie limitów API powtórz z większym interwałem throttlingu.
+  - Zweryfikuj pokrycie cache: `PYTHONPATH=. python scripts/check_data_coverage.py --config config/core.yaml --environment binance_paper --json`. Status `ok` oznacza komplet danych wymaganych przez backfill. W razie potrzeby możesz ograniczyć raport do wybranych symboli (`--symbol BTC_USDT`) lub interwałów (`--interval 1d`, `--interval D1`) oraz zapisać wynik do pliku (`--output data/reports/coverage/binance_paper.json`).
 3. **Konfiguracja środowiska**
    - Plik `config/core.yaml` ma aktywne środowisko `paper_binance` i profil ryzyka `balanced` (domyślny).
    - `config/alerts.yaml` (jeśli używany) zawiera aktywne kanały Telegram + e-mail + SMS (Orange jako operator referencyjny).
@@ -42,17 +46,27 @@ Ten runbook opisuje, jak uruchomić, monitorować i bezpiecznie zatrzymać tryb 
 ## 3. Uruchomienie pipeline’u paper trading
 1. Aktywuj wirtualne środowisko Pythona: `py -3.11 -m venv .venv && .venv\Scripts\activate` (Windows) lub `python3 -m venv .venv && source .venv/bin/activate` (macOS).
 2. Zainstaluj zależności: `pip install -e .[dev]` (pierwsze uruchomienie) lub `pip install -e .` dla aktualizacji.
-3. Wykonaj smoke test środowiska paper (sprawdzenie backfillu + egzekucji na krótkim oknie):
+3. Jeśli łączność z API Binance jest ograniczona, w pierwszej kolejności odtwórz cache poleceniem `PYTHONPATH=. python scripts/seed_paper_cache.py --environment binance_paper --days 60 --start-date 2024-01-01`. Następnie wykonaj smoke test środowiska paper (sprawdzenie backfillu + egzekucji na krótkim oknie):
    ```bash
    PYTHONPATH=. python scripts/run_daily_trend.py \
        --config config/core.yaml \
        --environment binance_paper \
        --paper-smoke \
+       --archive-smoke \
        --date-window 2024-01-01:2024-02-15 \
        --run-once
    ```
-   - Narzędzie wykona backfill ograniczony do podanego zakresu, uruchomi pojedynczą iterację i zapisze raport tymczasowy (`ledger.jsonl` + `summary.json`).
-   - Ścieżka katalogu raportu pojawi się w logu – zanotuj hash `summary.json` w logu audytu (sekcja „Smoke test”).
+   - Narzędzie wykona backfill ograniczony do podanego zakresu, uruchomi pojedynczą iterację i zapisze raport tymczasowy (`ledger.jsonl`, `summary.json`, `summary.txt`, `README.txt`).
+   - `summary.txt` zawiera gotowe podsumowanie dla zespołu ryzyka (środowisko, okno dat, liczba zleceń, status kanałów alertowych, hash `summary.json`).
+   - `README.txt` zawiera skróconą instrukcję audytu (co przepisać do logu, gdzie przechowywać ledger, jak długo archiwizować paczkę).
+   - W trybie `--paper-smoke` skrypt podmienia adapter giełdowy na tryb offline i korzysta wyłącznie z lokalnego cache Parquet/SQLite, dlatego przed uruchomieniem wymagany jest kompletny seed danych z kroku wcześniejszego oraz pozytywna weryfikacja `scripts/check_data_coverage.py`.
+   - Jeżeli w keychainie znajdują się placeholderowe tokeny kanałów alertowych, komunikaty o błędach (403/DNS) zostaną zarejestrowane w logu, ale nie przerywają smoke testu; status kanałów należy odnotować w audycie.
+   - Flaga `--risk-profile <nazwa>` pozwala doraźnie przełączyć pipeline na inny profil ryzyka (np. `aggressive`) bez modyfikacji `config/core.yaml`. Używaj tylko profili zdefiniowanych w sekcji `risk_profiles`; wynik smoke testu wpisz do audytu wraz z informacją o użytym profilu.
+   - Użycie flagi `--archive-smoke` tworzy dodatkowo archiwum ZIP z kompletem plików i instrukcją audytu. Ścieżka katalogu raportu i hash `summary.json` pojawią się w logu. Skopiuj hash, treść `summary.txt` oraz status kanałów alertowych do `docs/audit/paper_trading_log.md`. Archiwum ZIP przechowuj w sejfie audytu (retencja ≥ 24 miesiące).
+   - Opcjonalnie możesz wskazać katalog docelowy na artefakty smoke testu przy pomocy `--smoke-output <ścieżka>`. Wewnątrz katalogu zostanie utworzony podkatalog `daily_trend_smoke_*`; zachowaj go bez zmian do czasu archiwizacji i wpisu w logu audytu.
+   - Parametr `--smoke-min-free-mb <wartość>` pozwala narzucić minimalną ilość wolnego miejsca w katalogu raportu. Gdy próg nie jest spełniony, CLI zapisze ostrzeżenie w logu, oznaczy raport w `summary.json` oraz dopisze ostrzeżenie w alercie `paper_smoke`.
+   - Dodając `--smoke-fail-on-low-space` wymusisz traktowanie niskiego wolnego miejsca jako błędu operacyjnego – skrypt zakończy się kodem 4 po zapisaniu raportu i wyśle alert o poziomie `warning`.
+   - Jeśli w `config/core.yaml` skonfigurowano sekcję `reporting.smoke_archive_upload`, CLI automatycznie wykona kopię archiwum (domyślnie do `audit/smoke_archives/`) oraz – w przypadku backendu S3/MinIO – prześle plik do zdefiniowanego koszyka. Ścieżka docelowa trafia do logu oraz kontekstu alertu w polach `archive_upload_backend` i `archive_upload_location`. Zweryfikuj obecność pliku w magazynie i odnotuj lokalizację w audycie.
 4. Uruchom tryb jednorazowy (dry-run) w celu sanity check konfiguracji:
    ```bash
    PYTHONPATH=. python scripts/run_daily_trend.py --config config/core.yaml --environment binance_paper --dry-run
