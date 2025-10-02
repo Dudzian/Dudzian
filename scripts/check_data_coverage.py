@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Sequence
 
 from bot_core.config import load_core_config
+from bot_core.data.intervals import normalize_interval_token as _normalize_interval_token
 from bot_core.data.ohlcv import CoverageStatus, evaluate_coverage, summarize_issues
 
 
@@ -48,6 +49,17 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
             "Filtruj wynik do wskazanego symbolu (można podać wiele razy). "
             "Obsługiwane są zarówno nazwy instrumentów z konfiguracji (np. BTC_USDT), "
             "jak i symbole giełdowe (np. BTCUSDT)."
+        ),
+    )
+    parser.add_argument(
+        "--interval",
+        dest="intervals",
+        action="append",
+        default=None,
+        help=(
+            "Filtruj wynik do wskazanych interwałów (np. 1d, 1h, D1). "
+            "Można podać wiele razy; nazwy są nieczułe na wielkość liter i akceptują "
+            "format zarówno 1d, jak i D1."
         ),
     )
     return parser.parse_args(argv)
@@ -140,6 +152,37 @@ def main(argv: Sequence[str] | None = None) -> int:
         statuses = [status for status in statuses if status.symbol in resolved]
         if not statuses:
             print("Brak wpisów w manifeście dla wskazanych symboli.", file=sys.stderr)
+            return 2
+
+    # Filtrowanie po interwałach (opcjonalnie)
+    if args.intervals:
+        filter_tokens = [_normalize_interval_token(token) for token in args.intervals]
+        available_map: dict[str, set[str]] = {}
+        for status in statuses:
+            normalized = _normalize_interval_token(status.interval)
+            if not normalized:
+                continue
+            available_map.setdefault(normalized, set()).add(status.interval)
+
+        unknown: list[str] = []
+        resolved: set[str] = set()
+        for raw, normalized in zip(args.intervals, filter_tokens, strict=True):
+            if not normalized:
+                unknown.append(raw)
+                continue
+            variants = available_map.get(normalized)
+            if not variants:
+                unknown.append(raw)
+                continue
+            resolved.update(variants)
+
+        if unknown:
+            print("Nieznane interwały: " + ", ".join(unknown), file=sys.stderr)
+            return 2
+
+        statuses = [status for status in statuses if status.interval in resolved]
+        if not statuses:
+            print("Brak wpisów w manifeście dla wskazanych interwałów.", file=sys.stderr)
             return 2
 
     issues = summarize_issues(statuses)

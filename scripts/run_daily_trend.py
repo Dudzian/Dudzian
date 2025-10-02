@@ -26,6 +26,10 @@ from bot_core.exchanges.base import (
     ExchangeCredentials,
     OrderResult,
 )
+from bot_core.data.intervals import (
+    interval_to_milliseconds as _interval_to_milliseconds,
+    normalize_interval_token as _normalize_interval_token,
+)
 from bot_core.reporting.upload import SmokeArchiveUploader
 from bot_core.data.ohlcv import evaluate_coverage
 from bot_core.runtime.pipeline import build_daily_trend_pipeline, create_trading_controller
@@ -129,6 +133,14 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         help=(
             "Minimalna ilość wolnego miejsca (w MB) wymagana w katalogu raportu smoke; "
             "przy niższej wartości zgłosimy ostrzeżenie i oznaczymy raport."
+        ),
+    )
+    parser.add_argument(
+        "--smoke-fail-on-low-space",
+        action="store_true",
+        help=(
+            "Traktuj ostrzeżenie o niskim wolnym miejscu jako błąd – po zapisaniu raportu "
+            "zakończ proces kodem != 0."
         ),
     )
     parser.add_argument(
@@ -556,6 +568,60 @@ def _collect_storage_health(directory: Path, *, min_free_mb: float | None) -> Ma
     return info
 
 
+def _collect_required_intervals(
+    pipeline: Any,
+    *,
+    symbols: Sequence[str],
+) -> tuple[str, ...]:
+    """Zwraca uporządkowaną listę interwałów wymaganych do smoke testu."""
+    intervals: list[str] = []
+    seen: set[str] = set()
+
+    def _add_interval(value: str | None) -> None:
+        normalized = _normalize_interval_token(value)
+        if not normalized:
+            return
+        if normalized in seen:
+            return
+        seen.add(normalized)
+        intervals.append(value or normalized)
+
+    primary_interval = getattr(getattr(pipeline, "controller", None), "interval", None)
+    if primary_interval:
+        _add_interval(primary_interval)
+
+    bootstrap = getattr(pipeline, "bootstrap", None)
+    if bootstrap is None:
+        return tuple(intervals)
+
+    environment_cfg = getattr(bootstrap, "environment", None)
+    core_config = getattr(bootstrap, "core_config", None)
+    if environment_cfg is None or core_config is None:
+        return tuple(intervals)
+
+    universe_name = getattr(environment_cfg, "instrument_universe", None)
+    exchange_name = getattr(environment_cfg, "exchange", None)
+    if not universe_name or not exchange_name:
+        return tuple(intervals)
+
+    if not hasattr(core_config, "instrument_universes"):
+        return tuple(intervals)
+
+    try:
+        universe = core_config.instrument_universes[universe_name]
+    except Exception:  # noqa: BLE001
+        return tuple(intervals)
+
+    tracked_symbols = {str(symbol).lower() for symbol in symbols}
+    for instrument in getattr(universe, "instruments", ()):  # type: ignore[attr-defined]
+        symbol = instrument.exchange_symbols.get(exchange_name) if instrument else None
+        if symbol and symbol.lower() in tracked_symbols:
+            for window in getattr(instrument, "backfill_windows", ()):  # type: ignore[attr-defined]
+                _add_interval(getattr(window, "interval", None))
+
+    return tuple(intervals)
+
+
 def _prepare_smoke_report_directory(target: str | None) -> Path:
     """Zwraca katalog na raport smoke testu, tworząc go jeśli potrzeba."""
     if target:
@@ -787,21 +853,32 @@ def _render_smoke_summary(*, summary: Mapping[str, object], summary_sha256: str)
             fragments: list[str] = []
             for symbol, payload in sorted(cache_info.items()):
                 fragment = str(symbol)
-                coverage = payload.get("coverage_bars")
-                required = payload.get("required_bars")
-                row_count = payload.get("row_count")
-                try:
-                    coverage_int = int(coverage) if coverage is not None else None
-                except (TypeError, ValueError):
-                    coverage_int = None
-                try:
-                    required_int = int(required) if required is not None else None
-                except (TypeError, ValueError):
-                    required_int = None
-                try:
-                    row_count_int = int(row_count) if row_count is not None else None
-                except (TypeError, ValueError):
-                    row_count_int = None
+                if isinstance(payload, Mapping):
+                    intervals_payload = payload.get("intervals")
+                    if isinstance(intervals_payload, Mapping) and intervals_payload:
+                        interval_parts: list[str] = []
+                        for interval_name, interval_payload in sorted(intervals_payload.items()):
+                            interval_fragment = str(interval_name)
+                            if isinstance(interval_payload, Mapping):
+                                coverage_int = _as_int(interval_payload.get("coverage_bars"))
+                                required_int = _as_int(interval_payload.get("required_bars"))
+                                row_count_int = _as_int(interval_payload.get("row_count"))
+                                details: list[str] = []
+                                if coverage_int is not None and required_int is not None:
+                                    details.append(f"pokrycie {coverage_int}/{required_int}")
+                                if row_count_int is not None:
+                                    details.append(f"wiersze {row_count_int}")
+                                if details:
+                                    interval_fragment += " (" + ", ".join(details) + ")"
+                            interval_parts.append(interval_fragment)
+                        if interval_parts:
+                            fragment += " [" + "; ".join(interval_parts) + "]"
+                            fragments.append(fragment)
+                            continue
+
+                coverage_int = _as_int(payload.get("coverage_bars") if isinstance(payload, Mapping) else None)
+                required_int = _as_int(payload.get("required_bars") if isinstance(payload, Mapping) else None)
+                row_count_int = _as_int(payload.get("row_count") if isinstance(payload, Mapping) else None)
                 if coverage_int is not None and required_int is not None:
                     fragment += f": pokrycie {coverage_int}/{required_int}"
                 if row_count_int is not None:
@@ -858,23 +935,59 @@ def _ensure_smoke_cache(
     end_ms: int,
     required_bars: int,
     tick_ms: int,
-) -> Mapping[str, object] | None:
-    """Sprawdza, czy lokalny cache zawiera dane potrzebne do smoke testu.
-    Zwraca raport (manifest/cache) do osadzenia w summary.
-    """
+) -> Mapping[str, object]:
+    """Sprawdza, czy lokalny cache zawiera dane potrzebne do smoke testu."""
+    required_intervals = _collect_required_intervals(pipeline, symbols=symbols)
+    if not required_intervals:
+        required_intervals = (interval,)
+
+    normalized_primary = _normalize_interval_token(interval)
+    tick_map: dict[str, int] = {}
+    required_map: dict[str, int] = {}
+
+    for candidate in required_intervals:
+        normalized = _normalize_interval_token(candidate)
+        if not normalized:
+            continue
+        if normalized == normalized_primary:
+            tick_map[normalized] = max(1, int(tick_ms))
+            required_map[normalized] = int(required_bars)
+            continue
+        try:
+            candidate_tick_ms = _interval_to_milliseconds(candidate)
+        except ValueError:
+            _LOGGER.warning("Pominięto nieobsługiwany interwał manifestu: %s", candidate)
+            continue
+        tick_map[normalized] = candidate_tick_ms
+        window_bars = max(1, int((end_ms - start_ms) / max(1, candidate_tick_ms)) + 2)
+        required_map[normalized] = window_bars
+
+    effective_intervals = [
+        candidate
+        for candidate in required_intervals
+        if _normalize_interval_token(candidate) in tick_map
+    ]
+    if not effective_intervals:
+        effective_intervals = [interval]
+        tick_map.setdefault(normalized_primary or interval, max(1, int(tick_ms)))
+        required_map.setdefault(normalized_primary or interval, int(required_bars))
+
     manifest_report = _verify_manifest_coverage(
         pipeline=pipeline,
         symbols=symbols,
-        interval=interval,
+        intervals=effective_intervals,
         end_ms=end_ms,
-        required_bars=required_bars,
+        required_bars_map=required_map,
     )
 
     data_source = getattr(pipeline, "data_source", None)
     storage = getattr(data_source, "storage", None)
+    cache_reports: dict[str, dict[str, Mapping[str, object]]] = {}
+
     if storage is None:
-        _LOGGER.warning("Nie mogę zweryfikować cache – pipeline nie udostępnia storage'u. Pomijam kontrolę.")
-        cache_reports: dict[str, dict[str, object]] = {}
+        _LOGGER.warning(
+            "Nie mogę zweryfikować cache – pipeline nie udostępnia storage'u. Pomijam kontrolę.",
+        )
     else:
         try:
             metadata: MutableMapping[str, str] = storage.metadata()
@@ -882,80 +995,111 @@ def _ensure_smoke_cache(
             _LOGGER.warning("Nie udało się odczytać metadanych cache: %s", exc)
             metadata = {}
 
-        issues: list[tuple[str, str]] = []
-        cache_reports = {}
-
-        for symbol in symbols:
-            key = f"{symbol}::{interval}"
-            row_count: int | None = None
-            last_timestamp: int | None = None
-
-            if metadata:
-                raw_rows = metadata.get(f"row_count::{symbol}::{interval}")
-                if raw_rows is not None:
-                    try:
-                        row_count = int(raw_rows)
-                    except (TypeError, ValueError):
-                        _LOGGER.warning("Nieprawidłowa wartość row_count dla %s (%s): %s", symbol, interval, raw_rows)
-                raw_last = metadata.get(f"last_timestamp::{symbol}::{interval}")
-                if raw_last is not None:
-                    try:
-                        last_timestamp = int(float(raw_last))
-                    except (TypeError, ValueError):
-                        _LOGGER.warning("Nieprawidłowa wartość last_timestamp dla %s (%s): %s", symbol, interval, raw_last)
-
-            try:
-                payload = storage.read(key)
-            except KeyError:
-                issues.append((symbol, "brak wpisu w cache"))
+        for candidate in effective_intervals:
+            normalized = _normalize_interval_token(candidate)
+            if not normalized:
                 continue
 
-            rows = list(payload.get("rows", []))
-            if not rows:
-                issues.append((symbol, "puste dane w cache"))
-                continue
+            candidate_tick_ms = tick_map.get(normalized, max(1, int(tick_ms)))
+            candidate_required = required_map.get(normalized, int(required_bars))
 
-            if row_count is None:
-                row_count = len(rows)
-            if last_timestamp is None:
-                last_timestamp = int(float(rows[-1][0]))
-            first_timestamp = int(float(rows[0][0]))
+            issues: list[tuple[str, str]] = []
+            for symbol in symbols:
+                key = f"{symbol}::{candidate}"
+                row_count: int | None = None
+                last_timestamp: int | None = None
 
-            if row_count < required_bars:
-                issues.append((symbol, f"za mało świec ({row_count} < {required_bars})"))
-                continue
-            if last_timestamp < end_ms:
-                issues.append((symbol, f"ostatnia świeca {last_timestamp} < wymaganego końca {end_ms}"))
-                continue
-            if first_timestamp > start_ms:
-                issues.append((symbol, f"pierwsza świeca {first_timestamp} > wymaganego startu {start_ms}"))
-            else:
-                coverage = ((last_timestamp - first_timestamp) // max(1, tick_ms)) + 1
-                if coverage < required_bars:
-                    issues.append((symbol, f"pokrycie obejmuje {coverage} świec (wymagane {required_bars})"))
+                if metadata:
+                    raw_rows = metadata.get(f"row_count::{symbol}::{candidate}")
+                    if raw_rows is not None:
+                        try:
+                            row_count = int(raw_rows)
+                        except (TypeError, ValueError):
+                            _LOGGER.warning(
+                                "Nieprawidłowa wartość row_count dla %s (%s): %s",
+                                symbol,
+                                candidate,
+                                raw_rows,
+                            )
+                    raw_last = metadata.get(f"last_timestamp::{symbol}::{candidate}")
+                    if raw_last is not None:
+                        try:
+                            last_timestamp = int(float(raw_last))
+                        except (TypeError, ValueError):
+                            _LOGGER.warning(
+                                "Nieprawidłowa wartość last_timestamp dla %s (%s): %s",
+                                symbol,
+                                candidate,
+                                raw_last,
+                            )
+
+                try:
+                    payload = storage.read(key)
+                except KeyError:
+                    issues.append((str(symbol), "brak wpisu w cache"))
                     continue
-                cache_reports[str(symbol)] = {
+
+                rows = list(payload.get("rows", []))
+                if not rows:
+                    issues.append((str(symbol), "puste dane w cache"))
+                    continue
+
+                if row_count is None:
+                    row_count = len(rows)
+                if last_timestamp is None:
+                    last_timestamp = int(float(rows[-1][0]))
+
+                first_timestamp = int(float(rows[0][0]))
+
+                if row_count < candidate_required:
+                    issues.append((str(symbol), f"za mało świec ({row_count} < {candidate_required})"))
+                    continue
+
+                if last_timestamp < end_ms:
+                    issues.append((str(symbol), f"ostatnia świeca {last_timestamp} < wymaganego końca {end_ms}"))
+                    continue
+
+                if first_timestamp > start_ms:
+                    issues.append((str(symbol), f"pierwsza świeca {first_timestamp} > wymaganego startu {start_ms}"))
+                    continue
+
+                coverage = ((last_timestamp - first_timestamp) // max(1, candidate_tick_ms)) + 1
+                if coverage < candidate_required:
+                    issues.append((str(symbol), f"pokrycie obejmuje {coverage} świec (wymagane {candidate_required})"))
+                    continue
+
+                symbol_entry = cache_reports.setdefault(str(symbol), {})
+                interval_map = symbol_entry.setdefault("intervals", {})
+                interval_map[str(candidate)] = {
                     "row_count": int(row_count),
                     "first_timestamp_ms": first_timestamp,
                     "last_timestamp_ms": last_timestamp,
                     "coverage_bars": int(coverage),
-                    "required_bars": int(required_bars),
+                    "required_bars": int(candidate_required),
                 }
 
-        if issues:
-            for symbol, reason in issues:
-                _LOGGER.error("Cache offline dla symbolu %s (%s) nie spełnia wymagań smoke testu: %s", symbol, interval, reason)
-            raise RuntimeError(
-                "Cache offline nie obejmuje wymaganego zakresu danych. Uruchom scripts/seed_paper_cache.py, "
-                "aby zbudować deterministyczny seed przed smoke testem.",
-            )
+            if issues:
+                for symbol_name, reason in issues:
+                    _LOGGER.error(
+                        "Cache offline dla symbolu %s (%s) nie spełnia wymagań smoke testu: %s",
+                        symbol_name,
+                        candidate,
+                        reason,
+                    )
+                raise RuntimeError(
+                    "Cache offline nie obejmuje wymaganego zakresu danych. Uruchom scripts/seed_paper_cache.py, "
+                    "aby zbudować deterministyczny seed przed smoke testem.",
+                )
 
     result: dict[str, object] = {
         "interval": interval,
+        "intervals": [str(value) for value in effective_intervals],
         "symbols": [str(symbol) for symbol in symbols],
         "required_bars": int(required_bars),
         "tick_ms": int(max(1, tick_ms)),
         "window_ms": {"start": int(start_ms), "end": int(end_ms)},
+        "required_bars_map": {key: int(value) for key, value in required_map.items()},
+        "tick_ms_map": {key: int(value) for key, value in tick_map.items()},
     }
     if manifest_report:
         result["manifest"] = manifest_report
@@ -968,9 +1112,9 @@ def _verify_manifest_coverage(
     *,
     pipeline: Any,
     symbols: Sequence[str],
-    interval: str,
+    intervals: Sequence[str],
     end_ms: int,
-    required_bars: int,
+    required_bars_map: Mapping[str, int],
 ) -> Mapping[str, object] | None:
     """Waliduje metadane manifestu przed uruchomieniem smoke testu."""
     bootstrap = getattr(pipeline, "bootstrap", None)
@@ -1020,39 +1164,86 @@ def _verify_manifest_coverage(
         _LOGGER.warning("Nie udało się ocenić pokrycia manifestu: %s", exc)
         return None
 
+    normalized_map: dict[str, str] = {}
+    ordered_normalized: list[str] = []
+    for candidate in intervals:
+        normalized = _normalize_interval_token(candidate)
+        if not normalized:
+            continue
+        if normalized not in required_bars_map:
+            # pomiń interwały, których nie umiemy zmapować do wymagań
+            continue
+        if normalized not in normalized_map:
+            normalized_map[normalized] = str(candidate)
+            ordered_normalized.append(normalized)
+
+    if not ordered_normalized:
+        return None
+
     tracked_symbols = {str(symbol).lower() for symbol in symbols}
-    interval_key = interval.lower()
-    relevant = [
-        status
-        for status in statuses
-        if status.symbol.lower() in tracked_symbols and status.interval.lower() == interval_key
-    ]
+    status_by_key: dict[tuple[str, str], object] = {}
+    for status in statuses:
+        normalized = _normalize_interval_token(status.interval)
+        if not normalized:
+            continue
+        status_by_key[(status.symbol.lower(), normalized)] = status
 
     issues: list[str] = []
-    if not relevant:
-        issues.append(
-            "Manifest nie zawiera wpisów dla wymaganych symboli/interwałów – uruchom ponownie scripts/seed_paper_cache.py."
-        )
-    else:
-        for status in relevant:
+    entries_payload: list[dict[str, object]] = []
+
+    for symbol in symbols:
+        symbol_str = str(symbol)
+        symbol_key = symbol_str.lower()
+        for normalized in ordered_normalized:
+            display_interval = normalized_map[normalized]
+            status = status_by_key.get((symbol_key, normalized))
+            required_rows = required_bars_map.get(normalized, 0)
+            if status is None:
+                issues.append(
+                    f"{symbol_str}/{display_interval}: manifest nie zawiera wpisu – uruchom scripts/seed_paper_cache.py."
+                )
+                continue
+
             entry = status.manifest_entry
             if status.issues:
-                for issue in status.issues:
-                    issues.append(_render_manifest_issue(status.symbol, interval, issue))
+                issues.extend(
+                    _render_manifest_issue(status.symbol, status.interval, issue)
+                    for issue in status.issues
+                )
 
             row_count = entry.row_count
             if row_count is None:
-                issues.append(f"{status.symbol}/{interval}: manifest nie zawiera licznika świec (row_count)")
-            elif row_count < required_bars:
-                issues.append(f"{status.symbol}/{interval}: manifest raportuje jedynie {row_count} świec (< {required_bars})")
+                issues.append(
+                    f"{status.symbol}/{status.interval}: manifest nie zawiera licznika świec (row_count)"
+                )
+            elif required_rows and row_count < required_rows:
+                issues.append(
+                    f"{status.symbol}/{status.interval}: manifest raportuje jedynie {row_count} świec (< {required_rows})"
+                )
 
             last_ts = entry.last_timestamp_ms
             if last_ts is None:
-                issues.append(f"{status.symbol}/{interval}: manifest nie zawiera ostatniego stempla czasowego")
+                issues.append(
+                    f"{status.symbol}/{status.interval}: manifest nie zawiera ostatniego stempla czasowego"
+                )
             elif last_ts < end_ms:
                 issues.append(
-                    f"{status.symbol}/{interval}: ostatnia świeca w manifescie ({last_ts}) < wymaganego końca ({end_ms})"
+                    f"{status.symbol}/{status.interval}: ostatnia świeca w manifescie ({last_ts}) < wymaganego końca ({end_ms})"
                 )
+
+            entries_payload.append(
+                {
+                    "symbol": status.symbol,
+                    "interval": status.interval,
+                    "status": status.status,
+                    "issues": list(status.issues),
+                    "row_count": entry.row_count,
+                    "required_rows": status.required_rows,
+                    "gap_minutes": entry.gap_minutes,
+                    "last_timestamp_ms": entry.last_timestamp_ms,
+                    "last_timestamp_iso": entry.last_timestamp_iso,
+                }
+            )
 
     if issues:
         for detail in issues:
@@ -1062,28 +1253,15 @@ def _verify_manifest_coverage(
             "aby zaktualizować manifest."
         )
 
-    entries_payload: list[dict[str, object]] = []
-    for status in relevant:
-        entry = status.manifest_entry
-        entries_payload.append(
-            {
-                "symbol": status.symbol,
-                "interval": status.interval,
-                "status": status.status,
-                "issues": list(status.issues),
-                "row_count": entry.row_count,
-                "required_rows": status.required_rows,
-                "gap_minutes": entry.gap_minutes,
-                "last_timestamp_ms": entry.last_timestamp_ms,
-                "last_timestamp_iso": entry.last_timestamp_iso,
-            }
-        )
+    required_rows_payload = {
+        normalized_map[token]: int(required_bars_map[token]) for token in ordered_normalized
+    }
 
     return {
         "status": "ok",
         "as_of": as_of.isoformat(),
-        "interval": interval,
-        "required_rows": int(required_bars),
+        "intervals": [normalized_map[token] for token in ordered_normalized],
+        "required_rows": required_rows_payload,
         "symbols": sorted(str(symbol) for symbol in symbols),
         "entries": entries_payload,
     }
@@ -1227,7 +1405,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         _LOGGER.exception("Nie udało się zbudować pipeline'u daily trend: %s", exc)
         return 1
 
-    # Bezpieczne logowanie (mock w testach może nie mieć pól)
+    # Bezpieczne logowanie (mock/test może nie mieć pól)
     strategy_name = getattr(pipeline, "strategy_name", args.strategy)
     controller_name = getattr(pipeline, "controller_name", args.controller)
     _LOGGER.info(
@@ -1321,56 +1499,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         try:
             risk_engine = getattr(pipeline.bootstrap, "risk_engine", None)
             if risk_engine is not None and hasattr(risk_engine, "snapshot_state"):
-                risk_snapshot = risk_engine.snapshot_state(
-                    pipeline.bootstrap.environment.risk_profile
-                )
+                risk_snapshot = risk_engine.snapshot_state(pipeline.risk_profile_name)
         except NotImplementedError:
             _LOGGER.warning("Silnik ryzyka nie udostępnia metody snapshot_state – pomijam stan ryzyka")
         except Exception as exc:  # noqa: BLE001
             _LOGGER.warning("Nie udało się pobrać stanu ryzyka: %s", exc)
 
-        core_config = getattr(pipeline.bootstrap, "core_config", None)
-        reporting_source = core_config
-        if reporting_source is not None and hasattr(reporting_source, "reporting"):
-            reporting_source = getattr(reporting_source, "reporting", None)
-        upload_cfg = SmokeArchiveUploader.resolve_config(reporting_source)
-
-        # Elastyczne wywołanie, kompatybilne z testami monkeypatchującymi _export_smoke_report
-        try:
-            summary_path = _export_smoke_report(
-                report_dir=report_dir,
-                results=results,
-                ledger=pipeline.execution_service.ledger(),
-                window=window_meta,
-                environment=args.environment,
-                alert_snapshot=alert_snapshot,
-                risk_state=risk_snapshot,
-                data_checks=data_checks,
-                storage_info=storage_info,
-            )
-        except TypeError:
-            try:
-                summary_path = _export_smoke_report(
-                    report_dir=report_dir,
-                    results=results,
-                    ledger=pipeline.execution_service.ledger(),
-                    window=window_meta,
-                    environment=args.environment,
-                    alert_snapshot=alert_snapshot,
-                    risk_state=risk_snapshot,
-                    data_checks=data_checks,
-                )
-            except TypeError:
-                summary_path = _export_smoke_report(
-                    report_dir=report_dir,
-                    results=results,
-                    ledger=pipeline.execution_service.ledger(),
-                    window=window_meta,
-                    environment=args.environment,
-                    alert_snapshot=alert_snapshot,
-                    risk_state=risk_snapshot,
-                )
-
+        summary_path = _export_smoke_report(
+            report_dir=report_dir,
+            results=results,
+            ledger=pipeline.execution_service.ledger(),
+            window=window_meta,
+            environment=args.environment,
+            alert_snapshot=alert_snapshot,
+            risk_state=risk_snapshot,
+            data_checks=data_checks,
+            storage_info=storage_info,
+        )
         summary_hash = _hash_file(summary_path)
         try:
             summary_payload = json.loads(summary_path.read_text(encoding="utf-8"))
@@ -1393,7 +1538,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         _LOGGER.info("Podsumowanie smoke testu:%s%s", os.linesep, summary_text)
 
         archive_path: Path | None = None
-        archive_required = bool(args.archive_smoke or upload_cfg)
+        archive_required = bool(args.archive_smoke or (SmokeArchiveUploader.resolve_config(
+            getattr(getattr(pipeline.bootstrap, "core_config", None), "reporting", None)
+        )))
+        upload_cfg = SmokeArchiveUploader.resolve_config(
+            getattr(getattr(pipeline.bootstrap, "core_config", None), "reporting", None)
+        )
+
         if archive_required:
             archive_path = _archive_smoke_report(report_dir)
             if args.archive_smoke:
@@ -1427,12 +1578,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             if threshold_mb is not None:
                 storage_context["storage_threshold_mb"] = f"{float(threshold_mb):.2f}"
 
+        storage_status_lower = storage_status.lower() if storage_status else ""
+        fail_low_storage = bool(args.smoke_fail_on_low_space and storage_status_lower == "low")
+
         body = (
             "Zakończono smoke test paper trading."
             f" Zamówienia: {len(results)}, raport: {summary_path},"
             f" sha256: {summary_hash}"
         )
-        if storage_status and storage_status.lower() == "low":
+        if storage_status_lower == "low":
             free_str = storage_context.get("storage_free_mb")
             thresh_str = storage_context.get("storage_threshold_mb")
             if free_str and thresh_str:
@@ -1440,11 +1594,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             elif free_str:
                 body += f" Ostrzeżenie: niskie wolne miejsce ({free_str} MB)."
 
+        severity = "warning" if storage_status_lower == "low" else "info"
+
         message = AlertMessage(
             category="paper_smoke",
             title=f"Smoke test paper trading ({args.environment})",
             body=body,
-            severity="info",
+            severity=severity,
             context={
                 "environment": args.environment,
                 "report_dir": str(report_dir),
@@ -1465,6 +1621,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             },
         )
         pipeline.bootstrap.alert_router.dispatch(message)
+        if fail_low_storage:
+            free_str = storage_context.get("storage_free_mb", "?")
+            thresh_str = storage_context.get("storage_threshold_mb", str(args.smoke_min_free_mb or "?"))
+            _LOGGER.error(
+                "Smoke test zakończony niepowodzeniem: wolne miejsce %s MB poniżej wymaganego progu %s MB.",
+                free_str,
+                thresh_str,
+            )
+            return 4
         return 0
 
     # normalny tryb realtime / run-once

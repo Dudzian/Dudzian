@@ -32,7 +32,9 @@ Ten runbook opisuje, jak uruchomić, monitorować i bezpiecznie zatrzymać tryb 
 2. **Aktualizacja danych**
    - Uruchom `scripts/backfill.py --environment paper --granularity 1d --since 2016-01-01`.
    - Sprawdź logi (`logs/backfill.log`) pod kątem błędów; w razie limitów API powtórz z większym interwałem throttlingu.
-   - Zweryfikuj pokrycie cache: `PYTHONPATH=. python scripts/check_data_coverage.py --config config/core.yaml --environment binance_paper --json`. Status `ok` oznacza komplet danych wymaganych przez backfill.
+
+  - Zweryfikuj pokrycie cache: `PYTHONPATH=. python scripts/check_data_coverage.py --config config/core.yaml --environment binance_paper --json`. Status `ok` oznacza komplet danych wymaganych przez backfill. W razie potrzeby możesz ograniczyć raport do wybranych symboli (`--symbol BTC_USDT`) lub interwałów (`--interval 1d`, `--interval D1`) oraz zapisać wynik do pliku (`--output data/reports/coverage/binance_paper.json`).
+
 3. **Konfiguracja środowiska**
    - Plik `config/core.yaml` ma aktywne środowisko `paper_binance` i profil ryzyka `balanced` (domyślny).
    - `config/alerts.yaml` (jeśli używany) zawiera aktywne kanały Telegram + e-mail + SMS (Orange jako operator referencyjny).
@@ -66,6 +68,7 @@ Ten runbook opisuje, jak uruchomić, monitorować i bezpiecznie zatrzymać tryb 
    - Użycie flagi `--archive-smoke` tworzy dodatkowo archiwum ZIP z kompletem plików i instrukcją audytu. Ścieżka katalogu raportu i hash `summary.json` pojawią się w logu. Skopiuj hash, treść `summary.txt` oraz status kanałów alertowych do `docs/audit/paper_trading_log.md`. Archiwum ZIP przechowuj w sejfie audytu (retencja ≥ 24 miesiące).
    - Opcjonalnie możesz wskazać katalog docelowy na artefakty smoke testu przy pomocy `--smoke-output <ścieżka>`. Wewnątrz katalogu zostanie utworzony podkatalog `daily_trend_smoke_*`; zachowaj go bez zmian do czasu archiwizacji i wpisu w logu audytu.
    - Parametr `--smoke-min-free-mb <wartość>` pozwala narzucić minimalną ilość wolnego miejsca w katalogu raportu. Gdy próg nie jest spełniony, CLI zapisze ostrzeżenie w logu, oznaczy raport w `summary.json` oraz dopisze ostrzeżenie w alercie `paper_smoke`.
+   - Dodając `--smoke-fail-on-low-space` wymusisz traktowanie niskiego wolnego miejsca jako błędu operacyjnego – skrypt zakończy się kodem 4 po zapisaniu raportu i wyśle alert o poziomie `warning`.
    - Jeśli w `config/core.yaml` skonfigurowano sekcję `reporting.smoke_archive_upload`, CLI automatycznie wykona kopię archiwum (domyślnie do `audit/smoke_archives/`) oraz – w przypadku backendu S3/MinIO – prześle plik do zdefiniowanego koszyka. Ścieżka docelowa trafia do logu oraz kontekstu alertu w polach `archive_upload_backend` i `archive_upload_location`. Zweryfikuj obecność pliku w magazynie i odnotuj lokalizację w audycie.
 
 4. Uruchom tryb jednorazowy (dry-run) w celu sanity check konfiguracji:
