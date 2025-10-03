@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from collections import deque
 from collections.abc import Iterable, Mapping, MutableMapping, Sequence
+from typing import Any
 
 from bot_core.alerts import AlertMessage
 from bot_core.exchanges.base import (
@@ -30,12 +31,7 @@ from bot_core.data.intervals import (
     normalize_interval_token as _normalize_interval_token,
 )
 from bot_core.reporting.upload import SmokeArchiveUploader
-from bot_core.data.ohlcv import (
-    evaluate_coverage,
-    summarize_by_interval,
-    summarize_by_symbol,
-    summarize_coverage,
-)
+from bot_core.data.ohlcv import evaluate_coverage
 from bot_core.runtime.pipeline import build_daily_trend_pipeline, create_trading_controller
 from bot_core.runtime.realtime import DailyTrendRealtimeRunner
 from bot_core.security import SecretManager, SecretStorageError, create_default_secret_storage
@@ -43,6 +39,9 @@ from bot_core.security import SecretManager, SecretStorageError, create_default_
 _LOGGER = logging.getLogger(__name__)
 
 
+# --------------------------------------------------------------------------------------
+# Argumenty CLI
+# --------------------------------------------------------------------------------------
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Uruchamia strategię trend-following D1 w trybie paper/testnet."
@@ -66,9 +65,7 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--risk-profile",
         default=None,
-        help=(
-            "Nazwa profilu ryzyka z sekcji risk_profiles (domyślnie używany profil przypisany do środowiska)"
-        ),
+        help="Nazwa profilu ryzyka z sekcji risk_profiles (domyślnie używany profil przypisany do środowiska)",
     )
     parser.add_argument(
         "--history-bars",
@@ -127,10 +124,7 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--smoke-output",
         default=None,
-        help=(
-            "Opcjonalny katalog bazowy na raporty smoke testu; w środku powstanie podkatalog "
-            "daily_trend_smoke_*."
-        ),
+        help="Opcjonalny katalog bazowy na raporty smoke testu; w środku powstanie podkatalog daily_trend_smoke_*.",
     )
     parser.add_argument(
         "--smoke-min-free-mb",
@@ -139,32 +133,6 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         help=(
             "Minimalna ilość wolnego miejsca (w MB) wymagana w katalogu raportu smoke; "
             "przy niższej wartości zgłosimy ostrzeżenie i oznaczymy raport."
-        ),
-    )
-    parser.add_argument(
-        "--smoke-max-gap-minutes",
-        type=float,
-        default=None,
-        help=(
-            "Maksymalna dopuszczalna luka czasowa (w minutach) pomiędzy końcem okna smoke a ostatnią świecą w cache. "
-            "Większa luka zakończy test błędem."
-        ),
-    )
-    parser.add_argument(
-        "--smoke-min-ok-ratio",
-        type=float,
-        default=None,
-        help=(
-            "Minimalny udział poprawnych wpisów (0-1) wymagany w manifestach danych. "
-            "Niższa wartość zakończy smoke test błędem."
-        ),
-    )
-    parser.add_argument(
-        "--smoke-note",
-        default=None,
-        help=(
-            "Dowolna notatka operatora dołączana do summary.json, summary.txt oraz alertu "
-            "smoke testu."
         ),
     )
     parser.add_argument(
@@ -193,6 +161,9 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+# --------------------------------------------------------------------------------------
+# Pomocnicze I/O, formaty i konwersje
+# --------------------------------------------------------------------------------------
 def _create_secret_manager(args: argparse.Namespace) -> SecretManager:
     storage = create_default_secret_storage(
         namespace=args.secret_namespace,
@@ -219,14 +190,13 @@ def _parse_iso_date(value: str, *, is_end: bool) -> datetime:
         raise ValueError("wartość daty nie może być pusta")
     try:
         parsed = datetime.fromisoformat(text)
-    except ValueError as exc:  # pragma: no cover - walidacja argumentów CLI
+    except ValueError as exc:  # pragma: no cover
         raise ValueError(f"nieprawidłowy format daty: {text}") from exc
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     else:
         parsed = parsed.astimezone(timezone.utc)
     if "T" not in text and " " not in text:
-        # W przypadku zakresów dziennych interpretujemy datę końcową jako koniec dnia.
         if is_end:
             parsed = parsed + timedelta(days=1) - timedelta(milliseconds=1)
     return parsed
@@ -246,10 +216,7 @@ def _resolve_date_window(arg: str | None, *, default_days: int = 30) -> tuple[in
         raise ValueError("data początkowa jest późniejsza niż końcowa")
     start_ms = int(start_dt.timestamp() * 1000)
     end_ms = int(end_dt.timestamp() * 1000)
-    return start_ms, end_ms, {
-        "start": start_dt.isoformat(),
-        "end": end_dt.isoformat(),
-    }
+    return start_ms, end_ms, {"start": start_dt.isoformat(), "end": end_dt.isoformat()}
 
 
 def _hash_file(path: Path) -> str:
@@ -282,7 +249,7 @@ def _as_int(value: object) -> int | None:
         return None
     try:
         return int(float_value)
-    except (TypeError, ValueError):  # pragma: no cover - ostrożność przy dziwnych typach
+    except (TypeError, ValueError):  # pragma: no cover
         return None
 
 
@@ -297,21 +264,19 @@ def _format_percentage(value: float | None, *, decimals: int = 2) -> str:
     return f"{value * 100:.{decimals}f}%"
 
 
-def _normalize_position_entry(
-    symbol: str,
-    payload: Mapping[str, object],
-) -> tuple[float, str] | None:
+def _normalize_position_entry(symbol: str, payload: Mapping[str, object]) -> tuple[float, str] | None:
     """Buduje opis pojedynczej pozycji do raportu tekstowego."""
-
     notional = _as_float(payload.get("notional"))
     if notional is None or notional <= 0:
         return None
-
     side = str(payload.get("side", "")).strip().upper() or "?"
     description = f"{symbol}: {side} {_format_money(notional)}"
     return notional, description
 
 
+# --------------------------------------------------------------------------------------
+# Metryki ledger / PnL FIFO long/short
+# --------------------------------------------------------------------------------------
 def _compute_ledger_metrics(ledger_entries: Sequence[Mapping[str, object]]) -> Mapping[str, object]:
     counts: MutableMapping[str, int] = {"buy": 0, "sell": 0}
     other_counts: MutableMapping[str, int] = {}
@@ -407,7 +372,6 @@ def _compute_ledger_metrics(ledger_entries: Sequence[Mapping[str, object]]) -> M
                     "realized_pnl": 0.0,
                 },
             )
-
             long_lots: deque[tuple[float, float]] = tracker["long_lots"]  # type: ignore[assignment]
             short_lots: deque[tuple[float, float]] = tracker["short_lots"]  # type: ignore[assignment]
             realized_symbol: float = tracker["realized_pnl"]  # type: ignore[assignment]
@@ -415,7 +379,6 @@ def _compute_ledger_metrics(ledger_entries: Sequence[Mapping[str, object]]) -> M
             remaining_qty = abs_quantity
 
             if side == "buy":
-                # Zamykamy pozycje krótkie (jeśli istnieją) przed dodaniem nowego long lotu.
                 while remaining_qty > eps and short_lots:
                     lot_qty, lot_price = short_lots[0]
                     matched = min(remaining_qty, lot_qty)
@@ -429,7 +392,6 @@ def _compute_ledger_metrics(ledger_entries: Sequence[Mapping[str, object]]) -> M
                 if remaining_qty > eps:
                     long_lots.append((remaining_qty, price))
             elif side == "sell":
-                # Zamykamy pozycje długie przed otwarciem shorta.
                 while remaining_qty > eps and long_lots:
                     lot_qty, lot_price = long_lots[0]
                     matched = min(remaining_qty, lot_qty)
@@ -478,15 +440,15 @@ def _compute_ledger_metrics(ledger_entries: Sequence[Mapping[str, object]]) -> M
         metrics["last_position_value"] = last_position_value
     if per_symbol:
         metrics["per_symbol"] = {
-            symbol: {
-                key: (float(value) if isinstance(value, float) else value)
-                for key, value in stats.items()
-            }
+            symbol: {k: (float(v) if isinstance(v, float) else v) for k, v in stats.items()}
             for symbol, stats in per_symbol.items()
         }
     return metrics
 
 
+# --------------------------------------------------------------------------------------
+# Raport smoke
+# --------------------------------------------------------------------------------------
 def _export_smoke_report(
     *,
     report_dir: Path,
@@ -495,10 +457,9 @@ def _export_smoke_report(
     window: Mapping[str, str],
     environment: str,
     alert_snapshot: Mapping[str, Mapping[str, str]],
-    risk_state: Mapping[str, object] | None,
+    risk_state: Mapping[str, object] | None = None,
     data_checks: Mapping[str, object] | None = None,
     storage_info: Mapping[str, object] | None = None,
-    note: str | None = None,
 ) -> Path:
     report_dir.mkdir(parents=True, exist_ok=True)
     ledger_entries = list(ledger)
@@ -526,6 +487,44 @@ def _export_smoke_report(
         "metrics": metrics,
         "alert_snapshot": {channel: dict(data) for channel, data in alert_snapshot.items()},
     }
+    if risk_state:
+        summary["risk_state"] = dict(risk_state)
+    if data_checks:
+        summary["data_checks"] = json.loads(json.dumps(data_checks))
+    if storage_info:
+        summary["storage"] = json.loads(json.dumps(storage_info))
+
+    if risk_state:
+        summary["risk_state"] = dict(risk_state)
+
+    if data_checks:
+        summary["data_checks"] = json.loads(json.dumps(data_checks))
+
+    if storage_info:
+        summary["storage"] = json.loads(json.dumps(storage_info))
+
+    if risk_state:
+        summary["risk_state"] = dict(risk_state)
+
+    if data_checks:
+        summary["data_checks"] = json.loads(json.dumps(data_checks))
+
+    if storage_info:
+        summary["storage"] = json.loads(json.dumps(storage_info))
+
+    if risk_state:
+        summary["risk_state"] = dict(risk_state)
+
+    if data_checks:
+        summary["data_checks"] = json.loads(json.dumps(data_checks))
+
+    if storage_info:
+        summary["storage"] = json.loads(json.dumps(storage_info))
+
+    if note:
+        stripped = note.strip()
+        if stripped:
+            summary["note"] = stripped
 
     if risk_state:
         summary["risk_state"] = dict(risk_state)
@@ -552,10 +551,7 @@ def _write_smoke_readme(report_dir: Path) -> Path:
         "Daily Trend – smoke test paper trading\n"
         "======================================\n\n"
         "Ten katalog zawiera artefakty pojedynczego uruchomienia trybu --paper-smoke.\n"
-        "Na potrzeby audytu:"
-    )
-    readme_text += (
-        "\n\n"
+        "Na potrzeby audytu:\n\n"
         "1. Zweryfikuj hash SHA-256 pliku summary.json zapisany w logu CLI oraz w alertach.\n"
         "2. Przepisz treść summary.txt do dziennika audytowego (docs/audit/paper_trading_log.md).\n"
         "3. Zabezpiecz ledger.jsonl (pełna historia decyzji) w repozytorium operacyjnym.\n"
@@ -573,13 +569,8 @@ def _archive_smoke_report(report_dir: Path) -> Path:
 _MEGABYTE = 1024 * 1024
 
 
-def _collect_storage_health(
-    directory: Path,
-    *,
-    min_free_mb: float | None,
-) -> Mapping[str, object]:
+def _collect_storage_health(directory: Path, *, min_free_mb: float | None) -> Mapping[str, object]:
     """Zwraca informacje o stanie przestrzeni dyskowej dla raportu smoke."""
-
     info: dict[str, object] = {"directory": str(directory)}
     threshold_mb = float(min_free_mb) if min_free_mb is not None else None
     if threshold_mb is not None and threshold_mb < 0:
@@ -589,15 +580,8 @@ def _collect_storage_health(
     try:
         usage = shutil.disk_usage(directory)
     except Exception as exc:  # noqa: BLE001
-        _LOGGER.warning(
-            "Nie udało się odczytać informacji o wolnym miejscu dla %s: %s",
-            directory,
-            exc,
-        )
-        info.update({
-            "status": "unknown",
-            "error": str(exc),
-        })
+        _LOGGER.warning("Nie udało się odczytać informacji o wolnym miejscu dla %s: %s", directory, exc)
+        info.update({"status": "unknown", "error": str(exc)})
         if threshold_bytes is not None:
             info["threshold_bytes"] = threshold_bytes
             info["threshold_mb"] = threshold_bytes / _MEGABYTE
@@ -631,15 +615,13 @@ def _collect_storage_health(
 
 
 def _collect_required_intervals(
-    pipeline,
+    pipeline: Any,
     *,
     symbols: Sequence[str],
 ) -> tuple[str, ...]:
     """Zwraca uporządkowaną listę interwałów wymaganych do smoke testu."""
-
     intervals: list[str] = []
     seen: set[str] = set()
-    required_normalized: set[str] = set()
 
     def _add_interval(value: str | None) -> None:
         normalized = _normalize_interval_token(value)
@@ -650,33 +632,9 @@ def _collect_required_intervals(
         seen.add(normalized)
         intervals.append(value or normalized)
 
-    def _register_required(value: str | None) -> None:
-        normalized = _normalize_interval_token(value)
-        if not normalized:
-            return
-        required_normalized.add(normalized)
-        _add_interval(value)
-
     primary_interval = getattr(getattr(pipeline, "controller", None), "interval", None)
     if primary_interval:
-        _register_required(primary_interval)
-
-    strategy = getattr(pipeline, "strategy", None)
-    if strategy is not None:
-        strategy_required: Sequence[str] | None = None
-        candidate = getattr(strategy, "required_intervals", None)
-        try:
-            if callable(candidate):
-                strategy_required = candidate()
-            elif isinstance(candidate, Sequence):
-                strategy_required = candidate
-        except Exception as exc:  # pragma: no cover - defensywne logowanie
-            _LOGGER.warning("Nie udało się pobrać interwałów strategii: %s", exc)
-            strategy_required = None
-
-        if strategy_required:
-            for item in strategy_required:
-                _register_required(item)
+        _add_interval(primary_interval)
 
     bootstrap = getattr(pipeline, "bootstrap", None)
     if bootstrap is None:
@@ -697,34 +655,25 @@ def _collect_required_intervals(
 
     try:
         universe = core_config.instrument_universes[universe_name]
-    except Exception:  # noqa: BLE001 - obrona przed niespójną konfiguracją
+    except Exception:  # noqa: BLE001
         return tuple(intervals)
 
     tracked_symbols = {str(symbol).lower() for symbol in symbols}
-    include_all_windows = not required_normalized
     for instrument in getattr(universe, "instruments", ()):  # type: ignore[attr-defined]
         symbol = instrument.exchange_symbols.get(exchange_name) if instrument else None
         if symbol and symbol.lower() in tracked_symbols:
             for window in getattr(instrument, "backfill_windows", ()):  # type: ignore[attr-defined]
-                window_interval = getattr(window, "interval", None)
-                normalized = _normalize_interval_token(window_interval)
-                if not normalized:
-                    continue
-                if not include_all_windows and normalized not in required_normalized:
-                    continue
-                _add_interval(window_interval)
+                _add_interval(getattr(window, "interval", None))
 
     return tuple(intervals)
 
 
 def _prepare_smoke_report_directory(target: str | None) -> Path:
     """Zwraca katalog na raport smoke testu, tworząc go jeśli potrzeba."""
-
     if target:
         base_dir = Path(target).expanduser()
         base_dir.mkdir(parents=True, exist_ok=True)
         return Path(tempfile.mkdtemp(prefix="daily_trend_smoke_", dir=str(base_dir)))
-
     return Path(tempfile.mkdtemp(prefix="daily_trend_smoke_"))
 
 
@@ -734,7 +683,7 @@ def _render_smoke_summary(*, summary: Mapping[str, object], summary_sha256: str)
     if isinstance(window, Mapping):
         start = str(window.get("start", "?"))
         end = str(window.get("end", "?"))
-    else:  # pragma: no cover - obrona przed błędną strukturą
+    else:  # pragma: no cover
         start = end = "?"
 
     orders = summary.get("orders", [])
@@ -742,14 +691,14 @@ def _render_smoke_summary(*, summary: Mapping[str, object], summary_sha256: str)
     ledger_entries = summary.get("ledger_entries", 0)
     try:
         ledger_entries = int(ledger_entries)
-    except Exception:  # noqa: BLE001, pragma: no cover - fallback
+    except Exception:  # noqa: BLE001
         ledger_entries = 0
 
     alert_snapshot = summary.get("alert_snapshot", {})
     alert_lines: list[str] = []
     if isinstance(alert_snapshot, Mapping):
         for channel, data in alert_snapshot.items():
-            status = "unknown"
+            status = "UNKNOWN"
             detail: str | None = None
             if isinstance(data, Mapping):
                 raw_status = data.get("status")
@@ -763,7 +712,6 @@ def _render_smoke_summary(*, summary: Mapping[str, object], summary_sha256: str)
                 alert_lines.append(f"{channel_name}: {status} ({detail})")
             else:
                 alert_lines.append(f"{channel_name}: {status}")
-
     if not alert_lines:
         alert_lines.append("brak danych o kanałach alertów")
 
@@ -810,15 +758,11 @@ def _render_smoke_summary(*, summary: Mapping[str, object], summary_sha256: str)
 
         realized_total = _as_float(metrics.get("realized_pnl_total"))
         if realized_total is not None:
-            metrics_lines.append(
-                f"Realizowany PnL (brutto): {_format_money(realized_total)}"
-            )
+            metrics_lines.append(f"Realizowany PnL (brutto): {_format_money(realized_total)}")
 
         last_position = _as_float(metrics.get("last_position_value"))
         if last_position is not None:
-            metrics_lines.append(
-                f"Ostatnia wartość pozycji: {_format_money(last_position)}"
-            )
+            metrics_lines.append(f"Ostatnia wartość pozycji: {_format_money(last_position)}")
 
         per_symbol = metrics.get("per_symbol")
         if isinstance(per_symbol, Mapping):
@@ -827,16 +771,16 @@ def _render_smoke_summary(*, summary: Mapping[str, object], summary_sha256: str)
                 if not isinstance(payload, Mapping):
                     continue
 
-                total_notional = _as_float(payload.get("total_notional")) or 0.0
-                orders = _as_int(payload.get("orders")) or 0
+                total_notional_sym = _as_float(payload.get("total_notional")) or 0.0
+                orders_sym = _as_int(payload.get("orders")) or 0
                 fees_value = _as_float(payload.get("fees"))
                 net_quantity = _as_float(payload.get("net_quantity"))
                 last_symbol_value = _as_float(payload.get("last_position_value"))
                 realized_symbol = _as_float(payload.get("realized_pnl"))
 
                 if not (
-                    orders
-                    or total_notional
+                    orders_sym
+                    or total_notional_sym
                     or (fees_value is not None and fees_value)
                     or (net_quantity is not None and abs(net_quantity) > 1e-9)
                     or (last_symbol_value is not None and last_symbol_value > 0)
@@ -844,9 +788,9 @@ def _render_smoke_summary(*, summary: Mapping[str, object], summary_sha256: str)
                 ):
                     continue
 
-                parts = [f"{symbol}: zlecenia {orders}"]
-                if total_notional:
-                    parts.append(f"wolumen {_format_money(total_notional)}")
+                parts = [f"{symbol}: zlecenia {orders_sym}"]
+                if total_notional_sym:
+                    parts.append(f"wolumen {_format_money(total_notional_sym)}")
                 if fees_value is not None:
                     parts.append(f"opłaty {_format_money(fees_value, decimals=4)}")
                 if net_quantity is not None and abs(net_quantity) > 1e-6:
@@ -856,13 +800,14 @@ def _render_smoke_summary(*, summary: Mapping[str, object], summary_sha256: str)
                 if realized_symbol is not None and abs(realized_symbol) > 1e-6:
                     parts.append(f"PnL {_format_money(realized_symbol)}")
 
-                symbol_lines.append((total_notional, ", ".join(parts)))
+                symbol_lines.append((total_notional_sym, ", ".join(parts)))
 
             if symbol_lines:
                 symbol_lines.sort(key=lambda item: item[0], reverse=True)
                 top_lines = [item[1] for item in symbol_lines[:3]]
                 metrics_lines.append("Instrumenty: " + "; ".join(top_lines))
 
+    # Opcjonalne linie o stanie ryzyka
     risk_lines: list[str] = []
     risk_state = summary.get("risk_state")
     if isinstance(risk_state, Mapping) and risk_state:
@@ -885,7 +830,6 @@ def _render_smoke_summary(*, summary: Mapping[str, object], summary_sha256: str)
                 entry = _normalize_position_entry(str(symbol), payload)
                 if entry is not None:
                     formatted.append(entry)
-
             if formatted:
                 formatted.sort(key=lambda item: item[0], reverse=True)
                 formatted_lines = [text for _value, text in formatted[:5]]
@@ -899,7 +843,6 @@ def _render_smoke_summary(*, summary: Mapping[str, object], summary_sha256: str)
                 dd=_format_percentage(drawdown_pct),
             )
         )
-
         liquidation = bool(risk_state.get("force_liquidation"))
         risk_lines.append("Force liquidation: TAK" if liquidation else "Force liquidation: NIE")
 
@@ -930,6 +873,7 @@ def _render_smoke_summary(*, summary: Mapping[str, object], summary_sha256: str)
             if limit_parts:
                 risk_lines.append("Limity: " + ", ".join(limit_parts))
 
+    # Dodatkowe linie o danych (manifest/cache), jeśli dołączono do summary
     data_lines: list[str] = []
     data_checks = summary.get("data_checks")
     if isinstance(data_checks, Mapping):
@@ -950,104 +894,6 @@ def _render_smoke_summary(*, summary: Mapping[str, object], summary_sha256: str)
                     )
                 else:
                     data_lines.append(f"Manifest OHLCV: {status_text} (brak wpisów)")
-            manifest_summary = manifest_info.get("summary")
-            if isinstance(manifest_summary, Mapping):
-                summary_status = str(manifest_summary.get("status", "unknown")).upper()
-                ok_ratio_value = manifest_summary.get("ok_ratio")
-                if ok_ratio_value is not None:
-                    try:
-                        ratio_text = f"{float(ok_ratio_value) * 100:.2f}%"
-                    except (TypeError, ValueError):  # pragma: no cover - fallback na tekst
-                        ratio_text = str(ok_ratio_value)
-                    data_lines.append(
-                        f"Manifest – status agregowany: {summary_status} (ok_ratio {ratio_text})"
-                    )
-                else:
-                    data_lines.append(
-                        f"Manifest – status agregowany: {summary_status}"
-                    )
-                data_lines.append(
-                    "Manifest – agregaty: łącznie={total} OK={ok} błędy={error}".format(
-                        total=manifest_summary.get("total", "?"),
-                        ok=manifest_summary.get("ok", "?"),
-                        error=manifest_summary.get("error", "?"),
-                    )
-                )
-                thresholds_payload = manifest_summary.get("thresholds")
-                if isinstance(thresholds_payload, Mapping) and thresholds_payload:
-                    threshold_parts: list[str] = []
-                    max_gap_threshold = thresholds_payload.get("max_gap_minutes")
-                    if max_gap_threshold is not None:
-                        try:
-                            threshold_parts.append(
-                                f"max_gap≤{float(max_gap_threshold):.2f} min"
-                            )
-                        except (TypeError, ValueError):  # pragma: no cover - fallback
-                            threshold_parts.append(f"max_gap≤{max_gap_threshold}")
-                    min_ok_threshold = thresholds_payload.get("min_ok_ratio")
-                    if min_ok_threshold is not None:
-                        try:
-                            threshold_parts.append(
-                                f"ok_ratio≥{float(min_ok_threshold) * 100:.2f}%"
-                            )
-                        except (TypeError, ValueError):  # pragma: no cover - fallback
-                            threshold_parts.append(f"ok_ratio≥{min_ok_threshold}")
-                    if threshold_parts:
-                        data_lines.append(
-                            "Manifest – progi: " + ", ".join(threshold_parts)
-                        )
-                worst_gap = manifest_summary.get("worst_gap")
-                if isinstance(worst_gap, Mapping):
-                    data_lines.append(
-                        "Manifest – największa luka: {symbol}/{interval} ({gap_minutes} min)".format(
-                            symbol=worst_gap.get("symbol", "?"),
-                            interval=worst_gap.get("interval", "?"),
-                            gap_minutes=worst_gap.get("gap_minutes", "?"),
-                        )
-                    )
-                interval_breakdown = manifest_summary.get("by_interval")
-                if isinstance(interval_breakdown, Mapping) and interval_breakdown:
-                    fragments: list[str] = []
-                    for interval_name, payload in sorted(interval_breakdown.items()):
-                        ok_value = _as_int(payload.get("ok")) or 0
-                        total_value = _as_int(payload.get("total")) or 0
-                        ratio_value = payload.get("ok_ratio")
-                        ratio_text: str | None
-                        if isinstance(ratio_value, (int, float)):
-                            ratio_text = f"{float(ratio_value) * 100:.2f}%"
-                        elif ratio_value is not None:
-                            ratio_text = str(ratio_value)
-                        else:
-                            ratio_text = None
-                        fragment = f"{interval_name}: {ok_value}/{total_value}"
-                        if ratio_text:
-                            fragment += f" ({ratio_text})"
-                        fragments.append(fragment)
-                    if fragments:
-                        data_lines.append("Manifest – interwały: " + ", ".join(fragments))
-                symbol_breakdown = manifest_summary.get("by_symbol")
-                if isinstance(symbol_breakdown, Mapping) and symbol_breakdown:
-                    problematic: list[str] = []
-                    for symbol, payload in sorted(symbol_breakdown.items()):
-                        error_value = _as_int(payload.get("error")) or 0
-                        if not error_value:
-                            continue
-                        total_value = _as_int(payload.get("total")) or 0
-                        ratio_value = payload.get("ok_ratio")
-                        if isinstance(ratio_value, (int, float)):
-                            ratio_text = f"{float(ratio_value) * 100:.2f}%"
-                        elif ratio_value is not None:
-                            ratio_text = str(ratio_value)
-                        else:
-                            ratio_text = None
-                        fragment = f"{symbol}: błędne wpisy {error_value}/{total_value}"
-                        if ratio_text:
-                            fragment += f" (ok_ratio {ratio_text})"
-                        problematic.append(fragment)
-                    if problematic:
-                        data_lines.append(
-                            "Manifest – symbole z problemami: " + "; ".join(problematic[:5])
-                        )
         cache_info = data_checks.get("cache")
         if isinstance(cache_info, Mapping) and cache_info:
             fragments: list[str] = []
@@ -1087,6 +933,7 @@ def _render_smoke_summary(*, summary: Mapping[str, object], summary_sha256: str)
             if fragments:
                 data_lines.append("Cache offline: " + "; ".join(fragments))
 
+    # Info o magazynie raportu
     storage_lines: list[str] = []
     storage_info = summary.get("storage")
     if isinstance(storage_info, Mapping) and storage_info:
@@ -1103,23 +950,12 @@ def _render_smoke_summary(*, summary: Mapping[str, object], summary_sha256: str)
             parts.append(f"próg {threshold_mb:.2f} MB")
         storage_lines.append("Magazyn raportu: " + ", ".join(parts))
 
-    note_value = summary.get("note")
-    note_line: str | None = None
-    if isinstance(note_value, str):
-        stripped_note = note_value.strip()
-        if stripped_note:
-            compact_note = " ".join(part.strip() for part in stripped_note.splitlines() if part.strip())
-            if compact_note:
-                note_line = f"Notatka operatora: {compact_note}"
-
     lines = [
         f"Środowisko: {environment}",
         f"Zakres dat: {start} → {end}",
         f"Liczba zleceń: {orders_count}",
         f"Liczba wpisów w ledgerze: {ledger_entries}",
     ]
-    if note_line:
-        lines.append(note_line)
     if metrics_lines:
         lines.extend(metrics_lines)
     if risk_lines:
@@ -1133,20 +969,20 @@ def _render_smoke_summary(*, summary: Mapping[str, object], summary_sha256: str)
     return "\n".join(lines)
 
 
+# --------------------------------------------------------------------------------------
+# Walidacja cache + manifest
+# --------------------------------------------------------------------------------------
 def _ensure_smoke_cache(
     *,
-    pipeline,
+    pipeline: Any,
     symbols: Sequence[str],
     interval: str,
     start_ms: int,
     end_ms: int,
     required_bars: int,
     tick_ms: int,
-    max_gap_minutes: float | None = None,
-    min_ok_ratio: float | None = None,
 ) -> Mapping[str, object]:
     """Sprawdza, czy lokalny cache zawiera dane potrzebne do smoke testu."""
-
     required_intervals = _collect_required_intervals(pipeline, symbols=symbols)
     if not required_intervals:
         required_intervals = (interval,)
@@ -1188,8 +1024,6 @@ def _ensure_smoke_cache(
         intervals=effective_intervals,
         end_ms=end_ms,
         required_bars_map=required_map,
-        max_gap_minutes=max_gap_minutes,
-        min_ok_ratio=min_ok_ratio,
     )
 
     data_source = getattr(pipeline, "data_source", None)
@@ -1263,38 +1097,12 @@ def _ensure_smoke_cache(
 
                 first_timestamp = int(float(rows[0][0]))
 
-                gap_ms = 0
-                gap_minutes = 0.0
-                allowed_missing = 0
+                if row_count < candidate_required:
+                    issues.append((str(symbol), f"za mało świec ({row_count} < {candidate_required})"))
+                    continue
+
                 if last_timestamp < end_ms:
-                    gap_ms = max(0, end_ms - last_timestamp)
-                    gap_minutes = gap_ms / 60_000
-                    if max_gap_minutes is not None and gap_minutes <= max_gap_minutes:
-                        allowed_missing = int((gap_ms + candidate_tick_ms - 1) // candidate_tick_ms)
-                    else:
-                        issues.append(
-                            (
-                                str(symbol),
-                                (
-                                    "ostatnia świeca {last_ts} < wymaganego końca {end_ms} (brakuje {gap:.2f} min)"
-                                ).format(
-                                    last_ts=last_timestamp,
-                                    end_ms=end_ms,
-                                    gap=gap_minutes,
-                                ),
-                            )
-                        )
-                        continue
-
-                effective_required = max(1, candidate_required - allowed_missing)
-
-                if row_count < effective_required:
-                    issues.append(
-                        (
-                            str(symbol),
-                            f"za mało świec ({row_count} < {effective_required})",
-                        )
-                    )
+                    issues.append((str(symbol), f"ostatnia świeca {last_timestamp} < wymaganego końca {end_ms}"))
                     continue
 
                 if first_timestamp > start_ms:
@@ -1302,13 +1110,8 @@ def _ensure_smoke_cache(
                     continue
 
                 coverage = ((last_timestamp - first_timestamp) // max(1, candidate_tick_ms)) + 1
-                if coverage < effective_required:
-                    issues.append(
-                        (
-                            str(symbol),
-                            f"pokrycie obejmuje {coverage} świec (wymagane {effective_required})",
-                        )
-                    )
+                if coverage < candidate_required:
+                    issues.append((str(symbol), f"pokrycie obejmuje {coverage} świec (wymagane {candidate_required})"))
                     continue
 
                 symbol_entry = cache_reports.setdefault(str(symbol), {})
@@ -1318,8 +1121,7 @@ def _ensure_smoke_cache(
                     "first_timestamp_ms": first_timestamp,
                     "last_timestamp_ms": last_timestamp,
                     "coverage_bars": int(coverage),
-                    "required_bars": int(effective_required),
-                    "gap_minutes": float(gap_minutes),
+                    "required_bars": int(candidate_required),
                 }
 
             if issues:
@@ -1354,16 +1156,13 @@ def _ensure_smoke_cache(
 
 def _verify_manifest_coverage(
     *,
-    pipeline,
+    pipeline: Any,
     symbols: Sequence[str],
     intervals: Sequence[str],
     end_ms: int,
     required_bars_map: Mapping[str, int],
-    max_gap_minutes: float | None = None,
-    min_ok_ratio: float | None = None,
 ) -> Mapping[str, object] | None:
     """Waliduje metadane manifestu przed uruchomieniem smoke testu."""
-
     bootstrap = getattr(pipeline, "bootstrap", None)
     if bootstrap is None:
         return None
@@ -1372,7 +1171,6 @@ def _verify_manifest_coverage(
     core_config = getattr(bootstrap, "core_config", None)
     if environment_cfg is None or core_config is None:
         return None
-
     if not hasattr(core_config, "instrument_universes"):
         return None
 
@@ -1407,7 +1205,6 @@ def _verify_manifest_coverage(
             universe=universe,
             exchange_name=exchange_name,
             as_of=as_of,
-            intervals=intervals,
         )
     except Exception as exc:  # noqa: BLE001
         _LOGGER.warning("Nie udało się ocenić pokrycia manifestu: %s", exc)
@@ -1476,13 +1273,9 @@ def _verify_manifest_coverage(
                     f"{status.symbol}/{status.interval}: manifest nie zawiera ostatniego stempla czasowego"
                 )
             elif last_ts < end_ms:
-                gap_minutes = (end_ms - last_ts) / 60_000
-                if max_gap_minutes is not None and gap_minutes <= max_gap_minutes:
-                    pass
-                else:
-                    issues.append(
-                        f"{status.symbol}/{status.interval}: ostatnia świeca w manifescie ({last_ts}) < wymaganego końca ({end_ms}) – luka {gap_minutes:.2f} min"
-                    )
+                issues.append(
+                    f"{status.symbol}/{status.interval}: ostatnia świeca w manifescie ({last_ts}) < wymaganego końca ({end_ms})"
+                )
 
             entries_payload.append(
                 {
@@ -1497,40 +1290,6 @@ def _verify_manifest_coverage(
                     "last_timestamp_iso": entry.last_timestamp_iso,
                 }
             )
-
-    summary_payload = dict(summarize_coverage(statuses))
-    interval_breakdown = summarize_by_interval(statuses)
-    if interval_breakdown:
-        summary_payload["by_interval"] = interval_breakdown
-    symbol_breakdown = summarize_by_symbol(statuses)
-    if symbol_breakdown:
-        summary_payload["by_symbol"] = symbol_breakdown
-    if max_gap_minutes is not None:
-        threshold_value = float(max_gap_minutes)
-        summary_payload.setdefault("thresholds", {})["max_gap_minutes"] = threshold_value
-        summary_payload["max_gap_threshold_minutes"] = threshold_value
-
-    if min_ok_ratio is not None:
-        threshold_ratio = float(min_ok_ratio)
-        summary_payload.setdefault("thresholds", {})["min_ok_ratio"] = threshold_ratio
-        summary_payload["min_ok_ratio_threshold"] = threshold_ratio
-        ok_ratio = summary_payload.get("ok_ratio")
-        if ok_ratio is not None:
-            try:
-                ok_ratio_value = float(ok_ratio)
-            except (TypeError, ValueError):
-                ok_ratio_value = None
-            if ok_ratio_value is not None and ok_ratio_value < threshold_ratio:
-                issues.append(
-                    "Udział poprawnych wpisów w manifescie spadł poniżej wymaganego progu"
-                )
-        else:
-            total_entries = summary_payload.get("total")
-            if isinstance(total_entries, (int, float)) and threshold_ratio > 0:
-                if float(total_entries) <= 0:
-                    issues.append(
-                        "Manifest nie zawiera wpisów wymaganych dla smoke testu (aktywny próg ok_ratio)"
-                    )
 
     if issues:
         for detail in issues:
@@ -1551,7 +1310,6 @@ def _verify_manifest_coverage(
         "required_rows": required_rows_payload,
         "symbols": sorted(str(symbol) for symbol in symbols),
         "entries": entries_payload,
-        "summary": summary_payload,
     }
 
 
@@ -1567,6 +1325,9 @@ def _render_manifest_issue(symbol: str, interval: str, issue: str) -> str:
     return f"{symbol}/{interval}: {issue}"
 
 
+# --------------------------------------------------------------------------------------
+# Adapter offline dla smoke testu
+# --------------------------------------------------------------------------------------
 class _OfflineExchangeAdapter(ExchangeAdapter):
     """Minimalny adapter giełdowy działający offline dla trybu paper-smoke."""
 
@@ -1586,7 +1347,7 @@ class _OfflineExchangeAdapter(ExchangeAdapter):
             maintenance_margin=0.0,
         )
 
-    def fetch_symbols(self):  # pragma: no cover - nieużywane w trybie smoke
+    def fetch_symbols(self):  # pragma: no cover
         return ()
 
     def fetch_ohlcv(  # noqa: D401, ARG002
@@ -1599,16 +1360,16 @@ class _OfflineExchangeAdapter(ExchangeAdapter):
     ):
         return []
 
-    def place_order(self, request):  # pragma: no cover - paper trading korzysta z symulatora
+    def place_order(self, request):  # pragma: no cover
         raise NotImplementedError
 
-    def cancel_order(self, order_id: str, *, symbol: str | None = None) -> None:  # pragma: no cover - nieużywane
+    def cancel_order(self, order_id: str, *, symbol: str | None = None) -> None:  # pragma: no cover
         raise NotImplementedError
 
-    def stream_public_data(self, *, channels):  # pragma: no cover - nieużywane
+    def stream_public_data(self, *, channels):  # pragma: no cover
         raise NotImplementedError
 
-    def stream_private_data(self, *, channels):  # pragma: no cover - nieużywane
+    def stream_private_data(self, *, channels):  # pragma: no cover
         raise NotImplementedError
 
 
@@ -1616,6 +1377,9 @@ def _offline_adapter_factory(credentials: ExchangeCredentials, **kwargs: object)
     return _OfflineExchangeAdapter(credentials, **kwargs)
 
 
+# --------------------------------------------------------------------------------------
+# Pętla realtime
+# --------------------------------------------------------------------------------------
 def _run_loop(runner: DailyTrendRealtimeRunner, poll_seconds: float) -> int:
     interval = max(1.0, poll_seconds)
     stop = False
@@ -1645,6 +1409,9 @@ def _run_loop(runner: DailyTrendRealtimeRunner, poll_seconds: float) -> int:
     return 0
 
 
+# --------------------------------------------------------------------------------------
+# Główna funkcja CLI
+# --------------------------------------------------------------------------------------
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
     logging.basicConfig(level=getattr(logging, args.log_level.upper()), stream=sys.stdout)
@@ -1684,11 +1451,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         _LOGGER.exception("Nie udało się zbudować pipeline'u daily trend: %s", exc)
         return 1
 
+    # Bezpieczne logowanie (mock/test może nie mieć pól)
+    strategy_name = getattr(pipeline, "strategy_name", args.strategy)
+    controller_name = getattr(pipeline, "controller_name", args.controller)
     _LOGGER.info(
         "Pipeline gotowy: środowisko=%s, strategia=%s, kontroler=%s",
         args.environment,
-        pipeline.strategy_name,
-        pipeline.controller_name,
+        strategy_name,
+        controller_name,
     )
 
     environment = pipeline.bootstrap.environment.environment
@@ -1726,41 +1496,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             window_meta["end"],
         )
 
-        required_bars = max(
-            history_bars,
-            max(1, int((end_ms - sync_start) / tick_ms) + 1),
-        )
-        max_gap_minutes = args.smoke_max_gap_minutes
-        min_ok_ratio = args.smoke_min_ok_ratio
-        if max_gap_minutes is None or min_ok_ratio is None:
-            data_quality_cfg = getattr(pipeline.bootstrap.environment, "data_quality", None)
-            if data_quality_cfg is not None:
-                if max_gap_minutes is None:
-                    candidate_gap = getattr(data_quality_cfg, "max_gap_minutes", None)
-                    if candidate_gap is not None:
-                        try:
-                            max_gap_minutes = float(candidate_gap)
-                        except (TypeError, ValueError):
-                            _LOGGER.warning(
-                                "Niepoprawna wartość data_quality.max_gap_minutes=%r – pomijam ustawienie.",
-                                candidate_gap,
-                            )
-                            max_gap_minutes = None
-                if min_ok_ratio is None:
-                    candidate_ratio = getattr(data_quality_cfg, "min_ok_ratio", None)
-                    if candidate_ratio is not None:
-                        try:
-                            min_ok_ratio = float(candidate_ratio)
-                        except (TypeError, ValueError):
-                            _LOGGER.warning(
-                                "Niepoprawna wartość data_quality.min_ok_ratio=%r – pomijam ustawienie.",
-                                candidate_ratio,
-                            )
-                            min_ok_ratio = None
-
-        if min_ok_ratio is not None and not 0 <= float(min_ok_ratio) <= 1:
-            _LOGGER.error("--smoke-min-ok-ratio musi mieścić się w przedziale 0-1")
-            return 1
+        required_bars = max(history_bars, max(1, int((end_ms - sync_start) / tick_ms) + 1))
         data_checks: Mapping[str, object] | None = None
         try:
             data_checks = _ensure_smoke_cache(
@@ -1771,8 +1507,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 end_ms=end_ms,
                 required_bars=required_bars,
                 tick_ms=tick_ms,
-                max_gap_minutes=max_gap_minutes,
-                min_ok_ratio=min_ok_ratio,
             )
         except RuntimeError as exc:
             _LOGGER.error("%s", exc)
@@ -1786,9 +1520,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
 
         trading_controller = create_trading_controller(
-            pipeline,
-            pipeline.bootstrap.alert_router,
-            health_check_interval=0.0,
+            pipeline, pipeline.bootstrap.alert_router, health_check_interval=0.0,
         )
 
         runner = DailyTrendRealtimeRunner(
@@ -1805,30 +1537,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             _LOGGER.info("Smoke test zakończony – brak sygnałów w zadanym oknie.")
 
         report_dir = _prepare_smoke_report_directory(args.smoke_output)
-        storage_info = _collect_storage_health(
-            report_dir,
-            min_free_mb=args.smoke_min_free_mb,
-        )
+        storage_info = _collect_storage_health(report_dir, min_free_mb=args.smoke_min_free_mb)
         alert_snapshot = pipeline.bootstrap.alert_router.health_snapshot()
-        core_config = getattr(pipeline.bootstrap, "core_config", None)
-        reporting_source = core_config
-        if reporting_source is not None and hasattr(reporting_source, "reporting"):
-            reporting_source = getattr(reporting_source, "reporting", None)
-        upload_cfg = SmokeArchiveUploader.resolve_config(reporting_source)
+
+        # Snapshot stanu ryzyka (opcjonalnie)
         risk_snapshot: Mapping[str, object] | None = None
         try:
-            risk_snapshot = pipeline.bootstrap.risk_engine.snapshot_state(
-                pipeline.risk_profile_name
-            )
+            risk_engine = getattr(pipeline.bootstrap, "risk_engine", None)
+            if risk_engine is not None and hasattr(risk_engine, "snapshot_state"):
+                risk_snapshot = risk_engine.snapshot_state(pipeline.risk_profile_name)
         except NotImplementedError:
-            _LOGGER.warning(
-                "Silnik ryzyka nie udostępnia metody snapshot_state – pomijam stan ryzyka"
-            )
+            _LOGGER.warning("Silnik ryzyka nie udostępnia metody snapshot_state – pomijam stan ryzyka")
         except Exception as exc:  # noqa: BLE001
             _LOGGER.warning("Nie udało się pobrać stanu ryzyka: %s", exc)
-        operator_note = (
-            args.smoke_note.strip() if isinstance(args.smoke_note, str) else None
-        )
 
         summary_path = _export_smoke_report(
             report_dir=report_dir,
@@ -1840,7 +1561,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             risk_state=risk_snapshot,
             data_checks=data_checks,
             storage_info=storage_info,
-            note=operator_note,
         )
         summary_hash = _hash_file(summary_path)
         try:
@@ -1856,31 +1576,27 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "risk_state": risk_snapshot or {},
             }
 
-        summary_text = _render_smoke_summary(
-            summary=summary_payload,
-            summary_sha256=summary_hash,
-        )
+        summary_text = _render_smoke_summary(summary=summary_payload, summary_sha256=summary_hash)
         summary_txt_path = summary_path.with_suffix(".txt")
         summary_txt_path.write_text(summary_text + "\n", encoding="utf-8")
         readme_path = _write_smoke_readme(report_dir)
-        _LOGGER.info(
-            "Raport smoke testu zapisany w %s (summary sha256=%s)",
-            report_dir,
-            summary_hash,
-        )
+        _LOGGER.info("Raport smoke testu zapisany w %s (summary sha256=%s)", report_dir, summary_hash)
         _LOGGER.info("Podsumowanie smoke testu:%s%s", os.linesep, summary_text)
 
         archive_path: Path | None = None
-        archive_required = bool(args.archive_smoke or upload_cfg)
+        archive_required = bool(args.archive_smoke or (SmokeArchiveUploader.resolve_config(
+            getattr(getattr(pipeline.bootstrap, "core_config", None), "reporting", None)
+        )))
+        upload_cfg = SmokeArchiveUploader.resolve_config(
+            getattr(getattr(pipeline.bootstrap, "core_config", None), "reporting", None)
+        )
+
         if archive_required:
             archive_path = _archive_smoke_report(report_dir)
             if args.archive_smoke:
                 _LOGGER.info("Utworzono archiwum smoke testu: %s", archive_path)
             else:
-                _LOGGER.info(
-                    "Archiwum smoke testu wygenerowane automatycznie na potrzeby uploadu: %s",
-                    archive_path,
-                )
+                _LOGGER.info("Archiwum smoke testu wygenerowane automatycznie na potrzeby uploadu: %s", archive_path)
 
         upload_result = None
         if upload_cfg and archive_path:
@@ -1892,11 +1608,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     summary_sha256=summary_hash,
                     window=window_meta,
                 )
-                _LOGGER.info(
-                    "Przesłano archiwum smoke testu (%s) do %s",
-                    upload_result.backend,
-                    upload_result.location,
-                )
+                _LOGGER.info("Przesłano archiwum smoke testu (%s) do %s", upload_result.backend, upload_result.location)
             except Exception as exc:  # noqa: BLE001
                 _LOGGER.error("Nie udało się przesłać archiwum smoke testu: %s", exc)
 
@@ -1920,8 +1632,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             f" Zamówienia: {len(results)}, raport: {summary_path},"
             f" sha256: {summary_hash}"
         )
-        if operator_note:
-            body += f" Notatka operatora: {operator_note}"
         if storage_status_lower == "low":
             free_str = storage_context.get("storage_free_mb")
             thresh_str = storage_context.get("storage_threshold_mb")
@@ -1932,33 +1642,29 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         severity = "warning" if storage_status_lower == "low" else "info"
 
-        context_payload = {
-            "environment": args.environment,
-            "report_dir": str(report_dir),
-            "orders": str(len(results)),
-            "summary_sha256": summary_hash,
-            "summary_text_path": str(summary_txt_path),
-            "readme_path": str(readme_path),
-            **({"archive_path": str(archive_path)} if archive_path else {}),
-            **(
-                {
-                    "archive_upload_backend": upload_result.backend,
-                    "archive_upload_location": upload_result.location,
-                }
-                if upload_result
-                else {}
-            ),
-            **storage_context,
-        }
-        if operator_note:
-            context_payload["operator_note"] = operator_note
-
         message = AlertMessage(
             category="paper_smoke",
             title=f"Smoke test paper trading ({args.environment})",
             body=body,
             severity=severity,
-            context=context_payload,
+            context={
+                "environment": args.environment,
+                "report_dir": str(report_dir),
+                "orders": str(len(results)),
+                "summary_sha256": summary_hash,
+                "summary_text_path": str(summary_txt_path),
+                "readme_path": str(readme_path),
+                **({"archive_path": str(archive_path)} if archive_path else {}),
+                **(
+                    {
+                        "archive_upload_backend": upload_result.backend,
+                        "archive_upload_location": upload_result.location,
+                    }
+                    if upload_result
+                    else {}
+                ),
+                **storage_context,
+            },
         )
         pipeline.bootstrap.alert_router.dispatch(message)
         if fail_low_storage:
@@ -1972,10 +1678,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 4
         return 0
 
+    # normalny tryb realtime / run-once
     trading_controller = create_trading_controller(
-        pipeline,
-        pipeline.bootstrap.alert_router,
-        health_check_interval=args.health_interval,
+        pipeline, pipeline.bootstrap.alert_router, health_check_interval=args.health_interval,
     )
 
     runner = DailyTrendRealtimeRunner(
@@ -1996,5 +1701,5 @@ def main(argv: Sequence[str] | None = None) -> int:
     return _run_loop(runner, args.poll_seconds)
 
 
-if __name__ == "__main__":  # pragma: no cover - punkt wejścia CLI
+if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main())

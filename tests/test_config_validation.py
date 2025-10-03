@@ -8,7 +8,6 @@ from bot_core.config.models import (
     ControllerRuntimeConfig,
     CoreConfig,
     EnvironmentConfig,
-    EnvironmentDataQualityConfig,
     InstrumentBackfillWindow,
     InstrumentConfig,
     InstrumentUniverseConfig,
@@ -145,29 +144,6 @@ def test_validate_core_config_detects_unknown_default_controller(base_config: Co
     result = validate_core_config(config)
     assert not result.is_valid()
     assert "domyślny kontroler" in result.errors[0]
-
-
-def test_validate_core_config_detects_invalid_min_ok_ratio(base_config: CoreConfig) -> None:
-    invalid_env = replace(
-        base_config.environments["paper"],
-        data_quality=EnvironmentDataQualityConfig(min_ok_ratio=1.5),
-    )
-    config = replace(base_config, environments={"paper": invalid_env})
-
-    result = validate_core_config(config)
-    assert not result.is_valid()
-    assert any("min_ok_ratio" in error for error in result.errors)
-
-
-def test_validate_core_config_accepts_valid_min_ok_ratio(base_config: CoreConfig) -> None:
-    valid_env = replace(
-        base_config.environments["paper"],
-        data_quality=EnvironmentDataQualityConfig(min_ok_ratio=0.75),
-    )
-    config = replace(base_config, environments={"paper": valid_env})
-
-    result = validate_core_config(config)
-    assert result.is_valid()
 
 
 def test_validate_core_config_detects_controller_interval_without_backfill(

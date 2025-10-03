@@ -326,6 +326,7 @@ def test_build_daily_trend_pipeline_allows_risk_profile_override(
     )
 
     assert pipeline.risk_profile_name == "aggressive"
+    # powinno istnieć API risk_engine.should_liquidate; upewniamy się, że nie wymusza likwidacji
     assert pipeline.bootstrap.risk_engine.should_liquidate(profile_name="aggressive") is False
 
 

@@ -1,0 +1,95 @@
+{
+  "status": "error",
+  "config": {
+    "valid": true,
+    "errors": [],
+    "warnings": []
+  },
+  "coverage": {
+    "status": "error",
+    "issues": [
+      "POLUSDT/1d: manifest_status:missing_metadata",
+      "POLUSDT/1d: missing_row_count",
+      "POLUSDT/1h: manifest_status:missing_metadata",
+      "POLUSDT/1h: missing_row_count"
+    ],
+    "summary": {
+      "status": "error",
+      "total": 30,
+      "ok": 28,
+      "warning": 0,
+      "error": 2,
+      "ok_ratio": 0.9333333333333333,
+      "manifest_status_counts": {
+        "ok": 28,
+        "error": 2
+      },
+      "worst_gap": null,
+      "by_interval": {
+        "15m": {
+          "total": 10,
+          "ok": 10
+        },
+        "1d": {
+          "total": 10,
+          "ok": 9,
+          "error": 1
+        },
+        "1h": {
+          "total": 10,
+          "ok": 9,
+          "error": 1
+        }
+      },
+      "by_symbol": {
+        "ADAUSDT": {
+          "total": 3,
+          "ok": 3
+        },
+        "BNBUSDT": {
+          "total": 3,
+          "ok": 3
+        },
+        "BTCEUR": {
+          "total": 3,
+          "ok": 3
+        },
+        "BTCUSDT": {
+          "total": 3,
+          "ok": 3
+        },
+        "ETHEUR": {
+          "total": 3,
+          "ok": 3
+        },
+        "ETHUSDT": {
+          "total": 3,
+          "ok": 3
+        },
+        "LTCUSDT": {
+          "total": 3,
+          "ok": 3
+        },
+        "POLUSDT": {
+          "total": 3,
+          "ok": 1,
+          "error": 2
+        },
+        "SOLUSDT": {
+          "total": 3,
+          "ok": 3
+        },
+        "XRPUSDT": {
+          "total": 3,
+          "ok": 3
+        }
+      }
+    },
+    "thresholds": {}
+  },
+  "coverage_warnings": [],
+  "environment": "binance_paper",
+  "manifest_path": "var\\data\\binance_paper\\ohlcv_manifest.sqlite",
+  "as_of": "2025-10-03T21:36:12.902561+00:00",
+  "coverage_status": "error"
+}

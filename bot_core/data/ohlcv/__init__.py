@@ -6,9 +6,6 @@ from bot_core.data.ohlcv.cache import CachedOHLCVSource, PublicAPIDataSource
 from bot_core.data.ohlcv.coverage_check import (
     CoverageStatus,
     evaluate_coverage,
-    summarize_by_interval,
-    summarize_by_symbol,
-    summarize_coverage,
     summarize_issues,
 )
 from bot_core.data.ohlcv.gap_monitor import DataGapIncidentTracker, GapAlertPolicy
@@ -39,9 +36,6 @@ __all__ = [
     "evaluate_coverage",
     "generate_manifest_report",
     "summarize_status",
-    "summarize_coverage",
-    "summarize_by_interval",
-    "summarize_by_symbol",
     "summarize_issues",
     "SQLiteCacheStorage",
     "DualCacheStorage",

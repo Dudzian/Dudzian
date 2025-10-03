@@ -1,0 +1,112 @@
+{
+  "status": "error",
+  "config": {
+    "valid": true,
+    "errors": [],
+    "warnings": []
+  },
+  "coverage": {
+    "status": "error",
+    "issues": [
+      "BTCEUR/1d: manifest_status:missing_metadata",
+      "BTCEUR/1d: missing_row_count",
+      "BTCUSDT/1d: insufficient_rows:2970<3650",
+      "BTCUSDT/1h: insufficient_rows:26279<26280",
+      "ETHEUR/1d: manifest_status:missing_metadata",
+      "ETHEUR/1d: missing_row_count",
+      "ETHUSDT/1d: insufficient_rows:2970<3650",
+      "ETHUSDT/1h: insufficient_rows:26279<26280",
+      "MATICUSDT/15m: manifest_status:missing_metadata",
+      "MATICUSDT/15m: missing_row_count",
+      "MATICUSDT/1d: manifest_status:missing_metadata",
+      "MATICUSDT/1d: missing_row_count",
+      "MATICUSDT/1h: manifest_status:warning",
+      "MATICUSDT/1h: insufficient_rows:16949<17520",
+      "SOLUSDT/1d: manifest_status:missing_metadata",
+      "SOLUSDT/1d: missing_row_count"
+    ],
+    "summary": {
+      "status": "error",
+      "total": 30,
+      "ok": 20,
+      "warning": 0,
+      "error": 10,
+      "ok_ratio": 0.6666666666666666,
+      "manifest_status_counts": {
+        "ok": 20,
+        "error": 10
+      },
+      "worst_gap": null,
+      "by_interval": {
+        "15m": {
+          "total": 10,
+          "ok": 9,
+          "error": 1
+        },
+        "1d": {
+          "total": 10,
+          "ok": 4,
+          "error": 6
+        },
+        "1h": {
+          "total": 10,
+          "ok": 7,
+          "error": 3
+        }
+      },
+      "by_symbol": {
+        "ADAUSDT": {
+          "total": 3,
+          "ok": 3
+        },
+        "BNBUSDT": {
+          "total": 3,
+          "ok": 3
+        },
+        "BTCEUR": {
+          "total": 3,
+          "ok": 2,
+          "error": 1
+        },
+        "BTCUSDT": {
+          "total": 3,
+          "ok": 1,
+          "error": 2
+        },
+        "ETHEUR": {
+          "total": 3,
+          "ok": 2,
+          "error": 1
+        },
+        "ETHUSDT": {
+          "total": 3,
+          "ok": 1,
+          "error": 2
+        },
+        "LTCUSDT": {
+          "total": 3,
+          "ok": 3
+        },
+        "MATICUSDT": {
+          "total": 3,
+          "error": 3
+        },
+        "SOLUSDT": {
+          "total": 3,
+          "ok": 2,
+          "error": 1
+        },
+        "XRPUSDT": {
+          "total": 3,
+          "ok": 3
+        }
+      }
+    },
+    "thresholds": {}
+  },
+  "coverage_warnings": [],
+  "environment": "binance_paper",
+  "manifest_path": "var\\data\\binance_paper\\ohlcv_manifest.sqlite",
+  "as_of": "2025-10-03T21:13:09.494183+00:00",
+  "coverage_status": "error"
+}
