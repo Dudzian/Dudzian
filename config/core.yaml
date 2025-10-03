@@ -73,7 +73,7 @@ instrument_universes:
           zonda_spot: BTC-USDT
         backfill:
           - interval: "1d"
-            lookback_days: 3650
+            lookback_days: 1825
           - interval: "1h"
             lookback_days: 1095
           - interval: "15m"
@@ -90,7 +90,7 @@ instrument_universes:
           zonda_spot: ETH-USDT
         backfill:
           - interval: "1d"
-            lookback_days: 3650
+            lookback_days: 1825
           - interval: "1h"
             lookback_days: 1095
           - interval: "15m"
@@ -106,7 +106,7 @@ instrument_universes:
           zonda_spot: BTC-EUR
         backfill:
           - interval: "1d"
-            lookback_days: 3650
+            lookback_days: 1825
           - interval: "1h"
             lookback_days: 730
           - interval: "15m"
@@ -122,7 +122,7 @@ instrument_universes:
           zonda_spot: ETH-EUR
         backfill:
           - interval: "1d"
-            lookback_days: 3650
+            lookback_days: 1825
           - interval: "1h"
             lookback_days: 730
           - interval: "15m"
@@ -200,21 +200,20 @@ instrument_universes:
             lookback_days: 730
           - interval: "15m"
             lookback_days: 180
-      MATIC_USDT:
-        base_asset: MATIC
+      POL_USDT:
+        base_asset: POL
         quote_asset: USDT
-        categories: [alt, high_liquidity]
+        categories: [alt, high_liquidity, migrated_matic]
         exchanges:
-          binance_spot: MATICUSDT
-          binance_futures: MATICUSDT
-          kraken_spot: MATICUSDT
+          binance_spot: POLUSDT
+          binance_futures: POLUSDT
         backfill:
           - interval: "1d"
-            lookback_days: 1825
+            lookback_days: 360
           - interval: "1h"
-            lookback_days: 730
+            lookback_days: 360
           - interval: "15m"
-            lookback_days: 180
+            lookback_days: 360
       BTC_PLN:
         base_asset: BTC
         quote_asset: PLN
@@ -392,6 +391,8 @@ environments:
     keychain_key: kraken_paper_trading
     data_cache_path: ./var/data/kraken_paper
     risk_profile: balanced
+    default_strategy: core_daily_trend
+    default_controller: daily_trend_core
     alert_channels: ["telegram:primary", "email:ops"]
     ip_allowlist: []
     required_permissions: [read, trade]
@@ -425,6 +426,8 @@ environments:
     keychain_key: kraken_live_trading
     data_cache_path: ./var/data/kraken_live
     risk_profile: conservative
+    default_strategy: core_daily_trend
+    default_controller: daily_trend_core
     alert_channels: ["telegram:primary", "sms:orange_local", "email:ops"]
     ip_allowlist: []
     required_permissions: [read, trade]
@@ -456,6 +459,8 @@ environments:
     keychain_key: kraken_futures_paper_trading
     data_cache_path: ./var/data/kraken_futures_paper
     risk_profile: balanced
+    default_strategy: core_daily_trend
+    default_controller: daily_trend_core
     alert_channels: ["telegram:primary", "email:ops"]
     ip_allowlist: []
     required_permissions: [read, trade]
@@ -488,6 +493,8 @@ environments:
     keychain_key: kraken_futures_live_trading
     data_cache_path: ./var/data/kraken_futures_live
     risk_profile: conservative
+    default_strategy: core_daily_trend
+    default_controller: daily_trend_core
     alert_channels: ["telegram:primary", "sms:orange_local", "email:ops"]
     ip_allowlist: []
     required_permissions: [read, trade]
@@ -517,6 +524,8 @@ environments:
     keychain_key: zonda_paper_trading
     data_cache_path: ./var/data/zonda_paper
     risk_profile: conservative
+    default_strategy: core_daily_trend
+    default_controller: daily_trend_core
     alert_channels: ["telegram:primary"]
     ip_allowlist: []
     required_permissions: [read, trade]
@@ -552,6 +561,8 @@ environments:
     keychain_key: zonda_live_trading
     data_cache_path: ./var/data/zonda_live
     risk_profile: conservative
+    default_strategy: core_daily_trend
+    default_controller: daily_trend_core
     alert_channels: ["telegram:primary", "sms:nova_is", "email:ops"]
     ip_allowlist: []
     required_permissions: [read, trade]
