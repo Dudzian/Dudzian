@@ -241,6 +241,25 @@ instrument_universes:
           - interval: "15m"
             lookback_days: 180
 
+  # --- Tymczasowe mini-uniwersum do dociągnięcia metadanych POLUSDT ---
+  pol_only:
+    description: Tymczasowe uniwersum do backfillu POLUSDT (1d/1h/15m).
+    instruments:
+      POL_USDT:
+        base_asset: POL
+        quote_asset: USDT
+        categories: [temp, backfill_only]
+        exchanges:
+          binance_spot: POLUSDT
+        backfill:
+          - interval: "1d"
+            lookback_days: 360
+          - interval: "1h"
+            lookback_days: 360
+          - interval: "15m"
+            lookback_days: 360
+  # --- koniec sekcji tymczasowej ---
+
 environments:
   binance_paper:
     exchange: binance_spot
@@ -255,6 +274,8 @@ environments:
     ip_allowlist: []
     required_permissions: [read, trade]
     forbidden_permissions: [withdraw]
+    # Tymczasowo przełączone na pol_only, żeby szybko uzupełnić manifest dla POLUSDT.
+    # Po backfillu przywróć na: core_multi_exchange
     instrument_universe: core_multi_exchange
     data_quality:
       max_gap_minutes: 240
