@@ -187,12 +187,44 @@ class SecretManager:
         import json
 
         data = json.loads(raw_value)
+
+        def _first_present(*keys: str) -> str | None:
+            for key in keys:
+                if key in data and data[key] is not None:
+                    value = data[key]
+                    if isinstance(value, str):
+                        value = value.strip()
+                    return value
+            return None
+
+        key_id = _first_present("key_id", "keyId", "keyID", "api_key", "apiKey")
+        if not key_id:
+            raise ValueError("sekret nie zawiera pola 'key_id' ani aliasów 'keyId' / 'api_key'")
+
+        secret_value = _first_present("secret", "api_secret", "apiSecret", "secret_key", "secretKey") or ""
+        passphrase = _first_present("passphrase", "api_passphrase", "apiPassphrase")
+
+        permissions = data.get("permissions")
+        if not permissions and "scopes" in data:
+            permissions = data.get("scopes")
+
+        environment_value = _first_present("environment", "env")
+        if not environment_value:
+            raise ValueError("sekret nie zawiera pola 'environment'")
+
+        try:
+            environment = Environment(str(environment_value).lower())
+        except ValueError as exc:  # pragma: no cover - walidacja formatu
+            raise ValueError(f"nieobsługiwane środowisko w sekrecie: {environment_value}") from exc
+
         return SecretPayload(
-            key_id=str(data["key_id"]),
-            secret=str(data.get("secret", "")),
-            passphrase=data.get("passphrase"),
-            permissions=tuple(str(permission).lower() for permission in data.get("permissions", ()) or ()),
-            environment=Environment(data["environment"]),
+            key_id=str(key_id),
+            secret=str(secret_value),
+            passphrase=str(passphrase) if passphrase is not None else None,
+            permissions=tuple(
+                str(permission).lower() for permission in (permissions or ()) if permission is not None
+            ),
+            environment=environment,
         )
 
 
