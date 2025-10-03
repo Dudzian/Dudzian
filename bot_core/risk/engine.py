@@ -285,7 +285,11 @@ class ThresholdRiskEngine(RiskEngine):
 
         if not is_reducing:
             atr_value = _coerce_float(metadata.get("atr")) if metadata else None
+            if atr_value is None:
+                atr_value = _coerce_float(getattr(request, "atr", None))
             stop_price_value = _coerce_float(metadata.get("stop_price")) if metadata else None
+            if stop_price_value is None:
+                stop_price_value = _coerce_float(getattr(request, "stop_price", None))
             target_vol = profile.target_volatility()
             atr_multiple = profile.stop_loss_atr_multiple()
 
@@ -550,6 +554,32 @@ class ThresholdRiskEngine(RiskEngine):
         normalized_side = _normalize_position_side(side, default="long")
         state.update_position(symbol, side=normalized_side, notional=max(0.0, position_value))
         self._persist_state(profile_name)
+
+    def snapshot_state(self, profile_name: str) -> Mapping[str, object] | None:
+        state = self._states.get(profile_name)
+        if state is None:
+            return None
+
+        snapshot: MutableMapping[str, object] = dict(state.to_mapping())
+        snapshot["gross_notional"] = state.gross_notional()
+        snapshot["active_positions"] = state.active_positions()
+        snapshot["daily_loss_pct"] = state.daily_loss_pct()
+        current_equity = state.last_equity or state.start_of_day_equity
+        snapshot["drawdown_pct"] = state.drawdown_pct(current_equity)
+
+        profile = self._profiles.get(profile_name)
+        if profile is not None:
+            snapshot["limits"] = {
+                "max_positions": profile.max_positions(),
+                "max_leverage": profile.max_leverage(),
+                "daily_loss_limit": profile.daily_loss_limit(),
+                "drawdown_limit": profile.drawdown_limit(),
+                "max_position_pct": profile.max_position_exposure(),
+                "target_volatility": profile.target_volatility(),
+                "stop_loss_atr_multiple": profile.stop_loss_atr_multiple(),
+            }
+
+        return snapshot
 
     def should_liquidate(self, *, profile_name: str) -> bool:
         state = self._states.get(profile_name)

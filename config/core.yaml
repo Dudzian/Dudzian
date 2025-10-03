@@ -250,11 +250,16 @@ environments:
     credential_purpose: trading
     data_cache_path: ./var/data/binance_paper
     risk_profile: balanced
+    default_strategy: core_daily_trend
+    default_controller: daily_trend_core
     alert_channels: ["telegram:primary", "email:ops"]
     ip_allowlist: []
     required_permissions: [read, trade]
     forbidden_permissions: [withdraw]
     instrument_universe: core_multi_exchange
+    data_quality:
+      max_gap_minutes: 240
+      min_ok_ratio: 0.95
     adapter_settings:
       paper_trading:
         valuation_asset: USDT
@@ -291,6 +296,8 @@ environments:
     keychain_key: binance_live_trading
     data_cache_path: ./var/data/binance_live
     risk_profile: conservative
+    default_strategy: core_daily_trend
+    default_controller: daily_trend_core
     alert_channels: ["telegram:primary", "sms:orange_local", "email:ops"]
     ip_allowlist: []
     required_permissions: [read, trade]
@@ -320,11 +327,16 @@ environments:
     keychain_key: binance_futures_paper_trading
     data_cache_path: ./var/data/binance_futures_paper
     risk_profile: balanced
+    default_strategy: core_daily_trend
+    default_controller: daily_trend_core
     alert_channels: ["telegram:primary", "email:ops"]
     ip_allowlist: []
     required_permissions: [read, trade]
     forbidden_permissions: [withdraw]
     instrument_universe: core_multi_exchange
+    data_quality:
+      max_gap_minutes: 240
+      min_ok_ratio: 0.95
     alert_throttle:
       window_seconds: 300
       exclude_severities: [critical]
@@ -349,6 +361,8 @@ environments:
     keychain_key: binance_futures_live_trading
     data_cache_path: ./var/data/binance_futures_live
     risk_profile: conservative
+    default_strategy: core_daily_trend
+    default_controller: daily_trend_core
     alert_channels: ["telegram:primary", "sms:orange_local", "email:ops"]
     ip_allowlist: []
     required_permissions: [read, trade]
@@ -383,6 +397,8 @@ environments:
     required_permissions: [read, trade]
     forbidden_permissions: [withdraw]
     instrument_universe: core_multi_exchange
+    data_quality:
+      max_gap_minutes: 240
     adapter_settings:
       valuation_asset: ZUSD
     alert_throttle:
@@ -445,6 +461,9 @@ environments:
     required_permissions: [read, trade]
     forbidden_permissions: [withdraw]
     instrument_universe: core_multi_exchange
+    data_quality:
+      max_gap_minutes: 240
+      min_ok_ratio: 0.9
     alert_throttle:
       window_seconds: 300
       exclude_severities: [critical]
@@ -503,6 +522,9 @@ environments:
     required_permissions: [read, trade]
     forbidden_permissions: [withdraw]
     instrument_universe: core_multi_exchange
+    data_quality:
+      max_gap_minutes: 240
+      min_ok_ratio: 0.85
     adapter_settings:
       valuation_asset: PLN
       secondary_valuation_assets: [USDT, EUR, USD]
@@ -560,6 +582,12 @@ reporting:
   daily_report_time_utc: "21:00"
   weekly_report_day: "sunday"
   retention_months: "24"
+  smoke_archive_upload:
+    backend: local
+    local:
+      directory: audit/smoke_archives
+      filename_pattern: "{environment}_{timestamp}_{hash}.zip"
+      fsync: true
 
 alerts:
   telegram_channels:

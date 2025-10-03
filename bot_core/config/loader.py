@@ -12,6 +12,7 @@ from bot_core.config.models import (
     CoreConfig,
     EmailChannelSettings,
     EnvironmentConfig,
+    EnvironmentDataQualityConfig,
     RiskProfileConfig,
     SMSProviderSettings,
     TelegramChannelSettings,
@@ -67,6 +68,19 @@ try:
     from bot_core.config.models import DecisionJournalConfig  # type: ignore
 except Exception:
     DecisionJournalConfig = None  # type: ignore
+
+try:
+    from bot_core.config.models import (
+        CoreReportingConfig,
+        SmokeArchiveLocalConfig,
+        SmokeArchiveS3Config,
+        SmokeArchiveUploadConfig,
+    )  # type: ignore
+except Exception:
+    CoreReportingConfig = None  # type: ignore
+    SmokeArchiveLocalConfig = None  # type: ignore
+    SmokeArchiveS3Config = None  # type: ignore
+    SmokeArchiveUploadConfig = None  # type: ignore
 
 
 def _core_has(field_name: str) -> bool:
@@ -244,6 +258,29 @@ def _load_alert_audit(entry: Optional[Mapping[str, Any]]):
     )
 
 
+def _load_data_quality(entry: Optional[Mapping[str, Any]]):
+    """Mapuje ustawienia data_quality na dataclass środowiska."""
+    if EnvironmentDataQualityConfig is None or not entry:
+        return None
+
+    max_gap = entry.get("max_gap_minutes")
+    if max_gap in (None, ""):
+        max_gap_value = None
+    else:
+        max_gap_value = float(max_gap)
+
+    min_ok_ratio = entry.get("min_ok_ratio")
+    if min_ok_ratio in (None, ""):
+        min_ok_ratio_value = None
+    else:
+        min_ok_ratio_value = float(min_ok_ratio)
+
+    return EnvironmentDataQualityConfig(
+        max_gap_minutes=max_gap_value,
+        min_ok_ratio=min_ok_ratio_value,
+    )
+
+
 def _load_decision_journal(entry: Optional[Mapping[str, Any]]):
     if DecisionJournalConfig is None or not entry:
         return None
@@ -270,6 +307,87 @@ def _load_decision_journal(entry: Optional[Mapping[str, Any]]):
         filename_pattern=filename_pattern,
         retention_days=retention_days,
         fsync=fsync,
+    )
+
+
+def _format_optional_text(value: Any | None) -> str | None:
+    if value in (None, ""):
+        return None
+    return str(value)
+
+
+def _load_smoke_archive_upload(entry: Optional[Mapping[str, Any]]):
+    if SmokeArchiveUploadConfig is None or entry is None:
+        return None
+
+    backend = str(entry.get("backend", entry.get("type", "local"))).strip().lower()
+    if backend in {"disabled", "none"}:
+        return None
+    if backend not in {"local", "s3"}:
+        raise ValueError("smoke_archive_upload.backend musi być 'local', 's3' lub 'disabled'")
+
+    credential_secret = entry.get("credential_secret")
+    credential_value = str(credential_secret) if credential_secret not in (None, "") else None
+
+    local_cfg = None
+    if backend == "local":
+        if SmokeArchiveLocalConfig is None:
+            raise ValueError("Backend 'local' nie jest obsługiwany w tej gałęzi")
+        raw_local = entry.get("local") or {}
+        directory_value = raw_local.get("directory")
+        if not directory_value:
+            raise ValueError("smoke_archive_upload.local.directory jest wymagane dla backendu 'local'")
+        filename_pattern = str(raw_local.get("filename_pattern", "{environment}_{date}_{hash}.zip"))
+        fsync = bool(raw_local.get("fsync", False))
+        local_cfg = SmokeArchiveLocalConfig(
+            directory=str(directory_value),
+            filename_pattern=filename_pattern,
+            fsync=fsync,
+        )
+
+    s3_cfg = None
+    if backend == "s3":
+        if SmokeArchiveS3Config is None:
+            raise ValueError("Backend 's3' nie jest obsługiwany w tej gałęzi")
+        raw_s3 = entry.get("s3") or {}
+        bucket_value = raw_s3.get("bucket")
+        if not bucket_value:
+            raise ValueError("smoke_archive_upload.s3.bucket jest wymagane dla backendu 's3'")
+        prefix_value = raw_s3.get("prefix")
+        endpoint_url = _format_optional_text(raw_s3.get("endpoint_url"))
+        region = _format_optional_text(raw_s3.get("region"))
+        use_ssl = bool(raw_s3.get("use_ssl", True))
+        extra_args = {
+            str(key): str(value)
+            for key, value in (raw_s3.get("extra_args", {}) or {}).items()
+        }
+        s3_cfg = SmokeArchiveS3Config(
+            bucket=str(bucket_value),
+            object_prefix=_format_optional_text(prefix_value),
+            endpoint_url=endpoint_url,
+            region=region,
+            use_ssl=use_ssl,
+            extra_args=extra_args,
+        )
+
+    return SmokeArchiveUploadConfig(
+        backend=backend,
+        credential_secret=credential_value,
+        local=local_cfg,
+        s3=s3_cfg,
+    )
+
+
+def _load_reporting(entry: Optional[Mapping[str, Any]]):
+    if CoreReportingConfig is None:
+        return entry or {}
+
+    payload = entry or {}
+    return CoreReportingConfig(
+        daily_report_time_utc=_format_optional_text(payload.get("daily_report_time_utc")),
+        weekly_report_day=_format_optional_text(payload.get("weekly_report_day")),
+        retention_months=_format_optional_text(payload.get("retention_months")),
+        smoke_archive_upload=_load_smoke_archive_upload(payload.get("smoke_archive_upload")),
     )
 
 
@@ -305,12 +423,24 @@ def load_core_config(path: str | Path) -> CoreConfig:
                 str(value).lower() for value in (entry.get("forbidden_permissions", ()) or ())
             ),
         }
+        if _env_has("default_strategy"):
+            strategy_value = entry.get("default_strategy")
+            env_kwargs["default_strategy"] = (
+                str(strategy_value) if strategy_value not in (None, "") else None
+            )
+        if _env_has("default_controller"):
+            controller_value = entry.get("default_controller")
+            env_kwargs["default_controller"] = (
+                str(controller_value) if controller_value not in (None, "") else None
+            )
         if _env_has("alert_throttle"):
             env_kwargs["alert_throttle"] = _load_alert_throttle(entry.get("alert_throttle"))
         if _env_has("alert_audit"):
             env_kwargs["alert_audit"] = _load_alert_audit(entry.get("alert_audit"))
         if _env_has("decision_journal"):
             env_kwargs["decision_journal"] = _load_decision_journal(entry.get("decision_journal"))
+        if _env_has("data_quality"):
+            env_kwargs["data_quality"] = _load_data_quality(entry.get("data_quality"))
         environments[name] = EnvironmentConfig(**env_kwargs)
 
     risk_profiles = {
@@ -329,7 +459,7 @@ def load_core_config(path: str | Path) -> CoreConfig:
 
     strategies = _load_strategies(raw)
 
-    reporting = (raw.get("reporting", {}) or {})
+    reporting = _load_reporting(raw.get("reporting"))
     alerts = (raw.get("alerts", {}) or {})
     sms_providers = _load_sms_providers(alerts)
     signal_channels = _load_signal_channels(alerts)
