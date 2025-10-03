@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
@@ -35,6 +36,7 @@ from bot_core.config.models import (
     TelegramChannelSettings,
     WhatsAppChannelSettings,
 )
+from bot_core.config.validation import assert_core_config_valid
 from bot_core.exchanges.base import (
     Environment,
     ExchangeAdapter,
@@ -73,6 +75,9 @@ _PROFILE_CLASS_BY_NAME: Mapping[str, type[RiskProfile]] = {
 }
 
 
+_LOGGER = logging.getLogger(__name__)
+
+
 @dataclass(slots=True)
 class BootstrapContext:
     """Zawiera wszystkie komponenty zainicjalizowane dla danego środowiska."""
@@ -88,6 +93,7 @@ class BootstrapContext:
     audit_log: AlertAuditLog
     adapter_settings: Mapping[str, Any]
     decision_journal: TradingDecisionJournal | None
+    risk_profile_name: str
 
 
 def bootstrap_environment(
@@ -96,20 +102,30 @@ def bootstrap_environment(
     config_path: str | Path,
     secret_manager: SecretManager,
     adapter_factories: Mapping[str, ExchangeAdapterFactory] | None = None,
+    risk_profile_name: str | None = None,
 ) -> BootstrapContext:
     """Tworzy kompletny kontekst uruchomieniowy dla wskazanego środowiska."""
     core_config = load_core_config(config_path)
+    validation = assert_core_config_valid(core_config)
+    for warning in validation.warnings:
+        _LOGGER.warning("Walidacja konfiguracji: %s", warning)
     if environment_name not in core_config.environments:
         raise KeyError(f"Środowisko '{environment_name}' nie istnieje w konfiguracji")
 
     environment = core_config.environments[environment_name]
-    risk_profile_config = _resolve_risk_profile(core_config.risk_profiles, environment.risk_profile)
+    selected_profile = risk_profile_name or environment.risk_profile
+    risk_profile_config = _resolve_risk_profile(core_config.risk_profiles, selected_profile)
 
     risk_repository_path = Path(environment.data_cache_path) / "risk_state"
     risk_repository = FileRiskRepository(risk_repository_path)
     risk_engine = ThresholdRiskEngine(repository=risk_repository)
     profile = _build_risk_profile(risk_profile_config)
     risk_engine.register_profile(profile)
+    # Aktualizujemy konfigurację środowiska, aby dalsze komponenty znały aktywny profil.
+    try:
+        environment.risk_profile = selected_profile
+    except Exception:  # pragma: no cover - defensywnie w razie zmian modelu
+        _LOGGER.debug("Nie można nadpisać risk_profile w konfiguracji środowiska", exc_info=True)
 
     credentials = secret_manager.load_exchange_credentials(
         environment.keychain_key,
@@ -151,6 +167,7 @@ def bootstrap_environment(
         audit_log=audit_log,
         adapter_settings=environment.adapter_settings,
         decision_journal=decision_journal,
+        risk_profile_name=selected_profile,
     )
 
 
