@@ -29,7 +29,7 @@ Ten runbook opisuje, jak uruchomić, monitorować i bezpiecznie zatrzymać tryb 
    - `python scripts/validate_config.py --config config/core.yaml` – potwierdzenie spójności sekcji środowisk, profili ryzyka i kanałów alertowych.
    - `pytest --override-ini=addopts= tests/test_runtime_pipeline.py` – potwierdzenie, że pipeline przechodzi testy integracyjne.
    - `scripts/check_key_rotation.py --dry-run` – upewnij się, że rotacja kluczy nie jest przeterminowana.
-2. **Aktualizacja danych**
+2. **Aktualizacja danych i pre-check**
    - Uruchom `scripts/backfill.py --environment paper --granularity 1d --since 2016-01-01`.
    - Sprawdź logi (`logs/backfill.log`) pod kątem błędów; w razie limitów API powtórz z większym interwałem throttlingu.
 
