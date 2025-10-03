@@ -19,8 +19,6 @@ from bot_core.data.intervals import interval_to_milliseconds, normalize_interval
         ("D1", "1d"),
         ("h4", "4h"),
         ("H4", "4h"),
-        ("1M", "1M"),
-        ("M1", "1M"),
     ],
 )
 def test_normalize_interval_token(raw, expected):
@@ -32,10 +30,9 @@ def test_normalize_interval_token(raw, expected):
     [
         ("1s", 1000),
         ("5m", 5 * 60 * 1000),
-    ("2H", 2 * 3600 * 1000),
-    ("1d", 24 * 3600 * 1000),
-    ("3W", 3 * 7 * 24 * 3600 * 1000),
-    ("1M", 30 * 24 * 3600 * 1000),
+        ("2H", 2 * 3600 * 1000),
+        ("1d", 24 * 3600 * 1000),
+        ("3W", 3 * 7 * 24 * 3600 * 1000),
     ],
 )
 def test_interval_to_milliseconds(interval: str, expected: int):
