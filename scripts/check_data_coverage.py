@@ -6,11 +6,20 @@ import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Sequence
+from typing import Mapping, Sequence
 
 from bot_core.config import load_core_config
 from bot_core.data.intervals import normalize_interval_token as _normalize_interval_token
-from bot_core.data.ohlcv import CoverageStatus, evaluate_coverage, summarize_issues
+from bot_core.data.ohlcv import (
+    CoverageStatus,
+    CoverageSummary,
+    SummaryThresholdResult,
+    coerce_summary_mapping,
+    evaluate_coverage,
+    evaluate_summary_thresholds,
+    summarize_coverage,
+    summarize_issues,
+)
 
 
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
@@ -186,6 +195,31 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 2
 
     issues = summarize_issues(statuses)
+    summary_payload = coerce_summary_mapping(summarize_coverage(statuses))
+
+    threshold_payload: Mapping[str, object] | None = None
+    threshold_issues: tuple[str, ...] = ()
+
+    data_quality = getattr(environment, "data_quality", None)
+    if data_quality is not None:
+        max_gap = getattr(data_quality, "max_gap_minutes", None)
+        min_ok_ratio = getattr(data_quality, "min_ok_ratio", None)
+        if max_gap is not None or min_ok_ratio is not None:
+            threshold_result: SummaryThresholdResult = evaluate_summary_thresholds(
+                summary_payload,
+                max_gap_minutes=max_gap,
+                min_ok_ratio=min_ok_ratio,
+            )
+            threshold_payload = threshold_result.to_mapping()
+            threshold_issues = threshold_result.issues
+
+    summary_status = str(summary_payload.get("status") or "unknown")
+    if issues or threshold_issues:
+        status_token = "error"
+    elif summary_status != "unknown":
+        status_token = summary_status
+    else:
+        status_token = "ok"
     payload = {
         "environment": environment.name,
         "exchange": environment.exchange,
@@ -193,8 +227,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         "as_of": as_of.isoformat(),
         "entries": [_format_status(status) for status in statuses],
         "issues": issues,
-        "status": "ok" if not issues else "error",
+        "summary": summary_payload,
+        "status": status_token,
     }
+    if threshold_payload is not None:
+        payload["threshold_evaluation"] = threshold_payload
+        payload["threshold_issues"] = list(threshold_issues)
 
     serialized = json.dumps(payload, ensure_ascii=False, indent=2)
 
@@ -210,10 +248,61 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Manifest: {payload['manifest_path']}")
         print(f"Środowisko: {payload['environment']} ({payload['exchange']})")
         print(f"Ocena na: {payload['as_of']}")
+        summary = payload["summary"]
         for entry in payload["entries"]:
             print(
                 " - {symbol} {interval}: status={status} row_count={row_count} "
                 "required={required_rows} gap={gap_minutes}".format(**entry)
+            )
+        print(
+            "Podsumowanie: status={status} ok={ok}/{total} warning={warning} "
+            "error={error} stale_entries={stale_entries}".format(**summary)
+        )
+        if threshold_payload is not None:
+            thresholds = threshold_payload.get("thresholds") or {}
+            observed = threshold_payload.get("observed") or {}
+            issues_list = list(threshold_issues)
+            print("Progi jakości danych:")
+            if thresholds:
+                for name, value in thresholds.items():
+                    print(f" * {name}={value}")
+            else:
+                print(" * brak skonfigurowanych progów")
+            if observed:
+                observed_lines = ", ".join(f"{name}={value}" for name, value in observed.items())
+                print(f"Wartości obserwowane: {observed_lines}")
+            if issues_list:
+                print("Naruszenia progów:")
+                for issue in issues_list:
+                    print(f" * {issue}")
+            else:
+                print("Brak naruszeń progów jakości danych")
+        issue_counts = summary.get("issue_counts") or {}
+        issue_examples = summary.get("issue_examples") or {}
+        if issue_counts:
+            print("Kody problemów:")
+            for code in sorted(issue_counts):
+                count = issue_counts[code]
+                example = issue_examples.get(code)
+                if example:
+                    print(f" * {code}: count={count} example={example}")
+                else:
+                    print(f" * {code}: count={count}")
+        worst_gap = summary.get("worst_gap")
+        if isinstance(worst_gap, Mapping):
+            details = {
+                "symbol": worst_gap.get("symbol", "?"),
+                "interval": worst_gap.get("interval", "?"),
+                "gap": worst_gap.get("gap_minutes"),
+                "threshold": worst_gap.get("threshold_minutes"),
+                "manifest_status": worst_gap.get("manifest_status"),
+                "last": worst_gap.get("last_timestamp_iso"),
+            }
+            print(
+                "Największa luka: {symbol} {interval} gap={gap}min "
+                "threshold={threshold} manifest_status={manifest_status} last={last}".format(
+                    **details
+                )
             )
         if issues:
             print("Problemy:")
@@ -222,7 +311,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             print("Brak problemów z pokryciem danych")
 
-    return 0 if not issues else 1
+    return 0 if not issues and not threshold_issues else 1
 
 
 if __name__ == "__main__":  # pragma: no cover - wejście CLI

@@ -28,10 +28,12 @@ from bot_core.alerts import (
     SignalChannel,
     TelegramChannel,
     WhatsAppChannel,
+    build_coverage_alert_context,
     DEFAULT_SMS_PROVIDERS,
     get_sms_provider,
 )
 from bot_core.alerts.base import AlertChannel
+from bot_core.data.ohlcv import SummaryThresholdResult, coerce_summary_mapping
 from bot_core.observability.metrics import MetricsRegistry
 
 
@@ -199,10 +201,55 @@ def test_file_alert_audit_log_respects_retention(tmp_path: Path) -> None:
     old_file = (tmp_path / "audit") / "alerts-20230101.jsonl"
     assert old_file.exists()
 
+
     audit.append(new_message, channel="telegram")
     assert not old_file.exists()
     files = list((tmp_path / "audit").glob("alerts-*.jsonl"))
     assert len(files) == 1
+
+
+def test_build_coverage_alert_context_serializes_thresholds() -> None:
+    summary = coerce_summary_mapping(
+        {
+            "status": "warning",
+            "total": 5,
+            "ok": 4,
+            "warning": 1,
+            "error": 0,
+            "ok_ratio": 0.8,
+            "stale_entries": 0,
+            "worst_gap": {
+                "symbol": "BTCUSDT",
+                "interval": "1h",
+                "gap_minutes": 180.0,
+                "threshold_minutes": 240,
+            },
+        }
+    )
+    threshold = SummaryThresholdResult(
+        issues=("max_gap_exceeded:180.0>120.0",),
+        thresholds={"max_gap_minutes": 120.0},
+        observed={"worst_gap_minutes": 180.0, "ok_ratio": 0.8},
+    )
+
+    context = build_coverage_alert_context(summary=summary, threshold_result=threshold)
+
+    summary_payload = json.loads(context["summary"])
+    thresholds_payload = json.loads(context["thresholds"])
+
+    assert summary_payload["status"] == "warning"
+    assert context["summary_ok_ratio"] == "0.8000"
+    assert thresholds_payload["max_gap_minutes"] == pytest.approx(120.0)
+    assert "max_gap_exceeded" in context.get("threshold_issues", "")
+    assert context["observed_worst_gap_minutes"] == "180.00"
+
+
+def test_build_coverage_alert_context_handles_missing_data() -> None:
+    context = build_coverage_alert_context(summary=None, threshold_result=None)
+
+    assert context["summary_status"] == "unknown"
+    assert context["summary_worst_gap_minutes"] == "n/a"
+    assert "thresholds" not in context
 
 
 class _FakeHTTPResponse:
