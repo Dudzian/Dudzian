@@ -213,17 +213,23 @@ class SecretManager:
             permissions = data.get("scopes")
 
         environment_value = _first_present("environment", "env")
-        if not environment_value:
+
+        environment: Environment | None = None
+        if environment_value not in (None, ""):
+            if isinstance(environment_value, Environment):
+                environment = environment_value
+            else:
+                try:
+                    environment = Environment(str(environment_value).lower())
+                except ValueError as exc:  # pragma: no cover - walidacja formatu
+                    raise ValueError(
+                        f"nieobsługiwane środowisko w sekrecie: {environment_value}"
+                    ) from exc
+
+        if environment is None:
             if expected_environment is None:
                 raise ValueError("sekret nie zawiera pola 'environment'")
             environment = expected_environment
-        else:
-            try:
-                environment = Environment(str(environment_value).lower())
-            except ValueError as exc:  # pragma: no cover - walidacja formatu
-                raise ValueError(
-                    f"nieobsługiwane środowisko w sekrecie: {environment_value}"
-                ) from exc
 
         return SecretPayload(
             key_id=str(key_id),
