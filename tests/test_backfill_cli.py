@@ -8,11 +8,12 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from bot_core.config.loader import load_core_config
 from bot_core.config.models import (
+    EnvironmentDataQualityConfig,
     InstrumentBackfillWindow,
     InstrumentConfig,
     InstrumentUniverseConfig,
 )
-from bot_core.data.ohlcv import ManifestEntry, SQLiteCacheStorage
+from bot_core.data.ohlcv import CoverageStatus, ManifestEntry, SQLiteCacheStorage
 from bot_core.exchanges.base import Environment
 from bot_core.exchanges.binance.futures import BinanceFuturesAdapter
 from bot_core.exchanges.binance.spot import BinanceSpotAdapter
@@ -217,7 +218,7 @@ def test_report_manifest_health_does_not_alert_when_everything_ok(tmp_path):
 
     metadata = storage.metadata()
     metadata["last_timestamp::BTCUSDT::1h"] = str(int((as_of - timedelta(minutes=30)).timestamp() * 1000))
-    metadata["row_count::BTCUSDT::1h"] = "120"
+    metadata["row_count::BTCUSDT::1h"] = "720"
 
     backfill._report_manifest_health(
         manifest_path=manifest,
@@ -225,6 +226,7 @@ def test_report_manifest_health_does_not_alert_when_everything_ok(tmp_path):
         exchange_name="binance_spot",
         environment_name="binance_paper",
         alert_router=router,
+        data_quality=None,
         as_of=as_of,
     )
 
@@ -266,6 +268,7 @@ def test_report_manifest_health_emits_warning_for_long_gap(tmp_path):
         exchange_name="binance_spot",
         environment_name="binance_paper",
         alert_router=router,
+        data_quality=None,
         as_of=as_of,
     )
 
@@ -274,6 +277,36 @@ def test_report_manifest_health_emits_warning_for_long_gap(tmp_path):
     assert message.severity == "warning"
     assert "BTCUSDT" in message.body
     assert message.context["environment"] == "binance_paper"
+
+
+def test_report_manifest_health_alerts_on_threshold_only(tmp_path):
+    manifest = tmp_path / "manifest.sqlite"
+    storage = SQLiteCacheStorage(manifest, store_rows=False)
+    universe = _build_universe("BTC_USDT", "1h")
+    router = _CollectingRouter()
+    as_of = datetime(2024, 1, 1, 12, 0, tzinfo=timezone.utc)
+
+    metadata = storage.metadata()
+    metadata["last_timestamp::BTCUSDT::1h"] = str(int((as_of - timedelta(minutes=60)).timestamp() * 1000))
+    metadata["row_count::BTCUSDT::1h"] = "720"
+
+    data_quality = EnvironmentDataQualityConfig(max_gap_minutes=30.0, min_ok_ratio=None)
+
+    backfill._report_manifest_health(
+        manifest_path=manifest,
+        universe=universe,
+        exchange_name="binance_spot",
+        environment_name="binance_paper",
+        alert_router=router,
+        data_quality=data_quality,
+        as_of=as_of,
+    )
+
+    assert len(router.messages) == 1
+    message = router.messages[0]
+    assert message.severity == "warning"
+    assert "Alert progów jakości danych" in message.body
+    assert "max_gap_exceeded" in message.context.get("threshold_issues", "")
 
 
 def test_report_manifest_health_emits_critical_for_missing_metadata(tmp_path):
@@ -289,6 +322,7 @@ def test_report_manifest_health_emits_critical_for_missing_metadata(tmp_path):
         exchange_name="binance_spot",
         environment_name="binance_paper",
         alert_router=router,
+        data_quality=None,
         as_of=as_of,
     )
 
@@ -340,7 +374,23 @@ def test_report_manifest_health_prints_table(monkeypatch, tmp_path, capsys):
         ),
     ]
 
-    monkeypatch.setattr(backfill, "generate_manifest_report", lambda **_: entries)
+    def _status(entry: ManifestEntry) -> CoverageStatus:
+        issues = ()
+        if entry.status != "ok":
+            issues = (f"manifest_status:{entry.status}",)
+        return CoverageStatus(
+            symbol=entry.symbol,
+            interval=entry.interval,
+            manifest_entry=entry,
+            required_rows=None,
+            issues=issues,
+        )
+
+    monkeypatch.setattr(
+        backfill,
+        "evaluate_coverage",
+        lambda **_: [_status(entry) for entry in entries],
+    )
 
     manifest = tmp_path / "manifest.sqlite"
     manifest.touch()
@@ -352,6 +402,7 @@ def test_report_manifest_health_prints_table(monkeypatch, tmp_path, capsys):
         exchange_name="binance_spot",
         environment_name="binance_paper",
         alert_router=None,
+        data_quality=None,
         as_of=datetime(2024, 1, 1, tzinfo=timezone.utc),
         output_format="table",
     )
@@ -376,7 +427,20 @@ def test_report_manifest_health_prints_json(monkeypatch, tmp_path, capsys):
         )
     ]
 
-    monkeypatch.setattr(backfill, "generate_manifest_report", lambda **_: entries)
+    def _status(entry: ManifestEntry) -> CoverageStatus:
+        return CoverageStatus(
+            symbol=entry.symbol,
+            interval=entry.interval,
+            manifest_entry=entry,
+            required_rows=None,
+            issues=(),
+        )
+
+    monkeypatch.setattr(
+        backfill,
+        "evaluate_coverage",
+        lambda **_: [_status(entry) for entry in entries],
+    )
 
     manifest = tmp_path / "manifest.sqlite"
     manifest.touch()
@@ -388,6 +452,7 @@ def test_report_manifest_health_prints_json(monkeypatch, tmp_path, capsys):
         exchange_name="binance_spot",
         environment_name="binance_paper",
         alert_router=None,
+        data_quality=None,
         as_of=datetime(2024, 1, 1, tzinfo=timezone.utc),
         output_format="json",
     )
@@ -397,4 +462,6 @@ def test_report_manifest_health_prints_json(monkeypatch, tmp_path, capsys):
     assert payload["environment"] == "binance_paper"
     assert payload["exchange"] == "binance_spot"
     assert payload["summary"]["ok"] == 1
+    assert payload["summary"]["manifest_status_counts"]["ok"] == 1
+    assert payload["summary"]["issue_counts"] == {}
     assert payload["entries"][0]["symbol"] == "BTCUSDT"

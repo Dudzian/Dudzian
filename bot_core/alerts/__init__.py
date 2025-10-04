@@ -16,6 +16,12 @@ from bot_core.alerts.channels import (
     TelegramChannel,
     get_sms_provider,
 )
+from bot_core.alerts.coverage import (
+    build_coverage_alert_context,
+    build_coverage_alert_message,
+    dispatch_coverage_alert,
+    run_coverage_check_and_alert,
+)
 from bot_core.alerts.router import DefaultAlertRouter
 from bot_core.alerts.throttle import AlertThrottle
 
@@ -43,6 +49,10 @@ __all__ = [
     "AlertDeliveryError",
     "AlertMessage",
     "AlertRouter",
+    "build_coverage_alert_context",
+    "build_coverage_alert_message",
+    "dispatch_coverage_alert",
+    "run_coverage_check_and_alert",
     "DefaultAlertRouter",
     "AlertThrottle",
     "EmailChannel",

@@ -4,8 +4,16 @@ from bot_core.data.ohlcv.audit import GapAuditLogger, GapAuditRecord, JSONLGapAu
 from bot_core.data.ohlcv.backfill import BackfillSummary, OHLCVBackfillService
 from bot_core.data.ohlcv.cache import CachedOHLCVSource, PublicAPIDataSource
 from bot_core.data.ohlcv.coverage_check import (
+    CoverageReportPayload,
     CoverageStatus,
+    CoverageSummary,
+    SummaryThresholdResult,
+    build_coverage_report_payload,
+    coerce_summary_mapping,
+    coverage_status_to_mapping,
     evaluate_coverage,
+    evaluate_summary_thresholds,
+    summarize_coverage,
     summarize_issues,
 )
 from bot_core.data.ohlcv.gap_monitor import DataGapIncidentTracker, GapAlertPolicy
@@ -25,7 +33,13 @@ __all__ = [
     "GapAuditRecord",
     "JSONLGapAuditLogger",
     "CachedOHLCVSource",
+    "CoverageReportPayload",
     "CoverageStatus",
+    "CoverageSummary",
+    "SummaryThresholdResult",
+    "build_coverage_report_payload",
+    "coerce_summary_mapping",
+    "coverage_status_to_mapping",
     "DataGapIncidentTracker",
     "GapAlertPolicy",
     "ManifestEntry",
@@ -34,6 +48,8 @@ __all__ = [
     "ParquetCacheStorage",
     "PublicAPIDataSource",
     "evaluate_coverage",
+    "evaluate_summary_thresholds",
+    "summarize_coverage",
     "generate_manifest_report",
     "summarize_status",
     "summarize_issues",
