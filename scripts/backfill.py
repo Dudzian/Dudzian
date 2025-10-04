@@ -16,6 +16,7 @@ from bot_core.config.models import CoreConfig, EnvironmentConfig, InstrumentUniv
 from bot_core.data.ohlcv import (
     BackfillSummary,
     CachedOHLCVSource,
+    CoverageStatus,
     DataGapIncidentTracker,
     DualCacheStorage,
     GapAlertPolicy,
@@ -24,8 +25,8 @@ from bot_core.data.ohlcv import (
     ParquetCacheStorage,
     PublicAPIDataSource,
     SQLiteCacheStorage,
-    generate_manifest_report,
-    summarize_status,
+    evaluate_coverage,
+    summarize_coverage,
 )
 from bot_core.data.ohlcv.audit import JSONLGapAuditLogger
 from bot_core.exchanges.base import Environment, ExchangeCredentials
@@ -276,54 +277,74 @@ def _report_manifest_health(
     """Loguje stan manifestu i wysyła alerty o wykrytych lukach."""
     report_as_of = as_of or datetime.now(timezone.utc)
 
-    entries = generate_manifest_report(
-        manifest_path=manifest_path,
-        universe=universe,
-        exchange_name=exchange_name,
-        as_of=report_as_of,
+    statuses = list(
+        evaluate_coverage(
+            manifest_path=manifest_path,
+            universe=universe,
+            exchange_name=exchange_name,
+            as_of=report_as_of,
+        )
     )
 
-    if not entries:
+    if not statuses:
         _LOGGER.info(
             "Manifest OHLCV nie zawiera wpisów dla exchange=%s – pomijam raport",
             exchange_name,
         )
         return
 
-    summary = summarize_status(entries)
+    coverage_summary = summarize_coverage(statuses)
+    summary_payload = coverage_summary.to_mapping()
+    manifest_summary = dict(coverage_summary.manifest_status_counts)
+    entries = [status.manifest_entry for status in statuses]
+
     _LOGGER.info(
-        "Manifest OHLCV %s/%s – statusy: %s",
+        "Manifest OHLCV %s/%s – status=%s total=%s ok=%s warning=%s error=%s stale=%s",
         environment_name,
         exchange_name,
-        summary,
+        summary_payload.get("status"),
+        summary_payload.get("total"),
+        summary_payload.get("ok"),
+        summary_payload.get("warning"),
+        summary_payload.get("error"),
+        summary_payload.get("stale_entries"),
     )
+    if coverage_summary.issue_counts:
+        _LOGGER.info(
+            "Manifest OHLCV %s/%s – issue_counts=%s",
+            environment_name,
+            exchange_name,
+            coverage_summary.issue_counts,
+        )
 
     if output_format:
         if output_format == "table":
-            print(_format_manifest_table(entries, summary))
+            print(_format_manifest_table(entries, manifest_summary))
         elif output_format == "json":
             payload = {
                 "environment": environment_name,
                 "exchange": exchange_name,
                 "generated_at": report_as_of.isoformat(),
-                "summary": summary,
+                "summary": summary_payload,
                 "entries": [asdict(entry) for entry in entries],
             }
             print(json.dumps(payload, ensure_ascii=False, indent=2))
         else:  # pragma: no cover - walidacja w parserze argumentów
             _LOGGER.warning("Nieobsługiwany format raportu manifestu: %s", output_format)
 
-    issues = [entry for entry in entries if entry.status != "ok"]
-    if not issues:
+    issue_statuses = [status for status in statuses if status.issues]
+    if not issue_statuses:
         return
 
-    for entry in issues:
-        gap_display = "-" if entry.gap_minutes is None else f"{entry.gap_minutes:.1f} min"
+    for status in issue_statuses:
+        entry = status.manifest_entry
+        gap_display = "-" if entry.gap_minutes is None else f"{float(entry.gap_minutes):.1f} min"
         _LOGGER.warning(
-            "Manifest alert: %s %s status=%s gap=%s rows=%s last=%s",
+            "Manifest alert: %s %s status=%s issues=%s gap=%s rows=%s last=%s",
             entry.symbol,
             entry.interval,
             entry.status,
+            ", ".join(status.issues) if status.issues else "brak",
             gap_display,
             entry.row_count if entry.row_count is not None else "-",
             entry.last_timestamp_iso or "-",
@@ -332,48 +353,84 @@ def _report_manifest_health(
     if not alert_router:
         return
 
-    critical_entries = [e for e in issues if e.status in {"missing_metadata", "invalid_metadata"}]
-    warning_entries = [e for e in issues if e.status == "warning"]
+    critical_statuses = [
+        status
+        for status in issue_statuses
+        if status.manifest_entry.status in {"missing_metadata", "invalid_metadata"}
+    ]
+    critical_keys = {(status.symbol, status.interval) for status in critical_statuses}
+    warning_statuses = [
+        status
+        for status in issue_statuses
+        if (status.symbol, status.interval) not in critical_keys
+    ]
 
-    def _build_body(entries_seq: Sequence[object]) -> str:
+    worst_gap_payload = coverage_summary.worst_gap
+
+    def _format_alert_body(statuses_seq: Sequence[CoverageStatus]) -> str:
         lines = ["Problemy w manifeście OHLCV:"]
-        for entry in list(entries_seq)[:10]:
-            gap_display = "-" if entry.gap_minutes is None else f"{entry.gap_minutes:.1f} min"
-            row_display = "-" if entry.row_count is None else str(entry.row_count)
-            last_display = entry.last_timestamp_iso or "-"
-            lines.append(
-                f"- {entry.symbol} {entry.interval} ({entry.status}) – ostatnia świeca: {last_display} UTC, "
-                f"luka: {gap_display}, wiersze: {row_display}"
+        for status in list(statuses_seq)[:10]:
+            entry = status.manifest_entry
+            gap_display = "-" if entry.gap_minutes is None else f"{float(entry.gap_minutes):.1f} min"
+            threshold_display = (
+                "-" if entry.threshold_minutes is None else str(entry.threshold_minutes)
             )
-        if len(entries_seq) > 10:
-            lines.append(f"… oraz {len(entries_seq) - 10} kolejnych wpisów.")
+            row_display = "-" if entry.row_count is None else str(entry.row_count)
+            required_display = "-" if status.required_rows is None else str(status.required_rows)
+            last_display = entry.last_timestamp_iso or "-"
+            issue_display = ", ".join(status.issues) if status.issues else entry.status
+            lines.append(
+                f"- {entry.symbol} {entry.interval} – {issue_display}; gap={gap_display}, "
+                f"próg={threshold_display}, wiersze={row_display}, wymagane={required_display}, "
+                f"ostatnia={last_display} UTC"
+            )
+        if len(statuses_seq) > 10:
+            lines.append(f"… oraz {len(statuses_seq) - 10} kolejnych wpisów.")
+        if worst_gap_payload:
+            lines.append(
+                "Największa luka: {symbol}/{interval} {gap} min (próg {threshold})".format(
+                    symbol=worst_gap_payload.get("symbol", "?"),
+                    interval=worst_gap_payload.get("interval", "?"),
+                    gap=worst_gap_payload.get("gap_minutes", "?"),
+                    threshold=worst_gap_payload.get("threshold_minutes", "-"),
+                )
+            )
         lines.append("Szczegóły w logach backfillu oraz pliku manifestu.")
         return "\n".join(lines)
 
     context = {
         "environment": environment_name,
         "exchange": exchange_name,
-        "issues": str(len(issues)),
-        "summary": json.dumps(summary, ensure_ascii=False),
+        "issues": str(len(issue_statuses)),
+        "summary": json.dumps(summary_payload, ensure_ascii=False),
+        "stale_entries": str(coverage_summary.stale_entries),
     }
+    if coverage_summary.issue_counts:
+        context["issue_counts"] = json.dumps(coverage_summary.issue_counts, ensure_ascii=False)
+    if coverage_summary.issue_examples:
+        context["issue_examples"] = json.dumps(
+            coverage_summary.issue_examples, ensure_ascii=False
+        )
+    if coverage_summary.worst_gap:
+        context["worst_gap"] = json.dumps(coverage_summary.worst_gap, ensure_ascii=False)
 
-    if critical_entries:
+    if critical_statuses:
         alert_router.dispatch(
             AlertMessage(
                 category="data.ohlcv",
                 title=f"Krytyczne braki w manifeście OHLCV ({environment_name})",
-                body=_build_body(critical_entries),
+                body=_format_alert_body(critical_statuses),
                 severity="critical",
                 context=context,
             )
         )
 
-    if warning_entries:
+    if warning_statuses:
         alert_router.dispatch(
             AlertMessage(
                 category="data.ohlcv",
                 title=f"Ostrzeżenia w manifeście OHLCV ({environment_name})",
-                body=_build_body(warning_entries),
+                body=_format_alert_body(warning_statuses),
                 severity="warning",
                 context=context,
             )

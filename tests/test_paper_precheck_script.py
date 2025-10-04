@@ -53,6 +53,9 @@ def test_paper_precheck_success(tmp_path: Path, capsys: pytest.CaptureFixture[st
     summary = payload["coverage"]["summary"]
     assert summary["status"] == "ok"
     assert summary.get("ok_ratio") == pytest.approx(1.0)
+    assert summary["stale_entries"] == 0
+    assert summary["issue_counts"] == {}
+    assert summary["issue_examples"] == {}
 
 
 def test_paper_precheck_invalid_config(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
