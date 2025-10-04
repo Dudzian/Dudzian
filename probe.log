@@ -1,0 +1,27 @@
+INFO:bot_core.risk.engine:Zarejestrowano profil ryzyka balanced
+[PROBE] get_password(service='dudzian.trading', username='dudzian.trading:binance_paper_trading:trading') -> None
+ERROR:__main__:Nie uda³o siê zbudowaæ pipeline'u daily trend: Brak sekretu 'dudzian.trading:binance_paper_trading:trading'. Dodaj klucze przy u¿yciu narzêdzia konfiguracyjnego.
+Traceback (most recent call last):
+  File "scripts/run_daily_trend.py", line 1455, in main
+    pipeline = build_daily_trend_pipeline(
+        environment_name=args.environment,
+    ...<5 lines>...
+        risk_profile_name=args.risk_profile,
+    )
+  File "C:\Users\kamil\Documents\GitHub\Dudzian\bot_core\runtime\pipeline.py", line 70, in build_daily_trend_pipeline
+    bootstrap_ctx = bootstrap_environment(
+        environment_name,
+    ...<3 lines>...
+        risk_profile_name=risk_profile_name,
+    )
+  File "C:\Users\kamil\Documents\GitHub\Dudzian\bot_core\runtime\bootstrap.py", line 130, in bootstrap_environment
+    credentials = secret_manager.load_exchange_credentials(
+        environment.keychain_key,
+    ...<3 lines>...
+        forbidden_permissions=environment.forbidden_permissions,
+    )
+  File "C:\Users\kamil\Documents\GitHub\Dudzian\bot_core\security\base.py", line 78, in load_exchange_credentials
+    raise SecretStorageError(
+        f"Brak sekretu '{storage_key}'. Dodaj klucze przy u¿yciu narzêdzia konfiguracyjnego."
+    )
+bot_core.security.base.SecretStorageError: Brak sekretu 'dudzian.trading:binance_paper_trading:trading'. Dodaj klucze przy u¿yciu narzêdzia konfiguracyjnego.

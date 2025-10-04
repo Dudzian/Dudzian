@@ -1,0 +1,582 @@
+{
+  "environment": "binance_paper",
+  "window": {
+    "start": "2025-09-20T00:00:00+00:00",
+    "end": "2025-10-03T23:59:59.999000+00:00"
+  },
+  "orders": [],
+  "ledger_entries": 0,
+  "metrics": {
+    "side_counts": {
+      "buy": 0,
+      "sell": 0
+    },
+    "notional": {
+      "buy": 0.0,
+      "sell": 0.0,
+      "total": 0.0
+    },
+    "total_fees": 0.0,
+    "realized_pnl_total": 0.0
+  },
+  "alert_snapshot": {},
+  "risk_state": {
+    "profile": "balanced",
+    "current_day": "2025-10-04",
+    "start_of_day_equity": 100000.0,
+    "daily_realized_pnl": 0.0,
+    "peak_equity": 100000.0,
+    "force_liquidation": false,
+    "last_equity": 100000.0,
+    "positions": {},
+    "gross_notional": 0,
+    "active_positions": 0,
+    "daily_loss_pct": 0.0,
+    "drawdown_pct": 0.0,
+    "limits": {
+      "max_positions": 5,
+      "max_leverage": 3.0,
+      "daily_loss_limit": 0.015,
+      "drawdown_limit": 0.1,
+      "max_position_pct": 0.05,
+      "target_volatility": 0.11,
+      "stop_loss_atr_multiple": 1.5
+    }
+  },
+  "data_checks": {
+    "interval": "1d",
+    "intervals": [
+      "1d",
+      "1h",
+      "15m"
+    ],
+    "symbols": [
+      "BTCUSDT",
+      "ETHUSDT",
+      "SOLUSDT",
+      "BNBUSDT",
+      "XRPUSDT",
+      "ADAUSDT",
+      "LTCUSDT",
+      "POLUSDT"
+    ],
+    "required_bars": 15,
+    "tick_ms": 86400000,
+    "window_ms": {
+      "start": 1758326399999,
+      "end": 1759535999999
+    },
+    "required_bars_map": {
+      "1d": 15,
+      "1h": 338,
+      "15m": 1346
+    },
+    "tick_ms_map": {
+      "1d": 86400000,
+      "1h": 3600000,
+      "15m": 900000
+    },
+    "manifest": {
+      "status": "ok",
+      "as_of": "2025-10-03T23:59:59.999000+00:00",
+      "intervals": [
+        "1d",
+        "1h",
+        "15m"
+      ],
+      "required_rows": {
+        "1d": 15,
+        "1h": 338,
+        "15m": 1346
+      },
+      "symbols": [
+        "ADAUSDT",
+        "BNBUSDT",
+        "BTCUSDT",
+        "ETHUSDT",
+        "LTCUSDT",
+        "POLUSDT",
+        "SOLUSDT",
+        "XRPUSDT"
+      ],
+      "entries": [
+        {
+          "symbol": "BTCUSDT",
+          "interval": "1d",
+          "status": "ok",
+          "issues": [],
+          "row_count": 2971,
+          "required_rows": 1825,
+          "gap_minutes": 0.0,
+          "last_timestamp_ms": 1759536000000,
+          "last_timestamp_iso": "2025-10-04T00:00:00+00:00"
+        },
+        {
+          "symbol": "BTCUSDT",
+          "interval": "1h",
+          "status": "ok",
+          "issues": [],
+          "row_count": 26283,
+          "required_rows": 26280,
+          "gap_minutes": 0.0,
+          "last_timestamp_ms": 1759536000000,
+          "last_timestamp_iso": "2025-10-04T00:00:00+00:00"
+        },
+        {
+          "symbol": "BTCUSDT",
+          "interval": "15m",
+          "status": "ok",
+          "issues": [],
+          "row_count": 17296,
+          "required_rows": 17280,
+          "gap_minutes": 0.0,
+          "last_timestamp_ms": 1759538700000,
+          "last_timestamp_iso": "2025-10-04T00:45:00+00:00"
+        },
+        {
+          "symbol": "ETHUSDT",
+          "interval": "1d",
+          "status": "ok",
+          "issues": [],
+          "row_count": 2971,
+          "required_rows": 1825,
+          "gap_minutes": 0.0,
+          "last_timestamp_ms": 1759536000000,
+          "last_timestamp_iso": "2025-10-04T00:00:00+00:00"
+        },
+        {
+          "symbol": "ETHUSDT",
+          "interval": "1h",
+          "status": "ok",
+          "issues": [],
+          "row_count": 26283,
+          "required_rows": 26280,
+          "gap_minutes": 0.0,
+          "last_timestamp_ms": 1759536000000,
+          "last_timestamp_iso": "2025-10-04T00:00:00+00:00"
+        },
+        {
+          "symbol": "ETHUSDT",
+          "interval": "15m",
+          "status": "ok",
+          "issues": [],
+          "row_count": 17296,
+          "required_rows": 17280,
+          "gap_minutes": 0.0,
+          "last_timestamp_ms": 1759538700000,
+          "last_timestamp_iso": "2025-10-04T00:45:00+00:00"
+        },
+        {
+          "symbol": "SOLUSDT",
+          "interval": "1d",
+          "status": "ok",
+          "issues": [],
+          "row_count": 1826,
+          "required_rows": 1825,
+          "gap_minutes": 0.0,
+          "last_timestamp_ms": 1759536000000,
+          "last_timestamp_iso": "2025-10-04T00:00:00+00:00"
+        },
+        {
+          "symbol": "SOLUSDT",
+          "interval": "1h",
+          "status": "ok",
+          "issues": [],
+          "row_count": 26283,
+          "required_rows": 17520,
+          "gap_minutes": 0.0,
+          "last_timestamp_ms": 1759536000000,
+          "last_timestamp_iso": "2025-10-04T00:00:00+00:00"
+        },
+        {
+          "symbol": "SOLUSDT",
+          "interval": "15m",
+          "status": "ok",
+          "issues": [],
+          "row_count": 17296,
+          "required_rows": 17280,
+          "gap_minutes": 0.0,
+          "last_timestamp_ms": 1759538700000,
+          "last_timestamp_iso": "2025-10-04T00:45:00+00:00"
+        },
+        {
+          "symbol": "BNBUSDT",
+          "interval": "1d",
+          "status": "ok",
+          "issues": [],
+          "row_count": 2890,
+          "required_rows": 1825,
+          "gap_minutes": 0.0,
+          "last_timestamp_ms": 1759536000000,
+          "last_timestamp_iso": "2025-10-04T00:00:00+00:00"
+        },
+        {
+          "symbol": "BNBUSDT",
+          "interval": "1h",
+          "status": "ok",
+          "issues": [],
+          "row_count": 26283,
+          "required_rows": 17520,
+          "gap_minutes": 0.0,
+          "last_timestamp_ms": 1759536000000,
+          "last_timestamp_iso": "2025-10-04T00:00:00+00:00"
+        },
+        {
+          "symbol": "BNBUSDT",
+          "interval": "15m",
+          "status": "ok",
+          "issues": [],
+          "row_count": 17296,
+          "required_rows": 17280,
+          "gap_minutes": 0.0,
+          "last_timestamp_ms": 1759538700000,
+          "last_timestamp_iso": "2025-10-04T00:45:00+00:00"
+        },
+        {
+          "symbol": "XRPUSDT",
+          "interval": "1d",
+          "status": "ok",
+          "issues": [],
+          "row_count": 2711,
+          "required_rows": 1825,
+          "gap_minutes": 0.0,
+          "last_timestamp_ms": 1759536000000,
+          "last_timestamp_iso": "2025-10-04T00:00:00+00:00"
+        },
+        {
+          "symbol": "XRPUSDT",
+          "interval": "1h",
+          "status": "ok",
+          "issues": [],
+          "row_count": 26283,
+          "required_rows": 17520,
+          "gap_minutes": 0.0,
+          "last_timestamp_ms": 1759536000000,
+          "last_timestamp_iso": "2025-10-04T00:00:00+00:00"
+        },
+        {
+          "symbol": "XRPUSDT",
+          "interval": "15m",
+          "status": "ok",
+          "issues": [],
+          "row_count": 17296,
+          "required_rows": 17280,
+          "gap_minutes": 0.0,
+          "last_timestamp_ms": 1759538700000,
+          "last_timestamp_iso": "2025-10-04T00:45:00+00:00"
+        },
+        {
+          "symbol": "ADAUSDT",
+          "interval": "1d",
+          "status": "ok",
+          "issues": [],
+          "row_count": 2728,
+          "required_rows": 1825,
+          "gap_minutes": 0.0,
+          "last_timestamp_ms": 1759536000000,
+          "last_timestamp_iso": "2025-10-04T00:00:00+00:00"
+        },
+        {
+          "symbol": "ADAUSDT",
+          "interval": "1h",
+          "status": "ok",
+          "issues": [],
+          "row_count": 26283,
+          "required_rows": 17520,
+          "gap_minutes": 0.0,
+          "last_timestamp_ms": 1759536000000,
+          "last_timestamp_iso": "2025-10-04T00:00:00+00:00"
+        },
+        {
+          "symbol": "ADAUSDT",
+          "interval": "15m",
+          "status": "ok",
+          "issues": [],
+          "row_count": 17296,
+          "required_rows": 17280,
+          "gap_minutes": 0.0,
+          "last_timestamp_ms": 1759538700000,
+          "last_timestamp_iso": "2025-10-04T00:45:00+00:00"
+        },
+        {
+          "symbol": "LTCUSDT",
+          "interval": "1d",
+          "status": "ok",
+          "issues": [],
+          "row_count": 2853,
+          "required_rows": 1825,
+          "gap_minutes": 0.0,
+          "last_timestamp_ms": 1759536000000,
+          "last_timestamp_iso": "2025-10-04T00:00:00+00:00"
+        },
+        {
+          "symbol": "LTCUSDT",
+          "interval": "1h",
+          "status": "ok",
+          "issues": [],
+          "row_count": 26283,
+          "required_rows": 17520,
+          "gap_minutes": 0.0,
+          "last_timestamp_ms": 1759536000000,
+          "last_timestamp_iso": "2025-10-04T00:00:00+00:00"
+        },
+        {
+          "symbol": "LTCUSDT",
+          "interval": "15m",
+          "status": "ok",
+          "issues": [],
+          "row_count": 17296,
+          "required_rows": 17280,
+          "gap_minutes": 0.0,
+          "last_timestamp_ms": 1759538700000,
+          "last_timestamp_iso": "2025-10-04T00:45:00+00:00"
+        },
+        {
+          "symbol": "POLUSDT",
+          "interval": "1d",
+          "status": "ok",
+          "issues": [],
+          "row_count": 361,
+          "required_rows": 360,
+          "gap_minutes": 0.0,
+          "last_timestamp_ms": 1759536000000,
+          "last_timestamp_iso": "2025-10-04T00:00:00+00:00"
+        },
+        {
+          "symbol": "POLUSDT",
+          "interval": "1h",
+          "status": "ok",
+          "issues": [],
+          "row_count": 8643,
+          "required_rows": 8640,
+          "gap_minutes": 0.0,
+          "last_timestamp_ms": 1759536000000,
+          "last_timestamp_iso": "2025-10-04T00:00:00+00:00"
+        },
+        {
+          "symbol": "POLUSDT",
+          "interval": "15m",
+          "status": "ok",
+          "issues": [],
+          "row_count": 34573,
+          "required_rows": 34560,
+          "gap_minutes": 0.0,
+          "last_timestamp_ms": 1759538700000,
+          "last_timestamp_iso": "2025-10-04T00:45:00+00:00"
+        }
+      ]
+    },
+    "cache": {
+      "BTCUSDT": {
+        "intervals": {
+          "1d": {
+            "row_count": 2971,
+            "first_timestamp_ms": 1502928000000,
+            "last_timestamp_ms": 1759536000000,
+            "coverage_bars": 2971,
+            "required_bars": 15
+          },
+          "1h": {
+            "row_count": 26283,
+            "first_timestamp_ms": 1664917200000,
+            "last_timestamp_ms": 1759536000000,
+            "coverage_bars": 26284,
+            "required_bars": 338
+          },
+          "15m": {
+            "row_count": 17296,
+            "first_timestamp_ms": 1743973200000,
+            "last_timestamp_ms": 1759538700000,
+            "coverage_bars": 17296,
+            "required_bars": 1346
+          }
+        }
+      },
+      "ETHUSDT": {
+        "intervals": {
+          "1d": {
+            "row_count": 2971,
+            "first_timestamp_ms": 1502928000000,
+            "last_timestamp_ms": 1759536000000,
+            "coverage_bars": 2971,
+            "required_bars": 15
+          },
+          "1h": {
+            "row_count": 26283,
+            "first_timestamp_ms": 1664917200000,
+            "last_timestamp_ms": 1759536000000,
+            "coverage_bars": 26284,
+            "required_bars": 338
+          },
+          "15m": {
+            "row_count": 17296,
+            "first_timestamp_ms": 1743973200000,
+            "last_timestamp_ms": 1759538700000,
+            "coverage_bars": 17296,
+            "required_bars": 1346
+          }
+        }
+      },
+      "SOLUSDT": {
+        "intervals": {
+          "1d": {
+            "row_count": 1826,
+            "first_timestamp_ms": 1597104000000,
+            "last_timestamp_ms": 1759536000000,
+            "coverage_bars": 1881,
+            "required_bars": 15
+          },
+          "1h": {
+            "row_count": 26283,
+            "first_timestamp_ms": 1664917200000,
+            "last_timestamp_ms": 1759536000000,
+            "coverage_bars": 26284,
+            "required_bars": 338
+          },
+          "15m": {
+            "row_count": 17296,
+            "first_timestamp_ms": 1743973200000,
+            "last_timestamp_ms": 1759538700000,
+            "coverage_bars": 17296,
+            "required_bars": 1346
+          }
+        }
+      },
+      "BNBUSDT": {
+        "intervals": {
+          "1d": {
+            "row_count": 2890,
+            "first_timestamp_ms": 1509926400000,
+            "last_timestamp_ms": 1759536000000,
+            "coverage_bars": 2890,
+            "required_bars": 15
+          },
+          "1h": {
+            "row_count": 26283,
+            "first_timestamp_ms": 1664917200000,
+            "last_timestamp_ms": 1759536000000,
+            "coverage_bars": 26284,
+            "required_bars": 338
+          },
+          "15m": {
+            "row_count": 17296,
+            "first_timestamp_ms": 1743973200000,
+            "last_timestamp_ms": 1759538700000,
+            "coverage_bars": 17296,
+            "required_bars": 1346
+          }
+        }
+      },
+      "XRPUSDT": {
+        "intervals": {
+          "1d": {
+            "row_count": 2711,
+            "first_timestamp_ms": 1525392000000,
+            "last_timestamp_ms": 1759536000000,
+            "coverage_bars": 2711,
+            "required_bars": 15
+          },
+          "1h": {
+            "row_count": 26283,
+            "first_timestamp_ms": 1664917200000,
+            "last_timestamp_ms": 1759536000000,
+            "coverage_bars": 26284,
+            "required_bars": 338
+          },
+          "15m": {
+            "row_count": 17296,
+            "first_timestamp_ms": 1743973200000,
+            "last_timestamp_ms": 1759538700000,
+            "coverage_bars": 17296,
+            "required_bars": 1346
+          }
+        }
+      },
+      "ADAUSDT": {
+        "intervals": {
+          "1d": {
+            "row_count": 2728,
+            "first_timestamp_ms": 1523923200000,
+            "last_timestamp_ms": 1759536000000,
+            "coverage_bars": 2728,
+            "required_bars": 15
+          },
+          "1h": {
+            "row_count": 26283,
+            "first_timestamp_ms": 1664917200000,
+            "last_timestamp_ms": 1759536000000,
+            "coverage_bars": 26284,
+            "required_bars": 338
+          },
+          "15m": {
+            "row_count": 17296,
+            "first_timestamp_ms": 1743973200000,
+            "last_timestamp_ms": 1759538700000,
+            "coverage_bars": 17296,
+            "required_bars": 1346
+          }
+        }
+      },
+      "LTCUSDT": {
+        "intervals": {
+          "1d": {
+            "row_count": 2853,
+            "first_timestamp_ms": 1513123200000,
+            "last_timestamp_ms": 1759536000000,
+            "coverage_bars": 2853,
+            "required_bars": 15
+          },
+          "1h": {
+            "row_count": 26283,
+            "first_timestamp_ms": 1664917200000,
+            "last_timestamp_ms": 1759536000000,
+            "coverage_bars": 26284,
+            "required_bars": 338
+          },
+          "15m": {
+            "row_count": 17296,
+            "first_timestamp_ms": 1743973200000,
+            "last_timestamp_ms": 1759538700000,
+            "coverage_bars": 17296,
+            "required_bars": 1346
+          }
+        }
+      },
+      "POLUSDT": {
+        "intervals": {
+          "1d": {
+            "row_count": 361,
+            "first_timestamp_ms": 1726185600000,
+            "last_timestamp_ms": 1759536000000,
+            "coverage_bars": 387,
+            "required_bars": 15
+          },
+          "1h": {
+            "row_count": 8643,
+            "first_timestamp_ms": 1728424800000,
+            "last_timestamp_ms": 1759536000000,
+            "coverage_bars": 8643,
+            "required_bars": 338
+          },
+          "15m": {
+            "row_count": 34573,
+            "first_timestamp_ms": 1728423900000,
+            "last_timestamp_ms": 1759538700000,
+            "coverage_bars": 34573,
+            "required_bars": 1346
+          }
+        }
+      }
+    }
+  },
+  "storage": {
+    "directory": "C:\\Users\\kamil\\Documents\\GitHub\\Dudzian\\audit\\smoke_reports\\daily_trend_smoke_9sq5jrlu",
+    "status": "ok",
+    "free_bytes": 219847507968,
+    "total_bytes": 965553942528,
+    "free_mb": 209662.921875,
+    "total_mb": 920823.99609375,
+    "threshold_bytes": 104857600,
+    "threshold_mb": 100.0
+  }
+}

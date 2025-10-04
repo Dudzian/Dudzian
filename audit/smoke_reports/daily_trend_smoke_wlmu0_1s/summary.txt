@@ -1,0 +1,17 @@
+Środowisko: binance_paper
+Zakres dat: 2025-09-20T00:00:00+00:00 → 2025-10-03T23:59:59.999000+00:00
+Liczba zleceń: 0
+Liczba wpisów w ledgerze: 0
+Wolumen BUY: 0.00 | SELL: 0.00 | Razem: 0.00
+Łączne opłaty: 0.0000
+Realizowany PnL (brutto): 0.00
+Profil ryzyka: balanced
+Aktywne pozycje: 0 | Ekspozycja brutto: 0.00
+Dzienna strata: 0.00% | Obsunięcie: 0.00%
+Force liquidation: NIE
+Limity: max pozycje 5, max ekspozycja 5.00%, max dźwignia 3.00x, dzienna strata 1.50%, obsunięcie 10.00%, target vol 11.00%, stop loss ATR× 1.50
+Manifest OHLCV: OK (24 wpisów, problemy: 0)
+Cache offline: ADAUSDT [15m (pokrycie 17296/1346, wiersze 17296); 1d (pokrycie 2728/15, wiersze 2728); 1h (pokrycie 26284/338, wiersze 26283)]; BNBUSDT [15m (pokrycie 17296/1346, wiersze 17296); 1d (pokrycie 2890/15, wiersze 2890); 1h (pokrycie 26284/338, wiersze 26283)]; BTCUSDT [15m (pokrycie 17296/1346, wiersze 17296); 1d (pokrycie 2971/15, wiersze 2971); 1h (pokrycie 26284/338, wiersze 26283)]; ETHUSDT [15m (pokrycie 17296/1346, wiersze 17296); 1d (pokrycie 2971/15, wiersze 2971); 1h (pokrycie 26284/338, wiersze 26283)]; LTCUSDT [15m (pokrycie 17296/1346, wiersze 17296); 1d (pokrycie 2853/15, wiersze 2853); 1h (pokrycie 26284/338, wiersze 26283)]; POLUSDT [15m (pokrycie 34573/1346, wiersze 34573); 1d (pokrycie 387/15, wiersze 361); 1h (pokrycie 8643/338, wiersze 8643)]; SOLUSDT [15m (pokrycie 17296/1346, wiersze 17296); 1d (pokrycie 1881/15, wiersze 1826); 1h (pokrycie 26284/338, wiersze 26283)]; XRPUSDT [15m (pokrycie 17296/1346, wiersze 17296); 1d (pokrycie 2711/15, wiersze 2711); 1h (pokrycie 26284/338, wiersze 26283)]
+Magazyn raportu: status=OK, wolne 209666.04 MB, całkowite 920824.00 MB, próg 100.00 MB
+Alerty: brak danych o kanałach alertów
+SHA-256 summary.json: 4a4fbc45941933d047f82a2a30ad47dc022f1efa7f709be9e3c790e8f674be67

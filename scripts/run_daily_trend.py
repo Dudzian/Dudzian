@@ -462,6 +462,8 @@ def _export_smoke_report(
     storage_info: Mapping[str, object] | None = None,
 ) -> Path:
     report_dir.mkdir(parents=True, exist_ok=True)
+
+    # Zapis ledger.jsonl
     ledger_entries = list(ledger)
     ledger_path = report_dir / "ledger.jsonl"
     with ledger_path.open("w", encoding="utf-8") as handle:
@@ -469,8 +471,10 @@ def _export_smoke_report(
             json.dump(entry, handle, ensure_ascii=False)
             handle.write("\n")
 
+    # Metryki
     metrics = _compute_ledger_metrics(ledger_entries)
 
+    # Podsumowanie
     summary: dict[str, object] = {
         "environment": environment,
         "window": dict(window),
@@ -494,66 +498,7 @@ def _export_smoke_report(
     if storage_info:
         summary["storage"] = json.loads(json.dumps(storage_info))
 
-    if risk_state:
-        summary["risk_state"] = dict(risk_state)
-
-    if data_checks:
-        summary["data_checks"] = json.loads(json.dumps(data_checks))
-
-    if storage_info:
-        summary["storage"] = json.loads(json.dumps(storage_info))
-
-    if risk_state:
-        summary["risk_state"] = dict(risk_state)
-
-    if data_checks:
-        summary["data_checks"] = json.loads(json.dumps(data_checks))
-
-    if storage_info:
-        summary["storage"] = json.loads(json.dumps(storage_info))
-
-    if risk_state:
-        summary["risk_state"] = dict(risk_state)
-
-    if data_checks:
-        summary["data_checks"] = json.loads(json.dumps(data_checks))
-
-    if storage_info:
-        summary["storage"] = json.loads(json.dumps(storage_info))
-
-    if note:
-        stripped = note.strip()
-        if stripped:
-            summary["note"] = stripped
-
-    if risk_state:
-        summary["risk_state"] = dict(risk_state)
-
-    if data_checks:
-        summary["data_checks"] = json.loads(json.dumps(data_checks))
-
-    if storage_info:
-        summary["storage"] = json.loads(json.dumps(storage_info))
-
-    if note:
-        stripped = note.strip()
-        if stripped:
-            summary["note"] = stripped
-
-    if risk_state:
-        summary["risk_state"] = dict(risk_state)
-
-    if data_checks:
-        summary["data_checks"] = json.loads(json.dumps(data_checks))
-
-    if storage_info:
-        summary["storage"] = json.loads(json.dumps(storage_info))
-
-    if note:
-        stripped = note.strip()
-        if stripped:
-            summary["note"] = stripped
-
+    # Zapis summary.json
     summary_path = report_dir / "summary.json"
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return summary_path
@@ -1598,9 +1543,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         _LOGGER.info("Podsumowanie smoke testu:%s%s", os.linesep, summary_text)
 
         archive_path: Path | None = None
-        archive_required = bool(args.archive_smoke or (SmokeArchiveUploader.resolve_config(
-            getattr(getattr(pipeline.bootstrap, "core_config", None), "reporting", None)
-        )))
+        archive_required = bool(
+            args.archive_smoke
+            or (
+                SmokeArchiveUploader.resolve_config(
+                    getattr(getattr(pipeline.bootstrap, "core_config", None), "reporting", None)
+                )
+            )
+        )
         upload_cfg = SmokeArchiveUploader.resolve_config(
             getattr(getattr(pipeline.bootstrap, "core_config", None), "reporting", None)
         )
@@ -1622,7 +1572,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                     summary_sha256=summary_hash,
                     window=window_meta,
                 )
-                _LOGGER.info("Przesłano archiwum smoke testu (%s) do %s", upload_result.backend, upload_result.location)
+                _LOGGER.info(
+                    "Przesłano archiwum smoke testu (%s) do %s", upload_result.backend, upload_result.location
+                )
             except Exception as exc:  # noqa: BLE001
                 _LOGGER.error("Nie udało się przesłać archiwum smoke testu: %s", exc)
 

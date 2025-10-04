@@ -81,6 +81,6 @@
   "coverage_warnings": [],
   "environment": "binance_paper",
   "manifest_path": "var\\data\\binance_paper\\ohlcv_manifest.sqlite",
-  "as_of": "2025-10-03T22:14:47.416208+00:00",
+  "as_of": "2025-10-03T23:43:07.917118+00:00",
   "coverage_status": "ok"
 }
