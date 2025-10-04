@@ -3,10 +3,8 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 from bot_core.exchanges.base import Environment
-from bot_core.security.base import SecretManager, SecretStorage, SecretStorageError
+from bot_core.security.base import SecretManager, SecretStorage
 
 
 class _StubStorage(SecretStorage):
@@ -68,11 +66,21 @@ def test_load_exchange_credentials_supports_keyid_alias() -> None:
     assert creds.secret == "sekret"
 
 
-def test_load_exchange_credentials_missing_environment_raises() -> None:
-    manager = _manager_with({"api_key": "abc"})
+def test_load_exchange_credentials_missing_environment_defaults_to_expected() -> None:
+    manager = _manager_with(
+        {
+            "api_key": "legacy-key",
+            "api_secret": "legacy-secret",
+            "permissions": ["TRADE"],
+        }
+    )
 
-    with pytest.raises(SecretStorageError):
-        manager.load_exchange_credentials(
-            "binance_paper_trading",
-            expected_environment=Environment.PAPER,
-        )
+    creds = manager.load_exchange_credentials(
+        "binance_paper_trading",
+        expected_environment=Environment.PAPER,
+    )
+
+    assert creds.key_id == "legacy-key"
+    assert creds.secret == "legacy-secret"
+    assert creds.permissions == ("trade",)
+    assert creds.environment is Environment.PAPER

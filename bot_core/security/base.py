@@ -80,7 +80,7 @@ class SecretManager:
             )
 
         try:
-            payload = self._deserialize(raw_value)
+            payload = self._deserialize(raw_value, expected_environment=expected_environment)
         except ValueError as exc:  # pragma: no cover - ochrona przed zepsutymi danymi
             raise SecretStorageError(
                 f"Sekret '{storage_key}' ma niepoprawny format – usuń go i zapisz ponownie."
@@ -183,7 +183,11 @@ class SecretManager:
         )
 
     @staticmethod
-    def _deserialize(raw_value: str) -> SecretPayload:
+    def _deserialize(
+        raw_value: str,
+        *,
+        expected_environment: Environment | None = None,
+    ) -> SecretPayload:
         import json
 
         data = json.loads(raw_value)
@@ -209,13 +213,23 @@ class SecretManager:
             permissions = data.get("scopes")
 
         environment_value = _first_present("environment", "env")
-        if not environment_value:
-            raise ValueError("sekret nie zawiera pola 'environment'")
 
-        try:
-            environment = Environment(str(environment_value).lower())
-        except ValueError as exc:  # pragma: no cover - walidacja formatu
-            raise ValueError(f"nieobsługiwane środowisko w sekrecie: {environment_value}") from exc
+        environment: Environment | None = None
+        if environment_value not in (None, ""):
+            if isinstance(environment_value, Environment):
+                environment = environment_value
+            else:
+                try:
+                    environment = Environment(str(environment_value).lower())
+                except ValueError as exc:  # pragma: no cover - walidacja formatu
+                    raise ValueError(
+                        f"nieobsługiwane środowisko w sekrecie: {environment_value}"
+                    ) from exc
+
+        if environment is None:
+            if expected_environment is None:
+                raise ValueError("sekret nie zawiera pola 'environment'")
+            environment = expected_environment
 
         return SecretPayload(
             key_id=str(key_id),
