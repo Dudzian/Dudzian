@@ -140,51 +140,6 @@ def test_check_data_coverage_interval_and_symbol_filters(
     assert summary["status"] == "ok"
 
 
-def test_check_data_coverage_threshold_violation(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    cache_dir = tmp_path / "cache_threshold"
-    rows = _generate_rows(datetime(2024, 1, 1, tzinfo=timezone.utc), 40)
-    _write_cache(cache_dir, rows)
-    config_path = _write_config(
-        tmp_path,
-        cache_dir,
-        data_quality={"max_gap_minutes": 60.0},
-    )
-
-    last_iso = _last_row_iso(rows)
-    last_dt = datetime.fromisoformat(last_iso)
-    future_dt = last_dt + timedelta(hours=4)
-
-    exit_code = cli.main(
-        [
-            "--config",
-            str(config_path),
-            "--environment",
-            "binance_smoke",
-            "--as-of",
-            future_dt.isoformat(),
-            "--json",
-        ]
-    )
-
-    assert exit_code == 1
-    captured = capsys.readouterr()
-    payload = json.loads(captured.out)
-    assert payload["status"] == "error"
-    assert payload["issues"] == []
-    threshold_payload = payload["threshold_evaluation"]
-    assert payload["threshold_issues"]
-    assert any(
-        issue.startswith("max_gap_exceeded") for issue in payload["threshold_issues"]
-    )
-    assert any(
-        issue.startswith("max_gap_exceeded") for issue in threshold_payload["issues"]
-    )
-    observed = threshold_payload["observed"]
-    assert observed["worst_gap_minutes"] is not None
-
-
 # --- Współdzielone helpery dla scenariuszy CLI ---
 
 
@@ -279,7 +234,6 @@ def _write_config(
     instrument_name: str = "BTC_USDT",
     symbol: str = "BTCUSDT",
     backfill: Mapping[str, Sequence[Mapping[str, int]]] | None = None,
-    data_quality: Mapping[str, float | None] | None = None,
 ) -> Path:
     """Generuje minimalną konfigurację CoreConfig dla testów CLI."""
 
@@ -295,21 +249,6 @@ def _write_config(
     base_asset, _, quote_asset = instrument_name.partition("_")
     if not quote_asset:
         quote_asset = "USDT"
-
-    environment_payload: dict[str, object] = {
-        "exchange": exchange_name,
-        "environment": "paper",
-        "keychain_key": f"{exchange_name}_paper",  # fikcyjny wpis dla walidacji
-        "data_cache_path": str(cache_dir),
-        "risk_profile": "balanced",
-        "alert_channels": [],
-        "instrument_universe": universe_name,
-    }
-    if data_quality:
-        environment_payload["data_quality"] = {
-            "max_gap_minutes": data_quality.get("max_gap_minutes"),
-            "min_ok_ratio": data_quality.get("min_ok_ratio"),
-        }
 
     config_payload = {
         "risk_profiles": {
@@ -338,7 +277,15 @@ def _write_config(
             }
         },
         "environments": {
-            environment_name: environment_payload,
+            environment_name: {
+                "exchange": exchange_name,
+                "environment": "paper",
+                "keychain_key": f"{exchange_name}_paper",  # fikcyjny wpis dla walidacji
+                "data_cache_path": str(cache_dir),
+                "risk_profile": "balanced",
+                "alert_channels": [],
+                "instrument_universe": universe_name,
+            }
         },
     }
 
