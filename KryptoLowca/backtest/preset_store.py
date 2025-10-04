@@ -1,4 +1,4 @@
-# backtest/preset_store.py
+﻿# backtest/preset_store.py
 from __future__ import annotations
 
 import json
@@ -116,7 +116,8 @@ class PresetStore:
         with self._lock:
             items = self._presets.values()
             if only_with_metric:
-                items = [p for p in items if metric in p.metrics]
+                items_list = [p for p in list(items) if metric in p.metrics]
+            items = items_list
             if not items:
                 return None
             key_fn = (lambda p: p.metrics.get(metric, float("-inf"))) if higher_is_better else (
@@ -175,3 +176,4 @@ if __name__ == "__main__":
     store = PresetStore()
     store.save_preset("example", {"ma_fast": 9, "ma_slow": 21}, {"PF": 1.7, "Expectancy": 0.002})
     print(f"count={len(store.list_presets())} best PF={store.best_preset('PF').name if store.best_preset('PF') else None}")
+

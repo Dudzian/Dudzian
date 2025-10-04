@@ -1,5 +1,6 @@
 """Adapter REST/WebSocket dla giełdy Zonda."""
 from __future__ import annotations
+from typing import Any, Mapping, cast
 
 import asyncio
 import contextlib
@@ -155,17 +156,17 @@ def _build_ws_messages(subscriptions: Iterable[MarketSubscription]) -> tuple[lis
             "params": params,
         }
         symbols = list(subscription.symbols)
-        targets = symbols or [None]
+        targets = symbols or []
         for symbol in targets:
             payload = {
                 "action": action,
                 **template,
-                "params": dict(template["params"]),
+                "params": dict(cast(Mapping[str, Any], template["params"])),
             }
             unsubscribe_payload = {
                 "action": unsubscribe_action,
                 **template,
-                "params": dict(template["params"]),
+                "params": dict(cast(Mapping[str, Any], template["params"])),
             }
             if symbol is not None:
                 payload["params"]["symbol"] = symbol

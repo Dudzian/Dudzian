@@ -46,7 +46,7 @@ from KryptoLowca.event_emitter_adapter import (
 
 # Import GUI (Twoje GUI musi udostępniać klasę TradingGUI z konstruktorem wymagającym 'root')
 try:
-    from run_trading_gui_paper import TradingGUI  # plik z Twoim GUI
+    from KryptoLowca.run_trading_gui_paper import TradingGUI  # plik z Twoim GUI
 except Exception as e:
     logger.exception("Nie udało się zaimportować TradingGUI z run_trading_gui_paper.py")
     raise
@@ -120,6 +120,8 @@ def _wire_gui_with_bus(root, gui: Any, bus: EventBus) -> None:
         return
 
     def on_batch(ev_list: List[Event]) -> None:
+    if not isinstance(events, list):
+        events = [events]
         try:
             if has_batch:
                 gui.handle_events(ev_list)  # preferuj batch

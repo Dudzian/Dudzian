@@ -1,3 +1,4 @@
+﻿from typing import Callable, Sequence
 # trading_strategies_enhanced.py
 # -*- coding: utf-8 -*-
 
@@ -292,7 +293,7 @@ class MathUtils:
             return np.where(mask, result, fill_value)
     
     @staticmethod
-    def rolling_apply_numba(series: pd.Series, window: int, func: callable) -> pd.Series:
+    def rolling_apply_numba(series: pd.Series, window: int, func: "Callable[[Sequence[float]], float]") -> pd.Series:
         """Ultra-fast rolling apply using numpy operations."""
         if len(series) < window:
             return pd.Series(index=series.index, dtype=float)
@@ -2088,7 +2089,7 @@ class TradingStrategies:
         else:
             # Lekki hook: jeśli w przyszłości przekażesz ai_model, zastosuj most (patrz bridges/).
             try:
-                from bridges.ai_trading_bridge import AITradingBridge
+                from KryptoLowca.bridges.ai_trading_bridge import AITradingBridge
             except Exception:
                 AITradingBridge = None
 
@@ -2142,3 +2143,4 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"Error in main execution: {e}")
         raise
+

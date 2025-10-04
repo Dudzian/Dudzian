@@ -24,7 +24,7 @@ Notes:
 from __future__ import annotations
 import os
 import logging
-from typing import List, Optional, Callable, Tuple, Dict, Union
+from typing import List, Optional, Callable, Tuple, Dict, Union, Any, cast
 from abc import ABC, abstractmethod
 
 import numpy as np
@@ -184,7 +184,7 @@ class TorchSeqRegressor(nn.Module):
 
 
 class DeepARWrapper(TorchSeqRegressor):
-    def __init__(self, deepar_model: 'DeepARRegressor'):
+    def __init__(self, deepar_model: Any):
         super().__init__()
         self.model = deepar_model
 
@@ -324,7 +324,7 @@ class TorchDataset(Dataset):
 # ----------------------- Model Trainers -----------------------
 class ModelTrainer(ABC):
     @abstractmethod
-    def train(self, X: np.ndarray, y: np.ndarray, **kwargs):
+    def train(self, X: np.ndarray, y: np.ndarray, **kwargs: Any):
         pass
 
     @abstractmethod
@@ -354,9 +354,7 @@ class TorchModelTrainer(ModelTrainer):
         self.scaler = scaler
         self.is_trained = False
 
-    def train(self, X: np.ndarray, y: np.ndarray, epochs: int = CONFIG["DEFAULT_EPOCHS"],
-              batch_size: int = CONFIG["DEFAULT_BATCH_SIZE"], verbose: bool = False,
-              model_out: Optional[str] = None, progress_callback: Optional[Callable] = None):
+    def train(self, X: np.ndarray, y: np.ndarray, **kwargs: Any) -> Any:
         self.validate_input_data(X, y)
         N = len(X)
         val_n = max(1, int(0.1 * N))
@@ -488,8 +486,7 @@ class SklearnModelTrainer(ModelTrainer):
         self.scaler = scaler
         self.is_trained = False
 
-    def train(self, X: np.ndarray, y: np.ndarray, verbose: bool = False,
-              model_out: Optional[str] = None, progress_callback: Optional[Callable] = None):
+    def train(self, X: np.ndarray, y: np.ndarray, **kwargs: Any) -> Any:
         self.validate_input_data(X, y)
         Xf = X.reshape((len(X), -1))
         self.scaler.fit(Xf)
@@ -606,8 +603,8 @@ class BacktestEngine:
     def __init__(self, model: ModelTrainer):
         self.model = model
 
-    def run(self, df: pd.DataFrame, feature_cols: List[str], initial_window: int = CONFIG["INITIAL_WINDOW"],
-            step_size: int = CONFIG["STEP_SIZE"], fine_tune_epochs: int = CONFIG["FINE_TUNE_EPOCHS"],
+    def run(self, df: pd.DataFrame, feature_cols: List[str], initial_window: int = int(CONFIG["INITIAL_WINDOW"]),
+            step_size: int = int(CONFIG["STEP_SIZE"]), fine_tune_epochs: int = int(CONFIG["FINE_TUNE_EPOCHS"]),
             use_vectorbt: bool = VBT_AVAILABLE) -> Dict[str, float]:
         if use_vectorbt and not VBT_AVAILABLE:
             logger.warning("vectorbt not installed; using custom backtest")
@@ -615,7 +612,7 @@ class BacktestEngine:
 
         results = []
         train_data = df.iloc[:initial_window]
-        X_train, y_train = windowize_df_robust(train_data, feature_cols, self.model.seq_len)
+        X_train, y_train = windowize_df_robust(train_data, feature_cols, cast(Any, self.model).seq_len)
         if len(X_train) < CONFIG["MIN_SAMPLES"]:
             raise ValueError("Insufficient data for initial training")
 
@@ -624,8 +621,8 @@ class BacktestEngine:
         for i in range(initial_window, len(df) - step_size, step_size):
             train_data = df.iloc[:i]
             test_data = df.iloc[i:i+step_size]
-            X_train, y_train = windowize_df_robust(train_data, feature_cols, self.model.seq_len)
-            X_test, y_test = windowize_df_robust(test_data, feature_cols, self.model.seq_len)
+            X_train, y_train = windowize_df_robust(train_data, feature_cols, cast(Any, self.model).seq_len)
+            X_test, y_test = windowize_df_robust(test_data, feature_cols, cast(Any, self.model).seq_len)
             if len(X_train) < CONFIG["MIN_SAMPLES"] or len(X_test) == 0:
                 continue
 
@@ -730,7 +727,7 @@ if __name__ == "__main__":
 
         def test_initialization(self):
             self.assertEqual(self.model.input_size, 5)
-            self.assertEqual(self.model.seq_len, 20)
+            self.assertEqual(cast(Any, self.model).seq_len, 20)
             self.assertFalse(self.model.is_trained)
 
         def test_train(self):
@@ -741,7 +738,7 @@ if __name__ == "__main__":
             self.model.train(self.X, self.y, verbose=False)
             preds = self.model.predict_series(self.df, ['open', 'high', 'low', 'close', 'volume'])
             self.assertIsInstance(preds, pd.Series)
-            self.assertEqual(len(preds), len(self.df) - self.model.seq_len)
+            self.assertEqual(len(preds), len(self.df) - cast(Any, self.model).seq_len)
 
         def test_backtest(self):
             self.model.train(self.X, self.y, verbose=False)

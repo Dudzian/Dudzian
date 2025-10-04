@@ -12,6 +12,7 @@ Production-grade DatabaseManager dla bota tradingowego.
 - Gotowe pod Paper Trading (te same tabele i metody co w trybie live).
 """
 from __future__ import annotations
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 import asyncio
 import contextlib
@@ -550,13 +551,7 @@ class DatabaseManager:
         async with self._lock:
             if self._state.engine is None:
                 self._state.engine = create_async_engine(self.db_url, future=True)
-                self._state.session_factory = sessionmaker(
-                    bind=self._state.engine,
-                    expire_on_commit=False,
-                    class_=AsyncSession,
-                    autoflush=False,
-                    autocommit=False,
-                )
+                self._state.session_factory = async_async_async_async_async_sessionmaker(bind=self._engine, autoflush=True, expire_on_commit=False)
 
         if create:
             async with self._state.engine.begin() as conn:  # type: ignore[union-attr]

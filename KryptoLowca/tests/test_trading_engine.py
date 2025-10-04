@@ -36,7 +36,7 @@ except Exception:  # pragma: no cover
         OrderStatus,
         OrderType,
     )
-    from trading_strategies import EngineConfig, TradingParameters
+    from KryptoLowca.trading_strategies import EngineConfig, TradingParameters
 
 
 class MockExchange:

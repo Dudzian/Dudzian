@@ -589,9 +589,9 @@ class BacktestEngine:
 
             # aktualizacja/trzymanie
             if open_trade is not None:
-                open_trade["fees"] = float(open_trade.get("fees", 0.0)) + fill.fee
-                open_trade["slippage"] = float(open_trade.get("slippage", 0.0)) + abs(fill.slippage)
-                open_trade["volume"] = float(open_trade.get("volume", 0.0)) + abs(fill.size)
+                open_trade["fees"] = to_float(open_trade.get("fees", 0.0)) + fill.fee
+                open_trade["slippage"] = to_float(open_trade.get("slippage", 0.0)) + abs(fill.slippage)
+                open_trade["volume"] = to_float(open_trade.get("volume", 0.0)) + abs(fill.size)
                 trade_dir = open_trade["direction"]
                 if ((trade_dir == "LONG" and direction == 1 and position > 0) or
                     (trade_dir == "SHORT" and direction == -1 and position < 0)):
@@ -599,7 +599,7 @@ class BacktestEngine:
                     new_pos = abs(position)
                     if new_pos > 0:
                         open_trade["entry_price"] = (
-                            float(open_trade["entry_price"]) * prev_pos + fill.price * abs(fill.size)
+                            to_float(open_trade["entry_price"]) * prev_pos + fill.price * abs(fill.size)
                         ) / new_pos
                         open_trade["position"] = new_pos
                 open_trade["position"] = abs(position)
@@ -607,19 +607,19 @@ class BacktestEngine:
             # zamknięcie
             if open_trade is not None and position == 0.0:
                 exit_price = fill.price
-                pnl = portfolio_value - float(open_trade["entry_equity"])
+                pnl = portfolio_value - to_float(open_trade["entry_equity"])
                 trades.append(
                     BacktestTrade(
                         direction=str(open_trade["direction"]),
                         entry_time=open_trade["entry_time"],
                         exit_time=fill.timestamp,
-                        entry_price=float(open_trade["entry_price"]),
+                        entry_price=to_float(open_trade["entry_price"]),
                         exit_price=exit_price,
-                        quantity=float(open_trade["volume"]),
+                        quantity=to_float(open_trade["volume"]),
                         pnl=pnl,
                         pnl_pct=(pnl / self._initial_balance * 100.0) if self._initial_balance else 0.0,
-                        fees_paid=float(open_trade["fees"]),
-                        slippage_cost=float(open_trade["slippage"]),
+                        fees_paid=to_float(open_trade["fees"]),
+                        slippage_cost=to_float(open_trade["slippage"]),
                     )
                 )
                 open_trade = None
@@ -775,7 +775,7 @@ class BacktestEngine:
             return abs(context.position)
         if action == "BUY" and context.position < 0 and self._allow_short:
             return abs(context.position)
-        price = float(market_payload.get("price") or 0.0)
+        price = to_float(market_payload.get("price") or 0.0)
         if price <= 0:
             return 0.0
         extra = context.extra if isinstance(context.extra, dict) else {}
@@ -900,9 +900,7 @@ def evaluate_strategy_backtest(config: Mapping[str, object], report: BacktestRep
         raise ValidationError("Strategia nie wygenerowała żadnych domkniętych transakcji")
     if report.metrics.total_return_pct <= 0:
         raise ValidationError("Stopa zwrotu strategii jest nieakceptowalna")
-    max_drawdown_allowed = float(config.get("max_position_notional_pct", 0.02)) * float(
-        config.get("max_leverage", 1.0)
-    ) * 100.0
+    max_drawdown_allowed = to_float(config.get("max_position_notional_pct", 0.02)) * to_float(config.get("max_leverage", 1.0)) * 100.0
     if report.metrics.max_drawdown_pct > max_drawdown_allowed:
         raise ValidationError("Obsunięcie przekracza limity strategii")
 

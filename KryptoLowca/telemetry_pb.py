@@ -1,5 +1,6 @@
 """Dynamic protobuf definitions for telemetry snapshots."""
 from __future__ import annotations
+from typing import Any  # added by patch
 
 from typing import Any, Dict
 

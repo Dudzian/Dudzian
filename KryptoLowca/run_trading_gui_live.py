@@ -1,13 +1,15 @@
+from typing import Any
+trading_gui: Any  # mypy stub
 # run_trading_gui_paper.py
 # -*- coding: utf-8 -*-
 """
-Launcher PAPER do istniejącego trading_gui.py:
-- Nie wymaga żadnych kluczy API.
-- Dodaje okno "Quick Paper Trade" do ręcznego wysyłania MARKET BUY/SELL w trybie paper.
+Launcher PAPER do istniejĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â€šÂ¬Ă‚Â¦cego trading_gui.py:
+- Nie wymaga Ä‚â€žĂ„â€¦Ä‚â€žĂ‹ĹĄadnych kluczy API.
+- Dodaje okno "Quick Paper Trade" do rĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â‚¬ĹľĂ‹Âcznego wysyÄ‚â€žĂ„â€¦Ä‚ËĂ˘â€šÂ¬ÄąË‡ania MARKET BUY/SELL w trybie paper.
 - Zapisuje do bazy: orders, trades, positions (korzysta z managers.database_manager.DatabaseManager).
 - Pokazuje ostatnie pozycje i 10 ostatnich transakcji z trybu paper.
 
-NIC nie modyfikuje trading_gui.py – importujemy i „doklejamy” funkcjonalność.
+NIC nie modyfikuje trading_gui.py Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚ËĂ˘â€šÂ¬Äąâ€ş importujemy i Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă„ÄľdoklejamyĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă„â€ž funkcjonalnoÄ‚â€žĂ„â€¦Ä‚ËĂ˘â€šÂ¬ÄąĹşĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â€šÂ¬Ă‹â€ˇ.
 """
 
 from __future__ import annotations
@@ -37,29 +39,29 @@ if __package__ in (None, ""):
     _ensure_repo_root()
 
 
-import KryptoLowca.trading_gui  # Twój oryginalny plik GUI (NIE MODYFIKUJEMY GO)
+import KryptoLowca.trading_gui  # TwÄ‚â€žĂ˘â‚¬ĹˇĂ„Ä…Ă˘â‚¬Ĺˇj oryginalny plik GUI (NIE MODYFIKUJEMY GO)
 
-# DB manager (używamy tego samego co w testach earlier)
+# DB manager (uÄ‚â€žĂ„â€¦Ä‚â€žĂ‹ĹĄywamy tego samego co w testach earlier)
 from KryptoLowca.managers.database_manager import DatabaseManager
 
 
 # ----------------- POMOCNICZE -----------------
 
 def _fmt_float(x: float, max_dec: int = 8) -> float:
-    """Prosta normalizacja floatów do czytelnego zapisu."""
+    """Prosta normalizacja floatÄ‚â€žĂ˘â‚¬ĹˇĂ„Ä…Ă˘â‚¬Ĺˇw do czytelnego zapisu."""
     s = f"{float(x):.{max_dec}f}"
     if "." in s:
         s = s.rstrip("0").rstrip(".")
     return float(s) if s else 0.0
 
 
-def _get_last_price(app: trading_gui.TradingGUI, symbol: str) -> Optional[float]:
+def _get_last_price(app: "trading_gui.TradingGUI", symbol: str) -> Optional[float]:
     """
-    Pobiera cenę ostatnią z publicznego tickera przez ExchangeManager (bez kluczy).
-    Jeśli się nie uda, zwraca None.
+    Pobiera cenĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â‚¬ĹľĂ‹Â ostatniĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â€šÂ¬Ă‚Â¦ z publicznego tickera przez ExchangeManager (bez kluczy).
+    JeÄ‚â€žĂ„â€¦Ä‚ËĂ˘â€šÂ¬ÄąĹşli siĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â‚¬ĹľĂ‹Â nie uda, zwraca None.
     """
     try:
-        app._ensure_exchange()  # utwórz/lub użyj publicznego klienta z GUI
+        app._ensure_exchange()  # utwÄ‚â€žĂ˘â‚¬ĹˇĂ„Ä…Ă˘â‚¬Ĺˇrz/lub uÄ‚â€žĂ„â€¦Ä‚â€žĂ‹ĹĄyj publicznego klienta z GUI
         ex = getattr(app, "ex_mgr", None)
         if not ex:
             return None
@@ -74,36 +76,36 @@ def _get_last_price(app: trading_gui.TradingGUI, symbol: str) -> Optional[float]
     return None
 
 
-# ----------------- PATCH – zostawiamy paper po staremu -----------------
+# ----------------- PATCH Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚ËĂ˘â€šÂ¬Äąâ€ş zostawiamy paper po staremu -----------------
 
-# Oryginalna metoda GUI (paper – nie ruszamy jej, tylko zachowujemy dla ręcznych BUY/SELL w GUI)
-_ORIG_EXEC = trading_gui.TradingGUI._bridge_execute_trade
+# Oryginalna metoda GUI (paper Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚ËĂ˘â€šÂ¬Äąâ€ş nie ruszamy jej, tylko zachowujemy dla rĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â‚¬ĹľĂ‹Âcznych BUY/SELL w GUI)
+_ORIG_EXEC = trading_gui.TradingGUI._bridge_execute_trade  # type: ignore[name-defined]
 
 def _patched_bridge_execute_trade(self, symbol: str, side: str, mkt_price: float):
     """
-    Pozostawiamy PAPER tak jak było: wywołujemy oryginalną metodę GUI.
-    (Ten launcher NIE wysyła nic do CCXT; całość jest paper.)
+    Pozostawiamy PAPER tak jak byÄ‚â€žĂ„â€¦Ä‚ËĂ˘â€šÂ¬ÄąË‡o: wywoÄ‚â€žĂ„â€¦Ä‚ËĂ˘â€šÂ¬ÄąË‡ujemy oryginalnĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â€šÂ¬Ă‚Â¦ metodĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â‚¬ĹľĂ‹Â GUI.
+    (Ten launcher NIE wysyÄ‚â€žĂ„â€¦Ä‚ËĂ˘â€šÂ¬ÄąË‡a nic do CCXT; caÄ‚â€žĂ„â€¦Ä‚ËĂ˘â€šÂ¬ÄąË‡oÄ‚â€žĂ„â€¦Ä‚ËĂ˘â€šÂ¬ÄąĹşĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â€šÂ¬Ă‹â€ˇ jest paper.)
     """
     try:
         return _ORIG_EXEC(self, symbol, side, mkt_price)
     except Exception as e:
         tb = traceback.format_exc()
-        self._log(f"[Paper] Wyjątek w _bridge_execute_trade: {e}\n{tb}", "ERROR")
-        messagebox.showerror("Paper", f"Nieoczekiwany błąd: {e}")
+        self._log(f"[Paper] WyjĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â€šÂ¬Ă‚Â¦tek w _bridge_execute_trade: {e}\n{tb}", "ERROR")
+        messagebox.showerror("Paper", f"Nieoczekiwany bÄ‚â€žĂ„â€¦Ä‚ËĂ˘â€šÂ¬ÄąË‡Ă„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â€šÂ¬Ă‚Â¦d: {e}")
 
-trading_gui.TradingGUI._bridge_execute_trade = _patched_bridge_execute_trade
+trading_gui.TradingGUI._bridge_execute_trade = _patched_bridge_execute_trade  # type: ignore[name-defined]
 
 
 # ----------------- OKNO QUICK PAPER TRADE -----------------
 
 class QuickPaperTrade(tk.Toplevel):
     """
-    Ręczne MARKET BUY/SELL w trybie paper:
-    - liczy ilość z kwoty USDT / bieżącej ceny (z publicznego tickera),
-    - zapisuje zlecenie, trade i aktualizuje pozycję w DB,
+    RĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â‚¬ĹľĂ‹Âczne MARKET BUY/SELL w trybie paper:
+    - liczy iloÄ‚â€žĂ„â€¦Ä‚ËĂ˘â€šÂ¬ÄąĹşĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â€šÂ¬Ă‹â€ˇ z kwoty USDT / bieÄ‚â€žĂ„â€¦Ä‚â€žĂ‹ĹĄĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â€šÂ¬Ă‚Â¦cej ceny (z publicznego tickera),
+    - zapisuje zlecenie, trade i aktualizuje pozycjĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â‚¬ĹľĂ‹Â w DB,
     - pokazuje pozycje (paper) i 10 ostatnich transakcji (paper).
     """
-    def __init__(self, app: trading_gui.TradingGUI):
+    def __init__(self, app: "trading_gui.TradingGUI"):
         super().__init__(app.root)
         self.title("Quick Paper Trade")
         self.app = app
@@ -114,7 +116,7 @@ class QuickPaperTrade(tk.Toplevel):
 
         self._build_ui()
 
-        # podnieś okno na start
+        # podnieÄ‚â€žĂ„â€¦Ä‚ËĂ˘â€šÂ¬ÄąĹş okno na start
         self.after(100, self.lift)
         self.after(150, lambda: self.attributes("-topmost", True))
         self.after(500, lambda: self.attributes("-topmost", False))
@@ -156,7 +158,7 @@ class QuickPaperTrade(tk.Toplevel):
 
         frm_bot = ttk.Frame(self)
         frm_bot.pack(fill="x", padx=8, pady=(0,8))
-        ttk.Button(frm_bot, text="Odśwież", command=self._refresh_views).pack(side="right")
+        ttk.Button(frm_bot, text="OdÄ‚â€žĂ„â€¦Ä‚ËĂ˘â€šÂ¬ÄąĹşwieÄ‚â€žĂ„â€¦Ä‚â€žĂ‹ĹĄ", command=self._refresh_views).pack(side="right")
 
         self._refresh_views()
 
@@ -176,24 +178,24 @@ class QuickPaperTrade(tk.Toplevel):
             messagebox.showerror("Input", "Niepoprawna kwota USDT.")
             return
         if notional <= 0:
-            messagebox.showerror("Input", "Kwota musi być > 0.")
+            messagebox.showerror("Input", "Kwota musi byĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â€šÂ¬Ă‹â€ˇ > 0.")
             return
 
         price = _get_last_price(self.app, symbol)
         if not price:
-            messagebox.showerror("Price", f"Brak ceny dla {symbol}. Najpierw użyj 'Load Markets', wybierz symbol.")
+            messagebox.showerror("Price", f"Brak ceny dla {symbol}. Najpierw uÄ‚â€žĂ„â€¦Ä‚â€žĂ‹ĹĄyj 'Load Markets', wybierz symbol.")
             return
 
         qty = _fmt_float(notional / price, 8)
         if qty <= 0:
-            messagebox.showerror("Calc", "Wyliczona ilość wyszła 0. Zwiększ kwotę lub wybierz tańszy symbol.")
+            messagebox.showerror("Calc", "Wyliczona iloÄ‚â€žĂ„â€¦Ä‚ËĂ˘â€šÂ¬ÄąĹşĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â€šÂ¬Ă‹â€ˇ wyszÄ‚â€žĂ„â€¦Ä‚ËĂ˘â€šÂ¬ÄąË‡a 0. ZwiĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â‚¬ĹľĂ‹Âksz kwotĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â‚¬ĹľĂ‹Â lub wybierz taÄ‚â€žĂ„â€¦Ä‚ËĂ˘â€šÂ¬ÄąÄľszy symbol.")
             return
 
-        fee_rate = 0.001  # 0.1% – typowy maker/taker w testach paperowych
+        fee_rate = 0.001  # 0.1% Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚ËĂ˘â€šÂ¬Äąâ€ş typowy maker/taker w testach paperowych
         fee = _fmt_float(qty * price * fee_rate, 8)
 
         try:
-            # 1) Order → FILLED
+            # 1) Order Ă„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬Ă‚Â Ä‚ËĂ˘â€šÂ¬Ă˘â€žË FILLED
             oid = self.db.sync.record_order({
                 "symbol": symbol,
                 "side": side,
@@ -216,8 +218,8 @@ class QuickPaperTrade(tk.Toplevel):
             })
 
             # 3) Pozycja (prosty model long-only):
-            #    - BUY zwiększa ilość i aktualizuje średnią
-            #    - SELL zmniejsza ilość (nie otwieramy shortów w tym prostym panelu)
+            #    - BUY zwiĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â‚¬ĹľĂ‹Âksza iloÄ‚â€žĂ„â€¦Ä‚ËĂ˘â€šÂ¬ÄąĹşĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â€šÂ¬Ă‹â€ˇ i aktualizuje Ä‚â€žĂ„â€¦Ä‚ËĂ˘â€šÂ¬ÄąĹşredniĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â€šÂ¬Ă‚Â¦
+            #    - SELL zmniejsza iloÄ‚â€žĂ„â€¦Ä‚ËĂ˘â€šÂ¬ÄąĹşĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â€šÂ¬Ă‹â€ˇ (nie otwieramy shortÄ‚â€žĂ˘â‚¬ĹˇĂ„Ä…Ă˘â‚¬Ĺˇw w tym prostym panelu)
             positions = self.db.sync.get_open_positions(mode="paper")
             pos = next((p for p in positions if p.get("symbol")==symbol and p.get("side")=="LONG"), None)
 
@@ -253,16 +255,16 @@ class QuickPaperTrade(tk.Toplevel):
                         "unrealized_pnl": 0.0,
                         "mode": "paper"
                     })
-                # jeśli nie było pozycji – traktujemy SELL jako „nic do zamknięcia”: tylko trade + order zapisane
+                # jeÄ‚â€žĂ„â€¦Ä‚ËĂ˘â€šÂ¬ÄąĹşli nie byÄ‚â€žĂ„â€¦Ä‚ËĂ˘â€šÂ¬ÄąË‡o pozycji Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚ËĂ˘â€šÂ¬Äąâ€ş traktujemy SELL jako Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă„Äľnic do zamkniĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â‚¬ĹľĂ‹ÂciaĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă„â€ž: tylko trade + order zapisane
 
-            self.app._log(f"[Paper] MARKET {side} {symbol} qty={qty} price={price} (fee≈{fee})", "INFO")
-            messagebox.showinfo("Paper", f"Zaksięgowano PAPER {side} {symbol}\nIlość: {qty}\nCena: {price}")
+            self.app._log(f"[Paper] MARKET {side} {symbol} qty={qty} price={price} (feeĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬Ă‚Â°Ä‚â€šĂ‚Â{fee})", "INFO")
+            messagebox.showinfo("Paper", f"ZaksiĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â‚¬ĹľĂ‹Âgowano PAPER {side} {symbol}\nIloÄ‚â€žĂ„â€¦Ä‚ËĂ˘â€šÂ¬ÄąĹşĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â€šÂ¬Ă‹â€ˇ: {qty}\nCena: {price}")
             self._refresh_views()
 
         except Exception as e:
             tb = traceback.format_exc()
-            self.app._log(f"[Paper] Błąd paper trade: {e}\n{tb}", "ERROR")
-            messagebox.showerror("Paper", f"Błąd zapisu transakcji: {e}")
+            self.app._log(f"[Paper] BÄ‚â€žĂ„â€¦Ä‚ËĂ˘â€šÂ¬ÄąË‡Ă„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â€šÂ¬Ă‚Â¦d paper trade: {e}\n{tb}", "ERROR")
+            messagebox.showerror("Paper", f"BÄ‚â€žĂ„â€¦Ä‚ËĂ˘â€šÂ¬ÄąË‡Ă„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â€šÂ¬Ă‚Â¦d zapisu transakcji: {e}")
 
     # --- Widoki (pozycje + trades) ---
 
@@ -281,7 +283,7 @@ class QuickPaperTrade(tk.Toplevel):
                 _fmt_float(p.get("unrealized_pnl", 0.0))
             ))
 
-        # Trades (ostatnie 10 – paper)
+        # Trades (ostatnie 10 Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚ËĂ˘â€šÂ¬Äąâ€ş paper)
         try:
             tr = self.db.sync.fetch_trades(mode="paper")
         except Exception as e:
@@ -300,7 +302,7 @@ class QuickPaperTrade(tk.Toplevel):
 
 # --- Start GUI + auto-okno ----------------------------------------------------
 
-def _open_paper_panel_on_start(app: trading_gui.TradingGUI):
+def _open_paper_panel_on_start(app: "trading_gui.TradingGUI"):
     app.root.after(800, lambda: QuickPaperTrade(app))
 
 if __name__ == "__main__":

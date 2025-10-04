@@ -1,20 +1,22 @@
+from typing import Any
+trading_gui: Any  # mypy stub
 # run_trading_gui_paper.py
 # -*- coding: utf-8 -*-
 """
-Launcher PAPER do istniejącego trading_gui.py (GUI nie modyfikujemy).
+Launcher PAPER do istniejÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€šĂ‚Â¦cego trading_gui.py (GUI nie modyfikujemy).
 Funkcje:
-- Kierunek: LONG / SHORT (futures paper, bez nettingu – dwie niezależne pozycje na symbol).
-- Market/Limit: otwieranie i zamykanie dla obu kierunków.
+- Kierunek: LONG / SHORT (futures paper, bez nettingu Ä‚â€žĂ˘â‚¬ĹˇÄ‚â€ąĂ‚ÂĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąË‡Ä‚â€šĂ‚Â¬Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă˘â‚¬Ĺź dwie niezaleĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ˘â‚¬ĹľÄ‚â€ąÄąÄ„ne pozycje na symbol).
+- Market/Limit: otwieranie i zamykanie dla obu kierunkĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â€šÂ¬ÄąË‡Ä‚â€žĂ„â€¦Ä‚ËĂ˘â€šÂ¬ÄąË‡w.
 - Risk sizing: Spot i Futures (cap po marginie) + tryb ATR-aware (jak w Cryptohopperze).
-- SL/TP (twarde ceny), Partial TP (TP1/2/TP3) z PRESETAMI udziałów, Trailing – dla LONG i SHORT.
-- ATR-aware: SL/TP/Trailing/Sizing z krotności ATR na wybranym interwale.
+- SL/TP (twarde ceny), Partial TP (TP1/2/TP3) z PRESETAMI udziaĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â€šÂ¬ÄąË‡Ä‚â€žĂ„â€¦Ä‚ËĂ˘â€šÂ¬ÄąË‡w, Trailing Ä‚â€žĂ˘â‚¬ĹˇÄ‚â€ąĂ‚ÂĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąË‡Ä‚â€šĂ‚Â¬Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă˘â‚¬Ĺź dla LONG i SHORT.
+- ATR-aware: SL/TP/Trailing/Sizing z krotnoĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…ÄąĹźci ATR na wybranym interwale.
 - Zapis do DB: orders/trades/positions (side=LONG/SHORT), unrealized_pnl tutaj nie liczymy (0).
 
 Uwaga:
-- Short tylko w trybie Futures (w Spot – wyłączamy SHORT).
-- Zamykanie częściowe przez TP1/TP2/TP3 działa proporcjonalnie.
-- Trailing: LONG używa 'peak', SHORT używa 'trough'.
-- Nowość: przełącznik „Zawsze na wierzchu” i komunikaty wiązane z tym oknem (nie chowają się).
+- Short tylko w trybie Futures (w Spot Ä‚â€žĂ˘â‚¬ĹˇÄ‚â€ąĂ‚ÂĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąË‡Ä‚â€šĂ‚Â¬Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă˘â‚¬Ĺź wyĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€šĂ‚Â¦czamy SHORT).
+- Zamykanie czÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąÄľÄ‚â€ąĂ‚ÂĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…ÄąĹźciowe przez TP1/TP2/TP3 dziaĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇa proporcjonalnie.
+- Trailing: LONG uĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ˘â‚¬ĹľÄ‚â€ąÄąÄ„ywa 'peak', SHORT uĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ˘â‚¬ĹľÄ‚â€ąÄąÄ„ywa 'trough'.
+- NowoĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…ÄąĹźÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€ąĂ˘â‚¬Ë‡: przeĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€šĂ‚Â¦cznik Ä‚â€žĂ˘â‚¬ĹˇÄ‚â€ąĂ‚ÂĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąË‡Ä‚â€šĂ‚Â¬Ä‚â€žĂ„â€¦Ä‚â€žĂ„ÄľZawsze na wierzchuÄ‚â€žĂ˘â‚¬ĹˇÄ‚â€ąĂ‚ÂĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąË‡Ä‚â€šĂ‚Â¬Ä‚â€žĂ„â€¦Ä‚â€žĂ˘â‚¬Ĺľ i komunikaty wiÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€šĂ‚Â¦zane z tym oknem (nie chowajÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€šĂ‚Â¦ siÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąÄľÄ‚â€ąĂ‚Â).
 """
 
 from __future__ import annotations
@@ -52,7 +54,7 @@ from KryptoLowca.managers.database_manager import DatabaseManager
 FEE_RATE = 0.001       # 0.1% koszt (paper)
 ENGINE_TICK_MS = 1500  # ms: cykl silnika symulacji
 SAFETY_DELTA = 0.003   # 0.3% korekta, gdy SL/TP bez sensu
-MIN_SL_PCT = 0.0005    # min. 0.05% dla sizingu – anty-kosmiczne pozycje
+MIN_SL_PCT = 0.0005    # min. 0.05% dla sizingu Ä‚â€žĂ˘â‚¬ĹˇÄ‚â€ąĂ‚ÂĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąË‡Ä‚â€šĂ‚Â¬Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă˘â‚¬Ĺź anty-kosmiczne pozycje
 
 DEFAULT_ATR_LEN = 14
 DEFAULT_ATR_TF = "5m"
@@ -61,7 +63,7 @@ TIMEFRAMES = ["1m","3m","5m","15m","30m","1h","2h","4h","6h","12h","1d"]
 # alias typu
 LevelsKey = Tuple[str, str]  # (symbol, side) side in {"LONG","SHORT"}
 
-# Presety udziałów TP (wartości w ułamkach 0..1)
+# Presety udziaĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â€šÂ¬ÄąË‡Ä‚â€žĂ„â€¦Ä‚ËĂ˘â€šÂ¬ÄąË‡w TP (wartoĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…ÄąĹźci w uĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇamkach 0..1)
 TP_PORTION_PRESETS: Dict[str, Tuple[float,float,float]] = {
     "Zbalansowany (33/33/34)": (0.33, 0.33, 0.34),
     "Konserwatywny (25/35/40)": (0.25, 0.35, 0.40),
@@ -77,7 +79,7 @@ def _fmt_float(x: float, max_dec: int = 8) -> float:
         s = s.rstrip("0").rstrip(".")
     return float(s) if s else 0.0
 
-def _get_last_price(app: trading_gui.TradingGUI, symbol: str) -> Optional[float]:
+def _get_last_price(app: "trading_gui.TradingGUI", symbol: str) -> Optional[float]:
     try:
         app._ensure_exchange()
         ex = getattr(app, "ex_mgr", None)
@@ -93,8 +95,8 @@ def _get_last_price(app: trading_gui.TradingGUI, symbol: str) -> Optional[float]
         pass
     return None
 
-def _fetch_ohlcv(app: trading_gui.TradingGUI, symbol: str, timeframe: str, limit: int) -> Optional[List[List[float]]]:
-    """Pobiera świece przez exchange manager GUI (ccxt). Format: [ts, o, h, l, c, v] rosnąco."""
+def _fetch_ohlcv(app: "trading_gui.TradingGUI", symbol: str, timeframe: str, limit: int) -> Optional[List[List[float]]]:
+    """Pobiera Ă„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…ÄąĹźwiece przez exchange manager GUI (ccxt). Format: [ts, o, h, l, c, v] rosnÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€šĂ‚Â¦co."""
     try:
         app._ensure_exchange()
         ex = getattr(app, "ex_mgr", None)
@@ -105,7 +107,7 @@ def _fetch_ohlcv(app: trading_gui.TradingGUI, symbol: str, timeframe: str, limit
         return None
 
 def _compute_atr(ohlcv: List[List[float]], length: int) -> Optional[float]:
-    """Wilder ATR: initial SMA(TR[0:N]), potem wygładzanie."""
+    """Wilder ATR: initial SMA(TR[0:N]), potem wygĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇadzanie."""
     if not ohlcv or len(ohlcv) < length + 1:
         return None
     trs: List[float] = []
@@ -126,9 +128,9 @@ def _compute_atr(ohlcv: List[List[float]], length: int) -> Optional[float]:
 # ----------------- OKNO QUICK PAPER TRADE -----------------
 
 class QuickPaperTrade(tk.Toplevel):
-    _last_instance: "QuickPaperTrade" = None  # referencja do ostatniego okna (dla podbijania komunikatów)
+    _last_instance: "QuickPaperTrade | None" = None  # referencja do ostatniego okna (dla podbijania komunikatĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â€šÂ¬ÄąË‡Ä‚â€žĂ„â€¦Ä‚ËĂ˘â€šÂ¬ÄąË‡w)
 
-    def __init__(self, app: trading_gui.TradingGUI):
+    def __init__(self, app: "trading_gui.TradingGUI"):
         super().__init__(app.root)
         self.title("Quick Paper Trade")
         self.app = app
@@ -142,7 +144,7 @@ class QuickPaperTrade(tk.Toplevel):
         self.levels: Dict[LevelsKey, Dict[str, Any]] = {}
         self.watch_symbols: Set[str] = set()
 
-        # „Zawsze na wierzchu”
+        # Ä‚â€žĂ˘â‚¬ĹˇÄ‚â€ąĂ‚ÂĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąË‡Ä‚â€šĂ‚Â¬Ä‚â€žĂ„â€¦Ä‚â€žĂ„ÄľZawsze na wierzchuÄ‚â€žĂ˘â‚¬ĹˇÄ‚â€ąĂ‚ÂĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąË‡Ä‚â€šĂ‚Â¬Ä‚â€žĂ„â€¦Ä‚â€žĂ˘â‚¬Ĺľ
         self.always_on_top_var = tk.IntVar(value=1)
 
         self._build_ui()
@@ -168,7 +170,7 @@ class QuickPaperTrade(tk.Toplevel):
             pass
 
     def _with_topmost_msg(self, kind: str, title: str, text: str):
-        """Pokazuje messagebox modalnie względem TEGO okna i pilnuje topmost."""
+        """Pokazuje messagebox modalnie wzglÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąÄľÄ‚â€ąĂ‚Âdem TEGO okna i pilnuje topmost."""
         try:
             prev = bool(self.attributes("-topmost"))
         except Exception:
@@ -183,7 +185,7 @@ class QuickPaperTrade(tk.Toplevel):
             else:
                 messagebox.showinfo(title, text, parent=self)
         finally:
-            # przywróć do stanu wg przełącznika lub poprzedniego
+            # przywrĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â€šÂ¬ÄąË‡Ä‚â€žĂ„â€¦Ä‚ËĂ˘â€šÂ¬ÄąË‡Ä‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€ąĂ˘â‚¬Ë‡ do stanu wg przeĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€šĂ‚Â¦cznika lub poprzedniego
             target = bool(self.always_on_top_var.get()) or prev
             try:
                 self.attributes("-topmost", target)
@@ -200,10 +202,10 @@ class QuickPaperTrade(tk.Toplevel):
         main = ttk.Notebook(self)
         main.pack(fill="both", expand=True)
 
-        # --- Zakładka: Trade (Market/LIMIT + Risk + Futures + ATR + Kierunek) ---
+        # --- ZakĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇadka: Trade (Market/LIMIT + Risk + Futures + ATR + Kierunek) ---
         tab_trade = ttk.Frame(main); main.add(tab_trade, text="Trade")
 
-        # Górny pasek: symbol + kwota + market
+        # GĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â€šÂ¬ÄąË‡Ä‚â€žĂ„â€¦Ä‚ËĂ˘â€šÂ¬ÄąË‡rny pasek: symbol + kwota + market
         frm_top = ttk.Frame(tab_trade); frm_top.pack(fill="x", padx=8, pady=6)
         ttk.Label(frm_top, text="Symbol:").grid(row=0, column=0, sticky="w")
         default_symbol = getattr(self.app, "symbol_var", None)
@@ -215,7 +217,7 @@ class QuickPaperTrade(tk.Toplevel):
         self.notional_var = tk.StringVar(value="12")
         ttk.Entry(frm_top, textvariable=self.notional_var, width=10).grid(row=0, column=3, sticky="w", padx=4)
 
-        # Przełącznik „Zawsze na wierzchu”
+        # PrzeĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€šĂ‚Â¦cznik Ä‚â€žĂ˘â‚¬ĹˇÄ‚â€ąĂ‚ÂĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąË‡Ä‚â€šĂ‚Â¬Ä‚â€žĂ„â€¦Ä‚â€žĂ„ÄľZawsze na wierzchuÄ‚â€žĂ˘â‚¬ĹˇÄ‚â€ąĂ‚ÂĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąË‡Ä‚â€šĂ‚Â¬Ä‚â€žĂ„â€¦Ä‚â€žĂ˘â‚¬Ĺľ
         ttk.Checkbutton(frm_top, text="Zawsze na wierzchu", variable=self.always_on_top_var,
                         command=self._apply_topmost_from_var).grid(row=0, column=9, sticky="e", padx=(12,0))
 
@@ -234,7 +236,7 @@ class QuickPaperTrade(tk.Toplevel):
         frm_risk = ttk.LabelFrame(tab_trade, text="Risk sizing (paper)")
         frm_risk.pack(fill="x", padx=8, pady=(0,6))
 
-        ttk.Label(frm_risk, text="Kapitał (USDT):").grid(row=0, column=0, sticky="w")
+        ttk.Label(frm_risk, text="KapitaĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇ (USDT):").grid(row=0, column=0, sticky="w")
         self.capital_var = tk.StringVar(value="10000")
         ttk.Entry(frm_risk, textvariable=self.capital_var, width=10).grid(row=0, column=1, sticky="w", padx=4)
 
@@ -247,25 +249,25 @@ class QuickPaperTrade(tk.Toplevel):
         chk = ttk.Checkbutton(frm_risk, text="Futures / Leverage", variable=self.futures_var, command=self._toggle_futures_fields)
         chk.grid(row=0, column=4, sticky="w", padx=(12,0))
 
-        ttk.Label(frm_risk, text="Dźwignia (x):").grid(row=1, column=0, sticky="w", pady=(6,0))
+        ttk.Label(frm_risk, text="DĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ä‚â€žĂ„â€¦Ă„Ä…ÄąĹşwignia (x):").grid(row=1, column=0, sticky="w", pady=(6,0))
         self.leverage_var = tk.StringVar(value="10")
         self.ent_leverage = ttk.Entry(frm_risk, textvariable=self.leverage_var, width=8)
         self.ent_leverage.grid(row=1, column=1, sticky="w", padx=4, pady=(6,0))
 
-        ttk.Label(frm_risk, text="Max margin % kapitału:").grid(row=1, column=2, sticky="w", padx=(12,0), pady=(6,0))
+        ttk.Label(frm_risk, text="Max margin % kapitaĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇu:").grid(row=1, column=2, sticky="w", padx=(12,0), pady=(6,0))
         self.max_margin_pct_var = tk.StringVar(value="20")
         self.ent_max_margin = ttk.Entry(frm_risk, textvariable=self.max_margin_pct_var, width=8)
         self.ent_max_margin.grid(row=1, column=3, sticky="w", padx=4, pady=(6,0))
 
-        ttk.Label(frm_risk, text="Max wielkość pozycji % kapitału:").grid(row=1, column=4, sticky="w", padx=(12,0), pady=(6,0))
+        ttk.Label(frm_risk, text="Max wielkoĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…ÄąĹźÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€ąĂ˘â‚¬Ë‡ pozycji % kapitaĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇu:").grid(row=1, column=4, sticky="w", padx=(12,0), pady=(6,0))
         self.max_notional_pct_var = tk.StringVar(value="20")
         self.ent_max_notional = ttk.Entry(frm_risk, textvariable=self.max_notional_pct_var, width=8)
         self.ent_max_notional.grid(row=1, column=5, sticky="w", padx=4, pady=(6,0))
 
-        ttk.Button(frm_risk, text="Wylicz kwotę z ryzyka", command=self._on_calc_risk_notional).grid(row=1, column=6, padx=(12,4), pady=(6,0))
+        ttk.Button(frm_risk, text="Wylicz kwotÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąÄľÄ‚â€ąĂ‚Â z ryzyka", command=self._on_calc_risk_notional).grid(row=1, column=6, padx=(12,4), pady=(6,0))
         ttk.Button(frm_risk, text="Market (z ryzyka)", command=self._on_market_by_risk).grid(row=1, column=7, padx=4, pady=(6,0))
 
-        # domyślnie futures ON → SHORT dostępny; przy SPOT – SHORT blokujemy
+        # domyĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…ÄąĹźlnie futures ON Ä‚â€žĂ˘â‚¬ĹˇÄ‚â€ąĂ‚ÂĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€šĂ‚Â Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚ËĂ˘â‚¬ĹľĂ‹Â SHORT dostÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąÄľÄ‚â€ąĂ‚Âpny; przy SPOT Ä‚â€žĂ˘â‚¬ĹˇÄ‚â€ąĂ‚ÂĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąË‡Ä‚â€šĂ‚Â¬Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă˘â‚¬Ĺź SHORT blokujemy
         self._toggle_futures_fields()
 
         # ATR-aware panel
@@ -273,24 +275,24 @@ class QuickPaperTrade(tk.Toplevel):
         frm_atr.pack(fill="x", padx=8, pady=(0,6))
 
         self.use_atr_var = tk.IntVar(value=1)
-        ttk.Checkbutton(frm_atr, text="Użyj ATR do SL/TP/Trailing i sizingu", variable=self.use_atr_var, command=self._toggle_atr_fields).grid(row=0, column=0, sticky="w")
+        ttk.Checkbutton(frm_atr, text="UĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ˘â‚¬ĹľÄ‚â€ąÄąÄ„yj ATR do SL/TP/Trailing i sizingu", variable=self.use_atr_var, command=self._toggle_atr_fields).grid(row=0, column=0, sticky="w")
 
         ttk.Label(frm_atr, text="ATR length:").grid(row=0, column=1, sticky="w", padx=(12,0))
         self.atr_len_var = tk.StringVar(value=str(DEFAULT_ATR_LEN))
         self.ent_atr_len = ttk.Entry(frm_atr, textvariable=self.atr_len_var, width=8)
         self.ent_atr_len.grid(row=0, column=2, sticky="w", padx=4)
 
-        ttk.Label(frm_atr, text="Interwał ATR:").grid(row=0, column=3, sticky="w", padx=(12,0))
+        ttk.Label(frm_atr, text="InterwaĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇ ATR:").grid(row=0, column=3, sticky="w", padx=(12,0))
         self.atr_tf_var = tk.StringVar(value=DEFAULT_ATR_TF)
         self.cmb_atr_tf = ttk.Combobox(frm_atr, textvariable=self.atr_tf_var, values=TIMEFRAMES, state="readonly", width=6)
         self.cmb_atr_tf.grid(row=0, column=4, sticky="w", padx=4)
 
-        ttk.Label(frm_atr, text="SL k×ATR:").grid(row=1, column=0, sticky="w", pady=(6,0))
+        ttk.Label(frm_atr, text="SL kĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â€šÂ¬ÄąË‡Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚ËĂ˘â€šÂ¬ÄąÄ„ATR:").grid(row=1, column=0, sticky="w", pady=(6,0))
         self.k_sl_var = tk.StringVar(value="1.5")
         self.ent_k_sl = ttk.Entry(frm_atr, textvariable=self.k_sl_var, width=8)
         self.ent_k_sl.grid(row=1, column=1, sticky="w", padx=4, pady=(6,0))
 
-        ttk.Label(frm_atr, text="TP1/TP2/TP3 k×ATR:").grid(row=1, column=2, sticky="w", padx=(12,0), pady=(6,0))
+        ttk.Label(frm_atr, text="TP1/TP2/TP3 kĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â€šÂ¬ÄąË‡Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚ËĂ˘â€šÂ¬ÄąÄ„ATR:").grid(row=1, column=2, sticky="w", padx=(12,0), pady=(6,0))
         self.k_tp1_var = tk.StringVar(value="1.0")
         self.k_tp2_var = tk.StringVar(value="2.0")
         self.k_tp3_var = tk.StringVar(value="3.0")
@@ -298,12 +300,12 @@ class QuickPaperTrade(tk.Toplevel):
         self.ent_k_tp2 = ttk.Entry(frm_atr, textvariable=self.k_tp2_var, width=6); self.ent_k_tp2.grid(row=1, column=4, sticky="w", padx=2, pady=(6,0))
         self.ent_k_tp3 = ttk.Entry(frm_atr, textvariable=self.k_tp3_var, width=6); self.ent_k_tp3.grid(row=1, column=5, sticky="w", padx=2, pady=(6,0))
 
-        ttk.Label(frm_atr, text="Trailing k×ATR:").grid(row=1, column=6, sticky="w", padx=(12,0), pady=(6,0))
+        ttk.Label(frm_atr, text="Trailing kĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â€šÂ¬ÄąË‡Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚ËĂ˘â€šÂ¬ÄąÄ„ATR:").grid(row=1, column=6, sticky="w", padx=(12,0), pady=(6,0))
         self.k_trail_var = tk.StringVar(value="1.0")
         self.ent_k_trail = ttk.Entry(frm_atr, textvariable=self.k_trail_var, width=8)
         self.ent_k_trail.grid(row=1, column=7, sticky="w", padx=4, pady=(6,0))
 
-        ttk.Button(frm_atr, text="Wypełnij z ATR (jak CH)", command=self._apply_atr_levels).grid(row=0, column=5, padx=(12,4))
+        ttk.Button(frm_atr, text="WypeĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇnij z ATR (jak CH)", command=self._apply_atr_levels).grid(row=0, column=5, padx=(12,4))
         ttk.Button(frm_atr, text="Policz ryzyko (ATR)", command=self._on_calc_risk_notional).grid(row=0, column=6, padx=4)
 
         # LIMIT sekcja
@@ -312,7 +314,7 @@ class QuickPaperTrade(tk.Toplevel):
         self.limit_price_var = tk.StringVar(value="")
         ttk.Entry(frm_lim, textvariable=self.limit_price_var, width=12).grid(row=0, column=1, sticky="w", padx=4)
 
-        ttk.Label(frm_lim, text="Ilość (opcjonalnie, puste = z Kwoty):").grid(row=0, column=2, sticky="w", padx=(12,0))
+        ttk.Label(frm_lim, text="IloĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…ÄąĹźÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€ąĂ˘â‚¬Ë‡ (opcjonalnie, puste = z Kwoty):").grid(row=0, column=2, sticky="w", padx=(12,0))
         self.limit_qty_var = tk.StringVar(value="")
         ttk.Entry(frm_lim, textvariable=self.limit_qty_var, width=14).grid(row=0, column=3, sticky="w", padx=4)
 
@@ -328,9 +330,9 @@ class QuickPaperTrade(tk.Toplevel):
 
         frm_lbot = ttk.Frame(tab_trade); frm_lbot.pack(fill="x", padx=8, pady=(0,8))
         ttk.Button(frm_lbot, text="Cancel selected LIMIT", command=self._cancel_selected_limit).pack(side="right")
-        ttk.Button(frm_lbot, text="Odśwież", command=self._refresh_views).pack(side="right", padx=(0,8))
+        ttk.Button(frm_lbot, text="OdĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…ÄąĹźwieĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ˘â‚¬ĹľÄ‚â€ąÄąÄ„", command=self._refresh_views).pack(side="right", padx=(0,8))
 
-        # --- Zakładka: Stops / Targets ---
+        # --- ZakĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇadka: Stops / Targets ---
         tab_sl = ttk.Frame(main); main.add(tab_sl, text="Stops / Targets")
 
         # SL/TP twarde + SL % pomocniczo
@@ -346,7 +348,7 @@ class QuickPaperTrade(tk.Toplevel):
         self.ent_sl_price = ttk.Entry(frm_sl, textvariable=self.sl_price_var, width=12)
         self.ent_sl_price.grid(row=0, column=3, sticky="w", padx=4)
 
-        ttk.Label(frm_sl, text="SL % (jeśli wolisz procent):").grid(row=0, column=4, sticky="w", padx=(12,0))
+        ttk.Label(frm_sl, text="SL % (jeĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…ÄąĹźli wolisz procent):").grid(row=0, column=4, sticky="w", padx=(12,0))
         self.sl_pct_var = tk.StringVar(value="")
         self.ent_sl_pct = ttk.Entry(frm_sl, textvariable=self.sl_pct_var, width=8)
         self.ent_sl_pct.grid(row=0, column=5, sticky="w", padx=4)
@@ -357,57 +359,57 @@ class QuickPaperTrade(tk.Toplevel):
         self.ent_tp_price.grid(row=0, column=7, sticky="w", padx=4)
 
         ttk.Button(frm_sl, text="Ustaw SL/TP",   command=self._set_sl_tp).grid(row=0, column=8, padx=(12,4))
-        ttk.Button(frm_sl, text="Wyczyść SL/TP", command=self._clear_sl_tp).grid(row=0, column=9, padx=4)
+        ttk.Button(frm_sl, text="WyczyĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…ÄąĹźÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€ąĂ˘â‚¬Ë‡ SL/TP", command=self._clear_sl_tp).grid(row=0, column=9, padx=4)
 
-        # Partial TP (TP1/TP2/TP3) – w % od bazy
-        frm_ptp = ttk.LabelFrame(tab_sl, text="Partial TP (od ceny bazowej – % dodatnie)")
+        # Partial TP (TP1/TP2/TP3) Ä‚â€žĂ˘â‚¬ĹˇÄ‚â€ąĂ‚ÂĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąË‡Ä‚â€šĂ‚Â¬Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă˘â‚¬Ĺź w % od bazy
+        frm_ptp = ttk.LabelFrame(tab_sl, text="Partial TP (od ceny bazowej Ä‚â€žĂ˘â‚¬ĹˇÄ‚â€ąĂ‚ÂĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąË‡Ä‚â€šĂ‚Â¬Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă˘â‚¬Ĺź % dodatnie)")
         frm_ptp.pack(fill="x", padx=8, pady=6)
 
-        # PRESET udziałów TP
-        ttk.Label(frm_ptp, text="Preset udziałów:").grid(row=0, column=0, sticky="w")
+        # PRESET udziaĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â€šÂ¬ÄąË‡Ä‚â€žĂ„â€¦Ä‚ËĂ˘â€šÂ¬ÄąË‡w TP
+        ttk.Label(frm_ptp, text="Preset udziaĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â€šÂ¬ÄąË‡Ä‚â€žĂ„â€¦Ä‚ËĂ˘â€šÂ¬ÄąË‡w:").grid(row=0, column=0, sticky="w")
         self.tp_portion_preset_var = tk.StringVar(value="Zbalansowany (33/33/34)")
         self.cmb_tp_preset = ttk.Combobox(frm_ptp, textvariable=self.tp_portion_preset_var,
                                           values=list(TP_PORTION_PRESETS.keys()), state="readonly", width=24)
         self.cmb_tp_preset.grid(row=0, column=1, sticky="w", padx=4)
-        ttk.Button(frm_ptp, text="Zastosuj preset udziałów", command=self._apply_tp_portion_preset).grid(row=0, column=2, sticky="w", padx=(8,4))
+        ttk.Button(frm_ptp, text="Zastosuj preset udziaĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â€šÂ¬ÄąË‡Ä‚â€žĂ„â€¦Ä‚ËĂ˘â€šÂ¬ÄąË‡w", command=self._apply_tp_portion_preset).grid(row=0, column=2, sticky="w", padx=(8,4))
 
         ttk.Label(frm_ptp, text="TP1 %:").grid(row=1, column=0, sticky="w", pady=(6,0))
         self.tp1_pct_var = tk.StringVar(value="")
         ttk.Entry(frm_ptp, textvariable=self.tp1_pct_var, width=8).grid(row=1, column=1, sticky="w", padx=4, pady=(6,0))
-        ttk.Label(frm_ptp, text="Udział TP1 (% pozycji):").grid(row=1, column=2, sticky="w", padx=(12,0), pady=(6,0))
+        ttk.Label(frm_ptp, text="UdziaĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇ TP1 (% pozycji):").grid(row=1, column=2, sticky="w", padx=(12,0), pady=(6,0))
         self.tp1_portion_pct_var = tk.StringVar(value="33")
         ttk.Entry(frm_ptp, textvariable=self.tp1_portion_pct_var, width=8).grid(row=1, column=3, sticky="w", padx=4, pady=(6,0))
 
         ttk.Label(frm_ptp, text="TP2 %:").grid(row=1, column=4, sticky="w", padx=(12,0), pady=(6,0))
         self.tp2_pct_var = tk.StringVar(value="")
         ttk.Entry(frm_ptp, textvariable=self.tp2_pct_var, width=8).grid(row=1, column=5, sticky="w", padx=4, pady=(6,0))
-        ttk.Label(frm_ptp, text="Udział TP2 (% pozycji):").grid(row=1, column=6, sticky="w", padx=(12,0), pady=(6,0))
+        ttk.Label(frm_ptp, text="UdziaĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇ TP2 (% pozycji):").grid(row=1, column=6, sticky="w", padx=(12,0), pady=(6,0))
         self.tp2_portion_pct_var = tk.StringVar(value="33")
         ttk.Entry(frm_ptp, textvariable=self.tp2_portion_pct_var, width=8).grid(row=1, column=7, sticky="w", padx=4, pady=(6,0))
 
         ttk.Label(frm_ptp, text="TP3 %:").grid(row=1, column=8, sticky="w", padx=(12,0), pady=(6,0))
         self.tp3_pct_var = tk.StringVar(value="")
         ttk.Entry(frm_ptp, textvariable=self.tp3_pct_var, width=8).grid(row=1, column=9, sticky="w", padx=4, pady=(6,0))
-        ttk.Label(frm_ptp, text="Udział TP3 (% pozycji):").grid(row=1, column=10, sticky="w", padx=(12,0), pady=(6,0))
+        ttk.Label(frm_ptp, text="UdziaĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇ TP3 (% pozycji):").grid(row=1, column=10, sticky="w", padx=(12,0), pady=(6,0))
         self.tp3_portion_pct_var = tk.StringVar(value="34")
         ttk.Entry(frm_ptp, textvariable=self.tp3_portion_pct_var, width=8).grid(row=1, column=11, sticky="w", padx=4, pady=(6,0))
 
         ttk.Button(frm_ptp, text="Ustaw Partial TP", command=self._set_partial_tp).grid(row=1, column=12, padx=(12,4), pady=(6,0))
-        ttk.Button(frm_ptp, text="Wyczyść Partial",  command=self._clear_partial_tp).grid(row=1, column=13, padx=4, pady=(6,0))
+        ttk.Button(frm_ptp, text="WyczyĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…ÄąĹźÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€ąĂ˘â‚¬Ë‡ Partial",  command=self._clear_partial_tp).grid(row=1, column=13, padx=4, pady=(6,0))
 
         # Trailing Stop
-        frm_tr = ttk.LabelFrame(tab_sl, text="Trailing Stop (od ceny bazowej – % dodatnie)")
+        frm_tr = ttk.LabelFrame(tab_sl, text="Trailing Stop (od ceny bazowej Ä‚â€žĂ˘â‚¬ĹˇÄ‚â€ąĂ‚ÂĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąË‡Ä‚â€šĂ‚Â¬Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă˘â‚¬Ĺź % dodatnie)")
         frm_tr.pack(fill="x", padx=8, pady=6)
         ttk.Label(frm_tr, text="Aktywacja po zysku %:").grid(row=0, column=0, sticky="w")
         self.tr_activate_pct_var = tk.StringVar(value="")
         ttk.Entry(frm_tr, textvariable=self.tr_activate_pct_var, width=8).grid(row=0, column=1, sticky="w", padx=4)
-        ttk.Label(frm_tr, text="Szerokość traila %:").grid(row=0, column=2, sticky="w", padx=(12,0))
+        ttk.Label(frm_tr, text="SzerokoĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…ÄąĹźÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€ąĂ˘â‚¬Ë‡ traila %:").grid(row=0, column=2, sticky="w", padx=(12,0))
         self.tr_trail_pct_var = tk.StringVar(value="")
         ttk.Entry(frm_tr, textvariable=self.tr_trail_pct_var, width=8).grid(row=0, column=3, sticky="w", padx=4)
         ttk.Button(frm_tr, text="Ustaw Trailing",   command=self._set_trailing).grid(row=0, column=4, padx=(12,4))
-        ttk.Button(frm_tr, text="Wyczyść Trailing", command=self._clear_trailing).grid(row=0, column=5, padx=4)
+        ttk.Button(frm_tr, text="WyczyĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…ÄąĹźÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€ąĂ˘â‚¬Ë‡ Trailing", command=self._clear_trailing).grid(row=0, column=5, padx=4)
 
-        self.lbl_sl_info = ttk.Label(tab_sl, text="Brak aktywnych poziomów.")
+        self.lbl_sl_info = ttk.Label(tab_sl, text="Brak aktywnych poziomĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â€šÂ¬ÄąË‡Ä‚â€žĂ„â€¦Ä‚ËĂ˘â€šÂ¬ÄąË‡w.")
         self.lbl_sl_info.pack(anchor="w", padx=8, pady=(4,8))
 
         # --- Pozycje/Transakcje ---
@@ -442,14 +444,14 @@ class QuickPaperTrade(tk.Toplevel):
 
     def _market_click(self, click_side: str):
         """
-        Mapowanie przycisku na zamiar (intent) w zależności od kierunku i futures/spot:
+        Mapowanie przycisku na zamiar (intent) w zaleĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ˘â‚¬ĹľÄ‚â€ąÄąÄ„noĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…ÄąĹźci od kierunku i futures/spot:
         - LONG: BUY = OPEN_LONG, SELL = CLOSE_LONG
         - SHORT (tylko futures): SELL = OPEN_SHORT, BUY = CLOSE_SHORT
         """
         symbol = (self.symbol_var.get() or "BTC/USDT").strip().upper()
         mode_side = self.side_mode_var.get() or "LONG"
         if self.futures_var.get() != 1 and mode_side == "SHORT":
-            self._error("Futures", "SHORT dostępny tylko w trybie Futures.")
+            self._error("Futures", "SHORT dostÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąÄľÄ‚â€ąĂ‚Âpny tylko w trybie Futures.")
             return
 
         if click_side == "BUY":
@@ -463,7 +465,7 @@ class QuickPaperTrade(tk.Toplevel):
             self._error("Input", "Niepoprawna kwota USDT.")
             return
         if notional <= 0:
-            self._error("Input", "Kwota musi być > 0.")
+            self._error("Input", "Kwota musi byÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€ąĂ˘â‚¬Ë‡ > 0.")
             return
 
         price = _get_last_price(self.app, symbol)
@@ -473,19 +475,19 @@ class QuickPaperTrade(tk.Toplevel):
 
         qty = _fmt_float(notional / price, 8)
         if qty <= 0:
-            self._error("Calc", "Wyliczona ilość wyszła 0. Zwiększ kwotę / wybierz tańszy symbol.")
+            self._error("Calc", "Wyliczona iloĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…ÄąĹźÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€ąĂ˘â‚¬Ë‡ wyszĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇa 0. ZwiÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąÄľÄ‚â€ąĂ‚Âksz kwotÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąÄľÄ‚â€ąĂ‚Â / wybierz taĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă„Äľszy symbol.")
             return
 
         if intent == "CLOSE_LONG":
             pos = self._get_position(symbol, "LONG")
             if not pos or float(pos.get("quantity", 0.0)) <= 0:
-                self._error("Paper", "Brak pozycji LONG do zamknięcia.")
+                self._error("Paper", "Brak pozycji LONG do zamkniÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąÄľÄ‚â€ąĂ‚Âcia.")
                 return
             qty = min(qty, float(pos["quantity"]))
         elif intent == "CLOSE_SHORT":
             pos = self._get_position(symbol, "SHORT")
             if not pos or float(pos.get("quantity", 0.0)) <= 0:
-                self._error("Paper", "Brak pozycji SHORT do zamknięcia.")
+                self._error("Paper", "Brak pozycji SHORT do zamkniÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąÄľÄ‚â€ąĂ‚Âcia.")
                 return
             qty = min(qty, float(pos["quantity"]))
 
@@ -493,7 +495,7 @@ class QuickPaperTrade(tk.Toplevel):
         self._fill_now(symbol, side_on_trade, qty, price, intent=intent)
         self._refresh_views()
 
-    # ---------- FUTURES UI przełączanie ----------
+    # ---------- FUTURES UI przeĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€šĂ‚Â¦czanie ----------
 
     def _toggle_futures_fields(self):
         is_fut = self.futures_var.get() == 1
@@ -506,7 +508,7 @@ class QuickPaperTrade(tk.Toplevel):
             self.side_mode_var.set("LONG")
             self.rb_short.configure(state="disabled")
 
-    # ---------- ATR UI przełączanie ----------
+    # ---------- ATR UI przeĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€šĂ‚Â¦czanie ----------
 
     def _toggle_atr_fields(self):
         use = self.use_atr_var.get() == 1
@@ -537,20 +539,20 @@ class QuickPaperTrade(tk.Toplevel):
             k_tp3 = max(float(self.k_tp3_var.get()), 0.0)
             k_trail = max(float(self.k_trail_var.get()), 0.0)
         except Exception:
-            self._error("ATR", "Upewnij się, że ATR length/krotności są poprawne.")
+            self._error("ATR", "Upewnij siÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąÄľÄ‚â€ąĂ‚Â, Ă„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ˘â‚¬ĹľÄ‚â€ąÄąÄ„e ATR length/krotnoĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…ÄąĹźci sÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€šĂ‚Â¦ poprawne.")
             return
 
         if not use:
-            self._warning("ATR", "Zaznacz 'Użyj ATR...', aby zastosować poziomy z ATR.")
+            self._warning("ATR", "Zaznacz 'UĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ˘â‚¬ĹľÄ‚â€ąÄąÄ„yj ATR...', aby zastosowaÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€ąĂ˘â‚¬Ë‡ poziomy z ATR.")
             return
 
         ohlcv = _fetch_ohlcv(self.app, symbol, tf, limit=n+100)
         if not ohlcv or len(ohlcv) < n+1:
-            self._error("ATR", f"Za mało świec ({len(ohlcv) if ohlcv else 0}). Zwiększ limit/zmień interwał.")
+            self._error("ATR", f"Za maĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇo Ă„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…ÄąĹźwiec ({len(ohlcv) if ohlcv else 0}). ZwiÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąÄľÄ‚â€ąĂ‚Âksz limit/zmieĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă„Äľ interwaĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇ.")
             return
         atr = _compute_atr(ohlcv, n)
         if not atr:
-            self._error("ATR", "Nie udało się policzyć ATR.")
+            self._error("ATR", "Nie udaĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇo siÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąÄľÄ‚â€ąĂ‚Â policzyÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€ąĂ˘â‚¬Ë‡ ATR.")
             return
 
         key: LevelsKey = (symbol, side_mode)
@@ -593,9 +595,9 @@ class QuickPaperTrade(tk.Toplevel):
 
         self._apply_tp_portion_preset_to_levels(symbol, side_mode, log=False)
 
-        self._log(f"[Paper] [ATR][{side_mode}] len={n}, tf={tf}, ATR≈{atr:.8f}; SL={sl_abs}; "
-                  f"TPs={d['tp1']},{d['tp2']},{d['tp3']}; trailing≈{trail_pct*100:.3f}% ({side_mode}). "
-                  f"Preset udziałów='{self.tp_portion_preset_var.get()}'.", "INFO")
+        self._log(f"[Paper] [ATR][{side_mode}] len={n}, tf={tf}, ATRÄ‚â€žĂ˘â‚¬ĹˇÄ‚â€ąĂ‚ÂĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€šĂ‚Â°Ă„â€šĂ˘â‚¬ĹˇÄ‚â€šĂ‚Â{atr:.8f}; SL={sl_abs}; "
+                  f"TPs={d['tp1']},{d['tp2']},{d['tp3']}; trailingÄ‚â€žĂ˘â‚¬ĹˇÄ‚â€ąĂ‚ÂĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€šĂ‚Â°Ă„â€šĂ˘â‚¬ĹˇÄ‚â€šĂ‚Â{trail_pct*100:.3f}% ({side_mode}). "
+                  f"Preset udziaĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â€šÂ¬ÄąË‡Ä‚â€žĂ„â€¦Ä‚ËĂ˘â€šÂ¬ÄąË‡w='{self.tp_portion_preset_var.get()}'.", "INFO")
         self._refresh_sl_label()
 
     # ---------- RISK SIZING ----------
@@ -612,10 +614,10 @@ class QuickPaperTrade(tk.Toplevel):
             capital = float(self.capital_var.get())
             risk_pct = float(self.risk_pct_var.get()) / 100.0
         except Exception:
-            self._error("Risk sizing", "Podaj poprawny Kapitał i Ryzyko %.")
+            self._error("Risk sizing", "Podaj poprawny KapitaĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇ i Ryzyko %.")
             return
         if capital <= 0 or risk_pct <= 0:
-            self._error("Risk sizing", "Kapitał i Ryzyko muszą być > 0%.")
+            self._error("Risk sizing", "KapitaĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇ i Ryzyko muszÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€šĂ‚Â¦ byÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€ąĂ˘â‚¬Ë‡ > 0%.")
             return
 
         use_atr = self.use_atr_var.get() == 1
@@ -627,18 +629,18 @@ class QuickPaperTrade(tk.Toplevel):
                 tf = (self.atr_tf_var.get() or DEFAULT_ATR_TF)
                 k_sl = max(float(self.k_sl_var.get()), 0.01)
             except Exception:
-                self._error("ATR", "Upewnij się, że ATR length i k_sl są poprawne.")
+                self._error("ATR", "Upewnij siÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąÄľÄ‚â€ąĂ‚Â, Ă„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ˘â‚¬ĹľÄ‚â€ąÄąÄ„e ATR length i k_sl sÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€šĂ‚Â¦ poprawne.")
                 return
             ohlcv = _fetch_ohlcv(self.app, symbol, tf, limit=n+100)
             if not ohlcv or len(ohlcv) < n+1:
-                self._error("ATR", f"Za mało świec ({len(ohlcv) if ohlcv else 0}). Zmień interwał.")
+                self._error("ATR", f"Za maĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇo Ă„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…ÄąĹźwiec ({len(ohlcv) if ohlcv else 0}). ZmieĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă„Äľ interwaĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇ.")
                 return
             atr = _compute_atr(ohlcv, n)
             if not atr:
-                self._error("ATR", "Nie udało się policzyć ATR.")
+                self._error("ATR", "Nie udaĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇo siÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąÄľÄ‚â€ąĂ‚Â policzyÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€ąĂ˘â‚¬Ë‡ ATR.")
                 return
             sl_pct = max((k_sl * atr) / base, MIN_SL_PCT)
-            self._log(f"[Paper] [ATR][{side_mode}] base={base}, ATR≈{atr:.8f}, k_sl={k_sl} → SL%≈{sl_pct*100:.3f}%.", "INFO")
+            self._log(f"[Paper] [ATR][{side_mode}] base={base}, ATRÄ‚â€žĂ˘â‚¬ĹˇÄ‚â€ąĂ‚ÂĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€šĂ‚Â°Ă„â€šĂ˘â‚¬ĹˇÄ‚â€šĂ‚Â{atr:.8f}, k_sl={k_sl} Ä‚â€žĂ˘â‚¬ĹˇÄ‚â€ąĂ‚ÂĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€šĂ‚Â Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚ËĂ˘â‚¬ĹľĂ‹Â SL%Ä‚â€žĂ˘â‚¬ĹˇÄ‚â€ąĂ‚ÂĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€šĂ‚Â°Ă„â€šĂ˘â‚¬ĹˇÄ‚â€šĂ‚Â{sl_pct*100:.3f}%.", "INFO")
         else:
             sl_pct_text = (self.sl_pct_var.get() or "").strip()
             sl_price_text = (self.sl_price_var.get() or "").strip()
@@ -659,11 +661,11 @@ class QuickPaperTrade(tk.Toplevel):
                     self._error("Risk sizing", "SL (cena) niepoprawna.")
                     return
             else:
-                self._error("Risk sizing", "Podaj SL (jako % lub jako cenę), albo włącz ATR.")
+                self._error("Risk sizing", "Podaj SL (jako % lub jako cenÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąÄľÄ‚â€ąĂ‚Â), albo wĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€šĂ‚Â¦cz ATR.")
                 return
 
         if sl_pct < MIN_SL_PCT:
-            self._log(f"[Paper] SL% zbyt mały ({sl_pct*100:.4f}%) – podbity do {MIN_SL_PCT*100:.2f}%.", "ERROR")
+            self._log(f"[Paper] SL% zbyt maĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇy ({sl_pct*100:.4f}%) Ä‚â€žĂ˘â‚¬ĹˇÄ‚â€ąĂ‚ÂĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąË‡Ä‚â€šĂ‚Â¬Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă˘â‚¬Ĺź podbity do {MIN_SL_PCT*100:.2f}%.", "ERROR")
             sl_pct = MIN_SL_PCT
 
         risk_usdt = capital * risk_pct
@@ -674,7 +676,7 @@ class QuickPaperTrade(tk.Toplevel):
                 lev = max(float(self.leverage_var.get()), 1.0)
                 max_margin_pct = max(float(self.max_margin_pct_var.get()) / 100.0, 0.0)
             except Exception:
-                self._error("Futures", "Podaj poprawną dźwignię i Max margin %.") 
+                self._error("Futures", "Podaj poprawnÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€šĂ‚Â¦ dĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ä‚â€žĂ„â€¦Ă„Ä…ÄąĹşwigniÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąÄľÄ‚â€ąĂ‚Â i Max margin %.") 
                 return
             max_margin_pct = min(max_margin_pct, 1.0)
             req_margin = req_notional / lev
@@ -682,24 +684,24 @@ class QuickPaperTrade(tk.Toplevel):
             notional_cap = margin_cap * lev
             if req_margin > margin_cap:
                 self._log(f"[Paper] Kwota ograniczona marginem: wymagany margin~{req_margin:.2f} USDT > limit {margin_cap:.2f} USDT "
-                          f"(max {max_margin_pct*100:.0f}% kapitału, lev x{lev}).", "ERROR")
+                          f"(max {max_margin_pct*100:.0f}% kapitaĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇu, lev x{lev}).", "ERROR")
             notional = min(req_notional, notional_cap)
         else:
             try:
                 max_notional_pct = max(float(self.max_notional_pct_var.get()) / 100.0, 0.0)
             except Exception:
-                self._error("Spot cap", "Podaj poprawny Max wielkość pozycji %.") 
+                self._error("Spot cap", "Podaj poprawny Max wielkoĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…ÄąĹźÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€ąĂ˘â‚¬Ë‡ pozycji %.") 
                 return
             max_notional_pct = min(max_notional_pct, 1.0)
             notional_cap = capital * max_notional_pct
             if req_notional > notional_cap:
-                self._log(f"[Paper] Kwota ograniczona do limitu pozycji {notional_cap:.2f} USDT (max {max_notional_pct*100:.0f}% kapitału). "
+                self._log(f"[Paper] Kwota ograniczona do limitu pozycji {notional_cap:.2f} USDT (max {max_notional_pct*100:.0f}% kapitaĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇu). "
                           f"Wymagane~{req_notional:.2f} USDT.", "ERROR")
             notional = min(req_notional, notional_cap)
 
         self.notional_var.set(f"{_fmt_float(notional, 2)}")
         mode = "FUTURES" if self.futures_var.get() == 1 else "SPOT"
-        self._log(f"[Paper] [{mode}][{side_mode}] Risk sizing: base={base}, SL%={sl_pct*100:.3f}%, Risk={risk_usdt:.2f} USDT → Kwota={_fmt_float(notional,2)} USDT", "INFO")
+        self._log(f"[Paper] [{mode}][{side_mode}] Risk sizing: base={base}, SL%={sl_pct*100:.3f}%, Risk={risk_usdt:.2f} USDT Ä‚â€žĂ˘â‚¬ĹˇÄ‚â€ąĂ‚ÂĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€šĂ‚Â Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚ËĂ˘â‚¬ĹľĂ‹Â Kwota={_fmt_float(notional,2)} USDT", "INFO")
 
     def _on_market_by_risk(self):
         self._on_calc_risk_notional()
@@ -718,23 +720,23 @@ class QuickPaperTrade(tk.Toplevel):
         symbol = (self.symbol_var.get() or "BTC/USDT").strip().upper()
         side_mode = self.side_mode_var.get() or "LONG"
         if self.futures_var.get() != 1 and side_mode == "SHORT":
-            self._error("Futures", "SHORT dostępny tylko w trybie Futures.")
+            self._error("Futures", "SHORT dostÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąÄľÄ‚â€ąĂ‚Âpny tylko w trybie Futures.")
             return
 
         try:
             limit_price = float(self.limit_price_var.get())
         except Exception:
-            self._error("LIMIT", "Podaj poprawną cenę LIMIT.")
+            self._error("LIMIT", "Podaj poprawnÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€šĂ‚Â¦ cenÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąÄľÄ‚â€ąĂ‚Â LIMIT.")
             return
         if limit_price <= 0:
-            self._error("LIMIT", "Cena LIMIT musi być > 0.")
+            self._error("LIMIT", "Cena LIMIT musi byÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€ąĂ˘â‚¬Ë‡ > 0.")
             return
 
         qty: Optional[float] = None
         if (self.limit_qty_var.get() or "").strip():
             try: qty = float(self.limit_qty_var.get())
             except Exception:
-                self._error("LIMIT", "Niepoprawna ilość.")
+                self._error("LIMIT", "Niepoprawna iloĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…ÄąĹźÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€ąĂ˘â‚¬Ë‡.")
                 return
         else:
             try:
@@ -743,13 +745,13 @@ class QuickPaperTrade(tk.Toplevel):
                 self._error("LIMIT", "Niepoprawna kwota USDT.")
                 return
             if notional <= 0:
-                self._error("LIMIT", "Kwota musi być > 0.")
+                self._error("LIMIT", "Kwota musi byÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€ąĂ˘â‚¬Ë‡ > 0.")
                 return
             qty = notional / limit_price
 
         qty = _fmt_float(qty, 8)
         if qty <= 0:
-            self._error("LIMIT", "Ilość wyszła 0. Zwiększ kwotę/ilość.")
+            self._error("LIMIT", "IloĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…ÄąĹźÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€ąĂ˘â‚¬Ë‡ wyszĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇa 0. ZwiÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąÄľÄ‚â€ąĂ‚Âksz kwotÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąÄľÄ‚â€ąĂ‚Â/iloĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…ÄąĹźÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€ąĂ˘â‚¬Ë‡.")
             return
 
         if side_mode == "LONG":
@@ -760,7 +762,7 @@ class QuickPaperTrade(tk.Toplevel):
         if intent == "CLOSE_LONG":
             pos = self._get_position(symbol, "LONG")
             if not pos or float(pos.get("quantity", 0.0)) <= 0:
-                self._error("LIMIT", "Brak pozycji LONG do sprzedaży.")
+                self._error("LIMIT", "Brak pozycji LONG do sprzedaĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ˘â‚¬ĹľÄ‚â€ąÄąÄ„y.")
                 return
             qty = min(qty, float(pos["quantity"]))
         elif intent == "CLOSE_SHORT":
@@ -774,7 +776,7 @@ class QuickPaperTrade(tk.Toplevel):
         if last:
             dev = abs(limit_price - last) / last
             if dev > 0.5:
-                self._log(f"[Paper] Ostrzeżenie: LIMIT {click_side} {symbol} @ {limit_price} daleko od rynku (last~{last}).", "ERROR")
+                self._log(f"[Paper] OstrzeĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ˘â‚¬ĹľÄ‚â€ąÄąÄ„enie: LIMIT {click_side} {symbol} @ {limit_price} daleko od rynku (last~{last}).", "ERROR")
 
         oid = self.db.sync.record_order({
             "symbol": symbol, "side": click_side, "type": "LIMIT",
@@ -792,7 +794,7 @@ class QuickPaperTrade(tk.Toplevel):
         self._log(f"[Paper] LIMIT {click_side} {symbol} qty={qty} @ {limit_price} ({intent}, OPEN)", "INFO")
         self._refresh_views()
 
-    # ---------- SL/TP – ręczne ----------
+    # ---------- SL/TP Ä‚â€žĂ˘â‚¬ĹˇÄ‚â€ąĂ‚ÂĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąË‡Ä‚â€šĂ‚Â¬Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă˘â‚¬Ĺź rÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąÄľÄ‚â€ąĂ‚Âczne ----------
 
     def _set_sl_tp(self):
         symbol = (self.sl_symbol_var.get() or "").strip().upper()
@@ -845,20 +847,20 @@ class QuickPaperTrade(tk.Toplevel):
             if side_mode == "LONG":
                 if sl_p is not None and sl_p >= base:
                     corr = _fmt_float(base * (1.0 - SAFETY_DELTA), 8)
-                    self._log(f"[Paper] Korekta SL: {sl_p} ≥ baza({base}) → {corr}", "ERROR")
+                    self._log(f"[Paper] Korekta SL: {sl_p} Ä‚â€žĂ˘â‚¬ĹˇÄ‚â€ąĂ‚ÂĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€šĂ‚Â°Ă„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â€šÂ¬ÄąÄľ baza({base}) Ä‚â€žĂ˘â‚¬ĹˇÄ‚â€ąĂ‚ÂĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€šĂ‚Â Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚ËĂ˘â‚¬ĹľĂ‹Â {corr}", "ERROR")
                     sl_p = corr
                 if tp_p is not None and tp_p <= base:
                     corr = _fmt_float(base * (1.0 + SAFETY_DELTA), 8)
-                    self._log(f"[Paper] Korekta TP: {tp_p} ≤ baza({base}) → {corr}", "ERROR")
+                    self._log(f"[Paper] Korekta TP: {tp_p} Ä‚â€žĂ˘â‚¬ĹˇÄ‚â€ąĂ‚ÂĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€šĂ‚Â°Ă„â€šĂ˘â‚¬ĹˇÄ‚â€šĂ‚Â¤ baza({base}) Ä‚â€žĂ˘â‚¬ĹˇÄ‚â€ąĂ‚ÂĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€šĂ‚Â Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚ËĂ˘â‚¬ĹľĂ‹Â {corr}", "ERROR")
                     tp_p = corr
             else:  # SHORT
                 if sl_p is not None and sl_p <= base:
                     corr = _fmt_float(base * (1.0 + SAFETY_DELTA), 8)
-                    self._log(f"[Paper] Korekta SL(SHORT): {sl_p} ≤ baza({base}) → {corr}", "ERROR")
+                    self._log(f"[Paper] Korekta SL(SHORT): {sl_p} Ä‚â€žĂ˘â‚¬ĹˇÄ‚â€ąĂ‚ÂĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€šĂ‚Â°Ă„â€šĂ˘â‚¬ĹˇÄ‚â€šĂ‚Â¤ baza({base}) Ä‚â€žĂ˘â‚¬ĹˇÄ‚â€ąĂ‚ÂĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€šĂ‚Â Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚ËĂ˘â‚¬ĹľĂ‹Â {corr}", "ERROR")
                     sl_p = corr
                 if tp_p is not None and tp_p >= base:
                     corr = _fmt_float(base * (1.0 - SAFETY_DELTA), 8)
-                    self._log(f"[Paper] Korekta TP(SHORT): {tp_p} ≥ baza({base}) → {corr}", "ERROR")
+                    self._log(f"[Paper] Korekta TP(SHORT): {tp_p} Ä‚â€žĂ˘â‚¬ĹˇÄ‚â€ąĂ‚ÂĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€šĂ‚Â°Ă„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â€šÂ¬ÄąÄľ baza({base}) Ä‚â€žĂ˘â‚¬ĹˇÄ‚â€ąĂ‚ÂĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€šĂ‚Â Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚ËĂ˘â‚¬ĹľĂ‹Â {corr}", "ERROR")
                     tp_p = corr
 
         key: LevelsKey = (symbol, side_mode)
@@ -881,7 +883,7 @@ class QuickPaperTrade(tk.Toplevel):
             self._log(f"[Paper] Wyczyszczono SL/TP dla {symbol} [{side_mode}]", "INFO")
         self._refresh_sl_label()
 
-    # ---------- PRESET udziałów TP ----------
+    # ---------- PRESET udziaĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â€šÂ¬ÄąË‡Ä‚â€žĂ„â€¦Ä‚ËĂ˘â€šÂ¬ÄąË‡w TP ----------
 
     def _apply_tp_portion_preset(self):
         preset_name = self.tp_portion_preset_var.get()
@@ -912,7 +914,7 @@ class QuickPaperTrade(tk.Toplevel):
         if d.get("tp2"): d["tp2"]["portion"] = float(p2)
         if d.get("tp3"): d["tp3"]["portion"] = float(p3)
         if log:
-            self._log(f"[Paper] Zastosowano preset udziałów '{preset_name}' dla {symbol} [{side_mode}].", "INFO")
+            self._log(f"[Paper] Zastosowano preset udziaĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â€šÂ¬ÄąË‡Ä‚â€žĂ„â€¦Ä‚ËĂ˘â€šÂ¬ÄąË‡w '{preset_name}' dla {symbol} [{side_mode}].", "INFO")
         self._refresh_sl_label()
 
     # ---------- Partial TP (TP1/TP2/TP3) ----------
@@ -949,7 +951,7 @@ class QuickPaperTrade(tk.Toplevel):
 
         sum_portions = sum([p or 0.0 for p in (tp1_portion, tp2_portion, tp3_portion)])
         if sum_portions > 1.0 + 1e-9:
-            self._error("Partial TP", "Suma udziałów TP przekracza 100%. Zmniejsz udziały.")
+            self._error("Partial TP", "Suma udziaĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â€šÂ¬ÄąË‡Ä‚â€žĂ„â€¦Ä‚ËĂ˘â€šÂ¬ÄąË‡w TP przekracza 100%. Zmniejsz udziaĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇy.")
             return
 
         key: LevelsKey = (symbol, side_mode)
@@ -993,10 +995,10 @@ class QuickPaperTrade(tk.Toplevel):
             act = float((self.tr_activate_pct_var.get() or "").strip())/100.0
             trail = float((self.tr_trail_pct_var.get() or "").strip())/100.0
         except Exception:
-            self._error("Trailing", "Podaj poprawne wartości %.")
+            self._error("Trailing", "Podaj poprawne wartoĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…ÄąĹźci %.")
             return
         if act <= 0 or trail <= 0:
-            self._error("Trailing", "Wartości muszą być > 0%.")
+            self._error("Trailing", "WartoĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…ÄąĹźci muszÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€šĂ‚Â¦ byÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€ąĂ˘â‚¬Ë‡ > 0%.")
             return
 
         key: LevelsKey = (symbol, side_mode)
@@ -1078,7 +1080,7 @@ class QuickPaperTrade(tk.Toplevel):
                     self._fill_limit_order(od, sym, side_click, qty, fill_price, intent=intent)
                     self.open_limit_orders.remove(od)
 
-            # Poziomy SL/TP/Trailing dla LONG i SHORT niezależnie
+            # Poziomy SL/TP/Trailing dla LONG i SHORT niezaleĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ˘â‚¬ĹľÄ‚â€ąÄąÄ„nie
             for side_mode in ("LONG", "SHORT"):
                 st = self.levels.get((sym, side_mode)) or {}
                 pos = self._get_position(sym, side_mode)
@@ -1092,12 +1094,12 @@ class QuickPaperTrade(tk.Toplevel):
                 sl_p = st.get("sl")
                 if sl_p is not None:
                     if side_mode == "LONG" and price <= float(sl_p):
-                        self._log(f"[Paper] SL trigger {sym} [{side_mode}] @ {price} (SL={sl_p}) – zamknięcie.", "INFO")
+                        self._log(f"[Paper] SL trigger {sym} [{side_mode}] @ {price} (SL={sl_p}) Ä‚â€žĂ˘â‚¬ĹˇÄ‚â€ąĂ‚ÂĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąË‡Ä‚â€šĂ‚Â¬Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă˘â‚¬Ĺź zamkniÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąÄľÄ‚â€ąĂ‚Âcie.", "INFO")
                         self._fill_now(sym, "SELL", _fmt_float(pos_qty, 8), price, intent="CLOSE_LONG")
                         self._clear_all_for(sym, side_mode)
                         continue
                     if side_mode == "SHORT" and price >= float(sl_p):
-                        self._log(f"[Paper] SL trigger {sym} [{side_mode}] @ {price} (SL={sl_p}) – zamknięcie.", "INFO")
+                        self._log(f"[Paper] SL trigger {sym} [{side_mode}] @ {price} (SL={sl_p}) Ä‚â€žĂ˘â‚¬ĹˇÄ‚â€ąĂ‚ÂĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąË‡Ä‚â€šĂ‚Â¬Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă˘â‚¬Ĺź zamkniÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąÄľÄ‚â€ąĂ‚Âcie.", "INFO")
                         self._fill_now(sym, "BUY", _fmt_float(pos_qty, 8), price, intent="CLOSE_SHORT")
                         self._clear_all_for(sym, side_mode)
                         continue
@@ -1119,7 +1121,7 @@ class QuickPaperTrade(tk.Toplevel):
                                 tr["peak"] = price; peak = price
                             stop_price = peak * (1.0 - float(trail_pct or 0.0))
                             if price <= stop_price:
-                                self._log(f"[Paper] Trailing stop {sym} [LONG] @ {price} (stop~{_fmt_float(stop_price,8)}) – zamknięcie.", "INFO")
+                                self._log(f"[Paper] Trailing stop {sym} [LONG] @ {price} (stop~{_fmt_float(stop_price,8)}) Ä‚â€žĂ˘â‚¬ĹˇÄ‚â€ąĂ‚ÂĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąË‡Ä‚â€šĂ‚Â¬Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă˘â‚¬Ĺź zamkniÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąÄľÄ‚â€ąĂ‚Âcie.", "INFO")
                                 self._fill_now(sym, "SELL", _fmt_float(pos_qty, 8), price, intent="CLOSE_LONG")
                                 self._clear_all_for(sym, side_mode)
                                 continue
@@ -1134,7 +1136,7 @@ class QuickPaperTrade(tk.Toplevel):
                                 tr["trough"] = price; trough = price
                             stop_price = trough * (1.0 + float(trail_pct or 0.0))
                             if price >= stop_price:
-                                self._log(f"[Paper] Trailing stop {sym} [SHORT] @ {price} (stop~{_fmt_float(stop_price,8)}) – zamknięcie.", "INFO")
+                                self._log(f"[Paper] Trailing stop {sym} [SHORT] @ {price} (stop~{_fmt_float(stop_price,8)}) Ä‚â€žĂ˘â‚¬ĹˇÄ‚â€ąĂ‚ÂĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąË‡Ä‚â€šĂ‚Â¬Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă˘â‚¬Ĺź zamkniÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąÄľÄ‚â€ąĂ‚Âcie.", "INFO")
                                 self._fill_now(sym, "BUY", _fmt_float(pos_qty, 8), price, intent="CLOSE_SHORT")
                                 self._clear_all_for(sym, side_mode)
                                 continue
@@ -1152,7 +1154,7 @@ class QuickPaperTrade(tk.Toplevel):
                         if qty_exec > 0:
                             side_click = "SELL" if side_mode == "LONG" else "BUY"
                             intent = "CLOSE_LONG" if side_mode == "LONG" else "CLOSE_SHORT"
-                            self._log(f"[Paper] {key.upper()} trigger {sym} [{side_mode}] @ {price} – zamknięcie {qty_exec}.", "INFO")
+                            self._log(f"[Paper] {key.upper()} trigger {sym} [{side_mode}] @ {price} Ä‚â€žĂ˘â‚¬ĹˇÄ‚â€ąĂ‚ÂĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąË‡Ä‚â€šĂ‚Â¬Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă˘â‚¬Ĺź zamkniÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąÄľÄ‚â€ąĂ‚Âcie {qty_exec}.", "INFO")
                             self._fill_now(sym, side_click, qty_exec, price, intent=intent)
                             tp["done"] = True
                             pos = self._get_position(sym, side_mode)
@@ -1164,7 +1166,7 @@ class QuickPaperTrade(tk.Toplevel):
                     if (side_mode == "LONG" and price >= float(tp_p)) or (side_mode == "SHORT" and price <= float(tp_p)):
                         side_click = "SELL" if side_mode == "LONG" else "BUY"
                         intent = "CLOSE_LONG" if side_mode == "LONG" else "CLOSE_SHORT"
-                        self._log(f"[Paper] TP trigger {sym} [{side_mode}] @ {price} (TP={tp_p}) – pełne wyjście.", "INFO")
+                        self._log(f"[Paper] TP trigger {sym} [{side_mode}] @ {price} (TP={tp_p}) Ä‚â€žĂ˘â‚¬ĹˇÄ‚â€ąĂ‚ÂĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąË‡Ä‚â€šĂ‚Â¬Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă˘â‚¬Ĺź peĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇne wyjĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…ÄąĹźcie.", "INFO")
                         self._fill_now(sym, side_click, _fmt_float(pos_qty, 8), price, intent=intent)
                         self._clear_all_for(sym, side_mode)
                         continue
@@ -1211,7 +1213,7 @@ class QuickPaperTrade(tk.Toplevel):
         msg = f"[Paper] LIMIT {od.get('side')} {od.get('symbol')} anulowany ({reason})."
         self._log(msg, "ERROR")
 
-    # ---------- Wypełnienia ----------
+    # ---------- WypeĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇnienia ----------
 
     def _fill_now(self, symbol: str, side: str, qty: float, price: float, *, intent: str):
         qty = _fmt_float(qty, 8); price = float(price)
@@ -1230,7 +1232,7 @@ class QuickPaperTrade(tk.Toplevel):
         })
 
         self._apply_position_change(symbol, qty, price, intent=intent)
-        self._log(f"[Paper] FILLED {side} {symbol} qty={qty} @ {price} (fee≈{fee}) [{intent}]", "INFO")
+        self._log(f"[Paper] FILLED {side} {symbol} qty={qty} @ {price} (feeÄ‚â€žĂ˘â‚¬ĹˇÄ‚â€ąĂ‚ÂĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€šĂ‚Â°Ă„â€šĂ˘â‚¬ĹˇÄ‚â€šĂ‚Â{fee}) [{intent}]", "INFO")
 
     def _fill_limit_order(self, od: Dict[str, Any], symbol: str, side: str, qty: float, fill_price: float, *, intent: str):
         qty = _fmt_float(qty, 8); fill_price = float(fill_price)
@@ -1312,22 +1314,22 @@ class QuickPaperTrade(tk.Toplevel):
         side_mode = self.side_mode_var.get() or "LONG"
         d = self.levels.get((symbol, side_mode))
         if not d:
-            self.lbl_sl_info.config(text=f"Brak aktywnych poziomów dla {symbol} [{side_mode}]."); return
+            self.lbl_sl_info.config(text=f"Brak aktywnych poziomĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â€šÂ¬ÄąË‡Ä‚â€žĂ„â€¦Ä‚ËĂ˘â€šÂ¬ÄąË‡w dla {symbol} [{side_mode}]."); return
         parts = []
         if d.get("sl") is not None: parts.append(f"SL={d.get('sl')}")
         if d.get("tp") is not None: parts.append(f"TP={d.get('tp')}")
         for key in ("tp1","tp2","tp3"):
             tp = d.get(key)
             if tp:
-                parts.append(f"{key.upper()}={tp['price']} ({int(tp.get('portion',0)*100)}%) {'✓' if tp.get('done') else ''}")
+                parts.append(f"{key.upper()}={tp['price']} ({int(tp.get('portion',0)*100)}%) {'Ä‚â€žĂ˘â‚¬ĹˇÄ‚â€ąĂ‚ÂÄ‚â€žĂ„â€¦Ä‚ËĂ˘â€šÂ¬ÄąĹşĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă˘â‚¬Ĺź' if tp.get('done') else ''}")
         tr = d.get("trailing")
         if tr:
             status = "ON" if tr.get("active") else "ARMED"
             parts.append(f"TRAIL {status} [{tr.get('dir')}] (act={tr.get('activate_pct',0)*100:.2f}%, tr={tr.get('trail_pct',0)*100:.2f}%)")
         atrs = d.get("atr_snapshot")
         if atrs:
-            parts.append(f"ATR(len={atrs.get('len')}, tf={atrs.get('tf')}, ≈{_fmt_float(atrs.get('atr',0.0),6)})")
-        self.lbl_sl_info.config(text="; ".join(parts) if parts else f"Brak aktywnych poziomów dla {symbol} [{side_mode}].")
+            parts.append(f"ATR(len={atrs.get('len')}, tf={atrs.get('tf')}, Ä‚â€žĂ˘â‚¬ĹˇÄ‚â€ąĂ‚ÂĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€šĂ‚Â°Ă„â€šĂ˘â‚¬ĹˇÄ‚â€šĂ‚Â{_fmt_float(atrs.get('atr',0.0),6)})")
+        self.lbl_sl_info.config(text="; ".join(parts) if parts else f"Brak aktywnych poziomĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â€šÂ¬ÄąË‡Ä‚â€žĂ„â€¦Ä‚ËĂ˘â€šÂ¬ÄąË‡w dla {symbol} [{side_mode}].")
 
     # ---------- Anulowanie LIMIT ----------
 
@@ -1346,7 +1348,7 @@ class QuickPaperTrade(tk.Toplevel):
                 break
         self._refresh_views()
 
-    # ---------- zamknięcie ----------
+    # ---------- zamkniÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąÄľÄ‚â€ąĂ‚Âcie ----------
 
     def destroy(self):
         self._engine_running = False
@@ -1356,9 +1358,9 @@ class QuickPaperTrade(tk.Toplevel):
             pass
 
 
-# --- Patch stabilności komunikatów z oryginalnego mostka GUI -----------------
+# --- Patch stabilnoĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…ÄąĹźci komunikatĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â€šÂ¬ÄąË‡Ä‚â€žĂ„â€¦Ä‚ËĂ˘â€šÂ¬ÄąË‡w z oryginalnego mostka GUI -----------------
 
-_ORIG_EXEC = trading_gui.TradingGUI._bridge_execute_trade
+_ORIG_EXEC = trading_gui.TradingGUI._bridge_execute_trade  # type: ignore[name-defined]
 
 def _patched_bridge_execute_trade(self, symbol: str, side: str, mkt_price: float):
     try:
@@ -1369,28 +1371,28 @@ def _patched_bridge_execute_trade(self, symbol: str, side: str, mkt_price: float
             self._log(f"AI Manager: failed in _bridge_execute_trade: {e}\n{tb}", "ERROR")
         except Exception:
             print(f"[ERROR] _bridge_execute_trade: {e}\n{tb}")
-        # Jeśli istnieje okno QuickPaperTrade – użyj jego „topmost” i pokaż komunikat nad nim
+        # JeĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…ÄąĹźli istnieje okno QuickPaperTrade Ä‚â€žĂ˘â‚¬ĹˇÄ‚â€ąĂ‚ÂĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąË‡Ä‚â€šĂ‚Â¬Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă˘â‚¬Ĺź uĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ˘â‚¬ĹľÄ‚â€ąÄąÄ„yj jego Ä‚â€žĂ˘â‚¬ĹˇÄ‚â€ąĂ‚ÂĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąË‡Ä‚â€šĂ‚Â¬Ä‚â€žĂ„â€¦Ä‚â€žĂ„ÄľtopmostÄ‚â€žĂ˘â‚¬ĹˇÄ‚â€ąĂ‚ÂĂ„â€šĂ‹ÂÄ‚ËĂ˘â€šÂ¬ÄąË‡Ä‚â€šĂ‚Â¬Ä‚â€žĂ„â€¦Ä‚â€žĂ˘â‚¬Ĺľ i pokaĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ˘â‚¬ĹľÄ‚â€ąÄąÄ„ komunikat nad nim
         qp = getattr(QuickPaperTrade, "_last_instance", None)
         if isinstance(qp, QuickPaperTrade):
-            qp._error("Paper", f"Nieoczekiwany błąd: {e}\n{tb}")
+            qp._error("Paper", f"Nieoczekiwany bĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€šĂ‚Â¦d: {e}\n{tb}")
         else:
-            # awaryjnie nad głównym oknem
+            # awaryjnie nad gĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â€šÂ¬ÄąË‡Ä‚â€žĂ„â€¦Ä‚ËĂ˘â€šÂ¬ÄąË‡wnym oknem
             try:
                 self.root.lift()
                 self.root.attributes("-topmost", True)
-                messagebox.showerror("Paper", f"Nieoczekiwany błąd: {e}\n{tb}", parent=self.root)
+                messagebox.showerror("Paper", f"Nieoczekiwany bĂ„â€šĂ˘â‚¬ĹľÄ‚â€žĂ˘â‚¬Â¦Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ă„Ä…Ă‹â€ˇÄ‚â€žĂ˘â‚¬ĹˇÄ‚ËĂ˘â€šÂ¬ÄąÄľĂ„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚â€šĂ‚Â¦d: {e}\n{tb}", parent=self.root)
             finally:
                 try:
                     self.root.attributes("-topmost", False)
                 except Exception:
                     pass
 
-trading_gui.TradingGUI._bridge_execute_trade = _patched_bridge_execute_trade
+trading_gui.TradingGUI._bridge_execute_trade = _patched_bridge_execute_trade  # type: ignore[name-defined]
 
 
 # --- Start GUI + auto-okno ----------------------------------------------------
 
-def _open_paper_panel_on_start(app: trading_gui.TradingGUI):
+def _open_paper_panel_on_start(app: "trading_gui.TradingGUI"):
     app.root.after(800, lambda: QuickPaperTrade(app))
 
 if __name__ == "__main__":

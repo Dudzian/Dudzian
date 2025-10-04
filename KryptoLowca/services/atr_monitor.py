@@ -12,16 +12,16 @@ from KryptoLowca.event_emitter_adapter import EventBus, EmitterAdapter, Event, E
 class ATRMonitorConfig:
     atr_period: int = 14
     growth_threshold_pct: float = 40.0   # % wzrostu ATR vs baseline
-    min_bars_after_baseline: int = 50    # minimum barów po resecie baseline ATR
+    min_bars_after_baseline: int = 50    # minimum barÄ‚â€žĂ˘â‚¬ĹˇĂ„Ä…Ă˘â‚¬Ĺˇw po resecie baseline ATR
     symbol: str = "BTCUSDT"
 
 
 class ATRMonitor:
     """
     - Subskrybuje MARKET_TICK (payload: {'symbol','bar':{'high','low','close',...}})
-    - Liczy ATR, zarządza baseline (reset po WFO applied/completed).
-    - Gdy ATR rośnie > threshold, publikuje RISK_ALERT (kind='atr_spike').
-    - Przechowuje bufor barów do odczytu przez WFO (data_provider).
+    - Liczy ATR, zarzĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â€šÂ¬Ă‚Â¦dza baseline (reset po WFO applied/completed).
+    - Gdy ATR roÄ‚â€žĂ„â€¦Ä‚ËĂ˘â€šÂ¬ÄąĹşnie > threshold, publikuje RISK_ALERT (kind='atr_spike').
+    - Przechowuje bufor barÄ‚â€žĂ˘â‚¬ĹˇĂ„Ä…Ă˘â‚¬Ĺˇw do odczytu przez WFO (data_provider).
     """
     def __init__(self, adapter: EmitterAdapter, cfg: Optional[ATRMonitorConfig] = None) -> None:
         self.adapter = adapter
@@ -52,8 +52,10 @@ class ATRMonitor:
 
     # --------- Internals ---------
 
-    def _on_wfo_status_batch(self, events: List[Event]) -> None:
-        # Reset baseline po applied/completed (możesz zmienić wg preferencji)
+    def _on_wfo_status_batch(self, events: Event | list[Event]) -> None:
+        # Reset baseline po applied/completed (moÄ‚â€žĂ„â€¦Ä‚â€žĂ‹ĹĄesz zmieniĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â€šÂ¬Ă‹â€ˇ wg preferencji)
+        events = events if isinstance(events, list) else [events]
+
         for ev in events:
             st = ev.payload.get("status") or ev.payload.get("state") or ev.payload.get("kind")
             if st in ("applied", "completed"):
@@ -63,7 +65,9 @@ class ATRMonitor:
                     self._bars_since_baseline = 0
                     self.adapter.push_log(f"ATR baseline reset to {cur_atr:.6f} (WFO {st}).", level="INFO")
 
-    def _on_ticks_batch(self, events: List[Event]) -> None:
+    def _on_ticks_batch(self, events: Event | list[Event]) -> None:
+        events = events if isinstance(events, list) else [events]
+
         for ev in events:
             p = ev.payload
             if not p:
@@ -78,7 +82,7 @@ class ATRMonitor:
             ts = bar.get("ts")
 
             # Update bars buffer
-            self._bars.append({"ts": ts, "high": high, "low": low, "close": close})
+            self._bars.append({"ts": float(ts or 0.0), "high": float(high or 0.0), "low": float(low or 0.0), "close": float(close or 0.0)})
             self._last_close = close
 
             # Update ATR
@@ -125,4 +129,5 @@ class ATRMonitor:
                     "bars_since_baseline": self._bars_since_baseline,
                 },
             )
-            # po alercie nie resetujemy baseline — decyzja po Twojej stronie (WFO może go zresetować po applied)
+            # po alercie nie resetujemy baseline Ă„â€šĂ‹ÂÄ‚ËĂ˘â‚¬ĹˇĂ‚Â¬Ä‚ËĂ˘â€šÂ¬ÄąÄ„ decyzja po Twojej stronie (WFO moÄ‚â€žĂ„â€¦Ä‚â€žĂ‹ĹĄe go zresetowaĂ„â€šĂ˘â‚¬ĹľÄ‚ËĂ˘â€šÂ¬Ă‹â€ˇ po applied)
+

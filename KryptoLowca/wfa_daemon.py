@@ -58,7 +58,7 @@ def _iter_events(events: Optional[Iterable[Event] | Event]) -> List[Event]:
         return []
     if isinstance(events, list):
         return events
-    return [events]
+    return [events] if isinstance(events, Event) else list(events) if isinstance(events, Event) else list(events) if isinstance(events, Event) else list(events) if isinstance(events, Event) else list(events) if isinstance(events, Event) else list(events)
 
 
 def load_config(path: Path) -> Dict[str, Any]:

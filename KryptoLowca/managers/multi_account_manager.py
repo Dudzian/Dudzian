@@ -82,7 +82,7 @@ class MultiExchangeAccountManager:
         for (exchange, account), managed in self._accounts.items():
             async def _wrap(event: MarketPayload, ex=exchange, acc=account) -> None:
                 await callback(ex, acc, event)
-            tasks.append(managed.adapter.stream_market_data(subscriptions, _wrap))
+            tasks.append(asyncio.create_task(managed.adapter.stream_market_data(subscriptions, _wrap)))
         return tasks
 
     async def dispatch_order(self, order: OrderRequest) -> OrderStatus:

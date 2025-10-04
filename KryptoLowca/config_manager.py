@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Prosty menedżer konfiguracji kompatybilny ze starszym API testów."""
 from __future__ import annotations
+from typing import Any, Dict, cast  # added by patch
 
 import asyncio
 import json
@@ -96,7 +97,7 @@ class AIConfig:
                 "window_seconds": self.window_seconds if i == 0 else self.window_seconds / 2,
             }
             # jawne rzutowania
-            window = float(bucket.get("window_seconds", 0.0))
+            window = to_float(bucket.get("window_seconds", 0.0))
             bucket["window_seconds"] = window
             buckets.append(bucket)
         return buckets
@@ -308,7 +309,7 @@ def decrypt_config(token: bytes, key: bytes) -> Dict[str, Any]:
         payload = f.decrypt(token)
     except InvalidToken as exc:
         raise ConfigError("Zły klucz lub uszkodzony plik konfiguracyjny") from exc
-    return json.loads(payload.decode("utf-8"))
+    return cast(Dict[str, Any], json.loads(payload.decode("utf-8")))
 
 
 def save_encrypted_config(path: str | Path, data: Dict[str, Any], key: bytes) -> None:
@@ -358,7 +359,7 @@ class ConfigManager:
     ) -> Dict[str, Any]:
         preset = self.get_marketplace_preset(preset_id)
         merged = dict(self._current_config)
-        for section, payload in preset.items():
+        for section, payload in cast(Dict[str, Any], preset).items():
             merged[section] = payload
         # metadane
         merged.setdefault("meta", {})

@@ -98,7 +98,7 @@ def detect_signals_compatible(ohlcv: List[List[float]], ema_slow: int, min_atr_p
     a jeśli nie – spada do default_signal_detector.
     """
     try:
-        from backtest.engine import find_entry_signals  # opcjonalne
+        from KryptoLowca.backtest.engine import find_entry_signals  # opcjonalne
         return list(find_entry_signals(ohlcv, ema_slow=ema_slow, min_atr_pct=min_atr_pct))
     except Exception:
         return default_signal_detector(ohlcv, ema_slow, min_atr_pct)

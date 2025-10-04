@@ -1,4 +1,4 @@
-# backtest/runner_preset.py
+﻿# backtest/runner_preset.py
 from __future__ import annotations
 
 import logging
@@ -105,7 +105,7 @@ class PresetBacktestRunner:
         self,
         preset: Union[Preset, Dict[str, Any], str],
         store: Optional[PresetStore],
-    ) -> (Dict[str, Any], str):
+    ) -> "tuple[dict[str, Any], str]":
         if isinstance(preset, Preset):
             return preset.params, preset.name
         if isinstance(preset, dict):
@@ -124,3 +124,4 @@ class PresetBacktestRunner:
         Przykładowa domyślna ewaluacja (placeholder).
         """
         raise NotImplementedError("Nie zdefiniowano domyślnej ewaluacji metryk.")
+

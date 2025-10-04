@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """Konfiguracja logowania dla całej aplikacji KryptoLowca.
 
 Nowa wersja obsługuje:
@@ -93,15 +93,15 @@ def _ensure_queue_listener(handlers: Iterable[logging.Handler]) -> QueueHandler:
             _QUEUE = queue.Queue()
             _LISTENER = QueueListener(_QUEUE, *handlers, respect_handler_level=True)
             _LISTENER.start()
-            atexit.register(lambda: _LISTENER and _LISTENER.stop())
-        assert _QUEUE is not None
+atexit.register(lambda: (_LISTENER is not None) and (_LISTENER.stop() is None))
+assert _QUEUE is not None
         return QueueHandler(_QUEUE)
 
 
 def setup_app_logging(
     *,
     log_file: Path | str = DEFAULT_LOG_FILE,
-    level: int | str = None,
+    level: int | str | None = None,
     max_bytes: int = 5_000_000,
     backup_count: int = 10,
     service_name: str = "kryptolowca",
@@ -166,3 +166,6 @@ __all__ = [
     "setup_app_logging",
     "get_logger",
 ]
+
+
+

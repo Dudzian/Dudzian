@@ -13,7 +13,7 @@ from KryptoLowca.event_emitter_adapter import (
     Event,
     EventType,
 )
-from backtest.walkforward import (
+from KryptoLowca.backtest.walkforward import (
     Bar,
     WalkForwardConfig,
     ObjectiveWeights,
@@ -51,7 +51,7 @@ class WalkForwardService:
      - subskrybuje trigger'y z EventBus (opcjonalnie)
      - uruchamia WFO w tle
      - publikuje EventType.WFO_STATUS (started/progress/completed/error)
-     - opcjonalnie wywołuje apply_callback(...) ze zwycięskimi parametrami
+     - opcjonalnie wywoĹ‚uje apply_callback(...) ze zwyciÄ™skimi parametrami
     """
     def __init__(
         self,
@@ -82,20 +82,23 @@ class WalkForwardService:
 
     def _attach_bus(self) -> None:
         def on_events(batch: List[Event]) -> None:
+            pass
+            if not isinstance(events, list):
+                events = [events]
             for ev in batch:
                 try:
-                    if ev.etype == EventType.WFO_TRIGGER:
+                    if ev.type == EventType.WFO_TRIGGER:
                         symbol = ev.payload.get("symbol") or ev.payload.get("context", {}).get("symbol") or "BTCUSDT"
                         self.reoptimize_async(symbol=symbol, reason=ev.payload.get("reason", "external_trigger"))
-                    elif ev.etype == EventType.RISK_ALERT:
+                    elif ev.type == EventType.RISK_ALERT:
                         symbol = ev.payload.get("symbol", "BTCUSDT")
                         self.reoptimize_async(symbol=symbol, reason=ev.payload.get("kind", "risk_alert"))
                 except Exception:
                     # nie blokuj busa
                     pass
 
-        # krótki debounce; EventBus dostarczy listy
-        from KryptoLowca.event_emitter_adapter import DebounceRule
+            # krĂłtki debounce; EventBus dostarczy listy
+            from KryptoLowca.event_emitter_adapter import DebounceRule
         self.bus.subscribe(EventType.WFO_TRIGGER, on_events, rule=DebounceRule(window_sec=0.2, max_batch=50))
         self.bus.subscribe(EventType.RISK_ALERT, on_events, rule=DebounceRule(window_sec=0.2, max_batch=50))
 
@@ -105,7 +108,7 @@ class WalkForwardService:
         now = time.time()
         with self._lock:
             if symbol in self._active_jobs:
-                # już trwa
+                # juĹĽ trwa
                 self.adapter.push_wfo_status("busy", detail={"symbol": symbol, "job_id": self._active_jobs[symbol]})
                 return None
             last = self._last_run_ts.get(symbol, 0.0)
@@ -133,7 +136,7 @@ class WalkForwardService:
             if not isinstance(bars, list) or not isinstance(grid, list) or not grid:
                 raise ValueError("Brak danych (bars) lub param_grid.")
 
-            # (opcjonalny) progres — przy dużych gridach/utilach można emitować co X kroków.
+            # (opcjonalny) progres â€” przy duĹĽych gridach/utilach moĹĽna emitowaÄ‡ co X krokĂłw.
             result: WalkForwardResult = run_walkforward(
                 bars=bars,
                 param_grid=grid,
@@ -167,9 +170,9 @@ class WalkForwardService:
             if best and self.apply_callback:
                 try:
                     self.apply_callback(symbol, best)
-                    # Poinformuj GUI, że zastosowano:
+                    # Poinformuj GUI, ĹĽe zastosowano:
                     self.adapter.push_wfo_status("applied", detail={"symbol": symbol, "job_id": job_id, "params": best})
-                    # Możesz też poinformować logiem:
+                    # MoĹĽesz teĹĽ poinformowaÄ‡ logiem:
                     self.adapter.push_log(f"WFO: zastosowano nowe parametry dla {symbol}.", level="INFO")
                 except Exception as e:
                     self.adapter.push_wfo_status("apply_error", detail={"symbol": symbol, "job_id": job_id, "error": str(e)})

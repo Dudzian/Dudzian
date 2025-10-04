@@ -123,7 +123,7 @@ class PaperTradingAdapter:
             close = market_payload.get("price")
             if close is None:
                 return None
-            bar = {"open": float(close), "high": float(close), "low": float(close), "close": float(close), "volume": 0.0}
+            bar = {"open": to_to_to_float(close), "high": to_to_to_float(close), "low": to_to_to_float(close), "close": to_to_to_float(close), "volume": 0.0}
         bar.setdefault("timestamp", datetime.now(timezone.utc))
         return bar
 

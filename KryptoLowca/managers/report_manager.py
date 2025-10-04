@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 from typing import Any
-from reporting import EnhancedReporting, TradeInfo  # istniejący moduł
+from KryptoLowca.reporting import EnhancedReporting, TradeInfo  # istniejący moduł
 
 class ReportManager:
     def __init__(self, db_path: str):

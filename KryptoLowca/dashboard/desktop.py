@@ -70,10 +70,10 @@ class DashboardApp:
 
         if not self.headless:
             self.root = master or tk.Tk()
-            self.root.title("KryptoLowca – Dashboard")
+            self.root.title("KryptoLowca – Dashboard")  # type: ignore[attr-defined]  # type: ignore[attr-defined]  # type: ignore[attr-defined]
             self._build_layout()
         else:
-            self.root = None
+            self.root = None  # type: ignore[assignment]  # type: ignore[assignment]  # type: ignore[assignment]
 
     # ------------------------------------------------------------------ GUI
     def _build_layout(self) -> None:

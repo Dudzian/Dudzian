@@ -11,7 +11,7 @@ import time
 
 
 def _ensure_repo_root() -> None:
-    """Dopisuje katalog repo do sys.path tak, by import 'KryptoLowca' działał przy uruchamianiu skryptu bez instalacji."""
+    """Dopisuje katalog repo do sys.path tak, by import 'KryptoLowca' dziaĹ‚aĹ‚ przy uruchamianiu skryptu bez instalacji."""
     current_dir = Path(__file__).resolve().parent
     for candidate in (current_dir, *current_dir.parents):
         package_init = candidate / "KryptoLowca" / "__init__.py"
@@ -36,7 +36,7 @@ try:
         wire_gui_logs_to_adapter,
     )
 except Exception as e:
-    log.error("Nie udało się zaimportować event_emitter_adapter: %s", e, exc_info=True)
+    log.error("Nie udaĹ‚o siÄ™ zaimportowaÄ‡ event_emitter_adapter: %s", e, exc_info=True)
     raise
 
 from KryptoLowca.services.marketdata import MarketDataConfig, MarketDataService
@@ -66,24 +66,27 @@ def _start_gui_in_main_thread(adapter: EmitterAdapter, enable_gui: bool = True) 
         try:
             import KryptoLowca.trading_gui as trading_gui
         except Exception as e:
-            log.info("GUI: nie udało się załadować trading_gui (%s). Uruchamiam bez GUI.", e)
+            log.info("GUI: nie udaĹ‚o siÄ™ zaĹ‚adowaÄ‡ trading_gui (%s). Uruchamiam bez GUI.", e)
             return
         root = tk.Tk()
         try:
             gui = trading_gui.TradingGUI(root)
-            log.info("Załadowano GUI: trading_gui.TradingGUI(root)")
+            log.info("ZaĹ‚adowano GUI: trading_gui.TradingGUI(root)")
         except TypeError:
-            gui = trading_gui.TradingGUI()
-            log.info("Załadowano GUI: trading_gui.TradingGUI")
+            import tkinter as tk
+        root = tk.Tk()
+        gui = trading_gui.TradingGUI(root)
+  # type: ignore[call-arg]
+  log.info("ZaĹ‚adowano GUI: trading_gui.TradingGUI")
         except Exception as e:
             log.exception("GUI mainloop error podczas konstrukcji: %s", e)
             return
         wire_gui_logs_to_adapter(adapter)
         log.info("GUI start (main thread).")
         root.mainloop()
-        log.info("GUI zamknięte.")
+        log.info("GUI zamkniÄ™te.")
     except Exception as e:
-        log.info("GUI niedostępne lub błąd uruchomienia: %s", e)
+        log.info("GUI niedostÄ™pne lub bĹ‚Ä…d uruchomienia: %s", e)
 
 
 def main(use_dummy_feed: bool = True, enable_gui: bool = True) -> None:
@@ -131,7 +134,7 @@ def main(use_dummy_feed: bool = True, enable_gui: bool = True) -> None:
         symbol=SYMBOL, default_sl_atr_mult=2.0, default_tp_atr_mult=3.0, cooldown_after_exit_sec=5.0
     ))
 
-    # monitor wyników (opcjonalny)
+    # monitor wynikĂłw (opcjonalny)
     try:
         perf = PerformanceMonitor(bus, PerfMonitorConfig(
             symbol=SYMBOL, window_trades=100, min_trades_to_eval=20, pf_min=1.1, exp_min=0.0, consecutive_breaches=3
@@ -181,7 +184,7 @@ def main(use_dummy_feed: bool = True, enable_gui: bool = True) -> None:
     except Exception:
         pass
 
-    log.info("Zamykanie zakończone.")
+    log.info("Zamykanie zakoĹ„czone.")
 
 
 if __name__ == "__main__":

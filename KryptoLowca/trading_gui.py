@@ -103,7 +103,7 @@ from KryptoLowca.core.trading_engine import TradingEngine
 
 # istniejące moduły w repo
 from KryptoLowca.trading_strategies import TradingStrategies
-from reporting import TradeInfo
+from KryptoLowca.reporting import TradeInfo
 from KryptoLowca.database_manager import DatabaseManager  # klasyczny (bezargumentowy) konstruktor
 
 # =====================================

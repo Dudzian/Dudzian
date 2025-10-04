@@ -1,5 +1,6 @@
-"""Uniwersalny interfejs do zarządzania sekretami (ENV/File/Vault/AWS)."""
+﻿"""Uniwersalny interfejs do zarządzania sekretami (ENV/File/Vault/AWS)."""
 from __future__ import annotations
+from typing import Optional, cast  # added by patch
 
 import json
 import os
@@ -106,7 +107,8 @@ class SecretManager:
         if not self.file_path.exists():
             return {}
         try:
-            return json.loads(self.file_path.read_text())
+            from typing import Dict, Any, cast
+            return cast(Dict[str, str], json.loads(self.file_path.read_text()))
         except Exception:
             return {}
 
@@ -114,7 +116,8 @@ class SecretManager:
         if not self._metadata_path.exists():
             return {}
         try:
-            return json.loads(self._metadata_path.read_text())
+            from typing import Dict, Any, cast
+            return cast(Dict[str, str], json.loads(self._metadata_path.read_text()))
         except Exception:
             return {}
 
@@ -136,8 +139,9 @@ class SecretManager:
         secret_path = f"{self.vault_mount}/data/{key}"
         resp = client.secrets.kv.v2.read_secret_version(path=key, mount_point=self.vault_mount)
         data = resp.get("data", {}).get("data", {})
-        return data.get("value")
-
+        from typing import Optional
+        v = data.get("value")  # type: ignore[assignment]
+        return cast(Optional[str], v)
     def _vault_write(self, key: str, value: str) -> None:  # pragma: no cover
         client = self._vault_client()
         client.secrets.kv.v2.create_or_update_secret(
@@ -166,3 +170,6 @@ class SecretManager:
 
 
 __all__ = ["SecretManager", "SecretBackend"]
+
+
+

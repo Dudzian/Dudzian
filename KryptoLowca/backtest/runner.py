@@ -24,12 +24,12 @@ except ImportError as e:
     raise SystemExit(f"[ImportError] Nie znaleziono pakietu 'managers'. Upewnij się, że uruchamiasz z katalogu projektu. Szczegóły: {e}")
 
 try:
-    from backtest.engine import BacktestEngine, BacktestConfig, StrategyParams, EntryParams, ExitParams, TradeRecord
-    from backtest.metrics import compute_metrics, to_dict
+    from KryptoLowca.backtest.engine import BacktestEngine, BacktestConfig, StrategyParams, EntryParams, ExitParams, TradeRecord
+    from KryptoLowca.backtest.metrics import compute_metrics, to_dict
 except ImportError:
     # Fallback, gdy uruchamiasz bez pakietu (np. bez __init__.py) – import bez prefiksu
-    from engine import BacktestEngine, BacktestConfig, StrategyParams, EntryParams, ExitParams, TradeRecord
-    from metrics import compute_metrics, to_dict
+    from KryptoLowca.backtest.engine import BacktestEngine, BacktestConfig, StrategyParams, EntryParams, ExitParams, TradeRecord
+    from KryptoLowca.backtest.metrics import compute_metrics, to_dict
 
 
 DEFAULT_SYMBOLS = ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
@@ -139,7 +139,7 @@ def main():
         per_symbol_summary[sym] = note
 
     # metryki zagregowane
-    from backtest.metrics import compute_metrics, to_dict  # pewność, że import się złapie (po sys.path fix)
+    from KryptoLowca.backtest.metrics import compute_metrics, to_dict  # pewność, że import się złapie (po sys.path fix)
     m = compute_metrics(all_trades)
     summary = {
         "params": {

@@ -1,4 +1,4 @@
-"""Rozszerzone zarządzanie alertami (email, Slack, webhook) dla bota."""
+﻿"""Rozszerzone zarządzanie alertami (email, Slack, webhook) dla bota."""
 from __future__ import annotations
 
 import json
@@ -10,8 +10,7 @@ from dataclasses import dataclass
 from email.message import EmailMessage
 from typing import Any, Callable, Dict, Iterable, List, Optional, Protocol, Sequence
 
-import requests
-
+import requests  # type: ignore[import-untyped]
 from KryptoLowca.alerts import AlertEvent, AlertSeverity, get_alert_dispatcher
 
 logger = logging.getLogger(__name__)
@@ -254,4 +253,5 @@ __all__ = [
     "SlackWebhookSink",
     "WebhookAlertSink",
 ]
+
 

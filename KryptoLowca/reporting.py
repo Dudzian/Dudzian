@@ -999,7 +999,7 @@ class EnhancedReporting:
             
             # Benchmark comparison if provided
             if benchmark_returns and len(benchmark_returns) == len(returns):
-                benchmark_returns = np.array(benchmark_returns)
+                benchmark_returns = np.array(benchmark_returns)  # type: ignore[assignment]
                 
                 # Beta calculation
                 covariance = np.cov(returns, benchmark_returns)[0, 1]

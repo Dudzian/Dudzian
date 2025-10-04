@@ -1,0 +1,178 @@
+﻿# backtest/preset_store.py
+from __future__ import annotations
+
+import json
+import logging
+import os
+import threading
+import time
+from dataclasses import dataclass, asdict, field
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class Preset:
+    """
+    Pojedynczy preset strategii (z metrykami).
+    - params: dowolny słownik hiperparametrów strategii
+    - metrics: np. {"PF": 1.8, "Expectancy": 0.003, "MaxDD": -0.12}
+    """
+    name: str
+    params: Dict[str, Any]
+    metrics: Dict[str, float] = field(default_factory=dict)
+    created_at: float = field(default_factory=time.time)
+    updated_at: float = field(default_factory=time.time)
+
+    def to_json_dict(self) -> Dict[str, Any]:
+        d = asdict(self)
+        # db/JSON friendly: spróbuj zserializować paramy; w razie czego użyj repr()
+        try:
+            json.dumps(d["params"])
+        except TypeError:
+            d["params"] = {"__nonserializable__": repr(d["params"])}
+        return d
+
+    @staticmethod
+    def from_json_dict(d: Dict[str, Any]) -> "Preset":
+        return Preset(
+            name=d["name"],
+            params=d.get("params", {}),
+            metrics=d.get("metrics", {}),
+            created_at=d.get("created_at", time.time()),
+            updated_at=d.get("updated_at", d.get("created_at", time.time())),
+        )
+
+
+class PresetStore:
+    """
+    Lekki magazyn presetów z bezpiecznym zapisem do JSON.
+    Domyślna lokalizacja: backtest/presets.json (obok tego pliku).
+    """
+
+    def __init__(self, path: Optional[os.PathLike] = None, autosave: bool = True) -> None:
+        if path is None:
+            path = Path(__file__).with_name("presets.json")
+        self.path = Path(path)
+        self.autosave = autosave
+        self._lock = threading.RLock()
+        self._presets: Dict[str, Preset] = {}
+
+        self._ensure_dir()
+        if self.path.exists():
+            try:
+                self._load()
+            except Exception as e:
+                logger.exception("Nie udało się wczytać %s, startuję z pustym storem.", self.path)
+        else:
+            self._save()  # utwórz pusty plik
+
+    # --------------- public API ---------------
+
+    def save_preset(self, name: str, params: Dict[str, Any], metrics: Optional[Dict[str, float]] = None) -> Preset:
+        with self._lock:
+            p = Preset(name=name, params=params, metrics=metrics or {})
+            self._presets[name] = p
+            if self.autosave:
+                self._save()
+            return p
+
+    def upsert(self, preset: Preset) -> None:
+        with self._lock:
+            preset.updated_at = time.time()
+            self._presets[preset.name] = preset
+            if self.autosave:
+                self._save()
+
+    def get_preset(self, name: str) -> Optional[Preset]:
+        with self._lock:
+            return self._presets.get(name)
+
+    def delete_preset(self, name: str) -> bool:
+        with self._lock:
+            existed = name in self._presets
+            if existed:
+                del self._presets[name]
+                if self.autosave:
+                    self._save()
+            return existed
+
+    def list_presets(self) -> List[Preset]:
+        with self._lock:
+            return sorted(self._presets.values(), key=lambda p: (p.created_at, p.name))
+
+    def best_preset(
+        self,
+        metric: str,
+        *,
+        higher_is_better: bool = True,
+        only_with_metric: bool = True,
+    ) -> Optional[Preset]:
+        """
+        Zwraca preset o najlepszej wartości metryki.
+        """
+        with self._lock:
+            items = self._presets.values()
+            if only_with_metric:
+                items = [p for p in list(items) if metric in p.metrics]
+            if not items:
+                return None
+            key_fn = (lambda p: p.metrics.get(metric, float("-inf"))) if higher_is_better else (
+                lambda p: p.metrics.get(metric, float("inf"))
+            )
+            return max(items, key=key_fn) if higher_is_better else min(items, key=key_fn)
+
+    def import_many(self, presets: Iterable[Preset]) -> int:
+        cnt = 0
+        with self._lock:
+            for p in presets:
+                self._presets[p.name] = p
+                cnt += 1
+            if self.autosave:
+                self._save()
+        return cnt
+
+    # --------------- persistence ---------------
+
+    def _ensure_dir(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+
+    def _load(self) -> None:
+        with self._lock:
+            if not self.path.exists():
+                self._presets = {}
+                return
+            with self.path.open("r", encoding="utf-8") as f:
+                raw = json.load(f)
+            items = raw.get("presets", []) if isinstance(raw, dict) else raw
+            self._presets = {d["name"]: Preset.from_json_dict(d) for d in items if "name" in d}
+            logger.debug("Wczytano %d presetów z %s", len(self._presets), self.path)
+
+    def _save(self) -> None:
+        with self._lock:
+            tmp = self.path.with_suffix(self.path.suffix + ".tmp")
+            data = {"presets": [p.to_json_dict() for p in self._presets.values()]}
+            with tmp.open("w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(tmp, self.path)  # atomic on Windows/Unix
+
+    # --------------- helpers ---------------
+
+    def to_dict(self) -> Dict[str, Any]:
+        with self._lock:
+            return {
+                "path": str(self.path),
+                "count": len(self._presets),
+                "presets": [p.to_json_dict() for p in self._presets.values()],
+            }
+
+
+# Szybki test ręczny (odpal: python -m backtest.preset_store)
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    store = PresetStore()
+    store.save_preset("example", {"ma_fast": 9, "ma_slow": 21}, {"PF": 1.7, "Expectancy": 0.002})
+    print(f"count={len(store.list_presets())} best PF={store.best_preset('PF').name if store.best_preset('PF') else None}")
+

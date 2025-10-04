@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 Autotune: per-symbol uruchamia backtest.optimize, zrzuca best_preset.json do presets/live/<SYMBOL>__<TF>.json,
 opcjonalnie odpala backtest.runner na tych parametrach i generuje prosty raport (equity/drawdown).
@@ -68,8 +68,8 @@ def _newest_best_preset(after_ts: float | None = None) -> Path | None:
 
 def _load_json(path: Path) -> Dict[str, Any]:
     with path.open("r", encoding="utf-8") as f:
-        return json.load(f)
-
+        from typing import Dict, Any, cast
+        return cast(Dict[str, Any], json.load(f))
 def _save_json(path: Path, data: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as f:
@@ -286,3 +286,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

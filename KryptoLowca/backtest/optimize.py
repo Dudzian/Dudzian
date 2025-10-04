@@ -18,8 +18,8 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from KryptoLowca.managers.exchange_manager import ExchangeManager
-from backtest.engine import BacktestEngine, BacktestConfig, StrategyParams, EntryParams, ExitParams, TradeRecord
-from backtest.metrics import compute_metrics, to_dict
+from KryptoLowca.backtest.engine import BacktestEngine, BacktestConfig, StrategyParams, EntryParams, ExitParams, TradeRecord
+from KryptoLowca.backtest.metrics import compute_metrics, to_dict
 
 
 DEFAULT_SYMBOLS = ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
