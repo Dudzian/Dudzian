@@ -68,6 +68,7 @@ class EnvironmentConfig:
     forbidden_permissions: Sequence[str] = field(default_factory=tuple)
     alert_throttle: AlertThrottleConfig | None = None
     alert_audit: AlertAuditConfig | None = None
+    data_quality: EnvironmentDataQualityConfig | None = None
     decision_journal: DecisionJournalConfig | None = None
     default_strategy: str | None = None
     default_controller: str | None = None

@@ -205,6 +205,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         "summary": summary_payload,
         "status": status_token,
     }
+    if threshold_payload is not None:
+        payload["threshold_evaluation"] = threshold_payload
+        payload["threshold_issues"] = list(threshold_issues)
 
     serialized = json.dumps(payload, ensure_ascii=False, indent=2)
 
@@ -264,7 +267,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             print("Brak problemów z pokryciem danych")
 
-    return 0 if not issues else 1
+    return 0 if not issues and not threshold_issues else 1
 
 
 if __name__ == "__main__":  # pragma: no cover - wejście CLI

@@ -10,9 +10,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
-from bot_core.alerts import AlertMessage, DefaultAlertRouter
+from bot_core.alerts import AlertMessage, DefaultAlertRouter, build_coverage_alert_context
 from bot_core.config.loader import load_core_config
-from bot_core.config.models import CoreConfig, EnvironmentConfig, InstrumentUniverseConfig
+from bot_core.config.models import (
+    CoreConfig,
+    EnvironmentConfig,
+    EnvironmentDataQualityConfig,
+    InstrumentUniverseConfig,
+)
 from bot_core.data.ohlcv import (
     BackfillSummary,
     CachedOHLCVSource,
@@ -271,6 +276,7 @@ def _report_manifest_health(
     exchange_name: str,
     environment_name: str,
     alert_router: DefaultAlertRouter | None,
+    data_quality: EnvironmentDataQualityConfig | None,
     as_of: datetime | None = None,
     output_format: str | None = None,
 ) -> None:
@@ -350,6 +356,21 @@ def _report_manifest_health(
             entry.last_timestamp_iso or "-",
         )
 
+    if threshold_result.thresholds:
+        _LOGGER.info(
+            "Progi jakości danych %s/%s – %s",
+            environment_name,
+            exchange_name,
+            threshold_result.thresholds,
+        )
+    if threshold_issues:
+        _LOGGER.warning(
+            "Przekroczone progi jakości danych %s/%s – %s",
+            environment_name,
+            exchange_name,
+            threshold_issues,
+        )
+
     if not alert_router:
         return
 
@@ -398,6 +419,10 @@ def _report_manifest_health(
         lines.append("Szczegóły w logach backfillu oraz pliku manifestu.")
         return "\n".join(lines)
 
+    coverage_context = build_coverage_alert_context(
+        summary=coverage_summary,
+        threshold_result=threshold_result,
+    )
     context = {
         "environment": environment_name,
         "exchange": exchange_name,
@@ -424,6 +449,7 @@ def _report_manifest_health(
                 context=context,
             )
         )
+        alert_sent = True
 
     if warning_statuses:
         alert_router.dispatch(
@@ -432,6 +458,21 @@ def _report_manifest_health(
                 title=f"Ostrzeżenia w manifeście OHLCV ({environment_name})",
                 body=_format_alert_body(warning_statuses),
                 severity="warning",
+                context=context,
+            )
+        )
+        alert_sent = True
+
+    if not alert_sent and threshold_issues:
+        severity = "warning"
+        if any(issue.startswith("ok_ratio_below_threshold") for issue in threshold_issues):
+            severity = "critical"
+        alert_router.dispatch(
+            AlertMessage(
+                category="data.ohlcv",
+                title=f"Alert progów jakości danych OHLCV ({environment_name})",
+                body=_format_alert_body((), threshold_result),
+                severity=severity,
                 context=context,
             )
         )
@@ -739,6 +780,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         exchange_name=environment.exchange,
         environment_name=environment.name,
         alert_router=alert_router,
+        data_quality=getattr(environment, "data_quality", None),
         as_of=datetime.fromtimestamp(now_ts / 1000, tz=timezone.utc),
         output_format=manifest_format,
     )

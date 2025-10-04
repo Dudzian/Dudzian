@@ -311,40 +311,14 @@ def _coverage_payload(
     summary_payload["by_interval"] = _breakdown_by_interval(statuses)
     summary_payload["by_symbol"] = _breakdown_by_symbol(statuses)
 
-    thresholds: dict[str, float] = {}
-    worst_gap = summary_payload.get("worst_gap") if isinstance(summary_payload, Mapping) else None
-
-    if max_gap_minutes is not None:
-        thresholds["max_gap_minutes"] = float(max_gap_minutes)
-        if isinstance(worst_gap, Mapping):
-            try:
-                worst_gap_minutes = float(worst_gap.get("gap_minutes", 0.0))
-            except (TypeError, ValueError):
-                worst_gap_minutes = 0.0
-            if worst_gap_minutes > float(max_gap_minutes):
-                issues.append(
-                    f"max_gap_exceeded:{worst_gap_minutes}>{float(max_gap_minutes)}"
-                )
-
-    ok_ratio_value: float | None = None
-    if min_ok_ratio is not None:
-        thresholds["min_ok_ratio"] = float(min_ok_ratio)
-        ok_ratio = summary_payload.get("ok_ratio")
-        if isinstance(ok_ratio, (int, float)):
-            ok_ratio_value = float(ok_ratio)
-        else:
-            try:
-                ok_ratio_value = float(ok_ratio) if ok_ratio is not None else None
-            except (TypeError, ValueError):
-                ok_ratio_value = None
-        if ok_ratio_value is not None and ok_ratio_value < float(min_ok_ratio):
-            issues.append(
-                f"ok_ratio_below_threshold:{ok_ratio_value:.4f}<{float(min_ok_ratio):.4f}"
-            )
-        elif ok_ratio_value is None and float(min_ok_ratio) > 0:
-            total_entries = summary_payload.get("total")
-            if isinstance(total_entries, (int, float)) and float(total_entries) <= 0:
-                issues.append("manifest_empty_for_threshold")
+    threshold_result = evaluate_summary_thresholds(
+        summary_payload,
+        max_gap_minutes=max_gap_minutes,
+        min_ok_ratio=min_ok_ratio,
+    )
+    issues.extend(threshold_result.issues)
+    thresholds = dict(threshold_result.thresholds)
+    observed = {key: value for key, value in threshold_result.observed.items() if value is not None}
 
     status = "error" if issues else summary_payload.get("status", "ok")
     payload: dict[str, object] = {
@@ -353,6 +327,8 @@ def _coverage_payload(
         "summary": summary_payload,
         "thresholds": thresholds,
     }
+    if observed:
+        payload["threshold_observed"] = observed
     return payload
 
 
