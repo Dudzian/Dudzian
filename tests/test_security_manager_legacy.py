@@ -67,13 +67,14 @@ def test_load_exchange_credentials_supports_keyid_alias() -> None:
 
 
 def test_load_exchange_credentials_missing_environment_defaults_to_expected() -> None:
-    manager = _manager_with(
-        {
-            "api_key": "legacy-key",
-            "api_secret": "legacy-secret",
-            "permissions": ["TRADE"],
-        }
-    )
+    payload: dict[str, object] = {
+        "api_key": "legacy-key",
+        "api_secret": "legacy-secret",
+        "permissions": ["TRADE"],
+    }
+    assert "environment" not in payload  # sanity check – środowisko nie jest zapisane w sekrecie
+
+    manager = _manager_with(payload)
 
     creds = manager.load_exchange_credentials(
         "binance_paper_trading",
