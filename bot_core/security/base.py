@@ -80,7 +80,10 @@ class SecretManager:
             )
 
         try:
-            payload = self._deserialize(raw_value, expected_environment=expected_environment)
+            payload = self._deserialize(
+                raw_value,
+                expected_environment=expected_environment,
+            )
         except ValueError as exc:  # pragma: no cover - ochrona przed zepsutymi danymi
             raise SecretStorageError(
                 f"Sekret '{storage_key}' ma niepoprawny format – usuń go i zapisz ponownie."
@@ -225,11 +228,10 @@ class SecretManager:
                     raise ValueError(
                         f"nieobsługiwane środowisko w sekrecie: {environment_value}"
                     ) from exc
-
-        if environment is None:
-            if expected_environment is None:
-                raise ValueError("sekret nie zawiera pola 'environment'")
+        elif expected_environment is not None:
             environment = expected_environment
+        else:
+            raise ValueError("sekret nie zawiera pola 'environment'")
 
         return SecretPayload(
             key_id=str(key_id),
