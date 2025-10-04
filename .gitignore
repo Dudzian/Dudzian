@@ -8,3 +8,4 @@ env/
 .coverage
 coverage.xml
 env.example
+env.example
