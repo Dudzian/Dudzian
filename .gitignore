@@ -7,3 +7,4 @@ env/
 .venv/
 .coverage
 coverage.xml
+env.example
