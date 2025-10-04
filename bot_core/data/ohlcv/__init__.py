@@ -6,10 +6,8 @@ from bot_core.data.ohlcv.cache import CachedOHLCVSource, PublicAPIDataSource
 from bot_core.data.ohlcv.coverage_check import (
     CoverageStatus,
     CoverageSummary,
-    SummaryThresholdResult,
     coerce_summary_mapping,
     evaluate_coverage,
-    evaluate_summary_thresholds,
     summarize_coverage,
     summarize_issues,
 )
@@ -32,7 +30,6 @@ __all__ = [
     "CachedOHLCVSource",
     "CoverageStatus",
     "CoverageSummary",
-    "SummaryThresholdResult",
     "coerce_summary_mapping",
     "DataGapIncidentTracker",
     "GapAlertPolicy",
@@ -42,7 +39,6 @@ __all__ = [
     "ParquetCacheStorage",
     "PublicAPIDataSource",
     "evaluate_coverage",
-    "evaluate_summary_thresholds",
     "summarize_coverage",
     "generate_manifest_report",
     "summarize_status",

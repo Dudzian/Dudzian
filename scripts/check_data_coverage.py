@@ -13,10 +13,8 @@ from bot_core.data.intervals import normalize_interval_token as _normalize_inter
 from bot_core.data.ohlcv import (
     CoverageStatus,
     CoverageSummary,
-    SummaryThresholdResult,
     coerce_summary_mapping,
     evaluate_coverage,
-    evaluate_summary_thresholds,
     summarize_coverage,
     summarize_issues,
 )
@@ -196,30 +194,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     issues = summarize_issues(statuses)
     summary_payload = coerce_summary_mapping(summarize_coverage(statuses))
-
-    threshold_payload: Mapping[str, object] | None = None
-    threshold_issues: tuple[str, ...] = ()
-
-    data_quality = getattr(environment, "data_quality", None)
-    if data_quality is not None:
-        max_gap = getattr(data_quality, "max_gap_minutes", None)
-        min_ok_ratio = getattr(data_quality, "min_ok_ratio", None)
-        if max_gap is not None or min_ok_ratio is not None:
-            threshold_result: SummaryThresholdResult = evaluate_summary_thresholds(
-                summary_payload,
-                max_gap_minutes=max_gap,
-                min_ok_ratio=min_ok_ratio,
-            )
-            threshold_payload = threshold_result.to_mapping()
-            threshold_issues = threshold_result.issues
-
-    summary_status = str(summary_payload.get("status") or "unknown")
-    if issues or threshold_issues:
-        status_token = "error"
-    elif summary_status != "unknown":
-        status_token = summary_status
-    else:
-        status_token = "ok"
+    status_token = str(summary_payload.get("status") or ("ok" if not issues else "error"))
     payload = {
         "environment": environment.name,
         "exchange": environment.exchange,
@@ -258,25 +233,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             "Podsumowanie: status={status} ok={ok}/{total} warning={warning} "
             "error={error} stale_entries={stale_entries}".format(**summary)
         )
-        if threshold_payload is not None:
-            thresholds = threshold_payload.get("thresholds") or {}
-            observed = threshold_payload.get("observed") or {}
-            issues_list = list(threshold_issues)
-            print("Progi jakości danych:")
-            if thresholds:
-                for name, value in thresholds.items():
-                    print(f" * {name}={value}")
-            else:
-                print(" * brak skonfigurowanych progów")
-            if observed:
-                observed_lines = ", ".join(f"{name}={value}" for name, value in observed.items())
-                print(f"Wartości obserwowane: {observed_lines}")
-            if issues_list:
-                print("Naruszenia progów:")
-                for issue in issues_list:
-                    print(f" * {issue}")
-            else:
-                print("Brak naruszeń progów jakości danych")
         issue_counts = summary.get("issue_counts") or {}
         issue_examples = summary.get("issue_examples") or {}
         if issue_counts:

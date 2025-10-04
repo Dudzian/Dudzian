@@ -271,88 +271,6 @@ def summarize_coverage(statuses: Sequence[CoverageStatus]) -> CoverageSummary:
     return summary
 
 
-@dataclass(slots=True)
-class SummaryThresholdResult:
-    """Opisuje wynik porównania podsumowania z progami jakości."""
-
-    issues: tuple[str, ...]
-    thresholds: Mapping[str, float]
-    observed: Mapping[str, float | None]
-
-    def to_mapping(self) -> dict[str, object]:
-        return {
-            "issues": list(self.issues),
-            "thresholds": dict(self.thresholds),
-            "observed": dict(self.observed),
-        }
-
-
-def _coerce_float(value: object | None) -> float | None:
-    if value in (None, ""):
-        return None
-    try:
-        return float(value)  # type: ignore[return-value]
-    except (TypeError, ValueError):
-        return None
-
-
-def evaluate_summary_thresholds(
-    summary: CoverageSummary | Mapping[str, object] | None,
-    *,
-    max_gap_minutes: float | None = None,
-    min_ok_ratio: float | None = None,
-) -> SummaryThresholdResult:
-    """Porównuje zagregowane metryki pokrycia z progami jakości."""
-
-    normalized = coerce_summary_mapping(summary)
-
-    thresholds: dict[str, float] = {}
-    observed: dict[str, float | None] = {}
-    issues: list[str] = []
-
-    if max_gap_minutes is not None:
-        try:
-            threshold_gap = float(max_gap_minutes)
-        except (TypeError, ValueError):
-            threshold_gap = None
-        if threshold_gap is not None:
-            thresholds["max_gap_minutes"] = threshold_gap
-            worst_gap = normalized.get("worst_gap")
-            gap_minutes = None
-            if isinstance(worst_gap, Mapping):
-                gap_minutes = _coerce_float(worst_gap.get("gap_minutes"))
-            observed["worst_gap_minutes"] = gap_minutes
-            if gap_minutes is not None and gap_minutes > threshold_gap:
-                issues.append(f"max_gap_exceeded:{gap_minutes}>{threshold_gap}")
-
-    ok_ratio_value = _coerce_float(normalized.get("ok_ratio"))
-    observed["ok_ratio"] = ok_ratio_value
-    total_entries = _coerce_float(normalized.get("total"))
-    if total_entries is not None:
-        observed.setdefault("total_entries", total_entries)
-
-    if min_ok_ratio is not None:
-        try:
-            threshold_ratio = float(min_ok_ratio)
-        except (TypeError, ValueError):
-            threshold_ratio = None
-        if threshold_ratio is not None:
-            thresholds["min_ok_ratio"] = threshold_ratio
-            if ok_ratio_value is not None and ok_ratio_value < threshold_ratio:
-                issues.append(
-                    f"ok_ratio_below_threshold:{ok_ratio_value:.4f}<{threshold_ratio:.4f}"
-                )
-            elif ok_ratio_value is None and threshold_ratio > 0:
-                if total_entries is not None and total_entries <= 0:
-                    issues.append("manifest_empty_for_threshold")
-
-    return SummaryThresholdResult(
-        issues=tuple(issues),
-        thresholds=thresholds,
-        observed=observed,
-    )
-
-
 def coerce_summary_mapping(
     summary: CoverageSummary | Mapping[str, object] | None,
 ) -> dict[str, object]:
@@ -405,9 +323,7 @@ def coerce_summary_mapping(
 __all__ = [
     "CoverageStatus",
     "CoverageSummary",
-    "SummaryThresholdResult",
     "coerce_summary_mapping",
-    "evaluate_summary_thresholds",
     "evaluate_coverage",
     "summarize_coverage",
     "summarize_issues",
