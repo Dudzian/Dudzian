@@ -6,11 +6,18 @@ import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Sequence
+from typing import Mapping, Sequence
 
 from bot_core.config import load_core_config
 from bot_core.data.intervals import normalize_interval_token as _normalize_interval_token
-from bot_core.data.ohlcv import CoverageStatus, evaluate_coverage, summarize_issues
+from bot_core.data.ohlcv import (
+    CoverageStatus,
+    CoverageSummary,
+    coerce_summary_mapping,
+    evaluate_coverage,
+    summarize_coverage,
+    summarize_issues,
+)
 
 
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
@@ -186,6 +193,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 2
 
     issues = summarize_issues(statuses)
+    summary_payload = coerce_summary_mapping(summarize_coverage(statuses))
+    status_token = str(summary_payload.get("status") or ("ok" if not issues else "error"))
     payload = {
         "environment": environment.name,
         "exchange": environment.exchange,
@@ -193,7 +202,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         "as_of": as_of.isoformat(),
         "entries": [_format_status(status) for status in statuses],
         "issues": issues,
-        "status": "ok" if not issues else "error",
+        "summary": summary_payload,
+        "status": status_token,
     }
 
     serialized = json.dumps(payload, ensure_ascii=False, indent=2)
@@ -210,10 +220,42 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Manifest: {payload['manifest_path']}")
         print(f"Środowisko: {payload['environment']} ({payload['exchange']})")
         print(f"Ocena na: {payload['as_of']}")
+        summary = payload["summary"]
         for entry in payload["entries"]:
             print(
                 " - {symbol} {interval}: status={status} row_count={row_count} "
                 "required={required_rows} gap={gap_minutes}".format(**entry)
+            )
+        print(
+            "Podsumowanie: status={status} ok={ok}/{total} warning={warning} "
+            "error={error} stale_entries={stale_entries}".format(**summary)
+        )
+        issue_counts = summary.get("issue_counts") or {}
+        issue_examples = summary.get("issue_examples") or {}
+        if issue_counts:
+            print("Kody problemów:")
+            for code in sorted(issue_counts):
+                count = issue_counts[code]
+                example = issue_examples.get(code)
+                if example:
+                    print(f" * {code}: count={count} example={example}")
+                else:
+                    print(f" * {code}: count={count}")
+        worst_gap = summary.get("worst_gap")
+        if isinstance(worst_gap, Mapping):
+            details = {
+                "symbol": worst_gap.get("symbol", "?"),
+                "interval": worst_gap.get("interval", "?"),
+                "gap": worst_gap.get("gap_minutes"),
+                "threshold": worst_gap.get("threshold_minutes"),
+                "manifest_status": worst_gap.get("manifest_status"),
+                "last": worst_gap.get("last_timestamp_iso"),
+            }
+            print(
+                "Największa luka: {symbol} {interval} gap={gap}min "
+                "threshold={threshold} manifest_status={manifest_status} last={last}".format(
+                    **details
+                )
             )
         if issues:
             print("Problemy:")

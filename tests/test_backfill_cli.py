@@ -12,7 +12,7 @@ from bot_core.config.models import (
     InstrumentConfig,
     InstrumentUniverseConfig,
 )
-from bot_core.data.ohlcv import ManifestEntry, SQLiteCacheStorage
+from bot_core.data.ohlcv import CoverageStatus, ManifestEntry, SQLiteCacheStorage
 from bot_core.exchanges.base import Environment
 from bot_core.exchanges.binance.futures import BinanceFuturesAdapter
 from bot_core.exchanges.binance.spot import BinanceSpotAdapter
@@ -217,7 +217,7 @@ def test_report_manifest_health_does_not_alert_when_everything_ok(tmp_path):
 
     metadata = storage.metadata()
     metadata["last_timestamp::BTCUSDT::1h"] = str(int((as_of - timedelta(minutes=30)).timestamp() * 1000))
-    metadata["row_count::BTCUSDT::1h"] = "120"
+    metadata["row_count::BTCUSDT::1h"] = "720"
 
     backfill._report_manifest_health(
         manifest_path=manifest,
@@ -340,7 +340,23 @@ def test_report_manifest_health_prints_table(monkeypatch, tmp_path, capsys):
         ),
     ]
 
-    monkeypatch.setattr(backfill, "generate_manifest_report", lambda **_: entries)
+    def _status(entry: ManifestEntry) -> CoverageStatus:
+        issues = ()
+        if entry.status != "ok":
+            issues = (f"manifest_status:{entry.status}",)
+        return CoverageStatus(
+            symbol=entry.symbol,
+            interval=entry.interval,
+            manifest_entry=entry,
+            required_rows=None,
+            issues=issues,
+        )
+
+    monkeypatch.setattr(
+        backfill,
+        "evaluate_coverage",
+        lambda **_: [_status(entry) for entry in entries],
+    )
 
     manifest = tmp_path / "manifest.sqlite"
     manifest.touch()
@@ -376,7 +392,20 @@ def test_report_manifest_health_prints_json(monkeypatch, tmp_path, capsys):
         )
     ]
 
-    monkeypatch.setattr(backfill, "generate_manifest_report", lambda **_: entries)
+    def _status(entry: ManifestEntry) -> CoverageStatus:
+        return CoverageStatus(
+            symbol=entry.symbol,
+            interval=entry.interval,
+            manifest_entry=entry,
+            required_rows=None,
+            issues=(),
+        )
+
+    monkeypatch.setattr(
+        backfill,
+        "evaluate_coverage",
+        lambda **_: [_status(entry) for entry in entries],
+    )
 
     manifest = tmp_path / "manifest.sqlite"
     manifest.touch()
@@ -397,4 +426,6 @@ def test_report_manifest_health_prints_json(monkeypatch, tmp_path, capsys):
     assert payload["environment"] == "binance_paper"
     assert payload["exchange"] == "binance_spot"
     assert payload["summary"]["ok"] == 1
+    assert payload["summary"]["manifest_status_counts"]["ok"] == 1
+    assert payload["summary"]["issue_counts"] == {}
     assert payload["entries"][0]["symbol"] == "BTCUSDT"
