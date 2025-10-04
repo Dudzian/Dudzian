@@ -18,6 +18,7 @@ Dokument stanowi append-only rejestr zdarzeń operacyjnych związanych z trybem 
 | S-TEST-0001 | YYYY-MM-DDThh:mm:ssZ | imię nazwisko | binance_paper | 2024-01-01 → 2024-02-15 | `/tmp/daily_trend_smoke_xxx/summary.json` | `<hash>` | OK | „Smoke test sanity” |
  | S-0001 | 2025-09-30T16:53:03Z | CI Agent | binance_paper | 2024-01-01 → 2024-02-15 | `n/a` | `n/a` | ERROR (403 Binance API) | Smoke test przerwany – brak dostępu do API Binance (403 Forbidden) |
 | S-0002 | 2025-09-30T17:19:30Z | CI Agent | binance_paper | 2024-01-01 → 2024-02-15 | `/tmp/daily_trend_smoke_jk_rha7g/summary.json` | `c694ac951e24fb214fe8b454b4abb9582d94f59e25ed05f697035d2bff713f87` | WARN (alert channels) | Smoke test ukończony na cache offline; wysyłka alertów nieudana (403 Telegram, DNS e-mail). |
+| S-0003 | 2025-10-04T14:05:37Z | CI Agent | binance_paper | 2024-01-01 → 2024-02-15 | `n/a` | `58757da67489ea9ccbc59d93c0c944e8c78b8ee49b5de62d6d51a138b0049113` | OK | Smoke test zakończony pozytywnie (hash potwierdzający). |
 ## Sekcja C – Incydenty i alerty krytyczne
 | ID | Data (UTC) | Operator | Kod alertu | Opis | Działanie naprawcze | Status |
 |----|------------|----------|------------|------|---------------------|--------|
