@@ -79,23 +79,6 @@ def _parse_as_of(arg: str | None) -> datetime:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
-
-
-def _format_status(status: CoverageStatus) -> dict[str, object]:
-    entry = status.manifest_entry
-    return {
-        "symbol": status.symbol,
-        "interval": status.interval,
-        "status": status.status,
-        "manifest_status": entry.status,
-        "row_count": entry.row_count,
-        "required_rows": status.required_rows,
-        "last_timestamp_iso": entry.last_timestamp_iso,
-        "gap_minutes": entry.gap_minutes,
-        "issues": list(status.issues),
-    }
-
-
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
     config = load_core_config(Path(args.config))

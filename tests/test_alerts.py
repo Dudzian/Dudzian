@@ -6,7 +6,7 @@ import json
 import logging
 from email.message import EmailMessage
 from pathlib import Path
-from typing import List
+from typing import List, Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from urllib import request
 import sys
@@ -35,6 +35,12 @@ from bot_core.alerts import (
 from bot_core.alerts.base import AlertChannel
 from bot_core.data.ohlcv import SummaryThresholdResult, coerce_summary_mapping
 from bot_core.observability.metrics import MetricsRegistry
+from tests.test_check_data_coverage_script import (  # noqa: E402
+    _generate_rows,
+    _last_row_iso,
+    _write_cache,
+    _write_config,
+)
 
 
 class DummyChannel(AlertChannel):

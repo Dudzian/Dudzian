@@ -4,6 +4,7 @@ from bot_core.data.ohlcv.audit import GapAuditLogger, GapAuditRecord, JSONLGapAu
 from bot_core.data.ohlcv.backfill import BackfillSummary, OHLCVBackfillService
 from bot_core.data.ohlcv.cache import CachedOHLCVSource, PublicAPIDataSource
 from bot_core.data.ohlcv.coverage_check import (
+    CoverageReportPayload,
     CoverageStatus,
     CoverageSummary,
     coerce_summary_mapping,
@@ -28,6 +29,7 @@ __all__ = [
     "GapAuditRecord",
     "JSONLGapAuditLogger",
     "CachedOHLCVSource",
+    "CoverageReportPayload",
     "CoverageStatus",
     "CoverageSummary",
     "coerce_summary_mapping",

@@ -8,7 +8,11 @@ from math import ceil, isnan
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
-from bot_core.config.models import InstrumentBackfillWindow, InstrumentUniverseConfig
+from bot_core.config.models import (
+    EnvironmentDataQualityConfig,
+    InstrumentBackfillWindow,
+    InstrumentUniverseConfig,
+)
 from bot_core.data.ohlcv.manifest_report import ManifestEntry, generate_manifest_report
 
 
