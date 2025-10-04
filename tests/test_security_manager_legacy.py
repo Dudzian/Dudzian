@@ -67,11 +67,20 @@ def test_load_exchange_credentials_supports_keyid_alias() -> None:
 
 
 def test_load_exchange_credentials_missing_environment_defaults_to_expected() -> None:
-    manager = _manager_with({"api_key": "abc"})
+    manager = _manager_with(
+        {
+            "api_key": "legacy-key",
+            "api_secret": "legacy-secret",
+            "permissions": ["TRADE"],
+        }
+    )
 
     creds = manager.load_exchange_credentials(
         "binance_paper_trading",
         expected_environment=Environment.PAPER,
     )
 
+    assert creds.key_id == "legacy-key"
+    assert creds.secret == "legacy-secret"
+    assert creds.permissions == ("trade",)
     assert creds.environment is Environment.PAPER
