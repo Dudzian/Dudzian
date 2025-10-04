@@ -79,10 +79,12 @@ class SecretManager:
                 f"Brak sekretu '{storage_key}'. Dodaj klucze przy użyciu narzędzia konfiguracyjnego."
             )
 
+        environment = expected_environment
+
         try:
             payload = self._deserialize(
                 raw_value,
-                expected_environment=expected_environment,
+                expected_environment=environment,
             )
         except ValueError as exc:  # pragma: no cover - ochrona przed zepsutymi danymi
             raise SecretStorageError(
@@ -228,10 +230,11 @@ class SecretManager:
                     raise ValueError(
                         f"nieobsługiwane środowisko w sekrecie: {environment_value}"
                     ) from exc
-        elif expected_environment is not None:
+
+        if environment is None:
+            if expected_environment is None:
+                raise ValueError("sekret nie zawiera pola 'environment'")
             environment = expected_environment
-        else:
-            raise ValueError("sekret nie zawiera pola 'environment'")
 
         return SecretPayload(
             key_id=str(key_id),
