@@ -85,3 +85,23 @@ def test_load_exchange_credentials_missing_environment_defaults_to_expected() ->
     assert creds.secret == "legacy-secret"
     assert creds.permissions == ("trade",)
     assert creds.environment is Environment.PAPER
+
+
+def test_load_exchange_credentials_missing_environment_defaults_to_expected_live() -> None:
+    manager = _manager_with(
+        {
+            "key_id": "live-id",
+            "secret": "sekret-live",
+            "permissions": ["withdraw"],
+        }
+    )
+
+    creds = manager.load_exchange_credentials(
+        "binance_live_trading",
+        expected_environment=Environment.LIVE,
+    )
+
+    assert creds.key_id == "live-id"
+    assert creds.secret == "sekret-live"
+    assert creds.permissions == ("withdraw",)
+    assert creds.environment is Environment.LIVE
