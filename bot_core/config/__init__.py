@@ -10,6 +10,8 @@ from bot_core.config.validation import (
 from bot_core.config.models import (
     AlertAuditConfig,
     CoreConfig,
+    CoverageMonitorTargetConfig,
+    CoverageMonitoringConfig,
     EmailChannelSettings,
     EnvironmentConfig,
     EnvironmentDataQualityConfig,
@@ -25,6 +27,8 @@ from bot_core.config.models import (
 
 __all__ = [
     "CoreConfig",
+    "CoverageMonitorTargetConfig",
+    "CoverageMonitoringConfig",
     "EnvironmentConfig",
     "EnvironmentDataQualityConfig",
     "EmailChannelSettings",

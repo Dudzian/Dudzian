@@ -10,6 +10,8 @@ import yaml
 from bot_core.config.models import (
     AlertThrottleConfig,
     CoreConfig,
+    CoverageMonitorTargetConfig,
+    CoverageMonitoringConfig,
     EmailChannelSettings,
     EnvironmentConfig,
     EnvironmentDataQualityConfig,
@@ -391,6 +393,53 @@ def _load_reporting(entry: Optional[Mapping[str, Any]]):
     )
 
 
+def _load_coverage_monitoring(
+    entry: Optional[Mapping[str, Any]]
+) -> CoverageMonitoringConfig | None:
+    if not entry:
+        return None
+
+    enabled = bool(entry.get("enabled", True))
+    default_dispatch = bool(entry.get("default_dispatch", True))
+    default_category_raw = entry.get("default_category", "data.ohlcv")
+    if default_category_raw in (None, ""):
+        default_category = "data.ohlcv"
+    else:
+        default_category = str(default_category_raw)
+
+    targets_raw = entry.get("targets") or ()
+    targets: list[CoverageMonitorTargetConfig] = []
+    for target_entry in targets_raw:
+        if not isinstance(target_entry, Mapping):
+            continue
+        environment_value = target_entry.get("environment")
+        if not environment_value:
+            continue
+        dispatch_value = target_entry.get("dispatch")
+        dispatch_bool: bool | None
+        if dispatch_value is None:
+            dispatch_bool = None
+        else:
+            dispatch_bool = bool(dispatch_value)
+        category_value = target_entry.get("category")
+        severity_value = target_entry.get("severity_override")
+        targets.append(
+            CoverageMonitorTargetConfig(
+                environment=str(environment_value),
+                dispatch=dispatch_bool,
+                category=str(category_value) if category_value not in (None, "") else None,
+                severity_override=str(severity_value) if severity_value not in (None, "") else None,
+            )
+        )
+
+    return CoverageMonitoringConfig(
+        enabled=enabled,
+        default_dispatch=default_dispatch,
+        default_category=default_category,
+        targets=tuple(targets),
+    )
+
+
 def load_core_config(path: str | Path) -> CoreConfig:
     """Wczytuje plik YAML i mapuje go na dataclasses."""
     with Path(path).open("r", encoding="utf-8") as handle:
@@ -453,9 +502,23 @@ def load_core_config(path: str | Path) -> CoreConfig:
             stop_loss_atr_multiple=float(entry["stop_loss_atr_multiple"]),
             max_open_positions=int(entry["max_open_positions"]),
             hard_drawdown_pct=float(entry["hard_drawdown_pct"]),
+            data_quality=_load_data_quality(entry.get("data_quality")),
         )
         for name, entry in (raw.get("risk_profiles", {}) or {}).items()
     }
+
+    if risk_profiles:
+        for env in environments.values():
+            if env.data_quality is not None:
+                continue
+            profile = risk_profiles.get(env.risk_profile)
+            if profile is None or profile.data_quality is None:
+                continue
+            profile_quality = profile.data_quality
+            env.data_quality = EnvironmentDataQualityConfig(
+                max_gap_minutes=profile_quality.max_gap_minutes,
+                min_ok_ratio=profile_quality.min_ok_ratio,
+            )
 
     strategies = _load_strategies(raw)
 
@@ -516,6 +579,10 @@ def load_core_config(path: str | Path) -> CoreConfig:
             )
             for name, entry in controllers_raw.items()
         }
+    if _core_has("coverage_monitoring"):
+        core_kwargs["coverage_monitoring"] = _load_coverage_monitoring(
+            raw.get("coverage_monitoring")
+        )
 
     return CoreConfig(**core_kwargs)  # type: ignore[arg-type]
 

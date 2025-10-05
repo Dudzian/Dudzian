@@ -50,6 +50,26 @@ class EnvironmentDataQualityConfig:
 
 
 @dataclass(slots=True)
+class CoverageMonitorTargetConfig:
+    """Definicja środowiska objętego monitoringiem pokrycia danych."""
+
+    environment: str
+    dispatch: bool | None = None
+    category: str | None = None
+    severity_override: str | None = None
+
+
+@dataclass(slots=True)
+class CoverageMonitoringConfig:
+    """Ustawienia globalnego monitoringu pokrycia danych OHLCV."""
+
+    enabled: bool = True
+    default_dispatch: bool = True
+    default_category: str = "data.ohlcv"
+    targets: Sequence[CoverageMonitorTargetConfig] = field(default_factory=tuple)
+
+
+@dataclass(slots=True)
 class EnvironmentConfig:
     """Konfiguracja środowiska (np. live, paper, testnet)."""
 
@@ -68,6 +88,7 @@ class EnvironmentConfig:
     forbidden_permissions: Sequence[str] = field(default_factory=tuple)
     alert_throttle: AlertThrottleConfig | None = None
     alert_audit: AlertAuditConfig | None = None
+    data_quality: EnvironmentDataQualityConfig | None = None
     decision_journal: DecisionJournalConfig | None = None
     default_strategy: str | None = None
     default_controller: str | None = None
@@ -84,6 +105,7 @@ class RiskProfileConfig:
     stop_loss_atr_multiple: float
     max_open_positions: int
     hard_drawdown_pct: float
+    data_quality: EnvironmentDataQualityConfig | None = None
 
 
 # --- Instrumenty / uniwersa --------------------------------------------------
@@ -265,11 +287,14 @@ class CoreConfig:
     whatsapp_channels: Mapping[str, WhatsAppChannelSettings] = field(default_factory=dict)
     messenger_channels: Mapping[str, MessengerChannelSettings] = field(default_factory=dict)
     runtime_controllers: Mapping[str, ControllerRuntimeConfig] = field(default_factory=dict)
+    coverage_monitoring: CoverageMonitoringConfig | None = None
 
 
 __all__ = [
     "EnvironmentConfig",
     "EnvironmentDataQualityConfig",
+    "CoverageMonitorTargetConfig",
+    "CoverageMonitoringConfig",
     "RiskProfileConfig",
     "InstrumentBackfillWindow",
     "InstrumentConfig",

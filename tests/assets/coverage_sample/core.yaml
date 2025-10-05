@@ -1,0 +1,53 @@
+risk_profiles:
+  balanced:
+    max_daily_loss_pct: 0.02
+    max_position_pct: 0.05
+    target_volatility: 0.1
+    max_leverage: 3.0
+    stop_loss_atr_multiple: 1.5
+    max_open_positions: 5
+    hard_drawdown_pct: 0.1
+    data_quality:
+      max_gap_minutes: 1440.0
+      min_ok_ratio: 0.8
+instrument_universes:
+  sample_universe:
+    description: Anonimizowany sample manifestu do testów integracyjnych coverage
+    instruments:
+      BTC_USDT:
+        base_asset: BTC
+        quote_asset: USDT
+        categories:
+        - core
+        exchanges:
+          binance_spot: BTCUSDT
+        backfill:
+        - interval: 1d
+          lookback_days: 30
+      ETH_USDT:
+        base_asset: ETH
+        quote_asset: USDT
+        categories:
+        - core
+        exchanges:
+          binance_spot: ETHUSDT
+        backfill:
+        - interval: 1d
+          lookback_days: 30
+environments:
+  binance_sample:
+    exchange: binance_spot
+    environment: paper
+    keychain_key: binance_spot_paper
+    data_cache_path: tests/assets/coverage_sample
+    risk_profile: balanced
+    alert_channels: []
+    instrument_universe: sample_universe
+    data_quality:
+      max_gap_minutes: 1440.0
+      min_ok_ratio: 0.8
+coverage_monitoring:
+  enabled: true
+  default_dispatch: false
+  targets:
+  - environment: binance_sample
