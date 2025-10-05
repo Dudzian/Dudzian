@@ -31,6 +31,7 @@ from bot_core.data.intervals import (
     interval_to_milliseconds as _interval_to_milliseconds,
     normalize_interval_token as _normalize_interval_token,
 )
+from bot_core.reporting.audit import PaperSmokeJsonSynchronizer
 from bot_core.reporting.upload import SmokeArchiveUploader
 from bot_core.data.ohlcv import evaluate_coverage
 from bot_core.runtime.pipeline import build_daily_trend_pipeline, create_trading_controller
@@ -2026,9 +2027,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
             )
         )
-        upload_cfg = SmokeArchiveUploader.resolve_config(
-            getattr(getattr(pipeline.bootstrap, "core_config", None), "reporting", None)
-        )
+        reporting_cfg = getattr(getattr(pipeline.bootstrap, "core_config", None), "reporting", None)
+        upload_cfg = SmokeArchiveUploader.resolve_config(reporting_cfg)
+        json_sync_cfg = PaperSmokeJsonSynchronizer.resolve_config(reporting_cfg)
 
         if archive_required:
             archive_path = _archive_smoke_report(report_dir)
