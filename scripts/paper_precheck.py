@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import sys
@@ -554,19 +555,32 @@ def _coverage_payload(
     return payload
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    args = _parse_args(argv)
-    config = load_core_config(Path(args.config))
+def run_precheck(
+    *,
+    environment_name: str,
+    config: CoreConfig | None = None,
+    config_path: str | Path | None = None,
+    manifest_path: Path | None = None,
+    as_of: datetime | None = None,
+    symbols: Sequence[str] | None = None,
+    intervals: Sequence[str] | None = None,
+    max_gap_minutes: float | None = None,
+    min_ok_ratio: float | None = None,
+    fail_on_warnings: bool = False,
+    skip_risk_check: bool = False,
+) -> tuple[dict[str, object], int]:
+    """Wykonuje sanitarne kontrole paper_precheck i zwraca payload wraz z kodem zakończenia."""
+
+    if config is None:
+        if config_path is None:
+            raise ValueError("Wymagany jest config lub config_path")
+        config = load_core_config(Path(config_path))
     validation = validate_core_config(config)
 
-    environment = config.environments.get(args.environment)
-    if environment is None:
-        print(f"Nie znaleziono środowiska: {args.environment}", file=sys.stderr)
-        return 2
+    environment = config.environments.get(environment_name)
 
-    manifest_path = Path(args.manifest) if args.manifest else Path(environment.data_cache_path) / "ohlcv_manifest.sqlite"
-
-    as_of = _parse_as_of(args.as_of)
+    resolved_as_of = as_of or datetime.now(timezone.utc)
+    resolved_manifest = manifest_path
 
     coverage_result: Mapping[str, object] | None = None
     coverage_status = "skipped"
@@ -581,11 +595,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         universe = config.instrument_universes.get(environment.instrument_universe)
         if universe is None:
             coverage_warnings.append("universe_not_defined")
-        elif not manifest_path.exists():
+        elif not resolved_manifest.exists():
             coverage_warnings.append("manifest_missing")
         else:
-            max_gap = args.max_gap_minutes
-            min_ok_ratio = args.min_ok_ratio
+            max_gap = max_gap_minutes
+            min_ok = min_ok_ratio
             data_quality = getattr(environment, "data_quality", None)
             if data_quality is not None:
                 if max_gap is None:
@@ -595,27 +609,43 @@ def main(argv: Sequence[str] | None = None) -> int:
                             max_gap = float(candidate)
                         except (TypeError, ValueError):
                             coverage_warnings.append("invalid_max_gap_in_config")
-                if min_ok_ratio is None:
+                if min_ok is None:
                     candidate_ratio = getattr(data_quality, "min_ok_ratio", None)
                     if candidate_ratio is not None:
                         try:
-                            min_ok_ratio = float(candidate_ratio)
+                            min_ok = float(candidate_ratio)
                         except (TypeError, ValueError):
                             coverage_warnings.append("invalid_min_ok_ratio_in_config")
 
-            if min_ok_ratio is not None and not 0 <= float(min_ok_ratio) <= 1:
-                print("--min-ok-ratio musi mieścić się w zakresie 0-1", file=sys.stderr)
-                return 2
+            if min_ok is not None and not 0 <= float(min_ok) <= 1:
+                payload: dict[str, object] = {
+                    "status": "error",
+                    "config": {
+                        "valid": validation.is_valid(),
+                        "errors": list(validation.errors),
+                        "warnings": list(validation.warnings),
+                    },
+                    "coverage": None,
+                    "coverage_warnings": coverage_warnings + ["invalid_min_ok_ratio"],
+                    "risk": None,
+                    "environment": environment.name,
+                    "manifest_path": str(resolved_manifest),
+                    "as_of": resolved_as_of.isoformat(),
+                    "coverage_status": "error",
+                    "risk_status": "skipped",
+                }
+                payload["error_reason"] = "invalid_min_ok_ratio"
+                return payload, 2
 
             coverage_result = _coverage_payload(
-                manifest_path=manifest_path,
+                manifest_path=resolved_manifest,
                 universe=universe,
                 exchange=environment.exchange,
-                as_of=as_of,
-                symbols=args.symbols,
-                intervals=args.intervals,
+                as_of=resolved_as_of,
+                symbols=symbols,
+                intervals=intervals,
                 max_gap_minutes=max_gap,
-                min_ok_ratio=min_ok_ratio,
+                min_ok_ratio=min_ok,
             )
             coverage_status = str(coverage_result.get("status", "unknown"))
 
@@ -641,8 +671,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         "coverage_warnings": coverage_warnings,
         "risk": risk_result,
         "environment": environment.name,
-        "manifest_path": str(manifest_path),
-        "as_of": as_of.isoformat(),
+        "manifest_path": str(resolved_manifest),
+        "as_of": resolved_as_of.isoformat(),
+        "coverage_status": coverage_status,
+        "risk_status": risk_status,
     }
 
     final_status = "ok"
@@ -678,7 +710,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     result_payload["risk_status"] = risk_status
 
     if args.json or args.output:
-        serialized = json.dumps(result_payload, ensure_ascii=False, indent=2)
+        serialized = json.dumps(payload, ensure_ascii=False, indent=2)
         if args.output:
             output_path = Path(args.output)
             output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -687,13 +719,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(serialized)
 
     if not args.json:
-        print(f"Config: {'OK' if validation.is_valid() else 'ERROR'}")
-        if validation.errors:
-            for entry in validation.errors:
-                print(f"  ✖ {entry}")
-        if validation.warnings:
-            for entry in validation.warnings:
-                print(f"  ⚠ {entry}")
+        config_payload = payload.get("config", {}) if isinstance(payload, Mapping) else {}
+        config_valid = bool(config_payload.get("valid"))
+        print(f"Config: {'OK' if config_valid else 'ERROR'}")
+        for entry in config_payload.get("errors", []) or []:
+            print(f"  ✖ {entry}")
+        for entry in config_payload.get("warnings", []) or []:
+            print(f"  ⚠ {entry}")
+
+        coverage_result = payload.get("coverage") if isinstance(payload, Mapping) else None
+        coverage_status = str(payload.get("coverage_status", "skipped"))
+        coverage_warnings = list(payload.get("coverage_warnings", []) or [])
 
         if coverage_result is None:
             print("Pokrycie danych: pominięto (brak manifestu lub uniwersum)")
