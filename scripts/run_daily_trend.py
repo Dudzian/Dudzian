@@ -8,6 +8,7 @@ import os
 import logging
 import re
 import signal
+import subprocess
 import sys
 import shutil
 import tempfile
