@@ -1,12 +1,8 @@
 """Nowa modularna architektura bota handlowego."""
 
-from bot_core.alerts import (
-    AlertChannel,
-    AlertMessage,
-    DEFAULT_SMS_PROVIDERS,
-    SmsProviderConfig,
-    get_sms_provider,
-)
+from importlib import import_module
+from typing import TYPE_CHECKING, Any
+
 from bot_core.config.loader import load_core_config
 from bot_core.config.models import CoreConfig
 from bot_core.exchanges.base import ExchangeAdapter
@@ -15,7 +11,47 @@ from bot_core.security import (
     SecretManager,
     SecretStorageError,
 )
-from bot_core.runtime import BootstrapContext, bootstrap_environment
+
+if TYPE_CHECKING:  # pragma: no cover - wskazówki dla type-checkera
+    from bot_core.alerts import (
+        AlertChannel,
+        AlertMessage,
+        DEFAULT_SMS_PROVIDERS,
+        SmsProviderConfig,
+        get_sms_provider,
+    )
+    from bot_core.runtime import BootstrapContext, bootstrap_environment
+else:
+    AlertChannel = AlertMessage = DEFAULT_SMS_PROVIDERS = SmsProviderConfig = None  # type: ignore
+    BootstrapContext = bootstrap_environment = None  # type: ignore
+
+
+_ALERT_EXPORTS = {
+    "AlertChannel",
+    "AlertMessage",
+    "DEFAULT_SMS_PROVIDERS",
+    "SmsProviderConfig",
+    "get_sms_provider",
+}
+
+_RUNTIME_EXPORTS = {"BootstrapContext", "bootstrap_environment"}
+
+
+def __getattr__(name: str) -> Any:  # pragma: no cover - prosty delegat
+    """Leniwe eksporty modułu alertów, aby unikać błędów importu przy testach."""
+
+    if name in _ALERT_EXPORTS:
+        module = import_module("bot_core.alerts")
+        value = getattr(module, name)
+        globals()[name] = value
+        return value
+    if name in _RUNTIME_EXPORTS:
+        module = import_module("bot_core.runtime")
+        value = getattr(module, name)
+        globals()[name] = value
+        return value
+    raise AttributeError(name)
+
 
 # Observability is optional; expose when available.
 try:  # pragma: no cover - optional dependency
@@ -32,11 +68,11 @@ __all__ = [
     "get_sms_provider",
     "CoreConfig",
     "ExchangeAdapter",
+    "BootstrapContext",
+    "bootstrap_environment",
     "KeyringSecretStorage",
     "SecretManager",
     "SecretStorageError",
-    "BootstrapContext",
-    "bootstrap_environment",
     "load_core_config",
 ]
 
