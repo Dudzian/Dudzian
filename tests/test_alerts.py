@@ -6,7 +6,7 @@ import json
 import logging
 from email.message import EmailMessage
 from pathlib import Path
-from typing import List
+from typing import List, Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from urllib import request
 import sys
@@ -28,11 +28,22 @@ from bot_core.alerts import (
     SignalChannel,
     TelegramChannel,
     WhatsAppChannel,
+    build_coverage_alert_context,
+    build_coverage_alert_message,
+    dispatch_coverage_alert,
+    run_coverage_check_and_alert,
     DEFAULT_SMS_PROVIDERS,
     get_sms_provider,
 )
 from bot_core.alerts.base import AlertChannel
+from bot_core.data.ohlcv import SummaryThresholdResult, coerce_summary_mapping
 from bot_core.observability.metrics import MetricsRegistry
+from tests.test_check_data_coverage_script import (  # noqa: E402
+    _generate_rows,
+    _last_row_iso,
+    _write_cache,
+    _write_config,
+)
 
 
 class DummyChannel(AlertChannel):
@@ -199,10 +210,298 @@ def test_file_alert_audit_log_respects_retention(tmp_path: Path) -> None:
     old_file = (tmp_path / "audit") / "alerts-20230101.jsonl"
     assert old_file.exists()
 
+
     audit.append(new_message, channel="telegram")
     assert not old_file.exists()
     files = list((tmp_path / "audit").glob("alerts-*.jsonl"))
     assert len(files) == 1
+
+
+def test_build_coverage_alert_context_serializes_thresholds() -> None:
+    summary = coerce_summary_mapping(
+        {
+            "status": "warning",
+            "total": 5,
+            "ok": 4,
+            "warning": 1,
+            "error": 0,
+            "ok_ratio": 0.8,
+            "stale_entries": 0,
+            "worst_gap": {
+                "symbol": "BTCUSDT",
+                "interval": "1h",
+                "gap_minutes": 180.0,
+                "threshold_minutes": 240,
+            },
+        }
+    )
+    threshold = SummaryThresholdResult(
+        issues=("max_gap_exceeded:180.0>120.0",),
+        thresholds={"max_gap_minutes": 120.0},
+        observed={"worst_gap_minutes": 180.0, "ok_ratio": 0.8},
+    )
+
+    context = build_coverage_alert_context(summary=summary, threshold_result=threshold)
+
+    summary_payload = json.loads(context["summary"])
+    thresholds_payload = json.loads(context["thresholds"])
+
+    assert summary_payload["status"] == "warning"
+    assert context["summary_ok_ratio"] == "0.8000"
+    assert thresholds_payload["max_gap_minutes"] == pytest.approx(120.0)
+    assert "max_gap_exceeded" in context.get("threshold_issues", "")
+    assert context["observed_worst_gap_minutes"] == "180.00"
+
+
+def test_build_coverage_alert_context_handles_missing_data() -> None:
+    context = build_coverage_alert_context(summary=None, threshold_result=None)
+
+    assert context["summary_status"] == "unknown"
+    assert context["summary_worst_gap_minutes"] == "n/a"
+    assert "thresholds" not in context
+
+
+def test_build_coverage_alert_context_includes_gap_statistics() -> None:
+    summary = {
+        "status": "ok",
+        "total": 2,
+        "ok": 2,
+        "warning": 0,
+        "error": 0,
+        "ok_ratio": 1.0,
+        "stale_entries": 0,
+    }
+    gap_stats = {
+        "total_entries": 2,
+        "with_gap_measurement": 2,
+        "median_gap_minutes": 5.0,
+        "percentile_95_gap_minutes": 12.0,
+        "max_gap_minutes": 18.0,
+    }
+
+    context = build_coverage_alert_context(
+        summary=summary,
+        threshold_result=None,
+        gap_statistics=gap_stats,
+    )
+
+    assert json.loads(context["gap_statistics"]) == {
+        "total_entries": 2,
+        "with_gap_measurement": 2,
+        "median_gap_minutes": 5.0,
+        "percentile_95_gap_minutes": 12.0,
+        "max_gap_minutes": 18.0,
+    }
+    assert context["gap_median_gap_minutes"] == "5.00"
+    assert context["gap_percentile_95_gap_minutes"] == "12.00"
+    assert context["gap_max_gap_minutes"] == "18.00"
+
+
+def _coverage_cli_payload(
+    *,
+    issues: Sequence[str] | None = None,
+    threshold_issues: Sequence[str] | None = None,
+    thresholds: Mapping[str, float] | None = None,
+    observed: Mapping[str, float | None] | None = None,
+    summary_overrides: Mapping[str, object] | None = None,
+    gap_overrides: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    summary = {
+        "status": "ok",
+        "total": 4,
+        "ok": 4,
+        "warning": 0,
+        "error": 0,
+        "ok_ratio": 1.0,
+        "stale_entries": 0,
+        "worst_gap": {
+            "symbol": "BTCUSDT",
+            "interval": "1h",
+            "gap_minutes": 45.0,
+            "threshold_minutes": 30.0,
+        },
+    }
+    if summary_overrides:
+        summary.update(summary_overrides)
+
+    gap_stats = {
+        "total_entries": summary["total"],
+        "with_gap_measurement": summary["total"],
+        "min_gap_minutes": 0.0,
+        "max_gap_minutes": 45.0,
+        "mean_gap_minutes": 12.0,
+        "median_gap_minutes": 10.0,
+        "percentile_90_gap_minutes": 20.0,
+        "percentile_95_gap_minutes": 30.0,
+        "percentile_99_gap_minutes": 45.0,
+    }
+    if gap_overrides:
+        gap_stats.update(gap_overrides)
+
+    threshold_payload = {
+        "issues": list(threshold_issues or ()),
+        "thresholds": dict(thresholds or {}),
+        "observed": dict(observed or {}),
+    }
+
+    return {
+        "environment": "binance_paper",
+        "exchange": "binance_spot",
+        "manifest_path": "/tmp/ohlcv_manifest.sqlite",
+        "as_of": "2024-01-01T00:00:00+00:00",
+        "entries": [],
+        "issues": list(issues or ()),
+        "summary": summary,
+        "threshold_evaluation": threshold_payload,
+        "threshold_issues": list(threshold_issues or ()),
+        "status": summary.get("status", "ok"),
+        "gap_statistics": gap_stats,
+    }
+
+
+def test_build_coverage_alert_message_threshold_only() -> None:
+    payload = _coverage_cli_payload(
+        threshold_issues=("max_gap_exceeded:45.0>30.0",),
+        thresholds={"max_gap_minutes": 30.0},
+        observed={"worst_gap_minutes": 45.0},
+    )
+
+    message = build_coverage_alert_message(payload=payload)
+
+    assert message.severity == "warning"
+    assert message.category == "data.ohlcv"
+    assert "Naruszenia progów jakości danych" in message.body
+    assert "Statystyki luk" in message.body
+    assert message.context["environment"] == "binance_paper"
+    assert message.context["threshold_issue_count"] == "1"
+    issues = json.loads(message.context["threshold_issues"])
+    assert issues == ["max_gap_exceeded:45.0>30.0"]
+    assert json.loads(message.context["gap_statistics"])["max_gap_minutes"] == 45.0
+
+
+def test_dispatch_coverage_alert_skips_without_issues() -> None:
+    router = DefaultAlertRouter(audit_log=InMemoryAlertAuditLog())
+    channel = DummyChannel()
+    router.register(channel)
+    payload = _coverage_cli_payload()
+
+    dispatched = dispatch_coverage_alert(router, payload=payload)
+
+    assert dispatched is False
+    assert channel.messages == []
+
+
+def test_dispatch_coverage_alert_escalates_ok_ratio() -> None:
+    router = DefaultAlertRouter(audit_log=InMemoryAlertAuditLog())
+    channel = DummyChannel()
+    router.register(channel)
+    payload = _coverage_cli_payload(
+        threshold_issues=("ok_ratio_below_threshold:0.7000<0.9000",),
+        thresholds={"min_ok_ratio": 0.9},
+        observed={"ok_ratio": 0.7, "total_entries": 12},
+        summary_overrides={"ok_ratio": 0.7, "ok": 7, "total": 10},
+    )
+
+    dispatched = dispatch_coverage_alert(router, payload=payload)
+
+    assert dispatched is True
+    assert len(channel.messages) == 1
+    message = channel.messages[0]
+    assert message.severity == "critical"
+    assert "ok_ratio_below_threshold" in message.body
+    assert message.context["environment"] == "binance_paper"
+
+
+def test_run_coverage_check_and_alert_dispatches(tmp_path: Path) -> None:
+    cache_dir = tmp_path / "cache_threshold_alert"
+    rows = _generate_rows(datetime(2024, 1, 1, tzinfo=timezone.utc), 40)
+    _write_cache(cache_dir, rows)
+    config_path = _write_config(
+        tmp_path,
+        cache_dir,
+        data_quality={"max_gap_minutes": 60.0},
+    )
+
+    router = DefaultAlertRouter(audit_log=InMemoryAlertAuditLog())
+    channel = DummyChannel()
+    router.register(channel)
+
+    as_of = datetime.fromisoformat(_last_row_iso(rows)) + timedelta(hours=4)
+
+    report, dispatched = run_coverage_check_and_alert(
+        config_path=config_path,
+        environment_name="binance_smoke",
+        router=router,
+        as_of=as_of,
+    )
+
+    assert dispatched is True
+    assert channel.messages
+    message = channel.messages[0]
+    assert message.category == "data.ohlcv"
+    assert "max_gap_exceeded" in message.body
+    assert report.threshold_issues
+    assert report.payload["status"] == "error"
+    assert report.gap_statistics is not None
+    assert report.gap_statistics_by_interval is not None
+
+
+def test_run_coverage_check_and_alert_uses_risk_profile_threshold(tmp_path: Path) -> None:
+    cache_dir = tmp_path / "cache_profile_threshold_alert"
+    rows = _generate_rows(datetime(2024, 1, 1, tzinfo=timezone.utc), 40)
+    _write_cache(cache_dir, rows)
+    config_path = _write_config(
+        tmp_path,
+        cache_dir,
+        risk_profile_data_quality={"max_gap_minutes": 45.0},
+    )
+
+    router = DefaultAlertRouter(audit_log=InMemoryAlertAuditLog())
+    channel = DummyChannel()
+    router.register(channel)
+
+    as_of = datetime.fromisoformat(_last_row_iso(rows)) + timedelta(hours=2)
+
+    report, dispatched = run_coverage_check_and_alert(
+        config_path=config_path,
+        environment_name="binance_smoke",
+        router=router,
+        as_of=as_of,
+    )
+
+    assert dispatched is True
+    assert channel.messages
+    assert any("max_gap_exceeded" in message.body for message in channel.messages)
+    assert report.threshold_issues
+    assert report.threshold_result is not None
+    assert report.threshold_result.thresholds.get("max_gap_minutes") == pytest.approx(45.0)
+    assert report.gap_statistics is not None
+
+
+def test_run_coverage_check_and_alert_skips_when_ok(tmp_path: Path) -> None:
+    cache_dir = tmp_path / "cache_ok"
+    rows = _generate_rows(datetime(2024, 1, 1, tzinfo=timezone.utc), 30)
+    _write_cache(cache_dir, rows)
+    config_path = _write_config(tmp_path, cache_dir)
+
+    router = DefaultAlertRouter(audit_log=InMemoryAlertAuditLog())
+    channel = DummyChannel()
+    router.register(channel)
+
+    as_of = datetime.fromisoformat(_last_row_iso(rows))
+
+    report, dispatched = run_coverage_check_and_alert(
+        config_path=config_path,
+        environment_name="binance_smoke",
+        router=router,
+        as_of=as_of,
+    )
+
+    assert dispatched is False
+    assert channel.messages == []
+    assert report.threshold_issues == ()
+    assert report.summary["status"] == "ok"
+    assert report.gap_statistics is not None
 
 
 class _FakeHTTPResponse:

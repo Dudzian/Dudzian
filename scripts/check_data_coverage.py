@@ -6,11 +6,15 @@ import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Sequence
+from typing import Mapping, Sequence
 
 from bot_core.config import load_core_config
 from bot_core.data.intervals import normalize_interval_token as _normalize_interval_token
-from bot_core.data.ohlcv import CoverageStatus, evaluate_coverage, summarize_issues
+from bot_core.data.ohlcv import (
+    CoverageReportPayload,
+    build_coverage_report_payload,
+    evaluate_coverage,
+)
 
 
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
@@ -72,23 +76,6 @@ def _parse_as_of(arg: str | None) -> datetime:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
-
-
-def _format_status(status: CoverageStatus) -> dict[str, object]:
-    entry = status.manifest_entry
-    return {
-        "symbol": status.symbol,
-        "interval": status.interval,
-        "status": status.status,
-        "manifest_status": entry.status,
-        "row_count": entry.row_count,
-        "required_rows": status.required_rows,
-        "last_timestamp_iso": entry.last_timestamp_iso,
-        "gap_minutes": entry.gap_minutes,
-        "issues": list(status.issues),
-    }
-
-
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
     config = load_core_config(Path(args.config))
@@ -185,16 +172,25 @@ def main(argv: Sequence[str] | None = None) -> int:
             print("Brak wpisów w manifeście dla wskazanych interwałów.", file=sys.stderr)
             return 2
 
-    issues = summarize_issues(statuses)
-    payload = {
-        "environment": environment.name,
-        "exchange": environment.exchange,
-        "manifest_path": str(manifest_path),
-        "as_of": as_of.isoformat(),
-        "entries": [_format_status(status) for status in statuses],
-        "issues": issues,
-        "status": "ok" if not issues else "error",
-    }
+    report: CoverageReportPayload = build_coverage_report_payload(
+        statuses=tuple(statuses),
+        manifest_path=manifest_path,
+        environment_name=environment.name,
+        exchange_name=environment.exchange,
+        as_of=as_of,
+        data_quality=getattr(environment, "data_quality", None),
+    )
+
+    payload = report.to_mapping()
+    issues = list(report.issues)
+    summary_payload = report.summary
+    raw_threshold = payload.get("threshold_evaluation")
+    threshold_payload: Mapping[str, object] | None
+    if isinstance(raw_threshold, Mapping):
+        threshold_payload = raw_threshold
+    else:
+        threshold_payload = None
+    threshold_issues = report.threshold_issues
 
     serialized = json.dumps(payload, ensure_ascii=False, indent=2)
 
@@ -210,10 +206,72 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Manifest: {payload['manifest_path']}")
         print(f"Środowisko: {payload['environment']} ({payload['exchange']})")
         print(f"Ocena na: {payload['as_of']}")
+        summary = payload["summary"]
         for entry in payload["entries"]:
             print(
                 " - {symbol} {interval}: status={status} row_count={row_count} "
                 "required={required_rows} gap={gap_minutes}".format(**entry)
+            )
+        print(
+            "Podsumowanie: status={status} ok={ok}/{total} warning={warning} "
+            "error={error} stale_entries={stale_entries}".format(**summary)
+        )
+        gap_stats = payload.get("gap_statistics")
+        if isinstance(gap_stats, Mapping):
+            print(
+                "Statystyki luk: count={with_gap}/{total} median={median} p95={p95} max={max_gap}".format(
+                    with_gap=gap_stats.get("with_gap_measurement"),
+                    total=gap_stats.get("total_entries"),
+                    median=gap_stats.get("median_gap_minutes"),
+                    p95=gap_stats.get("percentile_95_gap_minutes"),
+                    max_gap=gap_stats.get("max_gap_minutes"),
+                )
+            )
+        if threshold_payload is not None:
+            thresholds = threshold_payload.get("thresholds") or {}
+            observed = threshold_payload.get("observed") or {}
+            issues_list = list(threshold_issues)
+            print("Progi jakości danych:")
+            if thresholds:
+                for name, value in thresholds.items():
+                    print(f" * {name}={value}")
+            else:
+                print(" * brak skonfigurowanych progów")
+            if observed:
+                observed_lines = ", ".join(f"{name}={value}" for name, value in observed.items())
+                print(f"Wartości obserwowane: {observed_lines}")
+            if issues_list:
+                print("Naruszenia progów:")
+                for issue in issues_list:
+                    print(f" * {issue}")
+            else:
+                print("Brak naruszeń progów jakości danych")
+        issue_counts = summary.get("issue_counts") or {}
+        issue_examples = summary.get("issue_examples") or {}
+        if issue_counts:
+            print("Kody problemów:")
+            for code in sorted(issue_counts):
+                count = issue_counts[code]
+                example = issue_examples.get(code)
+                if example:
+                    print(f" * {code}: count={count} example={example}")
+                else:
+                    print(f" * {code}: count={count}")
+        worst_gap = summary.get("worst_gap")
+        if isinstance(worst_gap, Mapping):
+            details = {
+                "symbol": worst_gap.get("symbol", "?"),
+                "interval": worst_gap.get("interval", "?"),
+                "gap": worst_gap.get("gap_minutes"),
+                "threshold": worst_gap.get("threshold_minutes"),
+                "manifest_status": worst_gap.get("manifest_status"),
+                "last": worst_gap.get("last_timestamp_iso"),
+            }
+            print(
+                "Największa luka: {symbol} {interval} gap={gap}min "
+                "threshold={threshold} manifest_status={manifest_status} last={last}".format(
+                    **details
+                )
             )
         if issues:
             print("Problemy:")
@@ -222,7 +280,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             print("Brak problemów z pokryciem danych")
 
-    return 0 if not issues else 1
+    return 0 if not issues and not threshold_issues else 1
 
 
 if __name__ == "__main__":  # pragma: no cover - wejście CLI

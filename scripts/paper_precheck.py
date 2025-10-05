@@ -8,82 +8,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
-# --- compat shims: funkcje mogły zostać usunięte / przeniesione w tej gałęzi ---
-# (zostawiamy, ale NIE polegamy na nich przy breakdownach)
-try:
-    from bot_core.data.ohlcv import summarize_by_interval  # noqa: F401
-except Exception:
-    def summarize_by_interval(_data, *args, **kwargs):
-        # Nie używamy, ale zostawiamy placeholder dla zgodności importów
-        return {}
-
-try:
-    from bot_core.data.ohlcv import summarize_by_symbol  # noqa: F401
-except Exception:
-    def summarize_by_symbol(_obj, *args, **kwargs):
-        # Nie używamy, ale zostawiamy placeholder dla zgodności importów
-        return {}
-
-try:
-    from bot_core.data.ohlcv import summarize_coverage  # noqa: F401
-except Exception:
-    def summarize_coverage(statuses, *args, **kwargs):
-        """
-        Fallback zawsze zwracający mapę z podstawowym podsumowaniem:
-        - total, ok, warning, error, ok_ratio
-        - manifest_status_counts (zliczenia po 'status')
-        - worst_gap (symbol/interval/gap_minutes), jeśli dostępne
-        """
-        def _get(o, n, d=None):
-            if isinstance(o, dict):
-                return o.get(n, d)
-            return getattr(o, n, d)
-
-        counts: dict[str, int] = {}
-        total = 0
-        worst = None  # (gap_minutes, symbol, interval)
-        for st in statuses or []:
-            total += 1
-            s = (_get(st, "status") or "unknown")
-            counts[s] = counts.get(s, 0) + 1
-            try:
-                gap = float(_get(st, "gap_minutes"))
-                if worst is None or (gap == gap and gap > (worst[0] if worst else -1.0)):  # NaN guard
-                    worst = (gap, _get(st, "symbol"), _get(st, "interval"))
-            except Exception:
-                pass
-
-        ok = counts.get("ok", 0)
-        warn = counts.get("warning", 0)
-        err = counts.get("error", 0)
-        ok_ratio = (ok / total) if total else None
-
-        worst_gap = None
-        if worst is not None:
-            worst_gap = {
-                "gap_minutes": float(worst[0]),
-                "symbol": worst[1],
-                "interval": worst[2],
-            }
-
-        overall = "ok"
-        if err > 0:
-            overall = "error"
-        elif warn > 0:
-            overall = "warning"
-
-        return {
-            "status": overall,
-            "total": total,
-            "ok": ok,
-            "warning": warn,
-            "error": err,
-            "ok_ratio": ok_ratio,
-            "manifest_status_counts": counts,
-            "worst_gap": worst_gap,
-        }
-# --- end shims ---
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -94,7 +18,10 @@ from bot_core.config.validation import validate_core_config
 from bot_core.data.intervals import normalize_interval_token
 from bot_core.data.ohlcv import (
     CoverageStatus,
+    coerce_summary_mapping,
     evaluate_coverage,
+    evaluate_summary_thresholds,
+    summarize_coverage,
     summarize_issues,
 )
 
@@ -279,59 +206,10 @@ def _filter_statuses_by_intervals(
     return filtered, []
 
 
-def _basic_summary(statuses: Sequence[object]) -> dict[str, object]:
-    """Minimalne, samodzielne podsumowanie, gdy wbudowane API zwraca listę/nie-mapę."""
-    counts: dict[str, int] = {}
-    total = 0
-    worst = None  # (gap_minutes, symbol, interval)
-
-    for st in statuses or []:
-        total += 1
-        s = (_get_field(st, "status") or "unknown")
-        counts[s] = counts.get(s, 0) + 1
-        try:
-            gap = float(_get_field(st, "gap_minutes"))
-            if worst is None or (gap == gap and gap > (worst[0] if worst else -1.0)):  # NaN guard
-                worst = (gap, _get_field(st, "symbol"), _get_field(st, "interval"))
-        except Exception:
-            pass
-
-    ok = counts.get("ok", 0)
-    warn = counts.get("warning", 0)
-    err = counts.get("error", 0)
-    ok_ratio = (ok / total) if total else None
-
-    worst_gap = None
-    if worst is not None:
-        worst_gap = {
-            "gap_minutes": float(worst[0]),
-            "symbol": worst[1],
-            "interval": worst[2],
-        }
-
-    overall = "ok"
-    if err > 0:
-        overall = "error"
-    elif warn > 0:
-        overall = "warning"
-
-    return {
-        "status": overall,
-        "total": total,
-        "ok": ok,
-        "warning": warn,
-        "error": err,
-        "ok_ratio": ok_ratio,
-        "manifest_status_counts": counts,
-        "worst_gap": worst_gap,
-    }
 
 
-def _coerce_summary_mapping(obj: object, statuses: Sequence[object]) -> dict[str, object]:
-    """Jeśli `obj` nie jest mapą, zbuduj minimalne podsumowanie na podstawie `statuses`."""
-    if isinstance(obj, Mapping):
-        return dict(obj)
-    return _basic_summary(list(statuses))
+
+
 
 
 def _breakdown_by_key(statuses: Sequence[object], key_name: str) -> dict[str, dict[str, int]]:
@@ -357,14 +235,7 @@ def _breakdown_by_symbol(statuses: Sequence[object]) -> dict[str, dict[str, int]
     return _breakdown_by_key(statuses, "symbol")
 
 
-def _coerce_issues(issues_obj: object) -> list[str]:
-    """Zamienia wynik summarize_issues na listę stringów (JSON-safe)."""
-    if issues_obj is None:
-        return []
-    if isinstance(issues_obj, (list, tuple, set)):
-        return [str(x) for x in issues_obj]
-    # pojedynczy obiekt -> też string
-    return [str(issues_obj)]
+
 
 
 def _coverage_payload(
@@ -434,47 +305,21 @@ def _coverage_payload(
         }
 
     # JSON-safe issues + summary
-    issues = _coerce_issues(summarize_issues(statuses))
-    summary_payload = _coerce_summary_mapping(summarize_coverage(statuses), statuses)
+    issues = list(summarize_issues(statuses))
+    summary_payload = coerce_summary_mapping(summarize_coverage(statuses))
 
     # Własne breakdowny (zawsze JSON-safe)
     summary_payload["by_interval"] = _breakdown_by_interval(statuses)
     summary_payload["by_symbol"] = _breakdown_by_symbol(statuses)
 
-    thresholds: dict[str, float] = {}
-    worst_gap = summary_payload.get("worst_gap") if isinstance(summary_payload, Mapping) else None
-
-    if max_gap_minutes is not None:
-        thresholds["max_gap_minutes"] = float(max_gap_minutes)
-        if isinstance(worst_gap, Mapping):
-            try:
-                worst_gap_minutes = float(worst_gap.get("gap_minutes", 0.0))
-            except (TypeError, ValueError):
-                worst_gap_minutes = 0.0
-            if worst_gap_minutes > float(max_gap_minutes):
-                issues.append(
-                    f"max_gap_exceeded:{worst_gap_minutes}>{float(max_gap_minutes)}"
-                )
-
-    ok_ratio_value: float | None = None
-    if min_ok_ratio is not None:
-        thresholds["min_ok_ratio"] = float(min_ok_ratio)
-        ok_ratio = summary_payload.get("ok_ratio")
-        if isinstance(ok_ratio, (int, float)):
-            ok_ratio_value = float(ok_ratio)
-        else:
-            try:
-                ok_ratio_value = float(ok_ratio) if ok_ratio is not None else None
-            except (TypeError, ValueError):
-                ok_ratio_value = None
-        if ok_ratio_value is not None and ok_ratio_value < float(min_ok_ratio):
-            issues.append(
-                f"ok_ratio_below_threshold:{ok_ratio_value:.4f}<{float(min_ok_ratio):.4f}"
-            )
-        elif ok_ratio_value is None and float(min_ok_ratio) > 0:
-            total_entries = summary_payload.get("total")
-            if isinstance(total_entries, (int, float)) and float(total_entries) <= 0:
-                issues.append("manifest_empty_for_threshold")
+    threshold_result = evaluate_summary_thresholds(
+        summary_payload,
+        max_gap_minutes=max_gap_minutes,
+        min_ok_ratio=min_ok_ratio,
+    )
+    issues.extend(threshold_result.issues)
+    thresholds = dict(threshold_result.thresholds)
+    observed = {key: value for key, value in threshold_result.observed.items() if value is not None}
 
     status = "error" if issues else summary_payload.get("status", "ok")
     payload: dict[str, object] = {
@@ -483,6 +328,8 @@ def _coverage_payload(
         "summary": summary_payload,
         "thresholds": thresholds,
     }
+    if observed:
+        payload["threshold_observed"] = observed
     return payload
 
 

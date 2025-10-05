@@ -8,3 +8,6 @@ env/
 .coverage
 coverage.xml
 env.example
+tests/assets/coverage_sample/ohlcv_manifest.sqlite
+var/data/*
+!var/data/.gitkeep

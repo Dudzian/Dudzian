@@ -1,186 +1,407 @@
-"""CLI do weryfikacji pokrycia danych OHLCV względem wymagań backfillu."""
+"""Testy skryptu check_data_coverage oraz współdzielone helpery CLI."""
 from __future__ import annotations
 
-import argparse
 import json
+import sqlite3
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Sequence
+from typing import Mapping, Sequence
 
-from bot_core.config import load_core_config
-from bot_core.data.ohlcv import CoverageStatus, evaluate_coverage, summarize_issues
+import pytest
+import yaml
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from scripts import check_data_coverage as cli  # noqa: E402  - import po modyfikacji sys.path
 
 
-def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Sprawdza manifest danych OHLCV dla środowiska paper/testnet.",
+def _last_row_iso(rows: Sequence[Sequence[float]]) -> str:
+    timestamp_ms = int(float(rows[-1][0]))
+    return datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc).isoformat()
+
+
+def test_check_data_coverage_success(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    cache_dir = tmp_path / "cache_success"
+    rows = _generate_rows(datetime(2024, 1, 1, tzinfo=timezone.utc), 40)
+    _write_cache(cache_dir, rows)
+    config_path = _write_config(tmp_path, cache_dir)
+
+    exit_code = cli.main(
+        [
+            "--config",
+            str(config_path),
+            "--environment",
+            "binance_smoke",
+            "--as-of",
+            _last_row_iso(rows),
+            "--json",
+        ]
     )
-    parser.add_argument("--config", default="config/core.yaml", help="Ścieżka do CoreConfig")
-    parser.add_argument(
-        "--environment",
-        required=True,
-        help="Nazwa środowiska z sekcji environments",
-    )
-    parser.add_argument(
-        "--as-of",
-        default=None,
-        help="Znacznik czasu ISO8601 używany do oceny opóźnień danych (domyślnie teraz, UTC)",
-    )
-    parser.add_argument(
-        "--json",
-        action="store_true",
-        help="Zwróć wynik w formacie JSON (łatwy do integracji z CI)",
-    )
-    parser.add_argument(
-        "--output",
-        help=(
-            "Ścieżka do pliku, w którym zostanie zapisany wynik w formacie JSON. "
-            "Katalogi zostaną utworzone automatycznie."
-        ),
-    )
-    parser.add_argument(
-        "--symbol",
-        dest="symbols",
-        action="append",
-        default=None,
-        help=(
-            "Filtruj wynik do wskazanego symbolu (można podać wiele razy). "
-            "Obsługiwane są zarówno nazwy instrumentów z konfiguracji (np. BTC_USDT), "
-            "jak i symbole giełdowe (np. BTCUSDT)."
-        ),
-    )
-    return parser.parse_args(argv)
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["status"] == "ok"
+    summary = payload["summary"]
+    assert summary["status"] == "ok"
+    assert summary["total"] == 1
+    assert summary["ok"] == 1
+    assert summary["issue_counts"] == {}
+    assert summary["issue_examples"] == {}
+    assert summary["stale_entries"] == 0
+    gap_stats = payload["gap_statistics"]
+    assert gap_stats["total_entries"] == summary["total"]
+    assert gap_stats["with_gap_measurement"] <= gap_stats["total_entries"]
 
 
-def _parse_as_of(arg: str | None) -> datetime:
-    if not arg:
-        return datetime.now(timezone.utc)
-    dt = datetime.fromisoformat(arg)
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+def test_check_data_coverage_insufficient_rows(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    cache_dir = tmp_path / "cache_failure"
+    rows = _generate_rows(datetime(2024, 1, 1, tzinfo=timezone.utc), 5)
+    _write_cache(cache_dir, rows)
+    config_path = _write_config(
+        tmp_path,
+        cache_dir,
+        backfill={"BTC_USDT": [{"interval": "1d", "lookback_days": 60}]},
+    )
+
+    exit_code = cli.main(
+        [
+            "--config",
+            str(config_path),
+            "--environment",
+            "binance_smoke",
+            "--as-of",
+            _last_row_iso(rows),
+            "--json",
+        ]
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["status"] == "error"
+    summary = payload["summary"]
+    assert summary["status"] == "error"
+    assert summary["total"] == 1
+    assert summary["error"] == 1
+    assert "insufficient_rows" in summary["issue_counts"]
+    assert summary["issue_counts"]["insufficient_rows"] == 1
+    assert "insufficient_rows" in summary["issue_examples"]
+    issues = payload["issues"]
+    assert any("insufficient_rows" in issue for issue in issues)
+    gap_stats = payload["gap_statistics"]
+    assert gap_stats["total_entries"] == summary["total"]
 
 
-def _format_status(status: CoverageStatus) -> dict[str, object]:
-    entry = status.manifest_entry
-    return {
-        "symbol": status.symbol,
-        "interval": status.interval,
-        "status": status.status,
-        "manifest_status": entry.status,
-        "row_count": entry.row_count,
-        "required_rows": status.required_rows,
-        "last_timestamp_iso": entry.last_timestamp_iso,
-        "gap_minutes": entry.gap_minutes,
-        "issues": list(status.issues),
+def test_check_data_coverage_interval_and_symbol_filters(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cache_dir = tmp_path / "cache_filters"
+    rows_daily = _generate_rows(datetime(2024, 1, 1, tzinfo=timezone.utc), 45, interval="1d")
+    rows_hourly = _generate_rows(datetime(2024, 1, 1, tzinfo=timezone.utc), 12, interval="1h")
+    _write_cache(cache_dir, rows_daily, interval="1d")
+    _write_cache(cache_dir, rows_hourly, interval="1h")
+    config_path = _write_config(
+        tmp_path,
+        cache_dir,
+        backfill={
+            "BTC_USDT": [
+                {"interval": "1d", "lookback_days": 30},
+                {"interval": "1h", "lookback_days": 24},
+            ]
+        },
+    )
+
+    as_of_iso = _last_row_iso(rows_daily if rows_daily[-1][0] >= rows_hourly[-1][0] else rows_hourly)
+    exit_code = cli.main(
+        [
+            "--config",
+            str(config_path),
+            "--environment",
+            "binance_smoke",
+            "--symbol",
+            "BTC_USDT",
+            "--interval",
+            "1d",
+            "--as-of",
+            as_of_iso,
+            "--json",
+        ]
+    )
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["status"] == "ok"
+    entries = payload["entries"]
+    assert len(entries) == 1
+    assert entries[0]["symbol"] == "BTCUSDT"
+    assert entries[0]["interval"] == "1d"
+    summary = payload["summary"]
+    assert summary["total"] == 1
+    assert summary["status"] == "ok"
+    assert payload["gap_statistics"]["total_entries"] == 1
+
+
+def test_check_data_coverage_threshold_violation(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cache_dir = tmp_path / "cache_threshold"
+    rows = _generate_rows(datetime(2024, 1, 1, tzinfo=timezone.utc), 40)
+    _write_cache(cache_dir, rows)
+    config_path = _write_config(
+        tmp_path,
+        cache_dir,
+        data_quality={"max_gap_minutes": 60.0},
+    )
+
+    last_iso = _last_row_iso(rows)
+    last_dt = datetime.fromisoformat(last_iso)
+    future_dt = last_dt + timedelta(hours=4)
+
+    exit_code = cli.main(
+        [
+            "--config",
+            str(config_path),
+            "--environment",
+            "binance_smoke",
+            "--as-of",
+            future_dt.isoformat(),
+            "--json",
+        ]
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["status"] == "error"
+    assert payload["issues"] == []
+    threshold_payload = payload["threshold_evaluation"]
+    assert payload["threshold_issues"]
+    assert any(
+        issue.startswith("max_gap_exceeded") for issue in payload["threshold_issues"]
+    )
+    assert any(
+        issue.startswith("max_gap_exceeded") for issue in threshold_payload["issues"]
+    )
+    observed = threshold_payload["observed"]
+    assert observed["worst_gap_minutes"] is not None
+
+
+def test_check_data_coverage_uses_risk_profile_threshold(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cache_dir = tmp_path / "cache_profile_threshold"
+    rows = _generate_rows(datetime(2024, 1, 1, tzinfo=timezone.utc), 40)
+    _write_cache(cache_dir, rows)
+    config_path = _write_config(
+        tmp_path,
+        cache_dir,
+        risk_profile_data_quality={"max_gap_minutes": 60.0},
+    )
+
+    last_dt = datetime.fromisoformat(_last_row_iso(rows))
+    future_dt = last_dt + timedelta(hours=4)
+
+    exit_code = cli.main(
+        [
+            "--config",
+            str(config_path),
+            "--environment",
+            "binance_smoke",
+            "--as-of",
+            future_dt.isoformat(),
+            "--json",
+        ]
+    )
+
+    assert exit_code == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "error"
+    assert payload["threshold_issues"]
+    assert any(issue.startswith("max_gap_exceeded") for issue in payload["threshold_issues"])
+    threshold_payload = payload["threshold_evaluation"]
+    assert threshold_payload["thresholds"]["max_gap_minutes"] == pytest.approx(60.0)
+
+
+# --- Współdzielone helpery dla scenariuszy CLI ---
+
+
+def _generate_rows(start: datetime, count: int, *, interval: str = "1d") -> list[list[float]]:
+    """Buduje syntetyczne świece OHLCV dla testów CLI."""
+
+    if count < 0:
+        raise ValueError("count musi być nieujemny")
+
+    step_map: Mapping[str, timedelta] = {
+        "1d": timedelta(days=1),
+        "1h": timedelta(hours=1),
+        "15m": timedelta(minutes=15),
     }
+    try:
+        step = step_map[interval]
+    except KeyError as exc:  # pragma: no cover - nie używane w obecnych testach
+        raise ValueError("Nieobsługiwany interwał testowy: {interval}".format(interval=interval)) from exc
 
-
-def main(argv: Sequence[str] | None = None) -> int:
-    args = _parse_args(argv)
-    config = load_core_config(Path(args.config))
-
-    environment = config.environments.get(args.environment)
-    if environment is None:
-        print(f"Nie znaleziono środowiska: {args.environment}", file=sys.stderr)
-        return 2
-
-    if not environment.instrument_universe:
-        print(
-            f"Środowisko {environment.name} nie ma przypisanego instrument_universe", file=sys.stderr
+    rows: list[list[float]] = []
+    current = start.astimezone(timezone.utc)
+    price = 10_000.0
+    for _ in range(count):
+        timestamp = int(current.timestamp() * 1000)
+        open_price = price
+        close_price = max(0.0001, open_price * 1.001)
+        high_price = max(open_price, close_price) * 1.001
+        low_price = min(open_price, close_price) * 0.999
+        volume = 100.0 + len(rows)
+        rows.append(
+            [
+                float(timestamp),
+                float(round(open_price, 6)),
+                float(round(high_price, 6)),
+                float(round(low_price, 6)),
+                float(round(close_price, 6)),
+                float(round(volume, 6)),
+            ]
         )
-        return 2
+        price = close_price
+        current += step
+    return rows
 
-    universe = config.instrument_universes.get(environment.instrument_universe)
-    if universe is None:
-        print(
-            f"Brak definicji uniwersum instrumentów: {environment.instrument_universe}",
-            file=sys.stderr,
-        )
-        return 2
 
-    as_of = _parse_as_of(args.as_of)
-    manifest_path = Path(environment.data_cache_path) / "ohlcv_manifest.sqlite"
-    statuses = evaluate_coverage(
-        manifest_path=manifest_path,
-        universe=universe,
-        exchange_name=environment.exchange,
-        as_of=as_of,
-    )
+def _write_cache(
+    cache_dir: Path,
+    rows: Sequence[Sequence[float]],
+    *,
+    symbol: str = "BTCUSDT",
+    interval: str = "1d",
+) -> Path:
+    """Zapisuje manifest SQLite z metadanymi wykorzystanymi w testach."""
 
-    # Filtrowanie po symbolach (opcjonalnie)
-    if args.symbols:
-        filter_tokens = [token.upper() for token in args.symbols]
-        # mapowanie aliasów z nazw instrumentów na symbole giełdowe
-        alias_map: dict[str, str] = {}
-        for instrument in universe.instruments:
-            symbol = instrument.exchange_symbols.get(environment.exchange)
-            if symbol:
-                alias_map[instrument.name.upper()] = symbol
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = cache_dir / "ohlcv_manifest.sqlite"
 
-        available_symbols: dict[str, str] = {status.symbol.upper(): status.symbol for status in statuses}
-
-        resolved: set[str] = set()
-        unknown: list[str] = []
-        for token, raw in zip(filter_tokens, args.symbols, strict=True):
-            symbol = alias_map.get(token)
-            if symbol is None:
-                symbol = available_symbols.get(token)
-            if symbol is None:
-                unknown.append(raw)
-                continue
-            resolved.add(symbol)
-
-        if unknown:
-            print("Nieznane symbole: " + ", ".join(unknown), file=sys.stderr)
-            return 2
-
-        statuses = [status for status in statuses if status.symbol in resolved]
-        if not statuses:
-            print("Brak wpisów w manifeście dla wskazanych symboli.", file=sys.stderr)
-            return 2
-
-    issues = summarize_issues(statuses)
-    payload = {
-        "environment": environment.name,
-        "exchange": environment.exchange,
-        "manifest_path": str(manifest_path),
-        "as_of": as_of.isoformat(),
-        "entries": [_format_status(status) for status in statuses],
-        "issues": issues,
-        "status": "ok" if not issues else "error",
-    }
-
-    serialized = json.dumps(payload, ensure_ascii=False, indent=2)
-
-    # Zapis do pliku, jeśli wskazano --output
-    if args.output:
-        output_path = Path(args.output)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(serialized + "\n", encoding="utf-8")
-
-    if args.json:
-        print(serialized)
-    else:
-        print(f"Manifest: {payload['manifest_path']}")
-        print(f"Środowisko: {payload['environment']} ({payload['exchange']})")
-        print(f"Ocena na: {payload['as_of']}")
-        for entry in payload["entries"]:
-            print(
-                " - {symbol} {interval}: status={status} row_count={row_count} required={required_rows} gap={gap_minutes}".format(
-                    **entry
-                )
+    with sqlite3.connect(manifest_path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS metadata (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
             )
-        if issues:
-            print("Problemy:")
-            for issue in issues:
-                print(f" * {issue}")
-        else:
-            print("Brak problemów z pokryciem danych")
+            """
+        )
 
-    return 0 if not issues else 1
+        if rows:
+            last_ts = int(float(rows[-1][0]))
+            row_count = len(rows)
+            entries = {
+                f"last_timestamp::{symbol}::{interval}": str(last_ts),
+                f"row_count::{symbol}::{interval}": str(row_count),
+            }
+            for key, value in entries.items():
+                connection.execute(
+                    """
+                    INSERT INTO metadata(key, value) VALUES(?, ?)
+                    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                    """,
+                    (key, value),
+                )
+
+    return manifest_path
 
 
-if __name__ == "__main__":  # pragma: no cover - wejście CLI
-    raise SystemExit(main())
+def _write_config(
+    tmp_path: Path,
+    cache_dir: Path,
+    *,
+    environment_name: str = "binance_smoke",
+    exchange_name: str = "binance_spot",
+    instrument_name: str = "BTC_USDT",
+    symbol: str = "BTCUSDT",
+    backfill: Mapping[str, Sequence[Mapping[str, int]]] | None = None,
+    data_quality: Mapping[str, float | None] | None = None,
+    risk_profile_data_quality: Mapping[str, float | None] | None = None,
+    extra_environments: Mapping[str, Mapping[str, object]] | None = None,
+    coverage_monitoring: Mapping[str, object] | None = None,
+) -> Path:
+    """Generuje minimalną konfigurację CoreConfig dla testów CLI."""
+
+    universe_name = "smoke_universe"
+    instrument_backfill = None
+    if backfill:
+        instrument_backfill = backfill.get(instrument_name)
+    if instrument_backfill is None:
+        instrument_backfill = (
+            {"interval": "1d", "lookback_days": 30},
+        )
+
+    base_asset, _, quote_asset = instrument_name.partition("_")
+    if not quote_asset:
+        quote_asset = "USDT"
+
+    environment_payload: dict[str, object] = {
+        "exchange": exchange_name,
+        "environment": "paper",
+        "keychain_key": f"{exchange_name}_paper",  # fikcyjny wpis dla walidacji
+        "data_cache_path": str(cache_dir),
+        "risk_profile": "balanced",
+        "alert_channels": [],
+        "instrument_universe": universe_name,
+    }
+    if data_quality:
+        environment_payload["data_quality"] = {
+            "max_gap_minutes": data_quality.get("max_gap_minutes"),
+            "min_ok_ratio": data_quality.get("min_ok_ratio"),
+        }
+
+    config_payload = {
+        "risk_profiles": {
+            "balanced": {
+                "max_daily_loss_pct": 0.02,
+                "max_position_pct": 0.05,
+                "target_volatility": 0.1,
+                "max_leverage": 3.0,
+                "stop_loss_atr_multiple": 1.5,
+                "max_open_positions": 5,
+                "hard_drawdown_pct": 0.1,
+            }
+        },
+        "instrument_universes": {
+            universe_name: {
+                "description": "Testowe uniwersum dla scenariuszy CLI",
+                "instruments": {
+                    instrument_name: {
+                        "base_asset": base_asset,
+                        "quote_asset": quote_asset,
+                        "categories": ["core"],
+                        "exchanges": {exchange_name: symbol},
+                        "backfill": list(instrument_backfill),
+                    }
+                },
+            }
+        },
+        "environments": {
+            environment_name: environment_payload,
+        },
+    }
+
+    if risk_profile_data_quality:
+        config_payload["risk_profiles"]["balanced"]["data_quality"] = {
+            "max_gap_minutes": risk_profile_data_quality.get("max_gap_minutes"),
+            "min_ok_ratio": risk_profile_data_quality.get("min_ok_ratio"),
+        }
+
+    if extra_environments:
+        config_payload["environments"].update(extra_environments)
+
+    if coverage_monitoring:
+        config_payload["coverage_monitoring"] = coverage_monitoring
+
+    config_path = tmp_path / "core.yaml"
+    config_path.write_text(
+        yaml.safe_dump(config_payload, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+    return config_path

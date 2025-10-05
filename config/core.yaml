@@ -7,6 +7,9 @@ risk_profiles:
     stop_loss_atr_multiple: 1.0
     max_open_positions: 3
     hard_drawdown_pct: 0.05
+    data_quality:
+      max_gap_minutes: 1440.0
+      min_ok_ratio: 0.92
   balanced:
     max_daily_loss_pct: 0.015
     max_position_pct: 0.05
@@ -15,6 +18,9 @@ risk_profiles:
     stop_loss_atr_multiple: 1.5
     max_open_positions: 5
     hard_drawdown_pct: 0.1
+    data_quality:
+      max_gap_minutes: 2160.0
+      min_ok_ratio: 0.9
   aggressive:
     max_daily_loss_pct: 0.03
     max_position_pct: 0.1
@@ -23,6 +29,9 @@ risk_profiles:
     stop_loss_atr_multiple: 2.0
     max_open_positions: 10
     hard_drawdown_pct: 0.2
+    data_quality:
+      max_gap_minutes: 2880.0
+      min_ok_ratio: 0.85
   manual:
     max_daily_loss_pct: 0.0
     max_position_pct: 0.0
@@ -31,6 +40,9 @@ risk_profiles:
     stop_loss_atr_multiple: 0.0
     max_open_positions: 0
     hard_drawdown_pct: 0.0
+    data_quality:
+      max_gap_minutes: 4320.0
+      min_ok_ratio: 0.75
 runtime:
   controllers:
     daily_trend_core:
