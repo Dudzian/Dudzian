@@ -28,6 +28,7 @@ class _DummyScheduler:
         interval: str,
         lookback_ms: int,
         frequency_seconds: int,
+        jitter_seconds: int = 0,
         name: str,
     ) -> None:
         self.jobs.append(
@@ -36,6 +37,7 @@ class _DummyScheduler:
                 "interval": interval,
                 "lookback_ms": lookback_ms,
                 "frequency_seconds": frequency_seconds,
+                "jitter_seconds": jitter_seconds,
                 "name": name,
             }
         )
