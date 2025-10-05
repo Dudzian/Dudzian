@@ -584,52 +584,6 @@ def _append_smoke_json_log_entry(
     return record
 
 
-def _sync_smoke_json_log(
-    *,
-    json_sync_cfg,
-    json_log_path: Path | None,
-    environment: str,
-    record_id: str | None,
-    timestamp: datetime,
-    secret_manager: SecretManager | None,
-):
-    if json_sync_cfg is None or json_log_path is None:
-        return None
-    record_id = record_id or ""
-    try:
-        synchronizer = PaperSmokeJsonSynchronizer(
-            json_sync_cfg,
-            secret_manager=secret_manager,
-        )
-        result = synchronizer.sync(
-            json_log_path,
-            environment=environment,
-            record_id=record_id,
-            timestamp=timestamp,
-        )
-        metadata = dict(result.metadata)
-        version_info = metadata.get("version_id")
-        receipt = metadata.get("ack_request_id") or metadata.get("ack_mechanism")
-        log_suffix = []
-        if version_info:
-            log_suffix.append(f"version_id={version_info}")
-        if receipt:
-            log_suffix.append(f"receipt={receipt}")
-        suffix_text = ", ".join(log_suffix)
-        if suffix_text:
-            suffix_text = f" ({suffix_text})"
-        _LOGGER.info(
-            "Zsynchronizowano dziennik JSONL smoke testów: backend=%s, location=%s%s",
-            result.backend,
-            result.location,
-            suffix_text,
-        )
-        return result
-    except Exception:  # noqa: BLE001
-        _LOGGER.exception("Nie udało się zsynchronizować dziennika JSONL smoke testów")
-        return None
-
-
 def _log_order_results(results: Iterable[OrderResult]) -> None:
     for result in results:
         _LOGGER.info(
@@ -2200,7 +2154,6 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         markdown_entry_id: str | None = None
         json_record: Mapping[str, object] | None = None
-        json_sync_result = None
         log_timestamp = datetime.now(timezone.utc)
 
         if audit_log_path is not None:
@@ -2265,23 +2218,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 if report_path_value:
                     alert_context["paper_precheck_report_path"] = str(report_path_value)
 
-            if json_sync_cfg:
-                json_sync_result = _sync_smoke_json_log(
-                    json_sync_cfg=json_sync_cfg,
-                    json_log_path=audit_json_path,
-                    environment=args.environment,
-                    record_id=str(record_id or ""),
-                    timestamp=log_timestamp,
-                    secret_manager=secret_manager,
-                )
-                if json_sync_result:
-                    alert_context["paper_smoke_json_sync_backend"] = json_sync_result.backend
-                    alert_context["paper_smoke_json_sync_location"] = json_sync_result.location
-                    metadata = json_sync_result.metadata
-                    version_id = metadata.get("version_id") if isinstance(metadata, Mapping) else None
-                    if version_id:
-                        alert_context["paper_smoke_json_sync_version_id"] = str(version_id)
-
         message = AlertMessage(
             category="paper_smoke",
             title=f"Smoke test paper trading ({args.environment})",
@@ -2302,10 +2238,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "paper_precheck_coverage_status": precheck_coverage_status or "unknown",
                 "paper_precheck_risk_status": precheck_risk_status or "unknown",
             }
-            if json_sync_result:
-                compliance_context["paper_smoke_json_sync_backend"] = json_sync_result.backend
-                compliance_context["paper_smoke_json_sync_location"] = json_sync_result.location
-                compliance_context.update(json_sync_result.metadata)
             compliance_message = AlertMessage(
                 category="paper_smoke_compliance",
                 title=f"Compliance audit log updated ({args.environment})",
