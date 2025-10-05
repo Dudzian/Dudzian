@@ -1,10 +1,9 @@
-"""Obsługa wysyłki archiwów smoke testu do bezpiecznego magazynu."""
+"""Obsługa synchronizacji dziennika JSONL smoke testów do magazynu audytowego."""
 from __future__ import annotations
 
-import hashlib
 import json
 import os
-import shutil
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,72 +11,72 @@ from typing import Mapping, MutableMapping
 
 from bot_core.config.models import (
     CoreReportingConfig,
-    SmokeArchiveLocalConfig,
-    SmokeArchiveS3Config,
-    SmokeArchiveUploadConfig,
+    PaperSmokeJsonSyncConfig,
+    PaperSmokeJsonSyncLocalConfig,
+    PaperSmokeJsonSyncS3Config,
 )
 from bot_core.security import SecretManager, SecretStorageError
 
 
 @dataclass(slots=True)
-class SmokeArchiveUploadResult:
-    """Szczegóły udanego przesłania archiwum smoke testu."""
+class PaperSmokeJsonSyncResult:
+    """Informacje o udanej synchronizacji dziennika JSONL."""
 
     backend: str
     location: str
     metadata: Mapping[str, str]
 
 
-class SmokeArchiveUploader:
-    """Realizuje wysyłkę artefaktów smoke testu zgodnie z konfiguracją."""
+class PaperSmokeJsonSynchronizer:
+    """Realizuje synchronizację dziennika JSONL smoke testów."""
 
     def __init__(
         self,
-        config: SmokeArchiveUploadConfig,
+        config: PaperSmokeJsonSyncConfig,
         *,
         secret_manager: SecretManager | None = None,
     ) -> None:
         self._config = config
         self._secret_manager = secret_manager
 
-    def upload(
+    def sync(
         self,
-        archive_path: Path,
+        json_log_path: Path,
         *,
         environment: str,
-        summary_sha256: str,
-        window: Mapping[str, str],
-    ) -> SmokeArchiveUploadResult:
-        if not archive_path.exists():
-            raise FileNotFoundError(archive_path)
+        record_id: str,
+        timestamp: datetime,
+    ) -> PaperSmokeJsonSyncResult:
+        if not json_log_path.exists():
+            raise FileNotFoundError(json_log_path)
 
         backend = self._config.backend.lower()
-        archive_sha256 = self._hash_file(archive_path)
-        timestamp = datetime.now(timezone.utc)
+        timestamp = timestamp.astimezone(timezone.utc)
+
+        contents = json_log_path.read_bytes()
+        log_sha256 = self._hash_bytes(contents)
         placeholders = self._build_placeholders(
             environment=environment,
-            summary_sha256=summary_sha256,
-            window=window,
+            record_id=record_id or "unknown",
             timestamp=timestamp,
+            log_sha256=log_sha256,
         )
-
-        metadata: MutableMapping[str, str] = {
-            "timestamp": timestamp.isoformat(),
-            "summary_sha256": summary_sha256,
-            "archive_sha256": archive_sha256,
-        }
 
         if backend == "local":
             if self._config.local is None:
                 raise ValueError("Brak konfiguracji local dla backendu 'local'")
-            destination, verification = self._upload_local(
-                archive_path,
-                local_cfg=self._config.local,
+            destination, verification = self._sync_local(
+                contents,
+                config=self._config.local,
                 placeholders=placeholders,
-                expected_hash=archive_sha256,
+                expected_hash=log_sha256,
             )
+            metadata: MutableMapping[str, str] = {
+                "timestamp": timestamp.isoformat(),
+                "log_sha256": log_sha256,
+            }
             metadata.update(verification)
-            return SmokeArchiveUploadResult(
+            return PaperSmokeJsonSyncResult(
                 backend="local",
                 location=str(destination),
                 metadata=metadata,
@@ -86,68 +85,78 @@ class SmokeArchiveUploader:
         if backend == "s3":
             if self._config.s3 is None:
                 raise ValueError("Brak konfiguracji s3 dla backendu 's3'")
-            location, verification = self._upload_s3(
-                archive_path,
-                s3_cfg=self._config.s3,
+            location, verification = self._sync_s3(
+                contents,
+                config=self._config.s3,
                 placeholders=placeholders,
-                expected_hash=archive_sha256,
+                expected_hash=log_sha256,
             )
+            metadata = {
+                "timestamp": timestamp.isoformat(),
+                "log_sha256": log_sha256,
+            }
             metadata.update(verification)
-            return SmokeArchiveUploadResult(
+            return PaperSmokeJsonSyncResult(
                 backend="s3",
                 location=location,
                 metadata=metadata,
             )
 
-        raise ValueError(f"Nieobsługiwany backend wysyłki archiwum: {self._config.backend}")
+        raise ValueError(f"Nieobsługiwany backend synchronizacji dziennika: {self._config.backend}")
 
     @staticmethod
-    def resolve_config(reporting: CoreReportingConfig | object | None) -> SmokeArchiveUploadConfig | None:
-        """Zwraca konfigurację uploadu, jeśli została zdefiniowana w configu."""
-
+    def resolve_config(
+        reporting: CoreReportingConfig | object | None,
+    ) -> PaperSmokeJsonSyncConfig | None:
         if reporting is None:
             return None
-        return getattr(reporting, "smoke_archive_upload", None)
+        return getattr(reporting, "paper_smoke_json_sync", None)
+
+    @staticmethod
+    def _hash_bytes(payload: bytes) -> str:
+        import hashlib
+
+        digest = hashlib.sha256()
+        digest.update(payload)
+        return digest.hexdigest()
 
     @staticmethod
     def _build_placeholders(
         *,
         environment: str,
-        summary_sha256: str,
-        window: Mapping[str, str],
+        record_id: str,
         timestamp: datetime,
+        log_sha256: str,
     ) -> MutableMapping[str, str]:
-        values: MutableMapping[str, str] = {
+        return {
             "environment": environment,
-            "hash": summary_sha256,
+            "record": record_id,
             "timestamp": timestamp.strftime("%Y%m%dT%H%M%SZ"),
             "date": timestamp.strftime("%Y-%m-%d"),
-            "start": str(window.get("start", "")),
-            "end": str(window.get("end", "")),
+            "log_hash": log_sha256,
         }
-        return values
 
-    def _upload_local(
+    def _sync_local(
         self,
-        archive_path: Path,
+        payload: bytes,
         *,
-        local_cfg: SmokeArchiveLocalConfig,
+        config: PaperSmokeJsonSyncLocalConfig,
         placeholders: Mapping[str, str],
         expected_hash: str,
     ) -> tuple[Path, Mapping[str, str]]:
-        destination_dir = Path(local_cfg.directory)
+        destination_dir = Path(config.directory)
         destination_dir.mkdir(parents=True, exist_ok=True)
-        filename = local_cfg.filename_pattern.format(**placeholders)
+        filename = config.filename_pattern.format(**placeholders)
         target_path = destination_dir / filename
-        shutil.copy2(archive_path, target_path)
-        if local_cfg.fsync:
-            with target_path.open("rb+") as handle:  # pragma: no cover - zależne od platformy
+        with target_path.open("wb") as handle:
+            handle.write(payload)
+            if config.fsync:
                 handle.flush()
                 os.fsync(handle.fileno())
-        verification_hash = self._hash_file(target_path)
+        verification_hash = self._hash_bytes(target_path.read_bytes())
         if verification_hash != expected_hash:
             raise RuntimeError(
-                "Niezgodność sumy kontrolnej przy kopiowaniu archiwum smoke do magazynu lokalnego"
+                "Niezgodność sumy kontrolnej przy synchronizacji lokalnego dziennika smoke"
             )
         metadata: MutableMapping[str, str] = {
             "verified": "true",
@@ -157,11 +166,11 @@ class SmokeArchiveUploader:
         }
         return target_path, metadata
 
-    def _upload_s3(
+    def _sync_s3(
         self,
-        archive_path: Path,
+        payload: bytes,
         *,
-        s3_cfg: SmokeArchiveS3Config,
+        config: PaperSmokeJsonSyncS3Config,
         placeholders: Mapping[str, str],
         expected_hash: str,
     ) -> tuple[str, Mapping[str, str]]:
@@ -172,33 +181,38 @@ class SmokeArchiveUploader:
         except ModuleNotFoundError as exc:  # pragma: no cover - zależne od środowiska
             raise RuntimeError("Backend 's3' wymaga zainstalowanego pakietu boto3") from exc
 
-        object_key = self._build_object_key(s3_cfg, placeholders)
+        object_key = self._build_object_key(config, placeholders)
         session = boto3.session.Session(
             aws_access_key_id=credentials.get("access_key_id"),
             aws_secret_access_key=credentials.get("secret_access_key"),
             aws_session_token=credentials.get("session_token"),
-            region_name=s3_cfg.region,
+            region_name=config.region,
         )
         client = session.client(
             "s3",
-            endpoint_url=s3_cfg.endpoint_url,
-            use_ssl=s3_cfg.use_ssl,
+            endpoint_url=config.endpoint_url,
+            use_ssl=config.use_ssl,
         )
-        extra_args = dict(s3_cfg.extra_args)
+        extra_args = dict(config.extra_args)
         metadata = dict(extra_args.get("Metadata") or {})
-        existing_hash = metadata.get("sha256")
-        if existing_hash and existing_hash.lower() != expected_hash.lower():
-            raise RuntimeError(
-                "Konfiguracja extra_args zawiera hash niezgodny z obliczoną sumą SHA-256 archiwum"
-            )
-        metadata["sha256"] = expected_hash
+        metadata.setdefault("sha256", expected_hash)
         extra_args["Metadata"] = metadata
-        client.upload_file(str(archive_path), s3_cfg.bucket, object_key, ExtraArgs=extra_args)
-        head = client.head_object(Bucket=s3_cfg.bucket, Key=object_key)
+        with tempfile.NamedTemporaryFile(delete=False) as temp_file:  # pragma: no cover - zależne od środowiska
+            temp_file.write(payload)
+            temp_file.flush()
+            upload_path = Path(temp_file.name)
+        try:
+            client.upload_file(str(upload_path), config.bucket, object_key, ExtraArgs=extra_args)
+        finally:
+            try:
+                upload_path.unlink(missing_ok=True)
+            except Exception:  # noqa: BLE001
+                pass
+        head = client.head_object(Bucket=config.bucket, Key=object_key)
         remote_metadata = head.get("Metadata", {}) if isinstance(head, Mapping) else {}
         remote_hash = remote_metadata.get("sha256")
         if remote_hash and remote_hash.lower() != expected_hash.lower():
-            raise RuntimeError("Hash pliku w S3 nie zgadza się z lokalną sumą SHA-256 archiwum")
+            raise RuntimeError("Hash pliku w S3 nie zgadza się z lokalną sumą SHA-256")
 
         verification: MutableMapping[str, str] = {
             "verified": "true",
@@ -217,9 +231,7 @@ class SmokeArchiveUploader:
                 verification["ack_http_status"] = str(status_code)
             if request_id:
                 verification["ack_request_id"] = str(request_id)
-
-        location = f"s3://{s3_cfg.bucket}/{object_key}"
-        return location, verification
+        return f"s3://{config.bucket}/{object_key}", verification
 
     def _load_s3_credentials(self) -> Mapping[str, str]:
         if not self._config.credential_secret:
@@ -241,30 +253,23 @@ class SmokeArchiveUploader:
             raise SecretStorageError(
                 "Sekret S3 nie zawiera wymaganych pól: " + ", ".join(missing)
             )
+
         return {str(key): str(value) for key, value in payload.items()}
 
     @staticmethod
     def _build_object_key(
-        config: SmokeArchiveS3Config,
+        config: PaperSmokeJsonSyncS3Config,
         placeholders: Mapping[str, str],
     ) -> str:
-        filename = "{environment}_{timestamp}_{hash}.zip".format(**placeholders)
+        filename = "{environment}_{timestamp}_{record}_{log_hash}.jsonl".format(**placeholders)
         if config.object_prefix:
             prefix = config.object_prefix.rstrip("/")
             return f"{prefix}/{filename}"
         return filename
 
-    @staticmethod
-    def _hash_file(path: Path) -> str:
-        digest = hashlib.sha256()
-        with path.open("rb") as handle:
-            for chunk in iter(lambda: handle.read(8192), b""):
-                digest.update(chunk)
-        return digest.hexdigest()
-
 
 __all__ = [
-    "SmokeArchiveUploader",
-    "SmokeArchiveUploadResult",
+    "PaperSmokeJsonSynchronizer",
+    "PaperSmokeJsonSyncResult",
 ]
 
