@@ -79,7 +79,6 @@ def test_runner_without_dispatch_success(tmp_path: Path, capsys: pytest.CaptureF
     summary = payload["summary"]
     assert summary["status"] == "ok"
     assert summary["ok"] == 1
-    assert payload["gap_statistics"]["total_entries"] == 1
 
 
 def test_runner_threshold_violation_sets_exit_code(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

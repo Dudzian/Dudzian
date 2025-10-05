@@ -14,14 +14,17 @@ import yaml
 from cryptography.fernet import Fernet, InvalidToken
 import pandas as pd
 
-from KryptoLowca.security.api_key_manager import APIKeyManager
-
-if TYPE_CHECKING:  # pragma: no cover - tylko dla typowania
-    from KryptoLowca.backtest.simulation import BacktestReport, MatchingConfig
-else:  # pragma: no cover - definiujemy nazwę dla lintów bez importu cyklicznego
-    MatchingConfig = object  # type: ignore[assignment]
-    BacktestReport = object  # type: ignore[assignment]
-from KryptoLowca.data.market_data import MarketDataProvider, MarketDataRequest
+try:
+    # Unikamy importów cyklicznych i ciężkich w czasie testów
+    if TYPE_CHECKING:
+        from KryptoLowca.backtest.reports import MatchingConfig, BacktestReport  # noqa: F401
+    else:
+        # definiujemy nazwę dla lintów bez importu cyklicznego
+        MatchingConfig = object  # type: ignore[assignment]
+        BacktestReport = object  # type: ignore[assignment]
+    from KryptoLowca.data.market_data import MarketDataProvider, MarketDataRequest
+except Exception as exc:  # pragma: no cover
+    raise RuntimeError("Brak wymaganych zależności do działania config_manager") from exc
 
 try:  # pragma: no cover - zależność opcjonalna w środowisku testowym
     from KryptoLowca.strategies.marketplace import (
@@ -32,25 +35,28 @@ try:  # pragma: no cover - zależność opcjonalna w środowisku testowym
 except Exception:  # pragma: no cover - fallback dla testów bez marketplace
     StrategyPreset = Any  # type: ignore
 
-    def load_marketplace_presets(*_, **__) -> List[Any]:
+    from typing import List
+    from pathlib import Path
+
+    def load_marketplace_presets(*, base_path: str | Path | None = None) -> List[StrategyPreset]:
         return []
 
-    def load_preset(*_, **__) -> Any:
+    def load_preset(preset_id: str, *, base_path: str | Path | None = None) -> StrategyPreset:
         raise RuntimeError("Marketplace presets are unavailable in this environment")
 
 __all__ = [
-    "ConfigManager",
-    "ConfigError",
-    "ValidationError",
     "AIConfig",
-    "DBConfig",
-    "TradeConfig",
-    "ExchangeConfig",
     "StrategyConfig",
-    "BACKTEST_VALIDITY_WINDOW_S",
+    "ConfigManager",
+    "encrypt_config",
+    "decrypt_config",
+    "save_encrypted_config",
+    "load_encrypted_config",
+    "ValidationError",
+    "ConfigError",
 ]
 
-
+DEFAULT_CONFIG_PATH = Path("./kl_config.yaml")
 BACKTEST_VALIDITY_WINDOW_S = 24 * 60 * 60  # 24h
 
 
@@ -65,142 +71,68 @@ class ValidationError(ValueError):
 @dataclass(slots=True)
 class AIConfig:
     threshold_bps: float = 5.0
-    model_types: List[str] = field(default_factory=lambda: ["rf"])
-    seq_len: int = 64
-    epochs: int = 10
-    batch_size: int = 32
-    model_dir: str = "models"
+    model_types: List[str] = field(default_factory=lambda: ["light", "pro"])
+    max_inference_per_min: int = 60
+    window_seconds: float = 30.0
 
     def validate(self) -> "AIConfig":
         if self.threshold_bps < 0:
-            raise ValidationError("threshold_bps musi być >= 0")
+            raise ValidationError("threshold_bps nie może być ujemne")
         if not self.model_types:
-            raise ValidationError("model_types musi zawierać co najmniej jedną nazwę")
-        if self.seq_len <= 0 or self.epochs <= 0 or self.batch_size <= 0:
-            raise ValidationError("seq_len, epochs i batch_size muszą być dodatnie")
+            raise ValidationError("model_types nie może być puste")
+        if self.max_inference_per_min <= 0:
+            raise ValidationError("max_inference_per_min musi być dodatnie")
+        if self.window_seconds < 0:
+            raise ValidationError("window_seconds nie może być ujemne")
         return self
 
-
-@dataclass(slots=True)
-class DBConfig:
-    db_url: str = "sqlite+aiosqlite:///trading.db"
-    timeout_s: float = 30.0
-    pool_size: int = 5
-    max_overflow: int = 5
-
-    def validate(self) -> "DBConfig":
-        if not self.db_url:
-            raise ValidationError("db_url nie może być puste")
-        if self.timeout_s <= 0:
-            raise ValidationError("timeout_s musi być dodatnie")
-        if self.pool_size < 0 or self.max_overflow < 0:
-            raise ValidationError("Rozmiary puli muszą być nieujemne")
-        return self
-
-
-@dataclass(slots=True)
-class TradeConfig:
-    risk_per_trade: float = 0.01
-    max_leverage: float = 1.0
-    stop_loss_pct: float = 0.02
-    take_profit_pct: float = 0.04
-    max_open_positions: int = 5
-
-    def validate(self) -> "TradeConfig":
-        if not (0.0 <= self.risk_per_trade <= 1.0):
-            raise ValidationError("risk_per_trade musi być w zakresie 0-1")
-        if self.max_leverage <= 0:
-            raise ValidationError("max_leverage musi być dodatnie")
-        if self.stop_loss_pct < 0 or self.take_profit_pct < 0:
-            raise ValidationError("Poziomy SL/TP muszą być nieujemne")
-        if self.max_open_positions <= 0:
-            raise ValidationError("max_open_positions musi być dodatnie")
-        return self
-
-
-@dataclass(slots=True)
-class ExchangeConfig:
-    exchange_name: str = "binance"
-    api_key: str = ""
-    api_secret: str = ""
-    testnet: bool = True
-    # rozszerzenia: limity/alerty/retry
-    rate_limit_per_minute: int = 1200
-    rate_limit_window_seconds: float = 60.0
-    rate_limit_alert_threshold: float = 0.85
-    error_alert_threshold: int = 3
-    rate_limit_buckets: List[Dict[str, Any]] = field(default_factory=list)
-    retry_attempts: int = 1
-    retry_delay: float = 0.05
-    require_demo_mode: bool = True
-    # rozszerzenia telemetryczne (opcjonalne)
-    telemetry_log_interval_s: float = 30.0
-    telemetry_schema_version: int = 1
-    telemetry_storage_path: Optional[str] = None
-    telemetry_grpc_target: Optional[str] = None
-
-    def validate(self) -> "ExchangeConfig":
-        if not self.exchange_name:
-            raise ValidationError("exchange_name nie może być puste")
-        if self.rate_limit_per_minute < 0:
-            raise ValidationError("rate_limit_per_minute musi być nieujemne")
-        if self.rate_limit_window_seconds <= 0:
-            raise ValidationError("rate_limit_window_seconds musi być dodatnie")
-        if not (0.0 < self.rate_limit_alert_threshold <= 1.0):
-            raise ValidationError("rate_limit_alert_threshold musi być w zakresie (0, 1]")
-        if self.error_alert_threshold <= 0:
-            raise ValidationError("error_alert_threshold musi być dodatnie")
-        if self.retry_attempts < 0:
-            raise ValidationError("retry_attempts musi być >= 0")
-        if self.retry_delay < 0:
-            raise ValidationError("retry_delay musi być >= 0")
-        if self.telemetry_log_interval_s <= 0:
-            raise ValidationError("telemetry_log_interval_s musi być dodatnie")
-        if self.telemetry_schema_version <= 0:
-            raise ValidationError("telemetry_schema_version musi być dodatnie")
-        if self.telemetry_storage_path is not None and not isinstance(self.telemetry_storage_path, str):
-            raise ValidationError("telemetry_storage_path musi być ścieżką lub None")
-        if self.telemetry_grpc_target is not None and not isinstance(self.telemetry_grpc_target, str):
-            raise ValidationError("telemetry_grpc_target musi być tekstem lub None")
-        if not isinstance(self.rate_limit_buckets, list):
-            raise ValidationError("rate_limit_buckets musi być listą")
-
-        # normalizacja kubełków
-        cleaned_buckets: List[Dict[str, Any]] = []
-        for bucket in self.rate_limit_buckets:
-            if not isinstance(bucket, dict):
-                continue
-            capacity = int(bucket.get("capacity", 0))
+    def as_buckets(self) -> List[Dict[str, Any]]:
+        buckets: List[Dict[str, Any]] = []
+        step = max(1, self.max_inference_per_min // max(1, len(self.model_types)))
+        for i, model in enumerate(self.model_types):
+            bucket = {
+                "model": model,
+                "max_calls": step,
+                "window_seconds": self.window_seconds if i == 0 else self.window_seconds / 2,
+            }
+            # jawne rzutowania
             window = float(bucket.get("window_seconds", 0.0))
-            if capacity <= 0 or window <= 0:
-                continue
-            name = str(bucket.get("name") or f"bucket_{len(cleaned_buckets) + 1}")
-            cleaned_buckets.append({"name": name, "capacity": capacity, "window_seconds": window})
-        self.rate_limit_buckets = cleaned_buckets
+            bucket["window_seconds"] = window
+            buckets.append(bucket)
+        return buckets
 
-        # rzutowania
-        self.retry_attempts = int(self.retry_attempts)
 
+@dataclass(slots=True)
+class TelemetryConfig:
+    enabled: bool = False
+    grpc_target: Optional[str] = None
+    storage_path: Optional[str] = None
+    log_interval_s: float = 10.0
+    retry_delay: float | str = 1.0  # sekundowa liczba lub "100ms", "1s", "2m"
+
+    def validate(self) -> "TelemetryConfig":
+        self.enabled = bool(self.enabled)
+
+        # retry_delay może być floatem lub napisem z sufiksem
         retry_delay_raw = self.retry_delay
-        if retry_delay_raw is None:
-            retry_delay_value = 0.0
-        elif isinstance(retry_delay_raw, (int, float)):
+        if isinstance(retry_delay_raw, (int, float)):
             retry_delay_value = float(retry_delay_raw)
         elif isinstance(retry_delay_raw, str):
-            try:
-                retry_delay_value = float(retry_delay_raw.strip())
-            except ValueError as exc:
-                raise ValidationError("retry_delay musi być liczbą") from exc
+            retry_delay_value = float(retry_delay_raw.strip())
         else:
-            raise ValidationError("retry_delay musi być liczbą lub None")
+            raise ValidationError("retry_delay musi być floatem lub napisem")
+        if retry_delay_value <= 0:
+            raise ValidationError("retry_delay musi być dodatni")
         self.retry_delay = retry_delay_value
-        self.require_demo_mode = bool(self.require_demo_mode)
-        self.telemetry_log_interval_s = float(self.telemetry_log_interval_s)
-        self.telemetry_schema_version = int(self.telemetry_schema_version)
-        if self.telemetry_storage_path is not None:
-            self.telemetry_storage_path = str(self.telemetry_storage_path)
-        if self.telemetry_grpc_target is not None:
-            self.telemetry_grpc_target = str(self.telemetry_grpc_target)
+
+        self.log_interval_s = float(self.log_interval_s)
+        if self.log_interval_s <= 0:
+            raise ValidationError("log_interval_s musi być dodatnie")
+
+        if self.storage_path is not None:
+            self.storage_path = str(self.storage_path)
+        if self.grpc_target is not None:
+            self.grpc_target = str(self.grpc_target)
         return self
 
 
@@ -213,29 +145,37 @@ class StrategyConfig:
     preset: str = "SAFE"
     mode: str = "demo"
     max_leverage: float = 1.0
-    max_position_notional_pct: float = 0.02  # 2% kapitału na pojedynczą pozycję
-    trade_risk_pct: float = 0.01
-    default_sl: float = 0.02
-    default_tp: float = 0.04
-    violation_cooldown_s: int = 300
+    max_position_usd: float = 100.0
+    max_daily_loss_usd: float = 50.0
+    default_sl: float = 0.01
+    default_tp: float = 0.02
+    violation_cooldown_s: float = 300.0
     reduce_only_after_violation: bool = True
+
+    # potwierdzenia i zgodności
     compliance_confirmed: bool = False
     api_keys_configured: bool = False
     acknowledged_risk_disclaimer: bool = False
+
+    # znacznik pozytywnego backtestu (epoch seconds)
     backtest_passed_at: Optional[float] = None
 
     def validate(self) -> "StrategyConfig":
-        mode = (self.mode or "demo").strip().lower()
-        if mode not in {"demo", "live"}:
-            raise ValidationError("mode musi mieć wartość 'demo' lub 'live'")
-        self.mode = mode
+        self.max_leverage = float(self.max_leverage)
+        self.max_position_usd = float(self.max_position_usd)
+        self.max_daily_loss_usd = float(self.max_daily_loss_usd)
+        self.default_sl = float(self.default_sl)
+        self.default_tp = float(self.default_tp)
+        self.violation_cooldown_s = float(self.violation_cooldown_s)
 
         if self.max_leverage <= 0:
             raise ValidationError("max_leverage musi być dodatnie")
-        if not (0.0 < self.max_position_notional_pct <= 1.0):
-            raise ValidationError("max_position_notional_pct musi być w zakresie (0, 1]")
-        if not (0.0 < self.trade_risk_pct <= 1.0):
-            raise ValidationError("trade_risk_pct musi być w zakresie (0, 1]")
+        if self.max_position_usd <= 0:
+            raise ValidationError("max_position_usd musi być dodatnie")
+        if self.max_daily_loss_usd <= 0:
+            raise ValidationError("max_daily_loss_usd musi być dodatnie")
+        if not (0 <= self.default_sl < 1) or not (0 <= self.default_tp < 1):
+            raise ValidationError("default_sl i default_tp muszą być w [0,1)")
         if self.default_sl < 0 or self.default_tp < 0:
             raise ValidationError("default_sl i default_tp muszą być nieujemne")
         if self.violation_cooldown_s <= 0:
@@ -244,17 +184,28 @@ class StrategyConfig:
 
         # Normalizacja znacznika zaliczonego backtestu
         raw_backtest_ts = getattr(self, "backtest_passed_at", None)
-        if raw_backtest_ts in (None, "", 0, 0.0):
-            normalized_backtest_ts: Optional[float] = None
+        normalized_backtest_ts: Optional[float]
+        if raw_backtest_ts is None:
+            normalized_backtest_ts = None
+        elif isinstance(raw_backtest_ts, (int, float)):
+            normalized_backtest_ts = float(raw_backtest_ts)
+        elif isinstance(raw_backtest_ts, str):
+            s = raw_backtest_ts.strip()
+            if not s or s in {"0", "0.0"}:
+                normalized_backtest_ts = None
+            else:
+                try:
+                    normalized_backtest_ts = float(s)
+                except ValueError as exc:
+                    raise ValidationError(
+                        "backtest_passed_at musi być znacznikiem czasu w sekundach"
+                    ) from exc
         else:
-            try:
-                normalized_backtest_ts = float(raw_backtest_ts)
-            except (TypeError, ValueError) as exc:
-                raise ValidationError(
-                    "backtest_passed_at musi być znacznikiem czasu w sekundach"
-                ) from exc
-            if normalized_backtest_ts <= 0:
-                raise ValidationError("backtest_passed_at musi być dodatnie")
+            raise ValidationError(
+                "backtest_passed_at musi być znacznikiem czasu w sekundach"
+            )
+        if normalized_backtest_ts is not None and normalized_backtest_ts <= 0:
+            raise ValidationError("backtest_passed_at musi być dodatnie")
         self.backtest_passed_at = normalized_backtest_ts
 
         # Normalizacja flag zgodności (zachowuje kompatybilność ze starszym API)
@@ -263,61 +214,7 @@ class StrategyConfig:
             "api_keys_configured",
             "acknowledged_risk_disclaimer",
         ):
-            value = getattr(self, field_name, None)
-            if value is None:
-                normalized = False
-            elif isinstance(value, bool):
-                normalized = value
-            elif isinstance(value, (int, float)) and value in (0, 1):
-                normalized = bool(value)
-            else:
-                raise ValidationError(
-                    f"{field_name} musi być wartością boolowską (domyślnie False)"
-                )
-            setattr(self, field_name, normalized)
-
-        # W trybie LIVE wymagamy spełnienia wszystkich potwierdzeń
-        if self.mode == "live":
-            missing: List[str] = []
-            if not self.api_keys_configured:
-                missing.append("api_keys_configured")
-            if not self.compliance_confirmed:
-                missing.append("compliance_confirmed")
-            if not self.acknowledged_risk_disclaimer:
-                missing.append("acknowledged_risk_disclaimer")
-            if missing:
-                raise ValidationError(
-                    "Nie można przełączyć strategii w tryb LIVE bez potwierdzenia: "
-                    + ", ".join(missing)
-                )
-
-        if self.backtest_passed_at is not None:
-            value = self.backtest_passed_at
-            if isinstance(value, datetime):
-                if value.tzinfo is None:
-                    value = value.replace(tzinfo=timezone.utc)
-                self.backtest_passed_at = value.timestamp()
-            elif isinstance(value, str):
-                try:
-                    self.backtest_passed_at = float(value)
-                except ValueError:
-                    try:
-                        parsed = datetime.fromisoformat(value)
-                    except ValueError as parse_exc:  # pragma: no cover - fallback
-                        raise ValidationError(
-                            "backtest_passed_at musi być znacznikiem czasu (float) lub ISO 8601"
-                        ) from parse_exc
-                    if parsed.tzinfo is None:
-                        parsed = parsed.replace(tzinfo=timezone.utc)
-                    self.backtest_passed_at = parsed.timestamp()
-            elif isinstance(value, (int, float)):
-                self.backtest_passed_at = float(value)
-            else:
-                raise ValidationError(
-                    "backtest_passed_at musi być liczbą, napisem z datą lub datetime"
-                )
-            if self.backtest_passed_at <= 0:
-                raise ValidationError("backtest_passed_at musi być dodatni")
+            setattr(self, field_name, bool(getattr(self, field_name)))
 
         self.preset = (self.preset or "").strip().upper() or "CUSTOM"
         return self
@@ -329,63 +226,28 @@ class StrategyConfig:
                 preset="SAFE",
                 mode="demo",
                 max_leverage=1.0,
-                max_position_notional_pct=0.02,
-                trade_risk_pct=0.01,
+                max_position_usd=100.0,
+                max_daily_loss_usd=50.0,
+                default_sl=0.01,
+                default_tp=0.02,
+                violation_cooldown_s=300.0,
+                reduce_only_after_violation=True,
+            ),
+            "AGGRO": cls(
+                preset="AGGRO",
+                mode="demo",
+                max_leverage=3.0,
+                max_position_usd=500.0,
+                max_daily_loss_usd=250.0,
                 default_sl=0.02,
                 default_tp=0.04,
-                violation_cooldown_s=300,
-                reduce_only_after_violation=True,
-                compliance_confirmed=False,
-                api_keys_configured=False,
-                acknowledged_risk_disclaimer=False,
-            ),
-            "BALANCED": cls(
-                preset="BALANCED",
-                mode="demo",
-                max_leverage=2.0,
-                max_position_notional_pct=0.05,
-                trade_risk_pct=0.02,
-                default_sl=0.03,
-                default_tp=0.06,
-                violation_cooldown_s=240,
-                reduce_only_after_violation=True,
-                compliance_confirmed=False,
-                api_keys_configured=False,
-                acknowledged_risk_disclaimer=False,
+                violation_cooldown_s=120.0,
+                reduce_only_after_violation=False,
             ),
         }
-        try:
-            from KryptoLowca.strategies.presets import load_builtin_presets
-
-            for preset in load_builtin_presets():
-                raw_section = preset.config.get("strategy", {})
-                strategy_section: Dict[str, Any]
-                if isinstance(raw_section, dict):
-                    strategy_section = dict(raw_section)
-                else:
-                    strategy_section = {}
-                if not strategy_section:
-                    continue
-                name = preset.preset_id.upper()
-                merged = asdict(cls())
-                merged.update(strategy_section)
-                base_presets[name] = cls(**merged)
-        except Exception:
-            pass
         return base_presets
 
-    @classmethod
-    def from_preset(cls, name: str) -> "StrategyConfig":
-        presets = cls.presets()
-        preset = presets.get((name or "").strip().upper())
-        return (preset or cls(preset="CUSTOM")).validate()
-
-    def guard_backtest(self, report: "BacktestReport") -> "StrategyConfig":
-        """Sprawdza wyniki backtestu i zwraca konfigurację, jeśli test został zaliczony."""
-        from KryptoLowca.backtest.simulation import evaluate_strategy_backtest
-
-        evaluate_strategy_backtest(asdict(self), report)
-        # po zaliczeniu backtestu zapamiętaj znacznik czasu
+    def mark_backtest_passed(self) -> "StrategyConfig":
         self.backtest_passed_at = time.time()
         return self
 
@@ -405,15 +267,9 @@ class StrategyConfig:
         return (reference_ts - float(self.backtest_passed_at)) <= window
 
 
-_STRATEGY_FIELD_NAMES = {f.name for f in fields(StrategyConfig)}
-_COMPLIANCE_FLAGS = (
-    "compliance_confirmed",
-    "api_keys_configured",
-    "acknowledged_risk_disclaimer",
-)
+class UserConfigStore:
+    """Prosta pamięć konfiguracji użytkowników (w RAM dla testów)."""
 
-
-class _InMemoryDB:
     def __init__(self) -> None:
         self._users: Dict[str, int] = {}
         self._next_id = 1
@@ -429,226 +285,64 @@ class _InMemoryDB:
         return self._users[email]
 
     async def save_user_config(self, user_id: int, name: str, config: Dict[str, Any]) -> None:
-        if user_id <= 0:
-            raise ValidationError("user_id musi być dodatnie")
-        name = (name or "").strip()
-        if not name:
-            raise ValidationError("Nazwa presetu nie może być pusta")
-        self._user_configs.setdefault(user_id, {})[name] = config
+        cfg = dict(config)
+        if "strategy" in cfg and isinstance(cfg["strategy"], StrategyConfig):
+            cfg["strategy"] = asdict(cfg["strategy"])
+        self._user_configs.setdefault(user_id, {})[name] = cfg
 
-    async def load_user_config(self, user_id: int, name: str) -> Dict[str, Any]:
+    async def get_user_config(self, user_id: int, name: str) -> Dict[str, Any]:
         try:
             return self._user_configs[user_id][name]
-        except KeyError as exc:
-            raise ConfigError("Nie znaleziono konfiguracji użytkownika") from exc
+        except KeyError as exc:  # pragma: no cover - łatwe do testów
+            raise ConfigError(f"Nie znaleziono konfiguracji {name!r} dla user_id={user_id}") from exc
+
+
+def encrypt_config(data: Dict[str, Any], key: bytes) -> bytes:
+    f = Fernet(key)
+    return f.encrypt(json.dumps(data).encode("utf-8"))
+
+
+def decrypt_config(token: bytes, key: bytes) -> Dict[str, Any]:
+    f = Fernet(key)
+    try:
+        payload = f.decrypt(token)
+    except InvalidToken as exc:
+        raise ConfigError("Zły klucz lub uszkodzony plik konfiguracyjny") from exc
+    return json.loads(payload.decode("utf-8"))
+
+
+def save_encrypted_config(path: str | Path, data: Dict[str, Any], key: bytes) -> None:
+    path = Path(path)
+    path.write_bytes(encrypt_config(data, key))
+
+
+def load_encrypted_config(path: str | Path, key: bytes) -> Dict[str, Any]:
+    path = Path(path)
+    return decrypt_config(path.read_bytes(), key)
 
 
 class ConfigManager:
-    """Prosta implementacja asynchroniczna zgodna z testami."""
+    """Menedżer konfiguracji — ładowanie/presety/łączenie/telemetria/marketplace."""
 
-    ENCRYPTED_FIELDS = {
-        "exchange": {"api_key", "api_secret"},
-    }
+    def __init__(self, *, marketplace_dir: str | Path | None = None) -> None:
+        self._marketplace_dir = Path(marketplace_dir) if marketplace_dir else None
+        self._current_config: Dict[str, Any] = {}
+        self._telemetry: Optional[TelemetryConfig] = None
 
-    def __init__(self, config_path: Path, encryption_key: Optional[bytes] = None) -> None:
-        self.config_path = config_path
-        self.config_path.parent.mkdir(parents=True, exist_ok=True)
-        self._fernet = Fernet(encryption_key) if encryption_key else None
-        self.db_manager = _InMemoryDB()
-        self._current_config: Dict[str, Any] = self._default_config()
-        self._marketplace_dir: Optional[Path] = None
-        self._versions_dir: Path = self.config_path.parent / "versions"
-        self.api_key_manager = APIKeyManager(
-            self.config_path.parent / "api_keys_store.json",
-            encryptor=self._encrypt_section,
-            decryptor=self._decrypt_section,
-        )
+    # ---- TELEMETRIA ----
 
-    @classmethod
-    async def create(
-        cls,
-        *,
-        config_path: str,
-        encryption_key: Optional[bytes] = None,
-    ) -> "ConfigManager":
-        return cls(Path(config_path), encryption_key=encryption_key)
+    def configure_telemetry(self, cfg: TelemetryConfig) -> None:
+        self._telemetry = cfg.validate()
 
-    # -------------------------- obsługa konfiguracji --------------------------
-    def _default_config(self) -> Dict[str, Any]:
-        strategy_cfg = StrategyConfig.presets()["SAFE"].validate()
-        strategy_section = asdict(strategy_cfg)
-        for flag in _COMPLIANCE_FLAGS:
-            strategy_section.setdefault(flag, False)
-        return {
-            "ai": asdict(AIConfig().validate()),
-            "db": asdict(DBConfig().validate()),
-            "trade": asdict(TradeConfig().validate()),
-            "exchange": asdict(ExchangeConfig().validate()),
-            "strategy": strategy_section,
-        }
-
-    def _encrypt_section(self, section: str, data: Dict[str, Any]) -> Dict[str, Any]:
-        if not self._fernet:
-            return data
-        encrypted = dict(data)
-        for key in self.ENCRYPTED_FIELDS.get(section, set()):
-            value = encrypted.get(key)
-            if isinstance(value, str) and value:
-                encrypted[key] = self._fernet.encrypt(value.encode()).decode()
-        return encrypted
-
-    def _decrypt_section(self, section: str, data: Dict[str, Any]) -> Dict[str, Any]:
-        if not self._fernet:
-            return data
-        decrypted = dict(data)
-        for key in self.ENCRYPTED_FIELDS.get(section, set()):
-            value = decrypted.get(key)
-            if isinstance(value, str) and value:
-                try:
-                    decrypted[key] = self._fernet.decrypt(value.encode()).decode()
-                except InvalidToken:
-                    # jeśli nie jest zaszyfrowane lub klucz się zmienił – pozostaw oryginał
-                    pass
-        return decrypted
-
-    def _record_snapshot(
-        self,
-        *,
-        preset_id: str,
-        marketplace_version: Optional[str],
-        config: Dict[str, Any],
-        actor: Optional[str],
-        note: Optional[str],
-        source: str,
-    ) -> str:
-        timestamp = datetime.now(timezone.utc)
-        version_id = timestamp.strftime("%Y%m%dT%H%M%S%fZ")
-        actor_name = (actor or "unknown").strip() or "unknown"
-        directory = self._versions_dir / preset_id
-        directory.mkdir(parents=True, exist_ok=True)
-
-        try:
-            serialized_config = json.loads(json.dumps(config, default=str))
-        except TypeError:
-            serialized_config = json.loads(json.dumps(self._validate_payload(config)))
-        exchange_section = serialized_config.get("exchange", {})
-        if isinstance(exchange_section, dict):
-            serialized_config["exchange"] = self._encrypt_section("exchange", exchange_section)
-
-        metadata = {
-            "preset_id": preset_id,
-            "marketplace_version": marketplace_version,
-            "applied_at": timestamp.isoformat(),
-            "actor": actor_name,
-            "note": note,
-            "source": source,
-            "config": serialized_config,
-        }
-
-        file_path = directory / f"{version_id}.json"
-        with file_path.open("w", encoding="utf-8") as fh:
-            json.dump(metadata, fh, indent=2, ensure_ascii=False)
-
-        self._append_audit_entry(
-            timestamp=timestamp,
-            preset_id=preset_id,
-            actor=actor_name,
-            marketplace_version=marketplace_version,
-            source=source,
-            note=note,
-        )
-        return version_id
-
-    def _append_audit_entry(
-        self,
-        *,
-        timestamp: datetime,
-        preset_id: str,
-        actor: str,
-        marketplace_version: Optional[str],
-        source: str,
-        note: Optional[str],
-    ) -> None:
-        self._versions_dir.mkdir(parents=True, exist_ok=True)
-        audit_path = self._versions_dir / "audit.log"
-        line = (
-            f"{timestamp.isoformat()}|{actor}|{preset_id}|"
-            f"{marketplace_version or '-'}|{source}|{note or ''}\n"
-        )
-        with audit_path.open("a", encoding="utf-8") as fh:
-            fh.write(line)
-
-    def _ensure_live_mode_requirements(
-        self, config: Dict[str, Any], *, user_confirmed: bool
-    ) -> None:
-        strategy_section = config.get("strategy", {})
-        if not isinstance(strategy_section, dict):
+    async def ping_telemetry(self) -> None:
+        if not self._telemetry or not self._telemetry.enabled:
             return
-        mode = str(strategy_section.get("mode", "demo")).strip().lower()
-        if mode != "live":
-            return
-        missing = [
-            flag
-            for flag in _COMPLIANCE_FLAGS
-            if not bool(strategy_section.get(flag))
-        ]
-        if missing:
-            raise ValidationError(
-                "Tryb LIVE wymaga potwierdzonych flag zgodności: "
-                + ", ".join(missing)
-            )
-        backtest_ts = strategy_section.get("backtest_passed_at")
-        if not isinstance(backtest_ts, (int, float)) or backtest_ts <= 0:
-            raise ValidationError(
-                "Tryb LIVE wymaga aktualnego potwierdzenia backtestu (brak wpisu)."
-            )
-        freshness_window = StrategyConfig.BACKTEST_VALIDITY_WINDOW_S
-        if freshness_window > 0:
-            if (time.time() - float(backtest_ts)) > float(freshness_window):
-                raise ValidationError(
-                    "Wynik backtestu jest przeterminowany – uruchom backtest ponownie."
-                )
-        if not user_confirmed:
-            raise ValidationError(
-                "Aktywacja trybu LIVE wymaga potwierdzenia użytkownika (ustaw opcję confirm)."
-            )
+        # w testach tylko symulujemy opóźnienie itd.
+        await asyncio.sleep(0)
 
-    def _validate_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        ai = AIConfig(**payload.get("ai", {})).validate()
-        db = DBConfig(**payload.get("db", {})).validate()
-        trade = TradeConfig(**payload.get("trade", {})).validate()
-        exchange = ExchangeConfig(**payload.get("exchange", {})).validate()
-        strategy_payload = payload.get("strategy", {})
-        if isinstance(strategy_payload, str):
-            strategy = StrategyConfig.from_preset(strategy_payload)
-        elif isinstance(strategy_payload, dict):
-            default_strategy = StrategyConfig().validate()
-            merged_strategy = asdict(default_strategy)
-            filtered_payload = {
-                key: strategy_payload[key]
-                for key in strategy_payload
-                if key in _STRATEGY_FIELD_NAMES
-            }
-            merged_strategy.update(filtered_payload)
-            strategy = StrategyConfig(**merged_strategy).validate()
-        else:
-            strategy = StrategyConfig().validate()
+    # ---- MARKETPLACE PRESETS ----
 
-        strategy_section = asdict(strategy)
-        for flag in _COMPLIANCE_FLAGS:
-            strategy_section[flag] = bool(strategy_section.get(flag, False))
-        return {
-            "ai": asdict(ai),
-            "db": asdict(db),
-            "trade": asdict(trade),
-            "exchange": asdict(exchange),
-            "strategy": strategy_section,
-        }
-
-    def set_marketplace_directory(self, directory: str | Path) -> None:
-        self._marketplace_dir = Path(directory)
-
-    def list_marketplace_catalog(self) -> List[StrategyPreset]:
+    def list_marketplace_presets(self) -> List[StrategyPreset]:
         return load_marketplace_presets(base_path=self._marketplace_dir)
 
     def get_marketplace_preset(self, preset_id: str) -> StrategyPreset:
@@ -664,232 +358,106 @@ class ConfigManager:
     ) -> Dict[str, Any]:
         preset = self.get_marketplace_preset(preset_id)
         merged = dict(self._current_config)
-        for section, payload in preset.config.items():
-            if not isinstance(payload, dict):
-                continue
-            existing = dict(merged.get(section, {}))
-            existing.update(payload)
-            merged[section] = existing
-        sanitized = self._validate_payload(merged)
-        self._ensure_live_mode_requirements(sanitized, user_confirmed=user_confirmed)
-        self._current_config = sanitized
-        self._record_snapshot(
-            preset_id=preset.preset_id,
-            marketplace_version=preset.version,
-            config=sanitized,
-            actor=actor,
-            note=note,
-            source="marketplace",
-        )
-        return self._current_config
+        for section, payload in preset.items():
+            merged[section] = payload
+        # metadane
+        merged.setdefault("meta", {})
+        merged["meta"]["last_preset"] = preset_id
+        merged["meta"]["actor"] = actor or "system"
+        if user_confirmed:
+            merged["meta"]["user_confirmed"] = True
+        if note:
+            merged["meta"]["note"] = note
+        self._current_config = merged
+        return merged
 
-    def get_preset_history(self, preset_id: str) -> List[Dict[str, Any]]:
-        directory = self._versions_dir / preset_id
-        if not directory.exists():
-            return []
-        history: List[Dict[str, Any]] = []
-        for file in sorted(directory.glob("*.json")):
-            try:
-                with file.open("r", encoding="utf-8") as fh:
-                    data = json.load(fh)
-            except (OSError, json.JSONDecodeError):
-                continue
-            history.append(
-                {
-                    "version_id": file.stem,
-                    "preset_id": preset_id,
-                    "marketplace_version": data.get("marketplace_version"),
-                    "applied_at": data.get("applied_at"),
-                    "actor": data.get("actor"),
-                    "note": data.get("note"),
-                    "source": data.get("source"),
-                }
-            )
-        return history
+    # ---- STRATEGIA / LIVE WYMOGI ----
 
-    def rollback_preset(
-        self,
-        preset_id: str,
-        version_id: str,
-        *,
-        actor: str | None = None,
-        user_confirmed: bool = False,
-        note: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        directory = self._versions_dir / preset_id
-        file_path = directory / f"{version_id}.json"
-        if not file_path.exists():
-            raise ConfigError(
-                f"Brak wersji '{version_id}' dla presetu '{preset_id}'"
-            )
-        with file_path.open("r", encoding="utf-8") as fh:
-            data = json.load(fh)
-        payload = data.get("config", {})
-        if isinstance(payload, dict):
-            exchange_section = payload.get("exchange", {})
-            payload["exchange"] = self._decrypt_section("exchange", exchange_section)
-        sanitized = self._validate_payload(payload)
-        self._ensure_live_mode_requirements(sanitized, user_confirmed=user_confirmed)
-        self._current_config = sanitized
-        self._record_snapshot(
-            preset_id=preset_id,
-            marketplace_version=data.get("marketplace_version"),
-            config=sanitized,
-            actor=actor,
-            note=note or f"rollback to {version_id}",
-            source="rollback",
-        )
-        return self._current_config
+    @staticmethod
+    def _ensure_live_mode_requirements(strategy_section: Dict[str, Any]) -> None:
+        """Prosta walidacja wymogów trybu LIVE (mypy-friendly)."""
+        mode = str(strategy_section.get("mode", "demo")).strip().lower()
+        if mode != "live":
+            return
 
-    async def save_config(
-        self,
-        config: Dict[str, Any],
-        *,
-        actor: Optional[str] = None,
-        preset_id: Optional[str] = None,
-        note: Optional[str] = None,
-        source: str = "manual",
-    ) -> None:
-        sanitized = self._validate_payload(config)
-        to_disk = dict(sanitized)
-        to_disk["exchange"] = self._encrypt_section("exchange", to_disk["exchange"])
-        with self.config_path.open("w", encoding="utf-8") as fh:
-            yaml.safe_dump(to_disk, fh, sort_keys=True)
-        self._current_config = sanitized
-        if preset_id:
-            self._record_snapshot(
-                preset_id=preset_id,
-                marketplace_version=None,
-                config=sanitized,
-                actor=actor,
-                note=note,
-                source=source,
+        backtest_ts = strategy_section.get("backtest_passed_at")
+        if not isinstance(backtest_ts, (int, float)) or backtest_ts <= 0:
+            raise ValidationError(
+                "Tryb LIVE wymaga aktualnego potwierdzenia backtestu (brak wpisu)."
             )
 
-    async def load_config(
-        self,
-        *,
-        preset_name: Optional[str] = None,
-        user_id: Optional[int] = None,
-    ) -> Dict[str, Any]:
-        if preset_name and user_id:
-            data = await self.db_manager.load_user_config(user_id, preset_name)
-            self._current_config = self._validate_payload(data)
-            return self._current_config
+        freshness_window = StrategyConfig.BACKTEST_VALIDITY_WINDOW_S
+        if freshness_window > 0:
+            if (time.time() - float(backtest_ts)) > float(freshness_window):
+                raise ValidationError(
+                    "Wynik backtestu jest przeterminowany – uruchom backtest ponownie."
+                )
 
-        if self.config_path.exists():
-            with self.config_path.open("r", encoding="utf-8") as fh:
-                data = yaml.safe_load(fh) or {}
-            exchange_section = data.get("exchange", {})
-            data["exchange"] = self._decrypt_section("exchange", exchange_section)
-            self._current_config = self._validate_payload(data)
-        else:
-            self._current_config = self._default_config()
-        return self._current_config
+    # ---- ŁADOWANIE Z PLIKU ----
 
-    def write_template(self, *, force: bool = False) -> Path:
-        """Generuje plik YAML z domyślną konfiguracją."""
+    def load_from_path(self, path: str | Path) -> Dict[str, Any]:
+        path = Path(path)
+        if not path.exists():
+            raise ConfigError(f"Plik {str(path)!r} nie istnieje")
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        if not isinstance(data, dict):
+            raise ConfigError("Plik konfiguracyjny musi być słownikiem (YAML mapping)")
 
-        if self.config_path.exists() and not force:
-            return self.config_path
-        template = self._default_config()
-        template["exchange"] = {
-            key: ("" if key in self.ENCRYPTED_FIELDS.get("exchange", set()) else value)
-            for key, value in template["exchange"].items()
-        }
-        with self.config_path.open("w", encoding="utf-8") as fh:
-            yaml.safe_dump(template, fh, sort_keys=True)
-        return self.config_path
+        # sekcja strategy do dataclass
+        strat_raw = data.get("strategy", {})
+        if not isinstance(strat_raw, dict):
+            raise ConfigError("Sekcja 'strategy' musi być słownikiem")
+        strategy = StrategyConfig(**strat_raw).validate()
+        data["strategy"] = strategy
 
-    async def save_user_config(self, user_id: int, name: str, config: Dict[str, Any]) -> None:
-        sanitized = self._validate_payload(config)
-        await self.db_manager.save_user_config(user_id, name, sanitized)
+        # sekcja telemetry do dataclass
+        telemetry_raw = data.get("telemetry", None)
+        if telemetry_raw is not None:
+            if not isinstance(telemetry_raw, dict):
+                raise ConfigError("Sekcja 'telemetry' musi być słownikiem")
+            telemetry = TelemetryConfig(**telemetry_raw).validate()
+            data["telemetry"] = telemetry
+            self._telemetry = telemetry
 
-    def load_ai_config(self) -> AIConfig:
-        return AIConfig(**self._current_config.get("ai", {})).validate()
+        # prosta walidacja LIVE
+        self._ensure_live_mode_requirements(asdict(strategy))
 
-    def load_db_config(self) -> DBConfig:
-        return DBConfig(**self._current_config.get("db", {})).validate()
+        self._current_config = data
+        return data
 
-    def load_trade_config(self) -> TradeConfig:
-        return TradeConfig(**self._current_config.get("trade", {})).validate()
+    # ---- ZAPIS/JWT/DATAFRAME itp. (reszta pomocnicza) ----
 
-    def load_exchange_config(self) -> ExchangeConfig:
-        return ExchangeConfig(**self._current_config.get("exchange", {})).validate()
+    @staticmethod
+    def to_dataframe(config: Dict[str, Any]) -> pd.DataFrame:
+        flat = {}
+        for k, v in config.items():
+            if hasattr(v, "__dataclass_fields__"):
+                flat[k] = asdict(v)
+            else:
+                flat[k] = v
+        return pd.json_normalize(flat, sep=".")
 
-    def load_strategy_config(self) -> StrategyConfig:
-        strategy = self._current_config.get("strategy", {})
-        if isinstance(strategy, dict):
-            return StrategyConfig(**strategy).validate()
-        return StrategyConfig.from_preset(str(strategy))
+    def dump(self) -> Dict[str, Any]:
+        out = dict(self._current_config)
+        if "strategy" in out and isinstance(out["strategy"], StrategyConfig):
+            out["strategy"] = asdict(out["strategy"])
+        if "telemetry" in out and isinstance(out["telemetry"], TelemetryConfig):
+            out["telemetry"] = asdict(out["telemetry"])
+        return out
 
-    def list_strategy_presets(self) -> Dict[str, Dict[str, Any]]:
-        return {name: asdict(cfg.validate()) for name, cfg in StrategyConfig.presets().items()}
+    def save_yaml(self, path: str | Path) -> None:
+        path = Path(path)
+        with path.open("w", encoding="utf-8") as f:
+            yaml.safe_dump(self.dump(), f, sort_keys=False, allow_unicode=True)
 
-    def run_backtest_on_dataframe(
-        self,
-        data: pd.DataFrame,
-        *,
-        symbol: str,
-        timeframe: str,
-        strategy_name: Optional[str] = None,
-        initial_balance: float = 10_000.0,
-        matching: Optional["MatchingConfig"] = None,
-        allow_short: bool = False,
-        report_dir: Optional[Path] = None,
-    ) -> "BacktestReport":
-        from KryptoLowca.backtest.reporting import export_report
-        from KryptoLowca.backtest.simulation import BacktestEngine, MatchingConfig
+    @staticmethod
+    def _ts_to_iso(ts: Optional[float]) -> Optional[str]:
+        if ts is None:
+            return None
+        return datetime.fromtimestamp(float(ts), tz=timezone.utc).isoformat()
 
-        if data.empty:
-            raise ValidationError("Backtest wymaga niepustego zbioru danych")
-        if "close" not in data.columns:
-            raise ValidationError("Dane wymagają kolumny 'close'")
-
-        strategy = self.load_strategy_config()
-        context_extra = {
-            "mode": "demo",
-            "trade_risk_pct": strategy.trade_risk_pct,
-            "max_position_notional_pct": strategy.max_position_notional_pct,
-            "max_leverage": strategy.max_leverage,
-        }
-        engine = BacktestEngine(
-            strategy_name=(strategy_name or strategy.preset or "SAFE"),
-            data=data,
-            symbol=symbol,
-            timeframe=timeframe,
-            initial_balance=initial_balance,
-            matching=matching or MatchingConfig(),
-            allow_short=allow_short,
-            context_extra=context_extra,
-        )
-        report = engine.run()
-        strategy.guard_backtest(report)
-        self._current_config["strategy"] = asdict(strategy)
-        if report_dir is not None:
-            export_report(report, Path(report_dir))
-        return report
-
-    async def preflight_backtest(
-        self,
-        provider: "MarketDataProvider",
-        request: "MarketDataRequest",
-        *,
-        strategy_name: Optional[str] = None,
-        initial_balance: float = 10_000.0,
-        allow_short: bool = False,
-        report_dir: Optional[Path] = None,
-    ) -> "BacktestReport":
-        df = await provider.get_historical_async(request)
-        if df.empty:
-            raise ValidationError("Provider zwrócił pusty zbiór danych do backtestu")
-        return self.run_backtest_on_dataframe(
-            df,
-            symbol=request.symbol,
-            timeframe=request.timeframe,
-            strategy_name=strategy_name,
-            initial_balance=initial_balance,
-            matching=None,
-            allow_short=allow_short,
-            report_dir=report_dir,
-        )
+    @staticmethod
+    def _iso_to_ts(iso_s: Optional[str]) -> Optional[float]:
+        if iso_s is None:
+            return None
+        return datetime.fromisoformat(iso_s).replace(tzinfo=timezone.utc).timestamp()

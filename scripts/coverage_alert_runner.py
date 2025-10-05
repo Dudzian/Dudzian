@@ -8,7 +8,7 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Sequence
 
 from bot_core.alerts.coverage import (
     build_environment_coverage_report,
@@ -198,18 +198,6 @@ def _print_text_report(
             ok_ratio=summary.get("ok_ratio"),
         )
     )
-
-    gap_stats = payload.get("gap_statistics")
-    if isinstance(gap_stats, Mapping):
-        print(
-            "Statystyki luk: count={with_gap}/{total} median={median} p95={p95} max={max_gap}".format(
-                with_gap=gap_stats.get("with_gap_measurement"),
-                total=gap_stats.get("total_entries"),
-                median=gap_stats.get("median_gap_minutes"),
-                p95=gap_stats.get("percentile_95_gap_minutes"),
-                max_gap=gap_stats.get("max_gap_minutes"),
-            )
-        )
 
     if threshold:
         thresholds = threshold.get("thresholds") or {}

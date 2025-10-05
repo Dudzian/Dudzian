@@ -11,9 +11,12 @@ from typing import Mapping, Sequence
 from bot_core.config import load_core_config
 from bot_core.data.intervals import normalize_interval_token as _normalize_interval_token
 from bot_core.data.ohlcv import (
-    CoverageReportPayload,
-    build_coverage_report_payload,
+    CoverageStatus,
+    CoverageSummary,
+    coerce_summary_mapping,
     evaluate_coverage,
+    summarize_coverage,
+    summarize_issues,
 )
 
 
@@ -172,25 +175,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             print("Brak wpisów w manifeście dla wskazanych interwałów.", file=sys.stderr)
             return 2
 
-    report: CoverageReportPayload = build_coverage_report_payload(
-        statuses=tuple(statuses),
-        manifest_path=manifest_path,
-        environment_name=environment.name,
-        exchange_name=environment.exchange,
-        as_of=as_of,
-        data_quality=getattr(environment, "data_quality", None),
-    )
-
-    payload = report.to_mapping()
-    issues = list(report.issues)
-    summary_payload = report.summary
-    raw_threshold = payload.get("threshold_evaluation")
-    threshold_payload: Mapping[str, object] | None
-    if isinstance(raw_threshold, Mapping):
-        threshold_payload = raw_threshold
-    else:
-        threshold_payload = None
-    threshold_issues = report.threshold_issues
+    issues = summarize_issues(statuses)
+    summary_payload = coerce_summary_mapping(summarize_coverage(statuses))
+    status_token = str(summary_payload.get("status") or ("ok" if not issues else "error"))
+    payload = {
+        "environment": environment.name,
+        "exchange": environment.exchange,
+        "manifest_path": str(manifest_path),
+        "as_of": as_of.isoformat(),
+        "entries": [_format_status(status) for status in statuses],
+        "issues": issues,
+        "summary": summary_payload,
+        "status": status_token,
+    }
+    if threshold_payload is not None:
+        payload["threshold_evaluation"] = threshold_payload
+        payload["threshold_issues"] = list(threshold_issues)
 
     serialized = json.dumps(payload, ensure_ascii=False, indent=2)
 
@@ -216,36 +216,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             "Podsumowanie: status={status} ok={ok}/{total} warning={warning} "
             "error={error} stale_entries={stale_entries}".format(**summary)
         )
-        gap_stats = payload.get("gap_statistics")
-        if isinstance(gap_stats, Mapping):
-            print(
-                "Statystyki luk: count={with_gap}/{total} median={median} p95={p95} max={max_gap}".format(
-                    with_gap=gap_stats.get("with_gap_measurement"),
-                    total=gap_stats.get("total_entries"),
-                    median=gap_stats.get("median_gap_minutes"),
-                    p95=gap_stats.get("percentile_95_gap_minutes"),
-                    max_gap=gap_stats.get("max_gap_minutes"),
-                )
-            )
-        if threshold_payload is not None:
-            thresholds = threshold_payload.get("thresholds") or {}
-            observed = threshold_payload.get("observed") or {}
-            issues_list = list(threshold_issues)
-            print("Progi jakości danych:")
-            if thresholds:
-                for name, value in thresholds.items():
-                    print(f" * {name}={value}")
-            else:
-                print(" * brak skonfigurowanych progów")
-            if observed:
-                observed_lines = ", ".join(f"{name}={value}" for name, value in observed.items())
-                print(f"Wartości obserwowane: {observed_lines}")
-            if issues_list:
-                print("Naruszenia progów:")
-                for issue in issues_list:
-                    print(f" * {issue}")
-            else:
-                print("Brak naruszeń progów jakości danych")
         issue_counts = summary.get("issue_counts") or {}
         issue_examples = summary.get("issue_examples") or {}
         if issue_counts:
