@@ -30,9 +30,11 @@ from bot_core.data.ohlcv import (
     ParquetCacheStorage,
     PublicAPIDataSource,
     SQLiteCacheStorage,
+    coerce_summary_mapping,
     evaluate_coverage,
     summarize_coverage,
 )
+from bot_core.data.ohlcv.coverage_check import SummaryThresholdResult, evaluate_summary_thresholds
 from bot_core.data.ohlcv.audit import JSONLGapAuditLogger
 from bot_core.exchanges.base import Environment, ExchangeCredentials
 from bot_core.exchanges.binance.futures import BinanceFuturesAdapter
@@ -300,9 +302,26 @@ def _report_manifest_health(
         return
 
     coverage_summary = summarize_coverage(statuses)
-    summary_payload = coverage_summary.to_mapping()
+    summary_payload = coerce_summary_mapping(coverage_summary)
     manifest_summary = dict(coverage_summary.manifest_status_counts)
     entries = [status.manifest_entry for status in statuses]
+
+    max_gap_minutes = getattr(data_quality, "max_gap_minutes", None) if data_quality else None
+    min_ok_ratio = getattr(data_quality, "min_ok_ratio", None) if data_quality else None
+    if max_gap_minutes is not None:
+        max_gap_minutes = float(max_gap_minutes)
+    if min_ok_ratio is not None:
+        min_ok_ratio = float(min_ok_ratio)
+
+    threshold_result = SummaryThresholdResult()
+    threshold_issues: tuple[str, ...] = ()
+    if max_gap_minutes is not None or min_ok_ratio is not None:
+        threshold_result = evaluate_summary_thresholds(
+            summary_payload,
+            max_gap_minutes=max_gap_minutes,
+            min_ok_ratio=min_ok_ratio,
+        )
+        threshold_issues = threshold_result.issues
 
     _LOGGER.info(
         "Manifest OHLCV %s/%s – status=%s total=%s ok=%s warning=%s error=%s stale=%s",
@@ -339,7 +358,7 @@ def _report_manifest_health(
             _LOGGER.warning("Nieobsługiwany format raportu manifestu: %s", output_format)
 
     issue_statuses = [status for status in statuses if status.issues]
-    if not issue_statuses:
+    if not issue_statuses and not threshold_issues:
         return
 
     for status in issue_statuses:
@@ -388,8 +407,15 @@ def _report_manifest_health(
 
     worst_gap_payload = coverage_summary.worst_gap
 
-    def _format_alert_body(statuses_seq: Sequence[CoverageStatus]) -> str:
-        lines = ["Problemy w manifeście OHLCV:"]
+    def _format_alert_body(
+        statuses_seq: Sequence[CoverageStatus],
+        thresholds: SummaryThresholdResult | None = None,
+    ) -> str:
+        lines: list[str] = []
+        if statuses_seq:
+            lines.append("Problemy w manifeście OHLCV:")
+        else:
+            lines.append("Alert progów jakości danych:")
         for status in list(statuses_seq)[:10]:
             entry = status.manifest_entry
             gap_display = "-" if entry.gap_minutes is None else f"{float(entry.gap_minutes):.1f} min"
@@ -416,6 +442,17 @@ def _report_manifest_health(
                     threshold=worst_gap_payload.get("threshold_minutes", "-"),
                 )
             )
+        if thresholds and thresholds.thresholds:
+            lines.append(
+                "Progi: "
+                + ", ".join(
+                    f"{key}={value}" for key, value in thresholds.thresholds.items()
+                )
+            )
+        if thresholds and thresholds.issues:
+            lines.append(
+                "Naruszenia progów: " + ", ".join(str(issue) for issue in thresholds.issues)
+            )
         lines.append("Szczegóły w logach backfillu oraz pliku manifestu.")
         return "\n".join(lines)
 
@@ -438,13 +475,16 @@ def _report_manifest_health(
         )
     if coverage_summary.worst_gap:
         context["worst_gap"] = json.dumps(coverage_summary.worst_gap, ensure_ascii=False)
+    if threshold_issues:
+        context["threshold_issues"] = json.dumps(list(threshold_issues), ensure_ascii=False)
 
+    alert_sent = False
     if critical_statuses:
         alert_router.dispatch(
             AlertMessage(
                 category="data.ohlcv",
                 title=f"Krytyczne braki w manifeście OHLCV ({environment_name})",
-                body=_format_alert_body(critical_statuses),
+                body=_format_alert_body(critical_statuses, threshold_result),
                 severity="critical",
                 context=context,
             )
@@ -456,7 +496,7 @@ def _report_manifest_health(
             AlertMessage(
                 category="data.ohlcv",
                 title=f"Ostrzeżenia w manifeście OHLCV ({environment_name})",
-                body=_format_alert_body(warning_statuses),
+                body=_format_alert_body(warning_statuses, threshold_result),
                 severity="warning",
                 context=context,
             )

@@ -120,7 +120,11 @@ korzystające z tego samego kontraktu `StrategyEngine` i `WalkForwardOptimizer`.
 dźwignię, ekspozycję per instrument oraz hard-stop drawdown. Dostępne są cztery gotowe profile
 (konserwatywny, zbalansowany, agresywny, manualny) odwzorowujące wymagane parametry. Silnik
 utrzymuje stan w repozytorium (`RiskRepository`), kontroluje reset doby w UTC, wymusza tryb
-awaryjny po przekroczeniu limitów i wskazuje dopuszczalną maksymalną wielkość zlecenia.
+awaryjny po przekroczeniu limitów i wskazuje dopuszczalną maksymalną wielkość zlecenia. Podczas
+oceny nowego zlecenia rynekowy dystans stop-loss może być większy niż minimalna wielokrotność ATR
+zdefiniowana w profilu – w takim przypadku limit pozycji wyznaczany jest na podstawie faktycznego
+stopu, natomiast zbyt ciasne ustawienie (poniżej minimum) prowadzi do natychmiastowego odrzucenia
+zlecenia.
 
 ## Bezpieczeństwo i przechowywanie sekretów
 

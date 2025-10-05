@@ -6,6 +6,7 @@ import json
 import hashlib
 import os
 import logging
+import re
 import signal
 import sys
 import shutil
@@ -15,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from collections import deque
 from collections.abc import Iterable, Mapping, MutableMapping, Sequence
-from typing import Any
+from typing import Any, Callable
 
 from bot_core.alerts import AlertMessage
 from bot_core.exchanges.base import (
@@ -30,11 +31,13 @@ from bot_core.data.intervals import (
     interval_to_milliseconds as _interval_to_milliseconds,
     normalize_interval_token as _normalize_interval_token,
 )
-from bot_core.reporting.upload import SmokeArchiveUploader
+from bot_core.reporting.audit import PaperSmokeJsonSynchronizer, PaperSmokeJsonSyncResult
+from bot_core.reporting.upload import SmokeArchiveUploader, SmokeArchiveUploadResult
 from bot_core.data.ohlcv import evaluate_coverage
 from bot_core.runtime.pipeline import build_daily_trend_pipeline, create_trading_controller
 from bot_core.runtime.realtime import DailyTrendRealtimeRunner
 from bot_core.security import SecretManager, SecretStorageError, create_default_secret_storage
+from scripts import paper_precheck as paper_precheck_cli
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -117,6 +120,52 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         help="Uruchom test dymny strategii paper trading (backfill + pojedyncza iteracja)",
     )
     parser.add_argument(
+        "--skip-paper-precheck",
+        action="store_true",
+        help="Pomiń automatyczny paper_precheck przed smoke testem (tylko debug)",
+    )
+    parser.add_argument(
+        "--paper-precheck-fail-on-warnings",
+        action="store_true",
+        help="Traktuj ostrzeżenia paper_precheck jako błąd podczas uruchamiania smoke testu",
+    )
+    parser.add_argument(
+        "--paper-precheck-audit-dir",
+        default="audit/paper_precheck_reports",
+        help=(
+            "Katalog, do którego zapisujemy raport JSON z paper_precheck; "
+            "podaj pusty napis, aby wyłączyć automatyczne logowanie."
+        ),
+    )
+    parser.add_argument(
+        "--paper-smoke-audit-log",
+        default="docs/audit/paper_trading_log.md",
+        help=(
+            "Ścieżka pliku logu audytu paper trading; podaj pusty napis, aby pominąć wpis."
+        ),
+    )
+    parser.add_argument(
+        "--paper-smoke-operator",
+        default=None,
+        help=(
+            "Nazwa operatora zapisywana w logu audytu (domyślnie PAPER_SMOKE_OPERATOR lub 'CI Agent')."
+        ),
+    )
+    parser.add_argument(
+        "--paper-smoke-json-log",
+        default="docs/audit/paper_trading_log.jsonl",
+        help=(
+            "Ścieżka pliku JSONL z wpisami smoke testów; podaj pusty napis, aby wyłączyć logowanie."
+        ),
+    )
+    parser.add_argument(
+        "--paper-smoke-summary-json",
+        default=None,
+        help=(
+            "Jeśli ustawione, zapisuje podsumowanie smoke testu w formacie JSON (np. do użytku w CI)."
+        ),
+    )
+    parser.add_argument(
         "--archive-smoke",
         action="store_true",
         help="Po zakończeniu smoke testu spakuj raport do archiwum ZIP z instrukcją audytu",
@@ -171,6 +220,523 @@ def _create_secret_manager(args: argparse.Namespace) -> SecretManager:
         headless_path=args.headless_storage,
     )
     return SecretManager(storage, namespace=args.secret_namespace)
+
+
+def _persist_precheck_audit(
+    payload: Mapping[str, object],
+    *,
+    environment: str,
+    audit_dir: Path | None,
+    audit_clock: Callable[[], datetime] | None,
+) -> Mapping[str, object] | None:
+    """Zapisuje raport paper_precheck w katalogu audytu (jeśli skonfigurowano)."""
+
+    if audit_dir is None:
+        return None
+
+    try:
+        timestamp = audit_clock() if audit_clock else datetime.now(timezone.utc)
+        metadata = paper_precheck_cli.persist_precheck_report(
+            payload,
+            environment_name=environment,
+            base_dir=audit_dir,
+            created_at=timestamp,
+        )
+    except Exception:  # noqa: BLE001
+        _LOGGER.exception(
+            "Nie udało się zapisać raportu paper_precheck do katalogu %s", audit_dir
+        )
+        return None
+
+    if isinstance(payload, MutableMapping):
+        payload.setdefault("audit_record", metadata)
+
+    _LOGGER.info(
+        "Raport paper_precheck zapisany do %s (sha256=%s)",
+        metadata.get("path"),
+        metadata.get("sha256"),
+    )
+    return metadata
+
+
+def _run_paper_precheck_for_smoke(
+    *,
+    config_path: Path,
+    environment: str,
+    fail_on_warnings: bool,
+    skip: bool,
+    audit_dir: Path | None = None,
+    audit_clock: Callable[[], datetime] | None = None,
+) -> tuple[Mapping[str, object] | None, int, Mapping[str, object] | None]:
+    """Uruchamia paper_precheck przed smoke testem i loguje wynik."""
+
+    if skip:
+        _LOGGER.warning(
+            "Pomijam automatyczny paper_precheck dla %s (--skip-paper-precheck)", environment
+        )
+        payload: dict[str, object] = {
+            "status": "skipped",
+            "coverage_status": "skipped",
+            "risk_status": "skipped",
+            "skip_reason": "cli_flag",
+        }
+        metadata = _persist_precheck_audit(
+            payload,
+            environment=environment,
+            audit_dir=audit_dir,
+            audit_clock=audit_clock,
+        )
+        return payload, 0, metadata
+
+    payload, exit_code = paper_precheck_cli.run_precheck(
+        environment_name=environment,
+        config_path=config_path,
+        fail_on_warnings=fail_on_warnings,
+    )
+
+    status = str(payload.get("status", "unknown"))
+    coverage_status = str(payload.get("coverage_status", "unknown"))
+    risk_status = str(payload.get("risk_status", "unknown"))
+
+    if payload.get("error_reason") == "environment_not_found":
+        _LOGGER.error(
+            "Paper pre-check: środowisko %s nie istnieje w konfiguracji", environment
+        )
+    elif payload.get("error_reason") == "invalid_min_ok_ratio":
+        _LOGGER.error("Paper pre-check: parametr min_ok_ratio spoza zakresu 0-1")
+
+    if exit_code != 0:
+        _LOGGER.error(
+            "Paper pre-check zakończony niepowodzeniem: status=%s coverage=%s risk=%s",  # noqa: G004
+            status,
+            coverage_status,
+            risk_status,
+        )
+        return payload, exit_code, None
+
+    _LOGGER.info(
+        "Paper pre-check zakończony statusem %s (coverage=%s, risk=%s)",
+        status,
+        coverage_status,
+        risk_status,
+    )
+
+    warning_sources: list[str] = []
+    coverage_warnings = list(payload.get("coverage_warnings", []) or [])
+    if coverage_status == "warning" or coverage_warnings:
+        warning_sources.append("coverage")
+    risk_payload = payload.get("risk")
+    risk_warnings: Sequence[str] = ()
+    if isinstance(risk_payload, Mapping):
+        risk_warnings = risk_payload.get("warnings", []) or []
+    if risk_status == "warning" or risk_warnings:
+        warning_sources.append("risk")
+
+    config_payload = payload.get("config") if isinstance(payload, Mapping) else None
+    config_warnings = []
+    if isinstance(config_payload, Mapping):
+        config_warnings = list(config_payload.get("warnings", []) or [])
+        if config_warnings:
+            warning_sources.append("config")
+
+    if warning_sources:
+        _LOGGER.warning(
+            "Paper pre-check zgłosił ostrzeżenia (%s) – sprawdź raport JSON przed kontynuacją",
+            ", ".join(sorted(set(warning_sources))),
+        )
+
+    metadata = _persist_precheck_audit(
+        payload,
+        environment=environment,
+        audit_dir=audit_dir,
+        audit_clock=audit_clock,
+    )
+
+    return payload, exit_code, metadata
+
+
+def _resolve_operator_name(raw: str | None) -> str:
+    """Zwraca nazwę operatora do logu audytu."""
+
+    candidates = [raw, os.environ.get("PAPER_SMOKE_OPERATOR"), "CI Agent"]
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        text = str(candidate).strip()
+        if text:
+            return text
+    return "CI Agent"
+
+
+def _prepare_precheck_audit_details(
+    precheck_metadata: Mapping[str, object] | None,
+    *,
+    precheck_status: str | None,
+    precheck_coverage_status: str | None,
+    precheck_risk_status: str | None,
+) -> tuple[list[str], dict[str, str]]:
+    """Buduje listę notatek i słownik metadanych do logów audytowych."""
+
+    notes: list[str] = []
+    metadata: dict[str, str] = {}
+
+    source = precheck_metadata if isinstance(precheck_metadata, Mapping) else {}
+
+    report_path = source.get("path")
+    if report_path:
+        report_path_text = str(report_path)
+        metadata["report_path"] = report_path_text
+        notes.append(f"paper_precheck_report=`{report_path_text}`")
+
+    report_hash = source.get("sha256")
+    if report_hash:
+        report_hash_text = str(report_hash)
+        metadata["report_sha256"] = report_hash_text
+        notes.append(f"paper_precheck_sha256=`{report_hash_text}`")
+
+    created_at = source.get("created_at")
+    if created_at:
+        created_at_text = str(created_at)
+        metadata["created_at"] = created_at_text
+        notes.append(f"paper_precheck_created_at={created_at_text}")
+
+    if precheck_status:
+        status_text = str(precheck_status)
+        metadata["status"] = status_text
+        notes.append(f"paper_precheck_status={status_text}")
+
+    if precheck_coverage_status:
+        coverage_text = str(precheck_coverage_status)
+        metadata["coverage_status"] = coverage_text
+        notes.append(f"paper_precheck_coverage_status={coverage_text}")
+
+    if precheck_risk_status:
+        risk_text = str(precheck_risk_status)
+        metadata["risk_status"] = risk_text
+        notes.append(f"paper_precheck_risk_status={risk_text}")
+
+    return notes, metadata
+
+
+def _append_smoke_audit_entry(
+    *,
+    log_path: Path | None,
+    timestamp: datetime,
+    operator: str,
+    environment: str,
+    window: Mapping[str, str],
+    summary_path: Path,
+    summary_sha256: str,
+    severity: str,
+    precheck_metadata: Mapping[str, object] | None,
+    precheck_status: str | None,
+    precheck_coverage_status: str | None,
+    precheck_risk_status: str | None,
+) -> str | None:
+    """Dopisuje nowy wiersz do logu audytu smoke testów paper tradingu."""
+
+    if log_path is None:
+        return None
+
+    try:
+        lines = log_path.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        _LOGGER.warning(
+            "Plik logu audytu %s nie istnieje – pomijam automatyczny wpis smoke testu.", log_path
+        )
+        return None
+    except Exception:  # noqa: BLE001
+        _LOGGER.exception("Nie udało się odczytać logu audytu %s", log_path)
+        return None
+
+    section_header = "## Sekcja B1 – Smoke testy paper tradingu"
+    try:
+        section_index = lines.index(section_header)
+    except ValueError:
+        _LOGGER.error("Nie znaleziono sekcji smoke testów w logu audytu %s", log_path)
+        return None
+
+    header_index = None
+    for idx in range(section_index + 1, len(lines)):
+        if lines[idx].startswith("|----"):
+            header_index = idx
+            break
+    if header_index is None:
+        _LOGGER.error("Nie znaleziono nagłówka tabeli smoke testów w %s", log_path)
+        return None
+
+    table_end_index = len(lines)
+    id_pattern = re.compile(r"^\|\s*(S-(\d+))\b")
+    max_id = 0
+    for idx in range(header_index + 1, len(lines)):
+        line = lines[idx]
+        if not line.startswith("|"):
+            table_end_index = idx
+            break
+        match = id_pattern.match(line)
+        if match:
+            try:
+                number = int(match.group(2))
+            except ValueError:
+                continue
+            max_id = max(max_id, number)
+
+    new_id = f"S-{max_id + 1:04d}"
+    window_start = str(window.get("start", "?"))
+    window_end = str(window.get("end", "?"))
+    window_text = f"{window_start} → {window_end}"
+    summary_display = f"`{summary_path}`"
+    summary_hash_display = f"`{summary_sha256}`"
+    severity_text = severity.upper()
+
+    notes, _ = _prepare_precheck_audit_details(
+        precheck_metadata,
+        precheck_status=precheck_status,
+        precheck_coverage_status=precheck_coverage_status,
+        precheck_risk_status=precheck_risk_status,
+    )
+    note_text = "; ".join(notes) if notes else "-"
+
+    new_row = (
+        f"| {new_id} | {timestamp.isoformat()} | {operator} | {environment} | {window_text} | "
+        f"{summary_display} | {summary_hash_display} | {severity_text} | {note_text} |"
+    )
+
+    lines.insert(table_end_index, new_row)
+    updated_content = "\n".join(lines) + "\n"
+    try:
+        log_path.write_text(updated_content, encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        _LOGGER.exception("Nie udało się zapisać wpisu smoke testu do logu %s", log_path)
+        return None
+
+    _LOGGER.info(
+        "Dodano wpis %s do logu audytu smoke testów (%s)", new_id, log_path
+    )
+    return new_id
+
+
+def _append_smoke_json_log_entry(
+    *,
+    json_path: Path | None,
+    timestamp: datetime,
+    operator: str,
+    environment: str,
+    window: Mapping[str, str],
+    summary_path: Path,
+    summary_sha256: str,
+    severity: str,
+    precheck_metadata: Mapping[str, object] | None,
+    precheck_payload: Mapping[str, object] | None,
+    precheck_status: str | None,
+    precheck_coverage_status: str | None,
+    precheck_risk_status: str | None,
+    markdown_entry_id: str | None,
+) -> Mapping[str, object] | None:
+    """Zapisuje wpis smoke testu w dzienniku JSONL (jeśli skonfigurowano)."""
+
+    if json_path is None:
+        return None
+
+    try:
+        json_path.parent.mkdir(parents=True, exist_ok=True)
+    except Exception:  # noqa: BLE001
+        _LOGGER.exception("Nie udało się utworzyć katalogu dla %s", json_path)
+        return None
+
+    timestamp_utc = timestamp.astimezone(timezone.utc)
+    record_id = f"J-{timestamp_utc.strftime('%Y%m%dT%H%M%S')}-{summary_sha256[:8]}"
+
+    notes, metadata_details = _prepare_precheck_audit_details(
+        precheck_metadata,
+        precheck_status=precheck_status,
+        precheck_coverage_status=precheck_coverage_status,
+        precheck_risk_status=precheck_risk_status,
+    )
+
+    if isinstance(precheck_payload, Mapping):
+        try:
+            sanitized_payload = json.loads(json.dumps(precheck_payload))
+        except TypeError:
+            sanitized_payload = None
+    else:
+        sanitized_payload = None
+
+    record = {
+        "record_id": record_id,
+        "markdown_entry_id": markdown_entry_id,
+        "timestamp": timestamp_utc.isoformat(),
+        "operator": operator,
+        "environment": environment,
+        "window_start": str(window.get("start", "?")),
+        "window_end": str(window.get("end", "?")),
+        "summary_path": str(summary_path),
+        "summary_sha256": summary_sha256,
+        "severity": severity.upper(),
+        "precheck_metadata": metadata_details,
+        "precheck_payload": sanitized_payload,
+        "notes": notes,
+    }
+
+    try:
+        with json_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception:  # noqa: BLE001
+        _LOGGER.exception("Nie udało się zapisać wpisu JSONL do %s", json_path)
+        return None
+
+    _LOGGER.info(
+        "Dodano wpis JSON smoke testu (%s) do %s", record_id, json_path
+    )
+    return record
+
+
+def _build_smoke_summary_payload(
+    *,
+    environment: str,
+    timestamp: datetime,
+    operator: str,
+    window: Mapping[str, str],
+    report_dir: Path,
+    summary_path: Path,
+    summary_sha256: str,
+    severity: str,
+    storage_context: Mapping[str, str] | None,
+    precheck_status: str | None,
+    precheck_coverage_status: str | None,
+    precheck_risk_status: str | None,
+    precheck_payload: Mapping[str, object] | None,
+    json_log_path: Path | None,
+    json_record: Mapping[str, object] | None,
+    json_sync_result: PaperSmokeJsonSyncResult | None,
+    archive_path: Path | None,
+    archive_upload_result: SmokeArchiveUploadResult | None,
+) -> Mapping[str, object]:
+    """Buduje podsumowanie smoke testu dla pipeline'u CI."""
+
+    timestamp_utc = timestamp.astimezone(timezone.utc)
+    payload: MutableMapping[str, object] = {
+        "environment": environment,
+        "timestamp": timestamp_utc.isoformat(),
+        "operator": operator,
+        "severity": severity.upper(),
+        "window": dict(window),
+        "report": {
+            "directory": str(report_dir),
+            "summary_path": str(summary_path),
+            "summary_sha256": summary_sha256,
+        },
+    }
+
+    if storage_context:
+        payload["storage"] = dict(storage_context)
+
+    precheck_info: MutableMapping[str, object] = {
+        "status": precheck_status or "unknown",
+        "coverage_status": precheck_coverage_status or "unknown",
+        "risk_status": precheck_risk_status or "unknown",
+    }
+
+    if isinstance(precheck_payload, Mapping):
+        try:
+            sanitized_precheck = json.loads(json.dumps(precheck_payload))
+        except TypeError:
+            sanitized_precheck = None
+        if sanitized_precheck is not None:
+            precheck_info["payload"] = sanitized_precheck
+
+    payload["precheck"] = precheck_info
+
+    if json_log_path is not None or json_record is not None or json_sync_result is not None:
+        json_info: MutableMapping[str, object] = {}
+        if json_log_path is not None:
+            json_info["path"] = str(json_log_path)
+        if json_record is not None:
+            try:
+                sanitized_record = json.loads(json.dumps(json_record))
+            except TypeError:
+                sanitized_record = {str(key): str(value) for key, value in json_record.items()}
+            json_info["record"] = sanitized_record
+            record_id_value = json_record.get("record_id")
+            if record_id_value is not None:
+                json_info["record_id"] = str(record_id_value)
+        if json_sync_result is not None:
+            json_info["sync"] = {
+                "backend": json_sync_result.backend,
+                "location": json_sync_result.location,
+                "metadata": dict(json_sync_result.metadata),
+            }
+        payload["json_log"] = json_info
+
+    if archive_path is not None or archive_upload_result is not None:
+        archive_info: MutableMapping[str, object] = {}
+        if archive_path is not None:
+            archive_info["path"] = str(archive_path)
+        if archive_upload_result is not None:
+            archive_info["upload"] = {
+                "backend": archive_upload_result.backend,
+                "location": archive_upload_result.location,
+                "metadata": dict(archive_upload_result.metadata),
+            }
+        payload["archive"] = archive_info
+
+    return payload
+
+
+def _write_smoke_summary_json(path: Path, payload: Mapping[str, object]) -> None:
+    """Zapisuje podsumowanie smoke testu do pliku JSON."""
+
+    path = Path(path).expanduser().resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
+
+
+def _sync_smoke_json_log(
+    *,
+    json_sync_cfg,
+    json_log_path: Path | None,
+    environment: str,
+    record_id: str | None,
+    timestamp: datetime,
+    secret_manager: SecretManager | None,
+):
+    if json_sync_cfg is None or json_log_path is None:
+        return None
+    record_id = record_id or ""
+    try:
+        synchronizer = PaperSmokeJsonSynchronizer(
+            json_sync_cfg,
+            secret_manager=secret_manager,
+        )
+        result = synchronizer.sync(
+            json_log_path,
+            environment=environment,
+            record_id=record_id,
+            timestamp=timestamp,
+        )
+        metadata = dict(result.metadata)
+        version_info = metadata.get("version_id")
+        receipt = metadata.get("ack_request_id") or metadata.get("ack_mechanism")
+        log_suffix = []
+        if version_info:
+            log_suffix.append(f"version_id={version_info}")
+        if receipt:
+            log_suffix.append(f"receipt={receipt}")
+        suffix_text = ", ".join(log_suffix)
+        if suffix_text:
+            suffix_text = f" ({suffix_text})"
+        _LOGGER.info(
+            "Zsynchronizowano dziennik JSONL smoke testów: backend=%s, location=%s%s",
+            result.backend,
+            result.location,
+            suffix_text,
+        )
+        return result
+    except Exception:  # noqa: BLE001
+        _LOGGER.exception("Nie udało się zsynchronizować dziennika JSONL smoke testów")
+        return None
 
 
 def _log_order_results(results: Iterable[OrderResult]) -> None:
@@ -891,6 +1457,30 @@ def _render_smoke_summary(*, summary: Mapping[str, object], summary_sha256: str)
                 fragments.append(fragment)
             if fragments:
                 data_lines.append("Cache offline: " + "; ".join(fragments))
+        precheck_info = data_checks.get("paper_precheck")
+        if isinstance(precheck_info, Mapping):
+            status = str(precheck_info.get("status", "unknown")).upper()
+            cov_status = str(precheck_info.get("coverage_status", "unknown"))
+            risk_status = str(precheck_info.get("risk_status", "unknown"))
+            warn_parts: list[str] = []
+            coverage_warnings = precheck_info.get("coverage_warnings")
+            if isinstance(coverage_warnings, list) and coverage_warnings:
+                warn_parts.append(f"coverage_warn={len(coverage_warnings)}")
+            config_payload = precheck_info.get("config")
+            if isinstance(config_payload, Mapping):
+                config_warns = config_payload.get("warnings") or []
+                if config_warns:
+                    warn_parts.append(f"config_warn={len(config_warns)}")
+            risk_payload = precheck_info.get("risk")
+            if isinstance(risk_payload, Mapping):
+                risk_warns = risk_payload.get("warnings") or []
+                if risk_warns:
+                    warn_parts.append(f"risk_warn={len(risk_warns)}")
+            warn_suffix = f" ({', '.join(warn_parts)})" if warn_parts else ""
+            data_lines.append(
+                f"Paper pre-check: {status} (coverage={cov_status}, risk={risk_status})"
+                + warn_suffix
+            )
 
     # Info o magazynie raportu
     storage_lines: list[str] = []
@@ -1386,6 +1976,46 @@ def main(argv: Sequence[str] | None = None) -> int:
         _LOGGER.error("Plik konfiguracyjny %s nie istnieje", config_path)
         return 1
 
+    precheck_payload: Mapping[str, object] | None = None
+    precheck_audit_metadata: Mapping[str, object] | None = None
+    audit_log_path: Path | None = None
+    audit_json_path: Path | None = None
+    summary_output_path: Path | None = None
+    operator_name: str | None = None
+    if args.paper_smoke:
+        audit_dir = None
+        if args.paper_precheck_audit_dir is not None:
+            audit_dir_arg = str(args.paper_precheck_audit_dir).strip()
+            if audit_dir_arg:
+                audit_dir = Path(audit_dir_arg)
+
+        if args.paper_smoke_audit_log is not None:
+            audit_log_arg = str(args.paper_smoke_audit_log).strip()
+            if audit_log_arg:
+                audit_log_path = Path(audit_log_arg)
+
+        if args.paper_smoke_json_log is not None:
+            audit_json_arg = str(args.paper_smoke_json_log).strip()
+            if audit_json_arg:
+                audit_json_path = Path(audit_json_arg)
+
+        if args.paper_smoke_summary_json is not None:
+            summary_arg = str(args.paper_smoke_summary_json).strip()
+            if summary_arg:
+                summary_output_path = Path(summary_arg)
+
+        operator_name = _resolve_operator_name(args.paper_smoke_operator)
+
+        precheck_payload, precheck_exit, precheck_audit_metadata = _run_paper_precheck_for_smoke(
+            config_path=config_path,
+            environment=args.environment,
+            fail_on_warnings=args.paper_precheck_fail_on_warnings,
+            skip=args.skip_paper_precheck,
+            audit_dir=audit_dir,
+        )
+        if precheck_exit != 0:
+            return int(precheck_exit)
+
     adapter_factories: Mapping[str, ExchangeAdapterFactory] | None = None
     if args.paper_smoke:
         adapter_factories = {
@@ -1456,9 +2086,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
 
         required_bars = max(history_bars, max(1, int((end_ms - sync_start) / tick_ms) + 1))
-        data_checks: Mapping[str, object] | None = None
+        smoke_cache_report: Mapping[str, object] | None = None
         try:
-            data_checks = _ensure_smoke_cache(
+            smoke_cache_report = _ensure_smoke_cache(
                 pipeline=pipeline,
                 symbols=pipeline.controller.symbols,
                 interval=pipeline.controller.interval,
@@ -1510,6 +2140,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         except Exception as exc:  # noqa: BLE001
             _LOGGER.warning("Nie udało się pobrać stanu ryzyka: %s", exc)
 
+        combined_checks: dict[str, object] = {}
+        if smoke_cache_report:
+            combined_checks.update(smoke_cache_report)
+        if precheck_payload is not None:
+            combined_checks["paper_precheck"] = json.loads(json.dumps(precheck_payload))
+        data_checks: Mapping[str, object] | None = combined_checks or None
+
         summary_path = _export_smoke_report(
             report_dir=report_dir,
             results=results,
@@ -1551,9 +2188,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
             )
         )
-        upload_cfg = SmokeArchiveUploader.resolve_config(
-            getattr(getattr(pipeline.bootstrap, "core_config", None), "reporting", None)
-        )
+        reporting_cfg = getattr(getattr(pipeline.bootstrap, "core_config", None), "reporting", None)
+        upload_cfg = SmokeArchiveUploader.resolve_config(reporting_cfg)
+        json_sync_cfg = PaperSmokeJsonSynchronizer.resolve_config(reporting_cfg)
 
         if archive_required:
             archive_path = _archive_smoke_report(report_dir)
@@ -1593,11 +2230,28 @@ def main(argv: Sequence[str] | None = None) -> int:
         storage_status_lower = storage_status.lower() if storage_status else ""
         fail_low_storage = bool(args.smoke_fail_on_low_space and storage_status_lower == "low")
 
+        precheck_status = None
+        precheck_status_text = None
+        precheck_coverage_status = None
+        precheck_risk_status = None
+        if isinstance(precheck_payload, Mapping):
+            precheck_status = str(precheck_payload.get("status", "unknown"))
+            precheck_coverage_status = str(
+                precheck_payload.get("coverage_status", "unknown")
+            )
+            precheck_risk_status = str(precheck_payload.get("risk_status", "unknown"))
+            precheck_status_text = (
+                f"{precheck_status} (coverage={precheck_coverage_status}, "
+                f"risk={precheck_risk_status})"
+            )
+
         body = (
             "Zakończono smoke test paper trading."
             f" Zamówienia: {len(results)}, raport: {summary_path},"
             f" sha256: {summary_hash}"
         )
+        if precheck_status_text:
+            body += f" Pre-check: {precheck_status_text}."
         if storage_status_lower == "low":
             free_str = storage_context.get("storage_free_mb")
             thresh_str = storage_context.get("storage_threshold_mb")
@@ -1607,32 +2261,213 @@ def main(argv: Sequence[str] | None = None) -> int:
                 body += f" Ostrzeżenie: niskie wolne miejsce ({free_str} MB)."
 
         severity = "warning" if storage_status_lower == "low" else "info"
+        if precheck_status and precheck_status.lower() == "warning":
+            severity = "warning"
+
+        precheck_context: dict[str, str] = {}
+        if isinstance(precheck_payload, Mapping):
+            precheck_context = {
+                "paper_precheck_status": precheck_status or "unknown",
+                "paper_precheck_coverage_status": precheck_coverage_status or "unknown",
+                "paper_precheck_risk_status": precheck_risk_status or "unknown",
+            }
+            manifest_path_value = precheck_payload.get("manifest_path")
+            if manifest_path_value:
+                precheck_context["paper_precheck_manifest"] = str(manifest_path_value)
+            coverage_warnings = precheck_payload.get("coverage_warnings")
+            if isinstance(coverage_warnings, list) and coverage_warnings:
+                precheck_context["paper_precheck_coverage_warnings"] = ",".join(
+                    str(w) for w in coverage_warnings
+                )
+            risk_payload = precheck_payload.get("risk")
+            if isinstance(risk_payload, Mapping):
+                risk_warnings = risk_payload.get("warnings") or []
+                if risk_warnings:
+                    precheck_context["paper_precheck_risk_warnings"] = ",".join(
+                        str(w) for w in risk_warnings
+                    )
+
+        precheck_metadata_for_log = precheck_audit_metadata
+        if precheck_metadata_for_log is None and isinstance(precheck_payload, Mapping):
+            audit_record = precheck_payload.get("audit_record")
+            if isinstance(audit_record, Mapping):
+                precheck_metadata_for_log = audit_record
+
+        archive_context: dict[str, str] = {}
+        if upload_result:
+            archive_context["archive_upload_backend"] = upload_result.backend
+            archive_context["archive_upload_location"] = upload_result.location
+            for key, value in upload_result.metadata.items():
+                archive_context[f"archive_upload_{key}"] = str(value)
+
+        alert_context: dict[str, str] = {
+            "environment": args.environment,
+            "report_dir": str(report_dir),
+            "orders": str(len(results)),
+            "summary_sha256": summary_hash,
+            "summary_text_path": str(summary_txt_path),
+            "readme_path": str(readme_path),
+            **({"archive_path": str(archive_path)} if archive_path else {}),
+            **archive_context,
+            **storage_context,
+            **precheck_context,
+        }
+
+        markdown_entry_id: str | None = None
+        json_record: Mapping[str, object] | None = None
+        json_sync_result = None
+        log_timestamp = datetime.now(timezone.utc)
+
+        if audit_log_path is not None:
+            try:
+                markdown_entry_id = _append_smoke_audit_entry(
+                    log_path=audit_log_path,
+                    timestamp=log_timestamp,
+                    operator=operator_name or _resolve_operator_name(None),
+                    environment=args.environment,
+                    window=window_meta,
+                    summary_path=summary_path,
+                    summary_sha256=summary_hash,
+                    severity=severity,
+                    precheck_metadata=precheck_metadata_for_log,
+                    precheck_status=precheck_status,
+                    precheck_coverage_status=precheck_coverage_status,
+                    precheck_risk_status=precheck_risk_status,
+                )
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception(
+                    "Nie udało się zaktualizować logu audytu paper trading: %s", audit_log_path
+                )
+
+        if audit_json_path is not None:
+            try:
+                json_record = _append_smoke_json_log_entry(
+                    json_path=audit_json_path,
+                    timestamp=log_timestamp,
+                    operator=operator_name or _resolve_operator_name(None),
+                    environment=args.environment,
+                    window=window_meta,
+                    summary_path=summary_path,
+                    summary_sha256=summary_hash,
+                    severity=severity,
+                    precheck_metadata=precheck_metadata_for_log,
+                    precheck_payload=precheck_payload if isinstance(precheck_payload, Mapping) else None,
+                    precheck_status=precheck_status,
+                    precheck_coverage_status=precheck_coverage_status,
+                    precheck_risk_status=precheck_risk_status,
+                    markdown_entry_id=markdown_entry_id,
+                )
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception(
+                    "Nie udało się zaktualizować dziennika JSON smoke testów: %s", audit_json_path
+                )
+
+        if markdown_entry_id:
+            alert_context["paper_smoke_audit_entry_id"] = markdown_entry_id
+            alert_context["paper_smoke_audit_log_path"] = str(audit_log_path)
+
+        if json_record:
+            alert_context["paper_smoke_json_log_path"] = str(audit_json_path)
+            record_id = json_record.get("record_id")
+            if record_id:
+                alert_context["paper_smoke_json_record_id"] = str(record_id)
+            precheck_meta = json_record.get("precheck_metadata")
+            if isinstance(precheck_meta, Mapping):
+                report_sha = precheck_meta.get("report_sha256")
+                if report_sha:
+                    alert_context["paper_precheck_report_sha256"] = str(report_sha)
+                report_path_value = precheck_meta.get("report_path")
+                if report_path_value:
+                    alert_context["paper_precheck_report_path"] = str(report_path_value)
+
+            if json_sync_cfg:
+                json_sync_result = _sync_smoke_json_log(
+                    json_sync_cfg=json_sync_cfg,
+                    json_log_path=audit_json_path,
+                    environment=args.environment,
+                    record_id=str(record_id or ""),
+                    timestamp=log_timestamp,
+                    secret_manager=secret_manager,
+                )
+                if json_sync_result:
+                    alert_context["paper_smoke_json_sync_backend"] = json_sync_result.backend
+                    alert_context["paper_smoke_json_sync_location"] = json_sync_result.location
+                    metadata = json_sync_result.metadata
+                    version_id = metadata.get("version_id") if isinstance(metadata, Mapping) else None
+                    if version_id:
+                        alert_context["paper_smoke_json_sync_version_id"] = str(version_id)
 
         message = AlertMessage(
             category="paper_smoke",
             title=f"Smoke test paper trading ({args.environment})",
             body=body,
             severity=severity,
-            context={
-                "environment": args.environment,
-                "report_dir": str(report_dir),
-                "orders": str(len(results)),
-                "summary_sha256": summary_hash,
-                "summary_text_path": str(summary_txt_path),
-                "readme_path": str(readme_path),
-                **({"archive_path": str(archive_path)} if archive_path else {}),
-                **(
-                    {
-                        "archive_upload_backend": upload_result.backend,
-                        "archive_upload_location": upload_result.location,
-                    }
-                    if upload_result
-                    else {}
-                ),
-                **storage_context,
-            },
+            context=alert_context,
         )
         pipeline.bootstrap.alert_router.dispatch(message)
+
+        if json_record:
+            compliance_context = {
+                "environment": args.environment,
+                "json_log_path": str(audit_json_path),
+                "json_record_id": str(json_record.get("record_id", "")),
+                "summary_sha256": summary_hash,
+                "operator": operator_name or _resolve_operator_name(None),
+                "paper_precheck_status": precheck_status or "unknown",
+                "paper_precheck_coverage_status": precheck_coverage_status or "unknown",
+                "paper_precheck_risk_status": precheck_risk_status or "unknown",
+            }
+            if upload_result:
+                compliance_context["archive_upload_backend"] = upload_result.backend
+                compliance_context["archive_upload_location"] = upload_result.location
+                for key, value in upload_result.metadata.items():
+                    compliance_context[f"archive_upload_{key}"] = str(value)
+            if json_sync_result:
+                compliance_context["paper_smoke_json_sync_backend"] = json_sync_result.backend
+                compliance_context["paper_smoke_json_sync_location"] = json_sync_result.location
+                compliance_context.update(json_sync_result.metadata)
+            compliance_message = AlertMessage(
+                category="paper_smoke_compliance",
+                title=f"Compliance audit log updated ({args.environment})",
+                body=(
+                    "Zaktualizowano dziennik JSONL smoke testów paper tradingu. "
+                    f"Rekord: {json_record.get('record_id', 'unknown')}"
+                ),
+                severity="warning" if severity.lower() == "warning" else "info",
+                context=compliance_context,
+            )
+            pipeline.bootstrap.alert_router.dispatch(compliance_message)
+
+        if summary_output_path is not None:
+            try:
+                summary_payload = _build_smoke_summary_payload(
+                    environment=args.environment,
+                    timestamp=log_timestamp,
+                    operator=operator_name or _resolve_operator_name(None),
+                    window=window_meta,
+                    report_dir=report_dir,
+                    summary_path=summary_path,
+                    summary_sha256=summary_hash,
+                    severity=severity,
+                    storage_context=storage_context or None,
+                    precheck_status=precheck_status,
+                    precheck_coverage_status=precheck_coverage_status,
+                    precheck_risk_status=precheck_risk_status,
+                    precheck_payload=precheck_payload,
+                    json_log_path=audit_json_path,
+                    json_record=json_record,
+                    json_sync_result=json_sync_result,
+                    archive_path=archive_path,
+                    archive_upload_result=upload_result,
+                )
+                _write_smoke_summary_json(summary_output_path, summary_payload)
+                _LOGGER.info("Zapisano podsumowanie smoke testu do %s", summary_output_path)
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception(
+                    "Nie udało się zapisać podsumowania smoke testu do %s",
+                    summary_output_path,
+                )
+
         if fail_low_storage:
             free_str = storage_context.get("storage_free_mb", "?")
             thresh_str = storage_context.get("storage_threshold_mb", str(args.smoke_min_free_mb or "?"))
@@ -1642,6 +2477,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 thresh_str,
             )
             return 4
+
         return 0
 
     # normalny tryb realtime / run-once
