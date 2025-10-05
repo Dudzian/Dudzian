@@ -9,6 +9,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 from bot_core.config import (
     AlertAuditConfig,
     EmailChannelSettings,
+    EnvironmentDataQualityConfig,
     InstrumentConfig,
     MessengerChannelSettings,
     SMSProviderSettings,
@@ -224,3 +225,54 @@ def test_load_core_config_loads_strategies(tmp_path: Path) -> None:
     assert abs(strategy.atr_multiplier - 1.8) < 1e-9
     assert abs(strategy.min_trend_strength - 0.01) < 1e-9
     assert abs(strategy.min_momentum - 0.002) < 1e-9
+
+
+def test_load_core_config_inherits_risk_profile_data_quality(tmp_path: Path) -> None:
+    config_path = tmp_path / "core.yaml"
+    config_path.write_text(
+        """
+        risk_profiles:
+          balanced:
+            max_daily_loss_pct: 0.02
+            max_position_pct: 0.05
+            target_volatility: 0.1
+            max_leverage: 3.0
+            stop_loss_atr_multiple: 1.5
+            max_open_positions: 5
+            hard_drawdown_pct: 0.1
+            data_quality:
+              max_gap_minutes: 180.0
+              min_ok_ratio: 0.85
+        instrument_universes:
+          core_daily:
+            description: Sample
+            instruments:
+              BTC_USDT:
+                base_asset: BTC
+                quote_asset: USDT
+                categories: [core]
+                exchanges:
+                  binance_spot: BTCUSDT
+                backfill:
+                  - interval: 1d
+                    lookback_days: 30
+        environments:
+          binance_paper:
+            exchange: binance_spot
+            environment: paper
+            keychain_key: binance_spot_paper
+            data_cache_path: ./var/data/binance
+            risk_profile: balanced
+            alert_channels: []
+            instrument_universe: core_daily
+        reporting: {}
+        alerts: {}
+        """,
+        encoding="utf-8",
+    )
+
+    config = load_core_config(config_path)
+    env = config.environments["binance_paper"]
+    assert isinstance(env.data_quality, EnvironmentDataQualityConfig)
+    assert env.data_quality.max_gap_minutes == 180.0
+    assert env.data_quality.min_ok_ratio == 0.85
