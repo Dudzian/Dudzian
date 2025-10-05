@@ -1,0 +1,113 @@
+name: Paper smoke test
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_window:
+        description: "Zakres dat (UTC) w formacie START:END używany w smoke teście"
+        required: false
+        default: ""
+      dry_run:
+        description: "Uruchom tylko weryfikację konfiguracji bez publikacji artefaktów"
+        required: false
+        default: "false"
+  schedule:
+    - cron: '30 3 * * *'
+
+jobs:
+  paper-smoke:
+    name: Paper trading smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      PYTHONUNBUFFERED: "1"
+      PAPER_SMOKE_OPERATOR: "ci-agent"
+      BOT_CORE_CONFIG: "config/core.yaml"
+      BOT_CORE_ENVIRONMENT: "binance_paper"
+      BOT_CORE_OUTPUT_DIR: "var/paper_smoke_ci"
+      # Sekcja reporting.paper_smoke_json_sync korzysta z sekretów przechowywanych w magazynie CI.
+      PAPER_SMOKE_SECRET_NAMESPACE: "ci/paper"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libpq-dev
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # Instalujemy tylko minimalny zestaw zależności potrzebnych do smoke testu.
+          pip install pyarrow boto3 pytest
+
+      - name: Prepare working directories
+        run: |
+          mkdir -p "$BOT_CORE_OUTPUT_DIR"
+          mkdir -p docs/audit
+
+      - name: Run paper smoke orchestrator
+        id: smoke
+        env:
+          PAPER_SMOKE_OPERATOR: ${{ env.PAPER_SMOKE_OPERATOR }}
+          PAPER_SMOKE_SECRET_NAMESPACE: ${{ env.PAPER_SMOKE_SECRET_NAMESPACE }}
+          PAPER_SMOKE_HEADLESS_PASSPHRASE: ${{ secrets.PAPER_SMOKE_HEADLESS_PASSPHRASE }}
+          PAPER_SMOKE_HEADLESS_STORAGE: ${{ secrets.PAPER_SMOKE_HEADLESS_STORAGE }}
+        run: |
+          EXTRA_ARGS=""
+          if [ -n "${{ github.event.inputs.run_window }}" ]; then
+            EXTRA_ARGS="--run-daily-trend-arg \"--date-window ${{ github.event.inputs.run_window }}\""
+          fi
+          AUTO_PUBLISH_FLAGS=""
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            AUTO_PUBLISH_FLAGS="--allow-auto-publish-failure"
+          fi
+          python scripts/run_paper_smoke_ci.py \
+            --config "$BOT_CORE_CONFIG" \
+            --environment "$BOT_CORE_ENVIRONMENT" \
+            --output-dir "$BOT_CORE_OUTPUT_DIR" \
+            --render-summary-markdown "$BOT_CORE_OUTPUT_DIR/paper_smoke_summary.md" \
+            --env-file "$GITHUB_ENV" \
+            $AUTO_PUBLISH_FLAGS \
+            $EXTRA_ARGS
+
+      - name: Validate summary (strict)
+        if: steps.smoke.outcome == 'success'
+        run: |
+          python scripts/validate_paper_smoke_summary.py \
+            --summary-json "$BOT_CORE_OUTPUT_DIR/paper_smoke_summary.json" \
+            --require-publish-success \
+            --require-publish-required \
+            --require-publish-exit-zero
+
+      - name: Render Markdown summary artifact
+        if: always()
+        run: |
+          python scripts/render_paper_smoke_summary.py \
+            --summary-json "$BOT_CORE_OUTPUT_DIR/paper_smoke_summary.json" \
+            --output "$BOT_CORE_OUTPUT_DIR/paper_smoke_summary.md" \
+            --title "Paper smoke test ${{ github.run_number }}"
+
+      - name: Upload smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: paper-smoke-${{ github.run_number }}
+          path: |
+            ${{ env.BOT_CORE_OUTPUT_DIR }}/paper_smoke_summary.json
+            ${{ env.BOT_CORE_OUTPUT_DIR }}/paper_smoke_summary.md
+            ${{ env.BOT_CORE_OUTPUT_DIR }}/paper_trading_log.jsonl
+            ${{ env.BOT_CORE_OUTPUT_DIR }}/paper_trading_log.md
+            ${{ env.BOT_CORE_OUTPUT_DIR }}/paper_precheck_reports
+            ${{ env.BOT_CORE_OUTPUT_DIR }}/runs
+
+      - name: Publish Markdown summary to job summary
+        if: always()
+        run: |
+          if [ -f "$BOT_CORE_OUTPUT_DIR/paper_smoke_summary.md" ]; then
+            cat "$BOT_CORE_OUTPUT_DIR/paper_smoke_summary.md" >> "$GITHUB_STEP_SUMMARY"
+          fi

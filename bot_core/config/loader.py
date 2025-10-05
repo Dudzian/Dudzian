@@ -74,12 +74,18 @@ except Exception:
 try:
     from bot_core.config.models import (
         CoreReportingConfig,
+        PaperSmokeJsonSyncConfig,
+        PaperSmokeJsonSyncLocalConfig,
+        PaperSmokeJsonSyncS3Config,
         SmokeArchiveLocalConfig,
         SmokeArchiveS3Config,
         SmokeArchiveUploadConfig,
     )  # type: ignore
 except Exception:
     CoreReportingConfig = None  # type: ignore
+    PaperSmokeJsonSyncConfig = None  # type: ignore
+    PaperSmokeJsonSyncLocalConfig = None  # type: ignore
+    PaperSmokeJsonSyncS3Config = None  # type: ignore
     SmokeArchiveLocalConfig = None  # type: ignore
     SmokeArchiveS3Config = None  # type: ignore
     SmokeArchiveUploadConfig = None  # type: ignore
@@ -380,6 +386,74 @@ def _load_smoke_archive_upload(entry: Optional[Mapping[str, Any]]):
     )
 
 
+def _load_paper_smoke_json_sync(entry: Optional[Mapping[str, Any]]):
+    if PaperSmokeJsonSyncConfig is None or entry is None:
+        return None
+
+    backend = str(entry.get("backend", entry.get("type", "local"))).strip().lower()
+    if backend in {"disabled", "none"}:
+        return None
+    if backend not in {"local", "s3"}:
+        raise ValueError(
+            "paper_smoke_json_sync.backend musi być 'local', 's3' lub 'disabled'"
+        )
+
+    credential_secret = entry.get("credential_secret")
+    credential_value = str(credential_secret) if credential_secret not in (None, "") else None
+
+    local_cfg = None
+    if backend == "local":
+        if PaperSmokeJsonSyncLocalConfig is None:
+            raise ValueError("Backend 'local' nie jest obsługiwany w tej gałęzi")
+        raw_local = entry.get("local") or {}
+        directory_value = raw_local.get("directory")
+        if not directory_value:
+            raise ValueError(
+                "paper_smoke_json_sync.local.directory jest wymagane dla backendu 'local'"
+            )
+        filename_pattern = str(raw_local.get("filename_pattern", "{environment}_{date}.jsonl"))
+        fsync = bool(raw_local.get("fsync", False))
+        local_cfg = PaperSmokeJsonSyncLocalConfig(
+            directory=str(directory_value),
+            filename_pattern=filename_pattern,
+            fsync=fsync,
+        )
+
+    s3_cfg = None
+    if backend == "s3":
+        if PaperSmokeJsonSyncS3Config is None:
+            raise ValueError("Backend 's3' nie jest obsługiwany w tej gałęzi")
+        raw_s3 = entry.get("s3") or {}
+        bucket_value = raw_s3.get("bucket")
+        if not bucket_value:
+            raise ValueError(
+                "paper_smoke_json_sync.s3.bucket jest wymagane dla backendu 's3'"
+            )
+        prefix_value = raw_s3.get("prefix")
+        endpoint_url = _format_optional_text(raw_s3.get("endpoint_url"))
+        region = _format_optional_text(raw_s3.get("region"))
+        use_ssl = bool(raw_s3.get("use_ssl", True))
+        extra_args = {
+            str(key): str(value)
+            for key, value in (raw_s3.get("extra_args", {}) or {}).items()
+        }
+        s3_cfg = PaperSmokeJsonSyncS3Config(
+            bucket=str(bucket_value),
+            object_prefix=_format_optional_text(prefix_value),
+            endpoint_url=endpoint_url,
+            region=region,
+            use_ssl=use_ssl,
+            extra_args=extra_args,
+        )
+
+    return PaperSmokeJsonSyncConfig(
+        backend=backend,
+        credential_secret=credential_value,
+        local=local_cfg,
+        s3=s3_cfg,
+    )
+
+
 def _load_reporting(entry: Optional[Mapping[str, Any]]):
     if CoreReportingConfig is None:
         return entry or {}
@@ -390,6 +464,7 @@ def _load_reporting(entry: Optional[Mapping[str, Any]]):
         weekly_report_day=_format_optional_text(payload.get("weekly_report_day")),
         retention_months=_format_optional_text(payload.get("retention_months")),
         smoke_archive_upload=_load_smoke_archive_upload(payload.get("smoke_archive_upload")),
+        paper_smoke_json_sync=_load_paper_smoke_json_sync(payload.get("paper_smoke_json_sync")),
     )
 
 

@@ -46,12 +46,9 @@ from bot_core.exchanges.base import (
 from bot_core.exchanges.binance import BinanceFuturesAdapter, BinanceSpotAdapter
 from bot_core.exchanges.kraken import KrakenFuturesAdapter, KrakenSpotAdapter
 from bot_core.exchanges.zonda import ZondaSpotAdapter
-from bot_core.risk.base import RiskProfile, RiskRepository
+from bot_core.risk.base import RiskRepository
 from bot_core.risk.engine import ThresholdRiskEngine
-from bot_core.risk.profiles.aggressive import AggressiveProfile
-from bot_core.risk.profiles.balanced import BalancedProfile
-from bot_core.risk.profiles.conservative import ConservativeProfile
-from bot_core.risk.profiles.manual import ManualProfile
+from bot_core.risk.factory import build_risk_profile_from_config
 from bot_core.risk.repository import FileRiskRepository
 from bot_core.security import SecretManager, SecretStorageError
 from bot_core.runtime.journal import (
@@ -67,13 +64,6 @@ _DEFAULT_ADAPTERS: Mapping[str, ExchangeAdapterFactory] = {
     "kraken_futures": KrakenFuturesAdapter,
     "zonda_spot": ZondaSpotAdapter,
 }
-
-_PROFILE_CLASS_BY_NAME: Mapping[str, type[RiskProfile]] = {
-    "conservative": ConservativeProfile,
-    "balanced": BalancedProfile,
-    "aggressive": AggressiveProfile,
-}
-
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -119,7 +109,7 @@ def bootstrap_environment(
     risk_repository_path = Path(environment.data_cache_path) / "risk_state"
     risk_repository = FileRiskRepository(risk_repository_path)
     risk_engine = ThresholdRiskEngine(repository=risk_repository)
-    profile = _build_risk_profile(risk_profile_config)
+    profile = build_risk_profile_from_config(risk_profile_config)
     risk_engine.register_profile(profile)
     # Aktualizujemy konfigurację środowiska, aby dalsze komponenty znały aktywny profil.
     try:
@@ -196,47 +186,6 @@ def _resolve_risk_profile(
         return profiles[profile_name]
     except KeyError as exc:
         raise KeyError(f"Profil ryzyka '{profile_name}' nie istnieje w konfiguracji") from exc
-
-
-def _build_risk_profile(config: RiskProfileConfig) -> RiskProfile:
-    """Tworzy profil ryzyka na podstawie konfiguracji.
-
-    - Jeśli `name` = "manual" → użyj parametrów z configu (ManualProfile).
-    - Jeśli `name` w {conservative, balanced, aggressive} → użyj predefiniowanych profili (domyślne wartości).
-    - W innym przypadku fallback do ManualProfile z parametrami z configu.
-    """
-    profile_key = config.name.lower()
-    if profile_key == "manual":
-        return ManualProfile(
-            name=config.name,
-            max_positions=config.max_open_positions,
-            max_leverage=config.max_leverage,
-            drawdown_limit=config.hard_drawdown_pct,
-            daily_loss_limit=config.max_daily_loss_pct,
-            max_position_pct=config.max_position_pct,
-            target_volatility=config.target_volatility,
-            stop_loss_atr_multiple=config.stop_loss_atr_multiple,
-        )
-
-    profile_class = _PROFILE_CLASS_BY_NAME.get(profile_key)
-    if profile_class is not None:
-        # Predefiniowane profile mają sensowne domyślne parametry;
-        # jeśli potrzebujesz parametryzacji — użyj profilu "manual".
-        return profile_class()
-
-    # Fallback: parametry z konfiguracji jako profil "manual"
-    return ManualProfile(
-        name=config.name,
-        max_positions=config.max_open_positions,
-        max_leverage=config.max_leverage,
-        drawdown_limit=config.hard_drawdown_pct,
-        daily_loss_limit=config.max_daily_loss_pct,
-        max_position_pct=config.max_position_pct,
-        target_volatility=config.target_volatility,
-        stop_loss_atr_multiple=config.stop_loss_atr_multiple,
-    )
-
-
 def build_alert_channels(
     *,
     core_config: CoreConfig,

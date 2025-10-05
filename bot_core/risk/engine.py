@@ -485,7 +485,7 @@ class ThresholdRiskEngine(RiskEngine):
                     )
 
                 tolerance = max(expected_stop_distance * 1e-4, 1e-8)
-                if abs(actual_distance - expected_stop_distance) > tolerance:
+                if actual_distance + tolerance < expected_stop_distance:
                     self._persist_state(profile_name)
                     return RiskCheckResult(
                         allowed=False,
@@ -504,7 +504,7 @@ class ThresholdRiskEngine(RiskEngine):
                         ),
                     )
 
-                allowed_total_quantity = risk_budget / expected_stop_distance
+                allowed_total_quantity = risk_budget / max(actual_distance, 1e-12)
                 if allowed_total_quantity <= 0:
                     self._persist_state(profile_name)
                     return RiskCheckResult(
