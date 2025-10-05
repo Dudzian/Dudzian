@@ -32,8 +32,8 @@ from bot_core.data.intervals import (
     interval_to_milliseconds as _interval_to_milliseconds,
     normalize_interval_token as _normalize_interval_token,
 )
-from bot_core.reporting.audit import PaperSmokeJsonSynchronizer, PaperSmokeJsonSyncResult
-from bot_core.reporting.upload import SmokeArchiveUploader, SmokeArchiveUploadResult
+from bot_core.reporting.audit import PaperSmokeJsonSynchronizer
+from bot_core.reporting.upload import SmokeArchiveUploader
 from bot_core.data.ohlcv import evaluate_coverage
 from bot_core.runtime.pipeline import build_daily_trend_pipeline, create_trading_controller
 from bot_core.runtime.realtime import DailyTrendRealtimeRunner
@@ -157,28 +157,6 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         default="docs/audit/paper_trading_log.jsonl",
         help=(
             "Ścieżka pliku JSONL z wpisami smoke testów; podaj pusty napis, aby wyłączyć logowanie."
-        ),
-    )
-    parser.add_argument(
-        "--paper-smoke-summary-json",
-        default=None,
-        help=(
-            "Jeśli ustawione, zapisuje podsumowanie smoke testu w formacie JSON (np. do użytku w CI)."
-        ),
-    )
-    parser.add_argument(
-        "--paper-smoke-auto-publish",
-        action="store_true",
-        help=(
-            "Po udanym smoke teście automatycznie opublikuj artefakty JSONL/ZIP"
-            " z wykorzystaniem publish_paper_smoke_artifacts.py."
-        ),
-    )
-    parser.add_argument(
-        "--paper-smoke-auto-publish-required",
-        action="store_true",
-        help=(
-            "Wymagaj powodzenia auto-publikacji artefaktów smoke (niepowodzenie lub pominięcie kończy run błędem)."
         ),
     )
     parser.add_argument(
@@ -605,318 +583,6 @@ def _append_smoke_json_log_entry(
         "Dodano wpis JSON smoke testu (%s) do %s", record_id, json_path
     )
     return record
-
-
-def _build_smoke_summary_payload(
-    *,
-    environment: str,
-    timestamp: datetime,
-    operator: str,
-    window: Mapping[str, str],
-    report_dir: Path,
-    summary_path: Path,
-    summary_sha256: str,
-    severity: str,
-    storage_context: Mapping[str, str] | None,
-    precheck_status: str | None,
-    precheck_coverage_status: str | None,
-    precheck_risk_status: str | None,
-    precheck_payload: Mapping[str, object] | None,
-    json_log_path: Path | None,
-    json_record: Mapping[str, object] | None,
-    json_sync_result: PaperSmokeJsonSyncResult | None,
-    archive_path: Path | None,
-    archive_upload_result: SmokeArchiveUploadResult | None,
-    publish_result: Mapping[str, object] | None = None,
-) -> Mapping[str, object]:
-    """Buduje podsumowanie smoke testu dla pipeline'u CI."""
-
-    timestamp_utc = timestamp.astimezone(timezone.utc)
-    payload: MutableMapping[str, object] = {
-        "environment": environment,
-        "timestamp": timestamp_utc.isoformat(),
-        "operator": operator,
-        "severity": severity.upper(),
-        "window": dict(window),
-        "report": {
-            "directory": str(report_dir),
-            "summary_path": str(summary_path),
-            "summary_sha256": summary_sha256,
-        },
-    }
-
-    if storage_context:
-        payload["storage"] = dict(storage_context)
-
-    precheck_info: MutableMapping[str, object] = {
-        "status": precheck_status or "unknown",
-        "coverage_status": precheck_coverage_status or "unknown",
-        "risk_status": precheck_risk_status or "unknown",
-    }
-
-    if isinstance(precheck_payload, Mapping):
-        try:
-            sanitized_precheck = json.loads(json.dumps(precheck_payload))
-        except TypeError:
-            sanitized_precheck = None
-        if sanitized_precheck is not None:
-            precheck_info["payload"] = sanitized_precheck
-
-    payload["precheck"] = precheck_info
-
-    if json_log_path is not None or json_record is not None or json_sync_result is not None:
-        json_info: MutableMapping[str, object] = {}
-        if json_log_path is not None:
-            json_info["path"] = str(json_log_path)
-        if json_record is not None:
-            try:
-                sanitized_record = json.loads(json.dumps(json_record))
-            except TypeError:
-                sanitized_record = {str(key): str(value) for key, value in json_record.items()}
-            json_info["record"] = sanitized_record
-            record_id_value = json_record.get("record_id")
-            if record_id_value is not None:
-                json_info["record_id"] = str(record_id_value)
-        if json_sync_result is not None:
-            json_info["sync"] = {
-                "backend": json_sync_result.backend,
-                "location": json_sync_result.location,
-                "metadata": dict(json_sync_result.metadata),
-            }
-        payload["json_log"] = json_info
-
-    if archive_path is not None or archive_upload_result is not None:
-        archive_info: MutableMapping[str, object] = {}
-        if archive_path is not None:
-            archive_info["path"] = str(archive_path)
-        if archive_upload_result is not None:
-            archive_info["upload"] = {
-                "backend": archive_upload_result.backend,
-                "location": archive_upload_result.location,
-                "metadata": dict(archive_upload_result.metadata),
-            }
-        payload["archive"] = archive_info
-
-    if publish_result is not None:
-        try:
-            payload["publish"] = json.loads(json.dumps(publish_result))
-        except TypeError:
-            payload["publish"] = {str(key): str(value) for key, value in publish_result.items()}
-
-    return payload
-
-
-def _write_smoke_summary_json(path: Path, payload: Mapping[str, object]) -> None:
-    """Zapisuje podsumowanie smoke testu do pliku JSON."""
-
-    path = Path(path).expanduser().resolve()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
-        json.dump(payload, handle, ensure_ascii=False, indent=2)
-        handle.write("\n")
-
-
-def _coerce_exit_code(value: object) -> int | None:
-    """Konwertuje wartość exit code na liczbę całkowitą, jeśli to możliwe."""
-
-    if value is None:
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):  # pragma: no cover - defensywne
-        return None
-
-
-def _normalize_publish_result(
-    raw_result: Mapping[str, object] | None,
-    *,
-    exit_code: int | None,
-    required: bool,
-) -> Mapping[str, object]:
-    """Ujednolica wynik auto-publikacji na potrzeby raportów i alertów."""
-
-    normalized: dict[str, object] = {}
-    if isinstance(raw_result, Mapping):
-        for key, value in raw_result.items():
-            normalized[str(key)] = value
-
-    if not normalized.get("status"):
-        normalized["status"] = "unknown"
-
-    coerced_exit = _coerce_exit_code(normalized.get("exit_code"))
-    if coerced_exit is not None:
-        normalized["exit_code"] = coerced_exit
-    elif "exit_code" not in normalized:
-        normalized["exit_code"] = exit_code
-    else:
-        normalized["exit_code"] = normalized.get("exit_code")
-
-    normalized["required"] = bool(required)
-
-    return normalized
-
-
-def _is_publish_result_ok(publish_result: Mapping[str, object] | None) -> bool:
-    """Sprawdza, czy auto-publikacja zakończyła się powodzeniem."""
-
-    if not isinstance(publish_result, Mapping):
-        return False
-
-    exit_code = _coerce_exit_code(publish_result.get("exit_code"))
-    if exit_code is not None and exit_code != 0:
-        return False
-
-    status = str(publish_result.get("status", "")).strip().lower()
-    return status == "ok"
-
-
-def _sync_smoke_json_log(
-    *,
-    json_sync_cfg,
-    json_log_path: Path | None,
-    environment: str,
-    record_id: str | None,
-    timestamp: datetime,
-    secret_manager: SecretManager | None,
-):
-    if json_sync_cfg is None or json_log_path is None:
-        return None
-    record_id = record_id or ""
-    try:
-        synchronizer = PaperSmokeJsonSynchronizer(
-            json_sync_cfg,
-            secret_manager=secret_manager,
-        )
-        result = synchronizer.sync(
-            json_log_path,
-            environment=environment,
-            record_id=record_id,
-            timestamp=timestamp,
-        )
-        metadata = dict(result.metadata)
-        version_info = metadata.get("version_id")
-        receipt = metadata.get("ack_request_id") or metadata.get("ack_mechanism")
-        log_suffix = []
-        if version_info:
-            log_suffix.append(f"version_id={version_info}")
-        if receipt:
-            log_suffix.append(f"receipt={receipt}")
-        suffix_text = ", ".join(log_suffix)
-        if suffix_text:
-            suffix_text = f" ({suffix_text})"
-        _LOGGER.info(
-            "Zsynchronizowano dziennik JSONL smoke testów: backend=%s, location=%s%s",
-            result.backend,
-            result.location,
-            suffix_text,
-        )
-        return result
-    except Exception:  # noqa: BLE001
-        _LOGGER.exception("Nie udało się zsynchronizować dziennika JSONL smoke testów")
-        return None
-
-
-def _auto_publish_smoke_artifacts(
-    *,
-    config_path: Path,
-    environment: str,
-    report_dir: Path,
-    json_log_path: Path | None,
-    summary_json_path: Path | None,
-    archive_path: Path | None,
-    record_id: str | None,
-    skip_json_sync: bool,
-    skip_archive_upload: bool,
-    dry_run: bool,
-) -> tuple[int, Mapping[str, object] | None]:
-    """Uruchamia publish_paper_smoke_artifacts.py i zwraca kod wyjścia oraz wynik."""
-
-    script_path = Path(__file__).with_name("publish_paper_smoke_artifacts.py")
-    if not script_path.exists():
-        _LOGGER.error("Brak skryptu publish_paper_smoke_artifacts.py obok run_daily_trend.py")
-        return 1, {"status": "error", "reason": "missing_script"}
-
-    cmd: list[str] = [
-        sys.executable,
-        str(script_path),
-        "--config",
-        str(config_path),
-        "--environment",
-        environment,
-        "--report-dir",
-        str(report_dir),
-        "--json",
-    ]
-
-    if json_log_path is not None:
-        cmd.extend(["--json-log", str(json_log_path)])
-    if summary_json_path is not None and summary_json_path.exists():
-        cmd.extend(["--summary-json", str(summary_json_path)])
-    if archive_path is not None and archive_path.exists():
-        cmd.extend(["--archive", str(archive_path)])
-    if record_id:
-        cmd.extend(["--record-id", record_id])
-    if skip_json_sync:
-        cmd.append("--skip-json-sync")
-    if skip_archive_upload:
-        cmd.append("--skip-archive-upload")
-    if dry_run:
-        cmd.append("--dry-run")
-
-    _LOGGER.info(
-        "Publikuję artefakty smoke testu przy pomocy publish_paper_smoke_artifacts.py (auto)",
-    )
-
-    try:
-        completed = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except OSError:  # pragma: no cover - uruchomienie interpretatora może zawieść na systemach CI
-        _LOGGER.exception("Nie udało się uruchomić publish_paper_smoke_artifacts.py")
-        return 1, {"status": "error", "reason": "exec_failed"}
-
-    stdout = (completed.stdout or "").strip()
-    stderr = (completed.stderr or "").strip()
-    if stderr:
-        _LOGGER.debug("publish_paper_smoke_artifacts stderr: %s", stderr)
-
-    payload: Mapping[str, object] | None = None
-    if stdout:
-        try:
-            parsed = json.loads(stdout)
-        except json.JSONDecodeError:
-            _LOGGER.error(
-                "Nie udało się sparsować wyjścia publish_paper_smoke_artifacts jako JSON: %s",
-                stdout,
-            )
-            payload = {"status": "error", "reason": "invalid_json"}
-        else:
-            if isinstance(parsed, Mapping):
-                payload = parsed
-            else:
-                payload = {"status": "error", "reason": "invalid_payload"}
-
-    if payload is None:
-        payload_dict: dict[str, object] = {"status": "unknown"}
-    elif isinstance(payload, Mapping):
-        payload_dict = dict(payload)
-        payload_dict.setdefault("status", "unknown")
-    else:  # pragma: no cover - defensywnie dla nietypowych wyników
-        payload_dict = {"status": "unknown"}
-    payload_dict["exit_code"] = completed.returncode
-
-    if completed.returncode == 0:
-        _LOGGER.info("Publikacja artefaktów smoke zakończona powodzeniem")
-    else:
-        _LOGGER.error(
-            "Publikacja artefaktów smoke zakończona błędem (code=%s)",
-            completed.returncode,
-        )
-
-    return completed.returncode, payload_dict
 
 
 def _log_order_results(results: Iterable[OrderResult]) -> None:
@@ -2160,7 +1826,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     precheck_audit_metadata: Mapping[str, object] | None = None
     audit_log_path: Path | None = None
     audit_json_path: Path | None = None
-    summary_output_path: Path | None = None
     operator_name: str | None = None
     if args.paper_smoke:
         audit_dir = None
@@ -2178,11 +1843,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             audit_json_arg = str(args.paper_smoke_json_log).strip()
             if audit_json_arg:
                 audit_json_path = Path(audit_json_arg)
-
-        if args.paper_smoke_summary_json is not None:
-            summary_arg = str(args.paper_smoke_summary_json).strip()
-            if summary_arg:
-                summary_output_path = Path(summary_arg)
 
         operator_name = _resolve_operator_name(args.paper_smoke_operator)
 
@@ -2473,13 +2133,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             if isinstance(audit_record, Mapping):
                 precheck_metadata_for_log = audit_record
 
-        archive_context: dict[str, str] = {}
-        if upload_result:
-            archive_context["archive_upload_backend"] = upload_result.backend
-            archive_context["archive_upload_location"] = upload_result.location
-            for key, value in upload_result.metadata.items():
-                archive_context[f"archive_upload_{key}"] = str(value)
-
         alert_context: dict[str, str] = {
             "environment": args.environment,
             "report_dir": str(report_dir),
@@ -2488,14 +2141,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             "summary_text_path": str(summary_txt_path),
             "readme_path": str(readme_path),
             **({"archive_path": str(archive_path)} if archive_path else {}),
-            **archive_context,
+            **(
+                {
+                    "archive_upload_backend": upload_result.backend,
+                    "archive_upload_location": upload_result.location,
+                }
+                if upload_result
+                else {}
+            ),
             **storage_context,
             **precheck_context,
         }
 
         markdown_entry_id: str | None = None
         json_record: Mapping[str, object] | None = None
-        json_sync_result = None
         log_timestamp = datetime.now(timezone.utc)
 
         if audit_log_path is not None:
@@ -2546,13 +2205,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             alert_context["paper_smoke_audit_entry_id"] = markdown_entry_id
             alert_context["paper_smoke_audit_log_path"] = str(audit_log_path)
 
-        publish_record_id: str | None = None
         if json_record:
             alert_context["paper_smoke_json_log_path"] = str(audit_json_path)
             record_id = json_record.get("record_id")
             if record_id:
-                publish_record_id = str(record_id)
-                alert_context["paper_smoke_json_record_id"] = publish_record_id
+                alert_context["paper_smoke_json_record_id"] = str(record_id)
             precheck_meta = json_record.get("precheck_metadata")
             if isinstance(precheck_meta, Mapping):
                 report_sha = precheck_meta.get("report_sha256")
@@ -2561,100 +2218,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 report_path_value = precheck_meta.get("report_path")
                 if report_path_value:
                     alert_context["paper_precheck_report_path"] = str(report_path_value)
-
-            if json_sync_cfg:
-                json_sync_result = _sync_smoke_json_log(
-                    json_sync_cfg=json_sync_cfg,
-                    json_log_path=audit_json_path,
-                    environment=args.environment,
-                    record_id=str(record_id or ""),
-                    timestamp=log_timestamp,
-                    secret_manager=secret_manager,
-                )
-                if json_sync_result:
-                    alert_context["paper_smoke_json_sync_backend"] = json_sync_result.backend
-                    alert_context["paper_smoke_json_sync_location"] = json_sync_result.location
-                    metadata = json_sync_result.metadata
-                    version_id = metadata.get("version_id") if isinstance(metadata, Mapping) else None
-                    if version_id:
-                        alert_context["paper_smoke_json_sync_version_id"] = str(version_id)
-
-        auto_publish_required = bool(args.paper_smoke_auto_publish_required)
-        auto_publish_enabled = bool(args.paper_smoke_auto_publish or auto_publish_required)
-
-        publish_exit_code: int | None = None
-        publish_result: Mapping[str, object] | None = _normalize_publish_result(
-            {"status": "skipped", "reason": "auto_publish_disabled"},
-            exit_code=None,
-            required=auto_publish_required,
-        )
-        publish_requirement_failed = False
-
-        if auto_publish_enabled:
-            publish_exit_code, publish_payload = _auto_publish_smoke_artifacts(
-                config_path=Path(args.config),
-                environment=args.environment,
-                report_dir=report_dir,
-                json_log_path=audit_json_path,
-                summary_json_path=summary_output_path,
-                archive_path=archive_path,
-                record_id=publish_record_id,
-                skip_json_sync=json_sync_result is not None,
-                skip_archive_upload=upload_result is not None,
-                dry_run=args.dry_run,
-            )
-            publish_result = _normalize_publish_result(
-                publish_payload,
-                exit_code=publish_exit_code,
-                required=auto_publish_required,
-            )
-            publish_exit_code = _coerce_exit_code(publish_result.get("exit_code"))
-
-            if auto_publish_required and not _is_publish_result_ok(publish_result):
-                publish_requirement_failed = True
-
-            if publish_result:
-                alert_context["paper_smoke_publish_status"] = str(publish_result.get("status", "unknown"))
-                if publish_exit_code is not None:
-                    alert_context["paper_smoke_publish_exit_code"] = str(publish_exit_code)
-                json_step = publish_result.get("json_sync")
-                if isinstance(json_step, Mapping):
-                    alert_context["paper_smoke_publish_json_status"] = str(
-                        json_step.get("status", "unknown")
-                    )
-                    backend_value = json_step.get("backend")
-                    if backend_value:
-                        alert_context["paper_smoke_publish_json_backend"] = str(backend_value)
-                    location_value = json_step.get("location")
-                    if location_value:
-                        alert_context["paper_smoke_publish_json_location"] = str(location_value)
-                    metadata = json_step.get("metadata")
-                    if isinstance(metadata, Mapping):
-                        for meta_key, meta_val in metadata.items():
-                            alert_context[f"paper_smoke_publish_json_{meta_key}"] = str(meta_val)
-                archive_step = publish_result.get("archive_upload")
-                if isinstance(archive_step, Mapping):
-                    alert_context["paper_smoke_publish_archive_status"] = str(
-                        archive_step.get("status", "unknown")
-                    )
-                    backend_value = archive_step.get("backend")
-                    if backend_value:
-                        alert_context["paper_smoke_publish_archive_backend"] = str(backend_value)
-                    location_value = archive_step.get("location")
-                    if location_value:
-                        alert_context["paper_smoke_publish_archive_location"] = str(location_value)
-                    metadata = archive_step.get("metadata")
-                    if isinstance(metadata, Mapping):
-                        for meta_key, meta_val in metadata.items():
-                            alert_context[f"paper_smoke_publish_archive_{meta_key}"] = str(meta_val)
-            if publish_requirement_failed:
-                severity = "error"
-                body += " Publikacja artefaktów wymagana – wynik nie spełnia kryteriów."
-            elif publish_exit_code and publish_exit_code != 0:
-                severity = "error"
-                body += " Publikacja artefaktów zakończona błędem."
-            elif publish_result and str(publish_result.get("status")) == "ok":
-                body += " Artefakty opublikowane automatycznie."
 
         message = AlertMessage(
             category="paper_smoke",
@@ -2676,51 +2239,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "paper_precheck_coverage_status": precheck_coverage_status or "unknown",
                 "paper_precheck_risk_status": precheck_risk_status or "unknown",
             }
-            if upload_result:
-                compliance_context["archive_upload_backend"] = upload_result.backend
-                compliance_context["archive_upload_location"] = upload_result.location
-                for key, value in upload_result.metadata.items():
-                    compliance_context[f"archive_upload_{key}"] = str(value)
-            if json_sync_result:
-                compliance_context["paper_smoke_json_sync_backend"] = json_sync_result.backend
-                compliance_context["paper_smoke_json_sync_location"] = json_sync_result.location
-                compliance_context.update(json_sync_result.metadata)
-            if publish_result:
-                compliance_context["paper_smoke_publish_status"] = str(
-                    publish_result.get("status", "unknown")
-                )
-                if publish_exit_code is not None:
-                    compliance_context["paper_smoke_publish_exit_code"] = str(publish_exit_code)
-                json_step = publish_result.get("json_sync")
-                if isinstance(json_step, Mapping):
-                    compliance_context["paper_smoke_publish_json_status"] = str(
-                        json_step.get("status", "unknown")
-                    )
-                    backend_value = json_step.get("backend")
-                    if backend_value:
-                        compliance_context["paper_smoke_publish_json_backend"] = str(backend_value)
-                    location_value = json_step.get("location")
-                    if location_value:
-                        compliance_context["paper_smoke_publish_json_location"] = str(location_value)
-                    metadata = json_step.get("metadata")
-                    if isinstance(metadata, Mapping):
-                        for meta_key, meta_val in metadata.items():
-                            compliance_context[f"paper_smoke_publish_json_{meta_key}"] = str(meta_val)
-                archive_step = publish_result.get("archive_upload")
-                if isinstance(archive_step, Mapping):
-                    compliance_context["paper_smoke_publish_archive_status"] = str(
-                        archive_step.get("status", "unknown")
-                    )
-                    backend_value = archive_step.get("backend")
-                    if backend_value:
-                        compliance_context["paper_smoke_publish_archive_backend"] = str(backend_value)
-                    location_value = archive_step.get("location")
-                    if location_value:
-                        compliance_context["paper_smoke_publish_archive_location"] = str(location_value)
-                    metadata = archive_step.get("metadata")
-                    if isinstance(metadata, Mapping):
-                        for meta_key, meta_val in metadata.items():
-                            compliance_context[f"paper_smoke_publish_archive_{meta_key}"] = str(meta_val)
             compliance_message = AlertMessage(
                 category="paper_smoke_compliance",
                 title=f"Compliance audit log updated ({args.environment})",
@@ -2728,54 +2246,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "Zaktualizowano dziennik JSONL smoke testów paper tradingu. "
                     f"Rekord: {json_record.get('record_id', 'unknown')}"
                 ),
-                severity=(
-                    "error"
-                    if severity.lower() == "error"
-                    else ("warning" if severity.lower() == "warning" else "info")
-                ),
+                severity="warning" if severity.lower() == "warning" else "info",
                 context=compliance_context,
             )
             pipeline.bootstrap.alert_router.dispatch(compliance_message)
-
-        if summary_output_path is not None:
-            try:
-                summary_payload = _build_smoke_summary_payload(
-                    environment=args.environment,
-                    timestamp=log_timestamp,
-                    operator=operator_name or _resolve_operator_name(None),
-                    window=window_meta,
-                    report_dir=report_dir,
-                    summary_path=summary_path,
-                    summary_sha256=summary_hash,
-                    severity=severity,
-                    storage_context=storage_context or None,
-                    precheck_status=precheck_status,
-                    precheck_coverage_status=precheck_coverage_status,
-                    precheck_risk_status=precheck_risk_status,
-                    precheck_payload=precheck_payload,
-                    json_log_path=audit_json_path,
-                    json_record=json_record,
-                    json_sync_result=json_sync_result,
-                    archive_path=archive_path,
-                    archive_upload_result=upload_result,
-                    publish_result=publish_result,
-                )
-                _write_smoke_summary_json(summary_output_path, summary_payload)
-                _LOGGER.info("Zapisano podsumowanie smoke testu do %s", summary_output_path)
-            except Exception:  # noqa: BLE001
-                _LOGGER.exception(
-                    "Nie udało się zapisać podsumowania smoke testu do %s",
-                    summary_output_path,
-                )
-
-        if publish_requirement_failed:
-            status_text = str(publish_result.get("status", "unknown")) if publish_result else "unknown"
-            _LOGGER.error(
-                "Smoke test zakończony niepowodzeniem: auto-publikacja artefaktów wymagana, status=%s, exit_code=%s.",
-                status_text,
-                publish_exit_code,
-            )
-            return 6
 
         if fail_low_storage:
             free_str = storage_context.get("storage_free_mb", "?")
