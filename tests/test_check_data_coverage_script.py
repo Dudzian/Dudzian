@@ -234,6 +234,12 @@ def _write_config(
     instrument_name: str = "BTC_USDT",
     symbol: str = "BTCUSDT",
     backfill: Mapping[str, Sequence[Mapping[str, int]]] | None = None,
+    data_quality: Mapping[str, float] | None = None,
+    risk_profile_data_quality: Mapping[str, float] | None = None,
+    extra_environments: Mapping[str, Mapping[str, object]] | None = None,
+    coverage_monitoring: Mapping[str, object] | None = None,
+    risk_profiles: Mapping[str, Mapping[str, object]] | None = None,
+    risk_profile_name: str = "balanced",
 ) -> Path:
     """Generuje minimalną konfigurację CoreConfig dla testów CLI."""
 
@@ -250,18 +256,20 @@ def _write_config(
     if not quote_asset:
         quote_asset = "USDT"
 
+    base_risk_profiles = risk_profiles or {
+        "balanced": {
+            "max_daily_loss_pct": 0.02,
+            "max_position_pct": 0.05,
+            "target_volatility": 0.1,
+            "max_leverage": 3.0,
+            "stop_loss_atr_multiple": 1.5,
+            "max_open_positions": 5,
+            "hard_drawdown_pct": 0.1,
+        }
+    }
+
     config_payload = {
-        "risk_profiles": {
-            "balanced": {
-                "max_daily_loss_pct": 0.02,
-                "max_position_pct": 0.05,
-                "target_volatility": 0.1,
-                "max_leverage": 3.0,
-                "stop_loss_atr_multiple": 1.5,
-                "max_open_positions": 5,
-                "hard_drawdown_pct": 0.1,
-            }
-        },
+        "risk_profiles": {name: dict(payload) for name, payload in base_risk_profiles.items()},
         "instrument_universes": {
             universe_name: {
                 "description": "Testowe uniwersum dla scenariuszy CLI",
@@ -282,12 +290,28 @@ def _write_config(
                 "environment": "paper",
                 "keychain_key": f"{exchange_name}_paper",  # fikcyjny wpis dla walidacji
                 "data_cache_path": str(cache_dir),
-                "risk_profile": "balanced",
+                "risk_profile": risk_profile_name,
                 "alert_channels": [],
                 "instrument_universe": universe_name,
             }
         },
     }
+
+    if risk_profile_data_quality:
+        config_payload["risk_profiles"].setdefault(risk_profile_name, {})
+        config_payload["risk_profiles"][risk_profile_name]["data_quality"] = dict(
+            risk_profile_data_quality
+        )
+
+    if data_quality:
+        config_payload["environments"][environment_name]["data_quality"] = dict(data_quality)
+
+    if extra_environments:
+        for name, payload in extra_environments.items():
+            config_payload["environments"][name] = dict(payload)
+
+    if coverage_monitoring:
+        config_payload["coverage_monitoring"] = dict(coverage_monitoring)
 
     config_path = tmp_path / "core.yaml"
     config_path.write_text(
