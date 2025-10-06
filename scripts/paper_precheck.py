@@ -5,7 +5,6 @@ import argparse
 import hashlib
 import json
 import math
-import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -31,53 +30,6 @@ from bot_core.data.ohlcv.coverage_check import SummaryThresholdResult, evaluate_
 from bot_core.exchanges.base import AccountSnapshot, OrderRequest
 from bot_core.risk.engine import ThresholdRiskEngine
 from bot_core.risk.factory import build_risk_profile_from_config
-
-
-def _sanitize_environment_token(value: str) -> str:
-    """Zamienia nazwę środowiska na token bezpieczny dla nazwy pliku."""
-
-    token = re.sub(r"[^A-Za-z0-9_.-]+", "_", value.strip())
-    if not token:
-        return "unknown_environment"
-    return token
-
-
-def persist_precheck_report(
-    payload: Mapping[str, object],
-    *,
-    environment_name: str,
-    base_dir: Path,
-    created_at: datetime | None = None,
-) -> dict[str, object]:
-    """Zapisuje wynik paper_precheck w katalogu audytu i zwraca metadane pliku."""
-
-    timestamp = (created_at or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    timestamp = timestamp.replace(microsecond=0)
-    token = timestamp.strftime("%Y%m%dT%H%M%SZ")
-    env_token = _sanitize_environment_token(environment_name)
-
-    base_dir.mkdir(parents=True, exist_ok=True)
-
-    base_name = f"{token}_{env_token}"
-    candidate = base_dir / f"{base_name}.json"
-    counter = 1
-    while candidate.exists():
-        candidate = base_dir / f"{base_name}_{counter}.json"
-        counter += 1
-
-    serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2)
-    candidate.write_text(serialized + "\n", encoding="utf-8")
-
-    digest = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
-    metadata: dict[str, object] = {
-        "path": str(candidate),
-        "sha256": digest,
-        "created_at": timestamp.isoformat(),
-        "environment": environment_name,
-        "status": str(payload.get("status", "unknown")),
-        "size_bytes": len(serialized.encode("utf-8")),
-    }
-    return metadata
 
 
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
@@ -637,29 +589,6 @@ def run_precheck(
     risk_result: Mapping[str, object] | None = None
     risk_status = "skipped"
 
-    if environment is None:
-        result_payload: dict[str, object] = {
-            "status": "error",
-            "config": {
-                "valid": validation.is_valid(),
-                "errors": list(validation.errors),
-                "warnings": list(validation.warnings),
-            },
-            "coverage": None,
-            "coverage_warnings": ["environment_not_found"],
-            "risk": None,
-            "environment": environment_name,
-            "manifest_path": str(resolved_manifest) if resolved_manifest else "",
-            "as_of": resolved_as_of.isoformat(),
-            "coverage_status": "skipped",
-            "risk_status": "skipped",
-            "error_reason": "environment_not_found",
-        }
-        return result_payload, 2
-
-    if resolved_manifest is None:
-        resolved_manifest = Path(environment.data_cache_path) / "ohlcv_manifest.sqlite"
-
     if not environment.instrument_universe:
         coverage_warnings.append("environment_missing_universe")
     else:
@@ -720,7 +649,7 @@ def run_precheck(
             )
             coverage_status = str(coverage_result.get("status", "unknown"))
 
-    if not skip_risk_check:
+    if not args.skip_risk_check:
         risk_result = _risk_sanity_payload(config=config, environment=environment)
         if isinstance(risk_result, Mapping):
             risk_status = str(risk_result.get("status", "unknown"))
@@ -760,7 +689,7 @@ def run_precheck(
     elif risk_result is not None and risk_status == "error":
         final_status = "error"
         exit_code = 5
-    elif fail_on_warnings and (
+    elif args.fail_on_warnings and (
         validation.warnings
         or coverage_status == "warning"
         or coverage_warnings
@@ -779,33 +708,6 @@ def run_precheck(
     result_payload["status"] = final_status
     result_payload["coverage_status"] = coverage_status
     result_payload["risk_status"] = risk_status
-
-    return result_payload, exit_code
-
-
-def main(argv: Sequence[str] | None = None) -> int:
-    args = _parse_args(argv)
-    as_of = _parse_as_of(args.as_of)
-    payload, exit_code = run_precheck(
-        environment_name=args.environment,
-        config_path=Path(args.config),
-        manifest_path=Path(args.manifest) if args.manifest else None,
-        as_of=as_of,
-        symbols=args.symbols,
-        intervals=args.intervals,
-        max_gap_minutes=args.max_gap_minutes,
-        min_ok_ratio=args.min_ok_ratio,
-        fail_on_warnings=args.fail_on_warnings,
-        skip_risk_check=args.skip_risk_check,
-    )
-
-    if payload.get("error_reason") == "environment_not_found":
-        print(f"Nie znaleziono środowiska: {args.environment}", file=sys.stderr)
-        return exit_code
-
-    if payload.get("error_reason") == "invalid_min_ok_ratio":
-        print("--min-ok-ratio musi mieścić się w zakresie 0-1", file=sys.stderr)
-        return exit_code
 
     if args.json or args.output:
         serialized = json.dumps(payload, ensure_ascii=False, indent=2)
@@ -868,8 +770,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             for warning in coverage_warnings:
                 print(f"  - {warning}")
 
-        risk_result = payload.get("risk") if isinstance(payload, Mapping) else None
-        risk_status = str(payload.get("risk_status", "skipped"))
         if risk_result is None:
             if args.skip_risk_check:
                 print("Sanity-check ryzyka: pominięto (--skip-risk-check)")
@@ -891,7 +791,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 for warning in warnings:
                     print(f"    - {warning}")
 
-        print(f"Status końcowy: {str(payload.get('status', 'unknown')).upper()}")
+        print(f"Status końcowy: {final_status.upper()}")
 
     return exit_code
 
