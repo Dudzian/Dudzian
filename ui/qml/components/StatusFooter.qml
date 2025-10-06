@@ -1,11 +1,13 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Window
 
 Pane {
     id: footer
     implicitHeight: 44
     padding: 12
+
     background: Rectangle {
         color: Qt.darker(footer.palette.window, 1.3)
     }
@@ -23,23 +25,30 @@ Pane {
         }
 
         Label {
-            text: qsTr("Okna: %1").arg((window && window.extraWindowCount !== undefined ? window.extraWindowCount : 0) + 1)
+            text: qsTr("Okna: %1")
+                     .arg(((Window.window && Window.window.extraWindowCount !== undefined)
+                           ? Window.window.extraWindowCount : 0) + 1)
         }
 
         Label {
-            text: appController.reduceMotionActive ? qsTr("Animacje: ograniczone") : qsTr("Animacje: pełne")
-            color: appController.reduceMotionActive ? Qt.rgba(0.96, 0.74, 0.23, 1) : palette.windowText
+            text: appController.reduceMotionActive
+                    ? qsTr("Animacje: ograniczone")
+                    : qsTr("Animacje: pełne")
+            color: appController.reduceMotionActive
+                    ? Qt.rgba(0.96, 0.74, 0.23, 1)
+                    : palette.windowText
         }
 
         Item { Layout.fillWidth: true }
 
         Label {
+            id: clockLabel
             text: Qt.formatDateTime(new Date(), "HH:mm:ss")
             Timer {
                 interval: 1000
                 running: true
                 repeat: true
-                onTriggered: parent.text = Qt.formatDateTime(new Date(), "HH:mm:ss")
+                onTriggered: clockLabel.text = Qt.formatDateTime(new Date(), "HH:mm:ss")
             }
         }
     }

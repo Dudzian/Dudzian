@@ -265,12 +265,6 @@ def _filter_statuses_by_intervals(
     return filtered, []
 
 
-
-
-
-
-
-
 def _breakdown_by_key(statuses: Sequence[object], key_name: str) -> dict[str, dict[str, int]]:
     """
     Agregacja bez obiektów niestabializowalnych:
@@ -292,8 +286,6 @@ def _breakdown_by_interval(statuses: Sequence[object]) -> dict[str, dict[str, in
 
 def _breakdown_by_symbol(statuses: Sequence[object]) -> dict[str, dict[str, int]]:
     return _breakdown_by_key(statuses, "symbol")
-
-
 
 
 def _resolve_reference_symbol(config: CoreConfig, environment: EnvironmentConfig) -> str:
@@ -505,7 +497,6 @@ def _risk_sanity_payload(
     payload["checks"] = checks
     payload["observations"] = observations
     return payload
-
 
 
 def _coverage_payload(

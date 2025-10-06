@@ -14,5 +14,6 @@ performance_guard:
   overlays:
     max_overlays: 4
     disable_secondary_when_fps_below: 55
+  max_overlay_count: 4  # wsteczna kompatybilność
 history_limit: 800
 maximum_samples: 12000

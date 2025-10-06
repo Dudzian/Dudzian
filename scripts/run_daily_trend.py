@@ -19,7 +19,6 @@ from collections import deque
 from collections.abc import Iterable, Mapping, MutableMapping, Sequence
 from typing import Any, Callable
 
-
 _RAW_OUTPUT_MAX_LEN = 4096
 _CONTEXT_SNIPPET_MAX_LEN = 240
 
@@ -36,8 +35,14 @@ from bot_core.data.intervals import (
     interval_to_milliseconds as _interval_to_milliseconds,
     normalize_interval_token as _normalize_interval_token,
 )
-from bot_core.reporting.audit import PaperSmokeJsonSynchronizer, PaperSmokeJsonSyncResult
-from bot_core.reporting.upload import SmokeArchiveUploader, SmokeArchiveUploadResult
+from bot_core.reporting.audit import (
+    PaperSmokeJsonSynchronizer,
+    PaperSmokeJsonSyncResult,
+)
+from bot_core.reporting.upload import (
+    SmokeArchiveUploader,
+    SmokeArchiveUploadResult,
+)
 from bot_core.data.ohlcv import evaluate_coverage
 from bot_core.runtime.pipeline import build_daily_trend_pipeline, create_trading_controller
 from bot_core.runtime.realtime import DailyTrendRealtimeRunner

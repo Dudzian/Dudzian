@@ -3,6 +3,8 @@
 #include <QAbstractListModel>
 #include <QDateTime>
 #include <QVector>
+#include <QString>
+#include <QVariant>
 
 struct OhlcvPoint {
     qint64 timestampMs = 0;
@@ -54,7 +56,6 @@ signals:
 
 private:
     void enforceMaximum();
-
     void recomputeIndicators();
 
     QVector<OhlcvPoint> m_candles;

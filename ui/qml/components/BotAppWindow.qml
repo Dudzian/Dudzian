@@ -12,13 +12,13 @@ ApplicationWindow {
     property alias chartView: chartView
     property var extraWindows: []
     property int extraWindowCount: 0
+
     title: qsTr("Bot Trading Shell")
     minimumWidth: 960
     minimumHeight: 540
     visible: true
 
     color: Qt.darker(palette.window, 1.05)
-
     readonly property color accentColor: Qt.rgba(0.14, 0.58, 0.82, 1)
 
     header: ToolBar {
@@ -192,9 +192,7 @@ ApplicationWindow {
         if (!win)
             return
         extraWindows.push(win)
-        win.windowClosed.connect(function() {
-            removeExtraWindow(win)
-        })
+        win.windowClosed.connect(function() { removeExtraWindow(win) })
         win.show()
         syncInstrumentLabel()
         if (!options || !options.restoreSession) {

@@ -7,6 +7,7 @@ Pane {
     property PerformanceGuard performanceGuard
     property string instrumentLabel: appController.instrumentLabel
     signal openWindowRequested()
+
     padding: 16
     background: Rectangle {
         color: Qt.darker(root.palette.window, 1.2)
@@ -29,27 +30,38 @@ Pane {
             rowSpacing: 8
 
             Label { text: qsTr("FPS target") }
-            Label { text: performanceGuard.fpsTarget.toString() }
+            Label { text: performanceGuard ? performanceGuard.fpsTarget.toString() : qsTr("—") }
 
             Label { text: qsTr("Reduce motion after") }
-            Label { text: qsTr("%1 s").arg(performanceGuard.reduceMotionAfterSeconds.toFixed(2)) }
+            Label {
+                text: performanceGuard
+                      ? qsTr("%1 s").arg(performanceGuard.reduceMotionAfterSeconds.toFixed(2))
+                      : qsTr("—")
+            }
 
             Label { text: qsTr("Jank budget") }
-            Label { text: qsTr("%1 ms").arg(performanceGuard.jankThresholdMs.toFixed(1)) }
+            Label {
+                text: performanceGuard
+                      ? qsTr("%1 ms").arg(performanceGuard.jankThresholdMs.toFixed(1))
+                      : qsTr("—")
+            }
 
             Label { text: qsTr("Overlay limit") }
-            Label { text: performanceGuard.maxOverlayCount.toString() }
+            Label { text: performanceGuard ? performanceGuard.maxOverlayCount.toString() : qsTr("—") }
 
             Label { text: qsTr("Disable overlays <FPS") }
             Label {
-                text: performanceGuard.disableSecondaryWhenFpsBelow > 0
-                    ? performanceGuard.disableSecondaryWhenFpsBelow.toString()
-                    : qsTr("—")
+                text: performanceGuard && performanceGuard.disableSecondaryWhenFpsBelow > 0
+                      ? performanceGuard.disableSecondaryWhenFpsBelow.toString()
+                      : qsTr("—")
             }
         }
 
         Label {
-            text: qsTr("Latest close: %1").arg(ohlcvModel.latestClose() === undefined ? qsTr("--") : Number(ohlcvModel.latestClose()).toFixed(2))
+            text: qsTr("Latest close: %1")
+                    .arg(ohlcvModel && ohlcvModel.latestClose() !== undefined
+                             ? Number(ohlcvModel.latestClose()).toFixed(2)
+                             : qsTr("--"))
             font.pixelSize: 16
         }
 

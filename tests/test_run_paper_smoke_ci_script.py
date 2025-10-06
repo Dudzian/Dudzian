@@ -421,7 +421,7 @@ def test_ci_main_end_to_end_local_backends(monkeypatch: pytest.MonkeyPatch, tmp_
         script = Path(cmd[1]).name if len(cmd) > 1 else ""
         if script == "run_daily_trend.py":
             summary_idx = cmd.index("--paper-smoke-summary-json")
-            summary_path = Path(cmd[summary_idx + 1])
+            summary_path = Path(summary_idx + 1 and cmd[summary_idx + 1])
             summary_path.parent.mkdir(parents=True, exist_ok=True)
 
             json_log_idx = cmd.index("--paper-smoke-json-log")
@@ -810,8 +810,9 @@ def test_ci_main_end_to_end_s3_backends(monkeypatch: pytest.MonkeyPatch, tmp_pat
     assert json_sync_meta.get("remote_sha256") == json_sync_meta.get("log_sha256")
     assert archive_meta.get("remote_sha256") == archive_meta.get("archive_sha256")
 
-    synced_objects = [key for key in uploads if key[0] == "json-audit"]
-    archive_objects = [key for key in uploads if key[0] == "archive-bucket"]
+    uploads_exist = lambda bucket: [key for key in uploads if key[0] == bucket]  # noqa: E731
+    synced_objects = uploads_exist("json-audit")
+    archive_objects = uploads_exist("archive-bucket")
     assert synced_objects, "Powinien powstać obiekt JSONL w magazynie S3"
     assert archive_objects, "Powinno zostać wysłane archiwum do magazynu S3"
 

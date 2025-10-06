@@ -5,12 +5,12 @@
 #include <QPointer>
 #include <QCommandLineParser>
 
+#include <memory>
+
 #include "grpc/TradingClient.hpp"
 #include "models/OhlcvListModel.hpp"
 #include "utils/PerformanceGuard.hpp"
 #include "utils/FrameRateMonitor.hpp"
-
-#include <memory>
 
 class Application : public QObject {
     Q_OBJECT

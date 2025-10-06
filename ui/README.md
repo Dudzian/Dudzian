@@ -60,9 +60,14 @@ Domyślne parametry są zgodne z plikiem `ui/config/example.yaml`. Wartości `--
 * `qml/components/BotAppWindow.qml` – okno główne z menu kontekstowym, skrótem `Ctrl+N` do otwierania nowych okien i automatycznym przywracaniem profilu workspace.
 
 Po uruchomieniu głównego okna można otwierać kolejne wykresy (`Nowe okno` lub `Ctrl+N`). Aplikacja zapamiętuje pozycję i liczbę okien między sesjami (`Qt.labs.settings`), a stopka informuje o aktywnym trybie „reduce motion”, kiedy `FrameRateMonitor` zasygnalizuje spadek FPS.
+* `src/app/Application.*` – warstwa klejąca CLI ↔ gRPC ↔ QML. Udostępnia `appController` w kontekście QML.
+* `qml/components/CandlestickChartView.qml` – widok wykresu z krzyżem celowniczym, autoprzeskalowaniem oraz mechanizmem sample-at-x.
+* `qml/components/SidePanel.qml` – wizualizacja parametrów performance guard i statusu połączenia.
 
 ## Kolejne kroki
 
 * Podpięcie realnego demona C++ (`/core`) przez TLS i RBAC.
 * Dodanie wskaźników ATR/RSI oraz konfiguracji nakładek z poziomu UI przy zachowaniu ograniczeń `PerformanceGuard`.
 * Benchmark QML Profiler 60/120 Hz + automatyczne raportowanie do `MetricsService` wraz z detekcją adaptacji animacji.
+* Dodanie warstwy animacji (Transitions/States) oraz adaptacji „reduce motion” na podstawie metryk gRPC.
+* Benchmark QML Profiler 60/120 Hz + automatyczne raportowanie do `MetricsService`.

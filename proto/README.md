@@ -16,19 +16,17 @@ brak WebSocketów i brak bezpośrednich połączeń HTTP z giełdami po stronie 
 Stosujemy jeden źródłowy plik `.proto` i generujemy klienta/serwer w różnych językach. Docelowo buildy
 rdzenia (C++) i narzędzi Pythonowych będą korzystać z tych samych artefaktów.
 
-### Generowanie stubów Python + gRPC
+Przykładowe generowanie stubów Python + gRPC:
 
 ```bash
-poetry run python scripts/generate_trading_stubs.py
+poetry run python -m grpc_tools.protoc \
+  --proto_path=proto \
+  --python_out=bot_core/generated \
+  --grpc_python_out=bot_core/generated \
+  proto/trading.proto
 ```
 
-Skrypt domyślnie generuje artefakty Pythona i C++. W razie potrzeby można ograniczyć zakres
-(`--skip-python` / `--skip-cpp`) lub wskazać niestandardowe katalogi wyjściowe.
-
-### Ręczne wywołanie protoc
-
-Jeżeli potrzebna jest niestandardowa konfiguracja, można uruchomić `protoc` bezpośrednio.
-Przykład generowania stubów C++ (dla demona) w katalogu `core/generated`:
+Generowanie stubów C++ (dla demona) w katalogu `core/generated`:
 
 ```bash
 protoc \
@@ -54,12 +52,13 @@ buf breaking proto --against '.git#branch=main,subdir=proto'
 
 Buf wykorzystujemy również w CI, dlatego przed push warto uruchomić te polecenia lokalnie (wymaga
 zainstalowanego `buf`, patrz [instrukcje](https://buf.build/docs/installation)).
+> **Wskazówka:** W pipeline CI przygotujemy dedykowany krok budujący stuby i publikujący je jako artefakt.
+> Komendy powyżej służą jako punkt startowy do dalszej automatyzacji.
 
 ## Zasady utrzymania kontraktu
 
 - Plik `trading.proto` jest traktowany jako kontrakt `v1`. Breaking changes są zabronione bez podniesienia
   wersji pakietu (np. `botcore.trading.v2`).
 - Przed dodaniem nowych pól należy przygotować ADR i aktualizację testów golden.
-- Każda zmiana przechodzi przez `buf lint` / `buf breaking` w pipeline CI; rekomendowane jest także
-  lokalne uruchomienie powyższych poleceń przed wysyłką PR.
+- Każda zmiana powinna przejść przez `buf lint` / `buf breaking` (zaplanowane do wdrożenia w pipeline CI).
 - Klient QML korzysta tylko z gRPC – UI nie łączy się bezpośrednio z giełdami.

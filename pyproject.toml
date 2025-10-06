@@ -39,6 +39,7 @@ testpaths = ["tests"]
 filterwarnings = [
   "ignore::DeprecationWarning",
 ]
+
 [project]
 name = "dudzian-bot"
 version = "0.1.0"
@@ -60,4 +61,3 @@ dev = [
   "protobuf>=4.24",
   "PyYAML>=6.0",
 ]
-
