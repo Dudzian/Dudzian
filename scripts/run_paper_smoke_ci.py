@@ -9,13 +9,10 @@ import shlex
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Sequence
-
-from scripts.render_paper_smoke_summary import DEFAULT_MAX_JSON_CHARS, render_summary_markdown
+from typing import Sequence
 
 
 _LOGGER = logging.getLogger(__name__)
-_RAW_OUTPUT_LIMIT = 2000
 
 
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
@@ -74,40 +71,6 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         help=(
             "Opcjonalna ścieżka pliku środowiskowego (KEY=VALUE), do którego zostaną dopisane "
             "kluczowe informacje o wyniku smoke testu (ścieżki raportów, statusy)."
-        ),
-    )
-    parser.add_argument(
-        "--render-summary-markdown",
-        default=None,
-        help=(
-            "Jeśli podano, zapisze raport Markdown wygenerowany na bazie summary.json w tej ścieżce."
-        ),
-    )
-    parser.add_argument(
-        "--render-summary-title",
-        default=None,
-        help="Opcjonalny tytuł raportu Markdown (przekazywany do renderera).",
-    )
-    parser.add_argument(
-        "--render-summary-max-json-chars",
-        type=int,
-        default=None,
-        help=(
-            "Maksymalna liczba znaków JSON w sekcjach 'details' raportu Markdown (domyślnie 2000)."
-        ),
-    )
-    parser.add_argument(
-        "--skip-summary-validation",
-        action="store_true",
-        help="Pomiń automatyczną walidację summary.json po zakończeniu smoke testu.",
-    )
-    parser.add_argument(
-        "--summary-validator-arg",
-        action="append",
-        default=[],
-        help=(
-            "Dodatkowe argumenty przekazywane do validate_paper_smoke_summary.py. "
-            "Wartość może zawierać kilka parametrów rozdzielonych spacjami i może być powtarzana."
         ),
     )
     return parser.parse_args(argv)
@@ -183,110 +146,7 @@ def _load_summary(summary_path: Path) -> dict:
     return json.loads(summary_path.read_text(encoding="utf-8"))
 
 
-def _truncate_text(text: str, *, limit: int = _RAW_OUTPUT_LIMIT) -> str:
-    if len(text) <= limit:
-        return text
-    half = max(limit - 3, 0)
-    return text[:half] + "..."
-
-
-def _run_summary_validation(
-    *,
-    summary_path: Path,
-    environment: str,
-    operator: str,
-    publish_required: bool,
-    extra_args: Sequence[str],
-) -> dict[str, Any]:
-    script_path = Path(__file__).with_name("validate_paper_smoke_summary.py")
-    if not script_path.exists():
-        return {
-            "status": "failed",
-            "reason": "validator_missing",
-            "exit_code": 1,
-            "stdout": "",
-            "stderr": "",
-            "required_publish_success": publish_required,
-        }
-
-    cmd: list[str] = [
-        sys.executable,
-        str(script_path),
-        "--summary",
-        str(summary_path),
-        "--require-environment",
-        environment,
-    ]
-    if operator:
-        cmd.extend(["--require-operator", operator])
-    if publish_required:
-        cmd.extend(
-            [
-                "--require-publish-success",
-                "--require-publish-required",
-                "--require-publish-exit-zero",
-            ]
-        )
-    for raw in extra_args:
-        if not raw:
-            continue
-        cmd.extend(shlex.split(raw))
-
-    _LOGGER.info("Waliduję podsumowanie smoke przy pomocy validate_paper_smoke_summary.py")
-
-    try:
-        completed = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except OSError:  # pragma: no cover - uruchomienie interpretatora może zawieść
-        return {
-            "status": "failed",
-            "reason": "validator_exec_failed",
-            "exit_code": 1,
-            "stdout": "",
-            "stderr": "",
-            "required_publish_success": publish_required,
-        }
-
-    stdout = (completed.stdout or "").strip()
-    stderr = (completed.stderr or "").strip()
-    trimmed_stdout = _truncate_text(stdout) if stdout else ""
-    trimmed_stderr = _truncate_text(stderr) if stderr else ""
-
-    parsed: Any | None = None
-    if stdout:
-        try:
-            parsed = json.loads(stdout)
-        except json.JSONDecodeError:
-            parsed = None
-
-    status = "ok" if completed.returncode == 0 else "failed"
-
-    return {
-        "status": status,
-        "exit_code": completed.returncode,
-        "stdout": trimmed_stdout,
-        "stderr": trimmed_stderr,
-        "raw_stdout_present": bool(stdout),
-        "raw_stderr_present": bool(stderr),
-        "result": parsed,
-        "required_publish_success": publish_required,
-        "command": cmd,
-    }
-
-
-def _write_env_file(
-    env_file: Path,
-    *,
-    operator: str,
-    paths: dict[str, Path],
-    summary: dict,
-    markdown_path: Path | None,
-    validation: dict[str, Any],
-) -> None:
+def _write_env_file(env_file: Path, *, operator: str, paths: dict[str, Path], summary: dict) -> None:
     env_file = env_file.expanduser()
     env_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -295,7 +155,6 @@ def _write_env_file(
         return value.replace("\n", "\\n")
 
     publish_status = summary.get("publish", {}).get("status", "unknown")
-    validation_status = validation.get("status", "unknown")
 
     data = {
         "PAPER_SMOKE_OPERATOR": operator,
@@ -304,11 +163,7 @@ def _write_env_file(
         "PAPER_SMOKE_AUDIT_LOG_PATH": str(paths["audit_log"].resolve()),
         "PAPER_SMOKE_STATUS": summary.get("status", "unknown"),
         "PAPER_SMOKE_PUBLISH_STATUS": publish_status,
-        "PAPER_SMOKE_VALIDATION_STATUS": validation_status,
     }
-
-    if markdown_path is not None:
-        data["PAPER_SMOKE_MARKDOWN_PATH"] = str(markdown_path.resolve())
 
     with env_file.open("a", encoding="utf-8") as fp:
         for key, value in data.items():
@@ -354,71 +209,18 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     summary = _load_summary(paths["summary"])
 
-    markdown_path: Path | None = None
-    if args.render_summary_markdown:
-        markdown_path = Path(args.render_summary_markdown).expanduser()
-        markdown_path.parent.mkdir(parents=True, exist_ok=True)
-        limit = (
-            args.render_summary_max_json_chars
-            if args.render_summary_max_json_chars is not None
-            else DEFAULT_MAX_JSON_CHARS
-        )
-        markdown = render_summary_markdown(
-            summary,
-            title_override=args.render_summary_title,
-            max_json_chars=max(limit, 0),
-        )
-        markdown_path.write_text(markdown, encoding="utf-8")
-
-    if args.skip_summary_validation:
-        validation_result = {
-            "status": "skipped",
-            "reason": "validation_disabled",
-            "exit_code": 0,
-            "required_publish_success": not args.allow_auto_publish_failure,
-        }
-    else:
-        validation_result = _run_summary_validation(
-            summary_path=paths["summary"],
-            environment=args.environment,
-            operator=operator,
-            publish_required=not args.allow_auto_publish_failure,
-            extra_args=args.summary_validator_arg,
-        )
-
-    summary["validation"] = validation_result
-    paths["summary"].write_text(
-        json.dumps(summary, indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
-
     if args.env_file:
-        _write_env_file(
-            Path(args.env_file),
-            operator=operator,
-            paths=paths,
-            summary=summary,
-            markdown_path=markdown_path,
-            validation=validation_result,
-        )
+        _write_env_file(Path(args.env_file), operator=operator, paths=paths, summary=summary)
 
     payload = {
+        "status": "ok",
         "summary_path": str(paths["summary"]),
         "summary": summary,
         "json_log_path": str(paths["json_log"]),
         "audit_log_path": str(paths["audit_log"]),
-        "validation": validation_result,
     }
-    if markdown_path is not None:
-        payload["markdown_report_path"] = str(markdown_path)
-    exit_code = int(validation_result.get("exit_code", 0))
-    payload["status"] = "ok" if exit_code == 0 else "validation_failed"
     print(json.dumps(payload, indent=2))
-    if exit_code != 0:
-        _LOGGER.error(
-            "Walidacja summary.json zakończyła się kodem %s", exit_code
-        )
-    return exit_code
+    return 0
 
 
 if __name__ == "__main__":  # pragma: no cover

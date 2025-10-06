@@ -73,8 +73,6 @@ Pakiet `proto/` zawiera definicje usług z zamrożonymi polami (brak breaking ch
 * `MetricsService` – `MetricsSnapshot`, `Heartbeat`.
 
 Pliki `.proto` generują stuby C++ (core) oraz Python (bot_core) – spójne testy kontraktowe golden files.
-Artefakty tworzymy skryptem `scripts/generate_trading_stubs.py`, a wzorcowy workflow
-`deploy/ci/github_actions_proto_stubs.yml` buduje je w CI i publikuje jako artefakt.
 
 ## Pipeline danych i synchronizacja z UI
 
