@@ -120,7 +120,11 @@ korzystające z tego samego kontraktu `StrategyEngine` i `WalkForwardOptimizer`.
 dźwignię, ekspozycję per instrument oraz hard-stop drawdown. Dostępne są cztery gotowe profile
 (konserwatywny, zbalansowany, agresywny, manualny) odwzorowujące wymagane parametry. Silnik
 utrzymuje stan w repozytorium (`RiskRepository`), kontroluje reset doby w UTC, wymusza tryb
-awaryjny po przekroczeniu limitów i wskazuje dopuszczalną maksymalną wielkość zlecenia.
+awaryjny po przekroczeniu limitów i wskazuje dopuszczalną maksymalną wielkość zlecenia. Podczas
+oceny nowego zlecenia rynekowy dystans stop-loss może być większy niż minimalna wielokrotność ATR
+zdefiniowana w profilu – w takim przypadku limit pozycji wyznaczany jest na podstawie faktycznego
+stopu, natomiast zbyt ciasne ustawienie (poniżej minimum) prowadzi do natychmiastowego odrzucenia
+zlecenia.
 
 ## Bezpieczeństwo i przechowywanie sekretów
 
@@ -156,6 +160,19 @@ Raport filtruje wpisy według strefy czasowej środowiska, wspiera retencję 24 
 podpisu kryptograficznego oraz szyfrowania w kolejnych etapach. Pakiet stanowi bazę do dziennych raportów P&L oraz
 audytów KYC/AML. Operacyjny proces paper tradingu opisuje runbook `docs/runbooks/paper_trading.md`, a
 append-only log audytowy prowadzimy w `docs/audit/paper_trading_log.md`.
+
+## Integracja z desktopową powłoką Qt/QML
+
+Zgodnie z rozszerzonym zakresem produktowym planujemy pełną aplikację desktopową z ciężkim demonem C++ i
+powłoką Qt Quick/QML. Dedykowany dokument [`desktop_shell_plan.md`](desktop_shell_plan.md) opisuje strukturę
+repozytorium (`/core`, `/ui`, `/proto`, `/packaging`, `/ops`), kontrakty Protobuf oraz wymagania wydajnościowe
+(60/120 Hz, KPI event→frame <150 ms). W praktyce oznacza to, że `bot_core` stanie się biblioteką logiki
+domainowej konsumowaną przez demon gRPC, a UI pozostanie cienkim klientem renderującym dane bez bezpośrednich
+połączeń z giełdami. Integracja będzie przebiegała etapami: zamrożenie kontraktów Protobuf, implementacja demona
+gRPC (MarketData/Risk/Orders/Metrics), stworzenie powłoki Qt z dedykowanym komponentem wykresu (QQuickItem) oraz
+pipeline’u packagingowego (MSI/DMG/AppImage) z auto-update i podpisami. Plan zakłada brak WebSocketów,
+wykorzystanie mTLS, RBAC oraz obserwowalność OpenTelemetry/Prometheus, a także pełną obsługę animacji 60/120 Hz
+przy adaptacji „reduce motion” dla środowisk obciążonych.
 
 ## Alerty i obserwowalność
 
