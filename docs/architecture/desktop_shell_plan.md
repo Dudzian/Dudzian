@@ -73,36 +73,6 @@ Pakiet `proto/` zawiera definicje usług z zamrożonymi polami (brak breaking ch
 * `MetricsService` – `MetricsSnapshot`, `Heartbeat`.
 
 Pliki `.proto` generują stuby C++ (core) oraz Python (bot_core) – spójne testy kontraktowe golden files.
-Artefakty tworzymy skryptem `scripts/generate_trading_stubs.py`, a wzorcowy workflow
-`deploy/ci/github_actions_proto_stubs.yml` buduje je w CI i publikuje jako artefakt.
-
-### Stub developerski
-
-* Skrypt `scripts/run_trading_stub_server.py` uruchamia lokalny serwer gRPC bezpośrednio na danych z YAML-a
-  lub na domyślnym datasetcie. Parametryzacja obejmuje host/port, wielokrotne `--dataset`, tryb `--shutdown-after`
-  (przydatny w CI), `--stream-repeat` do symulacji ciągłego feedu (loop na incrementach) oraz `--stream-interval`
-  pozwalający kontrolować kadencję aktualizacji (0 = natychmiast, >0 = odstęp w sekundach). W razie potrzeby można
-  pominąć dane startowe poprzez `--no-default-dataset`. Log startowy prezentuje również aktualną konfigurację
-  performance guard, co pozwala błyskawicznie zweryfikować oczekiwane progi FPS i ograniczenia overlayów.
-* Stub wykorzystuje `bot_core.testing.TradingStubServer` oraz helper `merge_datasets`, dzięki czemu można
-  łączyć wiele plików YAML bez konieczności modyfikacji kodu.
-* W repozytorium dostarczamy przykładowy zestaw `data/trading_stub/datasets/multi_asset_performance.yaml`
-  zawierający BTC/USDT (1m) i ETH/EUR (5m) oraz parametry `performance_guard` (target 120 Hz, jank ≤12 ms,
-  automatyczne ograniczenie overlayów). Dataset służy jako punkt startowy dla scenariuszy multi-window i
-  benchmarków animacji (60/120 Hz).
-* Workflow CI `deploy/ci/github_actions_proto_stubs.yml` po wygenerowaniu artefaktów może uruchomić stub
-  z `--shutdown-after`, aby przeprowadzić szybki smoke test UI lub komponentów gRPC.
-
-### Powłoka Qt/QML – MVP
-
-* `ui/` zawiera projekt CMake (Qt 6) budujący binarkę `bot_trading_shell` oraz bibliotekę QML z komponentami bazowymi
-  (`BotAppWindow`, `CandlestickChartView`, `SidePanel`, `StatusFooter`).
-* Klient gRPC (`TradingClient`) korzysta wyłącznie z kanału HTTP/2, pobiera historię (`GetOhlcvHistory`) oraz strumień
-  (`StreamOhlcv`) w tle, a następnie aktualizuje model `OhlcvListModel` (ring-buffer 10k+ świec, `candleAt()` dla QML).
-* QML implementuje krzyż celowniczy, tooltipy oraz dynamiczne skalowanie osi, animacje są ograniczone do interakcji
-  użytkownika i respektują parametry `performance_guard` (FPS, jank, limit overlayów).
-* `ui/config/example.yaml` oraz flagi CLI pozwalają spiąć powłokę z dowolnym datasetem stubu (`--dataset`), co przyspiesza
-  iteracje multi-window/120 Hz bez konieczności uruchamiania całego core.
 
 ## Pipeline danych i synchronizacja z UI
 
