@@ -92,6 +92,22 @@ jobs:
             --output "$BOT_CORE_OUTPUT_DIR/paper_smoke_summary.md" \
             --title "Paper smoke test ${{ github.run_number }}"
 
+      - name: Notify compliance
+        if: always() && steps.smoke.outcome == 'success'
+        env:
+          PAPER_SMOKE_SECRET_NAMESPACE: ${{ env.PAPER_SMOKE_SECRET_NAMESPACE }}
+          PAPER_SMOKE_HEADLESS_PASSPHRASE: ${{ secrets.PAPER_SMOKE_HEADLESS_PASSPHRASE }}
+          PAPER_SMOKE_HEADLESS_STORAGE: ${{ secrets.PAPER_SMOKE_HEADLESS_STORAGE }}
+        run: |
+          python scripts/notify_paper_smoke_summary.py \
+            --config "$BOT_CORE_CONFIG" \
+            --environment "$BOT_CORE_ENVIRONMENT" \
+            --summary-json "$BOT_CORE_OUTPUT_DIR/paper_smoke_summary.json" \
+            --operator "$PAPER_SMOKE_OPERATOR" \
+            --secret-namespace "$PAPER_SMOKE_SECRET_NAMESPACE" \
+            --headless-passphrase "$PAPER_SMOKE_HEADLESS_PASSPHRASE" \
+            --headless-secrets-path "$PAPER_SMOKE_HEADLESS_STORAGE"
+
       - name: Upload smoke artifacts
         if: always()
         uses: actions/upload-artifact@v4

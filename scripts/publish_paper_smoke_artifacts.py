@@ -64,6 +64,14 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         help="Lokalny plik JSONL z wpisami smoke testów (domyślnie w repozytorium audytu)",
     )
     parser.add_argument(
+        "--summary-json",
+        default=None,
+        help=(
+            "Ścieżka do znormalizowanego podsumowania smoke testu (wynik --paper-smoke-summary-json); "
+            "pozwala automatycznie odczytać logi i rekord."
+        ),
+    )
+    parser.add_argument(
         "--record-id",
         default=None,
         help="Identyfikator rekordu JSONL (domyślnie dopasowanie po hash summary)",
@@ -134,6 +142,14 @@ def _read_summary(report_dir: Path) -> tuple[Mapping[str, Any], str, Path]:
     if not isinstance(summary_data, Mapping):
         raise ValueError("Nieprawidłowy format summary.json (oczekiwano obiektu JSON)")
     return summary_data, summary_sha, summary_path
+
+
+def _load_structured_summary(path: Path) -> Mapping[str, Any]:
+    payload = path.read_bytes()
+    summary = json.loads(payload.decode("utf-8"))
+    if not isinstance(summary, Mapping):
+        raise ValueError("Nieprawidłowy format pliku podsumowania (oczekiwano obiektu JSON)")
+    return summary
 
 
 def _ensure_archive(report_dir: Path, archive_arg: str | None) -> Path | None:
@@ -280,8 +296,81 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
     _configure_logging(args.log_level)
 
+    structured_summary: Mapping[str, Any] | None = None
+    structured_report_cfg: Mapping[str, Any] | None = None
+    structured_json_cfg: Mapping[str, Any] | None = None
+    structured_archive_cfg: Mapping[str, Any] | None = None
+    expected_summary_sha: str | None = None
+
+    if args.summary_json:
+        summary_json_path = Path(args.summary_json).expanduser().resolve()
+        try:
+            structured_summary = _load_structured_summary(summary_json_path)
+        except FileNotFoundError:
+            _LOGGER.error("Nie znaleziono pliku podsumowania smoke: %s", summary_json_path)
+            result = _PublishResult(
+                status="error",
+                summary_sha256=None,
+                report_dir=str(Path(args.report_dir).resolve()),
+                json_sync=_build_step("error", reason="missing_summary_json"),
+                archive_upload=_build_step("error", reason="missing_summary_json"),
+            )
+            print(_serialize_result(result, as_json=args.json))
+            return 1
+        except ValueError as exc:
+            _LOGGER.error("Nie udało się sparsować podsumowania smoke: %s", exc)
+            result = _PublishResult(
+                status="error",
+                summary_sha256=None,
+                report_dir=str(Path(args.report_dir).resolve()),
+                json_sync=_build_step("error", reason="invalid_summary_json"),
+                archive_upload=_build_step("error", reason="invalid_summary_json"),
+            )
+            print(_serialize_result(result, as_json=args.json))
+            return 1
+
+        structured_report_cfg = (
+            structured_summary.get("report")
+            if isinstance(structured_summary.get("report"), Mapping)
+            else None
+        )
+        structured_json_cfg = (
+            structured_summary.get("json_log")
+            if isinstance(structured_summary.get("json_log"), Mapping)
+            else None
+        )
+        structured_archive_cfg = (
+            structured_summary.get("archive")
+            if isinstance(structured_summary.get("archive"), Mapping)
+            else None
+        )
+        if structured_report_cfg is not None:
+            expected_summary_sha = str(structured_report_cfg.get("summary_sha256") or "") or None
+
+        summary_environment = structured_summary.get("environment")
+        if summary_environment and str(summary_environment).lower() != args.environment.lower():
+            _LOGGER.error(
+                "Środowisko w podsumowaniu smoke (%s) nie zgadza się z argumentem CLI (%s)",
+                summary_environment,
+                args.environment,
+            )
+            result = _PublishResult(
+                status="error",
+                summary_sha256=None,
+                report_dir=str(Path(args.report_dir).resolve()),
+                json_sync=_build_step("error", reason="environment_mismatch"),
+                archive_upload=_build_step("error", reason="environment_mismatch"),
+            )
+            print(_serialize_result(result, as_json=args.json))
+            return 1
+
     report_dir = Path(args.report_dir).resolve()
-    json_log_path = Path(args.json_log).resolve()
+    json_log_arg = args.json_log
+    if structured_json_cfg is not None:
+        json_log_path_value = structured_json_cfg.get("path")
+        if isinstance(json_log_path_value, str) and json_log_path_value.strip():
+            json_log_arg = json_log_path_value
+    json_log_path = Path(json_log_arg).expanduser().resolve()
 
     try:
         summary_data, summary_sha, summary_path = _read_summary(report_dir)
@@ -307,6 +396,33 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         print(_serialize_result(result, as_json=args.json))
         return 1
+
+    if expected_summary_sha and summary_sha != expected_summary_sha:
+        _LOGGER.error(
+            "Hash summary.json (%s) nie zgadza się z wartością w podsumowaniu smoke (%s)",
+            summary_sha,
+            expected_summary_sha,
+        )
+        result = _PublishResult(
+            status="error",
+            summary_sha256=summary_sha,
+            report_dir=str(report_dir),
+            json_sync=_build_step("error", reason="summary_sha_mismatch"),
+            archive_upload=_build_step("error", reason="summary_sha_mismatch"),
+        )
+        print(_serialize_result(result, as_json=args.json))
+        return 1
+
+    if structured_report_cfg is not None:
+        report_directory = structured_report_cfg.get("directory")
+        if isinstance(report_directory, str) and report_directory.strip():
+            structured_dir = Path(report_directory).expanduser().resolve()
+            if structured_dir != report_dir:
+                _LOGGER.warning(
+                    "Katalog raportu w podsumowaniu smoke (%s) różni się od argumentu CLI (%s)",
+                    structured_dir,
+                    report_dir,
+                )
 
     try:
         core_config = load_core_config(args.config)
@@ -334,10 +450,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     exit_code = 0
 
     records = _load_json_records(json_log_path)
+    record_id_hint = args.record_id
+    if record_id_hint is None and structured_json_cfg is not None:
+        record_id_value = structured_json_cfg.get("record_id")
+        if record_id_value is None:
+            record_payload = structured_json_cfg.get("record")
+            if isinstance(record_payload, Mapping):
+                record_id_value = record_payload.get("record_id")
+        if record_id_value is not None:
+            record_id_hint = str(record_id_value)
+
     record = _find_record(
         records=records,
         environment=args.environment,
-        record_id=args.record_id,
+        record_id=record_id_hint,
         summary_sha256=summary_sha,
     )
 
@@ -355,10 +481,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             except ValueError:
                 _LOGGER.warning("Nieprawidłowy format znacznika czasu w rekordzie JSONL: %s", timestamp_value)
 
-    window = summary_data.get("window", {}) if isinstance(summary_data.get("window"), Mapping) else {}
+    window_source = summary_data.get("window", {}) if isinstance(summary_data.get("window"), Mapping) else {}
+    if not window_source and structured_summary is not None:
+        structured_window = structured_summary.get("window")
+        if isinstance(structured_window, Mapping):
+            window_source = structured_window
     window_payload: MutableMapping[str, str] = {
-        "start": str(window.get("start", "")),
-        "end": str(window.get("end", "")),
+        "start": str(window_source.get("start", "")),
+        "end": str(window_source.get("end", "")),
     }
 
     secret_manager: SecretManager | None = None
@@ -382,7 +512,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     elif record is None:
         _LOGGER.error(
             "Nie znaleziono rekordu JSONL odpowiadającego smoke testowi (record_id=%s, summary_sha=%s)",
-            args.record_id or "-",
+            record_id_hint or "-",
             summary_sha,
         )
         json_result = _build_step("error", reason="missing_record", backend=json_cfg.backend)
@@ -412,7 +542,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             json_result = _build_step("error", reason=str(exc), backend=json_cfg.backend)
             exit_code = exit_code or 6
 
-    archive_path = _ensure_archive(report_dir, args.archive)
+    archive_arg = args.archive
+    if archive_arg is None and structured_archive_cfg is not None:
+        archive_path_value = structured_archive_cfg.get("path")
+        if isinstance(archive_path_value, str) and archive_path_value.strip():
+            archive_arg = archive_path_value
+
+    archive_path = _ensure_archive(report_dir, archive_arg)
 
     if archive_cfg is None:
         archive_result = _build_step("skipped", reason="no_config")

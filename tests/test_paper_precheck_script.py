@@ -216,3 +216,20 @@ def test_paper_precheck_risk_warning_when_target_vol_zero(
     warnings = payload["risk"]["warnings"]
     assert "target_volatility_not_positive" in warnings
 
+
+def test_run_precheck_returns_payload(tmp_path: Path) -> None:
+    cache_dir = tmp_path / "cache_run_precheck"
+    rows = _generate_rows(datetime(2024, 1, 1, tzinfo=timezone.utc), 40)
+    _write_cache(cache_dir, rows)
+    config_path = _write_config(tmp_path, cache_dir)
+
+    payload, exit_code = paper_precheck.run_precheck(
+        environment_name="binance_smoke",
+        config_path=config_path,
+        as_of=datetime.fromtimestamp(rows[-1][0] / 1000, tz=timezone.utc),
+    )
+
+    assert exit_code == 0
+    assert payload["status"] == "ok"
+    assert payload["coverage_status"] == "ok"
+    assert payload["risk_status"] == "ok"

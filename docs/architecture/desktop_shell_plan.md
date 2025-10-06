@@ -73,6 +73,43 @@ Pakiet `proto/` zawiera definicje usług z zamrożonymi polami (brak breaking ch
 * `MetricsService` – `MetricsSnapshot`, `Heartbeat`.
 
 Pliki `.proto` generują stuby C++ (core) oraz Python (bot_core) – spójne testy kontraktowe golden files.
+Artefakty tworzymy skryptem `scripts/generate_trading_stubs.py`, a wzorcowy workflow
+`deploy/ci/github_actions_proto_stubs.yml` buduje je w CI i publikuje jako artefakt.
+
+### Stub developerski
+
+* Skrypt `scripts/run_trading_stub_server.py` uruchamia lokalny serwer gRPC bezpośrednio na danych z YAML-a
+  lub na domyślnym datasetcie. Parametryzacja obejmuje host/port, wielokrotne `--dataset`, tryb `--shutdown-after`
+  (przydatny w CI), `--stream-repeat` do symulacji ciągłego feedu (loop na incrementach) oraz `--stream-interval`
+  pozwalający kontrolować kadencję aktualizacji (0 = natychmiast, >0 = odstęp w sekundach). W razie potrzeby można
+  pominąć dane startowe poprzez `--no-default-dataset`. Log startowy prezentuje również aktualną konfigurację
+  performance guard, co pozwala błyskawicznie zweryfikować oczekiwane progi FPS i ograniczenia overlayów.
+* Stub wykorzystuje `bot_core.testing.TradingStubServer` oraz helper `merge_datasets`, dzięki czemu można
+  łączyć wiele plików YAML bez konieczności modyfikacji kodu.
+* W repozytorium dostarczamy przykładowy zestaw `data/trading_stub/datasets/multi_asset_performance.yaml`
+  zawierający BTC/USDT (1m) i ETH/EUR (5m) oraz parametry `performance_guard` (target 120 Hz, jank ≤12 ms,
+  automatyczne ograniczenie overlayów). Dataset służy jako punkt startowy dla scenariuszy multi-window i
+  benchmarków animacji (60/120 Hz).
+* Workflow CI `deploy/ci/github_actions_proto_stubs.yml` po wygenerowaniu artefaktów może uruchomić stub
+  z `--shutdown-after`, aby przeprowadzić szybki smoke test UI lub komponentów gRPC.
+
+### Powłoka Qt/QML – MVP
+
+* `ui/` zawiera projekt CMake (Qt 6) budujący binarkę `bot_trading_shell` oraz bibliotekę QML z komponentami bazowymi
+  (`BotAppWindow`, `CandlestickChartView`, `SidePanel`, `StatusFooter`).
+* Klient gRPC (`TradingClient`) korzysta wyłącznie z kanału HTTP/2, pobiera historię (`GetOhlcvHistory`) oraz strumień
+  (`StreamOhlcv`) w tle, a następnie aktualizuje model `OhlcvListModel` (ring-buffer 10k+ świec, `candleAt()` dla QML).
+* QML implementuje krzyż celowniczy, tooltipy oraz dynamiczne skalowanie osi; CandlestickChartView renderuje nakładki
+  EMA12/EMA26/VWAP (LineSeries) sterowane przez `PerformanceGuard` i automatycznie redukuje liczbę overlayów przy aktywnym
+  trybie „reduce motion” lub spadku FPS poniżej `disable_secondary_when_fps_below`.
+* `FrameRateMonitor` (C++) nasłuchuje `frameSwapped` głównego okna i po spadku FPS poniżej progów guardu (np. 55 FPS @60 Hz,
+  110 FPS @120 Hz) emituje `reduceMotionActive`; właściwość jest eksponowana do QML i powoduje natychmiastowe wygaszenie
+  animacji wtórnych oraz ograniczenie overlayów w każdym oknie.
+* Wsparcie multi-window: `BotAppWindow` potrafi otwierać dodatkowe `ChartWindow` (`Ctrl+N`/przycisk), zapamiętywać liczbę i geometrię okien
+  (`Qt.labs.settings`) oraz synchronizować guard/instrument pomiędzy wszystkimi widokami – spełnia wymagania pracy na wielu monitorach.
+* `ui/config/example.yaml` oraz flagi CLI (w tym `--overlay-disable-secondary-fps`) pozwalają spiąć powłokę z dowolnym datasetem
+  stubu (`--dataset`), kontrolować budżet animacji i overlayów oraz przyspieszać iteracje multi-window/120 Hz bez uruchamiania
+  całego core.
 
 ## Pipeline danych i synchronizacja z UI
 

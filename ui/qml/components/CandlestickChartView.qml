@@ -7,6 +7,14 @@ ChartView {
     property var model
     property PerformanceGuard performanceGuard
     property bool reduceMotion: false
+
+    // Definicje nakładek (kolejność = przypisanie do serii poniżej)
+    property var overlayDefinitions: [
+        { key: "ema_fast", label: qsTr("EMA 12"), color: Qt.rgba(0.96, 0.74, 0.23, 1), secondary: false },
+        { key: "ema_slow", label: qsTr("EMA 26"), color: Qt.rgba(0.62, 0.81, 0.93, 1), secondary: true },
+        { key: "vwap",     label: qsTr("VWAP"),    color: Qt.rgba(0.74, 0.53, 0.96, 1), secondary: true }
+    ]
+
     backgroundRoundness: 8
     theme: ChartView.ChartThemeDark
     animationOptions: ChartView.NoAnimation
@@ -37,34 +45,30 @@ ChartView {
     axisY: axisY
 
     onModelChanged: rebuild()
-    onPerformanceGuardChanged: {
-        reduceMotion = performanceGuard.reduceMotionAfterSeconds <= 0.6
-                || performanceGuard.fpsTarget < 90
-                || performanceGuard.jankThresholdMs < 12.0
-    }
+    onPerformanceGuardChanged: refreshOverlayVisibility()
+    onReduceMotionChanged: refreshOverlayVisibility()
 
     Component.onCompleted: {
         candleSeries.axisX = axisX
         candleSeries.axisY = axisY
         rebuild()
+        refreshOverlayVisibility()
     }
 
     function rebuild() {
         candleSeries.clear()
-        if (!model)
-            return
+        if (!model) return
         for (let row = 0; row < model.count; ++row) {
             appendRow(row)
         }
         updateAxisRange()
+        updateOverlays()
     }
 
     function appendRow(row) {
-        if (!model)
-            return
+        if (!model) return
         const candle = model.candleAt(row)
-        if (!candle || candle.timestamp === undefined)
-            return
+        if (!candle || candle.timestamp === undefined) return
         const set = Qt.createQmlObject('import QtCharts; CandlestickSet {}', candleSeries)
         set.timestamp = candle.timestamp
         set.open = candle.open
@@ -75,12 +79,11 @@ ChartView {
     }
 
     function updateAxisRange() {
-        if (candleSeries.count === 0)
-            return
+        if (candleSeries.count === 0) return
         const first = candleSeries.at(0)
-        const last = candleSeries.at(candleSeries.count - 1)
+        const last  = candleSeries.at(candleSeries.count - 1)
         axisX.min = new Date(first.timestamp)
-        axisX.max = new Date(last.timestamp)
+        axisX.max = new Date(last .timestamp)
         var minValue = Number.POSITIVE_INFINITY
         var maxValue = Number.NEGATIVE_INFINITY
         for (let i = 0; i < candleSeries.count; ++i) {
@@ -102,12 +105,12 @@ ChartView {
             for (let row = first; row <= last; ++row)
                 chartView.appendRow(row)
             chartView.updateAxisRange()
+            chartView.updateOverlays()
         }
         function onDataChanged(topLeft, bottomRight, roles) {
             for (let row = topLeft.row; row <= bottomRight.row; ++row) {
                 const candle = model.candleAt(row)
-                if (!candle)
-                    continue
+                if (!candle) continue
                 if (row < candleSeries.count) {
                     const set = candleSeries.at(row)
                     set.timestamp = candle.timestamp
@@ -118,9 +121,53 @@ ChartView {
                 }
             }
             chartView.updateAxisRange()
+            chartView.updateOverlays()
         }
     }
 
+    // --- Nakładki (linie) ---
+    LineSeries {
+        id: emaFastSeries
+        color: chartView.overlayDefinitions[0].color
+        width: 1.6
+        useOpenGL: false
+        axisX: axisX
+        axisY: axisY
+        opacity: visible ? 1 : 0
+        Behavior on opacity {
+            NumberAnimation { duration: chartView.reduceMotion ? 0 : 180; easing.type: Easing.OutCubic }
+        }
+    }
+
+    LineSeries {
+        id: emaSlowSeries
+        color: chartView.overlayDefinitions[1].color
+        width: 1.3
+        useOpenGL: false
+        axisX: axisX
+        axisY: axisY
+        opacity: visible ? 1 : 0
+        Behavior on opacity {
+            NumberAnimation { duration: chartView.reduceMotion ? 0 : 180; easing.type: Easing.OutCubic }
+        }
+    }
+
+    LineSeries {
+        id: vwapSeries
+        color: chartView.overlayDefinitions[2].color
+        width: 1.1
+        useOpenGL: false
+        axisX: axisX
+        axisY: axisY
+        opacity: visible ? 1 : 0
+        Behavior on opacity {
+            NumberAnimation { duration: chartView.reduceMotion ? 0 : 180; easing.type: Easing.OutCubic }
+        }
+    }
+
+    readonly property var overlaySeriesList: [emaFastSeries, emaSlowSeries, vwapSeries]
+
+    // --- Crosshair + tooltip ---
     Item {
         anchors.fill: parent
         z: 2
@@ -130,16 +177,12 @@ ChartView {
 
         Behavior on crosshairX {
             enabled: !chartView.reduceMotion
-            NumberAnimation {
-                duration: chartView.reduceMotion ? 0 : 90
-                easing.type: Easing.OutCubic
-            }
+            NumberAnimation { duration: chartView.reduceMotion ? 0 : 90; easing.type: Easing.OutCubic }
         }
 
         Rectangle {
             anchors.fill: parent
             color: Qt.rgba(0, 0, 0, 0)
-
             MouseArea {
                 anchors.fill: parent
                 hoverEnabled: true
@@ -173,29 +216,71 @@ ChartView {
             Column {
                 spacing: 2
                 Label { text: Qt.formatDateTime(new Date(crosshairData.timestamp), "yyyy-MM-dd HH:mm") }
-                Label { text: qsTr("O %1 H %2 L %3 C %4").arg(crosshairData.open.toFixed(2)).arg(crosshairData.high.toFixed(2)).arg(crosshairData.low.toFixed(2)).arg(crosshairData.close.toFixed(2)) }
+                Label { text: qsTr("O %1 H %2 L %3 C %4")
+                        .arg(crosshairData.open.toFixed(2))
+                        .arg(crosshairData.high.toFixed(2))
+                        .arg(crosshairData.low.toFixed(2))
+                        .arg(crosshairData.close.toFixed(2)) }
                 Label { text: qsTr("Vol %1").arg(crosshairData.volume.toFixed(2)) }
             }
         }
     }
 
     function sampleAt(x) {
-        if (!model || model.count === 0)
-            return ({})
+        if (!model || model.count === 0) return ({})
         const point = chartView.mapToValue(Qt.point(x, height / 2), candleSeries)
         const timestamp = point.x
         var closest = null
         var bestDelta = Number.POSITIVE_INFINITY
         for (let row = 0; row < model.count; ++row) {
             const candle = model.candleAt(row)
-            if (!candle)
-                continue
+            if (!candle) continue
             const delta = Math.abs(candle.timestamp - timestamp)
-            if (delta < bestDelta) {
-                bestDelta = delta
-                closest = candle
-            }
+            if (delta < bestDelta) { bestDelta = delta; closest = candle }
         }
         return closest || ({})
+    }
+
+    // --- Logika widoczności i rysowania nakładek ---
+    function refreshOverlayVisibility() {
+        var guard = performanceGuard
+        var allowed = overlaySeriesList.length
+        if (guard) {
+            allowed = guard.maxOverlayCount > 0 ? guard.maxOverlayCount : allowed
+            if (reduceMotion)
+                allowed = Math.min(allowed, 1)
+            if (guard.disableSecondaryWhenFpsBelow > 0 && guard.fpsTarget < guard.disableSecondaryWhenFpsBelow)
+                allowed = Math.min(allowed, 1)
+        } else if (reduceMotion) {
+            allowed = 1
+        }
+        for (var i = 0; i < overlaySeriesList.length; ++i) {
+            var series = overlaySeriesList[i]
+            if (!series) continue
+            var def = overlayDefinitions[i]
+            var visible = i < allowed
+            if (visible && def.secondary && allowed <= 1)
+                visible = false
+            series.visible = visible
+            series.opacity = visible ? 1.0 : 0.0
+        }
+        updateOverlays()
+    }
+
+    function updateOverlays() {
+        if (!model) return
+        for (var i = 0; i < overlaySeriesList.length; ++i) {
+            var series = overlaySeriesList[i]
+            if (!series) continue
+            series.clear()
+            if (!series.visible) continue
+            var def = overlayDefinitions[i]
+            var samples = model.overlaySeries(def.key) || []
+            for (var j = 0; j < samples.length; ++j) {
+                var sample = samples[j]
+                if (sample.timestamp === undefined || sample.value === undefined) continue
+                series.append(new Date(sample.timestamp), sample.value)
+            }
+        }
     }
 }

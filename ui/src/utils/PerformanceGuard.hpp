@@ -9,12 +9,14 @@ struct PerformanceGuard {
     Q_PROPERTY(double reduceMotionAfterSeconds MEMBER reduceMotionAfterSeconds)
     Q_PROPERTY(double jankThresholdMs MEMBER jankThresholdMs)
     Q_PROPERTY(int maxOverlayCount MEMBER maxOverlayCount)
+    Q_PROPERTY(int disableSecondaryWhenFpsBelow MEMBER disableSecondaryWhenFpsBelow)
 
 public:
     int fpsTarget = 60;
     double reduceMotionAfterSeconds = 1.0;
     double jankThresholdMs = 18.0;
     int maxOverlayCount = 3;
+    int disableSecondaryWhenFpsBelow = 0;
 };
 
 Q_DECLARE_METATYPE(PerformanceGuard)

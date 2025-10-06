@@ -37,6 +37,21 @@ protoc \
   proto/trading.proto
 ```
 
+> **Wskazówka:** W katalogu `deploy/ci/github_actions_proto_stubs.yml` znajdziesz przykładowy
+> workflow GitHub Actions, który instaluje `protoc`, uruchamia `buf lint`/`buf breaking`,
+> odpala skrypt `generate_trading_stubs.py` oraz publikuje wygenerowane artefakty jako plik job artefact.
+
+### Walidacja kontraktu przy pomocy Buf
+
+W katalogu `proto/` znajduje się plik `buf.yaml` definiujący reguły lint/breaking. Lokalne sprawdzenie:
+
+```bash
+buf lint proto
+buf breaking proto --against '.git#branch=main,subdir=proto'
+```
+
+Buf wykorzystujemy również w CI, dlatego przed push warto uruchomić te polecenia lokalnie (wymaga
+zainstalowanego `buf`, patrz [instrukcje](https://buf.build/docs/installation)).
 > **Wskazówka:** W pipeline CI przygotujemy dedykowany krok budujący stuby i publikujący je jako artefakt.
 > Komendy powyżej służą jako punkt startowy do dalszej automatyzacji.
 

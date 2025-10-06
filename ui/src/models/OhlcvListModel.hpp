@@ -3,6 +3,8 @@
 #include <QAbstractListModel>
 #include <QDateTime>
 #include <QVector>
+#include <QString>
+#include <QVariant>
 
 struct OhlcvPoint {
     qint64 timestampMs = 0;
@@ -47,13 +49,18 @@ public:
     Q_INVOKABLE QVariant latestClose() const;
     Q_INVOKABLE QVariant timestampAt(int row) const;
     Q_INVOKABLE QVariantMap candleAt(int row) const;
+    Q_INVOKABLE QVariantList overlaySeries(const QString& id) const;
 
 signals:
     void maximumSamplesChanged();
 
 private:
     void enforceMaximum();
+    void recomputeIndicators();
 
     QVector<OhlcvPoint> m_candles;
+    QVector<double> m_emaFast;
+    QVector<double> m_emaSlow;
+    QVector<double> m_vwap;
     int m_maximumSamples = 10240;
 };

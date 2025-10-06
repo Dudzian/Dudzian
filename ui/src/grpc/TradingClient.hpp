@@ -46,6 +46,9 @@ public:
     void setHistoryLimit(int limit);
     void setPerformanceGuard(const PerformanceGuard& guard);
 
+    // Getter wymagany przez Application.cpp
+    InstrumentConfig instrumentConfig() const { return m_instrumentConfig; }
+
     bool isStreaming() const { return m_running.load(); }
 
 public slots:
@@ -72,7 +75,8 @@ private:
         QStringLiteral("BTCUSDT"),
         QStringLiteral("USDT"),
         QStringLiteral("BTC"),
-        QStringLiteral("PT1M")};
+        QStringLiteral("PT1M")
+    };
     PerformanceGuard m_guard;
     int m_historyLimit = 500;
 

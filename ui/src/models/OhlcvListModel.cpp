@@ -1,6 +1,7 @@
 #include "OhlcvListModel.hpp"
 
 #include <algorithm>
+#include <cmath>
 
 OhlcvListModel::OhlcvListModel(QObject* parent)
     : QAbstractListModel(parent) {
@@ -61,6 +62,7 @@ void OhlcvListModel::resetWithHistory(const QList<OhlcvPoint>& candles) {
         return lhs.timestampMs < rhs.timestampMs;
     });
     enforceMaximum();
+    recomputeIndicators();
     endResetModel();
 }
 
@@ -72,6 +74,7 @@ void OhlcvListModel::applyIncrement(const OhlcvPoint& candle) {
             const auto row = m_candles.size() - 1;
             const QModelIndex idx = index(row);
             Q_EMIT dataChanged(idx, idx);
+            recomputeIndicators();
             return;
         }
     }
@@ -81,6 +84,7 @@ void OhlcvListModel::applyIncrement(const OhlcvPoint& candle) {
     m_candles.append(candle);
     enforceMaximum();
     endInsertRows();
+    recomputeIndicators();
 }
 
 void OhlcvListModel::setMaximumSamples(int value) {
@@ -89,6 +93,7 @@ void OhlcvListModel::setMaximumSamples(int value) {
     }
     m_maximumSamples = value;
     enforceMaximum();
+    recomputeIndicators();
     Q_EMIT maximumSamplesChanged();
 }
 
@@ -123,6 +128,35 @@ QVariantMap OhlcvListModel::candleAt(int row) const {
     return map;
 }
 
+QVariantList OhlcvListModel::overlaySeries(const QString& id) const {
+    const QVector<double>* values = nullptr;
+    if (id == QLatin1String("ema_fast")) {
+        values = &m_emaFast;
+    } else if (id == QLatin1String("ema_slow")) {
+        values = &m_emaSlow;
+    } else if (id == QLatin1String("vwap")) {
+        values = &m_vwap;
+    }
+
+    QVariantList series;
+    if (!values || values->size() != m_candles.size()) {
+        return series;
+    }
+
+    series.reserve(values->size());
+    for (int i = 0; i < values->size(); ++i) {
+        const double value = values->at(i);
+        if (std::isnan(value)) {
+            continue;
+        }
+        QVariantMap point;
+        point.insert(QStringLiteral("timestamp"), m_candles.at(i).timestampMs);
+        point.insert(QStringLiteral("value"), value);
+        series.append(point);
+    }
+    return series;
+}
+
 void OhlcvListModel::enforceMaximum() {
     if (m_maximumSamples <= 0) {
         return;
@@ -134,4 +168,49 @@ void OhlcvListModel::enforceMaximum() {
     beginRemoveRows(QModelIndex(), 0, removeCount - 1);
     m_candles.erase(m_candles.begin(), m_candles.begin() + removeCount);
     endRemoveRows();
+}
+
+void OhlcvListModel::recomputeIndicators() {
+    const int count = m_candles.size();
+    m_emaFast.resize(count);
+    m_emaSlow.resize(count);
+    m_vwap.resize(count);
+
+    if (count == 0) {
+        return;
+    }
+
+    // Parametry overlay’ów
+    const int fastPeriod = 12;
+    const int slowPeriod = 26;
+    const double fastMultiplier = 2.0 / (fastPeriod + 1.0);
+    const double slowMultiplier = 2.0 / (slowPeriod + 1.0);
+
+    double emaFast = m_candles.first().close;
+    double emaSlow = m_candles.first().close;
+    double cumulativePv = 0.0;
+    double cumulativeVolume = 0.0;
+
+    for (int i = 0; i < count; ++i) {
+        const auto& candle = m_candles.at(i);
+        const double price = candle.close;
+
+        if (i == 0) {
+            emaFast = price;
+            emaSlow = price;
+        } else {
+            emaFast = (price - emaFast) * fastMultiplier + emaFast;
+            emaSlow = (price - emaSlow) * slowMultiplier + emaSlow;
+        }
+        m_emaFast[i] = emaFast;
+        m_emaSlow[i] = emaSlow;
+
+        cumulativePv += price * candle.volume;
+        cumulativeVolume += candle.volume;
+        if (cumulativeVolume > 0.0) {
+            m_vwap[i] = cumulativePv / cumulativeVolume;
+        } else {
+            m_vwap[i] = price;
+        }
+    }
 }

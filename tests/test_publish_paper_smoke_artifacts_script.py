@@ -72,6 +72,46 @@ def _write_json_log(json_log_path: Path, *, summary_sha: str, timestamp: str = "
     json_log_path.write_text(json.dumps(record, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
+def _write_structured_summary(
+    path: Path,
+    *,
+    summary_sha: str,
+    report_dir: Path,
+    json_log_path: Path,
+    record_id: str,
+    archive_path: Path | None = None,
+) -> None:
+    payload: dict[str, object] = {
+        "environment": "binance_paper",
+        "timestamp": "2025-01-02T03:04:05+00:00",
+        "operator": "CI Agent",
+        "severity": "INFO",
+        "window": {"start": "2024-01-01", "end": "2024-01-31"},
+        "report": {
+            "directory": str(report_dir),
+            "summary_path": str(report_dir / "summary.json"),
+            "summary_sha256": summary_sha,
+        },
+        "precheck": {
+            "status": "ok",
+            "coverage_status": "ok",
+            "risk_status": "ok",
+        },
+        "json_log": {
+            "path": str(json_log_path),
+            "record_id": record_id,
+            "record": {
+                "record_id": record_id,
+                "environment": "binance_paper",
+            },
+        },
+    }
+    if archive_path is not None:
+        payload["archive"] = {"path": str(archive_path)}
+
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+
 def test_publish_success_local_backends(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     report_dir = tmp_path / "report"
     report_dir.mkdir()
@@ -218,3 +258,114 @@ def test_missing_record_returns_error(tmp_path: Path, capsys: pytest.CaptureFixt
     assert output["status"] == "error"
     assert output["json_sync"]["status"] == "error"
     assert output["json_sync"]["reason"] == "missing_record"
+
+
+def test_publish_uses_structured_summary_defaults(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    report_dir = tmp_path / "report"
+    report_dir.mkdir()
+    _write_summary(report_dir)
+    summary_bytes = (report_dir / "summary.json").read_bytes()
+    summary_sha = hashlib.sha256(summary_bytes).hexdigest()
+
+    json_log_path = tmp_path / "paper_trading_log.jsonl"
+    _write_json_log(json_log_path, summary_sha=summary_sha)
+
+    summary_payload_path = tmp_path / "smoke_summary.json"
+    _write_structured_summary(
+        summary_payload_path,
+        summary_sha=summary_sha,
+        report_dir=report_dir,
+        json_log_path=json_log_path,
+        record_id="J-20250102T030405-deadbeef",
+    )
+
+    json_target = tmp_path / "json_sync"
+    archive_target = tmp_path / "archive_sync"
+    reporting_cfg = {
+        "paper_smoke_json_sync": {
+            "backend": "local",
+            "local": {
+                "directory": str(json_target),
+                "filename_pattern": "{environment}_{date}.jsonl",
+                "fsync": False,
+            },
+        },
+        "smoke_archive_upload": {
+            "backend": "local",
+            "local": {
+                "directory": str(archive_target),
+                "filename_pattern": "{environment}_{hash}.zip",
+                "fsync": False,
+            },
+        },
+    }
+
+    config_path = _build_config(tmp_path, reporting=reporting_cfg)
+
+    exit_code = publish_script.main(
+        [
+            "--config",
+            str(config_path),
+            "--environment",
+            "binance_paper",
+            "--report-dir",
+            str(report_dir),
+            "--json-log",
+            str(tmp_path / "unused.jsonl"),
+            "--summary-json",
+            str(summary_payload_path),
+            "--json",
+        ]
+    )
+
+    assert exit_code == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output["status"] == "ok"
+    assert output["json_sync"]["status"] == "ok"
+    assert output["json_sync"].get("record_id") == "J-20250102T030405-deadbeef"
+
+
+def test_publish_errors_on_summary_hash_mismatch(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    report_dir = tmp_path / "report"
+    report_dir.mkdir()
+    _write_summary(report_dir)
+    summary_bytes = (report_dir / "summary.json").read_bytes()
+    summary_sha = hashlib.sha256(summary_bytes).hexdigest()
+
+    json_log_path = tmp_path / "paper_trading_log.jsonl"
+    _write_json_log(json_log_path, summary_sha=summary_sha)
+
+    summary_payload_path = tmp_path / "smoke_summary.json"
+    _write_structured_summary(
+        summary_payload_path,
+        summary_sha="deadbeef",
+        report_dir=report_dir,
+        json_log_path=json_log_path,
+        record_id="J-20250102T030405-deadbeef",
+    )
+
+    config_path = _build_config(tmp_path, reporting=None)
+
+    exit_code = publish_script.main(
+        [
+            "--config",
+            str(config_path),
+            "--environment",
+            "binance_paper",
+            "--report-dir",
+            str(report_dir),
+            "--json-log",
+            str(json_log_path),
+            "--summary-json",
+            str(summary_payload_path),
+            "--json",
+        ]
+    )
+
+    assert exit_code != 0
+    output = json.loads(capsys.readouterr().out)
+    assert output["status"] == "error"
+    assert output["json_sync"]["reason"] == "summary_sha_mismatch"
+    assert output["archive_upload"]["reason"] == "summary_sha_mismatch"
