@@ -1,0 +1,21 @@
+# Konfiguracja przykładowa dla powłoki Qt/QML korzystającej z trading stub server
+endpoint: 127.0.0.1:50061
+instrument:
+  exchange: BINANCE
+  symbol: BTC/USDT
+  venue_symbol: BTCUSDT
+  quote_currency: USDT
+  base_currency: BTC
+  granularity: PT1M
+performance_guard:
+  fps_target: 120
+  reduce_motion_after_seconds: 0.6
+  jank_threshold_ms: 12.0
+  overlays:
+    max_overlays: 4
+    disable_secondary_when_fps_below: 55
+telemetry:
+  metrics_endpoint: 127.0.0.1:50061
+  metrics_tag: desktop-shell-dev
+history_limit: 800
+maximum_samples: 12000

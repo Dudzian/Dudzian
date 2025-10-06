@@ -9,14 +9,21 @@ from pathlib import Path
 from typing import Mapping, Sequence
 
 from bot_core.config import load_core_config
+from bot_core.config.models import CoreConfig, EnvironmentConfig
 from bot_core.data.intervals import normalize_interval_token as _normalize_interval_token
 from bot_core.data.ohlcv import (
     CoverageStatus,
-    CoverageSummary,
     coerce_summary_mapping,
+    compute_gap_statistics,
+    compute_gap_statistics_by_interval,
     evaluate_coverage,
     summarize_coverage,
     summarize_issues,
+)
+from bot_core.data.ohlcv.coverage_check import (
+    SummaryThresholdResult,
+    evaluate_summary_thresholds,
+    status_to_mapping,
 )
 
 
@@ -79,6 +86,124 @@ def _parse_as_of(arg: str | None) -> datetime:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
+
+
+def _resolve_thresholds(config: CoreConfig, environment: EnvironmentConfig) -> tuple[float | None, float | None]:
+    max_gap_minutes: float | None = None
+    min_ok_ratio: float | None = None
+
+    data_quality = getattr(environment, "data_quality", None)
+    if data_quality is not None:
+        if getattr(data_quality, "max_gap_minutes", None) is not None:
+            max_gap_minutes = float(data_quality.max_gap_minutes)  # type: ignore[arg-type]
+        if getattr(data_quality, "min_ok_ratio", None) is not None:
+            min_ok_ratio = float(data_quality.min_ok_ratio)  # type: ignore[arg-type]
+
+    if (max_gap_minutes is None or min_ok_ratio is None) and getattr(environment, "risk_profile", None):
+        profile = config.risk_profiles.get(environment.risk_profile)
+        if profile and profile.data_quality:
+            profile_quality = profile.data_quality
+            if max_gap_minutes is None and getattr(profile_quality, "max_gap_minutes", None) is not None:
+                max_gap_minutes = float(profile_quality.max_gap_minutes)  # type: ignore[arg-type]
+            if min_ok_ratio is None and getattr(profile_quality, "min_ok_ratio", None) is not None:
+                min_ok_ratio = float(profile_quality.min_ok_ratio)  # type: ignore[arg-type]
+
+    return max_gap_minutes, min_ok_ratio
+
+
+def _filter_statuses_by_symbols(
+    statuses: Sequence[CoverageStatus],
+    *,
+    universe,
+    exchange: str,
+    requested: Sequence[str] | None,
+) -> tuple[list[CoverageStatus], list[str]]:
+    if not requested:
+        return list(statuses), []
+
+    filter_tokens = [token.upper() for token in requested]
+    alias_map: dict[str, str] = {}
+    for instrument in universe.instruments:
+        symbol = instrument.exchange_symbols.get(exchange)
+        if symbol:
+            alias_map[instrument.name.upper()] = symbol
+
+    available_symbols: dict[str, str] = {status.symbol.upper(): status.symbol for status in statuses}
+
+    resolved: set[str] = set()
+    unknown: list[str] = []
+    for token, raw in zip(filter_tokens, requested, strict=True):
+        symbol = alias_map.get(token)
+        if symbol is None:
+            symbol = available_symbols.get(token)
+        if symbol is None:
+            unknown.append(raw)
+            continue
+        resolved.add(symbol)
+
+    if unknown:
+        return [], unknown
+
+    filtered = [status for status in statuses if status.symbol in resolved]
+    return filtered, []
+
+
+def _filter_statuses_by_intervals(
+    statuses: Sequence[CoverageStatus],
+    *,
+    requested: Sequence[str] | None,
+) -> tuple[list[CoverageStatus], list[str]]:
+    if not requested:
+        return list(statuses), []
+
+    filter_tokens = [_normalize_interval_token(token) for token in requested]
+    available_map: dict[str, set[str]] = {}
+    for status in statuses:
+        normalized = _normalize_interval_token(status.interval)
+        if not normalized:
+            continue
+        available_map.setdefault(normalized, set()).add(status.interval)
+
+    resolved: set[str] = set()
+    unknown: list[str] = []
+    for raw, normalized in zip(requested, filter_tokens, strict=True):
+        if not normalized:
+            unknown.append(raw)
+            continue
+        variants = available_map.get(normalized)
+        if not variants:
+            unknown.append(raw)
+            continue
+        resolved.update(variants)
+
+    if unknown:
+        return [], unknown
+
+    filtered = [status for status in statuses if status.interval in resolved]
+    return filtered, []
+
+
+def _extend_summary_with_breakdowns(
+    summary_payload: Mapping[str, object],
+    statuses: Sequence[CoverageStatus],
+) -> dict[str, object]:
+    payload = dict(summary_payload)
+
+    def _breakdown(key_name: str) -> dict[str, dict[str, int]]:
+        result: dict[str, dict[str, int]] = {}
+        for status in statuses:
+            key = str(getattr(status, key_name, None) or "unknown")
+            bucket = result.setdefault(key, {})
+            bucket["total"] = bucket.get("total", 0) + 1
+            state = str(getattr(status, "status", None) or "unknown")
+            bucket[state] = bucket.get(state, 0) + 1
+        return result
+
+    payload["by_interval"] = _breakdown("interval")
+    payload["by_symbol"] = _breakdown("symbol")
+    return payload
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
     config = load_core_config(Path(args.config))
@@ -105,96 +230,86 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     as_of = _parse_as_of(args.as_of)
     manifest_path = Path(environment.data_cache_path) / "ohlcv_manifest.sqlite"
-    statuses = evaluate_coverage(
-        manifest_path=manifest_path,
-        universe=universe,
-        exchange_name=environment.exchange,
-        as_of=as_of,
+
+    statuses = list(
+        evaluate_coverage(
+            manifest_path=manifest_path,
+            universe=universe,
+            exchange_name=environment.exchange,
+            as_of=as_of,
+        )
     )
 
-    # Filtrowanie po symbolach (opcjonalnie)
-    if args.symbols:
-        filter_tokens = [token.upper() for token in args.symbols]
-        # mapowanie aliasów z nazw instrumentów na symbole giełdowe
-        alias_map: dict[str, str] = {}
-        for instrument in universe.instruments:
-            symbol = instrument.exchange_symbols.get(environment.exchange)
-            if symbol:
-                alias_map[instrument.name.upper()] = symbol
+    statuses, unknown_symbols = _filter_statuses_by_symbols(
+        statuses,
+        universe=universe,
+        exchange=environment.exchange,
+        requested=args.symbols or None,
+    )
+    if unknown_symbols:
+        print("Nieznane symbole: " + ", ".join(unknown_symbols), file=sys.stderr)
+        return 2
+    if not statuses:
+        print("Brak wpisów w manifeście dla wskazanych symboli.", file=sys.stderr)
+        return 2
 
-        available_symbols: dict[str, str] = {s.symbol.upper(): s.symbol for s in statuses}
-
-        resolved: set[str] = set()
-        unknown: list[str] = []
-        for token, raw in zip(filter_tokens, args.symbols, strict=True):
-            symbol = alias_map.get(token)
-            if symbol is None:
-                symbol = available_symbols.get(token)
-            if symbol is None:
-                unknown.append(raw)
-                continue
-            resolved.add(symbol)
-
-        if unknown:
-            print("Nieznane symbole: " + ", ".join(unknown), file=sys.stderr)
-            return 2
-
-        statuses = [status for status in statuses if status.symbol in resolved]
-        if not statuses:
-            print("Brak wpisów w manifeście dla wskazanych symboli.", file=sys.stderr)
-            return 2
-
-    # Filtrowanie po interwałach (opcjonalnie)
-    if args.intervals:
-        filter_tokens = [_normalize_interval_token(token) for token in args.intervals]
-        available_map: dict[str, set[str]] = {}
-        for status in statuses:
-            normalized = _normalize_interval_token(status.interval)
-            if not normalized:
-                continue
-            available_map.setdefault(normalized, set()).add(status.interval)
-
-        unknown: list[str] = []
-        resolved: set[str] = set()
-        for raw, normalized in zip(args.intervals, filter_tokens, strict=True):
-            if not normalized:
-                unknown.append(raw)
-                continue
-            variants = available_map.get(normalized)
-            if not variants:
-                unknown.append(raw)
-                continue
-            resolved.update(variants)
-
-        if unknown:
-            print("Nieznane interwały: " + ", ".join(unknown), file=sys.stderr)
-            return 2
-
-        statuses = [status for status in statuses if status.interval in resolved]
-        if not statuses:
-            print("Brak wpisów w manifeście dla wskazanych interwałów.", file=sys.stderr)
-            return 2
+    statuses, unknown_intervals = _filter_statuses_by_intervals(
+        statuses,
+        requested=args.intervals or None,
+    )
+    if unknown_intervals:
+        print("Nieznane interwały: " + ", ".join(unknown_intervals), file=sys.stderr)
+        return 2
+    if not statuses:
+        print("Brak wpisów w manifeście dla wskazanych interwałów.", file=sys.stderr)
+        return 2
 
     issues = summarize_issues(statuses)
-    summary_payload = coerce_summary_mapping(summarize_coverage(statuses))
-    status_token = str(summary_payload.get("status") or ("ok" if not issues else "error"))
-    payload = {
+    summary = summarize_coverage(statuses)
+    summary_payload = coerce_summary_mapping(summary)
+    summary_payload = _extend_summary_with_breakdowns(summary_payload, statuses)
+
+    max_gap_minutes, min_ok_ratio = _resolve_thresholds(config, environment)
+    threshold_result: SummaryThresholdResult | None = None
+    threshold_payload: Mapping[str, object] | None = None
+    threshold_issues: tuple[str, ...] = ()
+    if max_gap_minutes is not None or min_ok_ratio is not None:
+        threshold_result = evaluate_summary_thresholds(
+            summary_payload,
+            max_gap_minutes=max_gap_minutes,
+            min_ok_ratio=min_ok_ratio,
+        )
+        threshold_payload = threshold_result.to_mapping()
+        threshold_issues = threshold_result.issues
+
+    status_token = str(summary_payload.get("status") or "unknown")
+    if issues or threshold_issues:
+        status_token = "error"
+
+    payload: dict[str, object] = {
         "environment": environment.name,
         "exchange": environment.exchange,
         "manifest_path": str(manifest_path),
         "as_of": as_of.isoformat(),
-        "entries": [_format_status(status) for status in statuses],
+        "entries": [status_to_mapping(status) for status in statuses],
         "issues": issues,
         "summary": summary_payload,
         "status": status_token,
+        "threshold_issues": list(threshold_issues),
     }
     if threshold_payload is not None:
         payload["threshold_evaluation"] = threshold_payload
-        payload["threshold_issues"] = list(threshold_issues)
+
+    gap_stats = compute_gap_statistics(statuses)
+    payload["gap_statistics"] = gap_stats.to_mapping()
+    interval_stats = compute_gap_statistics_by_interval(statuses)
+    if interval_stats:
+        payload["gap_statistics_by_interval"] = {
+            interval: stats.to_mapping() for interval, stats in interval_stats.items()
+        }
 
     serialized = json.dumps(payload, ensure_ascii=False, indent=2)
 
-    # Zapis do pliku, jeśli wskazano --output
     if args.output:
         output_path = Path(args.output)
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -206,18 +321,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Manifest: {payload['manifest_path']}")
         print(f"Środowisko: {payload['environment']} ({payload['exchange']})")
         print(f"Ocena na: {payload['as_of']}")
-        summary = payload["summary"]
         for entry in payload["entries"]:
             print(
                 " - {symbol} {interval}: status={status} row_count={row_count} "
                 "required={required_rows} gap={gap_minutes}".format(**entry)
             )
+        summary_map = payload["summary"]
         print(
             "Podsumowanie: status={status} ok={ok}/{total} warning={warning} "
-            "error={error} stale_entries={stale_entries}".format(**summary)
+            "error={error} stale_entries={stale_entries}".format(**summary_map)
         )
-        issue_counts = summary.get("issue_counts") or {}
-        issue_examples = summary.get("issue_examples") or {}
+        issue_counts = summary_map.get("issue_counts") or {}
+        issue_examples = summary_map.get("issue_examples") or {}
         if issue_counts:
             print("Kody problemów:")
             for code in sorted(issue_counts):
@@ -227,7 +342,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     print(f" * {code}: count={count} example={example}")
                 else:
                     print(f" * {code}: count={count}")
-        worst_gap = summary.get("worst_gap")
+        worst_gap = summary_map.get("worst_gap")
         if isinstance(worst_gap, Mapping):
             details = {
                 "symbol": worst_gap.get("symbol", "?"),
@@ -243,9 +358,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                     **details
                 )
             )
-        if issues:
+        if issues or threshold_issues:
             print("Problemy:")
-            for issue in issues:
+            for issue in list(issues) + list(threshold_issues):
                 print(f" * {issue}")
         else:
             print("Brak problemów z pokryciem danych")

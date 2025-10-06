@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 import types
+import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -80,6 +81,10 @@ def test_smoke_archive_upload_local(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert destination.name == expected_name
     assert destination.exists()
     assert destination.read_bytes() == b"dummy-data"
+    expected_hash = hashlib.sha256(b"dummy-data").hexdigest()
+    assert result.metadata["archive_sha256"] == expected_hash
+    assert result.metadata["verified"] == "true"
+    assert result.metadata["ack_mechanism"] == "local_copy"
 
 
 def test_smoke_archive_upload_s3(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -96,10 +101,19 @@ def test_smoke_archive_upload_s3(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     )
 
     uploads: list[tuple[str, str, str, dict[str, str]]] = []
+    head_requests: list[tuple[str, str]] = []
 
     class _DummyS3Client:
         def upload_file(self, filename: str, bucket: str, object_key: str, ExtraArgs=None):  # noqa: N803
             uploads.append((filename, bucket, object_key, ExtraArgs or {}))
+
+        def head_object(self, Bucket: str, Key: str):  # noqa: N803
+            head_requests.append((Bucket, Key))
+            return {
+                "Metadata": {"sha256": hashlib.sha256(archive_path.read_bytes()).hexdigest()},
+                "VersionId": "ver-123",
+                "ResponseMetadata": {"HTTPStatusCode": 200, "RequestId": "req-456"},
+            }
 
     class _DummySession:
         def __init__(self, **kwargs) -> None:  # noqa: D401
@@ -137,12 +151,23 @@ def test_smoke_archive_upload_s3(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     assert result.backend == "s3"
     assert result.location == "s3://smoke-bucket/reports/binance_paper_20240102T123456Z_abc123.zip"
     assert result.metadata["timestamp"].startswith("2024-01-02T12:34:56")
+    expected_hash = hashlib.sha256(archive_path.read_bytes()).hexdigest()
+    assert result.metadata["archive_sha256"] == expected_hash
+    assert result.metadata["verified"] == "true"
+    assert result.metadata["acknowledged"] == "true"
+    assert result.metadata["remote_sha256"] == expected_hash
+    assert result.metadata["ack_request_id"] == "req-456"
+    assert result.metadata["ack_http_status"] == "200"
+    assert result.metadata["version_id"] == "ver-123"
 
     assert uploads == [
         (
             str(archive_path),
             "smoke-bucket",
             "reports/binance_paper_20240102T123456Z_abc123.zip",
-            {"ACL": "private"},
+            {"ACL": "private", "Metadata": {"sha256": expected_hash}},
         )
+    ]
+    assert head_requests == [
+        ("smoke-bucket", "reports/binance_paper_20240102T123456Z_abc123.zip")
     ]

@@ -1,6 +1,7 @@
 """Obsługa wysyłki archiwów smoke testu do bezpiecznego magazynu."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -51,6 +52,7 @@ class SmokeArchiveUploader:
             raise FileNotFoundError(archive_path)
 
         backend = self._config.backend.lower()
+        archive_sha256 = self._hash_file(archive_path)
         timestamp = datetime.now(timezone.utc)
         placeholders = self._build_placeholders(
             environment=environment,
@@ -59,32 +61,42 @@ class SmokeArchiveUploader:
             timestamp=timestamp,
         )
 
+        metadata: MutableMapping[str, str] = {
+            "timestamp": timestamp.isoformat(),
+            "summary_sha256": summary_sha256,
+            "archive_sha256": archive_sha256,
+        }
+
         if backend == "local":
             if self._config.local is None:
                 raise ValueError("Brak konfiguracji local dla backendu 'local'")
-            destination = self._upload_local(
+            destination, verification = self._upload_local(
                 archive_path,
                 local_cfg=self._config.local,
                 placeholders=placeholders,
+                expected_hash=archive_sha256,
             )
+            metadata.update(verification)
             return SmokeArchiveUploadResult(
                 backend="local",
                 location=str(destination),
-                metadata={"timestamp": timestamp.isoformat()},
+                metadata=metadata,
             )
 
         if backend == "s3":
             if self._config.s3 is None:
                 raise ValueError("Brak konfiguracji s3 dla backendu 's3'")
-            location = self._upload_s3(
+            location, verification = self._upload_s3(
                 archive_path,
                 s3_cfg=self._config.s3,
                 placeholders=placeholders,
+                expected_hash=archive_sha256,
             )
+            metadata.update(verification)
             return SmokeArchiveUploadResult(
                 backend="s3",
                 location=location,
-                metadata={"timestamp": timestamp.isoformat()},
+                metadata=metadata,
             )
 
         raise ValueError(f"Nieobsługiwany backend wysyłki archiwum: {self._config.backend}")
@@ -115,13 +127,14 @@ class SmokeArchiveUploader:
         }
         return values
 
-    @staticmethod
     def _upload_local(
+        self,
         archive_path: Path,
         *,
         local_cfg: SmokeArchiveLocalConfig,
         placeholders: Mapping[str, str],
-    ) -> Path:
+        expected_hash: str,
+    ) -> tuple[Path, Mapping[str, str]]:
         destination_dir = Path(local_cfg.directory)
         destination_dir.mkdir(parents=True, exist_ok=True)
         filename = local_cfg.filename_pattern.format(**placeholders)
@@ -131,7 +144,18 @@ class SmokeArchiveUploader:
             with target_path.open("rb+") as handle:  # pragma: no cover - zależne od platformy
                 handle.flush()
                 os.fsync(handle.fileno())
-        return target_path
+        verification_hash = self._hash_file(target_path)
+        if verification_hash != expected_hash:
+            raise RuntimeError(
+                "Niezgodność sumy kontrolnej przy kopiowaniu archiwum smoke do magazynu lokalnego"
+            )
+        metadata: MutableMapping[str, str] = {
+            "verified": "true",
+            "verified_hash": verification_hash,
+            "acknowledged": "true",
+            "ack_mechanism": "local_copy",
+        }
+        return target_path, metadata
 
     def _upload_s3(
         self,
@@ -139,7 +163,8 @@ class SmokeArchiveUploader:
         *,
         s3_cfg: SmokeArchiveS3Config,
         placeholders: Mapping[str, str],
-    ) -> str:
+        expected_hash: str,
+    ) -> tuple[str, Mapping[str, str]]:
         credentials = self._load_s3_credentials()
 
         try:
@@ -160,9 +185,41 @@ class SmokeArchiveUploader:
             use_ssl=s3_cfg.use_ssl,
         )
         extra_args = dict(s3_cfg.extra_args)
+        metadata = dict(extra_args.get("Metadata") or {})
+        existing_hash = metadata.get("sha256")
+        if existing_hash and existing_hash.lower() != expected_hash.lower():
+            raise RuntimeError(
+                "Konfiguracja extra_args zawiera hash niezgodny z obliczoną sumą SHA-256 archiwum"
+            )
+        metadata["sha256"] = expected_hash
+        extra_args["Metadata"] = metadata
         client.upload_file(str(archive_path), s3_cfg.bucket, object_key, ExtraArgs=extra_args)
+        head = client.head_object(Bucket=s3_cfg.bucket, Key=object_key)
+        remote_metadata = head.get("Metadata", {}) if isinstance(head, Mapping) else {}
+        remote_hash = remote_metadata.get("sha256")
+        if remote_hash and remote_hash.lower() != expected_hash.lower():
+            raise RuntimeError("Hash pliku w S3 nie zgadza się z lokalną sumą SHA-256 archiwum")
+
+        verification: MutableMapping[str, str] = {
+            "verified": "true",
+            "acknowledged": "true",
+        }
+        if remote_hash:
+            verification["remote_sha256"] = remote_hash
+        version_id = head.get("VersionId") if isinstance(head, Mapping) else None
+        if version_id:
+            verification["version_id"] = str(version_id)
+        response_meta = head.get("ResponseMetadata") if isinstance(head, Mapping) else None
+        if isinstance(response_meta, Mapping):
+            status_code = response_meta.get("HTTPStatusCode")
+            request_id = response_meta.get("RequestId") or response_meta.get("HostId")
+            if status_code is not None:
+                verification["ack_http_status"] = str(status_code)
+            if request_id:
+                verification["ack_request_id"] = str(request_id)
+
         location = f"s3://{s3_cfg.bucket}/{object_key}"
-        return location
+        return location, verification
 
     def _load_s3_credentials(self) -> Mapping[str, str]:
         if not self._config.credential_secret:
@@ -196,6 +253,14 @@ class SmokeArchiveUploader:
             prefix = config.object_prefix.rstrip("/")
             return f"{prefix}/{filename}"
         return filename
+
+    @staticmethod
+    def _hash_file(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(8192), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
 
 
 __all__ = [

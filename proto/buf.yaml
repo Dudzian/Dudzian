@@ -1,0 +1,10 @@
+version: v1
+name: buf.build/local/botcore
+lint:
+  use:
+    - DEFAULT
+  except:
+    - ENUM_NO_ALLOW_ALIAS
+breaking:
+  use:
+    - FILE

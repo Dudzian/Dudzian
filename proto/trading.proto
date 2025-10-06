@@ -1,0 +1,217 @@
+syntax = "proto3";
+
+package botcore.trading.v1;
+
+option go_package = "github.com/dudzian/bot/core/gen/go/botcore/trading/v1";
+option csharp_namespace = "BotCore.Trading.V1";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
+
+// Common enums shared across services.
+enum OrderSide {
+  ORDER_SIDE_UNSPECIFIED = 0;
+  ORDER_SIDE_BUY = 1;
+  ORDER_SIDE_SELL = 2;
+}
+
+enum OrderType {
+  ORDER_TYPE_UNSPECIFIED = 0;
+  ORDER_TYPE_MARKET = 1;
+  ORDER_TYPE_LIMIT = 2;
+  ORDER_TYPE_STOP_MARKET = 3;
+  ORDER_TYPE_STOP_LIMIT = 4;
+}
+
+enum TimeInForce {
+  TIME_IN_FORCE_UNSPECIFIED = 0;
+  TIME_IN_FORCE_GTC = 1; // Good till cancelled
+  TIME_IN_FORCE_GTD = 2; // Good till date
+  TIME_IN_FORCE_IOC = 3; // Immediate or cancel
+  TIME_IN_FORCE_FOK = 4; // Fill or kill
+}
+
+enum RiskProfile {
+  RISK_PROFILE_UNSPECIFIED = 0;
+  RISK_PROFILE_CONSERVATIVE = 1;
+  RISK_PROFILE_BALANCED = 2;
+  RISK_PROFILE_AGGRESSIVE = 3;
+  RISK_PROFILE_MANUAL = 4;
+}
+
+// Instrument describes a traded symbol.
+message Instrument {
+  string exchange = 1;
+  string symbol = 2;
+  string venue_symbol = 3;
+  string quote_currency = 4;
+  string base_currency = 5;
+}
+
+// Candle granularity encoded as ISO-8601 duration (e.g. "PT1M").
+message CandleGranularity {
+  string iso8601_duration = 1;
+}
+
+message OhlcvCandle {
+  Instrument instrument = 1;
+  google.protobuf.Timestamp open_time = 2;
+  double open = 3;
+  double high = 4;
+  double low = 5;
+  double close = 6;
+  double volume = 7;
+  bool closed = 8;
+  CandleGranularity granularity = 9;
+  uint64 sequence = 10; // Monotonic per instrument/granularity.
+}
+
+message GetOhlcvHistoryRequest {
+  Instrument instrument = 1;
+  CandleGranularity granularity = 2;
+  google.protobuf.Timestamp start_time = 3;
+  google.protobuf.Timestamp end_time = 4;
+  uint32 limit = 5; // Optional server side limit for pagination.
+}
+
+message GetOhlcvHistoryResponse {
+  repeated OhlcvCandle candles = 1;
+  bool has_more = 2;
+  google.protobuf.Timestamp next_start_time = 3; // For pagination when has_more = true.
+}
+
+message StreamOhlcvRequest {
+  Instrument instrument = 1;
+  CandleGranularity granularity = 2;
+  bool deliver_snapshots = 3; // When true the first payload contains historical window.
+}
+
+message StreamOhlcvUpdate {
+  oneof payload {
+    StreamOhlcvSnapshot snapshot = 1;
+    StreamOhlcvIncrement increment = 2;
+  }
+}
+
+message StreamOhlcvSnapshot {
+  repeated OhlcvCandle candles = 1;
+}
+
+message StreamOhlcvIncrement {
+  OhlcvCandle candle = 1;
+}
+
+message SubmitOrderRequest {
+  Instrument instrument = 1;
+  OrderSide side = 2;
+  OrderType type = 3;
+  double quantity = 4;
+  double price = 5;
+  TimeInForce time_in_force = 6;
+  string client_order_id = 7;
+  double max_slippage_bps = 8;
+  google.protobuf.Timestamp expiry_time = 9; // Optional for GTD orders.
+}
+
+message SubmitOrderResponse {
+  string order_id = 1;
+  string external_order_id = 2;
+  OrderStatus status = 3;
+  repeated OrderConstraintViolation violations = 4;
+}
+
+enum OrderStatus {
+  ORDER_STATUS_UNSPECIFIED = 0;
+  ORDER_STATUS_ACCEPTED = 1;
+  ORDER_STATUS_REJECTED = 2;
+  ORDER_STATUS_PENDING = 3;
+}
+
+message OrderConstraintViolation {
+  string code = 1;
+  string message = 2;
+}
+
+message CancelOrderRequest {
+  Instrument instrument = 1;
+  string order_id = 2;
+  string client_order_id = 3;
+}
+
+message CancelOrderResponse {
+  OrderStatus status = 1;
+  string message = 2;
+}
+
+message RiskStateRequest {
+  Instrument instrument = 1; // Optional filter; empty means portfolio level.
+}
+
+message ExposureLimit {
+  string code = 1; // Unique identifier of the limit.
+  double max_value = 2;
+  double current_value = 3;
+  double threshold_value = 4; // When exceeded the UI should highlight.
+}
+
+message RiskState {
+  RiskProfile profile = 1;
+  double portfolio_value = 2;
+  double current_drawdown = 3;
+  double max_daily_loss = 4;
+  double used_leverage = 5;
+  repeated ExposureLimit limits = 6;
+  google.protobuf.Timestamp generated_at = 7;
+}
+
+message MetricsRequest {
+  bool include_ui_metrics = 1;
+}
+
+message MetricsSnapshot {
+  google.protobuf.Timestamp generated_at = 1;
+  double event_to_frame_p95_ms = 2;
+  double fps = 3;
+  double cpu_utilization = 4;
+  double gpu_utilization = 5;
+  double ram_megabytes = 6;
+  uint64 dropped_frames = 7;
+  uint64 processed_messages_per_second = 8;
+  string notes = 9;
+}
+
+message MetricsAck {
+  bool accepted = 1;
+}
+
+message HealthCheckRequest {}
+
+message HealthCheckResponse {
+  string version = 1;
+  string git_commit = 2;
+  google.protobuf.Timestamp started_at = 3;
+}
+
+service MarketDataService {
+  rpc GetOhlcvHistory(GetOhlcvHistoryRequest) returns (GetOhlcvHistoryResponse);
+  rpc StreamOhlcv(StreamOhlcvRequest) returns (stream StreamOhlcvUpdate);
+}
+
+service OrderService {
+  rpc SubmitOrder(SubmitOrderRequest) returns (SubmitOrderResponse);
+  rpc CancelOrder(CancelOrderRequest) returns (CancelOrderResponse);
+}
+
+service RiskService {
+  rpc GetRiskState(RiskStateRequest) returns (RiskState);
+  rpc StreamRiskState(RiskStateRequest) returns (stream RiskState);
+}
+
+service MetricsService {
+  rpc StreamMetrics(MetricsRequest) returns (stream MetricsSnapshot);
+  rpc PushMetrics(MetricsSnapshot) returns (MetricsAck);
+}
+
+service HealthService {
+  rpc Check(google.protobuf.Empty) returns (HealthCheckResponse);
+}

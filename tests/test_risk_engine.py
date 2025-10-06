@@ -247,7 +247,7 @@ def test_target_volatility_limits_position_size(
     assert allowed_result.allowed is True
 
 
-def test_stop_loss_must_match_atr_multiple(manual_profile: ManualProfile) -> None:
+def test_stop_loss_must_not_be_tighter_than_minimum(manual_profile: ManualProfile) -> None:
     engine = ThresholdRiskEngine(clock=lambda: datetime(2024, 1, 1, 12, 0, 0))
     engine.register_profile(manual_profile)
 
@@ -255,7 +255,7 @@ def test_stop_loss_must_match_atr_multiple(manual_profile: ManualProfile) -> Non
     price = 25_000.0
     atr = 120.0
 
-    mismatched_stop = OrderRequest(
+    too_tight_stop = OrderRequest(
         symbol="BTCUSDT",
         side="buy",
         quantity=0.05,
@@ -266,13 +266,31 @@ def test_stop_loss_must_match_atr_multiple(manual_profile: ManualProfile) -> Non
     )
 
     result = engine.apply_pre_trade_checks(
-        mismatched_stop,
+        too_tight_stop,
         account=snapshot,
         profile_name=manual_profile.name,
     )
 
     assert result.allowed is False
     assert "stop loss" in (result.reason or "").lower()
+
+    wider_stop = OrderRequest(
+        symbol="BTCUSDT",
+        side="buy",
+        quantity=0.05,
+        order_type="limit",
+        price=price,
+        stop_price=price - atr * manual_profile.stop_loss_atr_multiple() * 1.6,
+        atr=atr,
+    )
+
+    wider_result = engine.apply_pre_trade_checks(
+        wider_stop,
+        account=snapshot,
+        profile_name=manual_profile.name,
+    )
+
+    assert wider_result.allowed is True
 
     missing_stop = OrderRequest(
         symbol="BTCUSDT",
@@ -292,6 +310,64 @@ def test_stop_loss_must_match_atr_multiple(manual_profile: ManualProfile) -> Non
 
     assert missing_result.allowed is False
     assert "stop_price" in (missing_result.reason or "").lower()
+
+
+def test_stop_loss_wider_than_minimum_limits_position_size() -> None:
+    profile = ManualProfile(
+        name="paper-profile",
+        max_positions=5,
+        max_leverage=15.0,
+        drawdown_limit=0.2,
+        daily_loss_limit=0.01,
+        max_position_pct=2.0,
+        target_volatility=0.03,
+        stop_loss_atr_multiple=2.0,
+    )
+
+    engine = ThresholdRiskEngine(clock=lambda: datetime(2024, 1, 1, 12, 0, 0))
+    engine.register_profile(profile)
+
+    equity = 120_000.0
+    price = 31_000.0
+    atr = 140.0
+    snapshot = _snapshot(equity)
+
+    wider_multiple = profile.stop_loss_atr_multiple() * 1.8
+    stop_distance = atr * wider_multiple
+    max_risk_capital = profile.target_volatility() * equity
+    allowed_quantity = max_risk_capital / stop_distance
+
+    baseline_order = _order(
+        price,
+        atr=atr,
+        stop_multiple=wider_multiple,
+        quantity=allowed_quantity * 0.95,
+    )
+
+    allowed = engine.apply_pre_trade_checks(
+        baseline_order,
+        account=snapshot,
+        profile_name=profile.name,
+    )
+
+    assert allowed.allowed is True
+
+    oversized_order = _order(
+        price,
+        atr=atr,
+        stop_multiple=wider_multiple,
+        quantity=allowed_quantity * 2,
+    )
+
+    denial = engine.apply_pre_trade_checks(
+        oversized_order,
+        account=snapshot,
+        profile_name=profile.name,
+    )
+
+    assert denial.allowed is False
+    assert denial.adjustments is not None
+    assert denial.adjustments["max_quantity"] == pytest.approx(allowed_quantity, rel=1e-6)
 
 
 def test_on_fill_normalizes_position_side_and_allows_growth(manual_profile: ManualProfile) -> None:
