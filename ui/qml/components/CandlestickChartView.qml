@@ -7,6 +7,8 @@ ChartView {
     property var model
     property PerformanceGuard performanceGuard
     property bool reduceMotion: false
+
+    // Definicje nakładek
     property var overlayDefinitions: [
         {
             key: "ema_fast",
@@ -27,6 +29,7 @@ ChartView {
             secondary: true
         }
     ]
+
     backgroundRoundness: 8
     theme: ChartView.ChartThemeDark
     animationOptions: ChartView.NoAnimation
@@ -97,7 +100,7 @@ ChartView {
         if (candleSeries.count === 0)
             return
         const first = candleSeries.at(0)
-        const last = candleSeries.at(candleSeries.count - 1)
+        const last  = candleSeries.at(candleSeries.count - 1)
         axisX.min = new Date(first.timestamp)
         axisX.max = new Date(last.timestamp)
         var minValue = Number.POSITIVE_INFINITY
@@ -142,6 +145,7 @@ ChartView {
         }
     }
 
+    // --- Nakładki (linie) ---
     LineSeries {
         id: emaFastSeries
         color: chartView.overlayDefinitions[0].color
@@ -192,6 +196,7 @@ ChartView {
 
     readonly property var overlaySeriesList: [emaFastSeries, emaSlowSeries, vwapSeries]
 
+    // --- Crosshair + tooltip ---
     Item {
         anchors.fill: parent
         z: 2
@@ -244,7 +249,13 @@ ChartView {
             Column {
                 spacing: 2
                 Label { text: Qt.formatDateTime(new Date(crosshairData.timestamp), "yyyy-MM-dd HH:mm") }
-                Label { text: qsTr("O %1 H %2 L %3 C %4").arg(crosshairData.open.toFixed(2)).arg(crosshairData.high.toFixed(2)).arg(crosshairData.low.toFixed(2)).arg(crosshairData.close.toFixed(2)) }
+                Label {
+                    text: qsTr("O %1 H %2 L %3 C %4")
+                        .arg(crosshairData.open.toFixed(2))
+                        .arg(crosshairData.high.toFixed(2))
+                        .arg(crosshairData.low.toFixed(2))
+                        .arg(crosshairData.close.toFixed(2))
+                }
                 Label { text: qsTr("Vol %1").arg(crosshairData.volume.toFixed(2)) }
             }
         }
@@ -270,6 +281,7 @@ ChartView {
         return closest || ({})
     }
 
+    // --- Logika widoczności i rysowania nakładek ---
     function refreshOverlayVisibility() {
         var guard = performanceGuard
         var allowed = overlaySeriesList.length
@@ -312,7 +324,7 @@ ChartView {
             if (!series.visible)
                 continue
             var def = overlayDefinitions[i]
-            var samples = model.overlaySeries(def.key)
+            var samples = model.overlaySeries(def.key) || []
             for (var j = 0; j < samples.length; ++j) {
                 var sample = samples[j]
                 if (sample.timestamp === undefined || sample.value === undefined)

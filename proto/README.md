@@ -16,19 +16,17 @@ brak WebSocketów i brak bezpośrednich połączeń HTTP z giełdami po stronie 
 Stosujemy jeden źródłowy plik `.proto` i generujemy klienta/serwer w różnych językach. Docelowo buildy
 rdzenia (C++) i narzędzi Pythonowych będą korzystać z tych samych artefaktów.
 
-### Generowanie stubów Python + gRPC
+Przykładowe generowanie stubów Python + gRPC:
 
 ```bash
-poetry run python scripts/generate_trading_stubs.py
+poetry run python -m grpc_tools.protoc \
+  --proto_path=proto \
+  --python_out=bot_core/generated \
+  --grpc_python_out=bot_core/generated \
+  proto/trading.proto
 ```
 
-Skrypt domyślnie generuje artefakty Pythona i C++. W razie potrzeby można ograniczyć zakres
-(`--skip-python` / `--skip-cpp`) lub wskazać niestandardowe katalogi wyjściowe.
-
-### Ręczne wywołanie protoc
-
-Jeżeli potrzebna jest niestandardowa konfiguracja, można uruchomić `protoc` bezpośrednio.
-Przykład generowania stubów C++ (dla demona) w katalogu `core/generated`:
+Generowanie stubów C++ (dla demona) w katalogu `core/generated`:
 
 ```bash
 protoc \

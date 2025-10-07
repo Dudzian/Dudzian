@@ -411,13 +411,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     }
     if markdown_path is not None:
         payload["markdown_report_path"] = str(markdown_path)
+
     exit_code = int(validation_result.get("exit_code", 0))
     payload["status"] = "ok" if exit_code == 0 else "validation_failed"
     print(json.dumps(payload, indent=2))
     if exit_code != 0:
-        _LOGGER.error(
-            "Walidacja summary.json zakończyła się kodem %s", exit_code
-        )
+        _LOGGER.error("Walidacja summary.json zakończyła się kodem %s", exit_code)
     return exit_code
 
 

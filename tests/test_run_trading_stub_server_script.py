@@ -108,7 +108,8 @@ market_data:
         low: 0.5
         close: 1.5
         volume: 10
-"""
+""",
+        encoding="utf-8",
     )
 
     server = _DummyServer(None, "", 0, 0)
@@ -178,7 +179,11 @@ def test_stream_repeat_options(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_negative_stream_interval_fails(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(run_trading_stub_server, "TradingStubServer", lambda *args, **kwargs: _DummyServer(None, "", 0, 0))
+    monkeypatch.setattr(
+        run_trading_stub_server,
+        "TradingStubServer",
+        lambda *args, **kwargs: _DummyServer(None, "", 0, 0),
+    )
 
     with pytest.raises(SystemExit):
         run_trading_stub_server.main(["--stream-interval", "-0.1"])

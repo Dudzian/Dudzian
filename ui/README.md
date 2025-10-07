@@ -69,3 +69,6 @@ Po uruchomieniu głównego okna można otwierać kolejne wykresy (`Nowe okno` lu
 * Podpięcie realnego demona C++ (`/core`) przez TLS i RBAC.
 * Dodanie wskaźników ATR/RSI oraz konfiguracji nakładek z poziomu UI przy zachowaniu ograniczeń `PerformanceGuard`.
 * Integracja z docelowym demona `MetricsService` (mTLS, RBAC) oraz raporty guardu na kanały alertowe.
+* Benchmark QML Profiler 60/120 Hz + automatyczne raportowanie do `MetricsService` wraz z detekcją adaptacji animacji.
+* Dodanie warstwy animacji (Transitions/States) oraz adaptacji „reduce motion” na podstawie metryk gRPC.
+* Benchmark QML Profiler 60/120 Hz + automatyczne raportowanie do `MetricsService`.

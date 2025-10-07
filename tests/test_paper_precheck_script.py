@@ -233,4 +233,3 @@ def test_run_precheck_returns_payload(tmp_path: Path) -> None:
     assert payload["status"] == "ok"
     assert payload["coverage_status"] == "ok"
     assert payload["risk_status"] == "ok"
-

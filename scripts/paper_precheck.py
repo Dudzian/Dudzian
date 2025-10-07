@@ -35,7 +35,6 @@ from bot_core.risk.factory import build_risk_profile_from_config
 
 def _sanitize_environment_token(value: str) -> str:
     """Zamienia nazwę środowiska na token bezpieczny dla nazwy pliku."""
-
     token = re.sub(r"[^A-Za-z0-9_.-]+", "_", value.strip())
     if not token:
         return "unknown_environment"
@@ -50,7 +49,6 @@ def persist_precheck_report(
     created_at: datetime | None = None,
 ) -> dict[str, object]:
     """Zapisuje wynik paper_precheck w katalogu audytu i zwraca metadane pliku."""
-
     timestamp = (created_at or datetime.now(timezone.utc)).astimezone(timezone.utc)
     timestamp = timestamp.replace(microsecond=0)
     token = timestamp.strftime("%Y%m%dT%H%M%SZ")
@@ -153,9 +151,13 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
 
 
 def _parse_as_of(value: str | None) -> datetime:
+    """Parsuje ISO8601; akceptuje końcówkę 'Z' jako UTC."""
     if not value:
         return datetime.now(timezone.utc)
-    dt = datetime.fromisoformat(value)
+    iso = value.strip()
+    if iso.endswith("Z"):
+        iso = iso[:-1] + "+00:00"
+    dt = datetime.fromisoformat(iso)
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
@@ -265,12 +267,6 @@ def _filter_statuses_by_intervals(
     return filtered, []
 
 
-
-
-
-
-
-
 def _breakdown_by_key(statuses: Sequence[object], key_name: str) -> dict[str, dict[str, int]]:
     """
     Agregacja bez obiektów niestabializowalnych:
@@ -294,11 +290,8 @@ def _breakdown_by_symbol(statuses: Sequence[object]) -> dict[str, dict[str, int]
     return _breakdown_by_key(statuses, "symbol")
 
 
-
-
 def _resolve_reference_symbol(config: CoreConfig, environment: EnvironmentConfig) -> str:
     """Próbuje wyznaczyć reprezentatywny symbol giełdowy dla sanity-checku ryzyka."""
-
     universe_name = getattr(environment, "instrument_universe", None)
     if not universe_name:
         return "BTCUSDT"
@@ -324,7 +317,6 @@ def _risk_sanity_payload(
     environment: EnvironmentConfig,
 ) -> Mapping[str, object]:
     """Weryfikuje bazowe zachowanie silnika ryzyka dla profilu środowiska."""
-
     payload: dict[str, object] = {
         "profile": environment.risk_profile,
         "issues": [],
@@ -376,7 +368,7 @@ def _risk_sanity_payload(
     if min_multiple > 0:
         wide_multiple = max(min_multiple * 1.5, min_multiple + 0.5, 1.0)
         if wide_multiple <= min_multiple:
-            wide_multiple = min_multiple + 0.25
+            wide_multiple = min_multiple + 0.25)
 
     atr = max(1.0, price * 0.005)
     if max_position_pct <= 0:
@@ -507,7 +499,6 @@ def _risk_sanity_payload(
     return payload
 
 
-
 def _coverage_payload(
     *,
     manifest_path: Path,
@@ -582,7 +573,7 @@ def _coverage_payload(
     summary_payload["by_interval"] = _breakdown_by_interval(statuses)
     summary_payload["by_symbol"] = _breakdown_by_symbol(statuses)
 
-    threshold_result = evaluate_summary_thresholds(
+    threshold_result: SummaryThresholdResult = evaluate_summary_thresholds(
         summary_payload,
         max_gap_minutes=max_gap_minutes,
         min_ok_ratio=min_ok_ratio,
@@ -618,7 +609,6 @@ def run_precheck(
     skip_risk_check: bool = False,
 ) -> tuple[dict[str, object], int]:
     """Wykonuje sanitarne kontrole paper_precheck i zwraca payload wraz z kodem zakończenia."""
-
     if config is None:
         if config_path is None:
             raise ValueError("Wymagany jest config lub config_path")
