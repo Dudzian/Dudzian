@@ -11,3 +11,7 @@ env.example
 tests/assets/coverage_sample/ohlcv_manifest.sqlite
 var/data/*
 !var/data/.gitkeep
+bot_core/generated/*
+!bot_core/generated/__init__.py
+core/generated/*
+!core/generated/.gitkeep

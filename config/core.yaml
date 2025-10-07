@@ -48,6 +48,14 @@ runtime:
     daily_trend_core:
       tick_seconds: 86400
       interval: 1d
+  metrics_service:
+    enabled: true
+    host: 127.0.0.1
+    port: 55060
+    history_size: 1024
+    log_sink: true
+    jsonl_path: audit/metrics/telemetry.jsonl
+    jsonl_fsync: false
 strategies:
   core_daily_trend:
     engine: daily_trend_momentum

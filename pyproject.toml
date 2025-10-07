@@ -34,10 +34,13 @@ module = ["yaml"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
-addopts = "--cov=bot_core --cov-report=xml --cov-report=term-missing"
+addopts = ""
 testpaths = ["tests"]
 filterwarnings = [
   "ignore::DeprecationWarning",
+]
+markers = [
+  "timeout: oznaczenie testów z ograniczeniem czasu wykonywania",
 ]
 [project]
 name = "dudzian-bot"
@@ -46,5 +49,18 @@ description = "Modułowy bot tradingowy"
 requires-python = ">=3.10"
 dependencies = [
   "pyarrow>=21.0.0",
+  "protobuf>=4.24",
+  "grpcio>=1.62",
+  "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.4",
+  "pytest-cov>=4.1",
+  "grpcio-tools>=1.62",
+  "grpcio>=1.62",
+  "protobuf>=4.24",
+  "PyYAML>=6.0",
 ]
 
