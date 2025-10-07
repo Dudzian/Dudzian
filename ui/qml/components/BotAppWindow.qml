@@ -154,6 +154,8 @@ ApplicationWindow {
         for (let i = 0; i < windowSettings.savedExtraWindows; ++i) {
             openChartWindow({ restoreSession: true })
         }
+        if (typeof appController !== 'undefined' && appController.notifyWindowCount)
+            appController.notifyWindowCount(extraWindowCount + 1)
     }
 
     onXChanged: windowSettings.savedX = window.x
@@ -192,13 +194,17 @@ ApplicationWindow {
         if (!win)
             return
         extraWindows.push(win)
-        win.windowClosed.connect(function() { removeExtraWindow(win) })
+        win.windowClosed.connect(function() {
+            removeExtraWindow(win)
+        })
         win.show()
         syncInstrumentLabel()
         if (!options || !options.restoreSession) {
             windowSettings.savedExtraWindows = extraWindows.length
         }
         extraWindowCount = extraWindows.length
+        if (typeof appController !== 'undefined' && appController.notifyWindowCount)
+            appController.notifyWindowCount(extraWindowCount + 1)
     }
 
     function removeExtraWindow(win) {
@@ -207,6 +213,8 @@ ApplicationWindow {
             extraWindows.splice(index, 1)
         extraWindowCount = extraWindows.length
         windowSettings.savedExtraWindows = extraWindows.length
+        if (typeof appController !== 'undefined' && appController.notifyWindowCount)
+            appController.notifyWindowCount(extraWindowCount + 1)
     }
 
     function syncPerformanceGuard() {

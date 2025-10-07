@@ -19,6 +19,7 @@ from collections import deque
 from collections.abc import Iterable, Mapping, MutableMapping, Sequence
 from typing import Any, Callable
 
+
 _RAW_OUTPUT_MAX_LEN = 4096
 _CONTEXT_SNIPPET_MAX_LEN = 240
 

@@ -16,8 +16,11 @@ public:
     void setPerformanceGuard(const PerformanceGuard& guard);
     void reset();
 
+    double lastFps() const { return m_lastFps; }
+
 signals:
     void reduceMotionSuggested(bool enabled);
+    void frameSampled(double fps);
 
 private slots:
     void handleFrameSwapped();
@@ -34,4 +37,5 @@ private:
     double m_lowFpsDuration = 0.0;
     double m_highFpsDuration = 0.0;
     bool m_reduceMotionActive = false;
+    double m_lastFps = 0.0;
 };

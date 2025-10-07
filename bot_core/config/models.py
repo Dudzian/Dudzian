@@ -39,6 +39,19 @@ class DecisionJournalConfig:
     fsync: bool = False
 
 
+@dataclass(slots=True)
+class MetricsServiceConfig:
+    """Ustawienia serwera telemetrii `MetricsService`."""
+
+    enabled: bool = True
+    host: str = "127.0.0.1"
+    port: int = 0
+    history_size: int = 1024
+    log_sink: bool = True
+    jsonl_path: str | None = None
+    jsonl_fsync: bool = False
+
+
 # --- Środowiska / rdzeń ------------------------------------------------------
 
 @dataclass(slots=True)
@@ -320,6 +333,7 @@ class CoreConfig:
     messenger_channels: Mapping[str, MessengerChannelSettings] = field(default_factory=dict)
     runtime_controllers: Mapping[str, ControllerRuntimeConfig] = field(default_factory=dict)
     coverage_monitoring: CoverageMonitoringConfig | None = None
+    metrics_service: MetricsServiceConfig | None = None
 
 
 __all__ = [
@@ -350,4 +364,5 @@ __all__ = [
     "AlertThrottleConfig",
     "AlertAuditConfig",
     "DecisionJournalConfig",
+    "MetricsServiceConfig",
 ]

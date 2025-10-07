@@ -2,15 +2,17 @@
 
 #include <QObject>
 #include <QQmlApplicationEngine>
-#include <QPointer>
 #include <QCommandLineParser>
 
 #include <memory>
+#include <optional>
 
 #include "grpc/TradingClient.hpp"
 #include "models/OhlcvListModel.hpp"
 #include "utils/PerformanceGuard.hpp"
 #include "utils/FrameRateMonitor.hpp"
+
+class UiTelemetryReporter;
 
 class Application : public QObject {
     Q_OBJECT
@@ -34,6 +36,10 @@ public slots:
     void start();
     void stop();
 
+    // Wywoływane z QML (ChartView/StatusFooter/MainWindow)
+    Q_INVOKABLE void notifyOverlayUsage(int activeCount, int allowedCount, bool reduceMotionActive);
+    Q_INVOKABLE void notifyWindowCount(int totalWindowCount);
+
 signals:
     void connectionStatusChanged();
     void performanceGuardChanged();
@@ -49,6 +55,11 @@ private:
     void ensureFrameMonitor();
     void attachWindow(QObject* object);
 
+    // Telemetria UI
+    void ensureTelemetry();
+    void reportOverlayTelemetry();
+    void reportReduceMotionTelemetry(bool enabled);
+
     QQmlApplicationEngine& m_engine;
     OhlcvListModel m_ohlcvModel;
     TradingClient m_client;
@@ -58,4 +69,18 @@ private:
     TradingClient::InstrumentConfig m_instrument;
     std::unique_ptr<FrameRateMonitor> m_frameMonitor;
     bool m_reduceMotionActive = false;
+
+    // --- Telemetry state ---
+    std::unique_ptr<UiTelemetryReporter> m_telemetry;
+    double m_latestFpsSample = 0.0;
+    int m_windowCount = 1;
+
+    struct OverlayState {
+        int active = 0;
+        int allowed = 0;
+        bool reduceMotion = false;
+    };
+    std::optional<OverlayState> m_lastOverlayState;
+    std::optional<bool> m_lastReduceMotionReported;
+    std::optional<bool> m_pendingReduceMotionState;
 };

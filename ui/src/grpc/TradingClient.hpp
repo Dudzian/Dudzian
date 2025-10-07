@@ -46,7 +46,7 @@ public:
     void setHistoryLimit(int limit);
     void setPerformanceGuard(const PerformanceGuard& guard);
 
-    // Getter wymagany przez Application.cpp
+    // Używane przez Application.cpp
     InstrumentConfig instrumentConfig() const { return m_instrumentConfig; }
 
     bool isStreaming() const { return m_running.load(); }
@@ -64,7 +64,8 @@ signals:
 
 private:
     void ensureStub();
-    QList<OhlcvPoint> convertHistory(const google::protobuf::RepeatedPtrField<botcore::trading::v1::OhlcvCandle>& candles) const;
+    QList<OhlcvPoint> convertHistory(
+        const google::protobuf::RepeatedPtrField<botcore::trading::v1::OhlcvCandle>& candles) const;
     OhlcvPoint convertCandle(const botcore::trading::v1::OhlcvCandle& candle) const;
     void streamLoop();
 
@@ -77,7 +78,7 @@ private:
         QStringLiteral("BTC"),
         QStringLiteral("PT1M")
     };
-    PerformanceGuard m_guard;
+    PerformanceGuard m_guard{};
     int m_historyLimit = 500;
 
     std::shared_ptr<grpc::Channel> m_channel;

@@ -21,7 +21,8 @@ Pane {
         }
 
         Label {
-            text: qsTr("Samples: %1").arg(ohlcvModel.count)
+            text: qsTr("Samples: %1")
+                    .arg(ohlcvModel && ohlcvModel.count !== undefined ? ohlcvModel.count : 0)
         }
 
         Label {

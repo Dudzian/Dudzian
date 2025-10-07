@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 grpc = pytest.importorskip("grpc")
+pytest.importorskip("grpc_tools")
 from google.protobuf import empty_pb2
 import yaml
 

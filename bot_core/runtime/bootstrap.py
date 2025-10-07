@@ -57,6 +57,15 @@ from bot_core.runtime.journal import (
     TradingDecisionJournal,
 )
 
+try:  # pragma: no cover - środowiska bez grpcio lub wygenerowanych stubów
+    from bot_core.runtime.metrics_service import (  # type: ignore
+        MetricsServer,
+        build_metrics_server_from_config,
+    )
+except Exception:  # pragma: no cover - brak zależności opcjonalnych
+    MetricsServer = None  # type: ignore
+    build_metrics_server_from_config = None  # type: ignore
+
 _DEFAULT_ADAPTERS: Mapping[str, ExchangeAdapterFactory] = {
     "binance_spot": BinanceSpotAdapter,
     "binance_futures": BinanceFuturesAdapter,
@@ -84,6 +93,7 @@ class BootstrapContext:
     adapter_settings: Mapping[str, Any]
     decision_journal: TradingDecisionJournal | None
     risk_profile_name: str
+    metrics_server: Any | None = None
 
 
 def bootstrap_environment(
@@ -145,6 +155,20 @@ def bootstrap_environment(
 
     decision_journal = _build_decision_journal(environment)
 
+    metrics_server: Any | None = None
+    if build_metrics_server_from_config is not None:
+        try:
+            metrics_server = build_metrics_server_from_config(core_config.metrics_service)
+            if metrics_server is not None:
+                metrics_server.start()
+                _LOGGER.info(
+                    "Serwer MetricsService uruchomiony na %s",
+                    getattr(metrics_server, "address", "unknown"),
+                )
+        except Exception:  # pragma: no cover - telemetria jest opcjonalna
+            _LOGGER.exception("Nie udało się uruchomić MetricsService – kontynuuję bez telemetrii")
+            metrics_server = None
+
     return BootstrapContext(
         core_config=core_config,
         environment=environment,
@@ -158,6 +182,7 @@ def bootstrap_environment(
         adapter_settings=environment.adapter_settings,
         decision_journal=decision_journal,
         risk_profile_name=selected_profile,
+        metrics_server=metrics_server,
     )
 
 

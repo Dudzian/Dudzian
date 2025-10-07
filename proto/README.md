@@ -52,13 +52,12 @@ buf breaking proto --against '.git#branch=main,subdir=proto'
 
 Buf wykorzystujemy również w CI, dlatego przed push warto uruchomić te polecenia lokalnie (wymaga
 zainstalowanego `buf`, patrz [instrukcje](https://buf.build/docs/installation)).
-> **Wskazówka:** W pipeline CI przygotujemy dedykowany krok budujący stuby i publikujący je jako artefakt.
-> Komendy powyżej służą jako punkt startowy do dalszej automatyzacji.
 
 ## Zasady utrzymania kontraktu
 
 - Plik `trading.proto` jest traktowany jako kontrakt `v1`. Breaking changes są zabronione bez podniesienia
   wersji pakietu (np. `botcore.trading.v2`).
 - Przed dodaniem nowych pól należy przygotować ADR i aktualizację testów golden.
-- Każda zmiana powinna przejść przez `buf lint` / `buf breaking` (zaplanowane do wdrożenia w pipeline CI).
+- Każda zmiana przechodzi przez `buf lint` / `buf breaking` w pipeline CI; rekomendowane jest także
+  lokalne uruchomienie powyższych poleceń przed wysyłką PR.
 - Klient QML korzysta tylko z gRPC – UI nie łączy się bezpośrednio z giełdami.

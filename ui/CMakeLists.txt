@@ -9,6 +9,13 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
 find_package(Qt6 6.5 COMPONENTS Quick QuickControls2 Charts REQUIRED)
+
+# --- Testing (from HEAD) ---
+include(CTest)
+if(BUILD_TESTING)
+    find_package(Qt6 6.5 COMPONENTS Test REQUIRED)
+endif()
+
 find_package(Protobuf REQUIRED)
 find_package(gRPC REQUIRED)
 
@@ -55,6 +62,7 @@ set(UI_SOURCES
     src/models/OhlcvListModel.cpp
     src/utils/PerformanceGuard.cpp
     src/utils/FrameRateMonitor.cpp
+    src/telemetry/UiTelemetryReporter.cpp
 )
 
 set(UI_HEADERS
@@ -63,6 +71,7 @@ set(UI_HEADERS
     src/models/OhlcvListModel.hpp
     src/utils/PerformanceGuard.hpp
     src/utils/FrameRateMonitor.hpp
+    src/telemetry/UiTelemetryReporter.hpp
 )
 
 qt_add_executable(bot_trading_shell
@@ -72,7 +81,6 @@ qt_add_executable(bot_trading_shell
 )
 
 target_include_directories(bot_trading_shell PRIVATE src ${GENERATED_DIR})
-
 target_link_libraries(bot_trading_shell
     PRIVATE
         Qt6::Quick
@@ -82,3 +90,22 @@ target_link_libraries(bot_trading_shell
 )
 
 install(TARGETS bot_trading_shell RUNTIME DESTINATION bin)
+
+# ---- Tests (from HEAD) ----
+if(BUILD_TESTING)
+    add_executable(ui_telemetry_tests
+        tests/UiTelemetryReporterTest.cpp
+        src/utils/PerformanceGuard.cpp
+        src/telemetry/UiTelemetryReporter.cpp
+    )
+    target_include_directories(ui_telemetry_tests PRIVATE src ${GENERATED_DIR})
+    target_link_libraries(ui_telemetry_tests
+        PRIVATE
+            Qt6::Core
+            Qt6::Test
+            trading_proto
+            protobuf::libprotobuf
+            gRPC::grpc++
+    )
+    add_test(NAME ui_telemetry_tests COMMAND ui_telemetry_tests)
+endif()

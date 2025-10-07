@@ -39,6 +39,9 @@ testpaths = ["tests"]
 filterwarnings = [
   "ignore::DeprecationWarning",
 ]
+markers = [
+  "timeout: oznaczenie testów z ograniczeniem czasu wykonywania",
+]
 
 [project]
 name = "dudzian-bot"

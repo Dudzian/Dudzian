@@ -92,6 +92,9 @@ Artefakty tworzymy skryptem `scripts/generate_trading_stubs.py`, a wzorcowy work
   benchmarków animacji (60/120 Hz).
 * Workflow CI `deploy/ci/github_actions_proto_stubs.yml` po wygenerowaniu artefaktów może uruchomić stub
   z `--shutdown-after`, aby przeprowadzić szybki smoke test UI lub komponentów gRPC.
+* Skrypt `scripts/run_metrics_service.py` startuje dedykowany serwer MetricsService (host/port, rozmiar historii,
+  opcjonalny LoggingSink oraz zapis do JSONL z `--jsonl`/`--jsonl-fsync`) – wykorzystywany w CI i lokalnie do
+  obserwacji zdarzeń reduce-motion i budżetu overlayów wysyłanych z powłoki.
 
 ### Powłoka Qt/QML – MVP
 
@@ -105,6 +108,10 @@ Artefakty tworzymy skryptem `scripts/generate_trading_stubs.py`, a wzorcowy work
 * `FrameRateMonitor` (C++) nasłuchuje `frameSwapped` głównego okna i po spadku FPS poniżej progów guardu (np. 55 FPS @60 Hz,
   110 FPS @120 Hz) emituje `reduceMotionActive`; właściwość jest eksponowana do QML i powoduje natychmiastowe wygaszenie
   animacji wtórnych oraz ograniczenie overlayów w każdym oknie.
+* `UiTelemetryReporter` wysyła zdarzenia UI do `MetricsService` (`PushMetrics`): wejście/wyjście z trybu reduce motion, budżety
+  overlayów oraz liczbę aktywnych okien multi-window; konfiguracja odbywa się przez flagi CLI (`--metrics-endpoint`,
+  `--metrics-tag`) lub wpis w YAML.
+* Sekcja `runtime.metrics_service` w `config/core.yaml` ustawia host/port serwera telemetrii, rozmiar historii (`history_size`), aktywność log sinka (`log_sink`) oraz parametry eksportu JSONL (`jsonl_path`, `jsonl_fsync`).
 * Wsparcie multi-window: `BotAppWindow` potrafi otwierać dodatkowe `ChartWindow` (`Ctrl+N`/przycisk), zapamiętywać liczbę i geometrię okien
   (`Qt.labs.settings`) oraz synchronizować guard/instrument pomiędzy wszystkimi widokami – spełnia wymagania pracy na wielu monitorach.
 * `ui/config/example.yaml` oraz flagi CLI (w tym `--overlay-disable-secondary-fps`) pozwalają spiąć powłokę z dowolnym datasetem

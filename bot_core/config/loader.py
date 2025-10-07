@@ -90,6 +90,11 @@ except Exception:
     SmokeArchiveS3Config = None  # type: ignore
     SmokeArchiveUploadConfig = None  # type: ignore
 
+try:
+    from bot_core.config.models import MetricsServiceConfig  # type: ignore
+except Exception:
+    MetricsServiceConfig = None  # type: ignore
+
 
 def _core_has(field_name: str) -> bool:
     """Sprawdza, czy CoreConfig posiada dane pole (bezpiecznie dla różnych gałęzi)."""
@@ -515,6 +520,26 @@ def _load_coverage_monitoring(
     )
 
 
+def _load_metrics_service(
+    runtime_section: Optional[Mapping[str, Any]]
+) -> MetricsServiceConfig | None:
+    if MetricsServiceConfig is None or not _core_has("metrics_service"):
+        return None
+    runtime = runtime_section or {}
+    metrics_raw = runtime.get("metrics_service")
+    if not metrics_raw:
+        return None
+    return MetricsServiceConfig(
+        enabled=bool(metrics_raw.get("enabled", True)),
+        host=str(metrics_raw.get("host", "127.0.0.1")),
+        port=int(metrics_raw.get("port", 0)),
+        history_size=int(metrics_raw.get("history_size", 1024)),
+        log_sink=bool(metrics_raw.get("log_sink", True)),
+        jsonl_path=str(metrics_raw.get("jsonl_path")) if metrics_raw.get("jsonl_path") else None,
+        jsonl_fsync=bool(metrics_raw.get("jsonl_fsync", False)),
+    )
+
+
 def load_core_config(path: str | Path) -> CoreConfig:
     """Wczytuje plik YAML i mapuje go na dataclasses."""
     with Path(path).open("r", encoding="utf-8") as handle:
@@ -598,6 +623,7 @@ def load_core_config(path: str | Path) -> CoreConfig:
     strategies = _load_strategies(raw)
 
     reporting = _load_reporting(raw.get("reporting"))
+    runtime_section = raw.get("runtime") or {}
     alerts = (raw.get("alerts", {}) or {})
     sms_providers = _load_sms_providers(alerts)
     signal_channels = _load_signal_channels(alerts)
@@ -646,7 +672,7 @@ def load_core_config(path: str | Path) -> CoreConfig:
     if _core_has("messenger_channels"):
         core_kwargs["messenger_channels"] = messenger_channels
     if _core_has("runtime_controllers") and ControllerRuntimeConfig is not None:
-        controllers_raw = (raw.get("runtime", {}) or {}).get("controllers", {}) or {}
+        controllers_raw = (runtime_section.get("controllers") or {})
         core_kwargs["runtime_controllers"] = {
             name: ControllerRuntimeConfig(
                 tick_seconds=float(entry.get("tick_seconds", entry.get("tick", 60.0))),
@@ -658,6 +684,9 @@ def load_core_config(path: str | Path) -> CoreConfig:
         core_kwargs["coverage_monitoring"] = _load_coverage_monitoring(
             raw.get("coverage_monitoring")
         )
+    metrics_config = _load_metrics_service(runtime_section)
+    if metrics_config is not None:
+        core_kwargs["metrics_service"] = metrics_config
 
     return CoreConfig(**core_kwargs)  # type: ignore[arg-type]
 

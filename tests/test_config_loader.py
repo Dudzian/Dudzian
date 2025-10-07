@@ -276,3 +276,32 @@ def test_load_core_config_inherits_risk_profile_data_quality(tmp_path: Path) -> 
     assert isinstance(env.data_quality, EnvironmentDataQualityConfig)
     assert env.data_quality.max_gap_minutes == 180.0
     assert env.data_quality.min_ok_ratio == 0.85
+
+def test_load_core_config_reads_metrics_service(tmp_path: Path) -> None:
+    config_path = tmp_path / "core.yaml"
+    config_path.write_text(
+        """
+        risk_profiles: {}
+        environments: {}
+        alerts: {}
+        runtime:
+          metrics_service:
+            enabled: true
+            host: 0.0.0.0
+            port: 55123
+            history_size: 256
+            log_sink: false
+        """,
+        encoding="utf-8",
+    )
+
+    config = load_core_config(config_path)
+
+    assert config.metrics_service is not None
+    metrics = config.metrics_service
+    assert metrics.enabled is True
+    assert metrics.host == "0.0.0.0"
+    assert metrics.port == 55123
+    assert metrics.history_size == 256
+    assert metrics.log_sink is False
+

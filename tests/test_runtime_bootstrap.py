@@ -197,6 +197,7 @@ def test_bootstrap_environment_initialises_components(tmp_path: Path) -> None:
     assert context.adapter_settings == {}
     risk_state_path = Path("./var/data/binance_paper/risk_state/balanced.json")
     assert risk_state_path.parent.exists()
+    assert context.metrics_server is None
 
 
 def test_bootstrap_environment_allows_risk_profile_override(tmp_path: Path) -> None:

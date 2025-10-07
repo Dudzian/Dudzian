@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from google.protobuf import descriptor_pb2, descriptor_pool, message_factory
 
+pytest.importorskip("grpc_tools")
 from grpc_tools import protoc
 
 

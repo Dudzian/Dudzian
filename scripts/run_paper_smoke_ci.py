@@ -11,10 +11,8 @@ import sys
 from pathlib import Path
 from typing import Any, Sequence
 
-from scripts.render_paper_smoke_summary import (
-    DEFAULT_MAX_JSON_CHARS,
-    render_summary_markdown,
-)
+from scripts.render_paper_smoke_summary import DEFAULT_MAX_JSON_CHARS, render_summary_markdown
+
 
 _LOGGER = logging.getLogger(__name__)
 _RAW_OUTPUT_LIMIT = 2000
