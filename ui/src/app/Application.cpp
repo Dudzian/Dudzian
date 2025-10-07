@@ -1,11 +1,11 @@
 #include "Application.hpp"
 
-#include <QQmlApplicationEngine>
 #include <QQmlContext>
-#include <QCommandLineParser>
 #include <QQuickWindow>
+#include <QtGlobal>
 
 #include "utils/FrameRateMonitor.hpp"
+#include "telemetry/UiTelemetryReporter.hpp"
 
 Application::Application(QQmlApplicationEngine& engine, QObject* parent)
     : QObject(parent)
@@ -19,7 +19,7 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
     connect(&m_engine, &QQmlApplicationEngine::objectCreated, this,
             [this](QObject* object, const QUrl&) { attachWindow(object); });
 
-    // Połączenia sygnałów klienta
+    // Połączenia sygnałów klienta (market data)
     connect(&m_client, &TradingClient::historyReceived, this, &Application::handleHistory);
     connect(&m_client, &TradingClient::candleReceived, this, &Application::handleCandle);
 
@@ -36,6 +36,8 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
                 if (m_frameMonitor) {
                     m_frameMonitor->setPerformanceGuard(m_guard);
                 }
+                // Telemetria overlay może zależeć od nowych limitów
+                reportOverlayTelemetry();
             });
 
     connect(&m_client, &TradingClient::streamingChanged, this, [this]() {
@@ -45,6 +47,9 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
         m_connectionStatus = state;
         Q_EMIT connectionStatusChanged();
     });
+
+    // Risk state (jeśli dostępne po stronie serwera)
+    connect(&m_client, &TradingClient::riskStateReceived, this, &Application::handleRiskState);
 }
 
 QString Application::instrumentLabel() const {
@@ -77,6 +82,12 @@ void Application::configureParser(QCommandLineParser& parser) const {
     parser.addOption({"overlay-disable-secondary-fps",
                       tr("Próg FPS wyłączający nakładki drugorzędne"), tr("fps"),
                       QStringLiteral("0")});
+
+    // Telemetria MetricsService (opcjonalnie)
+    parser.addOption({"metrics-endpoint", tr("Opcjonalny endpoint MetricsService"), tr("endpoint")});
+    parser.addOption({"metrics-tag", tr("Dodatkowa etykieta notatek telemetrycznych"), tr("tag")});
+    parser.addOption({"metrics-auth-token", tr("Token autoryzacyjny MetricsService"), tr("token")});
+    parser.addOption({"no-metrics", tr("Wyłącza wysyłkę telemetrycznych zdarzeń UI")});
 }
 
 bool Application::applyParser(const QCommandLineParser& parser) {
@@ -115,16 +126,49 @@ bool Application::applyParser(const QCommandLineParser& parser) {
         m_frameMonitor->setPerformanceGuard(m_guard);
     }
 
+    // Telemetria
+    const bool metricsDisabled = parser.isSet("no-metrics");
+    ensureTelemetry();
+    if (m_telemetry) {
+        if (metricsDisabled) {
+            m_telemetry->setEnabled(false);
+            m_lastReduceMotionReported.reset();
+            m_telemetry->setAuthToken({});
+        } else {
+            QString metricsEndpoint = parser.value("metrics-endpoint");
+            if (metricsEndpoint.isEmpty()) {
+                metricsEndpoint = parser.value("endpoint");
+            }
+            m_telemetry->setEndpoint(metricsEndpoint);
+            m_telemetry->setEnabled(!metricsEndpoint.isEmpty());
+            m_telemetry->setNotesTag(parser.value("metrics-tag"));
+            m_telemetry->setAuthToken(parser.value("metrics-auth-token"));
+            m_telemetry->setWindowCount(m_windowCount);
+            m_lastReduceMotionReported.reset();
+            m_pendingReduceMotionState = m_reduceMotionActive;
+            if (m_lastOverlayState.has_value()) {
+                reportOverlayTelemetry();
+            }
+        }
+    }
+
     return true;
 }
 
 void Application::start() {
     m_ohlcvModel.setMaximumSamples(m_maxSamples);
+    m_riskModel.clear();
+
     ensureFrameMonitor();
 
     // Jeśli QML już wczytany — podepnij okno
     if (!m_engine.rootObjects().isEmpty()) {
         attachWindow(m_engine.rootObjects().constFirst());
+    }
+
+    ensureTelemetry();
+    if (m_telemetry) {
+        m_telemetry->setWindowCount(m_windowCount);
     }
 
     m_client.start();
@@ -142,9 +186,14 @@ void Application::handleCandle(const OhlcvPoint& candle) {
     m_ohlcvModel.applyIncrement(candle);
 }
 
+void Application::handleRiskState(const RiskSnapshotData& snapshot) {
+    m_riskModel.updateFromSnapshot(snapshot);
+}
+
 void Application::exposeToQml() {
     m_engine.rootContext()->setContextProperty(QStringLiteral("appController"), this);
     m_engine.rootContext()->setContextProperty(QStringLiteral("ohlcvModel"), &m_ohlcvModel);
+    m_engine.rootContext()->setContextProperty(QStringLiteral("riskModel"), &m_riskModel);
 }
 
 void Application::ensureFrameMonitor() {
@@ -152,13 +201,21 @@ void Application::ensureFrameMonitor() {
         return;
 
     m_frameMonitor = std::make_unique<FrameRateMonitor>(this);
+
     connect(m_frameMonitor.get(), &FrameRateMonitor::reduceMotionSuggested, this,
             [this](bool enabled) {
                 if (m_reduceMotionActive == enabled)
                     return;
                 m_reduceMotionActive = enabled;
+                m_pendingReduceMotionState = enabled;  // zapamiętaj do telemetrii
                 Q_EMIT reduceMotionActiveChanged();
             });
+
+    connect(m_frameMonitor.get(), &FrameRateMonitor::frameSampled, this,
+            [this](double fps) {
+                m_latestFpsSample = fps;
+            });
+
     m_frameMonitor->setPerformanceGuard(m_guard);
 }
 
@@ -172,4 +229,78 @@ void Application::attachWindow(QObject* object) {
 
     ensureFrameMonitor();
     m_frameMonitor->setWindow(window);
+}
+
+void Application::ensureTelemetry() {
+    if (!m_telemetry) {
+        m_telemetry = std::make_unique<UiTelemetryReporter>(this);
+    }
+}
+
+void Application::notifyOverlayUsage(int activeCount, int allowedCount, bool reduceMotionActive) {
+    OverlayState state{qMax(0, activeCount), qMax(0, allowedCount), reduceMotionActive};
+
+    if (m_lastOverlayState.has_value()
+        && m_lastOverlayState->active == state.active
+        && m_lastOverlayState->allowed == state.allowed
+        && m_lastOverlayState->reduceMotion == state.reduceMotion) {
+        return;
+    }
+
+    m_lastOverlayState = state;
+
+    if (m_pendingReduceMotionState.has_value()) {
+        reportReduceMotionTelemetry(m_pendingReduceMotionState.value());
+        m_pendingReduceMotionState.reset();
+    }
+
+    reportOverlayTelemetry();
+}
+
+void Application::notifyWindowCount(int totalWindowCount) {
+    const int sanitized = qMax(1, totalWindowCount);
+    if (sanitized == m_windowCount)
+        return;
+
+    m_windowCount = sanitized;
+    if (m_telemetry) {
+        m_telemetry->setWindowCount(m_windowCount);
+    }
+    reportOverlayTelemetry();
+}
+
+void Application::reportOverlayTelemetry() {
+    if (!m_telemetry || !m_telemetry->isEnabled() || !m_lastOverlayState.has_value()) {
+        return;
+    }
+    const auto& state = m_lastOverlayState.value();
+    m_telemetry->setWindowCount(m_windowCount);
+    m_telemetry->reportOverlayBudget(m_guard, state.active, state.allowed, state.reduceMotion);
+
+    // Jeśli czeka raport reduce-motion — wyślij go tuż po overlay
+    if (m_pendingReduceMotionState.has_value()) {
+        reportReduceMotionTelemetry(m_pendingReduceMotionState.value());
+        m_pendingReduceMotionState.reset();
+    }
+}
+
+void Application::reportReduceMotionTelemetry(bool enabled) {
+    if (!m_telemetry || !m_telemetry->isEnabled())
+        return;
+
+    if (m_lastReduceMotionReported.has_value()
+        && m_lastReduceMotionReported.value() == enabled) {
+        return; // deduplikacja
+    }
+
+    m_lastReduceMotionReported = enabled;
+
+    const int overlayActive  = m_lastOverlayState.has_value() ? m_lastOverlayState->active : 0;
+    const int overlayAllowed = m_lastOverlayState.has_value()
+                                   ? m_lastOverlayState->allowed
+                                   : m_guard.maxOverlayCount;
+
+    m_telemetry->setWindowCount(m_windowCount);
+    m_telemetry->reportReduceMotion(m_guard, enabled, m_latestFpsSample,
+                                    overlayActive, overlayAllowed);
 }

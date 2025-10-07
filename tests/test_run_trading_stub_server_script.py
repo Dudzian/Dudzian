@@ -66,18 +66,19 @@ def test_runs_with_default_dataset(monkeypatch: pytest.MonkeyPatch, capsys: pyte
 
     monkeypatch.setattr(run_trading_stub_server, "TradingStubServer", factory)
 
-    exit_code = run_trading_stub_server.main([
-        "--port",
-        "0",
-        "--shutdown-after",
-        "0.01",
-        "--print-address",
-    ])
+    exit_code = run_trading_stub_server.main(
+        [
+            "--port",
+            "0",
+            "--shutdown-after",
+            "0.01",
+            "--print-address",
+        ]
+    )
 
     assert exit_code == 0
     assert server.started is True
     assert server.stopped_with == 1.0
-    # gdy timeout został użyty (0.01), wait powinien otrzymać tę wartość
     assert server.wait_timeouts == [0.01]
     assert server.dataset is not None
     assert len(server.dataset.history) >= 1
@@ -102,7 +103,7 @@ market_data:
       base_currency: FOO
     granularity: PT1M
     candles:
-      - open_time: 2024-01-01T00:00:00Z
+      - open_time: "2024-01-01T00:00:00Z"
         open: 1.0
         high: 2.0
         low: 0.5
@@ -187,3 +188,71 @@ def test_negative_stream_interval_fails(monkeypatch: pytest.MonkeyPatch) -> None
 
     with pytest.raises(SystemExit):
         run_trading_stub_server.main(["--stream-interval", "-0.1"])
+
+
+def test_metrics_server_integration(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    server = _DummyServer(None, "127.0.0.1", 0, 0)
+
+    class DummyMetrics:
+        def __init__(self) -> None:
+            self.stopped_with: float | None = None
+
+        def stop(self, grace: float | None = None) -> None:
+            self.stopped_with = grace
+
+    dummy_metrics = DummyMetrics()
+
+    def fake_start_metrics(args):
+        assert args.enable_metrics is True
+        assert getattr(args, "metrics_auth_token", None) is None
+        return dummy_metrics, "127.0.0.1:60062"
+
+    monkeypatch.setattr(run_trading_stub_server, "_start_metrics_server", fake_start_metrics)
+    monkeypatch.setattr(run_trading_stub_server, "TradingStubServer", lambda *args, **kwargs: server)
+
+    exit_code = run_trading_stub_server.main(
+        [
+            "--enable-metrics",
+            "--print-metrics-address",
+            "--shutdown-after",
+            "0.01",
+        ]
+    )
+
+    assert exit_code == 0
+    assert dummy_metrics.stopped_with == 1.0
+    output = capsys.readouterr().out
+    assert "127.0.0.1:60062" in output
+
+
+def test_metrics_server_auth_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    dummy_metrics = object()
+
+    def fake_start_metrics(args):
+        assert args.metrics_auth_token == "dev-secret"
+        return dummy_metrics, "127.0.0.1:60070"
+
+    stopped: dict[str, float | None] = {"value": None}
+
+    class DummyServer:
+        def __init__(self) -> None:
+            self.stopped = False
+
+        def stop(self, grace: float | None = None) -> None:
+            stopped["value"] = grace
+
+    monkeypatch.setattr(run_trading_stub_server, "_start_metrics_server", fake_start_metrics)
+    monkeypatch.setattr(run_trading_stub_server, "TradingStubServer", lambda *args, **kwargs: DummyServer())
+
+    exit_code = run_trading_stub_server.main(
+        [
+            "--enable-metrics",
+            "--metrics-auth-token",
+            "dev-secret",
+            "--shutdown-after",
+            "0.01",
+        ]
+    )
+
+    assert exit_code == 0
+    assert stopped["value"] == 1.0

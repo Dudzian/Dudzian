@@ -1,10 +1,13 @@
 #include "UiTelemetryReporter.hpp"
 
 #include <QJsonDocument>
+#include <QJsonObject>
 #include <QLoggingCategory>
 #include <QtGlobal>
 
 #include <chrono>
+#include <optional>
+#include <string>
 
 #include <grpcpp/channel.h>
 #include <grpcpp/client_context.h>
@@ -29,7 +32,8 @@ void stampNow(botcore::trading::v1::MetricsSnapshot& snapshot) {
     using namespace std::chrono;
     const auto now = system_clock::now();
     const auto secondsPart = duration_cast<seconds>(now.time_since_epoch());
-    const auto nanosPart = duration_cast<nanoseconds>(now.time_since_epoch()) - duration_cast<nanoseconds>(secondsPart);
+    const auto nanosPart = duration_cast<nanoseconds>(now.time_since_epoch())
+                         - duration_cast<nanoseconds>(secondsPart);
     auto* ts = snapshot.mutable_generated_at();
     ts->set_seconds(secondsPart.count());
     ts->set_nanos(static_cast<int32_t>(nanosPart.count()));
@@ -37,8 +41,7 @@ void stampNow(botcore::trading::v1::MetricsSnapshot& snapshot) {
 } // namespace
 
 UiTelemetryReporter::UiTelemetryReporter(QObject* parent)
-    : QObject(parent) {
-}
+    : QObject(parent) {}
 
 UiTelemetryReporter::~UiTelemetryReporter() = default;
 
@@ -67,17 +70,23 @@ void UiTelemetryReporter::setWindowCount(int count) {
     m_windowCount = qMax(1, count);
 }
 
+void UiTelemetryReporter::setAuthToken(const QString& token) {
+    m_authToken = token;
+}
+
 void UiTelemetryReporter::reportReduceMotion(const PerformanceGuard& guard,
                                              bool active,
                                              double fps,
                                              int overlayActive,
                                              int overlayAllowed) {
-    QJsonObject payload{{QStringLiteral("event"), QStringLiteral("reduce_motion")},
-                        {QStringLiteral("active"), active},
-                        {QStringLiteral("fps_target"), guard.fpsTarget},
-                        {QStringLiteral("overlay_active"), overlayActive},
-                        {QStringLiteral("overlay_allowed"), overlayAllowed},
-                        {QStringLiteral("jank_budget_ms"), guard.jankThresholdMs}};
+    QJsonObject payload{
+        {QStringLiteral("event"), QStringLiteral("reduce_motion")},
+        {QStringLiteral("active"), active},
+        {QStringLiteral("fps_target"), guard.fpsTarget},
+        {QStringLiteral("overlay_active"), overlayActive},
+        {QStringLiteral("overlay_allowed"), overlayAllowed},
+        {QStringLiteral("jank_budget_ms"), guard.jankThresholdMs}
+    };
     if (guard.disableSecondaryWhenFpsBelow > 0) {
         payload.insert(QStringLiteral("disable_secondary_fps"), guard.disableSecondaryWhenFpsBelow);
     }
@@ -88,11 +97,13 @@ void UiTelemetryReporter::reportOverlayBudget(const PerformanceGuard& guard,
                                               int overlayActive,
                                               int overlayAllowed,
                                               bool reduceMotionActive) {
-    QJsonObject payload{{QStringLiteral("event"), QStringLiteral("overlay_budget")},
-                        {QStringLiteral("active_overlays"), overlayActive},
-                        {QStringLiteral("allowed_overlays"), overlayAllowed},
-                        {QStringLiteral("reduce_motion"), reduceMotionActive},
-                        {QStringLiteral("fps_target"), guard.fpsTarget}};
+    QJsonObject payload{
+        {QStringLiteral("event"), QStringLiteral("overlay_budget")},
+        {QStringLiteral("active_overlays"), overlayActive},
+        {QStringLiteral("allowed_overlays"), overlayAllowed},
+        {QStringLiteral("reduce_motion"), reduceMotionActive},
+        {QStringLiteral("fps_target"), guard.fpsTarget}
+    };
     if (guard.disableSecondaryWhenFpsBelow > 0) {
         payload.insert(QStringLiteral("disable_secondary_fps"), guard.disableSecondaryWhenFpsBelow);
     }
@@ -118,10 +129,16 @@ void UiTelemetryReporter::pushSnapshot(const QJsonObject& notes, std::optional<d
     snapshot.set_notes(buildNotesJson(notes, m_notesTag, m_windowCount).toStdString());
 
     grpc::ClientContext context;
+    if (!m_authToken.isEmpty()) {
+        const std::string token = m_authToken.toStdString();
+        context.AddMetadata("authorization", std::string("Bearer ") + token);
+    }
+
     botcore::trading::v1::MetricsAck ack;
-    const auto status = stub->PushMetrics(&context, snapshot);
+    const auto status = stub->PushMetrics(&context, snapshot, &ack);
     if (!status.ok()) {
-        qCWarning(lcTelemetry) << "PushMetrics failed" << QString::fromStdString(status.error_message());
+        qCWarning(lcTelemetry) << "PushMetrics failed"
+                               << QString::fromStdString(status.error_message());
     }
 }
 
@@ -138,4 +155,3 @@ botcore::trading::v1::MetricsService::Stub* UiTelemetryReporter::ensureStub() {
     }
     return m_stub.get();
 }
-

@@ -17,6 +17,12 @@ from bot_core.testing import (
     merge_datasets,
 )
 
+# MetricsService (opcjonalnie — gdy brak gRPC/stubów, po prostu nie uruchamiamy)
+try:  # pragma: no cover - zależności opcjonalne
+    from bot_core.runtime.metrics_service import create_server as create_metrics_server
+except Exception:  # pragma: no cover - brak gRPC lub wygenerowanych stubów
+    create_metrics_server = None  # type: ignore
+
 LOGGER = logging.getLogger("run_trading_stub_server")
 
 
@@ -101,6 +107,56 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Wypisz sam adres serwera na stdout (np. do użycia w skryptach).",
     )
+
+    # --- MetricsService (opcjonalny towarzyszący serwer telemetrii UI) ---
+    parser.add_argument(
+        "--enable-metrics",
+        action="store_true",
+        help="Uruchom towarzyszący serwer MetricsService (wymaga pakietów gRPC).",
+    )
+    parser.add_argument(
+        "--metrics-host",
+        default="127.0.0.1",
+        help="Adres hosta dla serwera MetricsService (domyślnie 127.0.0.1).",
+    )
+    parser.add_argument(
+        "--metrics-port",
+        type=int,
+        default=50062,
+        help="Port nasłuchu MetricsService (0 = wybierz losowy wolny port).",
+    )
+    parser.add_argument(
+        "--metrics-history-size",
+        type=int,
+        default=2048,
+        help="Rozmiar historii snapshotów w pamięci serwera MetricsService.",
+    )
+    parser.add_argument(
+        "--metrics-jsonl",
+        type=Path,
+        default=None,
+        help="Opcjonalna ścieżka JSONL na snapshoty telemetrii (tworzona automatycznie).",
+    )
+    parser.add_argument(
+        "--metrics-jsonl-fsync",
+        action="store_true",
+        help="Wymuś fsync po każdym wpisie JSONL (wolniejsze, lecz bezpieczniejsze).",
+    )
+    parser.add_argument(
+        "--metrics-auth-token",
+        default=None,
+        help="Opcjonalny token autoryzacyjny wymagany przez MetricsService.",
+    )
+    parser.add_argument(
+        "--metrics-disable-log-sink",
+        action="store_true",
+        help="Nie loguj każdej metryki na stdout (przydatne przy testach wydajności).",
+    )
+    parser.add_argument(
+        "--print-metrics-address",
+        action="store_true",
+        help="Wypisz adres uruchomionego MetricsService na stdout.",
+    )
     return parser
 
 
@@ -114,6 +170,44 @@ def _install_signal_handlers(stop_callback) -> None:
             signal.signal(sig, handler)
         except ValueError:  # pragma: no cover - np. uruchomienie w wątku
             LOGGER.warning("Nie udało się zarejestrować handlera sygnału %s", sig)
+
+
+def _start_metrics_server(args) -> tuple[object | None, str | None]:
+    metrics_requested = (
+        args.enable_metrics or args.metrics_jsonl is not None or args.metrics_auth_token is not None
+    )
+    if not metrics_requested:
+        return None, None
+
+    if create_metrics_server is None:
+        LOGGER.error(
+            "Nie można uruchomić MetricsService – brak zależności gRPC lub wygenerowanych stubów."
+        )
+        return None, None
+
+    jsonl_path = str(args.metrics_jsonl) if args.metrics_jsonl else None
+    try:
+        server = create_metrics_server(
+            host=args.metrics_host,
+            port=args.metrics_port,
+            history_size=args.metrics_history_size,
+            enable_logging_sink=not args.metrics_disable_log_sink,
+            jsonl_path=jsonl_path,
+            jsonl_fsync=args.metrics_jsonl_fsync,
+            auth_token=args.metrics_auth_token,
+        )
+    except Exception:  # pragma: no cover - defensywnie logujemy wyjątek
+        LOGGER.exception("Nie udało się utworzyć serwera MetricsService")
+        return None, None
+
+    server.start()
+    address = getattr(server, "address", f"{args.metrics_host}:{args.metrics_port}")
+    LOGGER.info("Serwer MetricsService wystartował na %s", address)
+    if args.metrics_auth_token:
+        LOGGER.info(
+            "MetricsService wymaga nagłówka Authorization: Bearer <token> (token ustawiony)"
+        )
+    return server, address
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -133,6 +227,10 @@ def main(argv: list[str] | None = None) -> int:
             f"{key}={value}" for key, value in sorted(dataset.performance_guard.items())
         )
         LOGGER.info("Konfiguracja performance guard: %s", guard_preview)
+
+    metrics_server: object | None
+    metrics_address: str | None
+    metrics_server, metrics_address = _start_metrics_server(args)
 
     server = TradingStubServer(
         dataset=dataset,
@@ -156,6 +254,8 @@ def main(argv: list[str] | None = None) -> int:
     LOGGER.info("Serwer stub wystartował na %s", server.address)
     if args.print_address:
         print(server.address)
+    if args.print_metrics_address and metrics_address:
+        print(metrics_address)
 
     try:
         if args.shutdown_after is not None:
@@ -175,6 +275,11 @@ def main(argv: list[str] | None = None) -> int:
         if not should_stop:
             server.stop(grace=1.0)
         LOGGER.info("Serwer stub został zatrzymany.")
+        if metrics_server is not None:
+            try:
+                metrics_server.stop(grace=1.0)
+            except Exception:  # pragma: no cover - zatrzymanie jest best-effort
+                LOGGER.exception("Błąd podczas zatrzymywania MetricsService")
     return 0
 
 

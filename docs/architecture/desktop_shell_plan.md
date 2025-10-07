@@ -84,6 +84,10 @@ Artefakty tworzymy skryptem `scripts/generate_trading_stubs.py`, a wzorcowy work
   pozwalający kontrolować kadencję aktualizacji (0 = natychmiast, >0 = odstęp w sekundach). W razie potrzeby można
   pominąć dane startowe poprzez `--no-default-dataset`. Log startowy prezentuje również aktualną konfigurację
   performance guard, co pozwala błyskawicznie zweryfikować oczekiwane progi FPS i ograniczenia overlayów.
+* Stub potrafi równocześnie wystartować lekki `MetricsService` (`--enable-metrics`) – te same dane, które powłoka
+  wysyła do core, można odebrać lokalnie. Dostępne są przełączniki `--metrics-host/--metrics-port`, zapis JSONL
+  (`--metrics-jsonl`, `--metrics-jsonl-fsync`) oraz opcja `--metrics-disable-log-sink` tłumiąca logowanie snapshotów.
+  Adres serwera można pobrać z `--print-metrics-address`, co ułatwia podpięcie powłoki i pipeline’ów CI.
 * Stub wykorzystuje `bot_core.testing.TradingStubServer` oraz helper `merge_datasets`, dzięki czemu można
   łączyć wiele plików YAML bez konieczności modyfikacji kodu.
 * W repozytorium dostarczamy przykładowy zestaw `data/trading_stub/datasets/multi_asset_performance.yaml`
@@ -95,6 +99,8 @@ Artefakty tworzymy skryptem `scripts/generate_trading_stubs.py`, a wzorcowy work
 * Skrypt `scripts/run_metrics_service.py` startuje dedykowany serwer MetricsService (host/port, rozmiar historii,
   opcjonalny LoggingSink oraz zapis do JSONL z `--jsonl`/`--jsonl-fsync`) – wykorzystywany w CI i lokalnie do
   obserwacji zdarzeń reduce-motion i budżetu overlayów wysyłanych z powłoki.
+* Narzędzie `scripts/watch_metrics_stream.py` podgląda `MetricsSnapshot` wprost z gRPC (filtr `--event`, format `table/json`,
+  limit rekordów) i służy do debugowania telemetrycznego w CI oraz na stanowiskach operatorów.
 
 ### Powłoka Qt/QML – MVP
 
@@ -105,13 +111,18 @@ Artefakty tworzymy skryptem `scripts/generate_trading_stubs.py`, a wzorcowy work
 * QML implementuje krzyż celowniczy, tooltipy oraz dynamiczne skalowanie osi; CandlestickChartView renderuje nakładki
   EMA12/EMA26/VWAP (LineSeries) sterowane przez `PerformanceGuard` i automatycznie redukuje liczbę overlayów przy aktywnym
   trybie „reduce motion” lub spadku FPS poniżej `disable_secondary_when_fps_below`.
+* `SidePanel` prezentuje parametry guardu, status połączenia oraz zrzut `RiskState` (profil, wartość portfela, drawdown, dźwignia)
+  wraz z listą limitów ekspozycji pobieranych z `RiskService`; przekroczenia progów są wyróżniane kolorystycznie i raportowane do
+  telemetrii (`overlay_budget`).
 * `FrameRateMonitor` (C++) nasłuchuje `frameSwapped` głównego okna i po spadku FPS poniżej progów guardu (np. 55 FPS @60 Hz,
   110 FPS @120 Hz) emituje `reduceMotionActive`; właściwość jest eksponowana do QML i powoduje natychmiastowe wygaszenie
   animacji wtórnych oraz ograniczenie overlayów w każdym oknie.
 * `UiTelemetryReporter` wysyła zdarzenia UI do `MetricsService` (`PushMetrics`): wejście/wyjście z trybu reduce motion, budżety
   overlayów oraz liczbę aktywnych okien multi-window; konfiguracja odbywa się przez flagi CLI (`--metrics-endpoint`,
   `--metrics-tag`) lub wpis w YAML.
-* Sekcja `runtime.metrics_service` w `config/core.yaml` ustawia host/port serwera telemetrii, rozmiar historii (`history_size`), aktywność log sinka (`log_sink`) oraz parametry eksportu JSONL (`jsonl_path`, `jsonl_fsync`).
+* Sekcja `runtime.metrics_service` w `config/core.yaml` ustawia host/port serwera telemetrii, rozmiar historii (`history_size`), aktywność log sinka (`log_sink`), parametry eksportu JSONL (`jsonl_path`, `jsonl_fsync`), opcjonalny token autoryzacyjny (`auth_token`) oraz konfigurację alertów redukcji animacji i budżetu nakładek.
+* Flagi `reduce_motion_alerts`/`reduce_motion_category`/`reduce_motion_severity_*` aktywują sink alertów reagujący na zdarzenia `reduce_motion` z UI.
+* Flagi `overlay_alerts`/`overlay_alert_category`/`overlay_alert_severity_*` generują alerty, gdy UI raportuje przekroczenie limitu nakładek i informują o odzyskaniu budżetu.
 * Wsparcie multi-window: `BotAppWindow` potrafi otwierać dodatkowe `ChartWindow` (`Ctrl+N`/przycisk), zapamiętywać liczbę i geometrię okien
   (`Qt.labs.settings`) oraz synchronizować guard/instrument pomiędzy wszystkimi widokami – spełnia wymagania pracy na wielu monitorach.
 * `ui/config/example.yaml` oraz flagi CLI (w tym `--overlay-disable-secondary-fps`) pozwalają spiąć powłokę z dowolnym datasetem

@@ -14,7 +14,7 @@ try:  # pragma: no cover - opcjonalne zależności gRPC
 except Exception as exc:  # pragma: no cover - komunikat dla developera
     raise SystemExit(
         "Brak wsparcia gRPC. Upewnij się, że wygenerowałeś stuby (scripts/generate_trading_stubs.py) "
-        "i masz zainstalowane pakiety grpcio." 
+        "i masz zainstalowane pakiety grpcio."
     ) from exc
 
 
@@ -64,6 +64,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Wymuś fsync po każdym wpisie JSONL (kosztem wydajności).",
     )
     parser.add_argument(
+        "--auth-token",
+        default=None,
+        help="Opcjonalny token autoryzacyjny wymagany od klientów (Authorization: Bearer token).",
+    )
+    parser.add_argument(
         "--shutdown-after",
         type=float,
         default=None,
@@ -90,6 +95,7 @@ def _build_server(
     enable_logging_sink: bool,
     jsonl_path: Path | None,
     jsonl_fsync: bool,
+    auth_token: str | None,
     extra_sinks: Iterable = (),
 ):
     sinks = list(extra_sinks)
@@ -101,6 +107,7 @@ def _build_server(
         history_size=history_size,
         enable_logging_sink=enable_logging_sink,
         sinks=sinks,
+        auth_token=auth_token,
     )
 
 
@@ -132,6 +139,7 @@ def main(argv: list[str] | None = None) -> int:
         enable_logging_sink=not args.no_log_sink,
         jsonl_path=Path(args.jsonl) if args.jsonl else None,
         jsonl_fsync=args.jsonl_fsync,
+        auth_token=args.auth_token,
     )
 
     should_stop = False
@@ -149,6 +157,10 @@ def main(argv: list[str] | None = None) -> int:
     LOGGER.info("MetricsService uruchomiony na %s", server.address)
     if args.print_address:
         print(server.address)
+    if args.auth_token:
+        LOGGER.info(
+            "Serwer wymaga nagłówka Authorization: Bearer <token> od klientów telemetrycznych"
+        )
 
     try:
         if args.shutdown_after is not None:
@@ -173,4 +185,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":  # pragma: no cover - ścieżka uruchomienia skryptu
     sys.exit(main())
-

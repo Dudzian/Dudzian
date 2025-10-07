@@ -523,21 +523,56 @@ def _load_coverage_monitoring(
 def _load_metrics_service(
     runtime_section: Optional[Mapping[str, Any]]
 ) -> MetricsServiceConfig | None:
+    """Ładuje sekcję runtime.metrics_service z zachowaniem zgodności między gałęziami."""
     if MetricsServiceConfig is None or not _core_has("metrics_service"):
         return None
+
     runtime = runtime_section or {}
     metrics_raw = runtime.get("metrics_service")
     if not metrics_raw:
         return None
-    return MetricsServiceConfig(
-        enabled=bool(metrics_raw.get("enabled", True)),
-        host=str(metrics_raw.get("host", "127.0.0.1")),
-        port=int(metrics_raw.get("port", 0)),
-        history_size=int(metrics_raw.get("history_size", 1024)),
-        log_sink=bool(metrics_raw.get("log_sink", True)),
-        jsonl_path=str(metrics_raw.get("jsonl_path")) if metrics_raw.get("jsonl_path") else None,
-        jsonl_fsync=bool(metrics_raw.get("jsonl_fsync", False)),
-    )
+
+    # Zbiór dostępnych pól w aktualnym MetricsServiceConfig
+    available_fields = {f.name for f in fields(MetricsServiceConfig)}  # type: ignore[arg-type]
+
+    kwargs: dict[str, Any] = {
+        "enabled": bool(metrics_raw.get("enabled", True)),
+        "host": str(metrics_raw.get("host", "127.0.0.1")),
+        "port": int(metrics_raw.get("port", 0)),
+        "history_size": int(metrics_raw.get("history_size", 1024)),
+    }
+
+    if "auth_token" in available_fields:
+        kwargs["auth_token"] = (
+            str(metrics_raw.get("auth_token")) if metrics_raw.get("auth_token") else None
+        )
+    if "log_sink" in available_fields:
+        kwargs["log_sink"] = bool(metrics_raw.get("log_sink", True))
+    if "jsonl_path" in available_fields:
+        kwargs["jsonl_path"] = str(metrics_raw.get("jsonl_path")) if metrics_raw.get("jsonl_path") else None
+    if "jsonl_fsync" in available_fields:
+        kwargs["jsonl_fsync"] = bool(metrics_raw.get("jsonl_fsync", False))
+
+    # Pola telemetryczne, które mogą nie występować w starszych gałęziach
+    if "reduce_motion_alerts" in available_fields:
+        kwargs["reduce_motion_alerts"] = bool(metrics_raw.get("reduce_motion_alerts", False))
+    if "reduce_motion_category" in available_fields:
+        kwargs["reduce_motion_category"] = str(metrics_raw.get("reduce_motion_category", "ui.performance"))
+    if "reduce_motion_severity_active" in available_fields:
+        kwargs["reduce_motion_severity_active"] = str(metrics_raw.get("reduce_motion_severity_active", "warning"))
+    if "reduce_motion_severity_recovered" in available_fields:
+        kwargs["reduce_motion_severity_recovered"] = str(metrics_raw.get("reduce_motion_severity_recovered", "info"))
+
+    if "overlay_alerts" in available_fields:
+        kwargs["overlay_alerts"] = bool(metrics_raw.get("overlay_alerts", False))
+    if "overlay_alert_category" in available_fields:
+        kwargs["overlay_alert_category"] = str(metrics_raw.get("overlay_alert_category", "ui.performance"))
+    if "overlay_alert_severity_exceeded" in available_fields:
+        kwargs["overlay_alert_severity_exceeded"] = str(metrics_raw.get("overlay_alert_severity_exceeded", "warning"))
+    if "overlay_alert_severity_recovered" in available_fields:
+        kwargs["overlay_alert_severity_recovered"] = str(metrics_raw.get("overlay_alert_severity_recovered", "info"))
+
+    return MetricsServiceConfig(**kwargs)  # type: ignore[call-arg]
 
 
 def load_core_config(path: str | Path) -> CoreConfig:

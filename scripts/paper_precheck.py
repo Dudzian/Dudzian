@@ -11,7 +11,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -27,7 +26,10 @@ from bot_core.data.ohlcv import (
     summarize_coverage,
     summarize_issues,
 )
-from bot_core.data.ohlcv.coverage_check import SummaryThresholdResult, evaluate_summary_thresholds
+from bot_core.data.ohlcv.coverage_check import (
+    SummaryThresholdResult,
+    evaluate_summary_thresholds,
+)
 from bot_core.exchanges.base import AccountSnapshot, OrderRequest
 from bot_core.risk.engine import ThresholdRiskEngine
 from bot_core.risk.factory import build_risk_profile_from_config
@@ -368,7 +370,7 @@ def _risk_sanity_payload(
     if min_multiple > 0:
         wide_multiple = max(min_multiple * 1.5, min_multiple + 0.5, 1.0)
         if wide_multiple <= min_multiple:
-            wide_multiple = min_multiple + 0.25)
+            wide_multiple = min_multiple + 0.25
 
     atr = max(1.0, price * 0.005)
     if max_position_pct <= 0:

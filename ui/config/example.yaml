@@ -22,6 +22,7 @@ performance_guard:
 telemetry:
   metrics_endpoint: 127.0.0.1:50061
   metrics_tag: desktop-shell-dev
+  metrics_auth_token: dev-secret
 
 history_limit: 800
 maximum_samples: 12000

@@ -21,8 +21,10 @@ void FrameRateMonitor::setWindow(QQuickWindow* window) {
     if (!m_window)
         return;
 
-    m_connection = connect(m_window, &QQuickWindow::frameSwapped,
-                           this, &FrameRateMonitor::handleFrameSwapped);
+    m_connection = connect(
+        m_window, &QQuickWindow::frameSwapped,
+        this, &FrameRateMonitor::handleFrameSwapped
+    );
 }
 
 void FrameRateMonitor::setPerformanceGuard(const PerformanceGuard& guard) {
@@ -63,15 +65,20 @@ void FrameRateMonitor::handleFrameSwapped() {
         return;
 
     const double reduceSeconds = qMax(0.0, m_guard.reduceMotionAfterSeconds);
+
     if (fps < threshold) {
         m_lowFpsDuration += deltaSeconds;
         m_highFpsDuration = 0.0;
+
         if (!m_reduceMotionActive && (reduceSeconds == 0.0 || m_lowFpsDuration >= reduceSeconds))
             applyReduceMotion(true);
     } else {
         m_highFpsDuration += deltaSeconds;
         m_lowFpsDuration = 0.0;
-        const double recoverySeconds = reduceSeconds > 0.0 ? qMax(0.2, reduceSeconds * 0.5) : 0.3;
+
+        const double recoverySeconds =
+            (reduceSeconds > 0.0) ? qMax(0.2, reduceSeconds * 0.5) : 0.3;
+
         if (m_reduceMotionActive && m_highFpsDuration >= recoverySeconds)
             applyReduceMotion(false);
     }
