@@ -48,6 +48,23 @@ runtime:
     daily_trend_core:
       tick_seconds: 86400
       interval: 1d
+  metrics_service:
+    enabled: true
+    host: 127.0.0.1
+    port: 55060
+    history_size: 1024
+    auth_token: changeme-telemetry-token
+    log_sink: true
+    jsonl_path: audit/metrics/telemetry.jsonl
+    jsonl_fsync: false
+    reduce_motion_alerts: true
+    reduce_motion_category: ui.performance
+    reduce_motion_severity_active: warning
+    reduce_motion_severity_recovered: info
+    overlay_alerts: true
+    overlay_alert_category: ui.performance
+    overlay_alert_severity_exceeded: warning
+    overlay_alert_severity_recovered: info
 strategies:
   core_daily_trend:
     engine: daily_trend_momentum

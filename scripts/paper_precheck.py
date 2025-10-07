@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import math
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,6 +17,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from bot_core.config.loader import load_core_config
+from bot_core.config.models import CoreConfig, EnvironmentConfig
 from bot_core.config.validation import validate_core_config
 from bot_core.data.intervals import normalize_interval_token
 from bot_core.data.ohlcv import (
@@ -23,6 +27,57 @@ from bot_core.data.ohlcv import (
     summarize_coverage,
     summarize_issues,
 )
+from bot_core.data.ohlcv.coverage_check import SummaryThresholdResult, evaluate_summary_thresholds
+from bot_core.exchanges.base import AccountSnapshot, OrderRequest
+from bot_core.risk.engine import ThresholdRiskEngine
+from bot_core.risk.factory import build_risk_profile_from_config
+
+
+def _sanitize_environment_token(value: str) -> str:
+    """Zamienia nazwę środowiska na token bezpieczny dla nazwy pliku."""
+
+    token = re.sub(r"[^A-Za-z0-9_.-]+", "_", value.strip())
+    if not token:
+        return "unknown_environment"
+    return token
+
+
+def persist_precheck_report(
+    payload: Mapping[str, object],
+    *,
+    environment_name: str,
+    base_dir: Path,
+    created_at: datetime | None = None,
+) -> dict[str, object]:
+    """Zapisuje wynik paper_precheck w katalogu audytu i zwraca metadane pliku."""
+
+    timestamp = (created_at or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    timestamp = timestamp.replace(microsecond=0)
+    token = timestamp.strftime("%Y%m%dT%H%M%SZ")
+    env_token = _sanitize_environment_token(environment_name)
+
+    base_dir.mkdir(parents=True, exist_ok=True)
+
+    base_name = f"{token}_{env_token}"
+    candidate = base_dir / f"{base_name}.json"
+    counter = 1
+    while candidate.exists():
+        candidate = base_dir / f"{base_name}_{counter}.json"
+        counter += 1
+
+    serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2)
+    candidate.write_text(serialized + "\n", encoding="utf-8")
+
+    digest = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+    metadata: dict[str, object] = {
+        "path": str(candidate),
+        "sha256": digest,
+        "created_at": timestamp.isoformat(),
+        "environment": environment_name,
+        "status": str(payload.get("status", "unknown")),
+        "size_bytes": len(serialized.encode("utf-8")),
+    }
+    return metadata
 
 
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
@@ -88,6 +143,11 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         "--fail-on-warnings",
         action="store_true",
         help="Zakończ komendę kodem błędu, jeśli pojawią się ostrzeżenia.",
+    )
+    parser.add_argument(
+        "--skip-risk-check",
+        action="store_true",
+        help="Pomiń sanity-check silnika ryzyka (tylko do debugowania).",
     )
     return parser.parse_args(argv)
 
@@ -236,6 +296,217 @@ def _breakdown_by_symbol(statuses: Sequence[object]) -> dict[str, dict[str, int]
 
 
 
+def _resolve_reference_symbol(config: CoreConfig, environment: EnvironmentConfig) -> str:
+    """Próbuje wyznaczyć reprezentatywny symbol giełdowy dla sanity-checku ryzyka."""
+
+    universe_name = getattr(environment, "instrument_universe", None)
+    if not universe_name:
+        return "BTCUSDT"
+
+    universes = getattr(config, "instrument_universes", {}) or {}
+    universe = universes.get(universe_name)
+    if universe is None:
+        return "BTCUSDT"
+
+    exchange = environment.exchange
+    for instrument in getattr(universe, "instruments", ()):
+        symbols = getattr(instrument, "exchange_symbols", None)
+        if isinstance(symbols, Mapping):
+            candidate = symbols.get(exchange)
+            if candidate:
+                return str(candidate)
+    return "BTCUSDT"
+
+
+def _risk_sanity_payload(
+    *,
+    config: CoreConfig,
+    environment: EnvironmentConfig,
+) -> Mapping[str, object]:
+    """Weryfikuje bazowe zachowanie silnika ryzyka dla profilu środowiska."""
+
+    payload: dict[str, object] = {
+        "profile": environment.risk_profile,
+        "issues": [],
+        "warnings": [],
+    }
+
+    profiles = getattr(config, "risk_profiles", {}) or {}
+    profile_config = profiles.get(environment.risk_profile)
+    if profile_config is None:
+        payload["status"] = "error"
+        payload["issues"] = ["profile_not_defined"]
+        return payload
+
+    try:
+        profile = build_risk_profile_from_config(profile_config)
+    except Exception as exc:  # pragma: no cover - defensywnie
+        payload["status"] = "error"
+        payload["issues"] = [f"profile_build_failed:{exc}"]
+        return payload
+
+    payload["profile"] = profile.name
+
+    engine = ThresholdRiskEngine()
+    engine.register_profile(profile)
+
+    equity = 120_000.0
+    price = 30_000.0
+    target_vol = float(profile.target_volatility())
+    max_position_pct = float(profile.max_position_exposure())
+    min_multiple_raw = float(profile.stop_loss_atr_multiple())
+    min_multiple = max(min_multiple_raw, 0.0)
+
+    checks: dict[str, object] = {}
+    issues: list[str] = []
+    warnings: list[str] = []
+
+    symbol = _resolve_reference_symbol(config, environment)
+
+    if min_multiple <= 0:
+        warnings.append("stop_multiple_not_positive")
+
+    tight_multiple = 0.0
+    if min_multiple > 0:
+        tight_multiple = max(0.05, min_multiple * 0.5)
+        if tight_multiple >= min_multiple:
+            tight_multiple = max(0.05, min_multiple - 0.05)
+
+    wide_multiple = 1.0
+    if min_multiple > 0:
+        wide_multiple = max(min_multiple * 1.5, min_multiple + 0.5, 1.0)
+        if wide_multiple <= min_multiple:
+            wide_multiple = min_multiple + 0.25
+
+    atr = max(1.0, price * 0.005)
+    if max_position_pct <= 0:
+        warnings.append("max_position_pct_not_positive")
+
+    snapshot = AccountSnapshot(
+        balances={"USDT": equity},
+        total_equity=equity,
+        available_margin=equity,
+        maintenance_margin=0.0,
+    )
+
+    observations: dict[str, object] = {
+        "symbol": symbol,
+        "price": price,
+        "atr": atr,
+        "equity": equity,
+        "target_volatility": target_vol,
+        "max_position_pct": max_position_pct,
+        "min_stop_multiple": min_multiple,
+        "tight_stop_multiple": tight_multiple,
+        "wide_stop_multiple": wide_multiple,
+    }
+
+    enforce_profile_rules = target_vol > 0 and min_multiple > 0
+
+    def _build_request(quantity: float, stop_multiple: float) -> OrderRequest:
+        stop_price = price - atr * stop_multiple
+        metadata = {"atr": atr, "stop_price": stop_price}
+        return OrderRequest(
+            symbol=symbol,
+            side="buy",
+            quantity=float(quantity),
+            order_type="limit",
+            price=price,
+            stop_price=stop_price,
+            atr=atr,
+            metadata=metadata,
+        )
+
+    if enforce_profile_rules and tight_multiple > 0:
+        tight_result = engine.apply_pre_trade_checks(
+            _build_request(0.1, tight_multiple),
+            account=snapshot,
+            profile_name=profile.name,
+        )
+        rejected = not tight_result.allowed
+        checks["tight_stop_rejected"] = rejected
+        checks["tight_stop_reason"] = tight_result.reason
+        if not rejected:
+            issues.append("tight_stop_not_rejected")
+    elif target_vol <= 0 and "target_volatility_not_positive" not in warnings:
+        warnings.append("target_volatility_not_positive")
+
+    if enforce_profile_rules and wide_multiple > min_multiple:
+        stop_distance = atr * wide_multiple
+        if stop_distance <= 0:
+            issues.append("wide_stop_distance_non_positive")
+        else:
+            risk_budget = target_vol * equity
+            observations["risk_budget"] = risk_budget
+            quantities: list[float] = []
+            if risk_budget > 0 and stop_distance > 0:
+                risk_budget_qty = risk_budget / stop_distance
+                observations["risk_budget_quantity"] = risk_budget_qty
+                if risk_budget_qty > 0:
+                    quantities.append(risk_budget_qty)
+            if max_position_pct > 0 and price > 0:
+                position_limit_qty = (max_position_pct * equity) / price
+                observations["position_limit_quantity"] = position_limit_qty
+                if position_limit_qty > 0:
+                    quantities.append(position_limit_qty)
+
+            if not quantities:
+                issues.append("unable_to_compute_allowed_quantity")
+            else:
+                allowed_total_quantity = min(quantities)
+                observations["allowed_quantity"] = allowed_total_quantity
+                if allowed_total_quantity <= 0:
+                    issues.append("allowed_quantity_not_positive")
+                else:
+                    allowed_result = engine.apply_pre_trade_checks(
+                        _build_request(allowed_total_quantity * 0.95, wide_multiple),
+                        account=snapshot,
+                        profile_name=profile.name,
+                    )
+                    checks["wide_stop_allowed"] = allowed_result.allowed
+                    if not allowed_result.allowed:
+                        issues.append("wide_stop_not_accepted")
+
+                    oversized_result = engine.apply_pre_trade_checks(
+                        _build_request(allowed_total_quantity * 1.5, wide_multiple),
+                        account=snapshot,
+                        profile_name=profile.name,
+                    )
+                    blocked = not oversized_result.allowed
+                    checks["oversized_blocked"] = blocked
+                    if not blocked:
+                        issues.append("oversized_not_blocked")
+                    else:
+                        adjustments = oversized_result.adjustments or {}
+                        max_quantity = 0.0
+                        if isinstance(adjustments, Mapping):
+                            raw = adjustments.get("max_quantity")
+                            if raw is not None:
+                                try:
+                                    max_quantity = float(raw)
+                                except (TypeError, ValueError):  # pragma: no cover - defensywnie
+                                    max_quantity = 0.0
+                        observations["max_quantity_suggestion"] = max_quantity
+                        if not math.isclose(
+                            max_quantity,
+                            allowed_total_quantity,
+                            rel_tol=1e-3,
+                            abs_tol=1e-6,
+                        ):
+                            warnings.append("max_quantity_adjustment_differs")
+    elif target_vol <= 0 and "target_volatility_not_positive" not in warnings:
+        # brak docelowej zmienności uniemożliwia walidację limitów wolumenu
+        warnings.append("target_volatility_not_positive")
+
+    status = "error" if issues else ("warning" if warnings else "ok")
+    payload["status"] = status
+    payload["issues"] = issues
+    payload["warnings"] = warnings
+    payload["checks"] = checks
+    payload["observations"] = observations
+    return payload
+
+
 
 def _coverage_payload(
     *,
@@ -332,23 +603,62 @@ def _coverage_payload(
     return payload
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    args = _parse_args(argv)
-    config = load_core_config(Path(args.config))
+def run_precheck(
+    *,
+    environment_name: str,
+    config: CoreConfig | None = None,
+    config_path: str | Path | None = None,
+    manifest_path: Path | None = None,
+    as_of: datetime | None = None,
+    symbols: Sequence[str] | None = None,
+    intervals: Sequence[str] | None = None,
+    max_gap_minutes: float | None = None,
+    min_ok_ratio: float | None = None,
+    fail_on_warnings: bool = False,
+    skip_risk_check: bool = False,
+) -> tuple[dict[str, object], int]:
+    """Wykonuje sanitarne kontrole paper_precheck i zwraca payload wraz z kodem zakończenia."""
+
+    if config is None:
+        if config_path is None:
+            raise ValueError("Wymagany jest config lub config_path")
+        config = load_core_config(Path(config_path))
     validation = validate_core_config(config)
 
-    environment = config.environments.get(args.environment)
-    if environment is None:
-        print(f"Nie znaleziono środowiska: {args.environment}", file=sys.stderr)
-        return 2
+    environment = config.environments.get(environment_name)
 
-    manifest_path = Path(args.manifest) if args.manifest else Path(environment.data_cache_path) / "ohlcv_manifest.sqlite"
-
-    as_of = _parse_as_of(args.as_of)
+    resolved_as_of = as_of or datetime.now(timezone.utc)
+    resolved_manifest = manifest_path
 
     coverage_result: Mapping[str, object] | None = None
     coverage_status = "skipped"
     coverage_warnings: list[str] = []
+
+    risk_result: Mapping[str, object] | None = None
+    risk_status = "skipped"
+
+    if environment is None:
+        result_payload: dict[str, object] = {
+            "status": "error",
+            "config": {
+                "valid": validation.is_valid(),
+                "errors": list(validation.errors),
+                "warnings": list(validation.warnings),
+            },
+            "coverage": None,
+            "coverage_warnings": ["environment_not_found"],
+            "risk": None,
+            "environment": environment_name,
+            "manifest_path": str(resolved_manifest) if resolved_manifest else "",
+            "as_of": resolved_as_of.isoformat(),
+            "coverage_status": "skipped",
+            "risk_status": "skipped",
+            "error_reason": "environment_not_found",
+        }
+        return result_payload, 2
+
+    if resolved_manifest is None:
+        resolved_manifest = Path(environment.data_cache_path) / "ohlcv_manifest.sqlite"
 
     if not environment.instrument_universe:
         coverage_warnings.append("environment_missing_universe")
@@ -356,11 +666,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         universe = config.instrument_universes.get(environment.instrument_universe)
         if universe is None:
             coverage_warnings.append("universe_not_defined")
-        elif not manifest_path.exists():
+        elif not resolved_manifest.exists():
             coverage_warnings.append("manifest_missing")
         else:
-            max_gap = args.max_gap_minutes
-            min_ok_ratio = args.min_ok_ratio
+            max_gap = max_gap_minutes
+            min_ok = min_ok_ratio
             data_quality = getattr(environment, "data_quality", None)
             if data_quality is not None:
                 if max_gap is None:
@@ -370,29 +680,54 @@ def main(argv: Sequence[str] | None = None) -> int:
                             max_gap = float(candidate)
                         except (TypeError, ValueError):
                             coverage_warnings.append("invalid_max_gap_in_config")
-                if min_ok_ratio is None:
+                if min_ok is None:
                     candidate_ratio = getattr(data_quality, "min_ok_ratio", None)
                     if candidate_ratio is not None:
                         try:
-                            min_ok_ratio = float(candidate_ratio)
+                            min_ok = float(candidate_ratio)
                         except (TypeError, ValueError):
                             coverage_warnings.append("invalid_min_ok_ratio_in_config")
 
-            if min_ok_ratio is not None and not 0 <= float(min_ok_ratio) <= 1:
-                print("--min-ok-ratio musi mieścić się w zakresie 0-1", file=sys.stderr)
-                return 2
+            if min_ok is not None and not 0 <= float(min_ok) <= 1:
+                payload: dict[str, object] = {
+                    "status": "error",
+                    "config": {
+                        "valid": validation.is_valid(),
+                        "errors": list(validation.errors),
+                        "warnings": list(validation.warnings),
+                    },
+                    "coverage": None,
+                    "coverage_warnings": coverage_warnings + ["invalid_min_ok_ratio"],
+                    "risk": None,
+                    "environment": environment.name,
+                    "manifest_path": str(resolved_manifest),
+                    "as_of": resolved_as_of.isoformat(),
+                    "coverage_status": "error",
+                    "risk_status": "skipped",
+                }
+                payload["error_reason"] = "invalid_min_ok_ratio"
+                return payload, 2
 
             coverage_result = _coverage_payload(
-                manifest_path=manifest_path,
+                manifest_path=resolved_manifest,
                 universe=universe,
                 exchange=environment.exchange,
-                as_of=as_of,
-                symbols=args.symbols,
-                intervals=args.intervals,
+                as_of=resolved_as_of,
+                symbols=symbols,
+                intervals=intervals,
                 max_gap_minutes=max_gap,
-                min_ok_ratio=min_ok_ratio,
+                min_ok_ratio=min_ok,
             )
             coverage_status = str(coverage_result.get("status", "unknown"))
+
+    if not skip_risk_check:
+        risk_result = _risk_sanity_payload(config=config, environment=environment)
+        if isinstance(risk_result, Mapping):
+            risk_status = str(risk_result.get("status", "unknown"))
+        else:
+            risk_status = "unknown"
+    else:
+        risk_status = "skipped"
 
     config_payload = {
         "valid": validation.is_valid(),
@@ -405,9 +740,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         "config": config_payload,
         "coverage": coverage_result,
         "coverage_warnings": coverage_warnings,
+        "risk": risk_result,
         "environment": environment.name,
-        "manifest_path": str(manifest_path),
-        "as_of": as_of.isoformat(),
+        "manifest_path": str(resolved_manifest),
+        "as_of": resolved_as_of.isoformat(),
+        "coverage_status": coverage_status,
+        "risk_status": risk_status,
     }
 
     final_status = "ok"
@@ -419,19 +757,58 @@ def main(argv: Sequence[str] | None = None) -> int:
     elif coverage_result is not None and coverage_status == "error":
         final_status = "error"
         exit_code = 3
-    elif args.fail_on_warnings and (
-        validation.warnings or coverage_status == "warning" or coverage_warnings
+    elif risk_result is not None and risk_status == "error":
+        final_status = "error"
+        exit_code = 5
+    elif fail_on_warnings and (
+        validation.warnings
+        or coverage_status == "warning"
+        or coverage_warnings
+        or risk_status == "warning"
     ):
         final_status = "error"
         exit_code = 4
-    elif validation.warnings or coverage_status == "warning" or coverage_warnings:
+    elif (
+        validation.warnings
+        or coverage_status == "warning"
+        or coverage_warnings
+        or risk_status == "warning"
+    ):
         final_status = "warning"
 
     result_payload["status"] = final_status
     result_payload["coverage_status"] = coverage_status
+    result_payload["risk_status"] = risk_status
+
+    return result_payload, exit_code
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = _parse_args(argv)
+    as_of = _parse_as_of(args.as_of)
+    payload, exit_code = run_precheck(
+        environment_name=args.environment,
+        config_path=Path(args.config),
+        manifest_path=Path(args.manifest) if args.manifest else None,
+        as_of=as_of,
+        symbols=args.symbols,
+        intervals=args.intervals,
+        max_gap_minutes=args.max_gap_minutes,
+        min_ok_ratio=args.min_ok_ratio,
+        fail_on_warnings=args.fail_on_warnings,
+        skip_risk_check=args.skip_risk_check,
+    )
+
+    if payload.get("error_reason") == "environment_not_found":
+        print(f"Nie znaleziono środowiska: {args.environment}", file=sys.stderr)
+        return exit_code
+
+    if payload.get("error_reason") == "invalid_min_ok_ratio":
+        print("--min-ok-ratio musi mieścić się w zakresie 0-1", file=sys.stderr)
+        return exit_code
 
     if args.json or args.output:
-        serialized = json.dumps(result_payload, ensure_ascii=False, indent=2)
+        serialized = json.dumps(payload, ensure_ascii=False, indent=2)
         if args.output:
             output_path = Path(args.output)
             output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -440,13 +817,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(serialized)
 
     if not args.json:
-        print(f"Config: {'OK' if validation.is_valid() else 'ERROR'}")
-        if validation.errors:
-            for entry in validation.errors:
-                print(f"  ✖ {entry}")
-        if validation.warnings:
-            for entry in validation.warnings:
-                print(f"  ⚠ {entry}")
+        config_payload = payload.get("config", {}) if isinstance(payload, Mapping) else {}
+        config_valid = bool(config_payload.get("valid"))
+        print(f"Config: {'OK' if config_valid else 'ERROR'}")
+        for entry in config_payload.get("errors", []) or []:
+            print(f"  ✖ {entry}")
+        for entry in config_payload.get("warnings", []) or []:
+            print(f"  ⚠ {entry}")
+
+        coverage_result = payload.get("coverage") if isinstance(payload, Mapping) else None
+        coverage_status = str(payload.get("coverage_status", "skipped"))
+        coverage_warnings = list(payload.get("coverage_warnings", []) or [])
 
         if coverage_result is None:
             print("Pokrycie danych: pominięto (brak manifestu lub uniwersum)")
@@ -487,7 +868,30 @@ def main(argv: Sequence[str] | None = None) -> int:
             for warning in coverage_warnings:
                 print(f"  - {warning}")
 
-        print(f"Status końcowy: {final_status.upper()}")
+        risk_result = payload.get("risk") if isinstance(payload, Mapping) else None
+        risk_status = str(payload.get("risk_status", "skipped"))
+        if risk_result is None:
+            if args.skip_risk_check:
+                print("Sanity-check ryzyka: pominięto (--skip-risk-check)")
+            else:
+                print(f"Sanity-check ryzyka: {risk_status}")
+        else:
+            print(f"Sanity-check ryzyka: {risk_status}")
+            issues = []
+            warnings = []
+            if isinstance(risk_result, Mapping):
+                issues = list(risk_result.get("issues", []))
+                warnings = list(risk_result.get("warnings", []))
+            if issues:
+                print("  Problemy ryzyka:")
+                for issue in issues:
+                    print(f"    - {issue}")
+            if warnings:
+                print("  Ostrzeżenia ryzyka:")
+                for warning in warnings:
+                    print(f"    - {warning}")
+
+        print(f"Status końcowy: {str(payload.get('status', 'unknown')).upper()}")
 
     return exit_code
 

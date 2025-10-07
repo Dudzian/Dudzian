@@ -2,6 +2,27 @@
 
 from bot_core.runtime.bootstrap import BootstrapContext, bootstrap_environment
 
+try:
+    from bot_core.runtime.metrics_service import (  # type: ignore
+        MetricsServer,
+        MetricsServiceServicer,
+        MetricsSnapshotStore,
+        MetricsSink,
+        JsonlSink,
+        ReduceMotionAlertSink,
+        OverlayBudgetAlertSink,
+        create_server as create_metrics_server,
+        build_metrics_server_from_config,
+    )
+except Exception:  # pragma: no cover - brak wygenerowanych stubów lub grpcio
+    MetricsServer = None  # type: ignore
+    MetricsServiceServicer = None  # type: ignore
+    MetricsSnapshotStore = None  # type: ignore
+    MetricsSink = None  # type: ignore
+    JsonlSink = None  # type: ignore
+    create_metrics_server = None  # type: ignore
+    build_metrics_server_from_config = None  # type: ignore
+
 # Kontrolery mogą się różnić między gałęziami – importujemy opcjonalnie.
 try:
     from bot_core.runtime.controller import TradingController as _TradingController  # type: ignore
@@ -30,6 +51,21 @@ except Exception:  # pragma: no cover - starsze gałęzie mogą nie mieć moduł
     create_trading_controller = None  # type: ignore
 
 __all__ = ["BootstrapContext", "bootstrap_environment"]
+
+if MetricsServer is not None:
+    __all__.extend(
+        [
+            "MetricsServer",
+            "MetricsServiceServicer",
+            "MetricsSnapshotStore",
+            "MetricsSink",
+            "JsonlSink",
+            "ReduceMotionAlertSink",
+            "OverlayBudgetAlertSink",
+            "create_metrics_server",
+            "build_metrics_server_from_config",
+        ]
+    )
 
 # Eksportuj tylko te kontrolery, które są dostępne w danej gałęzi.
 if _TradingController is None:

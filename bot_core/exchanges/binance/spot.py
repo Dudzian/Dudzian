@@ -4,6 +4,7 @@ from __future__ import annotations
 import hmac
 import json
 import logging
+import random
 import time
 from hashlib import sha256
 from typing import Iterable, Mapping, Optional, Sequence
@@ -19,10 +20,19 @@ from bot_core.exchanges.base import (
     OrderRequest,
     OrderResult,
 )
+from bot_core.exchanges.binance.symbols import (
+    filter_supported_exchange_symbols,
+    to_exchange_symbol,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
 _DEFAULT_HEADERS = {"User-Agent": "bot-core/1.0 (+https://github.com/)"}
+_RETRYABLE_STATUS = {418, 429}
+_MAX_RETRIES = 3
+_BASE_BACKOFF = 0.4
+_BACKOFF_CAP = 4.0
+_JITTER_RANGE = (0.05, 0.35)
 
 
 def _to_float(value: object, default: float = 0.0) -> float:
@@ -240,23 +250,61 @@ class BinanceSpotAdapter(ExchangeAdapter):
         return self._execute_request(request)
 
     @staticmethod
-    def _execute_request(request: Request) -> dict[str, object] | list[object]:
-        try:
-            with urlopen(request, timeout=15) as response:  # nosec: B310 - endpoint zaufany
-                payload = response.read()
-        except HTTPError as exc:  # pragma: no cover - zależne od API i środowiska sieciowego
-            _LOGGER.error("Błąd HTTP podczas komunikacji z Binance: %s", exc)
-            raise RuntimeError(f"Binance API zwróciło błąd HTTP: {exc}") from exc
-        except URLError as exc:  # pragma: no cover - zależne od sieci
-            _LOGGER.error("Błąd sieci podczas komunikacji z Binance: %s", exc)
-            raise RuntimeError("Nie udało się połączyć z API Binance") from exc
+    def _calculate_backoff(attempt: int) -> float:
+        base_delay = min(_BASE_BACKOFF * (2 ** (attempt - 1)), _BACKOFF_CAP)
+        jitter = random.uniform(*_JITTER_RANGE)
+        return base_delay + jitter
 
-        try:
-            data = json.loads(payload)
-        except json.JSONDecodeError as exc:  # pragma: no cover - niepoprawne JSON to błąd API
-            _LOGGER.error("Niepoprawna odpowiedź JSON od Binance: %s", exc)
-            raise RuntimeError("Niepoprawna odpowiedź JSON od API Binance") from exc
-        return data
+    @classmethod
+    def _execute_request(cls, request: Request) -> dict[str, object] | list[object]:
+        last_error: Exception | None = None
+        for attempt in range(1, _MAX_RETRIES + 1):
+            try:
+                with urlopen(request, timeout=15) as response:  # nosec: B310 - endpoint zaufany
+                    payload = response.read()
+            except HTTPError as exc:
+                status_code = exc.code
+                if status_code in _RETRYABLE_STATUS or 500 <= status_code < 600:
+                    last_error = exc
+                    delay = cls._calculate_backoff(attempt)
+                    _LOGGER.warning(
+                        "Binance HTTP error (status=%s) — próba %s/%s, ponawianie za %.2fs",
+                        status_code,
+                        attempt,
+                        _MAX_RETRIES,
+                        delay,
+                    )
+                    if attempt == _MAX_RETRIES:
+                        break
+                    time.sleep(delay)
+                    continue
+                _LOGGER.error("Błąd HTTP podczas komunikacji z Binance: %s", exc)
+                raise RuntimeError(f"Binance API zwróciło błąd HTTP: {exc}") from exc
+            except URLError as exc:
+                last_error = exc
+                delay = cls._calculate_backoff(attempt)
+                _LOGGER.warning(
+                    "Błąd sieci podczas komunikacji z Binance — próba %s/%s, ponawianie za %.2fs",
+                    attempt,
+                    _MAX_RETRIES,
+                    delay,
+                )
+                if attempt == _MAX_RETRIES:
+                    break
+                time.sleep(delay)
+                continue
+            else:
+                try:
+                    data = json.loads(payload)
+                except json.JSONDecodeError as exc:  # pragma: no cover - niepoprawne JSON to błąd API
+                    _LOGGER.error("Niepoprawna odpowiedź JSON od Binance: %s", exc)
+                    raise RuntimeError("Niepoprawna odpowiedź JSON od API Binance") from exc
+                return data
+
+        assert last_error is not None  # dla mypy; realnie jeśli brak błędu, wcześniej zwracamy wynik
+        if isinstance(last_error, HTTPError):
+            raise RuntimeError(f"Binance API zwróciło błąd HTTP: {last_error}") from last_error
+        raise RuntimeError("Nie udało się połączyć z API Binance") from last_error
 
     # ----------------------------------------------------------------------------------
     # ExchangeAdapter API
@@ -346,7 +394,7 @@ class BinanceSpotAdapter(ExchangeAdapter):
         if not isinstance(symbols_section, list):
             raise RuntimeError("Pole 'symbols' w odpowiedzi Binance ma niepoprawny format")
 
-        active_symbols: list[str] = []
+        raw_symbols: list[str] = []
         for entry in symbols_section:
             if not isinstance(entry, dict):
                 continue
@@ -354,8 +402,8 @@ class BinanceSpotAdapter(ExchangeAdapter):
             symbol = entry.get("symbol")
             if status != "TRADING" or not isinstance(symbol, str):
                 continue
-            active_symbols.append(symbol)
-        return active_symbols
+            raw_symbols.append(symbol)
+        return filter_supported_exchange_symbols(raw_symbols)
 
     def fetch_ohlcv(
         self,
@@ -366,7 +414,11 @@ class BinanceSpotAdapter(ExchangeAdapter):
         limit: Optional[int] = None,
     ) -> Sequence[Sequence[float]]:
         """Pobiera świece OHLCV w formacie zgodnym z modułem danych."""
-        params: dict[str, object] = {"symbol": symbol, "interval": interval}
+        exchange_symbol = to_exchange_symbol(symbol)
+        if exchange_symbol is None:
+            raise ValueError(f"Symbol {symbol!r} nie jest wspierany przez adapter Binance Spot.")
+
+        params: dict[str, object] = {"symbol": exchange_symbol, "interval": interval}
         if start is not None:
             params["startTime"] = int(start)
         if end is not None:
@@ -396,8 +448,14 @@ class BinanceSpotAdapter(ExchangeAdapter):
         if "trade" not in self._permission_set:
             raise PermissionError("Aktualne poświadczenia nie mają uprawnień tradingowych.")
 
+        exchange_symbol = to_exchange_symbol(request.symbol)
+        if exchange_symbol is None:
+            raise ValueError(
+                "Symbol zlecenia nie jest wspierany lub posiada niepoprawny format."
+            )
+
         params: dict[str, object] = {
-            "symbol": request.symbol,
+            "symbol": exchange_symbol,
             "side": request.side.upper(),
             "type": request.order_type.upper(),
             "quantity": request.quantity,
@@ -434,7 +492,10 @@ class BinanceSpotAdapter(ExchangeAdapter):
             raise PermissionError("Aktualne poświadczenia nie mają uprawnień tradingowych.")
         params: dict[str, object] = {"orderId": order_id}
         if symbol:
-            params["symbol"] = symbol
+            exchange_symbol = to_exchange_symbol(symbol)
+            if exchange_symbol is None:
+                raise ValueError("Symbol anulowanego zlecenia ma niepoprawny format.")
+            params["symbol"] = exchange_symbol
         response = self._signed_request("/api/v3/order", method="DELETE", params=params)
         if isinstance(response, Mapping):
             response_map = dict(response)

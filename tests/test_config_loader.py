@@ -276,3 +276,51 @@ def test_load_core_config_inherits_risk_profile_data_quality(tmp_path: Path) -> 
     assert isinstance(env.data_quality, EnvironmentDataQualityConfig)
     assert env.data_quality.max_gap_minutes == 180.0
     assert env.data_quality.min_ok_ratio == 0.85
+
+def test_load_core_config_reads_metrics_service(tmp_path: Path) -> None:
+    config_path = tmp_path / "core.yaml"
+    config_path.write_text(
+        """
+        risk_profiles: {}
+        environments: {}
+        alerts: {}
+        runtime:
+          metrics_service:
+            enabled: true
+            host: 0.0.0.0
+            port: 55123
+            history_size: 256
+            auth_token: secret-token
+            log_sink: false
+            reduce_motion_alerts: true
+            reduce_motion_category: ui.performance.guard
+            reduce_motion_severity_active: critical
+            reduce_motion_severity_recovered: notice
+            overlay_alerts: true
+            overlay_alert_category: ui.performance.overlay
+            overlay_alert_severity_exceeded: critical
+            overlay_alert_severity_recovered: notice
+        """,
+        encoding="utf-8",
+    )
+
+    config = load_core_config(config_path)
+
+    assert config.metrics_service is not None
+    metrics = config.metrics_service
+    assert metrics.enabled is True
+    assert metrics.host == "0.0.0.0"
+    assert metrics.port == 55123
+    assert metrics.history_size == 256
+    assert metrics.auth_token == "secret-token"
+    assert metrics.log_sink is False
+    assert metrics.jsonl_path is None
+    assert metrics.reduce_motion_alerts is True
+    assert metrics.reduce_motion_category == "ui.performance.guard"
+    assert metrics.reduce_motion_severity_active == "critical"
+    assert metrics.reduce_motion_severity_recovered == "notice"
+    assert metrics.overlay_alerts is True
+    assert metrics.overlay_alert_category == "ui.performance.overlay"
+    assert metrics.overlay_alert_severity_exceeded == "critical"
+    assert metrics.overlay_alert_severity_recovered == "notice"
+

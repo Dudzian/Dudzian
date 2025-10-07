@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError
 from urllib.request import Request
 
 import pytest
@@ -14,6 +15,11 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from bot_core.exchanges.base import AccountSnapshot, Environment, ExchangeCredentials, OrderRequest
 from bot_core.exchanges.binance.spot import BinanceSpotAdapter
+from bot_core.exchanges.binance.symbols import (
+    filter_supported_exchange_symbols,
+    normalize_symbol,
+    to_exchange_symbol,
+)
 
 
 class _FakeResponse:
@@ -194,7 +200,7 @@ def test_place_order_builds_signed_payload(monkeypatch: pytest.MonkeyPatch) -> N
     adapter = BinanceSpotAdapter(credentials)
 
     order_request = OrderRequest(
-        symbol="BTCUSDT",
+        symbol="BTC/USDT",
         side="buy",
         quantity=0.01,
         order_type="limit",
@@ -239,7 +245,7 @@ def test_cancel_order_uses_delete_method(monkeypatch: pytest.MonkeyPatch) -> Non
     )
     adapter = BinanceSpotAdapter(credentials)
 
-    adapter.cancel_order("123", symbol="BTCUSDT")
+    adapter.cancel_order("123", symbol="BTC/USDT")
 
     assert captured_request is not None
     assert captured_request.get_method() == "DELETE"
@@ -248,3 +254,80 @@ def test_cancel_order_uses_delete_method(monkeypatch: pytest.MonkeyPatch) -> Non
     assert "symbol=BTCUSDT" in captured_request.full_url
     assert "orderId=123" in captured_request.full_url
     assert "signature=" in captured_request.full_url
+
+
+def test_execute_request_retries_on_rate_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    attempts: list[int] = []
+
+    def fake_urlopen(request: Request, timeout: int = 15):  # type: ignore[override]
+        if not attempts:
+            attempts.append(1)
+            raise HTTPError(request.full_url, 429, "Too Many Requests", hdrs=None, fp=None)
+        attempts.append(2)
+        return _FakeResponse({"ok": True})
+
+    monkeypatch.setattr("bot_core.exchanges.binance.spot.urlopen", fake_urlopen)
+    monkeypatch.setattr("bot_core.exchanges.binance.spot.time.sleep", lambda _: None)
+    monkeypatch.setattr("bot_core.exchanges.binance.spot.random.uniform", lambda *_: 0.0)
+
+    request = Request("https://api.binance.com/api/v3/time")
+    payload = BinanceSpotAdapter._execute_request(request)
+
+    assert attempts == [1, 2]
+    assert payload == {"ok": True}
+
+
+def test_fetch_symbols_filters_universe(monkeypatch: pytest.MonkeyPatch) -> None:
+    credentials = ExchangeCredentials(key_id="k", secret="s", environment=Environment.LIVE)
+    adapter = BinanceSpotAdapter(credentials)
+
+    fake_payload = {
+        "symbols": [
+            {"symbol": "BTCUSDT", "status": "TRADING"},
+            {"symbol": "ETHUSDT", "status": "TRADING"},
+            {"symbol": "ABCUSDT", "status": "TRADING"},
+            {"symbol": "ETHUSDT", "status": "BREAK"},
+        ]
+    }
+
+    monkeypatch.setattr(
+        BinanceSpotAdapter,
+        "_public_request",
+        lambda self, path, params=None, method="GET": fake_payload,
+    )
+
+    symbols = adapter.fetch_symbols()
+    assert symbols == ("BTC/USDT", "ETH/USDT")
+
+
+def test_fetch_ohlcv_converts_symbol(monkeypatch: pytest.MonkeyPatch) -> None:
+    credentials = ExchangeCredentials(key_id="k", secret="s", environment=Environment.LIVE)
+    adapter = BinanceSpotAdapter(credentials)
+
+    captured_params: dict[str, object] | None = None
+
+    def fake_public_request(self, path, params=None, method="GET"):
+        nonlocal captured_params
+        captured_params = dict(params or {})
+        return [[0, 1, 1, 1, 1, 1]]
+
+    monkeypatch.setattr(BinanceSpotAdapter, "_public_request", fake_public_request)
+
+    candles = adapter.fetch_ohlcv("BTC/USDT", "1d")
+
+    assert candles == [[0, 1, 1, 1, 1, 1]]
+    assert captured_params is not None
+    assert captured_params["symbol"] == "BTCUSDT"
+
+
+def test_filter_supported_exchange_symbols_handles_duplicates() -> None:
+    filtered = filter_supported_exchange_symbols(["BTCUSDT", "BTCUSDT", "ETHUSDT", "ABCUSDT"])
+    assert filtered == ("BTC/USDT", "ETH/USDT")
+
+
+def test_symbols_module_maps_formats() -> None:
+    assert normalize_symbol("btc_usdt") == "BTC/USDT"
+    assert normalize_symbol("BTCUSDT") == "BTC/USDT"
+    assert normalize_symbol("BTC/USDT") == "BTC/USDT"
+    assert to_exchange_symbol("BTC/USDT") == "BTCUSDT"
+    assert to_exchange_symbol("eth-pln") == "ETHPLN"

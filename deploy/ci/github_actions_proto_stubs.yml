@@ -1,0 +1,62 @@
+name: Generate trading stubs
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'proto/**'
+      - 'scripts/generate_trading_stubs.py'
+      - '.github/workflows/**'
+
+jobs:
+  build-stubs:
+    name: Build gRPC stubs
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install protoc and gRPC plugin
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler protobuf-compiler-grpc
+          protoc --version
+
+      - name: Setup Buf
+        uses: bufbuild/buf-setup-action@v1
+        with:
+          buf-version: 1.31.0
+
+      - name: Install Python tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install grpcio-tools
+
+      - name: buf lint
+        working-directory: proto
+        run: buf lint
+
+      - name: buf breaking
+        working-directory: proto
+        run: buf breaking --against '.git#branch=main,subdir=proto'
+
+      - name: Generate stubs
+        run: |
+          rm -rf bot_core/generated core/generated
+          python scripts/generate_trading_stubs.py
+
+      - name: Upload generated artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: trading-stubs-${{ github.run_number }}
+          path: |
+            bot_core/generated
+            core/generated

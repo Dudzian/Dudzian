@@ -74,15 +74,26 @@ except Exception:
 try:
     from bot_core.config.models import (
         CoreReportingConfig,
+        PaperSmokeJsonSyncConfig,
+        PaperSmokeJsonSyncLocalConfig,
+        PaperSmokeJsonSyncS3Config,
         SmokeArchiveLocalConfig,
         SmokeArchiveS3Config,
         SmokeArchiveUploadConfig,
     )  # type: ignore
 except Exception:
     CoreReportingConfig = None  # type: ignore
+    PaperSmokeJsonSyncConfig = None  # type: ignore
+    PaperSmokeJsonSyncLocalConfig = None  # type: ignore
+    PaperSmokeJsonSyncS3Config = None  # type: ignore
     SmokeArchiveLocalConfig = None  # type: ignore
     SmokeArchiveS3Config = None  # type: ignore
     SmokeArchiveUploadConfig = None  # type: ignore
+
+try:
+    from bot_core.config.models import MetricsServiceConfig  # type: ignore
+except Exception:
+    MetricsServiceConfig = None  # type: ignore
 
 
 def _core_has(field_name: str) -> bool:
@@ -380,6 +391,74 @@ def _load_smoke_archive_upload(entry: Optional[Mapping[str, Any]]):
     )
 
 
+def _load_paper_smoke_json_sync(entry: Optional[Mapping[str, Any]]):
+    if PaperSmokeJsonSyncConfig is None or entry is None:
+        return None
+
+    backend = str(entry.get("backend", entry.get("type", "local"))).strip().lower()
+    if backend in {"disabled", "none"}:
+        return None
+    if backend not in {"local", "s3"}:
+        raise ValueError(
+            "paper_smoke_json_sync.backend musi być 'local', 's3' lub 'disabled'"
+        )
+
+    credential_secret = entry.get("credential_secret")
+    credential_value = str(credential_secret) if credential_secret not in (None, "") else None
+
+    local_cfg = None
+    if backend == "local":
+        if PaperSmokeJsonSyncLocalConfig is None:
+            raise ValueError("Backend 'local' nie jest obsługiwany w tej gałęzi")
+        raw_local = entry.get("local") or {}
+        directory_value = raw_local.get("directory")
+        if not directory_value:
+            raise ValueError(
+                "paper_smoke_json_sync.local.directory jest wymagane dla backendu 'local'"
+            )
+        filename_pattern = str(raw_local.get("filename_pattern", "{environment}_{date}.jsonl"))
+        fsync = bool(raw_local.get("fsync", False))
+        local_cfg = PaperSmokeJsonSyncLocalConfig(
+            directory=str(directory_value),
+            filename_pattern=filename_pattern,
+            fsync=fsync,
+        )
+
+    s3_cfg = None
+    if backend == "s3":
+        if PaperSmokeJsonSyncS3Config is None:
+            raise ValueError("Backend 's3' nie jest obsługiwany w tej gałęzi")
+        raw_s3 = entry.get("s3") or {}
+        bucket_value = raw_s3.get("bucket")
+        if not bucket_value:
+            raise ValueError(
+                "paper_smoke_json_sync.s3.bucket jest wymagane dla backendu 's3'"
+            )
+        prefix_value = raw_s3.get("prefix")
+        endpoint_url = _format_optional_text(raw_s3.get("endpoint_url"))
+        region = _format_optional_text(raw_s3.get("region"))
+        use_ssl = bool(raw_s3.get("use_ssl", True))
+        extra_args = {
+            str(key): str(value)
+            for key, value in (raw_s3.get("extra_args", {}) or {}).items()
+        }
+        s3_cfg = PaperSmokeJsonSyncS3Config(
+            bucket=str(bucket_value),
+            object_prefix=_format_optional_text(prefix_value),
+            endpoint_url=endpoint_url,
+            region=region,
+            use_ssl=use_ssl,
+            extra_args=extra_args,
+        )
+
+    return PaperSmokeJsonSyncConfig(
+        backend=backend,
+        credential_secret=credential_value,
+        local=local_cfg,
+        s3=s3_cfg,
+    )
+
+
 def _load_reporting(entry: Optional[Mapping[str, Any]]):
     if CoreReportingConfig is None:
         return entry or {}
@@ -390,6 +469,7 @@ def _load_reporting(entry: Optional[Mapping[str, Any]]):
         weekly_report_day=_format_optional_text(payload.get("weekly_report_day")),
         retention_months=_format_optional_text(payload.get("retention_months")),
         smoke_archive_upload=_load_smoke_archive_upload(payload.get("smoke_archive_upload")),
+        paper_smoke_json_sync=_load_paper_smoke_json_sync(payload.get("paper_smoke_json_sync")),
     )
 
 
@@ -437,6 +517,45 @@ def _load_coverage_monitoring(
         default_dispatch=default_dispatch,
         default_category=default_category,
         targets=tuple(targets),
+    )
+
+
+def _load_metrics_service(
+    runtime_section: Optional[Mapping[str, Any]]
+) -> MetricsServiceConfig | None:
+    if MetricsServiceConfig is None or not _core_has("metrics_service"):
+        return None
+    runtime = runtime_section or {}
+    metrics_raw = runtime.get("metrics_service")
+    if not metrics_raw:
+        return None
+    return MetricsServiceConfig(
+        enabled=bool(metrics_raw.get("enabled", True)),
+        host=str(metrics_raw.get("host", "127.0.0.1")),
+        port=int(metrics_raw.get("port", 0)),
+        history_size=int(metrics_raw.get("history_size", 1024)),
+        auth_token=(
+            str(metrics_raw.get("auth_token")) if metrics_raw.get("auth_token") else None
+        ),
+        log_sink=bool(metrics_raw.get("log_sink", True)),
+        jsonl_path=str(metrics_raw.get("jsonl_path")) if metrics_raw.get("jsonl_path") else None,
+        jsonl_fsync=bool(metrics_raw.get("jsonl_fsync", False)),
+        reduce_motion_alerts=bool(metrics_raw.get("reduce_motion_alerts", False)),
+        reduce_motion_category=str(metrics_raw.get("reduce_motion_category", "ui.performance")),
+        reduce_motion_severity_active=str(
+            metrics_raw.get("reduce_motion_severity_active", "warning")
+        ),
+        reduce_motion_severity_recovered=str(
+            metrics_raw.get("reduce_motion_severity_recovered", "info")
+        ),
+        overlay_alerts=bool(metrics_raw.get("overlay_alerts", False)),
+        overlay_alert_category=str(metrics_raw.get("overlay_alert_category", "ui.performance")),
+        overlay_alert_severity_exceeded=str(
+            metrics_raw.get("overlay_alert_severity_exceeded", "warning")
+        ),
+        overlay_alert_severity_recovered=str(
+            metrics_raw.get("overlay_alert_severity_recovered", "info")
+        ),
     )
 
 
@@ -523,6 +642,7 @@ def load_core_config(path: str | Path) -> CoreConfig:
     strategies = _load_strategies(raw)
 
     reporting = _load_reporting(raw.get("reporting"))
+    runtime_section = raw.get("runtime") or {}
     alerts = (raw.get("alerts", {}) or {})
     sms_providers = _load_sms_providers(alerts)
     signal_channels = _load_signal_channels(alerts)
@@ -571,7 +691,7 @@ def load_core_config(path: str | Path) -> CoreConfig:
     if _core_has("messenger_channels"):
         core_kwargs["messenger_channels"] = messenger_channels
     if _core_has("runtime_controllers") and ControllerRuntimeConfig is not None:
-        controllers_raw = (raw.get("runtime", {}) or {}).get("controllers", {}) or {}
+        controllers_raw = (runtime_section.get("controllers") or {})
         core_kwargs["runtime_controllers"] = {
             name: ControllerRuntimeConfig(
                 tick_seconds=float(entry.get("tick_seconds", entry.get("tick", 60.0))),
@@ -583,6 +703,9 @@ def load_core_config(path: str | Path) -> CoreConfig:
         core_kwargs["coverage_monitoring"] = _load_coverage_monitoring(
             raw.get("coverage_monitoring")
         )
+    metrics_config = _load_metrics_service(runtime_section)
+    if metrics_config is not None:
+        core_kwargs["metrics_service"] = metrics_config
 
     return CoreConfig(**core_kwargs)  # type: ignore[arg-type]
 

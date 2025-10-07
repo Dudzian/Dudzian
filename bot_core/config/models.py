@@ -39,6 +39,28 @@ class DecisionJournalConfig:
     fsync: bool = False
 
 
+@dataclass(slots=True)
+class MetricsServiceConfig:
+    """Ustawienia serwera telemetrii `MetricsService`."""
+
+    enabled: bool = True
+    host: str = "127.0.0.1"
+    port: int = 0
+    history_size: int = 1024
+    auth_token: str | None = None
+    log_sink: bool = True
+    jsonl_path: str | None = None
+    jsonl_fsync: bool = False
+    reduce_motion_alerts: bool = False
+    reduce_motion_category: str = "ui.performance"
+    reduce_motion_severity_active: str = "warning"
+    reduce_motion_severity_recovered: str = "info"
+    overlay_alerts: bool = False
+    overlay_alert_category: str = "ui.performance"
+    overlay_alert_severity_exceeded: str = "warning"
+    overlay_alert_severity_recovered: str = "info"
+
+
 # --- Środowiska / rdzeń ------------------------------------------------------
 
 @dataclass(slots=True)
@@ -262,6 +284,37 @@ class SmokeArchiveUploadConfig:
 
 
 @dataclass(slots=True)
+class PaperSmokeJsonSyncLocalConfig:
+    """Konfiguracja lokalnego archiwum dziennika JSONL smoke testów."""
+
+    directory: str
+    filename_pattern: str = "{environment}_{date}.jsonl"
+    fsync: bool = False
+
+
+@dataclass(slots=True)
+class PaperSmokeJsonSyncS3Config:
+    """Konfiguracja wysyłki dziennika JSONL smoke testów do S3/MinIO."""
+
+    bucket: str
+    object_prefix: str | None = None
+    endpoint_url: str | None = None
+    region: str | None = None
+    use_ssl: bool = True
+    extra_args: Mapping[str, str] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class PaperSmokeJsonSyncConfig:
+    """Parametry synchronizacji dziennika JSONL smoke testów."""
+
+    backend: str
+    credential_secret: str | None = None
+    local: PaperSmokeJsonSyncLocalConfig | None = None
+    s3: PaperSmokeJsonSyncS3Config | None = None
+
+
+@dataclass(slots=True)
 class CoreReportingConfig:
     """Konfiguracja sekcji reportingowej CoreConfig."""
 
@@ -269,6 +322,7 @@ class CoreReportingConfig:
     weekly_report_day: str | None = None
     retention_months: str | None = None
     smoke_archive_upload: SmokeArchiveUploadConfig | None = None
+    paper_smoke_json_sync: PaperSmokeJsonSyncConfig | None = None
 
 
 @dataclass(slots=True)
@@ -288,6 +342,7 @@ class CoreConfig:
     messenger_channels: Mapping[str, MessengerChannelSettings] = field(default_factory=dict)
     runtime_controllers: Mapping[str, ControllerRuntimeConfig] = field(default_factory=dict)
     coverage_monitoring: CoverageMonitoringConfig | None = None
+    metrics_service: MetricsServiceConfig | None = None
 
 
 __all__ = [
@@ -310,9 +365,13 @@ __all__ = [
     "SmokeArchiveLocalConfig",
     "SmokeArchiveS3Config",
     "SmokeArchiveUploadConfig",
+    "PaperSmokeJsonSyncLocalConfig",
+    "PaperSmokeJsonSyncS3Config",
+    "PaperSmokeJsonSyncConfig",
     "CoreReportingConfig",
     "CoreConfig",
     "AlertThrottleConfig",
     "AlertAuditConfig",
     "DecisionJournalConfig",
+    "MetricsServiceConfig",
 ]
