@@ -2,6 +2,7 @@
 
 from bot_core.runtime.bootstrap import BootstrapContext, bootstrap_environment
 
+# --- Metrics service (opcjonalny – zależy od dostępności gRPC i wygenerowanych stubów) ---
 try:
     from bot_core.runtime.metrics_service import (  # type: ignore
         MetricsServer,
@@ -20,10 +21,12 @@ except Exception:  # pragma: no cover - brak wygenerowanych stubów lub grpcio
     MetricsSnapshotStore = None  # type: ignore
     MetricsSink = None  # type: ignore
     JsonlSink = None  # type: ignore
+    ReduceMotionAlertSink = None  # type: ignore
+    OverlayBudgetAlertSink = None  # type: ignore
     create_metrics_server = None  # type: ignore
     build_metrics_server_from_config = None  # type: ignore
 
-# Kontrolery mogą się różnić między gałęziami – importujemy opcjonalnie.
+# --- Kontrolery / pipeline (opcjonalne – różnice między gałęziami) ---
 try:
     from bot_core.runtime.controller import TradingController as _TradingController  # type: ignore
 except Exception:
@@ -35,7 +38,9 @@ except Exception:
     _DailyTrendController = None  # type: ignore
 
 try:
-    from bot_core.runtime.realtime import DailyTrendRealtimeRunner as _DailyTrendRealtimeRunner  # type: ignore
+    from bot_core.runtime.realtime import (  # type: ignore
+        DailyTrendRealtimeRunner as _DailyTrendRealtimeRunner
+    )
 except Exception:  # pragma: no cover - starsze gałęzie mogą nie mieć modułu realtime
     _DailyTrendRealtimeRunner = None  # type: ignore
 
@@ -50,8 +55,10 @@ except Exception:  # pragma: no cover - starsze gałęzie mogą nie mieć moduł
     build_daily_trend_pipeline = None  # type: ignore
     create_trading_controller = None  # type: ignore
 
+# --- Publiczny interfejs modułu ---
 __all__ = ["BootstrapContext", "bootstrap_environment"]
 
+# Eksport elementów metrics service tylko jeśli są dostępne
 if MetricsServer is not None:
     __all__.extend(
         [
@@ -69,11 +76,12 @@ if MetricsServer is not None:
 
 # Eksportuj tylko te kontrolery, które są dostępne w danej gałęzi.
 if _TradingController is None:
-    try:  # pragma: no cover - defensywny fallback, gdy pierwszy import się nie powiedzie
+    # Defensywny fallback, gdy bezpośredni import się nie powiódł
+    try:  # pragma: no cover
         from bot_core.runtime import controller as _controller_module  # type: ignore
 
         _TradingController = getattr(_controller_module, "TradingController", None)
-    except Exception:  # pragma: no cover - brak dostępnego kontrolera w starszej gałęzi
+    except Exception:  # pragma: no cover
         _TradingController = None  # type: ignore
 
 if _TradingController is not None:

@@ -61,7 +61,7 @@ Domyślne parametry są zgodne z plikiem `ui/config/example.yaml`. Wartości `--
 * `src/utils/FrameRateMonitor.*` – monitoruje `frameSwapped` głównego okna i emituje `reduceMotionActive`, gdy FPS spada poniżej progów guardu (np. 55 FPS @60 Hz), co pozwala UI automatycznie wygasić animacje/overlaya. Emituje także próbki FPS, które trafiają do telemetrii.
 * `src/telemetry/UiTelemetryReporter.*` – raportuje zdarzenia UI (`reduce motion`, budżet nakładek) do `MetricsService` demona gRPC i dopisuje metadane okien/nakładek.
 * `qml/components/CandlestickChartView.qml` – widok wykresu z krzyżem celowniczym, autoprzeskalowaniem, nakładkami EMA12/EMA26/VWAP sterowanymi `PerformanceGuard` oraz mechanizmem sample-at-x.
-* `qml/components/SidePanel.qml` – wizualizacja parametrów performance guard, statusu połączenia i streszczenie profilu ryzyka wraz z limitami ekspozycji, szybkie otwieranie dodatkowych okien.
+* `qml/components/SidePanel.qml` – wizualizacja parametrów performance guard i statusu połączenia, szybkie otwieranie dodatkowych okien.
 * `qml/components/ChartWindow.qml` – niezależne okno wykresu (multi-window/multi-monitor) z zapamiętywaniem geometrii przez `Qt.labs.settings`.
 * `qml/components/BotAppWindow.qml` – okno główne z menu kontekstowym, skrótem `Ctrl+N` do otwierania nowych okien i automatycznym przywracaniem profilu workspace.
 
@@ -72,3 +72,6 @@ Po uruchomieniu głównego okna można otwierać kolejne wykresy (`Nowe okno` lu
 * Podpięcie realnego demona C++ (`/core`) przez TLS i RBAC.
 * Dodanie wskaźników ATR/RSI oraz konfiguracji nakładek z poziomu UI przy zachowaniu ograniczeń `PerformanceGuard`.
 * Integracja z docelowym demona `MetricsService` (mTLS, RBAC) oraz raporty guardu na kanały alertowe.
+* Benchmark QML Profiler 60/120 Hz + automatyczne raportowanie do `MetricsService` wraz z detekcją adaptacji animacji.
+* Dodanie warstwy animacji (Transitions/States) oraz adaptacji „reduce motion” na podstawie metryk gRPC.
+* Benchmark QML Profiler 60/120 Hz + automatyczne raportowanie do `MetricsService`.

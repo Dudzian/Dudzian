@@ -42,6 +42,7 @@ filterwarnings = [
 markers = [
   "timeout: oznaczenie testów z ograniczeniem czasu wykonywania",
 ]
+
 [project]
 name = "dudzian-bot"
 version = "0.1.0"
@@ -64,3 +65,6 @@ dev = [
   "PyYAML>=6.0",
 ]
 
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"

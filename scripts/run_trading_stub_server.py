@@ -17,6 +17,7 @@ from bot_core.testing import (
     merge_datasets,
 )
 
+# MetricsService (opcjonalnie — gdy brak gRPC/stubów, po prostu nie uruchamiamy)
 try:  # pragma: no cover - zależności opcjonalne
     from bot_core.runtime.metrics_service import create_server as create_metrics_server
 except Exception:  # pragma: no cover - brak gRPC lub wygenerowanych stubów
@@ -106,6 +107,8 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Wypisz sam adres serwera na stdout (np. do użycia w skryptach).",
     )
+
+    # --- MetricsService (opcjonalny towarzyszący serwer telemetrii UI) ---
     parser.add_argument(
         "--enable-metrics",
         action="store_true",

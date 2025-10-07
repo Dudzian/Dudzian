@@ -53,6 +53,7 @@ market_data:
           close: 43150.0
           volume: 18.4
           closed: false
+
   - instrument:
       exchange: KRAKEN
       symbol: ETH/EUR
@@ -92,6 +93,7 @@ market_data:
           close: 2224.0
           volume: 215.0
           closed: false
+
 risk_states:
   - instrument:
       exchange: BINANCE
@@ -127,6 +129,7 @@ risk_states:
             max_value: 75000.0
             current_value: 42000.0
             threshold_value: 60000.0
+
 metrics:
   - generated_at: "2024-02-01T00:05:00Z"
     event_to_frame_p95_ms: 95.0
@@ -137,6 +140,7 @@ metrics:
     dropped_frames: 1
     processed_messages_per_second: 4200
     notes: "multi-asset dataset"
+
 performance_guard:
   fps_target: 120
   reduce_motion_after_seconds: 0.75

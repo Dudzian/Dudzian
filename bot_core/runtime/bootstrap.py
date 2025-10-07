@@ -57,6 +57,7 @@ from bot_core.runtime.journal import (
     TradingDecisionJournal,
 )
 
+# --- Metrics service (opcjonalny – w niektórych gałęziach może nie istnieć) ---
 try:  # pragma: no cover - środowiska bez grpcio lub wygenerowanych stubów
     from bot_core.runtime.metrics_service import (  # type: ignore
         MetricsServer,
@@ -155,13 +156,20 @@ def bootstrap_environment(
 
     decision_journal = _build_decision_journal(environment)
 
+    # --- MetricsService (opcjonalny, kompatybilny z różnymi sygnaturami funkcji) ---
     metrics_server: Any | None = None
     if build_metrics_server_from_config is not None:
         try:
-            metrics_server = build_metrics_server_from_config(
-                core_config.metrics_service,
-                alerts_router=alert_router,
-            )
+            # Nowsze gałęzie: build_metrics_server_from_config(cfg, alerts_router=...)
+            try:
+                metrics_server = build_metrics_server_from_config(  # type: ignore[call-arg]
+                    core_config.metrics_service,
+                    alerts_router=alert_router,
+                )
+            except TypeError:
+                # Starsze gałęzie: bez alerts_router
+                metrics_server = build_metrics_server_from_config(core_config.metrics_service)  # type: ignore[call-arg]
+
             if metrics_server is not None:
                 metrics_server.start()
                 _LOGGER.info(
@@ -214,6 +222,8 @@ def _resolve_risk_profile(
         return profiles[profile_name]
     except KeyError as exc:
         raise KeyError(f"Profil ryzyka '{profile_name}' nie istnieje w konfiguracji") from exc
+
+
 def build_alert_channels(
     *,
     core_config: CoreConfig,

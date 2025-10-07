@@ -7,6 +7,7 @@ Pane {
     property PerformanceGuard performanceGuard
     property string instrumentLabel: appController.instrumentLabel
     signal openWindowRequested()
+
     padding: 16
     background: Rectangle {
         color: Qt.darker(root.palette.window, 1.2)
@@ -17,6 +18,7 @@ Pane {
         anchors.fill: parent
         spacing: 12
 
+        // --- Performance guard ------------------------------------------------
         Label {
             text: qsTr("Performance guard")
             font.pixelSize: 18
@@ -29,95 +31,105 @@ Pane {
             rowSpacing: 8
 
             Label { text: qsTr("FPS target") }
-            Label { text: performanceGuard.fpsTarget.toString() }
+            Label { text: performanceGuard ? performanceGuard.fpsTarget.toString() : qsTr("—") }
 
             Label { text: qsTr("Reduce motion after") }
-            Label { text: qsTr("%1 s").arg(performanceGuard.reduceMotionAfterSeconds.toFixed(2)) }
+            Label {
+                text: performanceGuard
+                      ? qsTr("%1 s").arg(Number(performanceGuard.reduceMotionAfterSeconds).toFixed(2))
+                      : qsTr("—")
+            }
 
             Label { text: qsTr("Jank budget") }
-            Label { text: qsTr("%1 ms").arg(performanceGuard.jankThresholdMs.toFixed(1)) }
+            Label {
+                text: performanceGuard
+                      ? qsTr("%1 ms").arg(Number(performanceGuard.jankThresholdMs).toFixed(1))
+                      : qsTr("—")
+            }
 
             Label { text: qsTr("Overlay limit") }
-            Label { text: performanceGuard.maxOverlayCount.toString() }
+            Label { text: performanceGuard ? performanceGuard.maxOverlayCount.toString() : qsTr("—") }
 
             Label { text: qsTr("Disable overlays <FPS") }
             Label {
-                text: performanceGuard.disableSecondaryWhenFpsBelow > 0
-                    ? performanceGuard.disableSecondaryWhenFpsBelow.toString()
-                    : qsTr("—")
+                text: performanceGuard && performanceGuard.disableSecondaryWhenFpsBelow > 0
+                      ? performanceGuard.disableSecondaryWhenFpsBelow.toString()
+                      : qsTr("—")
             }
         }
 
         Label {
-            text: qsTr("Latest close: %1").arg(ohlcvModel.latestClose() === undefined ? qsTr("--") : Number(ohlcvModel.latestClose()).toFixed(2))
+            text: qsTr("Latest close: %1")
+                  .arg(ohlcvModel && ohlcvModel.latestClose() !== undefined
+                           ? Number(ohlcvModel.latestClose()).toFixed(2)
+                           : qsTr("--"))
             font.pixelSize: 16
         }
 
-        Rectangle {
-            height: 1
-            color: Qt.darker(root.palette.window, 1.4)
-            Layout.fillWidth: true
-        }
+        Rectangle { height: 1; color: Qt.darker(root.palette.window, 1.4); Layout.fillWidth: true }
+
+        // --- Connection / instrument -----------------------------------------
+        Label { text: qsTr("Instrument: %1").arg(currentInstrumentLabel()) }
+        Label { text: qsTr("Connection status: %1").arg(appController.connectionStatus) }
+
+        // --- Risk profile (optional – shown only if riskModel is available) ---
+        Rectangle { height: 1; color: Qt.darker(root.palette.window, 1.4); Layout.fillWidth: true }
 
         Label {
-            text: qsTr("Instrument: %1").arg(instrumentLabel)
-        }
-
-        Label {
-            text: qsTr("Connection status: %1").arg(appController.connectionStatus)
-        }
-
-        Rectangle {
-            height: 1
-            color: Qt.darker(root.palette.window, 1.4)
-            Layout.fillWidth: true
-        }
-
-        Label {
+            visible: typeof riskModel !== "undefined"
             text: qsTr("Profil ryzyka")
             font.pixelSize: 18
             font.bold: true
         }
 
         Label {
-            text: riskModel.hasData ? qsTr("Profil: %1").arg(riskModel.profileLabel) : qsTr("Profil: —")
+            visible: typeof riskModel !== "undefined"
+            text: (typeof riskModel !== "undefined" && riskModel.hasData)
+                    ? qsTr("Profil: %1").arg(riskModel.profileLabel)
+                    : qsTr("Profil: —")
         }
 
         Label {
-            text: riskModel.hasData
-                ? qsTr("Wartość portfela: %1").arg(Number(riskModel.portfolioValue).toLocaleString(Qt.locale(), 'f', 0))
-                : qsTr("Wartość portfela: —")
+            visible: typeof riskModel !== "undefined"
+            text: (typeof riskModel !== "undefined" && riskModel.hasData)
+                    ? qsTr("Wartość portfela: %1")
+                        .arg(Number(riskModel.portfolioValue).toLocaleString(Qt.locale(), "f", 0))
+                    : qsTr("Wartość portfela: —")
         }
 
         Label {
-            text: riskModel.hasData
-                ? qsTr("Drawdown: %1 %").arg((riskModel.currentDrawdown * 100).toFixed(2))
-                : qsTr("Drawdown: —")
+            visible: typeof riskModel !== "undefined"
+            text: (typeof riskModel !== "undefined" && riskModel.hasData)
+                    ? qsTr("Drawdown: %1 %").arg(Number(riskModel.currentDrawdown * 100).toFixed(2))
+                    : qsTr("Drawdown: —")
         }
 
         Label {
-            text: riskModel.hasData
-                ? qsTr("Dźwignia: %1x").arg(riskModel.usedLeverage.toFixed(2))
-                : qsTr("Dźwignia: —")
+            visible: typeof riskModel !== "undefined"
+            text: (typeof riskModel !== "undefined" && riskModel.hasData)
+                    ? qsTr("Dźwignia: %1x").arg(Number(riskModel.usedLeverage).toFixed(2))
+                    : qsTr("Dźwignia: —")
         }
 
         Label {
-            text: riskModel.hasData
-                ? qsTr("Aktualizacja: %1").arg(riskModel.generatedAt.toString(Qt.ISODate))
-                : qsTr("Aktualizacja: —")
+            visible: typeof riskModel !== "undefined"
+            text: (typeof riskModel !== "undefined" && riskModel.hasData)
+                    ? qsTr("Aktualizacja: %1").arg(riskModel.generatedAt.toString(Qt.ISODate))
+                    : qsTr("Aktualizacja: —")
         }
 
         ListView {
             Layout.fillWidth: true
-            visible: riskModel.hasData && riskModel.count > 0
+            visible: typeof riskModel !== "undefined" && riskModel.hasData && riskModel.count > 0
             implicitHeight: contentHeight
-            model: riskModel
+            model: (typeof riskModel !== "undefined") ? riskModel : null
+
             delegate: Rectangle {
-                width: parent.width
+                width: parent ? parent.width : 0
                 height: 36
-                color: model.breached ? Qt.rgba(0.6, 0.0, 0.0, 0.3) : Qt.rgba(0.0, 0.0, 0.0, 0.0)
+                color: model.breached ? Qt.rgba(0.6, 0.0, 0.0, 0.3) : "transparent"
                 radius: 4
-                border.color: Qt.rgba(1.0, 1.0, 1.0, 0.1)
+                border.color: Qt.rgba(1, 1, 1, 0.1)
 
                 RowLayout {
                     anchors.fill: parent
@@ -126,15 +138,19 @@ Pane {
                     Label {
                         text: model.code
                         Layout.fillWidth: true
+                        elide: Text.ElideRight
                     }
 
                     Label {
-                        text: qsTr("%1 / %2").arg(Number(model.currentValue).toLocaleString(Qt.locale(), 'f', 0)).arg(Number(model.maxValue).toLocaleString(Qt.locale(), 'f', 0))
+                        text: qsTr("%1 / %2")
+                              .arg(Number(model.currentValue).toLocaleString(Qt.locale(), "f", 0))
+                              .arg(Number(model.maxValue).toLocaleString(Qt.locale(), "f", 0))
                     }
                 }
             }
         }
 
+        // --- Actions ----------------------------------------------------------
         Button {
             text: qsTr("Otwórz nowe okno")
             Layout.fillWidth: true

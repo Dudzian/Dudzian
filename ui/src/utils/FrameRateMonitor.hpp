@@ -7,6 +7,10 @@
 
 class QQuickWindow;
 
+/**
+ * @brief Monitoruje FPS okna QML i sugeruje ograniczenie animacji (reduce-motion)
+ *        gdy spadek wydajności utrzymuje się dłużej niż dopuszczalny budżet.
+ */
 class FrameRateMonitor : public QObject {
     Q_OBJECT
 public:

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import time
+
 import pytest
 
 grpc = pytest.importorskip("grpc", reason="Wymaga biblioteki grpcio")
@@ -13,9 +16,6 @@ trading_pb2_grpc = pytest.importorskip(
     "bot_core.generated.trading_pb2_grpc",
     reason="Brak wygenerowanych stubów trading_pb2_grpc",
 )
-
-import json
-import time
 
 from bot_core.runtime.metrics_service import (
     MetricsServer,
@@ -91,8 +91,6 @@ def test_store_enforces_history_limit():
 
     history = [snap.notes for snap in store.snapshot_history()]
     assert history == ["two", "three"]
-
-
 
 
 def test_build_metrics_server_from_config_disabled():

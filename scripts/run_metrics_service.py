@@ -14,7 +14,7 @@ try:  # pragma: no cover - opcjonalne zależności gRPC
 except Exception as exc:  # pragma: no cover - komunikat dla developera
     raise SystemExit(
         "Brak wsparcia gRPC. Upewnij się, że wygenerowałeś stuby (scripts/generate_trading_stubs.py) "
-        "i masz zainstalowane pakiety grpcio." 
+        "i masz zainstalowane pakiety grpcio."
     ) from exc
 
 
@@ -185,4 +185,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":  # pragma: no cover - ścieżka uruchomienia skryptu
     sys.exit(main())
-

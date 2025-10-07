@@ -277,6 +277,7 @@ def test_load_core_config_inherits_risk_profile_data_quality(tmp_path: Path) -> 
     assert env.data_quality.max_gap_minutes == 180.0
     assert env.data_quality.min_ok_ratio == 0.85
 
+
 def test_load_core_config_reads_metrics_service(tmp_path: Path) -> None:
     config_path = tmp_path / "core.yaml"
     config_path.write_text(
@@ -323,4 +324,3 @@ def test_load_core_config_reads_metrics_service(tmp_path: Path) -> None:
     assert metrics.overlay_alert_category == "ui.performance.overlay"
     assert metrics.overlay_alert_severity_exceeded == "critical"
     assert metrics.overlay_alert_severity_recovered == "notice"
-

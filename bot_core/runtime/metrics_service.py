@@ -4,7 +4,7 @@ Moduł zapewnia:
 
 * lekkie przechowywanie ostatnich metryk w pamięci,
 * możliwość strumieniowania `MetricsSnapshot` do wielu klientów,
-* integrację z dodatkowymi "sinkami" (np. logowanie, Prometheus),
+* integrację z dodatkowymi "sinkami" (np. logowanie, JSONL, alerty),
 * serwer gRPC, który można wpiąć w docelowy daemon `bot_core`.
 
 Kod nie zakłada obecności WebSocketów – jedynie gRPC (`grpcio`).
@@ -27,6 +27,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from bot_core.alerts.base import AlertRouter
     from bot_core.config.models import MetricsServiceConfig
 
+# --- Stuby gRPC są opcjonalne podczas developmentu ---
 try:  # pragma: no cover - import opcjonalny, gdy brak wygenerowanych stubów
     from bot_core.generated import trading_pb2, trading_pb2_grpc  # type: ignore
 except ImportError:  # pragma: no cover - instrukcja dla developera
@@ -38,19 +39,21 @@ try:  # pragma: no cover - środowiska bez grpcio
 except ImportError:  # pragma: no cover - instrukcja dla developera
     grpc = None  # type: ignore
 
-try:  # pragma: no cover - alerty mogą być nieobecne na starszych gałęziach
+# Alerty mogą być nieobecne na starszych gałęziach
+try:  # pragma: no cover
     from bot_core.alerts.base import AlertMessage
-except Exception:  # pragma: no cover - brak modułu alertów
+except Exception:  # pragma: no cover
     AlertMessage = None  # type: ignore
 
 _LOGGER = logging.getLogger(__name__)
 
 
-class MetricsSink(Protocol):
-    """Komponent przyjmujący pojedynczy `MetricsSnapshot`.
+# =============================================================================
+# Sinki metryk
+# =============================================================================
 
-    Sink może zapisywać dane do plików, Prometheusa lub wysyłać je dalej.
-    """
+class MetricsSink(Protocol):
+    """Komponent przyjmujący pojedynczy `MetricsSnapshot`."""
 
     def handle_snapshot(self, snapshot) -> None:  # pragma: no cover - interfejs
         ...
@@ -63,9 +66,7 @@ class LoggingSink:
         self._logger = logger or _LOGGER
 
     def handle_snapshot(self, snapshot) -> None:  # pragma: no cover - logowanie
-        self._logger.info(
-            "MetricsSnapshot received", extra={"metrics_notes": snapshot.notes}
-        )
+        self._logger.info("MetricsSnapshot received", extra={"metrics_notes": snapshot.notes})
 
 
 class JsonlSink:
@@ -82,9 +83,9 @@ class JsonlSink:
     def handle_snapshot(self, snapshot) -> None:
         record = {
             "generated_at": _timestamp_to_iso(snapshot.generated_at)
-            if snapshot.HasField("generated_at")
+            if getattr(snapshot, "HasField", None) and snapshot.HasField("generated_at")
             else None,
-            "fps": snapshot.fps if snapshot.HasField("fps") else None,
+            "fps": snapshot.fps if getattr(snapshot, "HasField", None) and snapshot.HasField("fps") else None,
             "notes": snapshot.notes,
         }
         line = json.dumps(record, ensure_ascii=False)
@@ -137,10 +138,9 @@ class ReduceMotionAlertSink:
         disable_secondary = payload.get("disable_secondary_fps")
         tag = payload.get("tag")
 
+        # Duplikaty – pomijamy, by nie zalewać alertów
         if self._last_state is not None and self._last_state == active:
-            # Pomijamy duplikaty – UI wysyła snapshoty cyklicznie i nie chcemy zalewać alertów
             return
-
         self._last_state = active
 
         severity = self._severity_active if active else self._severity_recovered
@@ -238,11 +238,7 @@ class OverlayBudgetAlertSink:
         window_count = payload.get("window_count")
 
         severity = self._severity_exceeded if exceeded else self._severity_recovered
-        title = (
-            "Limit nakładek przekroczony"
-            if exceeded
-            else "Limit nakładek wrócił do normy"
-        )
+        title = "Limit nakładek przekroczony" if exceeded else "Limit nakładek wrócił do normy"
         body_lines = [
             f"Nakładki: {active} / {allowed} (reduce_motion={'tak' if reduce_motion else 'nie'}).",
         ]
@@ -283,6 +279,10 @@ class OverlayBudgetAlertSink:
             self._logger.exception("Nie udało się wysłać alertu overlay budget")
 
 
+# =============================================================================
+# Pamięć + broker
+# =============================================================================
+
 def _timestamp_to_iso(ts) -> str | None:
     if ts is None:
         return None
@@ -309,7 +309,6 @@ class MetricsSnapshotStore:
 
     def append(self, snapshot) -> None:
         """Dodaje snapshot i publikuje go do wszystkich subskrybentów."""
-
         clone = trading_pb2.MetricsSnapshot()
         clone.CopyFrom(snapshot)
         with self._lock:
@@ -333,6 +332,10 @@ class MetricsSnapshotStore:
             self._subscribers.discard(queue)
 
 
+# =============================================================================
+# Serwis gRPC
+# =============================================================================
+
 class MetricsServiceServicer(trading_pb2_grpc.MetricsServiceServicer):
     """Implementacja serwisu gRPC `MetricsService`."""
 
@@ -352,6 +355,7 @@ class MetricsServiceServicer(trading_pb2_grpc.MetricsServiceServicer):
         self._sinks: tuple[MetricsSink, ...] = tuple(sinks or ())
         self._auth_token = auth_token
 
+    # --- autoryzacja (opcjonalna) ---
     def _extract_token(self, context) -> str | None:
         if context is None or self._auth_token is None:
             return None
@@ -452,6 +456,10 @@ class MetricsServer:
         self._server.wait_for_termination(timeout)
 
 
+# =============================================================================
+# Fabryki
+# =============================================================================
+
 def create_server(
     *,
     host: str = "127.0.0.1",
@@ -463,8 +471,7 @@ def create_server(
     jsonl_fsync: bool = False,
     auth_token: str | None = None,
 ):
-    """Pomocnicza funkcja do budowy serwera z domyślnym logging sinkiem."""
-
+    """Pomocnicza funkcja do budowy serwera z domyślnymi sinkami."""
     base_sinks: list[MetricsSink] = []
     if enable_logging_sink:
         base_sinks.append(LoggingSink())
@@ -489,28 +496,30 @@ def build_metrics_server_from_config(
     alerts_router: "AlertRouter" | None = None,
 ) -> MetricsServer | None:
     """Buduje `MetricsServer` na bazie konfiguracji – zwraca ``None`` gdy wyłączony."""
-
     if config is None or not config.enabled:
         return None
+
     sink_list: list[MetricsSink] = list(sinks or [])
-    if alerts_router is not None and config.reduce_motion_alerts:
+    # Integracja z alertami UI – gdy dostępny router i włączone flagi w configu
+    if alerts_router is not None and getattr(config, "reduce_motion_alerts", False):
         sink_list.append(
             ReduceMotionAlertSink(
                 alerts_router,
-                category=config.reduce_motion_category,
-                severity_active=config.reduce_motion_severity_active,
-                severity_recovered=config.reduce_motion_severity_recovered,
+                category=getattr(config, "reduce_motion_category", "ui.performance"),
+                severity_active=getattr(config, "reduce_motion_severity_active", "warning"),
+                severity_recovered=getattr(config, "reduce_motion_severity_recovered", "info"),
             )
         )
-    if alerts_router is not None and config.overlay_alerts:
+    if alerts_router is not None and getattr(config, "overlay_alerts", False):
         sink_list.append(
             OverlayBudgetAlertSink(
                 alerts_router,
-                category=config.overlay_alert_category,
-                severity_exceeded=config.overlay_alert_severity_exceeded,
-                severity_recovered=config.overlay_alert_severity_recovered,
+                category=getattr(config, "overlay_alert_category", "ui.performance"),
+                severity_exceeded=getattr(config, "overlay_alert_severity_exceeded", "warning"),
+                severity_recovered=getattr(config, "overlay_alert_severity_recovered", "info"),
             )
         )
+
     return create_server(
         host=config.host,
         port=config.port,
@@ -519,6 +528,5 @@ def build_metrics_server_from_config(
         enable_logging_sink=config.log_sink,
         jsonl_path=config.jsonl_path,
         jsonl_fsync=config.jsonl_fsync,
-        auth_token=config.auth_token,
+        auth_token=getattr(config, "auth_token", None),
     )
-

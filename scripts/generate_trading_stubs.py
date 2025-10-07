@@ -14,25 +14,33 @@ from pathlib import Path
 
 
 def _patch_python_package_imports(output_dir: Path, proto_file: str) -> None:
-    """Ensure generated stubs use relative imports inside the package."""
-
+    """Upewnia się, że wygenerowane stuby używają względnych importów w pakiecie."""
     module_base = Path(proto_file).stem + "_pb2"
     grpc_file = output_dir / f"{module_base}_grpc.py"
-    if not grpc_file.exists():  # pragma: no cover - defensive guard for skip_python
+    if not grpc_file.exists():  # pragma: no cover - skip gdy pominięto generowanie
         return
 
-    text = grpc_file.read_text()
+    text = grpc_file.read_text(encoding="utf-8")
+    # Zmiana: `import <module_base> as ...` -> `from . import <module_base> as ...`
     if f"import {module_base} as" in text:
         text = text.replace(
             f"import {module_base} as",
             f"from . import {module_base} as",
         )
+    # Zmiana: `import <module_base>\n` -> `from . import <module_base>\n`
     if f"import {module_base}\n" in text:
         text = text.replace(
             f"import {module_base}\n",
             f"from . import {module_base}\n",
         )
-    grpc_file.write_text(text)
+    grpc_file.write_text(text, encoding="utf-8")
+
+
+def _ensure_python_package(output_dir: Path) -> None:
+    """Tworzy `__init__.py`, aby katalog ze stubami był pakietem Pythona."""
+    init_file = output_dir / "__init__.py"
+    if not init_file.exists():
+        init_file.write_text("# Package for generated gRPC stubs\n", encoding="utf-8")
 
 
 DEFAULT_PROTO = "trading.proto"
@@ -89,8 +97,10 @@ def _generate_python_stubs(args: argparse.Namespace) -> None:
         str(proto_file),
     ]
     _run_command(cmd, args.dry_run)
+
     if not args.dry_run:
         _patch_python_package_imports(output_dir, args.proto_file)
+        _ensure_python_package(output_dir)
 
 
 def _generate_cpp_stubs(args: argparse.Namespace) -> None:

@@ -69,9 +69,10 @@ void OhlcvListModel::resetWithHistory(const QList<OhlcvPoint>& candles) {
 void OhlcvListModel::applyIncrement(const OhlcvPoint& candle) {
     if (!m_candles.isEmpty()) {
         auto& last = m_candles.last();
+        // Aktualizacja ostatniej świecy (ta sama sekwencja lub timestamp)
         if (last.sequence == candle.sequence || last.timestampMs == candle.timestampMs) {
             last = candle;
-            const auto row = m_candles.size() - 1;
+            const int row = m_candles.size() - 1;
             const QModelIndex idx = index(row);
             Q_EMIT dataChanged(idx, idx);
             recomputeIndicators();
@@ -79,6 +80,7 @@ void OhlcvListModel::applyIncrement(const OhlcvPoint& candle) {
         }
     }
 
+    // Nowa świeca na końcu
     const int insertRow = m_candles.size();
     beginInsertRows(QModelIndex(), insertRow, insertRow);
     m_candles.append(candle);
@@ -137,10 +139,12 @@ QVariantList OhlcvListModel::overlaySeries(const QString& id) const {
     } else if (id == QLatin1String("vwap")) {
         values = &m_vwap;
     }
+
     QVariantList series;
     if (!values || values->size() != m_candles.size()) {
         return series;
     }
+
     series.reserve(values->size());
     for (int i = 0; i < values->size(); ++i) {
         const double value = values->at(i);
@@ -178,6 +182,7 @@ void OhlcvListModel::recomputeIndicators() {
         return;
     }
 
+    // Parametry nakładek (EMA/VWAP)
     const int fastPeriod = 12;
     const int slowPeriod = 26;
     const double fastMultiplier = 2.0 / (fastPeriod + 1.0);
@@ -191,6 +196,7 @@ void OhlcvListModel::recomputeIndicators() {
     for (int i = 0; i < count; ++i) {
         const auto& candle = m_candles.at(i);
         const double price = candle.close;
+
         if (i == 0) {
             emaFast = price;
             emaSlow = price;

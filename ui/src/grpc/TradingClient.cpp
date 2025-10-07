@@ -94,7 +94,8 @@ void TradingClient::start() {
     if (historyStatus.ok()) {
         Q_EMIT historyReceived(convertHistory(historyResp.candles()));
     } else {
-        Q_EMIT connectionStateChanged(QStringLiteral("history error: %1").arg(QString::fromStdString(historyStatus.error_message())));
+        Q_EMIT connectionStateChanged(QStringLiteral("history error: %1")
+                                          .arg(QString::fromStdString(historyStatus.error_message())));
     }
 
     refreshRiskState();
