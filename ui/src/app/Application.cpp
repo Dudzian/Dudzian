@@ -1,11 +1,10 @@
 #include "Application.hpp"
 
-#include <QQmlApplicationEngine>
 #include <QQmlContext>
-#include <QCommandLineParser>
 #include <QQuickWindow>
 #include <QtGlobal>
 
+#include "telemetry/TelemetryReporter.hpp"
 #include "telemetry/UiTelemetryReporter.hpp"
 #include "utils/FrameRateMonitor.hpp"
 
@@ -21,7 +20,7 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
     connect(&m_engine, &QQmlApplicationEngine::objectCreated, this,
             [this](QObject* object, const QUrl&) { attachWindow(object); });
 
-    // Połączenia sygnałów klienta
+    // Połączenia sygnałów klienta (market data)
     connect(&m_client, &TradingClient::historyReceived, this, &Application::handleHistory);
     connect(&m_client, &TradingClient::candleReceived, this, &Application::handleCandle);
 
@@ -38,6 +37,8 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
                 if (m_frameMonitor) {
                     m_frameMonitor->setPerformanceGuard(m_guard);
                 }
+                // Telemetria overlay może zależeć od nowych limitów
+                reportOverlayTelemetry();
             });
 
     connect(&m_client, &TradingClient::streamingChanged, this, [this]() {
@@ -47,6 +48,9 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
         m_connectionStatus = state;
         Q_EMIT connectionStatusChanged();
     });
+
+    // Risk state (jeśli dostępne po stronie serwera)
+    connect(&m_client, &TradingClient::riskStateReceived, this, &Application::handleRiskState);
 }
 
 QString Application::instrumentLabel() const {
@@ -79,10 +83,16 @@ void Application::configureParser(QCommandLineParser& parser) const {
     parser.addOption({"overlay-disable-secondary-fps",
                       tr("Próg FPS wyłączający nakładki drugorzędne"), tr("fps"),
                       QStringLiteral("0")});
+
+    // Telemetria MetricsService
     parser.addOption({"metrics-endpoint", tr("Adres serwera MetricsService"), tr("endpoint"),
                       QStringLiteral("127.0.0.1:50061")});
     parser.addOption({"metrics-tag", tr("Etykieta notatek telemetrii"), tr("tag"), QString()});
+    parser.addOption({"metrics-auth-token", tr("Token autoryzacyjny MetricsService"), tr("token")});
     parser.addOption({"disable-metrics", tr("Wyłącza wysyłkę telemetrii")});
+    parser.addOption({"no-metrics", tr("Alias: wyłącza wysyłkę telemetrii")});
+
+    // TLS/mTLS dla MetricsService (opcjonalnie)
     parser.addOption({"metrics-use-tls", tr("Wymusza połączenie TLS z MetricsService")});
     parser.addOption({"metrics-root-cert", tr("Plik root CA (PEM)"), tr("path"), QString()});
     parser.addOption({"metrics-client-cert", tr("Certyfikat klienta (PEM)"), tr("path"), QString()});
@@ -128,10 +138,16 @@ bool Application::applyParser(const QCommandLineParser& parser) {
         m_frameMonitor->setPerformanceGuard(m_guard);
     }
 
+    // --- Telemetria ---
     m_metricsEndpoint = parser.value("metrics-endpoint");
+    if (m_metricsEndpoint.isEmpty()) {
+        // Fallback: użyj endpointu tradingowego, jeśli nie podano dedykowanego dla MetricsService
+        m_metricsEndpoint = parser.value("endpoint");
+    }
     m_metricsTag = parser.value("metrics-tag");
-    m_metricsEnabled = !parser.isSet("disable-metrics");
+    m_metricsEnabled = !(parser.isSet("disable-metrics") || parser.isSet("no-metrics"));
 
+    // TLS config
     TelemetryTlsConfig tlsConfig;
     tlsConfig.enabled = parser.isSet("metrics-use-tls");
     tlsConfig.rootCertificatePath = parser.value("metrics-root-cert");
@@ -140,18 +156,32 @@ bool Application::applyParser(const QCommandLineParser& parser) {
     tlsConfig.serverNameOverride = parser.value("metrics-server-name");
     tlsConfig.pinnedServerSha256 = parser.value("metrics-server-sha256");
     m_tlsConfig = tlsConfig;
+
+    // Inicjalizacja/reportera + token
     ensureTelemetry();
+    if (m_telemetry) {
+        if (!parser.value("metrics-auth-token").isEmpty()) {
+            m_telemetry->setAuthToken(parser.value("metrics-auth-token"));
+        }
+    }
 
     return true;
 }
 
 void Application::start() {
     m_ohlcvModel.setMaximumSamples(m_maxSamples);
+    m_riskModel.clear();
+
     ensureFrameMonitor();
 
     // Jeśli QML już wczytany — podepnij okno
     if (!m_engine.rootObjects().isEmpty()) {
         attachWindow(m_engine.rootObjects().constFirst());
+    }
+
+    ensureTelemetry();
+    if (m_telemetry) {
+        m_telemetry->setWindowCount(m_windowCount);
     }
 
     m_client.start();
@@ -169,9 +199,14 @@ void Application::handleCandle(const OhlcvPoint& candle) {
     m_ohlcvModel.applyIncrement(candle);
 }
 
+void Application::handleRiskState(const RiskSnapshotData& snapshot) {
+    m_riskModel.updateFromSnapshot(snapshot);
+}
+
 void Application::exposeToQml() {
     m_engine.rootContext()->setContextProperty(QStringLiteral("appController"), this);
     m_engine.rootContext()->setContextProperty(QStringLiteral("ohlcvModel"), &m_ohlcvModel);
+    m_engine.rootContext()->setContextProperty(QStringLiteral("riskModel"), &m_riskModel);
 }
 
 void Application::ensureFrameMonitor() {
@@ -179,6 +214,7 @@ void Application::ensureFrameMonitor() {
         return;
 
     m_frameMonitor = std::make_unique<FrameRateMonitor>(this);
+
     connect(m_frameMonitor.get(), &FrameRateMonitor::reduceMotionSuggested, this,
             [this](bool enabled) {
                 if (m_reduceMotionActive == enabled) {
@@ -186,9 +222,11 @@ void Application::ensureFrameMonitor() {
                     return;
                 }
                 m_reduceMotionActive = enabled;
+                m_pendingReduceMotionState = enabled;  // zapamiętaj do telemetrii
                 Q_EMIT reduceMotionActiveChanged();
                 reportReduceMotionTelemetry(enabled);
             });
+
     connect(m_frameMonitor.get(), &FrameRateMonitor::frameSampled, this, [this](double fps) {
         m_latestFpsSample = fps;
         if (m_pendingReduceMotionState.has_value()) {
@@ -197,6 +235,7 @@ void Application::ensureFrameMonitor() {
             reportReduceMotionTelemetry(pending);
         }
     });
+
     m_frameMonitor->setPerformanceGuard(m_guard);
 }
 

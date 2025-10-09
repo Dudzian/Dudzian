@@ -3,9 +3,26 @@
 #include <QVariant>
 #include <QVariantMap>
 
+/**
+ * @brief Buduje strukturę PerformanceGuard z mapy (np. z QML / YAML).
+ *
+ * Obsługiwane klucze (bieżący format):
+ *  - "fps_target" (int)
+ *  - "reduce_motion_after_seconds" (double)
+ *  - "jank_threshold_ms" (double)
+ *  - "max_overlay_count" (int)
+ *  - "disable_secondary_when_fps_below" (int)
+ *
+ * Wsteczna kompatybilność (alternatywny format):
+ *  performance_guard:
+ *    overlays:
+ *      max_overlays: <int>
+ *      disable_secondary_when_fps_below: <int>
+ */
 PerformanceGuard performanceGuardFromMap(const QVariantMap& map) {
     PerformanceGuard guard;
 
+    // Aktualne klucze
     if (map.contains(QStringLiteral("fps_target"))) {
         guard.fpsTarget = map.value(QStringLiteral("fps_target")).toInt();
     }

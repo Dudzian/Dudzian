@@ -43,6 +43,7 @@ risk_profiles:
     data_quality:
       max_gap_minutes: 4320.0
       min_ok_ratio: 0.75
+
 runtime:
   controllers:
     daily_trend_core:
@@ -53,9 +54,11 @@ runtime:
     host: 127.0.0.1
     port: 55060
     history_size: 1024
+    auth_token: changeme-telemetry-token
     log_sink: true
     jsonl_path: audit/metrics/telemetry.jsonl
     jsonl_fsync: false
+    # — rozszerzenia kompatybilne w obie strony —
     ui_alerts_jsonl_path: audit/metrics/ui_alerts.jsonl
     tls:
       enabled: false
@@ -63,6 +66,15 @@ runtime:
       private_key_path: secrets/dev-metrics-server.key
       client_ca_path: secrets/dev-metrics-clients.pem
       require_client_auth: false
+    reduce_motion_alerts: true
+    reduce_motion_category: ui.performance
+    reduce_motion_severity_active: warning
+    reduce_motion_severity_recovered: info
+    overlay_alerts: true
+    overlay_alert_category: ui.performance
+    overlay_alert_severity_exceeded: warning
+    overlay_alert_severity_recovered: info
+
 strategies:
   core_daily_trend:
     engine: daily_trend_momentum
@@ -75,19 +87,18 @@ strategies:
       atr_multiplier: 2.0
       min_trend_strength: 0.005
       min_momentum: 0.001
+
 instrument_universes:
   core_multi_exchange:
-    description: Bazowy koszyk instrumentów dostępny na Binance, Krakenie i Zondzie.
+    description: >
+      Bazowy koszyk instrumentów dostępny na Binance, Krakenie i Zondzie.
       Zawiera pary BTC i ETH do USDT oraz EUR, sześć głównych altów oraz fiatowe pary
       na Zondzie wykorzystywane do testów integracyjnych.
     instruments:
       BTC_USDT:
         base_asset: BTC
         quote_asset: USDT
-        categories:
-        - core
-        - btc
-        - stable
+        categories: [core, btc, stable]
         exchanges:
           binance_spot: BTCUSDT
           binance_futures: BTCUSDT
@@ -95,19 +106,16 @@ instrument_universes:
           kraken_futures: pi_xbtusd
           zonda_spot: BTC-USDT
         backfill:
-        - interval: 1d
-          lookback_days: 1825
-        - interval: 1h
-          lookback_days: 1095
-        - interval: 15m
-          lookback_days: 180
+          - interval: 1d
+            lookback_days: 1825
+          - interval: 1h
+            lookback_days: 1095
+          - interval: 15m
+            lookback_days: 180
       ETH_USDT:
         base_asset: ETH
         quote_asset: USDT
-        categories:
-        - core
-        - eth
-        - stable
+        categories: [core, eth, stable]
         exchanges:
           binance_spot: ETHUSDT
           binance_futures: ETHUSDT
@@ -115,198 +123,174 @@ instrument_universes:
           kraken_futures: pi_ethusd
           zonda_spot: ETH-USDT
         backfill:
-        - interval: 1d
-          lookback_days: 1825
-        - interval: 1h
-          lookback_days: 1095
-        - interval: 15m
-          lookback_days: 180
+          - interval: 1d
+            lookback_days: 1825
+          - interval: 1h
+            lookback_days: 1095
+          - interval: 15m
+            lookback_days: 180
       BTC_EUR:
         base_asset: BTC
         quote_asset: EUR
-        categories:
-        - core
-        - btc
-        - fiat
+        categories: [core, btc, fiat]
         exchanges:
           binance_spot: BTCEUR
           kraken_spot: XBTEUR
           kraken_futures: pi_xbteur
           zonda_spot: BTC-EUR
         backfill:
-        - interval: 1d
-          lookback_days: 1825
-        - interval: 1h
-          lookback_days: 730
-        - interval: 15m
-          lookback_days: 180
+          - interval: 1d
+            lookback_days: 1825
+          - interval: 1h
+            lookback_days: 730
+          - interval: 15m
+            lookback_days: 180
       ETH_EUR:
         base_asset: ETH
         quote_asset: EUR
-        categories:
-        - core
-        - eth
-        - fiat
+        categories: [core, eth, fiat]
         exchanges:
           binance_spot: ETHEUR
           kraken_spot: ETHEUR
           kraken_futures: pi_etheur
           zonda_spot: ETH-EUR
         backfill:
-        - interval: 1d
-          lookback_days: 1825
-        - interval: 1h
-          lookback_days: 730
-        - interval: 15m
-          lookback_days: 180
+          - interval: 1d
+            lookback_days: 1825
+          - interval: 1h
+            lookback_days: 730
+          - interval: 15m
+            lookback_days: 180
       SOL_USDT:
         base_asset: SOL
         quote_asset: USDT
-        categories:
-        - alt
-        - high_liquidity
+        categories: [alt, high_liquidity]
         exchanges:
           binance_spot: SOLUSDT
           binance_futures: SOLUSDT
           kraken_spot: SOLUSDT
         backfill:
-        - interval: 1d
-          lookback_days: 1825
-        - interval: 1h
-          lookback_days: 730
-        - interval: 15m
-          lookback_days: 180
+          - interval: 1d
+            lookback_days: 1825
+          - interval: 1h
+            lookback_days: 730
+          - interval: 15m
+            lookback_days: 180
       BNB_USDT:
         base_asset: BNB
         quote_asset: USDT
-        categories:
-        - alt
-        - high_liquidity
+        categories: [alt, high_liquidity]
         exchanges:
           binance_spot: BNBUSDT
           binance_futures: BNBUSDT
         backfill:
-        - interval: 1d
-          lookback_days: 1825
-        - interval: 1h
-          lookback_days: 730
-        - interval: 15m
-          lookback_days: 180
+          - interval: 1d
+            lookback_days: 1825
+          - interval: 1h
+            lookback_days: 730
+          - interval: 15m
+            lookback_days: 180
       XRP_USDT:
         base_asset: XRP
         quote_asset: USDT
-        categories:
-        - alt
-        - high_liquidity
+        categories: [alt, high_liquidity]
         exchanges:
           binance_spot: XRPUSDT
           kraken_spot: XRPUSDT
         backfill:
-        - interval: 1d
-          lookback_days: 1825
-        - interval: 1h
-          lookback_days: 730
-        - interval: 15m
-          lookback_days: 180
+          - interval: 1d
+            lookback_days: 1825
+          - interval: 1h
+            lookback_days: 730
+          - interval: 15m
+            lookback_days: 180
       ADA_USDT:
         base_asset: ADA
         quote_asset: USDT
-        categories:
-        - alt
-        - high_liquidity
+        categories: [alt, high_liquidity]
         exchanges:
           binance_spot: ADAUSDT
           binance_futures: ADAUSDT
           kraken_spot: ADAUSDT
         backfill:
-        - interval: 1d
-          lookback_days: 1825
-        - interval: 1h
-          lookback_days: 730
-        - interval: 15m
-          lookback_days: 180
+          - interval: 1d
+            lookback_days: 1825
+          - interval: 1h
+            lookback_days: 730
+          - interval: 15m
+            lookback_days: 180
       LTC_USDT:
         base_asset: LTC
         quote_asset: USDT
-        categories:
-        - alt
-        - high_liquidity
+        categories: [alt, high_liquidity]
         exchanges:
           binance_spot: LTCUSDT
           binance_futures: LTCUSDT
           kraken_spot: LTCUSDT
         backfill:
-        - interval: 1d
-          lookback_days: 1825
-        - interval: 1h
-          lookback_days: 730
-        - interval: 15m
-          lookback_days: 180
+          - interval: 1d
+            lookback_days: 1825
+          - interval: 1h
+            lookback_days: 730
+          - interval: 15m
+            lookback_days: 180
       POL_USDT:
         base_asset: POL
         quote_asset: USDT
-        categories:
-        - alt
-        - high_liquidity
-        - migrated_matic
+        categories: [alt, high_liquidity, migrated_matic]
         exchanges:
           binance_spot: POLUSDT
           binance_futures: POLUSDT
         backfill:
-        - interval: 1d
-          lookback_days: 360
-        - interval: 1h
-          lookback_days: 360
-        - interval: 15m
-          lookback_days: 360
+          - interval: 1d
+            lookback_days: 360
+          - interval: 1h
+            lookback_days: 360
+          - interval: 15m
+            lookback_days: 360
       BTC_PLN:
         base_asset: BTC
         quote_asset: PLN
-        categories:
-        - fiat
-        - zonda
+        categories: [fiat, zonda]
         exchanges:
           zonda_spot: BTC-PLN
         backfill:
-        - interval: 1d
-          lookback_days: 3650
-        - interval: 1h
-          lookback_days: 1825
-        - interval: 15m
-          lookback_days: 180
+          - interval: 1d
+            lookback_days: 3650
+          - interval: 1h
+            lookback_days: 1825
+          - interval: 15m
+            lookback_days: 180
       ETH_PLN:
         base_asset: ETH
         quote_asset: PLN
-        categories:
-        - fiat
-        - zonda
+        categories: [fiat, zonda]
         exchanges:
           zonda_spot: ETH-PLN
         backfill:
-        - interval: 1d
-          lookback_days: 3650
-        - interval: 1h
-          lookback_days: 1825
-        - interval: 15m
-          lookback_days: 180
+          - interval: 1d
+            lookback_days: 3650
+          - interval: 1h
+            lookback_days: 1825
+          - interval: 15m
+            lookback_days: 180
   pol_only:
     description: Tymczasowe uniwersum do backfillu POLUSDT (1d/1h/15m).
     instruments:
       POL_USDT:
         base_asset: POL
         quote_asset: USDT
-        categories:
-        - temp
-        - backfill_only
+        categories: [temp, backfill_only]
         exchanges:
           binance_spot: POLUSDT
         backfill:
-        - interval: 1d
-          lookback_days: 360
-        - interval: 1h
-          lookback_days: 360
-        - interval: 15m
-          lookback_days: 360
+          - interval: 1d
+            lookback_days: 360
+          - interval: 1h
+            lookback_days: 360
+          - interval: 15m
+            lookback_days: 360
+
 environments:
   binance_paper:
     exchange: binance_spot
@@ -320,11 +304,8 @@ environments:
     default_controller: daily_trend_core
     alert_channels: []
     ip_allowlist: []
-    required_permissions:
-    - read
-    - trade
-    forbidden_permissions:
-    - withdraw
+    required_permissions: [read, trade]
+    forbidden_permissions: [withdraw]
     instrument_universe: core_multi_exchange
     data_quality:
       max_gap_minutes: 240
@@ -343,10 +324,8 @@ environments:
         ledger_fsync: true
     alert_throttle:
       window_seconds: 300
-      exclude_severities:
-      - critical
-      exclude_categories:
-      - health
+      exclude_severities: [critical]
+      exclude_categories: [health]
       max_entries: 4096
     alert_audit:
       backend: file
@@ -360,6 +339,7 @@ environments:
       filename_pattern: decisions-%Y%m%d.jsonl
       retention_days: 730
       fsync: true
+
   binance_live:
     exchange: binance_spot
     environment: live
@@ -369,22 +349,17 @@ environments:
     default_strategy: core_daily_trend
     default_controller: daily_trend_core
     alert_channels:
-    - telegram:primary
-    - sms:orange_local
-    - email:ops
+      - telegram:primary
+      - sms:orange_local
+      - email:ops
     ip_allowlist: []
-    required_permissions:
-    - read
-    - trade
-    forbidden_permissions:
-    - withdraw
+    required_permissions: [read, trade]
+    forbidden_permissions: [withdraw]
     instrument_universe: core_multi_exchange
     alert_throttle:
       window_seconds: 180
-      exclude_severities:
-      - critical
-      exclude_categories:
-      - health
+      exclude_severities: [critical]
+      exclude_categories: [health]
       max_entries: 4096
     alert_audit:
       backend: file
@@ -398,6 +373,7 @@ environments:
       filename_pattern: decisions-%Y%m%d.jsonl
       retention_days: 730
       fsync: true
+
   binance_futures_paper:
     exchange: binance_futures
     environment: paper
@@ -407,24 +383,19 @@ environments:
     default_strategy: core_daily_trend
     default_controller: daily_trend_core
     alert_channels:
-    - telegram:primary
-    - email:ops
+      - telegram:primary
+      - email:ops
     ip_allowlist: []
-    required_permissions:
-    - read
-    - trade
-    forbidden_permissions:
-    - withdraw
+    required_permissions: [read, trade]
+    forbidden_permissions: [withdraw]
     instrument_universe: core_multi_exchange
     data_quality:
       max_gap_minutes: 240
       min_ok_ratio: 0.95
     alert_throttle:
       window_seconds: 300
-      exclude_severities:
-      - critical
-      exclude_categories:
-      - health
+      exclude_severities: [critical]
+      exclude_categories: [health]
       max_entries: 4096
     alert_audit:
       backend: file
@@ -438,6 +409,7 @@ environments:
       filename_pattern: decisions-%Y%m%d.jsonl
       retention_days: 730
       fsync: true
+
   binance_futures_live:
     exchange: binance_futures
     environment: live
@@ -447,22 +419,17 @@ environments:
     default_strategy: core_daily_trend
     default_controller: daily_trend_core
     alert_channels:
-    - telegram:primary
-    - sms:orange_local
-    - email:ops
+      - telegram:primary
+      - sms:orange_local
+      - email:ops
     ip_allowlist: []
-    required_permissions:
-    - read
-    - trade
-    forbidden_permissions:
-    - withdraw
+    required_permissions: [read, trade]
+    forbidden_permissions: [withdraw]
     instrument_universe: core_multi_exchange
     alert_throttle:
       window_seconds: 180
-      exclude_severities:
-      - critical
-      exclude_categories:
-      - health
+      exclude_severities: [critical]
+      exclude_categories: [health]
       max_entries: 4096
     alert_audit:
       backend: file
@@ -476,6 +443,7 @@ environments:
       filename_pattern: decisions-%Y%m%d.jsonl
       retention_days: 730
       fsync: true
+
   kraken_paper:
     exchange: kraken_spot
     environment: paper
@@ -485,14 +453,11 @@ environments:
     default_strategy: core_daily_trend
     default_controller: daily_trend_core
     alert_channels:
-    - telegram:primary
-    - email:ops
+      - telegram:primary
+      - email:ops
     ip_allowlist: []
-    required_permissions:
-    - read
-    - trade
-    forbidden_permissions:
-    - withdraw
+    required_permissions: [read, trade]
+    forbidden_permissions: [withdraw]
     instrument_universe: core_multi_exchange
     data_quality:
       max_gap_minutes: 240
@@ -500,10 +465,8 @@ environments:
       valuation_asset: ZUSD
     alert_throttle:
       window_seconds: 300
-      exclude_severities:
-      - critical
-      exclude_categories:
-      - health
+      exclude_severities: [critical]
+      exclude_categories: [health]
       max_entries: 4096
     alert_audit:
       backend: file
@@ -517,6 +480,7 @@ environments:
       filename_pattern: decisions-%Y%m%d.jsonl
       retention_days: 730
       fsync: true
+
   kraken_live:
     exchange: kraken_spot
     environment: live
@@ -526,24 +490,19 @@ environments:
     default_strategy: core_daily_trend
     default_controller: daily_trend_core
     alert_channels:
-    - telegram:primary
-    - sms:orange_local
-    - email:ops
+      - telegram:primary
+      - sms:orange_local
+      - email:ops
     ip_allowlist: []
-    required_permissions:
-    - read
-    - trade
-    forbidden_permissions:
-    - withdraw
+    required_permissions: [read, trade]
+    forbidden_permissions: [withdraw]
     instrument_universe: core_multi_exchange
     adapter_settings:
       valuation_asset: ZEUR
     alert_throttle:
       window_seconds: 180
-      exclude_severities:
-      - critical
-      exclude_categories:
-      - health
+      exclude_severities: [critical]
+      exclude_categories: [health]
       max_entries: 4096
     alert_audit:
       backend: file
@@ -557,6 +516,7 @@ environments:
       filename_pattern: decisions-%Y%m%d.jsonl
       retention_days: 730
       fsync: true
+
   kraken_futures_paper:
     exchange: kraken_futures
     environment: paper
@@ -566,24 +526,19 @@ environments:
     default_strategy: core_daily_trend
     default_controller: daily_trend_core
     alert_channels:
-    - telegram:primary
-    - email:ops
+      - telegram:primary
+      - email:ops
     ip_allowlist: []
-    required_permissions:
-    - read
-    - trade
-    forbidden_permissions:
-    - withdraw
+    required_permissions: [read, trade]
+    forbidden_permissions: [withdraw]
     instrument_universe: core_multi_exchange
     data_quality:
       max_gap_minutes: 240
       min_ok_ratio: 0.9
     alert_throttle:
       window_seconds: 300
-      exclude_severities:
-      - critical
-      exclude_categories:
-      - health
+      exclude_severities: [critical]
+      exclude_categories: [health]
       max_entries: 4096
     alert_audit:
       backend: file
@@ -597,6 +552,7 @@ environments:
       filename_pattern: decisions-%Y%m%d.jsonl
       retention_days: 730
       fsync: true
+
   kraken_futures_live:
     exchange: kraken_futures
     environment: live
@@ -606,22 +562,17 @@ environments:
     default_strategy: core_daily_trend
     default_controller: daily_trend_core
     alert_channels:
-    - telegram:primary
-    - sms:orange_local
-    - email:ops
+      - telegram:primary
+      - sms:orange_local
+      - email:ops
     ip_allowlist: []
-    required_permissions:
-    - read
-    - trade
-    forbidden_permissions:
-    - withdraw
+    required_permissions: [read, trade]
+    forbidden_permissions: [withdraw]
     instrument_universe: core_multi_exchange
     alert_throttle:
       window_seconds: 180
-      exclude_severities:
-      - critical
-      exclude_categories:
-      - health
+      exclude_severities: [critical]
+      exclude_categories: [health]
       max_entries: 4096
     alert_audit:
       backend: file
@@ -635,6 +586,7 @@ environments:
       filename_pattern: decisions-%Y%m%d.jsonl
       retention_days: 730
       fsync: true
+
   zonda_paper:
     exchange: zonda_spot
     environment: paper
@@ -644,29 +596,21 @@ environments:
     default_strategy: core_daily_trend
     default_controller: daily_trend_core
     alert_channels:
-    - telegram:primary
+      - telegram:primary
     ip_allowlist: []
-    required_permissions:
-    - read
-    - trade
-    forbidden_permissions:
-    - withdraw
+    required_permissions: [read, trade]
+    forbidden_permissions: [withdraw]
     instrument_universe: core_multi_exchange
     data_quality:
       max_gap_minutes: 240
       min_ok_ratio: 0.85
     adapter_settings:
       valuation_asset: PLN
-      secondary_valuation_assets:
-      - USDT
-      - EUR
-      - USD
+      secondary_valuation_assets: [USDT, EUR, USD]
     alert_throttle:
       window_seconds: 420
-      exclude_severities:
-      - critical
-      exclude_categories:
-      - health
+      exclude_severities: [critical]
+      exclude_categories: [health]
       max_entries: 4096
     alert_audit:
       backend: file
@@ -680,6 +624,7 @@ environments:
       filename_pattern: decisions-%Y%m%d.jsonl
       retention_days: 730
       fsync: true
+
   zonda_live:
     exchange: zonda_spot
     environment: live
@@ -689,28 +634,20 @@ environments:
     default_strategy: core_daily_trend
     default_controller: daily_trend_core
     alert_channels:
-    - telegram:primary
-    - sms:nova_is
-    - email:ops
+      - telegram:primary
+      - sms:nova_is
+      - email:ops
     ip_allowlist: []
-    required_permissions:
-    - read
-    - trade
-    forbidden_permissions:
-    - withdraw
+    required_permissions: [read, trade]
+    forbidden_permissions: [withdraw]
     instrument_universe: core_multi_exchange
     adapter_settings:
       valuation_asset: PLN
-      secondary_valuation_assets:
-      - USDT
-      - EUR
-      - USD
+      secondary_valuation_assets: [USDT, EUR, USD]
     alert_throttle:
       window_seconds: 240
-      exclude_severities:
-      - critical
-      exclude_categories:
-      - health
+      exclude_severities: [critical]
+      exclude_categories: [health]
       max_entries: 4096
     alert_audit:
       backend: file
@@ -724,43 +661,45 @@ environments:
       filename_pattern: decisions-%Y%m%d.jsonl
       retention_days: 730
       fsync: true
+
 reporting:
-  daily_report_time_utc: '21:00'
+  daily_report_time_utc: "21:00"
   weekly_report_day: sunday
-  retention_months: '24'
+  retention_months: "24"
   smoke_archive_upload:
     backend: local
     local:
       directory: audit/smoke_archives
-      filename_pattern: '{environment}_{timestamp}_{hash}.zip'
+      filename_pattern: "{environment}_{timestamp}_{hash}.zip"
       fsync: true
+
 alerts:
   telegram_channels:
     primary:
-      chat_id: '123456789'
+      chat_id: "123456789"
       token_secret: telegram_primary_token
       parse_mode: MarkdownV2
   signal_channels:
     primary_signal:
       service_url: https://signal-gateway.local
-      sender_number: '+48500100999'
+      sender_number: "+48500100999"
       recipients:
-      - '+48555111222'
+        - "+48555111222"
       credential_secret: signal_cli_token
       verify_tls: true
   whatsapp_channels:
     primary_whatsapp:
-      phone_number_id: '10987654321'
+      phone_number_id: "10987654321"
       recipients:
-      - '48555111222'
+        - "48555111222"
       token_secret: whatsapp_primary_token
       api_base_url: https://graph.facebook.com
       api_version: v16.0
   messenger_channels:
     ops_messenger:
-      page_id: '1357924680'
+      page_id: "1357924680"
       recipients:
-      - '2468013579'
+        - "2468013579"
       token_secret: messenger_page_token
       api_base_url: https://graph.facebook.com
       api_version: v16.0
@@ -770,51 +709,51 @@ alerts:
       port: 587
       from_address: bot@example.com
       recipients:
-      - ops@example.com
+        - ops@example.com
       credential_secret: smtp_ops_credentials
       use_tls: true
   sms_providers:
     orange_local:
       provider: orange_pl
       api_base_url: https://api.orange.pl/sms/v1
-      from_number: '+48500100100'
+      from_number: "+48500100100"
       recipients:
-      - '+48555111222'
+        - "+48555111222"
       allow_alphanumeric_sender: true
       sender_id: BOT-ORANGE
       credential_key: orange_sms_credentials
     tmobile_local:
       provider: tmobile_pl
       api_base_url: https://api.t-mobile.pl/sms/v1
-      from_number: '+48500100101'
+      from_number: "+48500100101"
       recipients:
-      - '+48555111333'
+        - "+48555111333"
       allow_alphanumeric_sender: true
       sender_id: BOT-TMOBILE
       credential_key: tmobile_sms_credentials
     plus_local:
       provider: plus_pl
       api_base_url: https://api.plus.pl/messaging/v1
-      from_number: '+48500100102'
+      from_number: "+48500100102"
       recipients:
-      - '+48555111444'
+        - "+48555111444"
       allow_alphanumeric_sender: false
       credential_key: plus_sms_credentials
     play_local:
       provider: play_pl
       api_base_url: https://api.play.pl/sms/v1
-      from_number: '+48500100103'
+      from_number: "+48500100103"
       recipients:
-      - '+48555111555'
+        - "+48555111555"
       allow_alphanumeric_sender: true
       sender_id: BOT-PLAY
       credential_key: play_sms_credentials
     nova_is:
       provider: nova_is
       api_base_url: https://api.nova.is/sms/v1
-      from_number: '+3546001001'
+      from_number: "+3546001001"
       recipients:
-      - '+3546601234'
+        - "+3546601234"
       allow_alphanumeric_sender: true
       sender_id: BOT-NOVA
       credential_key: nova_sms_credentials

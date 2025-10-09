@@ -21,19 +21,26 @@ def _patch_python_package_imports(output_dir: Path, proto_file: str) -> None:
         return
 
     text = grpc_file.read_text(encoding="utf-8")
-    # Zmiana: `import trading_pb2 as ...` -> `from . import trading_pb2 as ...`
+    # Zmiana: `import <module_base> as ...` -> `from . import <module_base> as ...`
     if f"import {module_base} as" in text:
         text = text.replace(
             f"import {module_base} as",
             f"from . import {module_base} as",
         )
-    # Zmiana: `import trading_pb2\n` -> `from . import trading_pb2\n`
+    # Zmiana: `import <module_base>\n` -> `from . import <module_base>\n`
     if f"import {module_base}\n" in text:
         text = text.replace(
             f"import {module_base}\n",
             f"from . import {module_base}\n",
         )
     grpc_file.write_text(text, encoding="utf-8")
+
+
+def _ensure_python_package(output_dir: Path) -> None:
+    """Tworzy `__init__.py`, aby katalog ze stubami był pakietem Pythona."""
+    init_file = output_dir / "__init__.py"
+    if not init_file.exists():
+        init_file.write_text("# Package for generated gRPC stubs\n", encoding="utf-8")
 
 
 DEFAULT_PROTO = "trading.proto"
@@ -93,6 +100,7 @@ def _generate_python_stubs(args: argparse.Namespace) -> None:
 
     if not args.dry_run:
         _patch_python_package_imports(output_dir, args.proto_file)
+        _ensure_python_package(output_dir)
 
 
 def _generate_cpp_stubs(args: argparse.Namespace) -> None:

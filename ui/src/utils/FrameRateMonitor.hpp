@@ -7,6 +7,10 @@
 
 class QQuickWindow;
 
+/**
+ * @brief Monitoruje FPS okna QML i sugeruje ograniczenie animacji (reduce-motion)
+ *        gdy spadek wydajności utrzymuje się dłużej niż dopuszczalny budżet.
+ */
 class FrameRateMonitor : public QObject {
     Q_OBJECT
 public:
@@ -26,6 +30,7 @@ private slots:
     void handleFrameSwapped();
 
 private:
+    void processFrameInterval(double deltaSeconds);
     void applyReduceMotion(bool enabled);
     double lowFpsThreshold() const;
 
@@ -38,4 +43,9 @@ private:
     double m_highFpsDuration = 0.0;
     bool m_reduceMotionActive = false;
     double m_lastFps = 0.0;
+
+public:
+    // Ułatwia testy jednostkowe – pozwala zasymulować interwał klatkowy
+    // bez konieczności korzystania z prawdziwego QQuickWindow.
+    void simulateFrameIntervalForTest(double deltaSeconds) { processFrameInterval(deltaSeconds); }
 };

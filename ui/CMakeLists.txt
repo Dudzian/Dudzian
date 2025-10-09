@@ -10,16 +10,17 @@ set(CMAKE_AUTOUIC ON)
 
 find_package(Qt6 6.5 COMPONENTS Quick QuickControls2 Charts REQUIRED)
 
-# --- Testing (from HEAD) ---
+# --- Testing toggle ---
 include(CTest)
 if(BUILD_TESTING)
-    find_package(Qt6 6.5 COMPONENTS Test REQUIRED)
+    # Pull in all modules needed by tests only when testing is enabled
+    find_package(Qt6 6.5 COMPONENTS Test Gui Qml Quick Charts REQUIRED)
 endif()
 
+# --- Protobuf / gRPC ---
 find_package(Protobuf REQUIRED)
 find_package(gRPC REQUIRED)
 
-# ---- Protobuf / gRPC codegen ----
 set(PROTO_SRC ${CMAKE_SOURCE_DIR}/proto/trading.proto)
 set(GENERATED_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
 file(MAKE_DIRECTORY ${GENERATED_DIR})
@@ -54,12 +55,13 @@ target_link_libraries(trading_proto
         gRPC::grpc++_reflection
 )
 
-# ---- App sources ----
+# --- App sources ---
 set(UI_SOURCES
     src/main.cpp
     src/app/Application.cpp
     src/grpc/TradingClient.cpp
     src/models/OhlcvListModel.cpp
+    src/models/RiskStateModel.cpp
     src/utils/PerformanceGuard.cpp
     src/utils/FrameRateMonitor.cpp
     src/telemetry/UiTelemetryReporter.cpp
@@ -69,6 +71,8 @@ set(UI_HEADERS
     src/app/Application.hpp
     src/grpc/TradingClient.hpp
     src/models/OhlcvListModel.hpp
+    src/models/RiskStateModel.hpp
+    src/models/RiskTypes.hpp
     src/utils/PerformanceGuard.hpp
     src/utils/FrameRateMonitor.hpp
     src/telemetry/TelemetryReporter.hpp
@@ -92,8 +96,9 @@ target_link_libraries(bot_trading_shell
 
 install(TARGETS bot_trading_shell RUNTIME DESTINATION bin)
 
-# ---- Tests (from HEAD) ----
+# --- Tests ---
 if(BUILD_TESTING)
+    # UiTelemetryReporter tests (needs protobuf/gRPC stubs)
     add_executable(ui_telemetry_tests
         tests/UiTelemetryReporterTest.cpp
         src/utils/PerformanceGuard.cpp
@@ -110,6 +115,7 @@ if(BUILD_TESTING)
     )
     add_test(NAME ui_telemetry_tests COMMAND ui_telemetry_tests)
 
+    # Application-level telemetry tests
     add_executable(ui_application_telemetry_tests
         tests/ApplicationTelemetryTest.cpp
         src/app/Application.cpp
@@ -131,4 +137,38 @@ if(BUILD_TESTING)
             gRPC::grpc++
     )
     add_test(NAME ui_application_telemetry_tests COMMAND ui_application_telemetry_tests)
+
+    # FrameRateMonitor tests
+    add_executable(frame_rate_monitor_tests
+        tests/FrameRateMonitorTest.cpp
+        src/utils/PerformanceGuard.cpp
+        src/utils/FrameRateMonitor.cpp
+    )
+    target_include_directories(frame_rate_monitor_tests PRIVATE src)
+    target_link_libraries(frame_rate_monitor_tests PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME frame_rate_monitor_tests COMMAND frame_rate_monitor_tests)
+
+    # CandlestickChartView tests (needs QML/Charts)
+    add_executable(candlestick_chart_view_tests
+        tests/CandlestickChartViewTest.cpp
+        src/utils/PerformanceGuard.cpp
+    )
+    target_include_directories(candlestick_chart_view_tests PRIVATE src ${GENERATED_DIR})
+    qt_add_resources(candlestick_chart_view_tests candlestick_chart_view_qml
+        PREFIX "/qml/components"
+        FILES qml/components/CandlestickChartView.qml
+    )
+    target_link_libraries(candlestick_chart_view_tests
+        PRIVATE Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Charts Qt6::Test
+    )
+    add_test(NAME candlestick_chart_view_tests COMMAND candlestick_chart_view_tests)
+
+    # RiskStateModel tests
+    add_executable(risk_state_model_tests
+        tests/RiskStateModelTest.cpp
+        src/models/RiskStateModel.cpp
+    )
+    target_include_directories(risk_state_model_tests PRIVATE src)
+    target_link_libraries(risk_state_model_tests PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME risk_state_model_tests COMMAND risk_state_model_tests)
 endif()

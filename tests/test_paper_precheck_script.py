@@ -233,3 +233,65 @@ def test_run_precheck_returns_payload(tmp_path: Path) -> None:
     assert payload["status"] == "ok"
     assert payload["coverage_status"] == "ok"
     assert payload["risk_status"] == "ok"
+
+
+def test_paper_precheck_risk_warning_when_target_vol_zero(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cache_dir = tmp_path / "cache_risk_warning"
+    rows = _generate_rows(datetime(2024, 1, 1, tzinfo=timezone.utc), 40)
+    _write_cache(cache_dir, rows)
+    risk_profiles = {
+        "manual_custom": {
+            "max_daily_loss_pct": 0.01,
+            "max_position_pct": 0.05,
+            "target_volatility": 0.0,
+            "max_leverage": 2.0,
+            "stop_loss_atr_multiple": 1.2,
+            "max_open_positions": 3,
+            "hard_drawdown_pct": 0.1,
+        }
+    }
+    config_path = _write_config(
+        tmp_path,
+        cache_dir,
+        risk_profiles=risk_profiles,
+        risk_profile_name="manual_custom",
+    )
+
+    exit_code = paper_precheck.main(
+        [
+            "--config",
+            str(config_path),
+            "--environment",
+            "binance_smoke",
+            "--as-of",
+            datetime.fromtimestamp(rows[-1][0] / 1000, tz=timezone.utc).isoformat(),
+            "--json",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "warning"
+    assert payload["risk_status"] == "warning"
+    warnings = payload["risk"]["warnings"]
+    assert "target_volatility_not_positive" in warnings
+
+
+def test_run_precheck_returns_payload(tmp_path: Path) -> None:
+    cache_dir = tmp_path / "cache_run_precheck"
+    rows = _generate_rows(datetime(2024, 1, 1, tzinfo=timezone.utc), 40)
+    _write_cache(cache_dir, rows)
+    config_path = _write_config(tmp_path, cache_dir)
+
+    payload, exit_code = paper_precheck.run_precheck(
+        environment_name="binance_smoke",
+        config_path=config_path,
+        as_of=datetime.fromtimestamp(rows[-1][0] / 1000, tz=timezone.utc),
+    )
+
+    assert exit_code == 0
+    assert payload["status"] == "ok"
+    assert payload["coverage_status"] == "ok"
+    assert payload["risk_status"] == "ok"

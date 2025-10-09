@@ -1,5 +1,6 @@
 #include "TradingClient.hpp"
 
+#include <QDateTime>
 #include <QMetaObject>
 #include <QtGlobal>
 
@@ -17,6 +18,8 @@ using botcore::trading::v1::MarketDataService;
 using botcore::trading::v1::OhlcvCandle;
 using botcore::trading::v1::StreamOhlcvRequest;
 using botcore::trading::v1::StreamOhlcvUpdate;
+using botcore::trading::v1::RiskService;
+using botcore::trading::v1::RiskState;
 
 namespace {
 qint64 timestampToMs(const google::protobuf::Timestamp& ts) {
@@ -39,6 +42,7 @@ TradingClient::TradingClient(QObject* parent)
     : QObject(parent) {
     qRegisterMetaType<QList<OhlcvPoint>>("QList<OhlcvPoint>");
     qRegisterMetaType<PerformanceGuard>("PerformanceGuard");
+    qRegisterMetaType<RiskSnapshotData>("RiskSnapshotData");
 }
 
 TradingClient::~TradingClient() {
@@ -90,8 +94,11 @@ void TradingClient::start() {
     if (historyStatus.ok()) {
         Q_EMIT historyReceived(convertHistory(historyResp.candles()));
     } else {
-        Q_EMIT connectionStateChanged(QStringLiteral("history error: %1").arg(QString::fromStdString(historyStatus.error_message())));
+        Q_EMIT connectionStateChanged(QStringLiteral("history error: %1")
+                                          .arg(QString::fromStdString(historyStatus.error_message())));
     }
+
+    refreshRiskState();
 
     {
         std::lock_guard<std::mutex> lock(m_contextMutex);
@@ -121,6 +128,7 @@ void TradingClient::stop() {
 void TradingClient::ensureStub() {
     m_channel = grpc::CreateChannel(m_endpoint.toStdString(), grpc::InsecureChannelCredentials());
     m_marketDataStub = MarketDataService::NewStub(m_channel);
+    m_riskStub = RiskService::NewStub(m_channel);
 }
 
 QList<OhlcvPoint> TradingClient::convertHistory(const google::protobuf::RepeatedPtrField<OhlcvCandle>& candles) const {
@@ -199,4 +207,63 @@ void TradingClient::streamLoop() {
     }
     m_running.store(false);
     QMetaObject::invokeMethod(this, [this]() { Q_EMIT streamingChanged(); }, Qt::QueuedConnection);
+}
+
+void TradingClient::refreshRiskState() {
+    if (!m_riskStub) {
+        return;
+    }
+    grpc::ClientContext riskContext;
+    botcore::trading::v1::RiskStateRequest request;
+    RiskState response;
+    const grpc::Status status = m_riskStub->GetRiskState(&riskContext, request, &response);
+    if (status.ok()) {
+        const auto snapshot = convertRiskState(response);
+        QMetaObject::invokeMethod(
+            this,
+            [this, snapshot]() { Q_EMIT riskStateReceived(snapshot); },
+            Qt::QueuedConnection);
+    }
+}
+
+RiskSnapshotData TradingClient::convertRiskState(const RiskState& state) const {
+    RiskSnapshotData snapshot;
+    snapshot.hasData = true;
+    snapshot.profileEnum = state.profile();
+    switch (state.profile()) {
+    case botcore::trading::v1::RiskProfile::RISK_PROFILE_CONSERVATIVE:
+        snapshot.profileLabel = QStringLiteral("Konserwatywny");
+        break;
+    case botcore::trading::v1::RiskProfile::RISK_PROFILE_BALANCED:
+        snapshot.profileLabel = QStringLiteral("Zbalansowany");
+        break;
+    case botcore::trading::v1::RiskProfile::RISK_PROFILE_AGGRESSIVE:
+        snapshot.profileLabel = QStringLiteral("Agresywny");
+        break;
+    case botcore::trading::v1::RiskProfile::RISK_PROFILE_MANUAL:
+        snapshot.profileLabel = QStringLiteral("Manualny");
+        break;
+    default:
+        snapshot.profileLabel = QStringLiteral("Nieokreślony");
+        break;
+    }
+    snapshot.portfolioValue = state.portfolio_value();
+    snapshot.currentDrawdown = state.current_drawdown();
+    snapshot.maxDailyLoss = state.max_daily_loss();
+    snapshot.usedLeverage = state.used_leverage();
+    if (state.has_generated_at()) {
+        const auto ts = state.generated_at();
+        snapshot.generatedAt = QDateTime::fromSecsSinceEpoch(ts.seconds(), Qt::UTC);
+        snapshot.generatedAt = snapshot.generatedAt.addMSecs(ts.nanos() / 1000000);
+    }
+    snapshot.exposures.reserve(static_cast<int>(state.limits_size()));
+    for (const auto& limit : state.limits()) {
+        RiskExposureData exposure;
+        exposure.code = QString::fromStdString(limit.code());
+        exposure.maxValue = limit.max_value();
+        exposure.currentValue = limit.current_value();
+        exposure.thresholdValue = limit.threshold_value();
+        snapshot.exposures.append(exposure);
+    }
+    return snapshot;
 }

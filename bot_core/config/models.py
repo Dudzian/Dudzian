@@ -31,7 +31,6 @@ class AlertAuditConfig:
 @dataclass(slots=True)
 class DecisionJournalConfig:
     """Konfiguracja dziennika decyzji tradingowych."""
-
     backend: str
     directory: str | None = None
     filename_pattern: str = "decisions-%Y%m%d.jsonl"
@@ -42,7 +41,6 @@ class DecisionJournalConfig:
 @dataclass(slots=True)
 class MetricsServiceTlsConfig:
     """Opcjonalna konfiguracja TLS/mTLS dla serwera telemetrii."""
-
     enabled: bool = False
     certificate_path: str | None = None
     private_key_path: str | None = None
@@ -53,16 +51,31 @@ class MetricsServiceTlsConfig:
 @dataclass(slots=True)
 class MetricsServiceConfig:
     """Ustawienia serwera telemetrii `MetricsService`."""
-
     enabled: bool = True
     host: str = "127.0.0.1"
     port: int = 0
     history_size: int = 1024
+
+    # Rozszerzone pola (autoryzacja / logowanie / pliki)
+    auth_token: str | None = None
     log_sink: bool = True
     jsonl_path: str | None = None
     jsonl_fsync: bool = False
+
+    # Dodatkowe ścieżki/bezpieczeństwo
     ui_alerts_jsonl_path: str | None = None
     tls: MetricsServiceTlsConfig | None = None
+
+    # Opcjonalne alerty związane z UI/performance
+    reduce_motion_alerts: bool = False
+    reduce_motion_category: str = "ui.performance"
+    reduce_motion_severity_active: str = "warning"
+    reduce_motion_severity_recovered: str = "info"
+
+    overlay_alerts: bool = False
+    overlay_alert_category: str = "ui.performance"
+    overlay_alert_severity_exceeded: str = "warning"
+    overlay_alert_severity_recovered: str = "info"
 
 
 # --- Środowiska / rdzeń ------------------------------------------------------
@@ -70,7 +83,6 @@ class MetricsServiceConfig:
 @dataclass(slots=True)
 class EnvironmentDataQualityConfig:
     """Progi jakości danych używane przez środowisko."""
-
     max_gap_minutes: float | None = None
     min_ok_ratio: float | None = None
 
@@ -78,7 +90,6 @@ class EnvironmentDataQualityConfig:
 @dataclass(slots=True)
 class CoverageMonitorTargetConfig:
     """Definicja środowiska objętego monitoringiem pokrycia danych."""
-
     environment: str
     dispatch: bool | None = None
     category: str | None = None
@@ -88,7 +99,6 @@ class CoverageMonitorTargetConfig:
 @dataclass(slots=True)
 class CoverageMonitoringConfig:
     """Ustawienia globalnego monitoringu pokrycia danych OHLCV."""
-
     enabled: bool = True
     default_dispatch: bool = True
     default_category: str = "data.ohlcv"
@@ -98,7 +108,6 @@ class CoverageMonitoringConfig:
 @dataclass(slots=True)
 class EnvironmentConfig:
     """Konfiguracja środowiska (np. live, paper, testnet)."""
-
     name: str
     exchange: str
     environment: Environment
@@ -259,7 +268,6 @@ class ControllerRuntimeConfig:
 @dataclass(slots=True)
 class SmokeArchiveLocalConfig:
     """Konfiguracja lokalnego magazynu archiwów smoke testów."""
-
     directory: str
     filename_pattern: str = "{environment}_{date}_{hash}.zip"
     fsync: bool = False
@@ -268,7 +276,6 @@ class SmokeArchiveLocalConfig:
 @dataclass(slots=True)
 class SmokeArchiveS3Config:
     """Konfiguracja wysyłki archiwów smoke testu do S3/MinIO."""
-
     bucket: str
     object_prefix: str | None = None
     endpoint_url: str | None = None
@@ -280,7 +287,6 @@ class SmokeArchiveS3Config:
 @dataclass(slots=True)
 class SmokeArchiveUploadConfig:
     """Parametry wysyłki archiwum smoke testu po udanym przebiegu."""
-
     backend: str
     credential_secret: str | None = None
     local: SmokeArchiveLocalConfig | None = None
@@ -290,7 +296,6 @@ class SmokeArchiveUploadConfig:
 @dataclass(slots=True)
 class PaperSmokeJsonSyncLocalConfig:
     """Konfiguracja lokalnego archiwum dziennika JSONL smoke testów."""
-
     directory: str
     filename_pattern: str = "{environment}_{date}.jsonl"
     fsync: bool = False
@@ -299,7 +304,6 @@ class PaperSmokeJsonSyncLocalConfig:
 @dataclass(slots=True)
 class PaperSmokeJsonSyncS3Config:
     """Konfiguracja wysyłki dziennika JSONL smoke testów do S3/MinIO."""
-
     bucket: str
     object_prefix: str | None = None
     endpoint_url: str | None = None
@@ -311,7 +315,6 @@ class PaperSmokeJsonSyncS3Config:
 @dataclass(slots=True)
 class PaperSmokeJsonSyncConfig:
     """Parametry synchronizacji dziennika JSONL smoke testów."""
-
     backend: str
     credential_secret: str | None = None
     local: PaperSmokeJsonSyncLocalConfig | None = None
@@ -321,7 +324,6 @@ class PaperSmokeJsonSyncConfig:
 @dataclass(slots=True)
 class CoreReportingConfig:
     """Konfiguracja sekcji reportingowej CoreConfig."""
-
     daily_report_time_utc: str | None = None
     weekly_report_day: str | None = None
     retention_months: str | None = None
@@ -332,7 +334,6 @@ class CoreReportingConfig:
 @dataclass(slots=True)
 class CoreConfig:
     """Najwyższego poziomu konfiguracja aplikacji."""
-
     environments: Mapping[str, EnvironmentConfig]
     risk_profiles: Mapping[str, RiskProfileConfig]
     instrument_universes: Mapping[str, InstrumentUniverseConfig] = field(default_factory=dict)
@@ -379,5 +380,6 @@ __all__ = [
     "AlertThrottleConfig",
     "AlertAuditConfig",
     "DecisionJournalConfig",
+    "MetricsServiceTlsConfig",
     "MetricsServiceConfig",
 ]

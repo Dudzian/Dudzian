@@ -277,6 +277,7 @@ def test_load_core_config_inherits_risk_profile_data_quality(tmp_path: Path) -> 
     assert env.data_quality.max_gap_minutes == 180.0
     assert env.data_quality.min_ok_ratio == 0.85
 
+
 def test_load_core_config_reads_metrics_service(tmp_path: Path) -> None:
     config_path = tmp_path / "core.yaml"
     config_path.write_text(
@@ -290,7 +291,17 @@ def test_load_core_config_reads_metrics_service(tmp_path: Path) -> None:
             host: 0.0.0.0
             port: 55123
             history_size: 256
+            auth_token: secret-token
             log_sink: false
+            # brak jsonl_path => None
+            reduce_motion_alerts: true
+            reduce_motion_category: ui.performance.guard
+            reduce_motion_severity_active: critical
+            reduce_motion_severity_recovered: notice
+            overlay_alerts: true
+            overlay_alert_category: ui.performance.overlay
+            overlay_alert_severity_exceeded: critical
+            overlay_alert_severity_recovered: notice
         """,
         encoding="utf-8",
     )
@@ -303,7 +314,21 @@ def test_load_core_config_reads_metrics_service(tmp_path: Path) -> None:
     assert metrics.host == "0.0.0.0"
     assert metrics.port == 55123
     assert metrics.history_size == 256
+    assert metrics.auth_token == "secret-token"
     assert metrics.log_sink is False
+    assert metrics.jsonl_path is None
+
+    # Pola reduce/overlay z gałęzi UI
+    assert metrics.reduce_motion_alerts is True
+    assert metrics.reduce_motion_category == "ui.performance.guard"
+    assert metrics.reduce_motion_severity_active == "critical"
+    assert metrics.reduce_motion_severity_recovered == "notice"
+    assert metrics.overlay_alerts is True
+    assert metrics.overlay_alert_category == "ui.performance.overlay"
+    assert metrics.overlay_alert_severity_exceeded == "critical"
+    assert metrics.overlay_alert_severity_recovered == "notice"
+
+    # Metadane ścieżek źródłowych configu (ustawiane przez loader)
     assert Path(config.source_path or "").is_absolute()
     expected_dir = config_path.resolve(strict=False).parent
     assert config.source_directory == str(expected_dir)
@@ -341,6 +366,7 @@ def test_load_core_config_resolves_metrics_paths_relative_to_config(tmp_path: Pa
     expected_alerts = (config_dir / "logs/metrics/ui_alerts.jsonl").resolve(strict=False)
     assert metrics.jsonl_path == str(expected_jsonl)
     assert metrics.ui_alerts_jsonl_path == str(expected_alerts)
+
     assert metrics.tls is not None
     expected_cert = (config_dir / "secrets/server.crt").resolve(strict=False)
     expected_key = (config_dir / "secrets/server.key").resolve(strict=False)
@@ -348,4 +374,3 @@ def test_load_core_config_resolves_metrics_paths_relative_to_config(tmp_path: Pa
     assert metrics.tls.certificate_path == str(expected_cert)
     assert metrics.tls.private_key_path == str(expected_key)
     assert metrics.tls.client_ca_path == str(expected_ca)
-

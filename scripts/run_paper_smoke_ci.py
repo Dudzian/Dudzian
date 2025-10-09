@@ -344,7 +344,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(json.dumps({"status": "dry_run", "command": command}, indent=2))
         return 0
 
-    _LOGGER.info("Uruchamiam smoke test paper trading w trybie CI: %s", " ".join(map(shlex.quote, command)))
+    _LOGGER.info(
+        "Uruchamiam smoke test paper trading w trybie CI: %s",
+        " ".join(map(shlex.quote, command)),
+    )
 
     completed = subprocess.run(command, text=True, check=False)
 

@@ -9,13 +9,13 @@
 
 struct OhlcvPoint {
     qint64  timestampMs = 0;
-    double  open = 0.0;
-    double  high = 0.0;
-    double  low  = 0.0;
-    double  close = 0.0;
-    double  volume = 0.0;
-    bool    closed = false;
-    quint64 sequence = 0;
+    double  open        = 0.0;
+    double  high        = 0.0;
+    double  low         = 0.0;
+    double  close       = 0.0;
+    double  volume      = 0.0;
+    bool    closed      = false;
+    quint64 sequence    = 0;
 };
 Q_DECLARE_METATYPE(OhlcvPoint)
 
@@ -37,7 +37,7 @@ public:
 
     explicit OhlcvListModel(QObject* parent = nullptr);
 
-    int rowCount(const QModelIndex& parent = QModelIndex()) const override;
+    int      rowCount(const QModelIndex& parent = QModelIndex()) const override;
     QVariant data(const QModelIndex& index, int role = Qt::DisplayRole) const override;
     QHash<int, QByteArray> roleNames() const override;
 

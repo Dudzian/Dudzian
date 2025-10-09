@@ -29,7 +29,9 @@ W pierwszym terminalu uruchom stub z wieloassetowym datasetem i pętlą strumien
 ```bash
 python scripts/run_trading_stub_server.py \
   --dataset data/trading_stub/datasets/multi_asset_performance.yaml \
-  --stream-repeat --stream-interval 0.25
+  --stream-repeat --stream-interval 0.25 \
+  --enable-metrics --metrics-jsonl artifacts/metrics.jsonl \
+  --metrics-auth-token dev-secret --print-metrics-address
 ```
 
 W drugim terminalu wystartuj powłokę:
@@ -45,7 +47,8 @@ ui/build/bot_trading_shell \
   --jank-threshold-ms 12.0 \
   --overlay-disable-secondary-fps 55 \
   --metrics-endpoint 127.0.0.1:50061 \
-  --metrics-tag desktop-shell-dev
+  --metrics-tag desktop-shell-dev \
+  --metrics-auth-token dev-secret
 ```
 
 Domyślne parametry są zgodne z plikiem `ui/config/example.yaml`. Wartości `--max-samples` oraz `--history-limit` pozwalają kontrolować rozmiar buforów i wpływają na wymagania pamięciowe.

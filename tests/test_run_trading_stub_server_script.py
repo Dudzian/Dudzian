@@ -157,18 +157,19 @@ def test_runs_with_default_dataset(monkeypatch: pytest.MonkeyPatch, capsys: pyte
 
     monkeypatch.setattr(run_trading_stub_server, "TradingStubServer", factory)
 
-    exit_code = run_trading_stub_server.main([
-        "--port",
-        "0",
-        "--shutdown-after",
-        "0.01",
-        "--print-address",
-    ])
+    exit_code = run_trading_stub_server.main(
+        [
+            "--port",
+            "0",
+            "--shutdown-after",
+            "0.01",
+            "--print-address",
+        ]
+    )
 
     assert exit_code == 0
     assert server.started is True
     assert server.stopped_with == 1.0
-    # gdy timeout został użyty (0.01), wait powinien otrzymać tę wartość
     assert server.wait_timeouts == [0.01]
     assert server.dataset is not None
     assert len(server.dataset.history) >= 1
@@ -193,7 +194,7 @@ market_data:
       base_currency: FOO
     granularity: PT1M
     candles:
-      - open_time: 2024-01-01T00:00:00Z
+      - open_time: "2024-01-01T00:00:00Z"
         open: 1.0
         high: 2.0
         low: 0.5

@@ -64,3 +64,7 @@ dev = [
   "protobuf>=4.24",
   "PyYAML>=6.0",
 ]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
