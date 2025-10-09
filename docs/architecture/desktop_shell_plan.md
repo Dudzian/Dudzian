@@ -84,6 +84,13 @@ Artefakty tworzymy skryptem `scripts/generate_trading_stubs.py`, a wzorcowy work
   pozwalający kontrolować kadencję aktualizacji (0 = natychmiast, >0 = odstęp w sekundach). W razie potrzeby można
   pominąć dane startowe poprzez `--no-default-dataset`. Log startowy prezentuje również aktualną konfigurację
   performance guard, co pozwala błyskawicznie zweryfikować oczekiwane progi FPS i ograniczenia overlayów.
+* Opcja `--enable-metrics` startuje w tym samym procesie lekki serwer `MetricsService` (domyślnie `127.0.0.1:50061`),
+  który udostępnia telemetrię UI powłoce Qt. Można dostroić host/port, rozmiar historii (`--metrics-history-size`),
+  zapisy JSONL (`--metrics-jsonl`, `--metrics-jsonl-fsync`), wyłączyć logowanie do stdout (`--metrics-disable-log-sink`)
+  oraz wskazać log alertów UI (`--metrics-ui-alerts-jsonl`).
+  Przełącznik `--disable-metrics-ui-alerts` pozwala całkowicie wyłączyć sink `UiTelemetryAlertSink`, natomiast
+  `--metrics-print-address` wypisuje faktyczny adres serwera – przydatne w pipeline CI i przy pracy na wielu
+  instancjach stubu.
 * Stub wykorzystuje `bot_core.testing.TradingStubServer` oraz helper `merge_datasets`, dzięki czemu można
   łączyć wiele plików YAML bez konieczności modyfikacji kodu.
 * W repozytorium dostarczamy przykładowy zestaw `data/trading_stub/datasets/multi_asset_performance.yaml`
@@ -111,7 +118,10 @@ Artefakty tworzymy skryptem `scripts/generate_trading_stubs.py`, a wzorcowy work
 * `UiTelemetryReporter` wysyła zdarzenia UI do `MetricsService` (`PushMetrics`): wejście/wyjście z trybu reduce motion, budżety
   overlayów oraz liczbę aktywnych okien multi-window; konfiguracja odbywa się przez flagi CLI (`--metrics-endpoint`,
   `--metrics-tag`) lub wpis w YAML.
-* Sekcja `runtime.metrics_service` w `config/core.yaml` ustawia host/port serwera telemetrii, rozmiar historii (`history_size`), aktywność log sinka (`log_sink`) oraz parametry eksportu JSONL (`jsonl_path`, `jsonl_fsync`).
+* Połączenie telemetrii może być zabezpieczone TLS/mTLS – powłoka obsługuje `--metrics-use-tls`, ścieżki certów/kluczy oraz
+  pinning SHA-256 (`--metrics-server-sha256`), a stuby developerskie (`run_metrics_service.py`, `run_trading_stub_server.py`)
+  potrafią wystartować serwer z materiałem TLS i opcjonalnym wymaganiem certyfikatu klienta.
+* Sekcja `runtime.metrics_service` w `config/core.yaml` ustawia host/port serwera telemetrii, rozmiar historii (`history_size`), aktywność log sinka (`log_sink`) oraz parametry eksportu JSONL (`jsonl_path`, `jsonl_fsync`) i ścieżkę logu alertów UI (`ui_alerts_jsonl_path`).
 * Wsparcie multi-window: `BotAppWindow` potrafi otwierać dodatkowe `ChartWindow` (`Ctrl+N`/przycisk), zapamiętywać liczbę i geometrię okien
   (`Qt.labs.settings`) oraz synchronizować guard/instrument pomiędzy wszystkimi widokami – spełnia wymagania pracy na wielu monitorach.
 * `ui/config/example.yaml` oraz flagi CLI (w tym `--overlay-disable-secondary-fps`) pozwalają spiąć powłokę z dowolnym datasetem

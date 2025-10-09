@@ -21,7 +21,7 @@ import os
 import threading
 from queue import SimpleQueue, Empty
 from pathlib import Path
-from typing import Iterable, Optional, Protocol, Sequence, TYPE_CHECKING
+from typing import Iterable, Optional, Protocol, Sequence, TYPE_CHECKING, Any, Mapping
 
 if TYPE_CHECKING:  # pragma: no cover
     from bot_core.config.models import MetricsServiceConfig
@@ -31,6 +31,11 @@ try:  # pragma: no cover - import opcjonalny, gdy brak wygenerowanych stubów
 except ImportError:  # pragma: no cover - instrukcja dla developera
     trading_pb2 = None  # type: ignore
     trading_pb2_grpc = None  # type: ignore
+
+if trading_pb2_grpc is not None:  # pragma: no cover - zależne od wygenerowanych stubów
+    _MetricsServicerBase = trading_pb2_grpc.MetricsServiceServicer  # type: ignore
+else:  # pragma: no cover - środowiska developerskie bez gRPC
+    _MetricsServicerBase = object
 
 try:  # pragma: no cover - środowiska bez grpcio
     import grpc
@@ -140,7 +145,7 @@ class MetricsSnapshotStore:
             self._subscribers.discard(queue)
 
 
-class MetricsServiceServicer(trading_pb2_grpc.MetricsServiceServicer):
+class MetricsServiceServicer(_MetricsServicerBase):
     """Implementacja serwisu gRPC `MetricsService`."""
 
     def __init__(
@@ -156,6 +161,12 @@ class MetricsServiceServicer(trading_pb2_grpc.MetricsServiceServicer):
         super().__init__()
         self._store = store
         self._sinks: tuple[MetricsSink, ...] = tuple(sinks or ())
+
+    @property
+    def sinks(self) -> tuple[MetricsSink, ...]:
+        """Zwraca aktywne sinki powiązane z serwisem."""
+
+        return self._sinks
 
     def StreamMetrics(self, request, context):  # noqa: N802 - sygnatura gRPC
         for snapshot in self._store.snapshot_history():
@@ -185,6 +196,74 @@ class MetricsServiceServicer(trading_pb2_grpc.MetricsServiceServicer):
         return ack
 
 
+def _get_value(config: Mapping[str, Any] | Any, *candidates: str) -> Any:
+    if config is None:
+        return None
+    if isinstance(config, Mapping):
+        for name in candidates:
+            if name in config and config[name] is not None:
+                return config[name]
+    for name in candidates:
+        if hasattr(config, name):
+            value = getattr(config, name)
+            if value is not None:
+                return value
+    return None
+
+
+def _read_tls_material(source: Any) -> bytes | None:
+    if source is None:
+        return None
+    if isinstance(source, (bytes, bytearray)):
+        return bytes(source)
+    path = Path(source)
+    return path.read_bytes()
+
+
+def _build_server_credentials(tls_config: Mapping[str, Any] | Any) -> Any | None:
+    if tls_config is None:
+        return None
+    if isinstance(tls_config, Mapping):
+        enabled = bool(tls_config.get("enabled", True))
+    else:
+        enabled = bool(getattr(tls_config, "enabled", True))
+    if not enabled:
+        return None
+    if grpc is None:
+        raise RuntimeError("Konfiguracja TLS wymaga biblioteki grpcio")
+
+    certificate_source = _get_value(
+        tls_config, "certificate_path", "certificate", "cert_path", "cert"
+    )
+    key_source = _get_value(
+        tls_config, "private_key_path", "private_key", "key_path", "key"
+    )
+    if not certificate_source or not key_source:
+        raise ValueError("Konfiguracja TLS wymaga certyfikatu serwera i klucza prywatnego")
+
+    certificate = _read_tls_material(certificate_source)
+    private_key = _read_tls_material(key_source)
+    client_ca_source = _get_value(
+        tls_config, "client_ca_path", "client_ca", "ca_path", "ca"
+    )
+    client_ca = _read_tls_material(client_ca_source) if client_ca_source else None
+    require_client_auth = bool(
+        _get_value(
+            tls_config,
+            "require_client_auth",
+            "require_client_certificate",
+            "require_client_cert",
+        )
+        or False
+    )
+
+    return grpc.ssl_server_credentials(
+        ((private_key, certificate),),
+        root_certificates=client_ca,
+        require_client_auth=require_client_auth,
+    )
+
+
 class MetricsServer:
     """Pełny serwer gRPC obsługujący `MetricsService`."""
 
@@ -196,6 +275,8 @@ class MetricsServer:
         max_workers: int = 4,
         history_size: int = 1024,
         sinks: Iterable[MetricsSink] | None = None,
+        server_credentials: Any | None = None,
+        runtime_metadata: Mapping[str, Any] | None = None,
     ) -> None:
         if grpc is None or trading_pb2_grpc is None:  # pragma: no cover
             raise RuntimeError(
@@ -206,7 +287,16 @@ class MetricsServer:
         self._server = grpc.server(futures.ThreadPoolExecutor(max_workers=max_workers))
         trading_pb2_grpc.add_MetricsServiceServicer_to_server(self._servicer, self._server)
         self._address = f"{host}:{port}"
-        bound_port = self._server.add_insecure_port(self._address)
+        self._history_size = history_size
+        self._runtime_metadata: dict[str, Any] = dict(runtime_metadata or {})
+        tls_meta = self._runtime_metadata.get("tls", {})
+        self._tls_client_auth_required = bool(tls_meta.get("require_client_auth"))
+        if server_credentials is not None:
+            bound_port = self._server.add_secure_port(self._address, server_credentials)
+            self._tls_enabled = True
+        else:
+            bound_port = self._server.add_insecure_port(self._address)
+            self._tls_enabled = False
         if bound_port == 0:
             raise RuntimeError("Nie udało się zbindować portu dla MetricsServer")
         if port == 0:
@@ -219,6 +309,26 @@ class MetricsServer:
     @property
     def store(self) -> MetricsSnapshotStore:
         return self._store
+
+    @property
+    def sinks(self) -> tuple[MetricsSink, ...]:
+        return self._servicer.sinks
+
+    @property
+    def history_size(self) -> int:
+        return self._history_size
+
+    @property
+    def tls_enabled(self) -> bool:
+        return self._tls_enabled
+
+    @property
+    def tls_client_auth_required(self) -> bool:
+        return self._tls_client_auth_required
+
+    @property
+    def runtime_metadata(self) -> Mapping[str, Any]:
+        return self._runtime_metadata
 
     def start(self) -> None:
         self._server.start()
@@ -239,6 +349,7 @@ def create_server(
     enable_logging_sink: bool = True,
     jsonl_path: str | Path | None = None,
     jsonl_fsync: bool = False,
+    tls_config: Mapping[str, Any] | Any | None = None,
 ):
     """Pomocnicza funkcja do budowy serwera z domyślnym logging sinkiem."""
 
@@ -247,13 +358,50 @@ def create_server(
         base_sinks.append(LoggingSink())
     if jsonl_path:
         base_sinks.append(JsonlSink(jsonl_path, fsync=jsonl_fsync))
-    if sinks:
-        base_sinks.extend(list(sinks))
+    additional_sinks: list[MetricsSink] = list(sinks or ())
+    if additional_sinks:
+        base_sinks.extend(additional_sinks)
+    credentials = None
+    tls_require_client_auth = False
+
+    def _tls_value(name: str, default: Any = None) -> Any:
+        if tls_config is None:
+            return default
+        if isinstance(tls_config, Mapping):
+            return tls_config.get(name, default)
+        return getattr(tls_config, name, default)
+
+    if tls_config is not None:
+        tls_require_client_auth = bool(_tls_value("require_client_auth", False))
+        credentials = _build_server_credentials(tls_config)
+    runtime_metadata = {
+        "history_size": history_size,
+        "logging_sink_enabled": enable_logging_sink,
+        "jsonl_sink": {
+            "active": bool(jsonl_path),
+            "path": str(Path(jsonl_path).expanduser()) if jsonl_path else None,
+            "fsync": bool(jsonl_fsync) if jsonl_path else False,
+        },
+        "sink_descriptions": [
+            {"class": sink.__class__.__name__, "module": sink.__class__.__module__}
+            for sink in base_sinks
+        ],
+        "additional_sink_descriptions": [
+            {"class": sink.__class__.__name__, "module": sink.__class__.__module__}
+            for sink in additional_sinks
+        ],
+        "tls": {
+            "configured": credentials is not None,
+            "require_client_auth": tls_require_client_auth,
+        },
+    }
     server = MetricsServer(
         host=host,
         port=port,
         history_size=history_size,
         sinks=base_sinks,
+        server_credentials=credentials,
+        runtime_metadata=runtime_metadata,
     )
     return server
 
@@ -275,5 +423,6 @@ def build_metrics_server_from_config(
         enable_logging_sink=config.log_sink,
         jsonl_path=config.jsonl_path,
         jsonl_fsync=config.jsonl_fsync,
+        tls_config=getattr(config, "tls", None),
     )
 

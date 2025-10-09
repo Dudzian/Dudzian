@@ -95,6 +95,11 @@ try:
 except Exception:
     MetricsServiceConfig = None  # type: ignore
 
+try:
+    from bot_core.config.models import MetricsServiceTlsConfig  # type: ignore
+except Exception:
+    MetricsServiceTlsConfig = None  # type: ignore
+
 
 def _core_has(field_name: str) -> bool:
     """Sprawdza, czy CoreConfig posiada dane pole (bezpiecznie dla różnych gałęzi)."""
@@ -520,8 +525,28 @@ def _load_coverage_monitoring(
     )
 
 
+def _normalize_runtime_path(
+    raw_value: Any, *, base_dir: Path | None
+) -> str | None:
+    """Zwraca ścieżkę pliku znormalizowaną względem katalogu konfiguracji."""
+
+    if raw_value in (None, "", False):
+        return None
+
+    candidate = Path(str(raw_value)).expanduser()
+    if candidate.is_absolute() or base_dir is None:
+        return str(candidate)
+
+    try:
+        normalized_base = base_dir.expanduser().resolve(strict=False)
+    except Exception:  # noqa: BLE001 - zachowujemy najlepsze możliwe przybliżenie
+        normalized_base = base_dir.expanduser().absolute()
+
+    return str(normalized_base / candidate)
+
+
 def _load_metrics_service(
-    runtime_section: Optional[Mapping[str, Any]]
+    runtime_section: Optional[Mapping[str, Any]], *, base_dir: Path | None = None
 ) -> MetricsServiceConfig | None:
     if MetricsServiceConfig is None or not _core_has("metrics_service"):
         return None
@@ -529,21 +554,59 @@ def _load_metrics_service(
     metrics_raw = runtime.get("metrics_service")
     if not metrics_raw:
         return None
+    jsonl_path = _normalize_runtime_path(metrics_raw.get("jsonl_path"), base_dir=base_dir)
+    ui_alerts_path = _normalize_runtime_path(
+        metrics_raw.get("ui_alerts_jsonl_path"), base_dir=base_dir
+    )
+
+    tls_config = None
+    tls_raw = metrics_raw.get("tls")
+    if (
+        MetricsServiceTlsConfig is not None
+        and isinstance(tls_raw, Mapping)
+        and tls_raw
+    ):
+        certificate_raw = _normalize_runtime_path(
+            tls_raw.get("certificate_path"), base_dir=base_dir
+        )
+        private_key_raw = _normalize_runtime_path(
+            tls_raw.get("private_key_path"), base_dir=base_dir
+        )
+        client_ca_raw = _normalize_runtime_path(
+            tls_raw.get("client_ca_path"), base_dir=base_dir
+        )
+        tls_config = MetricsServiceTlsConfig(
+            enabled=bool(tls_raw.get("enabled", False)),
+            certificate_path=certificate_raw,
+            private_key_path=private_key_raw,
+            client_ca_path=client_ca_raw,
+            require_client_auth=bool(tls_raw.get("require_client_auth", False)),
+        )
+
     return MetricsServiceConfig(
         enabled=bool(metrics_raw.get("enabled", True)),
         host=str(metrics_raw.get("host", "127.0.0.1")),
         port=int(metrics_raw.get("port", 0)),
         history_size=int(metrics_raw.get("history_size", 1024)),
         log_sink=bool(metrics_raw.get("log_sink", True)),
-        jsonl_path=str(metrics_raw.get("jsonl_path")) if metrics_raw.get("jsonl_path") else None,
+        jsonl_path=jsonl_path,
         jsonl_fsync=bool(metrics_raw.get("jsonl_fsync", False)),
+        ui_alerts_jsonl_path=ui_alerts_path,
+        tls=tls_config,
     )
 
 
 def load_core_config(path: str | Path) -> CoreConfig:
     """Wczytuje plik YAML i mapuje go na dataclasses."""
-    with Path(path).open("r", encoding="utf-8") as handle:
+    config_path = Path(path).expanduser()
+    with config_path.open("r", encoding="utf-8") as handle:
         raw: dict[str, Any] = yaml.safe_load(handle) or {}
+
+    try:
+        config_absolute_path = config_path.resolve(strict=False)
+    except Exception:  # noqa: BLE001 - zachowujemy najlepsze przybliżenie
+        config_absolute_path = config_path.absolute()
+    config_base_dir = config_absolute_path.parent
 
     instrument_universes = _load_instrument_universes(raw)
 
@@ -684,9 +747,12 @@ def load_core_config(path: str | Path) -> CoreConfig:
         core_kwargs["coverage_monitoring"] = _load_coverage_monitoring(
             raw.get("coverage_monitoring")
         )
-    metrics_config = _load_metrics_service(runtime_section)
+    metrics_config = _load_metrics_service(runtime_section, base_dir=config_base_dir)
     if metrics_config is not None:
         core_kwargs["metrics_service"] = metrics_config
+
+    core_kwargs["source_path"] = str(config_absolute_path)
+    core_kwargs["source_directory"] = str(config_base_dir)
 
     return CoreConfig(**core_kwargs)  # type: ignore[arg-type]
 

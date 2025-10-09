@@ -40,6 +40,17 @@ class DecisionJournalConfig:
 
 
 @dataclass(slots=True)
+class MetricsServiceTlsConfig:
+    """Opcjonalna konfiguracja TLS/mTLS dla serwera telemetrii."""
+
+    enabled: bool = False
+    certificate_path: str | None = None
+    private_key_path: str | None = None
+    client_ca_path: str | None = None
+    require_client_auth: bool = False
+
+
+@dataclass(slots=True)
 class MetricsServiceConfig:
     """Ustawienia serwera telemetrii `MetricsService`."""
 
@@ -50,6 +61,8 @@ class MetricsServiceConfig:
     log_sink: bool = True
     jsonl_path: str | None = None
     jsonl_fsync: bool = False
+    ui_alerts_jsonl_path: str | None = None
+    tls: MetricsServiceTlsConfig | None = None
 
 
 # --- Środowiska / rdzeń ------------------------------------------------------
@@ -334,6 +347,8 @@ class CoreConfig:
     runtime_controllers: Mapping[str, ControllerRuntimeConfig] = field(default_factory=dict)
     coverage_monitoring: CoverageMonitoringConfig | None = None
     metrics_service: MetricsServiceConfig | None = None
+    source_path: str | None = None
+    source_directory: str | None = None
 
 
 __all__ = [

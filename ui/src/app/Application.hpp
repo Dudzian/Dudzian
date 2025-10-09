@@ -10,9 +10,9 @@
 #include "grpc/TradingClient.hpp"
 #include "models/OhlcvListModel.hpp"
 #include "utils/PerformanceGuard.hpp"
+#include "telemetry/TelemetryReporter.hpp"
+#include "telemetry/TelemetryTlsConfig.hpp"
 #include "utils/FrameRateMonitor.hpp"
-
-class UiTelemetryReporter;
 
 class Application : public QObject {
     Q_OBJECT
@@ -27,6 +27,8 @@ public:
     void configureParser(QCommandLineParser& parser) const;
     bool applyParser(const QCommandLineParser& parser);
 
+    void setTelemetryReporter(std::unique_ptr<TelemetryReporter> reporter);
+
     QString connectionStatus() const { return m_connectionStatus; }
     PerformanceGuard performanceGuard() const { return m_guard; }
     QString instrumentLabel() const;
@@ -39,6 +41,9 @@ public slots:
     // Wywoływane z QML (ChartView/StatusFooter/MainWindow)
     Q_INVOKABLE void notifyOverlayUsage(int activeCount, int allowedCount, bool reduceMotionActive);
     Q_INVOKABLE void notifyWindowCount(int totalWindowCount);
+
+    void ingestFpsSampleForTesting(double fps);
+    void setReduceMotionStateForTesting(bool active);
 
 signals:
     void connectionStatusChanged();
@@ -71,16 +76,24 @@ private:
     bool m_reduceMotionActive = false;
 
     // --- Telemetry state ---
-    std::unique_ptr<UiTelemetryReporter> m_telemetry;
+    std::unique_ptr<TelemetryReporter> m_telemetry;
+    QString m_metricsEndpoint;
+    QString m_metricsTag;
+    bool m_metricsEnabled = false;
     double m_latestFpsSample = 0.0;
     int m_windowCount = 1;
+    TelemetryTlsConfig m_tlsConfig;
 
     struct OverlayState {
         int active = 0;
         int allowed = 0;
         bool reduceMotion = false;
+        bool operator==(const OverlayState& other) const {
+            return active == other.active && allowed == other.allowed && reduceMotion == other.reduceMotion;
+        }
     };
     std::optional<OverlayState> m_lastOverlayState;
+    std::optional<OverlayState> m_lastOverlayTelemetryReported;
     std::optional<bool> m_lastReduceMotionReported;
     std::optional<bool> m_pendingReduceMotionState;
 };

@@ -19,6 +19,7 @@ from bot_core.exchanges.base import (
 from bot_core.risk.engine import ThresholdRiskEngine
 from bot_core.risk.repository import FileRiskRepository
 from bot_core.runtime import BootstrapContext, bootstrap_environment
+from bot_core.runtime.metrics_alerts import DEFAULT_UI_ALERTS_JSONL_PATH
 from bot_core.security import SecretManager, SecretStorage, SecretStorageError
 
 
@@ -198,6 +199,23 @@ def test_bootstrap_environment_initialises_components(tmp_path: Path) -> None:
     risk_state_path = Path("./var/data/binance_paper/risk_state/balanced.json")
     assert risk_state_path.parent.exists()
     assert context.metrics_server is None
+    assert context.metrics_ui_alert_sink_active is True
+    default_alert_log = DEFAULT_UI_ALERTS_JSONL_PATH.expanduser()
+    if not default_alert_log.is_absolute():
+        default_alert_log = default_alert_log.resolve(strict=False)
+    assert Path(context.metrics_ui_alerts_path or "") == default_alert_log
+    assert context.metrics_jsonl_path is None
+    assert context.metrics_service_enabled is None
+    assert context.metrics_ui_alerts_metadata is not None
+    metadata_path = context.metrics_ui_alerts_metadata.get("path")
+    assert metadata_path is not None
+    assert Path(str(metadata_path)).name == DEFAULT_UI_ALERTS_JSONL_PATH.name
+    assert Path(
+        context.metrics_ui_alerts_metadata.get("absolute_path")
+    ).name == DEFAULT_UI_ALERTS_JSONL_PATH.name
+    assert context.metrics_jsonl_metadata is None
+    if context.metrics_security_warnings is not None:
+        assert isinstance(context.metrics_security_warnings, tuple)
 
 
 def test_bootstrap_environment_allows_risk_profile_override(tmp_path: Path) -> None:

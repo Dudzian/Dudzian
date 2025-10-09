@@ -2,27 +2,115 @@
 
 from __future__ import annotations
 
+import importlib
 import json
+import textwrap
 import threading
 import time
+from pathlib import Path
+from typing import Mapping
 
 import pytest
 
-grpc = pytest.importorskip("grpc", reason="Wymaga biblioteki grpcio")
-trading_pb2 = pytest.importorskip(
-    "bot_core.generated.trading_pb2", reason="Brak wygenerowanych stubów trading_pb2"
-)
-trading_pb2_grpc = pytest.importorskip(
-    "bot_core.generated.trading_pb2_grpc",
-    reason="Brak wygenerowanych stubów trading_pb2_grpc",
-)
+try:  # pragma: no cover - środowiska bez grpcio
+    grpc = importlib.import_module("grpc")
+except Exception:  # pragma: no cover - brak zależności gRPC
+    grpc = None  # type: ignore[assignment]
+
+try:  # pragma: no cover - brak wygenerowanych stubów
+    trading_pb2 = importlib.import_module("bot_core.generated.trading_pb2")
+    trading_pb2_grpc = importlib.import_module("bot_core.generated.trading_pb2_grpc")
+except Exception:  # pragma: no cover - brak stubów
+    trading_pb2 = None  # type: ignore[assignment]
+    trading_pb2_grpc = None  # type: ignore[assignment]
+
+HAVE_REAL_GRPC = grpc is not None and trading_pb2 is not None and trading_pb2_grpc is not None
 
 from scripts import run_metrics_service
+from bot_core.runtime.metrics_service import LoggingSink
+
+
+def _make_dummy_server(
+    *,
+    address: str = "127.0.0.1:7777",
+    jsonl_path: Path | None = None,
+    history_size: int = 512,
+    tls_enabled: bool = False,
+    require_client_auth: bool = False,
+    logging_sink_enabled: bool = True,
+):
+    class DummyServer:
+        def __init__(self) -> None:
+            logging_sink = LoggingSink() if logging_sink_enabled else None
+            jsonl_sink = None
+            if jsonl_path is not None:
+                jsonl_cls = getattr(run_metrics_service, "JsonlSink", None)
+                if jsonl_cls is not None:
+                    jsonl_sink = jsonl_cls(jsonl_path)
+                else:
+                    class _FallbackJsonlSink:
+                        def __init__(self, path: Path) -> None:
+                            self._path = Path(path)
+                            self._fsync = False
+
+                    jsonl_sink = _FallbackJsonlSink(jsonl_path)
+            sinks = [sink for sink in (logging_sink, jsonl_sink) if sink is not None]
+            self._sinks = tuple(sinks)
+            self.address = address
+            self.history_size = history_size
+            self.tls_enabled = tls_enabled
+            self.tls_client_auth_required = require_client_auth
+            self.runtime_metadata = {
+                "history_size": history_size,
+                "logging_sink_enabled": logging_sink_enabled,
+                "jsonl_sink": {
+                    "active": jsonl_path is not None,
+                    "path": str(jsonl_path) if jsonl_path is not None else None,
+                    "fsync": False,
+                },
+                "sink_descriptions": [
+                    {
+                        "class": sink.__class__.__name__,
+                        "module": sink.__class__.__module__,
+                    }
+                    for sink in self._sinks
+                ],
+                "additional_sink_descriptions": [],
+                "tls": {
+                    "configured": tls_enabled,
+                    "require_client_auth": require_client_auth,
+                },
+            }
+
+        @property
+        def sinks(self):  # noqa: D401 - zgodność z interfejsem
+            return self._sinks
+
+        def start(self) -> None:
+            pass
+
+        def stop(self, grace=None) -> None:  # pragma: no cover - brak logiki
+            pass
+
+        def wait_for_termination(self, timeout=None):  # pragma: no cover - brak logiki
+            return True
+
+    return DummyServer()
 
 
 @pytest.mark.timeout(5)
-def test_metrics_service_cli_creates_jsonl(tmp_path):
+def test_metrics_service_cli_creates_jsonl(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     jsonl_path = tmp_path / "metrics.jsonl"
+    dummy_server = _make_dummy_server(
+        jsonl_path=jsonl_path,
+        logging_sink_enabled=False,
+    )
+
+    monkeypatch.setattr(run_metrics_service, "METRICS_RUNTIME_AVAILABLE", True)
+    monkeypatch.setattr(run_metrics_service, "_build_server", lambda **_: dummy_server)
+
     args = [
         "--host",
         "127.0.0.1",
@@ -41,6 +129,10 @@ def test_metrics_service_cli_creates_jsonl(tmp_path):
 
 
 @pytest.mark.timeout(5)
+@pytest.mark.skipif(
+    not HAVE_REAL_GRPC,
+    reason="Wymaga grpcio i wygenerowanych stubów gRPC",
+)
 def test_metrics_service_cli_accepts_metrics(tmp_path, monkeypatch):
     jsonl_path = tmp_path / "metrics.jsonl"
     args = [
@@ -91,3 +183,561 @@ def test_metrics_service_cli_accepts_metrics(tmp_path, monkeypatch):
     last = json.loads(lines[-1])
     assert last["notes"] == "cli-test"
     assert last["fps"] == pytest.approx(61.2)
+
+
+def test_metrics_service_tls_config_passed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    cert = tmp_path / "server.crt"
+    key = tmp_path / "server.key"
+    ca = tmp_path / "clients.pem"
+    for path in (cert, key, ca):
+        path.write_text("dummy", encoding="utf-8")
+
+    captured_kwargs: dict[str, object] = {}
+
+    monkeypatch.setattr(run_metrics_service, "METRICS_RUNTIME_AVAILABLE", True)
+
+    def fake_build_server(**kwargs):
+        nonlocal captured_kwargs
+        captured_kwargs = kwargs
+        class Dummy:
+            address = "127.0.0.1:1234"
+            def start(self):
+                pass
+            def wait_for_termination(self, timeout=None):
+                return True
+            def stop(self, grace=None):
+                pass
+        return Dummy()
+
+    monkeypatch.setattr(run_metrics_service, "_build_server", fake_build_server)
+
+    args = [
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "50070",
+        "--tls-cert",
+        str(cert),
+        "--tls-key",
+        str(key),
+        "--tls-client-ca",
+        str(ca),
+        "--tls-require-client-cert",
+        "--shutdown-after",
+        "0.1",
+    ]
+
+    exit_code = run_metrics_service.main(args)
+    assert exit_code == 0
+    tls = captured_kwargs.get("tls_config")
+    assert tls is not None
+    assert tls["certificate_path"] == cert
+    assert tls["private_key_path"] == key
+    assert tls["client_ca_path"] == ca
+    assert tls["require_client_auth"] is True
+
+
+def test_tls_key_permissions_warning(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys) -> None:
+    monkeypatch.setattr(run_metrics_service, "METRICS_RUNTIME_AVAILABLE", False)
+
+    cert = tmp_path / "cert.pem"
+    cert.write_text("cert", encoding="utf-8")
+    key = tmp_path / "key.pem"
+    key.write_text("key", encoding="utf-8")
+    key.chmod(0o666)
+
+    exit_code = run_metrics_service.main(
+        [
+            "--tls-cert",
+            str(cert),
+            "--tls-key",
+            str(key),
+            "--print-config-plan",
+        ]
+    )
+    assert exit_code == 0
+
+    payload = json.loads(capsys.readouterr().out.strip())
+    tls_section = payload.get("tls", {})
+    private_key_meta = tls_section.get("private_key")
+    assert private_key_meta is not None
+    warnings = private_key_meta.get("security_warnings", [])
+    assert any("Klucz prywatny TLS" in message for message in warnings)
+    security_flags = private_key_meta.get("security_flags", {})
+    assert security_flags.get("world_writable") is True
+    assert private_key_meta.get("role") == "tls_key"
+
+
+def test_metrics_service_print_config_plan(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    jsonl_path = tmp_path / "telemetry.jsonl"
+    cert = tmp_path / "server.crt"
+    key = tmp_path / "server.key"
+    cert.write_text("cert", encoding="utf-8")
+    key.write_text("key", encoding="utf-8")
+
+    dummy_server = _make_dummy_server(
+        jsonl_path=jsonl_path,
+        tls_enabled=True,
+        require_client_auth=False,
+    )
+
+    monkeypatch.setattr(run_metrics_service, "METRICS_RUNTIME_AVAILABLE", True)
+    monkeypatch.setattr(run_metrics_service, "_build_server", lambda **_: dummy_server)
+
+    args = [
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "0",
+        "--jsonl",
+        str(jsonl_path),
+        "--tls-cert",
+        str(cert),
+        "--tls-key",
+        str(key),
+        "--print-config-plan",
+    ]
+
+    exit_code = run_metrics_service.main(args)
+    assert exit_code == 0
+
+    captured = capsys.readouterr().out.strip()
+    assert captured, "CLI powinno wypisać plan konfiguracji"
+    payload = json.loads(captured)
+    assert payload["address"] == "127.0.0.1:7777"
+    assert payload["jsonl_sink"]["configured"] is True
+    tls_payload = payload["tls"]
+    assert tls_payload["configured"] is True
+    assert tls_payload["certificate"]["path"].endswith("server.crt")
+    assert payload["logging_sink_enabled"] is True
+    runtime_state = payload["runtime_state"]
+    assert runtime_state["available"] is True
+    assert runtime_state["reason"] is None
+    assert runtime_state["sink_count"] == 2
+    assert runtime_state["jsonl_sink_active"] is True
+    assert runtime_state["logging_sink_active"] is True
+    assert runtime_state["jsonl_sink"]["path"].endswith("telemetry.jsonl")
+    assert runtime_state["tls"]["enabled"] is True
+    assert runtime_state["metadata_source"] == "runtime_metadata"
+    parameter_sources = payload.get("parameter_sources", {})
+    assert parameter_sources.get("fail_on_security_warnings") == "default"
+    security = _get_security_section(payload)
+    assert security["enabled"] is False
+    assert security["source"] == "default"
+    assert security["parameter_source"] == "default"
+
+
+def test_metrics_service_fail_on_security_warnings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+) -> None:
+    jsonl_path = tmp_path / "telemetry.jsonl"
+    cert = tmp_path / "server.crt"
+    key = tmp_path / "server.key"
+    cert.write_text("cert", encoding="utf-8")
+    key.write_text("key", encoding="utf-8")
+
+    dummy_server = _make_dummy_server(
+        jsonl_path=jsonl_path,
+        tls_enabled=True,
+        require_client_auth=False,
+    )
+
+    monkeypatch.setattr(run_metrics_service, "METRICS_RUNTIME_AVAILABLE", True)
+    monkeypatch.setattr(run_metrics_service, "_build_server", lambda **_: dummy_server)
+
+    args = [
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "0",
+        "--jsonl",
+        str(jsonl_path),
+        "--tls-cert",
+        str(cert),
+        "--tls-key",
+        str(key),
+        "--print-config-plan",
+        "--fail-on-security-warnings",
+    ]
+
+    exit_code = run_metrics_service.main(args)
+    assert exit_code == 3
+
+    captured = capsys.readouterr().out.strip()
+    assert captured
+    payload = json.loads(captured)
+    parameter_sources = payload.get("parameter_sources", {})
+    assert parameter_sources.get("fail_on_security_warnings") == "cli"
+    security = _get_security_section(payload)
+    assert security["enabled"] is True
+    assert security["source"] == "cli"
+    assert security["parameter_source"] == "cli"
+    assert security.get("environment_variable") is None
+
+
+def test_metrics_service_config_plan_jsonl_written(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    output_path = tmp_path / "plan.jsonl"
+
+    dummy_server = _make_dummy_server(
+        address="127.0.0.1:9001",
+        jsonl_path=None,
+        tls_enabled=False,
+        logging_sink_enabled=True,
+    )
+
+    monkeypatch.setattr(run_metrics_service, "METRICS_RUNTIME_AVAILABLE", True)
+    monkeypatch.setattr(run_metrics_service, "_build_server", lambda **_: dummy_server)
+
+    args = [
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "0",
+        "--config-plan-jsonl",
+        str(output_path),
+        "--shutdown-after",
+        "0.0",
+    ]
+
+    exit_code = run_metrics_service.main(args)
+    assert exit_code == 0
+
+    contents = output_path.read_text(encoding="utf-8").strip().splitlines()
+    assert len(contents) == 1
+    payload = json.loads(contents[0])
+    assert payload["address"] == "127.0.0.1:9001"
+    assert payload["jsonl_sink"]["configured"] is False
+    runtime_state = payload["runtime_state"]
+    assert runtime_state["available"] is True
+    assert runtime_state["reason"] is None
+    assert runtime_state["sink_count"] >= 1
+    assert runtime_state["logging_sink_active"] is True
+    assert runtime_state["jsonl_sink_active"] is False
+    assert runtime_state["tls"]["enabled"] is False
+
+
+def test_metrics_service_core_config_applies_settings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_dir = tmp_path / "conf"
+    config_dir.mkdir()
+    logs_dir = config_dir / "logs"
+    logs_dir.mkdir()
+    telemetry_jsonl = logs_dir / "telemetry.jsonl"
+    telemetry_jsonl.write_text("{}\n", encoding="utf-8")
+    ui_alerts_jsonl = logs_dir / "ui_alerts.jsonl"
+    ui_alerts_jsonl.write_text("[]\n", encoding="utf-8")
+
+    certs_dir = config_dir / "certs"
+    certs_dir.mkdir()
+    cert_path = certs_dir / "server.crt"
+    key_path = certs_dir / "server.key"
+    ca_path = certs_dir / "clients.pem"
+    cert_path.write_text("cert", encoding="utf-8")
+    key_path.write_text("key", encoding="utf-8")
+    ca_path.write_text("ca", encoding="utf-8")
+
+    config_path = config_dir / "core.yaml"
+    config_path.write_text(
+        textwrap.dedent(
+            """
+            risk_profiles:
+              balanced:
+                max_daily_loss_pct: 0.02
+                max_position_pct: 0.05
+                target_volatility: 0.10
+                max_leverage: 2.0
+                stop_loss_atr_multiple: 2.0
+                max_open_positions: 4
+                hard_drawdown_pct: 0.20
+            environments:
+              paper_env:
+                exchange: binance
+                environment: paper
+                keychain_key: paper_key
+                data_cache_path: var/data
+                risk_profile: balanced
+            runtime:
+              metrics_service:
+                enabled: true
+                host: 0.0.0.0
+                port: 60123
+                history_size: 2048
+                log_sink: false
+                jsonl_path: logs/telemetry.jsonl
+                jsonl_fsync: true
+                ui_alerts_jsonl_path: logs/ui_alerts.jsonl
+                tls:
+                  enabled: true
+                  certificate_path: certs/server.crt
+                  private_key_path: certs/server.key
+                  client_ca_path: certs/clients.pem
+                  require_client_auth: true
+            """
+        ).strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    dummy_server = _make_dummy_server(
+        address="127.0.0.1:60123",
+        jsonl_path=telemetry_jsonl,
+        history_size=2048,
+        tls_enabled=True,
+        require_client_auth=True,
+        logging_sink_enabled=False,
+    )
+
+    captured_kwargs: dict[str, object] = {}
+
+    monkeypatch.setattr(run_metrics_service, "METRICS_RUNTIME_AVAILABLE", True)
+
+    def fake_build_server(**kwargs):
+        nonlocal captured_kwargs
+        captured_kwargs = kwargs
+        return dummy_server
+
+    monkeypatch.setattr(run_metrics_service, "_build_server", fake_build_server)
+
+    exit_code = run_metrics_service.main([
+        "--core-config",
+        str(config_path),
+        "--print-config-plan",
+    ])
+    assert exit_code == 0
+
+    captured = capsys.readouterr().out.strip()
+    assert captured
+    payload = json.loads(captured)
+
+    assert payload["host"] == "0.0.0.0"
+    assert payload["port"] == 60123
+    assert payload["history_size"] == 2048
+    assert payload["logging_sink_enabled"] is False
+    assert payload["jsonl_sink"]["configured"] is True
+    assert payload["jsonl_sink"]["file"]["exists"] is True
+
+    runtime_state = payload["runtime_state"]
+    assert runtime_state["available"] is True
+    assert runtime_state["reason"] is None
+    assert runtime_state["logging_sink_active"] is False
+    assert runtime_state["jsonl_sink"]["path"].endswith("telemetry.jsonl")
+    assert runtime_state["tls"]["enabled"] is True
+    assert runtime_state["tls"]["require_client_auth"] is True
+
+    core_section = payload["core_config"]
+    assert core_section["cli_argument"].endswith("core.yaml")
+    metrics_section = core_section["metrics_service"]
+    assert metrics_section["applied_sources"]["host"] == "core_config"
+    assert metrics_section["applied_sources"]["jsonl_path"] == "core_config"
+    assert metrics_section["applied_sources"]["log_sink"] == "core_config"
+    values = metrics_section["values"]
+    assert values["jsonl_path"].endswith("telemetry.jsonl")
+    assert values["jsonl_file"]["exists"] is True
+    assert values["ui_alerts_file"]["path"].endswith("ui_alerts.jsonl")
+    tls_values = values["tls"]
+    assert tls_values["require_client_auth"] is True
+    assert tls_values["certificate_file"]["exists"] is True
+    assert tls_values["private_key_file"]["exists"] is True
+    assert tls_values["client_ca_file"]["exists"] is True
+
+    assert captured_kwargs["host"] == "0.0.0.0"
+    assert captured_kwargs["port"] == 60123
+    assert captured_kwargs["history_size"] == 2048
+    assert captured_kwargs["enable_logging_sink"] is False
+    assert Path(captured_kwargs["jsonl_path"]) == telemetry_jsonl
+    tls_kwargs = captured_kwargs["tls_config"]
+    assert Path(tls_kwargs["certificate_path"]) == cert_path
+    assert Path(tls_kwargs["private_key_path"]) == key_path
+    assert Path(tls_kwargs["client_ca_path"]) == ca_path
+    assert tls_kwargs["require_client_auth"] is True
+
+
+def test_print_config_plan_without_runtime(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    monkeypatch.setattr(run_metrics_service, "METRICS_RUNTIME_AVAILABLE", False)
+    monkeypatch.setattr(
+        run_metrics_service,
+        "METRICS_RUNTIME_UNAVAILABLE_MESSAGE",
+        "brak gRPC",
+    )
+
+    exit_code = run_metrics_service.main(["--print-config-plan"])
+    assert exit_code == 0
+
+    captured = capsys.readouterr().out.strip()
+    payload = json.loads(captured)
+    runtime_state = payload["runtime_state"]
+    assert runtime_state["available"] is False
+    assert runtime_state["reason"] == "metrics_runtime_unavailable"
+    assert runtime_state["details"] == "brak gRPC"
+    assert runtime_state["jsonl_sink"]["path"] is None
+
+
+def test_config_plan_jsonl_without_runtime(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    destination = tmp_path / "audit.jsonl"
+    monkeypatch.setattr(run_metrics_service, "METRICS_RUNTIME_AVAILABLE", False)
+    monkeypatch.setattr(
+        run_metrics_service,
+        "METRICS_RUNTIME_UNAVAILABLE_MESSAGE",
+        "missing grpc runtime",
+    )
+
+    exit_code = run_metrics_service.main(["--config-plan-jsonl", str(destination)])
+    assert exit_code == 2
+
+    contents = destination.read_text(encoding="utf-8").strip().splitlines()
+    assert len(contents) == 1
+    payload = json.loads(contents[0])
+    runtime_state = payload["runtime_state"]
+    assert runtime_state["available"] is False
+    assert runtime_state["reason"] == "metrics_runtime_unavailable"
+    assert runtime_state["details"] == "missing grpc runtime"
+
+
+def _find_env_entry(entries: list[dict[str, object]], option: str) -> dict[str, object]:
+    for entry in entries:
+        if entry.get("option") == option:
+            return entry
+    raise AssertionError(f"Nie znaleziono wpisu dla opcji {option}")
+
+
+def _get_security_section(payload: Mapping[str, object]) -> Mapping[str, object]:
+    section = payload.get("security")
+    assert isinstance(section, Mapping)
+    fail_section = section.get("fail_on_security_warnings")
+    assert isinstance(fail_section, Mapping)
+    return fail_section
+
+
+def test_environment_override_applied_without_runtime(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    monkeypatch.setattr(run_metrics_service, "METRICS_RUNTIME_AVAILABLE", False)
+    monkeypatch.setenv("RUN_METRICS_SERVICE_HOST", "0.0.0.0")
+
+    exit_code = run_metrics_service.main(["--print-config-plan"])
+    assert exit_code == 0
+
+    payload = json.loads(capsys.readouterr().out.strip())
+    assert payload["host"] == "0.0.0.0"
+    env_section = payload.get("environment_overrides")
+    assert env_section is not None
+    host_entry = _find_env_entry(env_section["entries"], "host")
+    assert host_entry["applied"] is True
+    assert host_entry["parsed_value"] == "0.0.0.0"
+    parameter_sources = payload.get("parameter_sources", {})
+    assert parameter_sources.get("host") == "env"
+    assert parameter_sources.get("fail_on_security_warnings") == "default"
+    security = _get_security_section(payload)
+    assert security["enabled"] is False
+    assert security["source"] == "default"
+    assert security["parameter_source"] == "default"
+
+
+def test_environment_override_ignored_by_cli(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    monkeypatch.setattr(run_metrics_service, "METRICS_RUNTIME_AVAILABLE", False)
+    monkeypatch.setenv("RUN_METRICS_SERVICE_PORT", "7777")
+
+    exit_code = run_metrics_service.main(["--port", "1234", "--print-config-plan"])
+    assert exit_code == 0
+
+    payload = json.loads(capsys.readouterr().out.strip())
+    assert payload["port"] == 1234
+    env_section = payload.get("environment_overrides")
+    assert env_section is not None
+    port_entry = _find_env_entry(env_section["entries"], "port")
+    assert port_entry["applied"] is False
+    assert port_entry["reason"] == "cli_override"
+    parameter_sources = payload.get("parameter_sources", {})
+    assert parameter_sources.get("port") == "cli"
+    assert parameter_sources.get("fail_on_security_warnings") == "default"
+    security = _get_security_section(payload)
+    assert security["enabled"] is False
+    assert security["source"] == "default"
+    assert security["parameter_source"] == "default"
+
+
+def test_environment_override_jsonl_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys) -> None:
+    monkeypatch.setattr(run_metrics_service, "METRICS_RUNTIME_AVAILABLE", False)
+    jsonl_path = tmp_path / "env_metrics.jsonl"
+    monkeypatch.setenv("RUN_METRICS_SERVICE_JSONL", str(jsonl_path))
+
+    exit_code = run_metrics_service.main(["--print-config-plan"])
+    assert exit_code == 0
+
+    payload = json.loads(capsys.readouterr().out.strip())
+    assert payload["jsonl_sink"]["configured"] is True
+    assert payload["jsonl_sink"]["path"] == str(jsonl_path)
+    env_section = payload.get("environment_overrides")
+    assert env_section is not None
+    jsonl_entry = _find_env_entry(env_section["entries"], "jsonl_path")
+    assert jsonl_entry["applied"] is True
+    assert jsonl_entry["parsed_value"] == str(jsonl_path)
+    parameter_sources = payload.get("parameter_sources", {})
+    assert parameter_sources.get("jsonl_path") == "env"
+    assert parameter_sources.get("fail_on_security_warnings") == "default"
+    security = _get_security_section(payload)
+    assert security["enabled"] is False
+    assert security["source"] == "default"
+
+
+def test_environment_override_disable_jsonl(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    monkeypatch.setattr(run_metrics_service, "METRICS_RUNTIME_AVAILABLE", False)
+    monkeypatch.setenv("RUN_METRICS_SERVICE_JSONL", "none")
+
+    exit_code = run_metrics_service.main(["--print-config-plan"])
+    assert exit_code == 0
+
+    payload = json.loads(capsys.readouterr().out.strip())
+    assert payload["jsonl_sink"]["configured"] is False
+    env_section = payload.get("environment_overrides")
+    assert env_section is not None
+    jsonl_entry = _find_env_entry(env_section["entries"], "jsonl_path")
+    assert jsonl_entry["parsed_value"] is None
+    assert jsonl_entry["note"] == "jsonl_disabled"
+    parameter_sources = payload.get("parameter_sources", {})
+    assert parameter_sources.get("jsonl_path") == "env_disabled"
+    assert parameter_sources.get("fail_on_security_warnings") == "default"
+    security = _get_security_section(payload)
+    assert security["enabled"] is False
+    assert security["source"] == "default"
+
+
+def test_environment_override_fail_on_security_warnings(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys,
+) -> None:
+    monkeypatch.setattr(run_metrics_service, "METRICS_RUNTIME_AVAILABLE", False)
+    monkeypatch.setenv("RUN_METRICS_SERVICE_FAIL_ON_SECURITY_WARNINGS", "true")
+    jsonl_path = tmp_path / "metrics" / "telemetry.jsonl"
+    monkeypatch.setenv("RUN_METRICS_SERVICE_JSONL", str(jsonl_path))
+
+    exit_code = run_metrics_service.main(["--print-config-plan"])
+    assert exit_code == 3
+
+    payload = json.loads(capsys.readouterr().out.strip())
+    env_section = payload.get("environment_overrides")
+    assert env_section is not None
+    entry = _find_env_entry(env_section["entries"], "fail_on_security_warnings")
+    assert entry["applied"] is True
+    assert entry["parsed_value"] is True
+    parameter_sources = payload.get("parameter_sources", {})
+    assert parameter_sources.get("fail_on_security_warnings") == "env"
+    security = _get_security_section(payload)
+    assert security["enabled"] is True
+    assert security["source"] == "env:RUN_METRICS_SERVICE_FAIL_ON_SECURITY_WARNINGS"
+    assert security["parameter_source"] == "env"
+    assert security["environment_variable"] == "RUN_METRICS_SERVICE_FAIL_ON_SECURITY_WARNINGS"
+    assert security["environment_applied"] is True
+    assert security["environment_raw_value"] == "true"
+
+
+def test_environment_override_invalid_boolean(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(run_metrics_service, "METRICS_RUNTIME_AVAILABLE", False)
+    monkeypatch.setenv("RUN_METRICS_SERVICE_NO_LOG_SINK", "maybe")
+
+    with pytest.raises(SystemExit):
+        run_metrics_service.main([])

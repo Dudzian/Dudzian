@@ -368,7 +368,7 @@ def _risk_sanity_payload(
     if min_multiple > 0:
         wide_multiple = max(min_multiple * 1.5, min_multiple + 0.5, 1.0)
         if wide_multiple <= min_multiple:
-            wide_multiple = min_multiple + 0.25)
+            wide_multiple = min_multiple + 0.25
 
     atr = max(1.0, price * 0.005)
     if max_position_pct <= 0:
