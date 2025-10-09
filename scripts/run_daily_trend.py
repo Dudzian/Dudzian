@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import argparse
-import json
 import hashlib
+import json
+import importlib
 import os
 import logging
 import re
@@ -17,7 +18,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from collections import deque
 from collections.abc import Iterable, Mapping, MutableMapping, Sequence
-from typing import Any, Callable
+from dataclasses import asdict, dataclass
+from typing import Any, Callable, TYPE_CHECKING, Type
 
 
 _RAW_OUTPUT_MAX_LEN = 4096
@@ -36,6 +38,7 @@ from bot_core.data.intervals import (
     interval_to_milliseconds as _interval_to_milliseconds,
     normalize_interval_token as _normalize_interval_token,
 )
+from bot_core.config.loader import load_core_config
 from bot_core.reporting.audit import (
     PaperSmokeJsonSynchronizer,
     PaperSmokeJsonSyncResult,
@@ -45,10 +48,1339 @@ from bot_core.reporting.upload import (
     SmokeArchiveUploadResult,
 )
 from bot_core.data.ohlcv import evaluate_coverage
-from bot_core.runtime.pipeline import build_daily_trend_pipeline, create_trading_controller
-from bot_core.runtime.realtime import DailyTrendRealtimeRunner
 from bot_core.security import SecretManager, SecretStorageError, create_default_secret_storage
+from bot_core.runtime.file_metadata import (
+    directory_metadata as _directory_metadata,
+    file_reference_metadata as _file_reference_metadata,
+    log_security_warnings as _log_security_warnings,
+    permissions_from_mode as _permissions_from_mode,
+    security_flags_from_mode as _security_flags_from_mode,
+)
 from scripts import paper_precheck as paper_precheck_cli
+
+if TYPE_CHECKING:
+    from bot_core.config.models import CoreConfig, EnvironmentConfig, RiskProfileConfig
+    from bot_core.runtime.pipeline import (
+        build_daily_trend_pipeline as _BuildDailyTrendPipelineProto,
+        create_trading_controller as _CreateTradingControllerProto,
+    )
+    from bot_core.runtime.realtime import (
+        DailyTrendRealtimeRunner as _DailyTrendRealtimeRunnerProto,
+    )
+else:  # pragma: no cover - wykorzystywane tylko w czasie wykonywania
+    _BuildDailyTrendPipelineProto = Callable[..., Any]
+    _CreateTradingControllerProto = Callable[..., Any]
+    _DailyTrendRealtimeRunnerProto = Type[Any]
+
+
+build_daily_trend_pipeline: _BuildDailyTrendPipelineProto | None
+create_trading_controller: _CreateTradingControllerProto | None
+DailyTrendRealtimeRunner: _DailyTrendRealtimeRunnerProto | None
+
+
+try:
+    from bot_core.runtime.pipeline import (
+        build_daily_trend_pipeline,
+        create_trading_controller,
+    )
+except (ModuleNotFoundError, ImportError):  # pragma: no cover - zależy od instalacji
+    build_daily_trend_pipeline = None  # type: ignore[assignment]
+    create_trading_controller = None  # type: ignore[assignment]
+
+try:
+    from bot_core.runtime.realtime import (
+        DailyTrendRealtimeRunner,
+    )
+except (ModuleNotFoundError, ImportError):  # pragma: no cover - zależy od instalacji
+    DailyTrendRealtimeRunner = None  # type: ignore[assignment]
+
+try:  # pragma: no cover - opcjonalny moduł telemetrii UI
+    from bot_core.runtime.metrics_alerts import DEFAULT_UI_ALERTS_JSONL_PATH
+    _UI_TELEMETRY_ALERT_SINK_AVAILABLE = True
+except Exception:  # pragma: no cover - brak telemetrii UI
+    DEFAULT_UI_ALERTS_JSONL_PATH = Path("logs/ui_telemetry_alerts.jsonl")
+    _UI_TELEMETRY_ALERT_SINK_AVAILABLE = False
+
+
+_FALLBACK_RUNTIME_MODULE = "bot_core.runtime"
+_DEFAULT_PIPELINE_SOURCES: tuple[str, ...] = ("bot_core.runtime.pipeline",)
+_DEFAULT_REALTIME_SOURCES: tuple[str, ...] = ("bot_core.runtime.realtime",)
+_ENV_PIPELINE_MODULES = "RUN_DAILY_TREND_PIPELINE_MODULES"
+_ENV_REALTIME_MODULES = "RUN_DAILY_TREND_REALTIME_MODULES"
+_ENV_FAIL_ON_SECURITY_WARNINGS = "RUN_DAILY_TREND_FAIL_ON_SECURITY_WARNINGS"
+_MODULE_ENV_SPLIT_PATTERN = re.compile(r"[;:,\s]+")
+
+_DEFAULT_PIPELINE_ORIGIN = "domyślne moduły pipeline (bot_core.runtime.pipeline)"
+_DEFAULT_REALTIME_ORIGIN = "domyślne moduły realtime (bot_core.runtime.realtime)"
+_INTERNAL_OVERRIDE_ORIGIN = "wewnętrzne wywołanie _apply_runtime_overrides"
+
+
+@dataclass(frozen=True)
+class RuntimeModuleSnapshot:
+    """Stan modułów runtime wykorzystywanych przez CLI Daily Trend."""
+
+    pipeline_modules: tuple[str, ...]
+    realtime_modules: tuple[str, ...]
+    pipeline_origin: str | None
+    realtime_origin: str | None
+    pipeline_resolved_from: str | None
+    realtime_resolved_from: str | None
+    pipeline_fallback_used: bool
+    realtime_fallback_used: bool
+
+    def to_json_payload(self) -> dict[str, object]:
+        """Reprezentacja JSON z zachowaniem kompatybilności wstecznej."""
+
+        pipeline_list = list(self.pipeline_modules)
+        realtime_list = list(self.realtime_modules)
+        return {
+            "pipeline_modules": pipeline_list,
+            "realtime_modules": realtime_list,
+            "pipeline_resolved_from": self.pipeline_resolved_from,
+            "realtime_resolved_from": self.realtime_resolved_from,
+            "pipeline_fallback_used": self.pipeline_fallback_used,
+            "realtime_fallback_used": self.realtime_fallback_used,
+            "pipeline": {
+                "candidates": pipeline_list,
+                "origin": self.pipeline_origin,
+                "resolved_from": self.pipeline_resolved_from,
+                "fallback_used": self.pipeline_fallback_used,
+            },
+            "realtime": {
+                "candidates": realtime_list,
+                "origin": self.realtime_origin,
+                "resolved_from": self.realtime_resolved_from,
+                "fallback_used": self.realtime_fallback_used,
+            },
+        }
+
+
+@dataclass(frozen=True)
+class _ValidatedRuntimeConfig:
+    """Zawiera zweryfikowaną konfigurację CoreConfig oraz wybrane komponenty runtime."""
+
+    config: "CoreConfig"
+    environment: "EnvironmentConfig"
+    strategy_name: str
+    controller_name: str
+    risk_profile_name: str
+
+
+def _compact_mapping(values: Mapping[str, object] | dict[str, object]) -> dict[str, object]:
+    """Usuwa pary, w których wartość to ``None``."""
+
+    return {key: value for key, value in values.items() if value is not None}
+
+
+def _controller_details(pipeline: Any) -> Mapping[str, object] | None:
+    """Buduje podsumowanie kontrolera runtime wraz z parametrami egzekucji."""
+
+    controller = getattr(pipeline, "controller", None)
+    if controller is None:
+        return None
+
+    details: dict[str, object] = {
+        "name": getattr(pipeline, "controller_name", None),
+    }
+
+    interval_token = getattr(controller, "interval", None)
+    if interval_token is not None:
+        interval_str = str(interval_token)
+        details["interval"] = interval_str
+        try:
+            details["interval_normalized"] = _normalize_interval_token(interval_str)
+        except Exception:  # noqa: BLE001 - diagnostyka pomocnicza
+            _LOGGER.debug("Nie udało się znormalizować interwału kontrolera", exc_info=True)
+        try:
+            details["interval_ms"] = int(_interval_to_milliseconds(interval_str))
+        except Exception:  # noqa: BLE001 - diagnostyka pomocnicza
+            _LOGGER.debug("Nie udało się przeliczyć interwału na milisekundy", exc_info=True)
+
+    tick_value = getattr(controller, "tick_seconds", None)
+    if isinstance(tick_value, (int, float)):
+        details["tick_seconds"] = float(tick_value)
+
+    symbols = getattr(controller, "symbols", None)
+    if isinstance(symbols, Sequence) and not isinstance(symbols, (str, bytes)):
+        symbol_list = [str(item) for item in symbols]
+        details["symbols"] = symbol_list
+        details["symbol_count"] = len(symbol_list)
+
+    position_size = getattr(controller, "position_size", None)
+    if isinstance(position_size, (int, float)):
+        details["position_size"] = float(position_size)
+
+    execution_context = getattr(controller, "execution_context", None)
+    if execution_context is not None:
+        exec_payload: dict[str, object] = {
+            "portfolio_id": getattr(execution_context, "portfolio_id", None),
+            "risk_profile": getattr(execution_context, "risk_profile", None),
+            "environment": getattr(execution_context, "environment", None),
+        }
+        metadata = getattr(execution_context, "metadata", None)
+        if isinstance(metadata, Mapping):
+            exec_payload["metadata"] = dict(metadata)
+        details["execution_context"] = _compact_mapping(exec_payload)
+
+    return _compact_mapping(details)
+
+
+def _strategy_details(pipeline: Any) -> Mapping[str, object] | None:
+    """Zwraca szczegóły strategii wykorzystanej w pipeline."""
+
+    strategy = getattr(pipeline, "strategy", None)
+    if strategy is None:
+        return None
+
+    payload: dict[str, object] = {
+        "name": getattr(pipeline, "strategy_name", None),
+        "class": strategy.__class__.__name__,
+        "module": strategy.__class__.__module__,
+    }
+
+    settings = getattr(strategy, "_settings", None)
+    if settings is not None:
+        settings_payload: Mapping[str, object] | None
+        try:
+            settings_payload = asdict(settings)  # type: ignore[arg-type]
+        except Exception:  # noqa: BLE001 - fallback gdy ustawienia nie są dataclass
+            try:
+                settings_payload = dict(vars(settings))
+            except Exception:  # noqa: BLE001 - ostateczny fallback
+                settings_payload = None
+        if settings_payload:
+            payload["settings"] = dict(settings_payload)
+        max_history = getattr(settings, "max_history", None)
+        if callable(max_history):
+            try:
+                payload["max_history_bars"] = int(max_history())
+            except Exception:  # noqa: BLE001 - diagnostyka pomocnicza
+                _LOGGER.debug("Nie udało się odczytać max_history ze strategii", exc_info=True)
+
+    required_intervals = getattr(strategy, "required_intervals", None)
+    if callable(required_intervals):
+        try:
+            payload["required_intervals"] = list(required_intervals())
+        except Exception:  # noqa: BLE001 - strategia może nie implementować metody
+            _LOGGER.debug("Nie udało się pobrać required_intervals strategii", exc_info=True)
+
+    return _compact_mapping(payload)
+
+
+def _environment_details(pipeline: Any) -> Mapping[str, object] | None:
+    """Tworzy streszczenie środowiska operacyjnego pipeline'u."""
+
+    bootstrap = getattr(pipeline, "bootstrap", None)
+    if bootstrap is None:
+        return None
+
+    environment_cfg = getattr(bootstrap, "environment", None)
+    if environment_cfg is None:
+        return None
+
+    environment_value = getattr(environment_cfg, "environment", None)
+    if hasattr(environment_value, "value"):
+        environment_value = getattr(environment_value, "value")
+
+    payload: dict[str, object] = {
+        "name": getattr(environment_cfg, "name", None),
+        "exchange": getattr(environment_cfg, "exchange", None),
+        "environment": environment_value,
+        "risk_profile": getattr(environment_cfg, "risk_profile", None),
+        "instrument_universe": getattr(environment_cfg, "instrument_universe", None),
+        "data_cache_path": getattr(environment_cfg, "data_cache_path", None),
+        "default_strategy": getattr(environment_cfg, "default_strategy", None),
+        "default_controller": getattr(environment_cfg, "default_controller", None),
+    }
+
+    alert_channels = getattr(environment_cfg, "alert_channels", None)
+    if isinstance(alert_channels, Sequence) and not isinstance(alert_channels, (str, bytes)):
+        payload["alert_channels"] = list(alert_channels)
+
+    ip_allowlist = getattr(environment_cfg, "ip_allowlist", None)
+    if isinstance(ip_allowlist, Sequence) and not isinstance(ip_allowlist, (str, bytes)):
+        payload["ip_allowlist_count"] = len(tuple(ip_allowlist))
+
+    adapter = getattr(bootstrap, "adapter", None)
+    if adapter is not None:
+        payload["adapter"] = {
+            "class": adapter.__class__.__name__,
+            "module": adapter.__class__.__module__,
+        }
+
+    metrics_server = getattr(bootstrap, "metrics_server", None)
+    payload["metrics_service_active"] = metrics_server is not None
+    if metrics_server is not None:
+        address = getattr(metrics_server, "address", None)
+        if address:
+            payload["metrics_service_address"] = address
+
+    decision_journal = getattr(bootstrap, "decision_journal", None)
+    payload["decision_journal_enabled"] = decision_journal is not None
+    if decision_journal is not None:
+        payload["decision_journal"] = {
+            "class": decision_journal.__class__.__name__,
+            "module": decision_journal.__class__.__module__,
+        }
+
+    return _compact_mapping(payload)
+
+
+def _build_module_candidates(
+    user_modules: Sequence[str] | None,
+    defaults: Sequence[str],
+) -> tuple[str, ...]:
+    """Łączy moduły użytkownika, domyślne i fallback, zapewniając unikalność kolejności."""
+
+    ordered: list[str] = []
+    seen: set[str] = set()
+
+    def _add(module_name: str | None) -> None:
+        if not module_name:
+            return
+        if module_name in seen:
+            return
+        ordered.append(module_name)
+        seen.add(module_name)
+
+    if user_modules:
+        for candidate in user_modules:
+            _add(candidate.strip())
+
+    for candidate in defaults:
+        _add(candidate)
+
+    _add(_FALLBACK_RUNTIME_MODULE)
+    return tuple(ordered)
+
+
+def _parse_modules_env_value(
+    raw_value: str | None,
+    *,
+    env_var: str,
+) -> tuple[tuple[str, ...] | None, str | None]:
+    """Parsuje wartość modułów ze zmiennej środowiskowej."""
+
+    if raw_value is None:
+        return None, None
+
+    stripped = raw_value.strip()
+    if not stripped:
+        _LOGGER.warning(
+            "Zmienna środowiskowa %s jest ustawiona, ale nie zawiera żadnych modułów – ignoruję",
+            env_var,
+        )
+        return None, "empty_value"
+
+    modules = [candidate.strip() for candidate in _MODULE_ENV_SPLIT_PATTERN.split(raw_value) if candidate.strip()]
+    if not modules:
+        _LOGGER.warning(
+            "Zmienna środowiskowa %s nie zawiera poprawnych nazw modułów (wartość: %r)",
+            env_var,
+            raw_value,
+        )
+        return None, "invalid_value"
+
+    return tuple(modules), None
+
+
+def _modules_from_environment(env_var: str) -> tuple[str, ...] | None:
+    """Odczytuje listę modułów z zmiennej środowiskowej."""
+
+    modules, _ = _parse_modules_env_value(os.environ.get(env_var), env_var=env_var)
+    return modules
+
+
+def _parse_env_bool(value: str, *, variable: str) -> bool:
+    """Paruje wartości boolowskie ze zmiennych środowiskowych."""
+
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(
+        f"Zmienna {variable} oczekuje wartości bool (true/false, 1/0, yes/no) – otrzymano '{value}'."
+    )
+
+
+def _classify_risk_profile(name: str) -> str:
+    normalized = name.strip().lower()
+    if normalized in {"conservative", "balanced", "aggressive", "manual"}:
+        return normalized
+    return "custom"
+
+
+def _risk_profile_notes(classification: str) -> list[str]:
+    notes = [
+        "Ścieżka demo→paper→live jest obowiązkowa przed uruchomieniem w produkcji.",
+        "Monitoruj alerty reduce motion oraz overlay guard w powłoce Qt w trakcie testów.",
+    ]
+    if classification == "manual":
+        notes.append(
+            "Profil manualny wymaga ręcznej akceptacji sygnałów i rozszerzonego audytu RBAC/decision log.",
+        )
+    elif classification == "aggressive":
+        notes.append(
+            "Profil agresywny wymaga dodatkowych testów symulacyjnych i ścisłego nadzoru alertów ryzyka.",
+        )
+    elif classification == "conservative":
+        notes.append("Profil konserwatywny zalecany przy wdrożeniach pilotażowych lub testach integracyjnych.")
+    elif classification == "balanced":
+        notes.append("Profil zbalansowany używany w kampanii referencyjnej paper trading.")
+    return notes
+
+
+def _risk_profile_entry(
+    profile: "RiskProfileConfig", associated_envs: Sequence[str],
+) -> dict[str, object]:
+    classification = _classify_risk_profile(profile.name)
+    payload: dict[str, object] = {
+        "classification": classification,
+        "limits": {
+            "max_daily_loss_pct": profile.max_daily_loss_pct,
+            "max_position_pct": profile.max_position_pct,
+            "target_volatility": profile.target_volatility,
+            "max_leverage": profile.max_leverage,
+            "stop_loss_atr_multiple": profile.stop_loss_atr_multiple,
+            "max_open_positions": profile.max_open_positions,
+            "hard_drawdown_pct": profile.hard_drawdown_pct,
+        },
+        "associated_environments": list(associated_envs),
+        "requires_manual_controls": classification == "manual",
+        "deployment_pipeline": "demo→paper→live",
+        "notes": _risk_profile_notes(classification),
+    }
+    if profile.data_quality is not None:
+        payload["data_quality"] = {
+            "max_gap_minutes": profile.data_quality.max_gap_minutes,
+            "min_ok_ratio": profile.data_quality.min_ok_ratio,
+        }
+    return payload
+
+
+def _risk_profiles_payload(
+    config: "CoreConfig", environment_name: str | None,
+) -> dict[str, object]:
+    environment_profiles = {
+        name: env.risk_profile for name, env in sorted(config.environments.items())
+    }
+
+    env_config = None
+    if environment_name:
+        env_config = config.environments.get(environment_name)
+
+    profiles_section = {
+        name: _risk_profile_entry(
+            profile,
+            [env for env, profile_name in environment_profiles.items() if profile_name == name],
+        )
+        for name, profile in sorted(config.risk_profiles.items())
+    }
+
+    available_profiles = sorted(profiles_section.keys())
+
+    return {
+        "environment": environment_name,
+        "environment_found": env_config is not None,
+        "environment_profile": env_config.risk_profile if env_config else None,
+        "available_profiles": available_profiles,
+        "profiles": profiles_section,
+        "environments": environment_profiles,
+    }
+
+
+def _print_risk_profiles(config_path: Path, environment_name: str | None) -> int:
+    if not config_path.exists():
+        _LOGGER.error("Plik konfiguracyjny %s nie istnieje", config_path)
+        return 1
+
+    try:
+        config = load_core_config(config_path)
+    except Exception as exc:  # noqa: BLE001
+        _LOGGER.error("Nie udało się wczytać konfiguracji %s: %s", config_path, exc)
+        return 2
+
+    payload = _risk_profiles_payload(config, environment_name)
+    profile_names = ", ".join(payload["available_profiles"])
+    if profile_names:
+        _LOGGER.info("Dostępne profile ryzyka: %s", profile_names)
+    else:
+        _LOGGER.warning("Konfiguracja %s nie definiuje żadnych profili ryzyka", config_path)
+
+    env_profile = payload.get("environment_profile")
+    if env_profile:
+        _LOGGER.info(
+            "Środowisko %s korzysta z profilu %s (audyt demo→paper→live wymagany).",
+            payload["environment"],
+            env_profile,
+        )
+    json.dump(payload, sys.stdout, ensure_ascii=False, indent=2)
+    sys.stdout.write("\n")
+    return 0
+
+
+def _precheck_summary(payload: Mapping[str, object] | None) -> Mapping[str, object] | None:
+    """Redukuje wynik paper_precheck do metadanych audytowych."""
+
+    if not isinstance(payload, Mapping):
+        return None
+
+    summary: dict[str, object] = {
+        "status": payload.get("status"),
+        "coverage_status": payload.get("coverage_status"),
+        "risk_status": payload.get("risk_status"),
+    }
+
+    manifest_path = payload.get("manifest_path")
+    if manifest_path is not None:
+        summary["manifest_path"] = str(manifest_path)
+
+    coverage_warnings = payload.get("coverage_warnings")
+    if isinstance(coverage_warnings, Sequence) and coverage_warnings:
+        summary["coverage_warnings"] = [str(item) for item in coverage_warnings]
+
+    risk_payload = payload.get("risk")
+    if isinstance(risk_payload, Mapping):
+        risk_summary: dict[str, object] = {}
+        warnings = risk_payload.get("warnings")
+        if isinstance(warnings, Sequence) and warnings:
+            risk_summary["warnings"] = [str(item) for item in warnings]
+        if risk_summary:
+            summary["risk"] = risk_summary
+
+    return summary
+
+
+def _sanitize_precheck_audit_metadata(
+    metadata: Mapping[str, object] | None,
+) -> Mapping[str, object] | None:
+    """Zwraca tylko podstawowe informacje audytowe z raportu precheck."""
+
+    if not isinstance(metadata, Mapping):
+        return None
+
+    allowed_keys = {
+        "path",
+        "sha256",
+        "created_at",
+        "environment",
+        "status",
+        "size_bytes",
+    }
+    sanitized: dict[str, object] = {}
+    for key in sorted(allowed_keys):
+        if key not in metadata:
+            continue
+        value = metadata.get(key)
+        if value is None:
+            continue
+        if isinstance(value, (str, int, float)):
+            sanitized[key] = value
+        else:
+            sanitized[key] = str(value)
+    return sanitized or None
+
+
+def _collect_git_metadata(base_path: Path | None = None) -> Mapping[str, object] | None:
+    """Zwraca podstawowe metadane repozytorium Git na potrzeby audytu."""
+
+    git_binary = shutil.which("git")
+    if not git_binary:
+        _LOGGER.debug("Polecenie 'git' nie jest dostępne w PATH – pomijam metadane repozytorium")
+        return None
+
+    search_path = base_path or Path(__file__).resolve()
+    if search_path.is_file():
+        search_path = search_path.parent
+
+    try:
+        root_result = subprocess.run(
+            [git_binary, "rev-parse", "--show-toplevel"],
+            check=True,
+            capture_output=True,
+            text=True,
+            cwd=search_path,
+        )
+    except (OSError, subprocess.CalledProcessError):  # pragma: no cover - zależy od środowiska
+        _LOGGER.debug(
+            "Nie udało się ustalić katalogu głównego repozytorium Git", exc_info=True
+        )
+        return None
+
+    repo_root = Path(root_result.stdout.strip())
+
+    def _git(*args: str) -> str:
+        result = subprocess.run(
+            [git_binary, *args],
+            check=True,
+            capture_output=True,
+            text=True,
+            cwd=repo_root,
+        )
+        return result.stdout.strip()
+
+    metadata: dict[str, object] = {"root": str(repo_root)}
+
+    try:
+        metadata["commit"] = _git("rev-parse", "HEAD")
+    except (OSError, subprocess.CalledProcessError):
+        _LOGGER.debug("Nie udało się pobrać identyfikatora commita Git", exc_info=True)
+        return metadata
+
+    try:
+        metadata["branch"] = _git("rev-parse", "--abbrev-ref", "HEAD")
+    except (OSError, subprocess.CalledProcessError):
+        _LOGGER.debug("Nie udało się ustalić bieżącej gałęzi Git", exc_info=True)
+
+    try:
+        metadata["tag"] = _git("describe", "--tags", "--always")
+    except (OSError, subprocess.CalledProcessError):
+        _LOGGER.debug("Polecenie git describe nie powiodło się", exc_info=True)
+
+    try:
+        metadata["commit_timestamp"] = _git("log", "-1", "--format=%cI")
+    except (OSError, subprocess.CalledProcessError):
+        _LOGGER.debug("Nie udało się pobrać znacznika czasu commita", exc_info=True)
+
+    try:
+        status_output = subprocess.run(
+            [git_binary, "status", "--porcelain"],
+            check=True,
+            capture_output=True,
+            text=True,
+            cwd=repo_root,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError):
+        _LOGGER.debug("Nie udało się ustalić stanu roboczego repozytorium", exc_info=True)
+    else:
+        is_dirty = bool(status_output.strip())
+        metadata["is_dirty"] = is_dirty
+        if is_dirty:
+            metadata["dirty_entries"] = len(status_output.strip().splitlines())
+
+    return metadata
+
+
+def _resolve_path_relative_to(base_dir: Path | None, value: Path | str) -> Path:
+    """Zwraca ścieżkę uwzględniającą katalog bazowy konfiguracji."""
+
+    candidate = Path(value).expanduser()
+    if candidate.is_absolute() or base_dir is None:
+        return candidate
+
+    try:
+        normalized_base = base_dir.expanduser().resolve(strict=False)
+    except Exception:  # noqa: BLE001 - zachowujemy najlepsze przybliżenie
+        normalized_base = base_dir.expanduser().absolute()
+
+    return normalized_base / candidate
+
+
+def _config_file_metadata(path: Path) -> Mapping[str, object] | None:
+    """Zwraca metadane audytowe pliku konfiguracyjnego, w tym sumę SHA-256."""
+
+    metadata = _file_reference_metadata(path, role="core_config")
+    if not metadata.get("exists"):
+        # Brak pliku konfiguracyjnego – komunikat został już zarejestrowany.
+        return None
+
+    metadata.pop("path", None)
+    return metadata
+
+
+def _metrics_service_details_from_config(
+    config: "CoreConfig",
+    *,
+    base_dir: Path | None = None,
+    runtime_ui_alert_path: Path | str | None = None,
+    runtime_jsonl_path: Path | str | None = None,
+    ui_alert_sink_active: bool | None = None,
+    runtime_service_enabled: bool | None = None,
+    runtime_ui_alert_metadata: Mapping[str, object] | None = None,
+    runtime_jsonl_metadata: Mapping[str, object] | None = None,
+    runtime_security_warnings: Sequence[str] | None = None,
+) -> Mapping[str, object]:
+    """Buduje sekcję audytową opisującą konfigurację MetricsService."""
+
+    runtime_payload: dict[str, object] = {}
+    if runtime_jsonl_metadata is not None:
+        runtime_payload["jsonl_file"] = runtime_jsonl_metadata
+        runtime_payload["jsonl_path"] = str(
+            runtime_jsonl_metadata.get("path")
+            or runtime_jsonl_metadata.get("absolute_path")
+            or runtime_jsonl_path
+            or ""
+        )
+    elif runtime_jsonl_path:
+        runtime_jsonl = Path(runtime_jsonl_path).expanduser()
+        runtime_payload["jsonl_path"] = str(runtime_jsonl)
+        runtime_payload["jsonl_file"] = _file_reference_metadata(
+            runtime_jsonl, role="jsonl"
+        )
+    if runtime_ui_alert_metadata is not None:
+        runtime_payload["ui_alerts_file"] = runtime_ui_alert_metadata
+        runtime_payload["ui_alerts_jsonl_path"] = str(
+            runtime_ui_alert_metadata.get("path")
+            or runtime_ui_alert_metadata.get("absolute_path")
+            or runtime_ui_alert_path
+            or ""
+        )
+    elif runtime_ui_alert_path:
+        runtime_ui_alert = Path(runtime_ui_alert_path).expanduser()
+        runtime_payload["ui_alerts_jsonl_path"] = str(runtime_ui_alert)
+        runtime_payload["ui_alerts_file"] = _file_reference_metadata(
+            runtime_ui_alert, role="ui_alerts_jsonl"
+        )
+    if ui_alert_sink_active is not None:
+        runtime_payload["ui_alert_sink_active"] = bool(ui_alert_sink_active)
+    if runtime_service_enabled is not None:
+        runtime_payload["service_enabled"] = bool(runtime_service_enabled)
+    if runtime_security_warnings:
+        runtime_payload["security_warnings"] = list(runtime_security_warnings)
+    runtime_payload = _compact_mapping(runtime_payload) if runtime_payload else {}
+
+    metrics_cfg = getattr(config, "metrics_service", None)
+    if metrics_cfg is None:
+        payload: dict[str, object] = {
+            "configured": False,
+            "ui_alert_sink_available": _UI_TELEMETRY_ALERT_SINK_AVAILABLE,
+        }
+        if runtime_payload:
+            payload["runtime_state"] = runtime_payload
+        return payload
+
+    payload: dict[str, object] = {
+        "configured": True,
+        "enabled": bool(getattr(metrics_cfg, "enabled", False)),
+        "host": getattr(metrics_cfg, "host", None),
+        "port": getattr(metrics_cfg, "port", None),
+        "history_size": getattr(metrics_cfg, "history_size", None),
+        "log_sink": bool(getattr(metrics_cfg, "log_sink", False)),
+        "jsonl_fsync": bool(getattr(metrics_cfg, "jsonl_fsync", False)),
+        "ui_alert_sink_available": _UI_TELEMETRY_ALERT_SINK_AVAILABLE,
+    }
+
+    jsonl_path = getattr(metrics_cfg, "jsonl_path", None)
+    if jsonl_path:
+        resolved_jsonl = _resolve_path_relative_to(base_dir, jsonl_path)
+        jsonl_metadata = _file_reference_metadata(resolved_jsonl, role="jsonl")
+        payload["jsonl_path"] = jsonl_metadata["path"]
+        payload["jsonl_file"] = jsonl_metadata
+
+    ui_alerts_path_raw = getattr(metrics_cfg, "ui_alerts_jsonl_path", None)
+    ui_alerts_source = "config" if ui_alerts_path_raw else "default"
+    if ui_alerts_path_raw:
+        ui_alerts_path = _resolve_path_relative_to(base_dir, ui_alerts_path_raw)
+    else:
+        ui_alerts_path = DEFAULT_UI_ALERTS_JSONL_PATH.expanduser()
+    ui_alerts_metadata = _file_reference_metadata(ui_alerts_path, role="ui_alerts_jsonl")
+    payload["ui_alerts_source"] = ui_alerts_source
+    payload["ui_alerts_jsonl_path"] = ui_alerts_metadata["path"]
+    payload["ui_alerts_file"] = ui_alerts_metadata
+
+    tls_cfg = getattr(metrics_cfg, "tls", None)
+    if tls_cfg is not None:
+        tls_payload: dict[str, object] = {
+            "configured": True,
+            "enabled": bool(getattr(tls_cfg, "enabled", False)),
+            "require_client_auth": bool(getattr(tls_cfg, "require_client_auth", False)),
+        }
+
+        certificate_path = getattr(tls_cfg, "certificate_path", None)
+        if certificate_path:
+            tls_payload["certificate"] = _file_reference_metadata(
+                _resolve_path_relative_to(base_dir, certificate_path), role="tls_cert"
+            )
+
+        private_key_path = getattr(tls_cfg, "private_key_path", None)
+        if private_key_path:
+            tls_payload["private_key"] = _file_reference_metadata(
+                _resolve_path_relative_to(base_dir, private_key_path), role="tls_key"
+            )
+
+        client_ca_path = getattr(tls_cfg, "client_ca_path", None)
+        if client_ca_path:
+            tls_payload["client_ca"] = _file_reference_metadata(
+                _resolve_path_relative_to(base_dir, client_ca_path), role="tls_client_ca"
+            )
+
+        payload["tls"] = tls_payload
+    else:
+        payload["tls"] = {"configured": False}
+
+    if runtime_payload:
+        payload["runtime_state"] = runtime_payload
+
+    return _compact_mapping(payload)
+
+
+def _load_validated_core_config(
+    config_path: Path,
+    *,
+    environment: str,
+    strategy: str | None,
+    controller: str | None,
+    risk_profile: str | None,
+) -> _ValidatedRuntimeConfig | None:
+    """Wczytuje CoreConfig i waliduje podstawowe parametry wejściowe CLI."""
+
+    try:
+        config = load_core_config(config_path)
+    except Exception as exc:  # noqa: BLE001
+        _LOGGER.error("Nie udało się wczytać konfiguracji %s: %s", config_path, exc)
+        return None
+
+    environment_cfg = config.environments.get(environment)
+    if environment_cfg is None:
+        available = ", ".join(sorted(config.environments)) or "brak"
+        _LOGGER.error(
+            "Środowisko %s nie istnieje w konfiguracji %s. Dostępne środowiska: %s",
+            environment,
+            config_path,
+            available,
+        )
+        return None
+
+    resolved_strategy = strategy or environment_cfg.default_strategy
+    if not resolved_strategy:
+        _LOGGER.error(
+            "Środowisko %s nie ma zdefiniowanej domyślnej strategii, a parametr --strategy nie został użyty.",
+            environment,
+        )
+        return None
+
+    if resolved_strategy not in config.strategies:
+        available = ", ".join(sorted(config.strategies)) or "brak"
+        if strategy:
+            _LOGGER.error(
+                "Strategia %s nie jest zdefiniowana w konfiguracji. Dostępne strategie: %s",
+                resolved_strategy,
+                available,
+            )
+        else:
+            _LOGGER.error(
+                "Środowisko %s odwołuje się do strategii %s, której nie znaleziono. Dostępne strategie: %s",
+                environment,
+                resolved_strategy,
+                available,
+            )
+        return None
+
+    resolved_controller = controller or environment_cfg.default_controller
+    if not resolved_controller:
+        _LOGGER.error(
+            "Środowisko %s nie ma zdefiniowanego domyślnego kontrolera runtime, a parametr --controller nie został użyty.",
+            environment,
+        )
+        return None
+
+    if resolved_controller not in config.runtime_controllers:
+        available = ", ".join(sorted(config.runtime_controllers)) or "brak"
+        if controller:
+            _LOGGER.error(
+                "Kontroler runtime %s nie jest zdefiniowany w konfiguracji. Dostępne kontrolery: %s",
+                resolved_controller,
+                available,
+            )
+        else:
+            _LOGGER.error(
+                "Środowisko %s odwołuje się do kontrolera runtime %s, którego nie znaleziono. Dostępne kontrolery: %s",
+                environment,
+                resolved_controller,
+                available,
+            )
+        return None
+
+    requested_profile = risk_profile or environment_cfg.risk_profile
+    if requested_profile not in config.risk_profiles:
+        available = ", ".join(sorted(config.risk_profiles)) or "brak"
+        if risk_profile:
+            _LOGGER.error(
+                "Profil ryzyka %s nie istnieje w konfiguracji. Dostępne profile: %s",
+                requested_profile,
+                available,
+            )
+        else:
+            _LOGGER.error(
+                "Środowisko %s odwołuje się do profilu ryzyka %s, którego nie znaleziono. Dostępne profile: %s",
+                environment,
+                requested_profile,
+                available,
+            )
+        return None
+
+    return _ValidatedRuntimeConfig(
+        config=config,
+        environment=environment_cfg,
+        strategy_name=resolved_strategy,
+        controller_name=resolved_controller,
+        risk_profile_name=requested_profile,
+    )
+
+
+def _build_runtime_plan_payload(
+    *,
+    args: argparse.Namespace,
+    snapshot: RuntimeModuleSnapshot,
+    pipeline: Any,
+    config: "CoreConfig",
+    environment_name: str,
+    cli_pipeline_modules: Sequence[str] | None,
+    cli_realtime_modules: Sequence[str] | None,
+    env_pipeline_modules: Sequence[str] | None,
+    env_pipeline_raw: str | None,
+    env_pipeline_applied: bool,
+    env_pipeline_reason: str | None,
+    env_realtime_modules: Sequence[str] | None,
+    env_realtime_raw: str | None,
+    env_realtime_applied: bool,
+    env_realtime_reason: str | None,
+    cli_fail_on_security_flag: bool,
+    env_fail_on_security_raw: str | None,
+    env_fail_on_security_applied: bool,
+    env_fail_on_security_value: bool | None,
+    fail_on_security_source: str,
+    precheck_payload: Mapping[str, object] | None,
+    precheck_audit_metadata: Mapping[str, object] | None,
+    operator_name: str | None,
+) -> Mapping[str, object]:
+    """Buduje wpis audytowy opisujący konfigurację runtime."""
+
+    runtime_overview = snapshot.to_json_payload()
+    risk_payload = _risk_profiles_payload(config, environment_name)
+    risk_profile_name = getattr(pipeline, "risk_profile_name", None)
+
+    risk_details = None
+    if risk_profile_name:
+        profiles = risk_payload.get("profiles")
+        if isinstance(profiles, Mapping):
+            candidate = profiles.get(risk_profile_name)
+            if isinstance(candidate, Mapping):
+                risk_details = candidate
+
+    environment_cfg = getattr(pipeline.bootstrap, "environment", None)
+    environment_type = None
+    if environment_cfg is not None and hasattr(environment_cfg, "environment"):
+        environment_type = getattr(environment_cfg.environment, "value", environment_cfg.environment)
+
+    precheck_summary = _precheck_summary(precheck_payload)
+
+    config_path_arg = Path(args.config).expanduser()
+    config_source_value = getattr(config, "source_path", None)
+    config_source_path = (
+        Path(config_source_value).expanduser()
+        if config_source_value
+        else config_path_arg
+    )
+    config_file_section: dict[str, object] = {"path": str(config_path_arg)}
+    config_file_metadata = _config_file_metadata(config_source_path)
+    if config_file_metadata:
+        config_file_section.update(config_file_metadata)
+    elif config_source_value:
+        config_file_section["absolute_path"] = str(config_source_path)
+    else:
+        try:
+            config_file_section["absolute_path"] = str(
+                config_path_arg.resolve(strict=False)
+            )
+        except Exception:  # noqa: BLE001 - zachowujemy najlepsze przybliżenie
+            config_file_section["absolute_path"] = str(config_path_arg.absolute())
+
+    config_base_dir = config_source_path.parent
+
+    environment_entries: list[dict[str, object]] = []
+
+    if env_pipeline_raw is not None:
+        pipeline_entry: dict[str, object] = {
+            "option": "pipeline_modules",
+            "variable": _ENV_PIPELINE_MODULES,
+            "raw_value": env_pipeline_raw,
+            "applied": bool(env_pipeline_applied and env_pipeline_modules is not None),
+        }
+        if env_pipeline_modules is not None:
+            pipeline_entry["parsed_value"] = list(env_pipeline_modules)
+        if env_pipeline_reason is not None:
+            pipeline_entry["reason"] = env_pipeline_reason
+        environment_entries.append(_compact_mapping(pipeline_entry))
+
+    if env_realtime_raw is not None:
+        realtime_entry: dict[str, object] = {
+            "option": "realtime_modules",
+            "variable": _ENV_REALTIME_MODULES,
+            "raw_value": env_realtime_raw,
+            "applied": bool(env_realtime_applied and env_realtime_modules is not None),
+        }
+        if env_realtime_modules is not None:
+            realtime_entry["parsed_value"] = list(env_realtime_modules)
+        if env_realtime_reason is not None:
+            realtime_entry["reason"] = env_realtime_reason
+        environment_entries.append(_compact_mapping(realtime_entry))
+
+    env_fail_reason = None
+    if (
+        env_fail_on_security_raw is not None
+        and not env_fail_on_security_applied
+        and cli_fail_on_security_flag
+    ):
+        env_fail_reason = "cli_override"
+
+    if env_fail_on_security_raw is not None:
+        fail_entry: dict[str, object] = {
+            "option": "fail_on_security_warnings",
+            "variable": _ENV_FAIL_ON_SECURITY_WARNINGS,
+            "raw_value": env_fail_on_security_raw,
+            "applied": env_fail_on_security_applied,
+        }
+        if env_fail_on_security_value is not None:
+            fail_entry["parsed_value"] = bool(env_fail_on_security_value)
+        if env_fail_reason is not None:
+            fail_entry["reason"] = env_fail_reason
+        environment_entries.append(_compact_mapping(fail_entry))
+
+    environment_entries_list = [entry for entry in environment_entries if entry]
+
+    plan: dict[str, object] = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "config_path": str(Path(args.config)),
+        "config_file": config_file_section,
+        "environment": environment_name,
+        "environment_type": environment_type,
+        "runtime_modules": runtime_overview,
+        "pipeline_details": {
+            "class": pipeline.__class__.__name__,
+            "module": pipeline.__class__.__module__,
+        },
+        "overrides": {
+            "cli": _compact_mapping(
+                {
+                    "pipeline_modules": list(cli_pipeline_modules or []),
+                    "realtime_modules": list(cli_realtime_modules or []),
+                    "fail_on_security_warnings": bool(cli_fail_on_security_flag),
+                }
+            ),
+            "environment": _compact_mapping(
+                {
+                    "entries": environment_entries_list or None,
+                    "pipeline_modules": list(env_pipeline_modules or [])
+                    if env_pipeline_applied and env_pipeline_modules is not None
+                    else None,
+                    "realtime_modules": list(env_realtime_modules or [])
+                    if env_realtime_applied and env_realtime_modules is not None
+                    else None,
+                    "fail_on_security_warnings": _compact_mapping(
+                        {
+                            "variable": _ENV_FAIL_ON_SECURITY_WARNINGS,
+                            "raw_value": env_fail_on_security_raw,
+                            "applied": env_fail_on_security_applied,
+                            "parsed_value": bool(env_fail_on_security_value)
+                            if env_fail_on_security_value is not None
+                            else None,
+                            "reason": env_fail_reason,
+                        }
+                    )
+                    if env_fail_on_security_raw is not None
+                    else None,
+                }
+            ),
+        },
+        "strategy": getattr(pipeline, "strategy_name", args.strategy),
+        "controller": getattr(pipeline, "controller_name", args.controller),
+        "risk_profile": risk_profile_name,
+        "risk_profile_details": risk_details,
+        "risk_profiles_overview": risk_payload,
+        "paper_smoke": bool(args.paper_smoke),
+        "paper_smoke_operator": operator_name,
+        "notes": [
+            "Profile ryzyka: konserwatywny, zbalansowany, agresywny, manualny.",
+            "Pipeline środowiskowy: demo→paper→live (audyt wymagany przed produkcją).",
+        ],
+    }
+
+    if precheck_summary:
+        plan["paper_precheck"] = precheck_summary
+
+    audit_metadata = _sanitize_precheck_audit_metadata(precheck_audit_metadata)
+    if audit_metadata:
+        plan["paper_precheck_audit"] = audit_metadata
+
+    try:
+        git_metadata = _collect_git_metadata()
+    except Exception:  # noqa: BLE001 - diagnostyka pomocnicza, nie przerywamy wykonywania
+        _LOGGER.debug("Nie udało się zebrać metadanych Git", exc_info=True)
+    else:
+        if git_metadata:
+            plan["git"] = git_metadata
+
+    controller_payload = _controller_details(pipeline)
+    if controller_payload:
+        plan["controller_details"] = controller_payload
+
+    strategy_payload = _strategy_details(pipeline)
+    if strategy_payload:
+        plan["strategy_details"] = strategy_payload
+
+    environment_payload = _environment_details(pipeline)
+    if environment_payload:
+        plan["environment_details"] = environment_payload
+
+    bootstrap_ctx = getattr(pipeline, "bootstrap", None)
+    runtime_ui_alert_path = None
+    runtime_jsonl_path = None
+    runtime_sink_active = None
+    runtime_service_enabled = None
+    runtime_ui_alert_metadata = None
+    runtime_jsonl_metadata = None
+    runtime_security_warnings = None
+    if bootstrap_ctx is not None:
+        runtime_ui_alert_path = getattr(bootstrap_ctx, "metrics_ui_alerts_path", None)
+        runtime_jsonl_path = getattr(bootstrap_ctx, "metrics_jsonl_path", None)
+        runtime_sink_active = getattr(bootstrap_ctx, "metrics_ui_alert_sink_active", None)
+        runtime_service_enabled = getattr(bootstrap_ctx, "metrics_service_enabled", None)
+        runtime_ui_alert_metadata = getattr(
+            bootstrap_ctx, "metrics_ui_alerts_metadata", None
+        )
+        runtime_jsonl_metadata = getattr(
+            bootstrap_ctx, "metrics_jsonl_metadata", None
+        )
+        runtime_security_warnings = getattr(
+            bootstrap_ctx, "metrics_security_warnings", None
+        )
+
+    metrics_details = _metrics_service_details_from_config(
+        config,
+        base_dir=config_base_dir,
+        runtime_ui_alert_path=runtime_ui_alert_path,
+        runtime_jsonl_path=runtime_jsonl_path,
+        ui_alert_sink_active=runtime_sink_active,
+        runtime_service_enabled=runtime_service_enabled,
+        runtime_ui_alert_metadata=runtime_ui_alert_metadata,
+        runtime_jsonl_metadata=runtime_jsonl_metadata,
+        runtime_security_warnings=runtime_security_warnings,
+    )
+    if metrics_details:
+        plan["metrics_service_details"] = metrics_details
+
+    fail_on_security_parameter_source = (
+        "env" if fail_on_security_source.startswith("env:") else fail_on_security_source
+    )
+
+    plan["security"] = {
+        "fail_on_security_warnings": _compact_mapping(
+            {
+                "enabled": bool(args.fail_on_security_warnings),
+                "source": fail_on_security_source,
+                "parameter_source": fail_on_security_parameter_source,
+                "environment_variable": _ENV_FAIL_ON_SECURITY_WARNINGS
+                if env_fail_on_security_raw is not None
+                else None,
+                "environment_raw_value": env_fail_on_security_raw,
+                "environment_applied": env_fail_on_security_applied,
+                "environment_reason": env_fail_reason,
+            }
+        ),
+        "parameter_sources": {
+            "fail_on_security_warnings": fail_on_security_parameter_source,
+        },
+    }
+
+    return plan
+def _append_runtime_plan_jsonl(path: Path, payload: Mapping[str, object]) -> Path:
+    """Dopisuje wpis audytowy planu runtime do pliku JSONL."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False)
+        handle.write("\n")
+    return path
+
+
+@dataclass(frozen=True)
+class _ResolvedRuntimeSymbols:
+    """Wynik importu symboli runtime wraz z modułem źródłowym."""
+
+    symbols: tuple[Any, ...]
+    module_name: str
+
+
+def _resolve_runtime_symbols(
+    module_candidates: Iterable[str],
+    symbol_names: Iterable[str],
+    *,
+    component_hint: str,
+) -> _ResolvedRuntimeSymbols:
+    """Zwraca symbole runtime z listy modułów z komunikatami diagnostycznymi."""
+
+    diagnostics: list[str] = []
+    names = tuple(symbol_names)
+    candidates = tuple(module_candidates)
+
+    for module_name in candidates:
+        try:
+            module = importlib.import_module(module_name)
+        except ModuleNotFoundError as error:
+            if error.name == module_name:
+                diagnostics.append(f"{module_name}: moduł nie znaleziony")
+                continue
+            raise
+
+        missing = [name for name in names if not hasattr(module, name)]
+        if missing:
+            diagnostics.append(
+                f"{module_name}: brak symboli {', '.join(missing)}"
+            )
+            continue
+
+        resolved = tuple(getattr(module, name) for name in names)
+        return _ResolvedRuntimeSymbols(resolved, module_name)
+
+    candidates_display = ", ".join(candidates)
+    symbols = ", ".join(names)
+    details = "; ".join(diagnostics) or "brak dodatkowej diagnostyki"
+    message = (
+        f"Nie znaleziono {component_hint}: wymagane symbole ({symbols}) nie są dostępne w modułach: {candidates_display}. "
+        f"Diagnostyka: {details}"
+    )
+    raise ImportError(message)
+
+
+def _import_daily_trend_pipeline_symbols(
+    module_candidates: Sequence[str],
+) -> tuple[_BuildDailyTrendPipelineProto, _CreateTradingControllerProto, str]:
+    """Importuje wymagane symbole pipeline'u zgodnie z kolejnością modułów."""
+
+    symbols = ("build_daily_trend_pipeline", "create_trading_controller")
+    resolved = _resolve_runtime_symbols(module_candidates, symbols, component_hint="runtime pipeline")
+    return resolved.symbols[0], resolved.symbols[1], resolved.module_name
+
+
+def _import_daily_trend_realtime_runner(
+    module_candidates: Sequence[str],
+) -> tuple[_DailyTrendRealtimeRunnerProto, str]:
+    """Importuje klasę realtime z kolejnością modułów i walidacją typu."""
+
+    resolved = _resolve_runtime_symbols(
+        module_candidates,
+        ("DailyTrendRealtimeRunner",),
+        component_hint="realtime runner",
+    )
+    runner = resolved.symbols[0]
+    if not isinstance(runner, type):
+        raise ImportError(
+            "DailyTrendRealtimeRunner nie jest klasą – sprawdź implementację bot_core.runtime"
+        )
+    return runner, resolved.module_name
+
+
+_PIPELINE_MODULE_CANDIDATES = _build_module_candidates(None, _DEFAULT_PIPELINE_SOURCES)
+_REALTIME_MODULE_CANDIDATES = _build_module_candidates(None, _DEFAULT_REALTIME_SOURCES)
+_PIPELINE_MODULE_ORIGIN: str | None = _DEFAULT_PIPELINE_ORIGIN
+_REALTIME_MODULE_ORIGIN: str | None = _DEFAULT_REALTIME_ORIGIN
+_PIPELINE_RESOLVED_FROM: str | None = None
+_REALTIME_RESOLVED_FROM: str | None = None
+_PIPELINE_FALLBACK_USED: bool = False
+_REALTIME_FALLBACK_USED: bool = False
+
+if build_daily_trend_pipeline is None or create_trading_controller is None:
+    (
+        build_daily_trend_pipeline,
+        create_trading_controller,
+        _PIPELINE_RESOLVED_FROM,
+    ) = _import_daily_trend_pipeline_symbols(
+        _PIPELINE_MODULE_CANDIDATES
+    )
+else:
+    _PIPELINE_RESOLVED_FROM = build_daily_trend_pipeline.__module__
+
+_PIPELINE_FALLBACK_USED = _PIPELINE_RESOLVED_FROM == _FALLBACK_RUNTIME_MODULE
+
+if DailyTrendRealtimeRunner is None:
+    (
+        DailyTrendRealtimeRunner,
+        _REALTIME_RESOLVED_FROM,
+    ) = _import_daily_trend_realtime_runner(_REALTIME_MODULE_CANDIDATES)
+else:
+    _REALTIME_RESOLVED_FROM = DailyTrendRealtimeRunner.__module__
+
+_REALTIME_FALLBACK_USED = _REALTIME_RESOLVED_FROM == _FALLBACK_RUNTIME_MODULE
+
+
+def _apply_runtime_overrides(
+    pipeline_modules: Sequence[str] | None,
+    realtime_modules: Sequence[str] | None,
+    *,
+    pipeline_origin: str | None = None,
+    realtime_origin: str | None = None,
+) -> None:
+    """Aktualizuje globalne symbole runtime zgodnie z modułami przekazanymi w CLI."""
+
+    global build_daily_trend_pipeline
+    global create_trading_controller
+    global DailyTrendRealtimeRunner
+    global _PIPELINE_MODULE_CANDIDATES
+    global _REALTIME_MODULE_CANDIDATES
+    global _PIPELINE_MODULE_ORIGIN
+    global _REALTIME_MODULE_ORIGIN
+    global _PIPELINE_RESOLVED_FROM
+    global _REALTIME_RESOLVED_FROM
+    global _PIPELINE_FALLBACK_USED
+    global _REALTIME_FALLBACK_USED
+
+    if pipeline_modules is not None:
+        candidates = _build_module_candidates(pipeline_modules, _DEFAULT_PIPELINE_SOURCES)
+        try:
+            (
+                build_daily_trend_pipeline,
+                create_trading_controller,
+                pipeline_source_module,
+            ) = _import_daily_trend_pipeline_symbols(candidates)
+        except ImportError as exc:  # pragma: no cover - ścieżka obsługi błędów testowana przez main()
+            source = pipeline_origin or "override pipeline"
+            raise ImportError(f"{source}: {exc}") from exc
+        _PIPELINE_MODULE_CANDIDATES = candidates
+        _PIPELINE_MODULE_ORIGIN = pipeline_origin or _INTERNAL_OVERRIDE_ORIGIN
+        _PIPELINE_RESOLVED_FROM = pipeline_source_module
+        _PIPELINE_FALLBACK_USED = pipeline_source_module == _FALLBACK_RUNTIME_MODULE
+        source_suffix = f" (źródło: {pipeline_origin})" if pipeline_origin else ""
+        _LOGGER.info("Zastosowano moduły pipeline%s: %s", source_suffix, ", ".join(candidates))
+        _LOGGER.debug(
+            "Symbole pipeline pochodzą z modułu: %s", pipeline_source_module
+        )
+
+    if realtime_modules is not None:
+        candidates = _build_module_candidates(realtime_modules, _DEFAULT_REALTIME_SOURCES)
+        try:
+            (
+                DailyTrendRealtimeRunner,
+                realtime_source_module,
+            ) = _import_daily_trend_realtime_runner(candidates)
+        except ImportError as exc:  # pragma: no cover - ścieżka obsługi błędów testowana przez main()
+            source = realtime_origin or "override realtime"
+            raise ImportError(f"{source}: {exc}") from exc
+        _REALTIME_MODULE_CANDIDATES = candidates
+        _REALTIME_MODULE_ORIGIN = realtime_origin or _INTERNAL_OVERRIDE_ORIGIN
+        _REALTIME_RESOLVED_FROM = realtime_source_module
+        _REALTIME_FALLBACK_USED = realtime_source_module == _FALLBACK_RUNTIME_MODULE
+        source_suffix = f" (źródło: {realtime_origin})" if realtime_origin else ""
+        _LOGGER.info("Zastosowano moduły realtime%s: %s", source_suffix, ", ".join(candidates))
+        _LOGGER.debug(
+            "Klasę realtime załadowano z modułu: %s", realtime_source_module
+        )
+
+
+def get_runtime_module_candidates() -> RuntimeModuleSnapshot:
+    """Zwraca aktualną listę modułów runtime używanych przez CLI."""
+
+    return RuntimeModuleSnapshot(
+        tuple(_PIPELINE_MODULE_CANDIDATES),
+        tuple(_REALTIME_MODULE_CANDIDATES),
+        _PIPELINE_MODULE_ORIGIN,
+        _REALTIME_MODULE_ORIGIN,
+        _PIPELINE_RESOLVED_FROM,
+        _REALTIME_RESOLVED_FROM,
+        _PIPELINE_FALLBACK_USED,
+        _REALTIME_FALLBACK_USED,
+    )
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -75,6 +1407,54 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         "--controller",
         default=None,
         help="Nazwa kontrolera runtime (domyślnie pobierana z konfiguracji środowiska)",
+    )
+    parser.add_argument(
+        "--pipeline-module",
+        action="append",
+        dest="pipeline_modules",
+        metavar="MODULE",
+        help="Dodatkowy moduł z implementacją pipeline'u (można podać wielokrotnie)",
+    )
+    parser.add_argument(
+        "--realtime-module",
+        action="append",
+        dest="realtime_modules",
+        metavar="MODULE",
+        help="Dodatkowy moduł z klasą DailyTrendRealtimeRunner (można podać wielokrotnie)",
+    )
+    parser.add_argument(
+        "--print-runtime-modules",
+        action="store_true",
+        help="Wypisz aktualne moduły pipeline/realtime po zastosowaniu override'ów i zakończ",
+    )
+    parser.add_argument(
+        "--print-risk-profiles",
+        action="store_true",
+        help="Wypisz zdefiniowane profile ryzyka wraz z limitami i zakończ",
+    )
+    parser.add_argument(
+        "--runtime-plan-jsonl",
+        default=None,
+        help=(
+            "Ścieżka pliku JSONL z wpisami planu runtime (snapshot modułów, profili ryzyka, "
+            "override'ów). Wpis dodawany jest przed startem pipeline'u."
+        ),
+    )
+    parser.add_argument(
+        "--print-runtime-plan",
+        action="store_true",
+        help=(
+            "Wypisz na stdout bieżący plan runtime (moduły, profil ryzyka, metadane audytu) "
+            "i zakończ przed bootstrapem pipeline'u."
+        ),
+    )
+    parser.add_argument(
+        "--fail-on-security-warnings",
+        action="store_true",
+        help=(
+            "Zakończ działanie, jeśli plan runtime zawiera ostrzeżenia bezpieczeństwa dotyczące plików "
+            "telemetrii lub materiałów TLS."
+        ),
     )
     parser.add_argument(
         "--risk-profile",
@@ -2240,8 +3620,135 @@ def _run_loop(runner: DailyTrendRealtimeRunner, poll_seconds: float) -> int:
 # Główna funkcja CLI
 # --------------------------------------------------------------------------------------
 def main(argv: Sequence[str] | None = None) -> int:
-    args = _parse_args(argv)
+    argv_list = list(sys.argv[1:] if argv is None else argv)
+    args = _parse_args(argv_list)
     logging.basicConfig(level=getattr(logging, args.log_level.upper()), stream=sys.stdout)
+
+    provided_flags = {item for item in argv_list if isinstance(item, str) and item.startswith("--")}
+    cli_fail_flag = "--fail-on-security-warnings" in provided_flags
+    fail_on_security_source = "cli" if cli_fail_flag else "default"
+
+    env_fail_raw = os.environ.get(_ENV_FAIL_ON_SECURITY_WARNINGS)
+    env_fail_value: bool | None = None
+    env_fail_applied = False
+    if env_fail_raw is not None:
+        try:
+            env_fail_value = _parse_env_bool(env_fail_raw, variable=_ENV_FAIL_ON_SECURITY_WARNINGS)
+        except ValueError as exc:
+            _LOGGER.error("%s", exc)
+            return 2
+        if cli_fail_flag:
+            _LOGGER.info(
+                "Pominięto %s=%s, ponieważ ustawiono flagę CLI --fail-on-security-warnings.",
+                _ENV_FAIL_ON_SECURITY_WARNINGS,
+                env_fail_raw,
+            )
+        else:
+            args.fail_on_security_warnings = env_fail_value
+            env_fail_applied = True
+            fail_on_security_source = f"env:{_ENV_FAIL_ON_SECURITY_WARNINGS}"
+            _LOGGER.info(
+                "Zastosowano %s=%s – ostrzeżenia bezpieczeństwa będą traktowane jako %s.",
+                _ENV_FAIL_ON_SECURITY_WARNINGS,
+                env_fail_raw,
+                "błąd" if env_fail_value else "ostrzeżenie",
+            )
+
+    runtime_plan_path: Path | None = None
+    if args.runtime_plan_jsonl:
+        runtime_plan_path = Path(str(args.runtime_plan_jsonl)).expanduser()
+
+    env_pipeline_raw = os.environ.get(_ENV_PIPELINE_MODULES)
+    env_pipeline_modules, env_pipeline_reason = _parse_modules_env_value(
+        env_pipeline_raw, env_var=_ENV_PIPELINE_MODULES
+    )
+    env_pipeline_applied = False
+
+    env_realtime_raw = os.environ.get(_ENV_REALTIME_MODULES)
+    env_realtime_modules, env_realtime_reason = _parse_modules_env_value(
+        env_realtime_raw, env_var=_ENV_REALTIME_MODULES
+    )
+    env_realtime_applied = False
+
+    pipeline_modules: Sequence[str] | None = args.pipeline_modules
+    realtime_modules: Sequence[str] | None = args.realtime_modules
+    pipeline_origin: str | None = None
+    realtime_origin: str | None = None
+
+    if pipeline_modules is None:
+        if env_pipeline_modules is not None:
+            pipeline_modules = env_pipeline_modules
+            pipeline_origin = f"zmienna środowiskowa {_ENV_PIPELINE_MODULES}"
+            env_pipeline_applied = True
+    else:
+        pipeline_origin = "flagi CLI (--pipeline-module)"
+        if env_pipeline_modules is not None or env_pipeline_raw is not None:
+            _LOGGER.info(
+                "Pominięto moduły pipeline z %s na rzecz flag CLI (--pipeline-module)",
+                _ENV_PIPELINE_MODULES,
+            )
+
+    if realtime_modules is None:
+        if env_realtime_modules is not None:
+            realtime_modules = env_realtime_modules
+            realtime_origin = f"zmienna środowiskowa {_ENV_REALTIME_MODULES}"
+            env_realtime_applied = True
+    else:
+        realtime_origin = "flagi CLI (--realtime-module)"
+        if env_realtime_modules is not None or env_realtime_raw is not None:
+            _LOGGER.info(
+                "Pominięto moduły realtime z %s na rzecz flag CLI (--realtime-module)",
+                _ENV_REALTIME_MODULES,
+            )
+
+    if env_pipeline_raw is not None and not env_pipeline_applied and env_pipeline_reason is None:
+        env_pipeline_reason = "cli_override"
+
+    if env_realtime_raw is not None and not env_realtime_applied and env_realtime_reason is None:
+        env_realtime_reason = "cli_override"
+
+    pipeline_origin = pipeline_origin or (
+        "flagi CLI (--pipeline-module)" if pipeline_modules is not None else None
+    )
+    realtime_origin = realtime_origin or (
+        "flagi CLI (--realtime-module)" if realtime_modules is not None else None
+    )
+
+    try:
+        _apply_runtime_overrides(
+            pipeline_modules,
+            realtime_modules,
+            pipeline_origin=pipeline_origin,
+            realtime_origin=realtime_origin,
+        )
+    except ImportError as exc:
+        _LOGGER.error("Nie można załadować modułów runtime: %s", exc)
+        return 2
+
+    snapshot = get_runtime_module_candidates()
+    _LOGGER.debug(
+        (
+            "Aktywne moduły runtime – pipeline (%s, moduł %s): %s | "
+            "realtime (%s, moduł %s): %s"
+        ),
+        snapshot.pipeline_origin or "brak informacji",
+        snapshot.pipeline_resolved_from or "nieustalony",
+        ", ".join(snapshot.pipeline_modules),
+        snapshot.realtime_origin or "brak informacji",
+        snapshot.realtime_resolved_from or "nieustalony",
+        ", ".join(snapshot.realtime_modules),
+    )
+
+    if args.print_runtime_modules:
+        payload = snapshot.to_json_payload()
+        json.dump(payload, sys.stdout, ensure_ascii=False, indent=2)
+        sys.stdout.write("\n")
+        return 0
+
+    config_path = Path(args.config)
+
+    if args.print_risk_profiles:
+        return _print_risk_profiles(config_path, args.environment)
 
     try:
         secret_manager = _create_secret_manager(args)
@@ -2249,10 +3756,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         _LOGGER.error("Nie udało się zainicjalizować magazynu sekretów: %s", exc)
         return 2
 
-    config_path = Path(args.config)
     if not config_path.exists():
         _LOGGER.error("Plik konfiguracyjny %s nie istnieje", config_path)
         return 1
+
+    validation_result = _load_validated_core_config(
+        config_path,
+        environment=args.environment,
+        strategy=args.strategy,
+        controller=args.controller,
+        risk_profile=args.risk_profile,
+    )
+    if validation_result is None:
+        return 2
+
+    core_config_validated = validation_result.config
+    validated_strategy = validation_result.strategy_name
+    validated_controller = validation_result.controller_name
+    validated_risk_profile = validation_result.risk_profile_name
 
     precheck_payload: Mapping[str, object] | None = None
     precheck_audit_metadata: Mapping[str, object] | None = None
@@ -2307,12 +3828,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         pipeline = build_daily_trend_pipeline(
             environment_name=args.environment,
-            strategy_name=args.strategy,
-            controller_name=args.controller,
+            strategy_name=validated_strategy,
+            controller_name=validated_controller,
             config_path=config_path,
             secret_manager=secret_manager,
             adapter_factories=adapter_factories,
-            risk_profile_name=args.risk_profile,
+            risk_profile_name=validated_risk_profile,
         )
     except Exception as exc:  # noqa: BLE001
         _LOGGER.exception("Nie udało się zbudować pipeline'u daily trend: %s", exc)
@@ -2327,6 +3848,84 @@ def main(argv: Sequence[str] | None = None) -> int:
         strategy_name,
         controller_name,
     )
+
+    plan_payload: Mapping[str, object] | None = None
+    need_plan_snapshot = bool(
+        runtime_plan_path is not None
+        or args.print_runtime_plan
+        or args.fail_on_security_warnings
+    )
+    if need_plan_snapshot:
+        try:
+            config_for_plan = getattr(pipeline.bootstrap, "core_config", None)
+            if config_for_plan is None:
+                config_for_plan = core_config_validated
+            if config_for_plan is None:
+                config_for_plan = load_core_config(config_path)
+
+            plan_payload = _build_runtime_plan_payload(
+                args=args,
+                snapshot=snapshot,
+                pipeline=pipeline,
+                config=config_for_plan,
+                environment_name=args.environment,
+                cli_pipeline_modules=args.pipeline_modules,
+                cli_realtime_modules=args.realtime_modules,
+                env_pipeline_modules=env_pipeline_modules,
+                env_pipeline_raw=env_pipeline_raw,
+                env_pipeline_applied=env_pipeline_applied,
+                env_pipeline_reason=env_pipeline_reason,
+                env_realtime_modules=env_realtime_modules,
+                env_realtime_raw=env_realtime_raw,
+                env_realtime_applied=env_realtime_applied,
+                env_realtime_reason=env_realtime_reason,
+                cli_fail_on_security_flag=cli_fail_flag,
+                env_fail_on_security_raw=env_fail_raw,
+                env_fail_on_security_applied=env_fail_applied,
+                env_fail_on_security_value=env_fail_value,
+                fail_on_security_source=fail_on_security_source,
+                precheck_payload=precheck_payload,
+                precheck_audit_metadata=precheck_audit_metadata,
+                operator_name=operator_name,
+            )
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.error("Nie udało się zbudować planu runtime: %s", exc)
+            return 2
+
+    security_warnings_detected = False
+    if plan_payload is not None and args.fail_on_security_warnings:
+        security_warnings_detected = _log_security_warnings(
+            plan_payload,
+            fail_on_warnings=True,
+            logger=_LOGGER,
+            context="run_daily_trend.runtime_plan",
+        )
+
+    if runtime_plan_path is not None and plan_payload is not None:
+        try:
+            _append_runtime_plan_jsonl(runtime_plan_path, plan_payload)
+            _LOGGER.info(
+                "Zapisano plan runtime do %s (profil=%s)",
+                runtime_plan_path,
+                plan_payload.get("risk_profile") or "brak",
+            )
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.error(
+                "Nie udało się zapisać planu runtime do %s: %s",
+                runtime_plan_path,
+                exc,
+            )
+            return 2
+
+    if args.print_runtime_plan and plan_payload is not None:
+        json.dump(plan_payload, sys.stdout, ensure_ascii=False, indent=2)
+        sys.stdout.write("\n")
+        if args.fail_on_security_warnings and security_warnings_detected:
+            return 3
+        return 0
+
+    if args.fail_on_security_warnings and plan_payload is not None and security_warnings_detected:
+        return 3
 
     environment = pipeline.bootstrap.environment.environment
     if environment is Environment.LIVE and not args.allow_live:

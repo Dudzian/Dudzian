@@ -4,8 +4,9 @@
 #include <QQuickWindow>
 #include <QtGlobal>
 
-#include "utils/FrameRateMonitor.hpp"
+#include "telemetry/TelemetryReporter.hpp"
 #include "telemetry/UiTelemetryReporter.hpp"
+#include "utils/FrameRateMonitor.hpp"
 
 Application::Application(QQmlApplicationEngine& engine, QObject* parent)
     : QObject(parent)
@@ -83,11 +84,22 @@ void Application::configureParser(QCommandLineParser& parser) const {
                       tr("Próg FPS wyłączający nakładki drugorzędne"), tr("fps"),
                       QStringLiteral("0")});
 
-    // Telemetria MetricsService (opcjonalnie)
-    parser.addOption({"metrics-endpoint", tr("Opcjonalny endpoint MetricsService"), tr("endpoint")});
-    parser.addOption({"metrics-tag", tr("Dodatkowa etykieta notatek telemetrycznych"), tr("tag")});
+    // Telemetria MetricsService
+    parser.addOption({"metrics-endpoint", tr("Adres serwera MetricsService"), tr("endpoint"),
+                      QStringLiteral("127.0.0.1:50061")});
+    parser.addOption({"metrics-tag", tr("Etykieta notatek telemetrii"), tr("tag"), QString()});
     parser.addOption({"metrics-auth-token", tr("Token autoryzacyjny MetricsService"), tr("token")});
-    parser.addOption({"no-metrics", tr("Wyłącza wysyłkę telemetrycznych zdarzeń UI")});
+    parser.addOption({"disable-metrics", tr("Wyłącza wysyłkę telemetrii")});
+    parser.addOption({"no-metrics", tr("Alias: wyłącza wysyłkę telemetrii")});
+
+    // TLS/mTLS dla MetricsService (opcjonalnie)
+    parser.addOption({"metrics-use-tls", tr("Wymusza połączenie TLS z MetricsService")});
+    parser.addOption({"metrics-root-cert", tr("Plik root CA (PEM)"), tr("path"), QString()});
+    parser.addOption({"metrics-client-cert", tr("Certyfikat klienta (PEM)"), tr("path"), QString()});
+    parser.addOption({"metrics-client-key", tr("Klucz klienta (PEM)"), tr("path"), QString()});
+    parser.addOption({"metrics-server-name", tr("Override nazwy serwera TLS"), tr("name"), QString()});
+    parser.addOption({"metrics-server-sha256", tr("Oczekiwany odcisk SHA-256 certyfikatu serwera"), tr("hex"),
+                      QString()});
 }
 
 bool Application::applyParser(const QCommandLineParser& parser) {
@@ -126,29 +138,30 @@ bool Application::applyParser(const QCommandLineParser& parser) {
         m_frameMonitor->setPerformanceGuard(m_guard);
     }
 
-    // Telemetria
-    const bool metricsDisabled = parser.isSet("no-metrics");
+    // --- Telemetria ---
+    m_metricsEndpoint = parser.value("metrics-endpoint");
+    if (m_metricsEndpoint.isEmpty()) {
+        // Fallback: użyj endpointu tradingowego, jeśli nie podano dedykowanego dla MetricsService
+        m_metricsEndpoint = parser.value("endpoint");
+    }
+    m_metricsTag = parser.value("metrics-tag");
+    m_metricsEnabled = !(parser.isSet("disable-metrics") || parser.isSet("no-metrics"));
+
+    // TLS config
+    TelemetryTlsConfig tlsConfig;
+    tlsConfig.enabled = parser.isSet("metrics-use-tls");
+    tlsConfig.rootCertificatePath = parser.value("metrics-root-cert");
+    tlsConfig.clientCertificatePath = parser.value("metrics-client-cert");
+    tlsConfig.clientKeyPath = parser.value("metrics-client-key");
+    tlsConfig.serverNameOverride = parser.value("metrics-server-name");
+    tlsConfig.pinnedServerSha256 = parser.value("metrics-server-sha256");
+    m_tlsConfig = tlsConfig;
+
+    // Inicjalizacja/reportera + token
     ensureTelemetry();
     if (m_telemetry) {
-        if (metricsDisabled) {
-            m_telemetry->setEnabled(false);
-            m_lastReduceMotionReported.reset();
-            m_telemetry->setAuthToken({});
-        } else {
-            QString metricsEndpoint = parser.value("metrics-endpoint");
-            if (metricsEndpoint.isEmpty()) {
-                metricsEndpoint = parser.value("endpoint");
-            }
-            m_telemetry->setEndpoint(metricsEndpoint);
-            m_telemetry->setEnabled(!metricsEndpoint.isEmpty());
-            m_telemetry->setNotesTag(parser.value("metrics-tag"));
+        if (!parser.value("metrics-auth-token").isEmpty()) {
             m_telemetry->setAuthToken(parser.value("metrics-auth-token"));
-            m_telemetry->setWindowCount(m_windowCount);
-            m_lastReduceMotionReported.reset();
-            m_pendingReduceMotionState = m_reduceMotionActive;
-            if (m_lastOverlayState.has_value()) {
-                reportOverlayTelemetry();
-            }
         }
     }
 
@@ -204,17 +217,24 @@ void Application::ensureFrameMonitor() {
 
     connect(m_frameMonitor.get(), &FrameRateMonitor::reduceMotionSuggested, this,
             [this](bool enabled) {
-                if (m_reduceMotionActive == enabled)
+                if (m_reduceMotionActive == enabled) {
+                    reportReduceMotionTelemetry(enabled);
                     return;
+                }
                 m_reduceMotionActive = enabled;
                 m_pendingReduceMotionState = enabled;  // zapamiętaj do telemetrii
                 Q_EMIT reduceMotionActiveChanged();
+                reportReduceMotionTelemetry(enabled);
             });
 
-    connect(m_frameMonitor.get(), &FrameRateMonitor::frameSampled, this,
-            [this](double fps) {
-                m_latestFpsSample = fps;
-            });
+    connect(m_frameMonitor.get(), &FrameRateMonitor::frameSampled, this, [this](double fps) {
+        m_latestFpsSample = fps;
+        if (m_pendingReduceMotionState.has_value()) {
+            const bool pending = m_pendingReduceMotionState.value();
+            m_pendingReduceMotionState.reset();
+            reportReduceMotionTelemetry(pending);
+        }
+    });
 
     m_frameMonitor->setPerformanceGuard(m_guard);
 }
@@ -231,76 +251,96 @@ void Application::attachWindow(QObject* object) {
     m_frameMonitor->setWindow(window);
 }
 
-void Application::ensureTelemetry() {
-    if (!m_telemetry) {
-        m_telemetry = std::make_unique<UiTelemetryReporter>(this);
-    }
+void Application::setTelemetryReporter(std::unique_ptr<TelemetryReporter> reporter) {
+    m_telemetry = std::move(reporter);
+    ensureTelemetry();
 }
 
 void Application::notifyOverlayUsage(int activeCount, int allowedCount, bool reduceMotionActive) {
-    OverlayState state{qMax(0, activeCount), qMax(0, allowedCount), reduceMotionActive};
-
-    if (m_lastOverlayState.has_value()
-        && m_lastOverlayState->active == state.active
-        && m_lastOverlayState->allowed == state.allowed
-        && m_lastOverlayState->reduceMotion == state.reduceMotion) {
-        return;
-    }
-
+    OverlayState state;
+    state.active = qMax(0, activeCount);
+    state.allowed = qMax(0, allowedCount);
+    state.reduceMotion = reduceMotionActive;
     m_lastOverlayState = state;
-
-    if (m_pendingReduceMotionState.has_value()) {
-        reportReduceMotionTelemetry(m_pendingReduceMotionState.value());
-        m_pendingReduceMotionState.reset();
-    }
-
     reportOverlayTelemetry();
 }
 
 void Application::notifyWindowCount(int totalWindowCount) {
-    const int sanitized = qMax(1, totalWindowCount);
-    if (sanitized == m_windowCount)
-        return;
-
-    m_windowCount = sanitized;
+    m_windowCount = qMax(1, totalWindowCount);
+    ensureTelemetry();
     if (m_telemetry) {
         m_telemetry->setWindowCount(m_windowCount);
     }
-    reportOverlayTelemetry();
+}
+
+void Application::ingestFpsSampleForTesting(double fps) {
+    m_latestFpsSample = fps;
+    if (m_pendingReduceMotionState.has_value()) {
+        const bool pending = m_pendingReduceMotionState.value();
+        m_pendingReduceMotionState.reset();
+        reportReduceMotionTelemetry(pending);
+    }
+}
+
+void Application::setReduceMotionStateForTesting(bool active) {
+    m_reduceMotionActive = active;
+    reportReduceMotionTelemetry(active);
+}
+
+void Application::ensureTelemetry() {
+    const bool shouldEnable = m_metricsEnabled && !m_metricsEndpoint.isEmpty();
+    if (!m_telemetry) {
+        if (!shouldEnable)
+            return;
+        auto reporter = std::make_unique<UiTelemetryReporter>(this);
+        m_telemetry = std::move(reporter);
+    }
+    if (!m_telemetry)
+        return;
+
+    m_telemetry->setWindowCount(m_windowCount);
+    if (!m_metricsTag.isEmpty())
+        m_telemetry->setNotesTag(m_metricsTag);
+    if (!m_metricsEndpoint.isEmpty())
+        m_telemetry->setEndpoint(m_metricsEndpoint);
+    m_telemetry->setTlsConfig(m_tlsConfig);
+    m_telemetry->setEnabled(shouldEnable);
 }
 
 void Application::reportOverlayTelemetry() {
-    if (!m_telemetry || !m_telemetry->isEnabled() || !m_lastOverlayState.has_value()) {
+    ensureTelemetry();
+    if (!m_telemetry || !m_telemetry->isEnabled() || !m_lastOverlayState)
         return;
-    }
-    const auto& state = m_lastOverlayState.value();
-    m_telemetry->setWindowCount(m_windowCount);
-    m_telemetry->reportOverlayBudget(m_guard, state.active, state.allowed, state.reduceMotion);
 
-    // Jeśli czeka raport reduce-motion — wyślij go tuż po overlay
-    if (m_pendingReduceMotionState.has_value()) {
-        reportReduceMotionTelemetry(m_pendingReduceMotionState.value());
-        m_pendingReduceMotionState.reset();
-    }
+    const OverlayState current = *m_lastOverlayState;
+    if (m_lastOverlayTelemetryReported && *m_lastOverlayTelemetryReported == current)
+        return;
+
+    m_telemetry->reportOverlayBudget(m_guard, current.active, current.allowed, current.reduceMotion);
+    m_lastOverlayTelemetryReported = current;
 }
 
 void Application::reportReduceMotionTelemetry(bool enabled) {
-    if (!m_telemetry || !m_telemetry->isEnabled())
+    ensureTelemetry();
+    if (!m_telemetry || !m_telemetry->isEnabled()) {
+        m_pendingReduceMotionState.reset();
         return;
-
-    if (m_lastReduceMotionReported.has_value()
-        && m_lastReduceMotionReported.value() == enabled) {
-        return; // deduplikacja
     }
 
+    if (m_latestFpsSample <= 0.0) {
+        m_pendingReduceMotionState = enabled;
+        return;
+    }
+
+    if (m_lastReduceMotionReported && m_lastReduceMotionReported.value() == enabled)
+        return;
+
+    OverlayState overlay = m_lastOverlayState.value_or(OverlayState{});
+    if (overlay.allowed == 0) {
+        overlay.allowed = m_guard.maxOverlayCount > 0 ? m_guard.maxOverlayCount : 0;
+    }
+
+    m_telemetry->reportReduceMotion(m_guard, enabled, m_latestFpsSample, overlay.active, overlay.allowed);
     m_lastReduceMotionReported = enabled;
-
-    const int overlayActive  = m_lastOverlayState.has_value() ? m_lastOverlayState->active : 0;
-    const int overlayAllowed = m_lastOverlayState.has_value()
-                                   ? m_lastOverlayState->allowed
-                                   : m_guard.maxOverlayCount;
-
-    m_telemetry->setWindowCount(m_windowCount);
-    m_telemetry->reportReduceMotion(m_guard, enabled, m_latestFpsSample,
-                                    overlayActive, overlayAllowed);
+    m_pendingReduceMotionState.reset();
 }

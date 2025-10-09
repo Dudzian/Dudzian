@@ -95,6 +95,11 @@ try:
 except Exception:
     MetricsServiceConfig = None  # type: ignore
 
+try:
+    from bot_core.config.models import MetricsServiceTlsConfig  # type: ignore
+except Exception:
+    MetricsServiceTlsConfig = None  # type: ignore
+
 
 def _core_has(field_name: str) -> bool:
     """Sprawdza, czy CoreConfig posiada dane pole (bezpiecznie dla różnych gałęzi)."""
@@ -520,8 +525,27 @@ def _load_coverage_monitoring(
     )
 
 
+def _normalize_runtime_path(
+    raw_value: Any, *, base_dir: Path | None
+) -> str | None:
+    """Zwraca ścieżkę pliku znormalizowaną względem katalogu konfiguracji."""
+    if raw_value in (None, "", False):
+        return None
+
+    candidate = Path(str(raw_value)).expanduser()
+    if candidate.is_absolute() or base_dir is None:
+        return str(candidate)
+
+    try:
+        normalized_base = base_dir.expanduser().resolve(strict=False)
+    except Exception:  # noqa: BLE001 - zachowujemy najlepsze możliwe przybliżenie
+        normalized_base = base_dir.expanduser().absolute()
+
+    return str(normalized_base / candidate)
+
+
 def _load_metrics_service(
-    runtime_section: Optional[Mapping[str, Any]]
+    runtime_section: Optional[Mapping[str, Any]], *, base_dir: Path | None = None
 ) -> MetricsServiceConfig | None:
     """Ładuje sekcję runtime.metrics_service z zachowaniem zgodności między gałęziami."""
     if MetricsServiceConfig is None or not _core_has("metrics_service"):
@@ -532,9 +556,10 @@ def _load_metrics_service(
     if not metrics_raw:
         return None
 
-    # Zbiór dostępnych pól w aktualnym MetricsServiceConfig
+    # Lista dostępnych pól w aktualnym MetricsServiceConfig (różne gałęzie mogą się różnić)
     available_fields = {f.name for f in fields(MetricsServiceConfig)}  # type: ignore[arg-type]
 
+    # Pola bazowe (występujące w każdej wersji)
     kwargs: dict[str, Any] = {
         "enabled": bool(metrics_raw.get("enabled", True)),
         "host": str(metrics_raw.get("host", "127.0.0.1")),
@@ -542,43 +567,87 @@ def _load_metrics_service(
         "history_size": int(metrics_raw.get("history_size", 1024)),
     }
 
+    # Opcjonalne: token autoryzacyjny
     if "auth_token" in available_fields:
         kwargs["auth_token"] = (
             str(metrics_raw.get("auth_token")) if metrics_raw.get("auth_token") else None
         )
+
+    # Opcjonalne: log sink, jsonl, fsync
     if "log_sink" in available_fields:
         kwargs["log_sink"] = bool(metrics_raw.get("log_sink", True))
     if "jsonl_path" in available_fields:
-        kwargs["jsonl_path"] = str(metrics_raw.get("jsonl_path")) if metrics_raw.get("jsonl_path") else None
+        kwargs["jsonl_path"] = _normalize_runtime_path(metrics_raw.get("jsonl_path"), base_dir=base_dir)
     if "jsonl_fsync" in available_fields:
         kwargs["jsonl_fsync"] = bool(metrics_raw.get("jsonl_fsync", False))
 
-    # Pola telemetryczne, które mogą nie występować w starszych gałęziach
+    # Opcjonalne: osobna ścieżka na alerty UI (jeśli istnieje w modelu)
+    if "ui_alerts_jsonl_path" in available_fields:
+        kwargs["ui_alerts_jsonl_path"] = _normalize_runtime_path(
+            metrics_raw.get("ui_alerts_jsonl_path"), base_dir=base_dir
+        )
+
+    # Opcjonalne: konfiguracja TLS (jeśli dataclass TLS jest dostępny i pole istnieje)
+    if "tls" in available_fields and MetricsServiceTlsConfig is not None:
+        tls_raw = metrics_raw.get("tls") or {}
+        if isinstance(tls_raw, Mapping) and tls_raw:
+            certificate_raw = _normalize_runtime_path(tls_raw.get("certificate_path"), base_dir=base_dir)
+            private_key_raw = _normalize_runtime_path(tls_raw.get("private_key_path"), base_dir=base_dir)
+            client_ca_raw = _normalize_runtime_path(tls_raw.get("client_ca_path"), base_dir=base_dir)
+            kwargs["tls"] = MetricsServiceTlsConfig(
+                enabled=bool(tls_raw.get("enabled", False)),
+                certificate_path=certificate_raw,
+                private_key_path=private_key_raw,
+                client_ca_path=client_ca_raw,
+                require_client_auth=bool(tls_raw.get("require_client_auth", False)),
+            )
+
+    # Opcjonalne: alerty reduce_motion
     if "reduce_motion_alerts" in available_fields:
         kwargs["reduce_motion_alerts"] = bool(metrics_raw.get("reduce_motion_alerts", False))
     if "reduce_motion_category" in available_fields:
-        kwargs["reduce_motion_category"] = str(metrics_raw.get("reduce_motion_category", "ui.performance"))
+        kwargs["reduce_motion_category"] = str(
+            metrics_raw.get("reduce_motion_category", "ui.performance")
+        )
     if "reduce_motion_severity_active" in available_fields:
-        kwargs["reduce_motion_severity_active"] = str(metrics_raw.get("reduce_motion_severity_active", "warning"))
+        kwargs["reduce_motion_severity_active"] = str(
+            metrics_raw.get("reduce_motion_severity_active", "warning")
+        )
     if "reduce_motion_severity_recovered" in available_fields:
-        kwargs["reduce_motion_severity_recovered"] = str(metrics_raw.get("reduce_motion_severity_recovered", "info"))
+        kwargs["reduce_motion_severity_recovered"] = str(
+            metrics_raw.get("reduce_motion_severity_recovered", "info")
+        )
 
+    # Opcjonalne: alerty overlay_budget
     if "overlay_alerts" in available_fields:
         kwargs["overlay_alerts"] = bool(metrics_raw.get("overlay_alerts", False))
     if "overlay_alert_category" in available_fields:
-        kwargs["overlay_alert_category"] = str(metrics_raw.get("overlay_alert_category", "ui.performance"))
+        kwargs["overlay_alert_category"] = str(
+            metrics_raw.get("overlay_alert_category", "ui.performance")
+        )
     if "overlay_alert_severity_exceeded" in available_fields:
-        kwargs["overlay_alert_severity_exceeded"] = str(metrics_raw.get("overlay_alert_severity_exceeded", "warning"))
+        kwargs["overlay_alert_severity_exceeded"] = str(
+            metrics_raw.get("overlay_alert_severity_exceeded", "warning")
+        )
     if "overlay_alert_severity_recovered" in available_fields:
-        kwargs["overlay_alert_severity_recovered"] = str(metrics_raw.get("overlay_alert_severity_recovered", "info"))
+        kwargs["overlay_alert_severity_recovered"] = str(
+            metrics_raw.get("overlay_alert_severity_recovered", "info")
+        )
 
     return MetricsServiceConfig(**kwargs)  # type: ignore[call-arg]
 
 
 def load_core_config(path: str | Path) -> CoreConfig:
     """Wczytuje plik YAML i mapuje go na dataclasses."""
-    with Path(path).open("r", encoding="utf-8") as handle:
+    config_path = Path(path).expanduser()
+    with config_path.open("r", encoding="utf-8") as handle:
         raw: dict[str, Any] = yaml.safe_load(handle) or {}
+
+    try:
+        config_absolute_path = config_path.resolve(strict=False)
+    except Exception:  # noqa: BLE001 - zachowujemy najlepsze możliwe przybliżenie
+        config_absolute_path = config_path.absolute()
+    config_base_dir = config_absolute_path.parent
 
     instrument_universes = _load_instrument_universes(raw)
 
@@ -719,9 +788,12 @@ def load_core_config(path: str | Path) -> CoreConfig:
         core_kwargs["coverage_monitoring"] = _load_coverage_monitoring(
             raw.get("coverage_monitoring")
         )
-    metrics_config = _load_metrics_service(runtime_section)
+    metrics_config = _load_metrics_service(runtime_section, base_dir=config_base_dir)
     if metrics_config is not None:
         core_kwargs["metrics_service"] = metrics_config
+
+    core_kwargs["source_path"] = str(config_absolute_path)
+    core_kwargs["source_directory"] = str(config_base_dir)
 
     return CoreConfig(**core_kwargs)  # type: ignore[arg-type]
 

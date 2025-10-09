@@ -84,6 +84,13 @@ Artefakty tworzymy skryptem `scripts/generate_trading_stubs.py`, a wzorcowy work
   pozwalający kontrolować kadencję aktualizacji (0 = natychmiast, >0 = odstęp w sekundach). W razie potrzeby można
   pominąć dane startowe poprzez `--no-default-dataset`. Log startowy prezentuje również aktualną konfigurację
   performance guard, co pozwala błyskawicznie zweryfikować oczekiwane progi FPS i ograniczenia overlayów.
+* Opcja `--enable-metrics` startuje w tym samym procesie lekki serwer `MetricsService` (domyślnie `127.0.0.1:50061`),
+  który udostępnia telemetrię UI powłoce Qt. Można dostroić host/port, rozmiar historii (`--metrics-history-size`),
+  zapisy JSONL (`--metrics-jsonl`, `--metrics-jsonl-fsync`), wyłączyć logowanie do stdout (`--metrics-disable-log-sink`)
+  oraz wskazać log alertów UI (`--metrics-ui-alerts-jsonl`).
+  Przełącznik `--disable-metrics-ui-alerts` pozwala całkowicie wyłączyć sink `UiTelemetryAlertSink`, natomiast
+  `--metrics-print-address` wypisuje faktyczny adres serwera – przydatne w pipeline CI i przy pracy na wielu
+  instancjach stubu.
 * Stub potrafi równocześnie wystartować lekki `MetricsService` (`--enable-metrics`) – te same dane, które powłoka
   wysyła do core, można odebrać lokalnie. Dostępne są przełączniki `--metrics-host/--metrics-port`, zapis JSONL
   (`--metrics-jsonl`, `--metrics-jsonl-fsync`) oraz opcja `--metrics-disable-log-sink` tłumiąca logowanie snapshotów.
@@ -120,6 +127,10 @@ Artefakty tworzymy skryptem `scripts/generate_trading_stubs.py`, a wzorcowy work
 * `UiTelemetryReporter` wysyła zdarzenia UI do `MetricsService` (`PushMetrics`): wejście/wyjście z trybu reduce motion, budżety
   overlayów oraz liczbę aktywnych okien multi-window; konfiguracja odbywa się przez flagi CLI (`--metrics-endpoint`,
   `--metrics-tag`) lub wpis w YAML.
+* Połączenie telemetrii może być zabezpieczone TLS/mTLS – powłoka obsługuje `--metrics-use-tls`, ścieżki certów/kluczy oraz
+  pinning SHA-256 (`--metrics-server-sha256`), a stuby developerskie (`run_metrics_service.py`, `run_trading_stub_server.py`)
+  potrafią wystartować serwer z materiałem TLS i opcjonalnym wymaganiem certyfikatu klienta.
+* Sekcja `runtime.metrics_service` w `config/core.yaml` ustawia host/port serwera telemetrii, rozmiar historii (`history_size`), aktywność log sinka (`log_sink`) oraz parametry eksportu JSONL (`jsonl_path`, `jsonl_fsync`) i ścieżkę logu alertów UI (`ui_alerts_jsonl_path`).
 * Sekcja `runtime.metrics_service` w `config/core.yaml` ustawia host/port serwera telemetrii, rozmiar historii (`history_size`), aktywność log sinka (`log_sink`), parametry eksportu JSONL (`jsonl_path`, `jsonl_fsync`), opcjonalny token autoryzacyjny (`auth_token`) oraz konfigurację alertów redukcji animacji i budżetu nakładek.
 * Flagi `reduce_motion_alerts`/`reduce_motion_category`/`reduce_motion_severity_*` aktywują sink alertów reagujący na zdarzenia `reduce_motion` z UI.
 * Flagi `overlay_alerts`/`overlay_alert_category`/`overlay_alert_severity_*` generują alerty, gdy UI raportuje przekroczenie limitu nakładek i informują o odzyskaniu budżetu.

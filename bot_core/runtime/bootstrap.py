@@ -56,6 +56,11 @@ from bot_core.runtime.journal import (
     JsonlTradingDecisionJournal,
     TradingDecisionJournal,
 )
+from bot_core.runtime.file_metadata import (
+    collect_security_warnings,
+    file_reference_metadata,
+    log_security_warnings,
+)
 
 # --- Metrics service (opcjonalny – w niektórych gałęziach może nie istnieć) ---
 try:  # pragma: no cover - środowiska bez grpcio lub wygenerowanych stubów
@@ -66,6 +71,15 @@ try:  # pragma: no cover - środowiska bez grpcio lub wygenerowanych stubów
 except Exception:  # pragma: no cover - brak zależności opcjonalnych
     MetricsServer = None  # type: ignore
     build_metrics_server_from_config = None  # type: ignore
+
+try:  # pragma: no cover - sink telemetrii może być pominięty
+    from bot_core.runtime.metrics_alerts import (  # type: ignore
+        DEFAULT_UI_ALERTS_JSONL_PATH,
+        UiTelemetryAlertSink,
+    )
+except Exception:  # pragma: no cover - brak telemetrii UI
+    UiTelemetryAlertSink = None  # type: ignore
+    DEFAULT_UI_ALERTS_JSONL_PATH = Path("logs/ui_telemetry_alerts.jsonl")
 
 _DEFAULT_ADAPTERS: Mapping[str, ExchangeAdapterFactory] = {
     "binance_spot": BinanceSpotAdapter,
@@ -95,6 +109,13 @@ class BootstrapContext:
     decision_journal: TradingDecisionJournal | None
     risk_profile_name: str
     metrics_server: Any | None = None
+    metrics_ui_alerts_path: Path | None = None
+    metrics_jsonl_path: Path | None = None
+    metrics_ui_alert_sink_active: bool = False
+    metrics_service_enabled: bool | None = None
+    metrics_ui_alerts_metadata: Mapping[str, Any] | None = None
+    metrics_jsonl_metadata: Mapping[str, Any] | None = None
+    metrics_security_warnings: tuple[str, ...] | None = None
 
 
 def bootstrap_environment(
@@ -158,17 +179,124 @@ def bootstrap_environment(
 
     # --- MetricsService (opcjonalny, kompatybilny z różnymi sygnaturami funkcji) ---
     metrics_server: Any | None = None
+    metrics_sinks: list[Any] = []
+    metrics_ui_alert_path: Path | None = None
+    metrics_jsonl_path: Path | None = None
+    metrics_ui_alert_sink_active = False
+    metrics_service_enabled: bool | None = None
+    metrics_ui_alerts_metadata: Mapping[str, Any] | None = None
+    metrics_jsonl_metadata: Mapping[str, Any] | None = None
+    metrics_security_warnings: list[str] = []
+    metrics_security_payload: dict[str, object] = {}
+    metrics_config = getattr(core_config, "metrics_service", None)
+    if metrics_config is not None:
+        metrics_service_enabled = bool(getattr(metrics_config, "enabled", False))
+        jsonl_candidate = getattr(metrics_config, "jsonl_path", None)
+        if jsonl_candidate:
+            try:
+                metrics_jsonl_path = Path(jsonl_candidate).expanduser()
+            except Exception:  # pragma: no cover - diagnostyka pomocnicza
+                _LOGGER.debug(
+                    "Nie udało się znormalizować ścieżki JSONL telemetrii", exc_info=True
+                )
+                metrics_jsonl_path = Path(str(jsonl_candidate))
+            try:
+                metrics_jsonl_metadata = file_reference_metadata(
+                    metrics_jsonl_path, role="jsonl"
+                )
+            except Exception:  # pragma: no cover - diagnostyka pomocnicza
+                _LOGGER.debug(
+                    "Nie udało się zebrać metadanych JSONL telemetrii", exc_info=True
+                )
+            else:
+                metrics_security_payload["metrics_jsonl"] = metrics_jsonl_metadata
+    if UiTelemetryAlertSink is not None:
+        try:
+            base_dir_value = getattr(core_config, "source_directory", None)
+            base_dir: Path | None = None
+            if base_dir_value:
+                try:
+                    base_dir = Path(base_dir_value).expanduser()
+                except Exception:  # pragma: no cover - diagnostyka pomocnicza
+                    _LOGGER.debug(
+                        "Nie udało się znormalizować katalogu konfiguracji: %s", base_dir_value,
+                        exc_info=True,
+                    )
+            default_path = DEFAULT_UI_ALERTS_JSONL_PATH.expanduser()
+            if not default_path.is_absolute():
+                try:
+                    default_path = default_path.resolve(strict=False)
+                except Exception:  # pragma: no cover - zachowujemy przybliżenie
+                    default_path = default_path.absolute()
+
+            configured_path = None
+            if metrics_config and metrics_config.ui_alerts_jsonl_path:
+                configured_path = Path(metrics_config.ui_alerts_jsonl_path).expanduser()
+                if base_dir is not None and not configured_path.is_absolute():
+                    try:
+                        configured_path = (base_dir / configured_path).resolve(strict=False)
+                    except Exception:  # pragma: no cover - zachowujemy przybliżenie
+                        configured_path = (base_dir / configured_path).absolute()
+            telemetry_log = configured_path or default_path
+            metrics_sinks.append(
+                UiTelemetryAlertSink(alert_router, jsonl_path=telemetry_log)
+            )
+            metrics_ui_alert_path = telemetry_log
+            metrics_ui_alert_sink_active = True
+            try:
+                metrics_ui_alerts_metadata = file_reference_metadata(
+                    telemetry_log, role="ui_alerts_jsonl"
+                )
+            except Exception:  # pragma: no cover - diagnostyka pomocnicza
+                _LOGGER.debug(
+                    "Nie udało się zebrać metadanych logu alertów UI", exc_info=True
+                )
+            else:
+                metrics_security_payload["metrics_ui_alerts"] = metrics_ui_alerts_metadata
+        except Exception:  # pragma: no cover - nie blokujemy startu runtime
+            _LOGGER.exception("Nie udało się zainicjalizować UiTelemetryAlertSink")
+
+    if metrics_security_payload:
+        warnings_detected = log_security_warnings(
+            metrics_security_payload,
+            fail_on_warnings=False,
+            logger=_LOGGER,
+            context="runtime.bootstrap",
+        )
+        if warnings_detected:
+            for entry in collect_security_warnings(metrics_security_payload):
+                metrics_security_warnings.extend(
+                    str(item) for item in entry.get("warnings", [])
+                )
+
     if build_metrics_server_from_config is not None:
         try:
-            # Nowsze gałęzie: build_metrics_server_from_config(cfg, alerts_router=...)
+            # Najpierw spróbuj pełnej, najnowszej sygnatury (cfg, sinks, alerts_router)
             try:
                 metrics_server = build_metrics_server_from_config(  # type: ignore[call-arg]
                     core_config.metrics_service,
+                    sinks=metrics_sinks or None,
                     alerts_router=alert_router,
                 )
             except TypeError:
-                # Starsze gałęzie: bez alerts_router
-                metrics_server = build_metrics_server_from_config(core_config.metrics_service)  # type: ignore[call-arg]
+                # Następnie (cfg, alerts_router)
+                try:
+                    metrics_server = build_metrics_server_from_config(  # type: ignore[call-arg]
+                        core_config.metrics_service,
+                        alerts_router=alert_router,
+                    )
+                except TypeError:
+                    # Potem (cfg, sinks)
+                    try:
+                        metrics_server = build_metrics_server_from_config(  # type: ignore[call-arg]
+                            core_config.metrics_service,
+                            sinks=metrics_sinks or None,
+                        )
+                    except TypeError:
+                        # Na końcu najstarsza postać: tylko (cfg)
+                        metrics_server = build_metrics_server_from_config(
+                            core_config.metrics_service  # type: ignore[arg-type]
+                        )
 
             if metrics_server is not None:
                 metrics_server.start()
@@ -194,6 +322,15 @@ def bootstrap_environment(
         decision_journal=decision_journal,
         risk_profile_name=selected_profile,
         metrics_server=metrics_server,
+        metrics_ui_alerts_path=metrics_ui_alert_path,
+        metrics_jsonl_path=metrics_jsonl_path,
+        metrics_ui_alert_sink_active=metrics_ui_alert_sink_active,
+        metrics_service_enabled=metrics_service_enabled,
+        metrics_ui_alerts_metadata=metrics_ui_alerts_metadata,
+        metrics_jsonl_metadata=metrics_jsonl_metadata,
+        metrics_security_warnings=tuple(metrics_security_warnings)
+        if metrics_security_warnings
+        else None,
     )
 
 

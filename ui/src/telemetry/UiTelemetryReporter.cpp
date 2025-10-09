@@ -1,5 +1,7 @@
 #include "UiTelemetryReporter.hpp"
 
+#include <QCryptographicHash>
+#include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLoggingCategory>
@@ -10,6 +12,7 @@
 #include <string>
 
 #include <grpcpp/channel.h>
+#include <grpcpp/channel_arguments.h>
 #include <grpcpp/client_context.h>
 #include <grpcpp/create_channel.h>
 #include <grpcpp/security/credentials.h>
@@ -68,6 +71,20 @@ void UiTelemetryReporter::setNotesTag(const QString& tag) {
 
 void UiTelemetryReporter::setWindowCount(int count) {
     m_windowCount = qMax(1, count);
+}
+
+void UiTelemetryReporter::setTlsConfig(const TelemetryTlsConfig& config) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_tlsConfig = config;
+    if (!m_tlsConfig.enabled) {
+        m_tlsConfig.rootCertificatePath.clear();
+        m_tlsConfig.clientCertificatePath.clear();
+        m_tlsConfig.clientKeyPath.clear();
+        m_tlsConfig.serverNameOverride.clear();
+        m_tlsConfig.pinnedServerSha256.clear();
+    }
+    m_channel.reset();
+    m_stub.reset();
 }
 
 void UiTelemetryReporter::setAuthToken(const QString& token) {
@@ -142,13 +159,88 @@ void UiTelemetryReporter::pushSnapshot(const QJsonObject& notes, std::optional<d
     }
 }
 
+namespace {
+
+std::optional<std::string> readFileUtf8(const QString& path) {
+    if (path.isEmpty()) {
+        return std::nullopt;
+    }
+    QFile file(path);
+    if (!file.exists()) {
+        return std::nullopt;
+    }
+    if (!file.open(QIODevice::ReadOnly)) {
+        qCWarning(lcTelemetry) << "Nie można otworzyć pliku TLS" << path << file.errorString();
+        return std::nullopt;
+    }
+    const QByteArray data = file.readAll();
+    return std::string(data.constData(), static_cast<std::size_t>(data.size()));
+}
+
+void verifyPinnedFingerprint(const TelemetryTlsConfig& config, const QByteArray& certificate) {
+    if (config.pinnedServerSha256.isEmpty() || certificate.isEmpty()) {
+        return;
+    }
+    const QByteArray digest = QCryptographicHash::hash(certificate, QCryptographicHash::Sha256).toHex();
+    const QString hex = QString::fromUtf8(digest);
+    if (hex.compare(config.pinnedServerSha256, Qt::CaseInsensitive) != 0) {
+        qCWarning(lcTelemetry) << "Niepoprawny odcisk SHA-256 certyfikatu serwera MetricsService";
+    }
+}
+
+} // namespace
+
 botcore::trading::v1::MetricsService::Stub* UiTelemetryReporter::ensureStub() {
     std::lock_guard<std::mutex> lock(m_mutex);
     if (m_endpoint.isEmpty()) {
         return nullptr;
     }
     if (!m_channel) {
-        m_channel = grpc::CreateChannel(m_endpoint.toStdString(), grpc::InsecureChannelCredentials());
+        std::shared_ptr<grpc::ChannelCredentials> credentials;
+        grpc::ChannelArguments args;
+        if (m_tlsConfig.enabled) {
+            grpc::SslCredentialsOptions options;
+            QByteArray rootPem;
+            if (!m_tlsConfig.rootCertificatePath.isEmpty()) {
+                QFile rootFile(m_tlsConfig.rootCertificatePath);
+                if (rootFile.open(QIODevice::ReadOnly)) {
+                    rootPem = rootFile.readAll();
+                    options.pem_root_certs = std::string(rootPem.constData(), static_cast<std::size_t>(rootPem.size()));
+                } else {
+                    qCWarning(lcTelemetry) << "Nie udało się odczytać root CA" << m_tlsConfig.rootCertificatePath
+                                           << rootFile.errorString();
+                }
+            }
+            if (!m_tlsConfig.clientCertificatePath.isEmpty() && !m_tlsConfig.clientKeyPath.isEmpty()) {
+                auto cert = readFileUtf8(m_tlsConfig.clientCertificatePath);
+                auto key  = readFileUtf8(m_tlsConfig.clientKeyPath);
+                if (cert && key) {
+                    options.pem_key_cert_pairs.push_back({*key, *cert});
+                } else {
+                    qCWarning(lcTelemetry) << "Nie można odczytać certyfikatu lub klucza klienta TLS";
+                }
+            }
+            credentials = grpc::SslCredentials(options);
+            if (!m_tlsConfig.serverNameOverride.isEmpty()) {
+                args.SetString(GRPC_SSL_TARGET_NAME_OVERRIDE_ARG,
+                               m_tlsConfig.serverNameOverride.toStdString());
+            }
+            if (!rootPem.isEmpty()) {
+                verifyPinnedFingerprint(m_tlsConfig, rootPem);
+            }
+        } else {
+            credentials = grpc::InsecureChannelCredentials();
+        }
+
+        if (!credentials) {
+            qCWarning(lcTelemetry) << "Brak kredencji TLS dla MetricsService";
+            return nullptr;
+        }
+        if (m_tlsConfig.enabled) {
+            m_channel = grpc::CreateCustomChannel(m_endpoint.toStdString(), credentials, args);
+        } else {
+            m_channel = grpc::CreateChannel(m_endpoint.toStdString(), credentials);
+        }
     }
     if (!m_stub && m_channel) {
         m_stub = botcore::trading::v1::MetricsService::NewStub(m_channel);

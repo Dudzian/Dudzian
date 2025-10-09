@@ -75,6 +75,7 @@ set(UI_HEADERS
     src/models/RiskTypes.hpp
     src/utils/PerformanceGuard.hpp
     src/utils/FrameRateMonitor.hpp
+    src/telemetry/TelemetryReporter.hpp
     src/telemetry/UiTelemetryReporter.hpp
 )
 
@@ -113,6 +114,29 @@ if(BUILD_TESTING)
             gRPC::grpc++
     )
     add_test(NAME ui_telemetry_tests COMMAND ui_telemetry_tests)
+
+    # Application-level telemetry tests
+    add_executable(ui_application_telemetry_tests
+        tests/ApplicationTelemetryTest.cpp
+        src/app/Application.cpp
+        src/grpc/TradingClient.cpp
+        src/models/OhlcvListModel.cpp
+        src/utils/PerformanceGuard.cpp
+        src/utils/FrameRateMonitor.cpp
+        src/telemetry/UiTelemetryReporter.cpp
+    )
+    target_include_directories(ui_application_telemetry_tests PRIVATE src ${GENERATED_DIR})
+    target_link_libraries(ui_application_telemetry_tests
+        PRIVATE
+            Qt6::Core
+            Qt6::Gui
+            Qt6::Quick
+            Qt6::Test
+            trading_proto
+            protobuf::libprotobuf
+            gRPC::grpc++
+    )
+    add_test(NAME ui_application_telemetry_tests COMMAND ui_application_telemetry_tests)
 
     # FrameRateMonitor tests
     add_executable(frame_rate_monitor_tests

@@ -39,22 +39,39 @@ class DecisionJournalConfig:
 
 
 @dataclass(slots=True)
+class MetricsServiceTlsConfig:
+    """Opcjonalna konfiguracja TLS/mTLS dla serwera telemetrii."""
+    enabled: bool = False
+    certificate_path: str | None = None
+    private_key_path: str | None = None
+    client_ca_path: str | None = None
+    require_client_auth: bool = False
+
+
+@dataclass(slots=True)
 class MetricsServiceConfig:
     """Ustawienia serwera telemetrii `MetricsService`."""
     enabled: bool = True
     host: str = "127.0.0.1"
     port: int = 0
     history_size: int = 1024
-    # Rozszerzone pola (pełna, najbardziej rozbudowana wersja)
+
+    # Rozszerzone pola (autoryzacja / logowanie / pliki)
     auth_token: str | None = None
     log_sink: bool = True
     jsonl_path: str | None = None
     jsonl_fsync: bool = False
+
+    # Dodatkowe ścieżki/bezpieczeństwo
+    ui_alerts_jsonl_path: str | None = None
+    tls: MetricsServiceTlsConfig | None = None
+
     # Opcjonalne alerty związane z UI/performance
     reduce_motion_alerts: bool = False
     reduce_motion_category: str = "ui.performance"
     reduce_motion_severity_active: str = "warning"
     reduce_motion_severity_recovered: str = "info"
+
     overlay_alerts: bool = False
     overlay_alert_category: str = "ui.performance"
     overlay_alert_severity_exceeded: str = "warning"
@@ -331,6 +348,8 @@ class CoreConfig:
     runtime_controllers: Mapping[str, ControllerRuntimeConfig] = field(default_factory=dict)
     coverage_monitoring: CoverageMonitoringConfig | None = None
     metrics_service: MetricsServiceConfig | None = None
+    source_path: str | None = None
+    source_directory: str | None = None
 
 
 __all__ = [
@@ -361,5 +380,6 @@ __all__ = [
     "AlertThrottleConfig",
     "AlertAuditConfig",
     "DecisionJournalConfig",
+    "MetricsServiceTlsConfig",
     "MetricsServiceConfig",
 ]

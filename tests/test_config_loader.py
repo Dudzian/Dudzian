@@ -293,6 +293,7 @@ def test_load_core_config_reads_metrics_service(tmp_path: Path) -> None:
             history_size: 256
             auth_token: secret-token
             log_sink: false
+            # brak jsonl_path => None
             reduce_motion_alerts: true
             reduce_motion_category: ui.performance.guard
             reduce_motion_severity_active: critical
@@ -316,6 +317,8 @@ def test_load_core_config_reads_metrics_service(tmp_path: Path) -> None:
     assert metrics.auth_token == "secret-token"
     assert metrics.log_sink is False
     assert metrics.jsonl_path is None
+
+    # Pola reduce/overlay z gałęzi UI
     assert metrics.reduce_motion_alerts is True
     assert metrics.reduce_motion_category == "ui.performance.guard"
     assert metrics.reduce_motion_severity_active == "critical"
@@ -324,3 +327,50 @@ def test_load_core_config_reads_metrics_service(tmp_path: Path) -> None:
     assert metrics.overlay_alert_category == "ui.performance.overlay"
     assert metrics.overlay_alert_severity_exceeded == "critical"
     assert metrics.overlay_alert_severity_recovered == "notice"
+
+    # Metadane ścieżek źródłowych configu (ustawiane przez loader)
+    assert Path(config.source_path or "").is_absolute()
+    expected_dir = config_path.resolve(strict=False).parent
+    assert config.source_directory == str(expected_dir)
+
+
+def test_load_core_config_resolves_metrics_paths_relative_to_config(tmp_path: Path) -> None:
+    config_dir = tmp_path / "conf"
+    config_dir.mkdir()
+    config_path = config_dir / "core.yaml"
+    config_path.write_text(
+        """
+        risk_profiles: {}
+        environments: {}
+        alerts: {}
+        runtime:
+          metrics_service:
+            enabled: true
+            jsonl_path: logs/metrics/telemetry.jsonl
+            ui_alerts_jsonl_path: logs/metrics/ui_alerts.jsonl
+            tls:
+              enabled: true
+              certificate_path: secrets/server.crt
+              private_key_path: secrets/server.key
+              client_ca_path: secrets/client_ca.pem
+              require_client_auth: true
+        """,
+        encoding="utf-8",
+    )
+
+    config = load_core_config(config_path)
+
+    metrics = config.metrics_service
+    assert metrics is not None
+    expected_jsonl = (config_dir / "logs/metrics/telemetry.jsonl").resolve(strict=False)
+    expected_alerts = (config_dir / "logs/metrics/ui_alerts.jsonl").resolve(strict=False)
+    assert metrics.jsonl_path == str(expected_jsonl)
+    assert metrics.ui_alerts_jsonl_path == str(expected_alerts)
+
+    assert metrics.tls is not None
+    expected_cert = (config_dir / "secrets/server.crt").resolve(strict=False)
+    expected_key = (config_dir / "secrets/server.key").resolve(strict=False)
+    expected_ca = (config_dir / "secrets/client_ca.pem").resolve(strict=False)
+    assert metrics.tls.certificate_path == str(expected_cert)
+    assert metrics.tls.private_key_path == str(expected_key)
+    assert metrics.tls.client_ca_path == str(expected_ca)
