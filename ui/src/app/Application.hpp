@@ -4,6 +4,7 @@
 #include <QQmlApplicationEngine>
 #include <QPointer>
 #include <QCommandLineParser>
+#include <QElapsedTimer>
 
 #include <memory>
 #include <optional>
@@ -15,6 +16,9 @@
 #include "utils/FrameRateMonitor.hpp"
 #include "telemetry/TelemetryReporter.hpp"
 #include "telemetry/TelemetryTlsConfig.hpp"
+
+class QQuickWindow;
+class QScreen;
 
 class Application : public QObject {
     Q_OBJECT
@@ -33,6 +37,8 @@ public:
 
     // Umożliwia wstrzyknięcie mocka w testach
     void setTelemetryReporter(std::unique_ptr<TelemetryReporter> reporter);
+    void applyPreferredScreenForTesting(QQuickWindow* window);
+    QScreen* pickPreferredScreenForTesting() const;
 
     // Getters
     QString          connectionStatus() const { return m_connectionStatus; }
@@ -52,6 +58,7 @@ public slots:
     // Test helpers
     void ingestFpsSampleForTesting(double fps);
     void setReduceMotionStateForTesting(bool active);
+    void simulateFrameIntervalForTesting(double seconds);
 
 signals:
     void connectionStatusChanged();
@@ -76,6 +83,14 @@ private:
     void ensureTelemetry();
     void reportOverlayTelemetry();
     void reportReduceMotionTelemetry(bool enabled);
+    void reportJankTelemetry(double frameMs, double thresholdMs);
+    void applyMetricsEnvironmentOverrides(const QCommandLineParser& parser,
+                                          bool cliTokenProvided,
+                                          bool cliTokenFileProvided);
+    void applyScreenEnvironmentOverrides(const QCommandLineParser& parser);
+    void applyPreferredScreen(QQuickWindow* window);
+    QScreen* resolvePreferredScreen() const;
+    void updateScreenInfo(QScreen* screen);
 
     // --- Stan i komponenty ---
     QQmlApplicationEngine& m_engine;
@@ -104,9 +119,15 @@ private:
     QString                            m_metricsEndpoint;
     QString                            m_metricsTag;
     bool                               m_metricsEnabled = false;
+    QString                            m_metricsAuthToken;
     double                             m_latestFpsSample = 0.0;
     int                                m_windowCount = 1;
     TelemetryTlsConfig                 m_tlsConfig;
+    QString                            m_preferredScreenName;
+    int                                m_preferredScreenIndex = -1;
+    bool                               m_forcePrimaryScreen = false;
+    bool                               m_preferredScreenConfigured = false;
+    mutable bool                       m_screenWarningLogged = false;
 
     struct OverlayState {
         int  active = 0;
@@ -121,4 +142,8 @@ private:
     std::optional<OverlayState> m_lastOverlayTelemetryReported;
     std::optional<bool>         m_lastReduceMotionReported;
     std::optional<bool>         m_pendingReduceMotionState;
+    std::optional<TelemetryReporter::ScreenInfo> m_screenInfo;
+    QElapsedTimer               m_lastJankTelemetry;
+    bool                        m_jankTelemetryTimerValid = false;
+    int                         m_jankTelemetryCooldownMs = 400;
 };

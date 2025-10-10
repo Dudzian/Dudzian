@@ -23,9 +23,12 @@ from bot_core.runtime.metrics_service import (
     MetricsServiceServicer,
     ReduceMotionAlertSink,
     OverlayBudgetAlertSink,
+    UiTelemetryAlertSink,
     create_server,
 )
-from bot_core.alerts.base import AlertRouter, AlertMessage
+from bot_core.alerts import DefaultAlertRouter
+from bot_core.alerts.audit import InMemoryAlertAuditLog
+from bot_core.alerts.base import AlertRouter, AlertChannel, AlertMessage
 
 
 @pytest.mark.timeout(5)
@@ -177,6 +180,18 @@ class _RecorderRouter(AlertRouter):
         self.messages.append(message)
 
 
+class _CaptureChannel(AlertChannel):
+    def __init__(self) -> None:
+        self.name = "capture"
+        self.messages: list[AlertMessage] = []
+
+    def send(self, message: AlertMessage) -> None:
+        self.messages.append(message)
+
+    def health_check(self) -> dict[str, str]:
+        return {"status": "ok"}
+
+
 def test_reduce_motion_alert_sink_dispatches_alert():
     router = _RecorderRouter()
     sink = ReduceMotionAlertSink(
@@ -316,3 +331,57 @@ def test_overlay_budget_alert_sink_ignores_duplicates():
     servicer.PushMetrics(duplicate, None)
 
     assert len(router.messages) == 1, "Duplikaty overlay-budget nie powinny generować kolejnych alertów"
+
+
+@pytest.mark.timeout(5)
+def test_build_metrics_server_enables_ui_alert_sink(tmp_path):
+    if UiTelemetryAlertSink is None:
+        pytest.skip("Sink alertów telemetrii UI niedostępny")
+
+    from bot_core.runtime.metrics_service import build_metrics_server_from_config
+    from bot_core.config.models import MetricsServiceConfig
+
+    ui_log = tmp_path / "ui_alerts.jsonl"
+    config = MetricsServiceConfig(
+        enabled=True,
+        host="127.0.0.1",
+        port=0,
+        history_size=8,
+        log_sink=False,
+        ui_alerts_jsonl_path=str(ui_log),
+        overlay_alerts=True,
+    )
+
+    router = DefaultAlertRouter(audit_log=InMemoryAlertAuditLog())
+    channel = _CaptureChannel()
+    router.register(channel)
+
+    server = build_metrics_server_from_config(config, alerts_router=router)
+    assert server is not None
+    server.start()
+    try:
+        channel_rpc = grpc.insecure_channel(server.address)
+        stub = trading_pb2_grpc.MetricsServiceStub(channel_rpc)
+        snapshot = trading_pb2.MetricsSnapshot()
+        snapshot.notes = json.dumps(
+            {
+                "event": "overlay_budget",
+                "active_overlays": 5,
+                "allowed_overlays": 3,
+                "reduce_motion": True,
+            }
+        )
+        stub.PushMetrics(snapshot)
+        time.sleep(0.1)
+    finally:
+        server.stop(grace=0)
+
+    assert channel.messages, "Router powinien otrzymać alert z sinka UI"
+    assert ui_log.exists()
+    lines = [line for line in ui_log.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert lines, "Plik alertów UI powinien zawierać wpis"
+    record = json.loads(lines[-1])
+    assert record["category"] == "ui.performance.overlay_budget"
+    metadata = server.runtime_metadata.get("ui_alerts_sink", {})
+    assert metadata.get("active") is True
+    assert metadata.get("path")

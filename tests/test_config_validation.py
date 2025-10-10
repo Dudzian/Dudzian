@@ -7,11 +7,13 @@ import pytest
 from bot_core.config.models import (
     ControllerRuntimeConfig,
     CoreConfig,
+    DailyTrendMomentumStrategyConfig,
     EnvironmentConfig,
     InstrumentBackfillWindow,
     InstrumentConfig,
     InstrumentUniverseConfig,
-    DailyTrendMomentumStrategyConfig,
+    MetricsServiceConfig,
+    MetricsServiceTlsConfig,
     RiskProfileConfig,
     TelegramChannelSettings,
 )
@@ -144,6 +146,46 @@ def test_validate_core_config_detects_unknown_default_controller(base_config: Co
     result = validate_core_config(config)
     assert not result.is_valid()
     assert "domyślny kontroler" in result.errors[0]
+
+
+def _metrics_config_base() -> MetricsServiceConfig:
+    tls = MetricsServiceTlsConfig()
+    tls.enabled = True
+    tls.certificate_path = "cert.pem"
+    tls.private_key_path = "key.pem"
+    tls.client_ca_path = "clients.pem"
+    tls.require_client_auth = True
+
+    return MetricsServiceConfig(
+        enabled=True,
+        host="127.0.0.1",
+        port=55060,
+        history_size=256,
+        auth_token="token",
+        log_sink=True,
+        jsonl_path="audit/metrics.jsonl",
+        jsonl_fsync=False,
+        ui_alerts_jsonl_path="audit/ui_alerts.jsonl",
+        tls=tls,
+        reduce_motion_alerts=True,
+        reduce_motion_mode="enable",
+        reduce_motion_category="ui.performance",
+        reduce_motion_severity_active="warning",
+        reduce_motion_severity_recovered="info",
+        overlay_alerts=True,
+        overlay_alert_mode="enable",
+        overlay_alert_category="ui.performance.overlay",
+        overlay_alert_severity_exceeded="warning",
+        overlay_alert_severity_recovered="info",
+        overlay_alert_severity_critical="critical",
+        overlay_alert_critical_threshold=3,
+        jank_alerts=True,
+        jank_alert_mode="enable",
+        jank_alert_category="ui.performance.jank",
+        jank_alert_severity_spike="warning",
+        jank_alert_severity_critical="critical",
+        jank_alert_critical_over_ms=10.0,
+    )
 
 
 def test_validate_core_config_detects_controller_interval_without_backfill(
@@ -343,3 +385,80 @@ def test_validate_core_config_warns_on_tick_mismatch(base_config: CoreConfig) ->
     result = validate_core_config(config)
     assert result.is_valid()
     assert any("tick_seconds" in warn for warn in result.warnings)
+
+
+def test_validate_core_config_accepts_valid_metrics_block(base_config: CoreConfig) -> None:
+    metrics = _metrics_config_base()
+    config = replace(base_config, metrics_service=metrics)
+
+    result = validate_core_config(config)
+
+    assert result.is_valid()
+    assert result.errors == []
+
+
+def test_validate_core_config_detects_invalid_metrics_mode(base_config: CoreConfig) -> None:
+    metrics = _metrics_config_base()
+    metrics.reduce_motion_mode = "invalid"
+    config = replace(base_config, metrics_service=metrics)
+
+    result = validate_core_config(config)
+
+    assert not result.is_valid()
+    assert any("reduce_motion_mode" in err for err in result.errors)
+
+
+def test_validate_core_config_detects_nonpositive_overlay_threshold(
+    base_config: CoreConfig,
+) -> None:
+    metrics = _metrics_config_base()
+    metrics.overlay_alert_critical_threshold = 0
+    config = replace(base_config, metrics_service=metrics)
+
+    result = validate_core_config(config)
+
+    assert not result.is_valid()
+    assert any("overlay_alert_critical_threshold" in err for err in result.errors)
+
+
+def test_validate_core_config_detects_nonpositive_jank_threshold(
+    base_config: CoreConfig,
+) -> None:
+    metrics = _metrics_config_base()
+    metrics.jank_alert_critical_over_ms = -1.0
+    config = replace(base_config, metrics_service=metrics)
+
+    result = validate_core_config(config)
+
+    assert not result.is_valid()
+    assert any("jank_alert_critical_over_ms" in err for err in result.errors)
+
+
+def test_validate_core_config_detects_missing_tls_material(base_config: CoreConfig) -> None:
+    metrics = _metrics_config_base()
+    metrics.tls = MetricsServiceTlsConfig()
+    metrics.tls.enabled = True
+    metrics.tls.certificate_path = None
+    metrics.tls.private_key_path = ""
+    metrics.tls.require_client_auth = True
+    metrics.tls.client_ca_path = ""
+    config = replace(base_config, metrics_service=metrics)
+
+    result = validate_core_config(config)
+
+    assert not result.is_valid()
+    assert any("TLS" in err for err in result.errors)
+
+
+def test_validate_core_config_warns_on_metrics_mode_flag_conflict(
+    base_config: CoreConfig,
+) -> None:
+    metrics = _metrics_config_base()
+    metrics.reduce_motion_alerts = False
+    metrics.reduce_motion_mode = "enable"
+    config = replace(base_config, metrics_service=metrics)
+
+    result = validate_core_config(config)
+
+    assert result.is_valid()
+    assert any("reduce_motion_alerts" in warn for warn in result.warnings)
