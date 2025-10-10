@@ -141,6 +141,7 @@ Artefakty tworzymy skryptem `scripts/generate_trading_stubs.py`, a wzorcowy work
   o korekcie filtra.  Dodatkowo flaga `--risk-profile` (oraz `BOT_CORE_WATCH_METRICS_RISK_PROFILE`) pozwala jednym przełącznikiem
   załadować preset ryzyka (conservative/balanced/aggressive/manual) – watcher automatycznie włącza podsumowanie, wymusza minimalny
   próg severity, a w metadanych decision logu i podpisanym podsumowaniu zapisuje nazwę profilu wraz z narzuconymi limitami.
+  o korekcie filtra.
   Dodatkowo flaga `--summary` (lub zmienna `..._SUMMARY=true/false`) oblicza zbiorcze statystyki (liczba snapshotów, rozkład zdarzeń,
   agregaty FPS, lista ekranów oraz rozkład severity) zarówno dla strumienia gRPC, jak i odczytu JSONL, co ułatwia operatorom szybkie
   porównanie stanowisk w pipeline demo→paper→live.  Jeśli potrzeba zachować wynik audytu, flaga `--summary-output` lub zmienna
@@ -150,6 +151,8 @@ Artefakty tworzymy skryptem `scripts/generate_trading_stubs.py`, a wzorcowy work
   wygenerowane podsumowanie (`signature.algorithm = HMAC-SHA256`, opcjonalny `key_id`) i zapisuje parametry podpisu w metadanych
   decision logu (`summary_signature`).  Dzięki temu pipeline demo→paper→live ma jednolity materiał do audytu (decision log +
   summary JSON) z gwarancją integralności kryptograficznej.  Nowa flaga `--decision-log` (oraz `..._DECISION_LOG`) zapisuje każdy przefiltrowany snapshot do pliku JSONL w formacie decision
+  danych odbywa się nawet wtedy, gdy operator wyłączył wypis na STDOUT, co upraszcza automatyczne raportowanie w CI.  Nowa
+  flaga `--decision-log` (oraz `..._DECISION_LOG`) zapisuje każdy przefiltrowany snapshot do pliku JSONL w formacie decision
   log (źródło gRPC/JSONL, event, severity, FPS, metadane monitora, pełne `notes`). Pozwala to archiwizować decyzje
   operacyjne z audytów reduce-motion/overlay/jank, także podczas pracy offline (`--from-jsonl`). Każdy plik decision log
   rozpoczyna się wpisem `metadata` z kontekstem uruchomienia (tryb online/offline, endpoint lub ścieżka JSONL, aktywne
@@ -213,6 +216,7 @@ Artefakty tworzymy skryptem `scripts/generate_trading_stubs.py`, a wzorcowy work
   Błędne podpisy, brak oczekiwanych metadanych lub niespełnienie wymagań kończą się kodem 2 i szczegółowym
   logiem diagnostycznym.  To narzędzie stanowi obowiązkowy krok audytowy w pipeline demo→paper→live przed
   eskalacją alertów.
+  do historii poleceń.
 
 ### Powłoka Qt/QML – MVP
 

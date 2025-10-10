@@ -1,7 +1,7 @@
 """Narzędzie do podglądu strumienia MetricsService.
 
 Skrypt łączy się z serwerem telemetrii `MetricsService` (gRPC) i wypisuje
-otrzymane `MetricsSnapshot`.  Może filtrować zdarzenia po polu `event` oraz
+otrzymane `MetricsSnapshot`. Może filtrować zdarzenia po polu `event` oraz
 `severity` w `notes`, ograniczać liczbę pobranych rekordów, filtrować po
 metadanych ekranu i formatować wynik w postaci czytelnej tabeli lub surowego
 JSON-u.
@@ -77,29 +77,37 @@ import sys
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
-from scripts.telemetry_risk_profiles import (
-    get_risk_profile,
-    list_risk_profile_names,
-    risk_profile_metadata,
-)
-
-
 LOGGER = logging.getLogger("bot_core.scripts.watch_metrics_stream")
 
 _ENV_PREFIX = "BOT_CORE_WATCH_METRICS_"
+
+# --- profile ryzyka (opcjonalnie) ---
+try:
+    from scripts.telemetry_risk_profiles import (
+        get_risk_profile,
+        list_risk_profile_names,
+        risk_profile_metadata,
+    )
+except Exception:  # brak modułu – funkcje zapasowe
+    def list_risk_profile_names() -> list[str]:
+        return []
+    def get_risk_profile(_name: str) -> Mapping[str, Any]:
+        raise KeyError(_name)
+    def risk_profile_metadata(_name: str) -> Mapping[str, Any]:
+        return {}
 
 
 def _load_grpc_components():
     try:
         import grpc  # type: ignore
-    except ImportError as exc:  # pragma: no cover - środowisko bez grpcio
+    except ImportError as exc:  # pragma: no cover
         raise SystemExit(
             "Pakiet grpcio jest wymagany do połączenia z MetricsService."
         ) from exc
 
     try:
         from bot_core.generated import trading_pb2, trading_pb2_grpc  # type: ignore
-    except ImportError as exc:  # pragma: no cover - brak wygenerowanych stubów
+    except ImportError as exc:  # pragma: no cover
         raise SystemExit(
             "Brak wygenerowanych stubów trading_pb2*.py. Uruchom scripts/generate_trading_stubs.py"
         ) from exc
@@ -119,12 +127,10 @@ def _timestamp_to_iso(timestamp) -> str | None:
             dt = dt.replace(tzinfo=timezone.utc)
         return dt.astimezone(timezone.utc).isoformat()
     if isinstance(timestamp, Mapping):
-        seconds = timestamp.get("seconds")
-        nanos = timestamp.get("nanos")
-        if seconds is None and nanos is None:
+        seconds = int(timestamp.get("seconds") or 0)
+        nanos = int(timestamp.get("nanos") or 0)
+        if seconds == 0 and nanos == 0:
             return None
-        seconds = int(seconds or 0)
-        nanos = int(nanos or 0)
         dt = datetime.fromtimestamp(seconds + nanos / 1_000_000_000, tz=timezone.utc)
         return dt.isoformat()
     seconds = getattr(timestamp, "seconds", None)
@@ -161,7 +167,6 @@ _SEVERITY_ORDER = [
     "emergency",
     "fatal",
 ]
-
 _SEVERITY_RANK = {name: index for index, name in enumerate(_SEVERITY_ORDER)}
 
 
@@ -169,129 +174,13 @@ def _normalize_severity(candidate: Any) -> str | None:
     if not isinstance(candidate, str):
         return None
     normalized = candidate.strip()
-    if not normalized:
-        return None
-    return normalized.lower()
+    return normalized.lower() if normalized else None
 
 
 def _severity_at_least(candidate: str, minimum: str) -> bool:
-    candidate_rank = _SEVERITY_RANK.get(candidate)
-    minimum_rank = _SEVERITY_RANK.get(minimum)
-    if candidate_rank is None or minimum_rank is None:
-        return False
-    return candidate_rank >= minimum_rank
-
-
-def _extract_snapshot_fields(snapshot, notes_payload: Any) -> dict[str, Any]:
-    has_field = getattr(snapshot, "HasField", None)
-    timestamp = None
-    if has_field and snapshot.HasField("generated_at"):
-        timestamp = _timestamp_to_iso(snapshot.generated_at)
-
-    fps = None
-    if has_field and snapshot.HasField("fps"):
-        fps = snapshot.fps
-
-    event = None
-    severity = None
-    if isinstance(notes_payload, dict):
-        raw_event = notes_payload.get("event")
-        if isinstance(raw_event, str) and raw_event:
-            event = raw_event
-        severity = _normalize_severity(notes_payload.get("severity"))
-
-    screen_ctx = _screen_context(notes_payload)
-
-    return {
-        "timestamp": timestamp,
-        "fps": fps,
-        "event": event,
-        "severity": severity,
-        "screen": screen_ctx or None,
-    }
-
-
-class _OfflineSnapshot:
-    def __init__(self, record: Mapping[str, Any]) -> None:
-        raw_notes = record.get("notes")
-        if isinstance(raw_notes, str):
-            self.notes = raw_notes
-        else:
-            self.notes = json.dumps(raw_notes, ensure_ascii=False) if raw_notes is not None else ""
-
-        raw_fps = record.get("fps")
-        if isinstance(raw_fps, (int, float)):
-            self.fps = float(raw_fps)
-        else:
-            self.fps = None
-
-        generated_at = record.get("generated_at")
-        if isinstance(generated_at, (str, Mapping)):
-            self.generated_at = generated_at
-        else:
-            self.generated_at = None
-
-    def HasField(self, field: str) -> bool:  # pragma: no cover - prosta logika
-        if field == "generated_at":
-            return self.generated_at is not None
-        if field == "fps":
-            return self.fps is not None
-        return False
-
-
-def _iter_jsonl_snapshots(source: str) -> Iterable[_OfflineSnapshot]:
-    source_label = "stdin" if source == "-" else str(Path(source).expanduser())
-
-    handle = None
-    close_handle = False
-    if source == "-":
-        handle = sys.stdin
-    else:
-        path = Path(source).expanduser()
-        try:
-            if path.suffix.lower() in {".gz", ".gzip"}:
-                handle = gzip.open(path, "rt", encoding="utf-8")
-            else:
-                handle = path.open("r", encoding="utf-8")
-        except FileNotFoundError as exc:
-            LOGGER.error("Nie znaleziono pliku JSONL: %s", path)
-            raise SystemExit(2) from exc
-        except gzip.BadGzipFile as exc:
-            LOGGER.error("Nie udało się zdekompresować pliku JSONL %s: %s", path, exc)
-            raise SystemExit(2) from exc
-        except OSError as exc:  # pragma: no cover - zależne od platformy
-            LOGGER.error("Nie udało się odczytać pliku JSONL %s: %s", path, exc)
-            raise SystemExit(2) from exc
-        close_handle = True
-
-    assert handle is not None  # dla mypy
-
-    try:
-        for line_number, line in enumerate(handle, start=1):
-            stripped = line.strip()
-            if not stripped:
-                continue
-            try:
-                record = json.loads(stripped)
-            except json.JSONDecodeError as exc:
-                LOGGER.warning(
-                    "Pominięto wiersz %s w %s – niepoprawny JSON: %s",
-                    line_number,
-                    source_label,
-                    exc,
-                )
-                continue
-            if not isinstance(record, Mapping):
-                LOGGER.warning(
-                    "Pominięto wiersz %s w %s – oczekiwano obiektu JSON.",
-                    line_number,
-                    source_label,
-                )
-                continue
-            yield _OfflineSnapshot(record)
-    finally:
-        if close_handle and handle is not None:
-            handle.close()
+    cr = _SEVERITY_RANK.get(candidate)
+    mr = _SEVERITY_RANK.get(minimum)
+    return cr is not None and mr is not None and cr >= mr
 
 
 def _screen_context(notes: Any) -> dict[str, Any]:
@@ -334,35 +223,134 @@ def _screen_context(notes: Any) -> dict[str, Any]:
 def _screen_summary(context: dict[str, Any]) -> str:
     if not context:
         return ""
-
     parts: list[str] = []
 
     index = context.get("index")
     name = context.get("name")
     if isinstance(index, int):
         label = f"#{index}"
-        if isinstance(name, str) and name:
-            parts.append(f"{label} ({name})")
-        else:
-            parts.append(label)
+        parts.append(f"{label} ({name})" if isinstance(name, str) and name else label)
     elif isinstance(name, str) and name:
         parts.append(name)
 
     resolution = context.get("resolution")
     if isinstance(resolution, dict):
-        width = resolution.get("width")
-        height = resolution.get("height")
-        if isinstance(width, int) and isinstance(height, int):
-            parts.append(f"{width}x{height} px")
+        w = resolution.get("width")
+        h = resolution.get("height")
+        if isinstance(w, int) and isinstance(h, int):
+            parts.append(f"{w}x{h} px")
 
     refresh = context.get("refresh_hz")
     if isinstance(refresh, (int, float)) and refresh > 0:
         parts.append(f"{refresh:.0f} Hz")
 
-    if not parts:
-        return ""
+    return ", ".join(parts) if parts else ""
 
-    return ", ".join(parts)
+
+def _extract_snapshot_fields(snapshot, notes_payload: Any) -> dict[str, Any]:
+    has_field = getattr(snapshot, "HasField", None)
+    timestamp = None
+    if has_field and snapshot.HasField("generated_at"):
+        timestamp = _timestamp_to_iso(snapshot.generated_at)
+
+    fps = None
+    if has_field and snapshot.HasField("fps"):
+        fps = snapshot.fps
+
+    event = None
+    severity = None
+    if isinstance(notes_payload, dict):
+        raw_event = notes_payload.get("event")
+        if isinstance(raw_event, str) and raw_event:
+            event = raw_event
+        severity = _normalize_severity(notes_payload.get("severity"))
+
+    screen_ctx = _screen_context(notes_payload)
+
+    return {
+        "timestamp": timestamp,
+        "fps": fps,
+        "event": event,
+        "severity": severity,
+        "screen": screen_ctx or None,
+    }
+
+
+class _OfflineSnapshot:
+    def __init__(self, record: Mapping[str, Any]) -> None:
+        raw_notes = record.get("notes")
+        if isinstance(raw_notes, str):
+            self.notes = raw_notes
+        else:
+            self.notes = json.dumps(raw_notes, ensure_ascii=False) if raw_notes is not None else ""
+
+        raw_fps = record.get("fps")
+        self.fps = float(raw_fps) if isinstance(raw_fps, (int, float)) else None
+
+        generated_at = record.get("generated_at")
+        self.generated_at = generated_at if isinstance(generated_at, (str, Mapping)) else None
+
+    def HasField(self, field: str) -> bool:  # pragma: no cover
+        if field == "generated_at":
+            return self.generated_at is not None
+        if field == "fps":
+            return self.fps is not None
+        return False
+
+
+def _iter_jsonl_snapshots(source: str) -> Iterable[_OfflineSnapshot]:
+    source_label = "stdin" if source == "-" else str(Path(source).expanduser())
+
+    handle = None
+    close_handle = False
+    if source == "-":
+        handle = sys.stdin
+    else:
+        path = Path(source).expanduser()
+        try:
+            if path.suffix.lower() in {".gz", ".gzip"}:
+                handle = gzip.open(path, "rt", encoding="utf-8")
+            else:
+                handle = path.open("r", encoding="utf-8")
+        except FileNotFoundError as exc:
+            LOGGER.error("Nie znaleziono pliku JSONL: %s", path)
+            raise SystemExit(2) from exc
+        except gzip.BadGzipFile as exc:
+            LOGGER.error("Nie udało się zdekompresować pliku JSONL %s: %s", path, exc)
+            raise SystemExit(2) from exc
+        except OSError as exc:  # pragma: no cover
+            LOGGER.error("Nie udało się odczytać pliku JSONL %s: %s", path, exc)
+            raise SystemExit(2) from exc
+        close_handle = True
+
+    assert handle is not None
+
+    try:
+        for line_number, line in enumerate(handle, start=1):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                record = json.loads(stripped)
+            except json.JSONDecodeError as exc:
+                LOGGER.warning(
+                    "Pominięto wiersz %s w %s – niepoprawny JSON: %s",
+                    line_number,
+                    source_label,
+                    exc,
+                )
+                continue
+            if not isinstance(record, Mapping):
+                LOGGER.warning(
+                    "Pominięto wiersz %s w %s – oczekiwano obiektu JSON.",
+                    line_number,
+                    source_label,
+                )
+                continue
+            yield _OfflineSnapshot(record)
+    finally:
+        if close_handle and handle is not None:
+            handle.close()
 
 
 def _snapshot_timestamp(snapshot) -> str | None:
@@ -382,7 +370,7 @@ def _snapshot_fps(snapshot) -> float | None:
         return None
     try:
         return float(fps)
-    except (TypeError, ValueError):  # pragma: no cover - zabezpieczenie przed niestandardowym typem
+    except (TypeError, ValueError):  # pragma: no cover
         return None
 
 
@@ -471,14 +459,10 @@ class _SummaryCollector:
             stats["fps_count"] += 1
             stats["fps_total"] += fps_value
             stats["fps_min"] = (
-                fps_value
-                if stats["fps_min"] is None or fps_value < stats["fps_min"]
-                else stats["fps_min"]
+                fps_value if stats["fps_min"] is None or fps_value < stats["fps_min"] else stats["fps_min"]
             )
             stats["fps_max"] = (
-                fps_value
-                if stats["fps_max"] is None or fps_value > stats["fps_max"]
-                else stats["fps_max"]
+                fps_value if stats["fps_max"] is None or fps_value > stats["fps_max"] else stats["fps_max"]
             )
 
         screen_ctx = _screen_context(notes_payload)
@@ -527,6 +511,37 @@ class _SummaryCollector:
                 for level in sorted(self._severity_totals)
             }
         return summary
+
+
+def _canonical_payload(payload: Mapping[str, Any]) -> bytes:
+    return json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _sign_payload(
+    payload: Mapping[str, Any],
+    *,
+    signing_key: bytes | None,
+    signing_key_id: str | None,
+) -> Mapping[str, Any]:
+    if not signing_key:
+        return dict(payload)
+
+    digest = hmac.new(signing_key, _canonical_payload(payload), hashlib.sha256).digest()
+    signature_payload: dict[str, Any] = {
+        "algorithm": "HMAC-SHA256",
+        "value": base64.b64encode(digest).decode("ascii"),
+    }
+    if signing_key_id:
+        signature_payload["key_id"] = signing_key_id
+
+    entry = dict(payload)
+    entry["signature"] = signature_payload
+    return entry
 
 
 class _DecisionLogger:
@@ -608,9 +623,8 @@ def _matches_screen_filters(
     if not context:
         return False
 
-    if screen_index is not None:
-        if context.get("index") != screen_index:
-            return False
+    if screen_index is not None and context.get("index") != screen_index:
+        return False
 
     if screen_name:
         candidate = context.get("name")
@@ -700,10 +714,7 @@ def _decision_log_metadata_offline(
     until_iso: str | None,
     signing_info: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
-    if args.from_jsonl == "-":
-        input_location = "stdin"
-    else:
-        input_location = str(Path(args.from_jsonl).expanduser())
+    input_location = "stdin" if args.from_jsonl == "-" else str(Path(args.from_jsonl).expanduser())
     metadata: dict[str, Any] = {
         "mode": "jsonl",
         "input_file": input_location,
@@ -823,7 +834,7 @@ def _iter_stream(
         if metadata:
             stream_kwargs["metadata"] = metadata
         yield from stub.StreamMetrics(request, **stream_kwargs)
-    except Exception as exc:  # pragma: no cover - obsługa błędów połączenia
+    except Exception as exc:  # pragma: no cover
         LOGGER.error("Błąd połączenia z MetricsService: %s", exc)
         raise SystemExit(1) from exc
 
@@ -836,7 +847,7 @@ def _read_file_bytes(path: str | None) -> bytes | None:
     except FileNotFoundError as exc:
         LOGGER.error("Nie znaleziono pliku TLS: %s", path)
         raise SystemExit(2) from exc
-    except OSError as exc:  # pragma: no cover - zależne od platformy
+    except OSError as exc:  # pragma: no cover
         LOGGER.error("Nie udało się odczytać pliku TLS %s: %s", path, exc)
         raise SystemExit(2) from exc
     return data
@@ -970,21 +981,9 @@ def _apply_environment_overrides(
 
     _override_simple("summary_output", "SUMMARY_OUTPUT", "--summary-output")
     _override_simple("decision_log", "DECISION_LOG", "--decision-log")
-    _override_simple(
-        "decision_log_hmac_key",
-        "DECISION_LOG_HMAC_KEY",
-        "--decision-log-hmac-key",
-    )
-    _override_simple(
-        "decision_log_hmac_key_file",
-        "DECISION_LOG_HMAC_KEY_FILE",
-        "--decision-log-hmac-key-file",
-    )
-    _override_simple(
-        "decision_log_key_id",
-        "DECISION_LOG_KEY_ID",
-        "--decision-log-key-id",
-    )
+    _override_simple("decision_log_hmac_key", "DECISION_LOG_HMAC_KEY", "--decision-log-hmac-key")
+    _override_simple("decision_log_hmac_key_file", "DECISION_LOG_HMAC_KEY_FILE", "--decision-log-hmac-key-file")
+    _override_simple("decision_log_key_id", "DECISION_LOG_KEY_ID", "--decision-log-key-id")
 
     if "--format" not in provided_flags:
         env_key = f"{_ENV_PREFIX}FORMAT"
@@ -1028,8 +1027,10 @@ def _apply_risk_profile_settings(args: argparse.Namespace, parser: argparse.Argu
     try:
         profile_base = get_risk_profile(normalized)
     except KeyError:
+        available = list_risk_profile_names()
         parser.error(
-            f"Profil ryzyka {profile_name!r} nie jest obsługiwany. Dostępne: {', '.join(list_risk_profile_names())}"
+            f"Profil ryzyka {profile_name!r} nie jest obsługiwany."
+            + (f" Dostępne: {', '.join(available)}" if available else "")
         )
 
     args.risk_profile = normalized
@@ -1046,65 +1047,6 @@ def _apply_risk_profile_settings(args: argparse.Namespace, parser: argparse.Argu
             normalized,
         )
         args.summary = True
-
-def _load_auth_token(token: str | None, token_file: str | None) -> str | None:
-    if token and token_file:
-        LOGGER.error("Użyj tylko jednej z opcji autoryzacji: --auth-token lub --auth-token-file")
-        raise SystemExit(2)
-
-    if token_file:
-        try:
-            data = Path(token_file).expanduser().read_text(encoding="utf-8")
-        except FileNotFoundError as exc:
-            LOGGER.error("Nie znaleziono pliku z tokenem: %s", token_file)
-            raise SystemExit(2) from exc
-        except OSError as exc:  # pragma: no cover - zależne od platformy
-            LOGGER.error("Nie udało się odczytać pliku z tokenem %s: %s", token_file, exc)
-            raise SystemExit(2) from exc
-        token = data.strip()
-        if not token:
-            LOGGER.error("Plik %s nie zawiera tokenu autoryzacyjnego", token_file)
-            raise SystemExit(2)
-
-    return token
-
-
-def _load_decision_log_signing_key(
-    raw_key: str | None,
-    key_file: str | None,
-    *,
-    parser: argparse.ArgumentParser,
-) -> bytes | None:
-    if raw_key and key_file:
-        parser.error(
-            "Użyj tylko jednej z opcji podpisywania decision logu: --decision-log-hmac-key lub "
-            "--decision-log-hmac-key-file."
-        )
-
-    key_material = raw_key
-    if key_file:
-        try:
-            key_material = Path(key_file).expanduser().read_text(encoding="utf-8")
-        except FileNotFoundError as exc:
-            LOGGER.error("Nie znaleziono pliku z kluczem HMAC: %s", key_file)
-            raise SystemExit(2) from exc
-        except OSError as exc:  # pragma: no cover - zależne od platformy
-            LOGGER.error("Nie udało się odczytać klucza HMAC z %s: %s", key_file, exc)
-            raise SystemExit(2) from exc
-
-    if key_material is None:
-        return None
-
-    key_stripped = key_material.strip()
-    if not key_stripped:
-        parser.error("Klucz HMAC decision logu nie może być pusty")
-
-    key_bytes = key_stripped.encode("utf-8")
-    if len(key_bytes) < 16:
-        LOGGER.warning(
-            "Klucz HMAC dla decision logu ma mniej niż 16 bajtów – rozważ użycie dłuższego klucza."
-        )
-    return key_bytes
 
 
 def create_metrics_channel(
@@ -1157,11 +1099,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help="Maksymalna liczba snapshotów do wypisania; domyślnie stream bez końca",
     )
-    parser.add_argument(
-        "--event",
-        default=None,
-        help="Filtruj snapshoty po polu event w notes (np. reduce_motion)",
-    )
+    parser.add_argument("--event", default=None, help="Filtruj snapshoty po polu event w notes (np. reduce_motion)")
     parser.add_argument(
         "--severity",
         action="append",
@@ -1183,73 +1121,21 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--risk-profile",
         choices=list_risk_profile_names(),
         default=None,
-        help=(
-            "Zastosuj predefiniowany profil ryzyka – ustawia domyślne progi severity i wymagania audytu."
-        ),
+        help=("Zastosuj predefiniowany profil ryzyka – ustawia domyślne progi severity i wymagania audytu."),
     )
-    parser.add_argument(
-        "--since",
-        default=None,
-        help="Odfiltruj snapshoty starsze niż podany znacznik czasu ISO 8601 (UTC)",
-    )
-    parser.add_argument(
-        "--until",
-        default=None,
-        help="Odfiltruj snapshoty nowsze niż podany znacznik czasu ISO 8601 (UTC)",
-    )
-    parser.add_argument(
-        "--screen-index",
-        type=int,
-        default=None,
-        help="Ogranicz snapshoty do monitora o określonym indeksie",
-    )
-    parser.add_argument(
-        "--screen-name",
-        default=None,
-        help="Filtruj snapshoty po fragmencie nazwy monitora (case-insensitive)",
-    )
-    parser.add_argument(
-        "--format",
-        choices=("table", "json"),
-        default="table",
-        help="Format wypisywanych danych",
-    )
-    parser.add_argument(
-        "--auth-token",
-        default=None,
-        help="Opcjonalny token autoryzacyjny (wysyłany w nagłówku authorization)",
-    )
-    parser.add_argument(
-        "--auth-token-file",
-        default=None,
-        help="Ścieżka do pliku z tokenem Bearer (jedna linia). Wyklucza --auth-token",
-    )
+    parser.add_argument("--since", default=None, help="Odfiltruj snapshoty starsze niż podany znacznik czasu ISO 8601 (UTC)")
+    parser.add_argument("--until", default=None, help="Odfiltruj snapshoty nowsze niż podany znacznik czasu ISO 8601 (UTC)")
+    parser.add_argument("--screen-index", type=int, default=None, help="Ogranicz snapshoty do monitora o określonym indeksie")
+    parser.add_argument("--screen-name", default=None, help="Filtruj snapshoty po fragmencie nazwy monitora (case-insensitive)")
+    parser.add_argument("--format", choices=("table", "json"), default="table", help="Format wypisywanych danych")
+    parser.add_argument("--auth-token", default=None, help="Opcjonalny token autoryzacyjny (wysyłany w nagłówku authorization)")
+    parser.add_argument("--auth-token-file", default=None, help="Ścieżka do pliku z tokenem Bearer (jedna linia). Wyklucza --auth-token")
     parser.add_argument("--use-tls", action="store_true", help="Wymusza połączenie TLS z serwerem")
-    parser.add_argument(
-        "--root-cert",
-        default=None,
-        help="Ścieżka do zaufanego certyfikatu root CA (PEM) używanego do walidacji",
-    )
-    parser.add_argument(
-        "--client-cert",
-        default=None,
-        help="Certyfikat klienta (PEM) dla mTLS",
-    )
-    parser.add_argument(
-        "--client-key",
-        default=None,
-        help="Klucz prywatny klienta (PEM) dla mTLS",
-    )
-    parser.add_argument(
-        "--server-name",
-        default=None,
-        help="Nazwa serwera TLS (override SNI) – przydatne dla IP lub testów",
-    )
-    parser.add_argument(
-        "--server-sha256",
-        default=None,
-        help="Oczekiwany odcisk SHA-256 certyfikatu serwera (pinning)",
-    )
+    parser.add_argument("--root-cert", default=None, help="Ścieżka do zaufanego certyfikatu root CA (PEM) używanego do walidacji")
+    parser.add_argument("--client-cert", default=None, help="Certyfikat klienta (PEM) dla mTLS")
+    parser.add_argument("--client-key", default=None, help="Klucz prywatny klienta (PEM) dla mTLS")
+    parser.add_argument("--server-name", default=None, help="Nazwa serwera TLS (override SNI) – przydatne dla IP lub testów")
+    parser.add_argument("--server-sha256", default=None, help="Oczekiwany odcisk SHA-256 certyfikatu serwera (pinning)")
     parser.add_argument(
         "--from-jsonl",
         default=None,
@@ -1301,10 +1187,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--decision-log-key-id",
         default=None,
-        help=(
-            "Opcjonalny identyfikator klucza HMAC zapisywany przy podpisach decision logu "
-            "(ułatwia rotację kluczy)."
-        ),
+        help=("Opcjonalny identyfikator klucza HMAC zapisywany przy podpisach decision logu (ułatwia rotację kluczy)."),
     )
     return parser
 
@@ -1348,6 +1231,66 @@ def _emit_summary(
         LOGGER.info("Zapisano podsumowanie do %s", target_path)
 
     return signed_payload
+
+
+def _load_auth_token(token: str | None, token_file: str | None) -> str | None:
+    if token and token_file:
+        LOGGER.error("Użyj tylko jednej z opcji autoryzacji: --auth-token lub --auth-token-file")
+        raise SystemExit(2)
+
+    if token_file:
+        try:
+            data = Path(token_file).expanduser().read_text(encoding="utf-8")
+        except FileNotFoundError as exc:
+            LOGGER.error("Nie znaleziono pliku z tokenem: %s", token_file)
+            raise SystemExit(2) from exc
+        except OSError as exc:  # pragma: no cover
+            LOGGER.error("Nie udało się odczytać pliku z tokenem %s: %s", token_file, exc)
+            raise SystemExit(2) from exc
+        token = data.strip()
+        if not token:
+            LOGGER.error("Plik %s nie zawiera tokenu autoryzacyjnego", token_file)
+            raise SystemExit(2)
+
+    return token
+
+
+def _load_decision_log_signing_key(
+    raw_key: str | None,
+    key_file: str | None,
+    *,
+    parser: argparse.ArgumentParser,
+) -> bytes | None:
+    if raw_key and key_file:
+        parser.error(
+            "Użyj tylko jednej z opcji podpisywania decision logu: --decision-log-hmac-key lub "
+            "--decision-log-hmac-key-file."
+        )
+
+    key_material = raw_key
+    if key_file:
+        try:
+            key_material = Path(key_file).expanduser().read_text(encoding="utf-8")
+        except FileNotFoundError as exc:
+            LOGGER.error("Nie znaleziono pliku z kluczem HMAC: %s", key_file)
+            raise SystemExit(2) from exc
+        except OSError as exc:  # pragma: no cover
+            LOGGER.error("Nie udało się odczytać klucza HMAC z %s: %s", key_file, exc)
+            raise SystemExit(2) from exc
+
+    if key_material is None:
+        return None
+
+    key_stripped = key_material.strip()
+    if not key_stripped:
+        parser.error("Klucz HMAC decision logu nie może być pusty")
+
+    key_bytes = key_stripped.encode("utf-8")
+    if len(key_bytes) < 16:
+        LOGGER.warning(
+            "Klucz HMAC dla decision logu ma mniej niż 16 bajtów – rozważ użycie dłuższego klucza."
+        )
+    return key_bytes
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1497,9 +1440,7 @@ def main(argv: list[str] | None = None) -> int:
                 LOGGER.warning("Ignoruję token autoryzacyjny w trybie odczytu z pliku JSONL")
 
             count = 0
-            source_label = (
-                "stdin" if args.from_jsonl == "-" else str(Path(args.from_jsonl).expanduser())
-            )
+            source_label = "stdin" if args.from_jsonl == "-" else str(Path(args.from_jsonl).expanduser())
             if decision_logger:
                 decision_logger.write_metadata(
                     _decision_log_metadata_offline(
@@ -1531,13 +1472,7 @@ def main(argv: list[str] | None = None) -> int:
                     screen_name=args.screen_name,
                 ):
                     continue
-                print(
-                    _format_snapshot(
-                        snapshot,
-                        fmt=args.format,
-                        notes_payload=notes_payload,
-                    )
-                )
+                print(_format_snapshot(snapshot, fmt=args.format, notes_payload=notes_payload))
                 if summary_collector:
                     summary_collector.add(snapshot, notes_payload)
                 if decision_logger:
@@ -1547,9 +1482,7 @@ def main(argv: list[str] | None = None) -> int:
                     break
 
             if count == 0:
-                LOGGER.warning(
-                    "Nie znaleziono snapshotów w źródle %s spełniających filtry", source_label
-                )
+                LOGGER.warning("Nie znaleziono snapshotów w źródle %s spełniających filtry", source_label)
             if summary_collector:
                 if args.summary and count:
                     print()
@@ -1612,11 +1545,7 @@ def main(argv: list[str] | None = None) -> int:
             notes_payload = _parse_notes(snapshot.notes)
             if args.event and notes_payload.get("event") != args.event:
                 continue
-            if not _matches_severity_filter(
-                notes_payload,
-                severities=severity_filters,
-                severity_min=severity_min,
-            ):
+            if not _matches_severity_filter(notes_payload, severities=severity_filters, severity_min=severity_min):
                 continue
             if not _matches_screen_filters(
                 notes_payload,
@@ -1624,13 +1553,7 @@ def main(argv: list[str] | None = None) -> int:
                 screen_name=args.screen_name,
             ):
                 continue
-            print(
-                _format_snapshot(
-                    snapshot,
-                    fmt=args.format,
-                    notes_payload=notes_payload,
-                )
-            )
+            print(_format_snapshot(snapshot, fmt=args.format, notes_payload=notes_payload))
             if summary_collector:
                 summary_collector.add(snapshot, notes_payload)
             if decision_logger:
@@ -1655,34 +1578,5 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
 
-if __name__ == "__main__":  # pragma: no cover - punkt wejścia
+if __name__ == "__main__":  # pragma: no cover
     sys.exit(main())
-def _canonical_payload(payload: Mapping[str, Any]) -> bytes:
-    return json.dumps(
-        payload,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-
-
-def _sign_payload(
-    payload: Mapping[str, Any],
-    *,
-    signing_key: bytes | None,
-    signing_key_id: str | None,
-) -> Mapping[str, Any]:
-    if not signing_key:
-        return dict(payload)
-
-    digest = hmac.new(signing_key, _canonical_payload(payload), hashlib.sha256).digest()
-    signature_payload: dict[str, Any] = {
-        "algorithm": "HMAC-SHA256",
-        "value": base64.b64encode(digest).decode("ascii"),
-    }
-    if signing_key_id:
-        signature_payload["key_id"] = signing_key_id
-
-    entry = dict(payload)
-    entry["signature"] = signature_payload
-    return entry

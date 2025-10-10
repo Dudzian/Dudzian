@@ -748,6 +748,7 @@ def test_watch_metrics_stream_summary_signature_metadata(tmp_path, capsys):
     assert summary_payload["signature"]["algorithm"] == "HMAC-SHA256"
     assert summary_payload["signature"].get("key_id") == key_id
 
+
 def test_create_metrics_channel_insecure():
     grpc_module = _DummyGrpc()
     channel = create_metrics_channel(
