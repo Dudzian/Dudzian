@@ -92,6 +92,53 @@ _DEFAULT_ADAPTERS: Mapping[str, ExchangeAdapterFactory] = {
 _LOGGER = logging.getLogger(__name__)
 
 
+def _build_ui_alert_audit_metadata(
+    router: DefaultAlertRouter | None,
+    *,
+    requested_backend: str | None,
+) -> dict[str, object]:
+    """Zwraca metadane backendu audytu alertów UI dostępne w runtime."""
+
+    normalized_request = (requested_backend or "inherit").lower()
+    metadata: dict[str, object] = {"requested": normalized_request}
+
+    audit_log = getattr(router, "audit_log", None)
+
+    if isinstance(audit_log, FileAlertAuditLog):
+        metadata.update(
+            {
+                "backend": "file",
+                "directory": str(getattr(audit_log, "directory", "")) or None,
+                "pattern": getattr(audit_log, "filename_pattern", None),
+                "retention_days": getattr(audit_log, "retention_days", None),
+                "fsync": bool(getattr(audit_log, "fsync", False)),
+            }
+        )
+    elif isinstance(audit_log, InMemoryAlertAuditLog):
+        metadata["backend"] = "memory"
+    elif audit_log is None:
+        metadata["backend"] = None
+    else:  # pragma: no cover - diagnostyka innych backendów
+        metadata["backend"] = audit_log.__class__.__name__.lower()
+
+    note: str | None = None
+    backend_value = metadata.get("backend")
+    if normalized_request == "inherit":
+        note = "inherited_environment_router"
+    elif normalized_request == "file" and backend_value != "file":
+        note = "file_backend_unavailable"
+    elif normalized_request == "memory" and backend_value != "memory":
+        note = "memory_backend_not_selected"
+
+    if backend_value is None and note is None:
+        note = "router_missing_audit_log"
+
+    if note is not None:
+        metadata["note"] = note
+
+    return metadata
+
+
 @dataclass(slots=True)
 class BootstrapContext:
     """Zawiera wszystkie komponenty zainicjalizowane dla danego środowiska."""
@@ -116,6 +163,7 @@ class BootstrapContext:
     metrics_ui_alerts_metadata: Mapping[str, Any] | None = None
     metrics_jsonl_metadata: Mapping[str, Any] | None = None
     metrics_security_warnings: tuple[str, ...] | None = None
+    metrics_ui_alerts_settings: Mapping[str, Any] | None = None
 
 
 def bootstrap_environment(
@@ -186,6 +234,7 @@ def bootstrap_environment(
     metrics_service_enabled: bool | None = None
     metrics_ui_alerts_metadata: Mapping[str, Any] | None = None
     metrics_jsonl_metadata: Mapping[str, Any] | None = None
+    metrics_ui_alerts_settings: Mapping[str, Any] | None = None
     metrics_security_warnings: list[str] = []
     metrics_security_payload: dict[str, object] = {}
     metrics_config = getattr(core_config, "metrics_service", None)
@@ -238,11 +287,200 @@ def bootstrap_environment(
                     except Exception:  # pragma: no cover - zachowujemy przybliżenie
                         configured_path = (base_dir / configured_path).absolute()
             telemetry_log = configured_path or default_path
-            metrics_sinks.append(
-                UiTelemetryAlertSink(alert_router, jsonl_path=telemetry_log)
+            reduce_mode = "enable"
+            overlay_mode = "enable"
+            jank_mode = "disable"
+            if metrics_config is not None and getattr(metrics_config, "reduce_motion_mode", None) is not None:
+                candidate = str(getattr(metrics_config, "reduce_motion_mode", "enable")).lower()
+                if candidate in {"enable", "jsonl", "disable"}:
+                    reduce_mode = candidate
+            if metrics_config is not None and getattr(metrics_config, "overlay_alert_mode", None) is not None:
+                candidate = str(getattr(metrics_config, "overlay_alert_mode", "enable")).lower()
+                if candidate in {"enable", "jsonl", "disable"}:
+                    overlay_mode = candidate
+            if metrics_config is not None and getattr(metrics_config, "jank_alert_mode", None) is not None:
+                candidate = str(getattr(metrics_config, "jank_alert_mode", "disable")).lower()
+                if candidate in {"enable", "jsonl", "disable"}:
+                    jank_mode = candidate
+            if metrics_config is not None and getattr(metrics_config, "reduce_motion_mode", None) is None:
+                reduce_mode = (
+                    "enable"
+                    if bool(getattr(metrics_config, "reduce_motion_alerts", True))
+                    else "disable"
+                )
+            if metrics_config is not None and getattr(metrics_config, "overlay_alert_mode", None) is None:
+                overlay_mode = (
+                    "enable"
+                    if bool(getattr(metrics_config, "overlay_alerts", True))
+                    else "disable"
+                )
+            if metrics_config is not None and getattr(metrics_config, "jank_alert_mode", None) is None:
+                jank_mode = (
+                    "enable"
+                    if bool(getattr(metrics_config, "jank_alerts", False))
+                    else "disable"
+                )
+
+            reduce_dispatch = reduce_mode == "enable"
+            overlay_dispatch = overlay_mode == "enable"
+            jank_dispatch = jank_mode == "enable"
+            reduce_logging = reduce_mode in {"enable", "jsonl"}
+            overlay_logging = overlay_mode in {"enable", "jsonl"}
+            jank_logging = jank_mode in {"enable", "jsonl"}
+
+            sink_kwargs: dict[str, object] = {
+                "jsonl_path": telemetry_log,
+                "enable_reduce_motion_alerts": reduce_dispatch,
+                "enable_overlay_alerts": overlay_dispatch,
+                "log_reduce_motion_events": reduce_logging,
+                "log_overlay_events": overlay_logging,
+                "enable_jank_alerts": jank_dispatch,
+                "log_jank_events": jank_logging,
+            }
+            settings_payload: dict[str, object] = {
+                "jsonl_path": str(telemetry_log),
+                "reduce_mode": reduce_mode,
+                "overlay_mode": overlay_mode,
+                "jank_mode": jank_mode,
+                "reduce_motion_alerts": reduce_dispatch,
+                "overlay_alerts": overlay_dispatch,
+                "jank_alerts": jank_dispatch,
+                "reduce_motion_logging": reduce_logging,
+                "overlay_logging": overlay_logging,
+                "jank_logging": jank_logging,
+                "reduce_motion_category": "ui.performance",
+                "reduce_motion_severity_active": "warning",
+                "reduce_motion_severity_recovered": "info",
+                "overlay_category": "ui.performance",
+                "overlay_severity_exceeded": "warning",
+                "overlay_severity_recovered": "info",
+                "overlay_severity_critical": "critical",
+                "overlay_critical_threshold": 2,
+                "jank_category": "ui.performance",
+                "jank_severity_spike": "warning",
+                "jank_severity_critical": None,
+                "jank_critical_over_ms": None,
+            }
+            if metrics_config is not None:
+                sink_kwargs.update(
+                    reduce_motion_category=getattr(
+                        metrics_config, "reduce_motion_category", "ui.performance"
+                    ),
+                    reduce_motion_severity_active=getattr(
+                        metrics_config, "reduce_motion_severity_active", "warning"
+                    ),
+                    reduce_motion_severity_recovered=getattr(
+                        metrics_config, "reduce_motion_severity_recovered", "info"
+                    ),
+                    overlay_category=getattr(
+                        metrics_config, "overlay_alert_category", "ui.performance"
+                    ),
+                    overlay_severity_exceeded=getattr(
+                        metrics_config, "overlay_alert_severity_exceeded", "warning"
+                    ),
+                    overlay_severity_recovered=getattr(
+                        metrics_config, "overlay_alert_severity_recovered", "info"
+                    ),
+                    jank_category=getattr(metrics_config, "jank_alert_category", "ui.performance"),
+                    jank_severity_spike=getattr(
+                        metrics_config, "jank_alert_severity_spike", "warning"
+                    ),
+                )
+                settings_payload.update(
+                    reduce_motion_category=getattr(
+                        metrics_config, "reduce_motion_category", settings_payload["reduce_motion_category"]
+                    ),
+                    reduce_motion_severity_active=getattr(
+                        metrics_config,
+                        "reduce_motion_severity_active",
+                        settings_payload["reduce_motion_severity_active"],
+                    ),
+                    reduce_motion_severity_recovered=getattr(
+                        metrics_config,
+                        "reduce_motion_severity_recovered",
+                        settings_payload["reduce_motion_severity_recovered"],
+                    ),
+                    overlay_category=getattr(
+                        metrics_config, "overlay_alert_category", settings_payload["overlay_category"]
+                    ),
+                    overlay_severity_exceeded=getattr(
+                        metrics_config,
+                        "overlay_alert_severity_exceeded",
+                        settings_payload["overlay_severity_exceeded"],
+                    ),
+                    overlay_severity_recovered=getattr(
+                        metrics_config,
+                        "overlay_alert_severity_recovered",
+                        settings_payload["overlay_severity_recovered"],
+                    ),
+                    overlay_severity_critical=getattr(
+                        metrics_config,
+                        "overlay_alert_severity_critical",
+                        settings_payload["overlay_severity_critical"],
+                    ),
+                    overlay_critical_threshold=getattr(
+                        metrics_config,
+                        "overlay_alert_critical_threshold",
+                        settings_payload["overlay_critical_threshold"],
+                    ),
+                    jank_category=getattr(
+                        metrics_config, "jank_alert_category", settings_payload["jank_category"]
+                    ),
+                    jank_severity_spike=getattr(
+                        metrics_config,
+                        "jank_alert_severity_spike",
+                        settings_payload["jank_severity_spike"],
+                    ),
+                    jank_severity_critical=getattr(
+                        metrics_config,
+                        "jank_alert_severity_critical",
+                        settings_payload["jank_severity_critical"],
+                    ),
+                    jank_critical_over_ms=getattr(
+                        metrics_config,
+                        "jank_alert_critical_over_ms",
+                        settings_payload["jank_critical_over_ms"],
+                    ),
+                )
+                overlay_critical = getattr(metrics_config, "overlay_alert_severity_critical", None)
+                if overlay_critical is not None:
+                    sink_kwargs["overlay_severity_critical"] = overlay_critical
+                overlay_threshold = getattr(metrics_config, "overlay_alert_critical_threshold", None)
+                if overlay_threshold is not None:
+                    try:
+                        threshold_value = int(overlay_threshold)
+                        sink_kwargs["overlay_critical_threshold"] = threshold_value
+                        settings_payload["overlay_critical_threshold"] = threshold_value
+                    except (TypeError, ValueError):  # pragma: no cover - diagnostyka
+                        _LOGGER.debug(
+                            "Nieprawidłowy próg overlay_alert_critical_threshold=%s", overlay_threshold
+                        )
+                else:
+                    settings_payload["overlay_critical_threshold"] = None
+                jank_severity_critical = getattr(metrics_config, "jank_alert_severity_critical", None)
+                if jank_severity_critical is not None:
+                    sink_kwargs["jank_severity_critical"] = jank_severity_critical
+                jank_threshold = getattr(metrics_config, "jank_alert_critical_over_ms", None)
+                if jank_threshold is not None:
+                    try:
+                        threshold_ms = float(jank_threshold)
+                    except (TypeError, ValueError):  # pragma: no cover - diagnostyka
+                        _LOGGER.debug(
+                            "Nieprawidłowy próg jank_alert_critical_over_ms=%s", jank_threshold
+                        )
+                    else:
+                        sink_kwargs["jank_critical_over_ms"] = threshold_ms
+                        settings_payload["jank_critical_over_ms"] = threshold_ms
+            audit_backend = _build_ui_alert_audit_metadata(
+                alert_router,
+                requested_backend=getattr(metrics_config, "ui_alerts_audit_backend", None),
             )
+            settings_payload["audit"] = audit_backend
+
+            metrics_sinks.append(UiTelemetryAlertSink(alert_router, **sink_kwargs))
             metrics_ui_alert_path = telemetry_log
             metrics_ui_alert_sink_active = True
+            metrics_ui_alerts_settings = settings_payload
             try:
                 metrics_ui_alerts_metadata = file_reference_metadata(
                     telemetry_log, role="ui_alerts_jsonl"
@@ -331,6 +569,7 @@ def bootstrap_environment(
         metrics_security_warnings=tuple(metrics_security_warnings)
         if metrics_security_warnings
         else None,
+        metrics_ui_alerts_settings=metrics_ui_alerts_settings,
     )
 
 

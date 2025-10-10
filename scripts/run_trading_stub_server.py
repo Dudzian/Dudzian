@@ -45,20 +45,43 @@ except Exception:  # pragma: no cover
 # Router alertów (opcjonalny – różne gałęzie)
 DefaultAlertRouter = None
 InMemoryAlertAuditLog = None
+FileAlertAuditLog = None
 try:  # najczęściej tak:
-    from bot_core.alerts import DefaultAlertRouter as _Router, InMemoryAlertAuditLog as _Audit
+    from bot_core.alerts import (  # type: ignore
+        DefaultAlertRouter as _Router,
+        FileAlertAuditLog as _FileAudit,
+        InMemoryAlertAuditLog as _Audit,
+    )
     DefaultAlertRouter = _Router
     InMemoryAlertAuditLog = _Audit
+    FileAlertAuditLog = _FileAudit
 except Exception:
     try:  # czasem w oddzielnym module
-        from bot_core.alerts.audit import InMemoryAlertAuditLog as _Audit2  # type: ignore
+        from bot_core.alerts.audit import (  # type: ignore
+            FileAlertAuditLog as _FileAudit2,
+            InMemoryAlertAuditLog as _Audit2,
+        )
         from bot_core.alerts import DefaultAlertRouter as _Router2  # type: ignore
         DefaultAlertRouter = _Router2
         InMemoryAlertAuditLog = _Audit2
+        FileAlertAuditLog = _FileAudit2
     except Exception:
         pass
 
 LOGGER = logging.getLogger("run_trading_stub_server")
+
+UI_ALERT_MODE_CHOICES = ("enable", "jsonl", "disable")
+UI_ALERT_AUDIT_BACKEND_CHOICES = ("auto", "file", "memory")
+_DEFAULT_UI_CATEGORY = "ui.performance"
+_DEFAULT_UI_SEVERITY_ACTIVE = "warning"
+_DEFAULT_UI_SEVERITY_RECOVERED = "info"
+_DEFAULT_OVERLAY_SEVERITY_CRITICAL = "critical"
+_DEFAULT_OVERLAY_THRESHOLD = 2
+_DEFAULT_JANK_SEVERITY_SPIKE = "warning"
+_DEFAULT_JANK_SEVERITY_CRITICAL: str | None = None
+_DEFAULT_JANK_CRITICAL_THRESHOLD_MS: float | None = None
+_DEFAULT_UI_ALERT_AUDIT_PATTERN = "metrics-ui-alerts-%Y%m%d.jsonl"
+_DEFAULT_UI_ALERT_AUDIT_RETENTION_DAYS = 90
 
 
 def _configure_logging(level: str) -> None:
@@ -134,13 +157,33 @@ def _initial_value_sources(provided_flags: Iterable[str]) -> dict[str, str]:
         "--metrics-tls-require-client-cert": "metrics_tls_require_client_cert",
         "--metrics-ui-alerts-jsonl": "metrics_ui_alerts_jsonl_path",
         "--disable-metrics-ui-alerts": "disable_metrics_ui_alerts",
+        "--metrics-ui-alerts-reduce-mode": "metrics_ui_alerts_reduce_mode",
+        "--metrics-ui-alerts-overlay-mode": "metrics_ui_alerts_overlay_mode",
+        "--metrics-ui-alerts-reduce-category": "metrics_ui_alerts_reduce_category",
+        "--metrics-ui-alerts-reduce-active-severity": "metrics_ui_alerts_reduce_active_severity",
+        "--metrics-ui-alerts-reduce-recovered-severity": "metrics_ui_alerts_reduce_recovered_severity",
+        "--metrics-ui-alerts-overlay-category": "metrics_ui_alerts_overlay_category",
+        "--metrics-ui-alerts-overlay-exceeded-severity": "metrics_ui_alerts_overlay_exceeded_severity",
+        "--metrics-ui-alerts-overlay-recovered-severity": "metrics_ui_alerts_overlay_recovered_severity",
+        "--metrics-ui-alerts-overlay-critical-severity": "metrics_ui_alerts_overlay_critical_severity",
+        "--metrics-ui-alerts-overlay-critical-threshold": "metrics_ui_alerts_overlay_critical_threshold",
+        "--metrics-ui-alerts-jank-mode": "metrics_ui_alerts_jank_mode",
+        "--metrics-ui-alerts-jank-category": "metrics_ui_alerts_jank_category",
+        "--metrics-ui-alerts-jank-spike-severity": "metrics_ui_alerts_jank_spike_severity",
+        "--metrics-ui-alerts-jank-critical-severity": "metrics_ui_alerts_jank_critical_severity",
+        "--metrics-ui-alerts-jank-critical-over-ms": "metrics_ui_alerts_jank_critical_over_ms",
+        "--metrics-ui-alerts-audit-dir": "metrics_ui_alerts_audit_dir",
+        "--metrics-ui-alerts-audit-backend": "metrics_ui_alerts_audit_backend",
+        "--metrics-ui-alerts-audit-pattern": "metrics_ui_alerts_audit_pattern",
+        "--metrics-ui-alerts-audit-retention-days": "metrics_ui_alerts_audit_retention_days",
+        "--metrics-ui-alerts-audit-fsync": "metrics_ui_alerts_audit_fsync",
         "--metrics-print-address": "metrics_print_address",
         "--metrics-auth-token": "metrics_auth_token",
         "--print-runtime-plan": "print_runtime_plan",
         "--runtime-plan-jsonl": "runtime_plan_jsonl_path",
         "--fail-on-security-warnings": "fail_on_security_warnings",
     }
-    return {key: "cli" for key, val in mapping.items() if key in provided}
+    return {val: "cli" for key, val in mapping.items() if key in provided}
 
 
 def _finalize_value_sources(sources: Mapping[str, str]) -> dict[str, str]:
@@ -169,6 +212,26 @@ def _finalize_value_sources(sources: Mapping[str, str]) -> dict[str, str]:
         "metrics_ui_alerts_jsonl_path",
         "disable_metrics_ui_alerts",
         "metrics_print_address",
+        "metrics_ui_alerts_reduce_mode",
+        "metrics_ui_alerts_overlay_mode",
+        "metrics_ui_alerts_reduce_category",
+        "metrics_ui_alerts_reduce_active_severity",
+        "metrics_ui_alerts_reduce_recovered_severity",
+        "metrics_ui_alerts_overlay_category",
+        "metrics_ui_alerts_overlay_exceeded_severity",
+        "metrics_ui_alerts_overlay_recovered_severity",
+        "metrics_ui_alerts_overlay_critical_severity",
+        "metrics_ui_alerts_overlay_critical_threshold",
+        "metrics_ui_alerts_jank_mode",
+        "metrics_ui_alerts_jank_category",
+        "metrics_ui_alerts_jank_spike_severity",
+        "metrics_ui_alerts_jank_critical_severity",
+        "metrics_ui_alerts_jank_critical_over_ms",
+        "metrics_ui_alerts_audit_dir",
+        "metrics_ui_alerts_audit_backend",
+        "metrics_ui_alerts_audit_pattern",
+        "metrics_ui_alerts_audit_retention_days",
+        "metrics_ui_alerts_audit_fsync",
         "metrics_auth_token",
         "print_runtime_plan",
         "runtime_plan_jsonl_path",
@@ -429,6 +492,323 @@ def _apply_environment_overrides(
                 args.disable_metrics_ui_alerts,
             )
 
+    if (raw := os.getenv("RUN_TRADING_STUB_METRICS_UI_ALERTS_REDUCE_MODE")) is not None:
+        if env_present("--metrics-ui-alerts-reduce-mode"):
+            skip_due_to_cli("metrics_ui_alerts_reduce_mode", "RUN_TRADING_STUB_METRICS_UI_ALERTS_REDUCE_MODE", raw)
+        else:
+            normalized = raw.strip().lower()
+            if normalized not in UI_ALERT_MODE_CHOICES:
+                raise SystemExit(
+                    f"RUN_TRADING_STUB_METRICS_UI_ALERTS_REDUCE_MODE musi być jedną z wartości: {', '.join(UI_ALERT_MODE_CHOICES)}"
+                )
+            args.metrics_ui_alerts_reduce_mode = normalized
+            apply_value(
+                "metrics_ui_alerts_reduce_mode",
+                "RUN_TRADING_STUB_METRICS_UI_ALERTS_REDUCE_MODE",
+                raw,
+                normalized,
+            )
+
+    if (raw := os.getenv("RUN_TRADING_STUB_METRICS_UI_ALERTS_OVERLAY_MODE")) is not None:
+        if env_present("--metrics-ui-alerts-overlay-mode"):
+            skip_due_to_cli("metrics_ui_alerts_overlay_mode", "RUN_TRADING_STUB_METRICS_UI_ALERTS_OVERLAY_MODE", raw)
+        else:
+            normalized = raw.strip().lower()
+            if normalized not in UI_ALERT_MODE_CHOICES:
+                raise SystemExit(
+                    f"RUN_TRADING_STUB_METRICS_UI_ALERTS_OVERLAY_MODE musi być jedną z wartości: {', '.join(UI_ALERT_MODE_CHOICES)}"
+                )
+            args.metrics_ui_alerts_overlay_mode = normalized
+            apply_value(
+                "metrics_ui_alerts_overlay_mode",
+                "RUN_TRADING_STUB_METRICS_UI_ALERTS_OVERLAY_MODE",
+                raw,
+                normalized,
+            )
+
+    if (raw := os.getenv("RUN_TRADING_STUB_METRICS_UI_ALERTS_JANK_MODE")) is not None:
+        if env_present("--metrics-ui-alerts-jank-mode"):
+            skip_due_to_cli(
+                "metrics_ui_alerts_jank_mode",
+                "RUN_TRADING_STUB_METRICS_UI_ALERTS_JANK_MODE",
+                raw,
+            )
+        else:
+            normalized = raw.strip().lower()
+            if normalized not in UI_ALERT_MODE_CHOICES:
+                raise SystemExit(
+                    f"RUN_TRADING_STUB_METRICS_UI_ALERTS_JANK_MODE musi być jedną z wartości: {', '.join(UI_ALERT_MODE_CHOICES)}"
+                )
+            args.metrics_ui_alerts_jank_mode = normalized
+            apply_value(
+                "metrics_ui_alerts_jank_mode",
+                "RUN_TRADING_STUB_METRICS_UI_ALERTS_JANK_MODE",
+                raw,
+                normalized,
+            )
+
+    for option, env_var, attr in (
+        (
+            "metrics_ui_alerts_reduce_category",
+            "RUN_TRADING_STUB_METRICS_UI_ALERTS_REDUCE_CATEGORY",
+            "metrics_ui_alerts_reduce_category",
+        ),
+        (
+            "metrics_ui_alerts_reduce_active_severity",
+            "RUN_TRADING_STUB_METRICS_UI_ALERTS_REDUCE_ACTIVE_SEVERITY",
+            "metrics_ui_alerts_reduce_active_severity",
+        ),
+        (
+            "metrics_ui_alerts_reduce_recovered_severity",
+            "RUN_TRADING_STUB_METRICS_UI_ALERTS_REDUCE_RECOVERED_SEVERITY",
+            "metrics_ui_alerts_reduce_recovered_severity",
+        ),
+        (
+            "metrics_ui_alerts_overlay_category",
+            "RUN_TRADING_STUB_METRICS_UI_ALERTS_OVERLAY_CATEGORY",
+            "metrics_ui_alerts_overlay_category",
+        ),
+        (
+            "metrics_ui_alerts_overlay_exceeded_severity",
+            "RUN_TRADING_STUB_METRICS_UI_ALERTS_OVERLAY_EXCEEDED_SEVERITY",
+            "metrics_ui_alerts_overlay_exceeded_severity",
+        ),
+        (
+            "metrics_ui_alerts_overlay_recovered_severity",
+            "RUN_TRADING_STUB_METRICS_UI_ALERTS_OVERLAY_RECOVERED_SEVERITY",
+            "metrics_ui_alerts_overlay_recovered_severity",
+        ),
+        (
+            "metrics_ui_alerts_overlay_critical_severity",
+            "RUN_TRADING_STUB_METRICS_UI_ALERTS_OVERLAY_CRITICAL_SEVERITY",
+            "metrics_ui_alerts_overlay_critical_severity",
+        ),
+        (
+            "metrics_ui_alerts_jank_category",
+            "RUN_TRADING_STUB_METRICS_UI_ALERTS_JANK_CATEGORY",
+            "metrics_ui_alerts_jank_category",
+        ),
+        (
+            "metrics_ui_alerts_jank_spike_severity",
+            "RUN_TRADING_STUB_METRICS_UI_ALERTS_JANK_SPIKE_SEVERITY",
+            "metrics_ui_alerts_jank_spike_severity",
+        ),
+    ):
+        if (raw := os.getenv(env_var)) is not None:
+            if env_present(f"--{option.replace('_', '-')}"):
+                skip_due_to_cli(option, env_var, raw)
+            else:
+                setattr(args, attr, raw)
+                apply_value(option, env_var, raw, raw)
+
+    if (raw := os.getenv("RUN_TRADING_STUB_METRICS_UI_ALERTS_JANK_CRITICAL_SEVERITY")) is not None:
+        if env_present("--metrics-ui-alerts-jank-critical-severity"):
+            skip_due_to_cli(
+                "metrics_ui_alerts_jank_critical_severity",
+                "RUN_TRADING_STUB_METRICS_UI_ALERTS_JANK_CRITICAL_SEVERITY",
+                raw,
+            )
+        else:
+            normalized = raw.strip().lower()
+            if normalized in {"", "none", "null", "off", "disable", "disabled"}:
+                args.metrics_ui_alerts_jank_critical_severity = None
+                value_sources["metrics_ui_alerts_jank_critical_severity"] = "env_disabled"
+                override_keys.add("metrics_ui_alerts_jank_critical_severity")
+                record_entry(
+                    {
+                        "option": "metrics_ui_alerts_jank_critical_severity",
+                        "variable": "RUN_TRADING_STUB_METRICS_UI_ALERTS_JANK_CRITICAL_SEVERITY",
+                        "raw_value": raw,
+                        "applied": True,
+                        "parsed_value": None,
+                        "note": "jank_critical_severity_disabled",
+                    }
+                )
+            else:
+                args.metrics_ui_alerts_jank_critical_severity = raw
+                apply_value(
+                    "metrics_ui_alerts_jank_critical_severity",
+                    "RUN_TRADING_STUB_METRICS_UI_ALERTS_JANK_CRITICAL_SEVERITY",
+                    raw,
+                    raw,
+                )
+
+    if (raw := os.getenv("RUN_TRADING_STUB_METRICS_UI_ALERTS_JANK_CRITICAL_OVER_MS")) is not None:
+        if env_present("--metrics-ui-alerts-jank-critical-over-ms"):
+            skip_due_to_cli(
+                "metrics_ui_alerts_jank_critical_over_ms",
+                "RUN_TRADING_STUB_METRICS_UI_ALERTS_JANK_CRITICAL_OVER_MS",
+                raw,
+            )
+        else:
+            threshold_ms = parse_float("RUN_TRADING_STUB_METRICS_UI_ALERTS_JANK_CRITICAL_OVER_MS")
+            args.metrics_ui_alerts_jank_critical_over_ms = threshold_ms
+            apply_value(
+                "metrics_ui_alerts_jank_critical_over_ms",
+                "RUN_TRADING_STUB_METRICS_UI_ALERTS_JANK_CRITICAL_OVER_MS",
+                raw,
+                threshold_ms,
+            )
+
+    if (raw := os.getenv("RUN_TRADING_STUB_METRICS_UI_ALERTS_OVERLAY_CRITICAL_THRESHOLD")) is not None:
+        if env_present("--metrics-ui-alerts-overlay-critical-threshold"):
+            skip_due_to_cli(
+                "metrics_ui_alerts_overlay_critical_threshold",
+                "RUN_TRADING_STUB_METRICS_UI_ALERTS_OVERLAY_CRITICAL_THRESHOLD",
+                raw,
+            )
+        else:
+            args.metrics_ui_alerts_overlay_critical_threshold = parse_int(
+                "RUN_TRADING_STUB_METRICS_UI_ALERTS_OVERLAY_CRITICAL_THRESHOLD"
+            )
+            apply_value(
+                "metrics_ui_alerts_overlay_critical_threshold",
+                "RUN_TRADING_STUB_METRICS_UI_ALERTS_OVERLAY_CRITICAL_THRESHOLD",
+                raw,
+                args.metrics_ui_alerts_overlay_critical_threshold,
+            )
+
+    if (raw := os.getenv("RUN_TRADING_STUB_METRICS_UI_ALERTS_AUDIT_DIR")) is not None:
+        if env_present("--metrics-ui-alerts-audit-dir"):
+            skip_due_to_cli("metrics_ui_alerts_audit_dir", "RUN_TRADING_STUB_METRICS_UI_ALERTS_AUDIT_DIR", raw)
+        else:
+            normalized = raw.strip().lower()
+            if normalized in {"", "none", "null", "off", "disable", "disabled"}:
+                args.metrics_ui_alerts_audit_dir = None
+                value_sources["metrics_ui_alerts_audit_dir"] = "env_disabled"
+                override_keys.add("metrics_ui_alerts_audit_dir")
+                record_entry(
+                    {
+                        "option": "metrics_ui_alerts_audit_dir",
+                        "variable": "RUN_TRADING_STUB_METRICS_UI_ALERTS_AUDIT_DIR",
+                        "raw_value": raw,
+                        "applied": True,
+                        "parsed_value": None,
+                        "note": "metrics_ui_alerts_audit_disabled",
+                    }
+                )
+            else:
+                args.metrics_ui_alerts_audit_dir = Path(raw).expanduser()
+                apply_value(
+                    "metrics_ui_alerts_audit_dir",
+                    "RUN_TRADING_STUB_METRICS_UI_ALERTS_AUDIT_DIR",
+                    raw,
+                    str(args.metrics_ui_alerts_audit_dir),
+                )
+    if (raw := os.getenv("RUN_TRADING_STUB_METRICS_UI_ALERTS_AUDIT_BACKEND")) is not None:
+        if env_present("--metrics-ui-alerts-audit-backend"):
+            skip_due_to_cli(
+                "metrics_ui_alerts_audit_backend",
+                "RUN_TRADING_STUB_METRICS_UI_ALERTS_AUDIT_BACKEND",
+                raw,
+            )
+        else:
+            normalized = raw.strip().lower()
+            if normalized in {"", "auto"}:
+                args.metrics_ui_alerts_audit_backend = None
+                value_sources["metrics_ui_alerts_audit_backend"] = "env_auto"
+                override_keys.add("metrics_ui_alerts_audit_backend")
+                record_entry(
+                    {
+                        "option": "metrics_ui_alerts_audit_backend",
+                        "variable": "RUN_TRADING_STUB_METRICS_UI_ALERTS_AUDIT_BACKEND",
+                        "raw_value": raw,
+                        "applied": True,
+                        "parsed_value": None,
+                        "note": "metrics_ui_alerts_audit_backend_auto",
+                    }
+                )
+            elif normalized in UI_ALERT_AUDIT_BACKEND_CHOICES:
+                args.metrics_ui_alerts_audit_backend = normalized
+                apply_value(
+                    "metrics_ui_alerts_audit_backend",
+                    "RUN_TRADING_STUB_METRICS_UI_ALERTS_AUDIT_BACKEND",
+                    raw,
+                    normalized,
+                )
+            else:
+                parser.error(
+                    f"RUN_TRADING_STUB_METRICS_UI_ALERTS_AUDIT_BACKEND musi być jedną z wartości: {', '.join(UI_ALERT_AUDIT_BACKEND_CHOICES)}"
+                )
+
+    if (raw := os.getenv("RUN_TRADING_STUB_METRICS_UI_ALERTS_AUDIT_PATTERN")) is not None:
+        if env_present("--metrics-ui-alerts-audit-pattern"):
+            skip_due_to_cli(
+                "metrics_ui_alerts_audit_pattern",
+                "RUN_TRADING_STUB_METRICS_UI_ALERTS_AUDIT_PATTERN",
+                raw,
+            )
+        else:
+            normalized = raw.strip()
+            if not normalized:
+                args.metrics_ui_alerts_audit_pattern = None
+                value_sources["metrics_ui_alerts_audit_pattern"] = "env_disabled"
+                override_keys.add("metrics_ui_alerts_audit_pattern")
+                record_entry(
+                    {
+                        "option": "metrics_ui_alerts_audit_pattern",
+                        "variable": "RUN_TRADING_STUB_METRICS_UI_ALERTS_AUDIT_PATTERN",
+                        "raw_value": raw,
+                        "applied": True,
+                        "parsed_value": None,
+                        "note": "metrics_ui_alerts_audit_pattern_default",
+                    }
+                )
+            else:
+                args.metrics_ui_alerts_audit_pattern = normalized
+                apply_value(
+                    "metrics_ui_alerts_audit_pattern",
+                    "RUN_TRADING_STUB_METRICS_UI_ALERTS_AUDIT_PATTERN",
+                    raw,
+                    normalized,
+                )
+
+    if (raw := os.getenv("RUN_TRADING_STUB_METRICS_UI_ALERTS_AUDIT_RETENTION_DAYS")) is not None:
+        if env_present("--metrics-ui-alerts-audit-retention-days"):
+            skip_due_to_cli(
+                "metrics_ui_alerts_audit_retention_days",
+                "RUN_TRADING_STUB_METRICS_UI_ALERTS_AUDIT_RETENTION_DAYS",
+                raw,
+            )
+        else:
+            normalized = raw.strip()
+            if normalized == "":
+                args.metrics_ui_alerts_audit_retention_days = None
+                value_sources["metrics_ui_alerts_audit_retention_days"] = "env_disabled"
+                override_keys.add("metrics_ui_alerts_audit_retention_days")
+                record_entry(
+                    {
+                        "option": "metrics_ui_alerts_audit_retention_days",
+                        "variable": "RUN_TRADING_STUB_METRICS_UI_ALERTS_AUDIT_RETENTION_DAYS",
+                        "raw_value": raw,
+                        "applied": True,
+                        "parsed_value": None,
+                        "note": "metrics_ui_alerts_audit_retention_default",
+                    }
+                )
+            else:
+                args.metrics_ui_alerts_audit_retention_days = parse_int(
+                    "RUN_TRADING_STUB_METRICS_UI_ALERTS_AUDIT_RETENTION_DAYS"
+                )
+                apply_value(
+                    "metrics_ui_alerts_audit_retention_days",
+                    "RUN_TRADING_STUB_METRICS_UI_ALERTS_AUDIT_RETENTION_DAYS",
+                    raw,
+                    args.metrics_ui_alerts_audit_retention_days,
+                )
+
+    if (raw := os.getenv("RUN_TRADING_STUB_METRICS_UI_ALERTS_AUDIT_FSYNC")) is not None:
+        if env_present("--metrics-ui-alerts-audit-fsync"):
+            skip_due_to_cli("metrics_ui_alerts_audit_fsync", "RUN_TRADING_STUB_METRICS_UI_ALERTS_AUDIT_FSYNC", raw)
+        else:
+            args.metrics_ui_alerts_audit_fsync = parse_bool("RUN_TRADING_STUB_METRICS_UI_ALERTS_AUDIT_FSYNC")
+            apply_value(
+                "metrics_ui_alerts_audit_fsync",
+                "RUN_TRADING_STUB_METRICS_UI_ALERTS_AUDIT_FSYNC",
+                raw,
+                args.metrics_ui_alerts_audit_fsync,
+            )
+
     if (raw := os.getenv("RUN_TRADING_STUB_METRICS_PRINT_ADDRESS")) is not None:
         if env_present("--metrics-print-address"):
             skip_due_to_cli("metrics_print_address", "RUN_TRADING_STUB_METRICS_PRINT_ADDRESS", raw)
@@ -482,21 +862,207 @@ def _load_dataset(dataset_paths: Iterable[Path], include_default: bool) -> InMem
     return dataset
 
 
-def _build_ui_alert_sink(args) -> object | None:
+def _build_ui_alert_sink(
+    args,
+) -> tuple[object, Path, Mapping[str, object]] | None:
     if args.disable_metrics_ui_alerts:
         return None
-    if UiTelemetryAlertSink is None or DefaultAlertRouter is None or InMemoryAlertAuditLog is None:
+    if UiTelemetryAlertSink is None or DefaultAlertRouter is None:
         LOGGER.debug("Sink alertów telemetrii UI niedostępny – pomijam.")
         return None
-    path = Path(args.metrics_ui_alerts_jsonl).expanduser() if args.metrics_ui_alerts_jsonl else DEFAULT_UI_ALERTS_JSONL_PATH.expanduser()
+    path = (
+        Path(args.metrics_ui_alerts_jsonl).expanduser()
+        if args.metrics_ui_alerts_jsonl
+        else DEFAULT_UI_ALERTS_JSONL_PATH.expanduser()
+    )
     try:
-        router = DefaultAlertRouter(audit_log=InMemoryAlertAuditLog())
-        sink = UiTelemetryAlertSink(router, jsonl_path=path)
+        audit_log = None
+        raw_backend = getattr(args, "metrics_ui_alerts_audit_backend", None)
+        requested_backend = (raw_backend or "auto").lower()
+        if requested_backend not in UI_ALERT_AUDIT_BACKEND_CHOICES:
+            raise ValueError(f"Nieobsługiwany backend audytu UI: {requested_backend}")
+        audit_backend: dict[str, object] = {"requested": requested_backend}
+        audit_dir = (
+            Path(args.metrics_ui_alerts_audit_dir).expanduser()
+            if getattr(args, "metrics_ui_alerts_audit_dir", None)
+            else None
+        )
+        audit_pattern = (
+            getattr(args, "metrics_ui_alerts_audit_pattern", None)
+            or _DEFAULT_UI_ALERT_AUDIT_PATTERN
+        )
+        retention_override = getattr(args, "metrics_ui_alerts_audit_retention_days", None)
+        audit_retention = (
+            retention_override
+            if retention_override is not None
+            else _DEFAULT_UI_ALERT_AUDIT_RETENTION_DAYS
+        )
+        file_backend_requested = audit_dir is not None or requested_backend == "file"
+        memory_forced = requested_backend == "memory"
+        file_backend_error = False
+        if requested_backend == "file" and audit_dir is None:
+            raise ValueError("Backend plikowy audytu UI wymaga podania --metrics-ui-alerts-audit-dir")
+        if not memory_forced and audit_dir is not None:
+            if FileAlertAuditLog is None:
+                if requested_backend == "file":
+                    raise RuntimeError(
+                        "Wymuszono backend plikowy alertów UI, ale FileAlertAuditLog nie jest dostępny w środowisku."
+                    )
+                LOGGER.warning(
+                    "Wymuszono katalog audytu alertów UI (%s), ale FileAlertAuditLog nie jest dostępny – przełączam na backend w pamięci.",
+                    audit_dir,
+                )
+            else:
+                try:
+                    audit_log = FileAlertAuditLog(
+                        directory=audit_dir,
+                        filename_pattern=audit_pattern,
+                        retention_days=audit_retention,
+                        fsync=bool(getattr(args, "metrics_ui_alerts_audit_fsync", False)),
+                    )
+                except Exception as exc:
+                    file_backend_error = True
+                    if requested_backend == "file":
+                        raise RuntimeError(
+                            "Nie udało się zainicjalizować FileAlertAuditLog dla wymuszonego backendu file"
+                        ) from exc
+                    LOGGER.exception(
+                        "Nie udało się zainicjalizować FileAlertAuditLog w stubie – użyję audytu w pamięci."
+                    )
+                else:
+                    audit_backend.update(
+                        {
+                            "backend": "file",
+                            "directory": str(audit_dir),
+                            "pattern": audit_pattern,
+                            "retention_days": audit_retention,
+                            "fsync": bool(getattr(args, "metrics_ui_alerts_audit_fsync", False)),
+                        }
+                    )
+        if audit_log is None:
+            if InMemoryAlertAuditLog is None:
+                LOGGER.debug("Brak backendu audytu dla alertów UI – pomijam sink.")
+                audit_backend.setdefault("backend", None)
+                audit_backend.setdefault("note", "no_audit_backend_available")
+                return None
+            audit_log = InMemoryAlertAuditLog()
+            audit_backend.update(
+                {
+                    "backend": "memory",
+                    "fsync": bool(getattr(args, "metrics_ui_alerts_audit_fsync", False)),
+                }
+            )
+            if requested_backend == "memory" and audit_dir is not None:
+                audit_backend["note"] = "directory_ignored_memory_backend"
+            elif file_backend_requested and requested_backend != "memory":
+                audit_backend["note"] = (
+                    "file_backend_error" if file_backend_error else "file_backend_unavailable"
+                )
+        elif "backend" not in audit_backend:
+            audit_backend["backend"] = "file"
+
+        router = DefaultAlertRouter(audit_log=audit_log)
+        reduce_mode = (args.metrics_ui_alerts_reduce_mode or "enable").lower()
+        overlay_mode = (args.metrics_ui_alerts_overlay_mode or "enable").lower()
+        jank_mode = (args.metrics_ui_alerts_jank_mode or "enable").lower()
+        reduce_dispatch = reduce_mode == "enable"
+        overlay_dispatch = overlay_mode == "enable"
+        jank_dispatch = jank_mode == "enable"
+        reduce_logging = reduce_mode in {"enable", "jsonl"}
+        overlay_logging = overlay_mode in {"enable", "jsonl"}
+        jank_logging = jank_mode in {"enable", "jsonl"}
+        reduce_category = args.metrics_ui_alerts_reduce_category or _DEFAULT_UI_CATEGORY
+        reduce_active = (
+            args.metrics_ui_alerts_reduce_active_severity or _DEFAULT_UI_SEVERITY_ACTIVE
+        )
+        reduce_recovered = (
+            args.metrics_ui_alerts_reduce_recovered_severity or _DEFAULT_UI_SEVERITY_RECOVERED
+        )
+        overlay_category = args.metrics_ui_alerts_overlay_category or _DEFAULT_UI_CATEGORY
+        overlay_exceeded = (
+            args.metrics_ui_alerts_overlay_exceeded_severity or _DEFAULT_UI_SEVERITY_ACTIVE
+        )
+        overlay_recovered = (
+            args.metrics_ui_alerts_overlay_recovered_severity or _DEFAULT_UI_SEVERITY_RECOVERED
+        )
+        overlay_critical = (
+            args.metrics_ui_alerts_overlay_critical_severity or _DEFAULT_OVERLAY_SEVERITY_CRITICAL
+        )
+        threshold = (
+            args.metrics_ui_alerts_overlay_critical_threshold
+            if args.metrics_ui_alerts_overlay_critical_threshold is not None
+            else _DEFAULT_OVERLAY_THRESHOLD
+        )
+        jank_category = args.metrics_ui_alerts_jank_category or _DEFAULT_UI_CATEGORY
+        jank_spike = (
+            args.metrics_ui_alerts_jank_spike_severity or _DEFAULT_JANK_SEVERITY_SPIKE
+        )
+        jank_critical = (
+            args.metrics_ui_alerts_jank_critical_severity or _DEFAULT_JANK_SEVERITY_CRITICAL
+        )
+        jank_threshold = (
+            args.metrics_ui_alerts_jank_critical_over_ms
+            if args.metrics_ui_alerts_jank_critical_over_ms is not None
+            else _DEFAULT_JANK_CRITICAL_THRESHOLD_MS
+        )
+        sink_kwargs = dict(
+            jsonl_path=path,
+            enable_reduce_motion_alerts=reduce_dispatch,
+            enable_overlay_alerts=overlay_dispatch,
+            enable_jank_alerts=jank_dispatch,
+            log_reduce_motion_events=reduce_logging,
+            log_overlay_events=overlay_logging,
+            log_jank_events=jank_logging,
+            reduce_motion_category=reduce_category,
+            reduce_motion_severity_active=reduce_active,
+            reduce_motion_severity_recovered=reduce_recovered,
+            overlay_category=overlay_category,
+            overlay_severity_exceeded=overlay_exceeded,
+            overlay_severity_recovered=overlay_recovered,
+            jank_category=jank_category,
+            jank_severity_spike=jank_spike,
+        )
+        if overlay_critical:
+            sink_kwargs["overlay_severity_critical"] = overlay_critical
+        if threshold is not None:
+            sink_kwargs["overlay_critical_threshold"] = threshold
+        if jank_critical:
+            sink_kwargs["jank_severity_critical"] = jank_critical
+        if jank_threshold is not None:
+            sink_kwargs["jank_critical_over_ms"] = jank_threshold
+
+        sink_settings: dict[str, object] = {
+            "path": str(path),
+            "reduce_mode": reduce_mode,
+            "overlay_mode": overlay_mode,
+            "jank_mode": jank_mode,
+            "reduce_motion_alerts": reduce_dispatch,
+            "overlay_alerts": overlay_dispatch,
+            "jank_alerts": jank_dispatch,
+            "reduce_motion_logging": reduce_logging,
+            "overlay_logging": overlay_logging,
+            "jank_logging": jank_logging,
+            "reduce_motion_category": reduce_category,
+            "reduce_motion_severity_active": reduce_active,
+            "reduce_motion_severity_recovered": reduce_recovered,
+            "overlay_category": overlay_category,
+            "overlay_severity_exceeded": overlay_exceeded,
+            "overlay_severity_recovered": overlay_recovered,
+            "overlay_severity_critical": overlay_critical,
+            "overlay_critical_threshold": threshold,
+            "jank_category": jank_category,
+            "jank_severity_spike": jank_spike,
+            "jank_severity_critical": jank_critical,
+            "jank_critical_over_ms": jank_threshold,
+        }
+        sink_settings["audit"] = dict(audit_backend)
+
+        sink = UiTelemetryAlertSink(router, **sink_kwargs)
     except Exception:
         LOGGER.exception("Nie udało się zainicjalizować UiTelemetryAlertSink – kontynuuję bez alertów UI")
         return None
     LOGGER.info("Sink alertów telemetrii UI aktywny (log: %s)", path)
-    return sink
+    return sink, path, sink_settings
 
 
 def _start_metrics_service(args) -> tuple[object | None, str | None]:
@@ -509,8 +1075,11 @@ def _start_metrics_service(args) -> tuple[object | None, str | None]:
     sinks: list[object] = []
     if JsonlSink is not None and args.metrics_jsonl:
         sinks.append(JsonlSink(Path(args.metrics_jsonl), fsync=args.metrics_jsonl_fsync))
-    ui_sink = _build_ui_alert_sink(args)
-    if ui_sink is not None:
+    ui_sink_bundle = _build_ui_alert_sink(args)
+    ui_alerts_path: Path | None = None
+    ui_alerts_settings: Mapping[str, object] | None = None
+    if ui_sink_bundle is not None:
+        ui_sink, ui_alerts_path, ui_alerts_settings = ui_sink_bundle
         sinks.append(ui_sink)
 
     tls_config = None
@@ -521,6 +1090,15 @@ def _start_metrics_service(args) -> tuple[object | None, str | None]:
             "client_ca_path": Path(args.metrics_tls_client_ca) if args.metrics_tls_client_ca else None,
             "require_client_auth": bool(args.metrics_tls_require_client_cert),
         }
+
+    audit_dir_path = (
+        Path(args.metrics_ui_alerts_audit_dir).expanduser()
+        if getattr(args, "metrics_ui_alerts_audit_dir", None)
+        else None
+    )
+    audit_pattern = getattr(args, "metrics_ui_alerts_audit_pattern", None)
+    audit_retention = getattr(args, "metrics_ui_alerts_audit_retention_days", None)
+    audit_fsync = bool(getattr(args, "metrics_ui_alerts_audit_fsync", False))
 
     base_kwargs = dict(
         host=args.metrics_host,
@@ -536,17 +1114,80 @@ def _start_metrics_service(args) -> tuple[object | None, str | None]:
         kw["tls_config"] = tls_config
     if args.metrics_auth_token:
         kw["auth_token"] = args.metrics_auth_token
+    if ui_alerts_path is not None:
+        kw["ui_alerts_jsonl_path"] = ui_alerts_path
+    if ui_alerts_settings is not None:
+        kw["ui_alerts_config"] = ui_alerts_settings
+    if audit_dir_path is not None:
+        kw["ui_alerts_audit_dir"] = audit_dir_path
+    backend_choice = getattr(args, "metrics_ui_alerts_audit_backend", None)
+    if backend_choice is not None:
+        kw["ui_alerts_audit_backend"] = backend_choice
+    if audit_pattern is not None:
+        kw["ui_alerts_audit_pattern"] = audit_pattern
+    if audit_retention is not None:
+        kw["ui_alerts_audit_retention_days"] = audit_retention
+    kw["ui_alerts_audit_fsync"] = audit_fsync
     attempts.append(kw)
 
     if "tls_config" in kw:
-        attempts.append({k: v for k, v in base_kwargs.items() if True} | ({"auth_token": args.metrics_auth_token} if args.metrics_auth_token else {}))
+        k2 = dict(base_kwargs)
+        if args.metrics_auth_token:
+            k2["auth_token"] = args.metrics_auth_token
+        if ui_alerts_path is not None:
+            k2["ui_alerts_jsonl_path"] = ui_alerts_path
+        if ui_alerts_settings is not None:
+            k2["ui_alerts_config"] = ui_alerts_settings
+        if audit_dir_path is not None:
+            k2["ui_alerts_audit_dir"] = audit_dir_path
+        if backend_choice is not None:
+            k2["ui_alerts_audit_backend"] = backend_choice
+        if audit_pattern is not None:
+            k2["ui_alerts_audit_pattern"] = audit_pattern
+        if audit_retention is not None:
+            k2["ui_alerts_audit_retention_days"] = audit_retention
+        k2["ui_alerts_audit_fsync"] = audit_fsync
+        attempts.append(k2)
     if "auth_token" in kw:
-        attempts.append({k: v for k, v in base_kwargs.items() if True} | ({"tls_config": tls_config} if tls_config is not None else {}))
+        k3 = dict(base_kwargs)
+        if tls_config is not None:
+            k3["tls_config"] = tls_config
+        if ui_alerts_path is not None:
+            k3["ui_alerts_jsonl_path"] = ui_alerts_path
+        if ui_alerts_settings is not None:
+            k3["ui_alerts_config"] = ui_alerts_settings
+        if audit_dir_path is not None:
+            k3["ui_alerts_audit_dir"] = audit_dir_path
+        if backend_choice is not None:
+            k3["ui_alerts_audit_backend"] = backend_choice
+        if audit_pattern is not None:
+            k3["ui_alerts_audit_pattern"] = audit_pattern
+        if audit_retention is not None:
+            k3["ui_alerts_audit_retention_days"] = audit_retention
+        k3["ui_alerts_audit_fsync"] = audit_fsync
+        attempts.append(k3)
+    fallback_kwargs = dict(base_kwargs)
+    if ui_alerts_settings is not None:
+        fallback_kwargs["ui_alerts_config"] = ui_alerts_settings
+    if ui_alerts_path is not None:
+        fallback_kwargs["ui_alerts_jsonl_path"] = ui_alerts_path
+    if audit_dir_path is not None:
+        fallback_kwargs["ui_alerts_audit_dir"] = audit_dir_path
+    if backend_choice is not None:
+        fallback_kwargs["ui_alerts_audit_backend"] = backend_choice
+    if audit_pattern is not None:
+        fallback_kwargs["ui_alerts_audit_pattern"] = audit_pattern
+    if audit_retention is not None:
+        fallback_kwargs["ui_alerts_audit_retention_days"] = audit_retention
+    fallback_kwargs["ui_alerts_audit_fsync"] = audit_fsync
+    attempts.append(fallback_kwargs)
     attempts.append(dict(base_kwargs))
 
     last_exc: Exception | None = None
     for opt in attempts:
         try:
+            if ui_alerts_path is not None:
+                opt.setdefault("ui_alerts_jsonl_path", ui_alerts_path)
             server = create_metrics_server(**opt)  # type: ignore[misc]
             server.start()
             address = getattr(server, "address", f"{args.metrics_host}:{args.metrics_port}")
@@ -602,6 +1243,114 @@ def build_parser() -> argparse.ArgumentParser:
         "--metrics-ui-alerts-jsonl", type=Path, default=None, help="Plik JSONL dla alertów UI (domyślnie logs/ui_telemetry_alerts.jsonl)."
     )
     metrics_group.add_argument("--disable-metrics-ui-alerts", action="store_true", help="Wyłącz alerty telemetrii UI.")
+    metrics_group.add_argument(
+        "--metrics-ui-alerts-reduce-mode",
+        choices=UI_ALERT_MODE_CHOICES,
+        default=None,
+        help="Tryb alertów reduce-motion (enable/disable).",
+    )
+    metrics_group.add_argument(
+        "--metrics-ui-alerts-overlay-mode",
+        choices=UI_ALERT_MODE_CHOICES,
+        default=None,
+        help="Tryb alertów budżetu overlayów (enable/disable).",
+    )
+    metrics_group.add_argument(
+        "--metrics-ui-alerts-reduce-category",
+        default=None,
+        help="Kategoria alertów reduce-motion (domyślnie ui.performance).",
+    )
+    metrics_group.add_argument(
+        "--metrics-ui-alerts-reduce-active-severity",
+        default=None,
+        help="Severity alertu przy aktywacji reduce-motion (domyślnie warning).",
+    )
+    metrics_group.add_argument(
+        "--metrics-ui-alerts-reduce-recovered-severity",
+        default=None,
+        help="Severity alertu przy powrocie z reduce-motion (domyślnie info).",
+    )
+    metrics_group.add_argument(
+        "--metrics-ui-alerts-overlay-category",
+        default=None,
+        help="Kategoria alertów overlay budget (domyślnie ui.performance).",
+    )
+    metrics_group.add_argument(
+        "--metrics-ui-alerts-overlay-exceeded-severity",
+        default=None,
+        help="Severity alertu przy przekroczeniu overlay budget (domyślnie warning).",
+    )
+    metrics_group.add_argument(
+        "--metrics-ui-alerts-overlay-recovered-severity",
+        default=None,
+        help="Severity alertu przy powrocie overlay budget (domyślnie info).",
+    )
+    metrics_group.add_argument(
+        "--metrics-ui-alerts-overlay-critical-severity",
+        default=None,
+        help="Severity krytycznego alertu overlay (różnica >= próg).",
+    )
+    metrics_group.add_argument(
+        "--metrics-ui-alerts-overlay-critical-threshold",
+        type=int,
+        default=None,
+        help="Próg nadwyżki nakładek powodujący alert krytyczny.",
+    )
+    metrics_group.add_argument(
+        "--metrics-ui-alerts-jank-mode",
+        choices=UI_ALERT_MODE_CHOICES,
+        default=None,
+        help="Tryb alertów jank (enable/jsonl/disable).",
+    )
+    metrics_group.add_argument(
+        "--metrics-ui-alerts-jank-category",
+        default=None,
+        help="Kategoria alertów jank (domyślnie ui.performance).",
+    )
+    metrics_group.add_argument(
+        "--metrics-ui-alerts-jank-spike-severity",
+        default=None,
+        help="Severity alertu jank przy pojedynczym skoku (domyślnie warning).",
+    )
+    metrics_group.add_argument(
+        "--metrics-ui-alerts-jank-critical-severity",
+        default=None,
+        help="Severity alertu jank po przekroczeniu progu krytycznego (domyślnie brak).",
+    )
+    metrics_group.add_argument(
+        "--metrics-ui-alerts-jank-critical-over-ms",
+        type=float,
+        default=None,
+        help="Próg (ms) przekroczenia limitu klatki dla alertu jank o severity krytycznym.",
+    )
+    metrics_group.add_argument(
+        "--metrics-ui-alerts-audit-dir",
+        type=Path,
+        default=None,
+        help="Katalog audytu alertów UI emitowanych przez stub (JSONL).",
+    )
+    metrics_group.add_argument(
+        "--metrics-ui-alerts-audit-backend",
+        choices=UI_ALERT_AUDIT_BACKEND_CHOICES,
+        default=None,
+        help="Preferowany backend audytu alertów UI (auto/file/memory).",
+    )
+    metrics_group.add_argument(
+        "--metrics-ui-alerts-audit-pattern",
+        default=None,
+        help="Wzorzec nazw plików audytu UI (domyślnie metrics-ui-alerts-%%Y%%m%%d.jsonl).",
+    )
+    metrics_group.add_argument(
+        "--metrics-ui-alerts-audit-retention-days",
+        type=int,
+        default=None,
+        help="Retencja plików audytu alertów UI w dniach (domyślnie 90).",
+    )
+    metrics_group.add_argument(
+        "--metrics-ui-alerts-audit-fsync",
+        action="store_true",
+        help="Wymuś fsync po każdym wpisie audytu alertów UI.",
+    )
     metrics_group.add_argument("--metrics-print-address", action="store_true", help="Wypisz adres MetricsService.")
 
     # --- Audyt/Plan runtime ---
@@ -690,13 +1439,128 @@ def _build_metrics_plan(args) -> Mapping[str, object]:
         tls_info = {"configured": False, "require_client_auth": bool(args.metrics_tls_require_client_cert)}  # type: ignore[assignment]
 
     ui_alert_path = Path(str(args.metrics_ui_alerts_jsonl)).expanduser() if args.metrics_ui_alerts_jsonl else DEFAULT_UI_ALERTS_JSONL_PATH.expanduser()
+    reduce_mode_value = (args.metrics_ui_alerts_reduce_mode or "enable").lower()
+    overlay_mode_value = (args.metrics_ui_alerts_overlay_mode or "enable").lower()
+    jank_mode_value = (args.metrics_ui_alerts_jank_mode or "enable").lower()
+    reduce_dispatch = reduce_mode_value == "enable"
+    overlay_dispatch = overlay_mode_value == "enable"
+    jank_dispatch = jank_mode_value == "enable"
+    reduce_logging = reduce_mode_value in {"enable", "jsonl"}
+    overlay_logging = overlay_mode_value in {"enable", "jsonl"}
+    jank_logging = jank_mode_value in {"enable", "jsonl"}
+    sink_expected = (
+        reduce_logging
+        or overlay_logging
+        or jank_logging
+        or reduce_dispatch
+        or overlay_dispatch
+        or jank_dispatch
+    )
+    audit_dir_arg = getattr(args, "metrics_ui_alerts_audit_dir", None)
+    audit_dir = (
+        Path(str(audit_dir_arg)).expanduser()
+        if audit_dir_arg
+        else None
+    )
+    audit_pattern = (
+        getattr(args, "metrics_ui_alerts_audit_pattern", None)
+        or _DEFAULT_UI_ALERT_AUDIT_PATTERN
+    )
+    retention_override = getattr(args, "metrics_ui_alerts_audit_retention_days", None)
+    audit_retention = (
+        retention_override
+        if retention_override is not None
+        else _DEFAULT_UI_ALERT_AUDIT_RETENTION_DAYS
+    )
+    raw_backend_choice = getattr(args, "metrics_ui_alerts_audit_backend", None)
+    requested_backend = (raw_backend_choice or "auto").lower()
+    memory_forced = requested_backend == "memory"
+    file_backend_supported = audit_dir is not None and FileAlertAuditLog is not None and not memory_forced
+    audit_info: Mapping[str, object]
+    if requested_backend == "file" and audit_dir is None:
+        audit_info = {
+            "requested": requested_backend,
+            "backend": None,
+            "note": "file_backend_requires_directory",
+            "fsync": bool(getattr(args, "metrics_ui_alerts_audit_fsync", False)),
+        }
+    elif requested_backend == "file" and FileAlertAuditLog is None:
+        audit_info = {
+            "requested": requested_backend,
+            "backend": None,
+            "note": "file_backend_unavailable",
+            "fsync": bool(getattr(args, "metrics_ui_alerts_audit_fsync", False)),
+        }
+    elif requested_backend == "memory":
+        audit_info = {
+            "requested": requested_backend,
+            "backend": "memory",
+            "fsync": bool(getattr(args, "metrics_ui_alerts_audit_fsync", False)),
+            "note": "directory_ignored_memory_backend"
+            if audit_dir is not None
+            else None,
+        }
+        if audit_info["note"] is None:
+            audit_info = {k: v for k, v in audit_info.items() if v is not None}
+    elif file_backend_supported:
+        audit_info = {
+            "requested": requested_backend,
+            "backend": "file",
+            "directory": str(audit_dir),
+            "pattern": audit_pattern,
+            "retention_days": audit_retention,
+            "fsync": bool(getattr(args, "metrics_ui_alerts_audit_fsync", False)),
+        }
+    else:
+        audit_info = {
+            "requested": requested_backend,
+            "backend": "memory",
+            "fsync": bool(getattr(args, "metrics_ui_alerts_audit_fsync", False)),
+        }
+        if audit_dir is not None:
+            audit_info["note"] = "file_backend_unavailable"
+
     ui_alerts_info: Mapping[str, object] = {
         "configured": not bool(args.disable_metrics_ui_alerts),
         "available": ui_alert_deps,
-        "expected_active": bool(args.enable_metrics and not args.disable_metrics_ui_alerts and metrics_available and ui_alert_deps),
+        "expected_active": bool(args.enable_metrics and not args.disable_metrics_ui_alerts and metrics_available and ui_alert_deps and sink_expected),
         "path": str(ui_alert_path),
         "metadata": file_reference_metadata(ui_alert_path, role="ui_alerts_jsonl"),
         "source": "cli" if args.metrics_ui_alerts_jsonl else "default",
+        "reduce_mode": reduce_mode_value,
+        "overlay_mode": overlay_mode_value,
+        "jank_mode": jank_mode_value,
+        "reduce_motion_dispatch": reduce_dispatch,
+        "overlay_dispatch": overlay_dispatch,
+        "jank_dispatch": jank_dispatch,
+        "reduce_motion_logging": reduce_logging,
+        "overlay_logging": overlay_logging,
+        "jank_logging": jank_logging,
+        "reduce_motion_category": args.metrics_ui_alerts_reduce_category or _DEFAULT_UI_CATEGORY,
+        "reduce_motion_severity_active": args.metrics_ui_alerts_reduce_active_severity or _DEFAULT_UI_SEVERITY_ACTIVE,
+        "reduce_motion_severity_recovered": args.metrics_ui_alerts_reduce_recovered_severity or _DEFAULT_UI_SEVERITY_RECOVERED,
+        "overlay_category": args.metrics_ui_alerts_overlay_category or _DEFAULT_UI_CATEGORY,
+        "overlay_severity_exceeded": args.metrics_ui_alerts_overlay_exceeded_severity or _DEFAULT_UI_SEVERITY_ACTIVE,
+        "overlay_severity_recovered": args.metrics_ui_alerts_overlay_recovered_severity or _DEFAULT_UI_SEVERITY_RECOVERED,
+        "overlay_severity_critical": args.metrics_ui_alerts_overlay_critical_severity or _DEFAULT_OVERLAY_SEVERITY_CRITICAL,
+        "overlay_critical_threshold": (
+            args.metrics_ui_alerts_overlay_critical_threshold
+            if args.metrics_ui_alerts_overlay_critical_threshold is not None
+            else _DEFAULT_OVERLAY_THRESHOLD
+        ),
+        "jank_category": args.metrics_ui_alerts_jank_category or _DEFAULT_UI_CATEGORY,
+        "jank_severity_spike": args.metrics_ui_alerts_jank_spike_severity or _DEFAULT_JANK_SEVERITY_SPIKE,
+        "jank_severity_critical": (
+            args.metrics_ui_alerts_jank_critical_severity
+            if args.metrics_ui_alerts_jank_critical_severity is not None
+            else _DEFAULT_JANK_SEVERITY_CRITICAL
+        ),
+        "jank_critical_over_ms": (
+            args.metrics_ui_alerts_jank_critical_over_ms
+            if args.metrics_ui_alerts_jank_critical_over_ms is not None
+            else _DEFAULT_JANK_CRITICAL_THRESHOLD_MS
+        ),
+        "audit": audit_info,
     }
 
     warnings: list[str] = []
@@ -812,6 +1676,14 @@ def main(argv: list[str] | None = None) -> int:
             path = getattr(args, option)
             if path and not Path(path).exists():
                 parser.error(f"Ścieżka {option.replace('_', '-')} nie istnieje: {path}")
+
+    backend_choice = (getattr(args, "metrics_ui_alerts_audit_backend", None) or "auto").lower()
+    if backend_choice not in UI_ALERT_AUDIT_BACKEND_CHOICES:
+        parser.error("--metrics-ui-alerts-audit-backend wymaga wartości auto/file/memory")
+    if backend_choice == "file" and not getattr(args, "metrics_ui_alerts_audit_dir", None):
+        parser.error(
+            "--metrics-ui-alerts-audit-backend file wymaga jednoczesnego podania --metrics-ui-alerts-audit-dir"
+        )
 
     dataset_paths = args.dataset or []
     dataset = _load_dataset(dataset_paths, include_default=not args.no_default_dataset)

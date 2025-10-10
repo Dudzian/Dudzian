@@ -334,6 +334,25 @@ def _format_optional_text(value: Any | None) -> str | None:
     return str(value)
 
 
+def _normalize_alert_mode(value: Any | None, *, field_name: str) -> str | None:
+    """Normalizuje tryby alertów UI na wartość lower-case lub zwraca ``None``."""
+
+    normalized = _format_optional_text(value)
+    if normalized is None:
+        return None
+
+    normalized = normalized.strip().lower()
+    if normalized in {"enable", "jsonl", "disable"}:
+        return normalized
+
+    raise ValueError(
+        f"{field_name} musi należeć do {{enable,jsonl,disable}} (otrzymano {value!r})"
+    )
+
+
+_UI_ALERT_AUDIT_BACKEND_ALLOWED = {"auto", "file", "memory"}
+
+
 def _load_smoke_archive_upload(entry: Optional[Mapping[str, Any]]):
     if SmokeArchiveUploadConfig is None or entry is None:
         return None
@@ -586,6 +605,21 @@ def _load_metrics_service(
         kwargs["ui_alerts_jsonl_path"] = _normalize_runtime_path(
             metrics_raw.get("ui_alerts_jsonl_path"), base_dir=base_dir
         )
+    if "ui_alerts_audit_backend" in available_fields:
+        backend_value = metrics_raw.get("ui_alerts_audit_backend")
+        normalized_backend = _format_optional_text(backend_value)
+        if normalized_backend is None:
+            kwargs["ui_alerts_audit_backend"] = None
+        else:
+            normalized_backend = normalized_backend.strip().lower()
+            if normalized_backend == "auto":
+                kwargs["ui_alerts_audit_backend"] = None
+            elif normalized_backend in _UI_ALERT_AUDIT_BACKEND_ALLOWED:
+                kwargs["ui_alerts_audit_backend"] = normalized_backend
+            else:
+                raise ValueError(
+                    "ui_alerts_audit_backend musi należeć do {auto,file,memory}"
+                )
 
     # Opcjonalne: konfiguracja TLS (jeśli dataclass TLS jest dostępny i pole istnieje)
     if "tls" in available_fields and MetricsServiceTlsConfig is not None:
@@ -605,6 +639,10 @@ def _load_metrics_service(
     # Opcjonalne: alerty reduce_motion
     if "reduce_motion_alerts" in available_fields:
         kwargs["reduce_motion_alerts"] = bool(metrics_raw.get("reduce_motion_alerts", False))
+    if "reduce_motion_mode" in available_fields:
+        kwargs["reduce_motion_mode"] = _normalize_alert_mode(
+            metrics_raw.get("reduce_motion_mode"), field_name="reduce_motion_mode"
+        )
     if "reduce_motion_category" in available_fields:
         kwargs["reduce_motion_category"] = str(
             metrics_raw.get("reduce_motion_category", "ui.performance")
@@ -621,6 +659,10 @@ def _load_metrics_service(
     # Opcjonalne: alerty overlay_budget
     if "overlay_alerts" in available_fields:
         kwargs["overlay_alerts"] = bool(metrics_raw.get("overlay_alerts", False))
+    if "overlay_alert_mode" in available_fields:
+        kwargs["overlay_alert_mode"] = _normalize_alert_mode(
+            metrics_raw.get("overlay_alert_mode"), field_name="overlay_alert_mode"
+        )
     if "overlay_alert_category" in available_fields:
         kwargs["overlay_alert_category"] = str(
             metrics_raw.get("overlay_alert_category", "ui.performance")
@@ -633,6 +675,52 @@ def _load_metrics_service(
         kwargs["overlay_alert_severity_recovered"] = str(
             metrics_raw.get("overlay_alert_severity_recovered", "info")
         )
+    if "overlay_alert_severity_critical" in available_fields:
+        kwargs["overlay_alert_severity_critical"] = _format_optional_text(
+            metrics_raw.get("overlay_alert_severity_critical")
+        )
+    if "overlay_alert_critical_threshold" in available_fields:
+        threshold_raw = metrics_raw.get("overlay_alert_critical_threshold")
+        if threshold_raw in (None, ""):
+            kwargs["overlay_alert_critical_threshold"] = None
+        else:
+            try:
+                kwargs["overlay_alert_critical_threshold"] = int(threshold_raw)
+            except (TypeError, ValueError) as exc:  # pragma: no cover - walidacja wejścia
+                raise ValueError(
+                    "overlay_alert_critical_threshold musi być liczbą całkowitą"
+                ) from exc
+
+    # Opcjonalne: alerty jank
+    if "jank_alerts" in available_fields:
+        kwargs["jank_alerts"] = bool(metrics_raw.get("jank_alerts", False))
+    if "jank_alert_mode" in available_fields:
+        kwargs["jank_alert_mode"] = _normalize_alert_mode(
+            metrics_raw.get("jank_alert_mode"), field_name="jank_alert_mode"
+        )
+    if "jank_alert_category" in available_fields:
+        kwargs["jank_alert_category"] = str(
+            metrics_raw.get("jank_alert_category", "ui.performance")
+        )
+    if "jank_alert_severity_spike" in available_fields:
+        kwargs["jank_alert_severity_spike"] = str(
+            metrics_raw.get("jank_alert_severity_spike", "warning")
+        )
+    if "jank_alert_severity_critical" in available_fields:
+        kwargs["jank_alert_severity_critical"] = _format_optional_text(
+            metrics_raw.get("jank_alert_severity_critical")
+        )
+    if "jank_alert_critical_over_ms" in available_fields:
+        jank_threshold = metrics_raw.get("jank_alert_critical_over_ms")
+        if jank_threshold in (None, ""):
+            kwargs["jank_alert_critical_over_ms"] = None
+        else:
+            try:
+                kwargs["jank_alert_critical_over_ms"] = float(jank_threshold)
+            except (TypeError, ValueError) as exc:  # pragma: no cover - walidacja wejścia
+                raise ValueError(
+                    "jank_alert_critical_over_ms musi być liczbą"
+                ) from exc
 
     return MetricsServiceConfig(**kwargs)  # type: ignore[call-arg]
 
