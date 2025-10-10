@@ -50,6 +50,15 @@ try:  # pragma: no cover
 except Exception:  # pragma: no cover
     AlertMessage = None  # type: ignore
 
+try:  # pragma: no cover - sink telemetrii UI jest opcjonalny
+    from bot_core.runtime.metrics_alerts import (  # type: ignore
+        DEFAULT_UI_ALERTS_JSONL_PATH,
+        UiTelemetryAlertSink,
+    )
+except Exception:  # pragma: no cover - brak modułu telemetrii UI
+    UiTelemetryAlertSink = None  # type: ignore
+    DEFAULT_UI_ALERTS_JSONL_PATH = Path("logs/ui_telemetry_alerts.jsonl")
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -582,6 +591,8 @@ def create_server(
     enable_logging_sink: bool = True,
     jsonl_path: str | Path | None = None,
     jsonl_fsync: bool = False,
+    ui_alerts_jsonl_path: str | Path | None = None,
+    ui_alerts_config: Mapping[str, Any] | None = None,
     # spójnie wspieramy oba warianty
     tls_config: Mapping[str, Any] | Any | None = None,
     auth_token: str | None = None,
@@ -615,6 +626,11 @@ def create_server(
             "active": bool(jsonl_path),
             "path": str(Path(jsonl_path).expanduser()) if jsonl_path else None,
             "fsync": bool(jsonl_fsync) if jsonl_path else False,
+        },
+        "ui_alerts_sink": {
+            "active": bool(ui_alerts_jsonl_path),
+            "path": str(Path(ui_alerts_jsonl_path).expanduser()) if ui_alerts_jsonl_path else None,
+            "config": dict(ui_alerts_config) if ui_alerts_config else None,
         },
         "sink_descriptions": [
             {"class": sink.__class__.__name__, "module": sink.__class__.__module__}
@@ -652,25 +668,150 @@ def build_metrics_server_from_config(
         return None
 
     sink_list: list[MetricsSink] = list(sinks or [])
+    ui_alerts_path: str | None = None
+    ui_alerts_settings: Mapping[str, Any] | None = None
     # Integracja z alertami UI – gdy dostępny router i włączone flagi w configu
-    if alerts_router is not None and getattr(config, "reduce_motion_alerts", False):
-        sink_list.append(
-            ReduceMotionAlertSink(
-                alerts_router,
-                category=getattr(config, "reduce_motion_category", "ui.performance"),
-                severity_active=getattr(config, "reduce_motion_severity_active", "warning"),
-                severity_recovered=getattr(config, "reduce_motion_severity_recovered", "info"),
+    def _normalize_mode(mode_value, *, fallback_attr: str) -> str:
+        if mode_value is not None:
+            normalized = str(mode_value).lower()
+            if normalized in {"enable", "jsonl", "disable"}:
+                return normalized
+        else:
+            normalized = None
+        dispatch_enabled = bool(getattr(config, fallback_attr, False))
+        if normalized is None:
+            return "enable" if dispatch_enabled else "disable"
+        return normalized
+
+    reduce_mode = _normalize_mode(getattr(config, "reduce_motion_mode", None), fallback_attr="reduce_motion_alerts")
+    overlay_mode = _normalize_mode(getattr(config, "overlay_alert_mode", None), fallback_attr="overlay_alerts")
+    jank_mode = _normalize_mode(getattr(config, "jank_alert_mode", None), fallback_attr="jank_alerts")
+    reduce_dispatch = reduce_mode == "enable"
+    overlay_dispatch = overlay_mode == "enable"
+    jank_dispatch = jank_mode == "enable"
+    reduce_logging = reduce_mode in {"enable", "jsonl"}
+    overlay_logging = overlay_mode in {"enable", "jsonl"}
+    jank_logging = jank_mode in {"enable", "jsonl"}
+    ui_sink_attached = False
+    if alerts_router is not None and UiTelemetryAlertSink is not None:
+        try:
+            configured_path = getattr(config, "ui_alerts_jsonl_path", None)
+            path_value = configured_path or str(DEFAULT_UI_ALERTS_JSONL_PATH)
+            sink_kwargs = dict(
+                jsonl_path=path_value,
+                enable_reduce_motion_alerts=reduce_dispatch,
+                enable_overlay_alerts=overlay_dispatch,
+                log_reduce_motion_events=reduce_logging,
+                log_overlay_events=overlay_logging,
+                enable_jank_alerts=jank_dispatch,
+                log_jank_events=jank_logging,
+                reduce_motion_category=getattr(config, "reduce_motion_category", "ui.performance"),
+                reduce_motion_severity_active=getattr(
+                    config, "reduce_motion_severity_active", "warning"
+                ),
+                reduce_motion_severity_recovered=getattr(
+                    config, "reduce_motion_severity_recovered", "info"
+                ),
+                overlay_category=getattr(config, "overlay_alert_category", "ui.performance"),
+                overlay_severity_exceeded=getattr(
+                    config, "overlay_alert_severity_exceeded", "warning"
+                ),
+                overlay_severity_recovered=getattr(
+                    config, "overlay_alert_severity_recovered", "info"
+                ),
+                jank_category=getattr(config, "jank_alert_category", "ui.performance"),
+                jank_severity_spike=getattr(
+                    config, "jank_alert_severity_spike", "warning"
+                ),
             )
-        )
-    if alerts_router is not None and getattr(config, "overlay_alerts", False):
-        sink_list.append(
-            OverlayBudgetAlertSink(
-                alerts_router,
-                category=getattr(config, "overlay_alert_category", "ui.performance"),
-                severity_exceeded=getattr(config, "overlay_alert_severity_exceeded", "warning"),
-                severity_recovered=getattr(config, "overlay_alert_severity_recovered", "info"),
+            overlay_severity_critical = getattr(
+                config, "overlay_alert_severity_critical", None
             )
-        )
+            if overlay_severity_critical is not None:
+                sink_kwargs["overlay_severity_critical"] = overlay_severity_critical
+            overlay_threshold = getattr(config, "overlay_alert_critical_threshold", None)
+            if overlay_threshold is not None:
+                try:
+                    sink_kwargs["overlay_critical_threshold"] = int(overlay_threshold)
+                except (TypeError, ValueError):
+                    _LOGGER.debug(
+                        "Nieprawidłowy próg overlay_alert_critical_threshold=%s", overlay_threshold
+                    )
+            jank_severity_critical = getattr(config, "jank_alert_severity_critical", None)
+            if jank_severity_critical is not None:
+                sink_kwargs["jank_severity_critical"] = jank_severity_critical
+            jank_threshold = getattr(config, "jank_alert_critical_over_ms", None)
+            if jank_threshold is not None:
+                try:
+                    sink_kwargs["jank_critical_over_ms"] = float(jank_threshold)
+                except (TypeError, ValueError):
+                    _LOGGER.debug(
+                        "Nieprawidłowy próg jank_alert_critical_over_ms=%s", jank_threshold
+                    )
+            sink_list.append(UiTelemetryAlertSink(alerts_router, **sink_kwargs))
+            ui_alerts_path = path_value
+            ui_sink_attached = True
+            ui_alerts_settings = {
+                "jsonl_path": path_value,
+                "reduce_mode": reduce_mode,
+                "overlay_mode": overlay_mode,
+                "jank_mode": jank_mode,
+                "reduce_motion_alerts": reduce_dispatch,
+                "overlay_alerts": overlay_dispatch,
+                "jank_alerts": jank_dispatch,
+                "reduce_motion_logging": reduce_logging,
+                "overlay_logging": overlay_logging,
+                "jank_logging": jank_logging,
+                "reduce_motion_category": sink_kwargs.get("reduce_motion_category"),
+                "reduce_motion_severity_active": sink_kwargs.get("reduce_motion_severity_active"),
+                "reduce_motion_severity_recovered": sink_kwargs.get("reduce_motion_severity_recovered"),
+                "overlay_category": sink_kwargs.get("overlay_category"),
+                "overlay_severity_exceeded": sink_kwargs.get("overlay_severity_exceeded"),
+                "overlay_severity_recovered": sink_kwargs.get("overlay_severity_recovered"),
+                "overlay_severity_critical": sink_kwargs.get("overlay_severity_critical"),
+                "overlay_critical_threshold": sink_kwargs.get("overlay_critical_threshold"),
+                "jank_category": sink_kwargs.get("jank_category"),
+                "jank_severity_spike": sink_kwargs.get("jank_severity_spike"),
+                "jank_severity_critical": sink_kwargs.get("jank_severity_critical"),
+                "jank_critical_over_ms": sink_kwargs.get("jank_critical_over_ms"),
+            }
+        except Exception:  # pragma: no cover - diagnostyka pomocnicza
+            _LOGGER.exception("Nie udało się zainicjalizować UiTelemetryAlertSink")
+    if not ui_sink_attached and alerts_router is not None:
+        if reduce_dispatch:
+            sink_list.append(
+                ReduceMotionAlertSink(
+                    alerts_router,
+                    category=getattr(config, "reduce_motion_category", "ui.performance"),
+                    severity_active=getattr(
+                        config, "reduce_motion_severity_active", "warning"
+                    ),
+                    severity_recovered=getattr(
+                        config, "reduce_motion_severity_recovered", "info"
+                    ),
+                )
+            )
+        if overlay_dispatch:
+            sink_list.append(
+                OverlayBudgetAlertSink(
+                    alerts_router,
+                    category=getattr(config, "overlay_alert_category", "ui.performance"),
+                    severity_exceeded=getattr(
+                        config, "overlay_alert_severity_exceeded", "warning"
+                    ),
+                    severity_recovered=getattr(
+                        config, "overlay_alert_severity_recovered", "info"
+                    ),
+                )
+            )
+    if ui_alerts_path is None and UiTelemetryAlertSink is not None:
+        for sink in sink_list:
+            if isinstance(sink, UiTelemetryAlertSink):
+                try:
+                    ui_alerts_path = str(Path(sink.jsonl_path).expanduser())
+                except Exception:  # pragma: no cover - diagnostyka pomocnicza
+                    ui_alerts_path = str(sink.jsonl_path)
+                break
 
     return create_server(
         host=config.host,
@@ -680,6 +821,8 @@ def build_metrics_server_from_config(
         enable_logging_sink=getattr(config, "log_sink", True),
         jsonl_path=getattr(config, "jsonl_path", None),
         jsonl_fsync=getattr(config, "jsonl_fsync", False),
+        ui_alerts_jsonl_path=ui_alerts_path,
+        ui_alerts_config=ui_alerts_settings,
         tls_config=getattr(config, "tls", None),
         auth_token=getattr(config, "auth_token", None),
     )

@@ -88,9 +88,14 @@ Artefakty tworzymy skryptem `scripts/generate_trading_stubs.py`, a wzorcowy work
   który udostępnia telemetrię UI powłoce Qt. Można dostroić host/port, rozmiar historii (`--metrics-history-size`),
   zapisy JSONL (`--metrics-jsonl`, `--metrics-jsonl-fsync`), wyłączyć logowanie do stdout (`--metrics-disable-log-sink`)
   oraz wskazać log alertów UI (`--metrics-ui-alerts-jsonl`).
-  Przełącznik `--disable-metrics-ui-alerts` pozwala całkowicie wyłączyć sink `UiTelemetryAlertSink`, natomiast
-  `--metrics-print-address` wypisuje faktyczny adres serwera – przydatne w pipeline CI i przy pracy na wielu
-  instancjach stubu.
+  Przełącznik `--disable-metrics-ui-alerts` pozwala całkowicie wyłączyć sink `UiTelemetryAlertSink`, a dodatkowe
+  flagi `--metrics-ui-alerts-*-mode/category/severity/critical-threshold` umożliwiają spójne z core’owym runtime
+  sterowanie kategoriami i progami alertów reduce-motion/overlay. Tryb `mode` wspiera teraz warianty `enable`
+  (log + dispatch), `jsonl` (wyłącznie JSONL bez dispatchu) oraz `disable` (brak logowania i dispatchu). `--metrics-print-address`
+  wypisuje faktyczny adres serwera – przydatne w pipeline CI i przy pracy na wielu instancjach stubu.
+  Audyt alertów UI można przełączyć na backend plikowy za pomocą `--metrics-ui-alerts-audit-dir/pattern/retention-days`, `--metrics-ui-alerts-audit-backend`
+  (auto/file/memory) i `--metrics-ui-alerts-audit-fsync` (lub zmiennych `RUN_TRADING_STUB_METRICS_UI_ALERTS_AUDIT_*`). Gdy backend plikowy jest niedostępny (brak `FileAlertAuditLog`
+  w środowisku), skrypt samoczynnie degraduje się do audytu w pamięci i oznacza plan konfiguracji notatką `file_backend_unavailable`.
 * Stub potrafi równocześnie wystartować lekki `MetricsService` (`--enable-metrics`) – te same dane, które powłoka
   wysyła do core, można odebrać lokalnie. Dostępne są przełączniki `--metrics-host/--metrics-port`, zapis JSONL
   (`--metrics-jsonl`, `--metrics-jsonl-fsync`) oraz opcja `--metrics-disable-log-sink` tłumiąca logowanie snapshotów.
@@ -105,9 +110,46 @@ Artefakty tworzymy skryptem `scripts/generate_trading_stubs.py`, a wzorcowy work
   z `--shutdown-after`, aby przeprowadzić szybki smoke test UI lub komponentów gRPC.
 * Skrypt `scripts/run_metrics_service.py` startuje dedykowany serwer MetricsService (host/port, rozmiar historii,
   opcjonalny LoggingSink oraz zapis do JSONL z `--jsonl`/`--jsonl-fsync`) – wykorzystywany w CI i lokalnie do
-  obserwacji zdarzeń reduce-motion i budżetu overlayów wysyłanych z powłoki.
-* Narzędzie `scripts/watch_metrics_stream.py` podgląda `MetricsSnapshot` wprost z gRPC (filtr `--event`, format `table/json`,
-  limit rekordów) i służy do debugowania telemetrycznego w CI oraz na stanowiskach operatorów.
+  obserwacji zdarzeń reduce-motion, budżetu overlayów **oraz wykrytych klatek jank** wysyłanych z powłoki.
+  Flagi `--ui-alerts-audit-dir/pattern/retention-days`, `--ui-alerts-audit-backend` (auto/file/memory) oraz `--ui-alerts-audit-fsync`
+  (i odpowiadające im zmienne środowiskowe `RUN_METRICS_SERVICE_UI_ALERTS_AUDIT_*`) pozwalają zapisać audyt alertów UI do rotowanych plików JSONL.
+  Jeżeli backend plikowy nie jest dostępny, narzędzie loguje degradację do audytu w pamięci (również oznaczoną w planie konfiguracji jako
+  `file_backend_unavailable` lub `directory_ignored_memory_backend`), aby operatorzy mogli odnotować brak trwałego archiwum.
+  Runtime `bootstrap_environment` propaguje te informacje dalej – w `BootstrapContext.metrics_ui_alerts_settings` znajduje się sekcja
+  `audit` z rozstrzygnięciem realnego backendu (`memory` lub `file`), z notatkami `inherited_environment_router`, `file_backend_unavailable`
+  albo `memory_backend_not_selected` (np. gdy operator wymusił tryb `memory`, ale router środowiskowy wciąż zapisuje do pliku). Dzięki temu
+  pipeline demo→paper→live ma jednoznaczny obraz, czy alerty UI trafiają do trwałego audytu, czy też działamy w trybie degradacji.
+* Narzędzie `scripts/watch_metrics_stream.py` podgląda `MetricsSnapshot` wprost z gRPC (filtry `--event`, `--severity`,
+  `--severity-min`, `--since`, `--until`, `--screen-index`, `--screen-name`, format `table/json`, limit rekordów) i służy do
+  debugowania telemetrycznego w CI oraz na stanowiskach operatorów. Wspiera TLS/mTLS przez flagi `--use-tls`, `--root-cert`,
+  `--client-cert`, `--client-key`, `--server-name` oraz pinning `--server-sha256`.  Aby zapobiec przypadkowemu braku
+  szyfrowania, CLI wymaga jawnego `--use-tls` gdy operator poda którąkolwiek z flag TLS – w przeciwnym razie zakończy się
+  błędem i przypomni o konieczności włączenia kanału szyfrowanego.  Te same parametry można zasilić zmiennymi środowiskowymi
+  `BOT_CORE_WATCH_METRICS_*` (np. `..._ROOT_CERT`, `..._SERVER_SHA256`, `..._USE_TLS`, `..._SCREEN_INDEX`, `..._SCREEN_NAME`,
+  `..._SEVERITY`, `..._SEVERITY_MIN`, `..._SINCE`, `..._UNTIL`) oraz `..._FROM_JSONL` wskazującym artefakt JSONL z pipeline’u.
+  W trybie offline można użyć flagi `--from-jsonl`, aby przejrzeć zapisane snapshoty bez gRPC (TLS i tokeny są wówczas
+  ignorowane, a filtry po zdarzeniach/monitorach nadal działają); narzędzie rozpoznaje także artefakty `.jsonl.gz`
+  (dekompresja w locie) oraz potrafi czytać dane ze standardowego wejścia (`--from-jsonl -`), co ułatwia analizę w potokach
+  CI/CD.  Token RBAC można przekazać bezpiecznie z pliku
+  (`--auth-token-file`) lub zmiennej `..._AUTH_TOKEN` bez logowania wartości.  Wypisywany strumień zawiera podsumowanie
+  monitora (`screen=#1 (Main Display), 1920x1080 px, 60 Hz`), co upraszcza audyt kontekstu multi-monitorowego wraz z
+  alertami reduce-motion/overlay/jank zarówno online, jak i podczas analizy artefaktów CI.  Filtry czasowe `--since/--until`
+  (i odpowiadające im zmienne środowiskowe) pozwalają analizować konkretne okna czasowe bez potrzeby dodatkowego narzędzia,
+  a `--severity-min`/`BOT_CORE_WATCH_METRICS_SEVERITY_MIN` ograniczają audyt do alertów o zadanym poziomie istotności lub
+  wyższym (np. tylko `warning`+ i `critical`).  Jeżeli operator równocześnie poda listę `--severity`, CLI wymusza spójność –
+  próg `severity_min` nie może być niższy niż wartości na liście; w przeciwnym razie narzędzie zakończy się błędem i przypomni
+  o korekcie filtra.
+  Dodatkowo flaga `--summary` (lub zmienna `..._SUMMARY=true/false`) oblicza zbiorcze statystyki (liczba snapshotów, rozkład zdarzeń,
+  agregaty FPS, lista ekranów oraz rozkład severity) zarówno dla strumienia gRPC, jak i odczytu JSONL, co ułatwia operatorom szybkie
+  porównanie stanowisk w pipeline demo→paper→live.  Jeśli potrzeba zachować wynik audytu, flaga `--summary-output` lub zmienna
+  `..._SUMMARY_OUTPUT` zapisują podsumowanie do wskazanego pliku JSON (kanał gRPC/offline), przy czym kolekcjonowanie
+  danych odbywa się nawet wtedy, gdy operator wyłączył wypis na STDOUT, co upraszcza automatyczne raportowanie w CI.  Nowa
+  flaga `--decision-log` (oraz `..._DECISION_LOG`) zapisuje każdy przefiltrowany snapshot do pliku JSONL w formacie decision
+  log (źródło gRPC/JSONL, event, severity, FPS, metadane monitora, pełne `notes`). Pozwala to archiwizować decyzje
+  operacyjne z audytów reduce-motion/overlay/jank, także podczas pracy offline (`--from-jsonl`). Każdy plik decision log
+  rozpoczyna się wpisem `metadata` z kontekstem uruchomienia (tryb online/offline, endpoint lub ścieżka JSONL, aktywne
+  filtry – w tym okno czasowe `since/until`, ustawiony próg `severity_min` oraz listy severity – stan TLS/tokenów, wymuszone podsumowanie), dzięki czemu operatorzy mogą odtworzyć parametry audytu bez sięgania
+  do historii poleceń.
 
 ### Powłoka Qt/QML – MVP
 
@@ -120,20 +162,35 @@ Artefakty tworzymy skryptem `scripts/generate_trading_stubs.py`, a wzorcowy work
   trybie „reduce motion” lub spadku FPS poniżej `disable_secondary_when_fps_below`.
 * `SidePanel` prezentuje parametry guardu, status połączenia oraz zrzut `RiskState` (profil, wartość portfela, drawdown, dźwignia)
   wraz z listą limitów ekspozycji pobieranych z `RiskService`; przekroczenia progów są wyróżniane kolorystycznie i raportowane do
-  telemetrii (`overlay_budget`).
+  telemetrii (`overlay_budget`) oraz powiązanego alertingu.  Zdarzenia jank przekraczające budżet (`frame_ms > jank_threshold_ms`)
+  są emitowane jako osobny event telemetryjny, który zasila `UiTelemetryAlertSink` i JSONL.
 * `FrameRateMonitor` (C++) nasłuchuje `frameSwapped` głównego okna i po spadku FPS poniżej progów guardu (np. 55 FPS @60 Hz,
   110 FPS @120 Hz) emituje `reduceMotionActive`; właściwość jest eksponowana do QML i powoduje natychmiastowe wygaszenie
   animacji wtórnych oraz ograniczenie overlayów w każdym oknie.
 * `UiTelemetryReporter` wysyła zdarzenia UI do `MetricsService` (`PushMetrics`): wejście/wyjście z trybu reduce motion, budżety
   overlayów oraz liczbę aktywnych okien multi-window; konfiguracja odbywa się przez flagi CLI (`--metrics-endpoint`,
-  `--metrics-tag`) lub wpis w YAML.
+  `--metrics-tag`, `--metrics-auth-token`, `--metrics-auth-token-file`) lub wpis w YAML. Powłoka respektuje także zmienne
+  środowiskowe `BOT_CORE_UI_METRICS_*` (m.in. `ENDPOINT`, `TAG`, `ENABLED/DISABLED`, `USE_TLS`, `ROOT_CERT`, `CLIENT_CERT`,
+  `CLIENT_KEY`, `SERVER_NAME`, `SERVER_SHA256`, `AUTH_TOKEN`, `AUTH_TOKEN_FILE`) i automatycznie wymusza TLS, gdy dostarczono
+  materiał certyfikacyjny; token autoryzacyjny może zostać wczytany bezpośrednio z pliku.
+* Preferowany monitor można wybrać flagami CLI `--screen-name`, `--screen-index` lub `--primary-screen`.  To samo zachowanie
+  jest dostępne przez zmienne środowiskowe `BOT_CORE_UI_SCREEN_NAME`/`BOT_CORE_UI_SCREEN_INDEX`/`BOT_CORE_UI_SCREEN_PRIMARY`
+  (z rozróżnieniem wartości pustych jako „brak preferencji”).  Powłoka próbuje dopasować nazwę ekranu niezależnie od
+  wielkości liter, a przy żądaniu indeksu poza zakresem loguje ostrzeżenie i pozostawia okno na bieżącym monitorze.  Operatorzy
+  multi-monitor mogą dzięki temu przypiąć główne okno do wyświetlacza transakcyjnego już w pipeline demo→paper→live.
+* `UiTelemetryReporter` dołącza do zdarzeń JSON kontekst aktywnego ekranu (nazwa, producent, model, indeks, geometrię i odświeżanie).
+  Dane są aktualizowane przy każdej zmianie monitora i stanowią część audytu telemetryjnego, co ułatwia diagnozowanie problemów z FPS/jank
+  na stanowiskach demo→paper→live.
+* `UiTelemetryAlertSink` przenosi metadane ekranu do kontekstu alertów i wpisów JSONL (`screen_index`, rozdzielczość, odświeżanie, DPR)
+  oraz dopisuje skrócony opis monitora w treści powiadomień, dzięki czemu operatorzy wiedzą, na którym stanowisku pipeline'u demo→paper→live
+  wystąpiła degradacja wydajności.
 * Połączenie telemetrii może być zabezpieczone TLS/mTLS – powłoka obsługuje `--metrics-use-tls`, ścieżki certów/kluczy oraz
   pinning SHA-256 (`--metrics-server-sha256`), a stuby developerskie (`run_metrics_service.py`, `run_trading_stub_server.py`)
   potrafią wystartować serwer z materiałem TLS i opcjonalnym wymaganiem certyfikatu klienta.
-* Sekcja `runtime.metrics_service` w `config/core.yaml` ustawia host/port serwera telemetrii, rozmiar historii (`history_size`), aktywność log sinka (`log_sink`) oraz parametry eksportu JSONL (`jsonl_path`, `jsonl_fsync`) i ścieżkę logu alertów UI (`ui_alerts_jsonl_path`).
-* Sekcja `runtime.metrics_service` w `config/core.yaml` ustawia host/port serwera telemetrii, rozmiar historii (`history_size`), aktywność log sinka (`log_sink`), parametry eksportu JSONL (`jsonl_path`, `jsonl_fsync`), opcjonalny token autoryzacyjny (`auth_token`) oraz konfigurację alertów redukcji animacji i budżetu nakładek.
-* Flagi `reduce_motion_alerts`/`reduce_motion_category`/`reduce_motion_severity_*` aktywują sink alertów reagujący na zdarzenia `reduce_motion` z UI.
-* Flagi `overlay_alerts`/`overlay_alert_category`/`overlay_alert_severity_*` generują alerty, gdy UI raportuje przekroczenie limitu nakładek i informują o odzyskaniu budżetu.
+* Sekcja `runtime.metrics_service` w `config/core.yaml` ustawia host/port serwera telemetrii, rozmiar historii (`history_size`), aktywność log sinka (`log_sink`), parametry eksportu JSONL (`jsonl_path`, `jsonl_fsync`), opcjonalny token autoryzacyjny (`auth_token`) oraz ścieżkę logu alertów UI (`ui_alerts_jsonl_path`).
+* Pola `reduce_motion_alerts`/`reduce_motion_mode`/`reduce_motion_category`/`reduce_motion_severity_*` sterują zachowaniem sinka reduce-motion (tryby `enable`/`jsonl`/`disable`), który deduplikuje zdarzenia spadku FPS i loguje je do JSONL. Loader konfiguracji normalizuje wartości trybów do małych liter i odrzuca inne warianty, dzięki czemu błędna konfiguracja zostaje wykryta przed startem runtime.
+* Pola `overlay_alerts`/`overlay_alert_mode`/`overlay_alert_category`/`overlay_alert_severity_*`/`overlay_alert_severity_critical`/`overlay_alert_critical_threshold` kontrolują eskalację przekroczeń budżetu nakładek (jsonl-only vs pełne alerty) oraz próg krytyczny. Tryb jest walidowany przez loader (`enable`/`jsonl`/`disable` – bez rozróżniania wielkości liter), więc błędna wartość zostanie zatrzymana przed uruchomieniem usług.
+* Pola `jank_alerts`/`jank_alert_mode`/`jank_alert_category`/`jank_alert_severity_spike`/`jank_alert_severity_critical`/`jank_alert_critical_over_ms` konfigurują alerty „jank spike” (przekroczenie budżetu klatki) i logowanie JSONL, umożliwiając np. eskalację krytyczną po przekroczeniu limitu ms. Loader normalizuje tryb i zgłasza błąd, jeśli YAML zawiera wartość spoza zbioru `enable`/`jsonl`/`disable`.
 * Wsparcie multi-window: `BotAppWindow` potrafi otwierać dodatkowe `ChartWindow` (`Ctrl+N`/przycisk), zapamiętywać liczbę i geometrię okien
   (`Qt.labs.settings`) oraz synchronizować guard/instrument pomiędzy wszystkimi widokami – spełnia wymagania pracy na wielu monitorach.
 * `ui/config/example.yaml` oraz flagi CLI (w tym `--overlay-disable-secondary-fps`) pozwalają spiąć powłokę z dowolnym datasetem

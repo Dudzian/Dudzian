@@ -53,12 +53,21 @@ void FrameRateMonitor::handleFrameSwapped() {
         return;
 
     const double deltaSeconds = static_cast<double>(elapsedNs) / 1'000'000'000.0;
+    processFrameInterval(deltaSeconds);
+}
+
+void FrameRateMonitor::processFrameInterval(double deltaSeconds) {
     if (deltaSeconds <= 0.0)
         return;
 
     const double fps = 1.0 / deltaSeconds;
+    const double frameMs = deltaSeconds * 1000.0;
     m_lastFps = fps;
     Q_EMIT frameSampled(fps);
+
+    if (m_guard.jankThresholdMs > 0.0 && frameMs > m_guard.jankThresholdMs) {
+        Q_EMIT jankBudgetBreached(frameMs, m_guard.jankThresholdMs);
+    }
 
     const double threshold = lowFpsThreshold();
     if (threshold <= 0.0)

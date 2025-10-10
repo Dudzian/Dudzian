@@ -5,6 +5,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLoggingCategory>
+#include <QRect>
 #include <QtGlobal>
 
 #include <chrono>
@@ -91,6 +92,14 @@ void UiTelemetryReporter::setAuthToken(const QString& token) {
     m_authToken = token;
 }
 
+void UiTelemetryReporter::setScreenInfo(const ScreenInfo& info) {
+    m_screenInfo = info;
+}
+
+void UiTelemetryReporter::clearScreenInfo() {
+    m_screenInfo.reset();
+}
+
 void UiTelemetryReporter::reportReduceMotion(const PerformanceGuard& guard,
                                              bool active,
                                              double fps,
@@ -127,6 +136,36 @@ void UiTelemetryReporter::reportOverlayBudget(const PerformanceGuard& guard,
     pushSnapshot(payload, std::nullopt);
 }
 
+void UiTelemetryReporter::reportJankEvent(const PerformanceGuard& guard,
+                                          double frameTimeMs,
+                                          double thresholdMs,
+                                          bool reduceMotionActive,
+                                          int overlayActive,
+                                          int overlayAllowed) {
+    QJsonObject payload{
+        {QStringLiteral("event"), QStringLiteral("jank_spike")},
+        {QStringLiteral("frame_ms"), frameTimeMs},
+        {QStringLiteral("threshold_ms"), thresholdMs},
+        {QStringLiteral("reduce_motion"), reduceMotionActive},
+        {QStringLiteral("overlay_active"), overlayActive},
+        {QStringLiteral("overlay_allowed"), overlayAllowed},
+        {QStringLiteral("fps_target"), guard.fpsTarget},
+    };
+    if (guard.disableSecondaryWhenFpsBelow > 0) {
+        payload.insert(QStringLiteral("disable_secondary_fps"), guard.disableSecondaryWhenFpsBelow);
+    }
+    if (guard.jankThresholdMs > 0.0) {
+        payload.insert(QStringLiteral("configured_jank_threshold_ms"), guard.jankThresholdMs);
+    }
+    if (thresholdMs > 0.0 && frameTimeMs > thresholdMs) {
+        const double overBudget = frameTimeMs - thresholdMs;
+        payload.insert(QStringLiteral("over_budget_ms"), overBudget);
+        payload.insert(QStringLiteral("ratio"), frameTimeMs / thresholdMs);
+    }
+    const double fpsEstimate = frameTimeMs > 0.0 ? 1000.0 / frameTimeMs : 0.0;
+    pushSnapshot(payload, fpsEstimate > 0.0 ? std::optional<double>(fpsEstimate) : std::nullopt);
+}
+
 void UiTelemetryReporter::pushSnapshot(const QJsonObject& notes, std::optional<double> fpsValue) {
     if (!m_enabled || m_endpoint.isEmpty()) {
         return;
@@ -138,12 +177,17 @@ void UiTelemetryReporter::pushSnapshot(const QJsonObject& notes, std::optional<d
         return;
     }
 
+    QJsonObject enrichedNotes = notes;
+    if (m_screenInfo.has_value()) {
+        enrichedNotes.insert(QStringLiteral("screen"), buildScreenJson());
+    }
+
     botcore::trading::v1::MetricsSnapshot snapshot;
     stampNow(snapshot);
     if (fpsValue.has_value()) {
         snapshot.set_fps(fpsValue.value());
     }
-    snapshot.set_notes(buildNotesJson(notes, m_notesTag, m_windowCount).toStdString());
+    snapshot.set_notes(buildNotesJson(enrichedNotes, m_notesTag, m_windowCount).toStdString());
 
     grpc::ClientContext context;
     if (!m_authToken.isEmpty()) {
@@ -189,6 +233,41 @@ void verifyPinnedFingerprint(const TelemetryTlsConfig& config, const QByteArray&
 }
 
 } // namespace
+
+QJsonObject UiTelemetryReporter::buildScreenJson() const {
+    QJsonObject screen;
+    if (!m_screenInfo.has_value()) {
+        return screen;
+    }
+    const ScreenInfo info = m_screenInfo.value();
+    screen.insert(QStringLiteral("name"), info.name);
+    if (!info.manufacturer.isEmpty()) {
+        screen.insert(QStringLiteral("manufacturer"), info.manufacturer);
+    }
+    if (!info.model.isEmpty()) {
+        screen.insert(QStringLiteral("model"), info.model);
+    }
+    if (!info.serialNumber.isEmpty()) {
+        screen.insert(QStringLiteral("serial"), info.serialNumber);
+    }
+    screen.insert(QStringLiteral("index"), info.index);
+    screen.insert(QStringLiteral("refresh_hz"), info.refreshRateHz);
+    screen.insert(QStringLiteral("device_pixel_ratio"), info.devicePixelRatio);
+    screen.insert(QStringLiteral("logical_dpi_x"), info.logicalDpiX);
+    screen.insert(QStringLiteral("logical_dpi_y"), info.logicalDpiY);
+
+    const auto rectToJson = [](const QRect& rect) {
+        QJsonObject obj;
+        obj.insert(QStringLiteral("x"), rect.x());
+        obj.insert(QStringLiteral("y"), rect.y());
+        obj.insert(QStringLiteral("width"), rect.width());
+        obj.insert(QStringLiteral("height"), rect.height());
+        return obj;
+    };
+    screen.insert(QStringLiteral("geometry_px"), rectToJson(info.geometry));
+    screen.insert(QStringLiteral("available_geometry_px"), rectToJson(info.availableGeometry));
+    return screen;
+}
 
 botcore::trading::v1::MetricsService::Stub* UiTelemetryReporter::ensureStub() {
     std::lock_guard<std::mutex> lock(m_mutex);

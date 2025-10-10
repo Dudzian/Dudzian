@@ -25,6 +25,7 @@ public:
 signals:
     void reduceMotionSuggested(bool enabled);
     void frameSampled(double fps);
+    void jankBudgetBreached(double frameMs, double thresholdMs);
 
 private slots:
     void handleFrameSwapped();

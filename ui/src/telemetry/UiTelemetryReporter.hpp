@@ -33,6 +33,9 @@ public:
     void setNotesTag(const QString& tag) override;
     void setWindowCount(int count) override;
     void setTlsConfig(const TelemetryTlsConfig& config) override;
+    void setAuthToken(const QString& token) override;
+    void setScreenInfo(const ScreenInfo& info) override;
+    void clearScreenInfo() override;
     bool isEnabled() const override { return m_enabled && !m_endpoint.isEmpty(); }
 
     void reportReduceMotion(const PerformanceGuard& guard,
@@ -46,19 +49,25 @@ public:
                              int overlayAllowed,
                              bool reduceMotionActive) override;
 
-    // Rozszerzenia klasy (nie są częścią bazowego interfejsu)
-    void setAuthToken(const QString& token);
+    void reportJankEvent(const PerformanceGuard& guard,
+                         double frameTimeMs,
+                         double thresholdMs,
+                         bool reduceMotionActive,
+                         int overlayActive,
+                         int overlayAllowed) override;
 
 private:
     void pushSnapshot(const QJsonObject& notes, std::optional<double> fpsValue);
     botcore::trading::v1::MetricsService::Stub* ensureStub();
+    QJsonObject buildScreenJson() const;
 
     // Konfiguracja / stan
-    bool     m_enabled = false;
-    QString  m_endpoint;
-    QString  m_notesTag;
-    QString  m_authToken;
-    int      m_windowCount = 1;
+    bool        m_enabled = false;
+    QString     m_endpoint;
+    QString     m_notesTag;
+    QString     m_authToken;
+    int         m_windowCount = 1;
+    std::optional<ScreenInfo> m_screenInfo;
 
     // gRPC / TLS
     std::mutex m_mutex;
