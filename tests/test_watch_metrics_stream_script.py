@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import gzip
 import hashlib
+import hmac
 import json
 import io
 import sys
@@ -26,6 +28,26 @@ from scripts.watch_metrics_stream import (
     create_metrics_channel,
     main as watch_metrics_main,
 )
+
+
+def _assert_signed_entry(entry: dict[str, object], key: bytes, *, key_id: str | None) -> None:
+    assert "signature" in entry, "brak podpisu w decision logu"
+    signature = entry["signature"]
+    assert signature["algorithm"] == "HMAC-SHA256"
+    if key_id is None:
+        assert "key_id" not in signature or signature["key_id"] == key_id
+    else:
+        assert signature.get("key_id") == key_id
+    entry_copy = dict(entry)
+    entry_copy.pop("signature", None)
+    canonical = json.dumps(
+        entry_copy,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    expected = base64.b64encode(hmac.new(key, canonical, hashlib.sha256).digest()).decode("ascii")
+    assert signature["value"] == expected
 
 
 def test_parse_env_bool_recognises_true_false():
@@ -621,6 +643,112 @@ def test_watch_metrics_stream_summary_output_env(monkeypatch, tmp_path, capsys):
     assert file_payload["summary"]["severity_counts"] == {"critical": 1}
 
 
+def test_watch_metrics_stream_signed_summary(tmp_path, capsys):
+    record = {
+        "generated_at": "2024-05-05T10:00:00+00:00",
+        "fps": 55.0,
+        "notes": {
+            "event": "reduce_motion",
+            "severity": "warning",
+            "screen": {"index": 3, "name": "Ops Desk"},
+        },
+    }
+    jsonl_path = tmp_path / "signed.jsonl"
+    jsonl_path.write_text(json.dumps(record, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    output_path = tmp_path / "signed_summary.json"
+    key = "supersecret"
+    key_id = "ops-key"
+
+    exit_code = watch_metrics_main(
+        [
+            "--from-jsonl",
+            str(jsonl_path),
+            "--summary",
+            "--summary-output",
+            str(output_path),
+            "--decision-log-hmac-key",
+            key,
+            "--decision-log-key-id",
+            key_id,
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+
+    lines = [line for line in captured.out.splitlines() if line.strip()]
+    summary_payload = json.loads(lines[-1])
+    assert "signature" in summary_payload
+    assert summary_payload["signature"]["algorithm"] == "HMAC-SHA256"
+    assert summary_payload["signature"].get("key_id") == key_id
+
+    body = json.dumps(
+        {"summary": summary_payload["summary"]},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    expected_digest = hmac.new(key.encode("utf-8"), body, hashlib.sha256).digest()
+    assert summary_payload["signature"]["value"] == base64.b64encode(expected_digest).decode("ascii")
+
+    file_payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert file_payload == summary_payload
+
+
+def test_watch_metrics_stream_summary_signature_metadata(tmp_path, capsys):
+    records = [
+        {
+            "generated_at": "2024-05-06T10:00:00+00:00",
+            "fps": 62.0,
+            "notes": {
+                "event": "overlay_budget",
+                "severity": "error",
+                "screen": {"index": 1, "name": "Wall"},
+            },
+        }
+    ]
+    jsonl_path = tmp_path / "meta.jsonl"
+    jsonl_path.write_text(
+        "\n".join(json.dumps(item, ensure_ascii=False) for item in records) + "\n",
+        encoding="utf-8",
+    )
+
+    decision_log = tmp_path / "audit" / "events.jsonl"
+    summary_path = tmp_path / "summary.json"
+    key = "ops-secret"
+    key_id = "ops-key"
+
+    exit_code = watch_metrics_main(
+        [
+            "--from-jsonl",
+            str(jsonl_path),
+            "--summary",
+            "--summary-output",
+            str(summary_path),
+            "--decision-log",
+            str(decision_log),
+            "--decision-log-hmac-key",
+            key,
+            "--decision-log-key-id",
+            key_id,
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "overlay_budget" in captured.out
+
+    entries = [line for line in decision_log.read_text(encoding="utf-8").splitlines() if line.strip()]
+    metadata_entry = json.loads(entries[0])
+    summary_info = metadata_entry["metadata"].get("summary_signature")
+    assert summary_info == {"algorithm": "HMAC-SHA256", "key_id": key_id}
+
+    summary_payload = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert summary_payload["signature"]["algorithm"] == "HMAC-SHA256"
+    assert summary_payload["signature"].get("key_id") == key_id
+
+
 def test_create_metrics_channel_insecure():
     grpc_module = _DummyGrpc()
     channel = create_metrics_channel(
@@ -971,6 +1099,69 @@ def test_watch_metrics_stream_rejects_conflicting_severity_filters():
     assert excinfo.value.code == 2
 
 
+def test_watch_metrics_stream_risk_profile_defaults(tmp_path):
+    records = [
+        {
+            "generated_at": "2024-03-01T10:00:00Z",
+            "notes": json.dumps(
+                {
+                    "event": "reduce_motion",
+                    "severity": "warning",
+                    "screen": {"index": 0, "name": "Primary"},
+                },
+                ensure_ascii=False,
+            ),
+        },
+        {
+            "generated_at": "2024-03-01T10:00:01Z",
+            "notes": json.dumps(
+                {
+                    "event": "reduce_motion",
+                    "severity": "info",
+                    "screen": {"index": 1, "name": "Side"},
+                },
+                ensure_ascii=False,
+            ),
+        },
+    ]
+    jsonl_path = tmp_path / "metrics.jsonl"
+    jsonl_path.write_text("\n".join(json.dumps(item, ensure_ascii=False) for item in records) + "\n")
+
+    decision_log_path = tmp_path / "decision.jsonl"
+    summary_path = tmp_path / "summary.json"
+
+    exit_code = watch_metrics_main(
+        [
+            "--from-jsonl",
+            str(jsonl_path),
+            "--decision-log",
+            str(decision_log_path),
+            "--decision-log-hmac-key",
+            "sekret",
+            "--risk-profile",
+            "conservative",
+            "--summary-output",
+            str(summary_path),
+        ]
+    )
+    assert exit_code == 0
+
+    decision_entries = [json.loads(line) for line in decision_log_path.read_text().splitlines() if line]
+    assert decision_entries[0]["kind"] == "metadata"
+    metadata = decision_entries[0]["metadata"]
+    assert metadata["filters"]["severity_min"] == "warning"
+    assert metadata["risk_profile"]["name"] == "conservative"
+    assert metadata["risk_profile"]["severity_min"] == "warning"
+
+    snapshot_events = [entry for entry in decision_entries if entry["kind"] == "snapshot"]
+    assert len(snapshot_events) == 1
+    assert snapshot_events[0]["severity"] == "warning"
+
+    summary_payload = json.loads(summary_path.read_text())
+    assert summary_payload["metadata"]["risk_profile"]["name"] == "conservative"
+    assert summary_payload["summary"]["events"]["reduce_motion"]["count"] == 1
+
+
 def test_watch_metrics_stream_decision_log_env(monkeypatch, tmp_path, capsys):
     jsonl_path = tmp_path / "metrics.jsonl"
     jsonl_path.write_text(
@@ -1079,6 +1270,125 @@ def test_watch_metrics_stream_decision_log_grpc(monkeypatch, tmp_path, capsys):
     assert payload["source"] == "grpc"
     assert payload["event"] == "reduce_motion"
     assert payload["fps"] == pytest.approx(58.0)
+
+
+def test_watch_metrics_stream_decision_log_signatures_cli(monkeypatch, tmp_path, capsys):
+    stub = _StubCollector()
+    stub.response = [
+        _FakeSnapshot({"event": "overlay_budget", "severity": "critical"}, fps=52.0),
+    ]
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(
+        watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel"
+    )
+
+    decision_log = tmp_path / "signed" / "metrics.jsonl"
+    key_material = "ops-secret"
+    key_bytes = key_material.encode("utf-8")
+
+    exit_code = watch_metrics_main(
+        [
+            "--decision-log",
+            str(decision_log),
+            "--decision-log-hmac-key",
+            key_material,
+            "--decision-log-key-id",
+            "ops-key",
+            "--limit",
+            "1",
+        ]
+    )
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "overlay_budget" in captured.out
+
+    entries = [ln for ln in decision_log.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    assert len(entries) == 2
+    metadata_entry = json.loads(entries[0])
+    _assert_signed_entry(metadata_entry, key_bytes, key_id="ops-key")
+    assert metadata_entry["metadata"]["signing"]["algorithm"] == "HMAC-SHA256"
+    assert metadata_entry["metadata"]["signing"]["key_id"] == "ops-key"
+
+    snapshot_entry = json.loads(entries[1])
+    _assert_signed_entry(snapshot_entry, key_bytes, key_id="ops-key")
+    assert snapshot_entry["event"] == "overlay_budget"
+
+
+def test_watch_metrics_stream_decision_log_signatures_env_file(monkeypatch, tmp_path, capsys):
+    jsonl_path = tmp_path / "metrics.jsonl"
+    jsonl_path.write_text(
+        "\n".join(
+            [
+                json.dumps({"notes": {"event": "jank", "severity": "warning"}}),
+                json.dumps({"notes": {"event": "jank", "severity": "critical"}}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    key_file = tmp_path / "decision.key"
+    key_file.write_text("file-secret\n", encoding="utf-8")
+
+    decision_log = tmp_path / "decision" / "audit.jsonl"
+
+    monkeypatch.setenv(f"{_ENV_PREFIX}FROM_JSONL", str(jsonl_path))
+    monkeypatch.setenv(f"{_ENV_PREFIX}DECISION_LOG", str(decision_log))
+    monkeypatch.setenv(f"{_ENV_PREFIX}DECISION_LOG_HMAC_KEY_FILE", str(key_file))
+
+    exit_code = watch_metrics_main([])
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "jank" in captured.out
+
+    entries = [ln for ln in decision_log.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    assert len(entries) == 3
+    key_bytes = b"file-secret"
+
+    metadata_entry = json.loads(entries[0])
+    _assert_signed_entry(metadata_entry, key_bytes, key_id=None)
+    assert metadata_entry["metadata"]["signing"]["algorithm"] == "HMAC-SHA256"
+
+    first_snapshot = json.loads(entries[1])
+    second_snapshot = json.loads(entries[2])
+    _assert_signed_entry(first_snapshot, key_bytes, key_id=None)
+    _assert_signed_entry(second_snapshot, key_bytes, key_id=None)
+
+
+def test_watch_metrics_stream_decision_log_signing_conflict(tmp_path):
+    with pytest.raises(SystemExit) as excinfo:
+        watch_metrics_main(
+            [
+                "--decision-log",
+                str(tmp_path / "log.jsonl"),
+                "--decision-log-hmac-key",
+                "alpha",
+                "--decision-log-hmac-key-file",
+                str(tmp_path / "key.txt"),
+                "--from-jsonl",
+                str(tmp_path / "metrics.jsonl"),
+            ]
+        )
+
+    assert excinfo.value.code == 2
+
+
+def test_watch_metrics_stream_decision_log_signing_empty_key(tmp_path):
+    key_file = tmp_path / "key.txt"
+    key_file.write_text("   ", encoding="utf-8")
+    with pytest.raises(SystemExit) as excinfo:
+        watch_metrics_main(
+            [
+                "--decision-log",
+                str(tmp_path / "log.jsonl"),
+                "--decision-log-hmac-key-file",
+                str(key_file),
+                "--from-jsonl",
+                str(tmp_path / "metrics.jsonl"),
+            ]
+        )
+
+    assert excinfo.value.code == 2
 
 
 @pytest.mark.timeout(5)
