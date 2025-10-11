@@ -767,6 +767,8 @@ def test_runtime_plan_risk_profiles_directory(tmp_path: Path, capsys) -> None:
     assert any(entry["path"].endswith("lab.yaml") for entry in file_meta["files"])
     assert ui_section["risk_profile"]["name"] == "ops_dir"
     assert ui_section["risk_profile_summary"]["name"] == "ops_dir"
+
+
 def test_runtime_plan_memory_backend_flag(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys) -> None:
     exit_code = run_trading_stub_server.main(
         [

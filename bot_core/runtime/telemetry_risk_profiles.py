@@ -161,14 +161,12 @@ def _initialize_store() -> None:
 
 def list_risk_profile_names() -> list[str]:
     """Zwraca posortowaną listę dostępnych profili."""
-
     _initialize_store()
     return sorted(_PROFILE_STORE)
 
 
 def _merge_profile_dicts(base: Mapping[str, Any], overrides: Mapping[str, Any]) -> dict[str, Any]:
     """Zwraca nowy słownik powstały z głębokiego połączenia struktur."""
-
     result = deepcopy(base)
     for key, value in overrides.items():
         if key == "extends":
@@ -187,7 +185,6 @@ def register_risk_profiles(
     origin: str = "external",
 ) -> list[str]:
     """Rejestruje dodatkowe profile lub nadpisuje istniejące."""
-
     if not profiles:
         return []
 
@@ -262,9 +259,7 @@ def register_risk_profiles(
             if "extends_chain" in merged and not isinstance(
                 merged.get("extends_chain"), list
             ):
-                merged["extends_chain"] = list(
-                    merged.get("extends_chain") or []
-                )
+                merged["extends_chain"] = list(merged.get("extends_chain") or [])
 
         visiting.remove(name)
         resolved[name] = merged
@@ -312,7 +307,6 @@ def _load_risk_profiles_from_single_file(
 
 def list_risk_profile_files(directory: Path) -> list[Path]:
     """Zwraca posortowaną listę plików profili w katalogu."""
-
     files = [
         entry
         for entry in directory.iterdir()
@@ -324,7 +318,6 @@ def list_risk_profile_files(directory: Path) -> list[Path]:
 
 def load_risk_profiles_from_file(path: str | Path, *, origin: str | None = None) -> list[str]:
     """Ładuje profile z pliku lub katalogu JSON/YAML i rejestruje w store."""
-
     target = Path(path).expanduser()
     if target.is_dir():
         files = list_risk_profile_files(target)
@@ -337,9 +330,7 @@ def load_risk_profiles_from_file(path: str | Path, *, origin: str | None = None)
         base_origin = origin or f"dir:{target}"
         for entry in files:
             entry_origin = f"{base_origin}#{entry.name}" if base_origin else None
-            registered.extend(
-                _load_risk_profiles_from_single_file(entry, origin=entry_origin)
-            )
+            registered.extend(_load_risk_profiles_from_single_file(entry, origin=entry_origin))
         return registered
 
     return _load_risk_profiles_from_single_file(target, origin=origin)
@@ -349,7 +340,6 @@ def load_risk_profiles_with_metadata(
     path: str | Path, *, origin_label: str | None = None
 ) -> tuple[list[str], dict[str, Any]]:
     """Ładuje profile i zwraca listę nazw oraz metadane artefaktu."""
-
     target = Path(path).expanduser()
     if target.is_dir():
         files = list_risk_profile_files(target)
@@ -363,9 +353,7 @@ def load_risk_profiles_with_metadata(
         base_origin = origin_label or f"dir:{target}"
         for entry in files:
             entry_origin = f"{base_origin}#{entry.name}" if base_origin else None
-            entry_registered = _load_risk_profiles_from_single_file(
-                entry, origin=entry_origin
-            )
+            entry_registered = _load_risk_profiles_from_single_file(entry, origin=entry_origin)
             files_meta.append(
                 {
                     "path": str(entry),
@@ -384,9 +372,7 @@ def load_risk_profiles_with_metadata(
             metadata["origin"] = origin_label
         return registered, metadata
 
-    registered = _load_risk_profiles_from_single_file(
-        target, origin=origin_label or f"file:{target}"
-    )
+    registered = _load_risk_profiles_from_single_file(target, origin=origin_label or f"file:{target}")
     metadata = {
         "path": str(target),
         "type": "file",
@@ -399,7 +385,6 @@ def load_risk_profiles_with_metadata(
 
 def get_risk_profile(name: str) -> Mapping[str, Any]:
     """Zwraca kopię konfiguracji profilu."""
-
     _initialize_store()
     normalized = name.strip().lower()
     try:
@@ -411,14 +396,12 @@ def get_risk_profile(name: str) -> Mapping[str, Any]:
 
 def get_metrics_service_overrides(name: str) -> Mapping[str, Any]:
     """Zwraca mapowanie opcji CLI dla serwera MetricsService."""
-
     profile = get_risk_profile(name)
     return deepcopy(profile.get("metrics_service_overrides", {}))
 
 
 def get_metrics_service_config_overrides(name: str) -> Mapping[str, Any]:
     """Zwraca nadpisania odpowiadające polom MetricsServiceConfig."""
-
     overrides = {}
     cli_overrides = get_metrics_service_overrides(name)
     for option, value in cli_overrides.items():
@@ -430,7 +413,6 @@ def get_metrics_service_config_overrides(name: str) -> Mapping[str, Any]:
 
 def get_metrics_service_env_overrides(name: str) -> Mapping[str, Any]:
     """Zwraca mapowanie zmiennych środowiskowych dla presetów MetricsService."""
-
     env_overrides: dict[str, Any] = {}
     for option, value in get_metrics_service_overrides(name).items():
         env_name = _METRICS_CLI_TO_ENV.get(option)
@@ -441,7 +423,6 @@ def get_metrics_service_env_overrides(name: str) -> Mapping[str, Any]:
 
 def risk_profile_metadata(name: str) -> dict[str, Any]:
     """Buduje strukturę metadanych do logów i raportów."""
-
     profile = get_risk_profile(name)
     metadata = dict(profile)
     normalized = name.strip().lower()
@@ -454,7 +435,6 @@ def risk_profile_metadata(name: str) -> dict[str, Any]:
 
 def summarize_risk_profile(metadata: Mapping[str, Any]) -> dict[str, Any]:
     """Zwraca skrócone podsumowanie profilu ryzyka dla raportów audytowych."""
-
     summary: dict[str, Any] = {}
 
     for key in (
@@ -487,7 +467,6 @@ def summarize_risk_profile(metadata: Mapping[str, Any]) -> dict[str, Any]:
 
 def get_risk_profile_summary(name: str) -> dict[str, Any]:
     """Buduje podsumowanie profilu ryzyka na podstawie jego nazwy."""
-
     metadata = risk_profile_metadata(name)
     return summarize_risk_profile(metadata)
 

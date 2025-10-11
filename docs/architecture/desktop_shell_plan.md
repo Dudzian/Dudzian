@@ -210,6 +210,7 @@ Artefakty tworzymy skryptem `scripts/generate_trading_stubs.py`, a wzorcowy work
   * Presety mogą dziedziczyć z istniejących profili przy użyciu pola `extends`.  Wypisywany JSON (oraz metadane decision logu)
     zawiera wówczas `extends` i `extends_chain`, dzięki czemu operator widzi pełny łańcuch dziedziczenia.  Błędne odwołania
     (cykl lub nieistniejący profil) kończą działanie narzędzia kodem błędu jeszcze przed eskalacją alertu.
+  o korekcie filtra.
   Dodatkowo flaga `--summary` (lub zmienna `..._SUMMARY=true/false`) oblicza zbiorcze statystyki (liczba snapshotów, rozkład zdarzeń,
   agregaty FPS, lista ekranów oraz rozkład severity) zarówno dla strumienia gRPC, jak i odczytu JSONL, co ułatwia operatorom szybkie
   porównanie stanowisk w pipeline demo→paper→live.  Jeśli potrzeba zachować wynik audytu, flaga `--summary-output` lub zmienna
@@ -219,6 +220,8 @@ Artefakty tworzymy skryptem `scripts/generate_trading_stubs.py`, a wzorcowy work
   wygenerowane podsumowanie (`signature.algorithm = HMAC-SHA256`, opcjonalny `key_id`) i zapisuje parametry podpisu w metadanych
   decision logu (`summary_signature`).  Dzięki temu pipeline demo→paper→live ma jednolity materiał do audytu (decision log +
   summary JSON) z gwarancją integralności kryptograficznej.  Nowa flaga `--decision-log` (oraz `..._DECISION_LOG`) zapisuje każdy przefiltrowany snapshot do pliku JSONL w formacie decision
+  danych odbywa się nawet wtedy, gdy operator wyłączył wypis na STDOUT, co upraszcza automatyczne raportowanie w CI.  Nowa
+  flaga `--decision-log` (oraz `..._DECISION_LOG`) zapisuje każdy przefiltrowany snapshot do pliku JSONL w formacie decision
   log (źródło gRPC/JSONL, event, severity, FPS, metadane monitora, pełne `notes`). Pozwala to archiwizować decyzje
   operacyjne z audytów reduce-motion/overlay/jank, także podczas pracy offline (`--from-jsonl`). Każdy plik decision log
   rozpoczyna się wpisem `metadata` z kontekstem uruchomienia (tryb online/offline, endpoint lub ścieżka JSONL, aktywne
@@ -262,6 +265,7 @@ Artefakty tworzymy skryptem `scripts/generate_trading_stubs.py`, a wzorcowy work
   łańcuch dziedziczenia (`extends_chain`) oraz obowiązujące limity zdarzeń, co pozwala natychmiastowo porównać artefakty
   `telemetry_risk_profiles render --section summary` z wynikami `verify_decision_log`.  Wariant `manual` pozostawia ustawienia
   bez zmian dla niestandardowych scenariuszy.  Wprowadzone rozszerzenie
+  audytowego.  Wariant `manual` pozostawia ustawienia bez zmian dla niestandardowych scenariuszy.  Wprowadzone rozszerzenie
   `--summary-json` (oraz zmienna `BOT_CORE_VERIFY_DECISION_LOG_SUMMARY_JSON`)
   pozwala dodatkowo przekazać plik wygenerowany przez `watch_metrics_stream --summary-output`.  Skrypt
   przelicza własne statystyki (łączna liczba snapshotów, agregaty FPS na event, zestaw ekranów,
@@ -282,6 +286,7 @@ Artefakty tworzymy skryptem `scripts/generate_trading_stubs.py`, a wzorcowy work
   * Sekcja raportu audytowego uwzględnia `extends` i `extends_chain` dla profili pochodnych, a sama walidacja
     zatrzymuje się z błędem przy cyklicznym lub nieistniejącym odwołaniu w polu `extends`.  Dzięki temu pipeline
     demo→paper→live ma gwarancję, że audyt korzysta z pełnej, spójnej konfiguracji KPI.
+  offline (`--from-jsonl`, artefakty `.jsonl.gz`).
   Wynik walidacji można zarchiwizować w ustrukturyzowanej postaci: flaga `--report-output` (oraz zmienna
   `BOT_CORE_VERIFY_DECISION_LOG_REPORT_OUTPUT`) zapisuje raport JSON zawierający `report_version`, znacznik czasu
   generacji, metadane decision logu, lokalnie przeliczone podsumowanie oraz – gdy dostępne – wynik weryfikacji
@@ -296,6 +301,7 @@ Artefakty tworzymy skryptem `scripts/generate_trading_stubs.py`, a wzorcowy work
   Błędne podpisy, brak oczekiwanych metadanych lub niespełnienie wymagań kończą się kodem 2 i szczegółowym
   logiem diagnostycznym.  To narzędzie stanowi obowiązkowy krok audytowy w pipeline demo→paper→live przed
   eskalacją alertów.
+  do historii poleceń.
 
 ### Powłoka Qt/QML – MVP
 
@@ -328,12 +334,14 @@ Artefakty tworzymy skryptem `scripts/generate_trading_stubs.py`, a wzorcowy work
   Dane są aktualizowane przy każdej zmianie monitora i stanowią część audytu telemetryjnego, co ułatwia diagnozowanie problemów z FPS/jank
   na stanowiskach demo→paper→live.
 * `UiTelemetryAlertSink` przenosi metadane ekranu oraz aktywny profil ryzyka do kontekstu alertów i wpisów JSONL (`screen_index`, rozdzielczość, odświeżanie, DPR, `risk_profile`, `risk_profile_origin`)
+* `UiTelemetryAlertSink` przenosi metadane ekranu do kontekstu alertów i wpisów JSONL (`screen_index`, rozdzielczość, odświeżanie, DPR)
   oraz dopisuje skrócony opis monitora w treści powiadomień, dzięki czemu operatorzy wiedzą, na którym stanowisku pipeline'u demo→paper→live
   wystąpiła degradacja wydajności.
 * Połączenie telemetrii może być zabezpieczone TLS/mTLS – powłoka obsługuje `--metrics-use-tls`, ścieżki certów/kluczy oraz
   pinning SHA-256 (`--metrics-server-sha256`), a stuby developerskie (`run_metrics_service.py`, `run_trading_stub_server.py`)
   potrafią wystartować serwer z materiałem TLS i opcjonalnym wymaganiem certyfikatu klienta.
 * Sekcja `runtime.metrics_service` w `config/core.yaml` ustawia host/port serwera telemetrii, rozmiar historii (`history_size`), aktywność log sinka (`log_sink`), parametry eksportu JSONL (`jsonl_path`, `jsonl_fsync`), opcjonalny token autoryzacyjny (`auth_token`), ścieżkę logu alertów UI (`ui_alerts_jsonl_path`) oraz nowy klucz `ui_alerts_risk_profile`.  Loader normalizuje nazwę profilu do małych liter i waliduje ją względem sekcji `risk_profiles`, dzięki czemu runtime i narzędzia telemetryczne otrzymują spójne metadane audytowe.
+* Sekcja `runtime.metrics_service` w `config/core.yaml` ustawia host/port serwera telemetrii, rozmiar historii (`history_size`), aktywność log sinka (`log_sink`), parametry eksportu JSONL (`jsonl_path`, `jsonl_fsync`), opcjonalny token autoryzacyjny (`auth_token`) oraz ścieżkę logu alertów UI (`ui_alerts_jsonl_path`).
 * Pola `reduce_motion_alerts`/`reduce_motion_mode`/`reduce_motion_category`/`reduce_motion_severity_*` sterują zachowaniem sinka reduce-motion (tryby `enable`/`jsonl`/`disable`), który deduplikuje zdarzenia spadku FPS i loguje je do JSONL. Loader konfiguracji normalizuje wartości trybów do małych liter i odrzuca inne warianty, dzięki czemu błędna konfiguracja zostaje wykryta przed startem runtime.
 * Pola `overlay_alerts`/`overlay_alert_mode`/`overlay_alert_category`/`overlay_alert_severity_*`/`overlay_alert_severity_critical`/`overlay_alert_critical_threshold` kontrolują eskalację przekroczeń budżetu nakładek (jsonl-only vs pełne alerty) oraz próg krytyczny. Tryb jest walidowany przez loader (`enable`/`jsonl`/`disable` – bez rozróżniania wielkości liter), więc błędna wartość zostanie zatrzymana przed uruchomieniem usług.
 * Pola `jank_alerts`/`jank_alert_mode`/`jank_alert_category`/`jank_alert_severity_spike`/`jank_alert_severity_critical`/`jank_alert_critical_over_ms` konfigurują alerty „jank spike” (przekroczenie budżetu klatki) i logowanie JSONL, umożliwiając np. eskalację krytyczną po przekroczeniu limitu ms. Loader normalizuje tryb i zgłasza błąd, jeśli YAML zawiera wartość spoza zbioru `enable`/`jsonl`/`disable`.

@@ -331,18 +331,19 @@ def _apply_environment_overrides(
             return [str(v) if isinstance(v, Path) else v for v in value]
         return value
 
-    def apply_value(option: str, env_var: str, raw_value: str, parsed_value: Any) -> None:
+    def apply_value(option: str, env_var: str, raw_value: str, parsed_value: Any, **extra: object) -> None:
         override_keys.add(option)
         value_sources[option] = "env"
-        record_entry(
-            {
-                "option": option,
-                "variable": env_var,
-                "raw_value": raw_value,
-                "applied": True,
-                "parsed_value": normalize_value(parsed_value),
-            }
-        )
+        entry: dict[str, object] = {
+            "option": option,
+            "variable": env_var,
+            "raw_value": raw_value,
+            "applied": True,
+            "parsed_value": normalize_value(parsed_value),
+        }
+        if extra:
+            entry.update(extra)
+        record_entry(entry)
 
     def env_present(flag: str) -> bool:
         return flag in provided_flags
@@ -473,6 +474,7 @@ def _apply_environment_overrides(
         else:
             args.metrics_jsonl_fsync = parse_bool("RUN_TRADING_STUB_METRICS_JSONL_FSYNC")
             apply_value("metrics_jsonl_fsync", "RUN_TRADING_STUB_METRICS_JSONL_FSYNC", raw, args.metrics_jsonl_fsync)
+
     if (raw := os.getenv("RUN_TRADING_STUB_METRICS_RISK_PROFILES_FILE")) is not None:
         if env_present("--metrics-risk-profiles-file"):
             skip_due_to_cli("metrics_risk_profiles_file", "RUN_TRADING_STUB_METRICS_RISK_PROFILES_FILE", raw)
@@ -810,6 +812,7 @@ def _apply_environment_overrides(
                     raw,
                     str(args.metrics_ui_alerts_audit_dir),
                 )
+
     if (raw := os.getenv("RUN_TRADING_STUB_METRICS_UI_ALERTS_AUDIT_BACKEND")) is not None:
         if env_present("--metrics-ui-alerts-audit-backend"):
             skip_due_to_cli(
@@ -1582,10 +1585,9 @@ def _build_dataset_plan(dataset: InMemoryTradingDataset, dataset_paths: Iterable
 def _build_metrics_plan(args) -> Mapping[str, object]:
     metrics_available = create_metrics_server is not None
     ui_alert_deps = UiTelemetryAlertSink is not None and DefaultAlertRouter is not None and InMemoryAlertAuditLog is not None
-    jsonl_info: Mapping[str, object]
     if args.metrics_jsonl:
         jsonl_path = Path(str(args.metrics_jsonl)).expanduser()
-        jsonl_info = {
+        jsonl_info: Mapping[str, object] = {
             "configured": True,
             "path": str(jsonl_path),
             "metadata": file_reference_metadata(jsonl_path, role="jsonl"),
@@ -1648,9 +1650,8 @@ def _build_metrics_plan(args) -> Mapping[str, object]:
     requested_backend = (raw_backend_choice or "auto").lower()
     memory_forced = requested_backend == "memory"
     file_backend_supported = audit_dir is not None and FileAlertAuditLog is not None and not memory_forced
-    audit_info: Mapping[str, object]
     if requested_backend == "file" and audit_dir is None:
-        audit_info = {
+        audit_info: Mapping[str, object] = {
             "requested": requested_backend,
             "backend": None,
             "note": "file_backend_requires_directory",
@@ -1692,7 +1693,7 @@ def _build_metrics_plan(args) -> Mapping[str, object]:
         if audit_dir is not None:
             audit_info["note"] = "file_backend_unavailable"
 
-    ui_alerts_info: Mapping[str, object] = {
+    ui_alerts_info: dict[str, object] = {
         "configured": not bool(args.disable_metrics_ui_alerts),
         "available": ui_alert_deps,
         "expected_active": bool(args.enable_metrics and not args.disable_metrics_ui_alerts and metrics_available and ui_alert_deps and sink_expected),
@@ -1734,7 +1735,6 @@ def _build_metrics_plan(args) -> Mapping[str, object]:
         ),
         "audit": audit_info,
     }
-    ui_alerts_info = dict(ui_alerts_info)
     if risk_profile_meta := getattr(args, "_metrics_risk_profile_metadata", None):
         ui_alerts_info["risk_profile"] = dict(risk_profile_meta)
     if risk_profile_summary := getattr(args, "_metrics_risk_profile_summary", None):

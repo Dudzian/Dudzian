@@ -946,6 +946,8 @@ def test_watch_metrics_stream_summary_signature_metadata(tmp_path, capsys):
     assert summary_payload["signature"]["algorithm"] == "HMAC-SHA256"
     assert summary_payload["signature"].get("key_id") == key_id
 
+
+
 def test_create_metrics_channel_insecure():
     grpc_module = _DummyGrpc()
     channel = create_metrics_channel(
@@ -1493,6 +1495,8 @@ def test_watch_metrics_stream_core_config_decision_metadata(tmp_path):
     assert meta["core_config"]["path"] == str(config_path)
     assert meta["core_config"]["metrics_service"]["risk_profiles_file"] == str(profiles_path)
     assert meta["risk_profile"]["source"] == "core_config"
+
+
 def test_watch_metrics_stream_decision_log_env(monkeypatch, tmp_path, capsys):
     jsonl_path = tmp_path / "metrics.jsonl"
     jsonl_path.write_text(

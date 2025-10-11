@@ -24,15 +24,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
-try:
+# --- opcjonalna konfiguracja core.yaml ---------------------------------------
+try:  # pragma: no cover - brak modułu konfiguracji
     from bot_core.config import load_core_config  # type: ignore
-except Exception:  # pragma: no cover - brak modułu konfiguracji
+except Exception:  # pragma: no cover
     load_core_config = None  # type: ignore
 
+# --- presety profili ryzyka (z fallbackiem, patrz scripts.telemetry_risk_profiles) --
 from scripts.telemetry_risk_profiles import (
     get_risk_profile,
     list_risk_profile_names,
-    load_risk_profiles_from_file,
+    load_risk_profiles_with_metadata,
     risk_profile_metadata,
     summarize_risk_profile,
 )
@@ -1054,6 +1056,9 @@ def _write_report_output(destination: str, payload: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
+
+# ------------------------------ CLI -----------------------------------------
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Weryfikacja podpisów decision logu UI")
     parser.add_argument(
@@ -1175,7 +1180,7 @@ def _load_risk_profile_presets(args: argparse.Namespace, parser: argparse.Argume
 
     target = Path(path_value).expanduser()
     try:
-        registered = load_risk_profiles_from_file(target, origin=f"verify:{target}")
+        registered, _meta = load_risk_profiles_with_metadata(target, origin_label=f"verify:{target}")
     except FileNotFoundError as exc:
         parser.error(str(exc))
     except Exception as exc:  # pragma: no cover - zależne od formatu
@@ -1499,11 +1504,14 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    # źródło profilu ryzyka do metadanych
     args._risk_profile_source = None
-    provided_flags = {arg for arg in (argv or []) if arg.startswith("--")}
+    provided_flags = {arg for arg in (argv or []) if isinstance(arg, str) and arg.startswith("--")}
     if "--risk-profile" in provided_flags:
         args._risk_profile_source = "cli"
 
+    # ENV → CLI, core.yaml, plik presetów → zastosowanie profilu
     _apply_env_defaults(args, parser)
     _apply_core_config_defaults(args, parser)
     _load_risk_profile_presets(args, parser)
@@ -1534,7 +1542,7 @@ def main(argv: list[str] | None = None) -> int:
     max_event_counts: Mapping[str, int] = getattr(args, "_max_event_counts", {})
     min_event_counts: Mapping[str, int] = getattr(args, "_min_event_counts", {})
     risk_profile_config: Mapping[str, Any] | None = getattr(args, "_risk_profile_config", None)
-    # core_metadata already resolved powyżej
+
     if summary_path == "-" and args.path == "-":
         parser.error("Nie można czytać decision logu i podsumowania jednocześnie ze STDIN")
 

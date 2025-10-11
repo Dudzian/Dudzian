@@ -103,7 +103,6 @@ def _timestamp_to_iso(snapshot: Any) -> str | None:
 
 def _normalize_risk_profile(metadata: Mapping[str, Any] | None) -> dict[str, Any] | None:
     """Ujednolica metadane profilu ryzyka do struktury serializowalnej JSON."""
-
     if metadata is None:
         return None
 
@@ -120,7 +119,7 @@ def _normalize_risk_profile(metadata: Mapping[str, Any] | None) -> dict[str, Any
 
 
 class UiTelemetryAlertSink:
-    """Analizuje snapshoty UI i wysyła alerty o spadku FPS / nakładkach."""
+    """Analizuje snapshoty UI i wysyła alerty o spadku FPS / nakładkach / janku."""
 
     def __init__(
         self,
@@ -185,6 +184,7 @@ class UiTelemetryAlertSink:
             self._jsonl_path.parent.mkdir(parents=True, exist_ok=True)
             self._jsonl_path.touch(exist_ok=True)
 
+        # Metadane profilu ryzyka (opcjonalne)
         normalized_profile = _normalize_risk_profile(risk_profile)
         self._risk_profile_metadata = deepcopy(normalized_profile) if normalized_profile else None
         self._risk_profile_name: str | None = None
@@ -474,4 +474,3 @@ class UiTelemetryAlertSink:
 
 
 __all__ = ["UiTelemetryAlertSink", "DEFAULT_UI_ALERTS_JSONL_PATH"]
-

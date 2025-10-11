@@ -37,6 +37,8 @@ class _MemorySecretStorage(SecretStorage):
 
     def delete_secret(self, key: str) -> None:
         self._store.pop(key, None)
+
+
 _BASE_CONFIG = dedent(
     """
     risk_profiles:

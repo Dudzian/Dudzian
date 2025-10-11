@@ -869,6 +869,7 @@ def _apply_risk_profile_defaults(
         setattr(args, option, value)
         value_sources[option] = f"risk_profile:{profile_name}"
 
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Startuje serwer MetricsService odbierający telemetrię UI (gRPC).",
@@ -2040,7 +2041,7 @@ def _build_config_plan_payload(
     risk_profile_meta = getattr(args, "_ui_alerts_risk_profile_metadata", None)
     if risk_profile_meta:
         ui_alerts_section["risk_profile"] = dict(risk_profile_meta)
-    if risk_profile_summary := getattr(args, "_ui_alerts_risk_profile_summary", None):
+    if (risk_profile_summary := getattr(args, "_ui_alerts_risk_profile_summary", None)):
         ui_alerts_section["risk_profile_summary"] = dict(risk_profile_summary)
     risk_profiles_file_meta = getattr(args, "_ui_alerts_risk_profiles_file_metadata", None)
     if risk_profiles_file_meta:
@@ -2167,6 +2168,11 @@ def _build_config_plan_payload(
                 "active": not args.disable_ui_alerts and bool(ui_alerts_arg_path),
             }
             runtime_state["ui_alerts_sink"]["config"] = _ui_alerts_config_from_args(args)
+            if ui_alerts_arg_path is not None:
+                runtime_state["ui_alerts_sink"]["file"] = _file_reference_metadata(
+                    ui_alerts_arg_path, role="ui_alerts_jsonl"
+                )
+
         tls_metadata = runtime_metadata.get("tls", {})
         tls_enabled_value = bool(
             tls_metadata.get(
@@ -2204,13 +2210,13 @@ def _build_config_plan_payload(
 
     config_section = runtime_state["ui_alerts_sink"].setdefault("config", {})
     config_section["audit"] = dict(audit_section)
-    if risk_profile_meta := getattr(args, "_ui_alerts_risk_profile_metadata", None):
+    if (risk_profile_meta := getattr(args, "_ui_alerts_risk_profile_metadata", None)):
         config_section["risk_profile"] = dict(risk_profile_meta)
-    if risk_profile_summary := getattr(args, "_ui_alerts_risk_profile_summary", None):
+    if (risk_profile_summary := getattr(args, "_ui_alerts_risk_profile_summary", None)):
         config_section["risk_profile_summary"] = dict(risk_profile_summary)
-    if risk_profiles_file_meta := getattr(
+    if (risk_profiles_file_meta := getattr(
         args, "_ui_alerts_risk_profiles_file_metadata", None
-    ):
+    )):
         config_section["risk_profiles_file"] = dict(risk_profiles_file_meta)
     if ui_alerts_arg_path is not None and "file" not in runtime_state["ui_alerts_sink"]:
         runtime_state["ui_alerts_sink"]["file"] = _file_reference_metadata(

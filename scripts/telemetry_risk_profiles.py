@@ -1,51 +1,362 @@
-"""Kompatybilna warstwa eksportująca presety profili ryzyka oraz proste CLI."""
+"""Kompatybilna warstwa eksportująca presety profili ryzyka oraz proste CLI.
+
+- Jeśli dostępny jest moduł `bot_core.runtime.telemetry_risk_profiles`, re-eksportujemy jego API.
+- W przeciwnym razie używamy lokalnych presetów i minimalnych implementacji (fallback), tak aby
+  skrypty mogły korzystać m.in. z:
+    * get_metrics_service_overrides(profile_name)
+    * get_metrics_service_config_overrides(profile_name)
+    * get_metrics_service_env_overrides(profile_name)
+    * list_risk_profile_names()
+    * load_risk_profiles_with_metadata(path, origin_label=...)
+    * risk_profile_metadata(name)
+    * summarize_risk_profile(metadata)
+  oraz pokrewnych funkcji pomocniczych.
+
+Moduł może być współdzielony przez watcher (`watch_metrics_stream`) i weryfikator
+logów decyzji (`verify_decision_log`).
+"""
+
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shlex
 import sys
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Mapping, Tuple
 
-import yaml
+# PyYAML jest opcjonalny – używamy go tylko gdy użytkownik wybierze format YAML
+try:  # pragma: no cover
+    import yaml  # type: ignore
+except Exception:  # pragma: no cover - środowisko bez PyYAML
+    yaml = None  # type: ignore
 
-try:  # pragma: no cover - moduł konfiguracyjny może być niedostępny w starszych gałęziach
-    from bot_core.config.loader import load_core_config
+# Warstwa core-config jest opcjonalna (starsze gałęzie mogą jej nie mieć)
+try:  # pragma: no cover - moduł konfiguracyjny może być niedostępny
+    from bot_core.config.loader import load_core_config  # type: ignore
 except Exception:  # pragma: no cover - środowisko bez warstwy konfiguracji
     load_core_config = None  # type: ignore[assignment]
 
-from bot_core.runtime.telemetry_risk_profiles import (
-    MetricsRiskProfileResolver,
-    get_metrics_service_config_overrides,
-    get_metrics_service_env_overrides,
-    get_metrics_service_overrides,
-    get_risk_profile,
-    list_risk_profile_files,
-    list_risk_profile_names,
-    load_risk_profiles_from_file,
-    load_risk_profiles_with_metadata,
-    register_risk_profiles,
-    risk_profile_metadata,
-    summarize_risk_profile,
-)
+# ---------------------------------------------------------------------------
+# PRÓBA UŻYCIA PEŁNEGO API Z bot_core (preferowane)
+try:  # pragma: no cover
+    from bot_core.runtime.telemetry_risk_profiles import (  # type: ignore
+        MetricsRiskProfileResolver,
+        get_metrics_service_config_overrides,
+        get_metrics_service_env_overrides,
+        get_metrics_service_overrides,
+        get_risk_profile,
+        list_risk_profile_files,
+        list_risk_profile_names,
+        load_risk_profiles_from_file,
+        load_risk_profiles_with_metadata,
+        register_risk_profiles,
+        risk_profile_metadata,
+        summarize_risk_profile,
+    )
 
-__all__ = [
-    "MetricsRiskProfileResolver",
-    "get_metrics_service_config_overrides",
-    "get_metrics_service_env_overrides",
-    "get_metrics_service_overrides",
-    "get_risk_profile",
-    "list_risk_profile_files",
-    "load_risk_profiles_with_metadata",
-    "list_risk_profile_names",
-    "load_risk_profiles_from_file",
-    "register_risk_profiles",
-    "risk_profile_metadata",
-]
+    __all__ = [
+        "MetricsRiskProfileResolver",
+        "get_metrics_service_config_overrides",
+        "get_metrics_service_env_overrides",
+        "get_metrics_service_overrides",
+        "get_risk_profile",
+        "list_risk_profile_files",
+        "list_risk_profile_names",
+        "load_risk_profiles_from_file",
+        "load_risk_profiles_with_metadata",
+        "register_risk_profiles",
+        "risk_profile_metadata",
+        "summarize_risk_profile",
+    ]
 
+    _FALLBACK = False
+except Exception:  # pragma: no cover - fallback lokalny
+    _FALLBACK = True
+
+    # --- PRESETY LOKALNE -----------------------------------------------------
+    _RISK_PROFILE_PRESETS: dict[str, dict[str, Any]] = {
+        "conservative": {
+            "expect_summary_enabled": True,
+            "require_screen_info": True,
+            "severity_min": "warning",
+            "max_event_counts": {
+                "overlay_budget": 0,
+                "jank": 0,
+                "reduce_motion": 3,
+            },
+            "min_event_counts": {"reduce_motion": 1},
+        },
+        "balanced": {
+            "expect_summary_enabled": True,
+            "require_screen_info": True,
+            "severity_min": "notice",
+            "max_event_counts": {
+                "overlay_budget": 2,
+                "jank": 1,
+                "reduce_motion": 5,
+            },
+        },
+        "aggressive": {
+            "expect_summary_enabled": True,
+            "require_screen_info": True,
+            "severity_min": "info",
+            "max_event_counts": {
+                "overlay_budget": 4,
+                "jank": 2,
+                "reduce_motion": 8,
+            },
+        },
+        "manual": {},
+    }
+
+    _REGISTERED_SOURCES: list[str] = []
+
+    # --- API PUBLICZNE (fallback) --------------------------------------------
+    def list_risk_profile_names() -> list[str]:
+        """Zwraca posortowaną listę dostępnych profili ryzyka."""
+        return sorted(_RISK_PROFILE_PRESETS)
+
+    def get_risk_profile(name: str) -> Mapping[str, Any]:
+        """Zwraca kopię konfiguracji profilu o podanej nazwie."""
+        normalized = name.strip().lower()
+        try:
+            preset = _RISK_PROFILE_PRESETS[normalized]
+        except KeyError as exc:
+            raise KeyError(f"Nieznany profil ryzyka: {name!r}") from exc
+        return deepcopy(preset)
+
+    def risk_profile_metadata(name: str) -> dict[str, Any]:
+        """Buduje metadane profilu (do decision logów/raportów)."""
+        config = get_risk_profile(name)
+        out = dict(config)
+        out["name"] = name.strip().lower()
+        return out
+
+    def register_risk_profiles(
+        profiles: Mapping[str, Mapping[str, Any]]
+        | Iterable[tuple[str, Mapping[str, Any]]]
+    ) -> list[str]:
+        """Rejestruje/aktualizuje profile ryzyka. Zwraca listę zarejestrowanych nazw."""
+        registered: list[str] = []
+        items = profiles.items() if isinstance(profiles, Mapping) else list(profiles)
+        for name, cfg in items:
+            normalized = str(name).strip().lower()
+            _RISK_PROFILE_PRESETS[normalized] = deepcopy(dict(cfg))
+            registered.append(normalized)
+        return registered
+
+    def _detect_format_from_suffix(path: Path) -> str:
+        suf = path.suffix.lower()
+        if suf in {".yml", ".yaml"}:
+            return "yaml"
+        return "json"
+
+    def load_risk_profiles_from_file(path: Path | str) -> dict[str, dict[str, Any]]:
+        """Ładuje profile z pliku JSON/YAML. Akceptuje formaty:
+        - dict { name: { ...config... }, ... }
+        - dict { "profiles": { name: { ... }, ... } }
+        - list [{"name": "x", ...config...}, ...]
+        """
+        p = Path(path).expanduser()
+        if not p.exists():
+            raise FileNotFoundError(f"Nie znaleziono pliku profili ryzyka: {p}")
+
+        fmt = _detect_format_from_suffix(p)
+        text = p.read_text(encoding="utf-8")
+
+        data: Any
+        if fmt == "yaml":
+            if yaml is None:
+                raise RuntimeError(
+                    "Do wczytania profili w YAML wymagany jest PyYAML (pip install pyyaml)."
+                )
+            data = yaml.safe_load(text)
+        else:
+            data = json.loads(text)
+
+        profiles: dict[str, dict[str, Any]] = {}
+        if isinstance(data, dict) and "profiles" in data and isinstance(data["profiles"], dict):
+            for k, v in data["profiles"].items():
+                profiles[str(k).strip().lower()] = dict(v or {})
+        elif isinstance(data, dict):
+            for k, v in data.items():
+                profiles[str(k).strip().lower()] = dict(v or {})
+        elif isinstance(data, list):
+            for item in data:
+                if not isinstance(item, dict) or "name" not in item:
+                    continue
+                name = str(item["name"]).strip().lower()
+                cfg = {k: v for k, v in item.items() if k != "name"}
+                profiles[name] = cfg
+        else:
+            raise ValueError("Nieobsługiwany format pliku profili ryzyka.")
+
+        return profiles
+
+    def load_risk_profiles_with_metadata(
+        path: Path | str, *, origin_label: str | None = None
+    ) -> Tuple[list[str], Mapping[str, Any]]:
+        """Ładuje profile z pliku, rejestruje i zwraca (registered_names, metadata)."""
+        p = Path(path).expanduser()
+        profiles = load_risk_profiles_from_file(p)
+        registered = register_risk_profiles(profiles)
+
+        try:
+            stat = p.stat()
+            size = stat.st_size
+            mtime = stat.st_mtime
+            exists = True
+        except FileNotFoundError:
+            size = 0
+            mtime = 0.0
+            exists = False
+
+        if exists:
+            _REGISTERED_SOURCES.append(str(p))
+
+        metadata = {
+            "path": str(p),
+            "exists": exists,
+            "bytes": size,
+            "mtime": mtime,
+            "format": _detect_format_from_suffix(p),
+        }
+        if origin_label:
+            metadata["origin"] = origin_label
+        return registered, metadata
+
+    def list_risk_profile_files() -> list[str]:
+        """Zwraca listę ścieżek zarejestrowanych plików profili (fallback)."""
+        return list(dict.fromkeys(_REGISTERED_SOURCES))
+
+    def _severity_for(profile: Mapping[str, Any]) -> str | None:
+        return (
+            str(profile.get("severity_min")).lower() if "severity_min" in profile else None
+        )
+
+    def get_metrics_service_overrides(profile_name: str) -> dict[str, Any]:
+        """Mapuje profil ryzyka na override’y opcji `metrics_*` (BEZ prefiksu).
+        Zwracane klucze (np. `ui_alerts_reduce_mode`) są zgodne z oczekiwaniami
+        kodu, który następnie dodaje prefiks `metrics_`.
+        """
+        profile = get_risk_profile(profile_name)
+        severity = _severity_for(profile) or "warning"
+        max_counts = dict(profile.get("max_event_counts", {}))
+
+        overlay_raw = max_counts.get("overlay_budget", 0)
+        overlay_threshold = int(overlay_raw) if isinstance(overlay_raw, (int, float)) else 0
+
+        overrides: dict[str, Any] = {
+            # tryby alertów
+            "ui_alerts_reduce_mode": "enable",
+            "ui_alerts_overlay_mode": "enable",
+            "ui_alerts_jank_mode": "enable",
+            # severities wynikające z minimalnej akceptowalnej głośności
+            "ui_alerts_reduce_active_severity": severity,
+            "ui_alerts_overlay_exceeded_severity": severity,
+            "ui_alerts_jank_spike_severity": severity,
+            # progi
+            "ui_alerts_overlay_critical_threshold": max(0, overlay_threshold),
+        }
+
+        # Jeśli profil bardzo restrykcyjny dla jank (0), zdefiniuj krytyczne severity.
+        jank_cap = max_counts.get("jank", None)
+        if isinstance(jank_cap, (int, float)) and jank_cap <= 0:
+            overrides["ui_alerts_jank_critical_severity"] = "critical"
+
+        return overrides
+
+    # w niektórych miejscach API może oczekiwać tej nazwy – dopasowujemy do get_metrics_service_overrides
+    def get_metrics_service_config_overrides(profile_name: str) -> dict[str, Any]:
+        return get_metrics_service_overrides(profile_name)
+
+    def get_metrics_service_env_overrides(profile_name: str) -> dict[str, Any]:
+        """Mapuje override’y na zmienne środowiskowe dla `run_trading_stub_server`.
+
+        Przykład: klucz `ui_alerts_reduce_mode` ->
+        `RUN_TRADING_STUB_METRICS_UI_ALERTS_REDUCE_MODE`.
+        """
+        cli = get_metrics_service_overrides(profile_name)
+        env: dict[str, Any] = {}
+        for key, value in cli.items():
+            env_name = "RUN_TRADING_STUB_METRICS_" + key.upper()
+            env_name = env_name.replace("-", "_")
+            env[env_name] = value
+        return env
+
+    def summarize_risk_profile(metadata: Mapping[str, Any]) -> Mapping[str, Any]:
+        """Prosty, zgodny z JSON skrót konfiguracji profilu (fallback)."""
+        name = str(metadata.get("name", "")).strip().lower() or None
+        sev = metadata.get("severity_min")
+        maxc = dict(metadata.get("max_event_counts", {}) or {})
+        minc = dict(metadata.get("min_event_counts", {}) or {})
+        summary: dict[str, Any] = {
+            "name": name,
+            "severity_min": sev,
+            "limits": {
+                k: v
+                for k, v in {
+                    "overlay_budget": maxc.get("overlay_budget"),
+                    "jank": maxc.get("jank"),
+                    "reduce_motion": maxc.get("reduce_motion"),
+                }.items()
+                if v is not None
+            },
+            "requirements": {
+                k: v
+                for k, v in {
+                    "expect_summary_enabled": metadata.get("expect_summary_enabled"),
+                    "require_screen_info": metadata.get("require_screen_info"),
+                }.items()
+                if v is not None
+            },
+        }
+        # Podpowiedzi mappingu na override’y MetricsService (tylko to, co znamy w fallbacku)
+        try:
+            overrides = get_metrics_service_overrides(name or "")
+            summary["recommended_overrides"] = overrides
+        except Exception:
+            pass
+        return summary
+
+    class MetricsRiskProfileResolver:
+        """Minimalny resolver profili ryzyka (fallback)."""
+
+        def __init__(self) -> None:
+            self._names = set(list_risk_profile_names())
+
+        def names(self) -> list[str]:
+            return list_risk_profile_names()
+
+        def resolve_overrides(self, name: str) -> dict[str, Any]:
+            return get_metrics_service_overrides(name)
+
+        def register_file(self, path: Path | str) -> list[str]:
+            regs, _meta = load_risk_profiles_with_metadata(path, origin_label=f"resolver:{path}")
+            self._names.update(regs)
+            return regs
+
+    __all__ = [
+        "MetricsRiskProfileResolver",
+        "get_metrics_service_config_overrides",
+        "get_metrics_service_env_overrides",
+        "get_metrics_service_overrides",
+        "get_risk_profile",
+        "list_risk_profile_files",
+        "list_risk_profile_names",
+        "load_risk_profiles_from_file",
+        "load_risk_profiles_with_metadata",
+        "register_risk_profiles",
+        "risk_profile_metadata",
+        "summarize_risk_profile",
+    ]
+
+# ---------------------------------------------------------------------------
+# CLI – wspólne dla trybu pełnego i fallback
 
 RENDER_SECTION_CHOICES: tuple[str, ...] = (
     "metrics_service_overrides",
@@ -59,10 +370,6 @@ RENDER_SECTION_CHOICES: tuple[str, ...] = (
     "summary",
     "core_config",
 )
-
-
-# ---------------------------------------------------------------------------
-# Pomocnicze funkcje CLI
 
 
 def _load_core_metadata(path: str | None) -> Mapping[str, Any] | None:
@@ -84,33 +391,21 @@ def _load_core_metadata(path: str | None) -> Mapping[str, Any] | None:
         "host": getattr(metrics_cfg, "host", None),
         "port": getattr(metrics_cfg, "port", None),
         "risk_profile": getattr(metrics_cfg, "ui_alerts_risk_profile", None),
-        "risk_profiles_file": getattr(
-            metrics_cfg, "ui_alerts_risk_profiles_file", None
-        ),
+        "risk_profiles_file": getattr(metrics_cfg, "ui_alerts_risk_profiles_file", None),
     }
 
     tls_cfg = getattr(metrics_cfg, "tls", None)
     if tls_cfg is not None:
         metrics_meta["tls_enabled"] = bool(getattr(tls_cfg, "enabled", False))
-        metrics_meta["client_auth"] = bool(
-            getattr(tls_cfg, "require_client_auth", False)
-        )
-        metrics_meta["client_cert_configured"] = bool(
-            getattr(tls_cfg, "certificate_path", None)
-        )
-        metrics_meta["client_key_configured"] = bool(
-            getattr(tls_cfg, "private_key_path", None)
-        )
-        metrics_meta["root_cert_configured"] = bool(
-            getattr(tls_cfg, "client_ca_path", None)
-        )
+        metrics_meta["client_auth"] = bool(getattr(tls_cfg, "require_client_auth", False))
+        metrics_meta["client_cert_configured"] = bool(getattr(tls_cfg, "certificate_path", None))
+        metrics_meta["client_key_configured"] = bool(getattr(tls_cfg, "private_key_path", None))
+        metrics_meta["root_cert_configured"] = bool(getattr(tls_cfg, "client_ca_path", None))
 
     if getattr(metrics_cfg, "auth_token", None):
         metrics_meta["auth_token_configured"] = True
 
-    metadata["metrics_service"] = {
-        key: value for key, value in metrics_meta.items() if value not in (None, "")
-    }
+    metadata["metrics_service"] = {key: value for key, value in metrics_meta.items() if value not in (None, "")}
     return metadata
 
 
@@ -120,40 +415,27 @@ def _load_additional_profiles(
 ) -> list[Mapping[str, Any]]:
     metadata_entries: list[Mapping[str, Any]] = []
     for raw in files or []:
-        _, metadata = load_risk_profiles_with_metadata(
-            raw, origin_label="cli:file"
-        )
+        _, metadata = load_risk_profiles_with_metadata(raw, origin_label="cli:file")
         metadata_entries.append(metadata)
     for raw in directories or []:
-        _, metadata = load_risk_profiles_with_metadata(
-            raw, origin_label="cli:dir"
-        )
+        _, metadata = load_risk_profiles_with_metadata(raw, origin_label="cli:dir")
         metadata_entries.append(metadata)
     return metadata_entries
 
 
-def _dump_payload(
-    payload: Mapping[str, Any], *, output: str | None, fmt: str = "json"
-) -> None:
-    if fmt not in {"json", "yaml"}:
-        raise ValueError(f"Nieobsługiwany format serializacji: {fmt}")
-
-    if fmt == "yaml":
-        rendered = yaml.safe_dump(
-            payload,
-            allow_unicode=True,
-            sort_keys=False,
-        )
+def _write_text_output(payload: str, *, output: str | None) -> None:
+    if output:
+        target = Path(output).expanduser()
+        target.write_text(payload, encoding="utf-8")
     else:
-        rendered = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
-
-    _write_text_output(rendered, output=output)
+        sys.stdout.write(payload)
+        if not payload.endswith("\n"):
+            sys.stdout.write("\n")
 
 
 def _infer_format_from_output(path: str | None) -> str | None:
     if not path:
         return None
-
     suffix = Path(path).suffix.lower()
     if suffix in {".yaml", ".yml"}:
         return "yaml"
@@ -181,9 +463,7 @@ def _resolve_yaml_json_format(
         if explicit not in allowed:
             parser.error("Format musi być jednym z: json, yaml")
         if inferred is not None and inferred != explicit:
-            parser.error(
-                "Rozszerzenie pliku wyjściowego nie zgadza się z wymuszonym formatem"
-            )
+            parser.error("Rozszerzenie pliku wyjściowego nie zgadza się z wymuszonym formatem")
         final = explicit
 
     if final not in allowed:
@@ -191,6 +471,20 @@ def _resolve_yaml_json_format(
 
     setattr(args, "format", final)
     return final
+
+
+def _dump_payload(payload: Mapping[str, Any], *, output: str | None, fmt: str = "json") -> None:
+    if fmt not in {"json", "yaml"}:
+        raise ValueError(f"Nieobsługiwany format serializacji: {fmt}")
+
+    if fmt == "yaml":
+        if yaml is None:
+            raise RuntimeError("Wymagany PyYAML (pip install pyyaml), aby użyć formatu YAML")
+        rendered = yaml.safe_dump(payload, allow_unicode=True, sort_keys=False)
+    else:
+        rendered = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+
+    _write_text_output(rendered, output=output)
 
 
 def _add_shared_arguments(target: argparse.ArgumentParser) -> None:
@@ -217,61 +511,49 @@ def _add_shared_arguments(target: argparse.ArgumentParser) -> None:
         "--output",
         metavar="PATH",
         help=(
-            "Ścieżka wyjściowa dla raportu (domyślnie STDOUT); format może być "
-            "wywnioskowany z rozszerzenia pliku"
+            "Ścieżka wyjściowa dla raportu (domyślnie STDOUT); format może być wywnioskowany z rozszerzenia pliku"
         ),
     )
 
 
+# ---------------------------------------------------------------------------
+# Budowa parsera i podkomend
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="telemetry_risk_profiles",
-        description=(
-            "Zarządzanie presetami profili ryzyka telemetryjnego oraz audyt konfiguracji"
-        ),
+        description=("Zarządzanie presetami profili ryzyka telemetryjnego oraz audyt konfiguracji"),
         conflict_handler="resolve",
     )
     _add_shared_arguments(parser)
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    list_parser = subparsers.add_parser(
-        "list", help="Wyświetl listę dostępnych profili ryzyka"
-    )
+    list_parser = subparsers.add_parser("list", help="Wyświetl listę dostępnych profili ryzyka")
     _add_shared_arguments(list_parser)
-    list_parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Dołącz szczegóły każdego profilu",
-    )
+    list_parser.add_argument("--verbose", action="store_true", help="Dołącz szczegóły każdego profilu")
     list_parser.add_argument(
         "--format",
         choices=("json", "yaml"),
         help=(
-            "Format wyjścia raportu (json lub yaml). Domyślnie json lub zgodnie z rozszerzeniem "
-            "pliku wyjściowego"
+            "Format wyjścia raportu (json lub yaml). Domyślnie json lub zgodnie z rozszerzeniem pliku wyjściowego"
         ),
     )
 
-    show_parser = subparsers.add_parser(
-        "show", help="Wyświetl szczegóły wybranego profilu"
-    )
+    show_parser = subparsers.add_parser("show", help="Wyświetl szczegóły wybranego profilu")
     _add_shared_arguments(show_parser)
     show_parser.add_argument("name", help="Nazwa profilu ryzyka do wyświetlenia")
     show_parser.add_argument(
         "--format",
         choices=("json", "yaml"),
         help=(
-            "Format wyjścia raportu (json lub yaml). Domyślnie json lub zgodnie z rozszerzeniem "
-            "pliku wyjściowego"
+            "Format wyjścia raportu (json lub yaml). Domyślnie json lub zgodnie z rozszerzeniem pliku wyjściowego"
         ),
     )
 
     render_parser = subparsers.add_parser(
         "render",
-        help=(
-            "Wygeneruj nadpisania konfiguracji MetricsService dla wskazanego profilu"
-        ),
+        help=("Wygeneruj nadpisania konfiguracji MetricsService dla wskazanego profilu"),
     )
     _add_shared_arguments(render_parser)
     render_parser.add_argument("name", help="Nazwa profilu ryzyka")
@@ -286,23 +568,19 @@ def build_parser() -> argparse.ArgumentParser:
     render_parser.add_argument(
         "--include-profile",
         action="store_true",
-        help="Dołącz pełną definicję profilu do wyniku JSON/YAML (niedostępne dla formatów CLI/env)",
+        help=("Dołącz pełną definicję profilu do wyniku JSON/YAML (niedostępne dla formatów CLI/env)"),
     )
     render_parser.add_argument(
         "--cli-style",
         choices=("equals", "space"),
         default="equals",
-        help=(
-            "Sposób formatowania wartości flag CLI (equals: --key=value, space: --key value)"
-        ),
+        help=("Sposób formatowania wartości flag CLI (equals: --key=value, space: --key value)"),
     )
     render_parser.add_argument(
         "--env-style",
         choices=("dotenv", "export"),
         default="dotenv",
-        help=(
-            "Sposób formatowania zmiennych środowiskowych (dotenv: KEY=value, export: export KEY=value)"
-        ),
+        help=("Sposób formatowania zmiennych środowiskowych (dotenv: KEY=value, export: export KEY=value)"),
     )
     render_parser.add_argument(
         "--section",
@@ -312,14 +590,12 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="NAME",
         help=(
             "Ogranicz wynik JSON/YAML do wskazanych sekcji (można podać wielokrotnie). "
-            "Dostępne: " + ", ".join(RENDER_SECTION_CHOICES)
+            "Dostępne: "
+            + ", ".join(RENDER_SECTION_CHOICES)
         ),
     )
 
-    diff_parser = subparsers.add_parser(
-        "diff",
-        help="Porównaj dwa profile ryzyka i wypisz różnice w nadpisaniach",
-    )
+    diff_parser = subparsers.add_parser("diff", help="Porównaj dwa profile ryzyka i wypisz różnice w nadpisaniach")
     _add_shared_arguments(diff_parser)
     diff_parser.add_argument("base", help="Nazwa profilu bazowego")
     diff_parser.add_argument("target", help="Profil, z którym porównujemy")
@@ -327,33 +603,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--format",
         choices=("json", "yaml"),
         help=(
-            "Format raportu różnic (json lub yaml). Domyślnie json lub zgodnie z rozszerzeniem "
-            "pliku wyjściowego"
+            "Format raportu różnic (json lub yaml). Domyślnie json lub zgodnie z rozszerzeniem pliku wyjściowego"
         ),
     )
-    diff_parser.add_argument(
-        "--include-profiles",
-        action="store_true",
-        help="Dołącz pełne definicje profili do wyniku JSON/YAML",
-    )
-    diff_parser.add_argument(
-        "--hide-unchanged",
-        action="store_true",
-        help="Ukryj sekcje oznaczone jako niezmienione, aby uprościć raport",
-    )
+    diff_parser.add_argument("--include-profiles", action="store_true", help="Dołącz pełne definicje profili do wyniku JSON/YAML")
+    diff_parser.add_argument("--hide-unchanged", action="store_true", help="Ukryj sekcje niezmienione, aby uprościć raport")
     diff_parser.add_argument(
         "--section",
         dest="sections",
         action="append",
-        choices=(
-            "diff",
-            "summary",
-            "cli",
-            "env",
-            "profiles",
-            "core_config",
-            "sources",
-        ),
+        choices=("diff", "summary", "cli", "env", "profiles", "core_config", "sources"),
         metavar="NAME",
         help=(
             "Ogranicz wynik do wskazanych sekcji (można podać wielokrotnie). "
@@ -363,30 +622,22 @@ def build_parser() -> argparse.ArgumentParser:
     diff_parser.add_argument(
         "--fail-on-diff",
         action="store_true",
-        help=(
-            "Zakończ działanie kodem 1, jeżeli wykryto różnice pomiędzy profilami"
-        ),
+        help=("Zakończ działanie kodem 1, jeżeli wykryto różnice pomiędzy profilami"),
     )
     diff_parser.add_argument(
         "--cli-style",
         choices=("equals", "space"),
         default="equals",
-        help=(
-            "Format flag CLI w sekcji porównania (equals: --key=value, space: --key value)"
-        ),
+        help=("Format flag CLI w sekcji porównania (equals: --key=value, space: --key value)"),
     )
     diff_parser.add_argument(
         "--env-style",
         choices=("dotenv", "export"),
         default="dotenv",
-        help=(
-            "Format przypisań środowiskowych w sekcji porównania (dotenv lub export)"
-        ),
+        help=("Format przypisań środowiskowych w sekcji porównania (dotenv lub export)"),
     )
 
-    validate_parser = subparsers.add_parser(
-        "validate", help="Zweryfikuj dostępność zadanych profili"
-    )
+    validate_parser = subparsers.add_parser("validate", help="Zweryfikuj dostępność zadanych profili")
     _add_shared_arguments(validate_parser)
     validate_parser.add_argument(
         "--require",
@@ -398,59 +649,16 @@ def build_parser() -> argparse.ArgumentParser:
     validate_parser.add_argument(
         "--format",
         choices=("json", "yaml"),
-        help=(
-            "Format raportu (json lub yaml). Domyślnie json lub zgodnie z rozszerzeniem pliku"
-        ),
+        help=("Format raportu (json lub yaml). Domyślnie json lub zgodnie z rozszerzeniem pliku"),
     )
 
     return parser
 
 
-def _handle_list(
-    *,
-    verbose: bool,
-    selected: str | None,
-    sources: list[Mapping[str, Any]],
-    core_metadata: Mapping[str, Any] | None,
-) -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "risk_profiles": list(list_risk_profile_names()),
-        "sources": sources,
-    }
-    if verbose:
-        payload["profiles"] = {
-            name: risk_profile_metadata(name)
-            for name in list_risk_profile_names()
-        }
-    if selected:
-        payload["selected"] = selected.strip().lower()
-    if core_metadata:
-        payload["core_config"] = dict(core_metadata)
-    return payload
+# ---------------------------------------------------------------------------
+# Pomocnicze: rendering CLI/env i sekcji
 
-
-def _handle_show(
-    name: str,
-    *,
-    sources: list[Mapping[str, Any]],
-    core_metadata: Mapping[str, Any] | None,
-) -> dict[str, Any]:
-    normalized = name.strip().lower()
-    metadata = risk_profile_metadata(normalized)
-    payload: dict[str, Any] = {
-        "risk_profile": metadata,
-        "name": normalized,
-        "sources": sources,
-    }
-    payload["metrics_service_overrides"] = get_metrics_service_overrides(normalized)
-    if core_metadata:
-        payload["core_config"] = dict(core_metadata)
-    return payload
-
-
-def _build_cli_flags(
-    overrides: Mapping[str, Any], *, style: str = "equals"
-) -> list[str]:
+def _build_cli_flags(overrides: Mapping[str, Any], *, style: str = "equals") -> list[str]:
     flags: list[str] = []
     for option, value in sorted(overrides.items()):
         flag = "--" + option.replace("_", "-")
@@ -485,18 +693,11 @@ def _quote_for_dotenv(value: str) -> str:
         return '""'
     if _DOTENV_SAFE_VALUE.match(value):
         return value
-    escaped = (
-        value.replace("\\", "\\\\")
-        .replace("\n", "\\n")
-        .replace("\r", "\\r")
-        .replace('"', '\\"')
-    )
+    escaped = value.replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "\\r").replace('"', '\\"')
     return f'"{escaped}"'
 
 
-def _build_env_assignments(
-    overrides: Mapping[str, Any], *, style: str = "dotenv"
-) -> list[str]:
+def _build_env_assignments(overrides: Mapping[str, Any], *, style: str = "dotenv") -> list[str]:
     assignments: list[str] = []
     for env_name, raw_value in sorted(overrides.items()):
         value_text = _format_env_value(raw_value)
@@ -506,19 +707,94 @@ def _build_env_assignments(
         elif style == "export":
             value_repr = shlex.quote(value_text)
             assignments.append(f"export {env_name}={value_repr}")
-        else:  # pragma: no cover - zabezpieczenie przed nieznanym stylem
+        else:  # pragma: no cover - zabezpieczenie
             raise ValueError(f"Nieobsługiwany styl env: {style}")
     return assignments
 
 
-def _write_text_output(payload: str, *, output: str | None) -> None:
-    if output:
-        target = Path(output).expanduser()
-        target.write_text(payload, encoding="utf-8")
-    else:
-        sys.stdout.write(payload)
-        if not payload.endswith("\n"):
-            sys.stdout.write("\n")
+# ---------------------------------------------------------------------------
+# Handlery podkomend
+
+def _handle_list(
+    *,
+    verbose: bool,
+    selected: str | None,
+    sources: list[Mapping[str, Any]],
+    core_metadata: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "risk_profiles": list(list_risk_profile_names()),
+        "sources": sources,
+    }
+    if verbose:
+        payload["profiles"] = {name: risk_profile_metadata(name) for name in list_risk_profile_names()}
+    if selected:
+        payload["selected"] = selected.strip().lower()
+    if core_metadata:
+        payload["core_config"] = dict(core_metadata)
+    return payload
+
+
+def _handle_show(
+    name: str,
+    *,
+    sources: list[Mapping[str, Any]],
+    core_metadata: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    normalized = name.strip().lower()
+    metadata = risk_profile_metadata(normalized)
+    payload: dict[str, Any] = {
+        "risk_profile": metadata,
+        "name": normalized,
+        "sources": sources,
+    }
+    payload["metrics_service_overrides"] = get_metrics_service_overrides(normalized)
+    if core_metadata:
+        payload["core_config"] = dict(core_metadata)
+    return payload
+
+
+def _collect_added_or_changed(diff: Mapping[str, Any]) -> Mapping[str, Any]:
+    combined: dict[str, Any] = {}
+    for key, value in diff.get("added", {}).items():
+        combined[key] = value
+    for key, payload in diff.get("changed", {}).items():
+        combined[key] = payload.get("to")
+    return combined
+
+
+def _diff_mapping(base_map: Mapping[str, Any], target_map: Mapping[str, Any]) -> dict[str, Any]:
+    base_data = dict(base_map)
+    target_data = dict(target_map)
+
+    added = {key: deepcopy(value) for key, value in target_data.items() if key not in base_data}
+    removed = sorted(key for key in base_data if key not in target_data)
+    changed = {
+        key: {"from": deepcopy(base_data[key]), "to": deepcopy(target_data[key])}
+        for key in sorted(set(base_data) & set(target_data))
+        if base_data[key] != target_data[key]
+    }
+    unchanged = {
+        key: deepcopy(target_data[key])
+        for key in sorted(set(base_data) & set(target_data))
+        if base_data[key] == target_data[key]
+    }
+
+    return {"added": added, "removed": removed, "changed": changed, "unchanged": unchanged}
+
+
+def _diff_mapping_has_changes(diff: Mapping[str, Any]) -> bool:
+    return bool(diff.get("added") or diff.get("removed") or diff.get("changed"))
+
+
+def _diff_scalar(base_value: Any, target_value: Any) -> Mapping[str, Any]:
+    if base_value == target_value:
+        return {"unchanged": deepcopy(base_value)}
+    return {"from": deepcopy(base_value), "to": deepcopy(target_value)}
+
+
+def _scalar_diff_has_changes(diff: Mapping[str, Any]) -> bool:
+    return "unchanged" not in diff
 
 
 def _handle_render(
@@ -544,14 +820,10 @@ def _handle_render(
     selected_sections = tuple(section.strip() for section in sections or [])
 
     if fmt in {"cli", "env"} and include_profile:
-        raise ValueError(
-            "Opcja --include-profile jest dostępna wyłącznie dla formatu json/yaml"
-        )
+        raise ValueError("Opcja --include-profile jest dostępna wyłącznie dla formatu json/yaml")
 
     if fmt in {"cli", "env"} and selected_sections:
-        raise ValueError(
-            "Opcja --section jest dostępna wyłącznie dla formatów json oraz yaml"
-        )
+        raise ValueError("Opcja --section jest dostępna wyłącznie dla formatów json oraz yaml")
 
     if fmt == "cli":
         return None, cli_flags
@@ -586,69 +858,12 @@ def _handle_render(
         for key in selected_sections:
             if key == "env_assignments" and key in payload:
                 filtered[key] = payload[key]
-                if (
-                    "env_assignments_format" in payload
-                    and "env_assignments_format" not in selected_sections
-                ):
-                    filtered["env_assignments_format"] = payload[
-                        "env_assignments_format"
-                    ]
+                if "env_assignments_format" in payload and "env_assignments_format" not in selected_sections:
+                    filtered["env_assignments_format"] = payload["env_assignments_format"]
             elif key in payload:
                 filtered[key] = payload[key]
         payload = filtered
     return payload, None
-
-
-def _diff_mapping(
-    base_map: Mapping[str, Any], target_map: Mapping[str, Any]
-) -> dict[str, Any]:
-    base_data = dict(base_map)
-    target_data = dict(target_map)
-
-    added = {key: deepcopy(value) for key, value in target_data.items() if key not in base_data}
-    removed = sorted(key for key in base_data if key not in target_data)
-    changed = {
-        key: {"from": deepcopy(base_data[key]), "to": deepcopy(target_data[key])}
-        for key in sorted(set(base_data) & set(target_data))
-        if base_data[key] != target_data[key]
-    }
-    unchanged = {
-        key: deepcopy(target_data[key])
-        for key in sorted(set(base_data) & set(target_data))
-        if base_data[key] == target_data[key]
-    }
-
-    return {
-        "added": added,
-        "removed": removed,
-        "changed": changed,
-        "unchanged": unchanged,
-    }
-
-
-def _diff_mapping_has_changes(diff: Mapping[str, Any]) -> bool:
-    return bool(
-        diff.get("added") or diff.get("removed") or diff.get("changed")
-    )
-
-
-def _collect_added_or_changed(diff: Mapping[str, Any]) -> Mapping[str, Any]:
-    combined: dict[str, Any] = {}
-    for key, value in diff.get("added", {}).items():
-        combined[key] = value
-    for key, payload in diff.get("changed", {}).items():
-        combined[key] = payload.get("to")
-    return combined
-
-
-def _diff_scalar(base_value: Any, target_value: Any) -> Mapping[str, Any]:
-    if base_value == target_value:
-        return {"unchanged": deepcopy(base_value)}
-    return {"from": deepcopy(base_value), "to": deepcopy(target_value)}
-
-
-def _scalar_diff_has_changes(diff: Mapping[str, Any]) -> bool:
-    return "unchanged" not in diff
 
 
 def _handle_diff(
@@ -689,36 +904,19 @@ def _handle_diff(
         dict(target_metadata.get("min_event_counts") or {}),
     )
 
-    selected_sections = {
-        section.strip().lower() for section in sections or [] if section
-    }
+    selected_sections = {section.strip().lower() for section in sections or [] if section}
 
-    severity_diff = _diff_scalar(
-        base_metadata.get("severity_min"), target_metadata.get("severity_min")
-    )
-    extends_diff = _diff_scalar(
-        base_metadata.get("extends"), target_metadata.get("extends")
-    )
-    extends_chain_diff = _diff_scalar(
-        base_metadata.get("extends_chain"),
-        target_metadata.get("extends_chain"),
-    )
+    severity_diff = _diff_scalar(base_metadata.get("severity_min"), target_metadata.get("severity_min"))
+    extends_diff = _diff_scalar(base_metadata.get("extends"), target_metadata.get("extends"))
+    extends_chain_diff = _diff_scalar(base_metadata.get("extends_chain"), target_metadata.get("extends_chain"))
     expect_summary_diff = _diff_scalar(
-        base_metadata.get("expect_summary_enabled"),
-        target_metadata.get("expect_summary_enabled"),
+        base_metadata.get("expect_summary_enabled"), target_metadata.get("expect_summary_enabled")
     )
     require_screen_diff = _diff_scalar(
-        base_metadata.get("require_screen_info"),
-        target_metadata.get("require_screen_info"),
+        base_metadata.get("require_screen_info"), target_metadata.get("require_screen_info")
     )
 
-    mapping_diffs = [
-        cli_diff,
-        cfg_diff,
-        env_diff,
-        max_counts_diff,
-        min_counts_diff,
-    ]
+    mapping_diffs = [cli_diff, cfg_diff, env_diff, max_counts_diff, min_counts_diff]
     has_changes = any(_diff_mapping_has_changes(item) for item in mapping_diffs) or any(
         _scalar_diff_has_changes(item)
         for item in (
@@ -746,39 +944,28 @@ def _handle_diff(
             "expect_summary_enabled": expect_summary_diff,
             "require_screen_info": require_screen_diff,
         },
-            "summary": {
-                "base": summarize_risk_profile(base_metadata),
-                "target": summarize_risk_profile(target_metadata),
-            },
+        "summary": {
+            "base": summarize_risk_profile(base_metadata),
+            "target": summarize_risk_profile(target_metadata),
+        },
         "cli": {
             "base": _build_cli_flags(base_cli, style=cli_style),
             "target": _build_cli_flags(target_cli, style=cli_style),
-            "added_or_changed": _build_cli_flags(
-                _collect_added_or_changed(cli_diff), style=cli_style
-            ),
+            "added_or_changed": _build_cli_flags(_collect_added_or_changed(cli_diff), style=cli_style),
             "removed": cli_diff["removed"],
         },
         "env": {
             "base": _build_env_assignments(base_env, style=env_style),
             "target": _build_env_assignments(target_env, style=env_style),
-            "added_or_changed": _build_env_assignments(
-                _collect_added_or_changed(env_diff), style=env_style
-            ),
+            "added_or_changed": _build_env_assignments(_collect_added_or_changed(env_diff), style=env_style),
             "removed": env_diff["removed"],
             "format": env_style,
         },
     }
 
     if not include_unchanged:
-        for section in (
-            cli_diff,
-            cfg_diff,
-            env_diff,
-            max_counts_diff,
-            min_counts_diff,
-        ):
+        for section in (cli_diff, cfg_diff, env_diff, max_counts_diff, min_counts_diff):
             section.pop("unchanged", None)
-
         for scalar_key in (
             "severity_min",
             "extends",
@@ -790,10 +977,7 @@ def _handle_diff(
             if "unchanged" in scalar_section:
                 payload["diff"][scalar_key] = {}
 
-    include_profiles_section = include_profiles or (
-        "profiles" in selected_sections if selected_sections else False
-    )
-
+    include_profiles_section = include_profiles or ("profiles" in selected_sections if selected_sections else False)
     if include_profiles_section:
         payload["profiles"] = {"base": base_metadata, "target": target_metadata}
 
@@ -833,22 +1017,24 @@ def _handle_validate(
     return payload, 0
 
 
+# ---------------------------------------------------------------------------
+# Główne wejście CLI
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
+    # Zarejestruj dodatkowe profile z plików/katalogów
     try:
-        sources = _load_additional_profiles(
-            args.risk_profiles_files, args.risk_profiles_dirs
-        )
-    except Exception as exc:  # noqa: BLE001 - błędy raportujemy operatorowi
+        sources = _load_additional_profiles(args.risk_profiles_files, args.risk_profiles_dirs)
+    except Exception as exc:  # noqa: BLE001
         parser.error(str(exc))
 
     core_metadata: Mapping[str, Any] | None = None
     if getattr(args, "core_config", None):
         try:
             core_metadata = _load_core_metadata(args.core_config)
-        except Exception as exc:  # noqa: BLE001 - przekazujemy błąd użytkownikowi
+        except Exception as exc:  # noqa: BLE001
             parser.error(f"Nie udało się wczytać --core-config: {exc}")
 
     command = args.command
@@ -860,24 +1046,14 @@ def main(argv: list[str] | None = None) -> int:
         inferred_format = _infer_format_from_output(output_path)
         if getattr(args, "format", None) is None:
             args.format = inferred_format or "json"
-        elif (
-            getattr(args, "format") in {"json", "yaml"}
-            and inferred_format is not None
-            and inferred_format != getattr(args, "format")
-        ):
-            parser.error(
-                "Rozszerzenie pliku wyjściowego nie zgadza się z wymuszonym formatem"
-            )
+        elif getattr(args, "format") in {"json", "yaml"} and inferred_format is not None and inferred_format != getattr(args, "format"):
+            parser.error("Rozszerzenie pliku wyjściowego nie zgadza się z wymuszonym formatem")
     elif command == "diff":
         inferred_format = _infer_format_from_output(output_path)
         if getattr(args, "format", None) is None:
             args.format = inferred_format or "json"
-        elif (
-            inferred_format is not None and inferred_format != getattr(args, "format")
-        ):
-            parser.error(
-                "Rozszerzenie pliku wyjściowego nie zgadza się z wymuszonym formatem"
-            )
+        elif inferred_format is not None and inferred_format != getattr(args, "format"):
+            parser.error("Rozszerzenie pliku wyjściowego nie zgadza się z wymuszonym formatem")
 
     if command == "list":
         payload = _handle_list(
@@ -888,27 +1064,15 @@ def main(argv: list[str] | None = None) -> int:
             sources=sources,
             core_metadata=core_metadata,
         )
-        _dump_payload(
-            payload,
-            output=getattr(args, "output", None),
-            fmt=str(getattr(args, "format", "json")),
-        )
+        _dump_payload(payload, output=getattr(args, "output", None), fmt=str(getattr(args, "format", "json")))
         return 0
 
     if command == "show":
         try:
-            payload = _handle_show(
-                args.name,
-                sources=sources,
-                core_metadata=core_metadata,
-            )
+            payload = _handle_show(args.name, sources=sources, core_metadata=core_metadata)
         except (KeyError, ValueError) as exc:
             parser.error(str(exc))
-        _dump_payload(
-            payload,
-            output=getattr(args, "output", None),
-            fmt=str(getattr(args, "format", "json")),
-        )
+        _dump_payload(payload, output=getattr(args, "output", None), fmt=str(getattr(args, "format", "json")))
         return 0
 
     if command == "render":
@@ -932,12 +1096,10 @@ def main(argv: list[str] | None = None) -> int:
             _write_text_output(output_lines, output=getattr(args, "output", None))
             return 0
         if args.format == "yaml":
+            if yaml is None:
+                parser.error("Wymagany PyYAML (pip install pyyaml), aby użyć formatu YAML")
             yaml_payload = payload or {}
-            yaml_text = yaml.safe_dump(
-                yaml_payload,
-                allow_unicode=True,
-                sort_keys=False,
-            )
+            yaml_text = yaml.safe_dump(yaml_payload, allow_unicode=True, sort_keys=False)
             _write_text_output(yaml_text, output=getattr(args, "output", None))
             return 0
         _dump_payload(payload or {}, output=getattr(args, "output", None))
@@ -953,19 +1115,15 @@ def main(argv: list[str] | None = None) -> int:
                 include_profiles=bool(getattr(args, "include_profiles", False)),
                 cli_style=str(getattr(args, "cli_style", "equals")),
                 env_style=str(getattr(args, "env_style", "dotenv")),
-                include_unchanged=not bool(
-                    getattr(args, "hide_unchanged", False)
-                ),
+                include_unchanged=not bool(getattr(args, "hide_unchanged", False)),
                 sections=getattr(args, "sections", None),
             )
         except (KeyError, ValueError) as exc:
             parser.error(str(exc))
         if args.format == "yaml":
-            yaml_text = yaml.safe_dump(
-                payload,
-                allow_unicode=True,
-                sort_keys=False,
-            )
+            if yaml is None:
+                parser.error("Wymagany PyYAML (pip install pyyaml), aby użyć formatu YAML")
+            yaml_text = yaml.safe_dump(payload, allow_unicode=True, sort_keys=False)
             _write_text_output(yaml_text, output=getattr(args, "output", None))
         else:
             _dump_payload(payload, output=getattr(args, "output", None))
@@ -979,11 +1137,7 @@ def main(argv: list[str] | None = None) -> int:
             sources=sources,
             core_metadata=core_metadata,
         )
-        _dump_payload(
-            payload,
-            output=getattr(args, "output", None),
-            fmt=str(getattr(args, "format", "json")),
-        )
+        _dump_payload(payload, output=getattr(args, "output", None), fmt=str(getattr(args, "format", "json")))
         return exit_code
 
     parser.error(f"Nieobsługiwane polecenie: {command}")

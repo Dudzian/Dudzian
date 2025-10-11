@@ -322,6 +322,8 @@ def bootstrap_environment(
                     except Exception:  # pragma: no cover - zachowujemy przybliżenie
                         configured_path = (base_dir / configured_path).absolute()
             telemetry_log = configured_path or default_path
+
+            # --- Risk profile resolver (opcjonalny) ---
             risk_profile_meta: Mapping[str, Any] | None = None
             resolver: "MetricsRiskProfileResolver" | None = None
             if metrics_config is not None and getattr(metrics_config, "ui_alerts_risk_profile", None):
@@ -349,9 +351,12 @@ def bootstrap_environment(
                 if resolver is not None:
                     value = resolver.override(field_name, value)
                 return value
+
+            # Tryby zdarzeń
             reduce_mode = "enable"
             overlay_mode = "enable"
             jank_mode = "disable"
+
             reduce_candidate = _resolve_metrics_value("reduce_motion_mode", None)
             if reduce_candidate is not None:
                 candidate = str(reduce_candidate).lower()
@@ -361,6 +366,7 @@ def bootstrap_environment(
                 reduce_mode = (
                     "enable" if bool(_resolve_metrics_value("reduce_motion_alerts", True)) else "disable"
                 )
+
             overlay_candidate = _resolve_metrics_value("overlay_alert_mode", None)
             if overlay_candidate is not None:
                 candidate = str(overlay_candidate).lower()
@@ -370,6 +376,7 @@ def bootstrap_environment(
                 overlay_mode = (
                     "enable" if bool(_resolve_metrics_value("overlay_alerts", True)) else "disable"
                 )
+
             jank_candidate = _resolve_metrics_value("jank_alert_mode", None)
             if jank_candidate is not None:
                 candidate = str(jank_candidate).lower()
@@ -387,14 +394,17 @@ def bootstrap_environment(
             overlay_logging = overlay_mode in {"enable", "jsonl"}
             jank_logging = jank_mode in {"enable", "jsonl"}
 
+            # Kategorie / severity / progi (z możliwością override przez resolver)
             reduce_category = _resolve_metrics_value("reduce_motion_category", "ui.performance")
             reduce_active = _resolve_metrics_value("reduce_motion_severity_active", "warning")
             reduce_recovered = _resolve_metrics_value("reduce_motion_severity_recovered", "info")
+
             overlay_category = _resolve_metrics_value("overlay_alert_category", "ui.performance")
             overlay_exceeded = _resolve_metrics_value("overlay_alert_severity_exceeded", "warning")
             overlay_recovered = _resolve_metrics_value("overlay_alert_severity_recovered", "info")
             overlay_critical = _resolve_metrics_value("overlay_alert_severity_critical", "critical")
             overlay_threshold_raw = _resolve_metrics_value("overlay_alert_critical_threshold", 2)
+
             jank_category = _resolve_metrics_value("jank_alert_category", "ui.performance")
             jank_spike = _resolve_metrics_value("jank_alert_severity_spike", "warning")
             jank_critical = _resolve_metrics_value("jank_alert_severity_critical", None)
@@ -417,6 +427,8 @@ def bootstrap_environment(
                 "jank_category": jank_category,
                 "jank_severity_spike": jank_spike,
             }
+
+            # Walidacja/projekcja progów
             overlay_threshold_value: int | None = None
             if overlay_threshold_raw is not None:
                 try:
@@ -427,6 +439,7 @@ def bootstrap_environment(
                     )
                 else:
                     sink_kwargs["overlay_critical_threshold"] = overlay_threshold_value
+
             jank_threshold_value: float | None = None
             if jank_threshold_raw is not None:
                 try:
@@ -437,8 +450,11 @@ def bootstrap_environment(
                     )
                 else:
                     sink_kwargs["jank_critical_over_ms"] = jank_threshold_value
+
             if overlay_critical is not None:
                 sink_kwargs["overlay_severity_critical"] = overlay_critical
+            if jank_critical is not None:
+                sink_kwargs["jank_severity_critical"] = jank_critical
 
             settings_payload: dict[str, object] = {
                 "jsonl_path": str(telemetry_log),
@@ -466,6 +482,7 @@ def bootstrap_environment(
             }
             if resolver is not None:
                 risk_profile_meta = resolver.metadata()
+
             summary_payload: Mapping[str, Any] | None = None
             if risk_profile_meta is not None:
                 sink_kwargs["risk_profile"] = dict(risk_profile_meta)
@@ -481,6 +498,7 @@ def bootstrap_environment(
                 settings_payload["risk_profile_summary"] = dict(summary_payload)
             if metrics_risk_profiles_file is not None:
                 settings_payload["risk_profiles_file"] = dict(metrics_risk_profiles_file)
+
             audit_backend = _build_ui_alert_audit_metadata(
                 alert_router,
                 requested_backend=getattr(metrics_config, "ui_alerts_audit_backend", None),
@@ -504,11 +522,12 @@ def bootstrap_environment(
         except Exception:  # pragma: no cover - nie blokujemy startu runtime
             _LOGGER.exception("Nie udało się zainicjalizować UiTelemetryAlertSink")
 
+        # Jeśli tylko profil/plik profili – również pokaż w settings
         if metrics_ui_alerts_settings is None and risk_profile_meta is not None:
             metrics_ui_alerts_settings = {"risk_profile": dict(risk_profile_meta)}
-            summary_payload = risk_profile_meta.get("summary")
-            if summary_payload:
-                metrics_ui_alerts_settings["risk_profile_summary"] = dict(summary_payload)
+            if risk_profile_meta.get("summary"):
+                metrics_ui_alerts_settings["risk_profile_summary"] = dict(risk_profile_meta["summary"])  # type: ignore[index]
+
         if metrics_risk_profiles_file is not None:
             if metrics_ui_alerts_settings is None:
                 metrics_ui_alerts_settings = {

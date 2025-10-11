@@ -465,7 +465,7 @@ def test_cli_render_profile_env_with_include_profile_rejected(
                 "env",
                 "--include-profile",
             ]
-    )
+        )
 
     assert excinfo.value.code == 2
 
@@ -826,6 +826,7 @@ def test_cli_render_detects_format_extension_mismatch(tmp_path: Path) -> None:
 
     assert excinfo.value.code == 2
 
+
 def test_cli_diff_with_custom_profile(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -878,6 +879,7 @@ def test_cli_diff_with_custom_profile(
     )
     assert payload["diff"]["metrics_service_overrides"]["added"] == {}
     assert payload["diff"]["metrics_service_overrides"]["removed"] == []
+
 
 def test_cli_validate_requires_profiles(capsys: pytest.CaptureFixture[str]) -> None:
     exit_code = telemetry_profiles_cli.main(
