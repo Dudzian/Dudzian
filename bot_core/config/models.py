@@ -65,6 +65,8 @@ class MetricsServiceConfig:
     # Dodatkowe ścieżki/bezpieczeństwo
     ui_alerts_jsonl_path: str | None = None
     ui_alerts_audit_backend: str | None = None
+    ui_alerts_risk_profile: str | None = None
+    ui_alerts_risk_profiles_file: str | None = None
     tls: MetricsServiceTlsConfig | None = None
 
     # Opcjonalne alerty związane z UI/performance

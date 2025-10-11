@@ -12,6 +12,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from scripts.telemetry_risk_profiles import (
+    get_metrics_service_overrides,
+    list_risk_profile_names,
+    load_risk_profiles_with_metadata,
+    risk_profile_metadata,
+)
+
 # --- tryb rozszerzony: CoreConfig + audyt plików/bezpieczeństwa ---------------
 from bot_core.config.loader import load_core_config
 from bot_core.config.models import CoreConfig, MetricsServiceConfig
@@ -122,10 +129,16 @@ def _initial_value_sources(provided_flags: Iterable[str]) -> dict[str, str]:
         sources["jsonl_path"] = "cli"
     if "--jsonl-fsync" in provided:
         sources["jsonl_fsync"] = "cli"
+    if "--risk-profiles-file" in provided:
+        sources["risk_profiles_file"] = "cli"
+    if "--print-risk-profiles" in provided:
+        sources["print_risk_profiles"] = "cli"
     if "--ui-alerts-jsonl" in provided:
         sources["ui_alerts_jsonl_path"] = "cli"
     if "--disable-ui-alerts" in provided:
         sources["disable_ui_alerts"] = "cli"
+    if "--ui-alerts-risk-profile" in provided:
+        sources["ui_alerts_risk_profile"] = "cli"
     if "--ui-alerts-reduce-mode" in provided:
         sources["ui_alerts_reduce_mode"] = "cli"
     if "--ui-alerts-overlay-mode" in provided:
@@ -152,7 +165,7 @@ def _initial_value_sources(provided_flags: Iterable[str]) -> dict[str, str]:
         sources["ui_alerts_jank_category"] = "cli"
     if "--ui-alerts-jank-spike-severity" in provided:
         sources["ui_alerts_jank_spike_severity"] = "cli"
-    if "--ui-alerts-jank-critical-severity" in provided:
+    if "--ui-alerts-jand-critical-severity" in provided:
         sources["ui_alerts_jank_critical_severity"] = "cli"
     if "--ui-alerts-jank-critical-over-ms" in provided:
         sources["ui_alerts_jank_critical_over_ms"] = "cli"
@@ -189,6 +202,7 @@ def _finalize_value_sources(sources: dict[str, str]) -> dict[str, str]:
         "log_sink",
         "jsonl_path",
         "jsonl_fsync",
+        "risk_profiles_file",
         "fail_on_security_warnings",
         "tls_cert",
         "tls_key",
@@ -216,6 +230,7 @@ def _finalize_value_sources(sources: dict[str, str]) -> dict[str, str]:
         "ui_alerts_audit_retention_days",
         "ui_alerts_audit_fsync",
         "disable_ui_alerts",
+        "ui_alerts_risk_profile",
         "auth_token",
     }
     for key in keys:
@@ -272,6 +287,16 @@ def _apply_environment_overrides(
         ("jsonl_path", "RUN_METRICS_SERVICE_JSONL", "--jsonl"),
         ("jsonl_fsync", "RUN_METRICS_SERVICE_JSONL_FSYNC", "--jsonl-fsync"),
         (
+            "risk_profiles_file",
+            "RUN_METRICS_SERVICE_RISK_PROFILES_FILE",
+            "--risk-profiles-file",
+        ),
+        (
+            "print_risk_profiles",
+            "RUN_METRICS_SERVICE_PRINT_RISK_PROFILES",
+            "--print-risk-profiles",
+        ),
+        (
             "ui_alerts_jsonl_path",
             "RUN_METRICS_SERVICE_UI_ALERTS_JSONL",
             "--ui-alerts-jsonl",
@@ -280,6 +305,11 @@ def _apply_environment_overrides(
             "disable_ui_alerts",
             "RUN_METRICS_SERVICE_DISABLE_UI_ALERTS",
             "--disable-ui-alerts",
+        ),
+        (
+            "ui_alerts_risk_profile",
+            "RUN_METRICS_SERVICE_UI_ALERTS_RISK_PROFILE",
+            "--ui-alerts-risk-profile",
         ),
         (
             "ui_alerts_reduce_mode",
@@ -454,6 +484,19 @@ def _apply_environment_overrides(
             fsync_value = _parse_env_bool(raw, variable=env_var, parser=parser)
             args.jsonl_fsync = bool(fsync_value)
             apply_value(option, env_var, raw, bool(fsync_value))
+        elif option == "risk_profiles_file":
+            normalized = raw.strip()
+            if not normalized:
+                args.risk_profiles_file = None
+                apply_value(option, env_var, raw, None, note="risk_profiles_disabled")
+            else:
+                path_value = Path(normalized).expanduser()
+                args.risk_profiles_file = path_value
+                apply_value(option, env_var, raw, str(path_value))
+        elif option == "print_risk_profiles":
+            enabled = _parse_env_bool(raw, variable=env_var, parser=parser)
+            args.print_risk_profiles = bool(enabled)
+            apply_value(option, env_var, raw, bool(enabled))
         elif option == "ui_alerts_jsonl_path":
             normalized = raw.strip().lower()
             if normalized in {"", "none", "null", "off", "disable", "disabled"}:
@@ -476,6 +519,10 @@ def _apply_environment_overrides(
             disabled = _parse_env_bool(raw, variable=env_var, parser=parser)
             args.disable_ui_alerts = bool(disabled)
             apply_value(option, env_var, raw, bool(disabled))
+        elif option == "ui_alerts_risk_profile":
+            normalized = raw.strip().lower()
+            args.ui_alerts_risk_profile = normalized
+            apply_value(option, env_var, raw, normalized)
         elif option == "ui_alerts_reduce_mode":
             normalized = raw.strip().lower()
             if normalized not in UI_ALERT_MODE_CHOICES:
@@ -723,6 +770,102 @@ def _apply_environment_overrides(
     return section or {}, override_keys
 
 
+def _ui_alerts_config_from_args(args: argparse.Namespace) -> dict[str, object]:
+    return {
+        "reduce_mode": args.ui_alerts_reduce_mode or "enable",
+        "overlay_mode": args.ui_alerts_overlay_mode or "enable",
+        "jank_mode": args.ui_alerts_jank_mode or "enable",
+        "reduce_motion_category": args.ui_alerts_reduce_category or _DEFAULT_UI_CATEGORY,
+        "reduce_motion_severity_active": (
+            args.ui_alerts_reduce_active_severity or _DEFAULT_UI_SEVERITY_ACTIVE
+        ),
+        "reduce_motion_severity_recovered": (
+            args.ui_alerts_reduce_recovered_severity or _DEFAULT_UI_SEVERITY_RECOVERED
+        ),
+        "overlay_category": args.ui_alerts_overlay_category or _DEFAULT_UI_CATEGORY,
+        "overlay_severity_exceeded": (
+            args.ui_alerts_overlay_exceeded_severity or _DEFAULT_UI_SEVERITY_ACTIVE
+        ),
+        "overlay_severity_recovered": (
+            args.ui_alerts_overlay_recovered_severity or _DEFAULT_UI_SEVERITY_RECOVERED
+        ),
+        "overlay_severity_critical": (
+            args.ui_alerts_overlay_critical_severity or _DEFAULT_OVERLAY_SEVERITY_CRITICAL
+        ),
+        "overlay_critical_threshold": (
+            args.ui_alerts_overlay_critical_threshold
+            if args.ui_alerts_overlay_critical_threshold is not None
+            else _DEFAULT_OVERLAY_THRESHOLD
+        ),
+        "jank_category": args.ui_alerts_jank_category or _DEFAULT_UI_CATEGORY,
+        "jank_severity_spike": args.ui_alerts_jank_spike_severity or _DEFAULT_JANK_SEVERITY_SPIKE,
+        "jank_severity_critical": (
+            args.ui_alerts_jank_critical_severity or _DEFAULT_JANK_SEVERITY_CRITICAL
+        ),
+        "jank_critical_over_ms": (
+            args.ui_alerts_jank_critical_over_ms
+            if args.ui_alerts_jank_critical_over_ms is not None
+            else _DEFAULT_JANK_CRITICAL_THRESHOLD_MS
+        ),
+    }
+
+
+def _load_custom_risk_profiles(
+    args: argparse.Namespace, *, parser: argparse.ArgumentParser
+) -> None:
+    """Ładuje dodatkowe profile ryzyka z pliku, jeśli podano."""
+
+    path_value = getattr(args, "risk_profiles_file", None)
+    if not path_value:
+        args._ui_alerts_risk_profiles_file_metadata = None
+        return
+
+    target = Path(path_value).expanduser()
+    try:
+        registered, metadata = load_risk_profiles_with_metadata(
+            target, origin_label=f"metrics_service:{target}"
+        )
+    except FileNotFoundError as exc:
+        parser.error(str(exc))
+    except Exception as exc:  # noqa: BLE001 - chcemy pełny komunikat
+        parser.error(f"Nie udało się wczytać profili ryzyka z {target}: {exc}")
+    else:
+        if registered:
+            LOGGER.info(
+                "Załadowano %s profil(e) ryzyka telemetrii z %s", len(registered), target
+            )
+
+    args._ui_alerts_risk_profiles_file_metadata = dict(metadata)
+
+
+def _apply_risk_profile_defaults(
+    args: argparse.Namespace,
+    *,
+    parser: argparse.ArgumentParser,
+    value_sources: dict[str, str],
+) -> None:
+    profile_name = getattr(args, "ui_alerts_risk_profile", None)
+    if not profile_name:
+        return
+
+    try:
+        overrides = get_metrics_service_overrides(profile_name)
+    except KeyError:
+        parser.error(
+            f"Profil ryzyka {profile_name!r} nie jest obsługiwany. Dostępne: {', '.join(list_risk_profile_names())}"
+        )
+        return  # pragma: no cover - parser.error przerywa wykonanie
+
+    args._ui_alerts_risk_profile_metadata = risk_profile_metadata(profile_name)
+
+    for option, value in overrides.items():
+        source = value_sources.get(option)
+        if source == "cli" or (isinstance(source, str) and source.startswith("env")):
+            continue
+        setattr(args, option, value)
+        value_sources[option] = f"risk_profile:{profile_name}"
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Startuje serwer MetricsService odbierający telemetrię UI (gRPC).",
@@ -766,6 +909,25 @@ def build_parser() -> argparse.ArgumentParser:
         "--disable-ui-alerts",
         action="store_true",
         help="Wyłącza generowanie alertów UI po stronie serwera telemetrii.",
+    )
+    parser.add_argument(
+        "--ui-alerts-risk-profile",
+        default=None,
+        help="Zastosuj predefiniowany profil ryzyka dla alertów UI.",
+    )
+    parser.add_argument(
+        "--risk-profiles-file",
+        type=Path,
+        default=None,
+        help=(
+            "Ścieżka do pliku JSON/YAML z dodatkowymi profilami ryzyka telemetrii. "
+            "Profil można następnie wybrać przez --ui-alerts-risk-profile."
+        ),
+    )
+    parser.add_argument(
+        "--print-risk-profiles",
+        action="store_true",
+        help="Wypisz dostępne profile ryzyka telemetrii i zakończ działanie.",
     )
     parser.add_argument(
         "--ui-alerts-reduce-mode",
@@ -1061,7 +1223,7 @@ def _build_server(
                             "fsync": bool(ui_alerts_audit_fsync),
                         }
                     )
-                    if requested_backend == "memory" and ui_alerts_audit_dir is not None:
+                    if requested_backend == "memory" i ui_alerts_audit_dir is not None:
                         audit_backend["note"] = "directory_ignored_memory_backend"
                     elif file_backend_requested and requested_backend != "memory":
                         audit_backend["note"] = (
@@ -1554,7 +1716,7 @@ def _apply_core_metrics_config(
             if "tls_cert" not in tls_overridden and "tls_key" not in tls_overridden:
                 cert = getattr(tls_cfg, "certificate_path", None)
                 key = getattr(tls_cfg, "private_key_path", None)
-                if cert and key:
+                if cert i key:
                     args.tls_cert = Path(cert)
                     args.tls_key = Path(key)
                     sources.setdefault("tls_cert", "core_config")
@@ -1743,7 +1905,7 @@ def _build_config_plan_payload(
         "working_directory": str(Path.cwd()),
     }
 
-    tls_configured = bool(args.tls_cert and args.tls_key)
+    tls_configured = bool(args.tls_cert i args.tls_key)
 
     jsonl_section: dict[str, object] = {
         "configured": bool(args.jsonl),
@@ -1854,6 +2016,12 @@ def _build_config_plan_payload(
             ),
         }
     )
+    risk_profile_meta = getattr(args, "_ui_alerts_risk_profile_metadata", None)
+    if risk_profile_meta:
+        ui_alerts_section["risk_profile"] = dict(risk_profile_meta)
+    risk_profiles_file_meta = getattr(args, "_ui_alerts_risk_profiles_file_metadata", None)
+    if risk_profiles_file_meta:
+        ui_alerts_section["risk_profiles_file"] = dict(risk_profiles_file_meta)
     ui_alerts_section["audit"] = audit_section
     payload["ui_alerts"] = ui_alerts_section
     payload["metrics"] = {
@@ -1891,6 +2059,7 @@ def _build_config_plan_payload(
             "path": str(ui_alerts_arg_path) if ui_alerts_arg_path else None,
             "disabled": bool(args.disable_ui_alerts),
         }
+        runtime_state["ui_alerts_sink"]["config"] = _ui_alerts_config_from_args(args)
         if ui_alerts_arg_path is not None:
             runtime_state["ui_alerts_sink"]["file"] = _file_reference_metadata(
                 ui_alerts_arg_path, role="ui_alerts_jsonl"
@@ -1974,33 +2143,11 @@ def _build_config_plan_payload(
                 "path": str(ui_alerts_arg_path) if ui_alerts_arg_path else None,
                 "active": not args.disable_ui_alerts and bool(ui_alerts_arg_path),
             }
-            runtime_state["ui_alerts_sink"]["config"] = {
-                "reduce_mode": args.ui_alerts_reduce_mode or "enable",
-                "overlay_mode": args.ui_alerts_overlay_mode or "enable",
-                "reduce_motion_category": args.ui_alerts_reduce_category or _DEFAULT_UI_CATEGORY,
-                "reduce_motion_severity_active": args.ui_alerts_reduce_active_severity
-                or _DEFAULT_UI_SEVERITY_ACTIVE,
-                "reduce_motion_severity_recovered": args.ui_alerts_reduce_recovered_severity
-                or _DEFAULT_UI_SEVERITY_RECOVERED,
-                "overlay_category": args.ui_alerts_overlay_category or _DEFAULT_UI_CATEGORY,
-                "overlay_severity_exceeded": args.ui_alerts_overlay_exceeded_severity
-                or _DEFAULT_UI_SEVERITY_ACTIVE,
-                "overlay_severity_recovered": args.ui_alerts_overlay_recovered_severity
-                or _DEFAULT_UI_SEVERITY_RECOVERED,
-            "overlay_severity_critical": args.ui_alerts_overlay_critical_severity
-            or _DEFAULT_OVERLAY_SEVERITY_CRITICAL,
-            "overlay_critical_threshold": (
-                args.ui_alerts_overlay_critical_threshold
-                if args.ui_alerts_overlay_critical_threshold is not None
-                else _DEFAULT_OVERLAY_THRESHOLD
-            ),
-        }
-        config_section = runtime_state["ui_alerts_sink"].setdefault("config", {})
-        config_section["audit"] = dict(audit_section)
-        if ui_alerts_arg_path is not None:
-            runtime_state["ui_alerts_sink"]["file"] = _file_reference_metadata(
-                ui_alerts_arg_path, role="ui_alerts_jsonl"
-            )
+            runtime_state["ui_alerts_sink"]["config"] = _ui_alerts_config_from_args(args)
+            if ui_alerts_arg_path is not None:
+                runtime_state["ui_alerts_sink"]["file"] = _file_reference_metadata(
+                    ui_alerts_arg_path, role="ui_alerts_jsonl"
+                )
 
         tls_metadata = runtime_metadata.get("tls", {})
         tls_enabled_value = bool(
@@ -2037,9 +2184,22 @@ def _build_config_plan_payload(
             [{"class": info["class"], "module": info["module"]} for info in sinks_info],
         )
 
+    config_section = runtime_state["ui_alerts_sink"].setdefault("config", {})
+    config_section["audit"] = dict(audit_section)
+    if risk_profile_meta := getattr(args, "_ui_alerts_risk_profile_metadata", None):
+        config_section["risk_profile"] = dict(risk_profile_meta)
+    if risk_profiles_file_meta := getattr(
+        args, "_ui_alerts_risk_profiles_file_metadata", None
+    ):
+        config_section["risk_profiles_file"] = dict(risk_profiles_file_meta)
+    if ui_alerts_arg_path is not None and "file" not in runtime_state["ui_alerts_sink"]:
+        runtime_state["ui_alerts_sink"]["file"] = _file_reference_metadata(
+            ui_alerts_arg_path, role="ui_alerts_jsonl"
+        )
+
     payload["runtime_state"] = runtime_state
 
-    if core_config_section:
+    if core_config_section is not None:
         payload["core_config"] = core_config_section
     environment_entries: list[Mapping[str, object]] = []
     if environment_overrides:
@@ -2152,6 +2312,30 @@ def _install_signal_handlers(stop_callback) -> None:
             LOGGER.warning("Nie udało się zarejestrować handlera sygnału %s", sig)
 
 
+def _print_risk_profiles(
+    selected: str | None,
+    *,
+    profiles_file_meta: Mapping[str, Any] | None = None,
+    core_metadata: Mapping[str, Any] | None = None,
+) -> None:
+    profiles: dict[str, Mapping[str, Any]] = {}
+    for name in list_risk_profile_names():
+        profiles[name] = risk_profile_metadata(name)
+
+    payload: dict[str, Any] = {"risk_profiles": profiles}
+    if selected:
+        normalized = selected.strip().lower()
+        payload["selected"] = normalized
+        payload["selected_profile"] = profiles.get(normalized)
+    if profiles_file_meta:
+        payload["risk_profiles_file"] = dict(profiles_file_meta)
+    if core_metadata:
+        payload["core_config"] = dict(core_metadata)
+
+    json.dump(payload, sys.stdout, ensure_ascii=False, indent=2)
+    sys.stdout.write("\n")
+
+
 def main(argv: list[str] | None = None) -> int:
     raw_args = list(argv) if argv is not None else sys.argv[1:]
     parser = build_parser()
@@ -2191,22 +2375,35 @@ def main(argv: list[str] | None = None) -> int:
                         parser.error(
                             "Sekcja runtime.metrics_service.tls wymaga pól certificate_path oraz private_key_path"
                         )
+                if not bool(getattr(metrics_config, "enabled", True)):
+                    LOGGER.warning(
+                        "runtime.metrics_service.enabled = false w %s – kontynuuję uruchamianie zgodnie z flagami.",
+                        args.core_config,
+                    )
             else:
                 LOGGER.warning(
                     "Plik %s nie zawiera sekcji runtime.metrics_service – używam wartości z flag CLI.",
                     args.core_config,
                 )
+
             core_config_section = _build_core_config_section(
                 core_config,
                 metrics_config,
                 applied_sources,
                 requested_path=args.core_config,
             )
-            if metrics_config is not None and not bool(getattr(metrics_config, "enabled", True)):
-                LOGGER.warning(
-                    "runtime.metrics_service.enabled = false w %s – kontynuuję uruchamianie zgodnie z flagami.",
-                    args.core_config,
-                )
+
+    _load_custom_risk_profiles(args, parser=parser)
+
+    _apply_risk_profile_defaults(args, parser=parser, value_sources=value_sources)
+
+    if getattr(args, "print_risk_profiles", False):
+        _print_risk_profiles(
+            args.ui_alerts_risk_profile,
+            profiles_file_meta=getattr(args, "_ui_alerts_risk_profiles_file_metadata", None),
+            core_metadata=core_config_section,
+        )
+        return 0
 
     value_sources = _finalize_value_sources(value_sources)
 
@@ -2265,7 +2462,7 @@ def main(argv: list[str] | None = None) -> int:
                 return 3
 
         message = METRICS_RUNTIME_UNAVAILABLE_MESSAGE
-        if config_plan is not None and args.config_plan_jsonl and not args.print_config_plan:
+        if config_plan is not None and args.config_plan_jsonl i not args.print_config_plan:
             LOGGER.error(message)
             return 2
         parser.error(message)

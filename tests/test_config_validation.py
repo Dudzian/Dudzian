@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -148,6 +149,31 @@ def test_validate_core_config_detects_unknown_default_controller(base_config: Co
     assert "domyślny kontroler" in result.errors[0]
 
 
+def test_validate_core_config_checks_metrics_risk_profiles_file(
+    base_config: CoreConfig, tmp_path: Path
+) -> None:
+    missing_path = tmp_path / "missing_profiles.yaml"
+    metrics_config = MetricsServiceConfig(
+        enabled=True,
+        ui_alerts_risk_profile="balanced",
+        ui_alerts_risk_profiles_file=str(missing_path),
+    )
+    config = replace(base_config, metrics_service=metrics_config)
+
+    result = validate_core_config(config)
+    assert not result.is_valid()
+    assert any("ui_alerts_risk_profiles_file" in err for err in result.errors)
+
+    profiles_path = tmp_path / "telemetry_profiles.json"
+    profiles_path.write_text("{}", encoding="utf-8")
+    valid_metrics = replace(
+        metrics_config,
+        ui_alerts_risk_profiles_file=str(profiles_path),
+    )
+    result_ok = validate_core_config(replace(base_config, metrics_service=valid_metrics))
+    assert result_ok.is_valid()
+
+
 def _metrics_config_base() -> MetricsServiceConfig:
     tls = MetricsServiceTlsConfig()
     tls.enabled = True
@@ -166,6 +192,7 @@ def _metrics_config_base() -> MetricsServiceConfig:
         jsonl_path="audit/metrics.jsonl",
         jsonl_fsync=False,
         ui_alerts_jsonl_path="audit/ui_alerts.jsonl",
+        ui_alerts_risk_profile="balanced",
         tls=tls,
         reduce_motion_alerts=True,
         reduce_motion_mode="enable",
@@ -406,6 +433,17 @@ def test_validate_core_config_detects_invalid_metrics_mode(base_config: CoreConf
 
     assert not result.is_valid()
     assert any("reduce_motion_mode" in err for err in result.errors)
+
+
+def test_validate_core_config_detects_unknown_metrics_risk_profile(base_config: CoreConfig) -> None:
+    metrics = _metrics_config_base()
+    metrics.ui_alerts_risk_profile = "unknown"
+    config = replace(base_config, metrics_service=metrics)
+
+    result = validate_core_config(config)
+
+    assert not result.is_valid()
+    assert any("ui_alerts_risk_profile" in err for err in result.errors)
 
 
 def test_validate_core_config_detects_nonpositive_overlay_threshold(

@@ -98,6 +98,43 @@ def test_reduce_motion_alert(tmp_path: Path):
     assert record["context"]["active"] == "true"
 
 
+def test_alert_includes_risk_profile_metadata(tmp_path: Path) -> None:
+    router, channel = _build_router()
+    sink = UiTelemetryAlertSink(
+        router,
+        jsonl_path=tmp_path / "ui_alerts.jsonl",
+        risk_profile={
+            "name": "balanced",
+            "origin": "builtin",
+            "severity_min": "notice",
+        },
+    )
+
+    snapshot = _make_snapshot(
+        {
+            "event": "overlay_budget",
+            "active_overlays": 4,
+            "allowed_overlays": 2,
+            "reduce_motion": False,
+        },
+        fps=58.0,
+    )
+
+    sink.handle_snapshot(snapshot)
+
+    assert channel.messages, "Powinien zostać wysłany alert overlay"
+    message = channel.messages[0]
+    assert message.context["risk_profile"] == "balanced"
+    assert message.context["risk_profile_origin"] == "builtin"
+
+    line = (tmp_path / "ui_alerts.jsonl").read_text(encoding="utf-8").strip()
+    assert line, "Powinien powstać wpis JSONL"
+    record = json.loads(line)
+    assert record["risk_profile"]["name"] == "balanced"
+    assert record["risk_profile"]["origin"] == "builtin"
+    assert record["risk_profile"]["severity_min"] == "notice"
+
+
 def test_reduce_motion_alert_includes_screen_context(tmp_path: Path):
     router, channel = _build_router()
     sink = UiTelemetryAlertSink(router, jsonl_path=tmp_path / "ui_alerts.jsonl")

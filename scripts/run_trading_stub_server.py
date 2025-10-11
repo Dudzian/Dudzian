@@ -12,6 +12,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from scripts.telemetry_risk_profiles import (
+    get_metrics_service_overrides,
+    list_risk_profile_names,
+    load_risk_profiles_with_metadata,
+    risk_profile_metadata,
+)
+
 from bot_core.testing import (
     InMemoryTradingDataset,
     TradingStubServer,
@@ -157,6 +164,9 @@ def _initial_value_sources(provided_flags: Iterable[str]) -> dict[str, str]:
         "--metrics-tls-require-client-cert": "metrics_tls_require_client_cert",
         "--metrics-ui-alerts-jsonl": "metrics_ui_alerts_jsonl_path",
         "--disable-metrics-ui-alerts": "disable_metrics_ui_alerts",
+        "--metrics-ui-alerts-risk-profile": "metrics_ui_alerts_risk_profile",
+        "--metrics-risk-profiles-file": "metrics_risk_profiles_file",
+        "--metrics-print-risk-profiles": "metrics_print_risk_profiles",
         "--metrics-ui-alerts-reduce-mode": "metrics_ui_alerts_reduce_mode",
         "--metrics-ui-alerts-overlay-mode": "metrics_ui_alerts_overlay_mode",
         "--metrics-ui-alerts-reduce-category": "metrics_ui_alerts_reduce_category",
@@ -204,6 +214,8 @@ def _finalize_value_sources(sources: Mapping[str, str]) -> dict[str, str]:
         "metrics_history_size",
         "metrics_jsonl_path",
         "metrics_jsonl_fsync",
+        "metrics_risk_profiles_file",
+        "metrics_print_risk_profiles",
         "metrics_disable_log_sink",
         "metrics_tls_cert",
         "metrics_tls_key",
@@ -211,6 +223,7 @@ def _finalize_value_sources(sources: Mapping[str, str]) -> dict[str, str]:
         "metrics_tls_require_client_cert",
         "metrics_ui_alerts_jsonl_path",
         "disable_metrics_ui_alerts",
+        "metrics_ui_alerts_risk_profile",
         "metrics_print_address",
         "metrics_ui_alerts_reduce_mode",
         "metrics_ui_alerts_overlay_mode",
@@ -243,6 +256,49 @@ def _finalize_value_sources(sources: Mapping[str, str]) -> dict[str, str]:
     return finalized
 
 
+def _load_metrics_risk_profiles(
+    args: argparse.Namespace, *, parser: argparse.ArgumentParser
+) -> None:
+    path_value = getattr(args, "metrics_risk_profiles_file", None)
+    if not path_value:
+        args._metrics_risk_profiles_file_metadata = None
+        return
+
+    target = Path(path_value).expanduser()
+    try:
+        registered, metadata = load_risk_profiles_with_metadata(
+            target, origin_label=f"trading_stub:{target}"
+        )
+    except FileNotFoundError as exc:
+        parser.error(str(exc))
+    except Exception as exc:  # noqa: BLE001
+        parser.error(f"Nie udało się wczytać profili ryzyka z {target}: {exc}")
+    else:
+        if registered:
+            LOGGER.info(
+                "Załadowano %s profil(e) ryzyka telemetrii z %s", len(registered), target
+            )
+
+    args._metrics_risk_profiles_file_metadata = dict(metadata)
+
+
+def _print_metrics_risk_profiles(args: argparse.Namespace) -> None:
+    profiles: dict[str, Mapping[str, Any]] = {}
+    for name in list_risk_profile_names():
+        profiles[name] = risk_profile_metadata(name)
+
+    payload: dict[str, Any] = {"risk_profiles": profiles}
+    selected = getattr(args, "metrics_ui_alerts_risk_profile", None)
+    if selected:
+        normalized = selected.strip().lower()
+        payload["selected"] = normalized
+        payload["selected_profile"] = profiles.get(normalized)
+    if file_meta := getattr(args, "_metrics_risk_profiles_file_metadata", None):
+        payload["risk_profiles_file"] = dict(file_meta)
+
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
 def _apply_environment_overrides(
     args: argparse.Namespace,
     *,
@@ -269,18 +325,19 @@ def _apply_environment_overrides(
             return [str(v) if isinstance(v, Path) else v for v in value]
         return value
 
-    def apply_value(option: str, env_var: str, raw_value: str, parsed_value: Any) -> None:
+    def apply_value(option: str, env_var: str, raw_value: str, parsed_value: Any, **extra: object) -> None:
         override_keys.add(option)
         value_sources[option] = "env"
-        record_entry(
-            {
-                "option": option,
-                "variable": env_var,
-                "raw_value": raw_value,
-                "applied": True,
-                "parsed_value": normalize_value(parsed_value),
-            }
-        )
+        entry: dict[str, object] = {
+            "option": option,
+            "variable": env_var,
+            "raw_value": raw_value,
+            "applied": True,
+            "parsed_value": normalize_value(parsed_value),
+        }
+        if extra:
+            entry.update(extra)
+        record_entry(entry)
 
     def env_present(flag: str) -> bool:
         return flag in provided_flags
@@ -412,6 +469,47 @@ def _apply_environment_overrides(
             args.metrics_jsonl_fsync = parse_bool("RUN_TRADING_STUB_METRICS_JSONL_FSYNC")
             apply_value("metrics_jsonl_fsync", "RUN_TRADING_STUB_METRICS_JSONL_FSYNC", raw, args.metrics_jsonl_fsync)
 
+    if (raw := os.getenv("RUN_TRADING_STUB_METRICS_RISK_PROFILES_FILE")) is not None:
+        if env_present("--metrics-risk-profiles-file"):
+            skip_due_to_cli("metrics_risk_profiles_file", "RUN_TRADING_STUB_METRICS_RISK_PROFILES_FILE", raw)
+        else:
+            normalized = raw.strip()
+            if not normalized:
+                args.metrics_risk_profiles_file = None
+                apply_value(
+                    "metrics_risk_profiles_file",
+                    "RUN_TRADING_STUB_METRICS_RISK_PROFILES_FILE",
+                    raw,
+                    None,
+                    note="risk_profiles_disabled",
+                )
+            else:
+                args.metrics_risk_profiles_file = Path(normalized).expanduser()
+                apply_value(
+                    "metrics_risk_profiles_file",
+                    "RUN_TRADING_STUB_METRICS_RISK_PROFILES_FILE",
+                    raw,
+                    str(args.metrics_risk_profiles_file),
+                )
+
+    if (raw := os.getenv("RUN_TRADING_STUB_METRICS_PRINT_RISK_PROFILES")) is not None:
+        if env_present("--metrics-print-risk-profiles"):
+            skip_due_to_cli(
+                "metrics_print_risk_profiles",
+                "RUN_TRADING_STUB_METRICS_PRINT_RISK_PROFILES",
+                raw,
+            )
+        else:
+            args.metrics_print_risk_profiles = parse_bool(
+                "RUN_TRADING_STUB_METRICS_PRINT_RISK_PROFILES"
+            )
+            apply_value(
+                "metrics_print_risk_profiles",
+                "RUN_TRADING_STUB_METRICS_PRINT_RISK_PROFILES",
+                raw,
+                args.metrics_print_risk_profiles,
+            )
+
     if (raw := os.getenv("RUN_TRADING_STUB_METRICS_DISABLE_LOG_SINK")) is not None:
         if env_present("--metrics-disable-log-sink"):
             skip_due_to_cli("metrics_disable_log_sink", "RUN_TRADING_STUB_METRICS_DISABLE_LOG_SINK", raw)
@@ -422,6 +520,19 @@ def _apply_environment_overrides(
                 "RUN_TRADING_STUB_METRICS_DISABLE_LOG_SINK",
                 raw,
                 args.metrics_disable_log_sink,
+            )
+
+    if (raw := os.getenv("RUN_TRADING_STUB_METRICS_UI_ALERTS_RISK_PROFILE")) is not None:
+        if env_present("--metrics-ui-alerts-risk-profile"):
+            skip_due_to_cli("metrics_ui_alerts_risk_profile", "RUN_TRADING_STUB_METRICS_UI_ALERTS_RISK_PROFILE", raw)
+        else:
+            normalized = raw.strip().lower()
+            args.metrics_ui_alerts_risk_profile = normalized
+            apply_value(
+                "metrics_ui_alerts_risk_profile",
+                "RUN_TRADING_STUB_METRICS_UI_ALERTS_RISK_PROFILE",
+                raw,
+                normalized,
             )
 
     if (raw := os.getenv("RUN_TRADING_STUB_METRICS_TLS_CERT")) is not None:
@@ -853,6 +964,33 @@ def _apply_environment_overrides(
     return entries, override_keys
 
 
+def _apply_metrics_risk_profile_defaults(
+    args: argparse.Namespace,
+    *,
+    value_sources: dict[str, str],
+) -> None:
+    profile_name = getattr(args, "metrics_ui_alerts_risk_profile", None)
+    if not profile_name:
+        return
+
+    try:
+        overrides = get_metrics_service_overrides(profile_name)
+    except KeyError:
+        available = ", ".join(list_risk_profile_names())
+        raise SystemExit(
+            f"Profil ryzyka {profile_name!r} nie jest obsługiwany. Dostępne: {available}"
+        ) from None
+    args._metrics_risk_profile_metadata = risk_profile_metadata(profile_name)
+
+    for option, value in overrides.items():
+        attr = f"metrics_{option}"
+        source = value_sources.get(attr)
+        if source == "cli" or (isinstance(source, str) and source.startswith("env")):
+            continue
+        setattr(args, attr, value)
+        value_sources[attr] = f"risk_profile:{profile_name}"
+
+
 def _load_dataset(dataset_paths: Iterable[Path], include_default: bool) -> InMemoryTradingDataset:
     dataset = build_default_dataset() if include_default else InMemoryTradingDataset()
     for path in dataset_paths:
@@ -1056,6 +1194,12 @@ def _build_ui_alert_sink(
             "jank_critical_over_ms": jank_threshold,
         }
         sink_settings["audit"] = dict(audit_backend)
+        if risk_profile_meta := getattr(args, "_metrics_risk_profile_metadata", None):
+            sink_settings["risk_profile"] = dict(risk_profile_meta)
+        if risk_profiles_file_meta := getattr(
+            args, "_metrics_risk_profiles_file_metadata", None
+        ):
+            sink_settings["risk_profiles_file"] = dict(risk_profiles_file_meta)
 
         sink = UiTelemetryAlertSink(router, **sink_kwargs)
     except Exception:
@@ -1243,6 +1387,25 @@ def build_parser() -> argparse.ArgumentParser:
         "--metrics-ui-alerts-jsonl", type=Path, default=None, help="Plik JSONL dla alertów UI (domyślnie logs/ui_telemetry_alerts.jsonl)."
     )
     metrics_group.add_argument("--disable-metrics-ui-alerts", action="store_true", help="Wyłącz alerty telemetrii UI.")
+    metrics_group.add_argument(
+        "--metrics-ui-alerts-risk-profile",
+        default=None,
+        help="Zastosuj predefiniowany profil ryzyka dla alertów UI MetricsService.",
+    )
+    metrics_group.add_argument(
+        "--metrics-risk-profiles-file",
+        type=Path,
+        default=None,
+        help=(
+            "Plik JSON/YAML z dodatkowymi profilami ryzyka telemetrii. "
+            "Pozwala rozszerzyć presety używane przez --metrics-ui-alerts-risk-profile."
+        ),
+    )
+    metrics_group.add_argument(
+        "--metrics-print-risk-profiles",
+        action="store_true",
+        help="Wypisz dostępne profile ryzyka telemetrii i zakończ działanie.",
+    )
     metrics_group.add_argument(
         "--metrics-ui-alerts-reduce-mode",
         choices=UI_ALERT_MODE_CHOICES,
@@ -1562,6 +1725,15 @@ def _build_metrics_plan(args) -> Mapping[str, object]:
         ),
         "audit": audit_info,
     }
+    if risk_profile_meta := getattr(args, "_metrics_risk_profile_metadata", None):
+        ui_alerts_info = dict(ui_alerts_info)
+        ui_alerts_info["risk_profile"] = dict(risk_profile_meta)
+    if risk_profiles_file_meta := getattr(
+        args, "_metrics_risk_profiles_file_metadata", None
+    ):
+        if not isinstance(ui_alerts_info, dict):
+            ui_alerts_info = dict(ui_alerts_info)
+        ui_alerts_info["risk_profiles_file"] = dict(risk_profiles_file_meta)
 
     warnings: list[str] = []
     if args.enable_metrics and not metrics_available:
@@ -1659,6 +1831,13 @@ def main(argv: list[str] | None = None) -> int:
     environment_overrides, _ = _apply_environment_overrides(
         args, parser=parser, provided_flags=provided_flags, value_sources=value_sources
     )
+    _load_metrics_risk_profiles(args, parser=parser)
+    _apply_metrics_risk_profile_defaults(args, value_sources=value_sources)
+
+    if getattr(args, "metrics_print_risk_profiles", False):
+        _print_metrics_risk_profiles(args)
+        return 0
+
     parameter_sources = _finalize_value_sources(value_sources)
 
     _configure_logging(args.log_level)

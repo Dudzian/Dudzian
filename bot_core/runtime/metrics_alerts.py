@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Mapping
+from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
-from typing import Any, Mapping
+from typing import Any
 
 from bot_core.alerts import AlertMessage, DefaultAlertRouter
 
@@ -99,8 +101,25 @@ def _timestamp_to_iso(snapshot: Any) -> str | None:
     return dt.isoformat().replace("+00:00", "Z")
 
 
+def _normalize_risk_profile(metadata: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """Ujednolica metadane profilu ryzyka do struktury serializowalnej JSON."""
+    if metadata is None:
+        return None
+
+    def _normalize(value: Any) -> Any:
+        if isinstance(value, Mapping):
+            return {str(k): _normalize(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [_normalize(item) for item in value]
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return value
+        return str(value)
+
+    return {str(key): _normalize(val) for key, val in metadata.items()}
+
+
 class UiTelemetryAlertSink:
-    """Analizuje snapshoty UI i wysyła alerty o spadku FPS / nakładkach."""
+    """Analizuje snapshoty UI i wysyła alerty o spadku FPS / nakładkach / janku."""
 
     def __init__(
         self,
@@ -125,6 +144,7 @@ class UiTelemetryAlertSink:
         jank_severity_spike: str = "warning",
         jank_severity_critical: str | None = None,
         jank_critical_over_ms: float | None = None,
+        risk_profile: Mapping[str, Any] | None = None,
     ) -> None:
         self._router = router
         self._jsonl_path = Path(jsonl_path) if jsonl_path else DEFAULT_UI_ALERTS_JSONL_PATH
@@ -163,6 +183,19 @@ class UiTelemetryAlertSink:
         if self._should_write_jsonl:
             self._jsonl_path.parent.mkdir(parents=True, exist_ok=True)
             self._jsonl_path.touch(exist_ok=True)
+
+        # Metadane profilu ryzyka (opcjonalne)
+        normalized_profile = _normalize_risk_profile(risk_profile)
+        self._risk_profile_metadata = deepcopy(normalized_profile) if normalized_profile else None
+        self._risk_profile_name: str | None = None
+        self._risk_profile_origin: str | None = None
+        if self._risk_profile_metadata is not None:
+            name = self._risk_profile_metadata.get("name")
+            if isinstance(name, str) and name.strip():
+                self._risk_profile_name = name.strip()
+            origin = self._risk_profile_metadata.get("origin")
+            if isinstance(origin, str) and origin.strip():
+                self._risk_profile_origin = origin.strip()
 
     @property
     def jsonl_path(self) -> Path:
@@ -220,6 +253,7 @@ class UiTelemetryAlertSink:
             "window_count": str(payload.get("window_count", "")),
         }
         context.update(_screen_context(payload))
+        context = self._context_with_risk_profile(context)
         screen_summary = _screen_summary(payload)
         if self._log_reduce_motion_events:
             self._append_jsonl(
@@ -284,6 +318,7 @@ class UiTelemetryAlertSink:
             "difference": str(difference),
         }
         context.update(_screen_context(payload))
+        context = self._context_with_risk_profile(context)
         screen_summary = _screen_summary(payload)
         if self._log_overlay_events:
             self._append_jsonl(
@@ -362,6 +397,7 @@ class UiTelemetryAlertSink:
         if getattr(snapshot, "HasField", None) and snapshot.HasField("fps"):
             context["fps"] = f"{snapshot.fps:.4f}"
         context.update(_screen_context(payload))
+        context = self._context_with_risk_profile(context)
         screen_summary = _screen_summary(payload)
 
         if self._log_jank_events:
@@ -421,11 +457,20 @@ class UiTelemetryAlertSink:
             "payload": payload,
             "context": dict(context) if context is not None else None,
         }
+        if getattr(self, "_risk_profile_metadata", None) is not None:
+            record["risk_profile"] = self._risk_profile_metadata
         line = json.dumps(record, ensure_ascii=False)
         with self._lock:
             with self._jsonl_path.open("a", encoding="utf-8") as handle:
                 handle.write(line + "\n")
 
+    def _context_with_risk_profile(self, context: Mapping[str, Any]) -> dict[str, Any]:
+        result = dict(context)
+        if getattr(self, "_risk_profile_name", None):
+            result.setdefault("risk_profile", self._risk_profile_name)
+        if getattr(self, "_risk_profile_origin", None):
+            result.setdefault("risk_profile_origin", self._risk_profile_origin)
+        return result
+
 
 __all__ = ["UiTelemetryAlertSink", "DEFAULT_UI_ALERTS_JSONL_PATH"]
-

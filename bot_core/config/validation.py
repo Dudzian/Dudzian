@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Mapping
 
 from bot_core.config.models import CoreConfig
@@ -445,6 +446,23 @@ def _validate_metrics_service(
         if normalized and normalized not in _UI_ALERT_AUDIT_BACKEND_ALLOWED:
             errors.append(
                 f"{context}: ui_alerts_audit_backend musi należeć do {{auto,file,memory}} (otrzymano '{backend_value}')"
+            )
+
+    profile_value = getattr(metrics, "ui_alerts_risk_profile", None)
+    if profile_value:
+        normalized_profile = str(profile_value).strip().lower()
+        available_profiles = getattr(config, "risk_profiles", {}) or {}
+        if normalized_profile not in available_profiles:
+            errors.append(
+                f"{context}: ui_alerts_risk_profile '{profile_value}' nie istnieje w sekcji risk_profiles"
+            )
+
+    profiles_file_value = getattr(metrics, "ui_alerts_risk_profiles_file", None)
+    if profiles_file_value:
+        profiles_path = Path(str(profiles_file_value)).expanduser()
+        if not profiles_path.exists():
+            errors.append(
+                f"{context}: ui_alerts_risk_profiles_file '{profiles_path}' nie istnieje"
             )
 
 

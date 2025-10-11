@@ -620,6 +620,16 @@ def _load_metrics_service(
                 raise ValueError(
                     "ui_alerts_audit_backend musi należeć do {auto,file,memory}"
                 )
+    if "ui_alerts_risk_profile" in available_fields:
+        profile_value = _format_optional_text(metrics_raw.get("ui_alerts_risk_profile"))
+        if profile_value is None:
+            kwargs["ui_alerts_risk_profile"] = None
+        else:
+            kwargs["ui_alerts_risk_profile"] = profile_value.strip().lower()
+    if "ui_alerts_risk_profiles_file" in available_fields:
+        kwargs["ui_alerts_risk_profiles_file"] = _normalize_runtime_path(
+            metrics_raw.get("ui_alerts_risk_profiles_file"), base_dir=base_dir
+        )
 
     # Opcjonalne: konfiguracja TLS (jeśli dataclass TLS jest dostępny i pole istnieje)
     if "tls" in available_fields and MetricsServiceTlsConfig is not None:

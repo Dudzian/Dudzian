@@ -59,6 +59,18 @@ except Exception:  # pragma: no cover - brak modułu telemetrii UI
     UiTelemetryAlertSink = None  # type: ignore
     DEFAULT_UI_ALERTS_JSONL_PATH = Path("logs/ui_telemetry_alerts.jsonl")
 
+# Presety profili ryzyka telemetrii (opcjonalne)
+try:  # pragma: no cover - presety profili ryzyka mogą nie być dostępne
+    from bot_core.runtime.telemetry_risk_profiles import (  # type: ignore
+        MetricsRiskProfileResolver,
+        load_risk_profiles_with_metadata,
+        risk_profile_metadata,
+    )
+except Exception:  # pragma: no cover - starsze gałęzie bez presetów
+    MetricsRiskProfileResolver = None  # type: ignore
+    load_risk_profiles_with_metadata = None  # type: ignore
+    risk_profile_metadata = None  # type: ignore
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -619,6 +631,14 @@ def create_server(
     if tls_config is not None:
         tls_require_client_auth = bool(_tls_value("require_client_auth", False))
         credentials = _build_server_credentials(tls_config)
+    risk_profile_meta = None
+    if ui_alerts_config and "risk_profile" in ui_alerts_config:
+        profile_payload = ui_alerts_config["risk_profile"]
+        if isinstance(profile_payload, Mapping):
+            risk_profile_meta = dict(profile_payload)
+        elif profile_payload is not None:
+            risk_profile_meta = {"name": str(profile_payload)}
+
     runtime_metadata = {
         "history_size": history_size,
         "logging_sink_enabled": enable_logging_sink,
@@ -631,6 +651,7 @@ def create_server(
             "active": bool(ui_alerts_jsonl_path),
             "path": str(Path(ui_alerts_jsonl_path).expanduser()) if ui_alerts_jsonl_path else None,
             "config": dict(ui_alerts_config) if ui_alerts_config else None,
+            "risk_profile": risk_profile_meta,
         },
         "sink_descriptions": [
             {"class": sink.__class__.__name__, "module": sink.__class__.__module__}
@@ -670,6 +691,64 @@ def build_metrics_server_from_config(
     sink_list: list[MetricsSink] = list(sinks or [])
     ui_alerts_path: str | None = None
     ui_alerts_settings: Mapping[str, Any] | None = None
+
+    # --- Profile ryzyka telemetrii (opcjonalnie) ---
+    risk_profile_meta: Mapping[str, Any] | None = None
+    risk_profiles_file_meta: Mapping[str, Any] | None = None
+    resolver: "MetricsRiskProfileResolver" | None = None
+
+    profiles_file_value = getattr(config, "ui_alerts_risk_profiles_file", None)
+    if profiles_file_value:
+        normalized_file = str(Path(profiles_file_value).expanduser())
+        if load_risk_profiles_with_metadata is None:
+            risk_profiles_file_meta = {
+                "path": normalized_file,
+                "warning": "risk_profile_loader_unavailable",
+            }
+        else:
+            try:
+                _, risk_profiles_file_meta = load_risk_profiles_with_metadata(
+                    normalized_file,
+                    origin_label=f"metrics_service_config:{normalized_file}",
+                )
+            except Exception:  # pragma: no cover
+                _LOGGER.exception(
+                    "Nie udało się wczytać profili ryzyka telemetrii z %s", normalized_file
+                )
+                raise
+
+    profile_name = getattr(config, "ui_alerts_risk_profile", None)
+    if profile_name:
+        normalized_profile = str(profile_name).strip().lower()
+        if MetricsRiskProfileResolver is None:
+            base_meta = {"name": normalized_profile}
+            if callable(risk_profile_metadata):
+                try:
+                    base_meta = dict(risk_profile_metadata(normalized_profile))  # type: ignore[misc]
+                except Exception:  # pragma: no cover
+                    base_meta = {"name": normalized_profile}
+            base_meta["warning"] = "resolver_unavailable"
+            risk_profile_meta = base_meta
+        else:
+            try:
+                resolver = MetricsRiskProfileResolver(normalized_profile, config)
+            except KeyError:
+                risk_profile_meta = {"name": normalized_profile, "error": "unknown_profile"}
+                resolver = None
+                _LOGGER.warning(
+                    "Nieznany profil ryzyka telemetrii UI: %s", normalized_profile
+                )
+            except Exception:  # pragma: no cover
+                resolver = None
+                _LOGGER.exception("Nie udało się zastosować profilu ryzyka %s", normalized_profile)
+                risk_profile_meta = {"name": normalized_profile}
+
+    def _resolve_config_value(field_name: str, default: Any) -> Any:
+        value = getattr(config, field_name, default)
+        if resolver is not None:
+            value = resolver.override(field_name, value)
+        return value
+
     # Integracja z alertami UI – gdy dostępny router i włączone flagi w configu
     def _normalize_mode(mode_value, *, fallback_attr: str) -> str:
         if mode_value is not None:
@@ -683,9 +762,16 @@ def build_metrics_server_from_config(
             return "enable" if dispatch_enabled else "disable"
         return normalized
 
-    reduce_mode = _normalize_mode(getattr(config, "reduce_motion_mode", None), fallback_attr="reduce_motion_alerts")
-    overlay_mode = _normalize_mode(getattr(config, "overlay_alert_mode", None), fallback_attr="overlay_alerts")
-    jank_mode = _normalize_mode(getattr(config, "jank_alert_mode", None), fallback_attr="jank_alerts")
+    reduce_mode = _normalize_mode(
+        _resolve_config_value("reduce_motion_mode", None), fallback_attr="reduce_motion_alerts"
+    )
+    overlay_mode = _normalize_mode(
+        _resolve_config_value("overlay_alert_mode", None), fallback_attr="overlay_alerts"
+    )
+    jank_mode = _normalize_mode(
+        _resolve_config_value("jank_alert_mode", None), fallback_attr="jank_alerts"
+    )
+
     reduce_dispatch = reduce_mode == "enable"
     overlay_dispatch = overlay_mode == "enable"
     jank_dispatch = jank_mode == "enable"
@@ -693,10 +779,27 @@ def build_metrics_server_from_config(
     overlay_logging = overlay_mode in {"enable", "jsonl"}
     jank_logging = jank_mode in {"enable", "jsonl"}
     ui_sink_attached = False
+
     if alerts_router is not None and UiTelemetryAlertSink is not None:
         try:
             configured_path = getattr(config, "ui_alerts_jsonl_path", None)
             path_value = configured_path or str(DEFAULT_UI_ALERTS_JSONL_PATH)
+
+            reduce_category = _resolve_config_value("reduce_motion_category", "ui.performance")
+            reduce_active = _resolve_config_value("reduce_motion_severity_active", "warning")
+            reduce_recovered = _resolve_config_value("reduce_motion_severity_recovered", "info")
+
+            overlay_category = _resolve_config_value("overlay_alert_category", "ui.performance")
+            overlay_exceeded = _resolve_config_value("overlay_alert_severity_exceeded", "warning")
+            overlay_recovered = _resolve_config_value("overlay_alert_severity_recovered", "info")
+            overlay_critical = _resolve_config_value("overlay_alert_severity_critical", None)
+            overlay_threshold_raw = _resolve_config_value("overlay_alert_critical_threshold", None)
+
+            jank_category = _resolve_config_value("jank_alert_category", "ui.performance")
+            jank_spike = _resolve_config_value("jank_alert_severity_spike", "warning")
+            jank_critical = _resolve_config_value("jank_alert_severity_critical", None)
+            jank_threshold_raw = _resolve_config_value("jank_alert_critical_over_ms", None)
+
             sink_kwargs = dict(
                 jsonl_path=path_value,
                 enable_reduce_motion_alerts=reduce_dispatch,
@@ -705,49 +808,48 @@ def build_metrics_server_from_config(
                 log_overlay_events=overlay_logging,
                 enable_jank_alerts=jank_dispatch,
                 log_jank_events=jank_logging,
-                reduce_motion_category=getattr(config, "reduce_motion_category", "ui.performance"),
-                reduce_motion_severity_active=getattr(
-                    config, "reduce_motion_severity_active", "warning"
-                ),
-                reduce_motion_severity_recovered=getattr(
-                    config, "reduce_motion_severity_recovered", "info"
-                ),
-                overlay_category=getattr(config, "overlay_alert_category", "ui.performance"),
-                overlay_severity_exceeded=getattr(
-                    config, "overlay_alert_severity_exceeded", "warning"
-                ),
-                overlay_severity_recovered=getattr(
-                    config, "overlay_alert_severity_recovered", "info"
-                ),
-                jank_category=getattr(config, "jank_alert_category", "ui.performance"),
-                jank_severity_spike=getattr(
-                    config, "jank_alert_severity_spike", "warning"
-                ),
+                reduce_motion_category=reduce_category,
+                reduce_motion_severity_active=reduce_active,
+                reduce_motion_severity_recovered=reduce_recovered,
+                overlay_category=overlay_category,
+                overlay_severity_exceeded=overlay_exceeded,
+                overlay_severity_recovered=overlay_recovered,
+                jank_category=jank_category,
+                jank_severity_spike=jank_spike,
             )
-            overlay_severity_critical = getattr(
-                config, "overlay_alert_severity_critical", None
-            )
-            if overlay_severity_critical is not None:
-                sink_kwargs["overlay_severity_critical"] = overlay_severity_critical
-            overlay_threshold = getattr(config, "overlay_alert_critical_threshold", None)
-            if overlay_threshold is not None:
+            if overlay_critical is not None:
+                sink_kwargs["overlay_severity_critical"] = overlay_critical
+
+            overlay_threshold_value: int | None = None
+            if overlay_threshold_raw is not None:
                 try:
-                    sink_kwargs["overlay_critical_threshold"] = int(overlay_threshold)
+                    overlay_threshold_value = int(overlay_threshold_raw)
                 except (TypeError, ValueError):
                     _LOGGER.debug(
-                        "Nieprawidłowy próg overlay_alert_critical_threshold=%s", overlay_threshold
+                        "Nieprawidłowy próg overlay_alert_critical_threshold=%s", overlay_threshold_raw
                     )
-            jank_severity_critical = getattr(config, "jank_alert_severity_critical", None)
-            if jank_severity_critical is not None:
-                sink_kwargs["jank_severity_critical"] = jank_severity_critical
-            jank_threshold = getattr(config, "jank_alert_critical_over_ms", None)
-            if jank_threshold is not None:
+                else:
+                    sink_kwargs["overlay_critical_threshold"] = overlay_threshold_value
+
+            jank_threshold_value: float | None = None
+            if jank_threshold_raw is not None:
                 try:
-                    sink_kwargs["jank_critical_over_ms"] = float(jank_threshold)
+                    jank_threshold_value = float(jank_threshold_raw)
                 except (TypeError, ValueError):
                     _LOGGER.debug(
-                        "Nieprawidłowy próg jank_alert_critical_over_ms=%s", jank_threshold
+                        "Nieprawidłowy próg jank_alert_critical_over_ms=%s", jank_threshold_raw
                     )
+                else:
+                    sink_kwargs["jank_critical_over_ms"] = jank_threshold_value
+
+            if jank_critical is not None:
+                sink_kwargs["jank_severity_critical"] = jank_critical
+
+            if resolver is not None:
+                risk_profile_meta = resolver.metadata()
+            if risk_profile_meta is not None:
+                sink_kwargs["risk_profile"] = dict(risk_profile_meta)
+
             sink_list.append(UiTelemetryAlertSink(alerts_router, **sink_kwargs))
             ui_alerts_path = path_value
             ui_sink_attached = True
@@ -775,8 +877,13 @@ def build_metrics_server_from_config(
                 "jank_severity_critical": sink_kwargs.get("jank_severity_critical"),
                 "jank_critical_over_ms": sink_kwargs.get("jank_critical_over_ms"),
             }
+            if risk_profile_meta is not None:
+                ui_alerts_settings["risk_profile"] = dict(risk_profile_meta)
+            if risk_profiles_file_meta is not None:
+                ui_alerts_settings["risk_profiles_file"] = dict(risk_profiles_file_meta)
         except Exception:  # pragma: no cover - diagnostyka pomocnicza
             _LOGGER.exception("Nie udało się zainicjalizować UiTelemetryAlertSink")
+
     if not ui_sink_attached and alerts_router is not None:
         if reduce_dispatch:
             sink_list.append(
@@ -804,6 +911,7 @@ def build_metrics_server_from_config(
                     ),
                 )
             )
+
     if ui_alerts_path is None and UiTelemetryAlertSink is not None:
         for sink in sink_list:
             if isinstance(sink, UiTelemetryAlertSink):
@@ -812,6 +920,16 @@ def build_metrics_server_from_config(
                 except Exception:  # pragma: no cover - diagnostyka pomocnicza
                     ui_alerts_path = str(sink.jsonl_path)
                 break
+
+    if resolver is not None and risk_profile_meta is None:
+        risk_profile_meta = resolver.metadata()
+    if ui_alerts_settings is None and risk_profile_meta is not None:
+        ui_alerts_settings = {"risk_profile": dict(risk_profile_meta)}
+    if risk_profiles_file_meta is not None:
+        if ui_alerts_settings is None:
+            ui_alerts_settings = {"risk_profiles_file": dict(risk_profiles_file_meta)}
+        else:
+            ui_alerts_settings["risk_profiles_file"] = dict(risk_profiles_file_meta)
 
     return create_server(
         host=config.host,

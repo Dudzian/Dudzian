@@ -37,6 +37,8 @@ class _MemorySecretStorage(SecretStorage):
 
     def delete_secret(self, key: str) -> None:
         self._store.pop(key, None)
+
+
 _BASE_CONFIG = dedent(
     """
     risk_profiles:
@@ -453,3 +455,97 @@ def test_bootstrap_metrics_ui_alerts_audit_memory_request_on_file_backend(tmp_pa
     assert audit_info["requested"] == "memory"
     assert audit_info["backend"] == "file"
     assert audit_info["note"] == "memory_backend_not_selected"
+
+
+def test_bootstrap_metrics_risk_profiles_file_metadata(tmp_path: Path) -> None:
+    profiles_path = tmp_path / "telemetry_profiles.json"
+    profiles_path.write_text(
+        json.dumps(
+            {
+                "risk_profiles": {
+                    "balanced": {
+                        "metrics_service_overrides": {
+                            "ui_alerts_overlay_critical_threshold": 7,
+                        },
+                        "severity_min": "notice",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config_path = _write_config_custom(
+        tmp_path,
+        runtime_metrics={
+            "enabled": True,
+            "jsonl_path": str((tmp_path / "metrics.jsonl").resolve()),
+            "ui_alerts_jsonl_path": str((tmp_path / "ui_alerts.jsonl").resolve()),
+            "reduce_motion_alerts": True,
+            "overlay_alerts": True,
+            "jank_alerts": False,
+            "ui_alerts_risk_profile": "balanced",
+            "ui_alerts_risk_profiles_file": str(profiles_path),
+        },
+    )
+    _, manager = _prepare_manager()
+
+    context = bootstrap_environment(
+        "binance_paper", config_path=config_path, secret_manager=manager
+    )
+
+    assert context.metrics_ui_alerts_settings is not None
+    settings = context.metrics_ui_alerts_settings
+    risk_meta = settings.get("risk_profile")
+    assert isinstance(risk_meta, dict)
+    assert risk_meta.get("name") == "balanced"
+    file_meta = settings.get("risk_profiles_file")
+    assert isinstance(file_meta, dict)
+    assert Path(str(file_meta.get("path"))).resolve() == profiles_path.resolve()
+    assert "balanced" in file_meta.get("registered_profiles", [])
+
+
+def test_bootstrap_metrics_risk_profiles_directory_metadata(tmp_path: Path) -> None:
+    profiles_dir = tmp_path / "profiles"
+    profiles_dir.mkdir()
+    (profiles_dir / "ops.json").write_text(
+        json.dumps(
+            {
+                "risk_profiles": {
+                    "ops_dir": {
+                        "metrics_service_overrides": {
+                            "ui_alerts_overlay_critical_threshold": 5
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (profiles_dir / "lab.yaml").write_text(
+        "risk_profiles:\n  lab_dir:\n    severity_min: warning\n",
+        encoding="utf-8",
+    )
+
+    config_path = _write_config_custom(
+        tmp_path,
+        runtime_metrics={
+            "enabled": True,
+            "ui_alerts_risk_profile": "balanced",
+            "ui_alerts_risk_profiles_file": str(profiles_dir),
+        },
+    )
+    _, manager = _prepare_manager()
+
+    context = bootstrap_environment(
+        "binance_paper", config_path=config_path, secret_manager=manager
+    )
+
+    settings = context.metrics_ui_alerts_settings
+    assert isinstance(settings, dict)
+    file_meta = settings.get("risk_profiles_file")
+    assert isinstance(file_meta, dict)
+    assert file_meta["type"] == "directory"
+    assert file_meta["path"] == str(profiles_dir)
+    assert "ops_dir" in file_meta.get("registered_profiles", [])
+    assert any(entry["path"].endswith("lab.yaml") for entry in file_meta.get("files", []))

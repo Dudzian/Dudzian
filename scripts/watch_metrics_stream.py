@@ -1,4 +1,7 @@
-"""Narzędzie do podglądu strumienia MetricsService.
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Narzędzie do podglądu strumienia MetricsService.
 
 Skrypt łączy się z serwerem telemetrii `MetricsService` (gRPC) i wypisuje
 otrzymane `MetricsSnapshot`. Może filtrować zdarzenia po polu `event` oraz
@@ -56,6 +59,9 @@ Przykłady użycia::
         --decision-log-hmac-key-file secrets/ops_decision.key \
         --decision-log-key-id ops-2024q1
 
+    # Wczytaj ustawienia telemetryczne (host, TLS, profil ryzyka) z core.yaml
+    python -m scripts.watch_metrics_stream --core-config config/core.yaml --summary
+
 Skrypt wymaga obecności wygenerowanych stubów gRPC (`trading_pb2*.py`) oraz
 pakietu `grpcio`.
 """
@@ -81,20 +87,24 @@ LOGGER = logging.getLogger("bot_core.scripts.watch_metrics_stream")
 
 _ENV_PREFIX = "BOT_CORE_WATCH_METRICS_"
 
-# --- profile ryzyka (opcjonalnie) ---
+# --- load optional core config (core.yaml) ---
+try:
+    from bot_core.config import load_core_config  # type: ignore
+except Exception:  # pragma: no cover - środowisko bez modułu konfiguracyjnego
+    load_core_config = None  # type: ignore
+
+# --- risk profile presets (mandatory local module; may be extended via file) ---
 try:
     from scripts.telemetry_risk_profiles import (
         get_risk_profile,
         list_risk_profile_names,
+        load_risk_profiles_from_file,
         risk_profile_metadata,
     )
-except Exception:  # brak modułu – funkcje zapasowe
-    def list_risk_profile_names() -> list[str]:
-        return []
-    def get_risk_profile(_name: str) -> Mapping[str, Any]:
-        raise KeyError(_name)
-    def risk_profile_metadata(_name: str) -> Mapping[str, Any]:
-        return {}
+except Exception as exc:  # pragma: no cover
+    raise SystemExit(
+        "Brak modułu scripts.telemetry_risk_profiles. Upewnij się, że jest na PYTHONPATH."
+    ) from exc
 
 
 def _load_grpc_components():
@@ -127,10 +137,12 @@ def _timestamp_to_iso(timestamp) -> str | None:
             dt = dt.replace(tzinfo=timezone.utc)
         return dt.astimezone(timezone.utc).isoformat()
     if isinstance(timestamp, Mapping):
-        seconds = int(timestamp.get("seconds") or 0)
-        nanos = int(timestamp.get("nanos") or 0)
-        if seconds == 0 and nanos == 0:
+        seconds = timestamp.get("seconds")
+        nanos = timestamp.get("nanos")
+        if seconds is None and nanos is None:
             return None
+        seconds = int(seconds or 0)
+        nanos = int(nanos or 0)
         dt = datetime.fromtimestamp(seconds + nanos / 1_000_000_000, tz=timezone.utc)
         return dt.isoformat()
     seconds = getattr(timestamp, "seconds", None)
@@ -155,7 +167,7 @@ def _parse_notes(notes: str) -> dict[str, Any]:
         return {"raw": notes}
 
 
-_SEVERITY_ORDER = [
+SEVERITY_ORDER = [
     "trace",
     "debug",
     "info",
@@ -167,7 +179,7 @@ _SEVERITY_ORDER = [
     "emergency",
     "fatal",
 ]
-_SEVERITY_RANK = {name: index for index, name in enumerate(_SEVERITY_ORDER)}
+SEVERITY_RANK = {name: index for index, name in enumerate(SEVERITY_ORDER)}
 
 
 def _normalize_severity(candidate: Any) -> str | None:
@@ -178,8 +190,8 @@ def _normalize_severity(candidate: Any) -> str | None:
 
 
 def _severity_at_least(candidate: str, minimum: str) -> bool:
-    cr = _SEVERITY_RANK.get(candidate)
-    mr = _SEVERITY_RANK.get(minimum)
+    cr = SEVERITY_RANK.get(candidate)
+    mr = SEVERITY_RANK.get(minimum)
     return cr is not None and mr is not None and cr >= mr
 
 
@@ -290,7 +302,7 @@ class _OfflineSnapshot:
         generated_at = record.get("generated_at")
         self.generated_at = generated_at if isinstance(generated_at, (str, Mapping)) else None
 
-    def HasField(self, field: str) -> bool:  # pragma: no cover
+    def HasField(self, field: str) -> bool:  # pragma: no cover - prosta logika
         if field == "generated_at":
             return self.generated_at is not None
         if field == "fps":
@@ -318,12 +330,12 @@ def _iter_jsonl_snapshots(source: str) -> Iterable[_OfflineSnapshot]:
         except gzip.BadGzipFile as exc:
             LOGGER.error("Nie udało się zdekompresować pliku JSONL %s: %s", path, exc)
             raise SystemExit(2) from exc
-        except OSError as exc:  # pragma: no cover
+        except OSError as exc:  # pragma: no cover - zależne od platformy
             LOGGER.error("Nie udało się odczytać pliku JSONL %s: %s", path, exc)
             raise SystemExit(2) from exc
         close_handle = True
 
-    assert handle is not None
+    assert handle is not None  # dla mypy
 
     try:
         for line_number, line in enumerate(handle, start=1):
@@ -370,7 +382,7 @@ def _snapshot_fps(snapshot) -> float | None:
         return None
     try:
         return float(fps)
-    except (TypeError, ValueError):  # pragma: no cover
+    except (TypeError, ValueError):  # pragma: no cover - zabezpieczenie
         return None
 
 
@@ -737,6 +749,9 @@ def _decision_log_metadata_offline(
     risk_profile = getattr(args, "_risk_profile_config", None)
     if risk_profile:
         metadata["risk_profile"] = dict(risk_profile)
+    core_config = getattr(args, "_core_config_metadata", None)
+    if core_config:
+        metadata["core_config"] = dict(core_config)
     return metadata
 
 
@@ -786,6 +801,9 @@ def _decision_log_metadata_grpc(
     risk_profile = getattr(args, "_risk_profile_config", None)
     if risk_profile:
         metadata["risk_profile"] = dict(risk_profile)
+    core_config = getattr(args, "_core_config_metadata", None)
+    if core_config:
+        metadata["core_config"] = dict(core_config)
     return metadata
 
 
@@ -847,7 +865,7 @@ def _read_file_bytes(path: str | None) -> bytes | None:
     except FileNotFoundError as exc:
         LOGGER.error("Nie znaleziono pliku TLS: %s", path)
         raise SystemExit(2) from exc
-    except OSError as exc:  # pragma: no cover
+    except OSError as exc:  # pragma: no cover - zależne od platformy
         LOGGER.error("Nie udało się odczytać pliku TLS %s: %s", path, exc)
         raise SystemExit(2) from exc
     return data
@@ -893,7 +911,7 @@ def _apply_environment_overrides(
     *,
     parser: argparse.ArgumentParser,
     provided_flags: set[str],
-) -> None:
+) -> tuple[bool, bool]:
     env = os.environ
     env_use_tls_explicit = False
 
@@ -918,6 +936,8 @@ def _apply_environment_overrides(
             return
         value = env[env_key]
         setattr(args, attr, value)
+        if attr == "risk_profile":
+            args._risk_profile_source = "env"
         if attr in {
             "root_cert",
             "client_cert",
@@ -969,15 +989,23 @@ def _apply_environment_overrides(
     _override_list("severity", "SEVERITY", "--severity")
     _override_simple("severity_min", "SEVERITY_MIN", "--severity-min")
     _override_simple("risk_profile", "RISK_PROFILE", "--risk-profile")
+    _override_simple("risk_profiles_file", "RISK_PROFILES_FILE", "--risk-profiles-file")
+    _override_simple("core_config", "CORE_CONFIG", "--core-config")
     _override_numeric("screen_index", "SCREEN_INDEX", "--screen-index", int, allow_none=True)
     _override_simple("screen_name", "SCREEN_NAME", "--screen-name")
     _override_simple("since", "SINCE", "--since")
     _override_simple("until", "UNTIL", "--until")
     _override_simple("from_jsonl", "FROM_JSONL", "--from-jsonl")
+
     if "--summary" not in provided_flags and not args.summary:
         env_key = f"{_ENV_PREFIX}SUMMARY"
         if env_key in env:
             args.summary = _parse_env_bool(env[env_key], variable=env_key, parser=parser)
+
+    if "--print-risk-profiles" not in provided_flags and not getattr(args, "print_risk_profiles", False):
+        env_key = f"{_ENV_PREFIX}PRINT_RISK_PROFILES"
+        if env_key in env:
+            args.print_risk_profiles = _parse_env_bool(env[env_key], variable=env_key, parser=parser)
 
     _override_simple("summary_output", "SUMMARY_OUTPUT", "--summary-output")
     _override_simple("decision_log", "DECISION_LOG", "--decision-log")
@@ -1011,9 +1039,129 @@ def _apply_environment_overrides(
         if env_key in env:
             args.auth_token_file = env[env_key]
 
-    if tls_env_present and not args.use_tls and not env_use_tls_explicit and "--use-tls" not in provided_flags:
-        LOGGER.debug("Wymuszam TLS na podstawie zmiennych środowiskowych z materiałem TLS")
-        args.use_tls = True
+    return tls_env_present, env_use_tls_explicit
+
+
+def _apply_core_config_defaults(
+    args: argparse.Namespace,
+    *,
+    parser: argparse.ArgumentParser,
+    provided_flags: set[str],
+) -> None:
+    config_path = getattr(args, "core_config", None)
+    if not config_path:
+        return
+
+    if load_core_config is None:  # pragma: no cover - brak modułu konfiguracji
+        parser.error("Obsługa --core-config wymaga modułu bot_core.config")
+
+    target = Path(str(config_path)).expanduser()
+    if not target.exists():
+        parser.error(f"Plik konfiguracji core '{target}' nie istnieje")
+
+    try:
+        core_config = load_core_config(target)
+    except Exception as exc:  # pragma: no cover - błędna konfiguracja
+        parser.error(f"Nie udało się wczytać konfiguracji {target}: {exc}")
+
+    metadata: dict[str, Any] = {"path": str(target)}
+    metrics_config = getattr(core_config, "metrics_service", None)
+    if metrics_config is None:
+        metadata["warning"] = "metrics_service_missing"
+        args._core_config_metadata = metadata
+        return
+
+    metrics_meta: dict[str, Any] = {
+        "host": getattr(metrics_config, "host", None),
+        "port": getattr(metrics_config, "port", None),
+        "risk_profile": getattr(metrics_config, "ui_alerts_risk_profile", None),
+        "risk_profiles_file": getattr(
+            metrics_config, "ui_alerts_risk_profiles_file", None
+        ),
+    }
+
+    tls_config = getattr(metrics_config, "tls", None)
+    if tls_config is not None:
+        metrics_meta["tls_enabled"] = bool(getattr(tls_config, "enabled", False))
+        metrics_meta["client_auth"] = bool(getattr(tls_config, "require_client_auth", False))
+        metrics_meta["root_cert_configured"] = bool(getattr(tls_config, "client_ca_path", None))
+        metrics_meta["client_cert_configured"] = bool(getattr(tls_config, "certificate_path", None))
+        metrics_meta["client_key_configured"] = bool(getattr(tls_config, "private_key_path", None))
+
+    if getattr(metrics_config, "auth_token", None):
+        metrics_meta["auth_token_configured"] = True
+
+    metadata["metrics_service"] = {
+        key: value for key, value in metrics_meta.items() if value not in (None, "")
+    }
+    args._core_config_metadata = metadata
+
+    default_host = parser.get_default("host")
+    if (
+        "--host" not in provided_flags
+        and getattr(args, "host", default_host) == default_host
+        and getattr(metrics_config, "host", None)
+    ):
+        args.host = metrics_config.host
+
+    default_port = parser.get_default("port")
+    if (
+        "--port" not in provided_flags
+        and getattr(args, "port", default_port) == default_port
+        and getattr(metrics_config, "port", None)
+    ):
+        args.port = metrics_config.port
+
+    if not getattr(args, "risk_profiles_file", None) and getattr(
+        metrics_config, "ui_alerts_risk_profiles_file", None
+    ):
+        args.risk_profiles_file = metrics_config.ui_alerts_risk_profiles_file
+
+    if not getattr(args, "risk_profile", None) and getattr(
+        metrics_config, "ui_alerts_risk_profile", None
+    ):
+        args.risk_profile = metrics_config.ui_alerts_risk_profile
+        args._risk_profile_source = "core_config"
+
+    tls_cfg = getattr(metrics_config, "tls", None)
+    if tls_cfg is not None and getattr(tls_cfg, "enabled", False):
+        if not args.use_tls:
+            LOGGER.info(
+                "Konfiguracja core.yaml wymaga TLS – automatycznie włączam --use-tls"
+            )
+            args.use_tls = True
+        if not args.root_cert and getattr(tls_cfg, "client_ca_path", None):
+            args.root_cert = tls_cfg.client_ca_path
+        if not args.client_cert and getattr(tls_cfg, "certificate_path", None):
+            args.client_cert = tls_cfg.certificate_path
+        if not args.client_key and getattr(tls_cfg, "private_key_path", None):
+            args.client_key = tls_cfg.private_key_path
+
+    if (
+        getattr(metrics_config, "auth_token", None)
+        and not getattr(args, "auth_token", None)
+        and not getattr(args, "auth_token_file", None)
+    ):
+        args.auth_token = metrics_config.auth_token
+
+
+def _load_custom_risk_profiles(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    path_value = getattr(args, "risk_profiles_file", None)
+    if not path_value:
+        return
+
+    target = Path(path_value).expanduser()
+    try:
+        registered = load_risk_profiles_from_file(target, origin=f"watcher:{target}")
+    except FileNotFoundError as exc:
+        parser.error(str(exc))
+    except Exception as exc:
+        parser.error(f"Nie udało się wczytać profili ryzyka z {target}: {exc}")
+    else:
+        if registered:
+            LOGGER.info(
+                "Załadowano %s profil(e) ryzyka telemetrii z %s", len(registered), target
+            )
 
 
 def _apply_risk_profile_settings(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
@@ -1035,7 +1183,12 @@ def _apply_risk_profile_settings(args: argparse.Namespace, parser: argparse.Argu
 
     args.risk_profile = normalized
     args._risk_profile_base = profile_base
-    args._risk_profile_config = risk_profile_metadata(normalized)
+    profile_metadata = risk_profile_metadata(normalized)
+    source_label = getattr(args, "_risk_profile_source", None)
+    if source_label:
+        profile_metadata = dict(profile_metadata)
+        profile_metadata.setdefault("source", source_label)
+    args._risk_profile_config = profile_metadata
 
     severity_min = profile_base.get("severity_min")
     if severity_min and not args.severity_min:
@@ -1047,6 +1200,131 @@ def _apply_risk_profile_settings(args: argparse.Namespace, parser: argparse.Argu
             normalized,
         )
         args.summary = True
+
+
+def _print_available_risk_profiles(
+    selected: str | None, *, core_metadata: Mapping[str, Any] | None = None
+) -> None:
+    profiles: dict[str, Mapping[str, Any]] = {}
+    for name in list_risk_profile_names():
+        profiles[name] = risk_profile_metadata(name)
+
+    payload: dict[str, Any] = {"risk_profiles": profiles}
+    if selected:
+        normalized = selected.strip().lower()
+        payload["selected"] = normalized
+        payload["selected_profile"] = profiles.get(normalized)
+    if core_metadata:
+        payload["core_config"] = dict(core_metadata)
+
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+def _emit_summary(
+    summary_collector: _SummaryCollector | None,
+    *,
+    print_to_console: bool,
+    output_path: str | None,
+    signing_key: bytes | None,
+    signing_key_id: str | None,
+    risk_profile: Mapping[str, Any] | None = None,
+    core_metadata: Mapping[str, Any] | None = None,
+) -> Mapping[str, Any] | None:
+    if summary_collector is None:
+        return None
+
+    summary_payload: dict[str, Any] = {"summary": summary_collector.as_dict()}
+    if risk_profile or core_metadata:
+        metadata_section = summary_payload.setdefault("metadata", {})
+        if risk_profile:
+            metadata_section["risk_profile"] = dict(risk_profile)
+        if core_metadata:
+            metadata_section["core_config"] = dict(core_metadata)
+
+    signed_payload = _sign_payload(
+        summary_payload,
+        signing_key=signing_key,
+        signing_key_id=signing_key_id,
+    )
+
+    if print_to_console:
+        print(json.dumps(signed_payload, ensure_ascii=False))
+
+    if output_path:
+        target_path = Path(output_path).expanduser()
+        try:
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            target_path.write_text(
+                json.dumps(signed_payload, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            LOGGER.error("Nie udało się zapisać podsumowania do %s: %s", target_path, exc)
+            raise SystemExit(2) from exc
+
+        LOGGER.info("Zapisano podsumowanie do %s", target_path)
+
+    return signed_payload
+
+
+def _load_auth_token(token: str | None, token_file: str | None) -> str | None:
+    if token and token_file:
+        LOGGER.error("Użyj tylko jednej z opcji autoryzacji: --auth-token lub --auth-token-file")
+        raise SystemExit(2)
+
+    if token_file:
+        try:
+            data = Path(token_file).expanduser().read_text(encoding="utf-8")
+        except FileNotFoundError as exc:
+            LOGGER.error("Nie znaleziono pliku z tokenem: %s", token_file)
+            raise SystemExit(2) from exc
+        except OSError as exc:  # pragma: no cover - zależne od platformy
+            LOGGER.error("Nie udało się odczytać pliku z tokenem %s: %s", token_file, exc)
+            raise SystemExit(2) from exc
+        token = data.strip()
+        if not token:
+            LOGGER.error("Plik %s nie zawiera tokenu autoryzacyjnego", token_file)
+            raise SystemExit(2)
+
+    return token
+
+
+def _load_decision_log_signing_key(
+    raw_key: str | None,
+    key_file: str | None,
+    *,
+    parser: argparse.ArgumentParser,
+) -> bytes | None:
+    if raw_key and key_file:
+        parser.error(
+            "Użyj tylko jednej z opcji podpisywania decision logu: --decision-log-hmac-key lub "
+            "--decision-log-hmac-key-file."
+        )
+
+    key_material = raw_key
+    if key_file:
+        try:
+            key_material = Path(key_file).expanduser().read_text(encoding="utf-8")
+        except FileNotFoundError as exc:
+            LOGGER.error("Nie znaleziono pliku z kluczem HMAC: %s", key_file)
+            raise SystemExit(2) from exc
+        except OSError as exc:  # pragma: no cover - zależne od platformy
+            LOGGER.error("Nie udało się odczytać klucza HMAC z %s: %s", key_file, exc)
+            raise SystemExit(2) from exc
+
+    if key_material is None:
+        return None
+
+    key_stripped = key_material.strip()
+    if not key_stripped:
+        parser.error("Klucz HMAC decision logu nie może być pusty")
+
+    key_bytes = key_stripped.encode("utf-8")
+    if len(key_bytes) < 16:
+        LOGGER.warning(
+            "Klucz HMAC dla decision logu ma mniej niż 16 bajtów – rozważ użycie dłuższego klucza."
+        )
+    return key_bytes
 
 
 def create_metrics_channel(
@@ -1119,9 +1397,26 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--risk-profile",
-        choices=list_risk_profile_names(),
         default=None,
-        help=("Zastosuj predefiniowany profil ryzyka – ustawia domyślne progi severity i wymagania audytu."),
+        help=(
+            "Zastosuj predefiniowany profil ryzyka – ustawia domyślne progi severity i wymagania audytu."
+        ),
+    )
+    parser.add_argument(
+        "--risk-profiles-file",
+        default=None,
+        help=(
+            "Ścieżka do pliku JSON/YAML z dodatkowymi profilami ryzyka telemetrii. "
+            "Pozwala rozszerzyć lub nadpisać presety wbudowane."
+        ),
+    )
+    parser.add_argument(
+        "--core-config",
+        default=None,
+        help=(
+            "Ścieżka do pliku core.yaml – wczyta domyślne ustawienia MetricsService (profil ryzyka, "
+            "preset pliku z profilami, TLS, host/port)."
+        ),
     )
     parser.add_argument("--since", default=None, help="Odfiltruj snapshoty starsze niż podany znacznik czasu ISO 8601 (UTC)")
     parser.add_argument("--until", default=None, help="Odfiltruj snapshoty nowsze niż podany znacznik czasu ISO 8601 (UTC)")
@@ -1142,6 +1437,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help=(
             "Odczytaj snapshoty z pliku JSONL (np. artefakt CI) zamiast łączyć się z serwerem. "
             "Flagi TLS i autoryzacji są ignorowane w tym trybie."
+        ),
+    )
+    parser.add_argument(
+        "--print-risk-profiles",
+        action="store_true",
+        help=(
+            "Wypisz dostępne profile ryzyka telemetrii (wraz z progami) i zakończ działanie bez "
+            "łączenia się z serwerem ani odczytu artefaktów."
         ),
     )
     parser.add_argument(
@@ -1187,119 +1490,48 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--decision-log-key-id",
         default=None,
-        help=("Opcjonalny identyfikator klucza HMAC zapisywany przy podpisach decision logu (ułatwia rotację kluczy)."),
+        help=(
+            "Opcjonalny identyfikator klucza HMAC zapisywany przy podpisach decision logu "
+            "(ułatwia rotację kluczy)."
+        ),
     )
     return parser
-
-
-def _emit_summary(
-    summary_collector: _SummaryCollector | None,
-    *,
-    print_to_console: bool,
-    output_path: str | None,
-    signing_key: bytes | None,
-    signing_key_id: str | None,
-    risk_profile: Mapping[str, Any] | None = None,
-) -> Mapping[str, Any] | None:
-    if summary_collector is None:
-        return None
-
-    summary_payload: dict[str, Any] = {"summary": summary_collector.as_dict()}
-    if risk_profile:
-        summary_payload.setdefault("metadata", {})["risk_profile"] = dict(risk_profile)
-    signed_payload = _sign_payload(
-        summary_payload,
-        signing_key=signing_key,
-        signing_key_id=signing_key_id,
-    )
-
-    if print_to_console:
-        print(json.dumps(signed_payload, ensure_ascii=False))
-
-    if output_path:
-        target_path = Path(output_path).expanduser()
-        try:
-            target_path.parent.mkdir(parents=True, exist_ok=True)
-            target_path.write_text(
-                json.dumps(signed_payload, ensure_ascii=False, indent=2) + "\n",
-                encoding="utf-8",
-            )
-        except OSError as exc:
-            LOGGER.error("Nie udało się zapisać podsumowania do %s: %s", target_path, exc)
-            raise SystemExit(2) from exc
-
-        LOGGER.info("Zapisano podsumowanie do %s", target_path)
-
-    return signed_payload
-
-
-def _load_auth_token(token: str | None, token_file: str | None) -> str | None:
-    if token and token_file:
-        LOGGER.error("Użyj tylko jednej z opcji autoryzacji: --auth-token lub --auth-token-file")
-        raise SystemExit(2)
-
-    if token_file:
-        try:
-            data = Path(token_file).expanduser().read_text(encoding="utf-8")
-        except FileNotFoundError as exc:
-            LOGGER.error("Nie znaleziono pliku z tokenem: %s", token_file)
-            raise SystemExit(2) from exc
-        except OSError as exc:  # pragma: no cover
-            LOGGER.error("Nie udało się odczytać pliku z tokenem %s: %s", token_file, exc)
-            raise SystemExit(2) from exc
-        token = data.strip()
-        if not token:
-            LOGGER.error("Plik %s nie zawiera tokenu autoryzacyjnego", token_file)
-            raise SystemExit(2)
-
-    return token
-
-
-def _load_decision_log_signing_key(
-    raw_key: str | None,
-    key_file: str | None,
-    *,
-    parser: argparse.ArgumentParser,
-) -> bytes | None:
-    if raw_key and key_file:
-        parser.error(
-            "Użyj tylko jednej z opcji podpisywania decision logu: --decision-log-hmac-key lub "
-            "--decision-log-hmac-key-file."
-        )
-
-    key_material = raw_key
-    if key_file:
-        try:
-            key_material = Path(key_file).expanduser().read_text(encoding="utf-8")
-        except FileNotFoundError as exc:
-            LOGGER.error("Nie znaleziono pliku z kluczem HMAC: %s", key_file)
-            raise SystemExit(2) from exc
-        except OSError as exc:  # pragma: no cover
-            LOGGER.error("Nie udało się odczytać klucza HMAC z %s: %s", key_file, exc)
-            raise SystemExit(2) from exc
-
-    if key_material is None:
-        return None
-
-    key_stripped = key_material.strip()
-    if not key_stripped:
-        parser.error("Klucz HMAC decision logu nie może być pusty")
-
-    key_bytes = key_stripped.encode("utf-8")
-    if len(key_bytes) < 16:
-        LOGGER.warning(
-            "Klucz HMAC dla decision logu ma mniej niż 16 bajtów – rozważ użycie dłuższego klucza."
-        )
-    return key_bytes
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
 
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+
+    args._risk_profile_source = None
     provided_flags = {arg for arg in (argv or []) if arg.startswith("--")}
-    _apply_environment_overrides(args, parser=parser, provided_flags=provided_flags)
+    if "--risk-profile" in provided_flags:
+        args._risk_profile_source = "cli"
+
+    tls_env_present, env_use_tls_explicit = _apply_environment_overrides(
+        args,
+        parser=parser,
+        provided_flags=provided_flags,
+    )
+    _apply_core_config_defaults(args, parser=parser, provided_flags=provided_flags)
+    _load_custom_risk_profiles(args, parser)
+    if (
+        tls_env_present
+        and not args.use_tls
+        and not env_use_tls_explicit
+        and "--use-tls" not in provided_flags
+    ):
+        LOGGER.debug("Wymuszam TLS na podstawie zmiennych środowiskowych z materiałem TLS")
+        args.use_tls = True
     _apply_risk_profile_settings(args, parser)
+    core_metadata = getattr(args, "_core_config_metadata", None)
+
+    if getattr(args, "print_risk_profiles", False):
+        _print_available_risk_profiles(
+            getattr(args, "risk_profile", None), core_metadata=core_metadata
+        )
+        return 0
 
     if args.since is not None:
         args.since = args.since.strip() or None
@@ -1342,17 +1574,15 @@ def main(argv: list[str] | None = None) -> int:
     severity_min: str | None = None
     if args.severity_min:
         normalized_min = _normalize_severity(args.severity_min)
-        if normalized_min is None or normalized_min not in _SEVERITY_RANK:
+        if normalized_min is None or normalized_min not in SEVERITY_RANK:
             parser.error(
                 "Nieprawidłowa wartość --severity-min – użyj jednego z: "
-                + ", ".join(_SEVERITY_ORDER)
+                + ", ".join(SEVERITY_ORDER)
             )
         severity_min = normalized_min
         if severity_filters:
             conflicts = sorted(
-                value
-                for value in severity_filters
-                if not _severity_at_least(value, severity_min)
+                value for value in severity_filters if not _severity_at_least(value, severity_min)
             )
             if conflicts:
                 parser.error(
@@ -1493,6 +1723,7 @@ def main(argv: list[str] | None = None) -> int:
                     signing_key=signing_key,
                     signing_key_id=signing_key_id,
                     risk_profile=risk_profile_config,
+                    core_metadata=core_metadata,
                 )
             return 0
 
@@ -1574,6 +1805,7 @@ def main(argv: list[str] | None = None) -> int:
                 signing_key=signing_key,
                 signing_key_id=signing_key_id,
                 risk_profile=risk_profile_config,
+                core_metadata=core_metadata,
             )
         return 0
 

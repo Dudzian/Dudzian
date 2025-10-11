@@ -8,6 +8,7 @@ import hmac
 import json
 import io
 import sys
+import textwrap
 import types
 from pathlib import Path
 from typing import Iterable
@@ -28,6 +29,50 @@ from scripts.watch_metrics_stream import (
     create_metrics_channel,
     main as watch_metrics_main,
 )
+
+
+def _write_risk_profile_file(tmp_path: Path, name: str = "ops", severity: str = "warning") -> Path:
+    profiles_path = tmp_path / "telemetry_profiles.json"
+    payload = {"risk_profiles": {name: {"severity_min": severity}}}
+    profiles_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return profiles_path
+
+
+def _write_core_config(
+    tmp_path: Path,
+    *,
+    profiles_path: Path,
+    profile_name: str = "ops",
+    host: str = "10.20.30.40",
+    port: int = 50200,
+) -> Path:
+    config_path = tmp_path / "core.yaml"
+    profiles_str = str(profiles_path)
+    config_path.write_text(
+        textwrap.dedent(
+            f"""
+            risk_profiles:
+              conservative:
+                max_daily_loss_pct: 0.05
+                max_position_pct: 0.10
+                target_volatility: 0.2
+                max_leverage: 3.0
+                stop_loss_atr_multiple: 1.5
+                max_open_positions: 5
+                hard_drawdown_pct: 0.25
+            environments: {{}}
+            runtime:
+              metrics_service:
+                host: {host}
+                port: {port}
+                ui_alerts_risk_profile: {profile_name}
+                ui_alerts_risk_profiles_file: {profiles_str}
+            """
+        ).strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    return config_path
 
 
 def _assert_signed_entry(entry: dict[str, object], key: bytes, *, key_id: str | None) -> None:
@@ -80,6 +125,112 @@ def test_load_auth_token_conflicting_sources(tmp_path):
     token_path.write_text("secret")
     with pytest.raises(SystemExit):
         _load_auth_token("cli-token", str(token_path))
+
+
+def test_watch_metrics_stream_print_risk_profiles(capsys):
+    exit_code = watch_metrics_main(["--print-risk-profiles"])
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    payload = json.loads(captured.out)
+    assert "risk_profiles" in payload
+    assert "conservative" in payload["risk_profiles"]
+    assert payload["risk_profiles"]["conservative"]["origin"] == "builtin"
+    assert payload.get("selected") is None
+
+
+def test_watch_metrics_stream_print_risk_profiles_env(monkeypatch, capsys):
+    monkeypatch.setenv(f"{_ENV_PREFIX}PRINT_RISK_PROFILES", "1")
+    exit_code = watch_metrics_main([])
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    payload = json.loads(captured.out)
+    assert "risk_profiles" in payload
+    assert payload["risk_profiles"]["conservative"]["origin"] == "builtin"
+    assert payload.get("selected") is None
+
+
+def test_watch_metrics_stream_risk_profiles_file_cli(tmp_path, capsys):
+    profiles_path = tmp_path / "telemetry_profiles.json"
+    profiles_path.write_text(
+        json.dumps({"risk_profiles": {"ops": {"severity_min": "error"}}}, ensure_ascii=False)
+    )
+
+    exit_code = watch_metrics_main([
+        "--print-risk-profiles",
+        "--risk-profiles-file",
+        str(profiles_path),
+    ])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    payload = json.loads(captured.out)
+    assert "ops" in payload["risk_profiles"]
+    assert payload["risk_profiles"]["ops"]["severity_min"] == "error"
+    assert payload["risk_profiles"]["ops"]["origin"].startswith("watcher:")
+
+
+def test_watch_metrics_stream_risk_profiles_file_env(monkeypatch, tmp_path, capsys):
+    profiles_path = tmp_path / "telemetry_profiles.json"
+    profiles_path.write_text(
+        json.dumps({"risk_profiles": {"lab": {"severity_min": "info"}}}, ensure_ascii=False)
+    )
+    monkeypatch.setenv(f"{_ENV_PREFIX}RISK_PROFILES_FILE", str(profiles_path))
+    exit_code = watch_metrics_main(["--print-risk-profiles"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    payload = json.loads(captured.out)
+    assert "lab" in payload["risk_profiles"]
+    assert payload["risk_profiles"]["lab"]["severity_min"] == "info"
+    assert payload["risk_profiles"]["lab"]["origin"].startswith("watcher:")
+
+
+def test_watch_metrics_stream_risk_profiles_directory(tmp_path, capsys):
+    profiles_dir = tmp_path / "profiles"
+    profiles_dir.mkdir()
+    (profiles_dir / "ops.json").write_text(
+        json.dumps({"risk_profiles": {"ops_dir": {"severity_min": "error"}}}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (profiles_dir / "lab.yaml").write_text(
+        "risk_profiles:\n  lab_dir:\n    severity_min: warning\n",
+        encoding="utf-8",
+    )
+
+    exit_code = watch_metrics_main(
+        ["--print-risk-profiles", "--risk-profiles-file", str(profiles_dir)]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    payload = json.loads(captured.out)
+    assert payload["risk_profiles"]["ops_dir"]["origin"].endswith("#ops.json")
+    assert payload["risk_profiles"]["lab_dir"]["origin"].endswith("#lab.yaml")
+
+
+def test_watch_metrics_stream_core_config_prints_profiles(tmp_path, capsys):
+    profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="error")
+    config_path = _write_core_config(
+        tmp_path,
+        profiles_path=profiles_path,
+        profile_name="ops",
+        host="192.0.2.10",
+        port=50111,
+    )
+
+    exit_code = watch_metrics_main(["--print-risk-profiles", "--core-config", str(config_path)])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    payload = json.loads(captured.out)
+    assert payload["selected"] == "ops"
+    selected_profile = payload["selected_profile"]
+    assert selected_profile["origin"].startswith("watcher:")
+    assert selected_profile["severity_min"] == "error"
+    core_meta = payload.get("core_config")
+    assert core_meta["path"] == str(config_path)
+    assert core_meta["metrics_service"]["risk_profile"] == "ops"
+    assert core_meta["metrics_service"]["risk_profiles_file"] == str(profiles_path)
 
 
 def _start_server(auth_token: str | None = None) -> MetricsServer:
@@ -643,6 +794,52 @@ def test_watch_metrics_stream_summary_output_env(monkeypatch, tmp_path, capsys):
     assert file_payload["summary"]["severity_counts"] == {"critical": 1}
 
 
+def test_watch_metrics_stream_core_config_summary_metadata(tmp_path, capsys):
+    profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="error")
+    config_path = _write_core_config(tmp_path, profiles_path=profiles_path, profile_name="ops")
+
+    records = [
+        {
+            "generated_at": "2024-04-01T12:00:00Z",
+            "notes": json.dumps(
+                {
+                    "event": "reduce_motion",
+                    "severity": "error",
+                    "screen": {"name": "Desk", "index": 0},
+                },
+                ensure_ascii=False,
+            ),
+            "fps": 44.0,
+        }
+    ]
+    jsonl_path = tmp_path / "metrics.jsonl"
+    jsonl_path.write_text("\n".join(json.dumps(item, ensure_ascii=False) for item in records) + "\n")
+
+    summary_path = tmp_path / "summary.json"
+    exit_code = watch_metrics_main(
+        [
+            "--from-jsonl",
+            str(jsonl_path),
+            "--summary",
+            "--summary-output",
+            str(summary_path),
+            "--core-config",
+            str(config_path),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    summary_payload = json.loads(summary_path.read_text(encoding="utf-8"))
+    metadata = summary_payload["metadata"]
+    assert metadata["core_config"]["path"] == str(config_path)
+    assert metadata["core_config"]["metrics_service"]["risk_profile"] == "ops"
+    assert metadata["risk_profile"]["source"] == "core_config"
+    assert summary_payload["summary"]["events"]["reduce_motion"]["count"] == 1
+    assert summary_payload["summary"]["severity_counts"] == {"error": 1}
+    assert "summary" in captured.out
+
+
 def test_watch_metrics_stream_signed_summary(tmp_path, capsys):
     record = {
         "generated_at": "2024-05-05T10:00:00+00:00",
@@ -1152,6 +1349,7 @@ def test_watch_metrics_stream_risk_profile_defaults(tmp_path):
     assert metadata["filters"]["severity_min"] == "warning"
     assert metadata["risk_profile"]["name"] == "conservative"
     assert metadata["risk_profile"]["severity_min"] == "warning"
+    assert metadata["risk_profile"]["origin"] == "builtin"
 
     snapshot_events = [entry for entry in decision_entries if entry["kind"] == "snapshot"]
     assert len(snapshot_events) == 1
@@ -1159,7 +1357,130 @@ def test_watch_metrics_stream_risk_profile_defaults(tmp_path):
 
     summary_payload = json.loads(summary_path.read_text())
     assert summary_payload["metadata"]["risk_profile"]["name"] == "conservative"
+    assert summary_payload["metadata"]["risk_profile"]["origin"] == "builtin"
     assert summary_payload["summary"]["events"]["reduce_motion"]["count"] == 1
+
+
+def test_watch_metrics_stream_risk_profile_from_file(tmp_path):
+    records = [
+        {
+            "generated_at": "2024-03-02T10:00:00Z",
+            "notes": json.dumps(
+                {
+                    "event": "reduce_motion",
+                    "severity": "error",
+                    "screen": {"index": 0, "name": "Primary"},
+                },
+                ensure_ascii=False,
+            ),
+        },
+        {
+            "generated_at": "2024-03-02T10:00:01Z",
+            "notes": json.dumps(
+                {
+                    "event": "reduce_motion",
+                    "severity": "warning",
+                    "screen": {"index": 1, "name": "Backup"},
+                },
+                ensure_ascii=False,
+            ),
+        },
+    ]
+    jsonl_path = tmp_path / "metrics.jsonl"
+    jsonl_path.write_text("\n".join(json.dumps(item, ensure_ascii=False) for item in records) + "\n")
+
+    profiles_path = tmp_path / "profiles.json"
+    profiles_path.write_text(
+        json.dumps({"risk_profiles": {"ops": {"severity_min": "error"}}}, ensure_ascii=False)
+    )
+
+    decision_log_path = tmp_path / "ops_decision.jsonl"
+    summary_path = tmp_path / "ops_summary.json"
+
+    exit_code = watch_metrics_main(
+        [
+            "--from-jsonl",
+            str(jsonl_path),
+            "--risk-profiles-file",
+            str(profiles_path),
+            "--risk-profile",
+            "ops",
+            "--decision-log",
+            str(decision_log_path),
+            "--summary-output",
+            str(summary_path),
+        ]
+    )
+
+    assert exit_code == 0
+
+    decision_entries = [json.loads(line) for line in decision_log_path.read_text().splitlines() if line]
+    metadata = decision_entries[0]["metadata"]
+    assert metadata["risk_profile"]["name"] == "ops"
+    assert metadata["risk_profile"]["severity_min"] == "error"
+    assert metadata["risk_profile"]["origin"].startswith("watcher:")
+
+    snapshot_events = [entry for entry in decision_entries if entry["kind"] == "snapshot"]
+    assert len(snapshot_events) == 1
+    assert snapshot_events[0]["severity"] == "error"
+
+    summary_payload = json.loads(summary_path.read_text())
+    assert summary_payload["metadata"]["risk_profile"]["name"] == "ops"
+    assert summary_payload["metadata"]["risk_profile"]["origin"].startswith("watcher:")
+    assert summary_payload["summary"]["events"]["reduce_motion"]["count"] == 1
+
+
+def test_watch_metrics_stream_core_config_decision_metadata(tmp_path):
+    profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="error")
+    config_path = _write_core_config(tmp_path, profiles_path=profiles_path, profile_name="ops")
+
+    records = [
+        {
+            "generated_at": "2024-04-05T08:00:00Z",
+            "notes": json.dumps(
+                {
+                    "event": "reduce_motion",
+                    "severity": "error",
+                    "screen": {"name": "Desk", "index": 0},
+                },
+                ensure_ascii=False,
+            ),
+            "fps": 40.5,
+        }
+    ]
+    jsonl_path = tmp_path / "metrics.jsonl"
+    jsonl_path.write_text("\n".join(json.dumps(item, ensure_ascii=False) for item in records) + "\n")
+
+    decision_log_path = tmp_path / "decision.jsonl"
+    summary_path = tmp_path / "summary.json"
+
+    exit_code = watch_metrics_main(
+        [
+            "--from-jsonl",
+            str(jsonl_path),
+            "--decision-log",
+            str(decision_log_path),
+            "--decision-log-hmac-key",
+            "sekret",
+            "--summary-output",
+            str(summary_path),
+            "--core-config",
+            str(config_path),
+        ]
+    )
+
+    assert exit_code == 0
+    decision_entries = [
+        json.loads(line)
+        for line in decision_log_path.read_text(encoding="utf-8").splitlines()
+        if line
+    ]
+    metadata_entry = decision_entries[0]
+    assert metadata_entry["kind"] == "metadata"
+    meta = metadata_entry["metadata"]
+    assert meta["core_config"]["path"] == str(config_path)
+    assert meta["core_config"]["metrics_service"]["risk_profiles_file"] == str(profiles_path)
+    assert meta["risk_profile"]["source"] == "core_config"
 
 
 def test_watch_metrics_stream_decision_log_env(monkeypatch, tmp_path, capsys):

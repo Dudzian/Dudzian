@@ -24,9 +24,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
+# --- opcjonalna konfiguracja core.yaml ---------------------------------------
+try:
+    from bot_core.config import load_core_config  # type: ignore
+except Exception:  # pragma: no cover - brak modułu konfiguracji
+    load_core_config = None  # type: ignore
+
+# --- presety profili ryzyka (z fallbackiem, patrz scripts.telemetry_risk_profiles) --
 from scripts.telemetry_risk_profiles import (
     get_risk_profile,
     list_risk_profile_names,
+    load_risk_profiles_with_metadata,
     risk_profile_metadata,
 )
 
@@ -41,6 +49,9 @@ _ENV_REPORT_OUTPUT = f"{_ENV_PREFIX}REPORT_OUTPUT"
 _ENV_MAX_EVENT_COUNTS = f"{_ENV_PREFIX}MAX_EVENT_COUNTS_JSON"
 _ENV_MIN_EVENT_COUNTS = f"{_ENV_PREFIX}MIN_EVENT_COUNTS_JSON"
 _ENV_RISK_PROFILE = f"{_ENV_PREFIX}RISK_PROFILE"
+_ENV_RISK_PROFILES_FILE = f"{_ENV_PREFIX}RISK_PROFILES_FILE"
+_ENV_PRINT_RISK_PROFILES = f"{_ENV_PREFIX}PRINT_RISK_PROFILES"
+_ENV_CORE_CONFIG = f"{_ENV_PREFIX}CORE_CONFIG"
 
 _BOOL_TRUE = {"1", "true", "yes", "on"}
 _BOOL_FALSE = {"0", "false", "no", "off"}
@@ -1007,6 +1018,7 @@ def _build_report_payload(
     enforced_limits: Mapping[str, int] | None = None,
     enforced_minimums: Mapping[str, int] | None = None,
     risk_profile: Mapping[str, Any] | None = None,
+    core_config: Mapping[str, Any] | None = None,
 ) -> Mapping[str, Any]:
     payload: dict[str, Any] = {
         "report_version": 1,
@@ -1027,6 +1039,8 @@ def _build_report_payload(
         payload["enforced_event_minimums"] = dict(enforced_minimums)
     if risk_profile:
         payload["risk_profile"] = dict(risk_profile)
+    if core_config:
+        payload["core_config"] = dict(core_config)
     return payload
 
 
@@ -1037,6 +1051,7 @@ def _write_report_output(destination: str, payload: Mapping[str, Any]) -> None:
     path = Path(destination)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Weryfikacja podpisów decision logu UI")
@@ -1110,10 +1125,65 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--risk-profile",
-        choices=list_risk_profile_names(),
         help="Zastosuj predefiniowany profil ryzyka (ustawia limity i wymagania audytowe)",
     )
+    parser.add_argument(
+        "--risk-profiles-file",
+        help=(
+            "Ścieżka do pliku JSON/YAML z profilami ryzyka telemetrii – pozwala rozszerzyć"
+            " lub nadpisać wbudowane presety."
+        ),
+    )
+    parser.add_argument(
+        "--print-risk-profiles",
+        action="store_true",
+        help="Wypisz dostępne profile ryzyka (wraz z metadanymi) i zakończ",
+    )
+    parser.add_argument(
+        "--core-config",
+        help=(
+            "Ścieżka do pliku core.yaml – wczyta domyślne ustawienia MetricsService (profil "
+            "ryzyka i plik presetów)."
+        ),
+    )
     return parser
+
+
+def _print_available_risk_profiles(
+    selected: str | None, *, core_metadata: Mapping[str, Any] | None = None
+) -> None:
+    payload: dict[str, Any] = {"risk_profiles": {}}
+    for name in list_risk_profile_names():
+        payload["risk_profiles"][name] = risk_profile_metadata(name)
+
+    if selected:
+        normalized = selected.strip().lower()
+        payload["selected"] = normalized
+        payload["selected_profile"] = payload["risk_profiles"].get(normalized)
+
+    if core_metadata:
+        payload["core_config"] = dict(core_metadata)
+
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+def _load_risk_profile_presets(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    path_value = getattr(args, "risk_profiles_file", None)
+    if not path_value:
+        return
+
+    target = Path(path_value).expanduser()
+    try:
+        registered, _meta = load_risk_profiles_with_metadata(target, origin_label=f"verify:{target}")
+    except FileNotFoundError as exc:
+        parser.error(str(exc))
+    except Exception as exc:  # pragma: no cover - zależne od formatu
+        parser.error(f"Nie udało się wczytać profili ryzyka z {target}: {exc}")
+    else:
+        if registered:
+            LOGGER.info(
+                "Załadowano %s profil(e) ryzyka telemetrii z %s", len(registered), target
+            )
 
 
 def _apply_env_defaults(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
@@ -1121,6 +1191,23 @@ def _apply_env_defaults(args: argparse.Namespace, parser: argparse.ArgumentParse
         env_path = os.getenv(f"{_ENV_PREFIX}PATH")
         if env_path:
             args.path = env_path
+
+    if getattr(args, "risk_profiles_file", None) is None:
+        env_profiles = os.getenv(_ENV_RISK_PROFILES_FILE)
+        if env_profiles:
+            args.risk_profiles_file = env_profiles
+
+    if not getattr(args, "print_risk_profiles", False):
+        env_print = os.getenv(_ENV_PRINT_RISK_PROFILES)
+        if env_print:
+            args.print_risk_profiles = _parse_env_bool(
+                env_print, variable=_ENV_PRINT_RISK_PROFILES, parser=parser
+            )
+
+    if getattr(args, "core_config", None) is None:
+        env_core = os.getenv(_ENV_CORE_CONFIG)
+        if env_core:
+            args.core_config = env_core
 
     env_key = os.getenv(f"{_ENV_PREFIX}HMAC_KEY")
     env_key_file = os.getenv(f"{_ENV_PREFIX}HMAC_KEY_FILE")
@@ -1187,14 +1274,8 @@ def _apply_env_defaults(args: argparse.Namespace, parser: argparse.ArgumentParse
     if getattr(args, "risk_profile", None) is None:
         env_risk_profile = os.getenv(_ENV_RISK_PROFILE)
         if env_risk_profile:
-            normalized_profile = env_risk_profile.strip().lower()
-            available = list_risk_profile_names()
-            if normalized_profile not in available:
-                parser.error(
-                    f"{_ENV_RISK_PROFILE} ma nieprawidłową wartość {env_risk_profile!r}; dozwolone: "
-                    + ", ".join(available)
-                )
-            args.risk_profile = normalized_profile
+            args.risk_profile = env_risk_profile.strip().lower()
+            args._risk_profile_source = "env"
 
     if not getattr(args, "require_screen_info", False):
         env_screen = os.getenv(_ENV_REQUIRE_SCREEN_INFO)
@@ -1277,7 +1358,52 @@ def _apply_env_defaults(args: argparse.Namespace, parser: argparse.ArgumentParse
     expected_filters.update(cli_filters)
     args._expected_filters = expected_filters
 
-    _apply_risk_profile_defaults(args, parser)
+
+def _apply_core_config_defaults(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    config_path = getattr(args, "core_config", None)
+    if not config_path:
+        return
+
+    if load_core_config is None:  # pragma: no cover - brak modułu konfiguracji
+        parser.error("Obsługa --core-config wymaga modułu bot_core.config")
+
+    target = Path(str(config_path)).expanduser()
+    if not target.exists():
+        parser.error(f"Plik konfiguracji core '{target}' nie istnieje")
+
+    try:
+        core_config = load_core_config(target)
+    except Exception as exc:  # pragma: no cover - błędna konfiguracja
+        parser.error(f"Nie udało się wczytać konfiguracji {target}: {exc}")
+
+    metadata: dict[str, Any] = {"path": str(target)}
+    metrics_config = getattr(core_config, "metrics_service", None)
+    if metrics_config is None:
+        metadata["warning"] = "metrics_service_missing"
+        args._core_config_metadata = metadata
+        return
+
+    metrics_meta: dict[str, Any] = {
+        "host": getattr(metrics_config, "host", None),
+        "port": getattr(metrics_config, "port", None),
+        "risk_profile": getattr(metrics_config, "ui_alerts_risk_profile", None),
+        "risk_profiles_file": getattr(
+            metrics_config, "ui_alerts_risk_profiles_file", None
+        ),
+    }
+    metadata["metrics_service"] = {
+        key: value for key, value in metrics_meta.items() if value not in (None, "")
+    }
+    args._core_config_metadata = metadata
+
+    profiles_file = metrics_meta.get("risk_profiles_file")
+    if not getattr(args, "risk_profiles_file", None) and profiles_file:
+        args.risk_profiles_file = profiles_file
+
+    profile_name = metrics_meta.get("risk_profile")
+    if not getattr(args, "risk_profile", None) and profile_name:
+        args.risk_profile = profile_name
+        args._risk_profile_source = "core_config"
 
 
 def _apply_risk_profile_defaults(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
@@ -1286,13 +1412,20 @@ def _apply_risk_profile_defaults(args: argparse.Namespace, parser: argparse.Argu
         args._risk_profile_config = None
         return
 
+    normalized = profile_name.strip().lower()
+
     try:
-        base_config = get_risk_profile(profile_name)
+        base_config = get_risk_profile(normalized)
     except KeyError:
         parser.error(
             f"Profil ryzyka {profile_name!r} nie jest obsługiwany. Dostępne: {', '.join(list_risk_profile_names())}"
         )
-    profile_config = risk_profile_metadata(profile_name)
+    args.risk_profile = normalized
+    profile_config = risk_profile_metadata(normalized)
+    source_label = getattr(args, "_risk_profile_source", None)
+    if source_label:
+        profile_config = dict(profile_config)
+        profile_config.setdefault("source", source_label)
 
     if profile_config.get("expect_summary_enabled") and not args.expect_summary_enabled:
         args.expect_summary_enabled = True
@@ -1360,7 +1493,24 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    # źródło profilu ryzyka do metadanych
+    args._risk_profile_source = None
+    provided_flags = {arg for arg in (argv or []) if isinstance(arg, str) and arg.startswith("--")}
+    if "--risk-profile" in provided_flags:
+        args._risk_profile_source = "cli"
+
+    # ENV → CLI, core.yaml, plik presetów → zastosowanie profilu
     _apply_env_defaults(args, parser)
+    _apply_core_config_defaults(args, parser)
+    _load_risk_profile_presets(args, parser)
+    _apply_risk_profile_defaults(args, parser)
+
+    core_metadata: Mapping[str, Any] | None = getattr(args, "_core_config_metadata", None)
+
+    if getattr(args, "print_risk_profiles", False):
+        _print_available_risk_profiles(getattr(args, "risk_profile", None), core_metadata=core_metadata)
+        return 0
 
     if args.path is None:
         parser.error("Nie podano ścieżki do decision logu")
@@ -1381,6 +1531,7 @@ def main(argv: list[str] | None = None) -> int:
     max_event_counts: Mapping[str, int] = getattr(args, "_max_event_counts", {})
     min_event_counts: Mapping[str, int] = getattr(args, "_min_event_counts", {})
     risk_profile_config: Mapping[str, Any] | None = getattr(args, "_risk_profile_config", None)
+
     if summary_path == "-" and args.path == "-":
         parser.error("Nie można czytać decision logu i podsumowania jednocześnie ze STDIN")
 
@@ -1440,6 +1591,7 @@ def main(argv: list[str] | None = None) -> int:
                 enforced_limits=max_event_counts,
                 enforced_minimums=min_event_counts,
                 risk_profile=risk_profile_config,
+                core_config=core_metadata,
             ),
         )
     metadata_line = json.dumps(metadata_info, ensure_ascii=False)

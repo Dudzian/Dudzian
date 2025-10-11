@@ -8,10 +8,46 @@ import io
 import json
 import logging
 import sys
+import textwrap
 
 import pytest
 
 from scripts.verify_decision_log import main as verify_main
+
+
+def _write_risk_profile_file(tmp_path, name: str = "ops", severity: str = "error"):
+    profiles_path = tmp_path / "telemetry_profiles.json"
+    payload = {"risk_profiles": {name: {"severity_min": severity}}}
+    profiles_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return profiles_path
+
+
+def _write_core_config(tmp_path, *, profiles_path, profile_name: str = "ops"):
+    config_path = tmp_path / "core.yaml"
+    profiles_str = str(profiles_path)
+    config_path.write_text(
+        textwrap.dedent(
+            f"""
+            risk_profiles:
+              conservative:
+                max_daily_loss_pct: 0.05
+                max_position_pct: 0.10
+                target_volatility: 0.2
+                max_leverage: 3.0
+                stop_loss_atr_multiple: 1.5
+                max_open_positions: 5
+                hard_drawdown_pct: 0.25
+            environments: {{}}
+            runtime:
+              metrics_service:
+                ui_alerts_risk_profile: {profile_name}
+                ui_alerts_risk_profiles_file: {profiles_str}
+            """
+        ).strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    return config_path
 
 
 def _signed_entry(payload: dict[str, object], *, key: bytes, key_id: str | None) -> dict[str, object]:
@@ -160,6 +196,38 @@ def test_verify_reads_from_stdin(monkeypatch, tmp_path):
 
     exit_code = verify_main(["-", "--hmac-key", key.decode("utf-8")])
     assert exit_code == 0
+
+
+def test_print_risk_profiles_cli(tmp_path, capsys):
+    profiles_path = _write_risk_profile_file(tmp_path, name="desk", severity="notice")
+
+    exit_code = verify_main([
+        "--print-risk-profiles",
+        "--risk-profiles-file",
+        str(profiles_path),
+    ])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    payload = json.loads(output)
+    assert payload["risk_profiles"]["desk"]["severity_min"] == "notice"
+    assert payload["risk_profiles"]["desk"]["origin"].startswith("verify:")
+
+
+def test_print_risk_profiles_env(monkeypatch, tmp_path, capsys):
+    profiles_path = _write_risk_profile_file(tmp_path, name="desk", severity="warning")
+    monkeypatch.setenv("BOT_CORE_VERIFY_DECISION_LOG_PRINT_RISK_PROFILES", "1")
+    monkeypatch.setenv(
+        "BOT_CORE_VERIFY_DECISION_LOG_RISK_PROFILES_FILE",
+        str(profiles_path),
+    )
+
+    exit_code = verify_main([])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    payload = json.loads(output)
+    assert payload["risk_profiles"]["desk"]["severity_min"] == "warning"
 
 
 def test_verify_env_configuration(monkeypatch, tmp_path):
@@ -588,6 +656,7 @@ def test_verify_summary_signature_mismatch(tmp_path):
     )
 
     assert exit_code == 2
+
 
 def test_verify_metadata_expectations(tmp_path):
     key = b"secret"
@@ -1238,6 +1307,86 @@ def test_verify_risk_profile_rejects_low_severity(tmp_path):
     assert exit_code == 2
 
 
+def test_verify_risk_profile_file_cli(tmp_path):
+    key = b"risk"
+    log_path = tmp_path / "custom_profile.jsonl"
+    report_path = tmp_path / "report.json"
+    profiles_path = tmp_path / "profiles.json"
+    profiles_path.write_text(
+        json.dumps({"risk_profiles": {"ops": {"severity_min": "error"}}}, ensure_ascii=False)
+    )
+
+    entries = [
+        _metadata_entry(
+            key=key,
+            key_id="ops",
+            metadata={"mode": "jsonl", "summary_enabled": True},
+        ),
+        _snapshot_entry(
+            key=key,
+            key_id="ops",
+            timestamp="2024-07-01T00:00:01+00:00",
+            event="reduce_motion",
+            severity="error",
+            screen={"index": 0, "name": "Ops"},
+        ),
+    ]
+    _write_signed_log(entries, log_path)
+
+    exit_code = verify_main(
+        [
+            str(log_path),
+            "--hmac-key",
+            key.decode("utf-8"),
+            "--risk-profiles-file",
+            str(profiles_path),
+            "--risk-profile",
+            "ops",
+            "--report-output",
+            str(report_path),
+        ]
+    )
+
+    assert exit_code == 0
+    report_payload = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report_payload["risk_profile"]["name"] == "ops"
+    assert report_payload["risk_profile"]["origin"].startswith("verify:")
+
+
+def test_verify_risk_profile_file_env(monkeypatch, tmp_path):
+    key = b"risk"
+    log_path = tmp_path / "env_profile.jsonl"
+    profiles_path = tmp_path / "profiles.json"
+    profiles_path.write_text(
+        json.dumps({"risk_profiles": {"desk": {"severity_min": "notice"}}}, ensure_ascii=False)
+    )
+
+    entries = [
+        _metadata_entry(
+            key=key,
+            key_id=None,
+            metadata={"mode": "jsonl", "summary_enabled": True},
+        ),
+        _snapshot_entry(
+            key=key,
+            key_id=None,
+            timestamp="2024-07-01T00:00:01+00:00",
+            event="reduce_motion",
+            severity="notice",
+            screen={"index": 0, "name": "Desk"},
+        ),
+    ]
+    _write_signed_log(entries, log_path)
+
+    monkeypatch.setenv("BOT_CORE_VERIFY_DECISION_LOG_RISK_PROFILES_FILE", str(profiles_path))
+    monkeypatch.setenv("BOT_CORE_VERIFY_DECISION_LOG_RISK_PROFILE", "desk")
+    monkeypatch.setenv("BOT_CORE_VERIFY_DECISION_LOG_HMAC_KEY", key.decode("utf-8"))
+
+    exit_code = verify_main([str(log_path)])
+
+    assert exit_code == 0
+
+
 def test_verify_risk_profile_env_and_report(monkeypatch, tmp_path):
     key = b"risk"
     log_path = tmp_path / "risk_profile_env.jsonl"
@@ -1272,3 +1421,61 @@ def test_verify_risk_profile_env_and_report(monkeypatch, tmp_path):
     report_payload = json.loads(report_path.read_text(encoding="utf-8"))
     assert report_payload["risk_profile"]["name"] == "balanced"
     assert report_payload["risk_profile"]["severity_min"] == "notice"
+    assert report_payload["risk_profile"]["origin"] == "builtin"
+
+
+def test_verify_core_config_risk_profile(tmp_path):
+    key = b"risk"
+    log_path = tmp_path / "core_profile.jsonl"
+    report_path = tmp_path / "report.json"
+
+    profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
+    core_config_path = _write_core_config(
+        tmp_path,
+        profiles_path=profiles_path,
+        profile_name="ops",
+    )
+
+    entries = [
+        _metadata_entry(
+            key=key,
+            key_id=None,
+            metadata={
+                "mode": "jsonl",
+                "summary_enabled": True,
+            },
+        ),
+        _snapshot_entry(
+            key=key,
+            key_id=None,
+            timestamp="2024-07-01T00:00:01+00:00",
+            event="reduce_motion",
+            severity="warning",
+            screen={"index": 0, "name": "Ops", "manufacturer": "ACME"},
+        ),
+    ]
+    _write_signed_log(entries, log_path)
+
+    exit_code = verify_main(
+        [
+            str(log_path),
+            "--hmac-key",
+            key.decode("utf-8"),
+            "--core-config",
+            str(core_config_path),
+            "--report-output",
+            str(report_path),
+        ]
+    )
+
+    assert exit_code == 0
+    report_payload = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report_payload["risk_profile"]["name"] == "ops"
+    assert report_payload["risk_profile"]["origin"].startswith("verify:")
+    assert report_payload["risk_profile"].get("source") == "core_config"
+    assert report_payload["core_config"]["path"] == str(core_config_path)
+    assert report_payload["core_config"]["metrics_service"]["risk_profile"] == "ops"
+    assert (
+        report_payload["core_config"]["metrics_service"]["risk_profiles_file"]
+        == str(profiles_path)
+    )

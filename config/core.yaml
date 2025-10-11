@@ -60,6 +60,8 @@ runtime:
     jsonl_fsync: false
     # — rozszerzenia kompatybilne w obie strony —
     ui_alerts_jsonl_path: audit/metrics/ui_alerts.jsonl
+    ui_alerts_risk_profile: balanced
+    ui_alerts_risk_profiles_file: configs/telemetry_risk_profiles.yaml
     tls:
       enabled: false
       certificate_path: secrets/dev-metrics-server.crt
