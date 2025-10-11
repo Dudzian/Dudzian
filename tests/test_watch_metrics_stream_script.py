@@ -835,6 +835,7 @@ def test_watch_metrics_stream_core_config_summary_metadata(tmp_path, capsys):
     assert metadata["core_config"]["path"] == str(config_path)
     assert metadata["core_config"]["metrics_service"]["risk_profile"] == "ops"
     assert metadata["risk_profile"]["source"] == "core_config"
+    assert metadata["risk_profile_summary"]["name"] == "ops"
     assert summary_payload["summary"]["events"]["reduce_motion"]["count"] == 1
     assert summary_payload["summary"]["severity_counts"] == {"error": 1}
     assert "summary" in captured.out
@@ -944,6 +945,7 @@ def test_watch_metrics_stream_summary_signature_metadata(tmp_path, capsys):
     summary_payload = json.loads(summary_path.read_text(encoding="utf-8"))
     assert summary_payload["signature"]["algorithm"] == "HMAC-SHA256"
     assert summary_payload["signature"].get("key_id") == key_id
+
 
 
 def test_create_metrics_channel_insecure():
@@ -1350,6 +1352,8 @@ def test_watch_metrics_stream_risk_profile_defaults(tmp_path):
     assert metadata["risk_profile"]["name"] == "conservative"
     assert metadata["risk_profile"]["severity_min"] == "warning"
     assert metadata["risk_profile"]["origin"] == "builtin"
+    assert metadata["risk_profile_summary"]["name"] == "conservative"
+    assert metadata["risk_profile_summary"]["severity_min"] == "warning"
 
     snapshot_events = [entry for entry in decision_entries if entry["kind"] == "snapshot"]
     assert len(snapshot_events) == 1
@@ -1358,6 +1362,12 @@ def test_watch_metrics_stream_risk_profile_defaults(tmp_path):
     summary_payload = json.loads(summary_path.read_text())
     assert summary_payload["metadata"]["risk_profile"]["name"] == "conservative"
     assert summary_payload["metadata"]["risk_profile"]["origin"] == "builtin"
+    assert (
+        summary_payload["metadata"]["risk_profile_summary"]["name"] == "conservative"
+    )
+    assert (
+        summary_payload["metadata"]["risk_profile_summary"]["severity_min"] == "warning"
+    )
     assert summary_payload["summary"]["events"]["reduce_motion"]["count"] == 1
 
 
@@ -1419,6 +1429,8 @@ def test_watch_metrics_stream_risk_profile_from_file(tmp_path):
     assert metadata["risk_profile"]["name"] == "ops"
     assert metadata["risk_profile"]["severity_min"] == "error"
     assert metadata["risk_profile"]["origin"].startswith("watcher:")
+    assert metadata["risk_profile_summary"]["name"] == "ops"
+    assert metadata["risk_profile_summary"]["severity_min"] == "error"
 
     snapshot_events = [entry for entry in decision_entries if entry["kind"] == "snapshot"]
     assert len(snapshot_events) == 1
@@ -1427,6 +1439,8 @@ def test_watch_metrics_stream_risk_profile_from_file(tmp_path):
     summary_payload = json.loads(summary_path.read_text())
     assert summary_payload["metadata"]["risk_profile"]["name"] == "ops"
     assert summary_payload["metadata"]["risk_profile"]["origin"].startswith("watcher:")
+    assert summary_payload["metadata"]["risk_profile_summary"]["name"] == "ops"
+    assert summary_payload["metadata"]["risk_profile_summary"]["severity_min"] == "error"
     assert summary_payload["summary"]["events"]["reduce_motion"]["count"] == 1
 
 

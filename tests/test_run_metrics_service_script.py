@@ -324,6 +324,7 @@ def test_metrics_service_print_config_plan(tmp_path: Path, monkeypatch: pytest.M
     assert runtime_state["available"] is True
     assert runtime_state["reason"] is None
     assert runtime_state["sink_count"] == 2
+
     # assertions from main branch that must also be preserved
     assert runtime_state["jsonl_sink_active"] is True
     assert runtime_state["logging_sink_active"] is True
@@ -349,12 +350,30 @@ def test_metrics_service_print_config_plan(tmp_path: Path, monkeypatch: pytest.M
     assert security["parameter_source"] == "default"
 
 
+# Preserved test from the other branch; renamed to keep BOTH versions
+# (only the function name changed to avoid shadowing)
+
+def test_metrics_service_print_risk_profiles_codex(capsys: pytest.CaptureFixture[str]) -> None:
+    exit_code = run_metrics_service.main(["--print-risk-profiles"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert "risk_profiles" in payload
+    assert "conservative" in payload["risk_profiles"]
+    assert (
+        payload["risk_profiles"]["conservative"]["summary"]["name"]
+        == "conservative"
+    )
+
+
+# assertions from main branch also define this test; we keep it as-is
+
 def test_metrics_service_print_risk_profiles(capsys: pytest.CaptureFixture[str]) -> None:
     exit_code = run_metrics_service.main(["--print-risk-profiles"])
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
     assert "risk_profiles" in payload
     assert "conservative" in payload["risk_profiles"]
+
 
 
 def test_metrics_service_fail_on_security_warnings(
@@ -407,6 +426,7 @@ def test_metrics_service_fail_on_security_warnings(
     assert security.get("environment_variable") is None
 
 
+
 def test_metrics_service_config_plan_jsonl_written(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     output_path = tmp_path / "plan.jsonl"
 
@@ -450,6 +470,7 @@ def test_metrics_service_config_plan_jsonl_written(tmp_path: Path, monkeypatch: 
     assert ui_section["reduce_mode"] == "enable"
     assert ui_section["reduce_motion_dispatch"] is True
     assert ui_section["reduce_motion_logging"] is True
+
 
 
 def test_metrics_service_core_config_applies_settings(
@@ -606,6 +627,7 @@ def test_metrics_service_core_config_applies_settings(
     assert tls_kwargs["require_client_auth"] is True
 
 
+
 def test_print_config_plan_without_runtime(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
     monkeypatch.setattr(run_metrics_service, "METRICS_RUNTIME_AVAILABLE", False)
     monkeypatch.setattr(
@@ -627,6 +649,7 @@ def test_print_config_plan_without_runtime(monkeypatch: pytest.MonkeyPatch, caps
     assert runtime_state["ui_alerts_sink"]["path"] is None
     assert runtime_state["ui_alerts_sink"].get("disabled") is False
     assert payload["ui_alerts"]["configured"] is False
+
 
 
 def test_config_plan_jsonl_without_runtime(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -652,6 +675,7 @@ def test_config_plan_jsonl_without_runtime(monkeypatch: pytest.MonkeyPatch, tmp_
     assert payload["ui_alerts"]["configured"] is False
 
 
+
 def test_metrics_service_risk_profile_overrides(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
     monkeypatch.setattr(run_metrics_service, "METRICS_RUNTIME_AVAILABLE", False)
     monkeypatch.setattr(
@@ -670,6 +694,9 @@ def test_metrics_service_risk_profile_overrides(monkeypatch: pytest.MonkeyPatch,
     payload = json.loads(capsys.readouterr().out.strip())
     ui_section = payload["ui_alerts"]
     assert ui_section["risk_profile"]["name"] == "conservative"
+    # preserved additional assertions from other branch
+    assert ui_section["risk_profile_summary"]["name"] == "conservative"
+    assert ui_section["risk_profile_summary"]["severity_min"] == "warning"
     assert ui_section["reduce_motion_severity_active"] == "critical"
     assert ui_section["overlay_severity_exceeded"] == "critical"
     assert ui_section["overlay_critical_threshold"] == 1
@@ -677,10 +704,14 @@ def test_metrics_service_risk_profile_overrides(monkeypatch: pytest.MonkeyPatch,
     runtime_config = payload["runtime_state"]["ui_alerts_sink"]["config"]
     assert runtime_config["risk_profile"]["name"] == "conservative"
     assert runtime_config["risk_profile"]["severity_min"] == "warning"
+    # preserved additional assertions from other branch
+    assert runtime_config["risk_profile_summary"]["name"] == "conservative"
+    assert runtime_config["risk_profile_summary"]["severity_min"] == "warning"
     runtime_applied = runtime_config["risk_profile"].get("applied_overrides")
     if runtime_applied is not None:
         assert runtime_applied["overlay_alert_severity_critical"] == "critical"
         assert runtime_applied["jank_alert_severity_critical"] == "error"
+
 
 
 def test_metrics_service_risk_profiles_file_cli(
@@ -722,6 +753,9 @@ def test_metrics_service_risk_profiles_file_cli(
     ui_section = payload["ui_alerts"]
     assert ui_section["risk_profile"]["name"] == "custom"
     assert ui_section["risk_profile"]["severity_min"] == "notice"
+    # preserved additional assertions from other branch
+    assert ui_section["risk_profile_summary"]["name"] == "custom"
+    assert ui_section["risk_profile_summary"]["severity_min"] == "notice"
     assert ui_section["reduce_motion_severity_active"] == "error"
     assert ui_section["overlay_critical_threshold"] == 5
     file_meta = ui_section["risk_profiles_file"]
@@ -730,8 +764,11 @@ def test_metrics_service_risk_profiles_file_cli(
 
     runtime_config = payload["runtime_state"]["ui_alerts_sink"]["config"]
     assert runtime_config["risk_profile"]["name"] == "custom"
+    # preserved additional assertion
+    assert runtime_config["risk_profile_summary"]["name"] == "custom"
     runtime_file_meta = runtime_config["risk_profiles_file"]
     assert runtime_file_meta["path"] == str(profiles_path)
+
 
 
 def test_metrics_service_risk_profiles_directory(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys) -> None:
@@ -773,6 +810,9 @@ def test_metrics_service_risk_profiles_directory(monkeypatch: pytest.MonkeyPatch
 
     payload = json.loads(capsys.readouterr().out.strip())
     ui_section = payload["ui_alerts"]
+    assert ui_section["risk_profile"]["name"] == "ops_dir"
+    # preserved additional assertion from other branch
+    assert ui_section["risk_profile_summary"]["name"] == "ops_dir"
     file_meta = ui_section["risk_profiles_file"]
     assert file_meta["type"] == "directory"
     assert file_meta["path"] == str(profiles_dir)
@@ -780,9 +820,13 @@ def test_metrics_service_risk_profiles_directory(monkeypatch: pytest.MonkeyPatch
     assert any(entry["path"].endswith("ops.json") for entry in file_meta["files"])
 
     runtime_config = payload["runtime_state"]["ui_alerts_sink"]["config"]
+    assert runtime_config["risk_profile"]["name"] == "ops_dir"
+    # preserved additional assertion
+    assert runtime_config["risk_profile_summary"]["name"] == "ops_dir"
     runtime_file_meta = runtime_config["risk_profiles_file"]
     assert runtime_file_meta["type"] == "directory"
     assert runtime_file_meta["path"] == str(profiles_dir)
+
 
 
 def _find_env_entry(entries: list[dict[str, object]], option: str) -> dict[str, object]:
@@ -792,12 +836,14 @@ def _find_env_entry(entries: list[dict[str, object]], option: str) -> dict[str, 
     raise AssertionError(f"Nie znaleziono wpisu dla opcji {option}")
 
 
+
 def _get_security_section(payload: Mapping[str, object]) -> Mapping[str, object]:
     section = payload.get("security")
     assert isinstance(section, Mapping)
     fail_section = section.get("fail_on_security_warnings")
     assert isinstance(fail_section, Mapping)
     return fail_section
+
 
 
 def test_ui_alert_cli_options_forwarded(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -906,7 +952,10 @@ def test_ui_alert_cli_options_forwarded(monkeypatch: pytest.MonkeyPatch, tmp_pat
     assert captured_kwargs.get("ui_alerts_audit_dir") == audit_dir
     assert captured_kwargs.get("ui_alerts_audit_pattern") == "custom-%Y.jsonl"
     assert captured_kwargs.get("ui_alerts_audit_retention_days") == 7
+    # preserved both styles of assertion to keep full content
+    assert captured_kwargs.get("ui_alerts_audit_fsync") is True
     assert captured_kwargs.get("ui_alerts_audit_fsync") == True
+
 
 
 def test_ui_alerts_audit_memory_note_when_file_backend_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -962,6 +1011,7 @@ def test_ui_alerts_audit_memory_note_when_file_backend_missing(monkeypatch: pyte
     assert audit_config.get("note") == "file_backend_unavailable"
 
 
+
 def test_environment_override_applied_without_runtime(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
     monkeypatch.setattr(run_metrics_service, "METRICS_RUNTIME_AVAILABLE", False)
     monkeypatch.setenv("RUN_METRICS_SERVICE_HOST", "0.0.0.0")
@@ -985,6 +1035,7 @@ def test_environment_override_applied_without_runtime(monkeypatch: pytest.Monkey
     assert security["parameter_source"] == "default"
 
 
+
 def test_environment_override_ignored_by_cli(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
     monkeypatch.setattr(run_metrics_service, "METRICS_RUNTIME_AVAILABLE", False)
     monkeypatch.setenv("RUN_METRICS_SERVICE_PORT", "7777")
@@ -1006,6 +1057,7 @@ def test_environment_override_ignored_by_cli(monkeypatch: pytest.MonkeyPatch, ca
     assert security["enabled"] is False
     assert security["source"] == "default"
     assert security["parameter_source"] == "default"
+
 
 
 def test_environment_override_jsonl_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys) -> None:
@@ -1032,6 +1084,7 @@ def test_environment_override_jsonl_path(monkeypatch: pytest.MonkeyPatch, tmp_pa
     assert security["source"] == "default"
 
 
+
 def test_environment_override_disable_jsonl(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
     monkeypatch.setattr(run_metrics_service, "METRICS_RUNTIME_AVAILABLE", False)
     monkeypatch.setenv("RUN_METRICS_SERVICE_JSONL", "none")
@@ -1052,6 +1105,7 @@ def test_environment_override_disable_jsonl(monkeypatch: pytest.MonkeyPatch, cap
     security = _get_security_section(payload)
     assert security["enabled"] is False
     assert security["source"] == "default"
+
 
 
 def test_environment_override_fail_on_security_warnings(
@@ -1077,6 +1131,7 @@ def test_environment_override_fail_on_security_warnings(
     assert parameter_sources.get("fail_on_security_warnings") == "env"
     security = _get_security_section(payload)
     assert security["enabled"] is True
+
 
 
 def test_environment_override_ui_alerts_audit(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys) -> None:
@@ -1115,6 +1170,7 @@ def test_environment_override_ui_alerts_audit(monkeypatch: pytest.MonkeyPatch, t
     assert parameter_sources.get("ui_alerts_audit_fsync") == "env"
 
 
+
 def test_print_plan_marks_memory_audit_when_file_backend_missing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys
 ) -> None:
@@ -1133,6 +1189,7 @@ def test_print_plan_marks_memory_audit_when_file_backend_missing(
     assert audit_section["backend"] == "memory"
     assert audit_section.get("note") == "file_backend_unavailable"
     assert "directory" not in audit_section
+
 
 
 def test_build_server_uses_memory_audit_when_file_backend_missing(
@@ -1202,12 +1259,14 @@ def test_build_server_uses_memory_audit_when_file_backend_missing(
     assert audit_config.get("note") == "file_backend_unavailable"
 
 
+
 def test_environment_override_invalid_boolean(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(run_metrics_service, "METRICS_RUNTIME_AVAILABLE", False)
     monkeypatch.setenv("RUN_METRICS_SERVICE_NO_LOG_SINK", "maybe")
 
     with pytest.raises(SystemExit):
         run_metrics_service.main([])
+
 
 
 def test_ui_alerts_audit_backend_memory_flag(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys) -> None:
@@ -1228,6 +1287,7 @@ def test_ui_alerts_audit_backend_memory_flag(monkeypatch: pytest.MonkeyPatch, tm
     assert audit_info["backend"] == "memory"
     assert audit_info.get("note") == "directory_ignored_memory_backend"
     assert "directory" not in audit_info
+
 
 
 def test_ui_alerts_audit_backend_file_requires_directory(monkeypatch: pytest.MonkeyPatch) -> None:

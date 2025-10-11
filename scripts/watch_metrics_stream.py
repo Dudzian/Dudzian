@@ -83,28 +83,29 @@ import sys
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
-LOGGER = logging.getLogger("bot_core.scripts.watch_metrics_stream")
-
-_ENV_PREFIX = "BOT_CORE_WATCH_METRICS_"
-
-# --- load optional core config (core.yaml) ---
+# --- opcjonalna konfiguracja core.yaml ---------------------------------------
 try:
     from bot_core.config import load_core_config  # type: ignore
 except Exception:  # pragma: no cover - środowisko bez modułu konfiguracyjnego
     load_core_config = None  # type: ignore
 
-# --- risk profile presets (mandatory local module; may be extended via file) ---
+# --- presety profili ryzyka (z fallbackiem, patrz scripts.telemetry_risk_profiles) --
 try:
     from scripts.telemetry_risk_profiles import (
         get_risk_profile,
         list_risk_profile_names,
-        load_risk_profiles_from_file,
+        load_risk_profiles_with_metadata,
         risk_profile_metadata,
+        summarize_risk_profile,
     )
 except Exception as exc:  # pragma: no cover
     raise SystemExit(
         "Brak modułu scripts.telemetry_risk_profiles. Upewnij się, że jest na PYTHONPATH."
     ) from exc
+
+LOGGER = logging.getLogger("bot_core.scripts.watch_metrics_stream")
+
+_ENV_PREFIX = "BOT_CORE_WATCH_METRICS_"
 
 
 def _load_grpc_components():
@@ -179,6 +180,7 @@ SEVERITY_ORDER = [
     "emergency",
     "fatal",
 ]
+
 SEVERITY_RANK = {name: index for index, name in enumerate(SEVERITY_ORDER)}
 
 
@@ -363,56 +365,6 @@ def _iter_jsonl_snapshots(source: str) -> Iterable[_OfflineSnapshot]:
     finally:
         if close_handle and handle is not None:
             handle.close()
-
-
-def _snapshot_timestamp(snapshot) -> str | None:
-    if getattr(snapshot, "HasField", None) and not snapshot.HasField("generated_at"):
-        return None
-    generated_at = getattr(snapshot, "generated_at", None)
-    if generated_at is None:
-        return None
-    return _timestamp_to_iso(generated_at)
-
-
-def _snapshot_fps(snapshot) -> float | None:
-    if getattr(snapshot, "HasField", None) and not snapshot.HasField("fps"):
-        return None
-    fps = getattr(snapshot, "fps", None)
-    if fps is None:
-        return None
-    try:
-        return float(fps)
-    except (TypeError, ValueError):  # pragma: no cover - zabezpieczenie
-        return None
-
-
-def _parse_iso_datetime(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    try:
-        dt = datetime.fromisoformat(value)
-    except ValueError:
-        return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    else:
-        dt = dt.astimezone(timezone.utc)
-    return dt
-
-
-def _parse_cli_datetime(
-    value: str,
-    *,
-    parser: argparse.ArgumentParser,
-    flag: str,
-) -> datetime:
-    candidate = value.strip()
-    if not candidate:
-        parser.error(f"{flag} wymaga niepustej wartości ISO 8601")
-    dt = _parse_iso_datetime(candidate)
-    if dt is None:
-        parser.error(f"Niepoprawny format czasu dla {flag}; oczekiwano ISO 8601 (np. 2024-02-01T12:00:00Z)")
-    return dt
 
 
 class _SummaryCollector:
@@ -687,6 +639,56 @@ def _matches_time_filters(
     return True
 
 
+def _snapshot_timestamp(snapshot) -> str | None:
+    if getattr(snapshot, "HasField", None) and not snapshot.HasField("generated_at"):
+        return None
+    generated_at = getattr(snapshot, "generated_at", None)
+    if generated_at is None:
+        return None
+    return _timestamp_to_iso(generated_at)
+
+
+def _snapshot_fps(snapshot) -> float | None:
+    if getattr(snapshot, "HasField", None) and not snapshot.HasField("fps"):
+        return None
+    fps = getattr(snapshot, "fps", None)
+    if fps is None:
+        return None
+    try:
+        return float(fps)
+    except (TypeError, ValueError):  # pragma: no cover - zabezpieczenie
+        return None
+
+
+def _parse_iso_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    else:
+        dt = dt.astimezone(timezone.utc)
+    return dt
+
+
+def _parse_cli_datetime(
+    value: str,
+    *,
+    parser: argparse.ArgumentParser,
+    flag: str,
+) -> datetime:
+    candidate = value.strip()
+    if not candidate:
+        parser.error(f"{flag} wymaga niepustej wartości ISO 8601")
+    dt = _parse_iso_datetime(candidate)
+    if dt is None:
+        parser.error(f"Niepoprawny format czasu dla {flag}; oczekiwano ISO 8601 (np. 2024-02-01T12:00:00Z)")
+    return dt
+
+
 def _decision_log_filters(
     args,
     severity_filters: set[str] | None,
@@ -749,6 +751,9 @@ def _decision_log_metadata_offline(
     risk_profile = getattr(args, "_risk_profile_config", None)
     if risk_profile:
         metadata["risk_profile"] = dict(risk_profile)
+        summary = getattr(args, "_risk_profile_summary", None)
+        if summary:
+            metadata["risk_profile_summary"] = dict(summary)
     core_config = getattr(args, "_core_config_metadata", None)
     if core_config:
         metadata["core_config"] = dict(core_config)
@@ -801,6 +806,9 @@ def _decision_log_metadata_grpc(
     risk_profile = getattr(args, "_risk_profile_config", None)
     if risk_profile:
         metadata["risk_profile"] = dict(risk_profile)
+        summary = getattr(args, "_risk_profile_summary", None)
+        if summary:
+            metadata["risk_profile_summary"] = dict(summary)
     core_config = getattr(args, "_core_config_metadata", None)
     if core_config:
         metadata["core_config"] = dict(core_config)
@@ -1152,7 +1160,7 @@ def _load_custom_risk_profiles(args: argparse.Namespace, parser: argparse.Argume
 
     target = Path(path_value).expanduser()
     try:
-        registered = load_risk_profiles_from_file(target, origin=f"watcher:{target}")
+        registered, _meta = load_risk_profiles_with_metadata(target, origin_label=f"watcher:{target}")
     except FileNotFoundError as exc:
         parser.error(str(exc))
     except Exception as exc:
@@ -1169,6 +1177,7 @@ def _apply_risk_profile_settings(args: argparse.Namespace, parser: argparse.Argu
     if not profile_name:
         args._risk_profile_config = None
         args._risk_profile_base = None
+        args._risk_profile_summary = None
         return
 
     normalized = profile_name.strip().lower()
@@ -1177,8 +1186,7 @@ def _apply_risk_profile_settings(args: argparse.Namespace, parser: argparse.Argu
     except KeyError:
         available = list_risk_profile_names()
         parser.error(
-            f"Profil ryzyka {profile_name!r} nie jest obsługiwany."
-            + (f" Dostępne: {', '.join(available)}" if available else "")
+            f"Profil ryzyka {profile_name!r} nie jest obsługiwany." + (f" Dostępne: {', '.join(available)}" if available else "")
         )
 
     args.risk_profile = normalized
@@ -1189,6 +1197,7 @@ def _apply_risk_profile_settings(args: argparse.Namespace, parser: argparse.Argu
         profile_metadata = dict(profile_metadata)
         profile_metadata.setdefault("source", source_label)
     args._risk_profile_config = profile_metadata
+    args._risk_profile_summary = summarize_risk_profile(profile_metadata)
 
     severity_min = profile_base.get("severity_min")
     if severity_min and not args.severity_min:
@@ -1228,19 +1237,21 @@ def _emit_summary(
     signing_key: bytes | None,
     signing_key_id: str | None,
     risk_profile: Mapping[str, Any] | None = None,
+    risk_profile_summary: Mapping[str, Any] | None = None,
     core_metadata: Mapping[str, Any] | None = None,
 ) -> Mapping[str, Any] | None:
     if summary_collector is None:
         return None
 
     summary_payload: dict[str, Any] = {"summary": summary_collector.as_dict()}
-    if risk_profile or core_metadata:
+    if risk_profile or risk_profile_summary or core_metadata:
         metadata_section = summary_payload.setdefault("metadata", {})
         if risk_profile:
             metadata_section["risk_profile"] = dict(risk_profile)
+        if risk_profile_summary:
+            metadata_section["risk_profile_summary"] = dict(risk_profile_summary)
         if core_metadata:
             metadata_section["core_config"] = dict(core_metadata)
-
     signed_payload = _sign_payload(
         summary_payload,
         signing_key=signing_key,
@@ -1499,13 +1510,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+
     parser = build_arg_parser()
     args = parser.parse_args(argv)
 
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
-
+    # źródło profilu ryzyka do metadanych
     args._risk_profile_source = None
-    provided_flags = {arg for arg in (argv or []) if arg.startswith("--")}
+    provided_flags = {arg for arg in (argv or []) if isinstance(arg, str) and arg.startswith("--")}
     if "--risk-profile" in provided_flags:
         args._risk_profile_source = "cli"
 
@@ -1702,7 +1714,13 @@ def main(argv: list[str] | None = None) -> int:
                     screen_name=args.screen_name,
                 ):
                     continue
-                print(_format_snapshot(snapshot, fmt=args.format, notes_payload=notes_payload))
+                print(
+                    _format_snapshot(
+                        snapshot,
+                        fmt=args.format,
+                        notes_payload=notes_payload,
+                    )
+                )
                 if summary_collector:
                     summary_collector.add(snapshot, notes_payload)
                 if decision_logger:
@@ -1723,6 +1741,7 @@ def main(argv: list[str] | None = None) -> int:
                     signing_key=signing_key,
                     signing_key_id=signing_key_id,
                     risk_profile=risk_profile_config,
+                    risk_profile_summary=getattr(args, "_risk_profile_summary", None),
                     core_metadata=core_metadata,
                 )
             return 0
@@ -1776,7 +1795,11 @@ def main(argv: list[str] | None = None) -> int:
             notes_payload = _parse_notes(snapshot.notes)
             if args.event and notes_payload.get("event") != args.event:
                 continue
-            if not _matches_severity_filter(notes_payload, severities=severity_filters, severity_min=severity_min):
+            if not _matches_severity_filter(
+                notes_payload,
+                severities=severity_filters,
+                severity_min=severity_min,
+            ):
                 continue
             if not _matches_screen_filters(
                 notes_payload,
@@ -1784,7 +1807,13 @@ def main(argv: list[str] | None = None) -> int:
                 screen_name=args.screen_name,
             ):
                 continue
-            print(_format_snapshot(snapshot, fmt=args.format, notes_payload=notes_payload))
+            print(
+                _format_snapshot(
+                    snapshot,
+                    fmt=args.format,
+                    notes_payload=notes_payload,
+                )
+            )
             if summary_collector:
                 summary_collector.add(snapshot, notes_payload)
             if decision_logger:
@@ -1805,6 +1834,7 @@ def main(argv: list[str] | None = None) -> int:
                 signing_key=signing_key,
                 signing_key_id=signing_key_id,
                 risk_profile=risk_profile_config,
+                risk_profile_summary=getattr(args, "_risk_profile_summary", None),
                 core_metadata=core_metadata,
             )
         return 0

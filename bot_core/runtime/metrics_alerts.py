@@ -457,7 +457,7 @@ class UiTelemetryAlertSink:
             "payload": payload,
             "context": dict(context) if context is not None else None,
         }
-        if getattr(self, "_risk_profile_metadata", None) is not None:
+        if self._risk_profile_metadata is not None:
             record["risk_profile"] = self._risk_profile_metadata
         line = json.dumps(record, ensure_ascii=False)
         with self._lock:
@@ -466,9 +466,9 @@ class UiTelemetryAlertSink:
 
     def _context_with_risk_profile(self, context: Mapping[str, Any]) -> dict[str, Any]:
         result = dict(context)
-        if getattr(self, "_risk_profile_name", None):
+        if self._risk_profile_name:
             result.setdefault("risk_profile", self._risk_profile_name)
-        if getattr(self, "_risk_profile_origin", None):
+        if self._risk_profile_origin:
             result.setdefault("risk_profile_origin", self._risk_profile_origin)
         return result
 

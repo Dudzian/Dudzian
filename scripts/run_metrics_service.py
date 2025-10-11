@@ -17,6 +17,7 @@ from scripts.telemetry_risk_profiles import (
     list_risk_profile_names,
     load_risk_profiles_with_metadata,
     risk_profile_metadata,
+    summarize_risk_profile,
 )
 
 # --- tryb rozszerzony: CoreConfig + audyt plików/bezpieczeństwa ---------------
@@ -165,7 +166,7 @@ def _initial_value_sources(provided_flags: Iterable[str]) -> dict[str, str]:
         sources["ui_alerts_jank_category"] = "cli"
     if "--ui-alerts-jank-spike-severity" in provided:
         sources["ui_alerts_jank_spike_severity"] = "cli"
-    if "--ui-alerts-jand-critical-severity" in provided:
+    if "--ui-alerts-jank-critical-severity" in provided:
         sources["ui_alerts_jank_critical_severity"] = "cli"
     if "--ui-alerts-jank-critical-over-ms" in provided:
         sources["ui_alerts_jank_critical_over_ms"] = "cli"
@@ -845,6 +846,7 @@ def _apply_risk_profile_defaults(
     value_sources: dict[str, str],
 ) -> None:
     profile_name = getattr(args, "ui_alerts_risk_profile", None)
+    args._ui_alerts_risk_profile_summary = None
     if not profile_name:
         return
 
@@ -856,7 +858,9 @@ def _apply_risk_profile_defaults(
         )
         return  # pragma: no cover - parser.error przerywa wykonanie
 
-    args._ui_alerts_risk_profile_metadata = risk_profile_metadata(profile_name)
+    metadata = risk_profile_metadata(profile_name)
+    args._ui_alerts_risk_profile_metadata = metadata
+    args._ui_alerts_risk_profile_summary = summarize_risk_profile(metadata)
 
     for option, value in overrides.items():
         source = value_sources.get(option)
@@ -1223,7 +1227,7 @@ def _build_server(
                             "fsync": bool(ui_alerts_audit_fsync),
                         }
                     )
-                    if requested_backend == "memory" i ui_alerts_audit_dir is not None:
+                    if requested_backend == "memory" and ui_alerts_audit_dir is not None:
                         audit_backend["note"] = "directory_ignored_memory_backend"
                     elif file_backend_requested and requested_backend != "memory":
                         audit_backend["note"] = (
@@ -1716,7 +1720,7 @@ def _apply_core_metrics_config(
             if "tls_cert" not in tls_overridden and "tls_key" not in tls_overridden:
                 cert = getattr(tls_cfg, "certificate_path", None)
                 key = getattr(tls_cfg, "private_key_path", None)
-                if cert i key:
+                if cert and key:
                     args.tls_cert = Path(cert)
                     args.tls_key = Path(key)
                     sources.setdefault("tls_cert", "core_config")
@@ -1842,6 +1846,14 @@ def _build_core_config_section(
             "ui_alerts_jsonl_path": getattr(metrics_config, "ui_alerts_jsonl_path", None),
             "auth_token_set": bool(getattr(metrics_config, "auth_token", None)),
         }
+        profile_name_value = getattr(metrics_config, "ui_alerts_risk_profile", None)
+        if profile_name_value:
+            metrics_values["ui_alerts_risk_profile"] = str(profile_name_value)
+        profiles_file_value = getattr(
+            metrics_config, "ui_alerts_risk_profiles_file", None
+        )
+        if profiles_file_value:
+            metrics_values["ui_alerts_risk_profiles_file"] = str(profiles_file_value)
         if getattr(metrics_config, "jsonl_path", None):
             metrics_values["jsonl_file"] = _file_reference_metadata(
                 metrics_config.jsonl_path, role="jsonl"  # type: ignore[arg-type]
@@ -1873,6 +1885,16 @@ def _build_core_config_section(
                 )
             metrics_values["tls"] = tls_section
         metrics_section["values"] = metrics_values
+        if profile_name_value:
+            normalized_profile = str(profile_name_value).strip().lower()
+            try:
+                profile_meta = risk_profile_metadata(normalized_profile)
+            except Exception:  # noqa: BLE001 - defensywne
+                profile_meta = {"name": normalized_profile, "error": "unknown_profile"}
+            metrics_section["risk_profile"] = dict(profile_meta)
+            summary_payload = summarize_risk_profile(profile_meta)
+            if summary_payload:
+                metrics_section["risk_profile_summary"] = summary_payload
 
     section["metrics_service"] = metrics_section
     return section
@@ -1905,7 +1927,7 @@ def _build_config_plan_payload(
         "working_directory": str(Path.cwd()),
     }
 
-    tls_configured = bool(args.tls_cert i args.tls_key)
+    tls_configured = bool(args.tls_cert and args.tls_key)
 
     jsonl_section: dict[str, object] = {
         "configured": bool(args.jsonl),
@@ -2019,6 +2041,8 @@ def _build_config_plan_payload(
     risk_profile_meta = getattr(args, "_ui_alerts_risk_profile_metadata", None)
     if risk_profile_meta:
         ui_alerts_section["risk_profile"] = dict(risk_profile_meta)
+    if (risk_profile_summary := getattr(args, "_ui_alerts_risk_profile_summary", None)):
+        ui_alerts_section["risk_profile_summary"] = dict(risk_profile_summary)
     risk_profiles_file_meta = getattr(args, "_ui_alerts_risk_profiles_file_metadata", None)
     if risk_profiles_file_meta:
         ui_alerts_section["risk_profiles_file"] = dict(risk_profiles_file_meta)
@@ -2186,11 +2210,13 @@ def _build_config_plan_payload(
 
     config_section = runtime_state["ui_alerts_sink"].setdefault("config", {})
     config_section["audit"] = dict(audit_section)
-    if risk_profile_meta := getattr(args, "_ui_alerts_risk_profile_metadata", None):
+    if (risk_profile_meta := getattr(args, "_ui_alerts_risk_profile_metadata", None)):
         config_section["risk_profile"] = dict(risk_profile_meta)
-    if risk_profiles_file_meta := getattr(
+    if (risk_profile_summary := getattr(args, "_ui_alerts_risk_profile_summary", None)):
+        config_section["risk_profile_summary"] = dict(risk_profile_summary)
+    if (risk_profiles_file_meta := getattr(
         args, "_ui_alerts_risk_profiles_file_metadata", None
-    ):
+    )):
         config_section["risk_profiles_file"] = dict(risk_profiles_file_meta)
     if ui_alerts_arg_path is not None and "file" not in runtime_state["ui_alerts_sink"]:
         runtime_state["ui_alerts_sink"]["file"] = _file_reference_metadata(
@@ -2320,7 +2346,12 @@ def _print_risk_profiles(
 ) -> None:
     profiles: dict[str, Mapping[str, Any]] = {}
     for name in list_risk_profile_names():
-        profiles[name] = risk_profile_metadata(name)
+        metadata = risk_profile_metadata(name)
+        summary = summarize_risk_profile(metadata)
+        profile_payload: dict[str, Any] = dict(metadata)
+        if summary:
+            profile_payload.setdefault("summary", summary)
+        profiles[name] = profile_payload
 
     payload: dict[str, Any] = {"risk_profiles": profiles}
     if selected:
@@ -2462,7 +2493,7 @@ def main(argv: list[str] | None = None) -> int:
                 return 3
 
         message = METRICS_RUNTIME_UNAVAILABLE_MESSAGE
-        if config_plan is not None and args.config_plan_jsonl i not args.print_config_plan:
+        if config_plan is not None and args.config_plan_jsonl and not args.print_config_plan:
             LOGGER.error(message)
             return 2
         parser.error(message)

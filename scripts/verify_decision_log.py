@@ -25,9 +25,9 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 # --- opcjonalna konfiguracja core.yaml ---------------------------------------
-try:
+try:  # pragma: no cover - brak modułu konfiguracji
     from bot_core.config import load_core_config  # type: ignore
-except Exception:  # pragma: no cover - brak modułu konfiguracji
+except Exception:  # pragma: no cover
     load_core_config = None  # type: ignore
 
 # --- presety profili ryzyka (z fallbackiem, patrz scripts.telemetry_risk_profiles) --
@@ -36,6 +36,7 @@ from scripts.telemetry_risk_profiles import (
     list_risk_profile_names,
     load_risk_profiles_with_metadata,
     risk_profile_metadata,
+    summarize_risk_profile,
 )
 
 LOGGER = logging.getLogger("bot_core.scripts.verify_decision_log")
@@ -1018,6 +1019,7 @@ def _build_report_payload(
     enforced_limits: Mapping[str, int] | None = None,
     enforced_minimums: Mapping[str, int] | None = None,
     risk_profile: Mapping[str, Any] | None = None,
+    risk_profile_summary: Mapping[str, Any] | None = None,
     core_config: Mapping[str, Any] | None = None,
 ) -> Mapping[str, Any]:
     payload: dict[str, Any] = {
@@ -1039,6 +1041,8 @@ def _build_report_payload(
         payload["enforced_event_minimums"] = dict(enforced_minimums)
     if risk_profile:
         payload["risk_profile"] = dict(risk_profile)
+    if risk_profile_summary:
+        payload["risk_profile_summary"] = dict(risk_profile_summary)
     if core_config:
         payload["core_config"] = dict(core_config)
     return payload
@@ -1052,6 +1056,8 @@ def _write_report_output(destination: str, payload: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
+
+# ------------------------------ CLI -----------------------------------------
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Weryfikacja podpisów decision logu UI")
@@ -1410,6 +1416,7 @@ def _apply_risk_profile_defaults(args: argparse.Namespace, parser: argparse.Argu
     profile_name = getattr(args, "risk_profile", None)
     if not profile_name:
         args._risk_profile_config = None
+        args._risk_profile_summary = None
         return
 
     normalized = profile_name.strip().lower()
@@ -1467,6 +1474,10 @@ def _apply_risk_profile_defaults(args: argparse.Namespace, parser: argparse.Argu
         min_event_counts.setdefault(key, value)
     args._min_event_counts = min_event_counts
 
+    profile_summary = summarize_risk_profile(profile_config)
+    profile_config = dict(profile_config)
+    profile_config["summary"] = profile_summary
+    args._risk_profile_summary = profile_summary
     args._risk_profile_config = profile_config
 
 
@@ -1591,6 +1602,7 @@ def main(argv: list[str] | None = None) -> int:
                 enforced_limits=max_event_counts,
                 enforced_minimums=min_event_counts,
                 risk_profile=risk_profile_config,
+                risk_profile_summary=getattr(args, "_risk_profile_summary", None),
                 core_config=core_metadata,
             ),
         )

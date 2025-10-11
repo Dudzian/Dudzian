@@ -499,6 +499,9 @@ def test_bootstrap_metrics_risk_profiles_file_metadata(tmp_path: Path) -> None:
     risk_meta = settings.get("risk_profile")
     assert isinstance(risk_meta, dict)
     assert risk_meta.get("name") == "balanced"
+    summary_meta = settings.get("risk_profile_summary")
+    assert isinstance(summary_meta, dict)
+    assert summary_meta.get("name") == "balanced"
     file_meta = settings.get("risk_profiles_file")
     assert isinstance(file_meta, dict)
     assert Path(str(file_meta.get("path"))).resolve() == profiles_path.resolve()
@@ -543,6 +546,9 @@ def test_bootstrap_metrics_risk_profiles_directory_metadata(tmp_path: Path) -> N
 
     settings = context.metrics_ui_alerts_settings
     assert isinstance(settings, dict)
+    summary_meta = settings.get("risk_profile_summary")
+    assert isinstance(summary_meta, dict)
+    assert summary_meta.get("name") == "balanced"
     file_meta = settings.get("risk_profiles_file")
     assert isinstance(file_meta, dict)
     assert file_meta["type"] == "directory"

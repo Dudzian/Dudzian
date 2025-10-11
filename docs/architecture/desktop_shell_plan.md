@@ -134,6 +134,9 @@ Artefakty tworzymy skryptem `scripts/generate_trading_stubs.py`, a wzorcowy work
   Do szybkiej inspekcji dostępnych presetów (łącznie z tymi pobranymi z plików/katalogów) służy tryb `--print-risk-profiles`
   lub zmienna `RUN_METRICS_SERVICE_PRINT_RISK_PROFILES`, który wypisuje JSON z profilami, informacją o źródłach i metadanymi
   `core_config` bez uruchamiania serwera.
+  * Pliki/katalogi z presetami mogą korzystać z pola `extends`, aby dziedziczyć limity z profili builtin lub wcześniej
+    zarejestrowanych.  Zastosowany łańcuch (`extends_chain`) trafia do metadanych planu runtime oraz alertów UI, a parser
+    zakończy się błędem w razie cyklu lub odwołania do nieistniejącej nazwy.
   Jeżeli backend plikowy nie jest dostępny, narzędzie loguje degradację do audytu w pamięci (również oznaczoną w planie konfiguracji jako
   `file_backend_unavailable` lub `directory_ignored_memory_backend`), aby operatorzy mogli odnotować brak trwałego archiwum.
   Runtime `bootstrap_environment` propaguje te informacje dalej – w `BootstrapContext.metrics_ui_alerts_settings` znajduje się sekcja
@@ -168,6 +171,45 @@ Artefakty tworzymy skryptem `scripts/generate_trading_stubs.py`, a wzorcowy work
   dołączyć do audytu CI.  W razie potrzeby rozszerzenia/nadpisania presetów watcher potrafi wczytać dodatkowy plik
   JSON/YAML przez `--risk-profiles-file` (lub `BOT_CORE_WATCH_METRICS_RISK_PROFILES_FILE`).  Załadowane profile są oznaczane
   w metadanych polem `origin=watcher:…`, dzięki czemu audyt jednoznacznie wskazuje źródło definicji (repozytorium, artefakt CI).
+  Jeżeli pipeline potrzebuje przełożyć wybrany profil na konkretne parametry startowe dla `run_metrics_service.py`
+  lub `run_trading_stub_server.py`, pomocniczy skrypt `scripts/telemetry_risk_profiles.py render` generuje zarówno gotowy JSON
+  z nadpisaniami `MetricsService`, równoważny snippet YAML (do bezpośredniego użycia w `core.yaml`), listy flag CLI oraz – od tej iteracji – przypisania zmiennych
+  środowiskowych (`RUN_METRICS_SERVICE_*`).  Dzięki temu audyt demo→paper→live może w prosty sposób zbudować plik `.env`
+  lub polecenie shellowe bez ręcznego mapowania nazw parametrów.  Operator może zdecydować, czy wynik w formacie `env`
+  ma wyglądać jak plik `.env` (`--env-style=dotenv`, wartości automatycznie cytowane i escapowane) czy jak skrypt powłoki
+  (`--env-style=export`, z liniami `export KEY=value` i bezpiecznym quotingiem przez `shlex`).  Wygenerowane JSON-y zawierają
+  również informację o użytym stylu (`env_assignments_format`), co ułatwia dalszą automatyzację.  Jeżeli do polecenia `render`
+  dodamy `--include-profile`, pełna definicja profilu zostanie dołączona w wariantach JSON oraz YAML – przy formatach CLI/env
+  narzędzie zakończy się błędem, aby uniknąć cichego pominięcia metadanych w plikach `.env` lub listach flag.  Format JSON/YAML
+  wspiera dodatkowo selekcję sekcji (`--section metrics_service_config_overrides`, `--section env_assignments`, `--section risk_profile`, `--section summary` itd.),
+  dzięki czemu operator może wygenerować wyłącznie potrzebne fragmenty (np. tylko nadpisania konfiguracji, sam skrót `summary`
+  lub same przypisania środowiskowe) i zachować minimalny zrzut w artefaktach CI.  Jeśli polecenie otrzyma `--output`, renderer potrafi wywnioskować
+  format JSON/YAML na podstawie rozszerzenia pliku (np. `.yaml` automatycznie przełączy tryb YAML); kiedy operator wymusi
+  format sprzeczny z rozszerzeniem, CLI przerwie działanie z błędem, co zapobiega cichym rozbieżnościom w artefaktach.  Te
+  same zasady obowiązują dla poleceń `list`, `show` i `validate`, które otrzymały przełącznik `--format` – raporty można
+  więc seryjnie eksportować w YAML (np. do runbooków) lub JSON (do automatycznej analizy), a rozszerzenie pliku decyduje o
+  domyśle, jeśli operator nie podał formatu ręcznie.
+  Nowa komenda `scripts/telemetry_risk_profiles.py diff <bazowy> <docelowy>` buduje natomiast szczegółowe porównanie dwóch
+  presetów: różnice w nadpisaniach CLI/ENV/Konfiguracji, zmiany limitów `max/min_event_counts`, próg `severity_min`,
+  zarejestrowane `extends` oraz pełny łańcuch `extends_chain`, a także ujednolicony skrót metadanych (pochodzenie,
+  wymagania screen-info).  Wynik domyślnie generowany jest w formacie JSON, ale dzięki `--format=yaml` można uzyskać
+  równoważny raport w YAML do wklejenia np. w `core.yaml` lub w notatkach audytowych.  Jeśli wskazano `--output` z rozszerzeniem
+  `.yaml`, CLI automatycznie dobierze właściwy format (analogicznie `.json` zachowuje domyślne kodowanie JSON); konflikt pomiędzy
+  rozszerzeniem a ręcznie wymuszonym `--format` skutkuje błędem, aby utrzymać spójność raportów.  W obu wariantach narzędzie dostarcza
+  gotowe listy flag/zmiennych dla profilu docelowego i może opcjonalnie dołączyć pełne definicje obydwu presetów
+  (`--include-profiles`).  Aby skrócić raport do samych różnic, operator może dodać `--hide-unchanged`,
+  co usuwa sekcje oznaczone jako niezmienione (w tym `diff.extends`/`diff.extends_chain`) i pozwala szybciej ocenić
+  wpływ modyfikacji.  Dodatkowa flaga
+  `--section <NAME>` (można powtarzać) ogranicza wynik do wskazanych bloków (`diff`, `cli`, `env`, `summary`,
+  `profiles`, `core_config`, `sources`), co przydaje się np. podczas publikowania krótkich raportów w runbookach.
+  Jeżeli pipeline CI ma zatrzymać się przy wykryciu jakiejkolwiek różnicy, `--fail-on-diff` wymusza kod wyjścia 1
+  (raport JSON nadal trafia na STDOUT, więc artefakty audytowe pozostają dostępne).
+  Dzięki temu
+  operatorzy łatwo porównują profile conservative/balanced/aggressive lub własne rozszerzenia repozytoryjne,
+  a raport może zostać zapisany do artefaktów CI razem z decision logiem.
+  * Presety mogą dziedziczyć z istniejących profili przy użyciu pola `extends`.  Wypisywany JSON (oraz metadane decision logu)
+    zawiera wówczas `extends` i `extends_chain`, dzięki czemu operator widzi pełny łańcuch dziedziczenia.  Błędne odwołania
+    (cykl lub nieistniejący profil) kończą działanie narzędzia kodem błędu jeszcze przed eskalacją alertu.
   o korekcie filtra.
   Dodatkowo flaga `--summary` (lub zmienna `..._SUMMARY=true/false`) oblicza zbiorcze statystyki (liczba snapshotów, rozkład zdarzeń,
   agregaty FPS, lista ekranów oraz rozkład severity) zarówno dla strumienia gRPC, jak i odczytu JSONL, co ułatwia operatorom szybkie
@@ -219,6 +261,10 @@ Artefakty tworzymy skryptem `scripts/generate_trading_stubs.py`, a wzorcowy work
   (max/min liczby zdarzeń), minimalny próg severity oraz obligatoryjną obecność metadanych monitora.
   Profil konserwatywny ogranicza np. `overlay_budget` do zera i wymaga severity ≥ `warning`, balanced dopuszcza pojedyncze
   piki janku przy severity ≥ `notice`, a agresywny pracuje z progiem `info` – wszystkie te wartości trafiają także do raportu
+  audytowego w sekcji `risk_profile.summary`, generowanej na podstawie rendererów profili ryzyka.  Sekcja ta zawiera skrót KPI,
+  łańcuch dziedziczenia (`extends_chain`) oraz obowiązujące limity zdarzeń, co pozwala natychmiastowo porównać artefakty
+  `telemetry_risk_profiles render --section summary` z wynikami `verify_decision_log`.  Wariant `manual` pozostawia ustawienia
+  bez zmian dla niestandardowych scenariuszy.  Wprowadzone rozszerzenie
   audytowego.  Wariant `manual` pozostawia ustawienia bez zmian dla niestandardowych scenariuszy.  Wprowadzone rozszerzenie
   `--summary-json` (oraz zmienna `BOT_CORE_VERIFY_DECISION_LOG_SUMMARY_JSON`)
   pozwala dodatkowo przekazać plik wygenerowany przez `watch_metrics_stream --summary-output`.  Skrypt
@@ -237,6 +283,9 @@ Artefakty tworzymy skryptem `scripts/generate_trading_stubs.py`, a wzorcowy work
   z metadanymi pochodzenia – wliczając pliki/katalogi zadeklarowane przez `--risk-profiles-file`
   oraz wartości z `--core-config`.  Operatorzy mogą dzięki temu przed walidacją potwierdzić, jaki
   profil zostanie zastosowany i czy niestandardowe presety zostały poprawnie zarejestrowane.
+  * Sekcja raportu audytowego uwzględnia `extends` i `extends_chain` dla profili pochodnych, a sama walidacja
+    zatrzymuje się z błędem przy cyklicznym lub nieistniejącym odwołaniu w polu `extends`.  Dzięki temu pipeline
+    demo→paper→live ma gwarancję, że audyt korzysta z pełnej, spójnej konfiguracji KPI.
   offline (`--from-jsonl`, artefakty `.jsonl.gz`).
   Wynik walidacji można zarchiwizować w ustrukturyzowanej postaci: flaga `--report-output` (oraz zmienna
   `BOT_CORE_VERIFY_DECISION_LOG_REPORT_OUTPUT`) zapisuje raport JSON zawierający `report_version`, znacznik czasu

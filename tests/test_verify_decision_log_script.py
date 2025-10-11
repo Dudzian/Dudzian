@@ -37,7 +37,7 @@ def _write_core_config(tmp_path, *, profiles_path, profile_name: str = "ops"):
                 stop_loss_atr_multiple: 1.5
                 max_open_positions: 5
                 hard_drawdown_pct: 0.25
-            environments: {{}}
+            environments: {}
             runtime:
               metrics_service:
                 ui_alerts_risk_profile: {profile_name}
@@ -1099,7 +1099,7 @@ def test_verify_passes_when_filters_respected(tmp_path):
         timestamp="2024-06-01T00:00:02+00:00",
         event="reduce_motion",
         severity="warning",
-        screen={"index": 0, "name": "Main Display"},
+        screen={"index": 0, "name": "Main"},
     )
     _write_signed_log([metadata, snapshot], log_path)
 
@@ -1351,6 +1351,9 @@ def test_verify_risk_profile_file_cli(tmp_path):
     report_payload = json.loads(report_path.read_text(encoding="utf-8"))
     assert report_payload["risk_profile"]["name"] == "ops"
     assert report_payload["risk_profile"]["origin"].startswith("verify:")
+    # dodatkowe asercje dot. podsumowań (z gałęzi codex)
+    assert report_payload["risk_profile"]["summary"]["name"] == "ops"
+    assert report_payload["risk_profile_summary"]["name"] == "ops"
 
 
 def test_verify_risk_profile_file_env(monkeypatch, tmp_path):
@@ -1408,6 +1411,8 @@ def test_verify_risk_profile_env_and_report(monkeypatch, tmp_path):
     ]
     _write_signed_log(entries, log_path)
 
+    # upewnij się, że nie ma profili z ENV, test używa profilu builtin
+    monkeypatch.delenv("BOT_CORE_VERIFY_DECISION_LOG_RISK_PROFILES_FILE", raising=False)
     monkeypatch.setenv("BOT_CORE_VERIFY_DECISION_LOG_RISK_PROFILE", "balanced")
     monkeypatch.setenv("BOT_CORE_VERIFY_DECISION_LOG_REPORT_OUTPUT", str(report_path))
 
@@ -1422,6 +1427,13 @@ def test_verify_risk_profile_env_and_report(monkeypatch, tmp_path):
     assert report_payload["risk_profile"]["name"] == "balanced"
     assert report_payload["risk_profile"]["severity_min"] == "notice"
     assert report_payload["risk_profile"]["origin"] == "builtin"
+    # dodatkowe asercje dot. podsumowań (z gałęzi codex)
+    assert report_payload["risk_profile"]["summary"]["name"] == "balanced"
+    assert (
+        report_payload["risk_profile"]["summary"]["severity_min"]
+        == "notice"
+    )
+    assert report_payload["risk_profile_summary"]["name"] == "balanced"
 
 
 def test_verify_core_config_risk_profile(tmp_path):
@@ -1473,6 +1485,9 @@ def test_verify_core_config_risk_profile(tmp_path):
     assert report_payload["risk_profile"]["name"] == "ops"
     assert report_payload["risk_profile"]["origin"].startswith("verify:")
     assert report_payload["risk_profile"].get("source") == "core_config"
+    # dodatkowe asercje dot. podsumowań (z gałęzi codex)
+    assert report_payload["risk_profile"]["summary"]["name"] == "ops"
+    assert report_payload["risk_profile_summary"]["name"] == "ops"
     assert report_payload["core_config"]["path"] == str(core_config_path)
     assert report_payload["core_config"]["metrics_service"]["risk_profile"] == "ops"
     assert (

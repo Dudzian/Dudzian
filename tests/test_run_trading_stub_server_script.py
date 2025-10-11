@@ -673,6 +673,8 @@ def test_print_runtime_plan_includes_risk_profile(capsys) -> None:
     plan = json.loads(capsys.readouterr().out)
     ui_section = plan["metrics"]["ui_alerts"]
     assert ui_section["risk_profile"]["name"] == "conservative"
+    assert ui_section["risk_profile_summary"]["name"] == "conservative"
+    assert ui_section["risk_profile_summary"]["severity_min"] == "warning"
     assert ui_section["reduce_motion_severity_active"] == "critical"
     assert ui_section["overlay_severity_exceeded"] == "critical"
     assert ui_section["overlay_critical_threshold"] == 1
@@ -712,6 +714,7 @@ def test_runtime_plan_risk_profiles_file(tmp_path: Path, capsys) -> None:
     plan = json.loads(capsys.readouterr().out)
     ui_section = plan["metrics"]["ui_alerts"]
     assert ui_section["risk_profile"]["name"] == "custom"
+    assert ui_section["risk_profile_summary"]["name"] == "custom"
     assert ui_section["overlay_critical_threshold"] == 4
     assert ui_section["jank_severity_spike"] == "notice"
     file_meta = ui_section["risk_profiles_file"]
@@ -762,6 +765,8 @@ def test_runtime_plan_risk_profiles_directory(tmp_path: Path, capsys) -> None:
     assert file_meta["path"] == str(profiles_dir)
     assert "ops_dir" in file_meta["registered_profiles"]
     assert any(entry["path"].endswith("lab.yaml") for entry in file_meta["files"])
+    assert ui_section["risk_profile"]["name"] == "ops_dir"
+    assert ui_section["risk_profile_summary"]["name"] == "ops_dir"
 
 
 def test_runtime_plan_memory_backend_flag(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys) -> None:
@@ -1003,3 +1008,7 @@ def test_trading_stub_print_risk_profiles(capsys: pytest.CaptureFixture[str]) ->
     payload = json.loads(capsys.readouterr().out)
     assert "risk_profiles" in payload
     assert "conservative" in payload["risk_profiles"]
+    assert (
+        payload["risk_profiles"]["conservative"]["summary"]["name"]
+        == "conservative"
+    )

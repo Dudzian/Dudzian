@@ -17,6 +17,7 @@ from scripts.telemetry_risk_profiles import (
     list_risk_profile_names,
     load_risk_profiles_with_metadata,
     risk_profile_metadata,
+    summarize_risk_profile,
 )
 
 from bot_core.testing import (
@@ -285,7 +286,12 @@ def _load_metrics_risk_profiles(
 def _print_metrics_risk_profiles(args: argparse.Namespace) -> None:
     profiles: dict[str, Mapping[str, Any]] = {}
     for name in list_risk_profile_names():
-        profiles[name] = risk_profile_metadata(name)
+        metadata = risk_profile_metadata(name)
+        summary = summarize_risk_profile(metadata)
+        profile_payload: dict[str, Any] = dict(metadata)
+        if summary:
+            profile_payload.setdefault("summary", summary)
+        profiles[name] = profile_payload
 
     payload: dict[str, Any] = {"risk_profiles": profiles}
     selected = getattr(args, "metrics_ui_alerts_risk_profile", None)
@@ -806,6 +812,7 @@ def _apply_environment_overrides(
                     raw,
                     str(args.metrics_ui_alerts_audit_dir),
                 )
+
     if (raw := os.getenv("RUN_TRADING_STUB_METRICS_UI_ALERTS_AUDIT_BACKEND")) is not None:
         if env_present("--metrics-ui-alerts-audit-backend"):
             skip_due_to_cli(
@@ -970,6 +977,7 @@ def _apply_metrics_risk_profile_defaults(
     value_sources: dict[str, str],
 ) -> None:
     profile_name = getattr(args, "metrics_ui_alerts_risk_profile", None)
+    args._metrics_risk_profile_summary = None
     if not profile_name:
         return
 
@@ -980,7 +988,9 @@ def _apply_metrics_risk_profile_defaults(
         raise SystemExit(
             f"Profil ryzyka {profile_name!r} nie jest obsługiwany. Dostępne: {available}"
         ) from None
-    args._metrics_risk_profile_metadata = risk_profile_metadata(profile_name)
+    metadata = risk_profile_metadata(profile_name)
+    args._metrics_risk_profile_metadata = metadata
+    args._metrics_risk_profile_summary = summarize_risk_profile(metadata)
 
     for option, value in overrides.items():
         attr = f"metrics_{option}"
@@ -1196,6 +1206,8 @@ def _build_ui_alert_sink(
         sink_settings["audit"] = dict(audit_backend)
         if risk_profile_meta := getattr(args, "_metrics_risk_profile_metadata", None):
             sink_settings["risk_profile"] = dict(risk_profile_meta)
+        if risk_profile_summary := getattr(args, "_metrics_risk_profile_summary", None):
+            sink_settings["risk_profile_summary"] = dict(risk_profile_summary)
         if risk_profiles_file_meta := getattr(
             args, "_metrics_risk_profiles_file_metadata", None
         ):
@@ -1573,10 +1585,9 @@ def _build_dataset_plan(dataset: InMemoryTradingDataset, dataset_paths: Iterable
 def _build_metrics_plan(args) -> Mapping[str, object]:
     metrics_available = create_metrics_server is not None
     ui_alert_deps = UiTelemetryAlertSink is not None and DefaultAlertRouter is not None and InMemoryAlertAuditLog is not None
-    jsonl_info: Mapping[str, object]
     if args.metrics_jsonl:
         jsonl_path = Path(str(args.metrics_jsonl)).expanduser()
-        jsonl_info = {
+        jsonl_info: Mapping[str, object] = {
             "configured": True,
             "path": str(jsonl_path),
             "metadata": file_reference_metadata(jsonl_path, role="jsonl"),
@@ -1639,9 +1650,8 @@ def _build_metrics_plan(args) -> Mapping[str, object]:
     requested_backend = (raw_backend_choice or "auto").lower()
     memory_forced = requested_backend == "memory"
     file_backend_supported = audit_dir is not None and FileAlertAuditLog is not None and not memory_forced
-    audit_info: Mapping[str, object]
     if requested_backend == "file" and audit_dir is None:
-        audit_info = {
+        audit_info: Mapping[str, object] = {
             "requested": requested_backend,
             "backend": None,
             "note": "file_backend_requires_directory",
@@ -1683,7 +1693,7 @@ def _build_metrics_plan(args) -> Mapping[str, object]:
         if audit_dir is not None:
             audit_info["note"] = "file_backend_unavailable"
 
-    ui_alerts_info: Mapping[str, object] = {
+    ui_alerts_info: dict[str, object] = {
         "configured": not bool(args.disable_metrics_ui_alerts),
         "available": ui_alert_deps,
         "expected_active": bool(args.enable_metrics and not args.disable_metrics_ui_alerts and metrics_available and ui_alert_deps and sink_expected),
@@ -1726,13 +1736,12 @@ def _build_metrics_plan(args) -> Mapping[str, object]:
         "audit": audit_info,
     }
     if risk_profile_meta := getattr(args, "_metrics_risk_profile_metadata", None):
-        ui_alerts_info = dict(ui_alerts_info)
         ui_alerts_info["risk_profile"] = dict(risk_profile_meta)
+    if risk_profile_summary := getattr(args, "_metrics_risk_profile_summary", None):
+        ui_alerts_info["risk_profile_summary"] = dict(risk_profile_summary)
     if risk_profiles_file_meta := getattr(
         args, "_metrics_risk_profiles_file_metadata", None
     ):
-        if not isinstance(ui_alerts_info, dict):
-            ui_alerts_info = dict(ui_alerts_info)
         ui_alerts_info["risk_profiles_file"] = dict(risk_profiles_file_meta)
 
     warnings: list[str] = []

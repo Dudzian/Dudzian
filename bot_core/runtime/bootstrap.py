@@ -85,10 +85,12 @@ try:  # pragma: no cover - presety profili ryzyka mogą nie istnieć
     from bot_core.runtime.telemetry_risk_profiles import (  # type: ignore
         MetricsRiskProfileResolver,
         load_risk_profiles_with_metadata,
+        summarize_risk_profile,
     )
 except Exception:  # pragma: no cover - brak presetów
     MetricsRiskProfileResolver = None  # type: ignore
     load_risk_profiles_with_metadata = None  # type: ignore
+    summarize_risk_profile = None  # type: ignore
 
 _DEFAULT_ADAPTERS: Mapping[str, ExchangeAdapterFactory] = {
     "binance_spot": BinanceSpotAdapter,
@@ -480,9 +482,20 @@ def bootstrap_environment(
             }
             if resolver is not None:
                 risk_profile_meta = resolver.metadata()
+
+            summary_payload: Mapping[str, Any] | None = None
             if risk_profile_meta is not None:
                 sink_kwargs["risk_profile"] = dict(risk_profile_meta)
                 settings_payload["risk_profile"] = dict(risk_profile_meta)
+                summary_payload = risk_profile_meta.get("summary")
+                if summary_payload is None and summarize_risk_profile is not None:
+                    try:
+                        summary_payload = summarize_risk_profile(risk_profile_meta)
+                    except Exception:  # pragma: no cover - defensywne
+                        summary_payload = None
+            if summary_payload:
+                sink_kwargs["risk_profile_summary"] = dict(summary_payload)
+                settings_payload["risk_profile_summary"] = dict(summary_payload)
             if metrics_risk_profiles_file is not None:
                 settings_payload["risk_profiles_file"] = dict(metrics_risk_profiles_file)
 
@@ -510,8 +523,11 @@ def bootstrap_environment(
             _LOGGER.exception("Nie udało się zainicjalizować UiTelemetryAlertSink")
 
         # Jeśli tylko profil/plik profili – również pokaż w settings
-        if metrics_ui_alerts_settings is None and 'risk_profile_meta' in locals() and risk_profile_meta is not None:
+        if metrics_ui_alerts_settings is None and risk_profile_meta is not None:
             metrics_ui_alerts_settings = {"risk_profile": dict(risk_profile_meta)}
+            if risk_profile_meta.get("summary"):
+                metrics_ui_alerts_settings["risk_profile_summary"] = dict(risk_profile_meta["summary"])  # type: ignore[index]
+
         if metrics_risk_profiles_file is not None:
             if metrics_ui_alerts_settings is None:
                 metrics_ui_alerts_settings = {

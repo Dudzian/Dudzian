@@ -109,6 +109,30 @@ _METRICS_CLI_TO_CONFIG: Mapping[str, str] = {
     "ui_alerts_jank_critical_over_ms": "jank_alert_critical_over_ms",
 }
 
+# Mapowanie nazw opcji CLI na odpowiadające zmienne środowiskowe narzędzi CLI.
+_METRICS_CLI_TO_ENV: Mapping[str, str] = {
+    "ui_alerts_reduce_mode": "RUN_METRICS_SERVICE_UI_ALERTS_REDUCE_MODE",
+    "ui_alerts_overlay_mode": "RUN_METRICS_SERVICE_UI_ALERTS_OVERLAY_MODE",
+    "ui_alerts_jank_mode": "RUN_METRICS_SERVICE_UI_ALERTS_JANK_MODE",
+    "ui_alerts_reduce_category": "RUN_METRICS_SERVICE_UI_ALERTS_REDUCE_CATEGORY",
+    "ui_alerts_reduce_active_severity": "RUN_METRICS_SERVICE_UI_ALERTS_REDUCE_ACTIVE_SEVERITY",
+    "ui_alerts_reduce_recovered_severity": "RUN_METRICS_SERVICE_UI_ALERTS_REDUCE_RECOVERED_SEVERITY",
+    "ui_alerts_overlay_category": "RUN_METRICS_SERVICE_UI_ALERTS_OVERLAY_CATEGORY",
+    "ui_alerts_overlay_exceeded_severity": "RUN_METRICS_SERVICE_UI_ALERTS_OVERLAY_EXCEEDED_SEVERITY",
+    "ui_alerts_overlay_recovered_severity": "RUN_METRICS_SERVICE_UI_ALERTS_OVERLAY_RECOVERED_SEVERITY",
+    "ui_alerts_overlay_critical_severity": "RUN_METRICS_SERVICE_UI_ALERTS_OVERLAY_CRITICAL_SEVERITY",
+    "ui_alerts_overlay_critical_threshold": "RUN_METRICS_SERVICE_UI_ALERTS_OVERLAY_CRITICAL_THRESHOLD",
+    "ui_alerts_jank_category": "RUN_METRICS_SERVICE_UI_ALERTS_JANK_CATEGORY",
+    "ui_alerts_jank_spike_severity": "RUN_METRICS_SERVICE_UI_ALERTS_JANK_SPIKE_SEVERITY",
+    "ui_alerts_jank_critical_severity": "RUN_METRICS_SERVICE_UI_ALERTS_JANK_CRITICAL_SEVERITY",
+    "ui_alerts_jank_critical_over_ms": "RUN_METRICS_SERVICE_UI_ALERTS_JANK_CRITICAL_OVER_MS",
+    "ui_alerts_audit_dir": "RUN_METRICS_SERVICE_UI_ALERTS_AUDIT_DIR",
+    "ui_alerts_audit_backend": "RUN_METRICS_SERVICE_UI_ALERTS_AUDIT_BACKEND",
+    "ui_alerts_audit_pattern": "RUN_METRICS_SERVICE_UI_ALERTS_AUDIT_PATTERN",
+    "ui_alerts_audit_retention_days": "RUN_METRICS_SERVICE_UI_ALERTS_AUDIT_RETENTION_DAYS",
+    "ui_alerts_audit_fsync": "RUN_METRICS_SERVICE_UI_ALERTS_AUDIT_FSYNC",
+}
+
 # Przy zastosowaniu trybu "enable" włączamy odpowiadające flagi boolowskie.
 _REQUIRED_FLAG_FIELDS: Mapping[str, tuple[str, Any]] = {
     "reduce_motion_mode": ("reduce_motion_alerts", True),
@@ -137,9 +161,22 @@ def _initialize_store() -> None:
 
 def list_risk_profile_names() -> list[str]:
     """Zwraca posortowaną listę dostępnych profili."""
-
     _initialize_store()
     return sorted(_PROFILE_STORE)
+
+
+def _merge_profile_dicts(base: Mapping[str, Any], overrides: Mapping[str, Any]) -> dict[str, Any]:
+    """Zwraca nowy słownik powstały z głębokiego połączenia struktur."""
+    result = deepcopy(base)
+    for key, value in overrides.items():
+        if key == "extends":
+            # Dziedziczenie obsługujemy osobno – tu pomijamy wskaźnik rodzica.
+            continue
+        if isinstance(value, Mapping) and isinstance(result.get(key), Mapping):
+            result[key] = _merge_profile_dicts(result[key], value)
+        else:
+            result[key] = deepcopy(value)
+    return result
 
 
 def register_risk_profiles(
@@ -148,19 +185,90 @@ def register_risk_profiles(
     origin: str = "external",
 ) -> list[str]:
     """Rejestruje dodatkowe profile lub nadpisuje istniejące."""
-
     if not profiles:
         return []
 
     _initialize_store()
-    registered: list[str] = []
+
+    normalized_profiles: dict[str, dict[str, Any]] = {}
     for name, profile in profiles.items():
         if name is None:
             continue
         normalized = str(name).strip().lower()
         if not normalized:
             continue
-        _PROFILE_STORE[normalized] = deepcopy(dict(profile))
+        if profile is None:
+            normalized_profiles[normalized] = {}
+            continue
+        if not isinstance(profile, Mapping):
+            raise ValueError(
+                f"Profil ryzyka '{name}' musi być mapą, otrzymano {type(profile)!r}"
+            )
+        normalized_profiles[normalized] = deepcopy(dict(profile))
+
+    resolved: dict[str, dict[str, Any]] = {}
+    visiting: set[str] = set()
+
+    def resolve(name: str) -> dict[str, Any]:
+        if name in resolved:
+            return resolved[name]
+        if name in visiting:
+            raise ValueError(
+                f"Wykryto cykliczne dziedziczenie profili ryzyka przy '{name}'"
+            )
+        try:
+            entry = normalized_profiles[name]
+        except KeyError as exc:
+            # Powinno być niemożliwe – resolve wywoływany jest tylko dla znanych nazw.
+            raise KeyError(f"Nieznany profil do zarejestrowania: {name}") from exc
+
+        visiting.add(name)
+        extends_raw = entry.get("extends")
+        if extends_raw:
+            base_name = str(extends_raw).strip().lower()
+            if not base_name:
+                raise ValueError(
+                    f"Profil ryzyka '{name}' posiada nieprawidłowe pole extends"
+                )
+            if base_name == name:
+                raise ValueError(
+                    f"Profil ryzyka '{name}' nie może dziedziczyć z samego siebie"
+                )
+            if base_name in normalized_profiles:
+                base_profile = resolve(base_name)
+            else:
+                try:
+                    base_profile = get_risk_profile(base_name)
+                except KeyError as exc:
+                    raise ValueError(
+                        f"Profil ryzyka '{name}' dziedziczy z nieznanego profilu '{extends_raw}'"
+                    ) from exc
+            merged = _merge_profile_dicts(base_profile, entry)
+            chain: list[str] = []
+            base_chain = base_profile.get("extends_chain")
+            if isinstance(base_chain, list):
+                chain.extend(base_chain)
+            elif base_profile.get("extends"):
+                chain.append(str(base_profile["extends"]))
+            chain.append(base_name)
+            merged["extends"] = base_name
+            if chain:
+                merged["extends_chain"] = chain
+        else:
+            merged = deepcopy(entry)
+            if "extends_chain" in merged and not isinstance(
+                merged.get("extends_chain"), list
+            ):
+                merged["extends_chain"] = list(merged.get("extends_chain") or [])
+
+        visiting.remove(name)
+        resolved[name] = merged
+        return merged
+
+    registered: list[str] = []
+    for normalized in normalized_profiles:
+        profile_data = resolve(normalized)
+        _PROFILE_STORE[normalized] = deepcopy(profile_data)
         _PROFILE_ORIGINS[normalized] = origin
         registered.append(normalized)
     return registered
@@ -199,7 +307,6 @@ def _load_risk_profiles_from_single_file(
 
 def list_risk_profile_files(directory: Path) -> list[Path]:
     """Zwraca posortowaną listę plików profili w katalogu."""
-
     files = [
         entry
         for entry in directory.iterdir()
@@ -211,7 +318,6 @@ def list_risk_profile_files(directory: Path) -> list[Path]:
 
 def load_risk_profiles_from_file(path: str | Path, *, origin: str | None = None) -> list[str]:
     """Ładuje profile z pliku lub katalogu JSON/YAML i rejestruje w store."""
-
     target = Path(path).expanduser()
     if target.is_dir():
         files = list_risk_profile_files(target)
@@ -224,9 +330,7 @@ def load_risk_profiles_from_file(path: str | Path, *, origin: str | None = None)
         base_origin = origin or f"dir:{target}"
         for entry in files:
             entry_origin = f"{base_origin}#{entry.name}" if base_origin else None
-            registered.extend(
-                _load_risk_profiles_from_single_file(entry, origin=entry_origin)
-            )
+            registered.extend(_load_risk_profiles_from_single_file(entry, origin=entry_origin))
         return registered
 
     return _load_risk_profiles_from_single_file(target, origin=origin)
@@ -236,7 +340,6 @@ def load_risk_profiles_with_metadata(
     path: str | Path, *, origin_label: str | None = None
 ) -> tuple[list[str], dict[str, Any]]:
     """Ładuje profile i zwraca listę nazw oraz metadane artefaktu."""
-
     target = Path(path).expanduser()
     if target.is_dir():
         files = list_risk_profile_files(target)
@@ -250,9 +353,7 @@ def load_risk_profiles_with_metadata(
         base_origin = origin_label or f"dir:{target}"
         for entry in files:
             entry_origin = f"{base_origin}#{entry.name}" if base_origin else None
-            entry_registered = _load_risk_profiles_from_single_file(
-                entry, origin=entry_origin
-            )
+            entry_registered = _load_risk_profiles_from_single_file(entry, origin=entry_origin)
             files_meta.append(
                 {
                     "path": str(entry),
@@ -271,9 +372,7 @@ def load_risk_profiles_with_metadata(
             metadata["origin"] = origin_label
         return registered, metadata
 
-    registered = _load_risk_profiles_from_single_file(
-        target, origin=origin_label or f"file:{target}"
-    )
+    registered = _load_risk_profiles_from_single_file(target, origin=origin_label or f"file:{target}")
     metadata = {
         "path": str(target),
         "type": "file",
@@ -286,7 +385,6 @@ def load_risk_profiles_with_metadata(
 
 def get_risk_profile(name: str) -> Mapping[str, Any]:
     """Zwraca kopię konfiguracji profilu."""
-
     _initialize_store()
     normalized = name.strip().lower()
     try:
@@ -298,14 +396,12 @@ def get_risk_profile(name: str) -> Mapping[str, Any]:
 
 def get_metrics_service_overrides(name: str) -> Mapping[str, Any]:
     """Zwraca mapowanie opcji CLI dla serwera MetricsService."""
-
     profile = get_risk_profile(name)
     return deepcopy(profile.get("metrics_service_overrides", {}))
 
 
 def get_metrics_service_config_overrides(name: str) -> Mapping[str, Any]:
     """Zwraca nadpisania odpowiadające polom MetricsServiceConfig."""
-
     overrides = {}
     cli_overrides = get_metrics_service_overrides(name)
     for option, value in cli_overrides.items():
@@ -315,9 +411,18 @@ def get_metrics_service_config_overrides(name: str) -> Mapping[str, Any]:
     return overrides
 
 
+def get_metrics_service_env_overrides(name: str) -> Mapping[str, Any]:
+    """Zwraca mapowanie zmiennych środowiskowych dla presetów MetricsService."""
+    env_overrides: dict[str, Any] = {}
+    for option, value in get_metrics_service_overrides(name).items():
+        env_name = _METRICS_CLI_TO_ENV.get(option)
+        if env_name is not None:
+            env_overrides[env_name] = value
+    return env_overrides
+
+
 def risk_profile_metadata(name: str) -> dict[str, Any]:
     """Buduje strukturę metadanych do logów i raportów."""
-
     profile = get_risk_profile(name)
     metadata = dict(profile)
     normalized = name.strip().lower()
@@ -326,6 +431,44 @@ def risk_profile_metadata(name: str) -> dict[str, Any]:
     if origin:
         metadata.setdefault("origin", origin)
     return metadata
+
+
+def summarize_risk_profile(metadata: Mapping[str, Any]) -> dict[str, Any]:
+    """Zwraca skrócone podsumowanie profilu ryzyka dla raportów audytowych."""
+    summary: dict[str, Any] = {}
+
+    for key in (
+        "name",
+        "origin",
+        "extends",
+        "severity_min",
+        "expect_summary_enabled",
+        "require_screen_info",
+    ):
+        value = metadata.get(key)
+        if value is not None:
+            summary[key] = deepcopy(value)
+
+    extends_chain = metadata.get("extends_chain")
+    if extends_chain is None:
+        if metadata.get("extends"):
+            extends_chain = [metadata.get("extends")]  # type: ignore[list-item]
+        else:
+            extends_chain = []
+    summary["extends_chain"] = deepcopy(extends_chain)
+
+    for key in ("max_event_counts", "min_event_counts"):
+        value = metadata.get(key)
+        if value:
+            summary[key] = deepcopy(value)
+
+    return summary
+
+
+def get_risk_profile_summary(name: str) -> dict[str, Any]:
+    """Buduje podsumowanie profilu ryzyka na podstawie jego nazwy."""
+    metadata = risk_profile_metadata(name)
+    return summarize_risk_profile(metadata)
 
 
 def _metrics_config_defaults() -> Mapping[str, Any]:
@@ -374,6 +517,7 @@ class MetricsRiskProfileResolver:
         self._config = config
         self._overrides_config = dict(get_metrics_service_config_overrides(normalized))
         self._metadata_base = risk_profile_metadata(normalized)
+        self._summary = summarize_risk_profile(self._metadata_base)
         self._defaults = _metrics_config_defaults()
         self._applied: MutableMapping[str, dict[str, Any]] = {}
         self._skipped: MutableMapping[str, dict[str, Any]] = {}
@@ -414,6 +558,8 @@ class MetricsRiskProfileResolver:
 
     def metadata(self) -> dict[str, Any]:
         metadata = dict(self._metadata_base)
+        if self._summary:
+            metadata.setdefault("summary", dict(self._summary))
         if self._applied:
             metadata["applied_overrides"] = {
                 name: entry.get("value")
@@ -472,6 +618,7 @@ class MetricsRiskProfileResolver:
 __all__ = [
     "MetricsRiskProfileResolver",
     "get_metrics_service_config_overrides",
+    "get_metrics_service_env_overrides",
     "get_metrics_service_overrides",
     "get_risk_profile",
     "load_risk_profiles_with_metadata",
@@ -479,4 +626,6 @@ __all__ = [
     "load_risk_profiles_from_file",
     "register_risk_profiles",
     "risk_profile_metadata",
+    "summarize_risk_profile",
+    "get_risk_profile_summary",
 ]
