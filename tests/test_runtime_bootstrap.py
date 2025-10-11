@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from typing import Sequence
+from typing import Mapping, Sequence
+from textwrap import dedent
 
 import pytest
+import yaml
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
@@ -35,10 +37,8 @@ class _MemorySecretStorage(SecretStorage):
 
     def delete_secret(self, key: str) -> None:
         self._store.pop(key, None)
-
-
-def _write_config(tmp_path: Path) -> Path:
-    content = """
+_BASE_CONFIG = dedent(
+    """
     risk_profiles:
       balanced:
         max_daily_loss_pct: 0.015
@@ -112,16 +112,38 @@ def _write_config(tmp_path: Path) -> Path:
           sender_id: BOT-ORANGE
           credential_key: sms_orange
     """
+)
+
+
+def _write_config(tmp_path: Path) -> Path:
     config_path = tmp_path / "core.yaml"
-    config_path.write_text(content, encoding="utf-8")
+    config_path.write_text(_BASE_CONFIG, encoding="utf-8")
     return config_path
 
 
-def test_bootstrap_environment_initialises_components(tmp_path: Path) -> None:
+def _write_config_custom(
+    tmp_path: Path,
+    *,
+    runtime_metrics: Mapping[str, object] | None = None,
+    environment_overrides: Mapping[str, object] | None = None,
+) -> Path:
+    data = yaml.safe_load(_BASE_CONFIG)
+    if environment_overrides:
+        data.setdefault("environments", {}).setdefault("binance_paper", {}).update(
+            environment_overrides
+        )
+    if runtime_metrics is not None:
+        runtime_section = data.setdefault("runtime", {})
+        runtime_section["metrics_service"] = runtime_metrics
+
+    config_path = tmp_path / "core_custom.yaml"
+    config_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    return config_path
+
+
+def _prepare_manager() -> tuple[_MemorySecretStorage, SecretManager]:
     storage = _MemorySecretStorage()
     manager = SecretManager(storage, namespace="tests")
-
-    config_path = _write_config(tmp_path)
     credentials_payload = {
         "key_id": "paper-key",
         "secret": "paper-secret",
@@ -142,6 +164,12 @@ def test_bootstrap_environment_initialises_components(tmp_path: Path) -> None:
         json.dumps({"account_sid": "AC123", "auth_token": "token"}),
         purpose="alerts:sms",
     )
+    return storage, manager
+
+
+def test_bootstrap_environment_initialises_components(tmp_path: Path) -> None:
+    config_path = _write_config(tmp_path)
+    _, manager = _prepare_manager()
 
     context = bootstrap_environment(
         "binance_paper", config_path=config_path, secret_manager=manager
@@ -216,33 +244,30 @@ def test_bootstrap_environment_initialises_components(tmp_path: Path) -> None:
     assert context.metrics_jsonl_metadata is None
     if context.metrics_security_warnings is not None:
         assert isinstance(context.metrics_security_warnings, tuple)
+    assert context.metrics_ui_alerts_settings is not None
+    assert context.metrics_ui_alerts_settings["reduce_mode"] == "enable"
+    assert context.metrics_ui_alerts_settings["overlay_mode"] == "enable"
+    assert context.metrics_ui_alerts_settings["jank_mode"] == "disable"
+    assert context.metrics_ui_alerts_settings["reduce_motion_alerts"] is True
+    assert context.metrics_ui_alerts_settings["overlay_alerts"] is True
+    assert context.metrics_ui_alerts_settings["jank_alerts"] is False
+    assert context.metrics_ui_alerts_settings["reduce_motion_logging"] is True
+    assert context.metrics_ui_alerts_settings["overlay_logging"] is True
+    assert context.metrics_ui_alerts_settings["jank_logging"] is False
+    assert context.metrics_ui_alerts_settings["jank_category"] == "ui.performance"
+    assert context.metrics_ui_alerts_settings["jank_severity_spike"] == "warning"
+    assert context.metrics_ui_alerts_settings["jank_severity_critical"] is None
+    assert context.metrics_ui_alerts_settings["jank_critical_over_ms"] is None
+    audit_info = context.metrics_ui_alerts_settings.get("audit")
+    assert audit_info is not None
+    assert audit_info["requested"] == "inherit"
+    assert audit_info["backend"] == "memory"
+    assert audit_info["note"] == "inherited_environment_router"
 
 
 def test_bootstrap_environment_allows_risk_profile_override(tmp_path: Path) -> None:
-    storage = _MemorySecretStorage()
-    manager = SecretManager(storage, namespace="tests")
-
     config_path = _write_config(tmp_path)
-    credentials_payload = {
-        "key_id": "paper-key",
-        "secret": "paper-secret",
-        "passphrase": None,
-        "permissions": ["read", "trade"],
-        "environment": Environment.PAPER.value,
-    }
-    storage.set_secret("tests:binance_paper_key:trading", json.dumps(credentials_payload))
-    storage.set_secret("tests:zonda_paper_key:trading", json.dumps(credentials_payload))
-    manager.store_secret_value("telegram_token", "telegram-secret", purpose="alerts:telegram")
-    manager.store_secret_value(
-        "smtp_credentials",
-        json.dumps({"username": "bot", "password": "secret"}),
-        purpose="alerts:email",
-    )
-    manager.store_secret_value(
-        "sms_orange",
-        json.dumps({"account_sid": "AC123", "auth_token": "token"}),
-        purpose="alerts:sms",
-    )
+    storage, manager = _prepare_manager()
 
     context = bootstrap_environment(
         "binance_paper",
@@ -342,3 +367,189 @@ def test_bootstrap_environment_supports_zonda(tmp_path: Path) -> None:
     assert context.credentials.key_id == "zonda-key"
     assert context.environment.exchange == "zonda_spot"
     assert context.adapter_settings == {}
+
+
+def test_bootstrap_metrics_ui_alerts_audit_requested_file_without_backend(tmp_path: Path) -> None:
+    config_path = _write_config_custom(
+        tmp_path,
+        runtime_metrics={"enabled": True, "ui_alerts_audit_backend": "file"},
+    )
+    _, manager = _prepare_manager()
+
+    context = bootstrap_environment("binance_paper", config_path=config_path, secret_manager=manager)
+
+    assert context.metrics_ui_alerts_settings is not None
+    audit_info = context.metrics_ui_alerts_settings.get("audit")
+    assert audit_info is not None
+    assert audit_info["requested"] == "file"
+    assert audit_info["backend"] == "memory"
+    assert audit_info["note"] == "file_backend_unavailable"
+
+
+def test_bootstrap_metrics_ui_alerts_audit_inherits_file_backend(tmp_path: Path) -> None:
+    alerts_dir = tmp_path / "ui-alert-audit"
+    runtime_metrics = {
+        "enabled": True,
+        "ui_alerts_jsonl_path": str((tmp_path / "ui_alerts.jsonl").resolve()),
+    }
+    environment_overrides = {
+        "alert_audit": {
+            "backend": "file",
+            "directory": str(alerts_dir),
+            "filename_pattern": "alerts-%Y%m%d.jsonl",
+            "retention_days": 14,
+            "fsync": True,
+        }
+    }
+    config_path = _write_config_custom(
+        tmp_path,
+        runtime_metrics=runtime_metrics,
+        environment_overrides=environment_overrides,
+    )
+    _, manager = _prepare_manager()
+
+    context = bootstrap_environment("binance_paper", config_path=config_path, secret_manager=manager)
+
+    assert context.metrics_ui_alerts_settings is not None
+    audit_info = context.metrics_ui_alerts_settings.get("audit")
+    assert audit_info is not None
+    assert audit_info["requested"] == "inherit"
+    assert audit_info["backend"] == "file"
+    assert audit_info["note"] == "inherited_environment_router"
+    assert audit_info["directory"] == str(alerts_dir)
+    assert audit_info["pattern"] == "alerts-%Y%m%d.jsonl"
+    assert audit_info["retention_days"] == 14
+    assert audit_info["fsync"] is True
+
+
+def test_bootstrap_metrics_ui_alerts_audit_memory_request_on_file_backend(tmp_path: Path) -> None:
+    alerts_dir = tmp_path / "ui-alert-audit"
+    runtime_metrics = {
+        "enabled": True,
+        "ui_alerts_audit_backend": "memory",
+        "ui_alerts_jsonl_path": str((tmp_path / "ui_alerts.jsonl").resolve()),
+    }
+    environment_overrides = {
+        "alert_audit": {
+            "backend": "file",
+            "directory": str(alerts_dir),
+            "filename_pattern": "alerts-%Y%m%d.jsonl",
+            "retention_days": 7,
+            "fsync": False,
+        }
+    }
+    config_path = _write_config_custom(
+        tmp_path,
+        runtime_metrics=runtime_metrics,
+        environment_overrides=environment_overrides,
+    )
+    _, manager = _prepare_manager()
+
+    context = bootstrap_environment("binance_paper", config_path=config_path, secret_manager=manager)
+
+    assert context.metrics_ui_alerts_settings is not None
+    audit_info = context.metrics_ui_alerts_settings.get("audit")
+    assert audit_info is not None
+    assert audit_info["requested"] == "memory"
+    assert audit_info["backend"] == "file"
+    assert audit_info["note"] == "memory_backend_not_selected"
+
+
+def test_bootstrap_metrics_risk_profiles_file_metadata(tmp_path: Path) -> None:
+    profiles_path = tmp_path / "telemetry_profiles.json"
+    profiles_path.write_text(
+        json.dumps(
+            {
+                "risk_profiles": {
+                    "balanced": {
+                        "metrics_service_overrides": {
+                            "ui_alerts_overlay_critical_threshold": 7,
+                        },
+                        "severity_min": "notice",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config_path = _write_config_custom(
+        tmp_path,
+        runtime_metrics={
+            "enabled": True,
+            "jsonl_path": str((tmp_path / "metrics.jsonl").resolve()),
+            "ui_alerts_jsonl_path": str((tmp_path / "ui_alerts.jsonl").resolve()),
+            "reduce_motion_alerts": True,
+            "overlay_alerts": True,
+            "jank_alerts": False,
+            "ui_alerts_risk_profile": "balanced",
+            "ui_alerts_risk_profiles_file": str(profiles_path),
+        },
+    )
+    _, manager = _prepare_manager()
+
+    context = bootstrap_environment(
+        "binance_paper", config_path=config_path, secret_manager=manager
+    )
+
+    assert context.metrics_ui_alerts_settings is not None
+    settings = context.metrics_ui_alerts_settings
+    risk_meta = settings.get("risk_profile")
+    assert isinstance(risk_meta, dict)
+    assert risk_meta.get("name") == "balanced"
+    summary_meta = settings.get("risk_profile_summary")
+    assert isinstance(summary_meta, dict)
+    assert summary_meta.get("name") == "balanced"
+    file_meta = settings.get("risk_profiles_file")
+    assert isinstance(file_meta, dict)
+    assert Path(str(file_meta.get("path"))).resolve() == profiles_path.resolve()
+    assert "balanced" in file_meta.get("registered_profiles", [])
+
+
+def test_bootstrap_metrics_risk_profiles_directory_metadata(tmp_path: Path) -> None:
+    profiles_dir = tmp_path / "profiles"
+    profiles_dir.mkdir()
+    (profiles_dir / "ops.json").write_text(
+        json.dumps(
+            {
+                "risk_profiles": {
+                    "ops_dir": {
+                        "metrics_service_overrides": {
+                            "ui_alerts_overlay_critical_threshold": 5
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (profiles_dir / "lab.yaml").write_text(
+        "risk_profiles:\n  lab_dir:\n    severity_min: warning\n",
+        encoding="utf-8",
+    )
+
+    config_path = _write_config_custom(
+        tmp_path,
+        runtime_metrics={
+            "enabled": True,
+            "ui_alerts_risk_profile": "balanced",
+            "ui_alerts_risk_profiles_file": str(profiles_dir),
+        },
+    )
+    _, manager = _prepare_manager()
+
+    context = bootstrap_environment(
+        "binance_paper", config_path=config_path, secret_manager=manager
+    )
+
+    settings = context.metrics_ui_alerts_settings
+    assert isinstance(settings, dict)
+    summary_meta = settings.get("risk_profile_summary")
+    assert isinstance(summary_meta, dict)
+    assert summary_meta.get("name") == "balanced"
+    file_meta = settings.get("risk_profiles_file")
+    assert isinstance(file_meta, dict)
+    assert file_meta["type"] == "directory"
+    assert file_meta["path"] == str(profiles_dir)
+    assert "ops_dir" in file_meta.get("registered_profiles", [])
+    assert any(entry["path"].endswith("lab.yaml") for entry in file_meta.get("files", []))

@@ -88,9 +88,25 @@ Artefakty tworzymy skryptem `scripts/generate_trading_stubs.py`, a wzorcowy work
   który udostępnia telemetrię UI powłoce Qt. Można dostroić host/port, rozmiar historii (`--metrics-history-size`),
   zapisy JSONL (`--metrics-jsonl`, `--metrics-jsonl-fsync`), wyłączyć logowanie do stdout (`--metrics-disable-log-sink`)
   oraz wskazać log alertów UI (`--metrics-ui-alerts-jsonl`).
-  Przełącznik `--disable-metrics-ui-alerts` pozwala całkowicie wyłączyć sink `UiTelemetryAlertSink`, natomiast
-  `--metrics-print-address` wypisuje faktyczny adres serwera – przydatne w pipeline CI i przy pracy na wielu
-  instancjach stubu.
+  Przełącznik `--disable-metrics-ui-alerts` pozwala całkowicie wyłączyć sink `UiTelemetryAlertSink`, a dodatkowe
+  flagi `--metrics-ui-alerts-*-mode/category/severity/critical-threshold` umożliwiają spójne z core’owym runtime
+  sterowanie kategoriami i progami alertów reduce-motion/overlay. Tryb `mode` wspiera teraz warianty `enable`
+  (log + dispatch), `jsonl` (wyłącznie JSONL bez dispatchu) oraz `disable` (brak logowania i dispatchu). `--metrics-print-address`
+  wypisuje faktyczny adres serwera – przydatne w pipeline CI i przy pracy na wielu instancjach stubu.
+  Dostępny jest także przełącznik `--metrics-ui-alerts-risk-profile` (ENV: `RUN_TRADING_STUB_METRICS_UI_ALERTS_RISK_PROFILE`),
+  który ładuje te same presety co watcher/verifier – wartości severity, progi overlay/jank i tryby dispatchu są ustawiane
+  automatycznie, a w runtime planie `metrics.ui_alerts.risk_profile` zapisuje pełną charakterystykę profilu dla audytu demo→paper→live.
+  Jeśli potrzebujemy rozszerzyć lub nadpisać presety telemetryczne, możemy wskazać dodatkowy plik JSON/YAML przez
+  `--metrics-risk-profiles-file` (ENV: `RUN_TRADING_STUB_METRICS_RISK_PROFILES_FILE`).  Załadowane profile zostają oznaczone
+  w planie runtime (`metrics.ui_alerts.risk_profiles_file`) wraz z listą nazw i ścieżką źródła.  Od tej iteracji
+  obsługiwane są również katalogi zawierające wiele plików JSON/YAML – plan raportuje typ (`file`/`directory`) oraz
+  listę plików zarejestrowanych presetów, co ułatwia audyt zmian w pipeline demo→paper→live.
+  Szybki audyt presetów bez startu serwera umożliwia `--metrics-print-risk-profiles` (ENV:
+  `RUN_TRADING_STUB_METRICS_PRINT_RISK_PROFILES`), które wypisuje pełny JSON z dostępnymi profilami oraz metadanymi
+  plików/katalogów źródłowych.
+  Audyt alertów UI można przełączyć na backend plikowy za pomocą `--metrics-ui-alerts-audit-dir/pattern/retention-days`, `--metrics-ui-alerts-audit-backend`
+  (auto/file/memory) i `--metrics-ui-alerts-audit-fsync` (lub zmiennych `RUN_TRADING_STUB_METRICS_UI_ALERTS_AUDIT_*`). Gdy backend plikowy jest niedostępny (brak `FileAlertAuditLog`
+  w środowisku), skrypt samoczynnie degraduje się do audytu w pamięci i oznacza plan konfiguracji notatką `file_backend_unavailable`.
 * Stub potrafi równocześnie wystartować lekki `MetricsService` (`--enable-metrics`) – te same dane, które powłoka
   wysyła do core, można odebrać lokalnie. Dostępne są przełączniki `--metrics-host/--metrics-port`, zapis JSONL
   (`--metrics-jsonl`, `--metrics-jsonl-fsync`) oraz opcja `--metrics-disable-log-sink` tłumiąca logowanie snapshotów.
@@ -105,9 +121,181 @@ Artefakty tworzymy skryptem `scripts/generate_trading_stubs.py`, a wzorcowy work
   z `--shutdown-after`, aby przeprowadzić szybki smoke test UI lub komponentów gRPC.
 * Skrypt `scripts/run_metrics_service.py` startuje dedykowany serwer MetricsService (host/port, rozmiar historii,
   opcjonalny LoggingSink oraz zapis do JSONL z `--jsonl`/`--jsonl-fsync`) – wykorzystywany w CI i lokalnie do
-  obserwacji zdarzeń reduce-motion i budżetu overlayów wysyłanych z powłoki.
-* Narzędzie `scripts/watch_metrics_stream.py` podgląda `MetricsSnapshot` wprost z gRPC (filtr `--event`, format `table/json`,
-  limit rekordów) i służy do debugowania telemetrycznego w CI oraz na stanowiskach operatorów.
+  obserwacji zdarzeń reduce-motion, budżetu overlayów **oraz wykrytych klatek jank** wysyłanych z powłoki.
+  Flagi `--ui-alerts-audit-dir/pattern/retention-days`, `--ui-alerts-audit-backend` (auto/file/memory) oraz `--ui-alerts-audit-fsync`
+  (i odpowiadające im zmienne środowiskowe `RUN_METRICS_SERVICE_UI_ALERTS_AUDIT_*`) pozwalają zapisać audyt alertów UI do rotowanych plików JSONL.
+  Profil ryzyka można dobrać jednym przełącznikiem `--ui-alerts-risk-profile` (ENV: `RUN_METRICS_SERVICE_UI_ALERTS_RISK_PROFILE`),
+  co automatycznie ustawia tryby dispatch/logowania oraz severity i progi (np. konserwatywny = severity `critical`, próg overlay 1),
+  a w planie konfiguracji i metadanych runtime pojawia się sekcja `risk_profile` z pełnym opisem wymuszonych limitów.
+  Dodatkowe lub nadpisane presety można załadować przed startem serwera flagą `--risk-profiles-file`
+  (ENV: `RUN_METRICS_SERVICE_RISK_PROFILES_FILE`) lub zdefiniować je w konfiguracji YAML poprzez
+  pole `runtime.metrics_service.ui_alerts_risk_profiles_file`.  Efektywnie użyte profile są raportowane w sekcji
+  `ui_alerts.risk_profiles_file` planu konfiguracji oraz w metadanych runtime (`runtime_state.ui_alerts_sink.config.risk_profiles_file`).
+  Do szybkiej inspekcji dostępnych presetów (łącznie z tymi pobranymi z plików/katalogów) służy tryb `--print-risk-profiles`
+  lub zmienna `RUN_METRICS_SERVICE_PRINT_RISK_PROFILES`, który wypisuje JSON z profilami, informacją o źródłach i metadanymi
+  `core_config` bez uruchamiania serwera.
+  * Pliki/katalogi z presetami mogą korzystać z pola `extends`, aby dziedziczyć limity z profili builtin lub wcześniej
+    zarejestrowanych.  Zastosowany łańcuch (`extends_chain`) trafia do metadanych planu runtime oraz alertów UI, a parser
+    zakończy się błędem w razie cyklu lub odwołania do nieistniejącej nazwy.
+  Jeżeli backend plikowy nie jest dostępny, narzędzie loguje degradację do audytu w pamięci (również oznaczoną w planie konfiguracji jako
+  `file_backend_unavailable` lub `directory_ignored_memory_backend`), aby operatorzy mogli odnotować brak trwałego archiwum.
+  Runtime `bootstrap_environment` propaguje te informacje dalej – w `BootstrapContext.metrics_ui_alerts_settings` znajduje się sekcja
+  `audit` z rozstrzygnięciem realnego backendu (`memory` lub `file`), z notatkami `inherited_environment_router`, `file_backend_unavailable`
+  albo `memory_backend_not_selected` (np. gdy operator wymusił tryb `memory`, ale router środowiskowy wciąż zapisuje do pliku). Dzięki temu
+  pipeline demo→paper→live ma jednoznaczny obraz, czy alerty UI trafiają do trwałego audytu, czy też działamy w trybie degradacji.
+* Narzędzie `scripts/watch_metrics_stream.py` podgląda `MetricsSnapshot` wprost z gRPC (filtry `--event`, `--severity`,
+  `--severity-min`, `--since`, `--until`, `--screen-index`, `--screen-name`, format `table/json`, limit rekordów) i służy do
+  debugowania telemetrycznego w CI oraz na stanowiskach operatorów. Wspiera TLS/mTLS przez flagi `--use-tls`, `--root-cert`,
+  `--client-cert`, `--client-key`, `--server-name` oraz pinning `--server-sha256`.  Aby zapobiec przypadkowemu braku
+  szyfrowania, CLI wymaga jawnego `--use-tls` gdy operator poda którąkolwiek z flag TLS – w przeciwnym razie zakończy się
+  błędem i przypomni o konieczności włączenia kanału szyfrowanego.  Te same parametry można zasilić zmiennymi środowiskowymi
+  `BOT_CORE_WATCH_METRICS_*` (np. `..._ROOT_CERT`, `..._SERVER_SHA256`, `..._USE_TLS`, `..._SCREEN_INDEX`, `..._SCREEN_NAME`,
+  `..._SEVERITY`, `..._SEVERITY_MIN`, `..._SINCE`, `..._UNTIL`) oraz `..._FROM_JSONL` wskazującym artefakt JSONL z pipeline’u.
+  W trybie offline można użyć flagi `--from-jsonl`, aby przejrzeć zapisane snapshoty bez gRPC (TLS i tokeny są wówczas
+  ignorowane, a filtry po zdarzeniach/monitorach nadal działają); narzędzie rozpoznaje także artefakty `.jsonl.gz`
+  (dekompresja w locie) oraz potrafi czytać dane ze standardowego wejścia (`--from-jsonl -`), co ułatwia analizę w potokach
+  CI/CD.  Token RBAC można przekazać bezpiecznie z pliku
+  (`--auth-token-file`) lub zmiennej `..._AUTH_TOKEN` bez logowania wartości.  Wypisywany strumień zawiera podsumowanie
+  monitora (`screen=#1 (Main Display), 1920x1080 px, 60 Hz`), co upraszcza audyt kontekstu multi-monitorowego wraz z
+  alertami reduce-motion/overlay/jank zarówno online, jak i podczas analizy artefaktów CI.  Filtry czasowe `--since/--until`
+  (i odpowiadające im zmienne środowiskowe) pozwalają analizować konkretne okna czasowe bez potrzeby dodatkowego narzędzia,
+  a `--severity-min`/`BOT_CORE_WATCH_METRICS_SEVERITY_MIN` ograniczają audyt do alertów o zadanym poziomie istotności lub
+  wyższym (np. tylko `warning`+ i `critical`).  Jeżeli operator równocześnie poda listę `--severity`, CLI wymusza spójność –
+  próg `severity_min` nie może być niższy niż wartości na liście; w przeciwnym razie narzędzie zakończy się błędem i przypomni
+  o korekcie filtra.  Dodatkowo flaga `--risk-profile` (oraz `BOT_CORE_WATCH_METRICS_RISK_PROFILE`) pozwala jednym przełącznikiem
+  załadować preset ryzyka (conservative/balanced/aggressive/manual) – watcher automatycznie włącza podsumowanie, wymusza minimalny
+  próg severity, a w metadanych decision logu i podpisanym podsumowaniu zapisuje nazwę profilu wraz z narzuconymi limitami.
+  Gdy operator potrzebuje jedynie przejrzeć dostępne presety i ich parametry bez uruchamiania streamingu lub analizy artefaktów,
+  może użyć `--print-risk-profiles` (albo zmiennej `BOT_CORE_WATCH_METRICS_PRINT_RISK_PROFILES`), które wypisują pełny JSON
+  z opisem limitów KPI, wymaganych podpisów i minimalnych progów severity; taki zrzut można zachować w decision logu lub
+  dołączyć do audytu CI.  W razie potrzeby rozszerzenia/nadpisania presetów watcher potrafi wczytać dodatkowy plik
+  JSON/YAML przez `--risk-profiles-file` (lub `BOT_CORE_WATCH_METRICS_RISK_PROFILES_FILE`).  Załadowane profile są oznaczane
+  w metadanych polem `origin=watcher:…`, dzięki czemu audyt jednoznacznie wskazuje źródło definicji (repozytorium, artefakt CI).
+  Jeżeli pipeline potrzebuje przełożyć wybrany profil na konkretne parametry startowe dla `run_metrics_service.py`
+  lub `run_trading_stub_server.py`, pomocniczy skrypt `scripts/telemetry_risk_profiles.py render` generuje zarówno gotowy JSON
+  z nadpisaniami `MetricsService`, równoważny snippet YAML (do bezpośredniego użycia w `core.yaml`), listy flag CLI oraz – od tej iteracji – przypisania zmiennych
+  środowiskowych (`RUN_METRICS_SERVICE_*`).  Dzięki temu audyt demo→paper→live może w prosty sposób zbudować plik `.env`
+  lub polecenie shellowe bez ręcznego mapowania nazw parametrów.  Operator może zdecydować, czy wynik w formacie `env`
+  ma wyglądać jak plik `.env` (`--env-style=dotenv`, wartości automatycznie cytowane i escapowane) czy jak skrypt powłoki
+  (`--env-style=export`, z liniami `export KEY=value` i bezpiecznym quotingiem przez `shlex`).  Wygenerowane JSON-y zawierają
+  również informację o użytym stylu (`env_assignments_format`), co ułatwia dalszą automatyzację.  Jeżeli do polecenia `render`
+  dodamy `--include-profile`, pełna definicja profilu zostanie dołączona w wariantach JSON oraz YAML – przy formatach CLI/env
+  narzędzie zakończy się błędem, aby uniknąć cichego pominięcia metadanych w plikach `.env` lub listach flag.  Format JSON/YAML
+  wspiera dodatkowo selekcję sekcji (`--section metrics_service_config_overrides`, `--section env_assignments`, `--section risk_profile`, `--section summary` itd.),
+  dzięki czemu operator może wygenerować wyłącznie potrzebne fragmenty (np. tylko nadpisania konfiguracji, sam skrót `summary`
+  lub same przypisania środowiskowe) i zachować minimalny zrzut w artefaktach CI.  Jeśli polecenie otrzyma `--output`, renderer potrafi wywnioskować
+  format JSON/YAML na podstawie rozszerzenia pliku (np. `.yaml` automatycznie przełączy tryb YAML); kiedy operator wymusi
+  format sprzeczny z rozszerzeniem, CLI przerwie działanie z błędem, co zapobiega cichym rozbieżnościom w artefaktach.  Te
+  same zasady obowiązują dla poleceń `list`, `show` i `validate`, które otrzymały przełącznik `--format` – raporty można
+  więc seryjnie eksportować w YAML (np. do runbooków) lub JSON (do automatycznej analizy), a rozszerzenie pliku decyduje o
+  domyśle, jeśli operator nie podał formatu ręcznie.
+  Nowa komenda `scripts/telemetry_risk_profiles.py diff <bazowy> <docelowy>` buduje natomiast szczegółowe porównanie dwóch
+  presetów: różnice w nadpisaniach CLI/ENV/Konfiguracji, zmiany limitów `max/min_event_counts`, próg `severity_min`,
+  zarejestrowane `extends` oraz pełny łańcuch `extends_chain`, a także ujednolicony skrót metadanych (pochodzenie,
+  wymagania screen-info).  Wynik domyślnie generowany jest w formacie JSON, ale dzięki `--format=yaml` można uzyskać
+  równoważny raport w YAML do wklejenia np. w `core.yaml` lub w notatkach audytowych.  Jeśli wskazano `--output` z rozszerzeniem
+  `.yaml`, CLI automatycznie dobierze właściwy format (analogicznie `.json` zachowuje domyślne kodowanie JSON); konflikt pomiędzy
+  rozszerzeniem a ręcznie wymuszonym `--format` skutkuje błędem, aby utrzymać spójność raportów.  W obu wariantach narzędzie dostarcza
+  gotowe listy flag/zmiennych dla profilu docelowego i może opcjonalnie dołączyć pełne definicje obydwu presetów
+  (`--include-profiles`).  Aby skrócić raport do samych różnic, operator może dodać `--hide-unchanged`,
+  co usuwa sekcje oznaczone jako niezmienione (w tym `diff.extends`/`diff.extends_chain`) i pozwala szybciej ocenić
+  wpływ modyfikacji.  Dodatkowa flaga
+  `--section <NAME>` (można powtarzać) ogranicza wynik do wskazanych bloków (`diff`, `cli`, `env`, `summary`,
+  `profiles`, `core_config`, `sources`), co przydaje się np. podczas publikowania krótkich raportów w runbookach.
+  Jeżeli pipeline CI ma zatrzymać się przy wykryciu jakiejkolwiek różnicy, `--fail-on-diff` wymusza kod wyjścia 1
+  (raport JSON nadal trafia na STDOUT, więc artefakty audytowe pozostają dostępne).
+  Dzięki temu
+  operatorzy łatwo porównują profile conservative/balanced/aggressive lub własne rozszerzenia repozytoryjne,
+  a raport może zostać zapisany do artefaktów CI razem z decision logiem.
+  * Presety mogą dziedziczyć z istniejących profili przy użyciu pola `extends`.  Wypisywany JSON (oraz metadane decision logu)
+    zawiera wówczas `extends` i `extends_chain`, dzięki czemu operator widzi pełny łańcuch dziedziczenia.  Błędne odwołania
+    (cykl lub nieistniejący profil) kończą działanie narzędzia kodem błędu jeszcze przed eskalacją alertu.
+  Dodatkowo flaga `--summary` (lub zmienna `..._SUMMARY=true/false`) oblicza zbiorcze statystyki (liczba snapshotów, rozkład zdarzeń,
+  agregaty FPS, lista ekranów oraz rozkład severity) zarówno dla strumienia gRPC, jak i odczytu JSONL, co ułatwia operatorom szybkie
+  porównanie stanowisk w pipeline demo→paper→live.  Jeśli potrzeba zachować wynik audytu, flaga `--summary-output` lub zmienna
+  `..._SUMMARY_OUTPUT` zapisują podsumowanie do wskazanego pliku JSON (kanał gRPC/offline), przy czym kolekcjonowanie
+  danych odbywa się nawet wtedy, gdy operator wyłączył wypis na STDOUT, co upraszcza automatyczne raportowanie w CI.  Gdy
+  równocześnie dostarczono klucz HMAC (`--decision-log-hmac-key`/`..._DECISION_LOG_HMAC_KEY(_FILE)`), watcher podpisuje także
+  wygenerowane podsumowanie (`signature.algorithm = HMAC-SHA256`, opcjonalny `key_id`) i zapisuje parametry podpisu w metadanych
+  decision logu (`summary_signature`).  Dzięki temu pipeline demo→paper→live ma jednolity materiał do audytu (decision log +
+  summary JSON) z gwarancją integralności kryptograficznej.  Nowa flaga `--decision-log` (oraz `..._DECISION_LOG`) zapisuje każdy przefiltrowany snapshot do pliku JSONL w formacie decision
+  log (źródło gRPC/JSONL, event, severity, FPS, metadane monitora, pełne `notes`). Pozwala to archiwizować decyzje
+  operacyjne z audytów reduce-motion/overlay/jank, także podczas pracy offline (`--from-jsonl`). Każdy plik decision log
+  rozpoczyna się wpisem `metadata` z kontekstem uruchomienia (tryb online/offline, endpoint lub ścieżka JSONL, aktywne
+  filtry – w tym okno czasowe `since/until`, ustawiony próg `severity_min` oraz listy severity – stan TLS/tokenów, wymuszone podsumowanie), dzięki czemu operatorzy mogą odtworzyć parametry audytu bez sięgania
+  do historii poleceń.  Decision log można podpisywać kryptograficznie: flagi `--decision-log-hmac-key`/`--decision-log-hmac-key-file`
+  (oraz zmienne `..._DECISION_LOG_HMAC_KEY(_FILE)`) ładują klucz HMAC-SHA256, a opcjonalny identyfikator klucza (`--decision-log-key-id`,
+  `..._DECISION_LOG_KEY_ID`) trafia zarówno do metadanych, jak i do podpisów pojedynczych wpisów.  Podpisy (pole `signature`
+  z algorytmem, wartością Base64 i opcjonalnym `key_id`) są dodawane do wpisu `metadata` i każdego snapshotu, dzięki czemu pipeline demo→paper→live
+  może weryfikować integralność decision logów i łączyć je z rotacją kluczy operacyjnych.
+* Narzędzie uzupełniające `scripts/verify_decision_log.py` służy do walidacji podpisów HMAC
+  w decision logach wygenerowanych przez watcher.  Przyjmuje pliki `.jsonl`, `.jsonl.gz` lub
+  dane ze standardowego wejścia, obsługuje te same sekretne klucze przez flagi/zmienne (`--hmac-key`,
+  `--hmac-key-file`, `BOT_CORE_VERIFY_DECISION_LOG_HMAC_KEY(_FILE)`) oraz wymusza spójność
+  identyfikatorów kluczy (`--hmac-key-id`, `--expected-key-id`).  Operatorzy mogą równocześnie
+  zweryfikować metadane audytu: `--expect-mode grpc/jsonl`, `--expect-summary-enabled`, wielokrotne
+  `--expect-filter klucz=wartość`, wymagania TLS/tokenów (`--require-tls`, `--require-auth-token`),
+  a także oczekiwany endpoint (`--expect-endpoint`) lub ścieżkę pliku wejściowego (`--expect-input-file`).
+  Flaga `--require-screen-info` (oraz zmienna środowiskowa `BOT_CORE_VERIFY_DECISION_LOG_REQUIRE_SCREEN_INFO`)
+  wymusza, by każdy wpis snapshot posiadał sekcję `screen` z co najmniej jednym kluczowym polem (np. `index`, `name`,
+  `refresh_hz` lub `resolution`), dzięki czemu audyt potwierdza kompletność kontekstu multi-monitorowego.
+  Wbudowana walidacja dopasowuje każdy snapshot do filtrów opisanych w metadanych decision logu
+  (lista/severity_min, okno czasowe `since`/`until`, limity liczby wpisów, filtry ekranu i eventu) i
+  zatrzymuje weryfikację, jeśli którakolwiek obserwacja wykracza poza deklarowany zakres.  To pozwala
+  na szybkie wykrycie niespójnych logów już na etapie audytu bezpieczeństwa.
+  Te same warunki można zdefiniować przez zmienne środowiskowe (`BOT_CORE_VERIFY_DECISION_LOG_EXPECT_*`
+  oraz `...EXPECT_FILTERS_JSON`).  W przypadku poprawnej weryfikacji wypisywane jest podsumowanie wraz z
+  metadanymi audytu, a log podpisany kryptograficznie zostaje uznany za zgodny z parametrami pipeline'u.
+  Dodatkowe flagi `--max-event-count ZDARZENIE=LIMIT` oraz `--min-event-count ZDARZENIE=MINIMUM`
+  (wraz ze zmiennymi `BOT_CORE_VERIFY_DECISION_LOG_MAX_EVENT_COUNTS_JSON` i
+  `BOT_CORE_VERIFY_DECISION_LOG_MIN_EVENT_COUNTS_JSON`) pozwalają natychmiast zablokować logi, w których
+  zliczona liczba zdarzeń (np. `reduce_motion`, `overlay_budget`, `jank_spike`) przekracza operacyjne
+  limity KPI albo nie osiąga wymaganego minimum (np. oczekiwany alert sanity-check podczas testów
+  reduce-motion).  Wymusza to zbieranie lokalnego podsumowania i powiązuje audyt decision logu z limitami
+  ustalonymi dla profili ryzyka konserwatywny/zbalansowany/agresywny/manualny.
+  Operatorzy mogą skorzystać z predefiniowanych profili ryzyka (`--risk-profile conservative/balanced/aggressive/manual`
+  lub `BOT_CORE_VERIFY_DECISION_LOG_RISK_PROFILE`) – każda konfiguracja automatycznie wymusza kombinację limitów KPI
+  (max/min liczby zdarzeń), minimalny próg severity oraz obligatoryjną obecność metadanych monitora.
+  Profil konserwatywny ogranicza np. `overlay_budget` do zera i wymaga severity ≥ `warning`, balanced dopuszcza pojedyncze
+  piki janku przy severity ≥ `notice`, a agresywny pracuje z progiem `info` – wszystkie te wartości trafiają także do raportu
+  audytowego w sekcji `risk_profile.summary`, generowanej na podstawie rendererów profili ryzyka.  Sekcja ta zawiera skrót KPI,
+  łańcuch dziedziczenia (`extends_chain`) oraz obowiązujące limity zdarzeń, co pozwala natychmiastowo porównać artefakty
+  `telemetry_risk_profiles render --section summary` z wynikami `verify_decision_log`.  Wariant `manual` pozostawia ustawienia
+  bez zmian dla niestandardowych scenariuszy.  Wprowadzone rozszerzenie
+  `--summary-json` (oraz zmienna `BOT_CORE_VERIFY_DECISION_LOG_SUMMARY_JSON`)
+  pozwala dodatkowo przekazać plik wygenerowany przez `watch_metrics_stream --summary-output`.  Skrypt
+  przelicza własne statystyki (łączna liczba snapshotów, agregaty FPS na event, zestaw ekranów,
+  rozkład severity oraz pierwsza/ostatnia obserwacja) i porównuje je z artefaktem – wliczając w to
+  podpis HMAC (jeśli obecny) oraz deklarację w metadanych decision logu (`summary_signature`).  Każda
+  rozbieżność – brak zadeklarowanego monitora, różne liczniki severity, niespójne wartości FPS, brak
+  oczekiwanego podpisu bądź niezgodny identyfikator klucza – kończy audyt kodem błędu, dzięki czemu
+  pipeline demo→paper→live może automatycznie wychwycić manipulacje w podsumowaniu, także w scenariuszach
+  offline (`--from-jsonl`, artefakty `.jsonl.gz`).  Jeżeli potrzebne są niestandardowe presety telemetryczne,
+  walidator pozwala je wczytać przez `--risk-profiles-file` lub zmienną `BOT_CORE_VERIFY_DECISION_LOG_RISK_PROFILES_FILE`.
+  Nowe profile są oznaczane w raporcie jako `origin=verify:…`, co ułatwia rozpoznanie, z którego artefaktu/repozytorium
+  pochodził zestaw progów KPI.
+  Dla szybkiego audytu można użyć flagi `--print-risk-profiles` (lub zmiennej
+  `BOT_CORE_VERIFY_DECISION_LOG_PRINT_RISK_PROFILES`), która wypisuje bieżącą listę presetów wraz
+  z metadanymi pochodzenia – wliczając pliki/katalogi zadeklarowane przez `--risk-profiles-file`
+  oraz wartości z `--core-config`.  Operatorzy mogą dzięki temu przed walidacją potwierdzić, jaki
+  profil zostanie zastosowany i czy niestandardowe presety zostały poprawnie zarejestrowane.
+  * Sekcja raportu audytowego uwzględnia `extends` i `extends_chain` dla profili pochodnych, a sama walidacja
+    zatrzymuje się z błędem przy cyklicznym lub nieistniejącym odwołaniu w polu `extends`.  Dzięki temu pipeline
+    demo→paper→live ma gwarancję, że audyt korzysta z pełnej, spójnej konfiguracji KPI.
+  Wynik walidacji można zarchiwizować w ustrukturyzowanej postaci: flaga `--report-output` (oraz zmienna
+  `BOT_CORE_VERIFY_DECISION_LOG_REPORT_OUTPUT`) zapisuje raport JSON zawierający `report_version`, znacznik czasu
+  generacji, metadane decision logu, lokalnie przeliczone podsumowanie oraz – gdy dostępne – wynik weryfikacji
+  podsumowania (`summary_validation` z informacją o podpisie).  Sekcje `enforced_event_limits` oraz
+  `enforced_event_minimums` dokumentują obowiązujące limity KPI (zarówno maksymalne, jak i minimalne), a nowy blok
+  `risk_profile` opisuje zastosowany profil wraz z progami severity i aktywnymi limitami.  Takie dane pozwalają pipeline'owi
+  historycznie porównywać profile ryzyka.  Raport może być
+  kierowany na STDOUT (`-`) lub do pliku w repozytorium artefaktów CI, dzięki czemu zespoły ryzyka mają jeden spójny
+  dokument audytowy obejmujący metadane TLS/tokenów, filtry severity/screen/time oraz wszystkie statystyki FPS.
+  To rozszerzenie pozwala automatycznie porównywać audyty decision logów między etapami demo→paper→live, bez potrzeby
+  manualnego parsowania JSONL.
+  Błędne podpisy, brak oczekiwanych metadanych lub niespełnienie wymagań kończą się kodem 2 i szczegółowym
+  logiem diagnostycznym.  To narzędzie stanowi obowiązkowy krok audytowy w pipeline demo→paper→live przed
+  eskalacją alertów.
 
 ### Powłoka Qt/QML – MVP
 
@@ -120,20 +308,35 @@ Artefakty tworzymy skryptem `scripts/generate_trading_stubs.py`, a wzorcowy work
   trybie „reduce motion” lub spadku FPS poniżej `disable_secondary_when_fps_below`.
 * `SidePanel` prezentuje parametry guardu, status połączenia oraz zrzut `RiskState` (profil, wartość portfela, drawdown, dźwignia)
   wraz z listą limitów ekspozycji pobieranych z `RiskService`; przekroczenia progów są wyróżniane kolorystycznie i raportowane do
-  telemetrii (`overlay_budget`).
+  telemetrii (`overlay_budget`) oraz powiązanego alertingu.  Zdarzenia jank przekraczające budżet (`frame_ms > jank_threshold_ms`)
+  są emitowane jako osobny event telemetryjny, który zasila `UiTelemetryAlertSink` i JSONL.
 * `FrameRateMonitor` (C++) nasłuchuje `frameSwapped` głównego okna i po spadku FPS poniżej progów guardu (np. 55 FPS @60 Hz,
   110 FPS @120 Hz) emituje `reduceMotionActive`; właściwość jest eksponowana do QML i powoduje natychmiastowe wygaszenie
   animacji wtórnych oraz ograniczenie overlayów w każdym oknie.
 * `UiTelemetryReporter` wysyła zdarzenia UI do `MetricsService` (`PushMetrics`): wejście/wyjście z trybu reduce motion, budżety
   overlayów oraz liczbę aktywnych okien multi-window; konfiguracja odbywa się przez flagi CLI (`--metrics-endpoint`,
-  `--metrics-tag`) lub wpis w YAML.
+  `--metrics-tag`, `--metrics-auth-token`, `--metrics-auth-token-file`) lub wpis w YAML. Powłoka respektuje także zmienne
+  środowiskowe `BOT_CORE_UI_METRICS_*` (m.in. `ENDPOINT`, `TAG`, `ENABLED/DISABLED`, `USE_TLS`, `ROOT_CERT`, `CLIENT_CERT`,
+  `CLIENT_KEY`, `SERVER_NAME`, `SERVER_SHA256`, `AUTH_TOKEN`, `AUTH_TOKEN_FILE`) i automatycznie wymusza TLS, gdy dostarczono
+  materiał certyfikacyjny; token autoryzacyjny może zostać wczytany bezpośrednio z pliku.
+* Preferowany monitor można wybrać flagami CLI `--screen-name`, `--screen-index` lub `--primary-screen`.  To samo zachowanie
+  jest dostępne przez zmienne środowiskowe `BOT_CORE_UI_SCREEN_NAME`/`BOT_CORE_UI_SCREEN_INDEX`/`BOT_CORE_UI_SCREEN_PRIMARY`
+  (z rozróżnieniem wartości pustych jako „brak preferencji”).  Powłoka próbuje dopasować nazwę ekranu niezależnie od
+  wielkości liter, a przy żądaniu indeksu poza zakresem loguje ostrzeżenie i pozostawia okno na bieżącym monitorze.  Operatorzy
+  multi-monitor mogą dzięki temu przypiąć główne okno do wyświetlacza transakcyjnego już w pipeline demo→paper→live.
+* `UiTelemetryReporter` dołącza do zdarzeń JSON kontekst aktywnego ekranu (nazwa, producent, model, indeks, geometrię i odświeżanie).
+  Dane są aktualizowane przy każdej zmianie monitora i stanowią część audytu telemetryjnego, co ułatwia diagnozowanie problemów z FPS/jank
+  na stanowiskach demo→paper→live.
+* `UiTelemetryAlertSink` przenosi metadane ekranu oraz aktywny profil ryzyka do kontekstu alertów i wpisów JSONL (`screen_index`, rozdzielczość, odświeżanie, DPR, `risk_profile`, `risk_profile_origin`)
+  oraz dopisuje skrócony opis monitora w treści powiadomień, dzięki czemu operatorzy wiedzą, na którym stanowisku pipeline'u demo→paper→live
+  wystąpiła degradacja wydajności.
 * Połączenie telemetrii może być zabezpieczone TLS/mTLS – powłoka obsługuje `--metrics-use-tls`, ścieżki certów/kluczy oraz
   pinning SHA-256 (`--metrics-server-sha256`), a stuby developerskie (`run_metrics_service.py`, `run_trading_stub_server.py`)
   potrafią wystartować serwer z materiałem TLS i opcjonalnym wymaganiem certyfikatu klienta.
-* Sekcja `runtime.metrics_service` w `config/core.yaml` ustawia host/port serwera telemetrii, rozmiar historii (`history_size`), aktywność log sinka (`log_sink`) oraz parametry eksportu JSONL (`jsonl_path`, `jsonl_fsync`) i ścieżkę logu alertów UI (`ui_alerts_jsonl_path`).
-* Sekcja `runtime.metrics_service` w `config/core.yaml` ustawia host/port serwera telemetrii, rozmiar historii (`history_size`), aktywność log sinka (`log_sink`), parametry eksportu JSONL (`jsonl_path`, `jsonl_fsync`), opcjonalny token autoryzacyjny (`auth_token`) oraz konfigurację alertów redukcji animacji i budżetu nakładek.
-* Flagi `reduce_motion_alerts`/`reduce_motion_category`/`reduce_motion_severity_*` aktywują sink alertów reagujący na zdarzenia `reduce_motion` z UI.
-* Flagi `overlay_alerts`/`overlay_alert_category`/`overlay_alert_severity_*` generują alerty, gdy UI raportuje przekroczenie limitu nakładek i informują o odzyskaniu budżetu.
+* Sekcja `runtime.metrics_service` w `config/core.yaml` ustawia host/port serwera telemetrii, rozmiar historii (`history_size`), aktywność log sinka (`log_sink`), parametry eksportu JSONL (`jsonl_path`, `jsonl_fsync`), opcjonalny token autoryzacyjny (`auth_token`), ścieżkę logu alertów UI (`ui_alerts_jsonl_path`) oraz nowy klucz `ui_alerts_risk_profile`.  Loader normalizuje nazwę profilu do małych liter i waliduje ją względem sekcji `risk_profiles`, dzięki czemu runtime i narzędzia telemetryczne otrzymują spójne metadane audytowe.
+* Pola `reduce_motion_alerts`/`reduce_motion_mode`/`reduce_motion_category`/`reduce_motion_severity_*` sterują zachowaniem sinka reduce-motion (tryby `enable`/`jsonl`/`disable`), który deduplikuje zdarzenia spadku FPS i loguje je do JSONL. Loader konfiguracji normalizuje wartości trybów do małych liter i odrzuca inne warianty, dzięki czemu błędna konfiguracja zostaje wykryta przed startem runtime.
+* Pola `overlay_alerts`/`overlay_alert_mode`/`overlay_alert_category`/`overlay_alert_severity_*`/`overlay_alert_severity_critical`/`overlay_alert_critical_threshold` kontrolują eskalację przekroczeń budżetu nakładek (jsonl-only vs pełne alerty) oraz próg krytyczny. Tryb jest walidowany przez loader (`enable`/`jsonl`/`disable` – bez rozróżniania wielkości liter), więc błędna wartość zostanie zatrzymana przed uruchomieniem usług.
+* Pola `jank_alerts`/`jank_alert_mode`/`jank_alert_category`/`jank_alert_severity_spike`/`jank_alert_severity_critical`/`jank_alert_critical_over_ms` konfigurują alerty „jank spike” (przekroczenie budżetu klatki) i logowanie JSONL, umożliwiając np. eskalację krytyczną po przekroczeniu limitu ms. Loader normalizuje tryb i zgłasza błąd, jeśli YAML zawiera wartość spoza zbioru `enable`/`jsonl`/`disable`.
 * Wsparcie multi-window: `BotAppWindow` potrafi otwierać dodatkowe `ChartWindow` (`Ctrl+N`/przycisk), zapamiętywać liczbę i geometrię okien
   (`Qt.labs.settings`) oraz synchronizować guard/instrument pomiędzy wszystkimi widokami – spełnia wymagania pracy na wielu monitorach.
 * `ui/config/example.yaml` oraz flagi CLI (w tym `--overlay-disable-secondary-fps`) pozwalają spiąć powłokę z dowolnym datasetem

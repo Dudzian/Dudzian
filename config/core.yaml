@@ -60,6 +60,8 @@ runtime:
     jsonl_fsync: false
     # — rozszerzenia kompatybilne w obie strony —
     ui_alerts_jsonl_path: audit/metrics/ui_alerts.jsonl
+    ui_alerts_risk_profile: balanced
+    ui_alerts_risk_profiles_file: configs/telemetry_risk_profiles.yaml
     tls:
       enabled: false
       certificate_path: secrets/dev-metrics-server.crt
@@ -74,6 +76,13 @@ runtime:
     overlay_alert_category: ui.performance
     overlay_alert_severity_exceeded: warning
     overlay_alert_severity_recovered: info
+    overlay_alert_severity_critical: critical
+    overlay_alert_critical_threshold: 3
+    jank_alerts: true
+    jank_alert_category: ui.performance
+    jank_alert_severity_spike: warning
+    jank_alert_severity_critical: critical
+    jank_alert_critical_over_ms: 12.0
 
 strategies:
   core_daily_trend:

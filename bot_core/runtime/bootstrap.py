@@ -81,6 +81,17 @@ except Exception:  # pragma: no cover - brak telemetrii UI
     UiTelemetryAlertSink = None  # type: ignore
     DEFAULT_UI_ALERTS_JSONL_PATH = Path("logs/ui_telemetry_alerts.jsonl")
 
+try:  # pragma: no cover - presety profili ryzyka mogą nie istnieć
+    from bot_core.runtime.telemetry_risk_profiles import (  # type: ignore
+        MetricsRiskProfileResolver,
+        load_risk_profiles_with_metadata,
+        summarize_risk_profile,
+    )
+except Exception:  # pragma: no cover - brak presetów
+    MetricsRiskProfileResolver = None  # type: ignore
+    load_risk_profiles_with_metadata = None  # type: ignore
+    summarize_risk_profile = None  # type: ignore
+
 _DEFAULT_ADAPTERS: Mapping[str, ExchangeAdapterFactory] = {
     "binance_spot": BinanceSpotAdapter,
     "binance_futures": BinanceFuturesAdapter,
@@ -90,6 +101,53 @@ _DEFAULT_ADAPTERS: Mapping[str, ExchangeAdapterFactory] = {
 }
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _build_ui_alert_audit_metadata(
+    router: DefaultAlertRouter | None,
+    *,
+    requested_backend: str | None,
+) -> dict[str, object]:
+    """Zwraca metadane backendu audytu alertów UI dostępne w runtime."""
+
+    normalized_request = (requested_backend or "inherit").lower()
+    metadata: dict[str, object] = {"requested": normalized_request}
+
+    audit_log = getattr(router, "audit_log", None)
+
+    if isinstance(audit_log, FileAlertAuditLog):
+        metadata.update(
+            {
+                "backend": "file",
+                "directory": str(getattr(audit_log, "directory", "")) or None,
+                "pattern": getattr(audit_log, "filename_pattern", None),
+                "retention_days": getattr(audit_log, "retention_days", None),
+                "fsync": bool(getattr(audit_log, "fsync", False)),
+            }
+        )
+    elif isinstance(audit_log, InMemoryAlertAuditLog):
+        metadata["backend"] = "memory"
+    elif audit_log is None:
+        metadata["backend"] = None
+    else:  # pragma: no cover - diagnostyka innych backendów
+        metadata["backend"] = audit_log.__class__.__name__.lower()
+
+    note: str | None = None
+    backend_value = metadata.get("backend")
+    if normalized_request == "inherit":
+        note = "inherited_environment_router"
+    elif normalized_request == "file" and backend_value != "file":
+        note = "file_backend_unavailable"
+    elif normalized_request == "memory" and backend_value != "memory":
+        note = "memory_backend_not_selected"
+
+    if backend_value is None and note is None:
+        note = "router_missing_audit_log"
+
+    if note is not None:
+        metadata["note"] = note
+
+    return metadata
 
 
 @dataclass(slots=True)
@@ -116,6 +174,7 @@ class BootstrapContext:
     metrics_ui_alerts_metadata: Mapping[str, Any] | None = None
     metrics_jsonl_metadata: Mapping[str, Any] | None = None
     metrics_security_warnings: tuple[str, ...] | None = None
+    metrics_ui_alerts_settings: Mapping[str, Any] | None = None
 
 
 def bootstrap_environment(
@@ -186,11 +245,36 @@ def bootstrap_environment(
     metrics_service_enabled: bool | None = None
     metrics_ui_alerts_metadata: Mapping[str, Any] | None = None
     metrics_jsonl_metadata: Mapping[str, Any] | None = None
+    metrics_ui_alerts_settings: Mapping[str, Any] | None = None
+    metrics_risk_profiles_file: Mapping[str, Any] | None = None
     metrics_security_warnings: list[str] = []
     metrics_security_payload: dict[str, object] = {}
     metrics_config = getattr(core_config, "metrics_service", None)
     if metrics_config is not None:
         metrics_service_enabled = bool(getattr(metrics_config, "enabled", False))
+        profiles_file_value = getattr(metrics_config, "ui_alerts_risk_profiles_file", None)
+        if profiles_file_value:
+            normalized_file = Path(profiles_file_value).expanduser()
+            try:
+                normalized_file = normalized_file.resolve(strict=False)
+            except Exception:  # pragma: no cover - diagnostyka pomocnicza
+                normalized_file = normalized_file.absolute()
+            if load_risk_profiles_with_metadata is None:  # type: ignore[truthy-bool]
+                metrics_risk_profiles_file = {
+                    "path": str(normalized_file),
+                    "warning": "risk_profile_loader_unavailable",
+                }
+            else:
+                try:
+                    _, metrics_risk_profiles_file = load_risk_profiles_with_metadata(  # type: ignore[misc]
+                        str(normalized_file),
+                        origin_label=f"metrics_service_config:{normalized_file}",
+                    )
+                except Exception:  # pragma: no cover - diagnostyka konfiguracji
+                    _LOGGER.exception(
+                        "Nie udało się wczytać profili ryzyka telemetrii z %s", normalized_file
+                    )
+                    raise
         jsonl_candidate = getattr(metrics_config, "jsonl_path", None)
         if jsonl_candidate:
             try:
@@ -238,11 +322,175 @@ def bootstrap_environment(
                     except Exception:  # pragma: no cover - zachowujemy przybliżenie
                         configured_path = (base_dir / configured_path).absolute()
             telemetry_log = configured_path or default_path
-            metrics_sinks.append(
-                UiTelemetryAlertSink(alert_router, jsonl_path=telemetry_log)
+            risk_profile_meta: Mapping[str, Any] | None = None
+            resolver: "MetricsRiskProfileResolver" | None = None
+            if metrics_config is not None and getattr(metrics_config, "ui_alerts_risk_profile", None):
+                normalized_profile = str(metrics_config.ui_alerts_risk_profile).strip().lower()
+                if MetricsRiskProfileResolver is None:
+                    risk_profile_meta = {"name": normalized_profile, "warning": "resolver_unavailable"}
+                else:
+                    try:
+                        resolver = MetricsRiskProfileResolver(normalized_profile, metrics_config)
+                    except KeyError:
+                        risk_profile_meta = {"name": normalized_profile, "error": "unknown_profile"}
+                        _LOGGER.warning(
+                            "Nieznany profil ryzyka telemetrii UI w bootstrapie: %s", normalized_profile
+                        )
+                    except Exception:  # pragma: no cover - diagnostyka
+                        risk_profile_meta = {"name": normalized_profile}
+                        _LOGGER.exception(
+                            "Nie udało się zastosować profilu ryzyka %s w bootstrapie", normalized_profile
+                        )
+
+            def _resolve_metrics_value(field_name: str, default: Any) -> Any:
+                if metrics_config is None:
+                    return default
+                value = getattr(metrics_config, field_name, default)
+                if resolver is not None:
+                    value = resolver.override(field_name, value)
+                return value
+            reduce_mode = "enable"
+            overlay_mode = "enable"
+            jank_mode = "disable"
+            reduce_candidate = _resolve_metrics_value("reduce_motion_mode", None)
+            if reduce_candidate is not None:
+                candidate = str(reduce_candidate).lower()
+                if candidate in {"enable", "jsonl", "disable"}:
+                    reduce_mode = candidate
+            elif metrics_config is not None:
+                reduce_mode = (
+                    "enable" if bool(_resolve_metrics_value("reduce_motion_alerts", True)) else "disable"
+                )
+            overlay_candidate = _resolve_metrics_value("overlay_alert_mode", None)
+            if overlay_candidate is not None:
+                candidate = str(overlay_candidate).lower()
+                if candidate in {"enable", "jsonl", "disable"}:
+                    overlay_mode = candidate
+            elif metrics_config is not None:
+                overlay_mode = (
+                    "enable" if bool(_resolve_metrics_value("overlay_alerts", True)) else "disable"
+                )
+            jank_candidate = _resolve_metrics_value("jank_alert_mode", None)
+            if jank_candidate is not None:
+                candidate = str(jank_candidate).lower()
+                if candidate in {"enable", "jsonl", "disable"}:
+                    jank_mode = candidate
+            elif metrics_config is not None:
+                jank_mode = (
+                    "enable" if bool(_resolve_metrics_value("jank_alerts", False)) else "disable"
+                )
+
+            reduce_dispatch = reduce_mode == "enable"
+            overlay_dispatch = overlay_mode == "enable"
+            jank_dispatch = jank_mode == "enable"
+            reduce_logging = reduce_mode in {"enable", "jsonl"}
+            overlay_logging = overlay_mode in {"enable", "jsonl"}
+            jank_logging = jank_mode in {"enable", "jsonl"}
+
+            reduce_category = _resolve_metrics_value("reduce_motion_category", "ui.performance")
+            reduce_active = _resolve_metrics_value("reduce_motion_severity_active", "warning")
+            reduce_recovered = _resolve_metrics_value("reduce_motion_severity_recovered", "info")
+            overlay_category = _resolve_metrics_value("overlay_alert_category", "ui.performance")
+            overlay_exceeded = _resolve_metrics_value("overlay_alert_severity_exceeded", "warning")
+            overlay_recovered = _resolve_metrics_value("overlay_alert_severity_recovered", "info")
+            overlay_critical = _resolve_metrics_value("overlay_alert_severity_critical", "critical")
+            overlay_threshold_raw = _resolve_metrics_value("overlay_alert_critical_threshold", 2)
+            jank_category = _resolve_metrics_value("jank_alert_category", "ui.performance")
+            jank_spike = _resolve_metrics_value("jank_alert_severity_spike", "warning")
+            jank_critical = _resolve_metrics_value("jank_alert_severity_critical", None)
+            jank_threshold_raw = _resolve_metrics_value("jank_alert_critical_over_ms", None)
+
+            sink_kwargs: dict[str, object] = {
+                "jsonl_path": telemetry_log,
+                "enable_reduce_motion_alerts": reduce_dispatch,
+                "enable_overlay_alerts": overlay_dispatch,
+                "log_reduce_motion_events": reduce_logging,
+                "log_overlay_events": overlay_logging,
+                "enable_jank_alerts": jank_dispatch,
+                "log_jank_events": jank_logging,
+                "reduce_motion_category": reduce_category,
+                "reduce_motion_severity_active": reduce_active,
+                "reduce_motion_severity_recovered": reduce_recovered,
+                "overlay_category": overlay_category,
+                "overlay_severity_exceeded": overlay_exceeded,
+                "overlay_severity_recovered": overlay_recovered,
+                "jank_category": jank_category,
+                "jank_severity_spike": jank_spike,
+            }
+            overlay_threshold_value: int | None = None
+            if overlay_threshold_raw is not None:
+                try:
+                    overlay_threshold_value = int(overlay_threshold_raw)
+                except (TypeError, ValueError):
+                    _LOGGER.debug(
+                        "Nieprawidłowy próg overlay_alert_critical_threshold=%s", overlay_threshold_raw
+                    )
+                else:
+                    sink_kwargs["overlay_critical_threshold"] = overlay_threshold_value
+            jank_threshold_value: float | None = None
+            if jank_threshold_raw is not None:
+                try:
+                    jank_threshold_value = float(jank_threshold_raw)
+                except (TypeError, ValueError):
+                    _LOGGER.debug(
+                        "Nieprawidłowy próg jank_alert_critical_over_ms=%s", jank_threshold_raw
+                    )
+                else:
+                    sink_kwargs["jank_critical_over_ms"] = jank_threshold_value
+            if overlay_critical is not None:
+                sink_kwargs["overlay_severity_critical"] = overlay_critical
+
+            settings_payload: dict[str, object] = {
+                "jsonl_path": str(telemetry_log),
+                "reduce_mode": reduce_mode,
+                "overlay_mode": overlay_mode,
+                "jank_mode": jank_mode,
+                "reduce_motion_alerts": reduce_dispatch,
+                "overlay_alerts": overlay_dispatch,
+                "jank_alerts": jank_dispatch,
+                "reduce_motion_logging": reduce_logging,
+                "overlay_logging": overlay_logging,
+                "jank_logging": jank_logging,
+                "reduce_motion_category": reduce_category,
+                "reduce_motion_severity_active": reduce_active,
+                "reduce_motion_severity_recovered": reduce_recovered,
+                "overlay_category": overlay_category,
+                "overlay_severity_exceeded": overlay_exceeded,
+                "overlay_severity_recovered": overlay_recovered,
+                "overlay_severity_critical": overlay_critical,
+                "overlay_critical_threshold": overlay_threshold_value,
+                "jank_category": jank_category,
+                "jank_severity_spike": jank_spike,
+                "jank_severity_critical": jank_critical,
+                "jank_critical_over_ms": jank_threshold_value,
+            }
+            if resolver is not None:
+                risk_profile_meta = resolver.metadata()
+            summary_payload: Mapping[str, Any] | None = None
+            if risk_profile_meta is not None:
+                sink_kwargs["risk_profile"] = dict(risk_profile_meta)
+                settings_payload["risk_profile"] = dict(risk_profile_meta)
+                summary_payload = risk_profile_meta.get("summary")
+                if summary_payload is None and summarize_risk_profile is not None:
+                    try:
+                        summary_payload = summarize_risk_profile(risk_profile_meta)
+                    except Exception:  # pragma: no cover - defensywne
+                        summary_payload = None
+            if summary_payload:
+                sink_kwargs["risk_profile_summary"] = dict(summary_payload)
+                settings_payload["risk_profile_summary"] = dict(summary_payload)
+            if metrics_risk_profiles_file is not None:
+                settings_payload["risk_profiles_file"] = dict(metrics_risk_profiles_file)
+            audit_backend = _build_ui_alert_audit_metadata(
+                alert_router,
+                requested_backend=getattr(metrics_config, "ui_alerts_audit_backend", None),
             )
+            settings_payload["audit"] = audit_backend
+
+            metrics_sinks.append(UiTelemetryAlertSink(alert_router, **sink_kwargs))
             metrics_ui_alert_path = telemetry_log
             metrics_ui_alert_sink_active = True
+            metrics_ui_alerts_settings = settings_payload
             try:
                 metrics_ui_alerts_metadata = file_reference_metadata(
                     telemetry_log, role="ui_alerts_jsonl"
@@ -255,6 +503,22 @@ def bootstrap_environment(
                 metrics_security_payload["metrics_ui_alerts"] = metrics_ui_alerts_metadata
         except Exception:  # pragma: no cover - nie blokujemy startu runtime
             _LOGGER.exception("Nie udało się zainicjalizować UiTelemetryAlertSink")
+
+        if metrics_ui_alerts_settings is None and risk_profile_meta is not None:
+            metrics_ui_alerts_settings = {"risk_profile": dict(risk_profile_meta)}
+            summary_payload = risk_profile_meta.get("summary")
+            if summary_payload:
+                metrics_ui_alerts_settings["risk_profile_summary"] = dict(summary_payload)
+        if metrics_risk_profiles_file is not None:
+            if metrics_ui_alerts_settings is None:
+                metrics_ui_alerts_settings = {
+                    "risk_profiles_file": dict(metrics_risk_profiles_file)
+                }
+            else:
+                metrics_ui_alerts_settings = dict(metrics_ui_alerts_settings)
+                metrics_ui_alerts_settings["risk_profiles_file"] = dict(
+                    metrics_risk_profiles_file
+                )
 
     if metrics_security_payload:
         warnings_detected = log_security_warnings(
@@ -331,6 +595,7 @@ def bootstrap_environment(
         metrics_security_warnings=tuple(metrics_security_warnings)
         if metrics_security_warnings
         else None,
+        metrics_ui_alerts_settings=metrics_ui_alerts_settings,
     )
 
 

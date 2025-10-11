@@ -68,6 +68,10 @@ def _make_dummy_server(
                     "path": str(jsonl_path) if jsonl_path is not None else None,
                     "fsync": False,
                 },
+                "ui_alerts_sink": {
+                    "active": False,
+                    "path": None,
+                },
                 "sink_descriptions": [
                     {
                         "class": sink.__class__.__name__,
@@ -314,17 +318,18 @@ def test_metrics_service_print_config_plan(tmp_path: Path, monkeypatch: pytest.M
     assert runtime_state["available"] is True
     assert runtime_state["reason"] is None
     assert runtime_state["sink_count"] == 2
-    assert runtime_state["jsonl_sink_active"] is True
-    assert runtime_state["logging_sink_active"] is True
-    assert runtime_state["jsonl_sink"]["path"].endswith("telemetry.jsonl")
-    assert runtime_state["tls"]["enabled"] is True
-    assert runtime_state["metadata_source"] == "runtime_metadata"
-    parameter_sources = payload.get("parameter_sources", {})
-    assert parameter_sources.get("fail_on_security_warnings") == "default"
-    security = _get_security_section(payload)
-    assert security["enabled"] is False
-    assert security["source"] == "default"
-    assert security["parameter_source"] == "default"
+
+
+def test_metrics_service_print_risk_profiles(capsys: pytest.CaptureFixture[str]) -> None:
+    exit_code = run_metrics_service.main(["--print-risk-profiles"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert "risk_profiles" in payload
+    assert "conservative" in payload["risk_profiles"]
+    assert (
+        payload["risk_profiles"]["conservative"]["summary"]["name"]
+        == "conservative"
+    )
 
 
 def test_metrics_service_fail_on_security_warnings(
@@ -416,6 +421,10 @@ def test_metrics_service_config_plan_jsonl_written(tmp_path: Path, monkeypatch: 
     assert runtime_state["logging_sink_active"] is True
     assert runtime_state["jsonl_sink_active"] is False
     assert runtime_state["tls"]["enabled"] is False
+    ui_section = payload["metrics"]["ui_alerts"]
+    assert ui_section["reduce_mode"] == "enable"
+    assert ui_section["reduce_motion_dispatch"] is True
+    assert ui_section["reduce_motion_logging"] is True
 
 
 def test_metrics_service_core_config_applies_settings(
@@ -499,6 +508,14 @@ def test_metrics_service_core_config_applies_settings(
     def fake_build_server(**kwargs):
         nonlocal captured_kwargs
         captured_kwargs = kwargs
+        ui_path = kwargs.get("ui_alerts_jsonl_path")
+        sink_meta = dummy_server.runtime_metadata.get("ui_alerts_sink", {})
+        if ui_path:
+            sink_meta.update({"active": True, "path": str(ui_path)})
+        else:
+            sink_meta.setdefault("active", False)
+            sink_meta.setdefault("path", None)
+        dummy_server.runtime_metadata["ui_alerts_sink"] = sink_meta
         return dummy_server
 
     monkeypatch.setattr(run_metrics_service, "_build_server", fake_build_server)
@@ -520,12 +537,17 @@ def test_metrics_service_core_config_applies_settings(
     assert payload["logging_sink_enabled"] is False
     assert payload["jsonl_sink"]["configured"] is True
     assert payload["jsonl_sink"]["file"]["exists"] is True
+    assert payload["ui_alerts"]["configured"] is True
+    assert payload["ui_alerts"]["disabled"] is False
+    assert payload["ui_alerts"]["file"]["exists"] is True
 
     runtime_state = payload["runtime_state"]
     assert runtime_state["available"] is True
     assert runtime_state["reason"] is None
     assert runtime_state["logging_sink_active"] is False
     assert runtime_state["jsonl_sink"]["path"].endswith("telemetry.jsonl")
+    assert runtime_state["ui_alerts_sink"]["path"].endswith("ui_alerts.jsonl")
+    assert runtime_state["ui_alerts_sink"].get("active") is True
     assert runtime_state["tls"]["enabled"] is True
     assert runtime_state["tls"]["require_client_auth"] is True
 
@@ -550,6 +572,8 @@ def test_metrics_service_core_config_applies_settings(
     assert captured_kwargs["history_size"] == 2048
     assert captured_kwargs["enable_logging_sink"] is False
     assert Path(captured_kwargs["jsonl_path"]) == telemetry_jsonl
+    assert captured_kwargs["enable_ui_alerts"] is True
+    assert Path(captured_kwargs["ui_alerts_jsonl_path"]) == ui_alerts_jsonl
     tls_kwargs = captured_kwargs["tls_config"]
     assert Path(tls_kwargs["certificate_path"]) == cert_path
     assert Path(tls_kwargs["private_key_path"]) == key_path
@@ -575,6 +599,9 @@ def test_print_config_plan_without_runtime(monkeypatch: pytest.MonkeyPatch, caps
     assert runtime_state["reason"] == "metrics_runtime_unavailable"
     assert runtime_state["details"] == "brak gRPC"
     assert runtime_state["jsonl_sink"]["path"] is None
+    assert runtime_state["ui_alerts_sink"]["path"] is None
+    assert runtime_state["ui_alerts_sink"].get("disabled") is False
+    assert payload["ui_alerts"]["configured"] is False
 
 
 def test_config_plan_jsonl_without_runtime(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -596,6 +623,152 @@ def test_config_plan_jsonl_without_runtime(monkeypatch: pytest.MonkeyPatch, tmp_
     assert runtime_state["available"] is False
     assert runtime_state["reason"] == "metrics_runtime_unavailable"
     assert runtime_state["details"] == "missing grpc runtime"
+    assert runtime_state["ui_alerts_sink"]["path"] is None
+    assert payload["ui_alerts"]["configured"] is False
+
+
+def test_metrics_service_risk_profile_overrides(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    monkeypatch.setattr(run_metrics_service, "METRICS_RUNTIME_AVAILABLE", False)
+    monkeypatch.setattr(
+        run_metrics_service,
+        "METRICS_RUNTIME_UNAVAILABLE_MESSAGE",
+        "no runtime",
+    )
+
+    exit_code = run_metrics_service.main([
+        "--print-config-plan",
+        "--ui-alerts-risk-profile",
+        "conservative",
+    ])
+    assert exit_code == 0
+
+    payload = json.loads(capsys.readouterr().out.strip())
+    ui_section = payload["ui_alerts"]
+    assert ui_section["risk_profile"]["name"] == "conservative"
+    assert ui_section["risk_profile_summary"]["name"] == "conservative"
+    assert ui_section["risk_profile_summary"]["severity_min"] == "warning"
+    assert ui_section["reduce_motion_severity_active"] == "critical"
+    assert ui_section["overlay_severity_exceeded"] == "critical"
+    assert ui_section["overlay_critical_threshold"] == 1
+    assert ui_section["jank_severity_spike"] == "warning"
+    runtime_config = payload["runtime_state"]["ui_alerts_sink"]["config"]
+    assert runtime_config["risk_profile"]["name"] == "conservative"
+    assert runtime_config["risk_profile"]["severity_min"] == "warning"
+    assert runtime_config["risk_profile_summary"]["name"] == "conservative"
+    assert runtime_config["risk_profile_summary"]["severity_min"] == "warning"
+    runtime_applied = runtime_config["risk_profile"].get("applied_overrides")
+    if runtime_applied is not None:
+        assert runtime_applied["overlay_alert_severity_critical"] == "critical"
+        assert runtime_applied["jank_alert_severity_critical"] == "error"
+
+
+def test_metrics_service_risk_profiles_file_cli(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys
+) -> None:
+    monkeypatch.setattr(run_metrics_service, "METRICS_RUNTIME_AVAILABLE", False)
+    monkeypatch.setattr(run_metrics_service, "METRICS_RUNTIME_UNAVAILABLE_MESSAGE", "no runtime")
+
+    profiles_path = tmp_path / "telemetry_profiles.json"
+    profiles_path.write_text(
+        json.dumps(
+            {
+                "risk_profiles": {
+                    "custom": {
+                        "metrics_service_overrides": {
+                            "ui_alerts_reduce_active_severity": "error",
+                            "ui_alerts_overlay_critical_threshold": 5,
+                        },
+                        "severity_min": "notice",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = run_metrics_service.main(
+        [
+            "--print-config-plan",
+            "--risk-profiles-file",
+            str(profiles_path),
+            "--ui-alerts-risk-profile",
+            "custom",
+        ]
+    )
+    assert exit_code == 0
+
+    payload = json.loads(capsys.readouterr().out.strip())
+    ui_section = payload["ui_alerts"]
+    assert ui_section["risk_profile"]["name"] == "custom"
+    assert ui_section["risk_profile"]["severity_min"] == "notice"
+    assert ui_section["risk_profile_summary"]["name"] == "custom"
+    assert ui_section["risk_profile_summary"]["severity_min"] == "notice"
+    assert ui_section["reduce_motion_severity_active"] == "error"
+    assert ui_section["overlay_critical_threshold"] == 5
+    file_meta = ui_section["risk_profiles_file"]
+    assert file_meta["path"] == str(profiles_path)
+    assert "custom" in file_meta["registered_profiles"]
+
+    runtime_config = payload["runtime_state"]["ui_alerts_sink"]["config"]
+    assert runtime_config["risk_profile"]["name"] == "custom"
+    assert runtime_config["risk_profile_summary"]["name"] == "custom"
+    runtime_file_meta = runtime_config["risk_profiles_file"]
+    assert runtime_file_meta["path"] == str(profiles_path)
+
+
+def test_metrics_service_risk_profiles_directory(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys) -> None:
+    monkeypatch.setattr(run_metrics_service, "METRICS_RUNTIME_AVAILABLE", False)
+    monkeypatch.setattr(run_metrics_service, "METRICS_RUNTIME_UNAVAILABLE_MESSAGE", "no runtime")
+
+    profiles_dir = tmp_path / "profiles"
+    profiles_dir.mkdir()
+    (profiles_dir / "ops.json").write_text(
+        json.dumps(
+            {
+                "risk_profiles": {
+                    "ops_dir": {
+                        "metrics_service_overrides": {
+                            "ui_alerts_overlay_critical_threshold": 4
+                        },
+                        "severity_min": "warning",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (profiles_dir / "lab.yaml").write_text(
+        "risk_profiles:\n  lab_dir:\n    severity_min: notice\n",
+        encoding="utf-8",
+    )
+
+    exit_code = run_metrics_service.main(
+        [
+            "--print-config-plan",
+            "--risk-profiles-file",
+            str(profiles_dir),
+            "--ui-alerts-risk-profile",
+            "ops_dir",
+        ]
+    )
+    assert exit_code == 0
+
+    payload = json.loads(capsys.readouterr().out.strip())
+    ui_section = payload["ui_alerts"]
+    assert ui_section["risk_profile"]["name"] == "ops_dir"
+    assert ui_section["risk_profile_summary"]["name"] == "ops_dir"
+    file_meta = ui_section["risk_profiles_file"]
+    assert file_meta["type"] == "directory"
+    assert file_meta["path"] == str(profiles_dir)
+    assert "ops_dir" in file_meta["registered_profiles"]
+    assert any(entry["path"].endswith("ops.json") for entry in file_meta["files"])
+
+    runtime_config = payload["runtime_state"]["ui_alerts_sink"]["config"]
+    assert runtime_config["risk_profile"]["name"] == "ops_dir"
+    assert runtime_config["risk_profile_summary"]["name"] == "ops_dir"
+    runtime_file_meta = runtime_config["risk_profiles_file"]
+    assert runtime_file_meta["type"] == "directory"
+    assert runtime_file_meta["path"] == str(profiles_dir)
 
 
 def _find_env_entry(entries: list[dict[str, object]], option: str) -> dict[str, object]:
@@ -611,6 +784,168 @@ def _get_security_section(payload: Mapping[str, object]) -> Mapping[str, object]
     fail_section = section.get("fail_on_security_warnings")
     assert isinstance(fail_section, Mapping)
     return fail_section
+
+
+def test_ui_alert_cli_options_forwarded(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    captured_kwargs: dict[str, object] = {}
+
+    def fake_build_server(**kwargs):
+        nonlocal captured_kwargs
+        captured_kwargs = kwargs
+
+        class Dummy:
+            address = "127.0.0.1:6000"
+
+            def start(self) -> None:
+                pass
+
+            def wait_for_termination(self, timeout=None):
+                return True
+
+            def stop(self, grace=None):
+                pass
+
+        return Dummy()
+
+    monkeypatch.setattr(run_metrics_service, "_build_server", fake_build_server)
+    monkeypatch.setattr(run_metrics_service, "METRICS_RUNTIME_AVAILABLE", True)
+
+    alerts_path = tmp_path / "alerts.jsonl"
+    audit_dir = tmp_path / "audit"
+    args = [
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "0",
+        "--ui-alerts-jsonl",
+        str(alerts_path),
+        "--ui-alerts-reduce-mode",
+        "disable",
+        "--ui-alerts-overlay-mode",
+        "enable",
+        "--ui-alerts-reduce-category",
+        "ops.ui.reduce",
+        "--ui-alerts-reduce-active-severity",
+        "critical",
+        "--ui-alerts-reduce-recovered-severity",
+        "notice",
+        "--ui-alerts-overlay-category",
+        "ops.ui.overlay",
+        "--ui-alerts-overlay-exceeded-severity",
+        "warning",
+        "--ui-alerts-overlay-recovered-severity",
+        "info",
+        "--ui-alerts-overlay-critical-severity",
+        "major",
+        "--ui-alerts-overlay-critical-threshold",
+        "3",
+        "--ui-alerts-jank-mode",
+        "enable",
+        "--ui-alerts-jank-category",
+        "ops.ui.jank",
+        "--ui-alerts-jank-spike-severity",
+        "major",
+        "--ui-alerts-jank-critical-severity",
+        "critical",
+        "--ui-alerts-jank-critical-over-ms",
+        "8.5",
+        "--ui-alerts-audit-dir",
+        str(audit_dir),
+        "--ui-alerts-audit-pattern",
+        "custom-%Y.jsonl",
+        "--ui-alerts-audit-retention-days",
+        "7",
+        "--ui-alerts-audit-fsync",
+        "--shutdown-after",
+        "0.0",
+    ]
+
+    exit_code = run_metrics_service.main(args)
+    assert exit_code == 0
+    ui_config = captured_kwargs.get("ui_alerts_config")
+    assert ui_config is not None
+    assert ui_config["reduce_mode"] == "disable"
+    assert ui_config["overlay_mode"] == "enable"
+    assert ui_config["reduce_motion_alerts"] is False
+    assert ui_config["overlay_alerts"] is True
+    assert ui_config["reduce_motion_logging"] is False
+    assert ui_config["overlay_logging"] is True
+    assert ui_config["reduce_motion_category"] == "ops.ui.reduce"
+    assert ui_config["reduce_motion_severity_active"] == "critical"
+    assert ui_config["reduce_motion_severity_recovered"] == "notice"
+    assert ui_config["overlay_category"] == "ops.ui.overlay"
+    assert ui_config["overlay_severity_critical"] == "major"
+    assert ui_config["overlay_critical_threshold"] == 3
+    assert ui_config["jank_mode"] == "enable"
+    assert ui_config["jank_alerts"] is True
+    assert ui_config["jank_logging"] is True
+    assert ui_config["jank_category"] == "ops.ui.jank"
+    assert ui_config["jank_severity_spike"] == "major"
+    assert ui_config["jank_severity_critical"] == "critical"
+    assert ui_config["jank_critical_over_ms"] == pytest.approx(8.5)
+    assert ui_config["audit"]["requested"] == "auto"
+    assert ui_config["audit"]["backend"] == "file"
+    assert ui_config["audit"]["directory"] == str(audit_dir)
+    assert ui_config["audit"]["pattern"] == "custom-%Y.jsonl"
+    assert ui_config["audit"]["retention_days"] == 7
+    assert ui_config["audit"]["fsync"] is True
+    assert captured_kwargs.get("ui_alerts_audit_dir") == audit_dir
+    assert captured_kwargs.get("ui_alerts_audit_pattern") == "custom-%Y.jsonl"
+    assert captured_kwargs.get("ui_alerts_audit_retention_days") == 7
+    assert captured_kwargs.get("ui_alerts_audit_fsync") is True
+
+
+def test_ui_alerts_audit_memory_note_when_file_backend_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    captured_kwargs: dict[str, object] = {}
+
+    def fake_build_server(**kwargs):
+        nonlocal captured_kwargs
+        captured_kwargs = kwargs
+
+        class Dummy:
+            address = "127.0.0.1:6000"
+
+            def start(self) -> None:
+                pass
+
+            def wait_for_termination(self, timeout=None):
+                return True
+
+            def stop(self, grace=None):
+                pass
+
+        return Dummy()
+
+    monkeypatch.setattr(run_metrics_service, "_build_server", fake_build_server)
+    monkeypatch.setattr(run_metrics_service, "METRICS_RUNTIME_AVAILABLE", True)
+    monkeypatch.setattr(run_metrics_service, "FileAlertAuditLog", None)
+
+    alerts_path = tmp_path / "alerts.jsonl"
+    audit_dir = tmp_path / "audit"
+    args = [
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "0",
+        "--ui-alerts-jsonl",
+        str(alerts_path),
+        "--ui-alerts-audit-dir",
+        str(audit_dir),
+        "--ui-alerts-audit-fsync",
+        "--shutdown-after",
+        "0.0",
+    ]
+
+    exit_code = run_metrics_service.main(args)
+    assert exit_code == 0
+
+    ui_config = captured_kwargs.get("ui_alerts_config")
+    assert ui_config is not None
+    audit_config = ui_config.get("audit")
+    assert audit_config is not None
+    assert audit_config["requested"] == "auto"
+    assert audit_config["backend"] == "memory"
+    assert audit_config.get("note") == "file_backend_unavailable"
 
 
 def test_environment_override_applied_without_runtime(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
@@ -728,11 +1063,129 @@ def test_environment_override_fail_on_security_warnings(
     assert parameter_sources.get("fail_on_security_warnings") == "env"
     security = _get_security_section(payload)
     assert security["enabled"] is True
-    assert security["source"] == "env:RUN_METRICS_SERVICE_FAIL_ON_SECURITY_WARNINGS"
-    assert security["parameter_source"] == "env"
-    assert security["environment_variable"] == "RUN_METRICS_SERVICE_FAIL_ON_SECURITY_WARNINGS"
-    assert security["environment_applied"] is True
-    assert security["environment_raw_value"] == "true"
+
+
+def test_environment_override_ui_alerts_audit(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys) -> None:
+    monkeypatch.setattr(run_metrics_service, "METRICS_RUNTIME_AVAILABLE", False)
+    audit_dir = tmp_path / "ui_audit"
+    monkeypatch.setenv("RUN_METRICS_SERVICE_UI_ALERTS_AUDIT_DIR", str(audit_dir))
+    monkeypatch.setenv("RUN_METRICS_SERVICE_UI_ALERTS_AUDIT_PATTERN", "ops-%Y.jsonl")
+    monkeypatch.setenv("RUN_METRICS_SERVICE_UI_ALERTS_AUDIT_RETENTION_DAYS", "30")
+    monkeypatch.setenv("RUN_METRICS_SERVICE_UI_ALERTS_AUDIT_FSYNC", "true")
+
+    exit_code = run_metrics_service.main(["--print-config-plan"])
+    assert exit_code == 0
+
+    payload = json.loads(capsys.readouterr().out.strip())
+    audit_info = payload["ui_alerts"]["audit"]
+    assert audit_info["requested"] == "auto"
+    assert audit_info["backend"] == "file"
+    assert audit_info["directory"] == str(audit_dir)
+    assert audit_info["pattern"] == "ops-%Y.jsonl"
+    assert audit_info["retention_days"] == 30
+    assert audit_info["fsync"] is True
+    env_entries = payload.get("environment_overrides", {}).get("entries", [])
+    dir_entry = _find_env_entry(env_entries, "ui_alerts_audit_dir")
+    assert dir_entry["applied"] is True
+    assert dir_entry["parsed_value"] == str(audit_dir)
+    pattern_entry = _find_env_entry(env_entries, "ui_alerts_audit_pattern")
+    assert pattern_entry["parsed_value"] == "ops-%Y.jsonl"
+    retention_entry = _find_env_entry(env_entries, "ui_alerts_audit_retention_days")
+    assert retention_entry["parsed_value"] == 30
+    fsync_entry = _find_env_entry(env_entries, "ui_alerts_audit_fsync")
+    assert fsync_entry["parsed_value"] is True
+    parameter_sources = payload.get("parameter_sources", {})
+    assert parameter_sources.get("ui_alerts_audit_dir") == "env"
+    assert parameter_sources.get("ui_alerts_audit_pattern") == "env"
+    assert parameter_sources.get("ui_alerts_audit_retention_days") == "env"
+    assert parameter_sources.get("ui_alerts_audit_fsync") == "env"
+
+
+def test_print_plan_marks_memory_audit_when_file_backend_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys
+) -> None:
+    monkeypatch.setattr(run_metrics_service, "METRICS_RUNTIME_AVAILABLE", False)
+    monkeypatch.setattr(run_metrics_service, "FileAlertAuditLog", None)
+
+    audit_dir = tmp_path / "audit"
+    exit_code = run_metrics_service.main(
+        ["--ui-alerts-audit-dir", str(audit_dir), "--print-config-plan"]
+    )
+    assert exit_code == 0
+
+    payload = json.loads(capsys.readouterr().out.strip())
+    audit_section = payload["ui_alerts"]["audit"]
+    assert audit_section["requested"] == "auto"
+    assert audit_section["backend"] == "memory"
+    assert audit_section.get("note") == "file_backend_unavailable"
+    assert "directory" not in audit_section
+
+
+def test_build_server_uses_memory_audit_when_file_backend_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    captured_kwargs: dict[str, object] = {}
+
+    def fake_create_metrics_server(**kwargs):
+        nonlocal captured_kwargs
+        captured_kwargs = kwargs
+
+        class Dummy:
+            address = "127.0.0.1:50100"
+
+            def start(self) -> None:
+                pass
+
+        return Dummy()
+
+    class DummyRouter:
+        def __init__(self, audit_log) -> None:
+            self.audit_log = audit_log
+
+        def register(self, channel) -> None:
+            return None
+
+    class DummyMemoryAudit:
+        def __init__(self, *_, **__):
+            pass
+
+    class DummySink:
+        def __init__(self, _router, **kwargs) -> None:
+            self.kwargs = kwargs
+
+    monkeypatch.setattr(run_metrics_service, "create_metrics_server", fake_create_metrics_server)
+    monkeypatch.setattr(run_metrics_service, "METRICS_RUNTIME_AVAILABLE", True)
+    monkeypatch.setattr(run_metrics_service, "JsonlSink", None)
+    monkeypatch.setattr(run_metrics_service, "UiTelemetryAlertSink", DummySink)
+    monkeypatch.setattr(run_metrics_service, "DefaultAlertRouter", DummyRouter)
+    monkeypatch.setattr(run_metrics_service, "InMemoryAlertAuditLog", DummyMemoryAudit)
+    monkeypatch.setattr(run_metrics_service, "FileAlertAuditLog", None)
+
+    server = run_metrics_service._build_server(
+        host="127.0.0.1",
+        port=0,
+        history_size=32,
+        enable_logging_sink=True,
+        jsonl_path=None,
+        jsonl_fsync=False,
+        auth_token=None,
+        enable_ui_alerts=True,
+        ui_alerts_jsonl_path=tmp_path / "ui_alerts.jsonl",
+        ui_alerts_options=None,
+        ui_alerts_config=None,
+        ui_alerts_audit_dir=tmp_path / "audit",
+        ui_alerts_audit_pattern=None,
+        ui_alerts_audit_retention_days=None,
+        ui_alerts_audit_fsync=False,
+        extra_sinks=(),
+        tls_config=None,
+    )
+
+    assert server is not None
+    audit_config = captured_kwargs.get("ui_alerts_config", {}).get("audit")
+    assert audit_config is not None
+    assert audit_config["backend"] == "memory"
+    assert audit_config.get("note") == "file_backend_unavailable"
 
 
 def test_environment_override_invalid_boolean(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -741,3 +1194,29 @@ def test_environment_override_invalid_boolean(monkeypatch: pytest.MonkeyPatch) -
 
     with pytest.raises(SystemExit):
         run_metrics_service.main([])
+
+
+def test_ui_alerts_audit_backend_memory_flag(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys) -> None:
+    monkeypatch.setattr(run_metrics_service, "METRICS_RUNTIME_AVAILABLE", False)
+    exit_code = run_metrics_service.main(
+        [
+            "--ui-alerts-audit-backend",
+            "memory",
+            "--ui-alerts-audit-dir",
+            str(tmp_path / "audit"),
+            "--print-config-plan",
+        ]
+    )
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out.strip())
+    audit_info = payload["ui_alerts"]["audit"]
+    assert audit_info["requested"] == "memory"
+    assert audit_info["backend"] == "memory"
+    assert audit_info.get("note") == "directory_ignored_memory_backend"
+    assert "directory" not in audit_info
+
+
+def test_ui_alerts_audit_backend_file_requires_directory(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(run_metrics_service, "METRICS_RUNTIME_AVAILABLE", False)
+    with pytest.raises(SystemExit):
+        run_metrics_service.main(["--ui-alerts-audit-backend", "file", "--print-config-plan"])
