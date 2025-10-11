@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Mapping
 
 from bot_core.config.models import CoreConfig
+
+_UI_ALERT_AUDIT_BACKEND_ALLOWED = {"auto", "file", "memory"}
 
 # Mapowanie sufiksów interwałów na sekundy.
 _INTERVAL_SUFFIX_TO_SECONDS: Mapping[str, int] = {
@@ -84,6 +87,7 @@ def validate_core_config(config: CoreConfig) -> ConfigValidationResult:
     _validate_runtime_controllers(config, errors, warnings)
     _validate_instrument_universes(config, errors, warnings)
     _validate_environments(config, errors, warnings)
+    _validate_metrics_service(config, errors, warnings)
 
     return ConfigValidationResult(errors=errors, warnings=warnings)
 
@@ -339,6 +343,196 @@ def _validate_alert_channels(
         if key not in mapping:
             errors.append(f"{context}: kanał alertowy '{channel}' nie istnieje w sekcji alerts")
 
+
+def _validate_metrics_service(
+    config: CoreConfig, errors: list[str], warnings: list[str]
+) -> None:
+    metrics = getattr(config, "metrics_service", None)
+    if metrics is None:
+        return
+
+    context = "runtime.metrics_service"
+
+    tls = getattr(metrics, "tls", None)
+    if tls is not None and getattr(tls, "enabled", False):
+        certificate = getattr(tls, "certificate_path", None)
+        private_key = getattr(tls, "private_key_path", None)
+        if not certificate or not str(certificate).strip():
+            errors.append(
+                f"{context}: TLS wymaga certificate_path przy włączonym szyfrowaniu"
+            )
+        if not private_key or not str(private_key).strip():
+            errors.append(
+                f"{context}: TLS wymaga private_key_path przy włączonym szyfrowaniu"
+            )
+        if getattr(tls, "require_client_auth", False):
+            client_ca = getattr(tls, "client_ca_path", None)
+            if not client_ca or not str(client_ca).strip():
+                errors.append(
+                    f"{context}: TLS z require_client_auth wymaga client_ca_path"
+                )
+
+    _validate_ui_alert_block(
+        context=context,
+        block_name="reduce_motion",
+        enabled_flag=bool(getattr(metrics, "reduce_motion_alerts", False)),
+        mode_value=getattr(metrics, "reduce_motion_mode", None),
+        category_value=getattr(metrics, "reduce_motion_category", ""),
+        required_severities={
+            "reduce_motion_severity_active": getattr(
+                metrics, "reduce_motion_severity_active", ""
+            ),
+            "reduce_motion_severity_recovered": getattr(
+                metrics, "reduce_motion_severity_recovered", ""
+            ),
+        },
+        optional_severities={},
+        threshold_value=None,
+        threshold_label=None,
+        errors=errors,
+        warnings=warnings,
+    )
+
+    _validate_ui_alert_block(
+        context=context,
+        block_name="overlay",
+        enabled_flag=bool(getattr(metrics, "overlay_alerts", False)),
+        mode_value=getattr(metrics, "overlay_alert_mode", None),
+        category_value=getattr(metrics, "overlay_alert_category", ""),
+        required_severities={
+            "overlay_alert_severity_exceeded": getattr(
+                metrics, "overlay_alert_severity_exceeded", ""
+            ),
+            "overlay_alert_severity_recovered": getattr(
+                metrics, "overlay_alert_severity_recovered", ""
+            ),
+        },
+        optional_severities={
+            "overlay_alert_severity_critical": getattr(
+                metrics, "overlay_alert_severity_critical", None
+            )
+        },
+        threshold_value=getattr(metrics, "overlay_alert_critical_threshold", None),
+        threshold_label="overlay_alert_critical_threshold",
+        errors=errors,
+        warnings=warnings,
+    )
+
+    _validate_ui_alert_block(
+        context=context,
+        block_name="jank",
+        enabled_flag=bool(getattr(metrics, "jank_alerts", False)),
+        mode_value=getattr(metrics, "jank_alert_mode", None),
+        category_value=getattr(metrics, "jank_alert_category", ""),
+        required_severities={
+            "jank_alert_severity_spike": getattr(
+                metrics, "jank_alert_severity_spike", ""
+            ),
+        },
+        optional_severities={
+            "jank_alert_severity_critical": getattr(
+                metrics, "jank_alert_severity_critical", None
+            )
+        },
+        threshold_value=getattr(metrics, "jank_alert_critical_over_ms", None),
+        threshold_label="jank_alert_critical_over_ms",
+        errors=errors,
+        warnings=warnings,
+    )
+
+    backend_value = getattr(metrics, "ui_alerts_audit_backend", None)
+    if backend_value is not None:
+        normalized = str(backend_value).strip().lower()
+        if normalized and normalized not in _UI_ALERT_AUDIT_BACKEND_ALLOWED:
+            errors.append(
+                f"{context}: ui_alerts_audit_backend musi należeć do {{auto,file,memory}} (otrzymano '{backend_value}')"
+            )
+
+    profile_value = getattr(metrics, "ui_alerts_risk_profile", None)
+    if profile_value:
+        normalized_profile = str(profile_value).strip().lower()
+        available_profiles = getattr(config, "risk_profiles", {}) or {}
+        if normalized_profile not in available_profiles:
+            errors.append(
+                f"{context}: ui_alerts_risk_profile '{profile_value}' nie istnieje w sekcji risk_profiles"
+            )
+
+    profiles_file_value = getattr(metrics, "ui_alerts_risk_profiles_file", None)
+    if profiles_file_value:
+        profiles_path = Path(str(profiles_file_value)).expanduser()
+        if not profiles_path.exists():
+            errors.append(
+                f"{context}: ui_alerts_risk_profiles_file '{profiles_path}' nie istnieje"
+            )
+
+
+def _validate_ui_alert_block(
+    *,
+    context: str,
+    block_name: str,
+    enabled_flag: bool,
+    mode_value: str | None,
+    category_value: str | None,
+    required_severities: Mapping[str, str | None],
+    optional_severities: Mapping[str, str | None],
+    threshold_value: float | int | None,
+    threshold_label: str | None,
+    errors: list[str],
+    warnings: list[str],
+) -> None:
+    allowed_modes = {"enable", "jsonl", "disable"}
+    normalized_mode: str | None = None
+    if mode_value is not None:
+        normalized_mode = str(mode_value).strip().lower()
+        if not normalized_mode:
+            normalized_mode = None
+        elif normalized_mode not in allowed_modes:
+            errors.append(
+                f"{context}: {block_name}_mode musi należeć do {{enable,jsonl,disable}} (otrzymano '{mode_value}')"
+            )
+
+    if normalized_mode is None:
+        normalized_mode = "enable" if enabled_flag else "disable"
+    else:
+        if normalized_mode == "disable" and enabled_flag:
+            warnings.append(
+                f"{context}: {block_name}_alerts ustawione na True, ale tryb '{normalized_mode}' je wyciszy"
+            )
+        if normalized_mode != "disable" and not enabled_flag:
+            warnings.append(
+                f"{context}: {block_name}_alerts ustawione na False, tryb '{normalized_mode}' je jednak aktywuje"
+            )
+
+    if normalized_mode == "disable":
+        return
+
+    if not category_value or not str(category_value).strip():
+        errors.append(
+            f"{context}: {block_name}_alert_category nie może być puste przy aktywnych alertach"
+        )
+
+    for field_name, severity in required_severities.items():
+        if not severity or not str(severity).strip():
+            errors.append(
+                f"{context}: {field_name} nie może być puste przy aktywnych alertach"
+            )
+
+    for field_name, severity in optional_severities.items():
+        if severity is not None and not str(severity).strip():
+            errors.append(f"{context}: {field_name} nie może być puste jeśli jest ustawione")
+
+    if threshold_label is not None and threshold_value is not None:
+        try:
+            numeric = float(threshold_value)
+        except (TypeError, ValueError):  # pragma: no cover - defensywne logowanie
+            errors.append(
+                f"{context}: {threshold_label} musi być wartością liczbową"
+            )
+            return
+        if numeric <= 0:
+            errors.append(
+                f"{context}: {threshold_label} musi być dodatnie (otrzymano {threshold_value})"
+            )
 
 def _validate_instrument_universes(
     config: CoreConfig, errors: list[str], warnings: list[str]

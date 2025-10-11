@@ -4,6 +4,8 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 
+import pytest
+
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from bot_core.config import (
@@ -294,14 +296,25 @@ def test_load_core_config_reads_metrics_service(tmp_path: Path) -> None:
             auth_token: secret-token
             log_sink: false
             # brak jsonl_path => None
+            ui_alerts_risk_profile: Conservative
             reduce_motion_alerts: true
+            reduce_motion_mode: enable
             reduce_motion_category: ui.performance.guard
             reduce_motion_severity_active: critical
             reduce_motion_severity_recovered: notice
             overlay_alerts: true
+            overlay_alert_mode: jsonl
             overlay_alert_category: ui.performance.overlay
             overlay_alert_severity_exceeded: critical
             overlay_alert_severity_recovered: notice
+            overlay_alert_severity_critical: emergency
+            overlay_alert_critical_threshold: 3
+            jank_alerts: true
+            jank_alert_mode: enable
+            jank_alert_category: ui.performance.jank
+            jank_alert_severity_spike: major
+            jank_alert_severity_critical: critical
+            jank_alert_critical_over_ms: 7.5
         """,
         encoding="utf-8",
     )
@@ -317,21 +330,76 @@ def test_load_core_config_reads_metrics_service(tmp_path: Path) -> None:
     assert metrics.auth_token == "secret-token"
     assert metrics.log_sink is False
     assert metrics.jsonl_path is None
+    assert metrics.ui_alerts_risk_profile == "conservative"
 
     # Pola reduce/overlay z gałęzi UI
     assert metrics.reduce_motion_alerts is True
+    assert metrics.reduce_motion_mode == "enable"
     assert metrics.reduce_motion_category == "ui.performance.guard"
     assert metrics.reduce_motion_severity_active == "critical"
     assert metrics.reduce_motion_severity_recovered == "notice"
     assert metrics.overlay_alerts is True
+    assert metrics.overlay_alert_mode == "jsonl"
     assert metrics.overlay_alert_category == "ui.performance.overlay"
     assert metrics.overlay_alert_severity_exceeded == "critical"
     assert metrics.overlay_alert_severity_recovered == "notice"
+    assert metrics.overlay_alert_severity_critical == "emergency"
+    assert metrics.overlay_alert_critical_threshold == 3
+    assert metrics.jank_alerts is True
+    assert metrics.jank_alert_mode == "enable"
+    assert metrics.jank_alert_category == "ui.performance.jank"
+    assert metrics.jank_alert_severity_spike == "major"
+    assert metrics.jank_alert_severity_critical == "critical"
+    assert metrics.jank_alert_critical_over_ms == pytest.approx(7.5)
 
     # Metadane ścieżek źródłowych configu (ustawiane przez loader)
     assert Path(config.source_path or "").is_absolute()
     expected_dir = config_path.resolve(strict=False).parent
     assert config.source_directory == str(expected_dir)
+
+
+def test_load_core_config_normalizes_ui_alert_modes(tmp_path: Path) -> None:
+    config_path = tmp_path / "core.yaml"
+    config_path.write_text(
+        """
+        risk_profiles: {}
+        environments: {}
+        alerts: {}
+        runtime:
+          metrics_service:
+            enabled: true
+            reduce_motion_mode: ENABLE
+            overlay_alert_mode: JsonL
+            jank_alert_mode: DISABLE
+        """,
+        encoding="utf-8",
+    )
+
+    config = load_core_config(config_path)
+    metrics = config.metrics_service
+    assert metrics is not None
+    assert metrics.reduce_motion_mode == "enable"
+    assert metrics.overlay_alert_mode == "jsonl"
+    assert metrics.jank_alert_mode == "disable"
+
+
+def test_load_core_config_rejects_unknown_ui_alert_mode(tmp_path: Path) -> None:
+    config_path = tmp_path / "core.yaml"
+    config_path.write_text(
+        """
+        risk_profiles: {}
+        environments: {}
+        alerts: {}
+        runtime:
+          metrics_service:
+            enabled: true
+            reduce_motion_mode: maybe
+        """,
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError):
+        load_core_config(config_path)
 
 
 def test_load_core_config_resolves_metrics_paths_relative_to_config(tmp_path: Path) -> None:
@@ -374,3 +442,45 @@ def test_load_core_config_resolves_metrics_paths_relative_to_config(tmp_path: Pa
     assert metrics.tls.certificate_path == str(expected_cert)
     assert metrics.tls.private_key_path == str(expected_key)
     assert metrics.tls.client_ca_path == str(expected_ca)
+
+
+def test_load_core_config_parses_metrics_risk_profiles_file(tmp_path: Path) -> None:
+    profiles_path = tmp_path / "telemetry_profiles.yaml"
+    profiles_path.write_text("risk_profiles: {}\n", encoding="utf-8")
+
+    config_path = tmp_path / "core.yaml"
+    config_path.write_text(
+        f"""
+        risk_profiles: {{}}
+        runtime:
+          metrics_service:
+            enabled: true
+            ui_alerts_risk_profiles_file: {profiles_path.name}
+        """,
+        encoding="utf-8",
+    )
+
+    config = load_core_config(config_path)
+    assert config.metrics_service is not None
+    resolved_value = Path(config.metrics_service.ui_alerts_risk_profiles_file or "")
+    assert resolved_value.resolve(strict=False) == profiles_path.resolve(strict=False)
+
+
+def test_load_core_config_rejects_invalid_jank_threshold(tmp_path: Path) -> None:
+    config_path = tmp_path / "core.yaml"
+    config_path.write_text(
+        """
+        risk_profiles: {}
+        environments: {}
+        alerts: {}
+        runtime:
+          metrics_service:
+            enabled: true
+            jank_alerts: true
+            jank_alert_critical_over_ms: not-a-number
+        """,
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError):
+        load_core_config(config_path)

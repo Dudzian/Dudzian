@@ -64,18 +64,32 @@ class MetricsServiceConfig:
 
     # Dodatkowe ścieżki/bezpieczeństwo
     ui_alerts_jsonl_path: str | None = None
+    ui_alerts_audit_backend: str | None = None
+    ui_alerts_risk_profile: str | None = None
+    ui_alerts_risk_profiles_file: str | None = None
     tls: MetricsServiceTlsConfig | None = None
 
     # Opcjonalne alerty związane z UI/performance
     reduce_motion_alerts: bool = False
+    reduce_motion_mode: str | None = None
     reduce_motion_category: str = "ui.performance"
     reduce_motion_severity_active: str = "warning"
     reduce_motion_severity_recovered: str = "info"
 
     overlay_alerts: bool = False
+    overlay_alert_mode: str | None = None
     overlay_alert_category: str = "ui.performance"
     overlay_alert_severity_exceeded: str = "warning"
     overlay_alert_severity_recovered: str = "info"
+    overlay_alert_severity_critical: str | None = "critical"
+    overlay_alert_critical_threshold: int | None = 2
+
+    jank_alerts: bool = False
+    jank_alert_mode: str | None = None
+    jank_alert_category: str = "ui.performance"
+    jank_alert_severity_spike: str = "warning"
+    jank_alert_severity_critical: str | None = None
+    jank_alert_critical_over_ms: float | None = None
 
 
 # --- Środowiska / rdzeń ------------------------------------------------------

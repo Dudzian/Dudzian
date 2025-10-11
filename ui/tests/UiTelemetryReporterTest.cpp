@@ -1,6 +1,7 @@
 #include <QtTest/QtTest>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QRect>
 
 #include <grpcpp/server.h>
 #include <grpcpp/server_builder.h>
@@ -48,6 +49,8 @@ private slots:
     void cleanupTestCase();
     void testReduceMotionEvent();
     void testOverlayBudgetEvent();
+    void testJankEvent();
+    void testScreenMetadataIncluded();
 
 private:
     std::unique_ptr<grpc::Server> m_server;
@@ -130,6 +133,85 @@ void UiTelemetryReporterTest::testOverlayBudgetEvent() {
     QCOMPARE(json.value(QStringLiteral("allowed_overlays")).toInt(), 5);
     QCOMPARE(json.value(QStringLiteral("reduce_motion")).toBool(), false);
     QCOMPARE(json.value(QStringLiteral("window_count")).toInt(), 2);
+}
+
+void UiTelemetryReporterTest::testJankEvent() {
+    UiTelemetryReporter reporter;
+    reporter.setEndpoint(m_address);
+    reporter.setEnabled(true);
+    reporter.setNotesTag(QStringLiteral("jank-test"));
+    reporter.setWindowCount(1);
+
+    PerformanceGuard guard;
+    guard.fpsTarget = 90;
+    guard.jankThresholdMs = 12.0;
+    guard.maxOverlayCount = 6;
+
+    reporter.reportJankEvent(guard, 28.0, 12.0, true, 4, 6);
+
+    const auto snapshots = m_service->takeSnapshots();
+    QCOMPARE(snapshots.size(), std::size_t{1});
+    const auto& snapshot = snapshots.front();
+    QVERIFY(snapshot.fps() > 0.0);
+
+    const auto notes = QString::fromStdString(snapshot.notes());
+    const auto json = QJsonDocument::fromJson(notes.toUtf8()).object();
+    QCOMPARE(json.value(QStringLiteral("event")).toString(), QStringLiteral("jank_spike"));
+    QCOMPARE(json.value(QStringLiteral("frame_ms")).toDouble(), 28.0);
+    QCOMPARE(json.value(QStringLiteral("threshold_ms")).toDouble(), 12.0);
+    QCOMPARE(json.value(QStringLiteral("reduce_motion")).toBool(), true);
+    QCOMPARE(json.value(QStringLiteral("overlay_active")).toInt(), 4);
+    QCOMPARE(json.value(QStringLiteral("overlay_allowed")).toInt(), 6);
+    QCOMPARE(json.value(QStringLiteral("configured_jank_threshold_ms")).toDouble(), 12.0);
+    QVERIFY(json.value(QStringLiteral("over_budget_ms")).toDouble() > 15.0);
+    QCOMPARE(json.value(QStringLiteral("tag")).toString(), QStringLiteral("jank-test"));
+}
+
+void UiTelemetryReporterTest::testScreenMetadataIncluded() {
+    UiTelemetryReporter reporter;
+    reporter.setEndpoint(m_address);
+    reporter.setEnabled(true);
+    reporter.setNotesTag(QStringLiteral("screen-test"));
+    reporter.setWindowCount(1);
+
+    TelemetryReporter::ScreenInfo screenInfo;
+    screenInfo.name = QStringLiteral("MockDisplay-01");
+    screenInfo.manufacturer = QStringLiteral("MockVendor");
+    screenInfo.model = QStringLiteral("QTestPanel");
+    screenInfo.serialNumber = QStringLiteral("SER123");
+    screenInfo.index = 2;
+    screenInfo.geometry = QRect(0, 0, 2560, 1440);
+    screenInfo.availableGeometry = QRect(0, 0, 2560, 1400);
+    screenInfo.refreshRateHz = 144.0;
+    screenInfo.devicePixelRatio = 1.25;
+    screenInfo.logicalDpiX = 110.0;
+    screenInfo.logicalDpiY = 109.0;
+    reporter.setScreenInfo(screenInfo);
+
+    PerformanceGuard guard;
+    guard.fpsTarget = 144;
+    guard.maxOverlayCount = 5;
+
+    reporter.reportOverlayBudget(guard, 2, 5, false);
+
+    const auto snapshots = m_service->takeSnapshots();
+    QCOMPARE(snapshots.size(), std::size_t{1});
+    const auto& snapshot = snapshots.front();
+    const auto notes = QString::fromStdString(snapshot.notes());
+    const auto json = QJsonDocument::fromJson(notes.toUtf8()).object();
+    const auto screen = json.value(QStringLiteral("screen")).toObject();
+    QCOMPARE(screen.value(QStringLiteral("name")).toString(), QStringLiteral("MockDisplay-01"));
+    QCOMPARE(screen.value(QStringLiteral("manufacturer")).toString(), QStringLiteral("MockVendor"));
+    QCOMPARE(screen.value(QStringLiteral("model")).toString(), QStringLiteral("QTestPanel"));
+    QCOMPARE(screen.value(QStringLiteral("serial")).toString(), QStringLiteral("SER123"));
+    QCOMPARE(screen.value(QStringLiteral("index")).toInt(), 2);
+    QCOMPARE(screen.value(QStringLiteral("refresh_hz")).toDouble(), 144.0);
+    QCOMPARE(screen.value(QStringLiteral("device_pixel_ratio")).toDouble(), 1.25);
+    const auto geometry = screen.value(QStringLiteral("geometry_px")).toObject();
+    QCOMPARE(geometry.value(QStringLiteral("width")).toInt(), 2560);
+    QCOMPARE(geometry.value(QStringLiteral("height")).toInt(), 1440);
+    const auto available = screen.value(QStringLiteral("available_geometry_px")).toObject();
+    QCOMPARE(available.value(QStringLiteral("height")).toInt(), 1400);
 }
 
 QTEST_MAIN(UiTelemetryReporterTest)

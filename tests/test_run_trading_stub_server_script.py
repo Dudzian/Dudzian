@@ -298,8 +298,9 @@ def test_metrics_server_optional(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     )
 
     class DummyUiSink:
-        def __init__(self, _router, jsonl_path=None):
-            self.jsonl_path = jsonl_path
+        def __init__(self, _router, **kwargs):
+            self.kwargs = kwargs
+            self.jsonl_path = kwargs.get("jsonl_path")
 
     monkeypatch.setattr(run_trading_stub_server, "UiTelemetryAlertSink", DummyUiSink)
 
@@ -332,6 +333,182 @@ def test_metrics_server_optional(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     assert isinstance(sinks, list)
     assert any(isinstance(sink, tuple) and sink[0] == "jsonl" for sink in sinks)
     assert any(isinstance(sink, DummyUiSink) for sink in sinks)
+    ui_cfg = created_kwargs.get("ui_alerts_config")
+    assert ui_cfg is not None
+    assert ui_cfg["reduce_mode"] == "enable"
+    assert ui_cfg["reduce_motion_alerts"] is True
+    assert ui_cfg["reduce_motion_logging"] is True
+    assert ui_cfg["audit"]["requested"] == "auto"
+    assert ui_cfg["audit"]["backend"] == "memory"
+
+
+def test_metrics_ui_alert_cli_forwarding(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    dummy_metrics = _DummyMetricsServer()
+    captured_kwargs: dict[str, object] = {}
+
+    def fake_create_metrics_server(**kwargs):
+        nonlocal captured_kwargs
+        captured_kwargs = kwargs
+        return dummy_metrics
+
+    monkeypatch.setattr(run_trading_stub_server, "create_metrics_server", fake_create_metrics_server)
+    monkeypatch.setattr(
+        run_trading_stub_server,
+        "JsonlSink",
+        lambda path, fsync=False: ("jsonl", Path(path), fsync),
+    )
+
+    class DummyUiSink:
+        def __init__(self, _router, **kwargs):
+            self.kwargs = kwargs
+
+    monkeypatch.setattr(run_trading_stub_server, "UiTelemetryAlertSink", DummyUiSink)
+    monkeypatch.setattr(run_trading_stub_server, "TradingStubServer", lambda *args, **kwargs: _DummyServer(None, "127.0.0.1", 0, 0))
+
+    alerts_jsonl = tmp_path / "alerts.jsonl"
+
+    exit_code = run_trading_stub_server.main(
+        [
+            "--enable-metrics",
+            "--metrics-port",
+            "0",
+            "--metrics-ui-alerts-jsonl",
+            str(alerts_jsonl),
+            "--metrics-ui-alerts-reduce-mode",
+            "disable",
+            "--metrics-ui-alerts-overlay-mode",
+            "enable",
+            "--metrics-ui-alerts-reduce-category",
+            "ops.ui.reduce",
+            "--metrics-ui-alerts-reduce-active-severity",
+            "critical",
+            "--metrics-ui-alerts-reduce-recovered-severity",
+            "notice",
+            "--metrics-ui-alerts-overlay-category",
+            "ops.ui.overlay",
+            "--metrics-ui-alerts-overlay-exceeded-severity",
+            "warning",
+            "--metrics-ui-alerts-overlay-recovered-severity",
+            "info",
+            "--metrics-ui-alerts-overlay-critical-severity",
+            "major",
+            "--metrics-ui-alerts-overlay-critical-threshold",
+            "3",
+            "--metrics-ui-alerts-jank-mode",
+            "enable",
+            "--metrics-ui-alerts-jank-category",
+            "ops.ui.jank",
+            "--metrics-ui-alerts-jank-spike-severity",
+            "major",
+            "--metrics-ui-alerts-jank-critical-severity",
+            "critical",
+            "--metrics-ui-alerts-jank-critical-over-ms",
+            "7.25",
+            "--metrics-ui-alerts-audit-dir",
+            str(tmp_path / "audit"),
+            "--metrics-ui-alerts-audit-pattern",
+            "stub-%Y.jsonl",
+            "--metrics-ui-alerts-audit-retention-days",
+            "14",
+            "--metrics-ui-alerts-audit-fsync",
+            "--shutdown-after",
+            "0.01",
+        ]
+    )
+
+    assert exit_code == 0
+    ui_config = captured_kwargs.get("ui_alerts_config")
+    assert ui_config is not None
+    assert ui_config["reduce_mode"] == "disable"
+    assert ui_config["overlay_mode"] == "enable"
+    assert ui_config["reduce_motion_alerts"] is False
+    assert ui_config["reduce_motion_logging"] is False
+    assert ui_config["overlay_alerts"] is True
+    assert ui_config["overlay_logging"] is True
+    assert ui_config["reduce_motion_category"] == "ops.ui.reduce"
+    assert ui_config["reduce_motion_severity_active"] == "critical"
+    assert ui_config["reduce_motion_severity_recovered"] == "notice"
+    assert ui_config["overlay_category"] == "ops.ui.overlay"
+    assert ui_config["overlay_severity_exceeded"] == "warning"
+    assert ui_config["overlay_severity_recovered"] == "info"
+    assert ui_config["overlay_severity_critical"] == "major"
+    assert ui_config["overlay_critical_threshold"] == 3
+    assert ui_config["jank_mode"] == "enable"
+    assert ui_config["jank_alerts"] is True
+    assert ui_config["jank_logging"] is True
+    assert ui_config["jank_category"] == "ops.ui.jank"
+    assert ui_config["jank_severity_spike"] == "major"
+    assert ui_config["jank_severity_critical"] == "critical"
+    assert ui_config["jank_critical_over_ms"] == pytest.approx(7.25)
+    audit_info = ui_config["audit"]
+    assert audit_info["requested"] == "auto"
+    assert audit_info["backend"] == "file"
+    assert audit_info["directory"] == str(tmp_path / "audit")
+    assert audit_info["pattern"] == "stub-%Y.jsonl"
+    assert audit_info["retention_days"] == 14
+    assert audit_info["fsync"] is True
+    assert captured_kwargs.get("ui_alerts_audit_dir") == Path(tmp_path / "audit")
+    assert captured_kwargs.get("ui_alerts_audit_pattern") == "stub-%Y.jsonl"
+    assert captured_kwargs.get("ui_alerts_audit_retention_days") == 14
+    assert captured_kwargs.get("ui_alerts_audit_fsync") is True
+    assert "ui_alerts_jsonl_path" in captured_kwargs
+    assert Path(captured_kwargs["ui_alerts_jsonl_path"]) == alerts_jsonl
+
+
+def test_build_ui_alert_sink_memory_note_when_file_backend_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    class DummyRouter:
+        def __init__(self, audit_log) -> None:
+            self.audit_log = audit_log
+
+        def register(self, channel) -> None:
+            return None
+
+    class DummyAudit:
+        def __init__(self, *_, **__):
+            pass
+
+    class DummySink:
+        def __init__(self, _router, **kwargs) -> None:
+            self.kwargs = kwargs
+
+    monkeypatch.setattr(run_trading_stub_server, "DefaultAlertRouter", DummyRouter)
+    monkeypatch.setattr(run_trading_stub_server, "InMemoryAlertAuditLog", DummyAudit)
+    monkeypatch.setattr(run_trading_stub_server, "UiTelemetryAlertSink", DummySink)
+    monkeypatch.setattr(run_trading_stub_server, "FileAlertAuditLog", None)
+
+    args = SimpleNamespace(
+        disable_metrics_ui_alerts=False,
+        metrics_ui_alerts_jsonl=str(tmp_path / "ui_alerts.jsonl"),
+        metrics_ui_alerts_reduce_mode=None,
+        metrics_ui_alerts_overlay_mode=None,
+        metrics_ui_alerts_jank_mode=None,
+        metrics_ui_alerts_reduce_category=None,
+        metrics_ui_alerts_reduce_active_severity=None,
+        metrics_ui_alerts_reduce_recovered_severity=None,
+        metrics_ui_alerts_overlay_category=None,
+        metrics_ui_alerts_overlay_exceeded_severity=None,
+        metrics_ui_alerts_overlay_recovered_severity=None,
+        metrics_ui_alerts_overlay_critical_severity=None,
+        metrics_ui_alerts_overlay_critical_threshold=None,
+        metrics_ui_alerts_jank_category=None,
+        metrics_ui_alerts_jank_spike_severity=None,
+        metrics_ui_alerts_jank_critical_severity=None,
+        metrics_ui_alerts_jank_critical_over_ms=None,
+        metrics_ui_alerts_audit_dir=str(tmp_path / "audit"),
+        metrics_ui_alerts_audit_pattern=None,
+        metrics_ui_alerts_audit_retention_days=None,
+        metrics_ui_alerts_audit_fsync=False,
+    )
+
+    result = run_trading_stub_server._build_ui_alert_sink(args)
+    assert result is not None
+    sink_settings = result[2]
+    audit_info = sink_settings["audit"]
+    assert audit_info["requested"] == "auto"
+    assert audit_info["backend"] == "memory"
+    assert audit_info.get("note") == "file_backend_unavailable"
 
 
 def test_metrics_tls_configuration(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -459,6 +636,159 @@ def test_print_runtime_plan(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, cap
     assert security["parameter_source"] == "default"
 
 
+def test_print_runtime_plan_marks_memory_audit_when_file_backend_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys
+) -> None:
+    monkeypatch.setattr(run_trading_stub_server, "FileAlertAuditLog", None)
+
+    exit_code = run_trading_stub_server.main(
+        [
+            "--enable-metrics",
+            "--metrics-ui-alerts-audit-dir",
+            str(tmp_path / "audit"),
+            "--print-runtime-plan",
+        ]
+    )
+
+    assert exit_code == 0
+    plan = json.loads(capsys.readouterr().out)
+    audit_section = plan["metrics"]["ui_alerts"]["audit"]
+    assert audit_section["requested"] == "auto"
+    assert audit_section["backend"] == "memory"
+    assert audit_section.get("note") == "file_backend_unavailable"
+    assert "directory" not in audit_section
+
+
+def test_print_runtime_plan_includes_risk_profile(capsys) -> None:
+    exit_code = run_trading_stub_server.main(
+        [
+            "--enable-metrics",
+            "--metrics-ui-alerts-risk-profile",
+            "conservative",
+            "--print-runtime-plan",
+        ]
+    )
+
+    assert exit_code == 0
+    plan = json.loads(capsys.readouterr().out)
+    ui_section = plan["metrics"]["ui_alerts"]
+    assert ui_section["risk_profile"]["name"] == "conservative"
+    assert ui_section["reduce_motion_severity_active"] == "critical"
+    assert ui_section["overlay_severity_exceeded"] == "critical"
+    assert ui_section["overlay_critical_threshold"] == 1
+    assert ui_section["jank_severity_spike"] == "warning"
+
+
+def test_runtime_plan_risk_profiles_file(tmp_path: Path, capsys) -> None:
+    profiles_path = tmp_path / "telemetry_profiles.yaml"
+    profiles_path.write_text(
+        json.dumps(
+            {
+                "risk_profiles": {
+                    "custom": {
+                        "metrics_service_overrides": {
+                            "ui_alerts_overlay_critical_threshold": 4,
+                            "ui_alerts_jank_spike_severity": "notice",
+                        },
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = run_trading_stub_server.main(
+        [
+            "--enable-metrics",
+            "--metrics-risk-profiles-file",
+            str(profiles_path),
+            "--metrics-ui-alerts-risk-profile",
+            "custom",
+            "--print-runtime-plan",
+        ]
+    )
+
+    assert exit_code == 0
+    plan = json.loads(capsys.readouterr().out)
+    ui_section = plan["metrics"]["ui_alerts"]
+    assert ui_section["risk_profile"]["name"] == "custom"
+    assert ui_section["overlay_critical_threshold"] == 4
+    assert ui_section["jank_severity_spike"] == "notice"
+    file_meta = ui_section["risk_profiles_file"]
+    assert file_meta["path"] == str(profiles_path)
+    assert "custom" in file_meta["registered_profiles"]
+
+
+def test_runtime_plan_risk_profiles_directory(tmp_path: Path, capsys) -> None:
+    profiles_dir = tmp_path / "profiles"
+    profiles_dir.mkdir()
+    (profiles_dir / "ops.json").write_text(
+        json.dumps(
+            {
+                "risk_profiles": {
+                    "ops_dir": {
+                        "metrics_service_overrides": {
+                            "ui_alerts_overlay_critical_threshold": 6,
+                            "ui_alerts_reduce_active_severity": "error",
+                        },
+                        "severity_min": "notice",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (profiles_dir / "lab.yaml").write_text(
+        "risk_profiles:\n  lab_dir:\n    severity_min: warning\n",
+        encoding="utf-8",
+    )
+
+    exit_code = run_trading_stub_server.main(
+        [
+            "--enable-metrics",
+            "--metrics-risk-profiles-file",
+            str(profiles_dir),
+            "--metrics-ui-alerts-risk-profile",
+            "ops_dir",
+            "--print-runtime-plan",
+        ]
+    )
+
+    assert exit_code == 0
+    plan = json.loads(capsys.readouterr().out)
+    ui_section = plan["metrics"]["ui_alerts"]
+    file_meta = ui_section["risk_profiles_file"]
+    assert file_meta["type"] == "directory"
+    assert file_meta["path"] == str(profiles_dir)
+    assert "ops_dir" in file_meta["registered_profiles"]
+    assert any(entry["path"].endswith("lab.yaml") for entry in file_meta["files"])
+def test_runtime_plan_memory_backend_flag(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys) -> None:
+    exit_code = run_trading_stub_server.main(
+        [
+            "--enable-metrics",
+            "--metrics-ui-alerts-audit-backend",
+            "memory",
+            "--metrics-ui-alerts-audit-dir",
+            str(tmp_path / "audit"),
+            "--print-runtime-plan",
+        ]
+    )
+    assert exit_code == 0
+    plan = json.loads(capsys.readouterr().out)
+    audit_section = plan["metrics"]["ui_alerts"]["audit"]
+    assert audit_section["requested"] == "memory"
+    assert audit_section["backend"] == "memory"
+    assert audit_section.get("note") == "directory_ignored_memory_backend"
+    assert "directory" not in audit_section
+
+
+def test_runtime_plan_file_backend_requires_directory(monkeypatch: pytest.MonkeyPatch) -> None:
+    with pytest.raises(SystemExit):
+        run_trading_stub_server.main(
+            ["--enable-metrics", "--metrics-ui-alerts-audit-backend", "file", "--print-runtime-plan"]
+        )
+
+
 def test_fail_on_security_warnings_blocks_runtime_plan(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -517,8 +847,9 @@ def test_runtime_plan_jsonl_written(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     )
 
     class DummyUiSink:
-        def __init__(self, _router, jsonl_path=None):
-            self.jsonl_path = jsonl_path
+        def __init__(self, _router, **kwargs):
+            self.kwargs = kwargs
+            self.jsonl_path = kwargs.get("jsonl_path")
 
     monkeypatch.setattr(run_trading_stub_server, "UiTelemetryAlertSink", DummyUiSink)
     server = _DummyServer(None, "127.0.0.1", 0, 0)
@@ -545,6 +876,8 @@ def test_runtime_plan_jsonl_written(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     payload = payloads[-1]
     assert payload["metrics"]["enabled"] is True
     assert payload["metrics"]["ui_alerts"]["metadata"]["role"] == "ui_alerts_jsonl"
+    assert payload["metrics"]["ui_alerts"]["reduce_motion_logging"] is True
+    assert payload["metrics"]["ui_alerts"]["overlay_logging"] is True
     assert payload["dataset"]["sources"][-1]["path"] == str(dataset_yaml)
     assert payload["environment"]["parameter_sources"]["metrics_jsonl_path"] == "cli"
     security = _get_security_section(payload)
@@ -660,3 +993,11 @@ def test_environment_override_ignored_by_cli(monkeypatch: pytest.MonkeyPatch, ca
     security = _get_security_section(plan)
     assert security["enabled"] is False
     assert security["source"] == "default"
+
+
+def test_trading_stub_print_risk_profiles(capsys: pytest.CaptureFixture[str]) -> None:
+    exit_code = run_trading_stub_server.main(["--metrics-print-risk-profiles"])
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert "risk_profiles" in payload
+    assert "conservative" in payload["risk_profiles"]
