@@ -325,18 +325,19 @@ def _apply_environment_overrides(
             return [str(v) if isinstance(v, Path) else v for v in value]
         return value
 
-    def apply_value(option: str, env_var: str, raw_value: str, parsed_value: Any) -> None:
+    def apply_value(option: str, env_var: str, raw_value: str, parsed_value: Any, **extra: object) -> None:
         override_keys.add(option)
         value_sources[option] = "env"
-        record_entry(
-            {
-                "option": option,
-                "variable": env_var,
-                "raw_value": raw_value,
-                "applied": True,
-                "parsed_value": normalize_value(parsed_value),
-            }
-        )
+        entry: dict[str, object] = {
+            "option": option,
+            "variable": env_var,
+            "raw_value": raw_value,
+            "applied": True,
+            "parsed_value": normalize_value(parsed_value),
+        }
+        if extra:
+            entry.update(extra)
+        record_entry(entry)
 
     def env_present(flag: str) -> bool:
         return flag in provided_flags
@@ -467,6 +468,7 @@ def _apply_environment_overrides(
         else:
             args.metrics_jsonl_fsync = parse_bool("RUN_TRADING_STUB_METRICS_JSONL_FSYNC")
             apply_value("metrics_jsonl_fsync", "RUN_TRADING_STUB_METRICS_JSONL_FSYNC", raw, args.metrics_jsonl_fsync)
+
     if (raw := os.getenv("RUN_TRADING_STUB_METRICS_RISK_PROFILES_FILE")) is not None:
         if env_present("--metrics-risk-profiles-file"):
             skip_due_to_cli("metrics_risk_profiles_file", "RUN_TRADING_STUB_METRICS_RISK_PROFILES_FILE", raw)

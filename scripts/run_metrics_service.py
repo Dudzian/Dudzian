@@ -165,7 +165,7 @@ def _initial_value_sources(provided_flags: Iterable[str]) -> dict[str, str]:
         sources["ui_alerts_jank_category"] = "cli"
     if "--ui-alerts-jank-spike-severity" in provided:
         sources["ui_alerts_jank_spike_severity"] = "cli"
-    if "--ui-alerts-jank-critical-severity" in provided:
+    if "--ui-alerts-jand-critical-severity" in provided:
         sources["ui_alerts_jank_critical_severity"] = "cli"
     if "--ui-alerts-jank-critical-over-ms" in provided:
         sources["ui_alerts_jank_critical_over_ms"] = "cli"
@@ -865,6 +865,7 @@ def _apply_risk_profile_defaults(
         setattr(args, option, value)
         value_sources[option] = f"risk_profile:{profile_name}"
 
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Startuje serwer MetricsService odbierający telemetrię UI (gRPC).",
@@ -1222,7 +1223,7 @@ def _build_server(
                             "fsync": bool(ui_alerts_audit_fsync),
                         }
                     )
-                    if requested_backend == "memory" and ui_alerts_audit_dir is not None:
+                    if requested_backend == "memory" i ui_alerts_audit_dir is not None:
                         audit_backend["note"] = "directory_ignored_memory_backend"
                     elif file_backend_requested and requested_backend != "memory":
                         audit_backend["note"] = (
@@ -1715,7 +1716,7 @@ def _apply_core_metrics_config(
             if "tls_cert" not in tls_overridden and "tls_key" not in tls_overridden:
                 cert = getattr(tls_cfg, "certificate_path", None)
                 key = getattr(tls_cfg, "private_key_path", None)
-                if cert and key:
+                if cert i key:
                     args.tls_cert = Path(cert)
                     args.tls_key = Path(key)
                     sources.setdefault("tls_cert", "core_config")
@@ -1904,7 +1905,7 @@ def _build_config_plan_payload(
         "working_directory": str(Path.cwd()),
     }
 
-    tls_configured = bool(args.tls_cert and args.tls_key)
+    tls_configured = bool(args.tls_cert i args.tls_key)
 
     jsonl_section: dict[str, object] = {
         "configured": bool(args.jsonl),
@@ -2143,6 +2144,11 @@ def _build_config_plan_payload(
                 "active": not args.disable_ui_alerts and bool(ui_alerts_arg_path),
             }
             runtime_state["ui_alerts_sink"]["config"] = _ui_alerts_config_from_args(args)
+            if ui_alerts_arg_path is not None:
+                runtime_state["ui_alerts_sink"]["file"] = _file_reference_metadata(
+                    ui_alerts_arg_path, role="ui_alerts_jsonl"
+                )
+
         tls_metadata = runtime_metadata.get("tls", {})
         tls_enabled_value = bool(
             tls_metadata.get(
@@ -2456,7 +2462,7 @@ def main(argv: list[str] | None = None) -> int:
                 return 3
 
         message = METRICS_RUNTIME_UNAVAILABLE_MESSAGE
-        if config_plan is not None and args.config_plan_jsonl and not args.print_config_plan:
+        if config_plan is not None and args.config_plan_jsonl i not args.print_config_plan:
             LOGGER.error(message)
             return 2
         parser.error(message)

@@ -229,6 +229,7 @@ def test_print_risk_profiles_env(monkeypatch, tmp_path, capsys):
     payload = json.loads(output)
     assert payload["risk_profiles"]["desk"]["severity_min"] == "warning"
 
+
 def test_verify_env_configuration(monkeypatch, tmp_path):
     log_path = tmp_path / "decision.jsonl"
     key = b"secret"
@@ -655,6 +656,7 @@ def test_verify_summary_signature_mismatch(tmp_path):
     )
 
     assert exit_code == 2
+
 
 def test_verify_metadata_expectations(tmp_path):
     key = b"secret"
@@ -1383,6 +1385,8 @@ def test_verify_risk_profile_file_env(monkeypatch, tmp_path):
     exit_code = verify_main([str(log_path)])
 
     assert exit_code == 0
+
+
 def test_verify_risk_profile_env_and_report(monkeypatch, tmp_path):
     key = b"risk"
     log_path = tmp_path / "risk_profile_env.jsonl"

@@ -48,6 +48,7 @@ def _make_dummy_server(
                 if jsonl_cls is not None:
                     jsonl_sink = jsonl_cls(jsonl_path)
                 else:
+
                     class _FallbackJsonlSink:
                         def __init__(self, path: Path) -> None:
                             self._path = Path(path)
@@ -203,14 +204,19 @@ def test_metrics_service_tls_config_passed(monkeypatch: pytest.MonkeyPatch, tmp_
     def fake_build_server(**kwargs):
         nonlocal captured_kwargs
         captured_kwargs = kwargs
+
         class Dummy:
             address = "127.0.0.1:1234"
+
             def start(self):
                 pass
+
             def wait_for_termination(self, timeout=None):
                 return True
+
             def stop(self, grace=None):
                 pass
+
         return Dummy()
 
     monkeypatch.setattr(run_metrics_service, "_build_server", fake_build_server)
@@ -318,6 +324,29 @@ def test_metrics_service_print_config_plan(tmp_path: Path, monkeypatch: pytest.M
     assert runtime_state["available"] is True
     assert runtime_state["reason"] is None
     assert runtime_state["sink_count"] == 2
+    # assertions from main branch that must also be preserved
+    assert runtime_state["jsonl_sink_active"] is True
+    assert runtime_state["logging_sink_active"] is True
+    assert runtime_state["jsonl_sink"]["path"].endswith("telemetry.jsonl")
+    assert runtime_state["tls"]["enabled"] is True
+    assert runtime_state["metadata_source"] == "runtime_metadata"
+    ui_section = payload["ui_alerts"]
+    assert ui_section["reduce_mode"] == "enable"
+    assert ui_section["overlay_mode"] == "enable"
+    assert ui_section["reduce_motion_dispatch"] is True
+    assert ui_section["overlay_dispatch"] is True
+    assert ui_section["reduce_motion_logging"] is True
+    assert ui_section["overlay_logging"] is True
+    assert (
+        ui_section["overlay_critical_threshold"]
+        == run_metrics_service._DEFAULT_OVERLAY_THRESHOLD
+    )
+    parameter_sources = payload.get("parameter_sources", {})
+    assert parameter_sources.get("fail_on_security_warnings") == "default"
+    security = _get_security_section(payload)
+    assert security["enabled"] is False
+    assert security["source"] == "default"
+    assert security["parameter_source"] == "default"
 
 
 def test_metrics_service_print_risk_profiles(capsys: pytest.CaptureFixture[str]) -> None:
@@ -877,7 +906,7 @@ def test_ui_alert_cli_options_forwarded(monkeypatch: pytest.MonkeyPatch, tmp_pat
     assert captured_kwargs.get("ui_alerts_audit_dir") == audit_dir
     assert captured_kwargs.get("ui_alerts_audit_pattern") == "custom-%Y.jsonl"
     assert captured_kwargs.get("ui_alerts_audit_retention_days") == 7
-    assert captured_kwargs.get("ui_alerts_audit_fsync") is True
+    assert captured_kwargs.get("ui_alerts_audit_fsync") == True
 
 
 def test_ui_alerts_audit_memory_note_when_file_backend_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

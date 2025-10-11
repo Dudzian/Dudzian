@@ -1,7 +1,10 @@
-"""Narzędzie do podglądu strumienia MetricsService.
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Narzędzie do podglądu strumienia MetricsService.
 
 Skrypt łączy się z serwerem telemetrii `MetricsService` (gRPC) i wypisuje
-otrzymane `MetricsSnapshot`.  Może filtrować zdarzenia po polu `event` oraz
+otrzymane `MetricsSnapshot`. Może filtrować zdarzenia po polu `event` oraz
 `severity` w `notes`, ograniczać liczbę pobranych rekordów, filtrować po
 metadanych ekranu i formatować wynik w postaci czytelnej tabeli lub surowego
 JSON-u.
@@ -80,35 +83,41 @@ import sys
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+LOGGER = logging.getLogger("bot_core.scripts.watch_metrics_stream")
+
+_ENV_PREFIX = "BOT_CORE_WATCH_METRICS_"
+
+# --- load optional core config (core.yaml) ---
 try:
     from bot_core.config import load_core_config  # type: ignore
 except Exception:  # pragma: no cover - środowisko bez modułu konfiguracyjnego
     load_core_config = None  # type: ignore
 
-from scripts.telemetry_risk_profiles import (
-    get_risk_profile,
-    list_risk_profile_names,
-    load_risk_profiles_from_file,
-    risk_profile_metadata,
-)
-
-
-LOGGER = logging.getLogger("bot_core.scripts.watch_metrics_stream")
-
-_ENV_PREFIX = "BOT_CORE_WATCH_METRICS_"
+# --- risk profile presets (mandatory local module; may be extended via file) ---
+try:
+    from scripts.telemetry_risk_profiles import (
+        get_risk_profile,
+        list_risk_profile_names,
+        load_risk_profiles_from_file,
+        risk_profile_metadata,
+    )
+except Exception as exc:  # pragma: no cover
+    raise SystemExit(
+        "Brak modułu scripts.telemetry_risk_profiles. Upewnij się, że jest na PYTHONPATH."
+    ) from exc
 
 
 def _load_grpc_components():
     try:
         import grpc  # type: ignore
-    except ImportError as exc:  # pragma: no cover - środowisko bez grpcio
+    except ImportError as exc:  # pragma: no cover
         raise SystemExit(
             "Pakiet grpcio jest wymagany do połączenia z MetricsService."
         ) from exc
 
     try:
         from bot_core.generated import trading_pb2, trading_pb2_grpc  # type: ignore
-    except ImportError as exc:  # pragma: no cover - brak wygenerowanych stubów
+    except ImportError as exc:  # pragma: no cover
         raise SystemExit(
             "Brak wygenerowanych stubów trading_pb2*.py. Uruchom scripts/generate_trading_stubs.py"
         ) from exc
@@ -158,7 +167,7 @@ def _parse_notes(notes: str) -> dict[str, Any]:
         return {"raw": notes}
 
 
-_SEVERITY_ORDER = [
+SEVERITY_ORDER = [
     "trace",
     "debug",
     "info",
@@ -170,25 +179,84 @@ _SEVERITY_ORDER = [
     "emergency",
     "fatal",
 ]
-
-_SEVERITY_RANK = {name: index for index, name in enumerate(_SEVERITY_ORDER)}
+SEVERITY_RANK = {name: index for index, name in enumerate(SEVERITY_ORDER)}
 
 
 def _normalize_severity(candidate: Any) -> str | None:
     if not isinstance(candidate, str):
         return None
     normalized = candidate.strip()
-    if not normalized:
-        return None
-    return normalized.lower()
+    return normalized.lower() if normalized else None
 
 
 def _severity_at_least(candidate: str, minimum: str) -> bool:
-    candidate_rank = _SEVERITY_RANK.get(candidate)
-    minimum_rank = _SEVERITY_RANK.get(minimum)
-    if candidate_rank is None or minimum_rank is None:
-        return False
-    return candidate_rank >= minimum_rank
+    cr = SEVERITY_RANK.get(candidate)
+    mr = SEVERITY_RANK.get(minimum)
+    return cr is not None and mr is not None and cr >= mr
+
+
+def _screen_context(notes: Any) -> dict[str, Any]:
+    if not isinstance(notes, dict):
+        return {}
+    screen = notes.get("screen")
+    if not isinstance(screen, dict):
+        return {}
+
+    context: dict[str, Any] = {}
+
+    name = screen.get("name")
+    if isinstance(name, str) and name.strip():
+        context["name"] = name.strip()
+
+    index = screen.get("index")
+    if isinstance(index, (int, float)):
+        index_int = int(index)
+        if index_int >= 0:
+            context["index"] = index_int
+
+    refresh = screen.get("refresh_hz")
+    if isinstance(refresh, (int, float)) and refresh > 0:
+        context["refresh_hz"] = float(refresh)
+
+    dpr = screen.get("device_pixel_ratio")
+    if isinstance(dpr, (int, float)) and dpr > 0:
+        context["device_pixel_ratio"] = float(dpr)
+
+    geometry = screen.get("geometry_px")
+    if isinstance(geometry, dict):
+        width = geometry.get("width")
+        height = geometry.get("height")
+        if isinstance(width, (int, float)) and isinstance(height, (int, float)):
+            context["resolution"] = {"width": int(width), "height": int(height)}
+
+    return context
+
+
+def _screen_summary(context: dict[str, Any]) -> str:
+    if not context:
+        return ""
+    parts: list[str] = []
+
+    index = context.get("index")
+    name = context.get("name")
+    if isinstance(index, int):
+        label = f"#{index}"
+        parts.append(f"{label} ({name})" if isinstance(name, str) and name else label)
+    elif isinstance(name, str) and name:
+        parts.append(name)
+
+    resolution = context.get("resolution")
+    if isinstance(resolution, dict):
+        w = resolution.get("width")
+        h = resolution.get("height")
+        if isinstance(w, int) and isinstance(h, int):
+            parts.append(f"{w}x{h} px")
+
+    refresh = context.get("refresh_hz")
+    if isinstance(refresh, (int, float)) and refresh > 0:
+        parts.append(f"{refresh:.0f} Hz")
+
+    return ", ".join(parts) if parts else ""
 
 
 def _extract_snapshot_fields(snapshot, notes_payload: Any) -> dict[str, Any]:
@@ -229,16 +297,10 @@ class _OfflineSnapshot:
             self.notes = json.dumps(raw_notes, ensure_ascii=False) if raw_notes is not None else ""
 
         raw_fps = record.get("fps")
-        if isinstance(raw_fps, (int, float)):
-            self.fps = float(raw_fps)
-        else:
-            self.fps = None
+        self.fps = float(raw_fps) if isinstance(raw_fps, (int, float)) else None
 
         generated_at = record.get("generated_at")
-        if isinstance(generated_at, (str, Mapping)):
-            self.generated_at = generated_at
-        else:
-            self.generated_at = None
+        self.generated_at = generated_at if isinstance(generated_at, (str, Mapping)) else None
 
     def HasField(self, field: str) -> bool:  # pragma: no cover - prosta logika
         if field == "generated_at":
@@ -303,77 +365,6 @@ def _iter_jsonl_snapshots(source: str) -> Iterable[_OfflineSnapshot]:
             handle.close()
 
 
-def _screen_context(notes: Any) -> dict[str, Any]:
-    if not isinstance(notes, dict):
-        return {}
-    screen = notes.get("screen")
-    if not isinstance(screen, dict):
-        return {}
-
-    context: dict[str, Any] = {}
-
-    name = screen.get("name")
-    if isinstance(name, str) and name.strip():
-        context["name"] = name.strip()
-
-    index = screen.get("index")
-    if isinstance(index, (int, float)):
-        index_int = int(index)
-        if index_int >= 0:
-            context["index"] = index_int
-
-    refresh = screen.get("refresh_hz")
-    if isinstance(refresh, (int, float)) and refresh > 0:
-        context["refresh_hz"] = float(refresh)
-
-    dpr = screen.get("device_pixel_ratio")
-    if isinstance(dpr, (int, float)) and dpr > 0:
-        context["device_pixel_ratio"] = float(dpr)
-
-    geometry = screen.get("geometry_px")
-    if isinstance(geometry, dict):
-        width = geometry.get("width")
-        height = geometry.get("height")
-        if isinstance(width, (int, float)) and isinstance(height, (int, float)):
-            context["resolution"] = {"width": int(width), "height": int(height)}
-
-    return context
-
-
-def _screen_summary(context: dict[str, Any]) -> str:
-    if not context:
-        return ""
-
-    parts: list[str] = []
-
-    index = context.get("index")
-    name = context.get("name")
-    if isinstance(index, int):
-        label = f"#{index}"
-        if isinstance(name, str) and name:
-            parts.append(f"{label} ({name})")
-        else:
-            parts.append(label)
-    elif isinstance(name, str) and name:
-        parts.append(name)
-
-    resolution = context.get("resolution")
-    if isinstance(resolution, dict):
-        width = resolution.get("width")
-        height = resolution.get("height")
-        if isinstance(width, int) and isinstance(height, int):
-            parts.append(f"{width}x{height} px")
-
-    refresh = context.get("refresh_hz")
-    if isinstance(refresh, (int, float)) and refresh > 0:
-        parts.append(f"{refresh:.0f} Hz")
-
-    if not parts:
-        return ""
-
-    return ", ".join(parts)
-
-
 def _snapshot_timestamp(snapshot) -> str | None:
     if getattr(snapshot, "HasField", None) and not snapshot.HasField("generated_at"):
         return None
@@ -391,7 +382,7 @@ def _snapshot_fps(snapshot) -> float | None:
         return None
     try:
         return float(fps)
-    except (TypeError, ValueError):  # pragma: no cover - zabezpieczenie przed niestandardowym typem
+    except (TypeError, ValueError):  # pragma: no cover - zabezpieczenie
         return None
 
 
@@ -480,14 +471,10 @@ class _SummaryCollector:
             stats["fps_count"] += 1
             stats["fps_total"] += fps_value
             stats["fps_min"] = (
-                fps_value
-                if stats["fps_min"] is None or fps_value < stats["fps_min"]
-                else stats["fps_min"]
+                fps_value if stats["fps_min"] is None or fps_value < stats["fps_min"] else stats["fps_min"]
             )
             stats["fps_max"] = (
-                fps_value
-                if stats["fps_max"] is None or fps_value > stats["fps_max"]
-                else stats["fps_max"]
+                fps_value if stats["fps_max"] is None or fps_value > stats["fps_max"] else stats["fps_max"]
             )
 
         screen_ctx = _screen_context(notes_payload)
@@ -536,6 +523,37 @@ class _SummaryCollector:
                 for level in sorted(self._severity_totals)
             }
         return summary
+
+
+def _canonical_payload(payload: Mapping[str, Any]) -> bytes:
+    return json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _sign_payload(
+    payload: Mapping[str, Any],
+    *,
+    signing_key: bytes | None,
+    signing_key_id: str | None,
+) -> Mapping[str, Any]:
+    if not signing_key:
+        return dict(payload)
+
+    digest = hmac.new(signing_key, _canonical_payload(payload), hashlib.sha256).digest()
+    signature_payload: dict[str, Any] = {
+        "algorithm": "HMAC-SHA256",
+        "value": base64.b64encode(digest).decode("ascii"),
+    }
+    if signing_key_id:
+        signature_payload["key_id"] = signing_key_id
+
+    entry = dict(payload)
+    entry["signature"] = signature_payload
+    return entry
 
 
 class _DecisionLogger:
@@ -617,9 +635,8 @@ def _matches_screen_filters(
     if not context:
         return False
 
-    if screen_index is not None:
-        if context.get("index") != screen_index:
-            return False
+    if screen_index is not None and context.get("index") != screen_index:
+        return False
 
     if screen_name:
         candidate = context.get("name")
@@ -709,10 +726,7 @@ def _decision_log_metadata_offline(
     until_iso: str | None,
     signing_info: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
-    if args.from_jsonl == "-":
-        input_location = "stdin"
-    else:
-        input_location = str(Path(args.from_jsonl).expanduser())
+    input_location = "stdin" if args.from_jsonl == "-" else str(Path(args.from_jsonl).expanduser())
     metadata: dict[str, Any] = {
         "mode": "jsonl",
         "input_file": input_location,
@@ -838,7 +852,7 @@ def _iter_stream(
         if metadata:
             stream_kwargs["metadata"] = metadata
         yield from stub.StreamMetrics(request, **stream_kwargs)
-    except Exception as exc:  # pragma: no cover - obsługa błędów połączenia
+    except Exception as exc:  # pragma: no cover
         LOGGER.error("Błąd połączenia z MetricsService: %s", exc)
         raise SystemExit(1) from exc
 
@@ -982,6 +996,7 @@ def _apply_environment_overrides(
     _override_simple("since", "SINCE", "--since")
     _override_simple("until", "UNTIL", "--until")
     _override_simple("from_jsonl", "FROM_JSONL", "--from-jsonl")
+
     if "--summary" not in provided_flags and not args.summary:
         env_key = f"{_ENV_PREFIX}SUMMARY"
         if env_key in env:
@@ -994,21 +1009,9 @@ def _apply_environment_overrides(
 
     _override_simple("summary_output", "SUMMARY_OUTPUT", "--summary-output")
     _override_simple("decision_log", "DECISION_LOG", "--decision-log")
-    _override_simple(
-        "decision_log_hmac_key",
-        "DECISION_LOG_HMAC_KEY",
-        "--decision-log-hmac-key",
-    )
-    _override_simple(
-        "decision_log_hmac_key_file",
-        "DECISION_LOG_HMAC_KEY_FILE",
-        "--decision-log-hmac-key-file",
-    )
-    _override_simple(
-        "decision_log_key_id",
-        "DECISION_LOG_KEY_ID",
-        "--decision-log-key-id",
-    )
+    _override_simple("decision_log_hmac_key", "DECISION_LOG_HMAC_KEY", "--decision-log-hmac-key")
+    _override_simple("decision_log_hmac_key_file", "DECISION_LOG_HMAC_KEY_FILE", "--decision-log-hmac-key-file")
+    _override_simple("decision_log_key_id", "DECISION_LOG_KEY_ID", "--decision-log-key-id")
 
     if "--format" not in provided_flags:
         env_key = f"{_ENV_PREFIX}FORMAT"
@@ -1082,12 +1085,8 @@ def _apply_core_config_defaults(
         metrics_meta["tls_enabled"] = bool(getattr(tls_config, "enabled", False))
         metrics_meta["client_auth"] = bool(getattr(tls_config, "require_client_auth", False))
         metrics_meta["root_cert_configured"] = bool(getattr(tls_config, "client_ca_path", None))
-        metrics_meta["client_cert_configured"] = bool(
-            getattr(tls_config, "certificate_path", None)
-        )
-        metrics_meta["client_key_configured"] = bool(
-            getattr(tls_config, "private_key_path", None)
-        )
+        metrics_meta["client_cert_configured"] = bool(getattr(tls_config, "certificate_path", None))
+        metrics_meta["client_key_configured"] = bool(getattr(tls_config, "private_key_path", None))
 
     if getattr(metrics_config, "auth_token", None):
         metrics_meta["auth_token_configured"] = True
@@ -1164,6 +1163,7 @@ def _load_custom_risk_profiles(args: argparse.Namespace, parser: argparse.Argume
                 "Załadowano %s profil(e) ryzyka telemetrii z %s", len(registered), target
             )
 
+
 def _apply_risk_profile_settings(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
     profile_name = getattr(args, "risk_profile", None)
     if not profile_name:
@@ -1175,8 +1175,10 @@ def _apply_risk_profile_settings(args: argparse.Namespace, parser: argparse.Argu
     try:
         profile_base = get_risk_profile(normalized)
     except KeyError:
+        available = list_risk_profile_names()
         parser.error(
-            f"Profil ryzyka {profile_name!r} nie jest obsługiwany. Dostępne: {', '.join(list_risk_profile_names())}"
+            f"Profil ryzyka {profile_name!r} nie jest obsługiwany."
+            + (f" Dostępne: {', '.join(available)}" if available else "")
         )
 
     args.risk_profile = normalized
@@ -1198,6 +1200,72 @@ def _apply_risk_profile_settings(args: argparse.Namespace, parser: argparse.Argu
             normalized,
         )
         args.summary = True
+
+
+def _print_available_risk_profiles(
+    selected: str | None, *, core_metadata: Mapping[str, Any] | None = None
+) -> None:
+    profiles: dict[str, Mapping[str, Any]] = {}
+    for name in list_risk_profile_names():
+        profiles[name] = risk_profile_metadata(name)
+
+    payload: dict[str, Any] = {"risk_profiles": profiles}
+    if selected:
+        normalized = selected.strip().lower()
+        payload["selected"] = normalized
+        payload["selected_profile"] = profiles.get(normalized)
+    if core_metadata:
+        payload["core_config"] = dict(core_metadata)
+
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+def _emit_summary(
+    summary_collector: _SummaryCollector | None,
+    *,
+    print_to_console: bool,
+    output_path: str | None,
+    signing_key: bytes | None,
+    signing_key_id: str | None,
+    risk_profile: Mapping[str, Any] | None = None,
+    core_metadata: Mapping[str, Any] | None = None,
+) -> Mapping[str, Any] | None:
+    if summary_collector is None:
+        return None
+
+    summary_payload: dict[str, Any] = {"summary": summary_collector.as_dict()}
+    if risk_profile or core_metadata:
+        metadata_section = summary_payload.setdefault("metadata", {})
+        if risk_profile:
+            metadata_section["risk_profile"] = dict(risk_profile)
+        if core_metadata:
+            metadata_section["core_config"] = dict(core_metadata)
+
+    signed_payload = _sign_payload(
+        summary_payload,
+        signing_key=signing_key,
+        signing_key_id=signing_key_id,
+    )
+
+    if print_to_console:
+        print(json.dumps(signed_payload, ensure_ascii=False))
+
+    if output_path:
+        target_path = Path(output_path).expanduser()
+        try:
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            target_path.write_text(
+                json.dumps(signed_payload, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            LOGGER.error("Nie udało się zapisać podsumowania do %s: %s", target_path, exc)
+            raise SystemExit(2) from exc
+
+        LOGGER.info("Zapisano podsumowanie do %s", target_path)
+
+    return signed_payload
+
 
 def _load_auth_token(token: str | None, token_file: str | None) -> str | None:
     if token and token_file:
@@ -1309,11 +1377,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help="Maksymalna liczba snapshotów do wypisania; domyślnie stream bez końca",
     )
-    parser.add_argument(
-        "--event",
-        default=None,
-        help="Filtruj snapshoty po polu event w notes (np. reduce_motion)",
-    )
+    parser.add_argument("--event", default=None, help="Filtruj snapshoty po polu event w notes (np. reduce_motion)")
     parser.add_argument(
         "--severity",
         action="append",
@@ -1354,69 +1418,19 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "preset pliku z profilami, TLS, host/port)."
         ),
     )
-    parser.add_argument(
-        "--since",
-        default=None,
-        help="Odfiltruj snapshoty starsze niż podany znacznik czasu ISO 8601 (UTC)",
-    )
-    parser.add_argument(
-        "--until",
-        default=None,
-        help="Odfiltruj snapshoty nowsze niż podany znacznik czasu ISO 8601 (UTC)",
-    )
-    parser.add_argument(
-        "--screen-index",
-        type=int,
-        default=None,
-        help="Ogranicz snapshoty do monitora o określonym indeksie",
-    )
-    parser.add_argument(
-        "--screen-name",
-        default=None,
-        help="Filtruj snapshoty po fragmencie nazwy monitora (case-insensitive)",
-    )
-    parser.add_argument(
-        "--format",
-        choices=("table", "json"),
-        default="table",
-        help="Format wypisywanych danych",
-    )
-    parser.add_argument(
-        "--auth-token",
-        default=None,
-        help="Opcjonalny token autoryzacyjny (wysyłany w nagłówku authorization)",
-    )
-    parser.add_argument(
-        "--auth-token-file",
-        default=None,
-        help="Ścieżka do pliku z tokenem Bearer (jedna linia). Wyklucza --auth-token",
-    )
+    parser.add_argument("--since", default=None, help="Odfiltruj snapshoty starsze niż podany znacznik czasu ISO 8601 (UTC)")
+    parser.add_argument("--until", default=None, help="Odfiltruj snapshoty nowsze niż podany znacznik czasu ISO 8601 (UTC)")
+    parser.add_argument("--screen-index", type=int, default=None, help="Ogranicz snapshoty do monitora o określonym indeksie")
+    parser.add_argument("--screen-name", default=None, help="Filtruj snapshoty po fragmencie nazwy monitora (case-insensitive)")
+    parser.add_argument("--format", choices=("table", "json"), default="table", help="Format wypisywanych danych")
+    parser.add_argument("--auth-token", default=None, help="Opcjonalny token autoryzacyjny (wysyłany w nagłówku authorization)")
+    parser.add_argument("--auth-token-file", default=None, help="Ścieżka do pliku z tokenem Bearer (jedna linia). Wyklucza --auth-token")
     parser.add_argument("--use-tls", action="store_true", help="Wymusza połączenie TLS z serwerem")
-    parser.add_argument(
-        "--root-cert",
-        default=None,
-        help="Ścieżka do zaufanego certyfikatu root CA (PEM) używanego do walidacji",
-    )
-    parser.add_argument(
-        "--client-cert",
-        default=None,
-        help="Certyfikat klienta (PEM) dla mTLS",
-    )
-    parser.add_argument(
-        "--client-key",
-        default=None,
-        help="Klucz prywatny klienta (PEM) dla mTLS",
-    )
-    parser.add_argument(
-        "--server-name",
-        default=None,
-        help="Nazwa serwera TLS (override SNI) – przydatne dla IP lub testów",
-    )
-    parser.add_argument(
-        "--server-sha256",
-        default=None,
-        help="Oczekiwany odcisk SHA-256 certyfikatu serwera (pinning)",
-    )
+    parser.add_argument("--root-cert", default=None, help="Ścieżka do zaufanego certyfikatu root CA (PEM) używanego do walidacji")
+    parser.add_argument("--client-cert", default=None, help="Certyfikat klienta (PEM) dla mTLS")
+    parser.add_argument("--client-key", default=None, help="Klucz prywatny klienta (PEM) dla mTLS")
+    parser.add_argument("--server-name", default=None, help="Nazwa serwera TLS (override SNI) – przydatne dla IP lub testów")
+    parser.add_argument("--server-sha256", default=None, help="Oczekiwany odcisk SHA-256 certyfikatu serwera (pinning)")
     parser.add_argument(
         "--from-jsonl",
         default=None,
@@ -1484,78 +1498,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _print_available_risk_profiles(
-    selected: str | None, *, core_metadata: Mapping[str, Any] | None = None
-) -> None:
-    profiles: dict[str, Mapping[str, Any]] = {}
-    for name in list_risk_profile_names():
-        profiles[name] = risk_profile_metadata(name)
-
-    payload: dict[str, Any] = {"risk_profiles": profiles}
-    if selected:
-        normalized = selected.strip().lower()
-        payload["selected"] = normalized
-        payload["selected_profile"] = profiles.get(normalized)
-    if core_metadata:
-        payload["core_config"] = dict(core_metadata)
-
-    print(json.dumps(payload, ensure_ascii=False, indent=2))
-
-
-def _emit_summary(
-    summary_collector: _SummaryCollector | None,
-    *,
-    print_to_console: bool,
-    output_path: str | None,
-    signing_key: bytes | None,
-    signing_key_id: str | None,
-    risk_profile: Mapping[str, Any] | None = None,
-    core_metadata: Mapping[str, Any] | None = None,
-) -> Mapping[str, Any] | None:
-    if summary_collector is None:
-        return None
-
-    summary_payload: dict[str, Any] = {"summary": summary_collector.as_dict()}
-    if risk_profile or core_metadata:
-        metadata_section = summary_payload.setdefault("metadata", {})
-        if risk_profile:
-            metadata_section["risk_profile"] = dict(risk_profile)
-        if core_metadata:
-            metadata_section["core_config"] = dict(core_metadata)
-    signed_payload = _sign_payload(
-        summary_payload,
-        signing_key=signing_key,
-        signing_key_id=signing_key_id,
-    )
-
-    if print_to_console:
-        print(json.dumps(signed_payload, ensure_ascii=False))
-
-    if output_path:
-        target_path = Path(output_path).expanduser()
-        try:
-            target_path.parent.mkdir(parents=True, exist_ok=True)
-            target_path.write_text(
-                json.dumps(signed_payload, ensure_ascii=False, indent=2) + "\n",
-                encoding="utf-8",
-            )
-        except OSError as exc:
-            LOGGER.error("Nie udało się zapisać podsumowania do %s: %s", target_path, exc)
-            raise SystemExit(2) from exc
-
-        LOGGER.info("Zapisano podsumowanie do %s", target_path)
-
-    return signed_payload
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
+
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
 
     args._risk_profile_source = None
     provided_flags = {arg for arg in (argv or []) if arg.startswith("--")}
     if "--risk-profile" in provided_flags:
         args._risk_profile_source = "cli"
+
     tls_env_present, env_use_tls_explicit = _apply_environment_overrides(
         args,
         parser=parser,
@@ -1621,17 +1574,15 @@ def main(argv: list[str] | None = None) -> int:
     severity_min: str | None = None
     if args.severity_min:
         normalized_min = _normalize_severity(args.severity_min)
-        if normalized_min is None or normalized_min not in _SEVERITY_RANK:
+        if normalized_min is None or normalized_min not in SEVERITY_RANK:
             parser.error(
                 "Nieprawidłowa wartość --severity-min – użyj jednego z: "
-                + ", ".join(_SEVERITY_ORDER)
+                + ", ".join(SEVERITY_ORDER)
             )
         severity_min = normalized_min
         if severity_filters:
             conflicts = sorted(
-                value
-                for value in severity_filters
-                if not _severity_at_least(value, severity_min)
+                value for value in severity_filters if not _severity_at_least(value, severity_min)
             )
             if conflicts:
                 parser.error(
@@ -1719,9 +1670,7 @@ def main(argv: list[str] | None = None) -> int:
                 LOGGER.warning("Ignoruję token autoryzacyjny w trybie odczytu z pliku JSONL")
 
             count = 0
-            source_label = (
-                "stdin" if args.from_jsonl == "-" else str(Path(args.from_jsonl).expanduser())
-            )
+            source_label = "stdin" if args.from_jsonl == "-" else str(Path(args.from_jsonl).expanduser())
             if decision_logger:
                 decision_logger.write_metadata(
                     _decision_log_metadata_offline(
@@ -1753,13 +1702,7 @@ def main(argv: list[str] | None = None) -> int:
                     screen_name=args.screen_name,
                 ):
                     continue
-                print(
-                    _format_snapshot(
-                        snapshot,
-                        fmt=args.format,
-                        notes_payload=notes_payload,
-                    )
-                )
+                print(_format_snapshot(snapshot, fmt=args.format, notes_payload=notes_payload))
                 if summary_collector:
                     summary_collector.add(snapshot, notes_payload)
                 if decision_logger:
@@ -1769,9 +1712,7 @@ def main(argv: list[str] | None = None) -> int:
                     break
 
             if count == 0:
-                LOGGER.warning(
-                    "Nie znaleziono snapshotów w źródle %s spełniających filtry", source_label
-                )
+                LOGGER.warning("Nie znaleziono snapshotów w źródle %s spełniających filtry", source_label)
             if summary_collector:
                 if args.summary and count:
                     print()
@@ -1835,11 +1776,7 @@ def main(argv: list[str] | None = None) -> int:
             notes_payload = _parse_notes(snapshot.notes)
             if args.event and notes_payload.get("event") != args.event:
                 continue
-            if not _matches_severity_filter(
-                notes_payload,
-                severities=severity_filters,
-                severity_min=severity_min,
-            ):
+            if not _matches_severity_filter(notes_payload, severities=severity_filters, severity_min=severity_min):
                 continue
             if not _matches_screen_filters(
                 notes_payload,
@@ -1847,13 +1784,7 @@ def main(argv: list[str] | None = None) -> int:
                 screen_name=args.screen_name,
             ):
                 continue
-            print(
-                _format_snapshot(
-                    snapshot,
-                    fmt=args.format,
-                    notes_payload=notes_payload,
-                )
-            )
+            print(_format_snapshot(snapshot, fmt=args.format, notes_payload=notes_payload))
             if summary_collector:
                 summary_collector.add(snapshot, notes_payload)
             if decision_logger:
@@ -1879,34 +1810,5 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
 
-if __name__ == "__main__":  # pragma: no cover - punkt wejścia
+if __name__ == "__main__":  # pragma: no cover
     sys.exit(main())
-def _canonical_payload(payload: Mapping[str, Any]) -> bytes:
-    return json.dumps(
-        payload,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-
-
-def _sign_payload(
-    payload: Mapping[str, Any],
-    *,
-    signing_key: bytes | None,
-    signing_key_id: str | None,
-) -> Mapping[str, Any]:
-    if not signing_key:
-        return dict(payload)
-
-    digest = hmac.new(signing_key, _canonical_payload(payload), hashlib.sha256).digest()
-    signature_payload: dict[str, Any] = {
-        "algorithm": "HMAC-SHA256",
-        "value": base64.b64encode(digest).decode("ascii"),
-    }
-    if signing_key_id:
-        signature_payload["key_id"] = signing_key_id
-
-    entry = dict(payload)
-    entry["signature"] = signature_payload
-    return entry
