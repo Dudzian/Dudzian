@@ -789,10 +789,17 @@ def _collect_telemetry_artifacts(
             for key, value in metadata.items():
                 if key == "core_config" and isinstance(value, Mapping):
                     for service_key, service_meta in value.items():
-                        if isinstance(service_meta, Mapping):
-                            _record_auth_scopes(service_key, service_meta, f"core_config.{service_key}")
+                        if (
+                            isinstance(service_meta, Mapping)
+                            and service_key != "risk_service"
+                        ):
+                            _record_auth_scopes(
+                                service_key,
+                                service_meta,
+                                f"core_config.{service_key}",
+                            )
                     continue
-                if key in {"metrics_service", "risk_service"} and isinstance(value, Mapping):
+                if key == "metrics_service" and isinstance(value, Mapping):
                     _record_auth_scopes(key, value, "summary")
 
     required_auth_scopes = sorted(required_auth_scope_set)
