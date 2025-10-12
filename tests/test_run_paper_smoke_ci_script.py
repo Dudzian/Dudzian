@@ -34,6 +34,17 @@ def _format_env(value: object) -> str:
     return str(value)
 
 
+def test_normalize_sha256_fingerprint_preserves_first_octet() -> None:
+    assert run_paper_smoke_ci._normalize_sha256_fingerprint("aa:bb:cc") == "aabbcc"
+
+
+def test_normalize_sha256_fingerprint_accepts_sha256_prefix_with_pairs() -> None:
+    assert (
+        run_paper_smoke_ci._normalize_sha256_fingerprint("sha256:aa:bb:cc")
+        == "aabbcc"
+    )
+
+
 def _fake_subprocess_run_factory(
     *,
     tmp_path: Path,
