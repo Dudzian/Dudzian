@@ -6,6 +6,7 @@ import logging
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
+import os
 from typing import Any, Mapping, MutableMapping, Sequence
 
 from bot_core.alerts import (
@@ -48,9 +49,11 @@ from bot_core.exchanges.kraken import KrakenFuturesAdapter, KrakenSpotAdapter
 from bot_core.exchanges.zonda import ZondaSpotAdapter
 from bot_core.risk.base import RiskRepository
 from bot_core.risk.engine import ThresholdRiskEngine
+from bot_core.risk.events import RiskDecisionLog
 from bot_core.risk.factory import build_risk_profile_from_config
 from bot_core.risk.repository import FileRiskRepository
-from bot_core.security import SecretManager, SecretStorageError
+from bot_core.security import SecretManager, SecretStorageError, build_service_token_validator
+from bot_core.security.tokens import ServiceTokenValidator
 from bot_core.runtime.journal import (
     InMemoryTradingDecisionJournal,
     JsonlTradingDecisionJournal,
@@ -61,6 +64,7 @@ from bot_core.runtime.file_metadata import (
     file_reference_metadata,
     log_security_warnings,
 )
+from bot_core.observability.metrics import get_global_metrics_registry
 
 # --- Metrics service (opcjonalny – w niektórych gałęziach może nie istnieć) ---
 try:  # pragma: no cover - środowiska bez grpcio lub wygenerowanych stubów
@@ -71,6 +75,24 @@ try:  # pragma: no cover - środowiska bez grpcio lub wygenerowanych stubów
 except Exception:  # pragma: no cover - brak zależności opcjonalnych
     MetricsServer = None  # type: ignore
     build_metrics_server_from_config = None  # type: ignore
+
+try:  # pragma: no cover - risk service jest opcjonalny
+    from bot_core.runtime.risk_service import (  # type: ignore
+        RiskServer,
+        RiskSnapshotBuilder,
+        RiskSnapshotPublisher,
+        build_risk_server_from_config,
+    )
+except Exception:  # pragma: no cover
+    RiskServer = None  # type: ignore
+    RiskSnapshotBuilder = None  # type: ignore
+    RiskSnapshotPublisher = None  # type: ignore
+    build_risk_server_from_config = None  # type: ignore
+
+try:  # pragma: no cover - eksporter metryk może być niedostępny
+    from bot_core.runtime.risk_metrics import RiskMetricsExporter  # type: ignore
+except Exception:  # pragma: no cover
+    RiskMetricsExporter = None  # type: ignore
 
 try:  # pragma: no cover - sink telemetrii może być pominięty
     from bot_core.runtime.metrics_alerts import (  # type: ignore
@@ -85,11 +107,13 @@ try:  # pragma: no cover - presety profili ryzyka mogą nie istnieć
     from bot_core.runtime.telemetry_risk_profiles import (  # type: ignore
         MetricsRiskProfileResolver,
         load_risk_profiles_with_metadata,
+        reset_risk_profile_store,
         summarize_risk_profile,
     )
 except Exception:  # pragma: no cover - brak presetów
     MetricsRiskProfileResolver = None  # type: ignore
     load_risk_profiles_with_metadata = None  # type: ignore
+    reset_risk_profile_store = None  # type: ignore
     summarize_risk_profile = None  # type: ignore
 
 _DEFAULT_ADAPTERS: Mapping[str, ExchangeAdapterFactory] = {
@@ -150,6 +174,23 @@ def _build_ui_alert_audit_metadata(
     return metadata
 
 
+def _config_value(source: object, *names: str) -> Any:
+    """Zwraca pierwszą niepustą wartość z obiektu konfiguracji."""
+
+    if source is None:
+        return None
+    if isinstance(source, Mapping):
+        for name in names:
+            if name in source and source[name] is not None:
+                return source[name]
+    for name in names:
+        if hasattr(source, name):
+            value = getattr(source, name)
+            if value is not None:
+                return value
+    return None
+
+
 @dataclass(slots=True)
 class BootstrapContext:
     """Zawiera wszystkie komponenty zainicjalizowane dla danego środowiska."""
@@ -165,6 +206,7 @@ class BootstrapContext:
     audit_log: AlertAuditLog
     adapter_settings: Mapping[str, Any]
     decision_journal: TradingDecisionJournal | None
+    risk_decision_log: RiskDecisionLog | None
     risk_profile_name: str
     metrics_server: Any | None = None
     metrics_ui_alerts_path: Path | None = None
@@ -174,7 +216,17 @@ class BootstrapContext:
     metrics_ui_alerts_metadata: Mapping[str, Any] | None = None
     metrics_jsonl_metadata: Mapping[str, Any] | None = None
     metrics_security_warnings: tuple[str, ...] | None = None
+    metrics_security_metadata: Mapping[str, Any] | None = None
     metrics_ui_alerts_settings: Mapping[str, Any] | None = None
+    metrics_token_validator: ServiceTokenValidator | None = None
+    risk_server: Any | None = None
+    risk_snapshot_store: Any | None = None
+    risk_snapshot_builder: Any | None = None
+    risk_snapshot_publisher: Any | None = None
+    risk_service_enabled: bool | None = None
+    risk_security_metadata: Mapping[str, Any] | None = None
+    risk_security_warnings: tuple[str, ...] | None = None
+    risk_token_validator: ServiceTokenValidator | None = None
 
 
 def bootstrap_environment(
@@ -199,7 +251,11 @@ def bootstrap_environment(
 
     risk_repository_path = Path(environment.data_cache_path) / "risk_state"
     risk_repository = FileRiskRepository(risk_repository_path)
-    risk_engine = ThresholdRiskEngine(repository=risk_repository)
+    risk_decision_log = _build_risk_decision_log(core_config, environment)
+    risk_engine = ThresholdRiskEngine(
+        repository=risk_repository,
+        decision_log=risk_decision_log,
+    )
     profile = build_risk_profile_from_config(risk_profile_config)
     risk_engine.register_profile(profile)
     # Aktualizujemy konfigurację środowiska, aby dalsze komponenty znały aktywny profil.
@@ -249,9 +305,97 @@ def bootstrap_environment(
     metrics_risk_profiles_file: Mapping[str, Any] | None = None
     metrics_security_warnings: list[str] = []
     metrics_security_payload: dict[str, object] = {}
+    metrics_auth_metadata: Mapping[str, Any] | None = None
+    metrics_tls_enabled: bool | None = None
+    metrics_token_validator: ServiceTokenValidator | None = None
+    risk_server: Any | None = None
+    risk_snapshot_store: Any | None = None
+    risk_snapshot_builder: Any | None = None
+    risk_snapshot_publisher: Any | None = None
+    risk_metrics_exporter: Any | None = None
+    risk_service_enabled: bool | None = None
+    risk_security_payload: dict[str, object] = {}
+    risk_security_warnings: list[str] = []
+    risk_auth_metadata: Mapping[str, Any] | None = None
+    risk_tls_enabled: bool | None = None
+    risk_token_validator: ServiceTokenValidator | None = None
+
+    if RiskSnapshotBuilder is not None:
+        try:
+            risk_snapshot_builder = RiskSnapshotBuilder(risk_engine)
+        except Exception:  # pragma: no cover - nie blokujemy bootstrapu
+            risk_snapshot_builder = None
+            _LOGGER.debug("Nie udało się zainicjalizować RiskSnapshotBuilder", exc_info=True)
+    if risk_snapshot_builder is not None and RiskMetricsExporter is not None:
+        try:
+            risk_metrics_exporter = RiskMetricsExporter(
+                get_global_metrics_registry(),
+                environment=environment.environment.value,
+                stage=environment_name,
+            )
+            try:
+                for profile_name in risk_snapshot_builder.profile_names():
+                    snapshot = risk_snapshot_builder.build(profile_name)
+                    if snapshot is not None:
+                        risk_metrics_exporter(snapshot)
+            except Exception:  # pragma: no cover - diagnostyka snapshotów startowych
+                _LOGGER.debug(
+                    "Nie udało się wygenerować początkowych metryk ryzyka", exc_info=True
+                )
+        except Exception:  # pragma: no cover - eksporter jest opcjonalny
+            risk_metrics_exporter = None
+            _LOGGER.debug("Nie udało się zainicjalizować eksportera metryk ryzyka", exc_info=True)
     metrics_config = getattr(core_config, "metrics_service", None)
     if metrics_config is not None:
         metrics_service_enabled = bool(getattr(metrics_config, "enabled", False))
+        tls_config = getattr(metrics_config, "tls", None)
+        if tls_config is not None:
+            from bot_core.security import tls_audit as _tls_audit
+
+            tls_report = _tls_audit.audit_tls_entry(
+                tls_config,
+                role_prefix="metrics_tls",
+                env=os.environ,
+            )
+            metrics_tls_enabled = bool(tls_report.get("enabled"))
+            metrics_security_payload["tls"] = tls_report
+            if tls_report.get("warnings"):
+                metrics_security_warnings.extend(
+                    str(item) for item in tls_report.get("warnings", ())
+                )
+            if tls_report.get("errors"):
+                metrics_security_warnings.extend(
+                    str(item) for item in tls_report.get("errors", ())
+                )
+        else:
+            metrics_tls_enabled = False
+        token_value = _config_value(metrics_config, "auth_token", "token")
+        token_str = str(token_value).strip() if token_value else ""
+        rbac_entries = tuple(getattr(metrics_config, "rbac_tokens", ()) or ())
+        if rbac_entries:
+            try:
+                metrics_token_validator = build_service_token_validator(
+                    rbac_entries,
+                    default_scope="metrics.read",
+                )
+            except Exception:  # pragma: no cover - diagnostyka konfiguracji
+                _LOGGER.exception("Nie udało się zbudować walidatora RBAC dla MetricsService")
+                metrics_token_validator = None
+                metrics_security_warnings.append(
+                    "Nie udało się zainicjalizować walidatora RBAC MetricsService"
+                )
+            else:
+                metrics_security_payload["rbac_tokens"] = metrics_token_validator.metadata()
+        metrics_auth_metadata = {
+            "token_configured": bool(token_str) or bool(metrics_token_validator),
+        }
+        if token_str:
+            metrics_auth_metadata["token_length"] = len(token_str)
+        if metrics_token_validator is not None:
+            validator_meta = metrics_token_validator.metadata()
+            metrics_auth_metadata["rbac_tokens"] = validator_meta.get("tokens", [])
+            metrics_auth_metadata["default_scope"] = validator_meta.get("default_scope")
+        metrics_security_payload["auth"] = metrics_auth_metadata
         profiles_file_value = getattr(metrics_config, "ui_alerts_risk_profiles_file", None)
         if profiles_file_value:
             normalized_file = Path(profiles_file_value).expanduser()
@@ -552,34 +696,57 @@ def bootstrap_environment(
                     str(item) for item in entry.get("warnings", [])
                 )
 
+    if metrics_service_enabled:
+        if metrics_auth_metadata and not metrics_auth_metadata.get("token_configured"):
+            metrics_security_warnings.append(
+                "MetricsService ma włączone API bez tokenu autoryzacyjnego – ustaw runtime.metrics_service.auth_token."
+            )
+        if metrics_tls_enabled is False:
+            metrics_security_warnings.append(
+                "MetricsService działa bez TLS – włącz runtime.metrics_service.tls.enabled lub dostarcz certyfikaty."
+            )
+
+    if metrics_security_warnings:
+        metrics_security_warnings = list(dict.fromkeys(metrics_security_warnings))
+
     if build_metrics_server_from_config is not None:
         try:
-            # Najpierw spróbuj pełnej, najnowszej sygnatury (cfg, sinks, alerts_router)
+            # Najpierw spróbuj najnowszej sygnatury (cfg, sinks, alerts_router, token_validator)
             try:
                 metrics_server = build_metrics_server_from_config(  # type: ignore[call-arg]
                     core_config.metrics_service,
                     sinks=metrics_sinks or None,
                     alerts_router=alert_router,
+                    token_validator=metrics_token_validator,
                 )
             except TypeError:
-                # Następnie (cfg, alerts_router)
+                # Następnie (cfg, alerts_router, token_validator)
                 try:
                     metrics_server = build_metrics_server_from_config(  # type: ignore[call-arg]
                         core_config.metrics_service,
                         alerts_router=alert_router,
+                        token_validator=metrics_token_validator,
                     )
                 except TypeError:
-                    # Potem (cfg, sinks)
+                    # Potem (cfg, sinks, token_validator)
                     try:
                         metrics_server = build_metrics_server_from_config(  # type: ignore[call-arg]
                             core_config.metrics_service,
                             sinks=metrics_sinks or None,
+                            token_validator=metrics_token_validator,
                         )
                     except TypeError:
-                        # Na końcu najstarsza postać: tylko (cfg)
-                        metrics_server = build_metrics_server_from_config(
-                            core_config.metrics_service  # type: ignore[arg-type]
-                        )
+                        # Kolejny fallback (cfg, token_validator)
+                        try:
+                            metrics_server = build_metrics_server_from_config(
+                                core_config.metrics_service,
+                                token_validator=metrics_token_validator,
+                            )
+                        except TypeError:
+                            # Najstarsza postać: tylko (cfg)
+                            metrics_server = build_metrics_server_from_config(
+                                core_config.metrics_service  # type: ignore[arg-type]
+                            )
 
             if metrics_server is not None:
                 metrics_server.start()
@@ -590,6 +757,173 @@ def bootstrap_environment(
         except Exception:  # pragma: no cover - telemetria jest opcjonalna
             _LOGGER.exception("Nie udało się uruchomić MetricsService – kontynuuję bez telemetrii")
             metrics_server = None
+
+    risk_config = getattr(core_config, "risk_service", None)
+    if risk_config is not None:
+        risk_service_enabled = bool(getattr(risk_config, "enabled", True))
+        tls_config = getattr(risk_config, "tls", None)
+        if tls_config is not None:
+            from bot_core.security import tls_audit as _tls_audit
+
+            tls_report = _tls_audit.audit_tls_entry(
+                tls_config,
+                role_prefix="risk_tls",
+                env=os.environ,
+            )
+            risk_tls_enabled = bool(tls_report.get("enabled"))
+            risk_security_payload["tls"] = tls_report
+            if tls_report.get("warnings"):
+                risk_security_warnings.extend(
+                    str(item) for item in tls_report.get("warnings", ())
+                )
+            if tls_report.get("errors"):
+                risk_security_warnings.extend(
+                    str(item) for item in tls_report.get("errors", ())
+                )
+        else:
+            risk_tls_enabled = False
+        token_value = _config_value(risk_config, "auth_token", "token")
+        token_str = str(token_value).strip() if token_value else ""
+        rbac_entries = tuple(getattr(risk_config, "rbac_tokens", ()) or ())
+        if rbac_entries:
+            try:
+                risk_token_validator = build_service_token_validator(
+                    rbac_entries,
+                    default_scope="risk.read",
+                )
+            except Exception:  # pragma: no cover - diagnostyka konfiguracji
+                _LOGGER.exception("Nie udało się zbudować walidatora RBAC dla RiskService")
+                risk_token_validator = None
+                risk_security_warnings.append(
+                    "Nie udało się zainicjalizować walidatora RBAC RiskService"
+                )
+            else:
+                risk_security_payload["rbac_tokens"] = risk_token_validator.metadata()
+        risk_auth_metadata = {
+            "token_configured": bool(token_str) or bool(risk_token_validator),
+        }
+        if token_str:
+            risk_auth_metadata["token_length"] = len(token_str)
+        if risk_token_validator is not None:
+            validator_meta = risk_token_validator.metadata()
+            risk_auth_metadata["rbac_tokens"] = validator_meta.get("tokens", [])
+            risk_auth_metadata["default_scope"] = validator_meta.get("default_scope")
+        risk_security_payload["auth"] = risk_auth_metadata
+
+    if build_risk_server_from_config is not None and risk_config is not None:
+        try:
+            try:
+                candidate = build_risk_server_from_config(
+                    risk_config,
+                    token_validator=risk_token_validator,
+                )
+            except TypeError:
+                candidate = build_risk_server_from_config(risk_config)
+        except Exception:  # pragma: no cover - risk service jest opcjonalny
+            _LOGGER.exception("Nie udało się zbudować konfiguracji RiskService")
+        else:
+            if candidate is not None:
+                try:
+                    candidate.start()
+                except Exception:  # pragma: no cover - brak krytyczny, kontynuujemy bez serwera
+                    _LOGGER.exception("Nie udało się uruchomić RiskService – kontynuuję bez serwera ryzyka")
+                else:
+                    risk_server = candidate
+                    risk_snapshot_store = getattr(candidate, "store", None)
+                    _LOGGER.info(
+                        "Serwer RiskService uruchomiony na %s",
+                        getattr(candidate, "address", "unknown"),
+                    )
+                    if risk_snapshot_builder is not None:
+                        try:
+                            initial_snapshot = risk_snapshot_builder.build(profile.name)
+                            if initial_snapshot is not None:
+                                candidate.publish(initial_snapshot)
+                                if risk_metrics_exporter is not None:
+                                    try:
+                                        risk_metrics_exporter(initial_snapshot)
+                                    except Exception:  # pragma: no cover - diagnostyka eksportera
+                                        _LOGGER.debug(
+                                            "Nie udało się zaktualizować metryk ryzyka początkowym snapshotem",
+                                            exc_info=True,
+                                        )
+                        except Exception:  # pragma: no cover - diagnostyka
+                            _LOGGER.debug(
+                                "Nie udało się opublikować początkowego stanu ryzyka",
+                                exc_info=True,
+                            )
+                        if RiskSnapshotPublisher is not None:
+                            publish_interval = 5.0
+                            normalized_profiles: tuple[str, ...] = ()
+                            try:
+                                interval_raw = getattr(risk_config, "publish_interval_seconds", 5.0)
+                                publish_interval = float(interval_raw)
+                            except (TypeError, ValueError):
+                                _LOGGER.debug(
+                                    "Nieprawidłowy interwał publish_interval_seconds – używam domyślnego 5s",
+                                    exc_info=True,
+                                )
+                                publish_interval = 5.0
+                            raw_profiles = getattr(risk_config, "profiles", ()) or ()
+                            normalized_profiles = tuple(
+                                dict.fromkeys(
+                                    str(name).strip()
+                                    for name in raw_profiles
+                                    if str(name).strip()
+                                )
+                            )
+                            try:
+                                sinks = [candidate.publish]
+                                if risk_metrics_exporter is not None:
+                                    sinks.append(risk_metrics_exporter)
+                                publisher = RiskSnapshotPublisher(
+                                    risk_snapshot_builder,
+                                    profiles=normalized_profiles or None,
+                                    interval_seconds=publish_interval,
+                                    sinks=sinks,
+                                )
+                                publisher.start()
+                            except Exception:  # pragma: no cover - diagnostyka publikatora
+                                _LOGGER.exception("Nie udało się uruchomić RiskSnapshotPublisher")
+                            else:
+                                risk_snapshot_publisher = publisher
+                    _LOGGER.info(
+                        "RiskSnapshotPublisher aktywny (profili=%s, interwał=%.2fs)",
+                        ",".join(normalized_profiles) if normalized_profiles else "auto",
+                        publish_interval,
+                    )
+
+    if reset_risk_profile_store is not None:
+        try:
+            reset_risk_profile_store()
+        except Exception:  # pragma: no cover - defensywne czyszczenie
+            _LOGGER.debug("Nie udało się zresetować presetów profili ryzyka", exc_info=True)
+
+    if risk_security_payload:
+        warnings_detected = log_security_warnings(
+            risk_security_payload,
+            fail_on_warnings=False,
+            logger=_LOGGER,
+            context="risk_service",
+        )
+        if warnings_detected:
+            for entry in collect_security_warnings(risk_security_payload):
+                risk_security_warnings.extend(
+                    str(item) for item in entry.get("warnings", [])
+                )
+
+    if risk_service_enabled:
+        if risk_auth_metadata and not risk_auth_metadata.get("token_configured"):
+            risk_security_warnings.append(
+                "RiskService ma włączone API bez tokenu autoryzacyjnego – ustaw runtime.risk_service.auth_token."
+            )
+        if risk_tls_enabled is False:
+            risk_security_warnings.append(
+                "RiskService działa bez TLS – włącz runtime.risk_service.tls.enabled lub dostarcz certyfikaty."
+            )
+
+    if risk_security_warnings:
+        risk_security_warnings = list(dict.fromkeys(risk_security_warnings))
 
     return BootstrapContext(
         core_config=core_config,
@@ -603,6 +937,7 @@ def bootstrap_environment(
         audit_log=audit_log,
         adapter_settings=environment.adapter_settings,
         decision_journal=decision_journal,
+        risk_decision_log=risk_decision_log,
         risk_profile_name=selected_profile,
         metrics_server=metrics_server,
         metrics_ui_alerts_path=metrics_ui_alert_path,
@@ -614,7 +949,17 @@ def bootstrap_environment(
         metrics_security_warnings=tuple(metrics_security_warnings)
         if metrics_security_warnings
         else None,
+        metrics_security_metadata=metrics_security_payload if metrics_security_payload else None,
         metrics_ui_alerts_settings=metrics_ui_alerts_settings,
+        metrics_token_validator=metrics_token_validator,
+        risk_server=risk_server,
+        risk_snapshot_store=risk_snapshot_store,
+        risk_snapshot_builder=risk_snapshot_builder,
+        risk_snapshot_publisher=risk_snapshot_publisher,
+        risk_service_enabled=risk_service_enabled,
+        risk_security_metadata=risk_security_payload if risk_security_payload else None,
+        risk_security_warnings=tuple(risk_security_warnings) if risk_security_warnings else None,
+        risk_token_validator=risk_token_validator,
     )
 
 
@@ -633,6 +978,69 @@ def _instantiate_adapter(
     if settings:
         return factory(credentials, environment=environment, settings=settings)
     return factory(credentials, environment=environment)
+
+
+def _build_risk_decision_log(
+    core_config: CoreConfig, environment: EnvironmentConfig
+) -> RiskDecisionLog | None:
+    config = getattr(core_config, "risk_decision_log", None)
+    if config is None or not getattr(config, "enabled", True):
+        return None
+
+    configured_path = getattr(config, "path", None)
+    if configured_path:
+        candidate = Path(str(configured_path)).expanduser()
+        if not candidate.is_absolute():
+            log_path = Path(environment.data_cache_path) / candidate
+        else:
+            log_path = candidate
+    else:
+        log_path = Path(environment.data_cache_path) / "risk_decisions.jsonl"
+
+    max_entries = int(getattr(config, "max_entries", 1_000) or 1_000)
+    signing_key = _load_risk_decision_log_key(config)
+    signing_key_id = getattr(config, "signing_key_id", None)
+    jsonl_fsync = bool(getattr(config, "jsonl_fsync", False))
+
+    try:
+        return RiskDecisionLog(
+            max_entries=max_entries,
+            jsonl_path=log_path,
+            signing_key=signing_key,
+            signing_key_id=str(signing_key_id) if signing_key_id else None,
+            jsonl_fsync=jsonl_fsync,
+        )
+    except Exception:  # pragma: no cover - log jest opcjonalny
+        _LOGGER.exception("Nie udało się zainicjalizować RiskDecisionLog")
+        return None
+
+
+def _load_risk_decision_log_key(config: object) -> bytes | None:
+    env_name = getattr(config, "signing_key_env", None)
+    if env_name:
+        env_value = os.environ.get(str(env_name))
+        if env_value:
+            return env_value.encode("utf-8")
+        _LOGGER.warning(
+            "RiskDecisionLog: zmienna środowiskowa %s nie jest ustawiona", env_name
+        )
+
+    key_path = getattr(config, "signing_key_path", None)
+    if key_path:
+        try:
+            content = Path(str(key_path)).expanduser().read_bytes()
+            stripped = content.strip()
+            if stripped:
+                return stripped
+            _LOGGER.warning("RiskDecisionLog: plik %s nie zawiera klucza", key_path)
+        except Exception as exc:  # pragma: no cover - diagnostyka konfiguracji
+            _LOGGER.warning("RiskDecisionLog: błąd odczytu klucza z %s: %s", key_path, exc)
+
+    key_value = getattr(config, "signing_key_value", None)
+    if key_value not in (None, ""):
+        return str(key_value).encode("utf-8")
+
+    return None
 
 
 def _resolve_risk_profile(

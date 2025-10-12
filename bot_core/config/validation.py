@@ -8,6 +8,16 @@ from typing import Mapping
 from bot_core.config.models import CoreConfig
 
 _UI_ALERT_AUDIT_BACKEND_ALLOWED = {"auto", "file", "memory"}
+_SUPPORTED_TOKEN_HASH_ALGORITHMS = {
+    "sha224",
+    "sha256",
+    "sha384",
+    "sha512",
+    "sha3_224",
+    "sha3_256",
+    "sha3_384",
+    "sha3_512",
+}
 
 # Mapowanie sufiksów interwałów na sekundy.
 _INTERVAL_SUFFIX_TO_SECONDS: Mapping[str, int] = {
@@ -88,6 +98,8 @@ def validate_core_config(config: CoreConfig) -> ConfigValidationResult:
     _validate_instrument_universes(config, errors, warnings)
     _validate_environments(config, errors, warnings)
     _validate_metrics_service(config, errors, warnings)
+    _validate_risk_service(config, errors, warnings)
+    _validate_risk_decision_log(config, errors, warnings)
 
     return ConfigValidationResult(errors=errors, warnings=warnings)
 
@@ -353,6 +365,15 @@ def _validate_metrics_service(
 
     context = "runtime.metrics_service"
 
+    tokens = tuple(getattr(metrics, "rbac_tokens", ()) or ())
+    if tokens:
+        _validate_service_tokens_block(
+            tokens=tokens,
+            context=f"{context}.rbac_tokens",
+            errors=errors,
+            warnings=warnings,
+        )
+
     tls = getattr(metrics, "tls", None)
     if tls is not None and getattr(tls, "enabled", False):
         certificate = getattr(tls, "certificate_path", None)
@@ -370,6 +391,36 @@ def _validate_metrics_service(
             if not client_ca or not str(client_ca).strip():
                 errors.append(
                     f"{context}: TLS z require_client_auth wymaga client_ca_path"
+                )
+    if tls is not None:
+        pinned = tuple(getattr(tls, "pinned_fingerprints", ()) or ())
+        if pinned and not getattr(tls, "enabled", False):
+            warnings.append(
+                f"{context}: tls.pinned_fingerprints ustawione, ale TLS jest wyłączone"
+            )
+        seen_pins: set[str] = set()
+        for entry in pinned:
+            normalized = str(entry).strip().lower()
+            if not normalized or ":" not in normalized:
+                errors.append(
+                    f"{context}: wpis tls.pinned_fingerprints='{entry}' ma nieprawidłowy format"
+                )
+                continue
+            if normalized in seen_pins:
+                warnings.append(
+                    f"{context}: tls.pinned_fingerprints zawiera duplikat '{entry}'"
+                )
+            seen_pins.add(normalized)
+        password_env = getattr(tls, "private_key_password_env", None)
+        if password_env is not None:
+            normalized_env = str(password_env).strip()
+            if not normalized_env:
+                errors.append(
+                    f"{context}: tls.private_key_password_env nie może być puste"
+                )
+            elif normalized_env and not normalized_env.isupper():
+                warnings.append(
+                    f"{context}: nazwa zmiennej tls.private_key_password_env powinna być wielkimi literami"
                 )
 
     _validate_ui_alert_block(
@@ -466,6 +517,148 @@ def _validate_metrics_service(
             )
 
 
+def _validate_risk_service(
+    config: CoreConfig, errors: list[str], warnings: list[str]
+) -> None:
+    risk_service = getattr(config, "risk_service", None)
+    if risk_service is None:
+        return
+
+    context = "runtime.risk_service"
+
+    tokens = tuple(getattr(risk_service, "rbac_tokens", ()) or ())
+    if tokens:
+        _validate_service_tokens_block(
+            tokens=tokens,
+            context=f"{context}.rbac_tokens",
+            errors=errors,
+            warnings=warnings,
+        )
+
+    history_size = getattr(risk_service, "history_size", 0)
+    if history_size is None or int(history_size) <= 0:
+        errors.append(f"{context}: history_size musi być dodatnie")
+
+    port = getattr(risk_service, "port", 0)
+    if port is None or int(port) < 0:
+        errors.append(f"{context}: port nie może być ujemny")
+
+    interval_raw = getattr(risk_service, "publish_interval_seconds", None)
+    interval_value: float | None = None
+    if interval_raw is not None:
+        try:
+            interval_value = float(interval_raw)
+        except (TypeError, ValueError):
+            errors.append(f"{context}: publish_interval_seconds musi być liczbą dodatnią")
+    if interval_value is None:
+        errors.append(f"{context}: publish_interval_seconds musi być dodatnie")
+    elif interval_value <= 0:
+        errors.append(f"{context}: publish_interval_seconds musi być dodatnie")
+
+    profiles = getattr(risk_service, "profiles", None)
+    if profiles:
+        seen: set[str] = set()
+        for idx, profile in enumerate(profiles, start=1):
+            normalized = str(profile).strip()
+            if not normalized:
+                errors.append(f"{context}: profiles[{idx}] nie może być puste")
+                break
+            if normalized in seen:
+                warnings.append(
+                    f"{context}: profiles zawiera zduplikowany wpis '{normalized}' – zostanie zignorowany"
+                )
+                continue
+            seen.add(normalized)
+
+    tls = getattr(risk_service, "tls", None)
+    if tls is not None and getattr(tls, "enabled", False):
+        certificate = getattr(tls, "certificate_path", None)
+        private_key = getattr(tls, "private_key_path", None)
+        if not certificate or not str(certificate).strip():
+            errors.append(
+                f"{context}: TLS wymaga certificate_path przy włączonym szyfrowaniu"
+            )
+        if not private_key or not str(private_key).strip():
+            errors.append(
+                f"{context}: TLS wymaga private_key_path przy włączonym szyfrowaniu"
+            )
+        if getattr(tls, "require_client_auth", False):
+            client_ca = getattr(tls, "client_ca_path", None)
+            if not client_ca or not str(client_ca).strip():
+                errors.append(
+                    f"{context}: TLS z require_client_auth wymaga client_ca_path"
+                )
+    if tls is not None:
+        pinned = tuple(getattr(tls, "pinned_fingerprints", ()) or ())
+        if pinned and not getattr(tls, "enabled", False):
+            warnings.append(
+                f"{context}: tls.pinned_fingerprints ustawione, ale TLS jest wyłączone"
+            )
+        seen_pins: set[str] = set()
+        for entry in pinned:
+            normalized = str(entry).strip().lower()
+            if not normalized or ":" not in normalized:
+                errors.append(
+                    f"{context}: wpis tls.pinned_fingerprints='{entry}' ma nieprawidłowy format"
+                )
+                continue
+            if normalized in seen_pins:
+                warnings.append(
+                    f"{context}: tls.pinned_fingerprints zawiera duplikat '{entry}'"
+                )
+            seen_pins.add(normalized)
+        password_env = getattr(tls, "private_key_password_env", None)
+        if password_env is not None:
+            normalized_env = str(password_env).strip()
+            if not normalized_env:
+                errors.append(
+                    f"{context}: tls.private_key_password_env nie może być puste"
+                )
+            elif normalized_env and not normalized_env.isupper():
+                warnings.append(
+                    f"{context}: nazwa zmiennej tls.private_key_password_env powinna być wielkimi literami"
+                )
+
+
+def _validate_risk_decision_log(
+    config: CoreConfig, errors: list[str], warnings: list[str]
+) -> None:
+    log_config = getattr(config, "risk_decision_log", None)
+    if log_config is None or not getattr(log_config, "enabled", True):
+        return
+
+    context = "runtime.risk_decision_log"
+
+    max_entries = getattr(log_config, "max_entries", 0)
+    if max_entries is None or int(max_entries) <= 0:
+        errors.append(f"{context}: max_entries musi być dodatnie")
+
+    path_value = getattr(log_config, "path", None)
+    if path_value is not None and not str(path_value).strip():
+        errors.append(f"{context}: path nie może być puste")
+
+    key_sources: list[str] = []
+    for source in ("signing_key_env", "signing_key_path", "signing_key_value"):
+        value = getattr(log_config, source, None)
+        if value not in (None, ""):
+            key_sources.append(source)
+
+    if len(key_sources) > 1:
+        errors.append(
+            f"{context}: skonfiguruj tylko jedno źródło klucza podpisu (env/path/value)"
+        )
+
+    if not key_sources:
+        warnings.append(
+            f"{context}: brak klucza podpisu – podpisy HMAC nie będą generowane"
+        )
+
+    if getattr(log_config, "signing_key_value", None):
+        warnings.append(
+            f"{context}: signing_key_value w pliku YAML może naruszać politykę bezpieczeństwa"
+        )
+
+
 def _validate_ui_alert_block(
     *,
     context: str,
@@ -533,6 +726,83 @@ def _validate_ui_alert_block(
             errors.append(
                 f"{context}: {threshold_label} musi być dodatnie (otrzymano {threshold_value})"
             )
+
+
+def _validate_service_tokens_block(
+    *,
+    tokens,
+    context: str,
+    errors: list[str],
+    warnings: list[str],
+) -> None:
+    seen_ids: set[str] = set()
+    for idx, token in enumerate(tokens, start=1):
+        token_context = f"{context}[{idx}]"
+        token_id = str(getattr(token, "token_id", "")).strip()
+        if not token_id:
+            errors.append(f"{token_context}: token_id nie może być puste")
+            continue
+        if token_id in seen_ids:
+            warnings.append(
+                f"{context}: token_id '{token_id}' występuje wielokrotnie – kolejne wpisy będą nadpisywać wcześniejsze"
+            )
+        seen_ids.add(token_id)
+
+        token_env = getattr(token, "token_env", None)
+        token_value = getattr(token, "token_value", None)
+        token_hash = getattr(token, "token_hash", None)
+
+        if not token_env and not token_value and not token_hash:
+            errors.append(
+                f"{token_context}: wymagane token_value, token_env lub token_hash dla definicji tokenu"
+            )
+
+        if token_env is not None:
+            env_name = str(token_env).strip()
+            if not env_name:
+                errors.append(f"{token_context}.token_env nie może być puste")
+            elif not env_name.isupper():
+                warnings.append(
+                    f"{token_context}.token_env powinno być zapisane wielkimi literami (otrzymano '{token_env}')"
+                )
+
+        if token_hash:
+            normalized = str(token_hash).strip().lower()
+            if ":" in normalized:
+                algorithm, digest = normalized.split(":", 1)
+            else:
+                algorithm, digest = "sha256", normalized
+            algorithm = algorithm.strip()
+            digest = digest.strip()
+            if algorithm and algorithm not in _SUPPORTED_TOKEN_HASH_ALGORITHMS:
+                errors.append(
+                    f"{token_context}.token_hash wykorzystuje nieobsługiwany algorytm '{algorithm}'"
+                )
+            if not digest:
+                errors.append(f"{token_context}.token_hash wymaga wartości skrótu hex")
+            else:
+                try:
+                    bytes.fromhex(digest)
+                except ValueError:
+                    errors.append(
+                        f"{token_context}.token_hash musi zawierać poprawny zapis hex (otrzymano '{token_hash}')"
+                    )
+
+        scopes = tuple(getattr(token, "scopes", ()) or ())
+        seen_scopes: set[str] = set()
+        for scope_idx, scope in enumerate(scopes, start=1):
+            normalized_scope = str(scope).strip().lower()
+            if not normalized_scope:
+                warnings.append(
+                    f"{token_context}.scopes[{scope_idx}] jest puste i zostanie pominięte"
+                )
+                continue
+            if normalized_scope in seen_scopes:
+                warnings.append(
+                    f"{token_context}.scopes[{scope_idx}] duplikuje wpis '{normalized_scope}'"
+                )
+                continue
+            seen_scopes.add(normalized_scope)
 
 def _validate_instrument_universes(
     config: CoreConfig, errors: list[str], warnings: list[str]

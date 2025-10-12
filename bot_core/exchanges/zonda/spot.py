@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 import time
 from dataclasses import dataclass
 from hashlib import sha512
@@ -20,6 +21,13 @@ from bot_core.exchanges.base import (
     OrderRequest,
     OrderResult,
 )
+from bot_core.exchanges.errors import (
+    ExchangeAPIError,
+    ExchangeAuthError,
+    ExchangeNetworkError,
+    ExchangeThrottlingError,
+)
+from bot_core.observability.metrics import MetricsRegistry, get_global_metrics_registry
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -32,6 +40,11 @@ _BASE_URLS: Mapping[Environment, str] = {
 }
 
 _DEFAULT_HEADERS = {"User-Agent": "bot-core/1.0 (+https://github.com/)"}
+_RETRYABLE_STATUS = {408, 425, 429, 500, 502, 503, 504}
+_MAX_RETRIES = 3
+_BASE_BACKOFF = 0.4
+_BACKOFF_CAP = 4.0
+_JITTER_RANGE = (0.05, 0.35)
 
 
 def _extract_pair(symbol: str, entry: Mapping[str, object]) -> tuple[str, str] | None:
@@ -156,6 +169,42 @@ class _OrderPayload:
     raw: Mapping[str, object]
 
 
+@dataclass(slots=True)
+class ZondaTicker:
+    symbol: str
+    best_bid: float
+    best_ask: float
+    last_price: float
+    volume_24h: float
+    high_24h: float
+    low_24h: float
+    vwap_24h: float
+    timestamp: float
+
+
+@dataclass(slots=True)
+class ZondaOrderBookLevel:
+    price: float
+    quantity: float
+
+
+@dataclass(slots=True)
+class ZondaOrderBook:
+    symbol: str
+    bids: Sequence[ZondaOrderBookLevel]
+    asks: Sequence[ZondaOrderBookLevel]
+    timestamp: float
+
+
+@dataclass(slots=True)
+class ZondaTrade:
+    trade_id: str
+    price: float
+    quantity: float
+    side: str
+    timestamp: float
+
+
 # --- Adapter -----------------------------------------------------------------
 
 class ZondaSpotAdapter(ExchangeAdapter):
@@ -169,6 +218,18 @@ class ZondaSpotAdapter(ExchangeAdapter):
         "_settings",
         "_valuation_asset",
         "_secondary_valuation_assets",
+        "_http_timeout",
+        "_metrics",
+        "_metric_base_labels",
+        "_metric_http_latency",
+        "_metric_retries",
+        "_metric_signed_requests",
+        "_metric_api_errors",
+        "_metric_rate_limit_remaining",
+        "_metric_ticker_last_price",
+        "_metric_ticker_spread",
+        "_metric_orderbook_levels",
+        "_metric_trades_fetched",
     )
     name: str = "zonda_spot"
 
@@ -178,6 +239,7 @@ class ZondaSpotAdapter(ExchangeAdapter):
         *,
         environment: Environment | None = None,
         settings: Mapping[str, object] | None = None,
+        metrics_registry: MetricsRegistry | None = None,
     ) -> None:
         super().__init__(credentials)
         self._environment = environment or credentials.environment
@@ -190,6 +252,49 @@ class ZondaSpotAdapter(ExchangeAdapter):
         self._settings = dict(settings or {})
         self._valuation_asset = self._extract_valuation_asset()
         self._secondary_valuation_assets = self._extract_secondary_assets()
+        self._http_timeout = int(self._settings.get("http_timeout", 15))
+        self._metrics = metrics_registry or get_global_metrics_registry()
+        self._metric_base_labels = {
+            "exchange": self.name,
+            "environment": self._environment.value,
+        }
+        self._metric_http_latency = self._metrics.histogram(
+            "zonda_spot_http_latency_seconds",
+            "Czas trwania zapytań HTTP kierowanych do API Zonda Spot.",
+            buckets=(0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0),
+        )
+        self._metric_retries = self._metrics.counter(
+            "zonda_spot_retries_total",
+            "Liczba ponowień zapytań do API Zonda Spot (powód=throttled/server_error/network).",
+        )
+        self._metric_signed_requests = self._metrics.counter(
+            "zonda_spot_signed_requests_total",
+            "Łączna liczba podpisanych zapytań HTTP wysłanych do API Zonda Spot.",
+        )
+        self._metric_api_errors = self._metrics.counter(
+            "zonda_spot_api_errors_total",
+            "Błędy API Zonda Spot (powód=auth/throttled/api_error/json_error/network).",
+        )
+        self._metric_rate_limit_remaining = self._metrics.gauge(
+            "zonda_spot_rate_limit_remaining",
+            "Ostatnia wartość nagłówka X-RateLimit-Remaining dla API Zonda Spot.",
+        )
+        self._metric_ticker_last_price = self._metrics.gauge(
+            "zonda_spot_ticker_last_price",
+            "Ostatnia cena transakcyjna raportowana przez API Zonda Spot.",
+        )
+        self._metric_ticker_spread = self._metrics.gauge(
+            "zonda_spot_ticker_spread",
+            "Spread pomiędzy najlepszym bidem i askiem dla symboli Zonda Spot.",
+        )
+        self._metric_orderbook_levels = self._metrics.gauge(
+            "zonda_spot_orderbook_levels",
+            "Łączna liczba poziomów orderbooka (bids+asks) raportowanych przez API Zonda Spot.",
+        )
+        self._metric_trades_fetched = self._metrics.counter(
+            "zonda_spot_trades_fetched_total",
+            "Łączna liczba transakcji pobranych z API Zonda Spot.",
+        )
 
     # --- Konfiguracja wyceny -------------------------------------------------
 
@@ -233,30 +338,67 @@ class ZondaSpotAdapter(ExchangeAdapter):
             path = "/" + path
         return f"{self._base_url}{path}"
 
-    def _execute_request(self, request: Request) -> dict[str, object] | list[object]:
-        try:
-            with urlopen(request, timeout=15) as response:  # nosec: B310 – kontrolowany endpoint
-                payload = response.read()
-        except HTTPError as exc:  # pragma: no cover
-            _LOGGER.error("Zonda zwróciła błąd HTTP: %s", exc)
-            raise RuntimeError(f"Zonda API zwróciła błąd HTTP: {exc}") from exc
-        except URLError as exc:  # pragma: no cover
-            _LOGGER.error("Błąd sieci podczas komunikacji z Zonda: %s", exc)
-            raise RuntimeError("Nie udało się połączyć z API Zonda") from exc
-
-        try:
-            parsed: object = json.loads(payload)
-        except json.JSONDecodeError as exc:  # pragma: no cover
-            _LOGGER.error("Niepoprawna odpowiedź JSON od Zonda: %s", exc)
-            raise RuntimeError("Niepoprawna odpowiedź API Zonda") from exc
-
-        if isinstance(parsed, dict):
-            return parsed
-        if isinstance(parsed, list):
-            return parsed
-
-        _LOGGER.error("Nieoczekiwany format odpowiedzi API Zonda: %r", parsed)
-        raise RuntimeError("Nieoczekiwany format odpowiedzi API Zonda")
+    def _execute_request(
+        self,
+        request: Request,
+        *,
+        signed: bool,
+    ) -> dict[str, object] | list[object]:
+        retries = 0
+        backoff = _BASE_BACKOFF
+        while True:
+            if signed:
+                self._metric_signed_requests.inc(labels=self._metric_base_labels)
+            start = time.monotonic()
+            try:
+                with urlopen(request, timeout=self._http_timeout) as response:  # nosec: B310
+                    payload = response.read()
+                    status = getattr(response, "getcode", lambda: 200)()
+                    headers = getattr(response, "headers", {})
+            except HTTPError as exc:
+                payload = exc.read()
+                status = exc.code
+                headers = getattr(exc, "headers", {})
+                latency = time.monotonic() - start
+                self._metric_http_latency.observe(latency, labels=self._metric_base_labels)
+                if status in _RETRYABLE_STATUS and retries < _MAX_RETRIES:
+                    reason = "throttled" if status == 429 else "server_error"
+                    self._metric_retries.inc(
+                        amount=1.0,
+                        labels={**self._metric_base_labels, "reason": reason},
+                    )
+                    retries += 1
+                    sleep_for = min(backoff, _BACKOFF_CAP) + random.uniform(*_JITTER_RANGE)
+                    time.sleep(sleep_for)
+                    backoff *= 2
+                    continue
+                self._raise_api_error(status, payload, headers)
+            except URLError as exc:
+                latency = time.monotonic() - start
+                self._metric_http_latency.observe(latency, labels=self._metric_base_labels)
+                if retries < _MAX_RETRIES:
+                    self._metric_retries.inc(
+                        amount=1.0,
+                        labels={**self._metric_base_labels, "reason": "network"},
+                    )
+                    retries += 1
+                    sleep_for = min(backoff, _BACKOFF_CAP) + random.uniform(*_JITTER_RANGE)
+                    time.sleep(sleep_for)
+                    backoff *= 2
+                    continue
+                self._metric_api_errors.inc(
+                    amount=1.0,
+                    labels={**self._metric_base_labels, "reason": "network"},
+                )
+                raise ExchangeNetworkError(
+                    "Nie udało się połączyć z API Zonda.",
+                    reason=exc,
+                ) from exc
+            else:
+                latency = time.monotonic() - start
+                self._metric_http_latency.observe(latency, labels=self._metric_base_labels)
+                self._update_rate_limit(headers)
+                return self._parse_response(payload)
 
     def _public_request(
         self,
@@ -267,7 +409,7 @@ class ZondaSpotAdapter(ExchangeAdapter):
     ) -> dict[str, object] | list[object]:
         query = f"?{urlencode(params or {})}" if params else ""
         request = Request(self._build_url(path) + query, headers=dict(_DEFAULT_HEADERS), method=method)
-        return self._execute_request(request)
+        return self._execute_request(request, signed=False)
 
     def _signed_request(
         self,
@@ -310,7 +452,143 @@ class ZondaSpotAdapter(ExchangeAdapter):
             data=data_bytes,
             method=method,
         )
-        return self._execute_request(request)
+        return self._execute_request(request, signed=True)
+
+    def _update_rate_limit(self, headers: object) -> None:
+        if not headers:
+            return
+        header_value: object | None = None
+        if hasattr(headers, "get"):
+            for key in (
+                "X-RateLimit-Remaining",
+                "x-ratelimit-remaining",
+                "RateLimit-Remaining",
+                "X-BBX-Ratelimit-Remaining",
+            ):
+                value = headers.get(key)  # type: ignore[arg-type]
+                if value is not None:
+                    header_value = value
+                    break
+        if header_value is None:
+            return
+        try:
+            remaining = float(header_value)
+        except (TypeError, ValueError):
+            return
+        self._metric_rate_limit_remaining.set(
+            remaining,
+            labels=self._metric_base_labels,
+        )
+
+    def _parse_response(self, payload: bytes) -> dict[str, object] | list[object]:
+        try:
+            decoded = payload.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            self._metric_api_errors.inc(
+                amount=1.0,
+                labels={**self._metric_base_labels, "reason": "json_error"},
+            )
+            raise ExchangeAPIError(
+                message="Niepoprawne kodowanie odpowiedzi API Zonda.",
+                status_code=200,
+                payload=payload,
+            ) from exc
+        try:
+            parsed: object = json.loads(decoded) if decoded else {}
+        except json.JSONDecodeError as exc:
+            self._metric_api_errors.inc(
+                amount=1.0,
+                labels={**self._metric_base_labels, "reason": "json_error"},
+            )
+            raise ExchangeAPIError(
+                message="Niepoprawna odpowiedź JSON API Zonda.",
+                status_code=200,
+                payload=decoded,
+            ) from exc
+
+        if isinstance(parsed, (dict, list)):
+            return parsed  # type: ignore[return-value]
+
+        self._metric_api_errors.inc(
+            amount=1.0,
+            labels={**self._metric_base_labels, "reason": "json_error"},
+        )
+        raise ExchangeAPIError(
+            message="Nieoczekiwany format odpowiedzi API Zonda.",
+            status_code=200,
+            payload=parsed,
+        )
+
+    def _extract_error_details(self, payload: bytes) -> tuple[str | None, object | None]:
+        if not payload:
+            return None, None
+        try:
+            decoded = payload.decode("utf-8")
+        except UnicodeDecodeError:
+            return None, payload
+        try:
+            parsed: object = json.loads(decoded)
+        except json.JSONDecodeError:
+            return decoded or None, decoded
+
+        message: str | None = None
+        if isinstance(parsed, Mapping):
+            errors = parsed.get("errors")
+            if isinstance(errors, list):
+                fragments: list[str] = []
+                for entry in errors:
+                    if not isinstance(entry, Mapping):
+                        continue
+                    code = entry.get("code")
+                    detail = entry.get("message") or entry.get("error") or entry.get("info")
+                    text = str(detail) if detail is not None else ""
+                    if code is not None:
+                        fragments.append(f"[{code}] {text}" if text else f"[{code}]")
+                    elif text:
+                        fragments.append(text)
+                if fragments:
+                    message = "; ".join(fragments)
+            if not message:
+                status_text = parsed.get("status") or parsed.get("message") or parsed.get("statusMessage")
+                if isinstance(status_text, str) and status_text:
+                    message = status_text
+        elif isinstance(parsed, list):
+            fragments = [str(item) for item in parsed if isinstance(item, (str, int, float))]
+            if fragments:
+                message = "; ".join(fragments)
+
+        return message, parsed
+
+    def _raise_api_error(
+        self,
+        status: int,
+        payload: bytes,
+        headers: object,
+    ) -> None:
+        message, parsed_payload = self._extract_error_details(payload)
+        if status in {401, 403}:
+            reason = "auth"
+            exc_cls = ExchangeAuthError
+            default_message = "Żądanie zostało odrzucone przez API Zonda z powodu błędnych uprawnień."
+        elif status == 429:
+            reason = "throttled"
+            exc_cls = ExchangeThrottlingError
+            default_message = "Przekroczono limity zapytań API Zonda."
+        else:
+            reason = "api_error" if status < 500 else "server_error"
+            exc_cls = ExchangeAPIError
+            default_message = f"Zonda API zwróciła błąd HTTP {status}."
+
+        self._metric_api_errors.inc(
+            amount=1.0,
+            labels={**self._metric_base_labels, "reason": reason},
+        )
+        self._update_rate_limit(headers)
+        raise exc_cls(
+            message=message or default_message,
+            status_code=status,
+            payload=parsed_payload,
+        )
 
     def _fetch_price_map(self) -> Mapping[tuple[str, str], float]:
         response = self._public_request("/trading/ticker")
@@ -352,6 +630,11 @@ class ZondaSpotAdapter(ExchangeAdapter):
         if isinstance(items, Mapping):
             return sorted(str(symbol) for symbol in items.keys())
         return []
+
+    def _labels(self, **extra: str) -> Mapping[str, str]:
+        labels = dict(self._metric_base_labels)
+        labels.update({key: str(value) for key, value in extra.items()})
+        return labels
 
     def fetch_ohlcv(  # type: ignore[override]
         self,
@@ -513,6 +796,205 @@ class ZondaSpotAdapter(ExchangeAdapter):
                 return
         raise RuntimeError(f"Nieoczekiwana odpowiedź anulowania Zonda: {response}")
 
+    def fetch_ticker(self, symbol: str) -> ZondaTicker:
+        """Pobiera ticker oraz aktualizuje metryki top-of-book."""
+
+        payload = self._public_request("/trading/ticker")
+        if not isinstance(payload, Mapping):
+            raise ExchangeAPIError(
+                "Zonda nie zwróciła poprawnej odpowiedzi tickera.",
+                400,
+                payload=payload,
+            )
+
+        items = payload.get("items") if isinstance(payload, Mapping) else None
+        entry: Mapping[str, object] | None = None
+        if isinstance(items, Mapping):
+            raw_entry = items.get(symbol)
+            if isinstance(raw_entry, Mapping):
+                entry = raw_entry  # type: ignore[assignment]
+        if entry is None:
+            raise ExchangeAPIError(
+                f"Ticker dla symbolu {symbol} nie został znaleziony.",
+                404,
+                payload=payload,
+            )
+
+        ticker_section = entry.get("ticker") if isinstance(entry.get("ticker"), Mapping) else entry
+        best_bid = _to_float(
+            ticker_section.get("highestBid")
+            or ticker_section.get("bid")
+            or ticker_section.get("bestBid")
+        )
+        best_ask = _to_float(
+            ticker_section.get("lowestAsk")
+            or ticker_section.get("ask")
+            or ticker_section.get("bestAsk")
+        )
+        last_price = _to_float(
+            ticker_section.get("rate")
+            or ticker_section.get("last")
+            or ticker_section.get("lastPrice")
+        )
+        volume_24h = _to_float(
+            ticker_section.get("volume")
+            or ticker_section.get("volume24h")
+            or ticker_section.get("24hVolume")
+        )
+        high_24h = _to_float(
+            ticker_section.get("max")
+            or ticker_section.get("high")
+            or ticker_section.get("highestPrice")
+        )
+        low_24h = _to_float(
+            ticker_section.get("min")
+            or ticker_section.get("low")
+            or ticker_section.get("lowestPrice")
+        )
+        vwap_24h = _to_float(
+            ticker_section.get("vwap")
+            or ticker_section.get("average")
+            or ticker_section.get("averagePrice")
+        )
+        timestamp_raw = entry.get("time") or ticker_section.get("time") or time.time()
+        timestamp = _to_float(timestamp_raw, default=time.time())
+        if timestamp > 10_000_000_000:  # wartości w ms -> konwersja na sekundy
+            timestamp /= 1000.0
+
+        ticker = ZondaTicker(
+            symbol=symbol,
+            best_bid=best_bid,
+            best_ask=best_ask,
+            last_price=last_price,
+            volume_24h=volume_24h,
+            high_24h=high_24h,
+            low_24h=low_24h,
+            vwap_24h=vwap_24h,
+            timestamp=timestamp,
+        )
+
+        labels = self._labels(symbol=symbol)
+        self._metric_ticker_last_price.set(ticker.last_price, labels=labels)
+        spread = max(ticker.best_ask - ticker.best_bid, 0.0) if (ticker.best_ask and ticker.best_bid) else 0.0
+        self._metric_ticker_spread.set(spread, labels=labels)
+        return ticker
+
+    def fetch_order_book(self, symbol: str, *, depth: int = 50) -> ZondaOrderBook:
+        """Pobiera orderbook ograniczony do wskazanej głębokości."""
+
+        if depth <= 0:
+            raise ValueError("Parametr depth musi być dodatni.")
+
+        payload = self._public_request(f"/trading/orderbook-limited/{symbol}/{int(depth)}")
+        if not isinstance(payload, Mapping):
+            raise ExchangeAPIError(
+                "Zonda nie zwróciła poprawnej struktury orderbooka.",
+                400,
+                payload=payload,
+            )
+
+        raw_buy = payload.get("buy")
+        raw_sell = payload.get("sell")
+
+        def _parse_levels(entries: object) -> list[ZondaOrderBookLevel]:
+            levels: list[ZondaOrderBookLevel] = []
+            if isinstance(entries, Sequence):
+                for record in entries:
+                    if isinstance(record, Mapping):
+                        price = _to_float(record.get("ra") or record.get("price") or record.get("r"))
+                        quantity = _to_float(record.get("ca") or record.get("amount") or record.get("q"))
+                    elif isinstance(record, Sequence) and len(record) >= 2:
+                        price = _to_float(record[0])
+                        quantity = _to_float(record[1])
+                    else:
+                        continue
+                    if price <= 0 or quantity <= 0:
+                        continue
+                    levels.append(ZondaOrderBookLevel(price=price, quantity=quantity))
+            return levels
+
+        bids = _parse_levels(raw_buy)
+        asks = _parse_levels(raw_sell)
+        timestamp_raw = payload.get("time") or payload.get("timestamp") or time.time()
+        timestamp = _to_float(timestamp_raw, default=time.time())
+        if timestamp > 10_000_000_000:
+            timestamp /= 1000.0
+
+        orderbook = ZondaOrderBook(symbol=symbol, bids=bids, asks=asks, timestamp=timestamp)
+        labels = self._labels(symbol=symbol)
+        self._metric_orderbook_levels.set(len(bids) + len(asks), labels=labels)
+        return orderbook
+
+    def fetch_recent_trades(self, symbol: str, *, limit: int = 50) -> Sequence[ZondaTrade]:
+        """Pobiera ostatnie transakcje dla wskazanego symbolu."""
+
+        if limit <= 0:
+            raise ValueError("Parametr limit musi być dodatni.")
+
+        payload = self._public_request(
+            f"/trading/transactions/{symbol}",
+            params={"limit": int(limit)},
+        )
+        if isinstance(payload, Mapping):
+            maybe_items = payload.get("items") or payload.get("transactions")
+            items = maybe_items if isinstance(maybe_items, Sequence) else []
+        elif isinstance(payload, Sequence):
+            items = payload
+        else:
+            raise ExchangeAPIError(
+                "Zonda nie zwróciła poprawnej listy transakcji.",
+                400,
+                payload=payload,
+            )
+
+        trades: list[ZondaTrade] = []
+        for record in items:
+            if isinstance(record, Mapping):
+                trade_id = str(
+                    record.get("id")
+                    or record.get("tid")
+                    or record.get("transactionId")
+                    or ""
+                )
+                price = _to_float(record.get("rate") or record.get("price"))
+                quantity = _to_float(record.get("amount") or record.get("quantity"))
+                side_raw = str(record.get("side") or record.get("type") or record.get("direction") or "")
+                side = side_raw.lower() if side_raw else "unknown"
+                timestamp_raw = record.get("time") or record.get("timestamp") or 0
+                timestamp = _to_float(timestamp_raw)
+                if timestamp > 10_000_000_000:
+                    timestamp /= 1000.0
+                trades.append(
+                    ZondaTrade(
+                        trade_id=trade_id,
+                        price=price,
+                        quantity=quantity,
+                        side=side,
+                        timestamp=timestamp,
+                    )
+                )
+            elif isinstance(record, Sequence) and len(record) >= 4:
+                trade_id = str(record[0])
+                price = _to_float(record[1])
+                quantity = _to_float(record[2])
+                side = str(record[3]).lower()
+                timestamp = _to_float(record[4] if len(record) > 4 else 0)
+                if timestamp > 10_000_000_000:
+                    timestamp /= 1000.0
+                trades.append(
+                    ZondaTrade(
+                        trade_id=trade_id,
+                        price=price,
+                        quantity=quantity,
+                        side=side,
+                        timestamp=timestamp,
+                    )
+                )
+
+        labels = self._labels(symbol=symbol)
+        self._metric_trades_fetched.inc(amount=float(len(trades)), labels=labels)
+        return trades
+
     def stream_public_data(self, *, channels: Sequence[str]):  # type: ignore[override]
         raise NotImplementedError("Streaming Zonda zostanie dodany w przyszłym etapie.")
 
@@ -520,4 +1002,10 @@ class ZondaSpotAdapter(ExchangeAdapter):
         raise NotImplementedError("Streaming prywatny Zonda zostanie dodany w przyszłym etapie.")
 
 
-__all__ = ["ZondaSpotAdapter"]
+__all__ = [
+    "ZondaSpotAdapter",
+    "ZondaTicker",
+    "ZondaOrderBookLevel",
+    "ZondaOrderBook",
+    "ZondaTrade",
+]

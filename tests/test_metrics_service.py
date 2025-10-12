@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import time
 
 import pytest
@@ -17,6 +18,8 @@ trading_pb2_grpc = pytest.importorskip(
     reason="Brak wygenerowanych stubów trading_pb2_grpc",
 )
 
+from bot_core.config.models import ServiceTokenConfig
+from bot_core.security.tokens import build_service_token_validator
 from bot_core.runtime.metrics_service import (
     MetricsServer,
     MetricsSnapshotStore,
@@ -164,6 +167,70 @@ def test_metrics_server_requires_auth_token():
         )
         first = next(stream)
         assert first.notes == "auth-test"
+    finally:
+        server.stop(grace=0)
+
+
+@pytest.mark.timeout(5)
+def test_metrics_server_rbac_scopes():
+    reader_plain = "reader-secret"
+    reader_hash = hashlib.sha256(reader_plain.encode("utf-8")).hexdigest()
+    token_configs = [
+        ServiceTokenConfig(
+            token_id="writer",
+            token_value="writer-secret",
+            scopes=("metrics.write",),
+        ),
+        ServiceTokenConfig(
+            token_id="reader",
+            token_hash=f"sha256:{reader_hash}",
+            scopes=("metrics.read",),
+        ),
+    ]
+    validator = build_service_token_validator(token_configs, default_scope="metrics.read")
+    server = create_server(
+        host="127.0.0.1",
+        port=0,
+        history_size=4,
+        enable_logging_sink=False,
+        token_validator=validator,
+    )
+    server.start()
+    channel = grpc.insecure_channel(server.address)
+    stub = trading_pb2_grpc.MetricsServiceStub(channel)
+    snapshot = trading_pb2.MetricsSnapshot()
+    snapshot.notes = "rbac"
+    snapshot.fps = 61.0
+
+    try:
+        with pytest.raises(grpc.RpcError) as exc:
+            stub.PushMetrics(snapshot)
+        assert exc.value.code() == grpc.StatusCode.UNAUTHENTICATED
+
+        reader_meta = (("authorization", f"Bearer {reader_plain}"),)
+        with pytest.raises(grpc.RpcError) as exc:
+            stub.PushMetrics(snapshot, metadata=reader_meta)
+        assert exc.value.code() == grpc.StatusCode.UNAUTHENTICATED
+
+        writer_meta = (("authorization", "Bearer writer-secret"),)
+        ack = stub.PushMetrics(snapshot, metadata=writer_meta)
+        assert ack.accepted is True
+
+        with pytest.raises(grpc.RpcError) as exc:
+            list(
+                stub.StreamMetrics(
+                    trading_pb2.MetricsRequest(include_ui_metrics=True),
+                    metadata=writer_meta,
+                )
+            )
+        assert exc.value.code() == grpc.StatusCode.UNAUTHENTICATED
+
+        stream = stub.StreamMetrics(
+            trading_pb2.MetricsRequest(include_ui_metrics=True),
+            metadata=reader_meta,
+        )
+        first = next(stream)
+        assert first.notes == "rbac"
     finally:
         server.stop(grace=0)
 

@@ -26,6 +26,33 @@ except Exception:  # pragma: no cover - brak wygenerowanych stubów lub grpcio
     create_metrics_server = None  # type: ignore
     build_metrics_server_from_config = None  # type: ignore
 
+# --- Risk service (opcjonalny – zależy od wygenerowanych stubów) ---
+try:
+    from bot_core.runtime.risk_service import (  # type: ignore
+        RiskExposure,
+        RiskServer,
+        RiskServiceServicer,
+        RiskSnapshot,
+        RiskSnapshotBuilder,
+        RiskSnapshotPublisher,
+        RiskSnapshotStore,
+        build_risk_server_from_config,
+    )
+except Exception:  # pragma: no cover - brak stubów risk service
+    RiskExposure = None  # type: ignore
+    RiskServer = None  # type: ignore
+    RiskServiceServicer = None  # type: ignore
+    RiskSnapshot = None  # type: ignore
+    RiskSnapshotBuilder = None  # type: ignore
+    RiskSnapshotPublisher = None  # type: ignore
+    RiskSnapshotStore = None  # type: ignore
+    build_risk_server_from_config = None  # type: ignore
+
+try:  # pragma: no cover - eksporter metryk jest opcjonalny
+    from bot_core.runtime.risk_metrics import RiskMetricsExporter  # type: ignore
+except Exception:  # pragma: no cover - brak zależności opcjonalnych
+    RiskMetricsExporter = None  # type: ignore
+
 # --- Kontrolery / pipeline (opcjonalne – różnice między gałęziami) ---
 try:
     from bot_core.runtime.controller import TradingController as _TradingController  # type: ignore
@@ -73,6 +100,24 @@ if MetricsServer is not None:
             "build_metrics_server_from_config",
         ]
     )
+
+# Eksport elementów risk service tylko jeśli są dostępne
+if RiskServer is not None:
+    __all__.extend(
+        [
+            "RiskExposure",
+            "RiskServer",
+            "RiskServiceServicer",
+            "RiskSnapshot",
+            "RiskSnapshotBuilder",
+            "RiskSnapshotPublisher",
+            "RiskSnapshotStore",
+            "build_risk_server_from_config",
+        ]
+    )
+
+if RiskMetricsExporter is not None:
+    __all__.append("RiskMetricsExporter")
 
 # Eksportuj tylko te kontrolery, które są dostępne w danej gałęzi.
 if _TradingController is None:

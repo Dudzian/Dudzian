@@ -15,7 +15,10 @@ from bot_core.config.models import (
     EmailChannelSettings,
     EnvironmentConfig,
     EnvironmentDataQualityConfig,
+    RiskDecisionLogConfig,
+    ServiceTokenConfig,
     RiskProfileConfig,
+    RiskServiceConfig,
     SMSProviderSettings,
     TelegramChannelSettings,
 )
@@ -563,6 +566,97 @@ def _normalize_runtime_path(
     return str(normalized_base / candidate)
 
 
+def _normalize_env_var(value: Any) -> str | None:
+    if value in (None, "", False):
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _normalize_fingerprint_pin(value: Any) -> str:
+    text = str(value).strip().lower()
+    if not text:
+        raise ValueError("Fingerprint pining entry nie może być puste")
+    if ":" in text:
+        algorithm, fingerprint = text.split(":", 1)
+        algorithm = algorithm.strip() or "sha256"
+    else:
+        algorithm, fingerprint = "sha256", text
+    fingerprint = fingerprint.replace(":", "").strip()
+    if not fingerprint:
+        raise ValueError("Fingerprint pinning wymaga wartości hex")
+    allowed = set("0123456789abcdef")
+    if any(ch not in allowed for ch in fingerprint):
+        raise ValueError("Fingerprint pinning powinien zawierać tylko znaki hex")
+    return f"{algorithm}:{fingerprint}"
+
+
+def _normalize_pinned_fingerprints(raw_value: Any) -> tuple[str, ...]:
+    if raw_value in (None, ""):
+        return ()
+    if isinstance(raw_value, str):
+        entries = [raw_value]
+    else:
+        entries = list(raw_value)
+    normalized: list[str] = []
+    for entry in entries:
+        if entry in (None, ""):
+            continue
+        normalized.append(_normalize_fingerprint_pin(entry))
+    # usuwamy duplikaty zachowując kolejność
+    return tuple(dict.fromkeys(normalized))
+
+
+def _load_service_tokens(raw_value: Any) -> tuple[ServiceTokenConfig, ...]:
+    if raw_value in (None, ""):
+        return ()
+    entries = raw_value
+    if isinstance(entries, Mapping):
+        entries = [entries]
+    tokens: list[ServiceTokenConfig] = []
+    for entry in entries or ():
+        if not isinstance(entry, Mapping):
+            continue
+        token_id = str(entry.get("token_id") or entry.get("id") or "").strip()
+        if not token_id:
+            raise ValueError("Każdy wpis rbac_tokens wymaga pola token_id")
+        token_env = _normalize_env_var(
+            entry.get("token_env")
+            or entry.get("env")
+            or entry.get("token_env_var")
+        )
+        token_value = entry.get("token_value") or entry.get("value")
+        if token_value in (None, ""):
+            token_value = None
+        else:
+            token_value = str(token_value)
+        token_hash = entry.get("token_hash") or entry.get("hash")
+        if token_hash in (None, ""):
+            token_hash = None
+        else:
+            token_hash = str(token_hash)
+        scopes_raw = entry.get("scopes") or ()
+        if isinstance(scopes_raw, str):
+            scopes_iter = [scopes_raw]
+        else:
+            scopes_iter = list(scopes_raw)
+        scopes = tuple(
+            str(scope).strip()
+            for scope in scopes_iter
+            if isinstance(scope, str) and scope.strip()
+        )
+        tokens.append(
+            ServiceTokenConfig(
+                token_id=token_id,
+                token_env=token_env,
+                token_value=token_value,
+                token_hash=token_hash,
+                scopes=scopes,
+            )
+        )
+    return tuple(tokens)
+
+
 def _load_metrics_service(
     runtime_section: Optional[Mapping[str, Any]], *, base_dir: Path | None = None
 ) -> MetricsServiceConfig | None:
@@ -591,6 +685,9 @@ def _load_metrics_service(
         kwargs["auth_token"] = (
             str(metrics_raw.get("auth_token")) if metrics_raw.get("auth_token") else None
         )
+
+    if "rbac_tokens" in available_fields:
+        kwargs["rbac_tokens"] = _load_service_tokens(metrics_raw.get("rbac_tokens"))
 
     # Opcjonalne: log sink, jsonl, fsync
     if "log_sink" in available_fields:
@@ -644,6 +741,12 @@ def _load_metrics_service(
                 private_key_path=private_key_raw,
                 client_ca_path=client_ca_raw,
                 require_client_auth=bool(tls_raw.get("require_client_auth", False)),
+                private_key_password_env=_normalize_env_var(
+                    tls_raw.get("private_key_password_env")
+                ),
+                pinned_fingerprints=_normalize_pinned_fingerprints(
+                    tls_raw.get("pinned_fingerprints")
+                ),
             )
 
     # Opcjonalne: alerty reduce_motion
@@ -733,6 +836,110 @@ def _load_metrics_service(
                 ) from exc
 
     return MetricsServiceConfig(**kwargs)  # type: ignore[call-arg]
+
+
+def _load_risk_service(
+    runtime_section: Optional[Mapping[str, Any]], *, base_dir: Path | None = None
+) -> RiskServiceConfig | None:
+    if not _core_has("risk_service"):
+        return None
+
+    runtime = runtime_section or {}
+    risk_raw = runtime.get("risk_service")
+    if not risk_raw:
+        return None
+
+    available_fields = {f.name for f in fields(RiskServiceConfig)}
+    kwargs: dict[str, Any] = {
+        "enabled": bool(risk_raw.get("enabled", True)),
+        "host": str(risk_raw.get("host", "127.0.0.1")),
+        "port": int(risk_raw.get("port", 0)),
+        "history_size": int(risk_raw.get("history_size", 256)),
+        "publish_interval_seconds": float(risk_raw.get("publish_interval_seconds", 5.0)),
+    }
+
+    if "auth_token" in available_fields:
+        auth_value = risk_raw.get("auth_token")
+        kwargs["auth_token"] = str(auth_value) if auth_value not in (None, "") else None
+
+    if "rbac_tokens" in available_fields:
+        kwargs["rbac_tokens"] = _load_service_tokens(risk_raw.get("rbac_tokens"))
+
+    if "profiles" in available_fields:
+        profiles_raw = risk_raw.get("profiles") or ()
+        kwargs["profiles"] = tuple(
+            str(profile).strip()
+            for profile in profiles_raw
+            if isinstance(profile, str) and profile.strip()
+        )
+
+    if "tls" in available_fields and MetricsServiceTlsConfig is not None:
+        tls_raw = risk_raw.get("tls") or {}
+        if isinstance(tls_raw, Mapping) and tls_raw:
+            kwargs["tls"] = MetricsServiceTlsConfig(
+                enabled=bool(tls_raw.get("enabled", False)),
+                certificate_path=_normalize_runtime_path(
+                    tls_raw.get("certificate_path"), base_dir=base_dir
+                ),
+                private_key_path=_normalize_runtime_path(
+                    tls_raw.get("private_key_path"), base_dir=base_dir
+                ),
+                client_ca_path=_normalize_runtime_path(
+                    tls_raw.get("client_ca_path"), base_dir=base_dir
+                ),
+                require_client_auth=bool(tls_raw.get("require_client_auth", False)),
+                private_key_password_env=_normalize_env_var(
+                    tls_raw.get("private_key_password_env")
+                ),
+                pinned_fingerprints=_normalize_pinned_fingerprints(
+                    tls_raw.get("pinned_fingerprints")
+                ),
+            )
+
+    return RiskServiceConfig(**kwargs)  # type: ignore[call-arg]
+
+
+def _load_risk_decision_log(
+    runtime_section: Optional[Mapping[str, Any]], *, base_dir: Path | None = None
+) -> RiskDecisionLogConfig | None:
+    if not _core_has("risk_decision_log"):
+        return None
+
+    runtime = runtime_section or {}
+    log_raw = runtime.get("risk_decision_log")
+    if not log_raw:
+        return None
+
+    available_fields = {f.name for f in fields(RiskDecisionLogConfig)}
+    kwargs: dict[str, Any] = {
+        "enabled": bool(log_raw.get("enabled", True)),
+    }
+
+    if "path" in available_fields:
+        kwargs["path"] = _normalize_runtime_path(log_raw.get("path"), base_dir=base_dir)
+    if "max_entries" in available_fields:
+        kwargs["max_entries"] = int(log_raw.get("max_entries", 1_000))
+    if "signing_key_env" in available_fields:
+        env_value = log_raw.get("signing_key_env")
+        kwargs["signing_key_env"] = (
+            str(env_value).strip() if isinstance(env_value, str) and env_value.strip() else None
+        )
+    if "signing_key_path" in available_fields:
+        kwargs["signing_key_path"] = _normalize_runtime_path(
+            log_raw.get("signing_key_path"), base_dir=base_dir
+        )
+    if "signing_key_value" in available_fields:
+        value = log_raw.get("signing_key_value")
+        kwargs["signing_key_value"] = (
+            str(value) if value not in (None, "") else None
+        )
+    if "signing_key_id" in available_fields:
+        key_id = log_raw.get("signing_key_id")
+        kwargs["signing_key_id"] = str(key_id) if key_id not in (None, "") else None
+    if "jsonl_fsync" in available_fields:
+        kwargs["jsonl_fsync"] = bool(log_raw.get("jsonl_fsync", False))
+
+    return RiskDecisionLogConfig(**kwargs)  # type: ignore[call-arg]
 
 
 def load_core_config(path: str | Path) -> CoreConfig:
@@ -889,6 +1096,16 @@ def load_core_config(path: str | Path) -> CoreConfig:
     metrics_config = _load_metrics_service(runtime_section, base_dir=config_base_dir)
     if metrics_config is not None:
         core_kwargs["metrics_service"] = metrics_config
+
+    risk_service_config = _load_risk_service(runtime_section, base_dir=config_base_dir)
+    if risk_service_config is not None:
+        core_kwargs["risk_service"] = risk_service_config
+
+    risk_decision_log_config = _load_risk_decision_log(
+        runtime_section, base_dir=config_base_dir
+    )
+    if risk_decision_log_config is not None:
+        core_kwargs["risk_decision_log"] = risk_decision_log_config
 
     core_kwargs["source_path"] = str(config_absolute_path)
     core_kwargs["source_directory"] = str(config_base_dir)

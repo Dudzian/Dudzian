@@ -169,6 +169,17 @@ class MetricsTLSConfig:
     private_key_path: Optional[str] = None
     client_ca_path: Optional[str] = None
     require_client_auth: bool = False
+    private_key_password_env: Optional[str] = None
+    pinned_fingerprints: Tuple[str, ...] = field(default_factory=tuple)
+
+
+@dataclass
+class ServiceTokenConfig:
+    token_id: str
+    token_env: Optional[str] = None
+    token_value: Optional[str] = None
+    token_hash: Optional[str] = None
+    scopes: Tuple[str, ...] = field(default_factory=tuple)
 
 
 @dataclass
@@ -183,6 +194,7 @@ class MetricsServiceConfig:
     ui_alerts_jsonl_path: Optional[str] = None
     ui_alerts_risk_profile: Optional[str] = None
     ui_alerts_risk_profiles_file: Optional[str] = None
+    rbac_tokens: Tuple[ServiceTokenConfig, ...] = field(default_factory=tuple)
 
     # UI: reduce motion
     reduce_motion_alerts: Optional[bool] = None
@@ -359,7 +371,31 @@ def _parse_environments_section(
                 min_ok_ratio=float(dq_raw.get("min_ok_ratio")),
             )
 
-        cfg.environments[name] = env_cfg
+    cfg.environments[name] = env_cfg
+
+
+def _parse_service_tokens(raw_value: Optional[Iterable[Mapping[str, Any]]]) -> Tuple[ServiceTokenConfig, ...]:
+    if raw_value is None:
+        return tuple()
+    tokens: list[ServiceTokenConfig] = []
+    for entry in raw_value:
+        if not isinstance(entry, Mapping):
+            continue
+        scopes = tuple(
+            str(scope).strip()
+            for scope in _to_tuple(entry.get("scopes") or [])
+            if str(scope).strip()
+        )
+        tokens.append(
+            ServiceTokenConfig(
+                token_id=str(entry.get("token_id") or entry.get("id") or ""),
+                token_env=str(entry.get("token_env")) if entry.get("token_env") else None,
+                token_value=str(entry.get("token_value")) if entry.get("token_value") else None,
+                token_hash=str(entry.get("token_hash")) if entry.get("token_hash") else None,
+                scopes=scopes,
+            )
+        )
+    return tuple(tokens)
 
 
 def _parse_metrics_service(ms_raw: Mapping[str, Any], *, base_dir: Path) -> MetricsServiceConfig:
@@ -369,6 +405,7 @@ def _parse_metrics_service(ms_raw: Mapping[str, Any], *, base_dir: Path) -> Metr
     ms.port = int(ms_raw.get("port")) if ms_raw.get("port") is not None else None
     ms.history_size = int(ms_raw.get("history_size")) if ms_raw.get("history_size") is not None else None
     ms.auth_token = ms_raw.get("auth_token")
+    ms.rbac_tokens = _parse_service_tokens(ms_raw.get("rbac_tokens"))
     ms.log_sink = bool(ms_raw.get("log_sink")) if ms_raw.get("log_sink") is not None else None
 
     ms.jsonl_path = _resolve_path(base_dir, ms_raw.get("jsonl_path"))
@@ -418,12 +455,32 @@ def _parse_metrics_service(ms_raw: Mapping[str, Any], *, base_dir: Path) -> Metr
     # TLS
     tls_raw = ms_raw.get("tls") or {}
     if isinstance(tls_raw, Mapping):
+        password_env_raw = tls_raw.get("private_key_password_env")
+        password_env = None
+        if password_env_raw is not None:
+            text = str(password_env_raw).strip()
+            password_env = text or None
+        pins_raw = tls_raw.get("pinned_fingerprints") or ()
+        if isinstance(pins_raw, str):
+            pins_iter = [pins_raw]
+        else:
+            pins_iter = list(pins_raw)
+        pins_normalized = []
+        for item in pins_iter:
+            text = str(item).strip().lower()
+            if not text:
+                continue
+            if ":" not in text:
+                text = f"sha256:{text}"
+            pins_normalized.append(text)
         ms.tls = MetricsTLSConfig(
             enabled=bool(tls_raw.get("enabled", False)),
             certificate_path=_resolve_path(base_dir, tls_raw.get("certificate_path")),
             private_key_path=_resolve_path(base_dir, tls_raw.get("private_key_path")),
             client_ca_path=_resolve_path(base_dir, tls_raw.get("client_ca_path")),
             require_client_auth=bool(tls_raw.get("require_client_auth", False)),
+            private_key_password_env=password_env,
+            pinned_fingerprints=tuple(dict.fromkeys(pins_normalized)),
         )
 
     return ms
@@ -757,6 +814,10 @@ def test_load_core_config_reads_metrics_service(tmp_path: Path) -> None:
             jank_alert_severity_spike: major
             jank_alert_severity_critical: critical
             jank_alert_critical_over_ms: 7.5
+            rbac_tokens:
+              - token_id: reader
+                token_value: reader-secret
+                scopes: [metrics.read]
         """,
         encoding="utf-8",
     )
@@ -793,6 +854,8 @@ def test_load_core_config_reads_metrics_service(tmp_path: Path) -> None:
     assert metrics.jank_alert_severity_spike == "major"
     assert metrics.jank_alert_severity_critical == "critical"
     assert metrics.jank_alert_critical_over_ms == pytest.approx(7.5)
+    assert metrics.rbac_tokens and metrics.rbac_tokens[0].token_id == "reader"
+    assert metrics.rbac_tokens[0].scopes == ("metrics.read",)
 
     # Metadane ścieżek źródłowych configu (ustawiane przez loader)
     assert Path(config.source_path or "").is_absolute()
@@ -884,6 +947,40 @@ def test_load_core_config_resolves_metrics_paths_relative_to_config(tmp_path: Pa
     assert metrics.tls.certificate_path == str(expected_cert)
     assert metrics.tls.private_key_path == str(expected_key)
     assert metrics.tls.client_ca_path == str(expected_ca)
+    assert metrics.tls.private_key_password_env is None
+    assert metrics.tls.pinned_fingerprints == ()
+
+
+def test_load_core_config_normalizes_tls_pins(tmp_path: Path) -> None:
+    config_path = tmp_path / "core.yaml"
+    config_path.write_text(
+        """
+        risk_profiles: {}
+        environments: {}
+        alerts: {}
+        runtime:
+          metrics_service:
+            enabled: true
+            tls:
+              enabled: true
+              certificate_path: metrics.crt
+              private_key_path: metrics.key
+              private_key_password_env: METRICS_tls_key
+              pinned_fingerprints:
+                - SHA256:ABCDEF
+                - sha256:abcdef
+                - AbCdEf
+        """,
+        encoding="utf-8",
+    )
+
+    config = load_core_config(config_path)
+
+    metrics = config.metrics_service
+    assert metrics is not None
+    assert metrics.tls is not None
+    assert metrics.tls.private_key_password_env == "METRICS_tls_key"
+    assert metrics.tls.pinned_fingerprints == ("sha256:abcdef",)
 
 
 def test_load_core_config_parses_metrics_risk_profiles_file(tmp_path: Path) -> None:

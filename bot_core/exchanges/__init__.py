@@ -10,6 +10,13 @@ from bot_core.exchanges.base import (
 )
 from bot_core.exchanges.binance.futures import BinanceFuturesAdapter
 from bot_core.exchanges.binance.spot import BinanceSpotAdapter
+from bot_core.exchanges.errors import (
+    ExchangeAPIError,
+    ExchangeAuthError,
+    ExchangeError,
+    ExchangeNetworkError,
+    ExchangeThrottlingError,
+)
 from bot_core.exchanges.kraken.futures import KrakenFuturesAdapter
 from bot_core.exchanges.kraken.spot import KrakenSpotAdapter
 from bot_core.exchanges.zonda.spot import ZondaSpotAdapter
@@ -21,6 +28,11 @@ __all__ = [
     "Environment",
     "ExchangeAdapter",
     "ExchangeCredentials",
+    "ExchangeError",
+    "ExchangeAPIError",
+    "ExchangeAuthError",
+    "ExchangeThrottlingError",
+    "ExchangeNetworkError",
     "KrakenFuturesAdapter",
     "KrakenSpotAdapter",
     "OrderRequest",

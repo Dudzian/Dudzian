@@ -4,10 +4,11 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from typing import Callable, Dict, Mapping, MutableMapping
+from typing import Callable, Dict, Mapping, MutableMapping, Sequence
 
 from bot_core.exchanges.base import AccountSnapshot, OrderRequest
 from bot_core.risk.base import RiskCheckResult, RiskEngine, RiskProfile, RiskRepository
+from bot_core.risk.events import RiskDecisionLog
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -156,11 +157,13 @@ class ThresholdRiskEngine(RiskEngine):
         repository: RiskRepository | None = None,
         *,
         clock: Callable[[], datetime] | None = None,
+        decision_log: RiskDecisionLog | None = None,
     ) -> None:
         self._repository = repository or InMemoryRiskRepository()
         self._clock = clock or datetime.utcnow
         self._profiles: Dict[str, RiskProfile] = {}
         self._states: Dict[str, RiskState] = {}
+        self._decision_log = decision_log
 
     def register_profile(self, profile: RiskProfile) -> None:
         self._profiles[profile.name] = profile
@@ -215,14 +218,25 @@ class ThresholdRiskEngine(RiskEngine):
             state.force_liquidation = True
             force_reason = "Przekroczono dzienny limit straty."
 
+        def deny(
+            reason: str,
+            *,
+            adjustments: Mapping[str, float] | None = None,
+        ) -> RiskCheckResult:
+            result = RiskCheckResult(allowed=False, reason=reason, adjustments=adjustments)
+            self._persist_state(profile_name)
+            return self._finalize_decision(
+                profile_name=profile_name,
+                request=request,
+                account=account,
+                result=result,
+                state=state,
+            )
+
         price = request.price
         if price is None or price <= 0:
-            self._persist_state(profile_name)
-            return RiskCheckResult(
-                allowed=False,
-                reason=(
-                    "Brak ceny referencyjnej uniemożliwia obliczenie ekspozycji. Podaj midpoint z orderbooka lub cenę limit."
-                ),
+            return deny(
+                "Brak ceny referencyjnej uniemożliwia obliczenie ekspozycji. Podaj midpoint z orderbooka lub cenę limit."
             )
 
         symbol = request.symbol
@@ -239,20 +253,12 @@ class ThresholdRiskEngine(RiskEngine):
         if position:
             position_side = _normalize_position_side(position.side)
             if position_side == "long" and not is_buy and notional > current_notional:
-                self._persist_state(profile_name)
-                return RiskCheckResult(
-                    allowed=False,
-                    reason=(
-                        "Zlecenie sprzedaży przekracza wielkość istniejącej pozycji. Zamknij pozycję przed odwróceniem kierunku."
-                    ),
+                return deny(
+                    "Zlecenie sprzedaży przekracza wielkość istniejącej pozycji. Zamknij pozycję przed odwróceniem kierunku."
                 )
             if position_side == "short" and is_buy and notional > current_notional:
-                self._persist_state(profile_name)
-                return RiskCheckResult(
-                    allowed=False,
-                    reason=(
-                        "Zlecenie kupna przekracza wielkość krótkiej pozycji. Zamknij pozycję przed odwróceniem kierunku."
-                    ),
+                return deny(
+                    "Zlecenie kupna przekracza wielkość krótkiej pozycji. Zamknij pozycję przed odwróceniem kierunku."
                 )
 
         metadata: Mapping[str, object] = request.metadata or {}
@@ -273,15 +279,10 @@ class ThresholdRiskEngine(RiskEngine):
         is_new_position = current_notional == 0.0 and new_notional > 0.0 and not is_reducing
 
         if state.force_liquidation and not is_reducing:
-            self._persist_state(profile_name)
-            return RiskCheckResult(
-                allowed=False,
-                reason=(
-                    (force_reason + " Dozwolone są wyłącznie transakcje redukujące ekspozycję.")
-                    if force_reason
-                    else "Profil w trybie awaryjnym – dozwolone są wyłącznie transakcje redukujące ekspozycję."
-                ),
-            )
+            message = (
+                force_reason + " Dozwolone są wyłącznie transakcje redukujące ekspozycję."
+            ) if force_reason else "Profil w trybie awaryjnym – dozwolone są wyłącznie transakcje redukujące ekspozycję."
+            return deny(message)
 
         if not is_reducing:
             atr_value = _coerce_float(metadata.get("atr")) if metadata else None
@@ -295,17 +296,13 @@ class ThresholdRiskEngine(RiskEngine):
 
             if target_vol > 0 and account.total_equity > 0:
                 if atr_value is None or atr_value <= 0:
-                    self._persist_state(profile_name)
-                    return RiskCheckResult(
-                        allowed=False,
-                        reason="Brak prawidłowego ATR w metadanych zlecenia – nie można wyznaczyć wielkości pozycji.",
+                    return deny(
+                        "Brak prawidłowego ATR w metadanych zlecenia – nie można wyznaczyć wielkości pozycji."
                     )
 
                 if stop_price_value is None:
-                    self._persist_state(profile_name)
-                    return RiskCheckResult(
-                        allowed=False,
-                        reason="Metadane zlecenia nie zawierają stop_price wymaganej do kontroli ryzyka.",
+                    return deny(
+                        "Metadane zlecenia nie zawierają stop_price wymaganej do kontroli ryzyka."
                     )
 
                 if is_buy:
@@ -314,55 +311,37 @@ class ThresholdRiskEngine(RiskEngine):
                     stop_distance = stop_price_value - price
 
                 if stop_distance <= 0:
-                    self._persist_state(profile_name)
-                    return RiskCheckResult(
-                        allowed=False,
-                        reason="Stop loss musi znajdować się po stronie ograniczającej stratę (nieprawidłowy stop_price).",
+                    return deny(
+                        "Stop loss musi znajdować się po stronie ograniczającej stratę (nieprawidłowy stop_price)."
                     )
 
                 minimum_distance = atr_value * max(atr_multiple, 1.0)
                 if minimum_distance > 0 and stop_distance + 1e-9 < minimum_distance:
-                    self._persist_state(profile_name)
-                    return RiskCheckResult(
-                        allowed=False,
-                        reason="Stop loss jest ciaśniejszy niż wymaga tego polityka profilu ryzyka.",
-                    )
+                    return deny("Stop loss jest ciaśniejszy niż wymaga tego polityka profilu ryzyka.")
 
                 max_risk_capital = target_vol * account.total_equity
                 if max_risk_capital <= 0:
-                    self._persist_state(profile_name)
-                    return RiskCheckResult(
-                        allowed=False,
-                        reason="Kapitał lub target volatility profilu uniemożliwia otwarcie pozycji.",
-                    )
+                    return deny("Kapitał lub target volatility profilu uniemożliwia otwarcie pozycji.")
 
                 allowed_total_quantity = max_risk_capital / max(stop_distance, 1e-12)
                 current_quantity = current_notional / price
                 new_quantity = new_notional / price if price > 0 else 0.0
 
                 if allowed_total_quantity <= 0:
-                    self._persist_state(profile_name)
-                    return RiskCheckResult(
-                        allowed=False,
-                        reason="Target volatility profilu blokuje otwarcie pozycji przy zadanych parametrach ATR/stop.",
+                    return deny(
+                        "Target volatility profilu blokuje otwarcie pozycji przy zadanych parametrach ATR/stop."
                     )
 
                 if new_quantity > allowed_total_quantity:
                     allowed_increment = max(0.0, allowed_total_quantity - current_quantity)
-                    self._persist_state(profile_name)
-                    return RiskCheckResult(
-                        allowed=False,
-                        reason="Zlecenie przekracza limit wynikający z target volatility profilu ryzyka.",
+                    return deny(
+                        "Zlecenie przekracza limit wynikający z target volatility profilu ryzyka.",
                         adjustments={"max_quantity": max(0.0, allowed_increment)},
                     )
 
         if is_new_position:
             if state.active_positions() >= profile.max_positions():
-                self._persist_state(profile_name)
-                return RiskCheckResult(
-                    allowed=False,
-                    reason="Limit liczby równoległych pozycji został osiągnięty.",
-                )
+                return deny("Limit liczby równoległych pozycji został osiągnięty.")
 
         incremental_notional = max(0.0, new_notional - current_notional)
         if not is_reducing and incremental_notional > 0:
@@ -376,10 +355,8 @@ class ThresholdRiskEngine(RiskEngine):
                 allowed_additional_notional = usable_margin * effective_leverage
                 allowed_notional = current_notional + allowed_additional_notional
                 allowed_quantity = max(0.0, allowed_notional - current_notional) / price
-                self._persist_state(profile_name)
-                return RiskCheckResult(
-                    allowed=False,
-                    reason="Niewystarczający wolny margines na otwarcie lub powiększenie pozycji.",
+                return deny(
+                    "Niewystarczający wolny margines na otwarcie lub powiększenie pozycji.",
                     adjustments={"max_quantity": max(0.0, allowed_quantity)},
                 )
 
@@ -387,18 +364,12 @@ class ThresholdRiskEngine(RiskEngine):
         if not is_reducing and max_position_pct > 0:
             max_notional = max_position_pct * account.total_equity
             if max_notional <= 0:
-                self._persist_state(profile_name)
-                return RiskCheckResult(
-                    allowed=False,
-                    reason="Kapitał konta jest zbyt niski do otwierania nowych pozycji.",
-                )
+                return deny("Kapitał konta jest zbyt niski do otwierania nowych pozycji.")
             if new_notional > max_notional:
                 allowed_notional = max_notional
                 allowed_quantity = max(0.0, allowed_notional - current_notional) / price
-                self._persist_state(profile_name)
-                return RiskCheckResult(
-                    allowed=False,
-                    reason="Wielkość zlecenia przekracza limit ekspozycji na instrument.",
+                return deny(
+                    "Wielkość zlecenia przekracza limit ekspozycji na instrument.",
                     adjustments={"max_quantity": max(0.0, allowed_quantity)},
                 )
 
@@ -407,19 +378,13 @@ class ThresholdRiskEngine(RiskEngine):
             gross_without_symbol = state.gross_notional() - current_notional
             max_total_notional = max_leverage * account.total_equity
             if max_total_notional <= 0:
-                self._persist_state(profile_name)
-                return RiskCheckResult(
-                    allowed=False,
-                    reason="Kapitał konta nie pozwala na otwieranie pozycji przy zadanej dźwigni.",
-                )
+                return deny("Kapitał konta nie pozwala na otwieranie pozycji przy zadanej dźwigni.")
             new_gross = gross_without_symbol + new_notional
             if new_gross > max_total_notional:
                 remaining_notional = max(0.0, max_total_notional - gross_without_symbol)
                 allowed_quantity = remaining_notional / price
-                self._persist_state(profile_name)
-                return RiskCheckResult(
-                    allowed=False,
-                    reason="Przekroczono maksymalną dźwignię portfela.",
+                return deny(
+                    "Przekroczono maksymalną dźwignię portfela.",
                     adjustments={"max_quantity": max(0.0, allowed_quantity)},
                 )
 
@@ -433,12 +398,8 @@ class ThresholdRiskEngine(RiskEngine):
                 except (TypeError, ValueError):  # pragma: no cover - defensywnie
                     atr_value = None
                 if atr_value is None or atr_value <= 0:
-                    self._persist_state(profile_name)
-                    return RiskCheckResult(
-                        allowed=False,
-                        reason=(
-                            "Brak wartości ATR uniemożliwia wyznaczenie wielkości pozycji w oparciu o profil ryzyka."
-                        ),
+                    return deny(
+                        "Brak wartości ATR uniemożliwia wyznaczenie wielkości pozycji w oparciu o profil ryzyka."
                     )
 
                 stop_raw = request.stop_price
@@ -447,12 +408,8 @@ class ThresholdRiskEngine(RiskEngine):
                 except (TypeError, ValueError):  # pragma: no cover - defensywnie
                     stop_price = None
                 if stop_price is None or stop_price <= 0:
-                    self._persist_state(profile_name)
-                    return RiskCheckResult(
-                        allowed=False,
-                        reason=(
-                            "Zlecenie wymaga ustawienia stop loss opartego o ATR zgodnie z profilem ryzyka."
-                        ),
+                    return deny(
+                        "Zlecenie wymaga ustawienia stop loss opartego o ATR zgodnie z profilem ryzyka."
                     )
 
                 entering_long = is_buy and current_side == "long"
@@ -464,12 +421,8 @@ class ThresholdRiskEngine(RiskEngine):
 
                 expected_stop_distance = atr_value * stop_multiple
                 if expected_stop_distance <= 0:
-                    self._persist_state(profile_name)
-                    return RiskCheckResult(
-                        allowed=False,
-                        reason=(
-                            "Parametry ATR i mnożnik stop loss prowadzą do nieprawidłowego dystansu zabezpieczenia."
-                        ),
+                    return deny(
+                        "Parametry ATR i mnożnik stop loss prowadzą do nieprawidłowego dystansu zabezpieczenia."
                     )
 
                 if entering_long:
@@ -478,54 +431,42 @@ class ThresholdRiskEngine(RiskEngine):
                     actual_distance = stop_price - price
 
                 if actual_distance <= 0:
-                    self._persist_state(profile_name)
-                    return RiskCheckResult(
-                        allowed=False,
-                        reason="Cena stop loss musi znajdować się po właściwej stronie ceny wejścia.",
-                    )
+                    return deny("Cena stop loss musi znajdować się po właściwej stronie ceny wejścia.")
 
                 tolerance = max(expected_stop_distance * 1e-4, 1e-8)
                 if actual_distance + tolerance < expected_stop_distance:
-                    self._persist_state(profile_name)
-                    return RiskCheckResult(
-                        allowed=False,
-                        reason=(
-                            "Cena stop loss musi odpowiadać wielokrotności ATR określonej w profilu ryzyka."
-                        ),
+                    return deny(
+                        "Cena stop loss musi odpowiadać wielokrotności ATR określonej w profilu ryzyka."
                     )
 
                 risk_budget = target_vol * account.total_equity
                 if risk_budget <= 0:
-                    self._persist_state(profile_name)
-                    return RiskCheckResult(
-                        allowed=False,
-                        reason=(
-                            "Kapitał lub docelowa zmienność profilu uniemożliwiają otwarcie nowej pozycji."
-                        ),
+                    return deny(
+                        "Kapitał lub docelowa zmienność profilu uniemożliwiają otwarcie nowej pozycji."
                     )
 
                 allowed_total_quantity = risk_budget / max(actual_distance, 1e-12)
                 if allowed_total_quantity <= 0:
-                    self._persist_state(profile_name)
-                    return RiskCheckResult(
-                        allowed=False,
-                        reason="Docelowa zmienność profilu ogranicza wielkość pozycji do zera.",
-                    )
+                    return deny("Docelowa zmienność profilu ogranicza wielkość pozycji do zera.")
 
                 current_quantity = current_notional / price if price > 0 else 0.0
                 new_quantity = new_notional / price if price > 0 else 0.0
                 if new_quantity > allowed_total_quantity + 1e-9:
                     allowed_additional_quantity = max(0.0, allowed_total_quantity - current_quantity)
-                    self._persist_state(profile_name)
-                    return RiskCheckResult(
-                        allowed=False,
-                        reason="Wielkość zlecenia przekracza limit wynikający z docelowej zmienności profilu.",
+                    return deny(
+                        "Wielkość zlecenia przekracza limit wynikający z docelowej zmienności profilu.",
                         adjustments={"max_quantity": max(0.0, allowed_additional_quantity)},
                     )
 
         self._persist_state(profile_name)
-
-        return RiskCheckResult(allowed=True)
+        result = RiskCheckResult(allowed=True)
+        return self._finalize_decision(
+            profile_name=profile_name,
+            request=request,
+            account=account,
+            result=result,
+            state=state,
+        )
 
     def on_fill(
         self,
@@ -587,9 +528,85 @@ class ThresholdRiskEngine(RiskEngine):
             raise KeyError(f"Brak stanu ryzyka dla profilu {profile_name}")
         return state.force_liquidation
 
+    def recent_decisions(
+        self,
+        *,
+        profile_name: str | None = None,
+        limit: int = 20,
+    ) -> Sequence[Mapping[str, object]]:
+        if self._decision_log is None:
+            return ()
+        return self._decision_log.tail(profile=profile_name, limit=limit)
+
+    def _finalize_decision(
+        self,
+        *,
+        profile_name: str,
+        request: OrderRequest,
+        account: AccountSnapshot,
+        result: RiskCheckResult,
+        state: RiskState,
+    ) -> RiskCheckResult:
+        if self._decision_log is not None:
+            price_value = _coerce_float(request.price)
+            quantity_value = _coerce_float(request.quantity) or 0.0
+            notional = None
+            if price_value and price_value > 0:
+                notional = abs(quantity_value) * price_value
+
+            metadata: dict[str, object] = {
+                "account": {
+                    "total_equity": float(account.total_equity),
+                    "available_margin": float(account.available_margin),
+                    "maintenance_margin": float(account.maintenance_margin),
+                },
+                "state": {
+                    "force_liquidation": state.force_liquidation,
+                    "gross_notional": state.gross_notional(),
+                    "active_positions": state.active_positions(),
+                    "daily_loss_pct": state.daily_loss_pct(),
+                    "drawdown_pct": state.drawdown_pct(state.last_equity or state.start_of_day_equity),
+                    "current_day": state.current_day.isoformat(),
+                },
+            }
+            if isinstance(request.metadata, Mapping) and request.metadata:
+                metadata["request_metadata"] = {str(k): v for k, v in request.metadata.items()}
+
+            profile = self._profiles.get(profile_name)
+            if profile is not None:
+                metadata["limits"] = {
+                    "max_positions": profile.max_positions(),
+                    "max_leverage": profile.max_leverage(),
+                    "daily_loss_limit": profile.daily_loss_limit(),
+                    "drawdown_limit": profile.drawdown_limit(),
+                    "max_position_pct": profile.max_position_exposure(),
+                    "target_volatility": profile.target_volatility(),
+                    "stop_loss_atr_multiple": profile.stop_loss_atr_multiple(),
+                }
+
+            self._decision_log.record(
+                profile=profile_name,
+                symbol=request.symbol,
+                side=request.side,
+                quantity=quantity_value,
+                price=price_value,
+                notional=notional,
+                allowed=result.allowed,
+                reason=result.reason,
+                adjustments=result.adjustments,
+                metadata=metadata,
+            )
+
+        return result
+
     def _persist_state(self, profile_name: str) -> None:
         state = self._states[profile_name]
         self._repository.store(profile_name, state.to_mapping())
+
+    def profile_names(self) -> Sequence[str]:
+        """Zwraca listę zarejestrowanych profili ryzyka."""
+
+        return tuple(self._profiles.keys())
 
 
 __all__ = ["InMemoryRiskRepository", "ThresholdRiskEngine", "RiskState", "PositionState"]
