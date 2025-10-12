@@ -159,6 +159,14 @@ def _initialize_store() -> None:
         _PROFILE_ORIGINS[normalized] = "builtin"
 
 
+def reset_risk_profile_store() -> None:
+    """Przywraca wbudowane presety profili ryzyka."""
+
+    _PROFILE_STORE.clear()
+    _PROFILE_ORIGINS.clear()
+    _initialize_store()
+
+
 def list_risk_profile_names() -> list[str]:
     """Zwraca posortowaną listę dostępnych profili."""
     _initialize_store()
@@ -255,11 +263,24 @@ def register_risk_profiles(
             if chain:
                 merged["extends_chain"] = chain
         else:
-            merged = deepcopy(entry)
-            if "extends_chain" in merged and not isinstance(
-                merged.get("extends_chain"), list
-            ):
-                merged["extends_chain"] = list(merged.get("extends_chain") or [])
+            base_profile = _PROFILE_STORE.get(name)
+            if base_profile:
+                merged = _merge_profile_dicts(base_profile, entry)
+                if "extends" not in merged and base_profile.get("extends"):
+                    merged["extends"] = base_profile.get("extends")
+                base_chain = base_profile.get("extends_chain")
+                if (
+                    base_chain
+                    and "extends_chain" not in merged
+                    and isinstance(base_chain, list)
+                ):
+                    merged["extends_chain"] = list(base_chain)
+            else:
+                merged = deepcopy(entry)
+                if "extends_chain" in merged and not isinstance(
+                    merged.get("extends_chain"), list
+                ):
+                    merged["extends_chain"] = list(merged.get("extends_chain") or [])
 
         visiting.remove(name)
         resolved[name] = merged

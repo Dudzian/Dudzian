@@ -1,7 +1,8 @@
 """Testy jednostkowe dla silnika zarządzania ryzykiem."""
 from __future__ import annotations
 
-from datetime import datetime
+import json
+from datetime import datetime, timezone
 from pathlib import Path
 import sys
 
@@ -11,6 +12,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from bot_core.exchanges.base import AccountSnapshot, OrderRequest
 from bot_core.risk.engine import InMemoryRiskRepository, ThresholdRiskEngine
+from bot_core.risk.events import RiskDecisionLog
 from bot_core.risk.repository import FileRiskRepository
 from bot_core.risk.profiles.manual import ManualProfile
 
@@ -186,6 +188,97 @@ def test_margin_check_passes_when_leverage_covers_notional() -> None:
     )
 
     assert result.allowed is True
+
+
+def test_decision_log_records_allowed_and_denied_events(tmp_path, manual_profile):
+    timestamps = iter(
+        [
+            datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            datetime(2024, 1, 1, 12, 0, 1, tzinfo=timezone.utc),
+        ]
+    )
+
+    def _next_timestamp() -> datetime:
+        try:
+            return next(timestamps)
+        except StopIteration:
+            return datetime(2024, 1, 1, 12, 0, 59, tzinfo=timezone.utc)
+
+    log_path = tmp_path / "risk_decisions.jsonl"
+    decision_log = RiskDecisionLog(max_entries=10, jsonl_path=log_path, clock=_next_timestamp)
+    engine = ThresholdRiskEngine(clock=lambda: datetime(2024, 1, 1, 12, 0, 0), decision_log=decision_log)
+    engine.register_profile(manual_profile)
+
+    snapshot = _snapshot(1_000.0)
+    allowed_request = _order(30_000.0)
+    denied_request = _order(30_000.0, stop_multiple=0.0)
+
+    allowed_result = engine.apply_pre_trade_checks(
+        allowed_request,
+        account=snapshot,
+        profile_name=manual_profile.name,
+    )
+    assert allowed_result.allowed is True
+
+    denied_result = engine.apply_pre_trade_checks(
+        denied_request,
+        account=snapshot,
+        profile_name=manual_profile.name,
+    )
+    assert denied_result.allowed is False
+    assert denied_result.reason is not None
+
+    events = engine.recent_decisions(profile_name=manual_profile.name, limit=5)
+    assert len(events) == 2
+    allowed_event, denied_event = events
+    assert allowed_event["allowed"] is True
+    assert allowed_event["symbol"] == allowed_request.symbol
+    assert "metadata" in allowed_event
+    assert allowed_event["metadata"]["state"]["gross_notional"] >= 0
+    assert denied_event["allowed"] is False
+    assert "stop loss" in denied_event["reason"].lower()
+
+    log_lines = log_path.read_text(encoding="utf-8").strip().splitlines()
+    assert len(log_lines) == 2
+
+
+def test_decision_log_generates_hmac_signature(tmp_path, manual_profile):
+    timestamp = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+
+    def _clock() -> datetime:
+        return timestamp
+
+    log_path = tmp_path / "risk_signed.jsonl"
+    decision_log = RiskDecisionLog(
+        max_entries=5,
+        jsonl_path=log_path,
+        clock=_clock,
+        signing_key=b"very-secret-key",
+        signing_key_id="risk-ci",
+    )
+    engine = ThresholdRiskEngine(clock=_clock, decision_log=decision_log)
+    engine.register_profile(manual_profile)
+
+    account = _snapshot(10_000.0)
+    request = _order(5_000.0)
+    result = engine.apply_pre_trade_checks(
+        request,
+        account=account,
+        profile_name=manual_profile.name,
+    )
+
+    assert result.allowed is True
+    recent = engine.recent_decisions(profile_name=manual_profile.name, limit=1)
+    assert len(recent) == 1
+    entry = recent[0]
+    assert entry["signature"]["algorithm"] == "HMAC-SHA256"
+    assert entry["signature"]["key_id"] == "risk-ci"
+
+    serialized = log_path.read_text(encoding="utf-8").strip().splitlines()
+    assert len(serialized) == 1
+    payload = json.loads(serialized[0])
+    assert payload["signature"]["value"]
+    assert payload["profile"] == manual_profile.name
 
 
 @pytest.mark.parametrize(

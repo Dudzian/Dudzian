@@ -171,4 +171,26 @@ if(BUILD_TESTING)
     target_include_directories(risk_state_model_tests PRIVATE src)
     target_link_libraries(risk_state_model_tests PRIVATE Qt6::Core Qt6::Test)
     add_test(NAME risk_state_model_tests COMMAND risk_state_model_tests)
+
+    # SidePanel QML tests
+    add_executable(side_panel_tests
+        tests/SidePanelTest.cpp
+        src/models/RiskStateModel.cpp
+        src/utils/PerformanceGuard.cpp
+    )
+    target_include_directories(side_panel_tests PRIVATE src)
+    qt_add_resources(side_panel_tests side_panel_qml
+        PREFIX "/qml/components"
+        FILES qml/components/SidePanel.qml
+    )
+    target_link_libraries(side_panel_tests
+        PRIVATE
+            Qt6::Core
+            Qt6::Gui
+            Qt6::Qml
+            Qt6::Quick
+            Qt6::QuickControls2
+            Qt6::Test
+    )
+    add_test(NAME side_panel_tests COMMAND side_panel_tests)
 endif()

@@ -9,6 +9,9 @@ import json
 import sys
 import types
 from pathlib import Path
+from typing import Any, Mapping
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import pytest
 import yaml
@@ -23,14 +26,177 @@ class _FakeCompleted:
         self.returncode = returncode
 
 
+def _format_env(value: object) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if value is None:
+        return ""
+    return str(value)
+
+
 def _fake_subprocess_run_factory(
     *,
     tmp_path: Path,
     summary_payload: dict,
     validator_stdout: str | None = None,
     validator_returncode: int = 0,
+    verify_returncode: int = 0,
+    bundle_calls: list[dict] | None = None,
+    manifest_returncode: int = 0,
+    manifest_summary: dict | None = None,
+    manifest_calls: list[dict] | None = None,
+    tls_returncode: int = 0,
+    tls_report: dict | None = None,
+    tls_calls: list[dict] | None = None,
+    token_returncode: int = 0,
+    token_report: dict | None = None,
+    token_calls: list[dict] | None = None,
+    baseline_returncode: int = 0,
+    baseline_report: dict | None = None,
+    baseline_calls: list[dict] | None = None,
+    verify_calls: list[dict] | None = None,
 ):
     """Tworzy atrapę subprocess.run obsługującą run_daily_trend i walidator."""
+
+    telemetry_overrides = {
+        "ui_alerts_reduce_mode": "enable",
+        "ui_alerts_overlay_mode": "enable",
+        "ui_alerts_jank_mode": "enable",
+        "ui_alerts_reduce_active_severity": "notice",
+        "ui_alerts_overlay_exceeded_severity": "notice",
+        "ui_alerts_jank_spike_severity": "notice",
+        "ui_alerts_overlay_critical_threshold": 2,
+    }
+    telemetry_summary = {
+        "summary": {
+            "total_snapshots": 1,
+            "events": {"reduce_motion": {"count": 1}},
+        },
+        "metadata": {
+            "mode": "jsonl",
+            "summary_enabled": True,
+            "risk_profile_summary": {
+                "name": "balanced",
+                "recommended_overrides": telemetry_overrides,
+            },
+            "metrics_service": {
+                "auth_token_scope_required": "metrics.read",
+                "auth_token_scope_checked": True,
+                "auth_token_scope_match": True,
+                "auth_token_scopes": ["metrics.read"],
+                "auth_token_token_id": "metrics-reader",
+                "rbac_tokens": 1,
+            },
+            "risk_service": {
+                "auth_token_scope_required": "risk.read",
+                "auth_token_scope_checked": True,
+                "auth_token_scope_match": True,
+                "auth_token_scopes": ["risk.read"],
+                "auth_token_token_id": "risk-reader",
+                "required_scopes": {"risk.read": ["summary"]},
+                "rbac_tokens": 1,
+                "tls_enabled": True,
+                "root_cert_configured": True,
+                "client_cert_configured": True,
+                "client_key_configured": True,
+                "client_auth": True,
+                "pinned_fingerprints": [
+                    "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                ],
+            },
+            "core_config": {
+                "metrics_service": {
+                    "auth_token_scope_required": "metrics.read",
+                    "rbac_tokens": 1,
+                },
+                "risk_service": {
+                    "auth_token_scope_required": "risk.read",
+                    "required_scopes": {"risk.read": ["core_config.risk_service"]},
+                    "rbac_tokens": 1,
+                    "tls_enabled": True,
+                    "root_cert_configured": True,
+                    "client_cert_configured": True,
+                    "client_key_configured": True,
+                    "client_auth": True,
+                    "pinned_fingerprints": [
+                        "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                    ],
+                },
+            },
+        },
+    }
+
+    default_manifest_summary = {
+        "status_counts": {"ok": 2},
+        "total_entries": 2,
+        "worst_status": "ok",
+        "generated_at": "2025-01-01T00:00:00+00:00",
+        "manifest_path": str(tmp_path / "cache" / "ohlcv_manifest.sqlite"),
+        "environment": "binance_paper",
+        "exchange": "binance_spot",
+    }
+    manifest_payload = manifest_summary or default_manifest_summary
+
+    default_tls_report = tls_report or {
+        "services": {
+            "metrics_service": {
+                "enabled": True,
+                "auth_token_configured": False,
+                "tls": {"enabled": False},
+                "warnings": ["MetricsService działa bez TLS – rozważ włączenie szyfrowania"],
+                "errors": [],
+            },
+            "risk_service": {
+                "enabled": True,
+                "auth_token_configured": False,
+                "tls": {"enabled": False},
+                "warnings": ["RiskService działa bez TLS – rozważ włączenie szyfrowania"],
+                "errors": [],
+            },
+        },
+        "warnings": [
+            "MetricsService działa bez TLS – rozważ włączenie szyfrowania",
+            "RiskService działa bez TLS – rozważ włączenie szyfrowania",
+        ],
+        "errors": [],
+    }
+
+    default_token_report = token_report or {
+        "services": [
+            {
+                "service": "metrics_service",
+                "status": "ok",
+                "findings": [],
+                "coverage": {"metrics.read": ["metrics-reader"]},
+                "required_scopes": {"metrics.read": ["metrics.read"]},
+            },
+            {
+                "service": "risk_service",
+                "status": "ok",
+                "findings": [],
+                "coverage": {"risk.read": ["risk-reader"]},
+                "required_scopes": {"risk.read": ["risk.read"]},
+            },
+        ],
+        "warnings": [],
+        "errors": [],
+    }
+
+    default_baseline_report = baseline_report or {
+        "status": "warning",
+        "warnings": [
+            "MetricsService działa bez TLS – rozważ włączenie szyfrowania",
+            "RiskService działa bez TLS – rozważ włączenie szyfrowania",
+        ],
+        "errors": [],
+        "tls": default_tls_report,
+        "tokens": default_token_report,
+        "summary_signature": {
+            "algorithm": "HMAC-SHA256",
+            "value": "YmFzZWxpbmUtc2lnbmF0dXJl",
+            "key_id": "baseline-stub",
+        },
+    }
 
     def _run(cmd, *_, **kwargs):  # noqa: ANN001
         script = Path(cmd[1]).name if len(cmd) > 1 else ""
@@ -45,12 +211,187 @@ def _fake_subprocess_run_factory(
             assert "--require-publish-exit-zero" in cmd
             stdout = validator_stdout or json.dumps({"status": "ok"})
             return _FakeCompleted(stdout=stdout, returncode=validator_returncode)
+        if script == "watch_metrics_stream.py":
+            summary_arg = cmd.index("--summary-output")
+            summary_path = Path(cmd[summary_arg + 1])
+            summary_path.parent.mkdir(parents=True, exist_ok=True)
+            if "--core-config" in cmd:
+                cfg_arg = cmd.index("--core-config")
+                telemetry_summary.setdefault("metadata", {}).setdefault("core_config", {})["path"] = str(
+                    Path(cmd[cfg_arg + 1])
+                )
+            summary_path.write_text(json.dumps(telemetry_summary), encoding="utf-8")
+            log_arg = cmd.index("--decision-log")
+            log_path = Path(cmd[log_arg + 1])
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            entries = [
+                {"kind": "metadata", "metadata": {"mode": "jsonl", "summary_enabled": True}},
+                {
+                    "kind": "snapshot",
+                    "timestamp": "2025-01-01T00:00:01Z",
+                    "event": "reduce_motion",
+                    "severity": "notice",
+                    "source": "jsonl",
+                    "screen": {"index": 0, "name": "Desk"},
+                },
+            ]
+            log_path.write_text(
+                "\n".join(json.dumps(entry, ensure_ascii=False) for entry in entries) + "\n",
+                encoding="utf-8",
+            )
+            return _FakeCompleted(returncode=0)
+        if script == "telemetry_risk_profiles.py":
+            if "bundle" in cmd:
+                output_arg = cmd.index("--output-dir")
+                output_dir = Path(cmd[output_arg + 1])
+                output_dir.mkdir(parents=True, exist_ok=True)
+                stage_entries = [cmd[idx + 1] for idx, token in enumerate(cmd) if token == "--stage"]
+                stage_map = {"demo": "conservative", "paper": "balanced", "live": "manual"}
+                for entry in stage_entries:
+                    stage, profile = entry.split("=", 1)
+                    stage_map[stage.strip().lower()] = profile.strip().lower()
+                if bundle_calls is not None:
+                    bundle_calls.append({"cmd": list(cmd), "stage_map": dict(stage_map)})
+                env_style = "dotenv"
+                if "--env-style" in cmd:
+                    env_style = cmd[cmd.index("--env-style") + 1]
+                config_format = "yaml"
+                if "--config-format" in cmd:
+                    config_format = cmd[cmd.index("--config-format") + 1]
+                stages_payload = []
+                for stage_name, profile_name in stage_map.items():
+                    stage_dir = output_dir / stage_name
+                    stage_dir.mkdir(parents=True, exist_ok=True)
+                    env_path = stage_dir / "metrics.env"
+                    env_path.write_text(f"PROFILE={profile_name}\n", encoding="utf-8")
+                    config_path = stage_dir / "metrics.yaml"
+                    config_path.write_text(
+                        json.dumps({"risk_profile": profile_name}, ensure_ascii=False) + "\n",
+                        encoding="utf-8",
+                    )
+                    stages_payload.append(
+                        {
+                            "stage": stage_name,
+                            "risk_profile": profile_name,
+                            "risk_profile_summary": {"name": profile_name},
+                            "paths": {"env": str(env_path), "config": str(config_path)},
+                        }
+                    )
+                manifest = {
+                    "output_dir": str(output_dir),
+                    "env_style": env_style,
+                    "config_format": config_format,
+                    "stages": stages_payload,
+                    "manifest_path": str(output_dir / "manifest.json"),
+                }
+                manifest_path = output_dir / "manifest.json"
+                manifest_path.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+                return _FakeCompleted(stdout=json.dumps(manifest, ensure_ascii=False))
+
+            output_arg = cmd.index("--output")
+            output_path = Path(cmd[output_arg + 1])
+            fmt_arg = cmd.index("--format")
+            fmt = cmd[fmt_arg + 1]
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            if fmt == "env":
+                lines = [
+                    f"RUN_TRADING_STUB_METRICS_{key.upper()}={_format_env(value)}"
+                    for key, value in telemetry_overrides.items()
+                ]
+                output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            elif fmt == "yaml":
+                payload = {
+                    "summary": telemetry_summary["metadata"]["risk_profile_summary"],
+                    "metrics_service_overrides": telemetry_overrides,
+                    "env_assignments": [
+                        f"RUN_TRADING_STUB_METRICS_{key.upper()}={_format_env(value)}"
+                        for key, value in telemetry_overrides.items()
+                    ],
+                }
+                output_path.write_text(
+                    json.dumps(payload, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+            else:
+                raise AssertionError(f"Unexpected format in telemetry renderer: {fmt}")
+            return _FakeCompleted(returncode=0)
+        if script == "verify_decision_log.py":
+            report_arg = cmd.index("--report-output")
+            report_path = Path(cmd[report_arg + 1])
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "report_version": 1,
+                "summary": telemetry_summary["summary"],
+                "risk_profile_summary": telemetry_summary["metadata"]["risk_profile_summary"],
+                "risk_profile_snippet_validation": [
+                    {"type": "env", "status": "ok"},
+                    {"type": "yaml", "status": "ok"},
+                ],
+            }
+            report_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            if verify_calls is not None:
+                verify_calls.append({"cmd": list(cmd)})
+            return _FakeCompleted(returncode=verify_returncode)
+        if script == "export_manifest_metrics.py":
+            output_arg = cmd.index("--output")
+            metrics_path = Path(cmd[output_arg + 1])
+            metrics_path.parent.mkdir(parents=True, exist_ok=True)
+            metrics_path.write_text("# HELP ohlcv_manifest_gap_minutes ...\n", encoding="utf-8")
+            summary_arg = cmd.index("--summary-output")
+            summary_path = Path(cmd[summary_arg + 1])
+            summary_path.parent.mkdir(parents=True, exist_ok=True)
+            summary_path.write_text(json.dumps(manifest_payload, ensure_ascii=False), encoding="utf-8")
+            if manifest_calls is not None:
+                manifest_calls.append({"cmd": list(cmd)})
+            return _FakeCompleted(returncode=manifest_returncode)
+        if script == "audit_tls_assets.py":
+            if tls_calls is not None:
+                tls_calls.append({"cmd": list(cmd)})
+            json_arg = cmd.index("--json-output")
+            report_path = Path(cmd[json_arg + 1])
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_text(json.dumps(default_tls_report, ensure_ascii=False), encoding="utf-8")
+            return _FakeCompleted(stdout=json.dumps(default_tls_report, ensure_ascii=False), returncode=tls_returncode)
+        if script == "audit_service_tokens.py":
+            if token_calls is not None:
+                token_calls.append({"cmd": list(cmd)})
+            json_arg = cmd.index("--json-output")
+            report_path = Path(cmd[json_arg + 1])
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_text(json.dumps(default_token_report, ensure_ascii=False), encoding="utf-8")
+            return _FakeCompleted(stdout=json.dumps(default_token_report, ensure_ascii=False), returncode=token_returncode)
+        if script == "audit_security_baseline.py":
+            if baseline_calls is not None:
+                baseline_calls.append({"cmd": list(cmd)})
+            json_arg = cmd.index("--json-output")
+            report_path = Path(cmd[json_arg + 1])
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_text(json.dumps(default_baseline_report, ensure_ascii=False), encoding="utf-8")
+            return _FakeCompleted(
+                stdout=json.dumps(default_baseline_report, ensure_ascii=False),
+                returncode=baseline_returncode,
+            )
         raise AssertionError(f"Unexpected command: {cmd}")
 
     return _run
 
 
-def _write_core_config(tmp_path: Path, *, reporting: dict) -> Path:
+def _write_core_config(
+    tmp_path: Path,
+    *,
+    reporting: dict,
+    runtime_extra: Mapping[str, Any] | None = None,
+) -> Path:
+    runtime_config: dict[str, Any] = {
+        "metrics_service": {
+            "enabled": True,
+            "ui_alerts_jsonl_path": str(tmp_path / "metrics" / "ui_alerts.jsonl"),
+            "ui_alerts_risk_profile": "balanced",
+        }
+    }
+    if runtime_extra:
+        runtime_config.update(runtime_extra)
+
     payload = {
         "risk_profiles": {
             "balanced": {
@@ -74,12 +415,22 @@ def _write_core_config(tmp_path: Path, *, reporting: dict) -> Path:
             }
         },
         "reporting": reporting,
+        "runtime": runtime_config,
     }
     config_path = tmp_path / "core.yaml"
     config_path.write_text(
         yaml.safe_dump(payload, allow_unicode=True, sort_keys=False),
         encoding="utf-8",
     )
+    metrics_path = tmp_path / "metrics" / "ui_alerts.jsonl"
+    metrics_path.parent.mkdir(parents=True, exist_ok=True)
+    metrics_path.write_text(
+        json.dumps({"kind": "snapshot", "event": "reduce_motion", "severity": "notice"}) + "\n",
+        encoding="utf-8",
+    )
+    manifest_path = tmp_path / "cache" / "ohlcv_manifest.sqlite"
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text("stub", encoding="utf-8")
     return config_path
 
 
@@ -132,8 +483,7 @@ def test_main_runs_smoke_and_prints_summary(monkeypatch: pytest.MonkeyPatch, tmp
     run_daily_trend = scripts_dir / "run_daily_trend.py"
     run_daily_trend.write_text("print('stub run')", encoding="utf-8")
 
-    config_path = tmp_path / "config.yaml"
-    config_path.write_text("core: {}", encoding="utf-8")
+    config_path = _write_core_config(tmp_path, reporting={})
 
     summary_payload = {
         "status": "ok",
@@ -151,7 +501,12 @@ def test_main_runs_smoke_and_prints_summary(monkeypatch: pytest.MonkeyPatch, tmp
         },
     }
 
-    fake_run = _fake_subprocess_run_factory(tmp_path=tmp_path, summary_payload=summary_payload)
+    verify_calls: list[dict] = []
+    fake_run = _fake_subprocess_run_factory(
+        tmp_path=tmp_path,
+        summary_payload=summary_payload,
+        verify_calls=verify_calls,
+    )
     monkeypatch.setattr(run_paper_smoke_ci.subprocess, "run", fake_run)
     monkeypatch.chdir(tmp_path)
 
@@ -171,6 +526,493 @@ def test_main_runs_smoke_and_prints_summary(monkeypatch: pytest.MonkeyPatch, tmp
     assert summary_file.exists()
     summary = json.loads(summary_file.read_text(encoding="utf-8"))
     assert summary.get("validation", {}).get("status") == "ok"
+    telemetry = summary.get("telemetry", {})
+    assert telemetry.get("summary_path")
+    assert telemetry.get("decision_log_path")
+    assert telemetry.get("metrics_source_path")
+    assert telemetry.get("risk_profile", {}).get("name") == "balanced"
+    assert telemetry.get("decision_log_report", {}).get("status") == "ok"
+    telemetry_summary = telemetry.get("summary", {})
+    assert telemetry_summary.get("summary", {}).get("total_snapshots") == 1
+    assert telemetry.get("required_auth_scopes") == ["metrics.read", "risk.read"]
+    scope_details = telemetry.get("auth_scope_requirements") or {}
+    assert scope_details.get("metrics_service", {}).get("required_scopes") == ["metrics.read"]
+    assert scope_details.get("risk_service", {}).get("required_scopes") == ["risk.read"]
+    risk_requirements = telemetry.get("risk_service_requirements", {})
+    assert isinstance(risk_requirements.get("cli_args"), list)
+    assert risk_requirements.get("details", {}).get("require_tls") is True
+    assert "risk.read" in risk_requirements.get("details", {}).get("required_scopes", [])
+    assert "risk-reader" in risk_requirements.get("details", {}).get("required_token_ids", [])
+    combined_meta = risk_requirements.get("combined_metadata", {})
+    assert combined_meta.get("tls_enabled") is True
+    assert combined_meta.get("root_cert_configured") is True
+    assert "pinned_fingerprints" in combined_meta
+    snippets = telemetry.get("snippets", {})
+    assert snippets.get("env_path")
+    assert snippets.get("yaml_path")
+    bundle = telemetry.get("bundle", {})
+    assert bundle.get("manifest_path")
+    manifest = bundle.get("manifest", {})
+    assert manifest.get("stages")
+    stage_names = {stage["stage"] for stage in manifest["stages"]}
+    assert {"demo", "paper", "live"}.issubset(stage_names)
+    manifest_section = summary.get("manifest", {})
+    assert manifest_section.get("worst_status") == "ok"
+    assert manifest_section.get("exit_code") == 0
+    assert manifest_section.get("metrics_path")
+    tls_section = summary.get("tls_audit", {})
+    assert tls_section.get("status") == "warning"
+    assert tls_section.get("exit_code") == 0
+    assert tls_section.get("report_path")
+    assert tls_section.get("warnings")
+    token_section = summary.get("token_audit", {})
+    assert token_section.get("status") == "ok"
+    assert token_section.get("exit_code") == 0
+    assert token_section.get("report_path")
+    baseline_section = summary.get("security_baseline", {})
+    assert baseline_section.get("status") == "warning"
+    assert baseline_section.get("exit_code") == 0
+    assert baseline_section.get("report_path")
+    assert baseline_section.get("warnings")
+    signature = baseline_section.get("summary_signature", {})
+    assert signature.get("value")
+    assert signature.get("algorithm") == "HMAC-SHA256"
+
+    assert verify_calls, "verify_decision_log was not executed"
+    verify_cmd = verify_calls[0]["cmd"]
+    assert "--require-auth-scope" in verify_cmd
+    assert "metrics.read" in verify_cmd
+    assert "risk.read" in verify_cmd
+    assert "--require-risk-service-tls" in verify_cmd
+    assert "--require-risk-service-tls-material" in verify_cmd
+    assert "--expect-risk-service-server-sha256" in verify_cmd
+    assert (
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        in verify_cmd
+    )
+    assert "--require-risk-service-scope" in verify_cmd
+    assert "--require-risk-service-auth-token" in verify_cmd
+    assert "--require-risk-service-token-id" in verify_cmd
+    assert "risk-reader" in verify_cmd
+    decision_command = telemetry.get("decision_log_report", {}).get("command")
+    assert isinstance(decision_command, list)
+    assert "--require-auth-scope" in decision_command
+    assert "metrics.read" in decision_command
+    assert "risk.read" in decision_command
+    assert "--require-risk-service-tls" in decision_command
+    assert "--require-risk-service-auth-token" in decision_command
+    assert "--require-risk-service-token-id" in decision_command
+
+
+def test_main_propagates_decision_log_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    run_daily_trend = scripts_dir / "run_daily_trend.py"
+    run_daily_trend.write_text("print('stub run')", encoding="utf-8")
+
+    config_path = _write_core_config(tmp_path, reporting={})
+
+    summary_payload = {
+        "status": "ok",
+        "environment": "binance_paper",
+        "timestamp": "2024-01-01T00:00:00Z",
+        "operator": "CI Agent",
+        "severity": "info",
+        "window": {"start": "2024-01-01", "end": "2024-01-02"},
+        "publish": {"status": "ok", "required": True, "exit_code": 0},
+    }
+
+    fake_run = _fake_subprocess_run_factory(
+        tmp_path=tmp_path,
+        summary_payload=summary_payload,
+        verify_returncode=5,
+    )
+    monkeypatch.setattr(run_paper_smoke_ci.subprocess, "run", fake_run)
+    monkeypatch.chdir(tmp_path)
+
+    exit_code = run_paper_smoke_ci.main(
+        [
+            "--config",
+            str(config_path),
+            "--environment",
+            "binance_paper",
+            "--output-dir",
+            str(tmp_path / "output"),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    status_body, status_suffix = payload["status"].rsplit("_", 1)
+    assert status_suffix == "failed"
+    status_reasons = status_body.split("+")
+    assert "decision_log" in status_reasons
+    assert payload["decision_log_exit_code"] == 5
+
+    summary_file = tmp_path / "output" / "paper_smoke_summary.json"
+    summary = json.loads(summary_file.read_text(encoding="utf-8"))
+    telemetry = summary.get("telemetry", {})
+    report = telemetry.get("decision_log_report", {})
+    assert report.get("status") == "failed"
+    assert report.get("exit_code") == 5
+
+    assert exit_code == 5
+
+
+def test_main_propagates_manifest_failure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    run_daily_trend = scripts_dir / "run_daily_trend.py"
+    run_daily_trend.write_text("print('stub run')", encoding="utf-8")
+    config_path = _write_core_config(tmp_path, reporting={})
+
+    summary_payload = {
+        "status": "ok",
+        "environment": "binance_paper",
+        "timestamp": "2024-01-01T00:00:00Z",
+        "operator": "CI Agent",
+        "severity": "info",
+        "window": {"start": "2024-01-01", "end": "2024-01-02"},
+        "publish": {"status": "ok", "required": True, "exit_code": 0},
+    }
+
+    manifest_calls: list[dict] = []
+    manifest_summary = {
+        "status_counts": {"warning": 1},
+        "total_entries": 1,
+        "worst_status": "warning",
+        "environment": "binance_paper",
+        "manifest_path": str(tmp_path / "cache" / "ohlcv_manifest.sqlite"),
+    }
+
+    fake_run = _fake_subprocess_run_factory(
+        tmp_path=tmp_path,
+        summary_payload=summary_payload,
+        verify_returncode=0,
+        manifest_returncode=2,
+        manifest_summary=manifest_summary,
+        manifest_calls=manifest_calls,
+    )
+    monkeypatch.setattr(run_paper_smoke_ci.subprocess, "run", fake_run)
+    monkeypatch.chdir(tmp_path)
+
+    exit_code = run_paper_smoke_ci.main(
+        [
+            "--config",
+            str(config_path),
+            "--environment",
+            "binance_paper",
+            "--output-dir",
+            str(tmp_path / "output"),
+        ]
+    )
+
+    assert exit_code == 2
+    assert manifest_calls, "export_manifest_metrics.py powinien zostać wywołany"
+    cmd_tokens = manifest_calls[0]["cmd"]
+    assert "--deny-status" in cmd_tokens
+    summary = json.loads((tmp_path / "output" / "paper_smoke_summary.json").read_text(encoding="utf-8"))
+    manifest_section = summary.get("manifest", {})
+    assert manifest_section.get("worst_status") == "warning"
+    assert manifest_section.get("exit_code") == 2
+
+
+def test_manifest_export_uses_signing_configuration(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    (scripts_dir / "run_daily_trend.py").write_text("print('stub run')", encoding="utf-8")
+
+    manifest_calls: list[dict] = []
+    manifest_summary = {
+        "status_counts": {"ok": 1},
+        "total_entries": 1,
+        "worst_status": "ok",
+        "generated_at": "2025-01-01T00:00:00+00:00",
+        "manifest_path": str(tmp_path / "cache" / "ohlcv_manifest.sqlite"),
+        "environment": "binance_paper",
+        "exchange": "binance_spot",
+        "summary_signature": {
+            "algorithm": "HMAC-SHA256",
+            "value": "dGVzdF9kaWdlc3Q=",
+            "key_id": "ci-manifest",
+        },
+    }
+
+    config_path = _write_core_config(
+        tmp_path,
+        reporting={
+            "manifest_metrics": {
+                "signing": {
+                    "key_env": "EXPORT_MANIFEST_KEY",
+                    "key_id": "ci-manifest",
+                    "require": True,
+                }
+            }
+        },
+    )
+
+    monkeypatch.setenv("EXPORT_MANIFEST_KEY", "manifest-signing-secret-123456")
+
+    fake_run = _fake_subprocess_run_factory(
+        tmp_path=tmp_path,
+        summary_payload={
+            "status": "ok",
+            "environment": "binance_paper",
+            "timestamp": "2024-01-01T00:00:00Z",
+            "operator": "CI Agent",
+            "severity": "info",
+            "window": {"start": "2024-01-01", "end": "2024-01-02"},
+            "publish": {"status": "ok", "required": True, "exit_code": 0},
+            "report": {
+                "summary_path": str(tmp_path / "summary.json"),
+                "directory": str(tmp_path / "output"),
+                "summary_sha256": "deadbeef",
+            },
+        },
+        manifest_summary=manifest_summary,
+        manifest_calls=manifest_calls,
+    )
+    monkeypatch.setattr(run_paper_smoke_ci.subprocess, "run", fake_run)
+
+    env_file = tmp_path / "paper.env"
+    markdown_path = tmp_path / "summary.md"
+
+    exit_code = run_paper_smoke_ci.main(
+        [
+            "--config",
+            str(config_path),
+            "--environment",
+            "binance_paper",
+            "--output-dir",
+            str(tmp_path / "output"),
+            "--env-file",
+            str(env_file),
+            "--operator",
+            "CI Operator",
+            "--render-summary-markdown",
+            str(markdown_path),
+        ]
+    )
+
+    assert exit_code == 0
+    assert manifest_calls, "export_manifest_metrics.py powinien zostać wywołany"
+    cmd_tokens = manifest_calls[0]["cmd"]
+    assert "--summary-hmac-key-env" in cmd_tokens
+    assert "EXPORT_MANIFEST_KEY" in cmd_tokens
+    assert "--summary-hmac-key-id" in cmd_tokens
+    assert "ci-manifest" in cmd_tokens
+    assert "--require-summary-signature" in cmd_tokens
+
+    env_content = env_file.read_text(encoding="utf-8")
+    assert "PAPER_SMOKE_MANIFEST_SIGNATURE=dGVzdF9kaWdlc3Q=" in env_content
+    assert "PAPER_SMOKE_MANIFEST_SIGNATURE_ALGORITHM=HMAC-SHA256" in env_content
+    assert "PAPER_SMOKE_MANIFEST_SIGNATURE_KEY_ID=ci-manifest" in env_content
+    assert "PAPER_SMOKE_TLS_AUDIT_PATH=" in env_content
+    assert "PAPER_SMOKE_TLS_AUDIT_STATUS=warning" in env_content
+    assert "PAPER_SMOKE_TLS_AUDIT_EXIT_CODE=0" in env_content
+    assert "PAPER_SMOKE_TOKEN_AUDIT_PATH=" in env_content
+    assert "PAPER_SMOKE_TOKEN_AUDIT_STATUS=ok" in env_content
+    assert "PAPER_SMOKE_TOKEN_AUDIT_EXIT_CODE=0" in env_content
+    assert "PAPER_SMOKE_SECURITY_BASELINE_PATH=" in env_content
+    assert "PAPER_SMOKE_SECURITY_BASELINE_STATUS=warning" in env_content
+    assert "PAPER_SMOKE_SECURITY_BASELINE_EXIT_CODE=0" in env_content
+    assert "PAPER_SMOKE_SECURITY_BASELINE_SIGNATURE=YmFzZWxpbmUtc2lnbmF0dXJl" in env_content
+    assert "PAPER_SMOKE_SECURITY_BASELINE_SIGNATURE_ALGORITHM=HMAC-SHA256" in env_content
+    assert "PAPER_SMOKE_SECURITY_BASELINE_SIGNATURE_KEY_ID=baseline-stub" in env_content
+
+
+def test_main_fails_on_tls_audit_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    (scripts_dir / "run_daily_trend.py").write_text("print('stub run')", encoding="utf-8")
+
+    config_path = _write_core_config(tmp_path, reporting={})
+
+    error_report = {
+        "services": {
+            "metrics_service": {
+                "enabled": True,
+                "auth_token_configured": True,
+                "tls": {"enabled": True},
+                "warnings": [],
+                "errors": ["Certyfikat wygasł"],
+            }
+        },
+        "warnings": [],
+        "errors": ["Certyfikat wygasł"],
+    }
+
+    fake_run = _fake_subprocess_run_factory(
+        tmp_path=tmp_path,
+        summary_payload={
+            "status": "ok",
+            "environment": "binance_paper",
+            "timestamp": "2024-01-01T00:00:00Z",
+            "operator": "CI Agent",
+            "severity": "info",
+            "window": {"start": "2024-01-01", "end": "2024-01-02"},
+            "publish": {"status": "ok", "required": True, "exit_code": 0},
+        },
+        tls_returncode=2,
+        tls_report=error_report,
+        baseline_returncode=2,
+        baseline_report={
+            "status": "error",
+            "warnings": [],
+            "errors": ["Certyfikat wygasł"],
+            "tls": error_report,
+            "tokens": {"services": []},
+        },
+    )
+    monkeypatch.setattr(run_paper_smoke_ci.subprocess, "run", fake_run)
+    monkeypatch.chdir(tmp_path)
+
+    exit_code = run_paper_smoke_ci.main(
+        [
+            "--config",
+            str(config_path),
+            "--environment",
+            "binance_paper",
+            "--output-dir",
+            str(tmp_path / "output"),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert exit_code == 2
+
+
+def test_security_baseline_cli_uses_signing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    (scripts_dir / "run_daily_trend.py").write_text("print('stub run')", encoding="utf-8")
+
+    config_path = _write_core_config(
+        tmp_path,
+        reporting={},
+        runtime_extra={
+            "security_baseline": {
+                "signing": {
+                    "signing_key_env": "BASELINE_TOKEN",
+                    "signing_key_id": "baseline-ci",
+                    "require_signature": True,
+                }
+            }
+        },
+    )
+
+    baseline_calls: list[dict[str, Any]] = []
+    fake_run = _fake_subprocess_run_factory(
+        tmp_path=tmp_path,
+        summary_payload={
+            "status": "ok",
+            "environment": "binance_paper",
+            "timestamp": "2024-01-01T00:00:00Z",
+            "operator": "CI Agent",
+            "severity": "info",
+            "window": {"start": "2024-01-01", "end": "2024-01-02"},
+            "publish": {"status": "ok", "required": True, "exit_code": 0},
+        },
+        baseline_calls=baseline_calls,
+    )
+    monkeypatch.setattr(run_paper_smoke_ci.subprocess, "run", fake_run)
+    monkeypatch.chdir(tmp_path)
+
+    exit_code = run_paper_smoke_ci.main(
+        [
+            "--config",
+            str(config_path),
+            "--environment",
+            "binance_paper",
+            "--output-dir",
+            str(tmp_path / "output"),
+        ]
+    )
+
+    assert exit_code == 0
+    assert baseline_calls, "audit_security_baseline.py should be invoked"
+    baseline_cmd = baseline_calls[0]["cmd"]
+    assert "--summary-hmac-key-env" in baseline_cmd
+    assert "BASELINE_TOKEN" in baseline_cmd
+    assert "--summary-hmac-key-id" in baseline_cmd
+    assert "baseline-ci" in baseline_cmd
+    assert "--require-summary-signature" in baseline_cmd
+    assert payload["tls_audit_exit_code"] == 2
+    assert payload["security_baseline_exit_code"] == 2
+    assert payload["token_audit_exit_code"] == 0
+    assert "tls_audit" in payload["status"]
+    assert "security_baseline" in payload["status"]
+
+
+def test_main_fails_on_token_audit_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    (scripts_dir / "run_daily_trend.py").write_text("print('stub run')", encoding="utf-8")
+
+    config_path = _write_core_config(tmp_path, reporting={})
+
+    error_report = {
+        "services": [
+            {
+                "service": "metrics_service",
+                "findings": [
+                    {"level": "error", "message": "Missing metrics.read", "details": {"scope": "metrics.read"}}
+                ],
+            }
+        ],
+        "warnings": [],
+        "errors": ["Brak tokenów"],
+    }
+
+    fake_run = _fake_subprocess_run_factory(
+        tmp_path=tmp_path,
+        summary_payload={
+            "status": "ok",
+            "environment": "binance_paper",
+            "timestamp": "2024-01-01T00:00:00Z",
+            "operator": "CI Agent",
+            "severity": "info",
+            "window": {"start": "2024-01-01", "end": "2024-01-02"},
+            "publish": {"status": "ok", "required": True, "exit_code": 0},
+        },
+        token_returncode=3,
+        token_report=error_report,
+        baseline_returncode=2,
+        baseline_report={
+            "status": "error",
+            "warnings": [],
+            "errors": ["Brak tokenów"],
+            "tls": {"warnings": [], "errors": []},
+            "tokens": error_report,
+        },
+    )
+    monkeypatch.setattr(run_paper_smoke_ci.subprocess, "run", fake_run)
+    monkeypatch.chdir(tmp_path)
+
+    exit_code = run_paper_smoke_ci.main(
+        [
+            "--config",
+            str(config_path),
+            "--environment",
+            "binance_paper",
+            "--output-dir",
+            str(tmp_path / "output"),
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 3
+    assert payload["token_audit_exit_code"] == 3
+    assert payload["security_baseline_exit_code"] == 2
+    assert "token_audit" in payload["status"]
+    assert "security_baseline" in payload["status"]
 
 
 def test_main_propagates_non_zero_exit(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -178,8 +1020,7 @@ def test_main_propagates_non_zero_exit(monkeypatch: pytest.MonkeyPatch, tmp_path
     scripts_dir.mkdir()
     run_daily_trend = scripts_dir / "run_daily_trend.py"
     run_daily_trend.write_text("print('stub run')", encoding="utf-8")
-    config_path = tmp_path / "config.yaml"
-    config_path.write_text("core: {}", encoding="utf-8")
+    config_path = _write_core_config(tmp_path, reporting={})
 
     def fake_run(cmd, *_, **kwargs):  # noqa: ANN001
         script = Path(cmd[1]).name if len(cmd) > 1 else ""
@@ -209,8 +1050,7 @@ def test_main_writes_env_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
     scripts_dir.mkdir()
     run_daily_trend = scripts_dir / "run_daily_trend.py"
     run_daily_trend.write_text("print('stub run')", encoding="utf-8")
-    config_path = tmp_path / "config.yaml"
-    config_path.write_text("core: {}", encoding="utf-8")
+    config_path = _write_core_config(tmp_path, reporting={})
 
     summary_payload = {
         "status": "ok",
@@ -260,6 +1100,17 @@ def test_main_writes_env_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
     assert lines["PAPER_SMOKE_PUBLISH_STATUS"] == "ok"
     assert Path(lines["PAPER_SMOKE_MARKDOWN_PATH"]) == markdown_path.resolve()
     assert lines["PAPER_SMOKE_VALIDATION_STATUS"] == "ok"
+    assert lines.get("PAPER_SMOKE_RISK_BUNDLE_DIR")
+    assert lines.get("PAPER_SMOKE_RISK_BUNDLE_MANIFEST_PATH")
+    assert lines.get("PAPER_SMOKE_MANIFEST_PATH")
+    assert lines.get("PAPER_SMOKE_MANIFEST_STATUS") == "ok"
+    assert "PAPER_SMOKE_MANIFEST_METRICS_PATH" in lines
+    assert lines.get("PAPER_SMOKE_MANIFEST_EXIT_CODE") == "0"
+    assert lines.get("PAPER_SMOKE_MANIFEST_STAGE") == "paper"
+    assert lines.get("PAPER_SMOKE_MANIFEST_RISK_PROFILE") == "balanced"
+    assert lines.get("PAPER_SMOKE_TLS_AUDIT_PATH")
+    assert lines.get("PAPER_SMOKE_TLS_AUDIT_STATUS") == "warning"
+    assert lines.get("PAPER_SMOKE_TLS_AUDIT_EXIT_CODE") == "0"
     markdown = markdown_path.read_text(encoding="utf-8")
     assert markdown.startswith("# Raport CI")
 
@@ -269,8 +1120,7 @@ def test_main_dry_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: p
     scripts_dir.mkdir()
     run_daily_trend = scripts_dir / "run_daily_trend.py"
     run_daily_trend.write_text("print('stub run')", encoding="utf-8")
-    config_path = tmp_path / "config.yaml"
-    config_path.write_text("core: {}", encoding="utf-8")
+    config_path = _write_core_config(tmp_path, reporting={})
 
     monkeypatch.chdir(tmp_path)
 
@@ -292,13 +1142,70 @@ def test_main_dry_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: p
     assert exit_code == 0
 
 
+def test_main_allows_stage_override(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    (scripts_dir / "run_daily_trend.py").write_text("print('stub run')", encoding="utf-8")
+
+    config_path = _write_core_config(tmp_path, reporting={})
+
+    summary_payload = {
+        "status": "ok",
+        "environment": "binance_paper",
+        "timestamp": "2024-01-01T00:00:00Z",
+        "operator": "CI Agent",
+        "severity": "info",
+        "window": {"start": "2024-01-01", "end": "2024-01-02"},
+        "publish": {"status": "ok", "required": True, "exit_code": 0},
+    }
+
+    bundle_calls: list[dict] = []
+    fake_run = _fake_subprocess_run_factory(
+        tmp_path=tmp_path,
+        summary_payload=summary_payload,
+        bundle_calls=bundle_calls,
+    )
+    monkeypatch.setattr(run_paper_smoke_ci.subprocess, "run", fake_run)
+    monkeypatch.chdir(tmp_path)
+
+    bundle_dir = tmp_path / "custom_bundle"
+    exit_code = run_paper_smoke_ci.main(
+        [
+            "--config",
+            str(config_path),
+            "--environment",
+            "binance_paper",
+            "--output-dir",
+            str(tmp_path / "output"),
+            "--risk-profile-stage",
+            "demo=balanced",
+            "--risk-profile-stage",
+            "live=manual",
+            "--risk-profile-bundle-dir",
+            str(bundle_dir),
+            "--risk-profile-bundle-config-format",
+            "json",
+        ]
+    )
+
+    assert exit_code == 0
+    assert bundle_calls, "expected telemetry bundler to be invoked"
+    call = bundle_calls[-1]
+    assert call["stage_map"]["demo"] == "balanced"
+    assert call["stage_map"]["paper"] == "balanced"
+    assert call["stage_map"]["live"] == "manual"
+    summary = json.loads((tmp_path / "output" / "paper_smoke_summary.json").read_text(encoding="utf-8"))
+    bundle = summary.get("telemetry", {}).get("bundle", {})
+    assert bundle.get("output_dir") == str(bundle_dir)
+    assert bundle.get("manifest", {}).get("config_format") == "json"
+
+
 def test_main_allows_optional_publish(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     scripts_dir = tmp_path / "scripts"
     scripts_dir.mkdir()
     run_daily_trend = scripts_dir / "run_daily_trend.py"
     run_daily_trend.write_text("print('stub run')", encoding="utf-8")
-    config_path = tmp_path / "config.yaml"
-    config_path.write_text("core: {}", encoding="utf-8")
+    config_path = _write_core_config(tmp_path, reporting={})
 
     summary_payload = {
         "status": "ok",
@@ -308,6 +1215,8 @@ def test_main_allows_optional_publish(monkeypatch: pytest.MonkeyPatch, tmp_path:
         "severity": "info",
         "window": {"start": "2024-01-01", "end": "2024-01-02"},
     }
+
+    base_run = _fake_subprocess_run_factory(tmp_path=tmp_path, summary_payload=summary_payload)
 
     def fake_run(cmd, *_, **kwargs):  # noqa: ANN001
         script = Path(cmd[1]).name if len(cmd) > 1 else ""
@@ -322,7 +1231,7 @@ def test_main_allows_optional_publish(monkeypatch: pytest.MonkeyPatch, tmp_path:
             assert "--require-publish-required" not in cmd
             assert "--require-publish-exit-zero" not in cmd
             return _FakeCompleted(stdout=json.dumps({"status": "ok"}), returncode=0)
-        raise AssertionError(cmd)
+        return base_run(cmd, *_, **kwargs)
 
     monkeypatch.setattr(run_paper_smoke_ci.subprocess, "run", fake_run)
     monkeypatch.chdir(tmp_path)
@@ -348,8 +1257,7 @@ def test_main_renders_markdown_when_requested(monkeypatch: pytest.MonkeyPatch, t
     run_daily_trend = scripts_dir / "run_daily_trend.py"
     run_daily_trend.write_text("print('stub run')", encoding="utf-8")
 
-    config_path = tmp_path / "config.yaml"
-    config_path.write_text("core: {}", encoding="utf-8")
+    config_path = _write_core_config(tmp_path, reporting={})
 
     summary_payload = {
         "status": "ok",
@@ -416,6 +1324,20 @@ def test_ci_main_end_to_end_local_backends(monkeypatch: pytest.MonkeyPatch, tmp_
     }
 
     config_path = _write_core_config(tmp_path, reporting=reporting_cfg)
+
+    base_run = _fake_subprocess_run_factory(tmp_path=tmp_path, summary_payload={"status": "ok"})
+
+    base_run = _fake_subprocess_run_factory(tmp_path=tmp_path, summary_payload={"status": "ok"})
+
+    base_run = _fake_subprocess_run_factory(tmp_path=tmp_path, summary_payload={"status": "ok"})
+
+    base_run = _fake_subprocess_run_factory(
+        tmp_path=tmp_path, summary_payload={"status": "ok"}
+    )
+
+    base_run = _fake_subprocess_run_factory(
+        tmp_path=tmp_path, summary_payload={"status": "ok"}
+    )
 
     def _fake_run(cmd, *_, **kwargs):  # noqa: ANN001
         script = Path(cmd[1]).name if len(cmd) > 1 else ""
@@ -524,7 +1446,7 @@ def test_ci_main_end_to_end_local_backends(monkeypatch: pytest.MonkeyPatch, tmp_
                 exit_code = validate_paper_smoke_summary.main(cmd[2:])
             return _FakeCompleted(stdout=buf.getvalue(), returncode=exit_code)
 
-        raise AssertionError(f"Unexpected command: {cmd}")
+        return base_run(cmd, *_, **kwargs)
 
     monkeypatch.setattr(run_paper_smoke_ci.subprocess, "run", _fake_run)
     monkeypatch.chdir(tmp_path)
@@ -568,6 +1490,16 @@ def test_ci_main_end_to_end_local_backends(monkeypatch: pytest.MonkeyPatch, tmp_
     env_content = env_file.read_text(encoding="utf-8")
     assert "PAPER_SMOKE_SUMMARY_PATH=" in env_content
     assert "PAPER_SMOKE_PUBLISH_STATUS=ok" in env_content
+    assert "PAPER_SMOKE_TELEMETRY_SUMMARY_PATH=" in env_content
+    assert "PAPER_SMOKE_DECISION_LOG_PATH=" in env_content
+    assert "PAPER_SMOKE_DECISION_LOG_REPORT_PATH=" in env_content
+    assert "PAPER_SMOKE_RISK_PROFILE=balanced" in env_content
+    assert "PAPER_SMOKE_MANIFEST_STATUS=ok" in env_content
+    assert "PAPER_SMOKE_MANIFEST_METRICS_PATH=" in env_content
+    assert "PAPER_SMOKE_MANIFEST_PATH=" in env_content
+    assert "PAPER_SMOKE_MANIFEST_STAGE=paper" in env_content
+    assert "PAPER_SMOKE_TLS_AUDIT_STATUS=warning" in env_content
+    assert "PAPER_SMOKE_TLS_AUDIT_EXIT_CODE=0" in env_content
 
 
 def test_ci_main_end_to_end_s3_backends(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -661,6 +1593,10 @@ def test_ci_main_end_to_end_s3_backends(monkeypatch: pytest.MonkeyPatch, tmp_pat
         sys.modules,
         "boto3",
         types.SimpleNamespace(session=types.SimpleNamespace(Session=_StubSession)),
+    )
+
+    base_run = _fake_subprocess_run_factory(
+        tmp_path=tmp_path, summary_payload={"status": "ok"}
     )
 
     def _fake_run(cmd, *_, **kwargs):  # noqa: ANN001
@@ -770,7 +1706,7 @@ def test_ci_main_end_to_end_s3_backends(monkeypatch: pytest.MonkeyPatch, tmp_pat
                 exit_code = validate_paper_smoke_summary.main(cmd[2:])
             return _FakeCompleted(stdout=buf.getvalue(), returncode=exit_code)
 
-        raise AssertionError(f"Unexpected command: {cmd}")
+        return base_run(cmd, *_, **kwargs)
 
     monkeypatch.setattr(run_paper_smoke_ci.subprocess, "run", _fake_run)
     monkeypatch.chdir(tmp_path)
