@@ -9,6 +9,10 @@ import json
 import logging
 import sys
 import textwrap
+from pathlib import Path
+from typing import Any, Mapping
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import pytest
 
@@ -37,7 +41,7 @@ def _write_core_config(tmp_path, *, profiles_path, profile_name: str = "ops"):
                 stop_loss_atr_multiple: 1.5
                 max_open_positions: 5
                 hard_drawdown_pct: 0.25
-            environments: {}
+            environments: {{}}
             runtime:
               metrics_service:
                 ui_alerts_risk_profile: {profile_name}
@@ -48,6 +52,14 @@ def _write_core_config(tmp_path, *, profiles_path, profile_name: str = "ops"):
         encoding="utf-8",
     )
     return config_path
+
+
+def _format_env(value: object) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if value is None:
+        return ""
+    return str(value)
 
 
 def _signed_entry(payload: dict[str, object], *, key: bytes, key_id: str | None) -> dict[str, object]:
@@ -505,6 +517,213 @@ def test_verify_summary_mismatch(tmp_path):
     assert exit_code == 2
 
 
+def test_verify_snippet_validation_success(tmp_path):
+    key = b"sig"
+    log_path = tmp_path / "decision.jsonl"
+    summary_path = tmp_path / "summary.json"
+    report_path = tmp_path / "report.json"
+    env_snippet = tmp_path / "balanced.env"
+    yaml_snippet = tmp_path / "balanced.json"
+
+    entries = [
+        _signed_entry(
+            {
+                "kind": "metadata",
+                "timestamp": "2025-01-01T00:00:00Z",
+                "metadata": {"mode": "jsonl", "summary_enabled": True},
+            },
+            key=key,
+            key_id=None,
+        ),
+        _signed_entry(
+            {
+                "kind": "snapshot",
+                "timestamp": "2025-01-01T00:00:01Z",
+                "source": "jsonl",
+                "event": "reduce_motion",
+                "severity": "notice",
+                "notes": {"event": "reduce_motion", "severity": "notice"},
+                "screen": {
+                    "index": 0,
+                    "name": "primary",
+                    "refresh_hz": 120,
+                },
+            },
+            key=key,
+            key_id=None,
+        ),
+    ]
+    log_path.write_text(
+        "\n".join(json.dumps(entry, ensure_ascii=False) for entry in entries) + "\n",
+        encoding="utf-8",
+    )
+
+    recommended_overrides = {
+        "ui_alerts_reduce_mode": "enable",
+        "ui_alerts_overlay_mode": "enable",
+        "ui_alerts_jank_mode": "enable",
+        "ui_alerts_reduce_active_severity": "notice",
+        "ui_alerts_overlay_exceeded_severity": "notice",
+        "ui_alerts_jank_spike_severity": "notice",
+        "ui_alerts_overlay_critical_threshold": 2,
+    }
+    risk_profile_summary = {
+        "name": "balanced",
+        "severity_min": "notice",
+        "limits": {
+            "overlay_budget": 2,
+            "jank": 1,
+            "reduce_motion": 5,
+        },
+        "requirements": {
+            "expect_summary_enabled": True,
+            "require_screen_info": True,
+        },
+        "recommended_overrides": recommended_overrides,
+    }
+
+    summary_timestamp = "2025-01-01T00:00:01+00:00"
+    summary_payload = {
+        "summary": {
+            "total_snapshots": 1,
+            "first_timestamp": summary_timestamp,
+            "last_timestamp": summary_timestamp,
+            "events": {
+                "reduce_motion": {
+                    "count": 1,
+                    "first_timestamp": summary_timestamp,
+                    "last_timestamp": summary_timestamp,
+                    "screens": [
+                        {
+                            "index": 0,
+                            "name": "primary",
+                            "refresh_hz": 120,
+                        }
+                    ],
+                    "severity": {"counts": {"notice": 1}},
+                }
+            },
+            "severity_counts": {"notice": 1},
+        },
+        "metadata": {
+            "mode": "jsonl",
+            "summary_enabled": True,
+            "risk_profile_summary": risk_profile_summary,
+        },
+    }
+    summary_path.write_text(json.dumps(summary_payload, ensure_ascii=False), encoding="utf-8")
+
+    env_lines = [
+        f"RUN_TRADING_STUB_METRICS_{key.upper()}={_format_env(value)}"
+        for key, value in recommended_overrides.items()
+    ]
+    env_snippet.write_text("\n".join(env_lines) + "\n", encoding="utf-8")
+    yaml_snippet.write_text(
+        json.dumps({"metrics_service_overrides": recommended_overrides}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    exit_code = verify_main(
+        [
+            str(log_path),
+            "--hmac-key",
+            key.decode("utf-8"),
+            "--summary-json",
+            str(summary_path),
+            "--report-output",
+            str(report_path),
+            "--risk-profile",
+            "balanced",
+            "--risk-profile-env-snippet",
+            str(env_snippet),
+            "--risk-profile-yaml-snippet",
+            str(yaml_snippet),
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    validations = payload.get("risk_profile_snippet_validation")
+    assert validations, "Raport powinien zawierać sekcję walidacji snippetów"
+    statuses = {entry["type"]: entry["status"] for entry in validations}
+    assert statuses.get("env") == "ok"
+    assert statuses.get("yaml") == "ok"
+
+
+def test_verify_snippet_validation_mismatch(tmp_path):
+    key = b"sig"
+    log_path = tmp_path / "decision.jsonl"
+    summary_path = tmp_path / "summary.json"
+    env_snippet = tmp_path / "balanced.env"
+
+    entries = [
+        _signed_entry(
+            {
+                "kind": "metadata",
+                "timestamp": "2025-01-01T00:00:00Z",
+                "metadata": {"mode": "jsonl", "summary_enabled": True},
+            },
+            key=key,
+            key_id=None,
+        ),
+        _signed_entry(
+            {
+                "kind": "snapshot",
+                "timestamp": "2025-01-01T00:00:01Z",
+                "source": "jsonl",
+                "event": "reduce_motion",
+                "severity": "notice",
+                "notes": {"event": "reduce_motion", "severity": "notice"},
+            },
+            key=key,
+            key_id=None,
+        ),
+    ]
+    log_path.write_text(
+        "\n".join(json.dumps(entry, ensure_ascii=False) for entry in entries) + "\n",
+        encoding="utf-8",
+    )
+
+    summary_payload = {
+        "summary": {
+            "total_snapshots": 1,
+            "events": {"reduce_motion": {"count": 1}},
+        },
+        "metadata": {
+            "mode": "jsonl",
+            "summary_enabled": True,
+            "risk_profile_summary": {
+                "name": "balanced",
+                "recommended_overrides": {
+                    "ui_alerts_reduce_mode": "enable",
+                },
+            },
+        },
+    }
+    summary_path.write_text(json.dumps(summary_payload, ensure_ascii=False), encoding="utf-8")
+
+    env_snippet.write_text(
+        "RUN_TRADING_STUB_METRICS_UI_ALERTS_REDUCE_MODE=disable\n",
+        encoding="utf-8",
+    )
+
+    exit_code = verify_main(
+        [
+            str(log_path),
+            "--hmac-key",
+            key.decode("utf-8"),
+            "--summary-json",
+            str(summary_path),
+            "--risk-profile",
+            "balanced",
+            "--risk-profile-env-snippet",
+            str(env_snippet),
+        ]
+    )
+
+    assert exit_code == 2
+
+
 def test_verify_summary_signature_success(tmp_path):
     key = b"supersecret"
     key_id = "ops-2025"
@@ -755,6 +974,10 @@ def test_verify_metadata_env_expectations(monkeypatch, tmp_path):
                 "endpoint": "localhost:50051",
                 "use_tls": True,
                 "auth_token_provided": True,
+                "auth_token_scope_checked": True,
+                "auth_token_scope_match": True,
+                "auth_token_scopes": ["metrics.read"],
+                "auth_token_scope_required": "metrics.read",
                 "summary_enabled": True,
                 "filters": {"event": "overlay_budget"},
             },
@@ -796,6 +1019,52 @@ def test_verify_metadata_env_expectations(monkeypatch, tmp_path):
 
     exit_code = verify_main([])
     assert exit_code == 0
+
+
+def test_verify_metadata_require_auth_scope(tmp_path):
+    key = b"secret"
+    log_path = tmp_path / "auth_scope.jsonl"
+    metadata_entry = _signed_entry(
+        {
+            "kind": "metadata",
+            "timestamp": "2024-05-02T00:00:00+00:00",
+            "metadata": {
+                "mode": "grpc",
+                "endpoint": "localhost:50051",
+                "auth_token_provided": True,
+                "auth_token_scope_checked": True,
+                "auth_token_scope_match": True,
+                "auth_token_scopes": ["metrics.read"],
+            },
+        },
+        key=key,
+        key_id=None,
+    )
+    log_path.write_text(json.dumps(metadata_entry) + "\n", encoding="utf-8")
+
+    ok_exit = verify_main(
+        [
+            str(log_path),
+            "--hmac-key",
+            key.decode("utf-8"),
+            "--require-auth-token",
+            "--require-auth-scope",
+            "metrics.read",
+        ]
+    )
+    assert ok_exit == 0
+
+    fail_exit = verify_main(
+        [
+            str(log_path),
+            "--hmac-key",
+            key.decode("utf-8"),
+            "--require-auth-token",
+            "--require-auth-scope",
+            "metrics.write",
+        ]
+    )
+    assert fail_exit == 2
 
 
 def test_verify_metadata_filters_mismatch(tmp_path):
@@ -1494,3 +1763,371 @@ def test_verify_core_config_risk_profile(tmp_path):
         report_payload["core_config"]["metrics_service"]["risk_profiles_file"]
         == str(profiles_path)
     )
+
+
+def _tls_metadata_entry(*, key: bytes, fingerprint: str, materials: dict[str, bool], source: str | None = None):
+    metadata_payload = {
+        "kind": "metadata",
+        "timestamp": "2024-03-01T00:00:00+00:00",
+        "metadata": {
+            "mode": "grpc",
+            "use_tls": True,
+            "tls_materials": materials,
+            "server_sha256": fingerprint,
+        },
+    }
+    if source is not None:
+        metadata_payload["metadata"]["server_sha256_source"] = source
+    return _signed_entry(metadata_payload, key=key, key_id=None)
+
+
+def _tls_snapshot_entry(*, key: bytes) -> dict[str, object]:
+    return _signed_entry(
+        {
+            "kind": "snapshot",
+            "timestamp": "2024-03-01T00:00:01+00:00",
+            "source": "grpc",
+            "event": "reduce_motion",
+            "severity": "info",
+            "screen": {"index": 0, "name": "Ops"},
+            "notes": {"event": "reduce_motion", "severity": "info"},
+        },
+        key=key,
+        key_id=None,
+    )
+
+
+def _risk_tls_metadata_entry(
+    *,
+    key: bytes,
+    fingerprint: str | None,
+    materials: Mapping[str, bool],
+    risk_overrides: Mapping[str, Any] | None = None,
+) -> dict[str, object]:
+    metadata: dict[str, Any] = {
+        "kind": "metadata",
+        "timestamp": "2024-03-01T00:00:00+00:00",
+        "metadata": {
+            "mode": "grpc",
+            "use_tls": True,
+            "tls_materials": dict(materials),
+        },
+    }
+    if fingerprint:
+        metadata["metadata"]["server_sha256"] = fingerprint
+    risk_meta: dict[str, Any] = {
+        "tls_enabled": True,
+        "root_cert_configured": bool(materials.get("root_cert")),
+        "client_cert_configured": bool(materials.get("client_cert")),
+        "client_key_configured": bool(materials.get("client_key")),
+        "client_auth": bool(materials.get("client_auth")),
+        "auth_token_scope_required": "risk.read",
+        "required_scopes": {"risk.read": ["summary"]},
+        "auth_token_scope_checked": True,
+        "auth_token_scope_match": True,
+        "auth_token_scopes": ["risk.read"],
+    }
+    if fingerprint:
+        risk_meta["pinned_fingerprints"] = [fingerprint]
+    if risk_overrides:
+        risk_meta.update(risk_overrides)
+    metadata["metadata"]["risk_service"] = risk_meta
+    return _signed_entry(metadata, key=key, key_id=None)
+
+
+def test_verify_tls_requirements_success(tmp_path):
+    key = b"tls"
+    log_path = tmp_path / "decision.jsonl"
+    fingerprint = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    entries = [
+        _tls_metadata_entry(
+            key=key,
+            fingerprint=fingerprint,
+            materials={"root_cert": True, "server_sha256": True},
+            source="pinned_fingerprint",
+        ),
+        _tls_snapshot_entry(key=key),
+    ]
+    log_path.write_text("\n".join(json.dumps(entry, ensure_ascii=False) for entry in entries) + "\n", encoding="utf-8")
+
+    exit_code = verify_main(
+        [
+            str(log_path),
+            "--hmac-key",
+            key.decode("utf-8"),
+            "--require-tls-material",
+            "root_cert",
+            "--require-tls-material",
+            "server_sha256",
+            "--expect-server-sha256",
+            fingerprint,
+            "--expect-server-sha256-source",
+            "pinned_fingerprint",
+        ]
+    )
+
+    assert exit_code == 0
+
+
+def test_verify_tls_flag_requires_fingerprint(tmp_path):
+    key = b"tls"
+    log_path = tmp_path / "decision.jsonl"
+    metadata_entry = _signed_entry(
+        {
+            "kind": "metadata",
+            "timestamp": "2024-03-01T00:00:00+00:00",
+            "metadata": {
+                "mode": "grpc",
+                "use_tls": True,
+                "tls_materials": {"server_sha256": True},
+            },
+        },
+        key=key,
+        key_id=None,
+    )
+    entries = [metadata_entry, _tls_snapshot_entry(key=key)]
+    log_path.write_text("\n".join(json.dumps(entry, ensure_ascii=False) for entry in entries) + "\n", encoding="utf-8")
+
+    exit_code = verify_main([str(log_path), "--hmac-key", key.decode("utf-8")])
+
+    assert exit_code == 2
+
+
+def test_verify_tls_fingerprint_requires_flag(tmp_path):
+    key = b"tls"
+    log_path = tmp_path / "decision.jsonl"
+    fingerprint = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+    metadata_entry = _signed_entry(
+        {
+            "kind": "metadata",
+            "timestamp": "2024-03-01T00:00:00+00:00",
+            "metadata": {
+                "mode": "grpc",
+                "use_tls": True,
+                "tls_materials": {"server_sha256": False},
+                "server_sha256": fingerprint,
+            },
+        },
+        key=key,
+        key_id=None,
+    )
+    entries = [metadata_entry, _tls_snapshot_entry(key=key)]
+    log_path.write_text("\n".join(json.dumps(entry, ensure_ascii=False) for entry in entries) + "\n", encoding="utf-8")
+
+    exit_code = verify_main([str(log_path), "--hmac-key", key.decode("utf-8")])
+
+    assert exit_code == 2
+
+
+def test_verify_tls_requirements_missing_material(tmp_path):
+    key = b"tls"
+    log_path = tmp_path / "decision.jsonl"
+    fingerprint = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+    entries = [
+        _tls_metadata_entry(
+            key=key,
+            fingerprint=fingerprint,
+            materials={"root_cert": False, "server_sha256": True},
+            source="cli",
+        ),
+        _tls_snapshot_entry(key=key),
+    ]
+    log_path.write_text("\n".join(json.dumps(entry, ensure_ascii=False) for entry in entries) + "\n", encoding="utf-8")
+
+    exit_code = verify_main(
+        [
+            str(log_path),
+            "--hmac-key",
+            key.decode("utf-8"),
+            "--require-tls-material",
+            "root_cert",
+            "--require-tls-material",
+            "server_sha256",
+        ]
+    )
+
+    assert exit_code == 2
+
+
+def test_verify_tls_requirements_env_overrides(monkeypatch, tmp_path):
+    key = b"tls"
+    log_path = tmp_path / "decision.jsonl"
+    fingerprint = "aa11bb22cc33dd44ee55ff6677889900aa11bb22cc33dd44ee55ff6677889900"
+    fingerprint_env = ":".join(fingerprint[i : i + 2] for i in range(0, len(fingerprint), 2))
+    entries = [
+        _tls_metadata_entry(
+            key=key,
+            fingerprint=fingerprint,
+            materials={"root_cert": True, "server_sha256": True, "server_name": True},
+            source="env",
+        ),
+        _tls_snapshot_entry(key=key),
+    ]
+    log_path.write_text("\n".join(json.dumps(entry, ensure_ascii=False) for entry in entries) + "\n", encoding="utf-8")
+
+    monkeypatch.setenv(
+        "BOT_CORE_VERIFY_DECISION_LOG_REQUIRE_TLS_MATERIALS",
+        "[\"root_cert\", \"server_sha256\"]",
+    )
+    monkeypatch.setenv(
+        "BOT_CORE_VERIFY_DECISION_LOG_EXPECT_SERVER_SHA256",
+        fingerprint_env,
+    )
+    monkeypatch.setenv(
+        "BOT_CORE_VERIFY_DECISION_LOG_EXPECT_SERVER_SHA256_SOURCE",
+        "env",
+    )
+
+    exit_code = verify_main([str(log_path), "--hmac-key", key.decode("utf-8")])
+
+    assert exit_code == 0
+
+
+def test_verify_risk_service_tls_requirements(tmp_path):
+    key = b"risk"
+    log_path = tmp_path / "risk.jsonl"
+    fingerprint = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+    materials = {
+        "root_cert": True,
+        "client_cert": True,
+        "client_key": True,
+        "client_auth": True,
+        "server_sha256": True,
+    }
+    entries = [
+        _risk_tls_metadata_entry(
+            key=key,
+            fingerprint=fingerprint,
+            materials=materials,
+        ),
+        _tls_snapshot_entry(key=key),
+    ]
+    log_path.write_text(
+        "\n".join(json.dumps(entry, ensure_ascii=False) for entry in entries) + "\n",
+        encoding="utf-8",
+    )
+
+    exit_code = verify_main(
+        [
+            str(log_path),
+            "--hmac-key",
+            key.decode("utf-8"),
+            "--require-risk-service-tls",
+            "--require-risk-service-tls-material",
+            "root_cert",
+            "--require-risk-service-tls-material",
+            "client_cert",
+            "--require-risk-service-tls-material",
+            "client_key",
+            "--require-risk-service-tls-material",
+            "client_auth",
+            "--expect-risk-service-server-sha256",
+            fingerprint,
+            "--require-risk-service-scope",
+            "risk.read",
+            "--require-risk-service-auth-token",
+        ]
+    )
+
+    assert exit_code == 0
+
+
+def test_verify_risk_service_tls_missing_material(tmp_path):
+    key = b"risk"
+    log_path = tmp_path / "risk.jsonl"
+    fingerprint = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+    materials = {
+        "root_cert": False,
+        "client_cert": True,
+        "client_key": True,
+        "client_auth": True,
+        "server_sha256": True,
+    }
+    entries = [
+        _risk_tls_metadata_entry(
+            key=key,
+            fingerprint=fingerprint,
+            materials=materials,
+        ),
+        _tls_snapshot_entry(key=key),
+    ]
+    log_path.write_text(
+        "\n".join(json.dumps(entry, ensure_ascii=False) for entry in entries) + "\n",
+        encoding="utf-8",
+    )
+
+    exit_code = verify_main(
+        [
+            str(log_path),
+            "--hmac-key",
+            key.decode("utf-8"),
+            "--require-risk-service-tls",
+            "--require-risk-service-tls-material",
+            "root_cert",
+        ]
+    )
+
+    assert exit_code == 2
+
+
+def test_verify_risk_service_scope_required(tmp_path):
+    key = b"risk"
+    log_path = tmp_path / "risk.jsonl"
+    entries = [
+        _risk_tls_metadata_entry(
+            key=key,
+            fingerprint=None,
+            materials={"root_cert": True, "server_sha256": False},
+            risk_overrides={
+                "auth_token_scope_required": None,
+                "required_scopes": {},
+                "auth_token_scopes": [],
+            },
+        ),
+        _tls_snapshot_entry(key=key),
+    ]
+    log_path.write_text(
+        "\n".join(json.dumps(entry, ensure_ascii=False) for entry in entries) + "\n",
+        encoding="utf-8",
+    )
+
+    exit_code = verify_main(
+        [
+            str(log_path),
+            "--hmac-key",
+            key.decode("utf-8"),
+            "--require-risk-service-scope",
+            "risk.read",
+        ]
+    )
+
+    assert exit_code == 2
+
+
+def test_verify_risk_service_auth_token_required(tmp_path):
+    key = b"risk"
+    log_path = tmp_path / "risk.jsonl"
+    entries = [
+        _risk_tls_metadata_entry(
+            key=key,
+            fingerprint=None,
+            materials={"root_cert": True, "server_sha256": False},
+            risk_overrides={"auth_token_scope_checked": False},
+        ),
+        _tls_snapshot_entry(key=key),
+    ]
+    log_path.write_text(
+        "\n".join(json.dumps(entry, ensure_ascii=False) for entry in entries) + "\n",
+        encoding="utf-8",
+    )
+
+    exit_code = verify_main(
+        [
+            str(log_path),
+            "--hmac-key",
+            key.decode("utf-8"),
+            "--require-risk-service-auth-token",
+        ]
+    )
+
+    assert exit_code == 2

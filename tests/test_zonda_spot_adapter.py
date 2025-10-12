@@ -1,8 +1,11 @@
 import json
 import sys
+from io import BytesIO
 from pathlib import Path
 from hashlib import sha512
 import hmac
+from typing import Sequence
+from urllib.error import HTTPError, URLError
 from urllib.request import Request
 
 import pytest
@@ -10,12 +13,33 @@ import pytest
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from bot_core.exchanges.base import AccountSnapshot, Environment, ExchangeCredentials, OrderRequest
-from bot_core.exchanges.zonda.spot import ZondaSpotAdapter
+from bot_core.exchanges.errors import (
+    ExchangeAPIError,
+    ExchangeAuthError,
+    ExchangeNetworkError,
+    ExchangeThrottlingError,
+)
+from bot_core.exchanges.zonda.spot import (
+    ZondaOrderBook,
+    ZondaOrderBookLevel,
+    ZondaSpotAdapter,
+    ZondaTicker,
+    ZondaTrade,
+)
+from bot_core.observability.metrics import MetricsRegistry
 
 
 class _FakeResponse:
-    def __init__(self, payload: dict[str, object]) -> None:
+    def __init__(
+        self,
+        payload: dict[str, object],
+        *,
+        status: int = 200,
+        headers: dict[str, str] | None = None,
+    ) -> None:
         self._payload = payload
+        self._status = status
+        self.headers = headers or {}
 
     def __enter__(self) -> "_FakeResponse":
         return self
@@ -25,6 +49,9 @@ class _FakeResponse:
 
     def read(self) -> bytes:
         return json.dumps(self._payload).encode("utf-8")
+
+    def getcode(self) -> int:
+        return self._status
 
 
 def test_fetch_account_snapshot_builds_signature(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -36,14 +63,17 @@ def test_fetch_account_snapshot_builds_signature(monkeypatch: pytest.MonkeyPatch
         if url.endswith("/trading/balance"):
             captured = request
             payload = {"status": "Ok", "balances": []}
+            headers = {"X-RateLimit-Remaining": "98"}
         elif url.endswith("/trading/ticker"):
             payload = {"status": "Ok", "items": {}}
+            headers = {"X-RateLimit-Remaining": "97"}
         else:  # pragma: no cover - zabezpieczenie przed nieoczekiwanym endpointem
             raise AssertionError(f"Unexpected endpoint {url}")
-        return _FakeResponse(payload)
+        return _FakeResponse(payload, headers=headers)
 
     monkeypatch.setattr("bot_core.exchanges.zonda.spot.urlopen", fake_urlopen)
     monkeypatch.setattr("bot_core.exchanges.zonda.spot.time.time", lambda: 1_700_000_000.0)
+    metrics = MetricsRegistry()
 
     credentials = ExchangeCredentials(
         key_id="key",
@@ -51,7 +81,7 @@ def test_fetch_account_snapshot_builds_signature(monkeypatch: pytest.MonkeyPatch
         permissions=("read",),
         environment=Environment.LIVE,
     )
-    adapter = ZondaSpotAdapter(credentials)
+    adapter = ZondaSpotAdapter(credentials, metrics_registry=metrics)
 
     snapshot = adapter.fetch_account_snapshot()
 
@@ -67,6 +97,14 @@ def test_fetch_account_snapshot_builds_signature(monkeypatch: pytest.MonkeyPatch
         sha512,
     ).hexdigest()
     assert headers["api-hash"] == expected_signature
+    assert (
+        adapter._metric_signed_requests.value(labels=adapter._metric_base_labels)  # type: ignore[attr-defined]
+        == pytest.approx(1.0)
+    )
+    assert (
+        adapter._metric_rate_limit_remaining.value(labels=adapter._metric_base_labels)  # type: ignore[attr-defined]
+        == pytest.approx(97.0)
+    )
 
 
 def test_fetch_ohlcv_maps_items(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -162,6 +200,149 @@ def test_cancel_order_accepts_cancelled_status(monkeypatch: pytest.MonkeyPatch) 
     adapter.cancel_order("XYZ")
 
 
+def test_fetch_ticker_updates_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
+    metrics = MetricsRegistry()
+    credentials = ExchangeCredentials(key_id="public", environment=Environment.LIVE)
+    adapter = ZondaSpotAdapter(credentials, metrics_registry=metrics)
+
+    def fake_public_request(self, path: str, *, params=None, method="GET"):
+        assert path == "/trading/ticker"
+        return {
+            "status": "Ok",
+            "items": {
+                "BTC-PLN": {
+                    "time": 1_700_000_000,
+                    "highestBid": "99",
+                    "lowestAsk": "101",
+                    "rate": "100",
+                    "volume": "123.45",
+                    "max": "110",
+                    "min": "90",
+                    "average": "98",
+                }
+            },
+        }
+
+    monkeypatch.setattr(ZondaSpotAdapter, "_public_request", fake_public_request)
+
+    ticker = adapter.fetch_ticker("BTC-PLN")
+
+    assert isinstance(ticker, ZondaTicker)
+    assert ticker.best_bid == pytest.approx(99.0)
+    assert ticker.best_ask == pytest.approx(101.0)
+    assert ticker.last_price == pytest.approx(100.0)
+    labels = adapter._labels(symbol="BTC-PLN")  # type: ignore[attr-defined]
+    assert (
+        adapter._metric_ticker_last_price.value(labels=labels)  # type: ignore[attr-defined]
+        == pytest.approx(100.0)
+    )
+    assert (
+        adapter._metric_ticker_spread.value(labels=labels)  # type: ignore[attr-defined]
+        == pytest.approx(2.0)
+    )
+
+
+def test_fetch_order_book_parses_levels(monkeypatch: pytest.MonkeyPatch) -> None:
+    metrics = MetricsRegistry()
+    credentials = ExchangeCredentials(key_id="public", environment=Environment.LIVE)
+    adapter = ZondaSpotAdapter(credentials, metrics_registry=metrics)
+
+    def fake_public_request(self, path: str, *, params=None, method="GET"):
+        assert path == "/trading/orderbook-limited/BTC-PLN/5"
+        return {
+            "status": "Ok",
+            "time": 1_700_000_123,
+            "buy": [["100", "1"], {"ra": "99.5", "ca": "2"}],
+            "sell": [["101", "1.5"]],
+        }
+
+    monkeypatch.setattr(ZondaSpotAdapter, "_public_request", fake_public_request)
+
+    orderbook = adapter.fetch_order_book("BTC-PLN", depth=5)
+
+    assert isinstance(orderbook, ZondaOrderBook)
+    assert orderbook.timestamp == pytest.approx(1_700_000_123.0)
+    assert [level.price for level in orderbook.bids] == pytest.approx([100.0, 99.5])
+    assert [level.quantity for level in orderbook.asks] == pytest.approx([1.5])
+    labels = adapter._labels(symbol="BTC-PLN")  # type: ignore[attr-defined]
+    assert (
+        adapter._metric_orderbook_levels.value(labels=labels)  # type: ignore[attr-defined]
+        == pytest.approx(3.0)
+    )
+
+
+def test_fetch_recent_trades_updates_metric(monkeypatch: pytest.MonkeyPatch) -> None:
+    metrics = MetricsRegistry()
+    credentials = ExchangeCredentials(key_id="public", environment=Environment.LIVE)
+    adapter = ZondaSpotAdapter(credentials, metrics_registry=metrics)
+
+    def fake_public_request(self, path: str, *, params=None, method="GET"):
+        assert path == "/trading/transactions/BTC-PLN"
+        assert params == {"limit": 3}
+        return {
+            "status": "Ok",
+            "items": [
+                {"id": "1", "time": 1_700_000_100, "rate": "100", "amount": "0.5", "type": "buy"},
+                {"id": "2", "time": 1_700_000_200, "rate": "101", "amount": "0.3", "type": "sell"},
+            ],
+        }
+
+    monkeypatch.setattr(ZondaSpotAdapter, "_public_request", fake_public_request)
+
+    trades = adapter.fetch_recent_trades("BTC-PLN", limit=3)
+
+    assert isinstance(trades, Sequence)
+    assert len(trades) == 2
+    assert isinstance(trades[0], ZondaTrade)
+    assert trades[0].side == "buy"
+    labels = adapter._labels(symbol="BTC-PLN")  # type: ignore[attr-defined]
+    assert (
+        adapter._metric_trades_fetched.value(labels=labels)  # type: ignore[attr-defined]
+        == pytest.approx(2.0)
+    )
+
+
+def test_public_request_retries_throttling(monkeypatch: pytest.MonkeyPatch) -> None:
+    credentials = ExchangeCredentials(key_id="public", environment=Environment.LIVE)
+    metrics = MetricsRegistry()
+    adapter = ZondaSpotAdapter(credentials, metrics_registry=metrics)
+    monkeypatch.setattr("bot_core.exchanges.zonda.spot.time.sleep", lambda _: None)
+
+    calls: list[str] = []
+
+    def fake_urlopen(request: Request, timeout: int = 15):  # type: ignore[override]
+        url = request.full_url
+        calls.append(url)
+        if len(calls) == 1:
+            body = b'{"status":"Error","errors":[{"code":101,"message":"limit"}]}'
+            raise HTTPError(
+                url,
+                429,
+                "Too Many Requests",
+                {"X-RateLimit-Remaining": "0"},
+                BytesIO(body),
+            )
+        return _FakeResponse(
+            {"status": "Ok", "items": {"BTC-PLN": {"market": {"first": "BTC", "second": "PLN"}, "rate": "100"}}},
+            headers={"X-RateLimit-Remaining": "99"},
+        )
+
+    monkeypatch.setattr("bot_core.exchanges.zonda.spot.urlopen", fake_urlopen)
+
+    symbols = adapter.fetch_symbols()
+
+    assert symbols == ["BTC-PLN"]
+    assert len(calls) == 2
+    retries_metric = adapter._metric_retries.value(  # type: ignore[attr-defined]
+        labels={**adapter._metric_base_labels, "reason": "throttled"},
+    )
+    assert retries_metric == pytest.approx(1.0)
+    assert (
+        adapter._metric_rate_limit_remaining.value(labels=adapter._metric_base_labels)  # type: ignore[attr-defined]
+        == pytest.approx(99.0)
+    )
+
+
 def test_fetch_account_snapshot_converts_balances(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_signed_request(self, method: str, path: str, *, params=None, data=None):
         assert method == "POST"
@@ -210,3 +391,82 @@ def test_fetch_account_snapshot_converts_balances(monkeypatch: pytest.MonkeyPatc
     }
     assert snapshot.total_equity == pytest.approx(13742.222222, rel=1e-6)
     assert snapshot.available_margin == pytest.approx(11519.999999, rel=1e-6)
+
+
+def test_signed_request_maps_auth_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    credentials = ExchangeCredentials(
+        key_id="key",
+        secret="secret",
+        permissions=("read",),
+        environment=Environment.LIVE,
+    )
+    metrics = MetricsRegistry()
+    adapter = ZondaSpotAdapter(credentials, metrics_registry=metrics)
+
+    def fake_urlopen(request: Request, timeout: int = 15):  # type: ignore[override]
+        raise HTTPError(
+            request.full_url,
+            401,
+            "Unauthorized",
+            {},
+            BytesIO(b'{"status":"Fail","errors":[{"message":"auth"}]}'),
+        )
+
+    monkeypatch.setattr("bot_core.exchanges.zonda.spot.urlopen", fake_urlopen)
+
+    with pytest.raises(ExchangeAuthError):
+        adapter.fetch_account_snapshot()
+
+    api_errors = adapter._metric_api_errors.value(  # type: ignore[attr-defined]
+        labels={**adapter._metric_base_labels, "reason": "auth"},
+    )
+    assert api_errors == pytest.approx(1.0)
+
+
+def test_public_request_raises_network_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    credentials = ExchangeCredentials(key_id="public", environment=Environment.LIVE)
+    metrics = MetricsRegistry()
+    adapter = ZondaSpotAdapter(credentials, metrics_registry=metrics)
+    monkeypatch.setattr("bot_core.exchanges.zonda.spot.time.sleep", lambda _: None)
+
+    def fake_urlopen(request: Request, timeout: int = 15):  # type: ignore[override]
+        raise URLError("boom")
+
+    monkeypatch.setattr("bot_core.exchanges.zonda.spot.urlopen", fake_urlopen)
+
+    with pytest.raises(ExchangeNetworkError):
+        adapter.fetch_symbols()
+
+    retries = adapter._metric_retries.value(  # type: ignore[attr-defined]
+        labels={**adapter._metric_base_labels, "reason": "network"},
+    )
+    assert retries == pytest.approx(3.0)
+    api_errors = adapter._metric_api_errors.value(  # type: ignore[attr-defined]
+        labels={**adapter._metric_base_labels, "reason": "network"},
+    )
+    assert api_errors == pytest.approx(1.0)
+
+
+def test_public_request_raises_api_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    credentials = ExchangeCredentials(key_id="public", environment=Environment.LIVE)
+    metrics = MetricsRegistry()
+    adapter = ZondaSpotAdapter(credentials, metrics_registry=metrics)
+
+    def fake_urlopen(request: Request, timeout: int = 15):  # type: ignore[override]
+        raise HTTPError(
+            request.full_url,
+            500,
+            "Server Error",
+            {},
+            BytesIO(b'{"status":"Error","errors":[{"message":"oops"}]}'),
+        )
+
+    monkeypatch.setattr("bot_core.exchanges.zonda.spot.urlopen", fake_urlopen)
+
+    with pytest.raises(ExchangeAPIError):
+        adapter.fetch_symbols()
+
+    api_errors = adapter._metric_api_errors.value(  # type: ignore[attr-defined]
+        labels={**adapter._metric_base_labels, "reason": "server_error"},
+    )
+    assert api_errors == pytest.approx(1.0)

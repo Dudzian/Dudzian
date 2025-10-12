@@ -7,9 +7,9 @@ import logging
 import random
 import time
 from hashlib import sha256
-from typing import Iterable, Mapping, Optional, Sequence
+from typing import Any, Iterable, Mapping, Optional, Sequence
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 from urllib.request import Request, urlopen
 
 from bot_core.exchanges.base import (
@@ -24,6 +24,13 @@ from bot_core.exchanges.binance.symbols import (
     filter_supported_exchange_symbols,
     to_exchange_symbol,
 )
+from bot_core.exchanges.errors import (
+    ExchangeAPIError,
+    ExchangeAuthError,
+    ExchangeNetworkError,
+    ExchangeThrottlingError,
+)
+from bot_core.observability.metrics import MetricsRegistry, get_global_metrics_registry
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -135,6 +142,12 @@ class BinanceSpotAdapter(ExchangeAdapter):
         "_settings",
         "_valuation_asset",
         "_secondary_valuation_assets",
+        "_metrics",
+        "_metric_base_labels",
+        "_metric_http_latency",
+        "_metric_retries",
+        "_metric_signed_requests",
+        "_metric_weight",
     )
 
     name: str = "binance_spot"
@@ -145,6 +158,7 @@ class BinanceSpotAdapter(ExchangeAdapter):
         *,
         environment: Environment | None = None,
         settings: Mapping[str, object] | None = None,
+        metrics_registry: MetricsRegistry | None = None,
     ) -> None:
         super().__init__(credentials)
         self._environment = environment or credentials.environment
@@ -155,6 +169,28 @@ class BinanceSpotAdapter(ExchangeAdapter):
         self._settings = dict(settings or {})
         self._valuation_asset = self._extract_valuation_asset()
         self._secondary_valuation_assets = self._extract_secondary_assets()
+        self._metrics = metrics_registry or get_global_metrics_registry()
+        self._metric_base_labels = {
+            "exchange": self.name,
+            "environment": self._environment.value,
+        }
+        self._metric_http_latency = self._metrics.histogram(
+            "binance_spot_http_latency_seconds",
+            "Czas trwania zapytań HTTP kierowanych do API Binance Spot.",
+            buckets=(0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0),
+        )
+        self._metric_retries = self._metrics.counter(
+            "binance_spot_retries_total",
+            "Liczba ponowień zapytań do API Binance Spot (powód=throttled/network/server_error).",
+        )
+        self._metric_signed_requests = self._metrics.counter(
+            "binance_spot_signed_requests_total",
+            "Łączna liczba podpisanych zapytań HTTP wysłanych do API Binance Spot.",
+        )
+        self._metric_weight = self._metrics.gauge(
+            "binance_spot_used_weight",
+            "Ostatnie wartości nagłówków X-MBX-USED-WEIGHT od Binance Spot.",
+        )
 
     # ----------------------------------------------------------------------------------
     # Konfiguracja wyceny sald
@@ -211,7 +247,7 @@ class BinanceSpotAdapter(ExchangeAdapter):
             data = urlencode(_stringify_params(params)).encode("utf-8")
             headers["Content-Type"] = "application/x-www-form-urlencoded"
         request = Request(url, headers=headers, data=data, method=method)
-        return self._execute_request(request)
+        return self._execute_request(request, endpoint=path, signed=False)
 
     def _signed_request(
         self,
@@ -247,7 +283,7 @@ class BinanceSpotAdapter(ExchangeAdapter):
             separator = "?" if "?" not in url else "&"
             request = Request(f"{url}{separator}{signed_query}", headers=headers, method=method)
 
-        return self._execute_request(request)
+        return self._execute_request(request, endpoint=path, signed=True)
 
     @staticmethod
     def _calculate_backoff(attempt: int) -> float:
@@ -255,56 +291,186 @@ class BinanceSpotAdapter(ExchangeAdapter):
         jitter = random.uniform(*_JITTER_RANGE)
         return base_delay + jitter
 
-    @classmethod
-    def _execute_request(cls, request: Request) -> dict[str, object] | list[object]:
-        last_error: Exception | None = None
+    def _record_weight_headers(self, headers: Any) -> None:
+        if not headers:
+            return
+
+        def _get(name: str) -> Any:
+            getter = getattr(headers, "get", None)
+            if callable(getter):
+                try:
+                    return getter(name)
+                except Exception:  # pragma: no cover - defensywnie przed niestandardowym nagłówkiem
+                    return None
+            getter = getattr(headers, "getheader", None)
+            if callable(getter):
+                return getter(name)
+            if isinstance(headers, Mapping):  # pragma: no cover - fallback na mapowanie
+                return headers.get(name)
+            return None
+
+        for window, header_name in (
+            ("1m", "X-MBX-USED-WEIGHT-1M"),
+            ("1s", "X-MBX-USED-WEIGHT-1S"),
+        ):
+            raw_value = _get(header_name)
+            if raw_value in (None, ""):
+                continue
+            try:
+                numeric = float(raw_value)
+            except (TypeError, ValueError):
+                continue
+            labels = dict(self._metric_base_labels)
+            labels["window"] = window
+            self._metric_weight.set(numeric, labels=labels)
+
+    def _execute_request(
+        self,
+        request: Request,
+        *,
+        endpoint: str | None = None,
+        signed: bool = False,
+    ) -> dict[str, object] | list[object]:
+        path = endpoint or urlsplit(request.full_url).path or "unknown"
+        method = request.get_method() or "GET"
+        metric_labels = {
+            **self._metric_base_labels,
+            "endpoint": path,
+            "method": method,
+        }
         for attempt in range(1, _MAX_RETRIES + 1):
+            start = time.monotonic()
+            if signed:
+                self._metric_signed_requests.inc(labels={**self._metric_base_labels, "method": method})
             try:
                 with urlopen(request, timeout=15) as response:  # nosec: B310 - endpoint zaufany
                     payload = response.read()
+                    headers = getattr(response, "headers", None)
+                latency = time.monotonic() - start
+                self._metric_http_latency.observe(latency, labels=metric_labels)
+                if headers is not None:
+                    self._record_weight_headers(headers)
+                try:
+                    data = json.loads(payload)
+                except json.JSONDecodeError as exc:
+                    _LOGGER.error(
+                        "Niepoprawna odpowiedź JSON od Binance (endpoint=%s, environment=%s): %s",
+                        path,
+                        self._environment.value,
+                        exc,
+                    )
+                    raise ExchangeAPIError(
+                        message="Niepoprawna odpowiedź JSON od API Binance.",
+                        status_code=0,
+                        payload=None,
+                    ) from exc
+                return data
             except HTTPError as exc:
+                latency = time.monotonic() - start
+                self._metric_http_latency.observe(latency, labels=metric_labels)
                 status_code = exc.code
-                if status_code in _RETRYABLE_STATUS or 500 <= status_code < 600:
-                    last_error = exc
-                    delay = cls._calculate_backoff(attempt)
-                    _LOGGER.warning(
-                        "Binance HTTP error (status=%s) — próba %s/%s, ponawianie za %.2fs",
+                raw_payload = b""
+                try:
+                    raw_payload = exc.read() or b""
+                except Exception:  # pragma: no cover - zabezpieczenie przed nietypowym obiektem
+                    raw_payload = b""
+                parsed_payload: object | None = None
+                if raw_payload:
+                    try:
+                        parsed_payload = json.loads(raw_payload)
+                    except json.JSONDecodeError:
+                        parsed_payload = raw_payload.decode("utf-8", errors="replace")
+
+                if status_code in {401, 403}:
+                    _LOGGER.error(
+                        "Binance odrzuciło uwierzytelnienie (endpoint=%s, status=%s).",
+                        path,
                         status_code,
+                    )
+                    raise ExchangeAuthError(
+                        message="Binance API odrzuciło uwierzytelnienie.",
+                        status_code=status_code,
+                        payload=parsed_payload,
+                    ) from exc
+
+                if status_code in _RETRYABLE_STATUS:
+                    self._metric_retries.inc(
+                        labels={**metric_labels, "reason": "throttled", "status": str(status_code)}
+                    )
+                    delay = self._calculate_backoff(attempt)
+                    _LOGGER.warning(
+                        "Binance rate limit (endpoint=%s, attempt=%s/%s, delay=%.2fs).",
+                        path,
                         attempt,
                         _MAX_RETRIES,
                         delay,
                     )
                     if attempt == _MAX_RETRIES:
-                        break
+                        raise ExchangeThrottlingError(
+                            message="Binance API odrzuciło zapytanie z powodu przekroczenia limitu.",
+                            status_code=status_code,
+                            payload=parsed_payload,
+                        ) from exc
                     time.sleep(delay)
                     continue
-                _LOGGER.error("Błąd HTTP podczas komunikacji z Binance: %s", exc)
-                raise RuntimeError(f"Binance API zwróciło błąd HTTP: {exc}") from exc
+
+                if 500 <= status_code < 600:
+                    self._metric_retries.inc(
+                        labels={**metric_labels, "reason": "server_error", "status": str(status_code)}
+                    )
+                    delay = self._calculate_backoff(attempt)
+                    _LOGGER.warning(
+                        "Błąd serwera Binance (status=%s, endpoint=%s, attempt=%s/%s); retry za %.2fs.",
+                        status_code,
+                        path,
+                        attempt,
+                        _MAX_RETRIES,
+                        delay,
+                    )
+                    if attempt == _MAX_RETRIES:
+                        raise ExchangeAPIError(
+                            message="Binance API zwróciło błąd serwera.",
+                            status_code=status_code,
+                            payload=parsed_payload,
+                        ) from exc
+                    time.sleep(delay)
+                    continue
+
+                _LOGGER.error(
+                    "Błąd HTTP podczas komunikacji z Binance (status=%s, endpoint=%s).",
+                    status_code,
+                    path,
+                )
+                raise ExchangeAPIError(
+                    message="Binance API zwróciło błąd.",
+                    status_code=status_code,
+                    payload=parsed_payload,
+                ) from exc
             except URLError as exc:
-                last_error = exc
-                delay = cls._calculate_backoff(attempt)
+                latency = time.monotonic() - start
+                self._metric_http_latency.observe(latency, labels=metric_labels)
+                self._metric_retries.inc(labels={**metric_labels, "reason": "network"})
+                delay = self._calculate_backoff(attempt)
                 _LOGGER.warning(
-                    "Błąd sieci podczas komunikacji z Binance — próba %s/%s, ponawianie za %.2fs",
+                    "Błąd sieci podczas komunikacji z Binance (endpoint=%s, attempt=%s/%s); retry za %.2fs: %s",
+                    path,
                     attempt,
                     _MAX_RETRIES,
                     delay,
+                    exc,
                 )
                 if attempt == _MAX_RETRIES:
-                    break
+                    raise ExchangeNetworkError(
+                        message="Nie udało się połączyć z API Binance.",
+                        reason=exc,
+                    ) from exc
                 time.sleep(delay)
                 continue
-            else:
-                try:
-                    data = json.loads(payload)
-                except json.JSONDecodeError as exc:  # pragma: no cover - niepoprawne JSON to błąd API
-                    _LOGGER.error("Niepoprawna odpowiedź JSON od Binance: %s", exc)
-                    raise RuntimeError("Niepoprawna odpowiedź JSON od API Binance") from exc
-                return data
 
-        assert last_error is not None  # dla mypy; realnie jeśli brak błędu, wcześniej zwracamy wynik
-        if isinstance(last_error, HTTPError):
-            raise RuntimeError(f"Binance API zwróciło błąd HTTP: {last_error}") from last_error
-        raise RuntimeError("Nie udało się połączyć z API Binance") from last_error
+        raise ExchangeNetworkError(
+            message="Nie udało się uzyskać odpowiedzi od API Binance po wielokrotnych próbach.",
+            reason=None,
+        )
 
     # ----------------------------------------------------------------------------------
     # ExchangeAdapter API

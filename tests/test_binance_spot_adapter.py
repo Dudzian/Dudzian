@@ -1,10 +1,11 @@
 """Testy jednostkowe adaptera Binance Spot."""
 from __future__ import annotations
 
+import io
 import json
 from pathlib import Path
-from typing import Any
-from urllib.error import HTTPError
+from typing import Any, Mapping
+from urllib.error import HTTPError, URLError
 from urllib.request import Request
 
 import pytest
@@ -15,16 +16,23 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from bot_core.exchanges.base import AccountSnapshot, Environment, ExchangeCredentials, OrderRequest
 from bot_core.exchanges.binance.spot import BinanceSpotAdapter
+from bot_core.exchanges.errors import (
+    ExchangeAuthError,
+    ExchangeNetworkError,
+    ExchangeThrottlingError,
+)
 from bot_core.exchanges.binance.symbols import (
     filter_supported_exchange_symbols,
     normalize_symbol,
     to_exchange_symbol,
 )
+from bot_core.observability.metrics import MetricsRegistry
 
 
 class _FakeResponse:
-    def __init__(self, payload: dict[str, Any]) -> None:
+    def __init__(self, payload: Any, headers: Mapping[str, str] | None = None) -> None:
         self._payload = payload
+        self.headers = headers or {}
 
     def __enter__(self) -> "_FakeResponse":
         return self
@@ -33,6 +41,8 @@ class _FakeResponse:
         return None
 
     def read(self) -> bytes:
+        if isinstance(self._payload, (bytes, bytearray)):
+            return bytes(self._payload)
         return json.dumps(self._payload).encode("utf-8")
 
 
@@ -270,11 +280,153 @@ def test_execute_request_retries_on_rate_limit(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr("bot_core.exchanges.binance.spot.time.sleep", lambda _: None)
     monkeypatch.setattr("bot_core.exchanges.binance.spot.random.uniform", lambda *_: 0.0)
 
+    credentials = ExchangeCredentials(key_id="k", secret="s", environment=Environment.LIVE)
+    adapter = BinanceSpotAdapter(credentials, metrics_registry=MetricsRegistry())
+
     request = Request("https://api.binance.com/api/v3/time")
-    payload = BinanceSpotAdapter._execute_request(request)
+    payload = adapter._execute_request(request, endpoint="/api/v3/time")
 
     assert attempts == [1, 2]
     assert payload == {"ok": True}
+
+
+def test_execute_request_raises_throttling_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_urlopen(request: Request, timeout: int = 15):  # type: ignore[override]
+        payload = io.BytesIO(json.dumps({"code": 429, "msg": "Too Many"}).encode("utf-8"))
+        raise HTTPError(request.full_url, 429, "Too Many Requests", hdrs={}, fp=payload)
+
+    monkeypatch.setattr("bot_core.exchanges.binance.spot.urlopen", fake_urlopen)
+    monkeypatch.setattr("bot_core.exchanges.binance.spot.time.sleep", lambda _: None)
+    monkeypatch.setattr("bot_core.exchanges.binance.spot.random.uniform", lambda *_: 0.0)
+
+    registry = MetricsRegistry()
+    credentials = ExchangeCredentials(key_id="k", secret="s", environment=Environment.LIVE)
+    adapter = BinanceSpotAdapter(credentials, metrics_registry=registry)
+
+    request = Request("https://api.binance.com/api/v3/time")
+
+    with pytest.raises(ExchangeThrottlingError):
+        adapter._execute_request(request, endpoint="/api/v3/time")
+
+    counter = registry.get("binance_spot_retries_total")
+    labels = {
+        "exchange": "binance_spot",
+        "environment": "live",
+        "endpoint": "/api/v3/time",
+        "method": "GET",
+        "reason": "throttled",
+        "status": "429",
+    }
+    assert counter.value(labels=labels) == pytest.approx(3.0 if hasattr(counter, "value") else 3.0)
+
+
+def test_execute_request_raises_auth_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_urlopen(request: Request, timeout: int = 15):  # type: ignore[override]
+        payload = io.BytesIO(json.dumps({"code": -2015, "msg": "Invalid API-key"}).encode("utf-8"))
+        raise HTTPError(request.full_url, 403, "Forbidden", hdrs={}, fp=payload)
+
+    monkeypatch.setattr("bot_core.exchanges.binance.spot.urlopen", fake_urlopen)
+
+    credentials = ExchangeCredentials(key_id="k", secret="s", environment=Environment.LIVE)
+    adapter = BinanceSpotAdapter(credentials, metrics_registry=MetricsRegistry())
+
+    request = Request("https://api.binance.com/api/v3/account")
+
+    with pytest.raises(ExchangeAuthError):
+        adapter._execute_request(request, endpoint="/api/v3/account", signed=True)
+
+
+def test_execute_request_raises_network_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_urlopen(request: Request, timeout: int = 15):  # type: ignore[override]
+        raise URLError("network down")
+
+    monkeypatch.setattr("bot_core.exchanges.binance.spot.urlopen", fake_urlopen)
+    monkeypatch.setattr("bot_core.exchanges.binance.spot.time.sleep", lambda _: None)
+    monkeypatch.setattr("bot_core.exchanges.binance.spot.random.uniform", lambda *_: 0.0)
+
+    registry = MetricsRegistry()
+    credentials = ExchangeCredentials(key_id="k", secret="s", environment=Environment.LIVE)
+    adapter = BinanceSpotAdapter(credentials, metrics_registry=registry)
+
+    request = Request("https://api.binance.com/api/v3/time")
+
+    with pytest.raises(ExchangeNetworkError):
+        adapter._execute_request(request, endpoint="/api/v3/time")
+
+    counter = registry.get("binance_spot_retries_total")
+    labels = {
+        "exchange": "binance_spot",
+        "environment": "live",
+        "endpoint": "/api/v3/time",
+        "method": "GET",
+        "reason": "network",
+    }
+    assert counter.value(labels=labels) == pytest.approx(3.0)
+
+
+def test_execute_request_records_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
+    headers = {"X-MBX-USED-WEIGHT-1M": "1200", "X-MBX-USED-WEIGHT-1S": "80"}
+
+    def fake_urlopen(request: Request, timeout: int = 15):  # type: ignore[override]
+        return _FakeResponse({"ok": True}, headers=headers)
+
+    monkeypatch.setattr("bot_core.exchanges.binance.spot.urlopen", fake_urlopen)
+
+    registry = MetricsRegistry()
+    credentials = ExchangeCredentials(key_id="k", secret="s", environment=Environment.LIVE)
+    adapter = BinanceSpotAdapter(credentials, metrics_registry=registry)
+
+    request = Request("https://api.binance.com/api/v3/time")
+    payload = adapter._execute_request(request, endpoint="/api/v3/time")
+
+    assert payload == {"ok": True}
+
+    histogram = registry.get("binance_spot_http_latency_seconds")
+    hist_labels = {
+        "exchange": "binance_spot",
+        "environment": "live",
+        "endpoint": "/api/v3/time",
+        "method": "GET",
+    }
+    state = histogram.snapshot(labels=hist_labels)
+    assert state.count == 1
+
+    gauge = registry.get("binance_spot_used_weight")
+    gauge_1m = {"exchange": "binance_spot", "environment": "live", "window": "1m"}
+    gauge_1s = {"exchange": "binance_spot", "environment": "live", "window": "1s"}
+    assert gauge.value(labels=gauge_1m) == pytest.approx(1200.0)
+    assert gauge.value(labels=gauge_1s) == pytest.approx(80.0)
+
+
+def test_signed_request_increments_metric(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_urlopen(request: Request, timeout: int = 15):  # type: ignore[override]
+        return _FakeResponse({"orderId": 1, "status": "NEW", "executedQty": "0", "price": "0"})
+
+    monkeypatch.setattr("bot_core.exchanges.binance.spot.urlopen", fake_urlopen)
+    monkeypatch.setattr("bot_core.exchanges.binance.spot.time.time", lambda: 1_700_000_000.0)
+
+    registry = MetricsRegistry()
+    credentials = ExchangeCredentials(
+        key_id="key",
+        secret="secret",
+        permissions=("trade",),
+        environment=Environment.LIVE,
+    )
+    adapter = BinanceSpotAdapter(credentials, metrics_registry=registry)
+
+    request = OrderRequest(
+        symbol="BTC/USDT",
+        side="buy",
+        quantity=0.1,
+        order_type="limit",
+        price=25_000.0,
+    )
+
+    adapter.place_order(request)
+
+    counter = registry.get("binance_spot_signed_requests_total")
+    labels = {"exchange": "binance_spot", "environment": "live", "method": "POST"}
+    assert counter.value(labels=labels) == pytest.approx(1.0)
 
 
 def test_fetch_symbols_filters_universe(monkeypatch: pytest.MonkeyPatch) -> None:

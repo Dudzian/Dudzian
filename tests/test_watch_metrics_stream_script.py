@@ -8,10 +8,9 @@ import hmac
 import json
 import io
 import sys
-import textwrap
 import types
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Mapping, Sequence
 
 import pytest
 
@@ -45,33 +44,118 @@ def _write_core_config(
     profile_name: str = "ops",
     host: str = "10.20.30.40",
     port: int = 50200,
+    metrics_rbac_tokens: Sequence[dict[str, object]] | None = None,
+    metrics_tls: Mapping[str, object] | None = None,
+    risk_host: str = "127.0.0.1",
+    risk_port: int = 60300,
+    risk_enabled: bool = True,
+    risk_rbac_tokens: Sequence[dict[str, object]] | None = None,
+    risk_tls: Mapping[str, object] | None = None,
 ) -> Path:
     config_path = tmp_path / "core.yaml"
     profiles_str = str(profiles_path)
-    config_path.write_text(
-        textwrap.dedent(
-            f"""
-            risk_profiles:
-              conservative:
-                max_daily_loss_pct: 0.05
-                max_position_pct: 0.10
-                target_volatility: 0.2
-                max_leverage: 3.0
-                stop_loss_atr_multiple: 1.5
-                max_open_positions: 5
-                hard_drawdown_pct: 0.25
-            environments: {{}}
-            runtime:
-              metrics_service:
-                host: {host}
-                port: {port}
-                ui_alerts_risk_profile: {profile_name}
-                ui_alerts_risk_profiles_file: {profiles_str}
-            """
-        ).strip()
-        + "\n",
-        encoding="utf-8",
+    lines = [
+        "risk_profiles:",
+        "  conservative:",
+        "    max_daily_loss_pct: 0.05",
+        "    max_position_pct: 0.10",
+        "    target_volatility: 0.2",
+        "    max_leverage: 3.0",
+        "    stop_loss_atr_multiple: 1.5",
+        "    max_open_positions: 5",
+        "    hard_drawdown_pct: 0.25",
+        "environments: {}",
+        "runtime:",
+        "  metrics_service:",
+        f"    host: {host}",
+        f"    port: {port}",
+        f"    ui_alerts_risk_profile: {profile_name}",
+        f"    ui_alerts_risk_profiles_file: {profiles_str}",
+    ]
+
+    if metrics_rbac_tokens:
+        lines.append("    rbac_tokens:")
+        for token in metrics_rbac_tokens:
+            token_id = token.get("token_id", "")
+            lines.append(f"      - token_id: {token_id}")
+            token_env = token.get("token_env")
+            if token_env:
+                lines.append(f"        token_env: {token_env}")
+            token_value = token.get("token_value")
+            if token_value:
+                lines.append(f"        token_value: {token_value}")
+            token_hash = token.get("token_hash")
+            if token_hash:
+                lines.append(f"        token_hash: {token_hash}")
+            scopes = token.get("scopes")
+            if scopes:
+                lines.append("        scopes:")
+                for scope in scopes:
+                    lines.append(f"          - {scope}")
+
+    if metrics_tls:
+        lines.append("    tls:")
+        for key, value in metrics_tls.items():
+            if value is None:
+                continue
+            indent = "      "
+            if isinstance(value, (list, tuple)):
+                lines.append(f"{indent}{key}:")
+                for item in value:
+                    lines.append(f"{indent}  - {item}")
+            else:
+                rendered = value
+                if isinstance(value, bool):
+                    rendered = "true" if value else "false"
+                lines.append(f"{indent}{key}: {rendered}")
+
+    lines.extend(
+        [
+            "  risk_service:",
+            f"    enabled: {'true' if risk_enabled else 'false'}",
+            f"    host: {risk_host}",
+            f"    port: {risk_port}",
+            "    publish_interval_seconds: 5.0",
+        ]
     )
+
+    if risk_rbac_tokens:
+        lines.append("    rbac_tokens:")
+        for token in risk_rbac_tokens:
+            token_id = token.get("token_id", "")
+            lines.append(f"      - token_id: {token_id}")
+            token_env = token.get("token_env")
+            if token_env:
+                lines.append(f"        token_env: {token_env}")
+            token_value = token.get("token_value")
+            if token_value:
+                lines.append(f"        token_value: {token_value}")
+            token_hash = token.get("token_hash")
+            if token_hash:
+                lines.append(f"        token_hash: {token_hash}")
+            scopes = token.get("scopes")
+            if scopes:
+                lines.append("        scopes:")
+                for scope in scopes:
+                    lines.append(f"          - {scope}")
+
+    if risk_tls:
+        lines.append("    tls:")
+        for key, value in risk_tls.items():
+            if value is None:
+                continue
+            indent = "      "
+            if isinstance(value, (list, tuple)):
+                lines.append(f"{indent}{key}:")
+                for item in value:
+                    lines.append(f"{indent}  - {item}")
+            else:
+                rendered = value
+                if isinstance(value, bool):
+                    rendered = "true" if value else "false"
+                lines.append(f"{indent}{key}: {rendered}")
+
+    config_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return config_path
 
 
@@ -231,6 +315,52 @@ def test_watch_metrics_stream_core_config_prints_profiles(tmp_path, capsys):
     assert core_meta["path"] == str(config_path)
     assert core_meta["metrics_service"]["risk_profile"] == "ops"
     assert core_meta["metrics_service"]["risk_profiles_file"] == str(profiles_path)
+    assert core_meta["metrics_service"]["auth_token_scope_required"] == "metrics.read"
+
+
+def test_watch_metrics_stream_core_config_applies_tls_defaults(tmp_path, capsys):
+    profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="error")
+    root_cert = tmp_path / "metrics_root.pem"
+    root_bytes = b"demo-root-cert"
+    root_cert.write_bytes(root_bytes)
+    client_cert = tmp_path / "metrics_client.pem"
+    client_cert.write_text("dummy-cert", encoding="utf-8")
+    client_key = tmp_path / "metrics_client.key"
+    client_key.write_text("dummy-key", encoding="utf-8")
+    fingerprint = hashlib.sha256(root_bytes).hexdigest()
+
+    config_path = _write_core_config(
+        tmp_path,
+        profiles_path=profiles_path,
+        profile_name="ops",
+        metrics_tls={
+            "enabled": True,
+            "client_ca_path": str(root_cert),
+            "certificate_path": str(client_cert),
+            "private_key_path": str(client_key),
+            "require_client_auth": True,
+            "pinned_fingerprints": [f"sha256:{fingerprint}"],
+        },
+    )
+
+    exit_code = watch_metrics_main(["--print-risk-profiles", "--core-config", str(config_path)])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    payload = json.loads(captured.out)
+    metrics_meta = payload["core_config"]["metrics_service"]
+    assert metrics_meta["tls_enabled"] is True
+    assert metrics_meta["client_auth"] is True
+    assert metrics_meta["use_tls"] is True
+    assert metrics_meta["root_cert"] == str(root_cert)
+    assert metrics_meta["client_cert"] == str(client_cert)
+    assert metrics_meta["client_key"] == str(client_key)
+    assert metrics_meta["server_sha256"] == fingerprint
+    assert metrics_meta["server_sha256_source"] == "pinned_fingerprint"
+    assert metrics_meta["pinned_fingerprints"] == [f"sha256:{fingerprint}"]
+    assert metrics_meta["pinned_fingerprint_selected"] == fingerprint
+    assert metrics_meta["auth_token_scope_required"] == "metrics.read"
+    assert metrics_meta["auth_token_scope_checked"] is False
 
 
 def _start_server(auth_token: str | None = None) -> MetricsServer:
@@ -834,11 +964,93 @@ def test_watch_metrics_stream_core_config_summary_metadata(tmp_path, capsys):
     metadata = summary_payload["metadata"]
     assert metadata["core_config"]["path"] == str(config_path)
     assert metadata["core_config"]["metrics_service"]["risk_profile"] == "ops"
+    assert metadata["core_config"]["risk_service"]["auth_token_scope_required"] == "risk.read"
+    assert metadata["core_config"]["risk_service"]["required_scopes"] == {
+        "risk.read": ["core_config.risk_service"]
+    }
+    assert metadata["risk_service"]["auth_token_scope_required"] == "risk.read"
     assert metadata["risk_profile"]["source"] == "core_config"
     assert metadata["risk_profile_summary"]["name"] == "ops"
     assert summary_payload["summary"]["events"]["reduce_motion"]["count"] == 1
     assert summary_payload["summary"]["severity_counts"] == {"error": 1}
-    assert "summary" in captured.out
+
+
+def test_apply_core_config_defaults_uses_rbac_token(monkeypatch, tmp_path):
+    profiles_path = _write_risk_profile_file(tmp_path)
+    config_path = _write_core_config(
+        tmp_path,
+        profiles_path=profiles_path,
+        metrics_rbac_tokens=[
+            {
+                "token_id": "metrics-reader",
+                "token_env": "METRICS_STREAM_TOKEN",
+                "scopes": ["metrics.read"],
+            }
+        ],
+    )
+    monkeypatch.setenv("METRICS_STREAM_TOKEN", "rbac-secret")
+
+    parser = watch_metrics_module.build_arg_parser()
+    args = parser.parse_args(["--core-config", str(config_path)])
+    provided = {"--core-config"}
+
+    watch_metrics_module._apply_core_config_defaults(
+        args,
+        parser=parser,
+        provided_flags=provided,
+    )
+
+    assert args.auth_token == "rbac-secret"
+    metadata = getattr(args, "_core_config_metadata")
+    metrics_meta = metadata["metrics_service"]
+    assert metrics_meta["rbac_tokens"] == 1
+    assert metrics_meta["auth_token_source"] == "rbac_token"
+    assert metrics_meta["auth_token_scope_required"] == "metrics.read"
+    assert metrics_meta["auth_token_scope_checked"] is True
+    assert metrics_meta["auth_token_scope_match"] is True
+    assert metrics_meta["auth_token_scopes"] == ["metrics.read"]
+    assert metrics_meta["auth_token_token_id"] == "metrics-reader"
+    assert "auth_token_scope_warning" not in metrics_meta
+    assert "auth_token_scope_reason" not in metrics_meta
+
+    risk_meta = metadata["risk_service"]
+    assert risk_meta["auth_token_scope_required"] == "risk.read"
+    assert risk_meta["required_scopes"] == {"risk.read": ["core_config.risk_service"]}
+
+
+def test_apply_core_config_defaults_records_risk_rbac_token(monkeypatch, tmp_path):
+    profiles_path = _write_risk_profile_file(tmp_path)
+    config_path = _write_core_config(
+        tmp_path,
+        profiles_path=profiles_path,
+        risk_rbac_tokens=[
+            {
+                "token_id": "risk-reader",
+                "token_value": "risk-secret",
+                "scopes": ["risk.read"],
+            }
+        ],
+    )
+
+    parser = watch_metrics_module.build_arg_parser()
+    args = parser.parse_args(["--core-config", str(config_path)])
+    provided = {"--core-config"}
+
+    watch_metrics_module._apply_core_config_defaults(
+        args,
+        parser=parser,
+        provided_flags=provided,
+    )
+
+    metadata = getattr(args, "_core_config_metadata")
+    risk_meta = metadata["risk_service"]
+    assert risk_meta["rbac_tokens"] == 1
+    assert risk_meta["auth_token_scope_required"] == "risk.read"
+    assert risk_meta["required_scopes"] == {"risk.read": ["core_config.risk_service"]}
+    assert risk_meta["auth_token_scope_checked"] is True
+    assert risk_meta["auth_token_scope_match"] is True
+    assert risk_meta["auth_token_token_id"] == "risk-reader"
+    assert risk_meta["auth_token_scopes"] == ["risk.read"]
 
 
 def test_watch_metrics_stream_signed_summary(tmp_path, capsys):

@@ -39,6 +39,17 @@ class DecisionJournalConfig:
 
 
 @dataclass(slots=True)
+class ServiceTokenConfig:
+    """Definicja tokenu usługowego wykorzystywanego do RBAC."""
+
+    token_id: str
+    token_env: str | None = None
+    token_value: str | None = None
+    token_hash: str | None = None
+    scopes: Sequence[str] = field(default_factory=tuple)
+
+
+@dataclass(slots=True)
 class MetricsServiceTlsConfig:
     """Opcjonalna konfiguracja TLS/mTLS dla serwera telemetrii."""
     enabled: bool = False
@@ -46,6 +57,8 @@ class MetricsServiceTlsConfig:
     private_key_path: str | None = None
     client_ca_path: str | None = None
     require_client_auth: bool = False
+    private_key_password_env: str | None = None
+    pinned_fingerprints: Sequence[str] = field(default_factory=tuple)
 
 
 @dataclass(slots=True)
@@ -68,6 +81,7 @@ class MetricsServiceConfig:
     ui_alerts_risk_profile: str | None = None
     ui_alerts_risk_profiles_file: str | None = None
     tls: MetricsServiceTlsConfig | None = None
+    rbac_tokens: Sequence[ServiceTokenConfig] = field(default_factory=tuple)
 
     # Opcjonalne alerty związane z UI/performance
     reduce_motion_alerts: bool = False
@@ -90,6 +104,53 @@ class MetricsServiceConfig:
     jank_alert_severity_spike: str = "warning"
     jank_alert_severity_critical: str | None = None
     jank_alert_critical_over_ms: float | None = None
+
+
+@dataclass(slots=True)
+class RiskServiceConfig:
+    """Ustawienia serwera `RiskService`."""
+
+    enabled: bool = True
+    host: str = "127.0.0.1"
+    port: int = 0
+    history_size: int = 256
+    auth_token: str | None = None
+    tls: MetricsServiceTlsConfig | None = None
+    publish_interval_seconds: float = 5.0
+    profiles: Sequence[str] = field(default_factory=tuple)
+    rbac_tokens: Sequence[ServiceTokenConfig] = field(default_factory=tuple)
+
+
+@dataclass(slots=True)
+class RiskDecisionLogConfig:
+    """Konfiguracja dziennika decyzji silnika ryzyka."""
+
+    enabled: bool = True
+    path: str | None = None
+    max_entries: int = 1_000
+    signing_key_env: str | None = None
+    signing_key_path: str | None = None
+    signing_key_value: str | None = None
+    signing_key_id: str | None = None
+    jsonl_fsync: bool = False
+
+
+@dataclass(slots=True)
+class SecurityBaselineSigningConfig:
+    """Ustawienia podpisywania raportów audytu bezpieczeństwa."""
+
+    signing_key_env: str | None = None
+    signing_key_path: str | None = None
+    signing_key_value: str | None = None
+    signing_key_id: str | None = None
+    require_signature: bool = False
+
+
+@dataclass(slots=True)
+class SecurityBaselineConfig:
+    """Konfiguracja integracji audytu bezpieczeństwa."""
+
+    signing: SecurityBaselineSigningConfig | None = None
 
 
 # --- Środowiska / rdzeń ------------------------------------------------------
@@ -362,6 +423,9 @@ class CoreConfig:
     runtime_controllers: Mapping[str, ControllerRuntimeConfig] = field(default_factory=dict)
     coverage_monitoring: CoverageMonitoringConfig | None = None
     metrics_service: MetricsServiceConfig | None = None
+    risk_service: RiskServiceConfig | None = None
+    risk_decision_log: RiskDecisionLogConfig | None = None
+    security_baseline: SecurityBaselineConfig | None = None
     source_path: str | None = None
     source_directory: str | None = None
 
@@ -392,8 +456,13 @@ __all__ = [
     "CoreReportingConfig",
     "CoreConfig",
     "AlertThrottleConfig",
+    "ServiceTokenConfig",
     "AlertAuditConfig",
     "DecisionJournalConfig",
     "MetricsServiceTlsConfig",
     "MetricsServiceConfig",
+    "RiskServiceConfig",
+    "RiskDecisionLogConfig",
+    "SecurityBaselineConfig",
+    "SecurityBaselineSigningConfig",
 ]

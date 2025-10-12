@@ -81,13 +81,22 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Mapping, Sequence
 
 # --- opcjonalna konfiguracja core.yaml ---------------------------------------
 try:
     from bot_core.config import load_core_config  # type: ignore
 except Exception:  # pragma: no cover - środowisko bez modułu konfiguracyjnego
     load_core_config = None  # type: ignore
+
+try:  # pragma: no cover - moduł bezpieczeństwa jest opcjonalny w części środowisk
+    from bot_core.security.tokens import (  # type: ignore
+        resolve_service_token,
+        resolve_service_token_secret,
+    )
+except Exception:  # pragma: no cover - brak modułu bezpieczeństwa
+    resolve_service_token = None  # type: ignore
+    resolve_service_token_secret = None  # type: ignore
 
 # --- presety profili ryzyka (z fallbackiem, patrz scripts.telemetry_risk_profiles) --
 try:
@@ -106,6 +115,49 @@ except Exception as exc:  # pragma: no cover
 LOGGER = logging.getLogger("bot_core.scripts.watch_metrics_stream")
 
 _ENV_PREFIX = "BOT_CORE_WATCH_METRICS_"
+_HEX_DIGITS = set("0123456789abcdef")
+_REQUIRED_METRICS_SCOPE = "metrics.read"
+_REQUIRED_RISK_SCOPE = "risk.read"
+
+
+def _parse_pinned_fingerprint(entry: object) -> tuple[str, str] | None:
+    """Zwraca parę (algorytm, fingerprint) dla wpisu pinningu TLS."""
+
+    if entry in (None, ""):
+        return None
+    text = str(entry).strip().lower()
+    if not text:
+        return None
+    if ":" in text:
+        algorithm, fingerprint = text.split(":", 1)
+        algorithm = algorithm.strip() or "sha256"
+    else:
+        algorithm, fingerprint = "sha256", text
+    fingerprint = fingerprint.replace(":", "").strip()
+    if not fingerprint:
+        return None
+    if any(char not in _HEX_DIGITS for char in fingerprint):
+        LOGGER.warning(
+            "Wpis pinningu TLS '%s' zawiera znaki spoza zakresu hex – pomijam", entry
+        )
+        return None
+    return algorithm, fingerprint
+
+
+def _select_sha256_fingerprint(entries: Sequence[object]) -> str | None:
+    """Wybiera fingerprint SHA-256 spośród wpisów pinningu."""
+
+    for entry in entries:
+        parsed = _parse_pinned_fingerprint(entry)
+        if not parsed:
+            continue
+        algorithm, fingerprint = parsed
+        if algorithm == "sha256":
+            return fingerprint
+        LOGGER.warning(
+            "Pomijam wpis pinningu TLS %r – obsługiwany jest wyłącznie SHA-256", entry
+        )
+    return None
 
 
 def _load_grpc_components():
@@ -946,6 +998,8 @@ def _apply_environment_overrides(
         setattr(args, attr, value)
         if attr == "risk_profile":
             args._risk_profile_source = "env"
+        if attr == "server_sha256":
+            args._server_sha256_source = "env"
         if attr in {
             "root_cert",
             "client_cert",
@@ -1087,6 +1141,12 @@ def _apply_core_config_defaults(
             metrics_config, "ui_alerts_risk_profiles_file", None
         ),
     }
+    metrics_meta["auth_token_scope_required"] = _REQUIRED_METRICS_SCOPE
+    metrics_meta["auth_token_scope_checked"] = False
+
+    rbac_tokens = tuple(getattr(metrics_config, "rbac_tokens", ()) or ())
+    if rbac_tokens:
+        metrics_meta["rbac_tokens"] = len(rbac_tokens)
 
     tls_config = getattr(metrics_config, "tls", None)
     if tls_config is not None:
@@ -1095,14 +1155,20 @@ def _apply_core_config_defaults(
         metrics_meta["root_cert_configured"] = bool(getattr(tls_config, "client_ca_path", None))
         metrics_meta["client_cert_configured"] = bool(getattr(tls_config, "certificate_path", None))
         metrics_meta["client_key_configured"] = bool(getattr(tls_config, "private_key_path", None))
+        pinned_fingerprints = tuple(getattr(tls_config, "pinned_fingerprints", ()) or ())
+        if pinned_fingerprints:
+            metrics_meta["pinned_fingerprints"] = list(pinned_fingerprints)
+            selected_pin = _select_sha256_fingerprint(pinned_fingerprints)
+            if selected_pin and not getattr(args, "server_sha256", None):
+                args.server_sha256 = selected_pin
+                args._server_sha256_source = "pinned_fingerprint"
+            if selected_pin:
+                metrics_meta["pinned_fingerprint_selected"] = selected_pin
+            else:
+                metrics_meta["pinned_fingerprint_selected"] = None
 
     if getattr(metrics_config, "auth_token", None):
         metrics_meta["auth_token_configured"] = True
-
-    metadata["metrics_service"] = {
-        key: value for key, value in metrics_meta.items() if value not in (None, "")
-    }
-    args._core_config_metadata = metadata
 
     default_host = parser.get_default("host")
     if (
@@ -1145,12 +1211,126 @@ def _apply_core_config_defaults(
         if not args.client_key and getattr(tls_cfg, "private_key_path", None):
             args.client_key = tls_cfg.private_key_path
 
-    if (
-        getattr(metrics_config, "auth_token", None)
-        and not getattr(args, "auth_token", None)
-        and not getattr(args, "auth_token_file", None)
+    token_scope_match: bool | None = None
+    if not getattr(args, "auth_token", None) and not getattr(args, "auth_token_file", None):
+        if getattr(metrics_config, "auth_token", None):
+            args.auth_token = metrics_config.auth_token
+            metrics_meta["auth_token_source"] = "config"
+            metrics_meta["auth_token_scope_reason"] = "legacy_token"
+        elif (
+            rbac_tokens
+            and resolve_service_token is not None
+        ):
+            token_entry = resolve_service_token(
+                rbac_tokens,
+                scope=_REQUIRED_METRICS_SCOPE,
+            )
+            if token_entry and token_entry.secret:
+                args.auth_token = token_entry.secret
+                metrics_meta["auth_token_source"] = "rbac_token"
+                metrics_meta.setdefault("auth_token_configured", True)
+                metrics_meta["auth_token_scope_checked"] = True
+                scopes = sorted(token_entry.scopes)
+                if scopes:
+                    metrics_meta["auth_token_scopes"] = scopes
+                token_scope_match = bool(
+                    not scopes or _REQUIRED_METRICS_SCOPE in scopes
+                )
+                metrics_meta["auth_token_scope_match"] = token_scope_match
+                metrics_meta["auth_token_token_id"] = token_entry.token_id
+            elif resolve_service_token_secret is not None:
+                token_secret = resolve_service_token_secret(
+                    rbac_tokens, scope=_REQUIRED_METRICS_SCOPE
+                )
+                if token_secret:
+                    args.auth_token = token_secret
+                    metrics_meta["auth_token_source"] = "rbac_token"
+                    metrics_meta.setdefault("auth_token_configured", True)
+                    metrics_meta["auth_token_scope_reason"] = "rbac_secret_only"
+    if token_scope_match is False:
+        metrics_meta["auth_token_scope_warning"] = "missing_required_scope"
+
+    if args.use_tls:
+        metrics_meta["use_tls"] = True
+    for attr, key in (
+        ("root_cert", "root_cert"),
+        ("client_cert", "client_cert"),
+        ("client_key", "client_key"),
+        ("server_name", "server_name"),
     ):
-        args.auth_token = metrics_config.auth_token
+        value = getattr(args, attr, None)
+        if value:
+            metrics_meta[key] = value
+    server_sha = getattr(args, "server_sha256", None)
+    if server_sha:
+        metrics_meta["server_sha256"] = server_sha
+        source = getattr(args, "_server_sha256_source", None)
+        if source:
+            metrics_meta["server_sha256_source"] = source
+
+    metadata["metrics_service"] = {
+        key: value for key, value in metrics_meta.items() if value not in (None, "")
+    }
+
+    risk_config = getattr(core_config, "risk_service", None)
+    risk_meta: dict[str, Any] = {"auth_token_scope_required": _REQUIRED_RISK_SCOPE}
+    if risk_config is None:
+        risk_meta["warning"] = "risk_service_missing"
+    else:
+        risk_meta["enabled"] = bool(getattr(risk_config, "enabled", True))
+        risk_meta["host"] = getattr(risk_config, "host", None)
+        risk_meta["port"] = getattr(risk_config, "port", None)
+        risk_meta["history_size"] = getattr(risk_config, "history_size", None)
+        risk_meta["publish_interval_seconds"] = getattr(
+            risk_config, "publish_interval_seconds", None
+        )
+        profiles = getattr(risk_config, "profiles", None)
+        if profiles:
+            risk_meta["profiles"] = sorted({str(profile).strip() for profile in profiles if profile})
+        if getattr(risk_config, "auth_token", None):
+            risk_meta["auth_token_configured"] = True
+
+        required_scopes: dict[str, list[str]] = {
+            _REQUIRED_RISK_SCOPE: ["core_config.risk_service"]
+        }
+
+        rbac_tokens = tuple(getattr(risk_config, "rbac_tokens", ()) or ())
+        if rbac_tokens:
+            risk_meta["rbac_tokens"] = len(rbac_tokens)
+            if resolve_service_token is not None:
+                token_entry = resolve_service_token(
+                    rbac_tokens,
+                    scope=_REQUIRED_RISK_SCOPE,
+                )
+                risk_meta["auth_token_scope_checked"] = True
+                if token_entry:
+                    risk_meta["auth_token_scope_match"] = bool(
+                        not token_entry.scopes or _REQUIRED_RISK_SCOPE in token_entry.scopes
+                    )
+                    risk_meta["auth_token_token_id"] = token_entry.token_id
+                    if token_entry.scopes:
+                        risk_meta["auth_token_scopes"] = sorted(token_entry.scopes)
+                else:
+                    risk_meta["auth_token_scope_match"] = False
+        risk_meta["required_scopes"] = required_scopes
+
+        tls_cfg = getattr(risk_config, "tls", None)
+        if tls_cfg is not None:
+            risk_meta["tls_enabled"] = bool(getattr(tls_cfg, "enabled", False))
+            risk_meta["client_auth"] = bool(getattr(tls_cfg, "require_client_auth", False))
+            risk_meta["root_cert_configured"] = bool(getattr(tls_cfg, "client_ca_path", None))
+            risk_meta["client_cert_configured"] = bool(getattr(tls_cfg, "certificate_path", None))
+            risk_meta["client_key_configured"] = bool(getattr(tls_cfg, "private_key_path", None))
+            pinned = tuple(getattr(tls_cfg, "pinned_fingerprints", ()) or ())
+            if pinned:
+                risk_meta["pinned_fingerprints"] = list(pinned)
+
+    metadata["risk_service"] = {
+        key: value
+        for key, value in risk_meta.items()
+        if value not in (None, "", [], {})
+    }
+    args._core_config_metadata = metadata
 
 
 def _load_custom_risk_profiles(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
@@ -1252,6 +1432,14 @@ def _emit_summary(
             metadata_section["risk_profile_summary"] = dict(risk_profile_summary)
         if core_metadata:
             metadata_section["core_config"] = dict(core_metadata)
+            metrics_section = core_metadata.get("metrics_service")
+            if isinstance(metrics_section, Mapping):
+                metadata_section.setdefault(
+                    "metrics_service", dict(metrics_section)
+                )
+            risk_section = core_metadata.get("risk_service")
+            if isinstance(risk_section, Mapping):
+                metadata_section.setdefault("risk_service", dict(risk_section))
     signed_payload = _sign_payload(
         summary_payload,
         signing_key=signing_key,
@@ -1520,6 +1708,8 @@ def main(argv: list[str] | None = None) -> int:
     provided_flags = {arg for arg in (argv or []) if isinstance(arg, str) and arg.startswith("--")}
     if "--risk-profile" in provided_flags:
         args._risk_profile_source = "cli"
+    if "--server-sha256" in provided_flags:
+        args._server_sha256_source = "cli"
 
     tls_env_present, env_use_tls_explicit = _apply_environment_overrides(
         args,

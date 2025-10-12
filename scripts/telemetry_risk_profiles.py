@@ -25,6 +25,7 @@ import re
 import shlex
 import sys
 from copy import deepcopy
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Tuple
 
@@ -54,6 +55,7 @@ try:  # pragma: no cover
         load_risk_profiles_from_file,
         load_risk_profiles_with_metadata,
         register_risk_profiles,
+        reset_risk_profile_store,
         risk_profile_metadata,
         summarize_risk_profile,
     )
@@ -69,11 +71,13 @@ try:  # pragma: no cover
         "load_risk_profiles_from_file",
         "load_risk_profiles_with_metadata",
         "register_risk_profiles",
+        "reset_risk_profile_store",
         "risk_profile_metadata",
         "summarize_risk_profile",
     ]
 
     _FALLBACK = False
+
 except Exception:  # pragma: no cover - fallback lokalny
     _FALLBACK = True
 
@@ -89,6 +93,20 @@ except Exception:  # pragma: no cover - fallback lokalny
                 "reduce_motion": 3,
             },
             "min_event_counts": {"reduce_motion": 1},
+            "metrics_service_overrides": {
+                "ui_alerts_reduce_mode": "enable",
+                "ui_alerts_overlay_mode": "enable",
+                "ui_alerts_jank_mode": "enable",
+                "ui_alerts_reduce_active_severity": "critical",
+                "ui_alerts_reduce_recovered_severity": "notice",
+                "ui_alerts_overlay_exceeded_severity": "critical",
+                "ui_alerts_overlay_recovered_severity": "notice",
+                "ui_alerts_overlay_critical_severity": "critical",
+                "ui_alerts_overlay_critical_threshold": 1,
+                "ui_alerts_jank_spike_severity": "warning",
+                "ui_alerts_jank_critical_severity": "error",
+                "ui_alerts_jank_critical_over_ms": 12.0,
+            },
         },
         "balanced": {
             "expect_summary_enabled": True,
@@ -98,6 +116,20 @@ except Exception:  # pragma: no cover - fallback lokalny
                 "overlay_budget": 2,
                 "jank": 1,
                 "reduce_motion": 5,
+            },
+            "metrics_service_overrides": {
+                "ui_alerts_reduce_mode": "enable",
+                "ui_alerts_overlay_mode": "enable",
+                "ui_alerts_jank_mode": "enable",
+                "ui_alerts_reduce_active_severity": "warning",
+                "ui_alerts_reduce_recovered_severity": "info",
+                "ui_alerts_overlay_exceeded_severity": "warning",
+                "ui_alerts_overlay_recovered_severity": "info",
+                "ui_alerts_overlay_critical_severity": "error",
+                "ui_alerts_overlay_critical_threshold": 2,
+                "ui_alerts_jank_spike_severity": "notice",
+                "ui_alerts_jank_critical_severity": "warning",
+                "ui_alerts_jank_critical_over_ms": 18.0,
             },
         },
         "aggressive": {
@@ -109,218 +141,389 @@ except Exception:  # pragma: no cover - fallback lokalny
                 "jank": 2,
                 "reduce_motion": 8,
             },
+            "metrics_service_overrides": {
+                "ui_alerts_reduce_mode": "enable",
+                "ui_alerts_overlay_mode": "enable",
+                "ui_alerts_jank_mode": "enable",
+                "ui_alerts_reduce_active_severity": "info",
+                "ui_alerts_reduce_recovered_severity": "info",
+                "ui_alerts_overlay_exceeded_severity": "info",
+                "ui_alerts_overlay_recovered_severity": "info",
+                "ui_alerts_overlay_critical_severity": "warning",
+                "ui_alerts_overlay_critical_threshold": 3,
+                "ui_alerts_jank_spike_severity": "info",
+                "ui_alerts_jank_critical_severity": "warning",
+                "ui_alerts_jank_critical_over_ms": 22.0,
+            },
         },
         "manual": {},
     }
 
+    _PROFILE_STORE: dict[str, dict[str, Any]] = {}
+    _PROFILE_ORIGINS: dict[str, str] = {}
     _REGISTERED_SOURCES: list[str] = []
+    _SUPPORTED_SUFFIXES = {".json", ".yaml", ".yml"}
 
-    # --- API PUBLICZNE (fallback) --------------------------------------------
+    _METRICS_CLI_TO_ENV: Mapping[str, str] = {
+        "ui_alerts_reduce_mode": "RUN_METRICS_SERVICE_UI_ALERTS_REDUCE_MODE",
+        "ui_alerts_overlay_mode": "RUN_METRICS_SERVICE_UI_ALERTS_OVERLAY_MODE",
+        "ui_alerts_jank_mode": "RUN_METRICS_SERVICE_UI_ALERTS_JANK_MODE",
+        "ui_alerts_reduce_category": "RUN_METRICS_SERVICE_UI_ALERTS_REDUCE_CATEGORY",
+        "ui_alerts_reduce_active_severity": "RUN_METRICS_SERVICE_UI_ALERTS_REDUCE_ACTIVE_SEVERITY",
+        "ui_alerts_reduce_recovered_severity": "RUN_METRICS_SERVICE_UI_ALERTS_REDUCE_RECOVERED_SEVERITY",
+        "ui_alerts_overlay_category": "RUN_METRICS_SERVICE_UI_ALERTS_OVERLAY_CATEGORY",
+        "ui_alerts_overlay_exceeded_severity": "RUN_METRICS_SERVICE_UI_ALERTS_OVERLAY_EXCEEDED_SEVERITY",
+        "ui_alerts_overlay_recovered_severity": "RUN_METRICS_SERVICE_UI_ALERTS_OVERLAY_RECOVERED_SEVERITY",
+        "ui_alerts_overlay_critical_severity": "RUN_METRICS_SERVICE_UI_ALERTS_OVERLAY_CRITICAL_SEVERITY",
+        "ui_alerts_overlay_critical_threshold": "RUN_METRICS_SERVICE_UI_ALERTS_OVERLAY_CRITICAL_THRESHOLD",
+        "ui_alerts_jank_category": "RUN_METRICS_SERVICE_UI_ALERTS_JANK_CATEGORY",
+        "ui_alerts_jank_spike_severity": "RUN_METRICS_SERVICE_UI_ALERTS_JANK_SPIKE_SEVERITY",
+        "ui_alerts_jank_critical_severity": "RUN_METRICS_SERVICE_UI_ALERTS_JANK_CRITICAL_SEVERITY",
+        "ui_alerts_jank_critical_over_ms": "RUN_METRICS_SERVICE_UI_ALERTS_JANK_CRITICAL_OVER_MS",
+        "ui_alerts_audit_dir": "RUN_METRICS_SERVICE_UI_ALERTS_AUDIT_DIR",
+        "ui_alerts_audit_backend": "RUN_METRICS_SERVICE_UI_ALERTS_AUDIT_BACKEND",
+        "ui_alerts_audit_pattern": "RUN_METRICS_SERVICE_UI_ALERTS_AUDIT_PATTERN",
+        "ui_alerts_audit_retention_days": "RUN_METRICS_SERVICE_UI_ALERTS_AUDIT_RETENTION_DAYS",
+        "ui_alerts_audit_fsync": "RUN_METRICS_SERVICE_UI_ALERTS_AUDIT_FSYNC",
+    }
+
+    def _initialize_store() -> None:
+        if _PROFILE_STORE:
+            return
+        for name, data in _RISK_PROFILE_PRESETS.items():
+            normalized = name.strip().lower()
+            _PROFILE_STORE[normalized] = deepcopy(data)
+            _PROFILE_ORIGINS[normalized] = "builtin"
+
+    def reset_risk_profile_store() -> None:
+        _PROFILE_STORE.clear()
+        _PROFILE_ORIGINS.clear()
+        _REGISTERED_SOURCES.clear()
+        _initialize_store()
+
     def list_risk_profile_names() -> list[str]:
-        """Zwraca posortowaną listę dostępnych profili ryzyka."""
-        return sorted(_RISK_PROFILE_PRESETS)
+        _initialize_store()
+        return sorted(_PROFILE_STORE)
 
     def get_risk_profile(name: str) -> Mapping[str, Any]:
-        """Zwraca kopię konfiguracji profilu o podanej nazwie."""
+        _initialize_store()
         normalized = name.strip().lower()
         try:
-            preset = _RISK_PROFILE_PRESETS[normalized]
+            preset = _PROFILE_STORE[normalized]
         except KeyError as exc:
             raise KeyError(f"Nieznany profil ryzyka: {name!r}") from exc
         return deepcopy(preset)
 
     def risk_profile_metadata(name: str) -> dict[str, Any]:
-        """Buduje metadane profilu (do decision logów/raportów)."""
-        config = get_risk_profile(name)
-        out = dict(config)
-        out["name"] = name.strip().lower()
-        return out
+        profile = get_risk_profile(name)
+        metadata = dict(profile)
+        normalized = name.strip().lower()
+        metadata["name"] = normalized
+        origin = _PROFILE_ORIGINS.get(normalized)
+        if origin:
+            metadata.setdefault("origin", origin)
+        return metadata
+
+    def _merge_profile_dicts(base: Mapping[str, Any], overrides: Mapping[str, Any]) -> dict[str, Any]:
+        result = deepcopy(base)
+        for key, value in overrides.items():
+            if key == "extends":
+                continue
+            if isinstance(value, Mapping) and isinstance(result.get(key), Mapping):
+                result[key] = _merge_profile_dicts(result[key], value)
+            else:
+                result[key] = deepcopy(value)
+        return result
 
     def register_risk_profiles(
         profiles: Mapping[str, Mapping[str, Any]]
         | Iterable[tuple[str, Mapping[str, Any]]]
+        | None,
+        *,
+        origin: str = "external",
     ) -> list[str]:
-        """Rejestruje/aktualizuje profile ryzyka. Zwraca listę zarejestrowanych nazw."""
-        registered: list[str] = []
+        if not profiles:
+            return []
+
+        _initialize_store()
+
         items = profiles.items() if isinstance(profiles, Mapping) else list(profiles)
+        normalized_profiles: dict[str, dict[str, Any]] = {}
         for name, cfg in items:
             normalized = str(name).strip().lower()
-            _RISK_PROFILE_PRESETS[normalized] = deepcopy(dict(cfg))
+            if not normalized:
+                continue
+            if not isinstance(cfg, Mapping):
+                raise ValueError(
+                    f"Profil ryzyka '{name}' musi być mapą, otrzymano {type(cfg)!r}"
+                )
+            normalized_profiles[normalized] = deepcopy(dict(cfg))
+
+        resolved: dict[str, dict[str, Any]] = {}
+        visiting: set[str] = set()
+
+        def resolve(target: str) -> dict[str, Any]:
+            if target in resolved:
+                return resolved[target]
+            if target in visiting:
+                raise ValueError(
+                    f"Wykryto cykliczne dziedziczenie profili ryzyka przy '{target}'"
+                )
+            try:
+                entry = normalized_profiles[target]
+            except KeyError as exc:
+                raise KeyError(f"Nieznany profil do zarejestrowania: {target}") from exc
+
+            visiting.add(target)
+            extends_raw = entry.get("extends")
+            if extends_raw:
+                base_name = str(extends_raw).strip().lower()
+                if not base_name:
+                    raise ValueError(
+                        f"Profil ryzyka '{target}' posiada nieprawidłowe pole extends"
+                    )
+                if base_name == target:
+                    raise ValueError(
+                        f"Profil ryzyka '{target}' nie może dziedziczyć z samego siebie"
+                    )
+                if base_name in normalized_profiles:
+                    base_profile = resolve(base_name)
+                else:
+                    try:
+                        base_profile = get_risk_profile(base_name)
+                    except KeyError as exc:
+                        raise ValueError(
+                            f"Profil ryzyka '{target}' dziedziczy z nieznanego profilu '{extends_raw}'"
+                        ) from exc
+                merged = _merge_profile_dicts(base_profile, entry)
+                chain: list[str] = []
+                base_chain = base_profile.get("extends_chain")
+                if isinstance(base_chain, list):
+                    chain.extend(base_chain)
+                elif base_profile.get("extends"):
+                    chain.append(str(base_profile["extends"]))
+                chain.append(base_name)
+                merged["extends"] = base_name
+                if chain:
+                    merged["extends_chain"] = chain
+            else:
+                base_profile = _PROFILE_STORE.get(target)
+                if base_profile:
+                    merged = _merge_profile_dicts(base_profile, entry)
+                    if "extends" not in merged and base_profile.get("extends"):
+                        merged["extends"] = base_profile.get("extends")
+                    base_chain = base_profile.get("extends_chain")
+                    if (
+                        base_chain
+                        and "extends_chain" not in merged
+                        and isinstance(base_chain, list)
+                    ):
+                        merged["extends_chain"] = list(base_chain)
+                else:
+                    merged = deepcopy(entry)
+                    if "extends_chain" in merged and not isinstance(
+                        merged.get("extends_chain"), list
+                    ):
+                        merged["extends_chain"] = list(merged.get("extends_chain") or [])
+
+            visiting.remove(target)
+            resolved[target] = merged
+            return merged
+
+        registered: list[str] = []
+        for normalized in normalized_profiles:
+            profile_data = resolve(normalized)
+            _PROFILE_STORE[normalized] = deepcopy(profile_data)
+            _PROFILE_ORIGINS[normalized] = origin
             registered.append(normalized)
         return registered
 
-    def _detect_format_from_suffix(path: Path) -> str:
-        suf = path.suffix.lower()
-        if suf in {".yml", ".yaml"}:
-            return "yaml"
-        return "json"
+    def list_risk_profile_files(directory: Path) -> list[Path]:
+        files = [
+            entry
+            for entry in directory.iterdir()
+            if entry.is_file() and entry.suffix.lower() in _SUPPORTED_SUFFIXES
+        ]
+        files.sort()
+        return files
 
-    def load_risk_profiles_from_file(path: Path | str) -> dict[str, dict[str, Any]]:
-        """Ładuje profile z pliku JSON/YAML. Akceptuje formaty:
-        - dict { name: { ...config... }, ... }
-        - dict { "profiles": { name: { ... }, ... } }
-        - list [{"name": "x", ...config...}, ...]
-        """
-        p = Path(path).expanduser()
-        if not p.exists():
-            raise FileNotFoundError(f"Nie znaleziono pliku profili ryzyka: {p}")
+    def _load_risk_profiles_from_single_file(
+        source: Path, *, origin: str | None = None
+    ) -> list[str]:
+        if not source.exists():
+            raise FileNotFoundError(f"Nie znaleziono pliku profili ryzyka: {source}")
+        if source.is_dir():
+            raise IsADirectoryError(
+                f"Ścieżka {source} wskazuje katalog – użyj load_risk_profiles_from_file do obsługi katalogów"
+            )
 
-        fmt = _detect_format_from_suffix(p)
-        text = p.read_text(encoding="utf-8")
-
-        data: Any
-        if fmt == "yaml":
+        text = source.read_text(encoding="utf-8")
+        suffix = source.suffix.lower()
+        if suffix in {".yaml", ".yml"}:
             if yaml is None:
                 raise RuntimeError(
                     "Do wczytania profili w YAML wymagany jest PyYAML (pip install pyyaml)."
                 )
-            data = yaml.safe_load(text)
+            data: Any = yaml.safe_load(text) or {}
         else:
-            data = json.loads(text)
+            data = json.loads(text or "{}")
 
-        profiles: dict[str, dict[str, Any]] = {}
-        if isinstance(data, dict) and "profiles" in data and isinstance(data["profiles"], dict):
-            for k, v in data["profiles"].items():
-                profiles[str(k).strip().lower()] = dict(v or {})
-        elif isinstance(data, dict):
-            for k, v in data.items():
-                profiles[str(k).strip().lower()] = dict(v or {})
-        elif isinstance(data, list):
-            for item in data:
-                if not isinstance(item, dict) or "name" not in item:
-                    continue
-                name = str(item["name"]).strip().lower()
-                cfg = {k: v for k, v in item.items() if k != "name"}
-                profiles[name] = cfg
-        else:
-            raise ValueError("Nieobsługiwany format pliku profili ryzyka.")
+        if isinstance(data, Mapping) and "risk_profiles" in data:
+            data = data["risk_profiles"]
+        if not isinstance(data, Mapping):
+            raise ValueError("Plik profili ryzyka musi zawierać mapę risk_profiles")
 
-        return profiles
+        origin_label = f"file:{source}" if origin is None else origin
+        registered = register_risk_profiles(data, origin=origin_label)
+        _REGISTERED_SOURCES.append(str(source))
+        return registered
+
+    def load_risk_profiles_from_file(
+        path: str | Path, *, origin: str | None = None
+    ) -> list[str]:
+        target = Path(path).expanduser()
+        if target.is_dir():
+            files = list_risk_profile_files(target)
+            if not files:
+                raise ValueError(
+                    f"Katalog {target} nie zawiera żadnych plików JSON/YAML z profilami ryzyka"
+                )
+            registered: list[str] = []
+            base_origin = origin or f"dir:{target}"
+            for entry in files:
+                entry_origin = f"{base_origin}#{entry.name}" if base_origin else None
+                registered.extend(
+                    _load_risk_profiles_from_single_file(entry, origin=entry_origin)
+                )
+            return registered
+
+        return _load_risk_profiles_from_single_file(target, origin=origin)
 
     def load_risk_profiles_with_metadata(
-        path: Path | str, *, origin_label: str | None = None
+        path: str | Path, *, origin_label: str | None = None
     ) -> Tuple[list[str], Mapping[str, Any]]:
-        """Ładuje profile z pliku, rejestruje i zwraca (registered_names, metadata)."""
-        p = Path(path).expanduser()
-        profiles = load_risk_profiles_from_file(p)
-        registered = register_risk_profiles(profiles)
+        target = Path(path).expanduser()
+        if target.is_dir():
+            files = list_risk_profile_files(target)
+            if not files:
+                raise ValueError(
+                    f"Katalog {target} nie zawiera żadnych plików JSON/YAML z profilami ryzyka"
+                )
+            registered: list[str] = []
+            files_meta: list[dict[str, Any]] = []
+            base_origin = origin_label or f"dir:{target}"
+            for entry in files:
+                entry_origin = f"{base_origin}#{entry.name}" if base_origin else None
+                entry_registered = _load_risk_profiles_from_single_file(
+                    entry, origin=entry_origin
+                )
+                files_meta.append(
+                    {
+                        "path": str(entry),
+                        "registered_profiles": list(entry_registered),
+                    }
+                )
+                registered.extend(entry_registered)
 
-        try:
-            stat = p.stat()
-            size = stat.st_size
-            mtime = stat.st_mtime
-            exists = True
-        except FileNotFoundError:
-            size = 0
-            mtime = 0.0
-            exists = False
+            metadata: dict[str, Any] = {
+                "path": str(target),
+                "type": "directory",
+                "files": files_meta,
+                "registered_profiles": list(registered),
+            }
+            if origin_label:
+                metadata["origin"] = origin_label
+            return registered, metadata
 
-        if exists:
-            _REGISTERED_SOURCES.append(str(p))
-
+        registered = _load_risk_profiles_from_single_file(
+            target, origin=origin_label or f"file:{target}"
+        )
         metadata = {
-            "path": str(p),
-            "exists": exists,
-            "bytes": size,
-            "mtime": mtime,
-            "format": _detect_format_from_suffix(p),
+            "path": str(target),
+            "type": "file",
+            "registered_profiles": list(registered),
         }
         if origin_label:
             metadata["origin"] = origin_label
         return registered, metadata
 
-    def list_risk_profile_files() -> list[str]:
-        """Zwraca listę ścieżek zarejestrowanych plików profili (fallback)."""
-        return list(dict.fromkeys(_REGISTERED_SOURCES))
-
     def _severity_for(profile: Mapping[str, Any]) -> str | None:
-        return (
-            str(profile.get("severity_min")).lower() if "severity_min" in profile else None
-        )
+        value = profile.get("severity_min")
+        return str(value).lower() if value is not None else None
 
     def get_metrics_service_overrides(profile_name: str) -> dict[str, Any]:
-        """Mapuje profil ryzyka na override’y opcji `metrics_*` (BEZ prefiksu).
-        Zwracane klucze (np. `ui_alerts_reduce_mode`) są zgodne z oczekiwaniami
-        kodu, który następnie dodaje prefiks `metrics_`.
-        """
         profile = get_risk_profile(profile_name)
+        overrides = dict(profile.get("metrics_service_overrides", {}))
+        if overrides:
+            return overrides
+
         severity = _severity_for(profile) or "warning"
         max_counts = dict(profile.get("max_event_counts", {}))
-
         overlay_raw = max_counts.get("overlay_budget", 0)
         overlay_threshold = int(overlay_raw) if isinstance(overlay_raw, (int, float)) else 0
-
-        overrides: dict[str, Any] = {
-            # tryby alertów
+        dynamic: dict[str, Any] = {
             "ui_alerts_reduce_mode": "enable",
             "ui_alerts_overlay_mode": "enable",
             "ui_alerts_jank_mode": "enable",
-            # severities wynikające z minimalnej akceptowalnej głośności
             "ui_alerts_reduce_active_severity": severity,
             "ui_alerts_overlay_exceeded_severity": severity,
             "ui_alerts_jank_spike_severity": severity,
-            # progi
             "ui_alerts_overlay_critical_threshold": max(0, overlay_threshold),
         }
-
-        # Jeśli profil bardzo restrykcyjny dla jank (0), zdefiniuj krytyczne severity.
-        jank_cap = max_counts.get("jank", None)
+        jank_cap = max_counts.get("jank")
         if isinstance(jank_cap, (int, float)) and jank_cap <= 0:
-            overrides["ui_alerts_jank_critical_severity"] = "critical"
+            dynamic["ui_alerts_jank_critical_severity"] = "critical"
+        return dynamic
 
-        return overrides
-
-    # w niektórych miejscach API może oczekiwać tej nazwy – dopasowujemy do get_metrics_service_overrides
     def get_metrics_service_config_overrides(profile_name: str) -> dict[str, Any]:
         return get_metrics_service_overrides(profile_name)
 
     def get_metrics_service_env_overrides(profile_name: str) -> dict[str, Any]:
-        """Mapuje override’y na zmienne środowiskowe dla `run_trading_stub_server`.
-
-        Przykład: klucz `ui_alerts_reduce_mode` ->
-        `RUN_TRADING_STUB_METRICS_UI_ALERTS_REDUCE_MODE`.
-        """
-        cli = get_metrics_service_overrides(profile_name)
+        overrides = get_metrics_service_overrides(profile_name)
         env: dict[str, Any] = {}
-        for key, value in cli.items():
-            env_name = "RUN_TRADING_STUB_METRICS_" + key.upper()
-            env_name = env_name.replace("-", "_")
+        for option, value in overrides.items():
+            env_name = _METRICS_CLI_TO_ENV.get(option)
+            if env_name is None:
+                continue
             env[env_name] = value
         return env
 
     def summarize_risk_profile(metadata: Mapping[str, Any]) -> Mapping[str, Any]:
-        """Prosty, zgodny z JSON skrót konfiguracji profilu (fallback)."""
-        name = str(metadata.get("name", "")).strip().lower() or None
-        sev = metadata.get("severity_min")
-        maxc = dict(metadata.get("max_event_counts", {}) or {})
-        minc = dict(metadata.get("min_event_counts", {}) or {})
-        summary: dict[str, Any] = {
-            "name": name,
-            "severity_min": sev,
-            "limits": {
-                k: v
-                for k, v in {
-                    "overlay_budget": maxc.get("overlay_budget"),
-                    "jank": maxc.get("jank"),
-                    "reduce_motion": maxc.get("reduce_motion"),
-                }.items()
-                if v is not None
-            },
-            "requirements": {
-                k: v
-                for k, v in {
-                    "expect_summary_enabled": metadata.get("expect_summary_enabled"),
-                    "require_screen_info": metadata.get("require_screen_info"),
-                }.items()
-                if v is not None
-            },
-        }
-        # Podpowiedzi mappingu na override’y MetricsService (tylko to, co znamy w fallbacku)
-        try:
-            overrides = get_metrics_service_overrides(name or "")
-            summary["recommended_overrides"] = overrides
-        except Exception:
-            pass
+        summary: dict[str, Any] = {}
+
+        for key in (
+            "name",
+            "origin",
+            "extends",
+            "severity_min",
+            "expect_summary_enabled",
+            "require_screen_info",
+        ):
+            value = metadata.get(key)
+            if value is not None:
+                summary[key] = deepcopy(value)
+
+        extends_chain = metadata.get("extends_chain")
+        if extends_chain is None:
+            if metadata.get("extends"):
+                extends_chain = [metadata.get("extends")]  # type: ignore[list-item]
+            else:
+                extends_chain = []
+        summary["extends_chain"] = deepcopy(extends_chain)
+
+        for section in ("max_event_counts", "min_event_counts"):
+            value = metadata.get(section)
+            if value:
+                summary[section] = deepcopy(value)
+
+        name = metadata.get("name")
+        if name:
+            try:
+                summary["recommended_overrides"] = dict(
+                    get_metrics_service_overrides(str(name))
+                )
+            except Exception:
+                pass
         return summary
 
     class MetricsRiskProfileResolver:
@@ -351,6 +554,7 @@ except Exception:  # pragma: no cover - fallback lokalny
         "load_risk_profiles_from_file",
         "load_risk_profiles_with_metadata",
         "register_risk_profiles",
+        "reset_risk_profile_store",
         "risk_profile_metadata",
         "summarize_risk_profile",
     ]
@@ -595,6 +799,41 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    bundle_parser = subparsers.add_parser(
+        "bundle",
+        help=(
+            "Wygeneruj pakiet szablonów .env/.yaml dla etapów demo→paper→live na podstawie presetów profili ryzyka"
+        ),
+    )
+    _add_shared_arguments(bundle_parser)
+    bundle_parser.add_argument(
+        "--stage",
+        dest="stages",
+        action="append",
+        metavar="NAME=PROFILE",
+        help=(
+            "Przypisz profil ryzyka do etapu (np. --stage demo=conservative). "
+            "Domyślnie generowane są etapy demo/paper/live zgodnie z mapowaniem konserwatywny/zbalansowany/manualny"
+        ),
+    )
+    bundle_parser.add_argument(
+        "--output-dir",
+        required=True,
+        help="Katalog docelowy, w którym zostaną zapisane szablony i manifest",
+    )
+    bundle_parser.add_argument(
+        "--env-style",
+        choices=("dotenv", "export"),
+        default="dotenv",
+        help="Styl formatowania plików środowiskowych (dotenv lub export)",
+    )
+    bundle_parser.add_argument(
+        "--config-format",
+        choices=("yaml", "json"),
+        default="yaml",
+        help="Format pliku konfiguracyjnego MetricsService (yaml lub json)",
+    )
+
     diff_parser = subparsers.add_parser("diff", help="Porównaj dwa profile ryzyka i wypisz różnice w nadpisaniach")
     _add_shared_arguments(diff_parser)
     diff_parser.add_argument("base", help="Nazwa profilu bazowego")
@@ -710,6 +949,122 @@ def _build_env_assignments(overrides: Mapping[str, Any], *, style: str = "dotenv
         else:  # pragma: no cover - zabezpieczenie
             raise ValueError(f"Nieobsługiwany styl env: {style}")
     return assignments
+
+
+DEFAULT_BUNDLE_STAGE_MAP: Mapping[str, str] = {
+    "demo": "conservative",
+    "paper": "balanced",
+    "live": "manual",
+}
+
+
+def _parse_stage_mapping(stage_args: Iterable[str] | None) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    for entry in stage_args or []:
+        if "=" not in entry:
+            raise ValueError("Opcja --stage wymaga formatu etap=profil (np. --stage demo=conservative)")
+        stage, profile = entry.split("=", 1)
+        normalized_stage = stage.strip().lower()
+        normalized_profile = profile.strip().lower()
+        if not normalized_stage or not normalized_profile:
+            raise ValueError("Opcja --stage wymaga niepustych nazw etapu oraz profilu")
+        mapping[normalized_stage] = normalized_profile
+    final_mapping: dict[str, str] = dict(DEFAULT_BUNDLE_STAGE_MAP)
+    if mapping:
+        for stage, profile in mapping.items():
+            final_mapping[stage] = profile
+    return final_mapping
+
+
+def _handle_bundle(
+    *,
+    stage_mapping: Mapping[str, str],
+    output_dir: str,
+    env_style: str,
+    config_format: str,
+    sources: list[Mapping[str, Any]],
+    core_metadata: Mapping[str, Any] | None,
+) -> Mapping[str, Any]:
+    if config_format not in {"yaml", "json"}:
+        raise ValueError("Nieobsługiwany format konfiguracji (dozwolone: yaml, json)")
+
+    target_dir = Path(output_dir)
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    manifest: dict[str, Any] = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "output_dir": str(target_dir),
+        "env_style": env_style,
+        "config_format": config_format,
+        "stages": [],
+    }
+    if sources:
+        manifest["sources"] = [dict(item) for item in sources]
+    if core_metadata:
+        manifest["core_config"] = dict(core_metadata)
+
+    for stage, profile in stage_mapping.items():
+        metadata = risk_profile_metadata(profile)
+        summary = summarize_risk_profile(metadata)
+        env_overrides = dict(get_metrics_service_env_overrides(profile))
+        config_overrides = dict(get_metrics_service_config_overrides(profile))
+        env_lines = _build_env_assignments(env_overrides, style=env_style)
+
+        stage_dir = target_dir / stage
+        stage_dir.mkdir(parents=True, exist_ok=True)
+
+        env_filename = "metrics.env" if env_style == "dotenv" else "metrics.env.sh"
+        env_path = stage_dir / env_filename
+        summary_dump = json.dumps(summary, ensure_ascii=False, sort_keys=True)
+        header_lines = [
+            "# telemetry risk profile bundle",
+            f"# stage: {stage}",
+            f"# risk_profile: {profile}",
+            "# risk_profile_summary:",
+            f"#   {summary_dump}",
+            "",
+        ]
+        env_content = "\n".join(header_lines + env_lines)
+        if env_content and not env_content.endswith("\n"):
+            env_content += "\n"
+        env_path.write_text(env_content, encoding="utf-8")
+
+        config_filename = "metrics.yaml" if config_format == "yaml" else "metrics.json"
+        config_path = stage_dir / config_filename
+        config_payload: dict[str, Any] = {
+            "stage": stage,
+            "risk_profile": profile,
+            "risk_profile_summary": summary,
+            "metrics_service": {
+                "env_overrides": env_overrides,
+                "config_overrides": config_overrides,
+            },
+        }
+        if core_metadata:
+            config_payload["core_config"] = dict(core_metadata)
+
+        if config_format == "yaml":
+            if yaml is None:
+                raise RuntimeError("Wymagany PyYAML (pip install pyyaml), aby użyć formatu YAML")
+            config_text = yaml.safe_dump(config_payload, allow_unicode=True, sort_keys=False)
+        else:
+            config_text = json.dumps(config_payload, ensure_ascii=False, indent=2) + "\n"
+        config_path.write_text(config_text, encoding="utf-8")
+
+        manifest["stages"].append(
+            {
+                "stage": stage,
+                "risk_profile": profile,
+                "risk_profile_summary": summary,
+                "paths": {"env": str(env_path), "config": str(config_path)},
+            }
+        )
+
+    manifest_path = target_dir / "manifest.json"
+    manifest_text = json.dumps(manifest, ensure_ascii=False, indent=2) + "\n"
+    manifest_path.write_text(manifest_text, encoding="utf-8")
+    manifest["manifest_path"] = str(manifest_path)
+    return manifest
 
 
 # ---------------------------------------------------------------------------
@@ -1024,6 +1379,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
+    # Upewnij się, że każda sesja CLI startuje od czystego zestawu builtinów.
+    reset_risk_profile_store()
+
     # Zarejestruj dodatkowe profile z plików/katalogów
     try:
         sources = _load_additional_profiles(args.risk_profiles_files, args.risk_profiles_dirs)
@@ -1103,6 +1461,22 @@ def main(argv: list[str] | None = None) -> int:
             _write_text_output(yaml_text, output=getattr(args, "output", None))
             return 0
         _dump_payload(payload or {}, output=getattr(args, "output", None))
+        return 0
+
+    if command == "bundle":
+        try:
+            stage_mapping = _parse_stage_mapping(getattr(args, "stages", None))
+            manifest_payload = _handle_bundle(
+                stage_mapping=stage_mapping,
+                output_dir=str(getattr(args, "output_dir")),
+                env_style=str(getattr(args, "env_style", "dotenv")),
+                config_format=str(getattr(args, "config_format", "yaml")),
+                sources=sources,
+                core_metadata=core_metadata,
+            )
+        except (KeyError, ValueError, RuntimeError) as exc:
+            parser.error(str(exc))
+        _dump_payload(manifest_payload, output=getattr(args, "output", None))
         return 0
 
     if command == "diff":

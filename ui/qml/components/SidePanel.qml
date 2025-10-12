@@ -20,6 +20,7 @@ Pane {
 
         // --- Performance guard ------------------------------------------------
         Label {
+            objectName: "performanceGuardTitleLabel"
             text: qsTr("Performance guard")
             font.pixelSize: 18
             font.bold: true
@@ -30,28 +31,52 @@ Pane {
             columnSpacing: 12
             rowSpacing: 8
 
-            Label { text: qsTr("FPS target") }
-            Label { text: performanceGuard ? performanceGuard.fpsTarget.toString() : qsTr("—") }
-
-            Label { text: qsTr("Reduce motion after") }
             Label {
+                objectName: "fpsTargetLabel"
+                text: qsTr("FPS target")
+            }
+            Label {
+                objectName: "fpsTargetValueLabel"
+                text: performanceGuard ? performanceGuard.fpsTarget.toString() : qsTr("—")
+            }
+
+            Label {
+                objectName: "reduceMotionLabel"
+                text: qsTr("Reduce motion after")
+            }
+            Label {
+                objectName: "reduceMotionValueLabel"
                 text: performanceGuard
                       ? qsTr("%1 s").arg(Number(performanceGuard.reduceMotionAfterSeconds).toFixed(2))
                       : qsTr("—")
             }
 
-            Label { text: qsTr("Jank budget") }
             Label {
+                objectName: "jankBudgetLabel"
+                text: qsTr("Jank budget")
+            }
+            Label {
+                objectName: "jankBudgetValueLabel"
                 text: performanceGuard
                       ? qsTr("%1 ms").arg(Number(performanceGuard.jankThresholdMs).toFixed(1))
                       : qsTr("—")
             }
 
-            Label { text: qsTr("Overlay limit") }
-            Label { text: performanceGuard ? performanceGuard.maxOverlayCount.toString() : qsTr("—") }
-
-            Label { text: qsTr("Disable overlays <FPS") }
             Label {
+                objectName: "overlayLimitLabel"
+                text: qsTr("Overlay limit")
+            }
+            Label {
+                objectName: "overlayLimitValueLabel"
+                text: performanceGuard ? performanceGuard.maxOverlayCount.toString() : qsTr("—")
+            }
+
+            Label {
+                objectName: "disableSecondaryLabel"
+                text: qsTr("Disable overlays <FPS")
+            }
+            Label {
+                objectName: "disableSecondaryValueLabel"
                 text: performanceGuard && performanceGuard.disableSecondaryWhenFpsBelow > 0
                       ? performanceGuard.disableSecondaryWhenFpsBelow.toString()
                       : qsTr("—")
@@ -59,6 +84,7 @@ Pane {
         }
 
         Label {
+            objectName: "latestCloseLabel"
             text: qsTr("Latest close: %1")
                   .arg(ohlcvModel && ohlcvModel.latestClose() !== undefined
                            ? Number(ohlcvModel.latestClose()).toFixed(2)
@@ -69,13 +95,20 @@ Pane {
         Rectangle { height: 1; color: Qt.darker(root.palette.window, 1.4); Layout.fillWidth: true }
 
         // --- Connection / instrument -----------------------------------------
-        Label { text: qsTr("Instrument: %1").arg(currentInstrumentLabel()) }
-        Label { text: qsTr("Connection status: %1").arg(appController.connectionStatus) }
+        Label {
+            objectName: "instrumentLabel"
+            text: qsTr("Instrument: %1").arg(currentInstrumentLabel())
+        }
+        Label {
+            objectName: "connectionStatusLabel"
+            text: qsTr("Connection status: %1").arg(appController.connectionStatus)
+        }
 
         // --- Risk profile (optional – shown only if riskModel is available) ---
         Rectangle { height: 1; color: Qt.darker(root.palette.window, 1.4); Layout.fillWidth: true }
 
         Label {
+            objectName: "riskProfileHeaderLabel"
             visible: typeof riskModel !== "undefined"
             text: qsTr("Profil ryzyka")
             font.pixelSize: 18
@@ -83,6 +116,7 @@ Pane {
         }
 
         Label {
+            objectName: "riskProfileLabel"
             visible: typeof riskModel !== "undefined"
             text: (typeof riskModel !== "undefined" && riskModel.hasData)
                     ? qsTr("Profil: %1").arg(riskModel.profileLabel)
@@ -90,6 +124,7 @@ Pane {
         }
 
         Label {
+            objectName: "riskPortfolioLabel"
             visible: typeof riskModel !== "undefined"
             text: (typeof riskModel !== "undefined" && riskModel.hasData)
                     ? qsTr("Wartość portfela: %1")
@@ -98,6 +133,7 @@ Pane {
         }
 
         Label {
+            objectName: "riskDrawdownLabel"
             visible: typeof riskModel !== "undefined"
             text: (typeof riskModel !== "undefined" && riskModel.hasData)
                     ? qsTr("Drawdown: %1 %").arg(Number(riskModel.currentDrawdown * 100).toFixed(2))
@@ -105,6 +141,7 @@ Pane {
         }
 
         Label {
+            objectName: "riskLeverageLabel"
             visible: typeof riskModel !== "undefined"
             text: (typeof riskModel !== "undefined" && riskModel.hasData)
                     ? qsTr("Dźwignia: %1x").arg(Number(riskModel.usedLeverage).toFixed(2))
@@ -112,6 +149,7 @@ Pane {
         }
 
         Label {
+            objectName: "riskGeneratedAtLabel"
             visible: typeof riskModel !== "undefined"
             text: (typeof riskModel !== "undefined" && riskModel.hasData)
                     ? qsTr("Aktualizacja: %1").arg(riskModel.generatedAt.toString(Qt.ISODate))
@@ -119,6 +157,7 @@ Pane {
         }
 
         ListView {
+            objectName: "riskExposureList"
             Layout.fillWidth: true
             visible: typeof riskModel !== "undefined" && riskModel.hasData && riskModel.count > 0
             implicitHeight: contentHeight

@@ -23,6 +23,11 @@ from bot_core.data.ohlcv.manifest_report import (
     generate_manifest_report,
     summarize_status,
 )
+from bot_core.data.ohlcv.manifest_metrics import (
+    ManifestMetricsExporter,
+    STATUS_SEVERITY,
+    status_to_severity,
+)
 from bot_core.data.ohlcv.parquet_storage import ParquetCacheStorage
 from bot_core.data.ohlcv.scheduler import OHLCVRefreshScheduler
 from bot_core.data.ohlcv.sqlite_storage import SQLiteCacheStorage
@@ -44,15 +49,18 @@ __all__ = [
     "DataGapIncidentTracker",
     "GapAlertPolicy",
     "ManifestEntry",
+    "ManifestMetricsExporter",
     "OHLCVBackfillService",
     "OHLCVRefreshScheduler",
     "ParquetCacheStorage",
     "PublicAPIDataSource",
+    "STATUS_SEVERITY",
     "evaluate_summary_thresholds",
     "evaluate_coverage",
     "status_to_mapping",
     "summarize_coverage",
     "generate_manifest_report",
+    "status_to_severity",
     "summarize_status",
     "summarize_issues",
     "SQLiteCacheStorage",
