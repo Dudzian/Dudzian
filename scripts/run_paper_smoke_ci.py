@@ -24,8 +24,10 @@ def _normalize_sha256_fingerprint(value: object) -> str | None:
     candidate = value.strip().lower()
     if not candidate:
         return None
-    if ":" in candidate:
+    if candidate.startswith("sha256:"):
         candidate = candidate.split(":", 1)[-1]
+    elif candidate.startswith("sha256="):
+        candidate = candidate.split("=", 1)[-1]
     candidate = candidate.replace(":", "")
     if not candidate:
         return None
