@@ -1649,7 +1649,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--summary",
-        action="store_true,
+        action="store_true",
         help=(
             "Wypisz podsumowanie odebranych snapshotów (łączna liczba, zdarzenia, statystyki FPS). "
             "Działa zarówno w trybie online, jak i podczas odczytu z JSONL."

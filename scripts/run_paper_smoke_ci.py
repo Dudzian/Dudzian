@@ -487,7 +487,7 @@ def _run_watch_metrics_summary(
     completed = subprocess.run(cmd, text=True, check=False)
     if completed.returncode != 0:
         raise RuntimeError(
-            "watch_metrics_stream.py zakończył się niepowodzeniem – weryfikacja telemetryjna nie może zostać dokończona"
+            "watch_metrics_stream.py zakończył się niepowodzeniem – weryfikacja telemetryczna nie może zostać dokończona"
         )
 
     if not summary_path.exists():
@@ -865,6 +865,26 @@ def _collect_telemetry_artifacts(
         if combined_risk_meta.get("auth_token_scope_checked") is True:
             risk_cli_args.append("--require-risk-service-auth-token")
             risk_requirements_details["require_auth_token"] = True
+
+        # Wymagane identyfikatory tokenów (jeśli dostępne w metadanych)
+        token_ids: list[str] = []
+        token_id_value = combined_risk_meta.get("auth_token_token_id")
+        if isinstance(token_id_value, str):
+            candidate = token_id_value.strip()
+            if candidate:
+                token_ids.append(candidate)
+        tokens_list = combined_risk_meta.get("auth_token_tokens")
+        if isinstance(tokens_list, (list, tuple, set)):
+            for entry in tokens_list:
+                if isinstance(entry, str):
+                    candidate = entry.strip()
+                    if candidate:
+                        token_ids.append(candidate)
+        unique_token_ids = sorted({token for token in token_ids if token})
+        if unique_token_ids:
+            risk_requirements_details["required_token_ids"] = unique_token_ids
+            for token_id in unique_token_ids:
+                risk_cli_args.extend(["--require-risk-service-token-id", token_id])
 
     (
         verify_exit_code,
@@ -1799,7 +1819,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     except RuntimeError as exc:
         _LOGGER.error("Audyt TLS nie powiódł się: %s", exc)
-    # Kontynuujemy mimo błędu TLS, ale zarejestrujemy status jako failed
+        # Kontynuujemy mimo błędu TLS, ale zarejestrujemy status jako failed
 
     tls_report = tls_audit_artifacts.get("report") if 'tls_audit_artifacts' in locals() else None
     warnings = []

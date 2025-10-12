@@ -120,6 +120,7 @@ def _write_summary(tmp_path: Path, **overrides: object) -> Path:
                     "tls_materials": ["root_cert", "client_cert"],
                     "expected_server_sha256": ["aa:bb"],
                     "required_scopes": ["risk.read"],
+                    "required_token_ids": ["risk-reader"],
                     "require_auth_token": True,
                 },
                 "cli_args": ["--require-risk-service-tls"],
@@ -252,6 +253,10 @@ def test_main_dispatches_alert(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) 
     assert (
         message.context["paper_smoke_risk_service_required_scopes"]
         == "risk.read"
+    )
+    assert (
+        message.context["paper_smoke_risk_service_required_token_ids"]
+        == "risk-reader"
     )
     assert message.context["paper_smoke_risk_service_require_tls"] == "true"
     assert message.context["paper_smoke_risk_service_require_auth_token"] == "true"

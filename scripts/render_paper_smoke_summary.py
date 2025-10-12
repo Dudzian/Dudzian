@@ -91,7 +91,13 @@ def _truncate_json(data: Mapping[str, object] | Sequence[object] | object, limit
     return raw
 
 
-def _append_json_block(lines: list[str], title: str, payload: Mapping[str, object] | object, *, limit: int) -> None:
+def _append_json_block(
+    lines: list[str],
+    title: str,
+    payload: Mapping[str, object] | object,
+    *,
+    limit: int,
+) -> None:
     if payload is None:
         return
     rendered = _truncate_json(payload, limit)
@@ -105,7 +111,10 @@ def _append_json_block(lines: list[str], title: str, payload: Mapping[str, objec
 
 
 def render_summary_markdown(
-    summary: Mapping[str, object], *, title_override: str | None = None, max_json_chars: int = DEFAULT_MAX_JSON_CHARS
+    summary: Mapping[str, object],
+    *,
+    title_override: str | None = None,
+    max_json_chars: int = DEFAULT_MAX_JSON_CHARS,
 ) -> str:
     environment = _stringify(summary.get("environment"))
     title = title_override or f"Podsumowanie smoke paper trading — {environment}"
@@ -126,11 +135,15 @@ def render_summary_markdown(
     report = summary.get("report") if isinstance(summary.get("report"), Mapping) else None
     if report:
         lines.append("## Artefakty raportu")
-        lines.append(_build_table([
-            ("Katalog", report.get("directory")),
-            ("Plik summary", report.get("summary_path")),
-            ("Hash SHA-256", report.get("summary_sha256")),
-        ]))
+        lines.append(
+            _build_table(
+                [
+                    ("Katalog", report.get("directory")),
+                    ("Plik summary", report.get("summary_path")),
+                    ("Hash SHA-256", report.get("summary_sha256")),
+                ]
+            )
+        )
 
     storage = summary.get("storage") if isinstance(summary.get("storage"), Mapping) else None
     if storage:
@@ -271,6 +284,7 @@ def render_summary_markdown(
                         ("Materiały TLS", risk_details.get("tls_materials")),
                         ("Pinning SHA-256", risk_details.get("expected_server_sha256")),
                         ("Wymagane scope'y", risk_details.get("required_scopes")),
+                        ("Wymagane tokeny", risk_details.get("required_token_ids")),
                         ("Wymagany token", risk_details.get("require_auth_token")),
                     ]
                 )
@@ -307,8 +321,18 @@ def render_summary_markdown(
                 [
                     ("Ścieżka", json_log.get("path")),
                     ("Record ID", json_log.get("record_id")),
-                    ("Backend synchronizacji", (json_log.get("sync") or {}).get("backend") if isinstance(json_log.get("sync"), Mapping) else None),
-                    ("Lokalizacja", (json_log.get("sync") or {}).get("location") if isinstance(json_log.get("sync"), Mapping) else None),
+                    (
+                        "Backend synchronizacji",
+                        (json_log.get("sync") or {}).get("backend")
+                        if isinstance(json_log.get("sync"), Mapping)
+                        else None,
+                    ),
+                    (
+                        "Lokalizacja",
+                        (json_log.get("sync") or {}).get("location")
+                        if isinstance(json_log.get("sync"), Mapping)
+                        else None,
+                    ),
                 ]
             )
         )
@@ -320,7 +344,9 @@ def render_summary_markdown(
         if sync_info and isinstance(sync_info.get("metadata"), Mapping):
             sync_meta = sync_info["metadata"]
         if isinstance(sync_meta, Mapping):
-            _append_json_block(lines, "Metadane synchronizacji JSON", sync_meta, limit=max_json_chars)
+            _append_json_block(
+                lines, "Metadane synchronizacji JSON", sync_meta, limit=max_json_chars
+            )
 
     archive = summary.get("archive") if isinstance(summary.get("archive"), Mapping) else None
     if archive:
@@ -329,14 +355,26 @@ def render_summary_markdown(
             _build_table(
                 [
                     ("Ścieżka", archive.get("path")),
-                    ("Backend uploadu", (archive.get("upload") or {}).get("backend") if isinstance(archive.get("upload"), Mapping) else None),
-                    ("Lokalizacja", (archive.get("upload") or {}).get("location") if isinstance(archive.get("upload"), Mapping) else None),
+                    (
+                        "Backend uploadu",
+                        (archive.get("upload") or {}).get("backend")
+                        if isinstance(archive.get("upload"), Mapping)
+                        else None,
+                    ),
+                    (
+                        "Lokalizacja",
+                        (archive.get("upload") or {}).get("location")
+                        if isinstance(archive.get("upload"), Mapping)
+                        else None,
+                    ),
                 ]
             )
         )
         upload_info = archive.get("upload") if isinstance(archive.get("upload"), Mapping) else None
         if upload_info and isinstance(upload_info.get("metadata"), Mapping):
-            _append_json_block(lines, "Metadane uploadu archiwum", upload_info["metadata"], limit=max_json_chars)
+            _append_json_block(
+                lines, "Metadane uploadu archiwum", upload_info["metadata"], limit=max_json_chars
+            )
 
     manifest = summary.get("manifest") if isinstance(summary.get("manifest"), Mapping) else None
     if manifest:
@@ -384,14 +422,30 @@ def render_summary_markdown(
         if isinstance(manifest_summary, Mapping):
             _append_json_block(lines, "Szczegóły manifestu", manifest_summary, limit=max_json_chars)
 
-    # Sekcja audytu bezpieczeństwa (TLS + RBAC) – zachowana z drugiej gałęzi
-    security_baseline = summary.get("security_baseline") if isinstance(summary.get("security_baseline"), Mapping) else None
+    # Audyt bezpieczeństwa (TLS + RBAC)
+    security_baseline = (
+        summary.get("security_baseline")
+        if isinstance(summary.get("security_baseline"), Mapping)
+        else None
+    )
     if security_baseline:
         lines.append("## Audyt bezpieczeństwa (TLS + RBAC)")
-        warnings_payload = security_baseline.get("warnings") if isinstance(security_baseline, Mapping) else None
-        errors_payload = security_baseline.get("errors") if isinstance(security_baseline, Mapping) else None
-        warning_count = len(warnings_payload) if isinstance(warnings_payload, (list, tuple, set)) else (1 if warnings_payload else 0)
-        error_count = len(errors_payload) if isinstance(errors_payload, (list, tuple, set)) else (1 if errors_payload else 0)
+        warnings_payload = (
+            security_baseline.get("warnings") if isinstance(security_baseline, Mapping) else None
+        )
+        errors_payload = (
+            security_baseline.get("errors") if isinstance(security_baseline, Mapping) else None
+        )
+        warning_count = (
+            len(warnings_payload)
+            if isinstance(warnings_payload, (list, tuple, set))
+            else (1 if warnings_payload else 0)
+        )
+        error_count = (
+            len(errors_payload)
+            if isinstance(errors_payload, (list, tuple, set))
+            else (1 if errors_payload else 0)
+        )
         lines.append(
             _build_table(
                 [
@@ -436,7 +490,9 @@ def render_summary_markdown(
             lines.append("### Błędy bezpieczeństwa")
             lines.append(f"- {errors_payload}")
             lines.append("")
-        baseline_report_payload = security_baseline.get("report") if isinstance(security_baseline, Mapping) else None
+        baseline_report_payload = (
+            security_baseline.get("report") if isinstance(security_baseline, Mapping) else None
+        )
         if isinstance(baseline_report_payload, Mapping):
             _append_json_block(
                 lines,
@@ -450,8 +506,16 @@ def render_summary_markdown(
         lines.append("## Audyt tokenów RBAC")
         token_warnings = token_audit.get("warnings") if isinstance(token_audit, Mapping) else None
         token_errors = token_audit.get("errors") if isinstance(token_audit, Mapping) else None
-        warning_count = len(token_warnings) if isinstance(token_warnings, (list, tuple, set)) else (1 if token_warnings else 0)
-        error_count = len(token_errors) if isinstance(token_errors, (list, tuple, set)) else (1 if token_errors else 0)
+        warning_count = (
+            len(token_warnings)
+            if isinstance(token_warnings, (list, tuple, set))
+            else (1 if token_warnings else 0)
+        )
+        error_count = (
+            len(token_errors)
+            if isinstance(token_errors, (list, tuple, set))
+            else (1 if token_errors else 0)
+        )
         lines.append(
             _build_table(
                 [
@@ -490,8 +554,16 @@ def render_summary_markdown(
         lines.append("## Audyt TLS usług runtime")
         warnings_payload = tls_audit.get("warnings") if isinstance(tls_audit, Mapping) else None
         errors_payload = tls_audit.get("errors") if isinstance(tls_audit, Mapping) else None
-        warning_count = len(warnings_payload) if isinstance(warnings_payload, (list, tuple, set)) else (1 if warnings_payload else 0)
-        error_count = len(errors_payload) if isinstance(errors_payload, (list, tuple, set)) else (1 if errors_payload else 0)
+        warning_count = (
+            len(warnings_payload)
+            if isinstance(warnings_payload, (list, tuple, set))
+            else (1 if warnings_payload else 0)
+        )
+        error_count = (
+            len(errors_payload)
+            if isinstance(errors_payload, (list, tuple, set))
+            else (1 if errors_payload else 0)
+        )
         lines.append(
             _build_table(
                 [
@@ -539,9 +611,19 @@ def render_summary_markdown(
             )
         )
         if publish.get("raw_stdout"):
-            _append_json_block(lines, "Wyjście publish_paper_smoke_artifacts (stdout)", publish["raw_stdout"], limit=max_json_chars)
+            _append_json_block(
+                lines,
+                "Wyjście publish_paper_smoke_artifacts (stdout)",
+                publish["raw_stdout"],
+                limit=max_json_chars,
+            )
         if publish.get("raw_stderr"):
-            _append_json_block(lines, "Wyjście publish_paper_smoke_artifacts (stderr)", publish["raw_stderr"], limit=max_json_chars)
+            _append_json_block(
+                lines,
+                "Wyjście publish_paper_smoke_artifacts (stderr)",
+                publish["raw_stderr"],
+                limit=max_json_chars,
+            )
 
     return "\n".join(lines).rstrip() + "\n"
 
@@ -562,7 +644,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         raise FileNotFoundError(summary_path)
 
     summary = _load_summary(summary_path)
-    report = render_summary_markdown(summary, title_override=args.title, max_json_chars=max(args.max_json_chars, 0))
+    report = render_summary_markdown(
+        summary, title_override=args.title, max_json_chars=max(args.max_json_chars, 0)
+    )
     _write_output(report, Path(args.output) if args.output else None)
     return 0
 

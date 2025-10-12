@@ -70,6 +70,7 @@ def _sample_summary() -> dict:
                     "tls_materials": ["root_cert", "client_cert"],
                     "expected_server_sha256": ["aa:bb"],
                     "required_scopes": ["risk.read"],
+                    "required_token_ids": ["risk-reader"],
                     "require_auth_token": True,
                 },
                 "cli_args": ["--require-risk-service-tls"],
@@ -187,6 +188,7 @@ def test_render_manifest_section_present(tmp_path: Path) -> None:
     assert "### Wymagania RiskService" in rendered
     assert "metrics.read" in rendered
     assert "risk.read" in rendered
+    assert "risk-reader" in rendered
     assert "Flagi verify_decision_log" in rendered
     assert "## Audyt tokenów RBAC" in rendered
     assert "## Audyt TLS usług runtime" in rendered

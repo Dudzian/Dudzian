@@ -70,6 +70,8 @@ _ENV_EXPECT_SERVER_SHA256_SOURCE = f"{_ENV_PREFIX}EXPECT_SERVER_SHA256_SOURCE"
 # rozszerzenia dot. RBAC/TLS dla RiskService i auth-scope
 _ENV_REQUIRE_AUTH_SCOPE = f"{_ENV_PREFIX}REQUIRE_AUTH_SCOPE"
 _ENV_REQUIRE_RISK_SCOPE = f"{_ENV_PREFIX}REQUIRE_RISK_SERVICE_SCOPE"
+_ENV_REQUIRE_RISK_TOKEN_ID = f"{_ENV_PREFIX}REQUIRE_RISK_SERVICE_TOKEN_ID"
+
 _ENV_REQUIRE_RISK_TLS = f"{_ENV_PREFIX}REQUIRE_RISK_SERVICE_TLS"
 _ENV_REQUIRE_RISK_TLS_MATERIALS = f"{_ENV_PREFIX}REQUIRE_RISK_SERVICE_TLS_MATERIALS"
 _ENV_EXPECT_RISK_SERVER_SHA256 = f"{_ENV_PREFIX}EXPECT_RISK_SERVICE_SERVER_SHA256"
@@ -1051,6 +1053,7 @@ def _validate_risk_service_metadata(
     required_materials: Sequence[str],
     expected_fingerprints: Sequence[str],
     required_scopes: Sequence[str],
+    required_token_ids: Sequence[str],
     require_auth_token: bool,
 ) -> None:
     requirements_defined = any(
@@ -1059,6 +1062,7 @@ def _validate_risk_service_metadata(
             required_materials,
             expected_fingerprints,
             required_scopes,
+            required_token_ids,
             require_auth_token,
         ]
     )
@@ -1140,6 +1144,30 @@ def _validate_risk_service_metadata(
             raise VerificationError(
                 "Sekcja risk_service nie deklaruje wymaganych scope'ów: "
                 + ", ".join(sorted(missing_scopes))
+            )
+
+    # token_id (wielokrotne)
+    if required_token_ids:
+        recorded_tokens: set[str] = set()
+        token_id = metadata.get("auth_token_token_id")
+        if isinstance(token_id, str):
+            candidate = token_id.strip()
+            if candidate:
+                recorded_tokens.add(candidate)
+        token_list = metadata.get("auth_token_tokens")
+        if isinstance(token_list, (list, tuple, set)):
+            for entry in token_list:
+                if isinstance(entry, str):
+                    candidate = entry.strip()
+                    if candidate:
+                        recorded_tokens.add(candidate)
+        missing_tokens = [
+            token for token in required_token_ids if token not in recorded_tokens
+        ]
+        if missing_tokens:
+            raise VerificationError(
+                "Sekcja risk_service nie deklaruje wymaganych token_id: "
+                + ", ".join(sorted(missing_tokens))
             )
 
     if require_auth_token:
@@ -1711,6 +1739,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Wymagaj, aby sekcja risk_service deklarowała wskazany scope (można powtarzać)",
     )
     parser.add_argument(
+        "--require-risk-service-token-id",
+        dest="require_risk_service_token_id",
+        action="append",
+        default=[],
+        metavar="TOKEN_ID",
+        help="Wymagaj, aby sekcja risk_service deklarowała wskazany token_id (można powtarzać)",
+    )
+    parser.add_argument(
         "--require-risk-service-auth-token",
         action="store_true",
         help="Wymagaj potwierdzenia tokenu RBAC w sekcji risk_service",
@@ -2036,6 +2072,29 @@ def _apply_env_defaults(args: argparse.Namespace, parser: argparse.ArgumentParse
         seen_risk_scopes.add(normalized_scope)
         normalized_risk_scopes.append(normalized_scope)
     args._required_risk_service_scopes = tuple(normalized_risk_scopes)
+
+    required_risk_tokens_raw: list[str] = []
+    required_risk_tokens_raw.extend(
+        getattr(args, "require_risk_service_token_id", []) or []
+    )
+    env_required_risk_tokens = os.getenv(_ENV_REQUIRE_RISK_TOKEN_ID)
+    if env_required_risk_tokens:
+        required_risk_tokens_raw.extend(
+            _parse_env_list(
+                env_required_risk_tokens,
+                variable=_ENV_REQUIRE_RISK_TOKEN_ID,
+                parser=parser,
+            )
+        )
+    normalized_risk_tokens: list[str] = []
+    seen_risk_tokens: set[str] = set()
+    for token_id in required_risk_tokens_raw:
+        normalized_token = str(token_id).strip()
+        if not normalized_token or normalized_token in seen_risk_tokens:
+            continue
+        seen_risk_tokens.add(normalized_token)
+        normalized_risk_tokens.append(normalized_token)
+    args._required_risk_service_token_ids = tuple(normalized_risk_tokens)
 
     if not getattr(args, "require_risk_service_auth_token", False):
         env_risk_token = os.getenv(_ENV_REQUIRE_RISK_AUTH_TOKEN)
@@ -2400,6 +2459,7 @@ def main(argv: list[str] | None = None) -> int:
             required_materials=getattr(args, "_required_risk_service_tls_materials", ()),
             expected_fingerprints=getattr(args, "_expected_risk_service_sha256", ()),
             required_scopes=getattr(args, "_required_risk_service_scopes", ()),
+            required_token_ids=getattr(args, "_required_risk_service_token_ids", ()),
             require_auth_token=getattr(args, "_require_risk_service_auth_token", False),
         )
         if metadata:

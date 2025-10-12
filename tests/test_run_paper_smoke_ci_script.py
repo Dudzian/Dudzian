@@ -317,7 +317,7 @@ def _fake_subprocess_run_factory(
             return _FakeCompleted(returncode=0)
         if script == "verify_decision_log.py":
             report_arg = cmd.index("--report-output")
-            report_path = Path(cmd[report_arg + 1])
+            report_path = Path(report_arg + 1 and cmd[report_arg + 1])
             report_path.parent.mkdir(parents=True, exist_ok=True)
             payload = {
                 "report_version": 1,
@@ -542,6 +542,7 @@ def test_main_runs_smoke_and_prints_summary(monkeypatch: pytest.MonkeyPatch, tmp
     assert isinstance(risk_requirements.get("cli_args"), list)
     assert risk_requirements.get("details", {}).get("require_tls") is True
     assert "risk.read" in risk_requirements.get("details", {}).get("required_scopes", [])
+    assert "risk-reader" in risk_requirements.get("details", {}).get("required_token_ids", [])
     combined_meta = risk_requirements.get("combined_metadata", {})
     assert combined_meta.get("tls_enabled") is True
     assert combined_meta.get("root_cert_configured") is True
@@ -591,6 +592,8 @@ def test_main_runs_smoke_and_prints_summary(monkeypatch: pytest.MonkeyPatch, tmp
     )
     assert "--require-risk-service-scope" in verify_cmd
     assert "--require-risk-service-auth-token" in verify_cmd
+    assert "--require-risk-service-token-id" in verify_cmd
+    assert "risk-reader" in verify_cmd
     decision_command = telemetry.get("decision_log_report", {}).get("command")
     assert isinstance(decision_command, list)
     assert "--require-auth-scope" in decision_command
@@ -598,6 +601,7 @@ def test_main_runs_smoke_and_prints_summary(monkeypatch: pytest.MonkeyPatch, tmp
     assert "risk.read" in decision_command
     assert "--require-risk-service-tls" in decision_command
     assert "--require-risk-service-auth-token" in decision_command
+    assert "--require-risk-service-token-id" in decision_command
 
 
 def test_main_propagates_decision_log_failure(
@@ -1732,6 +1736,7 @@ def test_ci_main_end_to_end_s3_backends(monkeypatch: pytest.MonkeyPatch, tmp_pat
     assert json_sync_meta.get("remote_sha256") == json_sync_meta.get("log_sha256")
     assert archive_meta.get("remote_sha256") == archive_meta.get("archive_sha256")
 
+    uploads: dict[tuple[str, str], dict[str, object]]
     synced_objects = [key for key in uploads if key[0] == "json-audit"]
     archive_objects = [key for key in uploads if key[0] == "archive-bucket"]
     assert synced_objects, "Powinien powstać obiekt JSONL w magazynie S3"

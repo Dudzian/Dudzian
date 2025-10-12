@@ -265,6 +265,16 @@ def _append_telemetry_context(
                 )
             elif isinstance(scopes, str) and scopes:
                 context["paper_smoke_risk_service_required_scopes"] = scopes
+
+            # rozszerzenie: wymagane identyfikatory tokenów
+            token_ids = details.get("required_token_ids")
+            if isinstance(token_ids, (list, tuple, set)) and token_ids:
+                context["paper_smoke_risk_service_required_token_ids"] = ",".join(
+                    str(token) for token in token_ids
+                )
+            elif isinstance(token_ids, str) and token_ids:
+                context["paper_smoke_risk_service_required_token_ids"] = token_ids
+
             if "require_auth_token" in details:
                 _set_bool(
                     "paper_smoke_risk_service_require_auth_token",
