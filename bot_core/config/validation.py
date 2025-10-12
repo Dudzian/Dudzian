@@ -93,6 +93,7 @@ def validate_core_config(config: CoreConfig) -> ConfigValidationResult:
     warnings: list[str] = []
 
     _validate_risk_profiles(config, errors, warnings)
+    _validate_instrument_buckets(config, errors, warnings)
     _validate_strategies(config, errors, warnings)
     _validate_runtime_controllers(config, errors, warnings)
     _validate_instrument_universes(config, errors, warnings)
@@ -136,6 +137,34 @@ def _validate_risk_profiles(
         if name.lower() != profile.name.lower():
             warnings.append(
                 f"profil ryzyka '{name}' ma nazwę '{profile.name}' – zalecana spójność"
+            )
+
+        for bucket_name in profile.instrument_buckets:
+            if bucket_name not in config.instrument_buckets:
+                errors.append(
+                    f"{context}: koszyk instrumentów '{bucket_name}' nie istnieje w konfiguracji"
+                )
+
+
+def _validate_instrument_buckets(
+    config: CoreConfig, errors: list[str], warnings: list[str]
+) -> None:
+    universes = set(config.instrument_universes)
+    for name, bucket in config.instrument_buckets.items():
+        context = f"koszyk instrumentów '{name}'"
+        if not bucket.symbols:
+            errors.append(f"{context}: lista symboli nie może być pusta")
+        if bucket.universe and bucket.universe not in universes:
+            errors.append(
+                f"{context}: referencja do nieistniejącego uniwersum '{bucket.universe}'"
+            )
+        if bucket.max_position_pct is not None and bucket.max_position_pct <= 0:
+            errors.append(
+                f"{context}: max_position_pct musi być dodatnie, otrzymano {bucket.max_position_pct}"
+            )
+        if bucket.max_notional_usd is not None and bucket.max_notional_usd <= 0:
+            errors.append(
+                f"{context}: max_notional_usd musi być dodatnie, otrzymano {bucket.max_notional_usd}"
             )
 
 

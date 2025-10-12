@@ -5,7 +5,7 @@ from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import Callable, Mapping, MutableMapping
+from typing import Callable, Mapping, MutableMapping, Sequence
 
 from bot_core.alerts import DefaultAlertRouter
 from bot_core.config.models import (
@@ -14,6 +14,11 @@ from bot_core.config.models import (
     DailyTrendMomentumStrategyConfig,
     EnvironmentConfig,
     InstrumentUniverseConfig,
+    MeanReversionStrategyConfig,
+    VolatilityTargetingStrategyConfig,
+    CrossExchangeArbitrageStrategyConfig,
+    StrategyScheduleConfig,
+    MultiStrategySchedulerConfig,
 )
 from bot_core.data.base import OHLCVRequest
 from bot_core.data.ohlcv import (
@@ -28,9 +33,21 @@ from bot_core.execution.base import ExecutionContext, ExecutionService
 from bot_core.execution.paper import MarketMetadata, PaperTradingExecutionService
 from bot_core.exchanges.base import AccountSnapshot, Environment, ExchangeAdapterFactory
 from bot_core.runtime.bootstrap import BootstrapContext, bootstrap_environment
+from bot_core.runtime.multi_strategy_scheduler import (
+    MultiStrategyScheduler,
+    StrategyDataFeed,
+    StrategySignalSink,
+)
 from bot_core.runtime.controller import DailyTrendController
 from bot_core.security import SecretManager
 from bot_core.strategies.daily_trend import DailyTrendMomentumSettings, DailyTrendMomentumStrategy
+from bot_core.strategies.mean_reversion import MeanReversionSettings, MeanReversionStrategy
+from bot_core.strategies.volatility_target import VolatilityTargetSettings, VolatilityTargetStrategy
+from bot_core.strategies.cross_exchange_arbitrage import (
+    CrossExchangeArbitrageSettings,
+    CrossExchangeArbitrageStrategy,
+)
+from bot_core.strategies.base import StrategyEngine, StrategySignal, MarketSnapshot
 
 _DEFAULT_LEDGER_SUBDIR = Path("audit/ledger")
 
@@ -511,4 +528,256 @@ def _build_account_loader(
     return loader
 
 
-__all__ = ["DailyTrendPipeline", "build_daily_trend_pipeline", "create_trading_controller"]
+@dataclass(slots=True)
+class MultiStrategyRuntime:
+    """Zestaw komponentów do uruchomienia scheduler-a multi-strategy."""
+
+    bootstrap: BootstrapContext
+    scheduler: MultiStrategyScheduler
+    data_feed: StrategyDataFeed
+    signal_sink: StrategySignalSink
+    strategies: Mapping[str, StrategyEngine]
+    schedules: tuple[StrategyScheduleConfig, ...]
+
+
+class OHLCVStrategyFeed(StrategyDataFeed):
+    """Strategiczny feed korzystający z lokalnego cache OHLCV."""
+
+    def __init__(
+        self,
+        data_source: CachedOHLCVSource,
+        *,
+        symbols_map: Mapping[str, Sequence[str]],
+        interval_map: Mapping[str, str],
+        default_interval: str = "1h",
+    ) -> None:
+        self._data_source = data_source
+        self._symbols_map = {key: tuple(values) for key, values in symbols_map.items()}
+        self._interval_map = dict(interval_map)
+        self._default_interval = default_interval
+
+    def load_history(self, strategy_name: str, bars: int) -> Sequence[MarketSnapshot]:
+        interval = self._interval_map.get(strategy_name, self._default_interval)
+        symbols = self._symbols_map.get(strategy_name, ())
+        if not symbols or bars <= 0:
+            return ()
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        snapshots: list[MarketSnapshot] = []
+        for symbol in symbols:
+            request = OHLCVRequest(symbol=symbol, interval=interval, start=0, end=now_ms, limit=bars)
+            response = self._data_source.fetch_ohlcv(request)
+            snapshots.extend(_response_to_snapshots(symbol, response))
+        snapshots.sort(key=lambda snap: (snap.symbol, snap.timestamp))
+        return tuple(snapshots)
+
+    def fetch_latest(self, strategy_name: str) -> Sequence[MarketSnapshot]:
+        interval = self._interval_map.get(strategy_name, self._default_interval)
+        symbols = self._symbols_map.get(strategy_name, ())
+        if not symbols:
+            return ()
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        snapshots: list[MarketSnapshot] = []
+        for symbol in symbols:
+            request = OHLCVRequest(symbol=symbol, interval=interval, start=0, end=now_ms, limit=1)
+            response = self._data_source.fetch_ohlcv(request)
+            converted = _response_to_snapshots(symbol, response)
+            if converted:
+                snapshots.append(converted[-1])
+        snapshots.sort(key=lambda snap: (snap.symbol, snap.timestamp))
+        return tuple(snapshots)
+
+
+class InMemoryStrategySignalSink(StrategySignalSink):
+    """Lekki sink zapisujący sygnały dla celów audytu/regresji."""
+
+    def __init__(self) -> None:
+        self._records: list[tuple[str, Sequence[StrategySignal]]] = []
+
+    def submit(
+        self,
+        *,
+        strategy_name: str,
+        schedule_name: str,
+        risk_profile: str,
+        timestamp: datetime,
+        signals: Sequence[StrategySignal],
+    ) -> None:
+        self._records.append((schedule_name, tuple(signals)))
+
+    def export(self) -> Sequence[tuple[str, Sequence[StrategySignal]]]:
+        return tuple(self._records)
+
+
+def _response_to_snapshots(symbol: str, response: object) -> list[MarketSnapshot]:
+    if not response or not getattr(response, "rows", None):
+        return []
+    columns = [str(column).lower() for column in getattr(response, "columns", [])]
+    index = {column: idx for idx, column in enumerate(columns)}
+    required = {"open", "high", "low", "close"}
+    if not required.issubset(index):
+        return []
+    time_idx = index.get("open_time") or index.get("timestamp")
+    if time_idx is None:
+        return []
+    volume_idx = index.get("volume")
+    snapshots: list[MarketSnapshot] = []
+    for row in getattr(response, "rows", []):
+        if len(row) <= index["close"]:
+            continue
+        snapshots.append(
+            MarketSnapshot(
+                symbol=symbol,
+                timestamp=int(float(row[time_idx])),
+                open=float(row[index["open"]]),
+                high=float(row[index["high"]]),
+                low=float(row[index["low"]]),
+                close=float(row[index["close"]]),
+                volume=float(row[volume_idx]) if volume_idx is not None else 0.0,
+            )
+        )
+    snapshots.sort(key=lambda item: item.timestamp)
+    return snapshots
+
+
+def build_multi_strategy_runtime(
+    *,
+    environment_name: str,
+    scheduler_name: str | None,
+    config_path: str | Path,
+    secret_manager: SecretManager,
+    adapter_factories: Mapping[str, ExchangeAdapterFactory] | None = None,
+    telemetry_emitter: Callable[[str, Mapping[str, float]], None] | None = None,
+) -> MultiStrategyRuntime:
+    bootstrap_ctx = bootstrap_environment(
+        environment_name,
+        config_path=config_path,
+        secret_manager=secret_manager,
+        adapter_factories=adapter_factories,
+    )
+    core_config = bootstrap_ctx.core_config
+    environment = bootstrap_ctx.environment
+    scheduler_configs = getattr(core_config, "multi_strategy_schedulers", {})
+    if not scheduler_configs:
+        raise ValueError("Brak zdefiniowanych schedulerów multi-strategy w konfiguracji")
+    resolved_scheduler_name = scheduler_name or next(iter(scheduler_configs))
+    scheduler_cfg = scheduler_configs.get(resolved_scheduler_name)
+    if scheduler_cfg is None:
+        raise KeyError(f"Nie znaleziono scheduler-a {resolved_scheduler_name}")
+
+    paper_settings = _normalize_paper_settings(environment)
+    allowed_quotes = paper_settings["allowed_quotes"]
+    universe = _resolve_universe(core_config, environment)
+    markets = _build_markets(universe, environment.exchange, allowed_quotes, paper_settings)
+    if not markets:
+        raise ValueError("Brak instrumentów dla scheduler-a multi-strategy – sprawdź instrument_universe")
+
+    cache_root = Path(environment.data_cache_path)
+    parquet_storage = ParquetCacheStorage(cache_root / "ohlcv_parquet", namespace=environment.exchange)
+    manifest_storage = SQLiteCacheStorage(cache_root / "ohlcv_manifest.sqlite", store_rows=False)
+    storage = DualCacheStorage(primary=parquet_storage, manifest=manifest_storage)
+    public_source = PublicAPIDataSource(exchange_adapter=bootstrap_ctx.adapter)
+    cached_source = CachedOHLCVSource(storage=storage, upstream=public_source)
+
+    strategies = _instantiate_strategies(core_config)
+    interval_map: dict[str, str] = {}
+    symbols_map: dict[str, Sequence[str]] = {}
+    all_symbols = tuple(markets.keys())
+    for schedule in scheduler_cfg.schedules:
+        interval = schedule.interval or "1h"
+        interval_map[schedule.strategy] = interval
+        symbols_map.setdefault(schedule.strategy, all_symbols)
+
+    data_feed = OHLCVStrategyFeed(cached_source, symbols_map=symbols_map, interval_map=interval_map)
+    signal_sink = InMemoryStrategySignalSink()
+    scheduler = MultiStrategyScheduler(
+        environment=environment_name,
+        portfolio=str(paper_settings["portfolio_id"]),
+        telemetry_emitter=telemetry_emitter,
+        decision_journal=bootstrap_ctx.decision_journal,
+    )
+
+    for schedule in scheduler_cfg.schedules:
+        strategy = strategies.get(schedule.strategy)
+        if strategy is None:
+            raise KeyError(f"Strategia {schedule.strategy} nie została zarejestrowana w konfiguracji")
+        scheduler.register_schedule(
+            name=schedule.name,
+            strategy_name=schedule.strategy,
+            strategy=strategy,
+            feed=data_feed,
+            sink=signal_sink,
+            cadence_seconds=schedule.cadence_seconds,
+            max_drift_seconds=schedule.max_drift_seconds,
+            warmup_bars=schedule.warmup_bars,
+            risk_profile=schedule.risk_profile,
+            max_signals=schedule.max_signals,
+        )
+
+    return MultiStrategyRuntime(
+        bootstrap=bootstrap_ctx,
+        scheduler=scheduler,
+        data_feed=data_feed,
+        signal_sink=signal_sink,
+        strategies=strategies,
+        schedules=tuple(scheduler_cfg.schedules),
+    )
+
+
+def _instantiate_strategies(core_config: CoreConfig) -> dict[str, StrategyEngine]:
+    registry: dict[str, StrategyEngine] = {}
+    for name, cfg in getattr(core_config, "strategies", {}).items():
+        registry[name] = DailyTrendMomentumStrategy(
+            DailyTrendMomentumSettings(
+                fast_ma=cfg.fast_ma,
+                slow_ma=cfg.slow_ma,
+                breakout_lookback=cfg.breakout_lookback,
+                momentum_window=cfg.momentum_window,
+                atr_window=cfg.atr_window,
+                atr_multiplier=cfg.atr_multiplier,
+                min_trend_strength=cfg.min_trend_strength,
+                min_momentum=cfg.min_momentum,
+            )
+        )
+    for name, cfg in getattr(core_config, "mean_reversion_strategies", {}).items():
+        registry[name] = MeanReversionStrategy(
+            MeanReversionSettings(
+                lookback=cfg.lookback,
+                entry_zscore=cfg.entry_zscore,
+                exit_zscore=cfg.exit_zscore,
+                max_holding_period=cfg.max_holding_period,
+                volatility_cap=cfg.volatility_cap,
+                min_volume_usd=cfg.min_volume_usd,
+            )
+        )
+    for name, cfg in getattr(core_config, "volatility_target_strategies", {}).items():
+        registry[name] = VolatilityTargetStrategy(
+            VolatilityTargetSettings(
+                target_volatility=cfg.target_volatility,
+                lookback=cfg.lookback,
+                rebalance_threshold=cfg.rebalance_threshold,
+                min_allocation=cfg.min_allocation,
+                max_allocation=cfg.max_allocation,
+                floor_volatility=cfg.floor_volatility,
+            )
+        )
+    for name, cfg in getattr(core_config, "cross_exchange_arbitrage_strategies", {}).items():
+        registry[name] = CrossExchangeArbitrageStrategy(
+            CrossExchangeArbitrageSettings(
+                primary_exchange=cfg.primary_exchange,
+                secondary_exchange=cfg.secondary_exchange,
+                spread_entry=cfg.spread_entry,
+                spread_exit=cfg.spread_exit,
+                max_notional=cfg.max_notional,
+                max_open_seconds=cfg.max_open_seconds,
+            )
+        )
+    return registry
+
+
+__all__ = [
+    "DailyTrendPipeline",
+    "build_daily_trend_pipeline",
+    "create_trading_controller",
+    "MultiStrategyRuntime",
+    "build_multi_strategy_runtime",
+]

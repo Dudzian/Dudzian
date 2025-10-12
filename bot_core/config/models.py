@@ -207,6 +207,7 @@ class EnvironmentConfig:
 @dataclass(slots=True)
 class RiskProfileConfig:
     """Parametry wykorzystywane do inicjalizacji profili ryzyka."""
+
     name: str
     max_daily_loss_pct: float
     max_position_pct: float
@@ -216,6 +217,8 @@ class RiskProfileConfig:
     max_open_positions: int
     hard_drawdown_pct: float
     data_quality: EnvironmentDataQualityConfig | None = None
+    strategy_allocations: Mapping[str, float] = field(default_factory=dict)
+    instrument_buckets: Sequence[str] = field(default_factory=tuple)
 
 
 # --- Instrumenty / uniwersa --------------------------------------------------
@@ -246,6 +249,18 @@ class InstrumentUniverseConfig:
     instruments: Sequence[InstrumentConfig]
 
 
+@dataclass(slots=True)
+class InstrumentBucketConfig:
+    """Opis koszyka instrumentów przypisanych do profili ryzyka."""
+
+    name: str
+    universe: str
+    symbols: Sequence[str]
+    max_position_pct: float | None = None
+    max_notional_usd: float | None = None
+    tags: Sequence[str] = field(default_factory=tuple)
+
+
 # --- Strategie ----------------------------------------------------------------
 
 @dataclass(slots=True)
@@ -260,6 +275,71 @@ class DailyTrendMomentumStrategyConfig:
     atr_multiplier: float
     min_trend_strength: float
     min_momentum: float
+
+
+@dataclass(slots=True)
+class MeanReversionStrategyConfig:
+    """Parametry strategii powrotu do średniej."""
+
+    name: str
+    lookback: int
+    entry_zscore: float
+    exit_zscore: float
+    max_holding_period: int
+    volatility_cap: float
+    min_volume_usd: float
+
+
+@dataclass(slots=True)
+class VolatilityTargetingStrategyConfig:
+    """Konfiguracja strategii kontroli zmienności portfela."""
+
+    name: str
+    target_volatility: float
+    lookback: int
+    rebalance_threshold: float
+    min_allocation: float
+    max_allocation: float
+    floor_volatility: float
+
+
+@dataclass(slots=True)
+class CrossExchangeArbitrageStrategyConfig:
+    """Parametry strategii arbitrażowej cross-exchange."""
+
+    name: str
+    primary_exchange: str
+    secondary_exchange: str
+    spread_entry: float
+    spread_exit: float
+    max_notional: float
+    max_open_seconds: int
+
+
+@dataclass(slots=True)
+class StrategyScheduleConfig:
+    """Opis pojedynczego zadania harmonogramu strategii."""
+
+    name: str
+    strategy: str
+    cadence_seconds: int
+    max_drift_seconds: int
+    warmup_bars: int
+    risk_profile: str
+    max_signals: int = 10
+    interval: str | None = None
+
+
+@dataclass(slots=True)
+class MultiStrategySchedulerConfig:
+    """Konfiguracja scheduler-a wielostrate-gicznego."""
+
+    name: str
+    schedules: Sequence[StrategyScheduleConfig]
+    telemetry_namespace: str
+    decision_log_category: str = "runtime.scheduler"
+    health_check_interval: int = 300
+    rbac_tokens: Sequence[ServiceTokenConfig] = field(default_factory=tuple)
 
 
 # --- Kanały alertów -----------------------------------------------------------
@@ -412,7 +492,14 @@ class CoreConfig:
     environments: Mapping[str, EnvironmentConfig]
     risk_profiles: Mapping[str, RiskProfileConfig]
     instrument_universes: Mapping[str, InstrumentUniverseConfig] = field(default_factory=dict)
+    instrument_buckets: Mapping[str, InstrumentBucketConfig] = field(default_factory=dict)
     strategies: Mapping[str, DailyTrendMomentumStrategyConfig] = field(default_factory=dict)
+    mean_reversion_strategies: Mapping[str, MeanReversionStrategyConfig] = field(default_factory=dict)
+    volatility_target_strategies: Mapping[str, VolatilityTargetingStrategyConfig] = field(default_factory=dict)
+    cross_exchange_arbitrage_strategies: Mapping[
+        str, CrossExchangeArbitrageStrategyConfig
+    ] = field(default_factory=dict)
+    multi_strategy_schedulers: Mapping[str, MultiStrategySchedulerConfig] = field(default_factory=dict)
     reporting: CoreReportingConfig | None = None
     sms_providers: Mapping[str, SMSProviderSettings] = field(default_factory=dict)
     telegram_channels: Mapping[str, TelegramChannelSettings] = field(default_factory=dict)
@@ -439,7 +526,13 @@ __all__ = [
     "InstrumentBackfillWindow",
     "InstrumentConfig",
     "InstrumentUniverseConfig",
+    "InstrumentBucketConfig",
     "DailyTrendMomentumStrategyConfig",
+    "MeanReversionStrategyConfig",
+    "VolatilityTargetingStrategyConfig",
+    "CrossExchangeArbitrageStrategyConfig",
+    "StrategyScheduleConfig",
+    "MultiStrategySchedulerConfig",
     "SMSProviderSettings",
     "TelegramChannelSettings",
     "EmailChannelSettings",

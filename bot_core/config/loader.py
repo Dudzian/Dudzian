@@ -30,11 +30,13 @@ from bot_core.exchanges.base import Environment
 try:
     from bot_core.config.models import (
         InstrumentBackfillWindow,
+        InstrumentBucketConfig,
         InstrumentConfig,
         InstrumentUniverseConfig,
     )
 except Exception:  # brak rozszerzeń instrumentów
     InstrumentBackfillWindow = None  # type: ignore
+    InstrumentBucketConfig = None  # type: ignore
     InstrumentConfig = None  # type: ignore
     InstrumentUniverseConfig = None  # type: ignore
 
@@ -42,6 +44,21 @@ try:
     from bot_core.config.models import DailyTrendMomentumStrategyConfig
 except Exception:  # brak modułu strategii
     DailyTrendMomentumStrategyConfig = None  # type: ignore
+
+try:
+    from bot_core.config.models import (
+        CrossExchangeArbitrageStrategyConfig,
+        MeanReversionStrategyConfig,
+        MultiStrategySchedulerConfig,
+        StrategyScheduleConfig,
+        VolatilityTargetingStrategyConfig,
+    )
+except Exception:  # brak rozszerzonej biblioteki strategii
+    CrossExchangeArbitrageStrategyConfig = None  # type: ignore
+    MeanReversionStrategyConfig = None  # type: ignore
+    MultiStrategySchedulerConfig = None  # type: ignore
+    StrategyScheduleConfig = None  # type: ignore
+    VolatilityTargetingStrategyConfig = None  # type: ignore
 
 # Dodatkowe kanały komunikatorów – w pełni opcjonalne
 try:
@@ -151,6 +168,32 @@ def _load_instrument_universes(raw: Mapping[str, Any]):
     return universes
 
 
+def _load_instrument_buckets(
+    raw: Mapping[str, Any],
+) -> Mapping[str, "InstrumentBucketConfig"]:
+    if InstrumentBucketConfig is None:
+        return {}
+    buckets: dict[str, InstrumentBucketConfig] = {}
+    for name, entry in (raw.get("instrument_buckets", {}) or {}).items():
+        buckets[name] = InstrumentBucketConfig(
+            name=name,
+            universe=str(entry.get("universe", "")),
+            symbols=tuple(str(symbol) for symbol in (entry.get("symbols", ()) or ())),
+            max_position_pct=(
+                float(entry["max_position_pct"])
+                if entry.get("max_position_pct") is not None
+                else None
+            ),
+            max_notional_usd=(
+                float(entry["max_notional_usd"])
+                if entry.get("max_notional_usd") is not None
+                else None
+            ),
+            tags=tuple(str(tag) for tag in (entry.get("tags", ()) or ())),
+        )
+    return buckets
+
+
 def _load_sms_providers(raw_alerts: Mapping[str, Any]) -> Mapping[str, SMSProviderSettings]:
     providers: dict[str, SMSProviderSettings] = {}
     for name, entry in (raw_alerts.get("sms_providers", {}) or {}).items():
@@ -235,6 +278,113 @@ def _load_strategies(raw: Mapping[str, Any]):
             min_momentum=float(params.get("min_momentum", 0.0)),
         )
     return strategies
+
+
+def _load_mean_reversion_strategies(raw: Mapping[str, Any]):
+    if MeanReversionStrategyConfig is None:
+        return {}
+    strategies: dict[str, MeanReversionStrategyConfig] = {}
+    for name, entry in (raw.get("mean_reversion_strategies", {}) or {}).items():
+        params = entry.get("parameters", entry) or {}
+        strategies[name] = MeanReversionStrategyConfig(
+            name=name,
+            lookback=int(params.get("lookback", 96)),
+            entry_zscore=float(params.get("entry_zscore", 1.8)),
+            exit_zscore=float(params.get("exit_zscore", 0.4)),
+            max_holding_period=int(params.get("max_holding_period", 12)),
+            volatility_cap=float(params.get("volatility_cap", 0.04)),
+            min_volume_usd=float(params.get("min_volume_usd", 1000.0)),
+        )
+    return strategies
+
+
+def _load_volatility_target_strategies(raw: Mapping[str, Any]):
+    if VolatilityTargetingStrategyConfig is None:
+        return {}
+    strategies: dict[str, VolatilityTargetingStrategyConfig] = {}
+    for name, entry in (raw.get("volatility_target_strategies", {}) or {}).items():
+        params = entry.get("parameters", entry) or {}
+        strategies[name] = VolatilityTargetingStrategyConfig(
+            name=name,
+            target_volatility=float(params.get("target_volatility", 0.12)),
+            lookback=int(params.get("lookback", 60)),
+            rebalance_threshold=float(params.get("rebalance_threshold", 0.1)),
+            min_allocation=float(params.get("min_allocation", 0.1)),
+            max_allocation=float(params.get("max_allocation", 1.0)),
+            floor_volatility=float(params.get("floor_volatility", 0.02)),
+        )
+    return strategies
+
+
+def _load_cross_exchange_arbitrage_strategies(raw: Mapping[str, Any]):
+    if CrossExchangeArbitrageStrategyConfig is None:
+        return {}
+    strategies: dict[str, CrossExchangeArbitrageStrategyConfig] = {}
+    for name, entry in (raw.get("cross_exchange_arbitrage_strategies", {}) or {}).items():
+        params = entry.get("parameters", entry) or {}
+        strategies[name] = CrossExchangeArbitrageStrategyConfig(
+            name=name,
+            primary_exchange=str(params.get("primary_exchange", "")),
+            secondary_exchange=str(params.get("secondary_exchange", "")),
+            spread_entry=float(params.get("spread_entry", 0.0015)),
+            spread_exit=float(params.get("spread_exit", 0.0005)),
+            max_notional=float(params.get("max_notional", 50_000.0)),
+            max_open_seconds=int(params.get("max_open_seconds", 120)),
+        )
+    return strategies
+
+
+def _load_strategy_schedule(entry_name: str, entry: Mapping[str, Any]) -> StrategyScheduleConfig:
+    assert StrategyScheduleConfig is not None
+    return StrategyScheduleConfig(
+        name=entry_name,
+        strategy=str(entry.get("strategy") or entry_name),
+        cadence_seconds=int(entry.get("cadence_seconds", entry.get("cadence", 300))),
+        max_drift_seconds=int(entry.get("max_drift_seconds", entry.get("max_drift", 30))),
+        warmup_bars=int(entry.get("warmup_bars", 0)),
+        risk_profile=str(entry.get("risk_profile", "balanced")),
+        max_signals=int(entry.get("max_signals", 10)),
+        interval=str(entry.get("interval")) if entry.get("interval") else None,
+    )
+
+
+def _load_multi_strategy_schedulers(raw: Mapping[str, Any]):
+    if MultiStrategySchedulerConfig is None or StrategyScheduleConfig is None:
+        return {}
+    schedulers: dict[str, MultiStrategySchedulerConfig] = {}
+    sources: list[Mapping[str, Any]] = []
+    top_level = raw.get("multi_strategy_schedulers")
+    if isinstance(top_level, Mapping):
+        sources.append(top_level)
+    runtime_section = raw.get("runtime")
+    if isinstance(runtime_section, Mapping):
+        runtime_schedulers = runtime_section.get("multi_strategy_schedulers")
+        if isinstance(runtime_schedulers, Mapping):
+            sources.append(runtime_schedulers)
+
+    for source in sources:
+        for name, entry in (source or {}).items():
+            if not isinstance(entry, Mapping):
+                continue
+            schedules_raw = entry.get("schedules", {}) or {}
+            schedules = [
+                _load_strategy_schedule(schedule_name, schedule_entry)
+                for schedule_name, schedule_entry in schedules_raw.items()
+                if isinstance(schedule_entry, Mapping)
+            ]
+            schedulers[name] = MultiStrategySchedulerConfig(
+                name=name,
+                schedules=tuple(schedules),
+                telemetry_namespace=str(
+                    entry.get("telemetry_namespace", f"scheduler.{name}")
+                ),
+                decision_log_category=str(
+                    entry.get("decision_log_category", "runtime.scheduler")
+                ),
+                health_check_interval=int(entry.get("health_check_interval", 300)),
+                rbac_tokens=_load_service_tokens(entry.get("rbac_tokens")),
+            )
+    return schedulers
 
 
 def _load_alert_throttle(entry: Optional[Mapping[str, Any]]) -> AlertThrottleConfig | None:
@@ -1003,6 +1153,7 @@ def load_core_config(path: str | Path) -> CoreConfig:
     config_base_dir = config_absolute_path.parent
 
     instrument_universes = _load_instrument_universes(raw)
+    instrument_buckets = _load_instrument_buckets(raw)
 
     # Środowiska – budujemy kwargs dynamicznie, tak by działało na różnych gałęziach modeli.
     environments: dict[str, EnvironmentConfig] = {}
@@ -1060,6 +1211,13 @@ def load_core_config(path: str | Path) -> CoreConfig:
             max_open_positions=int(entry["max_open_positions"]),
             hard_drawdown_pct=float(entry["hard_drawdown_pct"]),
             data_quality=_load_data_quality(entry.get("data_quality")),
+            strategy_allocations={
+                str(bucket): float(weight)
+                for bucket, weight in (entry.get("strategy_allocations", {}) or {}).items()
+            },
+            instrument_buckets=tuple(
+                str(bucket) for bucket in (entry.get("instrument_buckets", ()) or ())
+            ),
         )
         for name, entry in (raw.get("risk_profiles", {}) or {}).items()
     }
@@ -1078,6 +1236,10 @@ def load_core_config(path: str | Path) -> CoreConfig:
             )
 
     strategies = _load_strategies(raw)
+    mean_reversion_strategies = _load_mean_reversion_strategies(raw)
+    volatility_target_strategies = _load_volatility_target_strategies(raw)
+    cross_exchange_arbitrage_strategies = _load_cross_exchange_arbitrage_strategies(raw)
+    scheduler_configs = _load_multi_strategy_schedulers(raw)
 
     reporting = _load_reporting(raw.get("reporting"))
     runtime_section = raw.get("runtime") or {}
@@ -1120,8 +1282,18 @@ def load_core_config(path: str | Path) -> CoreConfig:
     }
     if _core_has("instrument_universes"):
         core_kwargs["instrument_universes"] = instrument_universes
+    if _core_has("instrument_buckets"):
+        core_kwargs["instrument_buckets"] = instrument_buckets
     if _core_has("strategies"):
         core_kwargs["strategies"] = strategies
+    if _core_has("mean_reversion_strategies"):
+        core_kwargs["mean_reversion_strategies"] = mean_reversion_strategies
+    if _core_has("volatility_target_strategies"):
+        core_kwargs["volatility_target_strategies"] = volatility_target_strategies
+    if _core_has("cross_exchange_arbitrage_strategies"):
+        core_kwargs["cross_exchange_arbitrage_strategies"] = cross_exchange_arbitrage_strategies
+    if _core_has("multi_strategy_schedulers"):
+        core_kwargs["multi_strategy_schedulers"] = scheduler_configs
     if _core_has("signal_channels"):
         core_kwargs["signal_channels"] = signal_channels
     if _core_has("whatsapp_channels"):

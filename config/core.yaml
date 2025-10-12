@@ -10,6 +10,14 @@ risk_profiles:
     data_quality:
       max_gap_minutes: 1440.0
       min_ok_ratio: 0.92
+    strategy_allocations:
+      daily_trend: 0.45
+      mean_reversion: 0.2
+      volatility_target: 0.25
+      cross_exchange: 0.1
+    instrument_buckets:
+      - spot_core_major
+      - pln_bridge
   balanced:
     max_daily_loss_pct: 0.015
     max_position_pct: 0.05
@@ -21,6 +29,15 @@ risk_profiles:
     data_quality:
       max_gap_minutes: 2160.0
       min_ok_ratio: 0.9
+    strategy_allocations:
+      daily_trend: 0.35
+      mean_reversion: 0.3
+      volatility_target: 0.2
+      cross_exchange: 0.15
+    instrument_buckets:
+      - spot_core_major
+      - spot_alt_liquidity
+      - stat_arb_intraday
   aggressive:
     max_daily_loss_pct: 0.03
     max_position_pct: 0.1
@@ -32,6 +49,16 @@ risk_profiles:
     data_quality:
       max_gap_minutes: 2880.0
       min_ok_ratio: 0.85
+    strategy_allocations:
+      daily_trend: 0.3
+      mean_reversion: 0.25
+      volatility_target: 0.15
+      cross_exchange: 0.3
+    instrument_buckets:
+      - spot_core_major
+      - spot_alt_liquidity
+      - stat_arb_intraday
+      - cross_exchange_major
   manual:
     max_daily_loss_pct: 0.0
     max_position_pct: 0.0
@@ -43,12 +70,50 @@ risk_profiles:
     data_quality:
       max_gap_minutes: 4320.0
       min_ok_ratio: 0.75
+    strategy_allocations:
+      manual_override: 1.0
+    instrument_buckets:
+      - manual_override
 
 runtime:
   controllers:
     daily_trend_core:
       tick_seconds: 86400
       interval: 1d
+  multi_strategy_schedulers:
+    core_multi_pipeline:
+      telemetry_namespace: runtime.multi_strategy.core
+      decision_log_category: runtime.scheduler.core
+      health_check_interval: 120
+      rbac_tokens:
+        - token_id: scheduler-local
+          token_env: CORE_SCHEDULER_TOKEN
+          scopes: [runtime.schedule.read, runtime.schedule.write]
+      schedules:
+        mean_reversion_intraday:
+          strategy: core_mean_reversion
+          cadence_seconds: 900
+          max_drift_seconds: 120
+          warmup_bars: 120
+          risk_profile: balanced
+          max_signals: 4
+          interval: 5m
+        volatility_target_daily:
+          strategy: core_volatility_target
+          cadence_seconds: 86400
+          max_drift_seconds: 900
+          warmup_bars: 90
+          risk_profile: conservative
+          max_signals: 2
+          interval: 1d
+        cross_exchange_watch:
+          strategy: core_cross_exchange
+          cadence_seconds: 30
+          max_drift_seconds: 10
+          warmup_bars: 30
+          risk_profile: aggressive
+          max_signals: 6
+          interval: 30s
   metrics_service:
     enabled: true
     host: 127.0.0.1
@@ -96,6 +161,36 @@ strategies:
       atr_multiplier: 2.0
       min_trend_strength: 0.005
       min_momentum: 0.001
+
+mean_reversion_strategies:
+  core_mean_reversion:
+    parameters:
+      lookback: 96
+      entry_zscore: 1.9
+      exit_zscore: 0.35
+      max_holding_period: 16
+      volatility_cap: 0.035
+      min_volume_usd: 250000
+
+volatility_target_strategies:
+  core_volatility_target:
+    parameters:
+      target_volatility: 0.1
+      lookback: 60
+      rebalance_threshold: 0.08
+      min_allocation: 0.15
+      max_allocation: 0.95
+      floor_volatility: 0.015
+
+cross_exchange_arbitrage_strategies:
+  core_cross_exchange:
+    parameters:
+      primary_exchange: binance_spot
+      secondary_exchange: kraken_spot
+      spread_entry: 0.0018
+      spread_exit: 0.0006
+      max_notional: 75000
+      max_open_seconds: 180
 
 instrument_universes:
   core_multi_exchange:
@@ -299,6 +394,118 @@ instrument_universes:
             lookback_days: 360
           - interval: 15m
             lookback_days: 360
+  stat_arb_core:
+    description: >
+      Koszyk wysokiej płynności do strategii mean reversion na interwałach intraday
+      z uwzględnieniem par USD i EUR na Binance oraz Krakenie.
+    instruments:
+      BTC_USDT:
+        base_asset: BTC
+        quote_asset: USDT
+        categories: [stat_arb, btc, usd_quote]
+        exchanges:
+          binance_spot: BTCUSDT
+          kraken_spot: XBTUSDT
+        backfill:
+          - interval: 5m
+            lookback_days: 365
+          - interval: 1m
+            lookback_days: 120
+      ETH_USDT:
+        base_asset: ETH
+        quote_asset: USDT
+        categories: [stat_arb, eth, usd_quote]
+        exchanges:
+          binance_spot: ETHUSDT
+          kraken_spot: ETHUSDT
+        backfill:
+          - interval: 5m
+            lookback_days: 365
+          - interval: 1m
+            lookback_days: 120
+      BTC_EUR:
+        base_asset: BTC
+        quote_asset: EUR
+        categories: [stat_arb, btc, fiat]
+        exchanges:
+          binance_spot: BTCEUR
+          kraken_spot: XBTEUR
+        backfill:
+          - interval: 5m
+            lookback_days: 365
+          - interval: 1m
+            lookback_days: 120
+  cross_exchange_core:
+    description: >
+      Uniwersum arbitrażowe dla par BTC i ETH na giełdach Binance oraz Kraken z monitorowaniem
+      różnic cenowych między orderbookami spot.
+    instruments:
+      BTC_USDT_CROSS:
+        base_asset: BTC
+        quote_asset: USDT
+        categories: [arbitrage, btc]
+        exchanges:
+          binance_spot: BTCUSDT
+          kraken_spot: XBTUSDT
+        backfill:
+          - interval: 1m
+            lookback_days: 90
+          - interval: 30s
+            lookback_days: 30
+      ETH_USDT_CROSS:
+        base_asset: ETH
+        quote_asset: USDT
+        categories: [arbitrage, eth]
+        exchanges:
+          binance_spot: ETHUSDT
+          kraken_spot: ETHUSDT
+        backfill:
+          - interval: 1m
+            lookback_days: 90
+          - interval: 30s
+            lookback_days: 30
+
+instrument_buckets:
+  spot_core_major:
+    universe: core_multi_exchange
+    symbols: [BTC_USDT, ETH_USDT, BTC_EUR, ETH_EUR]
+    max_position_pct: 0.03
+    max_notional_usd: 175000
+    tags: [core, major]
+  spot_alt_liquidity:
+    universe: core_multi_exchange
+    symbols:
+      - SOL_USDT
+      - BNB_USDT
+      - XRP_USDT
+      - ADA_USDT
+      - LTC_USDT
+      - POL_USDT
+    max_position_pct: 0.025
+    max_notional_usd: 125000
+    tags: [alt, high_liquidity]
+  pln_bridge:
+    universe: core_multi_exchange
+    symbols: [BTC_PLN, ETH_PLN]
+    max_position_pct: 0.015
+    max_notional_usd: 60000
+    tags: [fiat_bridge]
+  stat_arb_intraday:
+    universe: stat_arb_core
+    symbols: [BTC_USDT, ETH_USDT, BTC_EUR, ETH_EUR]
+    max_position_pct: 0.02
+    max_notional_usd: 90000
+    tags: [stat_arb, intraday]
+  cross_exchange_major:
+    universe: cross_exchange_core
+    symbols: [BTC_USDT_CROSS, ETH_USDT_CROSS]
+    max_position_pct: 0.03
+    max_notional_usd: 110000
+    tags: [arbitrage, cross_exchange]
+  manual_override:
+    universe: core_multi_exchange
+    symbols: [BTC_USDT]
+    tags: [manual]
 
 environments:
   binance_paper:
