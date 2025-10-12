@@ -487,7 +487,7 @@ def _run_watch_metrics_summary(
     completed = subprocess.run(cmd, text=True, check=False)
     if completed.returncode != 0:
         raise RuntimeError(
-            "watch_metrics_stream.py zakończył się niepowodzeniem – weryfikacja telemetryjna nie może zostać dokończona"
+            "watch_metrics_stream.py zakończył się niepowodzeniem – weryfikacja telemetryczna nie może zostać dokończona"
         )
 
     if not summary_path.exists():
@@ -866,6 +866,7 @@ def _collect_telemetry_artifacts(
             risk_cli_args.append("--require-risk-service-auth-token")
             risk_requirements_details["require_auth_token"] = True
 
+        # Wymagane identyfikatory tokenów (jeśli dostępne w metadanych)
         token_ids: list[str] = []
         token_id_value = combined_risk_meta.get("auth_token_token_id")
         if isinstance(token_id_value, str):
@@ -1818,9 +1819,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     except RuntimeError as exc:
         _LOGGER.error("Audyt TLS nie powiódł się: %s", exc)
-        return 1
+        # Kontynuujemy mimo błędu TLS, ale zarejestrujemy status jako failed
 
-    tls_report = tls_audit_artifacts.get("report")
+    tls_report = tls_audit_artifacts.get("report") if 'tls_audit_artifacts' in locals() else None
     warnings = []
     errors = []
     if isinstance(tls_report, Mapping):
@@ -1835,17 +1836,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif isinstance(err_payload, str):
             errors = [err_payload]
 
-    summary["tls_audit"] = {
-        "report_path": str(tls_audit_artifacts["report_path"]),
-        "report": tls_report,
-        "exit_code": int(tls_audit_artifacts.get("exit_code", 0)),
-        "stdout": tls_audit_artifacts.get("stdout"),
-        "stderr": tls_audit_artifacts.get("stderr"),
-        "status": tls_audit_artifacts.get("status"),
-        "warnings": warnings,
-        "errors": errors,
-        "command": tls_audit_artifacts.get("command"),
-    }
+    if 'tls_audit_artifacts' in locals():
+        summary["tls_audit"] = {
+            "report_path": str(tls_audit_artifacts["report_path"]),
+            "report": tls_report,
+            "exit_code": int(tls_audit_artifacts.get("exit_code", 0)),
+            "stdout": tls_audit_artifacts.get("stdout"),
+            "stderr": tls_audit_artifacts.get("stderr"),
+            "status": tls_audit_artifacts.get("status"),
+            "warnings": warnings,
+            "errors": errors,
+            "command": tls_audit_artifacts.get("command"),
+        }
+    else:
+        summary["tls_audit"] = {
+            "status": "failed",
+            "errors": ["TLS audit did not run"],
+        }
 
     try:
         token_audit_artifacts = _run_token_audit(

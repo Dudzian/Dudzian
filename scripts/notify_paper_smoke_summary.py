@@ -265,6 +265,8 @@ def _append_telemetry_context(
                 )
             elif isinstance(scopes, str) and scopes:
                 context["paper_smoke_risk_service_required_scopes"] = scopes
+
+            # rozszerzenie: wymagane identyfikatory tokenów
             token_ids = details.get("required_token_ids")
             if isinstance(token_ids, (list, tuple, set)) and token_ids:
                 context["paper_smoke_risk_service_required_token_ids"] = ",".join(
@@ -272,6 +274,7 @@ def _append_telemetry_context(
                 )
             elif isinstance(token_ids, str) and token_ids:
                 context["paper_smoke_risk_service_required_token_ids"] = token_ids
+
             if "require_auth_token" in details:
                 _set_bool(
                     "paper_smoke_risk_service_require_auth_token",
@@ -296,6 +299,7 @@ def _append_telemetry_context(
                 context["paper_smoke_risk_service_pinned_fingerprints"] = ",".join(
                     str(entry) for entry in pinned
                 )
+
 
 def _build_alert_payload(
     *, summary: Mapping[str, Any], environment: str, operator_override: str | None
@@ -502,6 +506,7 @@ def _build_alert_payload(
             context["paper_smoke_token_audit_error_count"] = "1"
             severity = "error"
 
+    # Sekcja audytu baseline bezpieczeństwa (zachowana z drugiej gałęzi)
     security_baseline_section = summary.get("security_baseline")
     if isinstance(security_baseline_section, Mapping):
         report_path = security_baseline_section.get("report_path")
@@ -635,7 +640,7 @@ def _dispatch_alert(
     )
 
     _LOGGER.info(
-        "Wysyłam alert paper_smoke_compliance: environment=%s severity=%s",\
+        "Wysyłam alert paper_smoke_compliance: environment=%s severity=%s",
         args.environment,
         message.severity,
     )
@@ -716,4 +721,3 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry point
     raise SystemExit(main())
-

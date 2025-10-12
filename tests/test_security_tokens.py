@@ -91,6 +91,7 @@ def test_resolve_service_token_secret(monkeypatch):
     assert token.secret == "stream-secret"
     assert token.token_id == "reader"
     assert sorted(token.scopes) == ["metrics.read"]
+
     assert (
         resolve_service_token_secret(configs, scope="metrics.read", env=os.environ)
         == "stream-secret"

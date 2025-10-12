@@ -317,7 +317,7 @@ def _fake_subprocess_run_factory(
             return _FakeCompleted(returncode=0)
         if script == "verify_decision_log.py":
             report_arg = cmd.index("--report-output")
-            report_path = Path(cmd[report_arg + 1])
+            report_path = Path(report_arg + 1 and cmd[report_arg + 1])
             report_path.parent.mkdir(parents=True, exist_ok=True)
             payload = {
                 "report_version": 1,
@@ -885,6 +885,11 @@ def test_main_fails_on_tls_audit_error(
     captured = capsys.readouterr()
     payload = json.loads(captured.out)
     assert exit_code == 2
+    assert payload["tls_audit_exit_code"] == 2
+    assert payload["security_baseline_exit_code"] == 2
+    assert payload["token_audit_exit_code"] == 0
+    assert "tls_audit" in payload["status"]
+    assert "security_baseline" in payload["status"]
 
 
 def test_security_baseline_cli_uses_signing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -942,11 +947,6 @@ def test_security_baseline_cli_uses_signing(monkeypatch: pytest.MonkeyPatch, tmp
     assert "--summary-hmac-key-id" in baseline_cmd
     assert "baseline-ci" in baseline_cmd
     assert "--require-summary-signature" in baseline_cmd
-    assert payload["tls_audit_exit_code"] == 2
-    assert payload["security_baseline_exit_code"] == 2
-    assert payload["token_audit_exit_code"] == 0
-    assert "tls_audit" in payload["status"]
-    assert "security_baseline" in payload["status"]
 
 
 def test_main_fails_on_token_audit_error(
@@ -1324,16 +1324,6 @@ def test_ci_main_end_to_end_local_backends(monkeypatch: pytest.MonkeyPatch, tmp_
     }
 
     config_path = _write_core_config(tmp_path, reporting=reporting_cfg)
-
-    base_run = _fake_subprocess_run_factory(tmp_path=tmp_path, summary_payload={"status": "ok"})
-
-    base_run = _fake_subprocess_run_factory(tmp_path=tmp_path, summary_payload={"status": "ok"})
-
-    base_run = _fake_subprocess_run_factory(tmp_path=tmp_path, summary_payload={"status": "ok"})
-
-    base_run = _fake_subprocess_run_factory(
-        tmp_path=tmp_path, summary_payload={"status": "ok"}
-    )
 
     base_run = _fake_subprocess_run_factory(
         tmp_path=tmp_path, summary_payload={"status": "ok"}
@@ -1746,6 +1736,7 @@ def test_ci_main_end_to_end_s3_backends(monkeypatch: pytest.MonkeyPatch, tmp_pat
     assert json_sync_meta.get("remote_sha256") == json_sync_meta.get("log_sha256")
     assert archive_meta.get("remote_sha256") == archive_meta.get("archive_sha256")
 
+    uploads: dict[tuple[str, str], dict[str, object]]
     synced_objects = [key for key in uploads if key[0] == "json-audit"]
     archive_objects = [key for key in uploads if key[0] == "archive-bucket"]
     assert synced_objects, "Powinien powstać obiekt JSONL w magazynie S3"
