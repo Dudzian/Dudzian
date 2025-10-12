@@ -212,11 +212,13 @@ def audit_tls_assets(
 
     metrics_config = getattr(core_config, "metrics_service", None)
     if metrics_config is not None:
+        rbac_tokens_configured = bool(getattr(metrics_config, "rbac_tokens", ()) or ())
         service_report = {
             "enabled": bool(getattr(metrics_config, "enabled", False)),
             "auth_token_configured": bool(
                 str(getattr(metrics_config, "auth_token", "") or "").strip()
             ),
+            "rbac_tokens_configured": rbac_tokens_configured,
             "tls": audit_tls_entry(
                 getattr(metrics_config, "tls", None),
                 role_prefix="metrics_tls",
@@ -226,7 +228,11 @@ def audit_tls_assets(
             "warnings": [],
             "errors": [],
         }
-        if service_report["enabled"] and not service_report["auth_token_configured"]:
+        if (
+            service_report["enabled"]
+            and not service_report["auth_token_configured"]
+            and not rbac_tokens_configured
+        ):
             service_report["warnings"].append(
                 "MetricsService ma włączone API bez tokenu autoryzacyjnego"
             )
@@ -244,11 +250,13 @@ def audit_tls_assets(
 
     risk_config = getattr(core_config, "risk_service", None)
     if risk_config is not None:
+        rbac_tokens_configured = bool(getattr(risk_config, "rbac_tokens", ()) or ())
         service_report = {
             "enabled": bool(getattr(risk_config, "enabled", False)),
             "auth_token_configured": bool(
                 str(getattr(risk_config, "auth_token", "") or "").strip()
             ),
+            "rbac_tokens_configured": rbac_tokens_configured,
             "tls": audit_tls_entry(
                 getattr(risk_config, "tls", None),
                 role_prefix="risk_tls",
@@ -258,7 +266,11 @@ def audit_tls_assets(
             "warnings": [],
             "errors": [],
         }
-        if service_report["enabled"] and not service_report["auth_token_configured"]:
+        if (
+            service_report["enabled"]
+            and not service_report["auth_token_configured"]
+            and not rbac_tokens_configured
+        ):
             service_report["warnings"].append(
                 "RiskService ma włączone API bez tokenu autoryzacyjnego"
             )

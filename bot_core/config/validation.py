@@ -100,6 +100,7 @@ def validate_core_config(config: CoreConfig) -> ConfigValidationResult:
     _validate_metrics_service(config, errors, warnings)
     _validate_risk_service(config, errors, warnings)
     _validate_risk_decision_log(config, errors, warnings)
+    _validate_security_baseline(config, errors, warnings)
 
     return ConfigValidationResult(errors=errors, warnings=warnings)
 
@@ -657,6 +658,70 @@ def _validate_risk_decision_log(
         warnings.append(
             f"{context}: signing_key_value w pliku YAML może naruszać politykę bezpieczeństwa"
         )
+
+
+def _validate_security_baseline(
+    config: CoreConfig, errors: list[str], warnings: list[str]
+) -> None:
+    baseline_config = getattr(config, "security_baseline", None)
+    if baseline_config is None:
+        return
+
+    signing_config = getattr(baseline_config, "signing", None)
+    if signing_config is None:
+        return
+
+    context = "runtime.security_baseline.signing"
+
+    key_sources: list[str] = []
+
+    env_source = getattr(signing_config, "signing_key_env", None)
+    if env_source not in (None, ""):
+        env_name = str(env_source).strip()
+        if not env_name:
+            errors.append(f"{context}: signing_key_env nie może być puste")
+        else:
+            key_sources.append("env")
+            if not env_name.isupper():
+                warnings.append(
+                    f"{context}: signing_key_env='{env_name}' powinna używać wielkich liter"
+                )
+
+    path_source = getattr(signing_config, "signing_key_path", None)
+    if path_source not in (None, ""):
+        path_text = str(path_source).strip()
+        if not path_text:
+            errors.append(f"{context}: signing_key_path nie może być puste")
+        else:
+            key_sources.append("path")
+
+    value_source = getattr(signing_config, "signing_key_value", None)
+    if value_source not in (None, ""):
+        key_sources.append("value")
+        warnings.append(
+            f"{context}: signing_key_value w pliku YAML może naruszać politykę bezpieczeństwa"
+        )
+
+    if len(key_sources) > 1:
+        errors.append(
+            f"{context}: skonfiguruj tylko jedno źródło klucza podpisu (env/path/value)"
+        )
+
+    require_signature = bool(getattr(signing_config, "require_signature", False))
+    if require_signature and not key_sources:
+        errors.append(
+            f"{context}: require_signature ustawione na True wymaga konfiguracji klucza podpisu"
+        )
+    elif not require_signature and not key_sources:
+        warnings.append(
+            f"{context}: brak klucza podpisu – raport bezpieczeństwa będzie bez podpisu HMAC"
+        )
+
+    key_id_value = getattr(signing_config, "signing_key_id", None)
+    if key_id_value is not None:
+        key_id_text = str(key_id_value).strip()
+        if not key_id_text:
+            warnings.append(f"{context}: signing_key_id jest puste – rozważ usunięcie pola")
 
 
 def _validate_ui_alert_block(

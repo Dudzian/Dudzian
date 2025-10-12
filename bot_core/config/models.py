@@ -135,6 +135,24 @@ class RiskDecisionLogConfig:
     jsonl_fsync: bool = False
 
 
+@dataclass(slots=True)
+class SecurityBaselineSigningConfig:
+    """Ustawienia podpisywania raportów audytu bezpieczeństwa."""
+
+    signing_key_env: str | None = None
+    signing_key_path: str | None = None
+    signing_key_value: str | None = None
+    signing_key_id: str | None = None
+    require_signature: bool = False
+
+
+@dataclass(slots=True)
+class SecurityBaselineConfig:
+    """Konfiguracja integracji audytu bezpieczeństwa."""
+
+    signing: SecurityBaselineSigningConfig | None = None
+
+
 # --- Środowiska / rdzeń ------------------------------------------------------
 
 @dataclass(slots=True)
@@ -407,6 +425,7 @@ class CoreConfig:
     metrics_service: MetricsServiceConfig | None = None
     risk_service: RiskServiceConfig | None = None
     risk_decision_log: RiskDecisionLogConfig | None = None
+    security_baseline: SecurityBaselineConfig | None = None
     source_path: str | None = None
     source_directory: str | None = None
 
@@ -444,4 +463,6 @@ __all__ = [
     "MetricsServiceConfig",
     "RiskServiceConfig",
     "RiskDecisionLogConfig",
+    "SecurityBaselineConfig",
+    "SecurityBaselineSigningConfig",
 ]

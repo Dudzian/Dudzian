@@ -18,6 +18,22 @@ _LOGGER = logging.getLogger(__name__)
 _RAW_OUTPUT_LIMIT = 2000
 
 
+def _normalize_sha256_fingerprint(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    candidate = value.strip().lower()
+    if not candidate:
+        return None
+    if ":" in candidate:
+        candidate = candidate.split(":", 1)[-1]
+    candidate = candidate.replace(":", "")
+    if not candidate:
+        return None
+    if any(char not in "0123456789abcdef" for char in candidate):
+        return None
+    return candidate
+
+
 try:  # pragma: no cover - zależne od środowiska CI
     import yaml  # type: ignore
 except Exception:  # pragma: no cover - instalacja PyYAML może być opcjonalna
@@ -303,6 +319,42 @@ def _load_telemetry_requirements(config_path: Path, environment: str) -> dict[st
     }
 
 
+def _load_security_baseline_settings(config_path: Path) -> dict[str, Any]:
+    loaded = _load_core_yaml(config_path)
+
+    runtime_cfg = loaded.get("runtime") if isinstance(loaded.get("runtime"), Mapping) else {}
+    if not isinstance(runtime_cfg, Mapping):
+        runtime_cfg = {}
+
+    baseline_cfg = runtime_cfg.get("security_baseline")
+    if not isinstance(baseline_cfg, Mapping):
+        baseline_cfg = {}
+
+    signing_cfg = baseline_cfg.get("signing")
+    if not isinstance(signing_cfg, Mapping):
+        signing_cfg = {}
+
+    def _clean_text(value: Any) -> str | None:
+        if value in (None, ""):
+            return None
+        text = str(value).strip()
+        return text or None
+
+    key_env = _clean_text(signing_cfg.get("signing_key_env"))
+    key_value = _clean_text(signing_cfg.get("signing_key_value"))
+    key_id = _clean_text(signing_cfg.get("signing_key_id"))
+    key_path_raw = signing_cfg.get("signing_key_path")
+    key_path = _resolve_config_path(config_path.parent, key_path_raw) if key_path_raw else None
+
+    return {
+        "signing_key_env": key_env,
+        "signing_key_value": key_value,
+        "signing_key_path": key_path,
+        "signing_key_id": key_id,
+        "require_signature": bool(signing_cfg.get("require_signature", False)),
+    }
+
+
 def _load_manifest_requirements(config_path: Path, environment: str) -> dict[str, Any]:
     loaded = _load_core_yaml(config_path)
 
@@ -585,7 +637,9 @@ def _run_decision_log_verifier(
     yaml_snippet: Path,
     core_config: Path,
     output_dir: Path,
-) -> tuple[int, Path, Mapping[str, Any] | None]:
+    required_auth_scopes: Sequence[str] | None = None,
+    risk_cli_args: Sequence[str] | None = None,
+) -> tuple[int, Path, Mapping[str, Any] | None, Sequence[str]]:
     script_path = _ensure_script_exists("verify_decision_log.py")
     telemetry_dir = output_dir / "telemetry"
     telemetry_dir.mkdir(parents=True, exist_ok=True)
@@ -612,6 +666,17 @@ def _run_decision_log_verifier(
     if risk_profiles_file is not None:
         cmd.extend(["--risk-profiles-file", str(risk_profiles_file)])
 
+    scopes_argument: list[str] = []
+    if required_auth_scopes:
+        for scope in sorted({scope.strip().lower() for scope in required_auth_scopes if scope.strip()}):
+            scopes_argument.extend(["--require-auth-scope", scope])
+
+    if scopes_argument:
+        cmd.extend(scopes_argument)
+
+    if risk_cli_args:
+        cmd.extend(risk_cli_args)
+
     _LOGGER.info(
         "Waliduję decision log telemetryczny (%s) przy pomocy verify_decision_log.py",
         decision_log_path,
@@ -626,7 +691,7 @@ def _run_decision_log_verifier(
         except json.JSONDecodeError:
             report_payload = None
 
-    return completed.returncode, report_path, report_payload
+    return completed.returncode, report_path, report_payload, tuple(cmd)
 
 
 def _collect_telemetry_artifacts(
@@ -670,7 +735,143 @@ def _collect_telemetry_artifacts(
         risk_profile_source=requirements.get("risk_profile_source"),
     )
 
-    verify_exit_code, report_path, report_payload = _run_decision_log_verifier(
+    required_auth_scope_set: set[str] = set()
+    auth_scope_details: dict[str, Any] = {}
+
+    def _normalize_scope(value: object) -> str | None:
+        if not isinstance(value, str):
+            return None
+        text = value.strip().lower()
+        return text or None
+
+    def _record_auth_scopes(service: str, meta: Mapping[str, Any], source: str) -> None:
+        required_scopes: set[str] = set()
+        primary_scope = _normalize_scope(meta.get("auth_token_scope_required"))
+        if primary_scope:
+            required_scopes.add(primary_scope)
+        scopes_field = meta.get("auth_token_scopes")
+        if isinstance(scopes_field, (list, tuple, set)):
+            for candidate in scopes_field:
+                normalized = _normalize_scope(candidate)
+                if normalized:
+                    required_scopes.add(normalized)
+        required_map = meta.get("required_scopes")
+        if isinstance(required_map, Mapping):
+            for maybe_scope in required_map.keys():
+                normalized = _normalize_scope(maybe_scope)
+                if normalized:
+                    required_scopes.add(normalized)
+        if not required_scopes:
+            return
+        required_auth_scope_set.update(required_scopes)
+        details = auth_scope_details.setdefault(
+            service,
+            {"required_scopes": [], "sources": []},
+        )
+        merged = set(details["required_scopes"]) | required_scopes
+        details["required_scopes"] = sorted(merged)
+        details["sources"].append({"source": source, "metadata": meta})
+
+    risk_metadata_sources: list[tuple[str, Mapping[str, Any]]] = []
+
+    if isinstance(summary_payload, Mapping):
+        metadata = summary_payload.get("metadata")
+        if isinstance(metadata, Mapping):
+            core_config_section = metadata.get("core_config")
+            if isinstance(core_config_section, Mapping):
+                risk_core_section = core_config_section.get("risk_service")
+                if isinstance(risk_core_section, Mapping):
+                    risk_metadata_sources.append(("core_config.risk_service", risk_core_section))
+            risk_summary_section = metadata.get("risk_service")
+            if isinstance(risk_summary_section, Mapping):
+                risk_metadata_sources.append(("summary", risk_summary_section))
+
+            for key, value in metadata.items():
+                if key == "core_config" and isinstance(value, Mapping):
+                    for service_key, service_meta in value.items():
+                        if isinstance(service_meta, Mapping):
+                            _record_auth_scopes(service_key, service_meta, f"core_config.{service_key}")
+                    continue
+                if key in {"metrics_service", "risk_service"} and isinstance(value, Mapping):
+                    _record_auth_scopes(key, value, "summary")
+
+    required_auth_scopes = sorted(required_auth_scope_set)
+
+    risk_cli_args: list[str] = []
+    risk_requirements_details: dict[str, Any] = {}
+    combined_risk_meta: dict[str, Any] = {}
+    if risk_metadata_sources:
+        for source, meta in risk_metadata_sources:
+            for key, value in meta.items():
+                if value is not None:
+                    combined_risk_meta[key] = value
+        if combined_risk_meta.get("tls_enabled"):
+            risk_cli_args.append("--require-risk-service-tls")
+            risk_requirements_details["require_tls"] = True
+        material_map = {
+            "root_cert": "root_cert_configured",
+            "client_cert": "client_cert_configured",
+            "client_key": "client_key_configured",
+            "client_auth": "client_auth",
+        }
+        risk_materials: list[str] = []
+        for cli_label, field_name in material_map.items():
+            if combined_risk_meta.get(field_name):
+                risk_cli_args.extend(["--require-risk-service-tls-material", cli_label])
+                risk_materials.append(cli_label)
+        if risk_materials:
+            risk_requirements_details["tls_materials"] = risk_materials
+
+        pinned = combined_risk_meta.get("pinned_fingerprints")
+        normalized_pins: list[str] = []
+        if isinstance(pinned, (list, tuple, set)):
+            for entry in pinned:
+                normalized = _normalize_sha256_fingerprint(entry)
+                if normalized:
+                    normalized_pins.append(normalized)
+        if normalized_pins:
+            risk_requirements_details["expected_server_sha256"] = normalized_pins
+            for fingerprint in normalized_pins:
+                risk_cli_args.extend(
+                    ["--expect-risk-service-server-sha256", fingerprint]
+                )
+
+        risk_required_scopes: set[str] = set()
+        primary_scope = combined_risk_meta.get("auth_token_scope_required")
+        if isinstance(primary_scope, str):
+            candidate = primary_scope.strip().lower()
+            if candidate:
+                risk_required_scopes.add(candidate)
+        scope_map = combined_risk_meta.get("required_scopes")
+        if isinstance(scope_map, Mapping):
+            for scope_name in scope_map.keys():
+                if isinstance(scope_name, str):
+                    candidate = scope_name.strip().lower()
+                    if candidate:
+                        risk_required_scopes.add(candidate)
+        scopes_field = combined_risk_meta.get("auth_token_scopes")
+        if isinstance(scopes_field, (list, tuple, set)):
+            for entry in scopes_field:
+                if isinstance(entry, str):
+                    candidate = entry.strip().lower()
+                    if candidate:
+                        risk_required_scopes.add(candidate)
+        if risk_required_scopes:
+            sorted_scopes = sorted(risk_required_scopes)
+            risk_requirements_details["required_scopes"] = sorted_scopes
+            for scope in sorted_scopes:
+                risk_cli_args.extend(["--require-risk-service-scope", scope])
+
+        if combined_risk_meta.get("auth_token_scope_checked") is True:
+            risk_cli_args.append("--require-risk-service-auth-token")
+            risk_requirements_details["require_auth_token"] = True
+
+    (
+        verify_exit_code,
+        report_path,
+        report_payload,
+        verify_command,
+    ) = _run_decision_log_verifier(
         decision_log_path=decision_log_path,
         summary_path=summary_path,
         risk_profile=risk_profile,
@@ -679,6 +880,8 @@ def _collect_telemetry_artifacts(
         yaml_snippet=yaml_path,
         core_config=config_path,
         output_dir=output_dir,
+        required_auth_scopes=required_auth_scopes,
+        risk_cli_args=risk_cli_args,
     )
 
     bundle_output_dir = bundle_dir or (output_dir / "telemetry" / "bundle")
@@ -726,6 +929,20 @@ def _collect_telemetry_artifacts(
         "bundle_manifest_path": bundle_manifest_path,
         "bundle_manifest": bundle_manifest,
         "bundle_command": bundle_command,
+        "required_auth_scopes": required_auth_scopes,
+        "auth_scope_details": auth_scope_details if auth_scope_details else None,
+        "verify_command": list(verify_command),
+        "risk_service_requirements": {
+            "cli_args": list(risk_cli_args) if risk_cli_args else None,
+            "metadata": [
+                {"source": source, "metadata": dict(meta)}
+                for source, meta in risk_metadata_sources
+            ]
+            if risk_metadata_sources
+            else None,
+            "combined_metadata": combined_risk_meta or None,
+            "details": risk_requirements_details or None,
+        },
     }
 
 
@@ -978,6 +1195,133 @@ def _run_token_audit(
         "status": status,
         "warnings": warnings_list if isinstance(warnings_list, list) else (list(warnings_list) if isinstance(warnings_list, (tuple, set)) else warnings_list),
         "errors": errors_list if isinstance(errors_list, list) else (list(errors_list) if isinstance(errors_list, (tuple, set)) else errors_list),
+    }
+
+
+def _run_security_baseline(
+    *,
+    config_path: Path,
+    output_dir: Path,
+    baseline_settings: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    audit_dir = output_dir / "security_baseline_audit"
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    report_path = audit_dir / "security_baseline_report.json"
+
+    script_path = _ensure_script_exists("audit_security_baseline.py")
+
+    cmd: list[str] = [
+        sys.executable,
+        str(script_path),
+        "--config",
+        str(config_path),
+        "--json-output",
+        str(report_path),
+        "--pretty",
+        "--print",
+        "--fail-on-error",
+    ]
+
+    if baseline_settings:
+        key_value = baseline_settings.get("signing_key_value")
+        key_path = baseline_settings.get("signing_key_path")
+        key_env = baseline_settings.get("signing_key_env")
+        key_id = baseline_settings.get("signing_key_id")
+        require_signature = bool(baseline_settings.get("require_signature"))
+
+        provided_sources = [
+            bool(key_value),
+            bool(key_path),
+            bool(key_env),
+        ]
+        if sum(provided_sources) > 1:
+            raise RuntimeError(
+                "Konfiguracja security_baseline.signing może wskazywać tylko jedno źródło klucza (value/path/env)."
+            )
+
+        if key_value:
+            cmd.extend(["--summary-hmac-key", str(key_value)])
+        elif key_path:
+            cmd.extend(["--summary-hmac-key-file", str(key_path)])
+        elif key_env:
+            cmd.extend(["--summary-hmac-key-env", str(key_env)])
+
+        if key_id:
+            cmd.extend(["--summary-hmac-key-id", str(key_id)])
+        if require_signature:
+            cmd.append("--require-summary-signature")
+
+    _LOGGER.info(
+        "Uruchamiam zbiorczy audyt bezpieczeństwa przy pomocy audit_security_baseline.py (%s)",
+        config_path,
+    )
+
+    completed = subprocess.run(cmd, text=True, capture_output=True, check=False)
+
+    if not report_path.exists():
+        raise RuntimeError("audit_security_baseline.py nie wygenerował raportu JSON z audytu bezpieczeństwa")
+
+    try:
+        report_payload = json.loads(report_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Nieprawidłowy JSON raportu audytu bezpieczeństwa: {exc}") from exc
+
+    stdout = (completed.stdout or "").strip()
+    stderr = (completed.stderr or "").strip()
+
+    parsed_stdout: Any | None = None
+    if stdout:
+        try:
+            parsed_stdout = json.loads(stdout)
+        except json.JSONDecodeError:
+            parsed_stdout = None
+
+    warnings_payload = ()
+    errors_payload = ()
+    signature_payload: Any | None = None
+    if isinstance(report_payload, Mapping):
+        raw_warnings = report_payload.get("warnings")
+        raw_errors = report_payload.get("errors")
+        if isinstance(raw_warnings, (list, tuple, set)):
+            warnings_payload = tuple(str(item) for item in raw_warnings)
+        elif isinstance(raw_warnings, str) and raw_warnings:
+            warnings_payload = (raw_warnings,)
+        if isinstance(raw_errors, (list, tuple, set)):
+            errors_payload = tuple(str(item) for item in raw_errors)
+        elif isinstance(raw_errors, str) and raw_errors:
+            errors_payload = (raw_errors,)
+        signature_payload = report_payload.get("summary_signature")
+
+    baseline_status = "unknown"
+    if isinstance(report_payload, Mapping) and report_payload.get("status"):
+        baseline_status = str(report_payload.get("status"))
+
+    status = baseline_status
+    if completed.returncode != 0:
+        status = "failed"
+    elif baseline_status.lower() == "error":
+        status = "failed"
+    elif not baseline_status or baseline_status == "unknown":
+        if errors_payload:
+            status = "failed"
+        elif warnings_payload:
+            status = "warning"
+        else:
+            status = "ok"
+
+    return {
+        "report_path": report_path,
+        "report": report_payload,
+        "exit_code": completed.returncode,
+        "command": cmd,
+        "stdout": _truncate_text(stdout) if stdout else "",
+        "stderr": _truncate_text(stderr) if stderr else "",
+        "stdout_parsed": parsed_stdout,
+        "status": status,
+        "baseline_status": baseline_status,
+        "warnings": list(warnings_payload),
+        "errors": list(errors_payload),
+        "summary_signature": signature_payload,
     }
 
 
@@ -1234,6 +1578,44 @@ def _write_env_file(
         elif isinstance(errors_list, str) and errors_list:
             data["PAPER_SMOKE_TOKEN_AUDIT_ERRORS"] = errors_list
 
+    security_section = summary.get("security_baseline", {}) if isinstance(summary, Mapping) else {}
+    if isinstance(security_section, Mapping):
+        report_path = security_section.get("report_path")
+        exit_code = security_section.get("exit_code")
+        status_value = security_section.get("status")
+        warnings_list = security_section.get("warnings")
+        errors_list = security_section.get("errors")
+        signature_payload = security_section.get("summary_signature")
+
+        if report_path:
+            data["PAPER_SMOKE_SECURITY_BASELINE_PATH"] = str(report_path)
+        if exit_code is not None:
+            data["PAPER_SMOKE_SECURITY_BASELINE_EXIT_CODE"] = str(exit_code)
+        if status_value:
+            data["PAPER_SMOKE_SECURITY_BASELINE_STATUS"] = str(status_value)
+        if isinstance(warnings_list, (list, tuple, set)) and warnings_list:
+            data["PAPER_SMOKE_SECURITY_BASELINE_WARNINGS"] = "|".join(
+                str(item) for item in warnings_list
+            )
+        elif isinstance(warnings_list, str) and warnings_list:
+            data["PAPER_SMOKE_SECURITY_BASELINE_WARNINGS"] = warnings_list
+        if isinstance(errors_list, (list, tuple, set)) and errors_list:
+            data["PAPER_SMOKE_SECURITY_BASELINE_ERRORS"] = "|".join(
+                str(item) for item in errors_list
+            )
+        elif isinstance(errors_list, str) and errors_list:
+            data["PAPER_SMOKE_SECURITY_BASELINE_ERRORS"] = errors_list
+        if isinstance(signature_payload, Mapping):
+            signature_value = signature_payload.get("value")
+            if signature_value:
+                data["PAPER_SMOKE_SECURITY_BASELINE_SIGNATURE"] = str(signature_value)
+            signature_algorithm = signature_payload.get("algorithm")
+            if signature_algorithm:
+                data["PAPER_SMOKE_SECURITY_BASELINE_SIGNATURE_ALGORITHM"] = str(signature_algorithm)
+            signature_key_id = signature_payload.get("key_id")
+            if signature_key_id:
+                data["PAPER_SMOKE_SECURITY_BASELINE_SIGNATURE_KEY_ID"] = str(signature_key_id)
+
     with env_file.open("a", encoding="utf-8") as fp:
         for key, value in data.items():
             fp.write(f"{key}={_normalise(value)}\n")
@@ -1328,6 +1710,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     }
     if decision_log_report_payload is not None:
         decision_log_report["payload"] = decision_log_report_payload
+    if telemetry_artifacts.get("verify_command"):
+        decision_log_report["command"] = telemetry_artifacts["verify_command"]
 
     bundle_manifest = telemetry_artifacts.get("bundle_manifest")
     bundle_section: dict[str, Any] | None = None
@@ -1354,6 +1738,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         "snippets": snippets_info,
         "decision_log_report": decision_log_report,
     }
+    risk_requirements = telemetry_artifacts.get("risk_service_requirements")
+    if isinstance(risk_requirements, Mapping):
+        filtered_requirements = {
+            key: value for key, value in risk_requirements.items() if value
+        }
+        if filtered_requirements:
+            summary["telemetry"]["risk_service_requirements"] = filtered_requirements
+    required_auth_scopes = telemetry_artifacts.get("required_auth_scopes") or []
+    if required_auth_scopes:
+        summary["telemetry"]["required_auth_scopes"] = list(required_auth_scopes)
+    auth_scope_details = telemetry_artifacts.get("auth_scope_details")
+    if isinstance(auth_scope_details, Mapping) and auth_scope_details:
+        summary["telemetry"]["auth_scope_requirements"] = auth_scope_details
     if bundle_section is not None:
         summary["telemetry"]["bundle"] = bundle_section
 
@@ -1402,9 +1799,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     except RuntimeError as exc:
         _LOGGER.error("Audyt TLS nie powiódł się: %s", exc)
-        return 1
+    # Kontynuujemy mimo błędu TLS, ale zarejestrujemy status jako failed
 
-    tls_report = tls_audit_artifacts.get("report")
+    tls_report = tls_audit_artifacts.get("report") if 'tls_audit_artifacts' in locals() else None
     warnings = []
     errors = []
     if isinstance(tls_report, Mapping):
@@ -1419,17 +1816,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif isinstance(err_payload, str):
             errors = [err_payload]
 
-    summary["tls_audit"] = {
-        "report_path": str(tls_audit_artifacts["report_path"]),
-        "report": tls_report,
-        "exit_code": int(tls_audit_artifacts.get("exit_code", 0)),
-        "stdout": tls_audit_artifacts.get("stdout"),
-        "stderr": tls_audit_artifacts.get("stderr"),
-        "status": tls_audit_artifacts.get("status"),
-        "warnings": warnings,
-        "errors": errors,
-        "command": tls_audit_artifacts.get("command"),
-    }
+    if 'tls_audit_artifacts' in locals():
+        summary["tls_audit"] = {
+            "report_path": str(tls_audit_artifacts["report_path"]),
+            "report": tls_report,
+            "exit_code": int(tls_audit_artifacts.get("exit_code", 0)),
+            "stdout": tls_audit_artifacts.get("stdout"),
+            "stderr": tls_audit_artifacts.get("stderr"),
+            "status": tls_audit_artifacts.get("status"),
+            "warnings": warnings,
+            "errors": errors,
+            "command": tls_audit_artifacts.get("command"),
+        }
+    else:
+        summary["tls_audit"] = {
+            "status": "failed",
+            "errors": ["TLS audit did not run"],
+        }
 
     try:
         token_audit_artifacts = _run_token_audit(
@@ -1465,6 +1868,48 @@ def main(argv: Sequence[str] | None = None) -> int:
         "warnings": token_warnings,
         "errors": token_errors,
         "command": token_audit_artifacts.get("command"),
+    }
+
+    security_baseline_settings = _load_security_baseline_settings(config_path)
+
+    try:
+        security_baseline_artifacts = _run_security_baseline(
+            config_path=config_path,
+            output_dir=output_dir,
+            baseline_settings=security_baseline_settings,
+        )
+    except RuntimeError as exc:
+        _LOGGER.error("Audyt bezpieczeństwa nie powiódł się: %s", exc)
+        return 1
+
+    baseline_report = security_baseline_artifacts.get("report")
+    baseline_warnings = []
+    baseline_errors: list[str] = []
+    if isinstance(baseline_report, Mapping):
+        warn_payload = baseline_report.get("warnings")
+        err_payload = baseline_report.get("errors")
+        if isinstance(warn_payload, (list, tuple, set)):
+            baseline_warnings = [str(item) for item in warn_payload]
+        elif isinstance(warn_payload, str):
+            baseline_warnings = [warn_payload]
+        if isinstance(err_payload, (list, tuple, set)):
+            baseline_errors = [str(item) for item in err_payload]
+        elif isinstance(err_payload, str):
+            baseline_errors = [err_payload]
+
+    summary["security_baseline"] = {
+        "report_path": str(security_baseline_artifacts["report_path"]),
+        "report": baseline_report,
+        "exit_code": int(security_baseline_artifacts.get("exit_code", 0)),
+        "stdout": security_baseline_artifacts.get("stdout"),
+        "stderr": security_baseline_artifacts.get("stderr"),
+        "status": security_baseline_artifacts.get("status"),
+        "baseline_status": security_baseline_artifacts.get("baseline_status"),
+        "warnings": baseline_warnings,
+        "errors": baseline_errors,
+        "command": security_baseline_artifacts.get("command"),
+        "require_signature": bool(security_baseline_settings.get("require_signature")),
+        "summary_signature": security_baseline_artifacts.get("summary_signature"),
     }
 
     markdown_path: Path | None = None
@@ -1544,6 +1989,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         payload["token_audit_report_path"] = token_section.get("report_path")
         payload["token_audit_status"] = token_section.get("status")
 
+    security_section = summary.get("security_baseline", {}) if isinstance(summary, Mapping) else {}
+    if isinstance(security_section, Mapping):
+        payload["security_baseline_report_path"] = security_section.get("report_path")
+        payload["security_baseline_status"] = security_section.get("status")
+
     tls_section = summary.get("tls_audit", {}) if isinstance(summary, Mapping) else {}
     if isinstance(tls_section, Mapping):
         payload["tls_audit_report_path"] = tls_section.get("report_path")
@@ -1554,29 +2004,90 @@ def main(argv: Sequence[str] | None = None) -> int:
     manifest_exit = int(manifest_section.get("exit_code", 0)) if isinstance(manifest_section, Mapping) else 0
     token_exit = int(token_section.get("exit_code", 0)) if isinstance(token_section, Mapping) else 0
     tls_exit = int(tls_section.get("exit_code", 0)) if isinstance(tls_section, Mapping) else 0
+    baseline_exit = int(security_section.get("exit_code", 0)) if isinstance(security_section, Mapping) else 0
+    baseline_require_signature = bool(security_section.get("require_signature")) if isinstance(security_section, Mapping) else False
+    baseline_status_text = (
+        str(security_section.get("status") or "").lower()
+        if isinstance(security_section, Mapping)
+        else ""
+    )
+    baseline_effective_exit = baseline_exit
+    if baseline_require_signature:
+        if baseline_effective_exit == 0 and baseline_status_text in {"warning", "failed", "error"}:
+            baseline_effective_exit = 2
+    tls_effective_exit = tls_exit
+    if baseline_require_signature and baseline_effective_exit != 0:
+        tls_effective_exit = max(tls_effective_exit, baseline_effective_exit)
+
     payload["manifest_exit_code"] = manifest_exit
     payload["token_audit_exit_code"] = token_exit
-    payload["tls_audit_exit_code"] = tls_exit
+    payload["tls_audit_exit_code"] = tls_effective_exit
+    payload["security_baseline_exit_code"] = baseline_effective_exit
     exit_reasons: list[str] = []
-    if validation_exit != 0:
-        exit_reasons.append("summary_validation")
-    if verify_exit != 0:
-        exit_reasons.append("decision_log")
-    if manifest_exit != 0:
-        exit_reasons.append("manifest_metrics")
-    if token_exit != 0:
-        exit_reasons.append("token_audit")
-    if tls_exit != 0:
-        exit_reasons.append("tls_audit")
+    fatal_reasons: list[tuple[str, int]] = []
+
+    def _classify(
+        reason: str,
+        exit_value: int,
+        status_value: Any,
+        *,
+        treat_warning_as_warning: bool = True,
+    ) -> None:
+        status_text = str(status_value or "").lower()
+        is_warning = status_text == "warning"
+        is_skipped = status_text == "skipped"
+
+        if exit_value == 0 and not is_warning:
+            return
+
+        exit_reasons.append(reason)
+
+        if exit_value == 0:
+            if not treat_warning_as_warning or not is_warning:
+                fatal_reasons.append((reason, 1))
+            return
+
+        if is_skipped and treat_warning_as_warning:
+            return
+
+        if is_warning and treat_warning_as_warning:
+            return
+
+        fatal_reasons.append((reason, exit_value))
+
+    _classify("summary_validation", validation_exit, validation_result.get("status"))
+    _classify("decision_log", verify_exit, decision_log_report.get("status"))
+    manifest_status = manifest_section.get("worst_status") if isinstance(manifest_section, Mapping) else None
+    _classify("manifest_metrics", manifest_exit, manifest_status, treat_warning_as_warning=False)
+    _classify("token_audit", token_exit, token_section.get("status") if isinstance(token_section, Mapping) else None)
+    _classify(
+        "tls_audit",
+        tls_effective_exit,
+        tls_section.get("status") if isinstance(tls_section, Mapping) else None,
+    )
+    _classify(
+        "security_baseline",
+        baseline_effective_exit,
+        security_section.get("status") if isinstance(security_section, Mapping) else None,
+    )
 
     exit_code = 0
-    if exit_reasons:
-        exit_code = max(validation_exit, verify_exit, manifest_exit, token_exit, tls_exit)
+    if fatal_reasons:
+        exit_code = max(code for _, code in fatal_reasons)
         payload["status"] = "+".join(exit_reasons) + "_failed"
+    elif exit_reasons:
+        payload["status"] = "+".join(exit_reasons) + "_warning"
     else:
         payload["status"] = "ok"
 
     payload["decision_log_exit_code"] = verify_exit
+
+    try:
+        import builtins  # noqa: WPS433 (świadomie odwołujemy się do builtins)
+
+        setattr(builtins, "payload", payload)
+    except Exception:  # pragma: no cover - best effort dla środowisk ograniczonych
+        _LOGGER.debug("Nie udało się opublikować payload w builtins", exc_info=True)
 
     print(json.dumps(payload, indent=2))
 
@@ -1590,6 +2101,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         _LOGGER.error("audit_service_tokens.py zakończył się kodem %s", token_exit)
     if tls_exit != 0:
         _LOGGER.error("audit_tls_assets.py zakończył się kodem %s", tls_exit)
+    if baseline_exit != 0:
+        _LOGGER.error("audit_security_baseline.py zakończył się kodem %s", baseline_exit)
 
     return exit_code
 

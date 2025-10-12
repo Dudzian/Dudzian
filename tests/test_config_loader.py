@@ -1023,4 +1023,44 @@ def test_load_core_config_rejects_invalid_jank_threshold(tmp_path: Path) -> None
 
     with pytest.raises(ValueError):
         load_core_config(config_path)
+
+
+def test_load_core_config_reads_security_baseline(tmp_path: Path) -> None:
+    config_path = tmp_path / "core.yaml"
+    config_path.write_text(
+        """
+        risk_profiles:
+          balanced:
+            max_daily_loss_pct: 1.0
+            max_position_pct: 1.0
+            target_volatility: 0.2
+            max_leverage: 2.0
+            stop_loss_atr_multiple: 1.0
+            max_open_positions: 1
+            hard_drawdown_pct: 0.5
+        environments:
+          binance_paper:
+            exchange: binance_spot
+            environment: paper
+            keychain_key: paper
+            data_cache_path: cache
+            risk_profile: balanced
+            alert_channels: []
+        runtime:
+          security_baseline:
+            signing:
+              signing_key_env: BASELINE_KEY
+              signing_key_id: baseline-ci
+              require_signature: true
+        """,
+        encoding="utf-8",
+    )
+
+    config = load_core_config(config_path)
+    assert config.security_baseline is not None
+    assert config.security_baseline.signing is not None
+    signing = config.security_baseline.signing
+    assert signing.signing_key_env == "BASELINE_KEY"
+    assert signing.signing_key_id == "baseline-ci"
+    assert signing.require_signature is True
 '''

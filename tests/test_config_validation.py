@@ -19,6 +19,8 @@ from bot_core.config.models import (
     RiskDecisionLogConfig,
     RiskProfileConfig,
     RiskServiceConfig,
+    SecurityBaselineConfig,
+    SecurityBaselineSigningConfig,
     TelegramChannelSettings,
 )
 from bot_core.config.validation import (
@@ -460,6 +462,34 @@ def test_validate_core_config_detects_nonpositive_overlay_threshold(
 
     assert not result.is_valid()
     assert any("overlay_alert_critical_threshold" in err for err in result.errors)
+
+
+def test_validate_core_config_warns_security_baseline_without_key(
+    base_config: CoreConfig,
+) -> None:
+    security_config = SecurityBaselineConfig(
+        signing=SecurityBaselineSigningConfig(require_signature=False)
+    )
+    config = replace(base_config, security_baseline=security_config)
+
+    result = validate_core_config(config)
+
+    assert result.is_valid()
+    assert any("brak klucza podpisu" in warn for warn in result.warnings)
+
+
+def test_validate_core_config_errors_when_security_baseline_requires_key(
+    base_config: CoreConfig,
+) -> None:
+    security_config = SecurityBaselineConfig(
+        signing=SecurityBaselineSigningConfig(require_signature=True)
+    )
+    config = replace(base_config, security_baseline=security_config)
+
+    result = validate_core_config(config)
+
+    assert not result.is_valid()
+    assert any("require_signature" in err for err in result.errors)
 
 
 def test_validate_core_config_detects_nonpositive_jank_threshold(

@@ -16,6 +16,8 @@ from bot_core.config.models import (
     EnvironmentConfig,
     EnvironmentDataQualityConfig,
     RiskDecisionLogConfig,
+    SecurityBaselineConfig,
+    SecurityBaselineSigningConfig,
     ServiceTokenConfig,
     RiskProfileConfig,
     RiskServiceConfig,
@@ -899,6 +901,52 @@ def _load_risk_service(
     return RiskServiceConfig(**kwargs)  # type: ignore[call-arg]
 
 
+def _load_security_baseline(
+    runtime_section: Optional[Mapping[str, Any]], *, base_dir: Path | None = None
+) -> SecurityBaselineConfig | None:
+    if not _core_has("security_baseline"):
+        return None
+
+    runtime = runtime_section or {}
+    baseline_raw = runtime.get("security_baseline")
+    if not isinstance(baseline_raw, Mapping):
+        return None
+
+    signing_raw = baseline_raw.get("signing")
+    signing_config: SecurityBaselineSigningConfig | None = None
+
+    if isinstance(signing_raw, Mapping):
+        signing_kwargs: dict[str, Any] = {}
+
+        env_value = _normalize_env_var(signing_raw.get("signing_key_env"))
+        if env_value:
+            signing_kwargs["signing_key_env"] = env_value
+
+        path_value = _normalize_runtime_path(
+            signing_raw.get("signing_key_path"), base_dir=base_dir
+        )
+        if path_value:
+            signing_kwargs["signing_key_path"] = path_value
+
+        value_raw = signing_raw.get("signing_key_value")
+        if value_raw not in (None, ""):
+            signing_kwargs["signing_key_value"] = str(value_raw)
+
+        key_id_raw = signing_raw.get("signing_key_id")
+        if key_id_raw not in (None, ""):
+            signing_kwargs["signing_key_id"] = str(key_id_raw)
+
+        require_signature = bool(signing_raw.get("require_signature", False))
+        if require_signature or signing_kwargs:
+            signing_kwargs["require_signature"] = require_signature
+            signing_config = SecurityBaselineSigningConfig(**signing_kwargs)
+
+    if signing_config is None and not baseline_raw:
+        return None
+
+    return SecurityBaselineConfig(signing=signing_config)
+
+
 def _load_risk_decision_log(
     runtime_section: Optional[Mapping[str, Any]], *, base_dir: Path | None = None
 ) -> RiskDecisionLogConfig | None:
@@ -1106,6 +1154,12 @@ def load_core_config(path: str | Path) -> CoreConfig:
     )
     if risk_decision_log_config is not None:
         core_kwargs["risk_decision_log"] = risk_decision_log_config
+
+    security_baseline_config = _load_security_baseline(
+        runtime_section, base_dir=config_base_dir
+    )
+    if security_baseline_config is not None:
+        core_kwargs["security_baseline"] = security_baseline_config
 
     core_kwargs["source_path"] = str(config_absolute_path)
     core_kwargs["source_directory"] = str(config_base_dir)

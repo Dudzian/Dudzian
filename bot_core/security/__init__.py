@@ -21,6 +21,7 @@ from bot_core.security.tokens import (
     ServiceToken,
     ServiceTokenValidator,
     build_service_token_validator,
+    resolve_service_token,
     resolve_service_token_secret,
 )
 
@@ -39,6 +40,7 @@ __all__ = [
     "ServiceToken",
     "ServiceTokenValidator",
     "build_service_token_validator",
+    "resolve_service_token",
     "resolve_service_token_secret",
     "TokenAuditReport",
     "TokenAuditServiceReport",

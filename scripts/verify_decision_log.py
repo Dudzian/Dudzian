@@ -67,6 +67,14 @@ _ENV_REQUIRE_TLS_MATERIALS = f"{_ENV_PREFIX}REQUIRE_TLS_MATERIALS"
 _ENV_EXPECT_SERVER_SHA256 = f"{_ENV_PREFIX}EXPECT_SERVER_SHA256"
 _ENV_EXPECT_SERVER_SHA256_SOURCE = f"{_ENV_PREFIX}EXPECT_SERVER_SHA256_SOURCE"
 
+# rozszerzenia dot. RBAC/TLS dla RiskService i auth-scope
+_ENV_REQUIRE_AUTH_SCOPE = f"{_ENV_PREFIX}REQUIRE_AUTH_SCOPE"
+_ENV_REQUIRE_RISK_SCOPE = f"{_ENV_PREFIX}REQUIRE_RISK_SERVICE_SCOPE"
+_ENV_REQUIRE_RISK_TLS = f"{_ENV_PREFIX}REQUIRE_RISK_SERVICE_TLS"
+_ENV_REQUIRE_RISK_TLS_MATERIALS = f"{_ENV_PREFIX}REQUIRE_RISK_SERVICE_TLS_MATERIALS"
+_ENV_EXPECT_RISK_SERVER_SHA256 = f"{_ENV_PREFIX}EXPECT_RISK_SERVICE_SERVER_SHA256"
+_ENV_REQUIRE_RISK_AUTH_TOKEN = f"{_ENV_PREFIX}REQUIRE_RISK_SERVICE_AUTH_TOKEN"
+
 _BOOL_TRUE = {"1", "true", "yes", "on"}
 _BOOL_FALSE = {"0", "false", "no", "off"}
 
@@ -102,6 +110,14 @@ _TLS_MATERIAL_CHOICES = (
     "client_key",
     "server_name",
     "server_sha256",
+)
+
+# rozszerzenie: osobna lista materiałów TLS dla RiskService
+_RISK_TLS_MATERIAL_CHOICES = (
+    "root_cert",
+    "client_cert",
+    "client_key",
+    "client_auth",
 )
 
 _HEX_DIGITS = set("0123456789abcdef")
@@ -790,6 +806,7 @@ def _validate_metadata(
     expect_summary: bool,
     expected_filters: Mapping[str, Any],
     require_auth_token: bool,
+    required_auth_scopes: Sequence[str],
     require_tls: bool,
     expect_input_file: str | None,
     expect_endpoint: str | None,
@@ -803,6 +820,7 @@ def _validate_metadata(
             expect_summary,
             expected_filters,
             require_auth_token,
+            required_auth_scopes,
             require_tls,
             expect_input_file,
             expect_endpoint,
@@ -869,6 +887,42 @@ def _validate_metadata(
         if not metadata.get("auth_token_provided", False):
             raise VerificationError("Metadane wskazują brak tokenu autoryzacyjnego")
 
+    required_auth_scopes = tuple(scope for scope in required_auth_scopes if scope)
+    if required_auth_scopes:
+        scope_checked = metadata.get("auth_token_scope_checked")
+        if scope_checked is not True:
+            raise VerificationError(
+                "Metadane nie potwierdzają weryfikacji scope'ów tokenu autoryzacyjnego"
+            )
+        scope_match = metadata.get("auth_token_scope_match")
+        if scope_match is False:
+            raise VerificationError(
+                "Token autoryzacyjny nie spełnia wymaganych scope'ów"
+            )
+        scopes_recorded_raw = metadata.get("auth_token_scopes")
+        recorded_scopes: set[str] | None
+        if scopes_recorded_raw is None:
+            recorded_scopes = None
+        elif isinstance(scopes_recorded_raw, (list, tuple, set)):
+            recorded_scopes = {
+                str(entry).strip().lower()
+                for entry in scopes_recorded_raw
+                if str(entry).strip()
+            }
+        else:
+            raise VerificationError(
+                "Metadane auth_token_scopes powinny być listą lub krotką scope'ów"
+            )
+        if recorded_scopes:
+            missing_scopes = [
+                scope for scope in required_auth_scopes if scope not in recorded_scopes
+            ]
+            if missing_scopes:
+                raise VerificationError(
+                    "Token autoryzacyjny nie posiada wymaganych scope'ów: "
+                    + ", ".join(sorted(missing_scopes))
+                )
+
     if require_tls:
         if mode != "grpc":
             raise VerificationError("Wymagano TLS dla logu w trybie grpc")
@@ -893,6 +947,22 @@ def _validate_metadata(
             "Brak wymaganych materiałów TLS w metadanych: " + ", ".join(sorted(missing_materials))
         )
 
+    # spójność deklaracji fingerprintu z flagą w tls_materials
+    server_material_recorded = "server_sha256" in tls_materials
+    server_material_flag = bool(tls_materials.get("server_sha256"))
+    server_fingerprint_raw = metadata.get("server_sha256") if isinstance(metadata, Mapping) else None
+    normalized_present = _normalize_server_sha256(server_fingerprint_raw)
+
+    if server_material_recorded:
+        if server_material_flag and normalized_present is None:
+            raise VerificationError(
+                "Metadane TLS deklarują obecność server_sha256, lecz fingerprint nie został zapisany"
+            )
+        if normalized_present is not None and not server_material_flag:
+            raise VerificationError(
+                "Metadane TLS zawierają fingerprint server_sha256, jednak tls_materials wskazuje jego brak"
+            )
+
     expected_sha = [item for item in expected_server_sha256 if item]
     normalized_expected: dict[str, str] = {}
     for raw in expected_sha:
@@ -904,8 +974,6 @@ def _validate_metadata(
     expected_sources = tuple({source for source in expected_server_sha256_sources if source})
 
     if normalized_expected or "server_sha256" in required_tls_materials:
-        server_fingerprint_raw = metadata.get("server_sha256") if isinstance(metadata, Mapping) else None
-        normalized_present = _normalize_server_sha256(server_fingerprint_raw)
         if normalized_present is None:
             raise VerificationError("Metadane TLS nie zawierają poprawnego odcisku server_sha256")
         if normalized_expected and normalized_present not in normalized_expected:
@@ -947,6 +1015,142 @@ def _matches_screen_name(screen: Mapping[str, Any] | None, *, expected_substring
     if not isinstance(candidate, str):
         return False
     return expected_substring.casefold() in candidate.casefold()
+
+
+def _extract_risk_service_metadata(
+    metadata: Mapping[str, Any] | None,
+) -> Mapping[str, Any] | None:
+    if not isinstance(metadata, Mapping):
+        return None
+
+    candidates: list[Mapping[str, Any]] = []
+    core_cfg = metadata.get("core_config")
+    if isinstance(core_cfg, Mapping):
+        risk_core = core_cfg.get("risk_service")
+        if isinstance(risk_core, Mapping):
+            candidates.append(risk_core)
+    risk_section = metadata.get("risk_service")
+    if isinstance(risk_section, Mapping):
+        candidates.append(risk_section)
+
+    if not candidates:
+        return None
+
+    merged: dict[str, Any] = {}
+    for candidate in candidates:
+        for key, value in candidate.items():
+            if value is not None:
+                merged[key] = value
+    return merged
+
+
+def _validate_risk_service_metadata(
+    metadata: Mapping[str, Any] | None,
+    *,
+    require_tls: bool,
+    required_materials: Sequence[str],
+    expected_fingerprints: Sequence[str],
+    required_scopes: Sequence[str],
+    require_auth_token: bool,
+) -> None:
+    requirements_defined = any(
+        [
+            require_tls,
+            required_materials,
+            expected_fingerprints,
+            required_scopes,
+            require_auth_token,
+        ]
+    )
+    if not requirements_defined:
+        return
+
+    if metadata is None:
+        raise VerificationError("Metadane nie zawierają sekcji risk_service")
+
+    if require_tls and not metadata.get("tls_enabled"):
+        raise VerificationError("Sekcja risk_service nie wskazuje aktywnego TLS")
+
+    material_field_map = {
+        "root_cert": "root_cert_configured",
+        "client_cert": "client_cert_configured",
+        "client_key": "client_key_configured",
+        "client_auth": "client_auth",
+    }
+    missing_risk_materials: list[str] = []
+    for material in required_materials:
+        field_name = material_field_map.get(material)
+        if not field_name:
+            raise VerificationError(
+                f"Materiał TLS {material} nie jest obsługiwany dla risk_service"
+            )
+        if not metadata.get(field_name):
+            missing_risk_materials.append(material)
+    if missing_risk_materials:
+        raise VerificationError(
+            "Sekcja risk_service nie zawiera wymaganych materiałów TLS: "
+            + ", ".join(sorted(missing_risk_materials))
+        )
+
+    normalized_expected_fps = [fp for fp in expected_fingerprints if fp]
+    if normalized_expected_fps:
+        recorded = metadata.get("pinned_fingerprints")
+        recorded_set: set[str] = set()
+        if isinstance(recorded, (list, tuple, set)):
+            for entry in recorded:
+                normalized = _normalize_server_sha256(entry)
+                if normalized:
+                    recorded_set.add(normalized)
+        missing_fp = [
+            fingerprint
+            for fingerprint in normalized_expected_fps
+            if fingerprint not in recorded_set
+        ]
+        if missing_fp:
+            raise VerificationError(
+                "Sekcja risk_service nie zawiera wymaganego pinningu TLS: "
+                + ", ".join(sorted(missing_fp))
+            )
+
+    if required_scopes:
+        recorded_scopes: set[str] = set()
+        primary_scope = metadata.get("auth_token_scope_required")
+        if isinstance(primary_scope, str):
+            candidate = primary_scope.strip().lower()
+            if candidate:
+                recorded_scopes.add(candidate)
+        scopes_field = metadata.get("auth_token_scopes")
+        if isinstance(scopes_field, (list, tuple, set)):
+            for entry in scopes_field:
+                if isinstance(entry, str):
+                    candidate = entry.strip().lower()
+                    if candidate:
+                        recorded_scopes.add(candidate)
+        required_map = metadata.get("required_scopes")
+        if isinstance(required_map, Mapping):
+            for scope_name in required_map.keys():
+                if isinstance(scope_name, str):
+                    candidate = scope_name.strip().lower()
+                    if candidate:
+                        recorded_scopes.add(candidate)
+        missing_scopes = [
+            scope for scope in required_scopes if scope not in recorded_scopes
+        ]
+        if missing_scopes:
+            raise VerificationError(
+                "Sekcja risk_service nie deklaruje wymaganych scope'ów: "
+                + ", ".join(sorted(missing_scopes))
+            )
+
+    if require_auth_token:
+        if metadata.get("auth_token_scope_checked") is not True:
+            raise VerificationError(
+                "Sekcja risk_service nie potwierdza weryfikacji tokenu RBAC"
+            )
+        if metadata.get("auth_token_scope_match") is False:
+            raise VerificationError(
+                "Token RBAC dla risk_service nie spełnia wymaganych scope'ów"
+            )
 
 
 def _ensure_filter_matches_snapshots(
@@ -1442,6 +1646,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Wymagaj, by log gRPC zawierał token autoryzacyjny",
     )
     parser.add_argument(
+        "--require-auth-scope",
+        dest="require_auth_scopes",
+        action="append",
+        default=[],
+        metavar="SCOPE",
+        help="Wymagaj, by token autoryzacyjny obejmował wskazany scope (można podawać wielokrotnie)",
+    )
+    parser.add_argument(
         "--require-tls",
         action="store_true",
         help="Wymagaj, by log gRPC był zarejestrowany przy użyciu TLS",
@@ -1453,6 +1665,28 @@ def build_parser() -> argparse.ArgumentParser:
         choices=_TLS_MATERIAL_CHOICES,
         metavar="MATERIAŁ",
         help="Wymagaj obecności materiału TLS w metadanych (można podawać wielokrotnie)",
+    )
+    # rozszerzenia RiskService
+    parser.add_argument(
+        "--require-risk-service-tls",
+        action="store_true",
+        help="Wymagaj, by konfiguracja RiskService wskazywała aktywne TLS",
+    )
+    parser.add_argument(
+        "--require-risk-service-tls-material",
+        dest="require_risk_service_tls_material",
+        action="append",
+        default=[],
+        choices=_RISK_TLS_MATERIAL_CHOICES,
+        metavar="MATERIAŁ",
+        help="Wymagaj określonych materiałów TLS w sekcji risk_service (można powtarzać)",
+    )
+    parser.add_argument(
+        "--expect-risk-service-server-sha256",
+        action="append",
+        default=[],
+        metavar="FINGERPRINT",
+        help="Oczekiwany fingerprint SHA-256 z pinningu RiskService (można podawać wielokrotnie)",
     )
     parser.add_argument(
         "--expect-server-sha256",
@@ -1467,6 +1701,19 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         metavar="ŹRÓDŁO",
         help="Dozwolone źródła fingerprintu TLS (np. cli, env, pinned_fingerprint)",
+    )
+    parser.add_argument(
+        "--require-risk-service-scope",
+        dest="require_risk_service_scope",
+        action="append",
+        default=[],
+        metavar="SCOPE",
+        help="Wymagaj, aby sekcja risk_service deklarowała wskazany scope (można powtarzać)",
+    )
+    parser.add_argument(
+        "--require-risk-service-auth-token",
+        action="store_true",
+        help="Wymagaj potwierdzenia tokenu RBAC w sekcji risk_service",
     )
     parser.add_argument(
         "--require-screen-info",
@@ -1665,7 +1912,9 @@ def _apply_env_defaults(args: argparse.Namespace, parser: argparse.ArgumentParse
         if env_endpoint:
             args.expect_endpoint = env_endpoint
 
-    required_tls_materials = {str(item).strip().lower() for item in getattr(args, "require_tls_material", [])}
+    required_tls_materials = {
+        str(item).strip().lower() for item in getattr(args, "require_tls_material", [])
+    }
     env_tls_materials = os.getenv(_ENV_REQUIRE_TLS_MATERIALS)
     if env_tls_materials:
         for entry in _parse_env_list(env_tls_materials, variable=_ENV_REQUIRE_TLS_MATERIALS, parser=parser):
@@ -1716,6 +1965,116 @@ def _apply_env_defaults(args: argparse.Namespace, parser: argparse.ArgumentParse
         normalized_sources.append(normalized_source)
     args._expected_server_sha256_sources = tuple(normalized_sources)
 
+    # --- RiskService rozszerzenia z ENV/CLI ---------------------------------
+    if not getattr(args, "require_risk_service_tls", False):
+        env_risk_tls = os.getenv(_ENV_REQUIRE_RISK_TLS)
+        if env_risk_tls is not None:
+            args.require_risk_service_tls = _parse_env_bool(
+                env_risk_tls,
+                variable=_ENV_REQUIRE_RISK_TLS,
+                parser=parser,
+            )
+
+    risk_tls_materials = {
+        str(item).strip().lower()
+        for item in getattr(args, "require_risk_service_tls_material", [])
+    }
+    env_risk_tls_materials = os.getenv(_ENV_REQUIRE_RISK_TLS_MATERIALS)
+    if env_risk_tls_materials:
+        for entry in _parse_env_list(
+            env_risk_tls_materials,
+            variable=_ENV_REQUIRE_RISK_TLS_MATERIALS,
+            parser=parser,
+        ):
+            normalized = entry.strip().lower()
+            if normalized not in _RISK_TLS_MATERIAL_CHOICES:
+                parser.error(
+                    f"{_ENV_REQUIRE_RISK_TLS_MATERIALS} zawiera nieobsługiwany materiał TLS {entry!r};"
+                    f" dozwolone: {', '.join(_RISK_TLS_MATERIAL_CHOICES)}"
+                )
+            risk_tls_materials.add(normalized)
+    args._required_risk_service_tls_materials = tuple(sorted(risk_tls_materials))
+
+    expected_risk_sha: list[str] = []
+    expected_risk_sha.extend(getattr(args, "expect_risk_service_server_sha256", []) or [])
+    env_expected_risk_sha = os.getenv(_ENV_EXPECT_RISK_SERVER_SHA256)
+    if env_expected_risk_sha:
+        expected_risk_sha.extend(
+            _parse_env_list(
+                env_expected_risk_sha,
+                variable=_ENV_EXPECT_RISK_SERVER_SHA256,
+                parser=parser,
+            )
+        )
+    normalized_risk_sha: list[str] = []
+    seen_risk_sha: set[str] = set()
+    for raw in expected_risk_sha:
+        normalized = _normalize_server_sha256(raw)
+        if not normalized or normalized in seen_risk_sha:
+            continue
+        seen_risk_sha.add(normalized)
+        normalized_risk_sha.append(normalized)
+    args._expected_risk_service_sha256 = tuple(normalized_risk_sha)
+
+    required_risk_scopes_raw: list[str] = []
+    required_risk_scopes_raw.extend(getattr(args, "require_risk_service_scope", []) or [])
+    env_required_risk_scopes = os.getenv(_ENV_REQUIRE_RISK_SCOPE)
+    if env_required_risk_scopes:
+        required_risk_scopes_raw.extend(
+            _parse_env_list(
+                env_required_risk_scopes,
+                variable=_ENV_REQUIRE_RISK_SCOPE,
+                parser=parser,
+            )
+        )
+    normalized_risk_scopes: list[str] = []
+    seen_risk_scopes: set[str] = set()
+    for scope in required_risk_scopes_raw:
+        normalized_scope = str(scope).strip().lower()
+        if not normalized_scope or normalized_scope in seen_risk_scopes:
+            continue
+        seen_risk_scopes.add(normalized_scope)
+        normalized_risk_scopes.append(normalized_scope)
+    args._required_risk_service_scopes = tuple(normalized_risk_scopes)
+
+    if not getattr(args, "require_risk_service_auth_token", False):
+        env_risk_token = os.getenv(_ENV_REQUIRE_RISK_AUTH_TOKEN)
+        if env_risk_token is not None:
+            args.require_risk_service_auth_token = _parse_env_bool(
+                env_risk_token,
+                variable=_ENV_REQUIRE_RISK_AUTH_TOKEN,
+                parser=parser,
+            )
+
+    args._require_risk_service_tls = bool(getattr(args, "require_risk_service_tls", False))
+    args._require_risk_service_auth_token = bool(
+        getattr(args, "require_risk_service_auth_token", False)
+    )
+
+    required_auth_scopes_raw: list[str] = []
+    required_auth_scopes_raw.extend(getattr(args, "require_auth_scopes", []) or [])
+    env_required_scopes = os.getenv(_ENV_REQUIRE_AUTH_SCOPE)
+    if env_required_scopes:
+        required_auth_scopes_raw.extend(
+            _parse_env_list(
+                env_required_scopes,
+                variable=_ENV_REQUIRE_AUTH_SCOPE,
+                parser=parser,
+            )
+        )
+    normalized_auth_scopes: list[str] = []
+    seen_auth_scopes: set[str] = set()
+    for scope in required_auth_scopes_raw:
+        normalized_scope = str(scope).strip().lower()
+        if not normalized_scope or normalized_scope in seen_auth_scopes:
+            continue
+        seen_auth_scopes.add(normalized_scope)
+        normalized_auth_scopes.append(normalized_scope)
+    args._required_auth_scopes = tuple(normalized_auth_scopes)
+    if normalized_auth_scopes:
+        args.require_auth_token = True
+
+    # --- reszta --------------------------------------------------------------
     if getattr(args, "risk_profile", None) is None:
         env_risk_profile = os.getenv(_ENV_RISK_PROFILE)
         if env_risk_profile:
@@ -2026,6 +2385,7 @@ def main(argv: list[str] | None = None) -> int:
             expect_summary=args.expect_summary_enabled,
             expected_filters=getattr(args, "_expected_filters", {}),
             require_auth_token=args.require_auth_token,
+            required_auth_scopes=getattr(args, "_required_auth_scopes", ()),
             require_tls=args.require_tls,
             expect_input_file=args.expect_input_file,
             expect_endpoint=args.expect_endpoint,
@@ -2034,6 +2394,14 @@ def main(argv: list[str] | None = None) -> int:
             expected_server_sha256_sources=getattr(args, "_expected_server_sha256_sources", ()),
         )
         metadata = result.get("metadata")
+        _validate_risk_service_metadata(
+            _extract_risk_service_metadata(metadata),
+            require_tls=getattr(args, "_require_risk_service_tls", False),
+            required_materials=getattr(args, "_required_risk_service_tls_materials", ()),
+            expected_fingerprints=getattr(args, "_expected_risk_service_sha256", ()),
+            required_scopes=getattr(args, "_required_risk_service_scopes", ()),
+            require_auth_token=getattr(args, "_require_risk_service_auth_token", False),
+        )
         if metadata:
             _ensure_filter_matches_snapshots(metadata=metadata, snapshots=result.get("snapshots", []))
         summary_signature_meta = None

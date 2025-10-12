@@ -8,6 +8,7 @@ from bot_core.security.tokens import (
     ServiceToken,
     ServiceTokenValidator,
     build_service_token_validator,
+    resolve_service_token,
     resolve_service_token_secret,
 )
 
@@ -85,6 +86,12 @@ def test_resolve_service_token_secret(monkeypatch):
         ),
     ]
 
+    token = resolve_service_token(configs, scope="metrics.read", env=os.environ)
+    assert token is not None
+    assert token.secret == "stream-secret"
+    assert token.token_id == "reader"
+    assert sorted(token.scopes) == ["metrics.read"]
+
     assert (
         resolve_service_token_secret(configs, scope="metrics.read", env=os.environ)
         == "stream-secret"
@@ -105,4 +112,5 @@ def test_resolve_service_token_secret_skips_hashed():
         )
     ]
 
+    assert resolve_service_token(configs, scope="metrics.read") is None
     assert resolve_service_token_secret(configs, scope="metrics.read") is None

@@ -179,6 +179,23 @@ def build_service_token_validator(
     return ServiceTokenValidator(tokens, default_scope=default_scope)
 
 
+def resolve_service_token(
+    configs: Sequence[ServiceTokenConfig],
+    *,
+    scope: str | None = None,
+    env: Mapping[str, str] | None = None,
+) -> ServiceToken | None:
+    """Zwraca token usługowy zawierający jawny sekret dla wskazanego scope."""
+    env_mapping = env or os.environ
+    for config in configs:
+        token = ServiceToken.from_config(config, env=env_mapping)
+        if not token.allows_scope(scope):
+            continue
+        if token.secret:
+            return token
+    return None
+
+
 def resolve_service_token_secret(
     configs: Sequence[ServiceTokenConfig],
     *,
@@ -186,20 +203,16 @@ def resolve_service_token_secret(
     env: Mapping[str, str] | None = None,
 ) -> str | None:
     """Zwraca jawny sekret tokenu usługi dostępnego dla podanego scope."""
-
-    env_mapping = env or os.environ
-    for config in configs:
-        token = ServiceToken.from_config(config, env=env_mapping)
-        if not token.allows_scope(scope):
-            continue
-        if token.secret:
-            return token.secret
-    return None
+    token = resolve_service_token(configs, scope=scope, env=env)
+    if token is None:
+        return None
+    return token.secret
 
 
 __all__ = [
     "ServiceToken",
     "ServiceTokenValidator",
     "build_service_token_validator",
+    "resolve_service_token",
     "resolve_service_token_secret",
 ]

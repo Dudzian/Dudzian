@@ -10,6 +10,7 @@ import logging
 import sys
 import textwrap
 from pathlib import Path
+from typing import Any, Mapping
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -973,6 +974,10 @@ def test_verify_metadata_env_expectations(monkeypatch, tmp_path):
                 "endpoint": "localhost:50051",
                 "use_tls": True,
                 "auth_token_provided": True,
+                "auth_token_scope_checked": True,
+                "auth_token_scope_match": True,
+                "auth_token_scopes": ["metrics.read"],
+                "auth_token_scope_required": "metrics.read",
                 "summary_enabled": True,
                 "filters": {"event": "overlay_budget"},
             },
@@ -1014,6 +1019,52 @@ def test_verify_metadata_env_expectations(monkeypatch, tmp_path):
 
     exit_code = verify_main([])
     assert exit_code == 0
+
+
+def test_verify_metadata_require_auth_scope(tmp_path):
+    key = b"secret"
+    log_path = tmp_path / "auth_scope.jsonl"
+    metadata_entry = _signed_entry(
+        {
+            "kind": "metadata",
+            "timestamp": "2024-05-02T00:00:00+00:00",
+            "metadata": {
+                "mode": "grpc",
+                "endpoint": "localhost:50051",
+                "auth_token_provided": True,
+                "auth_token_scope_checked": True,
+                "auth_token_scope_match": True,
+                "auth_token_scopes": ["metrics.read"],
+            },
+        },
+        key=key,
+        key_id=None,
+    )
+    log_path.write_text(json.dumps(metadata_entry) + "\n", encoding="utf-8")
+
+    ok_exit = verify_main(
+        [
+            str(log_path),
+            "--hmac-key",
+            key.decode("utf-8"),
+            "--require-auth-token",
+            "--require-auth-scope",
+            "metrics.read",
+        ]
+    )
+    assert ok_exit == 0
+
+    fail_exit = verify_main(
+        [
+            str(log_path),
+            "--hmac-key",
+            key.decode("utf-8"),
+            "--require-auth-token",
+            "--require-auth-scope",
+            "metrics.write",
+        ]
+    )
+    assert fail_exit == 2
 
 
 def test_verify_metadata_filters_mismatch(tmp_path):
@@ -1734,7 +1785,7 @@ def _tls_snapshot_entry(*, key: bytes) -> dict[str, object]:
     return _signed_entry(
         {
             "kind": "snapshot",
-            "timestamp": "2024-03-01T00:00:01+00:00",
+            "timestamp": "2024-03-01T00:00:00+00:00".replace("+00:00", "+00:00"),
             "source": "grpc",
             "event": "reduce_motion",
             "severity": "info",
@@ -1744,6 +1795,44 @@ def _tls_snapshot_entry(*, key: bytes) -> dict[str, object]:
         key=key,
         key_id=None,
     )
+
+
+def _risk_tls_metadata_entry(
+    *,
+    key: bytes,
+    fingerprint: str | None,
+    materials: Mapping[str, bool],
+    risk_overrides: Mapping[str, Any] | None = None,
+) -> dict[str, object]:
+    metadata: dict[str, Any] = {
+        "kind": "metadata",
+        "timestamp": "2024-03-01T00:00:00+00:00",
+        "metadata": {
+            "mode": "grpc",
+            "use_tls": True,
+            "tls_materials": dict(materials),
+        },
+    }
+    if fingerprint:
+        metadata["metadata"]["server_sha256"] = fingerprint
+    risk_meta: dict[str, Any] = {
+        "tls_enabled": True,
+        "root_cert_configured": bool(materials.get("root_cert")),
+        "client_cert_configured": bool(materials.get("client_cert")),
+        "client_key_configured": bool(materials.get("client_key")),
+        "client_auth": bool(materials.get("client_auth")),
+        "auth_token_scope_required": "risk.read",
+        "required_scopes": {"risk.read": ["summary"]},
+        "auth_token_scope_checked": True,
+        "auth_token_scope_match": True,
+        "auth_token_scopes": ["risk.read"],
+    }
+    if fingerprint:
+        risk_meta["pinned_fingerprints"] = [fingerprint]
+    if risk_overrides:
+        risk_meta.update(risk_overrides)
+    metadata["metadata"]["risk_service"] = risk_meta
+    return _signed_entry(metadata, key=key, key_id=None)
 
 
 def test_verify_tls_requirements_success(tmp_path):
@@ -1778,6 +1867,56 @@ def test_verify_tls_requirements_success(tmp_path):
     )
 
     assert exit_code == 0
+
+
+def test_verify_tls_flag_requires_fingerprint(tmp_path):
+    key = b"tls"
+    log_path = tmp_path / "decision.jsonl"
+    metadata_entry = _signed_entry(
+        {
+            "kind": "metadata",
+            "timestamp": "2024-03-01T00:00:00+00:00",
+            "metadata": {
+                "mode": "grpc",
+                "use_tls": True,
+                "tls_materials": {"server_sha256": True},
+            },
+        },
+        key=key,
+        key_id=None,
+    )
+    entries = [metadata_entry, _tls_snapshot_entry(key=key)]
+    log_path.write_text("\n".join(json.dumps(entry, ensure_ascii=False) for entry in entries) + "\n", encoding="utf-8")
+
+    exit_code = verify_main([str(log_path), "--hmac-key", key.decode("utf-8")])
+
+    assert exit_code == 2
+
+
+def test_verify_tls_fingerprint_requires_flag(tmp_path):
+    key = b"tls"
+    log_path = tmp_path / "decision.jsonl"
+    fingerprint = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+    metadata_entry = _signed_entry(
+        {
+            "kind": "metadata",
+            "timestamp": "2024-03-01T00:00:00+00:00",
+            "metadata": {
+                "mode": "grpc",
+                "use_tls": True,
+                "tls_materials": {"server_sha256": False},
+                "server_sha256": fingerprint,
+            },
+        },
+        key=key,
+        key_id=None,
+    )
+    entries = [metadata_entry, _tls_snapshot_entry(key=key)]
+    log_path.write_text("\n".join(json.dumps(entry, ensure_ascii=False) for entry in entries) + "\n", encoding="utf-8")
+
+    exit_code = verify_main([str(log_path), "--hmac-key", key.decode("utf-8")])
+
+    assert exit_code == 2
 
 
 def test_verify_tls_requirements_missing_material(tmp_path):
@@ -1842,3 +1981,153 @@ def test_verify_tls_requirements_env_overrides(monkeypatch, tmp_path):
     exit_code = verify_main([str(log_path), "--hmac-key", key.decode("utf-8")])
 
     assert exit_code == 0
+
+
+def test_verify_risk_service_tls_requirements(tmp_path):
+    key = b"risk"
+    log_path = tmp_path / "risk.jsonl"
+    fingerprint = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+    materials = {
+        "root_cert": True,
+        "client_cert": True,
+        "client_key": True,
+        "client_auth": True,
+        "server_sha256": True,
+    }
+    entries = [
+        _risk_tls_metadata_entry(
+            key=key,
+            fingerprint=fingerprint,
+            materials=materials,
+        ),
+        _tls_snapshot_entry(key=key),
+    ]
+    log_path.write_text(
+        "\n".join(json.dumps(entry, ensure_ascii=False) for entry in entries) + "\n",
+        encoding="utf-8",
+    )
+
+    exit_code = verify_main(
+        [
+            str(log_path),
+            "--hmac-key",
+            key.decode("utf-8"),
+            "--require-risk-service-tls",
+            "--require-risk-service-tls-material",
+            "root_cert",
+            "--require-risk-service-tls-material",
+            "client_cert",
+            "--require-risk-service-tls-material",
+            "client_key",
+            "--require-risk-service-tls-material",
+            "client_auth",
+            "--expect-risk-service-server-sha256",
+            fingerprint,
+            "--require-risk-service-scope",
+            "risk.read",
+            "--require-risk-service-auth-token",
+        ]
+    )
+
+    assert exit_code == 0
+
+
+def test_verify_risk_service_tls_missing_material(tmp_path):
+    key = b"risk"
+    log_path = tmp_path / "risk.jsonl"
+    fingerprint = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+    materials = {
+        "root_cert": False,
+        "client_cert": True,
+        "client_key": True,
+        "client_auth": True,
+        "server_sha256": True,
+    }
+    entries = [
+        _risk_tls_metadata_entry(
+            key=key,
+            fingerprint=fingerprint,
+            materials=materials,
+        ),
+        _tls_snapshot_entry(key=key),
+    ]
+    log_path.write_text(
+        "\n".join(json.dumps(entry, ensure_ascii=False) for entry in entries) + "\n",
+        encoding="utf-8",
+    )
+
+    exit_code = verify_main(
+        [
+            str(log_path),
+            "--hmac-key",
+            key.decode("utf-8"),
+            "--require-risk-service-tls",
+            "--require-risk-service-tls-material",
+            "root_cert",
+        ]
+    )
+
+    assert exit_code == 2
+
+
+def test_verify_risk_service_scope_required(tmp_path):
+    key = b"risk"
+    log_path = tmp_path / "risk.jsonl"
+    entries = [
+        _risk_tls_metadata_entry(
+            key=key,
+            fingerprint=None,
+            materials={"root_cert": True, "server_sha256": False},
+            risk_overrides={
+                "auth_token_scope_required": None,
+                "required_scopes": {},
+                "auth_token_scopes": [],
+            },
+        ),
+        _tls_snapshot_entry(key=key),
+    ]
+    log_path.write_text(
+        "\n".join(json.dumps(entry, ensure_ascii=False) for entry in entries) + "\n",
+        encoding="utf-8",
+    )
+
+    exit_code = verify_main(
+        [
+            str(log_path),
+            "--hmac-key",
+            key.decode("utf-8"),
+            "--require-risk-service-scope",
+            "risk.read",
+        ]
+    )
+
+    assert exit_code == 2
+
+
+def test_verify_risk_service_auth_token_required(tmp_path):
+    key = b"risk"
+    log_path = tmp_path / "risk.jsonl"
+    entries = [
+        _risk_tls_metadata_entry(
+            key=key,
+            fingerprint=None,
+            materials={"root_cert": True, "server_sha256": False},
+            risk_overrides={"auth_token_scope_checked": False},
+        ),
+        _tls_snapshot_entry(key=key),
+    ]
+    log_path.write_text(
+        "\n".join(json.dumps(entry, ensure_ascii=False) for entry in entries) + "\n",
+        encoding="utf-8",
+    )
+
+    exit_code = verify_main(
+        [
+            str(log_path),
+            "--hmac-key",
+            key.decode("utf-8"),
+            "--require-risk-service-auth-token",
+        ]
+    )
+
+    assert exit_code == 2
