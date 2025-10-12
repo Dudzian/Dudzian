@@ -1785,7 +1785,7 @@ def _tls_snapshot_entry(*, key: bytes) -> dict[str, object]:
     return _signed_entry(
         {
             "kind": "snapshot",
-            "timestamp": "2024-03-01T00:00:01+00:00",
+            "timestamp": "2024-03-01T00:00:00+00:00".replace("+00:00", "+00:00"),
             "source": "grpc",
             "event": "reduce_motion",
             "severity": "info",

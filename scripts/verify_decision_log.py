@@ -66,6 +66,8 @@ _ENV_RISK_PROFILE_YAML_SNIPPET = f"{_ENV_PREFIX}RISK_PROFILE_YAML_SNIPPET"
 _ENV_REQUIRE_TLS_MATERIALS = f"{_ENV_PREFIX}REQUIRE_TLS_MATERIALS"
 _ENV_EXPECT_SERVER_SHA256 = f"{_ENV_PREFIX}EXPECT_SERVER_SHA256"
 _ENV_EXPECT_SERVER_SHA256_SOURCE = f"{_ENV_PREFIX}EXPECT_SERVER_SHA256_SOURCE"
+
+# rozszerzenia dot. RBAC/TLS dla RiskService i auth-scope
 _ENV_REQUIRE_AUTH_SCOPE = f"{_ENV_PREFIX}REQUIRE_AUTH_SCOPE"
 _ENV_REQUIRE_RISK_SCOPE = f"{_ENV_PREFIX}REQUIRE_RISK_SERVICE_SCOPE"
 _ENV_REQUIRE_RISK_TLS = f"{_ENV_PREFIX}REQUIRE_RISK_SERVICE_TLS"
@@ -110,6 +112,7 @@ _TLS_MATERIAL_CHOICES = (
     "server_sha256",
 )
 
+# rozszerzenie: osobna lista materiałów TLS dla RiskService
 _RISK_TLS_MATERIAL_CHOICES = (
     "root_cert",
     "client_cert",
@@ -944,6 +947,7 @@ def _validate_metadata(
             "Brak wymaganych materiałów TLS w metadanych: " + ", ".join(sorted(missing_materials))
         )
 
+    # spójność deklaracji fingerprintu z flagą w tls_materials
     server_material_recorded = "server_sha256" in tls_materials
     server_material_flag = bool(tls_materials.get("server_sha256"))
     server_fingerprint_raw = metadata.get("server_sha256") if isinstance(metadata, Mapping) else None
@@ -1662,6 +1666,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="MATERIAŁ",
         help="Wymagaj obecności materiału TLS w metadanych (można podawać wielokrotnie)",
     )
+    # rozszerzenia RiskService
     parser.add_argument(
         "--require-risk-service-tls",
         action="store_true",
@@ -1960,6 +1965,7 @@ def _apply_env_defaults(args: argparse.Namespace, parser: argparse.ArgumentParse
         normalized_sources.append(normalized_source)
     args._expected_server_sha256_sources = tuple(normalized_sources)
 
+    # --- RiskService rozszerzenia z ENV/CLI ---------------------------------
     if not getattr(args, "require_risk_service_tls", False):
         env_risk_tls = os.getenv(_ENV_REQUIRE_RISK_TLS)
         if env_risk_tls is not None:
@@ -2068,6 +2074,7 @@ def _apply_env_defaults(args: argparse.Namespace, parser: argparse.ArgumentParse
     if normalized_auth_scopes:
         args.require_auth_token = True
 
+    # --- reszta --------------------------------------------------------------
     if getattr(args, "risk_profile", None) is None:
         env_risk_profile = os.getenv(_ENV_RISK_PROFILE)
         if env_risk_profile:

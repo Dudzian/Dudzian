@@ -1045,8 +1045,8 @@ def _apply_environment_overrides(
 
     _override_simple("host", "HOST", "--host")
     _override_numeric("port", "PORT", "--port", int)
-    _override_numeric("timeout", "TIMEOUT", "--timeout", float, allow_none=True)
-    _override_numeric("limit", "LIMIT", "--limit", int, allow_none=True)
+    _override_numeric("timeout", "TIMEOUT", float, allow_none=True)
+    _override_numeric("limit", "LIMIT", int, allow_none=True)
     _override_simple("event", "EVENT", "--event")
     _override_list("severity", "SEVERITY", "--severity")
     _override_simple("severity_min", "SEVERITY_MIN", "--severity-min")
@@ -1272,6 +1272,7 @@ def _apply_core_config_defaults(
         key: value for key, value in metrics_meta.items() if value not in (None, "")
     }
 
+    # --- risk_service metadane (jeśli obecne w core.yaml) --------------------
     risk_config = getattr(core_config, "risk_service", None)
     risk_meta: dict[str, Any] = {"auth_token_scope_required": _REQUIRED_RISK_SCOPE}
     if risk_config is None:
@@ -1294,12 +1295,12 @@ def _apply_core_config_defaults(
             _REQUIRED_RISK_SCOPE: ["core_config.risk_service"]
         }
 
-        rbac_tokens = tuple(getattr(risk_config, "rbac_tokens", ()) or ())
-        if rbac_tokens:
-            risk_meta["rbac_tokens"] = len(rbac_tokens)
+        rbac_tokens_risk = tuple(getattr(risk_config, "rbac_tokens", ()) or ())
+        if rbac_tokens_risk:
+            risk_meta["rbac_tokens"] = len(rbac_tokens_risk)
             if resolve_service_token is not None:
                 token_entry = resolve_service_token(
-                    rbac_tokens,
+                    rbac_tokens_risk,
                     scope=_REQUIRED_RISK_SCOPE,
                 )
                 risk_meta["auth_token_scope_checked"] = True
@@ -1648,7 +1649,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--summary",
-        action="store_true",
+        action="store_true,
         help=(
             "Wypisz podsumowanie odebranych snapshotów (łączna liczba, zdarzenia, statystyki FPS). "
             "Działa zarówno w trybie online, jak i podczas odczytu z JSONL."

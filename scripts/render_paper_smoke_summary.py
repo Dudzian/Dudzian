@@ -384,6 +384,7 @@ def render_summary_markdown(
         if isinstance(manifest_summary, Mapping):
             _append_json_block(lines, "Szczegóły manifestu", manifest_summary, limit=max_json_chars)
 
+    # Sekcja audytu bezpieczeństwa (TLS + RBAC) – zachowana z drugiej gałęzi
     security_baseline = summary.get("security_baseline") if isinstance(summary.get("security_baseline"), Mapping) else None
     if security_baseline:
         lines.append("## Audyt bezpieczeństwa (TLS + RBAC)")

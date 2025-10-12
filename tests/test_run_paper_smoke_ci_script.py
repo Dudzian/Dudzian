@@ -881,6 +881,11 @@ def test_main_fails_on_tls_audit_error(
     captured = capsys.readouterr()
     payload = json.loads(captured.out)
     assert exit_code == 2
+    assert payload["tls_audit_exit_code"] == 2
+    assert payload["security_baseline_exit_code"] == 2
+    assert payload["token_audit_exit_code"] == 0
+    assert "tls_audit" in payload["status"]
+    assert "security_baseline" in payload["status"]
 
 
 def test_security_baseline_cli_uses_signing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -938,11 +943,6 @@ def test_security_baseline_cli_uses_signing(monkeypatch: pytest.MonkeyPatch, tmp
     assert "--summary-hmac-key-id" in baseline_cmd
     assert "baseline-ci" in baseline_cmd
     assert "--require-summary-signature" in baseline_cmd
-    assert payload["tls_audit_exit_code"] == 2
-    assert payload["security_baseline_exit_code"] == 2
-    assert payload["token_audit_exit_code"] == 0
-    assert "tls_audit" in payload["status"]
-    assert "security_baseline" in payload["status"]
 
 
 def test_main_fails_on_token_audit_error(
@@ -1320,16 +1320,6 @@ def test_ci_main_end_to_end_local_backends(monkeypatch: pytest.MonkeyPatch, tmp_
     }
 
     config_path = _write_core_config(tmp_path, reporting=reporting_cfg)
-
-    base_run = _fake_subprocess_run_factory(tmp_path=tmp_path, summary_payload={"status": "ok"})
-
-    base_run = _fake_subprocess_run_factory(tmp_path=tmp_path, summary_payload={"status": "ok"})
-
-    base_run = _fake_subprocess_run_factory(tmp_path=tmp_path, summary_payload={"status": "ok"})
-
-    base_run = _fake_subprocess_run_factory(
-        tmp_path=tmp_path, summary_payload={"status": "ok"}
-    )
 
     base_run = _fake_subprocess_run_factory(
         tmp_path=tmp_path, summary_payload={"status": "ok"}

@@ -332,4 +332,3 @@ def test_main_returns_error_when_summary_missing(tmp_path: Path) -> None:
     missing_path = tmp_path / "missing.json"
     exit_code = cli.main(["--summary-json", str(missing_path)])
     assert exit_code == 2
-

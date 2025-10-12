@@ -186,7 +186,6 @@ def resolve_service_token(
     env: Mapping[str, str] | None = None,
 ) -> ServiceToken | None:
     """Zwraca token usługowy zawierający jawny sekret dla wskazanego scope."""
-
     env_mapping = env or os.environ
     for config in configs:
         token = ServiceToken.from_config(config, env=env_mapping)
@@ -204,7 +203,6 @@ def resolve_service_token_secret(
     env: Mapping[str, str] | None = None,
 ) -> str | None:
     """Zwraca jawny sekret tokenu usługi dostępnego dla podanego scope."""
-
     token = resolve_service_token(configs, scope=scope, env=env)
     if token is None:
         return None
