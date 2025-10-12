@@ -15,7 +15,10 @@ from bot_core.config.models import (
     InstrumentUniverseConfig,
     MetricsServiceConfig,
     MetricsServiceTlsConfig,
+    ServiceTokenConfig,
+    RiskDecisionLogConfig,
     RiskProfileConfig,
+    RiskServiceConfig,
     TelegramChannelSettings,
 )
 from bot_core.config.validation import (
@@ -488,6 +491,28 @@ def test_validate_core_config_detects_missing_tls_material(base_config: CoreConf
     assert any("TLS" in err for err in result.errors)
 
 
+def test_validate_core_config_warns_on_duplicate_tls_pins(base_config: CoreConfig) -> None:
+    metrics = _metrics_config_base()
+    metrics.tls.pinned_fingerprints = ("sha256:abc", "sha256:abc")
+    config = replace(base_config, metrics_service=metrics)
+
+    result = validate_core_config(config)
+
+    assert result.is_valid()
+    assert any("pinned_fingerprints" in warn for warn in result.warnings)
+
+
+def test_validate_core_config_detects_invalid_tls_pin_format(base_config: CoreConfig) -> None:
+    metrics = _metrics_config_base()
+    metrics.tls.pinned_fingerprints = ("invalid",)
+    config = replace(base_config, metrics_service=metrics)
+
+    result = validate_core_config(config)
+
+    assert not result.is_valid()
+    assert any("pinned_fingerprints" in err for err in result.errors)
+
+
 def test_validate_core_config_warns_on_metrics_mode_flag_conflict(
     base_config: CoreConfig,
 ) -> None:
@@ -500,3 +525,74 @@ def test_validate_core_config_warns_on_metrics_mode_flag_conflict(
 
     assert result.is_valid()
     assert any("reduce_motion_alerts" in warn for warn in result.warnings)
+
+
+def test_validate_core_config_checks_risk_service_settings(base_config: CoreConfig) -> None:
+    invalid = RiskServiceConfig(publish_interval_seconds=0.0)
+    config = replace(base_config, risk_service=invalid)
+
+    result = validate_core_config(config)
+    assert not result.is_valid()
+    assert any("publish_interval_seconds" in err for err in result.errors)
+
+    valid = replace(invalid, publish_interval_seconds=5.0, profiles=("balanced",))
+    result_ok = validate_core_config(replace(base_config, risk_service=valid))
+    assert result_ok.is_valid()
+
+
+def test_validate_core_config_metrics_rbac_tokens(base_config: CoreConfig) -> None:
+    metrics = MetricsServiceConfig(
+        enabled=True,
+        rbac_tokens=(ServiceTokenConfig(token_id="", token_value=None),),
+    )
+    result = validate_core_config(replace(base_config, metrics_service=metrics))
+    assert not result.is_valid()
+    assert any("rbac_tokens" in err for err in result.errors)
+
+    valid_metrics = MetricsServiceConfig(
+        enabled=True,
+        rbac_tokens=(
+            ServiceTokenConfig(token_id="reader", token_value="secret", scopes=("metrics.read",)),
+        ),
+    )
+    result_ok = validate_core_config(replace(base_config, metrics_service=valid_metrics))
+    assert result_ok.is_valid()
+
+
+def test_validate_core_config_risk_rbac_tokens(base_config: CoreConfig) -> None:
+    risk = RiskServiceConfig(
+        publish_interval_seconds=5.0,
+        rbac_tokens=(
+            ServiceTokenConfig(token_id="dup", token_value="one"),
+            ServiceTokenConfig(token_id="dup", token_value="two"),
+        ),
+    )
+    result = validate_core_config(replace(base_config, risk_service=risk))
+    assert result.is_valid()
+    assert any("rbac_tokens" in warn for warn in result.warnings)
+
+
+def test_validate_core_config_checks_risk_decision_log(base_config: CoreConfig) -> None:
+    invalid = RiskDecisionLogConfig(max_entries=0)
+    config = replace(base_config, risk_decision_log=invalid)
+
+    result = validate_core_config(config)
+    assert not result.is_valid()
+    assert any("max_entries" in err for err in result.errors)
+
+    valid = RiskDecisionLogConfig(path="/tmp/risk.jsonl")
+    result_ok = validate_core_config(replace(base_config, risk_decision_log=valid))
+    assert result_ok.is_valid()
+    assert any("brak klucza podpisu" in warn for warn in result_ok.warnings)
+
+
+def test_validate_core_config_detects_multiple_risk_log_key_sources(base_config: CoreConfig) -> None:
+    invalid = RiskDecisionLogConfig(
+        signing_key_env="RISK_KEY",
+        signing_key_path="/secure/key.bin",
+    )
+    config = replace(base_config, risk_decision_log=invalid)
+
+    result = validate_core_config(config)
+    assert not result.is_valid()
+    assert any("źródło klucza" in err for err in result.errors)

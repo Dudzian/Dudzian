@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
+import codecs
 from collections import defaultdict
 from copy import deepcopy
 import gzip
@@ -32,12 +33,19 @@ except Exception:  # pragma: no cover
 
 # --- presety profili ryzyka (z fallbackiem, patrz scripts.telemetry_risk_profiles) --
 from scripts.telemetry_risk_profiles import (
+    get_metrics_service_env_overrides,
     get_risk_profile,
     list_risk_profile_names,
     load_risk_profiles_with_metadata,
+    reset_risk_profile_store,
     risk_profile_metadata,
     summarize_risk_profile,
 )
+
+try:  # pragma: no cover - PyYAML opcjonalny
+    import yaml  # type: ignore
+except Exception:  # pragma: no cover - środowiska minimalne
+    yaml = None  # type: ignore
 
 LOGGER = logging.getLogger("bot_core.scripts.verify_decision_log")
 
@@ -53,6 +61,11 @@ _ENV_RISK_PROFILE = f"{_ENV_PREFIX}RISK_PROFILE"
 _ENV_RISK_PROFILES_FILE = f"{_ENV_PREFIX}RISK_PROFILES_FILE"
 _ENV_PRINT_RISK_PROFILES = f"{_ENV_PREFIX}PRINT_RISK_PROFILES"
 _ENV_CORE_CONFIG = f"{_ENV_PREFIX}CORE_CONFIG"
+_ENV_RISK_PROFILE_ENV_SNIPPET = f"{_ENV_PREFIX}RISK_PROFILE_ENV_SNIPPET"
+_ENV_RISK_PROFILE_YAML_SNIPPET = f"{_ENV_PREFIX}RISK_PROFILE_YAML_SNIPPET"
+_ENV_REQUIRE_TLS_MATERIALS = f"{_ENV_PREFIX}REQUIRE_TLS_MATERIALS"
+_ENV_EXPECT_SERVER_SHA256 = f"{_ENV_PREFIX}EXPECT_SERVER_SHA256"
+_ENV_EXPECT_SERVER_SHA256_SOURCE = f"{_ENV_PREFIX}EXPECT_SERVER_SHA256_SOURCE"
 
 _BOOL_TRUE = {"1", "true", "yes", "on"}
 _BOOL_FALSE = {"0", "false", "no", "off"}
@@ -82,6 +95,16 @@ _SEVERITY_ORDER = [
 ]
 
 _SEVERITY_RANK = {name: index for index, name in enumerate(_SEVERITY_ORDER)}
+
+_TLS_MATERIAL_CHOICES = (
+    "root_cert",
+    "client_cert",
+    "client_key",
+    "server_name",
+    "server_sha256",
+)
+
+_HEX_DIGITS = set("0123456789abcdef")
 
 
 class _SummaryAggregator:
@@ -196,6 +219,211 @@ class _SummaryAggregator:
         return summary
 
 
+def _format_env_override_value(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return repr(value)
+    if value is None:
+        return ""
+    return str(value)
+
+
+def _env_override_key(option: str) -> str:
+    return "RUN_TRADING_STUB_METRICS_" + option.replace("-", "_").upper()
+
+
+def _normalize_overrides(overrides: Mapping[str, Any] | None) -> dict[str, Any]:
+    if not overrides:
+        return {}
+    normalized: dict[str, Any] = {}
+    for key, value in overrides.items():
+        normalized[str(key)] = value
+    return normalized
+
+
+def _expected_env_assignments(overrides: Mapping[str, Any]) -> dict[str, str]:
+    expected: dict[str, str] = {}
+    for key, value in overrides.items():
+        expected[_env_override_key(str(key))] = _format_env_override_value(value)
+    return expected
+
+
+def _unescape_env_value(raw: str) -> str:
+    if raw.startswith("\"") and raw.endswith("\""):
+        inner = raw[1:-1]
+        try:
+            return codecs.decode(inner, "unicode_escape")
+        except Exception:  # pragma: no cover - defensywne
+            return inner.replace("\\\"", "\"").replace("\\\\", "\\")
+    if raw.startswith("'") and raw.endswith("'"):
+        inner = raw[1:-1]
+        return inner.replace("\\'", "'").replace("\\\\", "\\")
+    return raw
+
+
+def _parse_env_snippet(path: Path) -> dict[str, str]:
+    content = path.read_text(encoding="utf-8")
+    assignments: dict[str, str] = {}
+    for index, raw_line in enumerate(content.splitlines(), start=1):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :].strip()
+        if "=" not in line:
+            raise VerificationError(
+                f"Linia {index} pliku {path} nie zawiera przypisania KEY=VALUE"
+            )
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if not key:
+            raise VerificationError(
+                f"Linia {index} pliku {path} zawiera pustą nazwę zmiennej środowiskowej"
+            )
+        assignments[key] = _unescape_env_value(value.strip())
+    return assignments
+
+
+def _load_yaml_like(path: Path) -> Mapping[str, Any]:
+    text = path.read_text(encoding="utf-8")
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        if yaml is None:
+            raise VerificationError(
+                f"Plik {path} nie jest poprawnym JSON-em, a PyYAML nie jest dostępny do parsowania"
+            )
+        data = yaml.safe_load(text)
+    if not isinstance(data, Mapping):
+        raise VerificationError(f"Plik {path} nie zawiera słownika z konfiguracją snippetów")
+    return data
+
+
+def _validate_risk_profile_snippets(
+    *,
+    env_path: str | None,
+    yaml_path: str | None,
+    recommended_overrides: Mapping[str, Any] | None,
+    profile_name: str | None,
+) -> tuple[list[Mapping[str, Any]], list[str]]:
+    validations: list[Mapping[str, Any]] = []
+    errors: list[str] = []
+    overrides = _normalize_overrides(recommended_overrides)
+    profile_label = profile_name or "unknown"
+
+    if env_path:
+        entry: dict[str, Any] = {"type": "env", "path": env_path}
+        validations.append(entry)
+        target = Path(env_path).expanduser()
+        try:
+            actual = _parse_env_snippet(target)
+        except FileNotFoundError:
+            entry["status"] = "missing"
+            entry["error"] = "file_missing"
+            errors.append(f"Brak pliku env snippet: {env_path}")
+        except VerificationError as exc:
+            entry["status"] = "error"
+            entry["error"] = str(exc)
+            errors.append(str(exc))
+        else:
+            if not overrides:
+                entry["status"] = "error"
+                entry["error"] = "missing_recommended_overrides"
+                errors.append(
+                    "Brak recommended_overrides w podsumowaniu profilu ryzyka – nie można porównać snippetów"
+                )
+            else:
+                expected = _expected_env_assignments(overrides)
+                missing = sorted(key for key in expected if key not in actual)
+                extra = sorted(key for key in actual if key not in expected)
+                mismatched = {
+                    key: {"expected": expected[key], "actual": actual[key]}
+                    for key in expected
+                    if key in actual and actual[key] != expected[key]
+                }
+                entry["expected_keys"] = sorted(expected)
+                if not missing and not extra and not mismatched:
+                    entry["status"] = "ok"
+                else:
+                    entry["status"] = "mismatch"
+                    details: dict[str, Any] = {}
+                    if missing:
+                        details["missing"] = missing
+                    if extra:
+                        details["extra"] = extra
+                    if mismatched:
+                        details["mismatched"] = mismatched
+                    if details:
+                        entry["details"] = details
+                    errors.append(
+                        "Plik env snippet nie zgadza się z recommended_overrides profilu "
+                        f"{profile_label}"
+                    )
+
+    if yaml_path:
+        entry = {"type": "yaml", "path": yaml_path}
+        validations.append(entry)
+        target = Path(yaml_path).expanduser()
+        try:
+            payload = _load_yaml_like(target)
+        except FileNotFoundError:
+            entry["status"] = "missing"
+            entry["error"] = "file_missing"
+            errors.append(f"Brak pliku YAML/JSON snippet: {yaml_path}")
+        except VerificationError as exc:
+            entry["status"] = "error"
+            entry["error"] = str(exc)
+            errors.append(str(exc))
+        else:
+            section: Mapping[str, Any] | None = None
+            if isinstance(payload.get("metrics_service_overrides"), Mapping):
+                section = payload["metrics_service_overrides"]  # type: ignore[index]
+            elif isinstance(payload, Mapping):
+                section = payload
+            if not overrides:
+                entry["status"] = "error"
+                entry["error"] = "missing_recommended_overrides"
+                errors.append(
+                    "Brak recommended_overrides w podsumowaniu profilu ryzyka – nie można porównać snippetów"
+                )
+            elif not isinstance(section, Mapping):
+                entry["status"] = "error"
+                entry["error"] = "missing_override_section"
+                errors.append(
+                    f"Plik {yaml_path} nie zawiera sekcji metrics_service_overrides do weryfikacji"
+                )
+            else:
+                expected_map = _normalize_overrides(overrides)
+                actual_map = _normalize_overrides(section)
+                missing = sorted(key for key in expected_map if key not in actual_map)
+                extra = sorted(key for key in actual_map if key not in expected_map)
+                mismatched = {
+                    key: {"expected": expected_map[key], "actual": actual_map[key]}
+                    for key in expected_map
+                    if key in actual_map and actual_map[key] != expected_map[key]
+                }
+                if not missing and not extra and not mismatched:
+                    entry["status"] = "ok"
+                else:
+                    entry["status"] = "mismatch"
+                    details = {}
+                    if missing:
+                        details["missing"] = missing
+                    if extra:
+                        details["extra"] = extra
+                    if mismatched:
+                        details["mismatched"] = mismatched
+                    if details:
+                        entry["details"] = details
+                    errors.append(
+                        "Plik YAML/JSON snippet nie zgadza się z recommended_overrides profilu "
+                        f"{profile_label}"
+                    )
+
+    return validations, errors
+
+
 def _normalize_severity(candidate: Any) -> str | None:
     if not isinstance(candidate, str):
         return None
@@ -236,6 +464,52 @@ def _parse_env_bool(value: str, *, variable: str, parser: argparse.ArgumentParse
         return False
     parser.error(f"Nieprawidłowa wartość {variable}={value!r}; oczekiwano wartości bool")
     raise AssertionError("unreachable")
+
+
+def _parse_env_list(
+    value: str,
+    *,
+    variable: str,
+    parser: argparse.ArgumentParser,
+) -> list[str]:
+    raw = (value or "").strip()
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        candidates = [item.strip() for item in raw.replace(";", ",").split(",")]
+        return [item for item in candidates if item]
+    if isinstance(parsed, str):
+        parsed_list = [parsed.strip()]
+    elif isinstance(parsed, list):
+        parsed_list = []
+        for item in parsed:
+            if isinstance(item, str):
+                stripped = item.strip()
+                if stripped:
+                    parsed_list.append(stripped)
+            elif item is None:
+                continue
+            else:
+                parser.error(
+                    f"{variable} może zawierać jedynie wartości tekstowe (lub null w tablicy JSON)"
+                )
+    else:
+        parser.error(f"{variable} musi być listą JSON lub pojedynczym tekstem")
+        parsed_list = []
+    return [entry for entry in parsed_list if entry]
+
+
+def _normalize_server_sha256(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip().lower().replace(":", "")
+    if not stripped:
+        return None
+    if any(char not in _HEX_DIGITS for char in stripped):
+        return None
+    return stripped
 
 
 def _coerce_expected_value(raw: str) -> Any:
@@ -519,6 +793,9 @@ def _validate_metadata(
     require_tls: bool,
     expect_input_file: str | None,
     expect_endpoint: str | None,
+    required_tls_materials: Sequence[str],
+    expected_server_sha256: Sequence[str],
+    expected_server_sha256_sources: Sequence[str],
 ) -> None:
     expectations_defined = any(
         [
@@ -529,6 +806,9 @@ def _validate_metadata(
             require_tls,
             expect_input_file,
             expect_endpoint,
+            required_tls_materials,
+            expected_server_sha256,
+            expected_server_sha256_sources,
         ]
     )
     if metadata is None:
@@ -594,6 +874,68 @@ def _validate_metadata(
             raise VerificationError("Wymagano TLS dla logu w trybie grpc")
         if not metadata.get("use_tls", False):
             raise VerificationError("Metadane wskazują, że połączenie gRPC nie używa TLS")
+
+    tls_requirements = bool(required_tls_materials or expected_server_sha256 or expected_server_sha256_sources)
+    tls_materials = metadata.get("tls_materials") if isinstance(metadata, Mapping) else None
+    if tls_requirements:
+        if not isinstance(tls_materials, Mapping):
+            raise VerificationError("Metadane nie zawierają sekcji tls_materials")
+    if not isinstance(tls_materials, Mapping):
+        tls_materials = {}
+
+    missing_materials: list[str] = []
+    for material in required_tls_materials:
+        present = tls_materials.get(material)
+        if not present:
+            missing_materials.append(material)
+    if missing_materials:
+        raise VerificationError(
+            "Brak wymaganych materiałów TLS w metadanych: " + ", ".join(sorted(missing_materials))
+        )
+
+    expected_sha = [item for item in expected_server_sha256 if item]
+    normalized_expected: dict[str, str] = {}
+    for raw in expected_sha:
+        normalized = _normalize_server_sha256(raw)
+        if normalized is None:
+            raise VerificationError(f"Nieprawidłowy oczekiwany fingerprint SHA-256: {raw!r}")
+        normalized_expected[normalized] = raw
+
+    expected_sources = tuple({source for source in expected_server_sha256_sources if source})
+
+    if normalized_expected or "server_sha256" in required_tls_materials:
+        server_fingerprint_raw = metadata.get("server_sha256") if isinstance(metadata, Mapping) else None
+        normalized_present = _normalize_server_sha256(server_fingerprint_raw)
+        if normalized_present is None:
+            raise VerificationError("Metadane TLS nie zawierają poprawnego odcisku server_sha256")
+        if normalized_expected and normalized_present not in normalized_expected:
+            expected_labels = ", ".join(sorted(normalized_expected.values()))
+            raise VerificationError(
+                "Fingerprint server_sha256 w metadanych nie zgadza się z oczekiwanymi wartościami"
+                + (f" ({expected_labels})" if expected_labels else "")
+            )
+        if expected_sources:
+            fingerprint_source_raw = metadata.get("server_sha256_source") if isinstance(metadata, Mapping) else None
+            fingerprint_source = (
+                str(fingerprint_source_raw).strip().lower() if fingerprint_source_raw is not None else None
+            )
+            if fingerprint_source not in expected_sources:
+                allowed = ", ".join(sorted(expected_sources)) or ""
+                raise VerificationError(
+                    "Źródło fingerprintu TLS w metadanych nie spełnia oczekiwań"
+                    + (f" (dozwolone: {allowed})" if allowed else "")
+                )
+    elif expected_sources:
+        fingerprint_source_raw = metadata.get("server_sha256_source") if isinstance(metadata, Mapping) else None
+        fingerprint_source = (
+            str(fingerprint_source_raw).strip().lower() if fingerprint_source_raw is not None else None
+        )
+        if fingerprint_source not in expected_sources:
+            allowed = ", ".join(sorted(expected_sources)) or ""
+            raise VerificationError(
+                "Metadane TLS nie zawierają fingerprintu, ale określono oczekiwane źródła"
+                + (f" (dozwolone: {allowed})" if allowed else "")
+            )
 
 
 def _matches_screen_name(screen: Mapping[str, Any] | None, *, expected_substring: str) -> bool:
@@ -951,6 +1293,11 @@ def _validate_summary_path(
         result["signature"] = signature_payload
     if metadata_signature:
         result["metadata_signature"] = metadata_signature
+    metadata_section = payload.get("metadata")
+    if isinstance(metadata_section, Mapping):
+        rp_summary = metadata_section.get("risk_profile_summary")
+        if isinstance(rp_summary, Mapping):
+            result["risk_profile_summary"] = rp_summary
     return result
 
 
@@ -1021,6 +1368,7 @@ def _build_report_payload(
     risk_profile: Mapping[str, Any] | None = None,
     risk_profile_summary: Mapping[str, Any] | None = None,
     core_config: Mapping[str, Any] | None = None,
+    risk_profile_snippet_validation: Sequence[Mapping[str, Any]] | None = None,
 ) -> Mapping[str, Any]:
     payload: dict[str, Any] = {
         "report_version": 1,
@@ -1045,6 +1393,10 @@ def _build_report_payload(
         payload["risk_profile_summary"] = dict(risk_profile_summary)
     if core_config:
         payload["core_config"] = dict(core_config)
+    if risk_profile_snippet_validation:
+        payload["risk_profile_snippet_validation"] = [
+            dict(entry) for entry in risk_profile_snippet_validation
+        ]
     return payload
 
 
@@ -1093,6 +1445,28 @@ def build_parser() -> argparse.ArgumentParser:
         "--require-tls",
         action="store_true",
         help="Wymagaj, by log gRPC był zarejestrowany przy użyciu TLS",
+    )
+    parser.add_argument(
+        "--require-tls-material",
+        action="append",
+        default=[],
+        choices=_TLS_MATERIAL_CHOICES,
+        metavar="MATERIAŁ",
+        help="Wymagaj obecności materiału TLS w metadanych (można podawać wielokrotnie)",
+    )
+    parser.add_argument(
+        "--expect-server-sha256",
+        action="append",
+        default=[],
+        metavar="FINGERPRINT",
+        help="Oczekiwany odcisk SHA-256 serwera zapisany w metadanych (można podawać wielokrotnie)",
+    )
+    parser.add_argument(
+        "--expect-server-sha256-source",
+        action="append",
+        default=[],
+        metavar="ŹRÓDŁO",
+        help="Dozwolone źródła fingerprintu TLS (np. cli, env, pinned_fingerprint)",
     )
     parser.add_argument(
         "--require-screen-info",
@@ -1144,6 +1518,20 @@ def build_parser() -> argparse.ArgumentParser:
         "--print-risk-profiles",
         action="store_true",
         help="Wypisz dostępne profile ryzyka (wraz z metadanymi) i zakończ",
+    )
+    parser.add_argument(
+        "--risk-profile-env-snippet",
+        help=(
+            "Ścieżka do pliku .env wygenerowanego przez telemetry_risk_profiles render --format env,"
+            " który ma zostać porównany z recommended_overrides"
+        ),
+    )
+    parser.add_argument(
+        "--risk-profile-yaml-snippet",
+        help=(
+            "Ścieżka do pliku YAML/JSON wygenerowanego przez telemetry_risk_profiles render --format yaml"
+            " (z sekcją metrics_service_overrides) w celu porównania z recommended_overrides"
+        ),
     )
     parser.add_argument(
         "--core-config",
@@ -1277,6 +1665,57 @@ def _apply_env_defaults(args: argparse.Namespace, parser: argparse.ArgumentParse
         if env_endpoint:
             args.expect_endpoint = env_endpoint
 
+    required_tls_materials = {str(item).strip().lower() for item in getattr(args, "require_tls_material", [])}
+    env_tls_materials = os.getenv(_ENV_REQUIRE_TLS_MATERIALS)
+    if env_tls_materials:
+        for entry in _parse_env_list(env_tls_materials, variable=_ENV_REQUIRE_TLS_MATERIALS, parser=parser):
+            normalized = entry.strip().lower()
+            if normalized not in _TLS_MATERIAL_CHOICES:
+                parser.error(
+                    f"{_ENV_REQUIRE_TLS_MATERIALS} zawiera nieobsługiwany materiał TLS {entry!r};"
+                    f" dozwolone: {', '.join(_TLS_MATERIAL_CHOICES)}"
+                )
+            required_tls_materials.add(normalized)
+    args._required_tls_materials = tuple(sorted(required_tls_materials))
+
+    expected_server_sha: list[str] = []
+    expected_server_sha.extend(getattr(args, "expect_server_sha256", []) or [])
+    env_expected_sha = os.getenv(_ENV_EXPECT_SERVER_SHA256)
+    if env_expected_sha:
+        expected_server_sha.extend(
+            _parse_env_list(env_expected_sha, variable=_ENV_EXPECT_SERVER_SHA256, parser=parser)
+        )
+    unique_expected_sha: list[str] = []
+    seen_sha: set[str] = set()
+    for raw in expected_server_sha:
+        candidate = str(raw).strip()
+        if not candidate or candidate in seen_sha:
+            continue
+        seen_sha.add(candidate)
+        unique_expected_sha.append(candidate)
+    args._expected_server_sha256 = tuple(unique_expected_sha)
+
+    expected_sources_raw: list[str] = []
+    expected_sources_raw.extend(getattr(args, "expect_server_sha256_source", []) or [])
+    env_expected_sources = os.getenv(_ENV_EXPECT_SERVER_SHA256_SOURCE)
+    if env_expected_sources:
+        expected_sources_raw.extend(
+            _parse_env_list(
+                env_expected_sources,
+                variable=_ENV_EXPECT_SERVER_SHA256_SOURCE,
+                parser=parser,
+            )
+        )
+    normalized_sources: list[str] = []
+    seen_sources: set[str] = set()
+    for source in expected_sources_raw:
+        normalized_source = str(source).strip().lower()
+        if not normalized_source or normalized_source in seen_sources:
+            continue
+        seen_sources.add(normalized_source)
+        normalized_sources.append(normalized_source)
+    args._expected_server_sha256_sources = tuple(normalized_sources)
+
     if getattr(args, "risk_profile", None) is None:
         env_risk_profile = os.getenv(_ENV_RISK_PROFILE)
         if env_risk_profile:
@@ -1299,6 +1738,16 @@ def _apply_env_defaults(args: argparse.Namespace, parser: argparse.ArgumentParse
         env_report_path = os.getenv(_ENV_REPORT_OUTPUT)
         if env_report_path:
             args.report_output = env_report_path
+
+    if getattr(args, "risk_profile_env_snippet", None) is None:
+        env_env_snippet = os.getenv(_ENV_RISK_PROFILE_ENV_SNIPPET)
+        if env_env_snippet:
+            args.risk_profile_env_snippet = env_env_snippet
+
+    if getattr(args, "risk_profile_yaml_snippet", None) is None:
+        env_yaml_snippet = os.getenv(_ENV_RISK_PROFILE_YAML_SNIPPET)
+        if env_yaml_snippet:
+            args.risk_profile_yaml_snippet = env_yaml_snippet
 
     max_event_counts: dict[str, int] = {}
     env_event_limits = os.getenv(_ENV_MAX_EVENT_COUNTS)
@@ -1505,6 +1954,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
+    # Zresetuj stan profili ryzyka, aby unikać przecieków pomiędzy wywołaniami.
+    reset_risk_profile_store()
+
     # źródło profilu ryzyka do metadanych
     args._risk_profile_source = None
     provided_flags = {arg for arg in (argv or []) if isinstance(arg, str) and arg.startswith("--")}
@@ -1546,10 +1998,20 @@ def main(argv: list[str] | None = None) -> int:
     if summary_path == "-" and args.path == "-":
         parser.error("Nie można czytać decision logu i podsumowania jednocześnie ze STDIN")
 
-    collect_summary = bool(summary_path or report_output or max_event_counts or min_event_counts)
+    collect_summary = bool(
+        summary_path
+        or report_output
+        or max_event_counts
+        or min_event_counts
+        or getattr(args, "risk_profile_env_snippet", None)
+        or getattr(args, "risk_profile_yaml_snippet", None)
+    )
     if risk_profile_config and risk_profile_config.get("severity_min"):
         collect_summary = True
 
+    summary_validation: Mapping[str, Any] | None = None
+    result: Mapping[str, Any]
+    exit_code = 0
     try:
         result = verify_log(
             args.path,
@@ -1567,6 +2029,9 @@ def main(argv: list[str] | None = None) -> int:
             require_tls=args.require_tls,
             expect_input_file=args.expect_input_file,
             expect_endpoint=args.expect_endpoint,
+            required_tls_materials=getattr(args, "_required_tls_materials", ()),
+            expected_server_sha256=getattr(args, "_expected_server_sha256", ()),
+            expected_server_sha256_sources=getattr(args, "_expected_server_sha256_sources", ()),
         )
         metadata = result.get("metadata")
         if metadata:
@@ -1574,7 +2039,6 @@ def main(argv: list[str] | None = None) -> int:
         summary_signature_meta = None
         if isinstance(metadata, Mapping):
             summary_signature_meta = metadata.get("summary_signature")
-        summary_validation: Mapping[str, Any] | None = None
         if summary_path:
             summary_validation = _validate_summary_path(
                 summary_path,
@@ -1592,6 +2056,44 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     metadata_info = result.get("metadata") or {}
+
+    risk_profile_summary_for_report: Mapping[str, Any] | None = None
+    if summary_validation and isinstance(summary_validation, Mapping):
+        rp_summary = summary_validation.get("risk_profile_summary")
+        if isinstance(rp_summary, Mapping):
+            risk_profile_summary_for_report = rp_summary
+    if not risk_profile_summary_for_report and isinstance(metadata_info, Mapping):
+        rp_summary = metadata_info.get("risk_profile_summary")
+        if isinstance(rp_summary, Mapping):
+            risk_profile_summary_for_report = rp_summary
+    if not risk_profile_summary_for_report:
+        fallback_summary = getattr(args, "_risk_profile_summary", None)
+        if isinstance(fallback_summary, Mapping):
+            risk_profile_summary_for_report = fallback_summary
+
+    recommended_overrides: Mapping[str, Any] | None = None
+    profile_name = None
+    if isinstance(risk_profile_summary_for_report, Mapping):
+        recommended_overrides = risk_profile_summary_for_report.get("recommended_overrides")
+        profile_name = risk_profile_summary_for_report.get("name")
+    if recommended_overrides is None:
+        fallback_summary = getattr(args, "_risk_profile_summary", None)
+        if isinstance(fallback_summary, Mapping):
+            recommended_overrides = fallback_summary.get("recommended_overrides")
+            profile_name = profile_name or fallback_summary.get("name")
+
+    snippet_validations, snippet_errors = _validate_risk_profile_snippets(
+        env_path=getattr(args, "risk_profile_env_snippet", None),
+        yaml_path=getattr(args, "risk_profile_yaml_snippet", None),
+        recommended_overrides=recommended_overrides,
+        profile_name=profile_name or getattr(args, "risk_profile", None),
+    )
+
+    for error_message in snippet_errors:
+        LOGGER.error("Walidacja snippetów profilu ryzyka: %s", error_message)
+    if snippet_errors:
+        exit_code = 2
+
     if report_output:
         _write_report_output(
             report_output,
@@ -1602,18 +2104,27 @@ def main(argv: list[str] | None = None) -> int:
                 enforced_limits=max_event_counts,
                 enforced_minimums=min_event_counts,
                 risk_profile=risk_profile_config,
-                risk_profile_summary=getattr(args, "_risk_profile_summary", None),
+                risk_profile_summary=risk_profile_summary_for_report,
                 core_config=core_metadata,
+                risk_profile_snippet_validation=snippet_validations,
             ),
         )
     metadata_line = json.dumps(metadata_info, ensure_ascii=False)
-    LOGGER.info(
-        "OK: zweryfikowano %s wpisów (plik=%s)\nMetadane: %s",
-        result["verified_entries"],
-        result["path"],
-        metadata_line,
-    )
-    return 0
+    if exit_code == 0:
+        LOGGER.info(
+            "OK: zweryfikowano %s wpisów (plik=%s)\nMetadane: %s",
+            result["verified_entries"],
+            result["path"],
+            metadata_line,
+        )
+    else:
+        LOGGER.error(
+            "Walidacja zakończona z błędami snippetów profilu ryzyka (zweryfikowano %s wpisów, plik=%s).\nMetadane: %s",
+            result["verified_entries"],
+            result["path"],
+            metadata_line,
+        )
+    return exit_code
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI

@@ -43,6 +43,24 @@ class _DummySecretManager:
 
 
 def _write_summary(tmp_path: Path, **overrides: object) -> Path:
+    manifest_payload = {
+        "manifest_path": str(tmp_path / "manifest" / "ohlcv_manifest.sqlite"),
+        "metrics_path": str(tmp_path / "manifest" / "metrics.prom"),
+        "summary_path": str(tmp_path / "manifest" / "summary.json"),
+        "worst_status": "ok",
+        "status_counts": {"ok": 5},
+        "total_entries": 5,
+        "exit_code": 0,
+        "stage": "paper",
+        "risk_profile": "balanced",
+        "deny_status": ["warning", "invalid_metadata"],
+        "summary": {"status_counts": {"ok": 5}},
+        "summary_signature": {
+            "algorithm": "HMAC-SHA256",
+            "value": "YWJj",
+            "key_id": "ci-manifest",
+        },
+    }
     payload = {
         "environment": "binance_paper",
         "operator": "CI Agent",
@@ -79,8 +97,30 @@ def _write_summary(tmp_path: Path, **overrides: object) -> Path:
             "json_sync": {"status": "ok", "backend": "s3", "location": "s3://audit/jsonl"},
             "archive_upload": {"status": "ok", "backend": "s3", "location": "s3://audit/archive.zip"},
         },
+        "manifest": manifest_payload,
+        "tls_audit": {
+            "report_path": str(tmp_path / "tls" / "audit.json"),
+            "status": "warning",
+            "exit_code": 0,
+            "warnings": ["MetricsService działa bez TLS"],
+            "errors": [],
+        },
+        "token_audit": {
+            "report_path": str(tmp_path / "rbac" / "audit.json"),
+            "status": "ok",
+            "exit_code": 0,
+            "warnings": ["Legacy auth token"],
+            "errors": [],
+        },
     }
+    manifest_override = overrides.pop("manifest", None)
     payload.update(overrides)
+    if isinstance(manifest_override, Mapping):
+        payload["manifest"].update(manifest_override)
+    elif manifest_override is None:
+        payload["manifest"] = manifest_payload
+    else:
+        payload["manifest"] = manifest_override
     path = tmp_path / "summary.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
     return path
@@ -114,9 +154,21 @@ def test_main_dispatches_alert(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) 
     assert len(recorded_router.messages) == 1
     message = recorded_router.messages[0]
     assert message.category == "paper_smoke_compliance"
-    assert message.severity == "info"
+    assert message.severity == "warning"
     assert message.context["summary_sha256"] == "deadbeef"
     assert message.context["paper_smoke_publish_status"] == "ok"
+    assert message.context["paper_smoke_manifest_status"] == "ok"
+    assert message.context["paper_smoke_manifest_exit_code"] == "0"
+    assert message.context["paper_smoke_manifest_status_count_ok"] == "5"
+    assert message.context["paper_smoke_manifest_signature"] == "YWJj"
+    assert message.context["paper_smoke_manifest_signature_algorithm"] == "HMAC-SHA256"
+    assert message.context["paper_smoke_manifest_signature_key_id"] == "ci-manifest"
+    assert message.context["paper_smoke_tls_audit_status"] == "warning"
+    assert message.context["paper_smoke_tls_audit_exit_code"] == "0"
+    assert message.context["paper_smoke_tls_audit_warning_count"] == "1"
+    assert message.context["paper_smoke_token_audit_status"] == "ok"
+    assert message.context["paper_smoke_token_audit_exit_code"] == "0"
+    assert message.context["paper_smoke_token_audit_warning_count"] == "1"
 
 
 def test_main_dry_run_prints_preview(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -134,8 +186,58 @@ def test_main_dry_run_prints_preview(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     captured = capsys.readouterr()
     payload = json.loads(captured.out)
     assert payload["status"] == "dry-run"
-    assert payload["severity"] == "info"
+    assert payload["severity"] == "warning"
     assert payload["context"]["paper_smoke_publish_status"] == "warning"
+    assert payload["context"]["paper_smoke_manifest_status"] == "ok"
+    assert payload["context"]["paper_smoke_manifest_signature"] == "YWJj"
+    assert payload["context"]["paper_smoke_tls_audit_status"] == "warning"
+    assert payload["context"]["paper_smoke_token_audit_status"] == "ok"
+
+
+def test_manifest_failure_escalates_severity(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    summary_path = _write_summary(
+        tmp_path,
+        manifest={
+            "worst_status": "missing_metadata",
+            "status_counts": {"missing_metadata": 2},
+            "total_entries": 2,
+            "exit_code": 2,
+        },
+    )
+
+    recorded_router = _RecorderRouter()
+    recorded_audit = _RecordedAuditLog(records=[])
+
+    def _fake_build_alert_channels(**_kwargs):  # noqa: ANN003
+        return {}, recorded_router, recorded_audit
+
+    monkeypatch.setattr(cli, "build_alert_channels", _fake_build_alert_channels)
+    monkeypatch.setattr(cli, "_create_secret_manager", lambda args: _DummySecretManager())
+    monkeypatch.setattr(
+        cli,
+        "load_core_config",
+        lambda _path: types.SimpleNamespace(environments={"binance_paper": object()}),
+    )
+
+    exit_code = cli.main(
+        [
+            "--config",
+            str(tmp_path / "core.yaml"),
+            "--environment",
+            "binance_paper",
+            "--summary-json",
+            str(summary_path),
+        ]
+    )
+
+    assert exit_code == 0
+    assert recorded_router.messages[0].severity == "error"
+    assert (
+        recorded_router.messages[0].context["paper_smoke_manifest_status"]
+        == "missing_metadata"
+    )
 
 
 def test_main_returns_error_when_summary_missing(tmp_path: Path) -> None:

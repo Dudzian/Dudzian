@@ -23,6 +23,7 @@ _SUMMARY_KEY_PRECHECK = "precheck"
 _SUMMARY_KEY_JSON = "json_log"
 _SUMMARY_KEY_ARCHIVE = "archive"
 _SUMMARY_KEY_PUBLISH = "publish"
+_SUMMARY_KEY_MANIFEST = "manifest"
 
 
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
@@ -256,6 +257,128 @@ def _build_alert_payload(
                 for key, value in metadata.items():
                     context[f"paper_smoke_archive_{key}"] = str(value)
 
+    manifest_section = summary.get(_SUMMARY_KEY_MANIFEST)
+    if isinstance(manifest_section, Mapping):
+        manifest_path = manifest_section.get("manifest_path")
+        if manifest_path:
+            context["paper_smoke_manifest_path"] = str(manifest_path)
+        metrics_path = manifest_section.get("metrics_path")
+        if metrics_path:
+            context["paper_smoke_manifest_metrics_path"] = str(metrics_path)
+        summary_path = manifest_section.get("summary_path")
+        if summary_path:
+            context["paper_smoke_manifest_summary_path"] = str(summary_path)
+        worst_status = manifest_section.get("worst_status")
+        if worst_status:
+            context["paper_smoke_manifest_status"] = str(worst_status)
+        stage_value = manifest_section.get("stage")
+        if stage_value:
+            context["paper_smoke_manifest_stage"] = str(stage_value)
+        risk_profile = manifest_section.get("risk_profile")
+        if risk_profile:
+            context["paper_smoke_manifest_risk_profile"] = str(risk_profile)
+        deny_status = manifest_section.get("deny_status")
+        if isinstance(deny_status, (list, tuple, set)):
+            context["paper_smoke_manifest_deny_status"] = ",".join(str(item) for item in deny_status)
+        elif deny_status:
+            context["paper_smoke_manifest_deny_status"] = str(deny_status)
+
+        status_counts = manifest_section.get("status_counts")
+        if isinstance(status_counts, Mapping):
+            for status, value in status_counts.items():
+                context[f"paper_smoke_manifest_status_count_{status}"] = str(value)
+
+        total_entries = manifest_section.get("total_entries")
+        if total_entries is not None:
+            context["paper_smoke_manifest_total_entries"] = str(total_entries)
+
+        signature_payload = manifest_section.get("summary_signature")
+        if isinstance(signature_payload, Mapping):
+            signature_value = signature_payload.get("value")
+            if signature_value:
+                context["paper_smoke_manifest_signature"] = str(signature_value)
+            signature_algorithm = signature_payload.get("algorithm")
+            if signature_algorithm:
+                context["paper_smoke_manifest_signature_algorithm"] = str(signature_algorithm)
+            signature_key_id = signature_payload.get("key_id")
+            if signature_key_id:
+                context["paper_smoke_manifest_signature_key_id"] = str(signature_key_id)
+
+        exit_code = manifest_section.get("exit_code")
+        if exit_code is not None:
+            context["paper_smoke_manifest_exit_code"] = str(exit_code)
+            try:
+                if int(exit_code) != 0:
+                    severity = "error"
+            except (TypeError, ValueError):
+                severity = "error"
+
+    tls_section = summary.get("tls_audit")
+    if isinstance(tls_section, Mapping):
+        report_path = tls_section.get("report_path")
+        status_value = tls_section.get("status")
+        exit_code = tls_section.get("exit_code")
+        warnings_payload = tls_section.get("warnings")
+        errors_payload = tls_section.get("errors")
+        if report_path:
+            context["paper_smoke_tls_audit_path"] = str(report_path)
+        if status_value:
+            context["paper_smoke_tls_audit_status"] = str(status_value)
+        if exit_code is not None:
+            context["paper_smoke_tls_audit_exit_code"] = str(exit_code)
+            try:
+                if int(exit_code) != 0:
+                    severity = "error"
+            except (TypeError, ValueError):
+                severity = "error"
+        if isinstance(warnings_payload, (list, tuple, set)) and warnings_payload:
+            context["paper_smoke_tls_audit_warning_count"] = str(len(warnings_payload))
+            if severity == "info":
+                severity = "warning"
+        elif isinstance(warnings_payload, str) and warnings_payload:
+            context["paper_smoke_tls_audit_warning_count"] = "1"
+            if severity == "info":
+                severity = "warning"
+        if isinstance(errors_payload, (list, tuple, set)) and errors_payload:
+            context["paper_smoke_tls_audit_error_count"] = str(len(errors_payload))
+            severity = "error"
+        elif isinstance(errors_payload, str) and errors_payload:
+            context["paper_smoke_tls_audit_error_count"] = "1"
+            severity = "error"
+
+    token_section = summary.get("token_audit")
+    if isinstance(token_section, Mapping):
+        report_path = token_section.get("report_path")
+        status_value = token_section.get("status")
+        exit_code = token_section.get("exit_code")
+        warnings_payload = token_section.get("warnings")
+        errors_payload = token_section.get("errors")
+        if report_path:
+            context["paper_smoke_token_audit_path"] = str(report_path)
+        if status_value:
+            context["paper_smoke_token_audit_status"] = str(status_value)
+        if exit_code is not None:
+            context["paper_smoke_token_audit_exit_code"] = str(exit_code)
+            try:
+                if int(exit_code) != 0:
+                    severity = "error"
+            except (TypeError, ValueError):
+                severity = "error"
+        if isinstance(warnings_payload, (list, tuple, set)) and warnings_payload:
+            context["paper_smoke_token_audit_warning_count"] = str(len(warnings_payload))
+            if severity == "info":
+                severity = "warning"
+        elif isinstance(warnings_payload, str) and warnings_payload:
+            context["paper_smoke_token_audit_warning_count"] = "1"
+            if severity == "info":
+                severity = "warning"
+        if isinstance(errors_payload, (list, tuple, set)) and errors_payload:
+            context["paper_smoke_token_audit_error_count"] = str(len(errors_payload))
+            severity = "error"
+        elif isinstance(errors_payload, str) and errors_payload:
+            context["paper_smoke_token_audit_error_count"] = "1"
+            severity = "error"
+
     publish_section = summary.get(_SUMMARY_KEY_PUBLISH)
     if isinstance(publish_section, Mapping):
         _append_publish_context(context, publish_section)
@@ -274,6 +397,27 @@ def _build_alert_payload(
         f"Severity: {severity.upper()}",
         f"Pre-check: {context.get('precheck_status', 'unknown')}",
     ]
+    manifest_status = context.get("paper_smoke_manifest_status")
+    if manifest_status:
+        body_lines.append(f"Manifest OHLCV: {manifest_status}")
+    token_status = context.get("paper_smoke_token_audit_status")
+    if token_status:
+        body_lines.append(f"Audyt tokenów: {token_status}")
+    token_warnings = context.get("paper_smoke_token_audit_warning_count")
+    if token_warnings:
+        body_lines.append(f"Tokeny ostrzeżenia: {token_warnings}")
+    token_errors = context.get("paper_smoke_token_audit_error_count")
+    if token_errors:
+        body_lines.append(f"Tokeny błędy: {token_errors}")
+    tls_status = context.get("paper_smoke_tls_audit_status")
+    if tls_status:
+        body_lines.append(f"Audyt TLS: {tls_status}")
+    tls_warnings = context.get("paper_smoke_tls_audit_warning_count")
+    if tls_warnings:
+        body_lines.append(f"TLS ostrzeżenia: {tls_warnings}")
+    tls_errors = context.get("paper_smoke_tls_audit_error_count")
+    if tls_errors:
+        body_lines.append(f"TLS błędy: {tls_errors}")
     publish_status = context.get("paper_smoke_publish_status")
     if publish_status:
         body_lines.append(f"Auto-publikacja: {publish_status}")

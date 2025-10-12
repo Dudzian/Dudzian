@@ -1,8 +1,11 @@
 import json
 from pathlib import Path
+import sys
 
 import pytest
 import yaml
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import scripts.telemetry_risk_profiles as telemetry_profiles_cli
 
@@ -202,6 +205,76 @@ def test_cli_list_profiles_yaml_format(
 
     payload = yaml.safe_load(capsys.readouterr().out)
     assert payload["profiles"]["cli-list-yaml"]["severity_min"] == "info"
+
+
+def test_cli_bundle_generates_templates(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    output_dir = tmp_path / "bundle"
+    exit_code = telemetry_profiles_cli.main(
+        [
+            "bundle",
+            "--output-dir",
+            str(output_dir),
+            "--stage",
+            "demo=conservative",
+            "--stage",
+            "paper=balanced",
+            "--config-format",
+            "json",
+        ]
+    )
+    assert exit_code == 0
+
+    manifest_stdout = json.loads(capsys.readouterr().out)
+    assert manifest_stdout["manifest_path"].endswith("manifest.json")
+
+    manifest_path = output_dir / "manifest.json"
+    manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    stages = {entry["stage"] for entry in manifest_payload["stages"]}
+    assert stages == {"demo", "paper", "live"}
+
+    demo_env = (output_dir / "demo" / "metrics.env").read_text(encoding="utf-8")
+    assert "risk_profile_summary" in demo_env
+
+    demo_config = json.loads((output_dir / "demo" / "metrics.json").read_text(encoding="utf-8"))
+    assert demo_config["risk_profile"] == "conservative"
+    assert (
+        demo_config["metrics_service"]["env_overrides"][
+            "RUN_METRICS_SERVICE_UI_ALERTS_OVERLAY_CRITICAL_THRESHOLD"
+        ]
+        == 1
+    )
+
+
+def test_cli_bundle_defaults(tmp_path: Path) -> None:
+    output_dir = tmp_path / "bundle-default"
+    exit_code = telemetry_profiles_cli.main([
+        "bundle",
+        "--output-dir",
+        str(output_dir),
+    ])
+    assert exit_code == 0
+
+    manifest_payload = json.loads((output_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert [entry["stage"] for entry in manifest_payload["stages"]] == [
+        "demo",
+        "paper",
+        "live",
+    ]
+
+
+def test_cli_bundle_rejects_invalid_stage(tmp_path: Path) -> None:
+    output_dir = tmp_path / "bundle-invalid"
+    with pytest.raises(SystemExit) as excinfo:
+        telemetry_profiles_cli.main([
+            "bundle",
+            "--output-dir",
+            str(output_dir),
+            "--stage",
+            "invalid",
+        ])
+    assert excinfo.value.code == 2
 
 
 def test_cli_list_profiles_infers_yaml_from_output(tmp_path: Path) -> None:

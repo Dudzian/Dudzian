@@ -192,6 +192,132 @@ def render_summary_markdown(
         if upload_info and isinstance(upload_info.get("metadata"), Mapping):
             _append_json_block(lines, "Metadane uploadu archiwum", upload_info["metadata"], limit=max_json_chars)
 
+    manifest = summary.get("manifest") if isinstance(summary.get("manifest"), Mapping) else None
+    if manifest:
+        lines.append("## Manifest danych OHLCV")
+        deny_status_value = manifest.get("deny_status")
+        if isinstance(deny_status_value, (list, tuple, set)):
+            deny_status_text = ", ".join(str(item) for item in deny_status_value)
+        else:
+            deny_status_text = _stringify(deny_status_value)
+        manifest_rows = [
+            ("Plik manifestu", manifest.get("manifest_path")),
+            ("Plik metryk", manifest.get("metrics_path")),
+            ("Plik podsumowania", manifest.get("summary_path")),
+            ("Status", manifest.get("worst_status")),
+            ("Kod wyjścia", manifest.get("exit_code")),
+            ("Etap", manifest.get("stage")),
+            ("Profil ryzyka", manifest.get("risk_profile")),
+            ("Łączna liczba wpisów", manifest.get("total_entries")),
+            ("Blokowane statusy", deny_status_text if deny_status_value else None),
+        ]
+        lines.append(_build_table(manifest_rows))
+
+        status_counts = manifest.get("status_counts")
+        if isinstance(status_counts, Mapping) and status_counts:
+            lines.append("### Liczba wpisów manifestu wg statusu")
+            status_rows = [(status, status_counts.get(status)) for status in sorted(status_counts)]
+            lines.append(_build_table(status_rows))
+
+        signature_payload = manifest.get("summary_signature")
+        if isinstance(signature_payload, Mapping):
+            signature_rows = [
+                ("Podpis – algorytm", signature_payload.get("algorithm")),
+                ("Podpis – wartość", signature_payload.get("value")),
+                ("Podpis – key_id", signature_payload.get("key_id")),
+            ]
+            lines.append(_build_table(signature_rows))
+            _append_json_block(
+                lines,
+                "Szczegóły podpisu manifestu",
+                signature_payload,
+                limit=max_json_chars,
+            )
+
+        manifest_summary = manifest.get("summary")
+        if isinstance(manifest_summary, Mapping):
+            _append_json_block(lines, "Szczegóły manifestu", manifest_summary, limit=max_json_chars)
+
+    token_audit = summary.get("token_audit") if isinstance(summary.get("token_audit"), Mapping) else None
+    if token_audit:
+        lines.append("## Audyt tokenów RBAC")
+        token_warnings = token_audit.get("warnings") if isinstance(token_audit, Mapping) else None
+        token_errors = token_audit.get("errors") if isinstance(token_audit, Mapping) else None
+        warning_count = len(token_warnings) if isinstance(token_warnings, (list, tuple, set)) else (1 if token_warnings else 0)
+        error_count = len(token_errors) if isinstance(token_errors, (list, tuple, set)) else (1 if token_errors else 0)
+        lines.append(
+            _build_table(
+                [
+                    ("Raport JSON", token_audit.get("report_path")),
+                    ("Status", token_audit.get("status")),
+                    ("Kod wyjścia", token_audit.get("exit_code")),
+                    ("Liczba ostrzeżeń", warning_count if warning_count else None),
+                    ("Liczba błędów", error_count if error_count else None),
+                ]
+            )
+        )
+        if isinstance(token_warnings, (list, tuple, set)) and token_warnings:
+            lines.append("### Ostrzeżenia tokenów")
+            for entry in token_warnings:
+                lines.append(f"- {entry}")
+            lines.append("")
+        elif isinstance(token_warnings, str) and token_warnings:
+            lines.append("### Ostrzeżenia tokenów")
+            lines.append(f"- {token_warnings}")
+            lines.append("")
+        if isinstance(token_errors, (list, tuple, set)) and token_errors:
+            lines.append("### Błędy tokenów")
+            for entry in token_errors:
+                lines.append(f"- {entry}")
+            lines.append("")
+        elif isinstance(token_errors, str) and token_errors:
+            lines.append("### Błędy tokenów")
+            lines.append(f"- {token_errors}")
+            lines.append("")
+        token_report_payload = token_audit.get("report") if isinstance(token_audit, Mapping) else None
+        if isinstance(token_report_payload, Mapping):
+            _append_json_block(lines, "Raport audytu tokenów", token_report_payload, limit=max_json_chars)
+
+    tls_audit = summary.get("tls_audit") if isinstance(summary.get("tls_audit"), Mapping) else None
+    if tls_audit:
+        lines.append("## Audyt TLS usług runtime")
+        warnings_payload = tls_audit.get("warnings") if isinstance(tls_audit, Mapping) else None
+        errors_payload = tls_audit.get("errors") if isinstance(tls_audit, Mapping) else None
+        warning_count = len(warnings_payload) if isinstance(warnings_payload, (list, tuple, set)) else (1 if warnings_payload else 0)
+        error_count = len(errors_payload) if isinstance(errors_payload, (list, tuple, set)) else (1 if errors_payload else 0)
+        lines.append(
+            _build_table(
+                [
+                    ("Raport JSON", tls_audit.get("report_path")),
+                    ("Status", tls_audit.get("status")),
+                    ("Kod wyjścia", tls_audit.get("exit_code")),
+                    ("Liczba ostrzeżeń", warning_count if warning_count else None),
+                    ("Liczba błędów", error_count if error_count else None),
+                ]
+            )
+        )
+        if isinstance(warnings_payload, (list, tuple, set)) and warnings_payload:
+            lines.append("### Ostrzeżenia TLS")
+            for entry in warnings_payload:
+                lines.append(f"- {entry}")
+            lines.append("")
+        elif isinstance(warnings_payload, str) and warnings_payload:
+            lines.append("### Ostrzeżenia TLS")
+            lines.append(f"- {warnings_payload}")
+            lines.append("")
+        if isinstance(errors_payload, (list, tuple, set)) and errors_payload:
+            lines.append("### Błędy TLS")
+            for entry in errors_payload:
+                lines.append(f"- {entry}")
+            lines.append("")
+        elif isinstance(errors_payload, str) and errors_payload:
+            lines.append("### Błędy TLS")
+            lines.append(f"- {errors_payload}")
+            lines.append("")
+        report_payload = tls_audit.get("report") if isinstance(tls_audit, Mapping) else None
+        if isinstance(report_payload, Mapping):
+            _append_json_block(lines, "Raport audytu TLS", report_payload, limit=max_json_chars)
+
     publish = summary.get("publish") if isinstance(summary.get("publish"), Mapping) else None
     if publish:
         lines.append("## Auto-publikacja artefaktów")

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from collections import deque
 from concurrent import futures
+import hmac
 from datetime import datetime, timezone
 import json
 import logging
@@ -26,6 +27,8 @@ from typing import Iterable, Optional, Protocol, Sequence, TYPE_CHECKING, Any, M
 if TYPE_CHECKING:  # pragma: no cover
     from bot_core.alerts.base import AlertRouter
     from bot_core.config.models import MetricsServiceConfig
+
+from bot_core.security.tokens import ServiceToken, ServiceTokenValidator
 
 # --- Stuby gRPC są opcjonalne podczas developmentu ---
 try:  # pragma: no cover - import opcjonalny, gdy brak wygenerowanych stubów
@@ -64,11 +67,13 @@ try:  # pragma: no cover - presety profili ryzyka mogą nie być dostępne
     from bot_core.runtime.telemetry_risk_profiles import (  # type: ignore
         MetricsRiskProfileResolver,
         load_risk_profiles_with_metadata,
+        reset_risk_profile_store,
         risk_profile_metadata,
     )
 except Exception:  # pragma: no cover - starsze gałęzie bez presetów
     MetricsRiskProfileResolver = None  # type: ignore
     load_risk_profiles_with_metadata = None  # type: ignore
+    reset_risk_profile_store = None  # type: ignore
     risk_profile_metadata = None  # type: ignore
 
 _LOGGER = logging.getLogger(__name__)
@@ -370,6 +375,7 @@ class MetricsServiceServicer(_MetricsServicerBase):
         store: MetricsSnapshotStore,
         sinks: Iterable[MetricsSink] | None = None,
         auth_token: str | None = None,
+        token_validator: ServiceTokenValidator | None = None,
     ) -> None:
         if trading_pb2_grpc is None or grpc is None:  # pragma: no cover - brak stubów
             raise RuntimeError(
@@ -383,10 +389,11 @@ class MetricsServiceServicer(_MetricsServicerBase):
         self._store = store
         self._sinks: tuple[MetricsSink, ...] = tuple(sinks or ())
         self._auth_token = auth_token
+        self._token_validator = token_validator
 
     # --- autoryzacja (opcjonalna) ---
     def _extract_token(self, context) -> str | None:
-        if context is None or self._auth_token is None:
+        if context is None:
             return None
         metadata = getattr(context, "invocation_metadata", lambda: ())()
         for key, value in metadata or ():
@@ -399,15 +406,35 @@ class MetricsServiceServicer(_MetricsServicerBase):
                 return value
         return None
 
-    def _ensure_authorized(self, context) -> None:
-        if self._auth_token is None:
+    def _attach_token_metadata(self, context, token: ServiceToken) -> None:
+        if context is None or grpc is None:
             return
-        token = self._extract_token(context)
-        if token == self._auth_token:
-            return
+        try:
+            context.set_trailing_metadata((("x-token-id", token.token_id),))
+        except Exception:  # pragma: no cover - zależne od implementacji gRPC
+            pass
+
+    def _abort_unauthorized(self, context) -> None:
         if context is not None and grpc is not None:
             context.abort(grpc.StatusCode.UNAUTHENTICATED, "Brak poprawnego tokenu telemetrii")
         raise RuntimeError("Brak poprawnego tokenu telemetrii")
+
+    def _ensure_authorized(self, context, *, scope: str) -> None:
+        requires_auth = self._auth_token is not None or (
+            self._token_validator is not None and self._token_validator.requires_token
+        )
+        if not requires_auth:
+            return
+        token = self._extract_token(context)
+        if self._token_validator is not None:
+            matched = self._token_validator.validate(token, scope=scope)
+            if matched is not None:
+                self._attach_token_metadata(context, matched)
+                return
+        if self._auth_token is not None and token is not None:
+            if hmac.compare_digest(token, self._auth_token):
+                return
+        self._abort_unauthorized(context)
 
     @property
     def sinks(self) -> tuple[MetricsSink, ...]:
@@ -415,7 +442,7 @@ class MetricsServiceServicer(_MetricsServicerBase):
         return self._sinks
 
     def StreamMetrics(self, request, context):  # noqa: N802 - sygnatura gRPC
-        self._ensure_authorized(context)
+        self._ensure_authorized(context, scope="metrics.read")
         for snapshot in self._store.snapshot_history():
             yield snapshot
         queue = self._store.register()
@@ -432,7 +459,7 @@ class MetricsServiceServicer(_MetricsServicerBase):
             self._store.unregister(queue)
 
     def PushMetrics(self, request, context):  # noqa: N802 - sygnatura gRPC
-        self._ensure_authorized(context)
+        self._ensure_authorized(context, scope="metrics.write")
         self._store.append(request)
         for sink in self._sinks:
             try:
@@ -527,18 +554,25 @@ class MetricsServer:
         server_credentials: Any | None = None,
         runtime_metadata: Mapping[str, Any] | None = None,
         auth_token: str | None = None,
+        token_validator: ServiceTokenValidator | None = None,
     ) -> None:
         if grpc is None or trading_pb2_grpc is None:  # pragma: no cover
             raise RuntimeError(
                 "Uruchomienie MetricsServer wymaga pakietów grpcio oraz wygenerowanych stubów."
             )
         self._store = MetricsSnapshotStore(maxlen=history_size)
-        self._servicer = MetricsServiceServicer(self._store, sinks=sinks, auth_token=auth_token)
+        self._servicer = MetricsServiceServicer(
+            self._store,
+            sinks=sinks,
+            auth_token=auth_token,
+            token_validator=token_validator,
+        )
         self._server = grpc.server(futures.ThreadPoolExecutor(max_workers=max_workers))
         trading_pb2_grpc.add_MetricsServiceServicer_to_server(self._servicer, self._server)
         self._address = f"{host}:{port}"
         self._history_size = history_size
         self._runtime_metadata: dict[str, Any] = dict(runtime_metadata or {})
+        self._token_validator = token_validator
         tls_meta = self._runtime_metadata.get("tls", {})
         self._tls_client_auth_required = bool(tls_meta.get("require_client_auth"))
         if server_credentials is not None:
@@ -567,6 +601,10 @@ class MetricsServer:
     @property
     def history_size(self) -> int:
         return self._history_size
+
+    @property
+    def token_validator(self) -> ServiceTokenValidator | None:
+        return self._token_validator
 
     @property
     def tls_enabled(self) -> bool:
@@ -608,6 +646,7 @@ def create_server(
     # spójnie wspieramy oba warianty
     tls_config: Mapping[str, Any] | Any | None = None,
     auth_token: str | None = None,
+    token_validator: ServiceTokenValidator | None = None,
 ):
     """Pomocnicza funkcja do budowy serwera z domyślnymi sinkami."""
     base_sinks: list[MetricsSink] = []
@@ -665,6 +704,11 @@ def create_server(
             "configured": credentials is not None,
             "require_client_auth": tls_require_client_auth,
         },
+        "auth": {
+            "legacy_token": bool(auth_token),
+            "rbac_tokens": token_validator.metadata()["tokens"] if token_validator else [],
+            "default_scope": token_validator.default_scope if token_validator else None,
+        },
     }
     server = MetricsServer(
         host=host,
@@ -674,7 +718,13 @@ def create_server(
         server_credentials=credentials,
         runtime_metadata=runtime_metadata,
         auth_token=auth_token,
+        token_validator=token_validator,
     )
+    if reset_risk_profile_store is not None:
+        try:
+            reset_risk_profile_store()
+        except Exception:  # pragma: no cover - defensywne
+            _LOGGER.debug("Nie udało się zresetować presetów profili ryzyka", exc_info=True)
     return server
 
 
@@ -683,6 +733,7 @@ def build_metrics_server_from_config(
     *,
     sinks: Iterable[MetricsSink] | None = None,
     alerts_router: "AlertRouter" | None = None,
+    token_validator: ServiceTokenValidator | None = None,
 ) -> MetricsServer | None:
     """Buduje `MetricsServer` na bazie konfiguracji – zwraca ``None`` gdy wyłączony."""
     if config is None or not config.enabled:
@@ -943,4 +994,5 @@ def build_metrics_server_from_config(
         ui_alerts_config=ui_alerts_settings,
         tls_config=getattr(config, "tls", None),
         auth_token=getattr(config, "auth_token", None),
+        token_validator=token_validator,
     )

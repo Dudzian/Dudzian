@@ -117,9 +117,67 @@ _BASE_CONFIG = dedent(
 )
 
 
+_RISK_TLS_CERT = """-----BEGIN CERTIFICATE-----
+MIIDCzCCAfOgAwIBAgIUXg2adJP0b1IzyHUIygGCz5e4CZswDQYJKoZIhvcNAQEL
+BQAwFTETMBEGA1UEAwwKdGVzdC5sb2NhbDAeFw0yNTEwMTIxMzUzMThaFw0yNjEw
+MTIxMzUzMThaMBUxEzARBgNVBAMMCnRlc3QubG9jYWwwggEiMA0GCSqGSIb3DQEB
+AQUAA4IBDwAwggEKAoIBAQCoTFYSrtuGtDlfV6zjE1YQZz8rDoW58bid8CcMXAA/
+6sXvCDYFepgjJpD1dDaXLIORNaoteLJLDwd/GbWhK589n/+KzLfnrS+vC+Y9/Zwr
+9mCJbQ6liPYleqidG98cY50nrru8IiLORWDDWPLMcNJbGuTkg+JUkmVhaLSmWF1u
+GLN+5IFJ+NXo3fUW5B1swcGYFlta0KelpNaatyMKQZZ7wO4QXp8H/ajBbXpWnE/n
+JAYOqdBS03+AVpy2Qr0HnCw8NxSur9pqLY4EDepPgowBaMuVv8XgG8+XYJm6y9HH
+r1sDd7u1Nq+EnqDfuwZ7HRe5sNQXCW8MwOp+kWqVgrGVAgMBAAGjUzBRMB0GA1Ud
+DgQWBBQgFv08KgCA0frYHzc8GrR6RFyi+jAfBgNVHSMEGDAWgBQgFv08KgCA0frY
+Hzc8GrR6RFyi+jAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBAQAP
+LvBg5dsZoS2IZXZMv89QTJsI2pndypdL8iQND7StJstgp57f18rOIqn6M3Hw+RwN
+NnFs84Jm9qrPRto8jd/sxFFEKYwraLOYadTdIorRYFNdoSYA8dQwh4vUbWLGL5pV
+EYrSDEItLWPznRLYx2O5NIo1sM6/LWDDSYbwE9EUCxrCFzF9TQT8lVLQDE2KTCbB
+EiSKc+jb0Y2FlBCTDbfpK3CrvS2nhP+Vh+M9iyacJNHEhbiEkam0wje5/6gDsBoi
+ouji8dqM2xUMITUW+BWHn/eDOqLss5ZlRbGTNm0Hq3CP7uf0u15r5QxBJjzZYddr
+WTcLAxCHylb4RYSCze+i
+-----END CERTIFICATE-----
+"""
+
+
+_RISK_TLS_KEY = """-----BEGIN PRIVATE KEY-----
+MIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQCoTFYSrtuGtDlf
+V6zjE1YQZz8rDoW58bid8CcMXAA/6sXvCDYFepgjJpD1dDaXLIORNaoteLJLDwd/
+GbWhK589n/+KzLfnrS+vC+Y9/Zwr9mCJbQ6liPYleqidG98cY50nrru8IiLORWDD
+WPLMcNJbGuTkg+JUkmVhaLSmWF1uGLN+5IFJ+NXo3fUW5B1swcGYFlta0KelpNaa
+tyMKQZZ7wO4QXp8H/ajBbXpWnE/nJAYOqdBS03+AVpy2Qr0HnCw8NxSur9pqLY4E
+DepPgowBaMuVv8XgG8+XYJm6y9HHr1sDd7u1Nq+EnqDfuwZ7HRe5sNQXCW8MwOp+
+kWqVgrGVAgMBAAECggEATxe89b/OdIJbWibancb3EfNruOD00Lu8XyE/QKw2A9Pi
+XKE3viBswkw8INaSVz54wHP/e6o25FZ2V/GtrcZR6oS4dDMclJkMCVBmzqhSzkhV
++w/RK9NvlpKMDnXMR0u7TixslxBV2im5vWSeipzVBzLe8lPWuJcqZPpvt6NcmUHo
+dCVW+fqrZeTmYAMi4oCtCr9GqznYjK0Lpp1RaeGTEo9nzdULaR/9KcqjsMSUXrmY
+5JgGgA0iFLcA9EYCMC6C6kpLuimW5FYO+pNNhRPPGWA9Lti5UMjLAG9bgr4cnsLK
+PXaCYTlL95LGSq4JvMPwsytmSUnzDPejp+sEy8gXawKBgQDPssDA31r8tDpO7MRs
+fvmICQ0760EyQ17bpYZ6cKdfHfMfnEqaJU6MBurhkLA9EsajmYgHJQbCyX10Pso9
+3fcTlMCGsvFYT8F5iNkEjGg7PAKIEmjgufmOoip20+uKLCm2kFi4km/BY10EQ5sk
+znmFV61A6BMLu+cqnNpXYqOvCwKBgQDPb+nTVN8knCXn1CRc/JBvfZpktN0/INZ2
+Rlnjn/C1oVVhuXiAuvEfULs6wkViCNd9C6Sle69BCAu3rVX1D2YPAorUx5jp07sE
+2HrFIpLl15QqT5YuE6sOP+tXxLSF9J8SiJWYHGJBfHF8HXuci+wRXJb01mXkdAIN
+c4lLvMYF3wKBgFkKiRgmqRstKNItLwhUZyWqu8G0WX7y4vfHPp+/LAHbFR+4IUN0
+OvhM/uU04llMc1wvteFaPkvDlcUAJjPftMzwOJmGnXD+wDMaN+97QjQixfMP8WZm
+VFaRryLCN3hE9p0NxPtbzA1cS8RIN3rQCcjgjaYF2CRvqera08AiyYmBAoGAUlRt
+roXB5sretItbP1iyjr2AOLYcFcEXvWugo5pINB5rP9UYAaewqagmF2Uhmo490JB9
+cXyMizgBRo5STmglLpHovhjWFQAG+x5cY7+cJAMS+FQMHA+MVaSC6JvWtk/njriM
+/wlM6gbVF9ivxes275EbDOPHHwv4AJS5ikjLI2sCgYArrbobSUf8aDrs86EgS4Jb
+Nd1bjYx8SWC+uRyZNfsE/TllEtyrP8yWMP6Tq9S+uMXrHfcE1Rj7bj9fJYxeOzQe
+geENbbsvj9oU2pNPKWlwk861WMZcppkpmVHrgIIukGC+DSTWFntBGNyDRBdgE+gg
+ymp4BN4Riifev8GdFf+lMg==
+-----END PRIVATE KEY-----
+"""
+
+
 def _write_config(tmp_path: Path) -> Path:
+    data = yaml.safe_load(_BASE_CONFIG)
+    env_section = data.get("environments", {})
+    for name, env_cfg in env_section.items():
+        cache_dir = tmp_path / "cache" / name
+        env_cfg["data_cache_path"] = str(cache_dir)
     config_path = tmp_path / "core.yaml"
-    config_path.write_text(_BASE_CONFIG, encoding="utf-8")
+    config_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
     return config_path
 
 
@@ -127,6 +185,8 @@ def _write_config_custom(
     tmp_path: Path,
     *,
     runtime_metrics: Mapping[str, object] | None = None,
+    runtime_risk: Mapping[str, object] | None = None,
+    runtime_risk_service: Mapping[str, object] | None = None,
     environment_overrides: Mapping[str, object] | None = None,
 ) -> Path:
     data = yaml.safe_load(_BASE_CONFIG)
@@ -134,9 +194,19 @@ def _write_config_custom(
         data.setdefault("environments", {}).setdefault("binance_paper", {}).update(
             environment_overrides
         )
+    env_section = data.get("environments", {})
+    for name, env_cfg in env_section.items():
+        if "data_cache_path" not in env_cfg or not env_cfg["data_cache_path"]:
+            env_cfg["data_cache_path"] = str(tmp_path / "cache" / name)
     if runtime_metrics is not None:
         runtime_section = data.setdefault("runtime", {})
         runtime_section["metrics_service"] = runtime_metrics
+    if runtime_risk is not None:
+        runtime_section = data.setdefault("runtime", {})
+        runtime_section["risk_decision_log"] = runtime_risk
+    if runtime_risk_service is not None:
+        runtime_section = data.setdefault("runtime", {})
+        runtime_section["risk_service"] = runtime_risk_service
 
     config_path = tmp_path / "core_custom.yaml"
     config_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
@@ -218,6 +288,7 @@ def test_bootstrap_environment_initialises_components(tmp_path: Path) -> None:
     assert context.alert_router.audit_log is context.audit_log
     assert context.alert_router.throttle is not None
     assert context.alert_router.throttle.window.total_seconds() == pytest.approx(60.0)
+    assert context.risk_snapshot_publisher is None
     assert "critical" in context.alert_router.throttle.exclude_severities
 
     # Health check nie powinien zgłaszać wyjątków dla świeżo zainicjalizowanych kanałów.
@@ -226,8 +297,9 @@ def test_bootstrap_environment_initialises_components(tmp_path: Path) -> None:
 
     assert context.risk_engine.should_liquidate(profile_name="balanced") is False
     assert context.adapter_settings == {}
-    risk_state_path = Path("./var/data/binance_paper/risk_state/balanced.json")
-    assert risk_state_path.parent.exists()
+    risk_state_dir = Path(context.environment.data_cache_path) / "risk_state"
+    assert risk_state_dir.exists()
+    assert getattr(context.risk_repository, "_base_path", None) == risk_state_dir
     assert context.metrics_server is None
     assert context.metrics_ui_alert_sink_active is True
     default_alert_log = DEFAULT_UI_ALERTS_JSONL_PATH.expanduser()
@@ -265,6 +337,52 @@ def test_bootstrap_environment_initialises_components(tmp_path: Path) -> None:
     assert audit_info["requested"] == "inherit"
     assert audit_info["backend"] == "memory"
     assert audit_info["note"] == "inherited_environment_router"
+
+
+def test_bootstrap_environment_creates_signed_risk_decision_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime_risk = {
+        "path": "audit/risk_decisions.jsonl",
+        "max_entries": 16,
+        "signing_key_env": "BOT_CORE_RISK_KEY",
+        "signing_key_id": "ci-risk",
+    }
+    config_path = _write_config_custom(tmp_path, runtime_risk=runtime_risk)
+    monkeypatch.setenv("BOT_CORE_RISK_KEY", "risk-secret")
+    _, manager = _prepare_manager()
+
+    context = bootstrap_environment(
+        "binance_paper", config_path=config_path, secret_manager=manager
+    )
+
+    assert context.risk_decision_log is not None
+    log_path = context.risk_decision_log.path
+    assert log_path is not None
+
+    context.risk_engine.apply_pre_trade_checks(
+        OrderRequest(
+            symbol="ETHUSDT",
+            side="buy",
+            quantity=0.5,
+            order_type="market",
+            price=1_500.0,
+        ),
+        account=AccountSnapshot(
+            balances={"USDT": 50_000.0},
+            total_equity=50_000.0,
+            available_margin=50_000.0,
+            maintenance_margin=0.0,
+        ),
+        profile_name=context.risk_profile_name,
+    )
+
+    assert log_path.exists()
+    serialized = log_path.read_text(encoding="utf-8").strip().splitlines()
+    assert serialized
+    payload = json.loads(serialized[0])
+    assert payload["profile"] == context.risk_profile_name
+    assert payload["signature"]["key_id"] == "ci-risk"
 
 
 def test_bootstrap_environment_allows_risk_profile_override(tmp_path: Path) -> None:
@@ -555,3 +673,99 @@ def test_bootstrap_metrics_risk_profiles_directory_metadata(tmp_path: Path) -> N
     assert file_meta["path"] == str(profiles_dir)
     assert "ops_dir" in file_meta.get("registered_profiles", [])
     assert any(entry["path"].endswith("lab.yaml") for entry in file_meta.get("files", []))
+
+
+def test_bootstrap_collects_risk_security_metadata(tmp_path: Path) -> None:
+    tls_dir = tmp_path / "tls"
+    tls_dir.mkdir()
+    cert_path = tls_dir / "risk_cert.pem"
+    key_path = tls_dir / "risk_key.pem"
+    cert_path.write_text(_RISK_TLS_CERT, encoding="utf-8")
+    key_path.write_text(_RISK_TLS_KEY, encoding="utf-8")
+
+    config_path = _write_config_custom(
+        tmp_path,
+        runtime_risk_service={
+            "enabled": False,
+            "tls": {
+                "certificate_path": str(cert_path),
+                "private_key_path": str(key_path),
+            },
+        },
+    )
+
+    _, manager = _prepare_manager()
+    context = bootstrap_environment(
+        "binance_paper", config_path=config_path, secret_manager=manager
+    )
+
+    assert context.risk_security_metadata is not None
+    tls_meta = context.risk_security_metadata.get("tls")
+    assert isinstance(tls_meta, Mapping)
+    certificate_meta = tls_meta.get("certificate")
+    assert isinstance(certificate_meta, Mapping)
+    certificates = certificate_meta.get("certificates")
+    assert isinstance(certificates, list) and certificates
+    fingerprint = certificates[0]["fingerprint_sha256"]
+    assert fingerprint == "a49ede6616a62c76e2affdf692aa103cfeb89ddbd1f0f03b13a8a3166aa63079"
+
+    auth_meta = context.risk_security_metadata.get("auth")
+    assert isinstance(auth_meta, Mapping)
+    assert auth_meta.get("token_configured") is False
+    assert context.risk_token_validator is None
+
+    # Ostrzeżenia wynikają z luźnych uprawnień plików w katalogu tymczasowym
+    warnings = context.risk_security_warnings
+    assert warnings is not None
+    assert any("Klucz prywatny TLS" in warning for warning in warnings)
+
+
+def test_bootstrap_collects_metrics_security_metadata(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    tls_dir = tmp_path / "metrics_tls"
+    tls_dir.mkdir()
+    cert_path = tls_dir / "metrics_cert.pem"
+    key_path = tls_dir / "metrics_key.pem"
+    cert_path.write_text(_RISK_TLS_CERT, encoding="utf-8")
+    key_path.write_text(_RISK_TLS_KEY, encoding="utf-8")
+
+    if "bot_core.runtime.bootstrap" in sys.modules:
+        monkeypatch.setattr(
+            sys.modules["bot_core.runtime.bootstrap"],
+            "build_metrics_server_from_config",
+            lambda *_, **__: None,
+        )
+
+    config_path = _write_config_custom(
+        tmp_path,
+        runtime_metrics={
+            "enabled": True,
+            "auth_token": "",
+            "tls": {
+                "enabled": True,
+                "certificate_path": str(cert_path),
+                "private_key_path": str(key_path),
+            },
+        },
+    )
+
+    _, manager = _prepare_manager()
+    context = bootstrap_environment(
+        "binance_paper", config_path=config_path, secret_manager=manager
+    )
+
+    metadata = context.metrics_security_metadata
+    assert isinstance(metadata, Mapping)
+    tls_meta = metadata.get("tls")
+    assert isinstance(tls_meta, Mapping)
+    certificates = tls_meta.get("certificate", {}).get("certificates", [])
+    assert certificates
+    assert certificates[0]["fingerprint_sha256"] == "a49ede6616a62c76e2affdf692aa103cfeb89ddbd1f0f03b13a8a3166aa63079"
+
+    auth_meta = metadata.get("auth")
+    assert isinstance(auth_meta, Mapping)
+    assert auth_meta.get("token_configured") is False
+    assert context.metrics_token_validator is None
+
+    warnings = context.metrics_security_warnings
+    assert warnings is not None
+    assert any("MetricsService ma włączone API bez tokenu" in warning for warning in warnings)
