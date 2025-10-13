@@ -246,6 +246,9 @@ class MultiStrategyScheduler:
                     if isinstance(entry_spread, (int, float)) and isinstance(exit_spread, (int, float)) and entry_spread:
                         capture = (float(entry_spread) - float(exit_spread)) / abs(float(entry_spread))
                         arbitrage_captures.append(capture * 10_000.0)
+                schedule.metrics["last_latency_ms"] = max(
+                    0.0, (self._clock() - timestamp).total_seconds() * 1000
+                )
                 self._record_decisions(schedule, bounded_signals, timestamp, snapshot.symbol)
                 schedule.sink.submit(
                     strategy_name=schedule.strategy_name,
