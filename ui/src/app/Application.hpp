@@ -87,6 +87,7 @@ private:
     void applyMetricsEnvironmentOverrides(const QCommandLineParser& parser,
                                           bool cliTokenProvided,
                                           bool cliTokenFileProvided);
+    void applyTradingTlsEnvironmentOverrides(const QCommandLineParser& parser);
     void applyScreenEnvironmentOverrides(const QCommandLineParser& parser);
     void applyPreferredScreen(QQuickWindow* window);
     QScreen* resolvePreferredScreen() const;
@@ -101,6 +102,7 @@ private:
     QString          m_connectionStatus = QStringLiteral("idle");
     PerformanceGuard m_guard{};
     int              m_maxSamples = 10240;
+    TradingClient::TlsConfig m_tradingTlsConfig{};
 
     TradingClient::InstrumentConfig m_instrument{
         QStringLiteral("BINANCE"),
