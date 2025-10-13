@@ -91,11 +91,27 @@ jobs:
             $AUTO_PUBLISH_FLAGS \
             $EXTRA_ARGS
 
-      - name: Run risk simulation suite
+      - name: Run risk simulations
+        if: always()
+        shell: bash
         run: |
-          python - <<'PY'
+          set -e
+          if [ -f "scripts/run_risk_simulation_lab.py" ]; then
+            echo "▶ Running lab risk simulations…"
+            python scripts/run_risk_simulation_lab.py \
+              --config "$BOT_CORE_CONFIG" \
+              --environment "$BOT_CORE_ENVIRONMENT" \
+              --output-dir "$BOT_CORE_OUTPUT_DIR/risk_simulation" \
+              --namespace binance_spot \
+              --symbols BTCUSDT ETHUSDT \
+              --interval 1h \
+              --synthetic-fallback \
+              --fail-on-breach \
+              --print-summary
+          else
+            echo "▶ Lab script not found – running fallback suite…"
+            python - <<'PY'
 from pathlib import Path
-
 from bot_core.risk.engine import ThresholdRiskEngine
 from bot_core.risk.simulation import write_default_smoke_scenarios
 
@@ -109,17 +125,20 @@ manual_overrides = {
     "stop_loss_atr_multiple": 1.0,
 }
 
-parquet_path = Path("${{ env.BOT_CORE_OUTPUT_DIR }}/risk_simulation/smoke_scenarios.parquet")
+out_dir = Path("${{ env.BOT_CORE_OUTPUT_DIR }}/risk_simulation")
+out_dir.mkdir(parents=True, exist_ok=True)
+parquet_path = out_dir / "smoke_scenarios.parquet"
 write_default_smoke_scenarios(parquet_path)
 
 report = ThresholdRiskEngine.generate_simulation_reports(
     parquet_path,
-    output_dir="${{ env.BOT_CORE_OUTPUT_DIR }}/risk_simulation",
+    output_dir=str(out_dir),
     manual_overrides=manual_overrides,
 )
 print(f"Generated risk simulation JSON: {report['json_path']}")
 print(f"Generated risk simulation PDF: {report['pdf_path']}")
 PY
+          fi
 
       - name: Validate summary (strict)
         if: steps.smoke.outcome == 'success'

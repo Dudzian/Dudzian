@@ -44,12 +44,13 @@ public:
 
     struct TlsConfig {
         bool enabled = false;
-        bool requireClientAuth = false;
-        QString rootCertificatePath;
-        QString clientCertificatePath;
-        QString clientKeyPath;
-        QString serverNameOverride;
-        QString pinnedServerFingerprint;
+        bool requireClientAuth = false;          // mTLS wymagany?
+        QString rootCertificatePath;             // PEM root CA
+        QString clientCertificatePath;           // PEM cert klienta (opcjonalnie)
+        QString clientKeyPath;                   // PEM klucz klienta  (opcjonalnie)
+        QString serverNameOverride;              // SNI override (używane w .cpp)
+        QString targetNameOverride;              // alias legacy używany w Application.cpp
+        QString pinnedServerFingerprint;         // oczekiwany SHA-256 cert/CA (hex, bez ':')
     };
 
     struct PreLiveChecklistResult {
@@ -96,6 +97,7 @@ private:
     void streamLoop();
     RiskSnapshotData convertRiskState(const botcore::trading::v1::RiskState& state) const;
 
+    // --- Konfiguracja połączenia/rynku ---
     QString m_endpoint = QStringLiteral("127.0.0.1:50061");
     InstrumentConfig m_instrumentConfig{
         QStringLiteral("BINANCE"),
@@ -109,10 +111,12 @@ private:
     int m_historyLimit = 500;
     TlsConfig m_tlsConfig{};
 
+    // --- gRPC ---
     std::shared_ptr<grpc::Channel> m_channel;
     std::unique_ptr<botcore::trading::v1::MarketDataService::Stub> m_marketDataStub;
     std::unique_ptr<botcore::trading::v1::RiskService::Stub> m_riskStub;
 
+    // --- Streaming ---
     std::atomic<bool> m_running{false};
     std::thread m_streamThread;
     std::mutex m_contextMutex;

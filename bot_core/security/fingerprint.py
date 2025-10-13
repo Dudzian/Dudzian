@@ -1,26 +1,381 @@
-"""Narzędzia do pobierania i podpisywania odcisku sprzętowego hosta."""
+"""Generowanie/pozyskiwanie i podpisywanie fingerprintów sprzętowych (OEM + host)."""
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import hmac
+import json
 import os
 import platform
 import re
+import socket
 import subprocess
 import sys
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Mapping, MutableMapping
+from typing import Any, Callable, Iterable, Mapping, MutableMapping, Optional, Sequence
 
 from bot_core.security.rotation import RotationRegistry, RotationStatus
 from bot_core.security.signing import build_hmac_signature, canonical_json_bytes
 
+# ---------------------------------------------------------------------------
+# Wspólne stałe/typy
+# ---------------------------------------------------------------------------
 
+# OEM (starsze API) – format skrótu i algorytm podpisu
+FINGERPRINT_HASH = "SHA384"
+SIGNATURE_ALGORITHM = "HMAC-SHA384"
+
+# Nowsze API – domyślny "cel" w rejestrze rotacji
 _DEFAULT_PURPOSE = "hardware-fingerprint"
+# Starsze API – zachowanie zgodności w helperach OEM
+_OEM_DEFAULT_PURPOSE = "oem-fingerprint-signing"
+
 _HEX_RE = re.compile(r"[^0-9a-f]")
 
+
+class FingerprintError(RuntimeError):
+    """Wyjątek zgłaszany przy problemach z generowaniem/podpisywaniem fingerprintu."""
+
+
+# ---------------------------------------------------------------------------
+# Starsze API – OEM Device Fingerprint
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class FingerprintDocument:
+    """Dokument OEM fingerprintu z podpisem HMAC."""
+
+    payload: Mapping[str, object]
+    signature: Mapping[str, object]
+
+    def to_json(self) -> str:
+        return json.dumps(
+            {"payload": self.payload, "signature": self.signature},
+            indent=2,
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+
+
+def _now_iso(timestamp: Optional[datetime] = None) -> str:
+    value = timestamp or datetime.now(timezone.utc)
+    value = value.astimezone(timezone.utc).replace(microsecond=0)
+    return value.isoformat().replace("+00:00", "Z")
+
+
+def _read_first_line(path: Path) -> Optional[str]:
+    try:
+        with path.open("r", encoding="utf-8", errors="ignore") as handle:
+            line = handle.readline().strip()
+    except FileNotFoundError:
+        return None
+    return line or None
+
+
+def _run_command(command: list[str]) -> Optional[str]:
+    try:
+        completed = subprocess.run(
+            command,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+        )
+    except (FileNotFoundError, OSError):
+        return None
+    output = completed.stdout.strip()
+    return output or None
+
+
+def _sanitize(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    candidate = value.strip()
+    return candidate or None
+
+
+def _probe_cpu_identifier(env: Mapping[str, str]) -> Optional[str]:
+    override = _sanitize(env.get("OEM_CPU_ID"))
+    if override:
+        return override
+
+    serial = _read_first_line(Path("/sys/devices/virtual/dmi/id/product_uuid"))
+    if serial:
+        return serial
+
+    cpuinfo_path = Path("/proc/cpuinfo")
+    try:
+        for line in cpuinfo_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+            if ":" not in line:
+                continue
+            key, raw = line.split(":", 1)
+            if key.strip().lower() in {"serial", "hardware", "processor"}:
+                candidate = _sanitize(raw)
+                if candidate:
+                    return candidate
+    except FileNotFoundError:
+        pass
+
+    mac = _sanitize(f"{uuid.getnode():012x}")
+    if mac:
+        return mac
+
+    uname = platform.uname()
+    fallback = "-".join(filter(None, [uname.system, uname.node, uname.machine]))
+    return fallback or None
+
+
+def _probe_tpm_identifier(env: Mapping[str, str]) -> Optional[str]:
+    override = _sanitize(env.get("OEM_TPM_ID"))
+    if override:
+        return override
+
+    candidate = _read_first_line(Path("/sys/class/tpm/tpm0/device/unique_id"))
+    if candidate:
+        return candidate
+
+    candidate = _read_first_line(Path("/sys/class/tpm/tpm0/unique_id"))
+    if candidate:
+        return candidate
+
+    candidate = _run_command(["tpm2_getcap", "-c", "properties-fixed"])
+    if candidate:
+        return hashlib.sha256(candidate.encode("utf-8")).hexdigest()
+
+    return None
+
+
+def _probe_dongle_identifier(env: Mapping[str, str]) -> Optional[str]:
+    override = _sanitize(env.get("OEM_DONGLE_ID"))
+    if override:
+        return override
+
+    default_path = Path(env.get("OEM_DONGLE_PATH", "var/oem/dongle_id.txt"))
+    return _read_first_line(default_path)
+
+
+def _collect_mac_addresses(env: Mapping[str, str]) -> list[str]:
+    override = _sanitize(env.get("OEM_MAC_ADDRESSES"))
+    if override:
+        addresses = {
+            candidate.replace(":", "").replace("-", "").lower()
+            for candidate in (_sanitize(entry) for entry in override.split(","))
+            if candidate
+        }
+        return sorted(addresses)
+
+    addresses: set[str] = set()
+    try:
+        node = uuid.getnode()
+    except ValueError:
+        node = None
+    if node is not None:
+        addresses.add(f"{node:012x}")
+
+    sys_class = Path("/sys/class/net")
+    if sys_class.exists():
+        for interface in sys_class.iterdir():
+            address_path = interface / "address"
+            candidate = _read_first_line(address_path)
+            if candidate and candidate != "00:00:00:00:00:00":
+                addresses.add(candidate.replace(":", "").lower())
+
+    if not addresses:
+        try:
+            hostname = socket.gethostname().encode("utf-8")
+        except OSError:
+            hostname = b""
+        if hostname:
+            addresses.add(hashlib.sha256(hostname).hexdigest()[:12])
+
+    return sorted(addresses)
+
+
+def _collect_hostname(env: Mapping[str, str]) -> Optional[str]:
+    override = _sanitize(env.get("OEM_HOSTNAME"))
+    if override:
+        return override
+    return _sanitize(platform.node())
+
+
+def _collect_os_info() -> dict[str, str]:
+    return {
+        "system": platform.system(),
+        "release": platform.release(),
+        "version": platform.version(),
+        "machine": platform.machine(),
+    }
+
+
+def _normalize_factors(factors: Mapping[str, object]) -> dict[str, object]:
+    normalized: dict[str, object] = {}
+    for key, value in sorted(factors.items()):
+        if value is None:
+            continue
+        if isinstance(value, Mapping):
+            normalized[key] = _normalize_factors(value)
+        elif isinstance(value, (list, tuple, set)):
+            normalized[key] = [str(item) for item in sorted(value)]
+        else:
+            normalized[key] = str(value)
+    return normalized
+
+
+def _ensure_key_strength(key: bytes) -> None:
+    if len(key) < 32:
+        raise FingerprintError("Klucz podpisu fingerprintu musi mieć co najmniej 32 bajty")
+
+
+def _sign_payload(payload: Mapping[str, object], key: bytes, key_id: Optional[str]) -> dict[str, str]:
+    digest = hmac.new(key, canonical_json_bytes(payload), hashlib.sha384).digest()
+    signature = {
+        "algorithm": SIGNATURE_ALGORITHM,
+        "value": base64.b64encode(digest).decode("ascii"),
+    }
+    if key_id:
+        signature["key_id"] = str(key_id)
+    return signature
+
+
+class DeviceFingerprintGenerator:
+    """Generator fingerprintu bazujący na metadanych sprzętowych (OEM API)."""
+
+    def __init__(
+        self,
+        *,
+        env: Optional[Mapping[str, str]] = None,
+        extra_probes: Optional[Iterable[Callable[[MutableMapping[str, object]], None]]] = None,
+    ) -> None:
+        self._env = env or os.environ
+        self._extra_probes = tuple(extra_probes or ())
+
+    def collect_factors(self) -> dict[str, object]:
+        factors: MutableMapping[str, object] = {}
+
+        cpu_id = _probe_cpu_identifier(self._env)
+        if cpu_id:
+            factors["cpu_id"] = cpu_id
+
+        mac_addresses = _collect_mac_addresses(self._env)
+        if mac_addresses:
+            factors["mac_addresses"] = mac_addresses
+
+        hostname = _collect_hostname(self._env)
+        if hostname:
+            factors["hostname"] = hostname
+
+        os_info = _collect_os_info()
+        factors["os"] = os_info
+
+        tpm = _probe_tpm_identifier(self._env)
+        if tpm:
+            factors["tpm"] = tpm
+
+        dongle = _probe_dongle_identifier(self._env)
+        if dongle:
+            factors["dongle"] = dongle
+
+        salt = _sanitize(self._env.get("OEM_FINGERPRINT_SALT"))
+        if salt:
+            factors["salt"] = salt
+
+        for probe in self._extra_probes:
+            probe(factors)
+
+        return dict(factors)
+
+    def generate_fingerprint(self, *, factors: Optional[Mapping[str, object]] = None) -> str:
+        factors = factors or self.collect_factors()
+        canonical = canonical_json_bytes(_normalize_factors(factors))
+        digest = hashlib.sha384(canonical).digest()
+        token = base64.b32encode(digest).decode("ascii").rstrip("=").upper()
+        grouped = [token[i : i + 8] for i in range(0, len(token), 8)]
+        return "-".join(grouped)
+
+    def build_document(
+        self,
+        *,
+        signing_key: bytes,
+        key_id: Optional[str] = None,
+        factors: Optional[Mapping[str, object]] = None,
+        registry: Optional[RotationRegistry] = None,
+        purpose: str = _OEM_DEFAULT_PURPOSE,
+        rotation_interval_days: float = 90.0,
+        mark_rotation: bool = False,
+        created_at: Optional[datetime] = None,
+    ) -> FingerprintDocument:
+        _ensure_key_strength(signing_key)
+        collected = _normalize_factors(factors or self.collect_factors())
+        fingerprint = self.generate_fingerprint(factors=collected)
+        timestamp = datetime.now(timezone.utc) if created_at is None else created_at.astimezone(timezone.utc)
+
+        if registry and key_id:
+            status = registry.status(key_id, purpose, interval_days=rotation_interval_days, now=timestamp)
+            if status.last_rotated is not None and status.is_overdue:
+                raise FingerprintError(
+                    f"Klucz '{key_id}' dla celu '{purpose}' jest przeterminowany (ostatnia rotacja {status.last_rotated})."
+                )
+
+        payload = {
+            "fingerprint": fingerprint,
+            "algorithm": FINGERPRINT_HASH,
+            "created_at": _now_iso(timestamp),
+            "factors": collected,
+        }
+        signature = _sign_payload(payload, signing_key, key_id)
+
+        if registry and key_id and mark_rotation:
+            registry.mark_rotated(key_id, purpose, timestamp=timestamp)
+
+        return FingerprintDocument(payload=payload, signature=signature)
+
+
+def verify_document(document: Mapping[str, object], *, key: bytes) -> bool:
+    payload = document.get("payload")
+    signature = document.get("signature")
+    if not isinstance(payload, Mapping) or not isinstance(signature, Mapping):
+        raise FingerprintError("Nieprawidłowa struktura dokumentu fingerprintu")
+    expected = _sign_payload(payload, key, signature.get("key_id"))  # type: ignore[arg-type]
+    return expected["value"] == signature.get("value")
+
+
+def get_local_fingerprint() -> str:
+    generator = DeviceFingerprintGenerator()
+    return generator.generate_fingerprint()
+
+
+def build_fingerprint_document(
+    *,
+    signing_key: bytes,
+    key_id: Optional[str] = None,
+    env: Optional[Mapping[str, str]] = None,
+    registry: Optional[RotationRegistry] = None,
+    purpose: str = _OEM_DEFAULT_PURPOSE,
+    rotation_interval_days: float = 90.0,
+    mark_rotation: bool = False,
+    created_at: Optional[datetime] = None,
+) -> FingerprintDocument:
+    """Funkcja pomocnicza budująca podpisany dokument fingerprintu OEM."""
+    generator = DeviceFingerprintGenerator(env=env)
+    return generator.build_document(
+        signing_key=signing_key,
+        key_id=key_id,
+        registry=registry,
+        purpose=purpose,
+        rotation_interval_days=rotation_interval_days,
+        mark_rotation=mark_rotation,
+        created_at=created_at,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Nowsze API – Hardware Fingerprint Service (z rotacją kluczy)
+# ---------------------------------------------------------------------------
 
 def _ensure_utc_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -42,13 +397,11 @@ def _component_entry(value: str | None) -> dict[str, str] | None:
     return {"raw": raw, "normalized": normalized, "digest": digest}
 
 
-def _read_first_existing(paths: list[Path]) -> str | None:
+def _read_first_existing(paths: Sequence[Path]) -> str | None:
     for candidate in paths:
         try:
             data = candidate.read_text(encoding="utf-8")
-        except FileNotFoundError:
-            continue
-        except OSError:
+        except (FileNotFoundError, OSError):
             continue
         content = data.strip()
         if content:
@@ -72,13 +425,12 @@ def _probe_cpu_info() -> str | None:
                     _, _, value = line.partition(":")
                     entries.append(value.strip())
                     break
-    except FileNotFoundError:
-        pass
-    except OSError:
+    except (FileNotFoundError, OSError):
         pass
 
     if not entries:
         return None
+    # usuń duplikaty z zachowaniem kolejności
     return " | ".join(dict.fromkeys(entries))
 
 
@@ -103,7 +455,6 @@ def _probe_tpm_info() -> str | None:
     if system == "darwin":
         return None
 
-    # Linux i pozostałe systemy POSIX
     base = Path("/sys/class/tpm")
     if not base.exists():
         return None
@@ -152,7 +503,7 @@ def _probe_dongle() -> str | None:
 
 @dataclass(slots=True)
 class FingerprintRecord:
-    """Wynik podpisanego fingerprintu."""
+    """Wynik podpisanego fingerprintu (nowe API)."""
 
     payload: Mapping[str, Any]
     signature: Mapping[str, str]
@@ -219,26 +570,19 @@ class RotatingHmacKeyProvider:
         return priority, timestamp
 
     def select_active_key(self, *, now: datetime | None = None) -> tuple[str, bytes, RotationStatus]:
-        statuses: dict[str, RotationStatus] = {}
-        for key_id in self._keys:
-            statuses[key_id] = self.status_for(key_id, now=now)
-
-        sorted_ids = sorted(
-            statuses.items(),
-            key=lambda item: (self._priority_tuple(item[1]), item[0]),
-        )
-
+        statuses: dict[str, RotationStatus] = {kid: self.status_for(kid, now=now) for kid in self._keys}
+        sorted_ids = sorted(statuses.items(), key=lambda item: (self._priority_tuple(item[1]), item[0]))
         active_id, status = sorted_ids[0]
         return active_id, self._keys[active_id], status
 
     def sign(self, payload: Mapping[str, Any], *, now: datetime | None = None) -> tuple[str, dict[str, str]]:
         key_id, key, _status = self.select_active_key(now=now)
-        signature = build_hmac_signature(payload, key=key, key_id=key_id)
+        signature = build_hmac_signature(payload, key=key, key_id=key_id, algorithm=SIGNATURE_ALGORITHM)
         return key_id, signature
 
 
 class HardwareFingerprintService:
-    """Buduje deterministyczny fingerprint sprzętowy podpisany HMAC."""
+    """Buduje deterministyczny fingerprint sprzętowy podpisany HMAC (nowe API)."""
 
     def __init__(
         self,
@@ -313,13 +657,15 @@ class HardwareFingerprintService:
         return FingerprintRecord(payload=payload, signature=signature, key_id=key_id)
 
 
+# ---------------------------------------------------------------------------
+# Helpery/CLI (nowe API)
+# ---------------------------------------------------------------------------
+
 def decode_secret(value: str) -> bytes:
     text = value.strip()
     if text.startswith("hex:"):
         return bytes.fromhex(text[4:])
     if text.startswith("base64:"):
-        import base64
-
         return base64.b64decode(text[7:])
     return text.encode("utf-8")
 
@@ -352,7 +698,6 @@ def _load_keys_from_args(args: list[str]) -> dict[str, bytes]:
 
 def cli(argv: list[str] | None = None) -> int:
     import argparse
-    import json
 
     parser = argparse.ArgumentParser(description="Generuje odcisk sprzętowy hosta i podpisuje go HMAC.")
     parser.add_argument("--dongle", help="Wymuszony identyfikator klucza sprzętowego USB.")
@@ -411,10 +756,19 @@ if __name__ == "__main__":  # pragma: no cover - CLI
 
 
 __all__ = [
+    # OEM API
+    "DeviceFingerprintGenerator",
+    "FingerprintDocument",
+    "FingerprintError",
+    "FINGERPRINT_HASH",
+    "SIGNATURE_ALGORITHM",
+    "build_fingerprint_document",
+    "get_local_fingerprint",
+    "verify_document",
+    # Nowe API
     "FingerprintRecord",
     "HardwareFingerprintService",
     "RotatingHmacKeyProvider",
     "build_key_provider",
     "decode_secret",
 ]
-

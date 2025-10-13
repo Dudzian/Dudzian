@@ -1,0 +1,129 @@
+name: OEM Packaging
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Wersja bundla"
+        required: true
+        type: string
+      fingerprint_placeholder:
+        description: "Opcjonalny placeholder fingerprintu"
+        required: false
+        default: UNPROVISIONED
+        type: string
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+      fingerprint_placeholder:
+        required: false
+        type: string
+        default: UNPROVISIONED
+
+jobs:
+  package-linux:
+    runs-on: [self-hosted, linux-oem]
+    env:
+      OEM_VERSION: ${{ inputs.version }}
+      OEM_FINGERPRINT_PLACEHOLDER: ${{ inputs.fingerprint_placeholder }}
+      OEM_HMAC_KEY_B64: ${{ secrets.OEM_HMAC_KEY_B64 }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Prepare signing key
+        run: |
+          if [ -z "$OEM_HMAC_KEY_B64" ]; then
+            echo "OEM_HMAC_KEY_B64 secret is required" >&2
+            exit 1
+          fi
+          echo "$OEM_HMAC_KEY_B64" | base64 -d > /tmp/oem_hmac.key
+      - name: Build Linux bundle
+        run: |
+          python deploy/packaging/build_core_bundle.py \
+            --platform linux \
+            --version "$OEM_VERSION" \
+            --signing-key-path /tmp/oem_hmac.key \
+            --daemon core/dist/linux \
+            --ui ui/dist/linux \
+            --config core.yaml=config/core.yaml \
+            --config env=.env.example \
+            --resource scripts=scripts/install/linux \
+            --fingerprint-placeholder "$OEM_FINGERPRINT_PLACEHOLDER" \
+            --output-dir var/dist
+      - name: Publish artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: core-oem-linux
+          path: var/dist/core-oem-*linux*.tar.gz
+
+  package-macos:
+    runs-on: [self-hosted, macos-oem]
+    needs: package-linux
+    env:
+      OEM_VERSION: ${{ inputs.version }}
+      OEM_FINGERPRINT_PLACEHOLDER: ${{ inputs.fingerprint_placeholder }}
+      OEM_HMAC_KEY_B64: ${{ secrets.OEM_HMAC_KEY_B64 }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Prepare signing key
+        run: |
+          if [ -z "$OEM_HMAC_KEY_B64" ]; then
+            echo "OEM_HMAC_KEY_B64 secret is required" >&2
+            exit 1
+          fi
+          echo "$OEM_HMAC_KEY_B64" | base64 -d > /tmp/oem_hmac.key
+      - name: Build macOS bundle
+        run: |
+          python3 deploy/packaging/build_core_bundle.py \
+            --platform macos \
+            --version "$OEM_VERSION" \
+            --signing-key-path /tmp/oem_hmac.key \
+            --daemon core/dist/macos \
+            --ui ui/dist/macos \
+            --config core.yaml=config/core.yaml \
+            --config env=.env.example \
+            --resource scripts=scripts/install/macos \
+            --fingerprint-placeholder "$OEM_FINGERPRINT_PLACEHOLDER" \
+            --output-dir var/dist
+      - name: Publish artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: core-oem-macos
+          path: var/dist/core-oem-*macos*.tar.gz
+
+  package-windows:
+    runs-on: [self-hosted, windows-oem]
+    needs: package-macos
+    env:
+      OEM_VERSION: ${{ inputs.version }}
+      OEM_FINGERPRINT_PLACEHOLDER: ${{ inputs.fingerprint_placeholder }}
+      OEM_HMAC_KEY_B64: ${{ secrets.OEM_HMAC_KEY_B64 }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Prepare signing key
+        shell: pwsh
+        run: |
+          if (-not $env:OEM_HMAC_KEY_B64) {
+            Write-Error "OEM_HMAC_KEY_B64 secret is required"
+          }
+          [IO.File]::WriteAllBytes("C:/oem_hmac.key", [Convert]::FromBase64String($env:OEM_HMAC_KEY_B64))
+      - name: Build Windows bundle
+        shell: pwsh
+        run: |
+          python deploy/packaging/build_core_bundle.py `
+            --platform windows `
+            --version $env:OEM_VERSION `
+            --signing-key-path C:/oem_hmac.key `
+            --daemon core/dist/windows `
+            --ui ui/dist/windows `
+            --config core.yaml=config/core.yaml `
+            --config env=.env.example `
+            --resource scripts=scripts/install/windows `
+            --fingerprint-placeholder $env:OEM_FINGERPRINT_PLACEHOLDER `
+            --output-dir var/dist
+      - name: Publish artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: core-oem-windows
+          path: var/dist/core-oem-*windows*.zip

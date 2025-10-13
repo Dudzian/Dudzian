@@ -3,13 +3,21 @@ endpoint: 127.0.0.1:50061
 
 grpc:
   tls:
-    enabled: false
+    enabled: true
     root_cert: secrets/mtls/ca/ca.pem
     client_cert: secrets/mtls/client/client.crt
     client_key: secrets/mtls/client/client.key
-    server_name: trading.local
-    pinned_sha256: ""
-    require_client_auth: false
+    server_name: core-daemon.internal
+    pinned_sha256: ""          # opcjonalne pinning certyfikatu serwera (SHA-256 SPKI)
+    require_client_auth: true  # mamy cert klienta, więc włączone
+
+# Wsteczna kompatybilność (starsze buildy mogą czytać te klucze)
+tls:
+  enabled: true
+  root_certificate: secrets/mtls/ca/ca.pem
+  client_certificate: secrets/mtls/client/client.crt
+  client_key: secrets/mtls/client/client.key
+  target_name_override: core-daemon.internal
 
 instrument:
   exchange: BINANCE

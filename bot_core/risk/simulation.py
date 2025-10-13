@@ -1,38 +1,70 @@
-"""Narzędzia do symulacji scenariuszy ryzyka z użyciem danych Parquet."""
+"""Symulacje profili ryzyka, stres testy paper→live oraz scenariusze Parquet."""
 from __future__ import annotations
 
 import json
+import logging
+import math
+import random
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterable, Mapping, MutableMapping, Sequence
+from statistics import median, pstdev
+from typing import Iterable, Mapping, MutableMapping, Sequence, TYPE_CHECKING
 
-import pyarrow as pa
-import pyarrow.parquet as pq
+# --- Importy opcjonalne ------------------------------------------------------
+try:  # pyarrow może nie być dostępny
+    import pyarrow as pa  # type: ignore
+    import pyarrow.parquet as pq  # type: ignore
+except Exception:  # pragma: no cover
+    pa = None  # type: ignore
+    pq = None  # type: ignore
 
-from bot_core.exchanges.base import AccountSnapshot, OrderRequest
-from bot_core.risk.base import RiskEngine, RiskProfile
-from bot_core.risk.profiles import (
-    AggressiveProfile,
-    BalancedProfile,
-    ConservativeProfile,
-    ManualProfile,
-)
+# konfiguracja i profile (gałąź codex)
+try:  # pragma: no cover
+    from bot_core.config import load_core_config
+    from bot_core.risk.factory import build_risk_profile_from_config
+except Exception:  # pragma: no cover
+    load_core_config = None  # type: ignore[misc,assignment]
+    build_risk_profile_from_config = None  # type: ignore[misc,assignment]
 
-__all__ = [
-    "DEFAULT_PROFILES",
-    "SimulationOrder",
-    "RiskScenarioResult",
-    "RiskSimulationSuite",
-    "DEFAULT_SMOKE_SCENARIOS",
-    "write_default_smoke_scenarios",
-    "build_profile",
-    "load_orders_from_parquet",
-    "run_profile_scenario",
-]
+# profile (gałąź main)
+try:  # pragma: no cover
+    from bot_core.risk.profiles import (
+        AggressiveProfile,
+        BalancedProfile,
+        ConservativeProfile,
+        ManualProfile,
+    )
+except Exception:  # pragma: no cover
+    AggressiveProfile = BalancedProfile = ConservativeProfile = ManualProfile = None  # type: ignore
 
+# API exchanges (gałąź main)
+try:  # pragma: no cover
+    from bot_core.exchanges.base import AccountSnapshot, OrderRequest
+except Exception:  # pragma: no cover
+    AccountSnapshot = OrderRequest = None  # type: ignore
+
+# API ryzyka (gałąź main)
+try:  # pragma: no cover
+    from bot_core.risk.base import RiskEngine, RiskProfile
+except Exception:  # pragma: no cover
+    RiskEngine = RiskProfile = None  # type: ignore
+
+if TYPE_CHECKING:  # tylko dla typowania
+    from bot_core.risk.base import RiskProfile as _RiskProfileT  # noqa: F401
+
+_LOGGER = logging.getLogger(__name__)
+
+# --- Stałe -------------------------------------------------------------------
 DEFAULT_PROFILES: Sequence[str] = ("conservative", "balanced", "aggressive", "manual")
+_BASE_EQUITY_DEFAULT = 100_000.0
 
+# PDF
+_PDF_LINE_HEIGHT = 14
+_PDF_PAGE_WIDTH = 612
+_PDF_PAGE_HEIGHT = 792
+
+# smoke scenariusze (gałąź main)
 _SMOKE_BASE_TIMESTAMP = datetime(2024, 1, 1, 12, 0, 0)
 DEFAULT_SMOKE_SCENARIOS: tuple[Mapping[str, object], ...] = (
     {
@@ -112,21 +144,209 @@ DEFAULT_SMOKE_SCENARIOS: tuple[Mapping[str, object], ...] = (
     },
 )
 
+# --- Modele danych -----------------------------------------------------------
+@dataclass(slots=True)
+class Candle:
+    """Pojedyncza świeca OHLCV wykorzystywana w symulacji."""
+    timestamp_ms: int
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float
 
-def write_default_smoke_scenarios(path: str | Path) -> Path:
-    """Zapisuje domyślne scenariusze smoke testu do pliku Parquet."""
 
-    target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    table = pa.Table.from_pylist([dict(row) for row in DEFAULT_SMOKE_SCENARIOS])
-    pq.write_table(table, target)
-    return target
+@dataclass(slots=True)
+class StressTestResult:
+    """Wynik pojedynczego stres testu."""
+    name: str
+    status: str
+    metrics: MutableMapping[str, float | str] = field(default_factory=dict)
+    notes: str | None = None
+
+    def to_mapping(self) -> Mapping[str, object]:
+        payload: dict[str, object] = {
+            "name": self.name,
+            "status": self.status,
+            "metrics": dict(self.metrics),
+        }
+        if self.notes:
+            payload["notes"] = self.notes
+        return payload
+
+    def is_failure(self) -> bool:
+        return self.status.lower() not in {"ok", "passed", "success"}
+
+
+@dataclass(slots=True)
+class ProfileSimulationResult:
+    """Metryki wynikowe dla profilu ryzyka (symulacja OHLCV)."""
+    profile: str
+    base_equity: float
+    final_equity: float
+    total_return_pct: float
+    max_drawdown_pct: float
+    worst_daily_loss_pct: float
+    realized_volatility: float
+    breaches: Sequence[str] = field(default_factory=tuple)
+    stress_tests: Sequence[StressTestResult] = field(default_factory=tuple)
+    sample_size: int = 0
+
+    def to_mapping(self) -> Mapping[str, object]:
+        return {
+            "profile": self.profile,
+            "base_equity": self.base_equity,
+            "final_equity": self.final_equity,
+            "total_return_pct": self.total_return_pct,
+            "max_drawdown_pct": self.max_drawdown_pct,
+            "worst_daily_loss_pct": self.worst_daily_loss_pct,
+            "realized_volatility": self.realized_volatility,
+            "breaches": list(self.breaches),
+            "stress_tests": [result.to_mapping() for result in self.stress_tests],
+            "sample_size": self.sample_size,
+        }
+
+    def has_failures(self) -> bool:
+        return bool(self.breaches) or any(r.is_failure() for r in self.stress_tests)
+
+
+@dataclass(slots=True)
+class RiskScenarioResult:
+    """Zbiorczy wynik symulacji scenariuszy (Parquet/engine)."""
+    profile: str
+    total_orders: int
+    accepted_orders: int
+    rejected_orders: int
+    force_liquidation: bool
+    rejection_reasons: Sequence[str]
+    decisions: Sequence[Mapping[str, object]]
+    final_state: Mapping[str, object] | None
+
+    def to_mapping(self) -> Mapping[str, object]:
+        return {
+            "profile": self.profile,
+            "total_orders": self.total_orders,
+            "accepted_orders": self.accepted_orders,
+            "rejected_orders": self.rejected_orders,
+            "force_liquidation": self.force_liquidation,
+            "rejection_reasons": list(self.rejection_reasons),
+            "decisions": list(self.decisions),
+            "final_state": dict(self.final_state) if self.final_state is not None else None,
+        }
+
+
+@dataclass(slots=True)
+class RiskSimulationReport:
+    """Zbiorczy raport z symulacji profili ryzyka (OHLCV)."""
+    generated_at: str
+    base_equity: float
+    profiles: Sequence[ProfileSimulationResult]
+    synthetic_data: bool = False
+
+    def to_mapping(self) -> Mapping[str, object]:
+        return {
+            "generated_at": self.generated_at,
+            "base_equity": self.base_equity,
+            "synthetic_data": self.synthetic_data,
+            "profiles": [p.to_mapping() for p in self.profiles],
+            "breach_count": sum(len(p.breaches) for p in self.profiles),
+            "stress_failures": sum(sum(1 for r in p.stress_tests if r.is_failure()) for p in self.profiles),
+        }
+
+    def has_failures(self) -> bool:
+        return any(p.has_failures() for p in self.profiles)
+
+    def write_json(self, path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8") as handle:
+            json.dump(self.to_mapping(), handle, ensure_ascii=False, indent=2, sort_keys=True)
+            handle.write("\n")
+
+    def write_pdf(self, path: Path) -> None:
+        lines: list[str] = [
+            f"Risk Simulation Report — {self.generated_at}",
+            f"Base equity: {self.base_equity:,.2f} USD",
+            f"Synthetic dataset fallback: {'yes' if self.synthetic_data else 'no'}",
+        ]
+        for profile in self.profiles:
+            lines.append("")
+            lines.append(f"Profile: {profile.profile}")
+            lines.append(
+                f"  Final equity: {profile.final_equity:,.2f} USD (return {profile.total_return_pct * 100:.2f}%)"
+            )
+            lines.append(
+                f"  Max drawdown: {profile.max_drawdown_pct * 100:.2f}% — worst daily loss {profile.worst_daily_loss_pct * 100:.2f}%"
+            )
+            lines.append(f"  Realized volatility: {profile.realized_volatility * 100:.2f}%")
+            lines.append(f"  Breaches: {', '.join(profile.breaches) if profile.breaches else 'none'}")
+            for stress in profile.stress_tests:
+                status = stress.status.upper()
+                severity = stress.metrics.get("severity")
+                if severity:
+                    lines.append(f"  Stress {stress.name}: {status} (severity {severity})")
+                else:
+                    lines.append(f"  Stress {stress.name}: {status}")
+                if stress.notes:
+                    lines.append(f"    Notes: {stress.notes}")
+        _write_simple_pdf(path, lines)
+
+
+@dataclass(slots=True)
+class RiskSimulationSuite:
+    """Raport zbiorczy dla scenariuszy Parquet/engine."""
+    scenarios: Sequence[RiskScenarioResult]
+    generated_at: datetime = field(default_factory=datetime.utcnow)
+
+    def to_mapping(self) -> Mapping[str, object]:
+        return {
+            "generated_at": self.generated_at.isoformat(),
+            "scenarios": [s.to_mapping() for s in self.scenarios],
+        }
+
+    def to_json(self, *, indent: int = 2) -> str:
+        return json.dumps(self.to_mapping(), indent=indent, sort_keys=True)
+
+    def write_json(self, path: str | Path, *, indent: int = 2) -> Path:
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(self.to_json(indent=indent), encoding="utf-8")
+        return target
+
+    def render_pdf(self, path: str | Path) -> Path:
+        lines: list[str] = [
+            "Paper Labs – Risk Simulation Report",
+            f"Generated at: {self.generated_at.isoformat()}",
+            "",
+        ]
+        for scenario in self.scenarios:
+            lines.extend(
+                [
+                    f"Profile: {scenario.profile}",
+                    f"Total orders: {scenario.total_orders}",
+                    f"Accepted: {scenario.accepted_orders}",
+                    f"Rejected: {scenario.rejected_orders}",
+                    f"Forced liquidation: {'yes' if scenario.force_liquidation else 'no'}",
+                ]
+            )
+            if scenario.rejection_reasons:
+                lines.append("Rejection reasons:")
+                for reason in scenario.rejection_reasons:
+                    lines.append(f" • {reason}")
+            lines.append("")
+        _write_simple_pdf(path, lines)
+        return Path(path)
+
+
+@dataclass(slots=True)
+class SimulationSettings:
+    """Parametry wejściowe symulacji OHLCV."""
+    base_equity: float = _BASE_EQUITY_DEFAULT
+    max_bars: int | None = 720
 
 
 @dataclass(slots=True)
 class SimulationOrder:
-    """Pojedynczy rekord wejściowy używany podczas symulacji."""
-
+    """Pojedynczy rekord wejściowy używany podczas symulacji (Parquet/engine)."""
     profile: str
     timestamp: datetime
     symbol: str
@@ -141,7 +361,9 @@ class SimulationOrder:
     position_value: float | None = None
     pnl: float | None = None
 
-    def to_order_request(self) -> OrderRequest:
+    def to_order_request(self):  # zwracamy obiekt lub zgłaszamy błąd jeśli brak OrderRequest
+        if OrderRequest is None:
+            raise RuntimeError("OrderRequest is not available in this build.")
         return OrderRequest(
             symbol=self.symbol,
             side=self.side,
@@ -153,7 +375,9 @@ class SimulationOrder:
             metadata={"source": "risk_simulation"},
         )
 
-    def to_account_snapshot(self) -> AccountSnapshot:
+    def to_account_snapshot(self):
+        if AccountSnapshot is None:
+            raise RuntimeError("AccountSnapshot is not available in this build.")
         balances: MutableMapping[str, float] = {"USD": float(self.total_equity)}
         return AccountSnapshot(
             balances=balances,
@@ -189,9 +413,7 @@ class SimulationOrder:
             "maintenance_margin": float(self.maintenance_margin),
             "atr": None if self.atr is None else float(self.atr),
             "stop_price": None if self.stop_price is None else float(self.stop_price),
-            "position_value": (
-                None if self.position_value is None else float(self.position_value)
-            ),
+            "position_value": None if self.position_value is None else float(self.position_value),
             "pnl": None if self.pnl is None else float(self.pnl),
         }
 
@@ -215,7 +437,7 @@ class SimulationOrder:
             pnl=_coerce_optional_float(data.get("pnl")),
         )
 
-
+# --- Funkcje pomocnicze ------------------------------------------------------
 def _parse_timestamp(value: object) -> datetime:
     if isinstance(value, datetime):
         return value
@@ -240,16 +462,19 @@ def _coerce_optional_float(value: object | None) -> float | None:
         return None
 
 
-_PROFILE_FACTORY = {
+_PROFILE_FACTORY: dict[str, object] = {
     "conservative": ConservativeProfile,
     "balanced": BalancedProfile,
     "aggressive": AggressiveProfile,
 }
 
-
 def build_profile(profile_name: str, *, manual_overrides: Mapping[str, object] | None = None) -> RiskProfile:
+    if RiskProfile is None:
+        raise RuntimeError("RiskProfile base class is not available in this build.")
     normalized = profile_name.strip().lower()
     if normalized == "manual":
+        if ManualProfile is None:
+            raise RuntimeError("ManualProfile is not available in this build.")
         if not manual_overrides:
             raise ValueError("Manual profile requires overrides with explicit limits")
         required = {
@@ -276,96 +501,390 @@ def build_profile(profile_name: str, *, manual_overrides: Mapping[str, object] |
         )
     try:
         factory = _PROFILE_FACTORY[normalized]
-    except KeyError as exc:  # pragma: no cover - defensywnie
+    except KeyError as exc:  # pragma: no cover
         raise KeyError(f"Unsupported risk profile: {profile_name}") from exc
-    return factory()
+    if factory is None:  # pragma: no cover
+        raise RuntimeError(f"Profile '{profile_name}' is not available in this build.")
+    return factory()  # type: ignore[call-arg]
 
+# --- Loader świec Parquet (OHLCV) -------------------------------------------
+class MarketDatasetLoader:
+    """Loader świec OHLCV z plików Parquet (year=*/month=*/data.parquet)."""
+
+    def __init__(self, root: Path, *, namespace: str) -> None:
+        self._root = Path(root)
+        self._namespace = namespace
+
+    def load(self, symbol: str, interval: str) -> Sequence[Candle]:
+        if pq is None:
+            raise RuntimeError("pyarrow nie jest dostępny — nie można wczytać danych Parquet")
+        partition = self._root / self._namespace / symbol / interval
+        if not partition.exists():
+            raise FileNotFoundError(partition)
+        candles: list[Candle] = []
+        for year_dir in sorted(partition.glob("year=*")):
+            for month_dir in sorted(year_dir.glob("month=*")):
+                file_path = month_dir / "data.parquet"
+                if not file_path.exists():
+                    continue
+                table = pq.read_table(file_path)
+                if table.num_rows == 0:
+                    continue
+                data = table.to_pydict()
+                open_times = data.get("open_time", [])
+                highs = data.get("high", [])
+                lows = data.get("low", [])
+                opens = data.get("open", [])
+                closes = data.get("close", [])
+                volumes = data.get("volume", [])
+                for idx in range(len(open_times)):
+                    candles.append(
+                        Candle(
+                            timestamp_ms=int(open_times[idx]),
+                            open=float(opens[idx]),
+                            high=float(highs[idx]),
+                            low=float(lows[idx]),
+                            close=float(closes[idx]),
+                            volume=float(volumes[idx]),
+                        )
+                    )
+        candles.sort(key=lambda c: c.timestamp_ms)
+        if not candles:
+            raise FileNotFoundError(partition)
+        return candles
+
+# --- Generator syntetycznych świec ------------------------------------------
+def _generate_synthetic_candles(*, bars: int, seed: int = 42, interval_seconds: int = 3600) -> Sequence[Candle]:
+    rng = random.Random(seed)
+    candles: list[Candle] = []
+    timestamp = int(datetime(2022, 1, 1, tzinfo=timezone.utc).timestamp() * 1000)
+    price = 21_000.0
+    for index in range(bars):
+        drift = math.sin(index / 12.0) * 0.004
+        shock = (rng.random() - 0.5) * 0.01
+        change = drift + shock
+        open_price = price
+        close_price = max(1.0, open_price * (1 + change))
+        high = max(open_price, close_price) * (1 + abs(shock) * 0.3)
+        low = min(open_price, close_price) * (1 - abs(shock) * 0.3)
+        volume = 1_000 + rng.random() * 600
+        candles.append(
+            Candle(
+                timestamp_ms=timestamp,
+                open=open_price,
+                high=high,
+                low=low,
+                close=close_price,
+                volume=volume,
+            )
+        )
+        price = close_price
+        timestamp += interval_seconds * 1000
+    return candles
+
+# --- Metryki z serii ---------------------------------------------------------
+def _compute_returns(candles: Sequence[Candle]) -> list[float]:
+    returns: list[float] = []
+    for idx in range(1, len(candles)):
+        prev = candles[idx - 1]
+        current = candles[idx]
+        if prev.close <= 0:
+            continue
+        returns.append((current.close - prev.close) / prev.close)
+    return returns
+
+
+def _compute_daily_losses(candles: Sequence[Candle], pnl_series: Sequence[float], base_equity: float) -> float:
+    worst_loss = 0.0
+    equity = base_equity
+    by_day: dict[str, float] = {}
+    for candle, pnl in zip(candles[1:], pnl_series):
+        day = datetime.fromtimestamp(candle.timestamp_ms / 1000.0, tz=timezone.utc).date().isoformat()
+        by_day.setdefault(day, equity)
+        equity += pnl
+        change = equity - by_day[day]
+        if by_day[day] > 0 and change < 0:
+            loss_pct = abs(change) / by_day[day]
+            worst_loss = max(worst_loss, loss_pct)
+    return worst_loss
+
+
+def _compute_max_drawdown(pnl_series: Sequence[float], base_equity: float) -> float:
+    equity = base_equity
+    peak = base_equity
+    max_drawdown = 0.0
+    for pnl in pnl_series:
+        equity += pnl
+        if equity > peak:
+            peak = equity
+        drawdown = (peak - equity) / peak if peak > 0 else 0.0
+        max_drawdown = max(max_drawdown, drawdown)
+    return max_drawdown
+
+
+def _realized_volatility(returns: Sequence[float]) -> float:
+    if not returns:
+        return 0.0
+    return math.sqrt(pstdev(returns)) * math.sqrt(len(returns)) if len(returns) > 1 else abs(returns[0])
+
+# --- Stres testy -------------------------------------------------------------
+def _run_flash_crash_test(profile: RiskProfile, candles: Sequence[Candle], base_equity: float) -> StressTestResult:
+    max_drop = 0.0
+    for idx in range(1, len(candles)):
+        prev_close = candles[idx - 1].close
+        current_low = candles[idx].low
+        if prev_close <= 0:
+            continue
+        drop = (current_low - prev_close) / prev_close
+        max_drop = min(max_drop, drop)
+    severity = abs(max_drop)
+    metrics: dict[str, float] = {
+        "max_low_gap_pct": severity,
+        "severity": severity / max(profile.drawdown_limit(), 1e-6),
+    }
+    allowed = severity <= profile.drawdown_limit()
+    status = "passed" if allowed else "failed"
+    notes = None
+    if not allowed:
+        notes = f"Observed crash {severity * 100:.2f}% breaches drawdown limit {profile.drawdown_limit() * 100:.2f}%"
+    return StressTestResult(name="flash_crash", status=status, metrics=metrics, notes=notes)
+
+
+def _run_liquidity_dryout_test(profile: RiskProfile, candles: Sequence[Candle]) -> StressTestResult:
+    volumes = [candle.volume for candle in candles]
+    if not volumes:
+        return StressTestResult(
+            name="dry_liquidity",
+            status="failed",
+            metrics={"severity": float("inf")},
+            notes="Brak danych wolumenu dla symulacji",
+        )
+    median_volume = median(volumes)
+    threshold = median_volume * 0.2
+    low_volume_ratio = sum(1 for v in volumes if v <= threshold) / len(volumes)
+    allowed_ratio = max(0.05, 0.35 - profile.target_volatility())
+    metrics: dict[str, float] = {
+        "low_volume_ratio": low_volume_ratio,
+        "allowed_ratio": allowed_ratio,
+        "severity": low_volume_ratio / max(allowed_ratio, 1e-6),
+    }
+    status = "passed" if low_volume_ratio <= allowed_ratio else "failed"
+    notes = (
+        None
+        if status == "passed"
+        else f"{low_volume_ratio * 100:.2f}% słabych wolumenów przekracza próg {allowed_ratio * 100:.2f}%"
+    )
+    return StressTestResult(name="dry_liquidity", status=status, metrics=metrics, notes=notes)
+
+
+def _run_latency_spike_test(profile: RiskProfile, candles: Sequence[Candle]) -> StressTestResult:
+    spreads = []
+    for candle in candles:
+        if candle.open <= 0:
+            continue
+        spreads.append((candle.high - candle.low) / candle.open)
+    if not spreads:
+        return StressTestResult(
+            name="latency_spike",
+            status="failed",
+            metrics={"severity": float("inf")},
+            notes="Brak danych spreadu dla symulacji",
+        )
+    max_spread = max(spreads)
+    threshold = 0.01 + profile.stop_loss_atr_multiple() * 0.015
+    metrics: dict[str, float] = {
+        "max_spread_pct": max_spread,
+        "threshold": threshold,
+        "severity": max_spread / max(threshold, 1e-6),
+    }
+    status = "passed" if max_spread <= threshold else "failed"
+    notes = (
+        None
+        if status == "passed"
+        else f"Spread {max_spread * 100:.2f}% przekracza próg {threshold * 100:.2f}% – ryzyko poślizgu"
+    )
+    return StressTestResult(name="latency_spike", status=status, metrics=metrics, notes=notes)
+
+# --- Runner OHLCV ------------------------------------------------------------
+class RiskSimulationRunner:
+    """Uruchamia symulacje profili ryzyka dla danych rynkowych (OHLCV)."""
+
+    def __init__(
+        self,
+        *,
+        profiles: Sequence[RiskProfile],
+        candles_by_symbol: Mapping[str, Sequence[Candle]],
+        settings: SimulationSettings | None = None,
+    ) -> None:
+        self._profiles = list(profiles)
+        self._candles_by_symbol = candles_by_symbol
+        self._settings = settings or SimulationSettings()
+
+    def run(self) -> RiskSimulationReport:
+        base_equity = self._settings.base_equity
+        now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        synthetic = all(len(candles) == 0 for candles in self._candles_by_symbol.values())
+        profile_results: list[ProfileSimulationResult] = []
+        for profile in self._profiles:
+            profile_results.append(self._run_for_profile(profile=profile, base_equity=base_equity))
+        return RiskSimulationReport(
+            generated_at=now,
+            base_equity=base_equity,
+            profiles=profile_results,
+            synthetic_data=synthetic,
+        )
+
+    def _run_for_profile(self, *, profile: RiskProfile, base_equity: float) -> ProfileSimulationResult:
+        total_returns: list[float] = []
+        pnl_series: list[float] = []
+        sample_size = 0
+        leverage_limit = max(profile.max_leverage(), 1.0)
+        position_pct = max(profile.max_position_exposure(), 0.0)
+        for candles in self._candles_by_symbol.values():
+            if not candles:
+                continue
+            max_bars = self._settings.max_bars
+            subset = candles[-max_bars:] if max_bars else candles
+            returns = _compute_returns(subset)
+            if not returns:
+                continue
+            notional = base_equity * position_pct
+            notional = min(notional, base_equity * leverage_limit)
+            pnl = [notional * r for r in returns]
+            pnl_series.extend(pnl)
+            total_returns.extend(returns)
+            sample_size += len(returns)
+        if not pnl_series:
+            stress_tests = (
+                StressTestResult(name="flash_crash", status="failed", metrics={"severity": float("inf")}, notes="Brak danych do symulacji"),
+                StressTestResult(name="dry_liquidity", status="failed", metrics={"severity": float("inf")}, notes="Brak danych do symulacji"),
+                StressTestResult(name="latency_spike", status="failed", metrics={"severity": float("inf")}, notes="Brak danych do symulacji"),
+            )
+            return ProfileSimulationResult(
+                profile=profile.name,
+                base_equity=base_equity,
+                final_equity=base_equity,
+                total_return_pct=0.0,
+                max_drawdown_pct=0.0,
+                worst_daily_loss_pct=0.0,
+                realized_volatility=0.0,
+                breaches=("data_unavailable",),
+                stress_tests=stress_tests,
+                sample_size=0,
+            )
+        total_pnl = sum(pnl_series)
+        final_equity = base_equity + total_pnl
+        max_drawdown = _compute_max_drawdown(pnl_series, base_equity)
+        worst_daily_loss = _compute_daily_losses(next(iter(self._candles_by_symbol.values())), pnl_series, base_equity)
+        realized_vol = _realized_volatility(total_returns)
+        breaches = []
+        if max_drawdown > profile.drawdown_limit():
+            breaches.append("drawdown_limit")
+        if worst_daily_loss > profile.daily_loss_limit():
+            breaches.append("daily_loss_limit")
+        if realized_vol > profile.target_volatility() * 1.6:
+            breaches.append("volatility_target")
+        stress_results = [
+            _run_flash_crash_test(profile, candles, base_equity) for candles in self._candles_by_symbol.values() if candles
+        ] or [StressTestResult(name="flash_crash", status="failed", metrics={"severity": float("inf")}, notes="Brak danych do symulacji")]
+        liquidity_results = [
+            _run_liquidity_dryout_test(profile, candles) for candles in self._candles_by_symbol.values() if candles
+        ]
+        latency_results = [
+            _run_latency_spike_test(profile, candles) for candles in self._candles_by_symbol.values() if candles
+        ]
+        stress_tests = tuple(stress_results + liquidity_results + latency_results)
+        return ProfileSimulationResult(
+            profile=profile.name,
+            base_equity=base_equity,
+            final_equity=final_equity,
+            total_return_pct=(final_equity / base_equity) - 1.0,
+            max_drawdown_pct=max_drawdown,
+            worst_daily_loss_pct=worst_daily_loss,
+            realized_volatility=realized_vol,
+            breaches=tuple(breaches),
+            stress_tests=stress_tests,
+            sample_size=sample_size,
+        )
+
+# --- Wczytywanie profili z konfiguracji --------------------------------------
+def load_profiles_from_config(path: str | Path) -> Sequence[RiskProfile]:
+    """Wczytuje i instancjuje profile ryzyka na podstawie konfiguracji."""
+    if load_core_config is None or build_risk_profile_from_config is None:
+        raise RuntimeError("Config-based profiles are not available in this build.")
+    config = load_core_config(path)
+    profiles: list[RiskProfile] = []
+    for profile_config in config.risk_profiles.values():
+        profiles.append(build_risk_profile_from_config(profile_config))
+    if not profiles:
+        raise RuntimeError("Brak profili ryzyka w konfiguracji")
+    return profiles
+
+def run_simulations_from_config(
+    *,
+    config_path: str | Path,
+    dataset_root: Path | None,
+    namespace: str,
+    symbols: Sequence[str],
+    interval: str,
+    settings: SimulationSettings | None = None,
+    synthetic_fallback: bool = False,
+) -> RiskSimulationReport:
+    """Uruchamia symulacje OHLCV na podstawie konfiguracji."""
+    profiles = load_profiles_from_config(config_path)
+    if dataset_root is None:
+        dataset_root = Path("data/ohlcv")
+    candles: dict[str, Sequence[Candle]] = {}
+    loader = MarketDatasetLoader(dataset_root, namespace=namespace)
+    for symbol in symbols:
+        try:
+            candles[symbol] = loader.load(symbol, interval)
+        except FileNotFoundError:
+            if not synthetic_fallback:
+                raise
+            _LOGGER.warning("Brak danych Parquet dla %s – generuję syntetyczne świece", symbol)
+            candles[symbol] = _generate_synthetic_candles(bars=settings.max_bars if settings else 720)
+    if synthetic_fallback and any(not c for c in candles.values()):
+        for symbol, existing in list(candles.items()):
+            if existing:
+                continue
+            candles[symbol] = _generate_synthetic_candles(
+                bars=settings.max_bars if settings else 720,
+                seed=hash(symbol) % 10_000,
+            )
+    runner = RiskSimulationRunner(profiles=profiles, candles_by_symbol=candles, settings=settings)
+    report = runner.run()
+    if synthetic_fallback:
+        report.synthetic_data = True
+    return report
+
+# --- Scenariusze Parquet/engine (gałąź main) ---------------------------------
+def write_default_smoke_scenarios(path: str | Path) -> Path:
+    """Zapisuje domyślne scenariusze smoke testu do pliku Parquet."""
+    if pa is None or pq is None:
+        raise RuntimeError("pyarrow nie jest dostępny — nie można zapisać pliku Parquet")
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    table = pa.Table.from_pylist([dict(row) for row in DEFAULT_SMOKE_SCENARIOS])
+    pq.write_table(table, target)
+    return target
 
 def load_orders_from_parquet(path: str | Path) -> Sequence[SimulationOrder]:
+    if pq is None:
+        raise RuntimeError("pyarrow nie jest dostępny — nie można wczytać pliku Parquet")
     table = pq.read_table(path)
     records = table.to_pylist()
     orders = [SimulationOrder.from_mapping(record) for record in records]
     orders.sort(key=lambda order: order.timestamp)
     return tuple(orders)
 
-
-@dataclass(slots=True)
-class RiskScenarioResult:
-    """Zbiorczy wynik symulacji pojedynczego profilu."""
-
-    profile: str
-    total_orders: int
-    accepted_orders: int
-    rejected_orders: int
-    force_liquidation: bool
-    rejection_reasons: Sequence[str]
-    decisions: Sequence[Mapping[str, object]]
-    final_state: Mapping[str, object] | None
-
-    def to_mapping(self) -> Mapping[str, object]:
-        return {
-            "profile": self.profile,
-            "total_orders": self.total_orders,
-            "accepted_orders": self.accepted_orders,
-            "rejected_orders": self.rejected_orders,
-            "force_liquidation": self.force_liquidation,
-            "rejection_reasons": list(self.rejection_reasons),
-            "decisions": list(self.decisions),
-            "final_state": dict(self.final_state) if self.final_state is not None else None,
-        }
-
-
-@dataclass(slots=True)
-class RiskSimulationSuite:
-    """Raport zbiorczy obejmujący wszystkie uruchomione scenariusze."""
-
-    scenarios: Sequence[RiskScenarioResult]
-    generated_at: datetime = field(default_factory=datetime.utcnow)
-
-    def to_mapping(self) -> Mapping[str, object]:
-        return {
-            "generated_at": self.generated_at.isoformat(),
-            "scenarios": [scenario.to_mapping() for scenario in self.scenarios],
-        }
-
-    def to_json(self, *, indent: int = 2) -> str:
-        return json.dumps(self.to_mapping(), indent=indent, sort_keys=True)
-
-    def write_json(self, path: str | Path, *, indent: int = 2) -> Path:
-        target = Path(path)
-        target.write_text(self.to_json(indent=indent), encoding="utf-8")
-        return target
-
-    def render_pdf(self, path: str | Path) -> Path:
-        lines: list[str] = [
-            "Paper Labs – Risk Simulation Report",
-            f"Generated at: {self.generated_at.isoformat()}",
-            "",
-        ]
-        for scenario in self.scenarios:
-            lines.extend(
-                [
-                    f"Profile: {scenario.profile}",
-                    f"Total orders: {scenario.total_orders}",
-                    f"Accepted: {scenario.accepted_orders}",
-                    f"Rejected: {scenario.rejected_orders}",
-                    f"Forced liquidation: {'yes' if scenario.force_liquidation else 'no'}",
-                ]
-            )
-            if scenario.rejection_reasons:
-                lines.append("Rejection reasons:")
-                for reason in scenario.rejection_reasons:
-                    lines.append(f" • {reason}")
-            lines.append("")
-        _write_simple_pdf(path, lines)
-        return Path(path)
-
-
 def run_profile_scenario(
     engine: RiskEngine,
     profile: RiskProfile,
     orders: Iterable[SimulationOrder],
 ) -> RiskScenarioResult:
+    if RiskEngine is None:
+        raise RuntimeError("RiskEngine is not available in this build.")
     engine.register_profile(profile)
     accepted = 0
     rejected = 0
@@ -376,16 +895,8 @@ def run_profile_scenario(
             continue
         snapshot = order.to_account_snapshot()
         request = order.to_order_request()
-        result = engine.apply_pre_trade_checks(
-            request,
-            account=snapshot,
-            profile_name=profile.name,
-        )
-        decision_payload: MutableMapping[str, object] = {
-            "order": order.to_mapping(),
-            "allowed": result.allowed,
-            "reason": result.reason,
-        }
+        result = engine.apply_pre_trade_checks(request, account=snapshot, profile_name=profile.name)
+        decision_payload: MutableMapping[str, object] = {"order": order.to_mapping(), "allowed": result.allowed, "reason": result.reason}
         if result.adjustments is not None:
             decision_payload["adjustments"] = dict(result.adjustments)
         decisions.append(decision_payload)
@@ -405,10 +916,9 @@ def run_profile_scenario(
             if result.reason:
                 rejection_reasons.append(result.reason)
     state = engine.snapshot_state(profile.name)
-    force_liquidation = False
     try:
         force_liquidation = engine.should_liquidate(profile_name=profile.name)
-    except KeyError:  # pragma: no cover - defensywnie
+    except KeyError:  # pragma: no cover
         force_liquidation = False
     return RiskScenarioResult(
         profile=profile.name,
@@ -421,49 +931,75 @@ def run_profile_scenario(
         final_state=state,
     )
 
+# --- PDF utils (wspólne) -----------------------------------------------------
+def _escape_pdf_text(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+def _build_simple_pdf(lines: Sequence[str]) -> bytes:
+    content_lines = ["BT", "/F1 12 Tf", f"72 {_PDF_PAGE_HEIGHT - 72} Td"]
+    for index, line in enumerate(lines):
+        escaped = _escape_pdf_text(line)
+        if index == 0:
+            content_lines.append(f"({escaped}) Tj")
+        else:
+            content_lines.append(f"0 -{_PDF_LINE_HEIGHT} Td ({escaped}) Tj")
+    content_lines.append("ET")
+    content_stream = "\n".join(content_lines).encode("utf-8")
+    stream = b"<< /Length %d >>\nstream\n" % len(content_stream) + content_stream + b"\nendstream"
+    objects: list[bytes] = []
+    objects.append(b"<< /Type /Catalog /Pages 2 0 R >>")
+    objects.append(b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>")
+    page_dict = (
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 %d %d] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>"
+        % (_PDF_PAGE_WIDTH, _PDF_PAGE_HEIGHT)
+    )
+    objects.append(page_dict)
+    objects.append(stream)
+    objects.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+    output = bytearray()
+    output.extend(b"%PDF-1.4\n")
+    offsets: list[int] = []
+    for index, obj in enumerate(objects, start=1):
+        offsets.append(len(output))
+        output.extend(f"{index} 0 obj\n".encode("utf-8"))
+        output.extend(obj)
+        output.extend(b"\nendobj\n")
+    xref_offset = len(output)
+    output.extend(f"xref\n0 {len(objects) + 1}\n".encode("utf-8"))
+    output.extend(b"0000000000 65535 f \n")
+    for offset in offsets:
+        output.extend(f"{offset:010} 00000 n \n".encode("utf-8"))
+    output.extend(b"trailer\n")
+    output.extend(f"<< /Size {len(objects) + 1} /Root 1 0 R >>\n".encode("utf-8"))
+    output.extend(b"startxref\n")
+    output.extend(str(xref_offset).encode("utf-8"))
+    output.extend(b"\n%%EOF\n")
+    return bytes(output)
 
 def _write_simple_pdf(path: str | Path, lines: Sequence[str]) -> None:
-    def escape(text: str) -> str:
-        return text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    Path(path).write_bytes(_build_simple_pdf(lines))
 
-    text_commands = ["BT", "/F1 12 Tf", "50 780 Td"]
-    first = True
-    for line in lines:
-        if first:
-            text_commands.append(f"({escape(line)}) Tj")
-            first = False
-        else:
-            text_commands.append("T*")
-            text_commands.append(f"({escape(line)}) Tj")
-    text_commands.append("ET")
-    content = "\n".join(text_commands).encode("latin-1", "ignore")
-    objects = [
-        b"1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n",
-        b"2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n",
-        b"3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >> endobj\n",
-        b"4 0 obj << /Length "
-        + str(len(content)).encode("ascii")
-        + b" >> stream\n"
-        + content
-        + b"\nendstream\nendobj\n",
-        b"5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj\n",
-    ]
-    pdf_parts: list[bytes] = [b"%PDF-1.4\n"]
-    offsets: list[int] = []
-    for obj in objects:
-        current_offset = sum(len(part) for part in pdf_parts)
-        offsets.append(current_offset)
-        pdf_parts.append(obj)
-    body = b"".join(pdf_parts)
-    xref_offset = len(body)
-    xref_lines = ["xref", "0 6", "0000000000 65535 f "]
-    for offset in offsets:
-        xref_lines.append(f"{offset:010d} 00000 n ")
-    xref = "\n".join(xref_lines).encode("ascii") + b"\n"
-    trailer = (
-        b"trailer << /Size 6 /Root 1 0 R >>\nstartxref\n"
-        + str(xref_offset).encode("ascii")
-        + b"\n%%EOF\n"
-    )
-    target = Path(path)
-    target.write_bytes(body + xref + trailer)
+# --- Public API --------------------------------------------------------------
+__all__ = [
+    # OHLCV branch
+    "Candle",
+    "RiskSimulationRunner",
+    "RiskSimulationReport",
+    "ProfileSimulationResult",
+    "StressTestResult",
+    "SimulationSettings",
+    "MarketDatasetLoader",
+    "load_profiles_from_config",
+    "run_simulations_from_config",
+    # Parquet/engine branch
+    "DEFAULT_PROFILES",
+    "SimulationOrder",
+    "RiskScenarioResult",
+    "RiskSimulationSuite",
+    "DEFAULT_SMOKE_SCENARIOS",
+    "write_default_smoke_scenarios",
+    "build_profile",
+    "load_orders_from_parquet",
+    "run_profile_scenario",
+]
