@@ -10,6 +10,7 @@ Aby uniknąć jednorazowego „skoku” statusu całego etapu, wprowadzamy jawny
   - Iteracja 4M rozszerza konfigurację `core.yaml` o blok `grpc_metadata` dla `metrics_service`, co umożliwia automatyczne wstrzykiwanie nagłówków gRPC z konfiguracji, walidowane przez loader i validator, z zachowaniem strażnika środowiskowego `BOT_CORE_WATCH_METRICS_HEADERS=NONE` jako wyłącznika.
   - Iteracja 4N przenosi poufne wartości nagłówków gRPC do warstwy środowiskowej/plików (pola `value_env`/`value_file` w `grpc_metadata`), zapisując źródła w konfiguracji runtime i decision logu `watch_metrics_stream`.
   - Iteracja 4O naprawia normalizację `grpc_metadata` w loaderze konfiguracji, aby wariant słownikowy (np. `authorization: {value_env: ...}`) poprawnie pobierał wartości z ENV/plików i zachowywał informacje o źródle.
+  - Iteracja 4P deduplikuje nagłówki gRPC przy scalaniu konfiguracji `core.yaml` z parametrami CLI, zapewniając że wartości operatora nadpisują preset oraz że kolejność metadanych odzwierciedla ostatnie wystąpienia kluczy.
 - **Czynności w toku:** brak – backlog Etapu 4 zamknięty.
 - **Blokery:** brak.
 

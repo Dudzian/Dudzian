@@ -70,7 +70,7 @@ from __future__ import annotations
 
 import argparse
 import base64
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from contextlib import nullcontext
 from datetime import datetime, timezone
 import hashlib
@@ -198,6 +198,26 @@ def _parse_metadata_entries(
             )
         metadata.append((normalized_key, value.strip()))
     return metadata
+
+
+def _merge_metadata_entries(
+    entries: Sequence[tuple[str, str]]
+) -> list[tuple[str, str]]:
+    """Zwraca listę metadanych z usuniętymi duplikatami kluczy.
+
+    W przypadku powtórzeń ostatnia wartość wygrywa, dzięki czemu wpisy CLI
+    nadpisują konfigurację `core.yaml`, a kolejność wynikowa zachowuje ostatnie
+    wystąpienie każdego klucza (ważne dla serwera gRPC, który wykorzystuje
+    kolejność metadanych).
+    """
+
+    deduplicated: "OrderedDict[str, str]" = OrderedDict()
+    for key, value in entries:
+        if key in deduplicated:
+            # usuwamy poprzednie wystąpienie, aby odtworzyć kolejność "ostatni wygrywa"
+            del deduplicated[key]
+        deduplicated[key] = value
+    return list(deduplicated.items())
 
 
 def _load_grpc_components():
@@ -1894,6 +1914,8 @@ def main(argv: list[str] | None = None) -> int:
     if headers_disabled:
         args.headers = None
     _apply_core_config_defaults(args, parser=parser, provided_flags=provided_flags)
+    if getattr(args, "_custom_metadata", None):
+        args._custom_metadata = _merge_metadata_entries(args._custom_metadata)
     _load_custom_risk_profiles(args, parser)
     if (
         tls_env_present

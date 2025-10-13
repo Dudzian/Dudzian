@@ -1535,6 +1535,27 @@ def test_core_config_grpc_metadata_disabled_by_env(monkeypatch, tmp_path):
     assert metadata is None
 
 
+def test_core_config_grpc_metadata_cli_override(monkeypatch, tmp_path):
+    stub = _StubCollector()
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
+    config_path = _write_core_config(
+        tmp_path,
+        profiles_path=profiles_path,
+        metrics_grpc_metadata={"x-trace": "config", "x-role": "config"},
+    )
+
+    exit_code = watch_metrics_main(
+        ["--core-config", str(config_path), "--header", "x-trace=cli"]
+    )
+
+    assert exit_code == 0
+    assert stub.calls
+    _request, _timeout, metadata = stub.calls[0]
+    assert metadata == [("x-role", "config"), ("x-trace", "cli")]
+
+
 def test_watch_metrics_stream_header_invalid_format(monkeypatch):
     stub = _StubCollector()
     _install_dummy_loader(monkeypatch, stub)
