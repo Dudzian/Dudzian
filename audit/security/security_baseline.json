@@ -1,0 +1,253 @@
+{
+  "config_path": "config/core.yaml",
+  "errors": [
+    "Brak tokenu zapewniającego wymagany scope"
+  ],
+  "generated_at": "2025-10-13T14:48:08.423107+00:00",
+  "status": "error",
+  "tls": {
+    "errors": [],
+    "services": {
+      "metrics_service": {
+        "auth_token_configured": true,
+        "enabled": true,
+        "errors": [],
+        "rbac_tokens_configured": false,
+        "tls": {
+          "certificate": {
+            "absolute_path": "/workspace/Dudzian/config/secrets/dev-metrics-server.crt",
+            "exists": false,
+            "parent": {
+              "absolute_path": "/workspace/Dudzian/config/secrets",
+              "exists": false,
+              "is_dir": false,
+              "path": "/workspace/Dudzian/config/secrets",
+              "writable": false
+            },
+            "parent_absolute_path": "/workspace/Dudzian/config/secrets",
+            "parent_directory": "/workspace/Dudzian/config/secrets",
+            "parent_exists": false,
+            "parent_is_dir": false,
+            "parent_writable": false,
+            "path": "/workspace/Dudzian/config/secrets/dev-metrics-server.crt",
+            "role": "metrics_tls_certificate",
+            "security_warnings": [
+              "Katalog nadrzędny nie istnieje – utwórz go przed startem procesu."
+            ],
+            "stat_error": "[Errno 2] No such file or directory: '/workspace/Dudzian/config/secrets/dev-metrics-server.crt'"
+          },
+          "client_ca": {
+            "absolute_path": "/workspace/Dudzian/config/secrets/dev-metrics-clients.pem",
+            "exists": false,
+            "parent": {
+              "absolute_path": "/workspace/Dudzian/config/secrets",
+              "exists": false,
+              "is_dir": false,
+              "path": "/workspace/Dudzian/config/secrets",
+              "writable": false
+            },
+            "parent_absolute_path": "/workspace/Dudzian/config/secrets",
+            "parent_directory": "/workspace/Dudzian/config/secrets",
+            "parent_exists": false,
+            "parent_is_dir": false,
+            "parent_writable": false,
+            "path": "/workspace/Dudzian/config/secrets/dev-metrics-clients.pem",
+            "role": "metrics_tls_client_ca",
+            "security_warnings": [
+              "Katalog nadrzędny nie istnieje – utwórz go przed startem procesu."
+            ],
+            "stat_error": "[Errno 2] No such file or directory: '/workspace/Dudzian/config/secrets/dev-metrics-clients.pem'"
+          },
+          "configured": true,
+          "enabled": false,
+          "errors": [],
+          "key_matches_certificate": null,
+          "password_env": null,
+          "pinned_fingerprint_match": null,
+          "pinned_fingerprints": [],
+          "private_key": {
+            "absolute_path": "/workspace/Dudzian/config/secrets/dev-metrics-server.key",
+            "exists": false,
+            "parent": {
+              "absolute_path": "/workspace/Dudzian/config/secrets",
+              "exists": false,
+              "is_dir": false,
+              "path": "/workspace/Dudzian/config/secrets",
+              "writable": false
+            },
+            "parent_absolute_path": "/workspace/Dudzian/config/secrets",
+            "parent_directory": "/workspace/Dudzian/config/secrets",
+            "parent_exists": false,
+            "parent_is_dir": false,
+            "parent_writable": false,
+            "path": "/workspace/Dudzian/config/secrets/dev-metrics-server.key",
+            "role": "tls_key",
+            "role_label": "metrics_tls_key",
+            "security_warnings": [
+              "Katalog nadrzędny nie istnieje – utwórz go przed startem procesu.",
+              "Plik materiału TLS jest niedostępny – konfiguracja nie będzie kompletna."
+            ],
+            "stat_error": "[Errno 2] No such file or directory: '/workspace/Dudzian/config/secrets/dev-metrics-server.key'"
+          },
+          "warnings": [
+            "Katalog nadrzędny nie istnieje – utwórz go przed startem procesu.",
+            "Plik materiału TLS jest niedostępny – konfiguracja nie będzie kompletna."
+          ]
+        },
+        "warnings": [
+          "MetricsService działa bez TLS – rozważ włączenie szyfrowania",
+          "Katalog nadrzędny nie istnieje – utwórz go przed startem procesu.",
+          "Plik materiału TLS jest niedostępny – konfiguracja nie będzie kompletna."
+        ]
+      }
+    },
+    "warnings": [
+      "MetricsService działa bez TLS – rozważ włączenie szyfrowania",
+      "Katalog nadrzędny nie istnieje – utwórz go przed startem procesu.",
+      "Plik materiału TLS jest niedostępny – konfiguracja nie będzie kompletna."
+    ]
+  },
+  "tokens": {
+    "errors": [
+      "Brak tokenu zapewniającego wymagany scope",
+      "Brak tokenu zapewniającego wymagany scope"
+    ],
+    "services": [
+      {
+        "configured": true,
+        "coverage": {
+          "metrics.read": [
+            "<legacy-auth-token>"
+          ]
+        },
+        "enabled": true,
+        "findings": [
+          {
+            "details": {
+              "service": "metrics_service"
+            },
+            "level": "warning",
+            "message": "Brak skonfigurowanych tokenów RBAC dla włączonej usługi"
+          },
+          {
+            "details": {
+              "service": "metrics_service"
+            },
+            "level": "warning",
+            "message": "Usługa używa legacy auth_token – rozważ migrację na RBAC"
+          }
+        ],
+        "legacy_token": true,
+        "required_scopes": {
+          "metrics.read": [
+            "metrics.read"
+          ]
+        },
+        "service": "metrics_service",
+        "token_count": 0,
+        "tokens": []
+      },
+      {
+        "configured": false,
+        "coverage": {
+          "risk.read": []
+        },
+        "enabled": false,
+        "findings": [],
+        "legacy_token": false,
+        "required_scopes": {
+          "risk.read": [
+            "risk.read"
+          ]
+        },
+        "service": "risk_service",
+        "token_count": 0,
+        "tokens": []
+      },
+      {
+        "configured": true,
+        "coverage": {
+          "runtime.schedule.read": [],
+          "runtime.schedule.write": []
+        },
+        "enabled": true,
+        "findings": [
+          {
+            "details": {
+              "service": "multi_strategy_scheduler:core_multi_pipeline",
+              "token_id": "scheduler-local"
+            },
+            "level": "warning",
+            "message": "Token RBAC nie posiada ani jawnego sekretu ani skrótu"
+          },
+          {
+            "details": {
+              "service": "multi_strategy_scheduler:core_multi_pipeline",
+              "token_env": "CORE_SCHEDULER_TOKEN",
+              "token_id": "scheduler-local"
+            },
+            "level": "warning",
+            "message": "Zmienna środowiskowa tokenu RBAC nie jest ustawiona"
+          },
+          {
+            "details": {
+              "scope": "runtime.schedule.read",
+              "service": "multi_strategy_scheduler:core_multi_pipeline"
+            },
+            "level": "error",
+            "message": "Brak tokenu zapewniającego wymagany scope"
+          },
+          {
+            "details": {
+              "scope": "runtime.schedule.write",
+              "service": "multi_strategy_scheduler:core_multi_pipeline"
+            },
+            "level": "error",
+            "message": "Brak tokenu zapewniającego wymagany scope"
+          }
+        ],
+        "legacy_token": false,
+        "required_scopes": {
+          "runtime.schedule.read": [
+            "runtime.schedule.read"
+          ],
+          "runtime.schedule.write": [
+            "runtime.schedule.write"
+          ]
+        },
+        "service": "multi_strategy_scheduler:core_multi_pipeline",
+        "token_count": 1,
+        "tokens": [
+          {
+            "env_present": false,
+            "has_hash": false,
+            "has_plain": false,
+            "hash_algorithm": null,
+            "scopes": [
+              "runtime.schedule.read",
+              "runtime.schedule.write"
+            ],
+            "source": "env",
+            "token_env": "CORE_SCHEDULER_TOKEN",
+            "token_id": "scheduler-local"
+          }
+        ]
+      }
+    ],
+    "warnings": [
+      "Brak skonfigurowanych tokenów RBAC dla włączonej usługi",
+      "Usługa używa legacy auth_token – rozważ migrację na RBAC",
+      "Token RBAC nie posiada ani jawnego sekretu ani skrótu",
+      "Zmienna środowiskowa tokenu RBAC nie jest ustawiona"
+    ]
+  },
+  "warnings": [
+    "MetricsService działa bez TLS – rozważ włączenie szyfrowania",
+    "Katalog nadrzędny nie istnieje – utwórz go przed startem procesu.",
+    "Plik materiału TLS jest niedostępny – konfiguracja nie będzie kompletna.",
+    "Brak skonfigurowanych tokenów RBAC dla włączonej usługi",
+    "Usługa używa legacy auth_token – rozważ migrację na RBAC",
+    "Token RBAC nie posiada ani jawnego sekretu ani skrótu",
+    "Zmienna środowiskowa tokenu RBAC nie jest ustawiona"
+  ]
+}

@@ -34,6 +34,10 @@ Przykłady użycia::
     export BOT_CORE_WATCH_METRICS_SERVER_SHA256=0123deadbeef
     python -m scripts.watch_metrics_stream --auth-token-file secrets/token.txt
 
+    # Wczytaj dodatkowe nagłówki gRPC z pliku poprzez zmienną środowiskową
+    export BOT_CORE_WATCH_METRICS_HEADERS_FILE=config/metrics_headers.env
+    python -m scripts.watch_metrics_stream --summary
+
     # Audytuj zdarzenia z określonego okna czasowego
     python -m scripts.watch_metrics_stream \
         --from-jsonl artifacts/metrics.jsonl --since 2024-02-01T00:00:00Z \
@@ -62,6 +66,9 @@ Przykłady użycia::
     # Wczytaj ustawienia telemetryczne (host, TLS, profil ryzyka) z core.yaml
     python -m scripts.watch_metrics_stream --core-config config/core.yaml --summary
 
+    # Wypisz scalone nagłówki gRPC bez łączenia z serwerem
+    python -m scripts.watch_metrics_stream --headers-report-only --header x-trace=demo
+
 Skrypt wymaga obecności wygenerowanych stubów gRPC (`trading_pb2*.py`) oraz
 pakietu `grpcio`.
 """
@@ -70,7 +77,8 @@ from __future__ import annotations
 
 import argparse
 import base64
-from collections import defaultdict
+import binascii
+from collections import OrderedDict, defaultdict
 from contextlib import nullcontext
 from datetime import datetime, timezone
 import hashlib
@@ -79,9 +87,12 @@ import hmac
 import json
 import logging
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
+
+MetadataValue = str | bytes
 
 # --- opcjonalna konfiguracja core.yaml ---------------------------------------
 try:
@@ -115,9 +126,14 @@ except Exception as exc:  # pragma: no cover
 LOGGER = logging.getLogger("bot_core.scripts.watch_metrics_stream")
 
 _ENV_PREFIX = "BOT_CORE_WATCH_METRICS_"
+_CLI_HEADER_SOURCE = "cli:--header"
+_ENV_HEADER_SOURCE = f"env:{_ENV_PREFIX}HEADERS"
+_CLI_HEADER_DIR_SOURCE = "cli:--headers-dir"
+_ENV_HEADER_DIR_SOURCE = f"env:{_ENV_PREFIX}HEADERS_DIRS"
 _HEX_DIGITS = set("0123456789abcdef")
 _REQUIRED_METRICS_SCOPE = "metrics.read"
 _REQUIRED_RISK_SCOPE = "risk.read"
+_METADATA_KEY_PATTERN = re.compile(r"^[0-9a-z._-]+$")
 
 
 def _parse_pinned_fingerprint(entry: object) -> tuple[str, str] | None:
@@ -158,6 +174,459 @@ def _select_sha256_fingerprint(entries: Sequence[object]) -> str | None:
             "Pomijam wpis pinningu TLS %r – obsługiwany jest wyłącznie SHA-256", entry
         )
     return None
+
+
+def _looks_like_sensitive_metadata_key(key: str) -> bool:
+    lowered = key.lower()
+    return any(token in lowered for token in ("auth", "token", "secret", "key"))
+
+
+_METADATA_CLEAR_SENTINELS = {"none", "null"}
+
+
+def _split_header_entries(raw_value: str) -> list[str]:
+    """Dzieli łańcuch nagłówków na poszczególne wpisy.
+
+    Obsługuje zarówno separatory średnikowe, jak i wieloliniowe. Linie zaczynające
+    się od `#` są traktowane jako komentarze i ignorowane.
+    """
+
+    entries: list[str] = []
+    for chunk in raw_value.replace("\r\n", "\n").split("\n"):
+        piece = chunk.strip()
+        if not piece or piece.startswith("#"):
+            continue
+        for entry in piece.split(";"):
+            normalized = entry.strip()
+            if normalized:
+                entries.append(normalized)
+    return entries
+
+
+def _split_header_file_specs(raw_value: str) -> list[str]:
+    """Zwraca listę ścieżek zdefiniowanych w zmiennej HEADERS_FILE."""
+
+    paths: list[str] = []
+    for chunk in raw_value.replace("\r\n", "\n").split("\n"):
+        piece = chunk.strip()
+        if not piece or piece.startswith("#"):
+            continue
+        for candidate in piece.split(";"):
+            normalized = candidate.strip()
+            if normalized:
+                paths.append(normalized)
+    return paths
+
+
+def _split_header_directory_specs(raw_value: str) -> list[str]:
+    """Zwraca listę katalogów zdefiniowanych w zmiennych HEADERS_DIRS."""
+
+    return _split_header_file_specs(raw_value)
+
+
+def _resolve_headers_directory(
+    path_value: str, *, parser: argparse.ArgumentParser
+) -> tuple[list[str], str]:
+    """Zwraca posortowaną listę plików nagłówków z katalogu."""
+
+    target = Path(path_value).expanduser()
+    if not target.exists():
+        parser.error(f"Nie znaleziono katalogu nagłówków gRPC: {target}")
+    if not target.is_dir():
+        parser.error(f"Ścieżka {target} nie jest katalogiem nagłówków gRPC")
+    files = sorted(entry for entry in target.iterdir() if entry.is_file())
+    return [str(item) for item in files], str(target)
+
+
+def _load_headers_file_entries(
+    path_value: str, *, parser: argparse.ArgumentParser
+) -> tuple[list[str], str]:
+    """Wczytuje nagłówki gRPC z pliku i zwraca je wraz z kanoniczną ścieżką."""
+
+    target = Path(path_value).expanduser()
+    try:
+        content = target.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        parser.error(f"Nie znaleziono pliku nagłówków gRPC: {target}")
+    except OSError as exc:  # pragma: no cover - zależne od środowiska
+        parser.error(f"Nie można odczytać pliku nagłówków gRPC {target}: {exc}")
+    return _split_header_entries(content), str(target)
+
+
+def _decode_base64_payload(
+    payload: str,
+    *,
+    parser: argparse.ArgumentParser,
+    key: str,
+    entry: str,
+    source: str,
+) -> bytes:
+    """Dekoduje wartość w formacie Base64, zgłaszając błąd parsera przy niepowodzeniu."""
+
+    normalized = "".join(payload.split())
+    if not normalized:
+        parser.error(
+            f"Nagłówek '{key}' otrzymał pustą wartość base64 w wpisie '{entry}' (źródło {source})"
+        )
+    try:
+        return base64.b64decode(normalized, validate=True)
+    except binascii.Error:
+        parser.error(
+            f"Nagłówek '{key}' nie zawiera poprawnej wartości base64 w wpisie '{entry}' (źródło {source})"
+        )
+
+
+def _resolve_metadata_value(
+    value: str,
+    *,
+    parser: argparse.ArgumentParser,
+    key: str,
+    entry: str,
+    env: Mapping[str, str] | None = None,
+) -> tuple[MetadataValue, str | None]:
+    """Zwraca docelową wartość nagłówka oraz opis źródła (jeśli dotyczy).
+
+    Wartości mogą wskazywać na plik (`@file:path`) lub zmienną środowiskową
+    (`@env:NAME`). Sekwencja `@@` pozwala wprowadzić dosłowną wartość
+    rozpoczynającą się od `@`.
+    """
+
+    if not value.startswith("@"):
+        return value, None
+
+    if value.startswith("@@"):
+        # Escapowany znak `@` – obcinamy pierwszy prefiksowy znak.
+        return value[1:], None
+
+    directive, separator, remainder = value[1:].partition(":")
+    if not separator:
+        # Nieznana dyrektywa – traktujemy jak literalną wartość.
+        return value, None
+
+    directive_lower = directive.lower()
+    target = remainder.strip()
+
+    if directive_lower == "file":
+        if not target:
+            parser.error(
+                f"Nagłówek '{key}' wskazuje pusty plik w wpisie '{entry}'"
+            )
+        file_path = Path(target).expanduser()
+        try:
+            content = file_path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            parser.error(
+                f"Nie znaleziono pliku '{file_path}' dla nagłówka '{key}'"
+            )
+        except OSError as exc:  # pragma: no cover - zależne od środowiska
+            parser.error(
+                f"Nie można odczytać pliku '{file_path}' dla nagłówka '{key}': {exc}"
+            )
+        # Usuwamy typowe końcówki linii pozostawiając resztę wartości bez zmian.
+        return content.rstrip("\r\n"), f"file:{file_path}"
+
+    if directive_lower in {"file64", "fileb64", "file-base64"}:
+        if not target:
+            parser.error(
+                f"Nagłówek '{key}' wskazuje pusty plik w wpisie '{entry}'"
+            )
+        file_path = Path(target).expanduser()
+        try:
+            content = file_path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            parser.error(
+                f"Nie znaleziono pliku '{file_path}' dla nagłówka '{key}'"
+            )
+        except OSError as exc:  # pragma: no cover - zależne od środowiska
+            parser.error(
+                f"Nie można odczytać pliku '{file_path}' dla nagłówka '{key}': {exc}"
+            )
+        decoded = _decode_base64_payload(
+            content,
+            parser=parser,
+            key=key,
+            entry=entry,
+            source=f"file:{file_path}",
+        )
+        return decoded, f"file:{file_path}"
+
+    if directive_lower == "env":
+        if not target:
+            parser.error(
+                f"Nagłówek '{key}' wskazuje pustą zmienną środowiskową w wpisie '{entry}'"
+            )
+        env_map = dict(env or os.environ)
+        if target not in env_map:
+            parser.error(
+                f"Zmiennej środowiskowej '{target}' wymaganej przez nagłówek '{key}' nie znaleziono"
+            )
+        return env_map[target], f"env:{target}"
+
+    if directive_lower in {"env64", "envb64", "env-base64"}:
+        if not target:
+            parser.error(
+                f"Nagłówek '{key}' wskazuje pustą zmienną środowiskową w wpisie '{entry}'"
+            )
+        env_map = dict(env or os.environ)
+        if target not in env_map:
+            parser.error(
+                f"Zmiennej środowiskowej '{target}' wymaganej przez nagłówek '{key}' nie znaleziono"
+            )
+        decoded = _decode_base64_payload(
+            env_map[target],
+            parser=parser,
+            key=key,
+            entry=entry,
+            source=f"env:{target}",
+        )
+        return decoded, f"env:{target}"
+
+    if directive_lower == "literal":
+        # Pozwala jawnie podać wartość zaczynającą się od '@'.
+        return remainder, None
+
+    # Nieznana dyrektywa – pozostawiamy wartość bez zmian.
+    return value, None
+
+
+def _parse_metadata_entries(
+    entries: Sequence[str],
+    *,
+    parser: argparse.ArgumentParser,
+    env: Mapping[str, str] | None = None,
+    base_source: str | None = None,
+) -> tuple[
+    list[tuple[str, MetadataValue]],
+    set[str],
+    dict[str, str],
+    dict[str, str],
+]:
+    metadata: list[tuple[str, MetadataValue]] = []
+    removals: set[str] = set()
+    sources: dict[str, str] = {}
+    removal_sources: dict[str, str] = {}
+    env_map = env or os.environ
+    for raw_entry in entries:
+        entry = raw_entry.strip()
+        if not entry:
+            continue
+        if "=" in entry:
+            key, value = entry.split("=", 1)
+        elif ":" in entry:
+            key, value = entry.split(":", 1)
+        else:
+            parser.error(
+                "Nieprawidłowy nagłówek gRPC '%s'. Użyj formatu klucz=wartość lub klucz:wartość." % raw_entry
+            )
+        stripped_key = key.strip()
+        normalized_key = stripped_key.lower()
+        if not normalized_key:
+            parser.error("Nagłówek gRPC o pustym kluczu jest niedozwolony")
+        if stripped_key != normalized_key:
+            parser.error(
+                "Nagłówek gRPC '%s' musi używać małych liter" % stripped_key
+            )
+        if not _METADATA_KEY_PATTERN.fullmatch(normalized_key):
+            parser.error(
+                "Nagłówek gRPC '%s' zawiera niedozwolone znaki – dozwolone są małe litery, cyfry, '-', '_' i '.'"
+                % normalized_key
+            )
+        normalized_value = value.strip()
+        sentinel = normalized_value.lower()
+        if sentinel in _METADATA_CLEAR_SENTINELS:
+            removals.add(normalized_key)
+            if base_source:
+                removal_sources[normalized_key] = base_source
+            continue
+        if sentinel == "default":
+            # Przywracamy konfigurację domyślną – brak wpisu CLI/ENV.
+            removals.discard(normalized_key)
+            removal_sources.pop(normalized_key, None)
+            continue
+        resolved_value, value_source = _resolve_metadata_value(
+            normalized_value,
+            parser=parser,
+            key=normalized_key,
+            entry=raw_entry,
+            env=env_map,
+        )
+        if isinstance(resolved_value, bytes) and not normalized_key.endswith("-bin"):
+            try:
+                resolved_value = resolved_value.decode("utf-8")
+            except UnicodeDecodeError:
+                parser.error(
+                    "Nagłówek gRPC '%s' oczekuje tekstowej wartości UTF-8, otrzymano dane binarne" % normalized_key
+                )
+        if isinstance(resolved_value, str) and normalized_key.endswith("-bin"):
+            resolved_value = _decode_base64_payload(
+                resolved_value,
+                parser=parser,
+                key=normalized_key,
+                entry=raw_entry,
+                source=base_source or "inline",
+            )
+        removals.discard(normalized_key)
+        removal_sources.pop(normalized_key, None)
+        metadata.append((normalized_key, resolved_value))
+        if base_source:
+            detail_source = base_source
+            if value_source:
+                detail_source = f"{base_source}@{value_source}"
+            sources[normalized_key] = detail_source
+    return metadata, removals, sources, removal_sources
+
+
+def _merge_metadata_entries(
+    entries: Sequence[tuple[str, MetadataValue]]
+) -> list[tuple[str, MetadataValue]]:
+    """Zwraca listę metadanych z usuniętymi duplikatami kluczy.
+
+    W przypadku powtórzeń ostatnia wartość wygrywa, dzięki czemu wpisy CLI
+    nadpisują konfigurację `core.yaml`, a kolejność wynikowa zachowuje ostatnie
+    wystąpienie każdego klucza (ważne dla serwera gRPC, który wykorzystuje
+    kolejność metadanych).
+    """
+
+    deduplicated: "OrderedDict[str, MetadataValue]" = OrderedDict()
+    for key, value in entries:
+        if key in deduplicated:
+            # usuwamy poprzednie wystąpienie, aby odtworzyć kolejność "ostatni wygrywa"
+            del deduplicated[key]
+        deduplicated[key] = value
+    return list(deduplicated.items())
+
+
+def _finalize_custom_metadata(args: argparse.Namespace) -> None:
+    removals = set(getattr(args, "_custom_metadata_remove", set()) or ())
+    entries = list(getattr(args, "_custom_metadata", []) or [])
+
+    if removals and entries:
+        entries = [pair for pair in entries if pair[0] not in removals]
+
+    merged = _merge_metadata_entries(entries) if entries else []
+    args._custom_metadata = merged or None
+
+    sources_map = dict(getattr(args, "_custom_metadata_sources", {}) or {})
+    merged_sources: dict[str, str] = {}
+    if sources_map and merged:
+        for key, _ in merged:
+            source = sources_map.get(key)
+            if source:
+                merged_sources[key] = source
+
+    args._custom_metadata_sources = merged_sources or None
+
+    removal_sources = getattr(args, "_custom_metadata_remove_sources", {}) or {}
+
+    core_meta = getattr(args, "_core_config_metadata", None)
+    if isinstance(core_meta, dict):
+        metrics_meta = core_meta.get("metrics_service")
+        if isinstance(metrics_meta, dict):
+            if merged_sources:
+                metrics_meta["grpc_metadata_sources"] = dict(merged_sources)
+            else:
+                metrics_meta.pop("grpc_metadata_sources", None)
+            if merged:
+                metrics_meta["grpc_metadata_keys"] = [key for key, _ in merged]
+                metrics_meta["grpc_metadata_count"] = len(merged)
+                metrics_meta["grpc_metadata_enabled"] = True
+            else:
+                metrics_meta.pop("grpc_metadata_keys", None)
+                metrics_meta.pop("grpc_metadata_count", None)
+                metrics_meta["grpc_metadata_enabled"] = False
+            if removals:
+                metrics_meta["grpc_metadata_removed"] = sorted(removals)
+                if removal_sources:
+                    metrics_meta["grpc_metadata_removed_sources"] = dict(removal_sources)
+                else:
+                    metrics_meta.pop("grpc_metadata_removed_sources", None)
+            else:
+                metrics_meta.pop("grpc_metadata_removed", None)
+                metrics_meta.pop("grpc_metadata_removed_sources", None)
+
+
+def _sanitize_metadata_preview(key: str, value: MetadataValue) -> tuple[str, dict[str, object]]:
+    """Zwraca bezpieczny do logowania podgląd wartości metadanych."""
+
+    details: dict[str, object] = {"key": key}
+    if isinstance(value, bytes):
+        details["type"] = "binary"
+        details["value_preview"] = f"<{len(value)} bytes>"
+        details["length"] = len(value)
+        return details["value_preview"], details
+
+    details["type"] = "text"
+    masked = _looks_like_sensitive_metadata_key(key)
+    rendered = value.replace("\r", "\\r").replace("\n", "\\n")
+    truncated = False
+    if len(rendered) > 80:
+        rendered = rendered[:77] + "..."
+        truncated = True
+    if masked:
+        rendered = "<masked>"
+        details["masked"] = True
+    if truncated:
+        details["truncated"] = True
+    details["value_preview"] = rendered
+    details["length"] = len(value)
+    return rendered, details
+
+
+def _build_headers_report(args: argparse.Namespace) -> dict[str, object]:
+    entries = list(getattr(args, "_custom_metadata", []) or [])
+    sources = dict(getattr(args, "_custom_metadata_sources", {}) or {})
+    removals = set(getattr(args, "_custom_metadata_remove", set()) or ())
+    removal_sources = dict(getattr(args, "_custom_metadata_remove_sources", {}) or {})
+    headers_disabled = bool(getattr(args, "_headers_disabled", False))
+
+    report: dict[str, object] = {
+        "headers_disabled": headers_disabled,
+        "headers_count": 0,
+        "headers": [],
+        "removed": [],
+    }
+
+    if headers_disabled:
+        report["removed_count"] = len(removals)
+        if removals:
+            removed_list: list[dict[str, object]] = []
+            for key in sorted(removals):
+                entry: dict[str, object] = {"key": key}
+                source = removal_sources.get(key)
+                if source:
+                    entry["source"] = source
+                removed_list.append(entry)
+            report["removed"] = removed_list
+        return report
+
+    summarized_headers: list[dict[str, object]] = []
+    for key, value in entries:
+        _, details = _sanitize_metadata_preview(key, value)
+        source = sources.get(key)
+        if source:
+            details["source"] = source
+        summarized_headers.append(details)
+
+    report["headers"] = summarized_headers
+    report["headers_count"] = len(summarized_headers)
+    if removals:
+        removed_list = []
+        for key in sorted(removals):
+            entry: dict[str, object] = {"key": key}
+            source = removal_sources.get(key)
+            if source:
+                entry["source"] = source
+            removed_list.append(entry)
+        report["removed"] = removed_list
+        report["removed_count"] = len(removals)
+    else:
+        report["removed_count"] = 0
+    return report
+
+
+def _print_headers_report(args: argparse.Namespace) -> None:
+    report = _build_headers_report(args)
+    print(json.dumps(report, ensure_ascii=False, indent=2))
 
 
 def _load_grpc_components():
@@ -855,6 +1324,18 @@ def _decision_log_metadata_grpc(
         "server_name": bool(args.server_name),
         "server_sha256": bool(args.server_sha256),
     }
+    custom_metadata = getattr(args, "_custom_metadata", None) or []
+    if custom_metadata:
+        custom_section: dict[str, Any] = {
+            "keys": [key for key, _ in custom_metadata],
+            "count": len(custom_metadata),
+        }
+        if any(_looks_like_sensitive_metadata_key(key) for key, _ in custom_metadata):
+            custom_section["contains_sensitive"] = True
+        sources_map = getattr(args, "_custom_metadata_sources", None)
+        if sources_map:
+            custom_section["sources"] = dict(sources_map)
+        metadata["custom_metadata"] = custom_section
     risk_profile = getattr(args, "_risk_profile_config", None)
     if risk_profile:
         metadata["risk_profile"] = dict(risk_profile)
@@ -905,7 +1386,7 @@ def _iter_stream(
     request,
     *,
     timeout: float | None,
-    metadata: list[tuple[str, str]] | None,
+    metadata: list[tuple[str, MetadataValue]] | None,
 ) -> Iterable:
     try:
         stream_kwargs = {"timeout": timeout}
@@ -987,18 +1468,35 @@ def _apply_environment_overrides(
 
     tls_env_present = False
 
-    def _override_simple(attr: str, suffix: str, flag: str) -> None:
+    def _override_simple(
+        attr: str,
+        suffix: str,
+        flag: str,
+        *,
+        allow_none: bool = False,
+        allow_default: bool = True,
+        strip_value: bool = False,
+    ) -> None:
         nonlocal tls_env_present
         if flag in provided_flags:
             return
         env_key = f"{_ENV_PREFIX}{suffix}"
         if env_key not in env:
             return
-        value = env[env_key]
+        raw_value = env[env_key]
+        stripped = raw_value.strip()
+        normalized = stripped.lower()
+        value: Any
+        if allow_none and normalized in {"", "none", "null"}:
+            value = None
+        elif allow_default and normalized == "default":
+            value = parser.get_default(attr)
+        else:
+            value = stripped if strip_value else raw_value
         setattr(args, attr, value)
-        if attr == "risk_profile":
+        if attr == "risk_profile" and value not in (None, ""):
             args._risk_profile_source = "env"
-        if attr == "server_sha256":
+        if attr == "server_sha256" and value not in (None, ""):
             args._server_sha256_source = "env"
         if attr in {
             "root_cert",
@@ -1007,7 +1505,7 @@ def _apply_environment_overrides(
             "server_name",
             "server_sha256",
         }:
-            tls_env_present = True
+            tls_env_present = bool(value)
 
     def _override_numeric(
         attr: str,
@@ -1023,11 +1521,16 @@ def _apply_environment_overrides(
         if env_key not in env:
             return
         raw_value = env[env_key]
-        if allow_none and raw_value.strip() == "":
+        stripped = raw_value.strip()
+        normalized = stripped.lower()
+        if allow_none and normalized in {"", "none", "null"}:
             setattr(args, attr, None)
             return
+        if normalized == "default":
+            setattr(args, attr, parser.get_default(attr))
+            return
         try:
-            setattr(args, attr, cast(raw_value))
+            setattr(args, attr, cast(stripped))
         except Exception:
             parser.error(
                 f"Nieprawidłowa wartość '{raw_value}' w zmiennej {env_key} dla parametru {attr}."
@@ -1040,24 +1543,112 @@ def _apply_environment_overrides(
         if env_key not in env:
             return
         raw_value = env[env_key]
+        stripped = raw_value.strip()
+        normalized = stripped.lower()
+        if normalized in {"", "none", "null"}:
+            setattr(args, attr, None)
+            return
+        if normalized == "default":
+            setattr(args, attr, parser.get_default(attr))
+            return
         values = [item.strip() for item in raw_value.split(",") if item.strip()]
         setattr(args, attr, values)
 
+    def _override_headers(attr: str, suffix: str, flag: str) -> None:
+        if flag in provided_flags:
+            return
+        env_key = f"{_ENV_PREFIX}{suffix}"
+        if env_key not in env:
+            return
+        raw_value = env[env_key]
+        stripped = raw_value.strip()
+        normalized = stripped.lower()
+        if normalized in {"", "none", "null"}:
+            setattr(args, attr, [])
+            return
+        if normalized == "default":
+            setattr(args, attr, parser.get_default(attr))
+            return
+        setattr(args, attr, _split_header_entries(raw_value))
+
+    def _override_header_files(attr: str, suffix: str, flag: str) -> None:
+        if flag in provided_flags:
+            return
+        env_key = f"{_ENV_PREFIX}{suffix}"
+        if env_key not in env:
+            return
+        raw_value = env[env_key]
+        stripped = raw_value.strip()
+        normalized = stripped.lower()
+        if normalized in {"", "none", "null"}:
+            setattr(args, attr, [])
+            return
+        if normalized == "default":
+            setattr(args, attr, parser.get_default(attr))
+            return
+        paths = _split_header_file_specs(raw_value)
+        if not paths:
+            parser.error(
+                f"Zmienna {env_key} nie zawiera żadnych ścieżek nagłówków gRPC"
+            )
+        setattr(args, attr, paths)
+
+    def _override_header_dirs(attr: str, suffix: str, flag: str) -> None:
+        if flag in provided_flags:
+            return
+        env_key = f"{_ENV_PREFIX}{suffix}"
+        if env_key not in env:
+            return
+        raw_value = env[env_key]
+        stripped = raw_value.strip()
+        normalized = stripped.lower()
+        if normalized in {"", "none", "null"}:
+            setattr(args, attr, [])
+            return
+        if normalized == "default":
+            setattr(args, attr, parser.get_default(attr))
+            return
+        directories = _split_header_directory_specs(raw_value)
+        if not directories:
+            parser.error(
+                f"Zmienna {env_key} nie zawiera żadnych katalogów nagłówków gRPC"
+            )
+        setattr(args, attr, directories)
+
     _override_simple("host", "HOST", "--host")
     _override_numeric("port", "PORT", "--port", int)
-    _override_numeric("timeout", "TIMEOUT", float, allow_none=True)
-    _override_numeric("limit", "LIMIT", int, allow_none=True)
-    _override_simple("event", "EVENT", "--event")
+    _override_numeric("timeout", "TIMEOUT", "--timeout", float, allow_none=True)
+    _override_numeric("limit", "LIMIT", "--limit", int, allow_none=True)
+    _override_simple("event", "EVENT", "--event", allow_none=True, strip_value=True)
     _override_list("severity", "SEVERITY", "--severity")
-    _override_simple("severity_min", "SEVERITY_MIN", "--severity-min")
-    _override_simple("risk_profile", "RISK_PROFILE", "--risk-profile")
-    _override_simple("risk_profiles_file", "RISK_PROFILES_FILE", "--risk-profiles-file")
-    _override_simple("core_config", "CORE_CONFIG", "--core-config")
+    _override_simple(
+        "severity_min",
+        "SEVERITY_MIN",
+        "--severity-min",
+        allow_none=True,
+        strip_value=True,
+    )
+    _override_simple(
+        "risk_profile",
+        "RISK_PROFILE",
+        "--risk-profile",
+        allow_none=True,
+        strip_value=True,
+    )
+    _override_simple(
+        "risk_profiles_file",
+        "RISK_PROFILES_FILE",
+        "--risk-profiles-file",
+        allow_none=True,
+    )
+    _override_simple("core_config", "CORE_CONFIG", "--core-config", allow_none=True)
     _override_numeric("screen_index", "SCREEN_INDEX", "--screen-index", int, allow_none=True)
-    _override_simple("screen_name", "SCREEN_NAME", "--screen-name")
-    _override_simple("since", "SINCE", "--since")
-    _override_simple("until", "UNTIL", "--until")
-    _override_simple("from_jsonl", "FROM_JSONL", "--from-jsonl")
+    _override_simple("screen_name", "SCREEN_NAME", "--screen-name", allow_none=True, strip_value=True)
+    _override_simple("since", "SINCE", "--since", allow_none=True, strip_value=True)
+    _override_simple("until", "UNTIL", "--until", allow_none=True, strip_value=True)
+    _override_simple("from_jsonl", "FROM_JSONL", "--from-jsonl", allow_none=True)
+    _override_header_files("headers_files", "HEADERS_FILE", "--headers-file")
+    _override_header_dirs("headers_dirs", "HEADERS_DIRS", "--headers-dir")
 
     if "--summary" not in provided_flags and not args.summary:
         env_key = f"{_ENV_PREFIX}SUMMARY"
@@ -1069,11 +1660,44 @@ def _apply_environment_overrides(
         if env_key in env:
             args.print_risk_profiles = _parse_env_bool(env[env_key], variable=env_key, parser=parser)
 
-    _override_simple("summary_output", "SUMMARY_OUTPUT", "--summary-output")
-    _override_simple("decision_log", "DECISION_LOG", "--decision-log")
-    _override_simple("decision_log_hmac_key", "DECISION_LOG_HMAC_KEY", "--decision-log-hmac-key")
-    _override_simple("decision_log_hmac_key_file", "DECISION_LOG_HMAC_KEY_FILE", "--decision-log-hmac-key-file")
-    _override_simple("decision_log_key_id", "DECISION_LOG_KEY_ID", "--decision-log-key-id")
+    if "--headers-report" not in provided_flags and not getattr(args, "headers_report", False):
+        env_key = f"{_ENV_PREFIX}HEADERS_REPORT"
+        if env_key in env:
+            args.headers_report = _parse_env_bool(env[env_key], variable=env_key, parser=parser)
+
+    if "--headers-report-only" not in provided_flags and not getattr(args, "headers_report_only", False):
+        env_key = f"{_ENV_PREFIX}HEADERS_REPORT_ONLY"
+        if env_key in env:
+            args.headers_report_only = _parse_env_bool(env[env_key], variable=env_key, parser=parser)
+
+    _override_simple(
+        "summary_output",
+        "SUMMARY_OUTPUT",
+        "--summary-output",
+        allow_none=True,
+    )
+    _override_simple("decision_log", "DECISION_LOG", "--decision-log", allow_none=True)
+    _override_simple(
+        "decision_log_hmac_key",
+        "DECISION_LOG_HMAC_KEY",
+        "--decision-log-hmac-key",
+        allow_none=True,
+        strip_value=True,
+    )
+    _override_simple(
+        "decision_log_hmac_key_file",
+        "DECISION_LOG_HMAC_KEY_FILE",
+        "--decision-log-hmac-key-file",
+        allow_none=True,
+    )
+    _override_simple(
+        "decision_log_key_id",
+        "DECISION_LOG_KEY_ID",
+        "--decision-log-key-id",
+        allow_none=True,
+        strip_value=True,
+    )
+    _override_headers("headers", "HEADERS", "--header")
 
     if "--format" not in provided_flags:
         env_key = f"{_ENV_PREFIX}FORMAT"
@@ -1085,11 +1709,17 @@ def _apply_environment_overrides(
                 )
             args.format = candidate
 
-    _override_simple("root_cert", "ROOT_CERT", "--root-cert")
-    _override_simple("client_cert", "CLIENT_CERT", "--client-cert")
-    _override_simple("client_key", "CLIENT_KEY", "--client-key")
-    _override_simple("server_name", "SERVER_NAME", "--server-name")
-    _override_simple("server_sha256", "SERVER_SHA256", "--server-sha256")
+    _override_simple("root_cert", "ROOT_CERT", "--root-cert", allow_none=True, strip_value=True)
+    _override_simple("client_cert", "CLIENT_CERT", "--client-cert", allow_none=True, strip_value=True)
+    _override_simple("client_key", "CLIENT_KEY", "--client-key", allow_none=True, strip_value=True)
+    _override_simple("server_name", "SERVER_NAME", "--server-name", allow_none=True, strip_value=True)
+    _override_simple(
+        "server_sha256",
+        "SERVER_SHA256",
+        "--server-sha256",
+        allow_none=True,
+        strip_value=True,
+    )
 
     if "--auth-token" not in provided_flags and args.auth_token is None:
         env_key = f"{_ENV_PREFIX}AUTH_TOKEN"
@@ -1169,6 +1799,174 @@ def _apply_core_config_defaults(
 
     if getattr(metrics_config, "auth_token", None):
         metrics_meta["auth_token_configured"] = True
+
+    existing_custom_entries = list(getattr(args, "_custom_metadata", []) or [])
+    existing_custom_sources = dict(getattr(args, "_custom_metadata_sources", {}) or {})
+    existing_removal_keys = set(getattr(args, "_custom_metadata_remove", set()) or ())
+    existing_removal_sources = dict(getattr(args, "_custom_metadata_remove_sources", {}) or {})
+
+    config_metadata_entries = tuple(getattr(metrics_config, "grpc_metadata", ()) or ())
+    metadata_sources = dict(getattr(metrics_config, "grpc_metadata_sources", {}) or {})
+    config_metadata_files = tuple(getattr(metrics_config, "grpc_metadata_files", ()) or ())
+    config_metadata_directories = (
+        tuple(getattr(metrics_config, "grpc_metadata_directories", ()) or ())
+        if hasattr(metrics_config, "grpc_metadata_directories")
+        else ()
+    )
+    if config_metadata_files:
+        metrics_meta["grpc_metadata_files"] = list(config_metadata_files)
+        metrics_meta["grpc_metadata_files_count"] = len(config_metadata_files)
+    if config_metadata_directories:
+        metrics_meta["grpc_metadata_directories"] = list(config_metadata_directories)
+        metrics_meta["grpc_metadata_directories_count"] = len(config_metadata_directories)
+
+    headers_disabled = getattr(args, "_headers_disabled", False)
+
+    file_metadata_entries: list[tuple[str, MetadataValue]] = []
+    file_metadata_sources: dict[str, str] = {}
+    file_removal_keys: set[str] = set()
+    file_removal_sources: dict[str, str] = {}
+    directory_metadata_entries: list[tuple[str, MetadataValue]] = []
+    directory_metadata_sources: dict[str, str] = {}
+    directory_removal_keys: set[str] = set()
+    directory_removal_sources: dict[str, str] = {}
+    directory_files_map: dict[str, list[str]] = {}
+
+    if config_metadata_directories and not headers_disabled:
+        for dir_path in config_metadata_directories:
+            trimmed_dir = str(dir_path).strip()
+            if not trimmed_dir:
+                continue
+            files, resolved_dir = _resolve_headers_directory(trimmed_dir, parser=parser)
+            directory_files_map.setdefault(resolved_dir, [])
+            if files:
+                directory_files_map[resolved_dir].extend(files)
+            else:
+                continue
+            for file_path in files:
+                entries, resolved_path = _load_headers_file_entries(file_path, parser=parser)
+                if not entries:
+                    continue
+                (
+                    parsed_entries,
+                    removal_keys,
+                    parsed_sources,
+                    parsed_removal_sources,
+                ) = _parse_metadata_entries(
+                    entries,
+                    parser=parser,
+                    env=os.environ,
+                    base_source=f"config-dir:{resolved_path}",
+                )
+                if parsed_entries:
+                    directory_metadata_entries.extend(parsed_entries)
+                    if parsed_sources:
+                        directory_metadata_sources.update(parsed_sources)
+                if removal_keys:
+                    directory_removal_keys.update(removal_keys)
+                    if parsed_removal_sources:
+                        directory_removal_sources.update(parsed_removal_sources)
+                    else:
+                        for key in removal_keys:
+                            directory_removal_sources.setdefault(
+                                key, f"config-dir:{resolved_path}"
+                            )
+
+    if config_metadata_files and not headers_disabled:
+        for file_path in config_metadata_files:
+            trimmed_path = str(file_path).strip()
+            if not trimmed_path:
+                continue
+            entries, resolved_path = _load_headers_file_entries(trimmed_path, parser=parser)
+            if not entries:
+                continue
+            (
+                parsed_entries,
+                removal_keys,
+                parsed_sources,
+                parsed_removal_sources,
+            ) = _parse_metadata_entries(
+                entries,
+                parser=parser,
+                env=os.environ,
+                base_source=f"config-file:{resolved_path}",
+            )
+            if parsed_entries:
+                file_metadata_entries.extend(parsed_entries)
+                if parsed_sources:
+                    file_metadata_sources.update(parsed_sources)
+            if removal_keys:
+                file_removal_keys.update(removal_keys)
+                if parsed_removal_sources:
+                    file_removal_sources.update(parsed_removal_sources)
+                else:
+                    for key in removal_keys:
+                        file_removal_sources.setdefault(key, f"config-file:{resolved_path}")
+
+    config_prepend: list[tuple[str, MetadataValue]] = []
+    if not headers_disabled:
+        if directory_metadata_entries:
+            config_prepend.extend(directory_metadata_entries)
+        if file_metadata_entries:
+            config_prepend.extend(file_metadata_entries)
+        if config_metadata_entries:
+            config_prepend.extend(config_metadata_entries)
+
+    if config_prepend:
+        metrics_meta["grpc_metadata_keys"] = [key for key, _ in config_prepend]
+        metrics_meta["grpc_metadata_count"] = len(config_prepend)
+        metrics_meta["grpc_metadata_enabled"] = True
+        combined_entries = config_prepend + existing_custom_entries
+    else:
+        combined_entries = existing_custom_entries
+        if config_metadata_entries or config_metadata_files:
+            metrics_meta["grpc_metadata_enabled"] = False
+
+    combined_sources: dict[str, str] = {}
+    if directory_metadata_sources:
+        combined_sources.update(directory_metadata_sources)
+    if file_metadata_sources:
+        combined_sources.update(file_metadata_sources)
+    if metadata_sources:
+        combined_sources.update(metadata_sources)
+    if existing_custom_sources:
+        combined_sources.update(existing_custom_sources)
+
+    combined_removal_keys = set(existing_removal_keys)
+    combined_removal_sources = dict(existing_removal_sources)
+    if directory_removal_keys and not headers_disabled:
+        combined_removal_keys.update(directory_removal_keys)
+        for key in directory_removal_keys:
+            source = directory_removal_sources.get(key)
+            if source:
+                combined_removal_sources[key] = source
+            else:
+                combined_removal_sources.setdefault(key, "config-dir")
+    if file_removal_keys and not headers_disabled:
+        combined_removal_keys.update(file_removal_keys)
+        for key in file_removal_keys:
+            source = file_removal_sources.get(key)
+            if source:
+                combined_removal_sources[key] = source
+            else:
+                combined_removal_sources.setdefault(key, "config-file")
+
+    args._custom_metadata = combined_entries
+    args._custom_metadata_sources = combined_sources or None
+    args._custom_metadata_remove = combined_removal_keys
+    args._custom_metadata_remove_sources = combined_removal_sources or None
+
+    metadata_applied = bool(config_prepend)
+    if combined_sources and (metadata_applied or existing_custom_sources):
+        metrics_meta["grpc_metadata_sources"] = dict(combined_sources)
+    if directory_files_map:
+        metrics_meta["grpc_metadata_directory_files"] = {
+            directory: list(files)
+            for directory, files in directory_files_map.items()
+        }
+        metrics_meta["grpc_metadata_directory_files_total"] = sum(
+            len(files) for files in directory_files_map.values()
+        )
 
     default_host = parser.get_default("host")
     if (
@@ -1695,6 +2493,57 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "(ułatwia rotację kluczy)."
         ),
     )
+    parser.add_argument(
+        "--header",
+        dest="headers",
+        action="append",
+        default=None,
+        help=(
+            "Dodatkowe nagłówki gRPC w formacie klucz=wartość lub klucz:wartość. "
+            "Można podać wielokrotnie, np. --header x-trace=abc123. Wartości mogą "
+            "odwoływać się do @env:NAZWA, @file:ścieżka, @env64:NAZWA, @file64:ścieżka "
+            "lub @@prefix (dosłowny '@')."
+        ),
+    )
+    parser.add_argument(
+        "--headers-file",
+        dest="headers_files",
+        action="append",
+        default=None,
+        help=(
+            "Ścieżka do pliku z dodatkowymi nagłówkami gRPC. Każda linia powinna zawierać "
+            "wpis klucz=wartość (puste linie i komentarze z # są pomijane). "
+            "Można podać wiele plików; wpisy z późniejszych źródeł nadpisują wcześniejsze. "
+            "Wariant środowiskowy: zmienna BOT_CORE_WATCH_METRICS_HEADERS_FILE (lista ścieżek)."
+        ),
+    )
+    parser.add_argument(
+        "--headers-report",
+        action="store_true",
+        help=(
+            "Wypisz do stdout zagregowane nagłówki gRPC (klucz, typ, źródło) po sca-"
+            "leniu konfiguracji core.yaml, zmiennych środowiskowych i parametrów CLI."
+        ),
+    )
+    parser.add_argument(
+        "--headers-report-only",
+        action="store_true",
+        help=(
+            "Jak --headers-report, ale zakończ działanie po wypisaniu raportu bez "
+            "łączenia z serwerem ani odczytu artefaktów JSONL."
+        ),
+    )
+    parser.add_argument(
+        "--headers-dir",
+        dest="headers_dirs",
+        action="append",
+        default=None,
+        help=(
+            "Katalog zawierający pliki z nagłówkami gRPC (format jak w --headers-file). "
+            "Pliki są sortowane alfabetycznie i scalane z innymi źródłami. "
+            "Wariant środowiskowy: BOT_CORE_WATCH_METRICS_HEADERS_DIRS (lista katalogów)."
+        ),
+    )
     return parser
 
 
@@ -1717,7 +2566,119 @@ def main(argv: list[str] | None = None) -> int:
         parser=parser,
         provided_flags=provided_flags,
     )
+    if getattr(args, "headers_report_only", False):
+        args.headers_report = True
+    custom_metadata_entries: list[tuple[str, MetadataValue]] = []
+    custom_metadata_sources: dict[str, str] = {}
+    removal_sources: dict[str, str] = {}
+    removal_keys_total: set[str] = set()
+
+    env_headers_obj = getattr(args, "headers", None)
+    env_header_files_obj = getattr(args, "headers_files", None)
+    env_header_dirs_obj = getattr(args, "headers_dirs", None)
+    env_headers_list = env_headers_obj if isinstance(env_headers_obj, list) else None
+    env_header_files_list = (
+        env_header_files_obj if isinstance(env_header_files_obj, list) else None
+    )
+    env_header_dirs_list = (
+        env_header_dirs_obj if isinstance(env_header_dirs_obj, list) else None
+    )
+
+    env_lists = [
+        candidate
+        for candidate in (env_headers_list, env_header_files_list, env_header_dirs_list)
+        if candidate is not None
+    ]
+    env_requested_disable = bool(env_lists) and all(not candidate for candidate in env_lists)
+
+    headers_disabled = (
+        env_requested_disable
+        and "--header" not in provided_flags
+        and "--headers-file" not in provided_flags
+        and "--headers-dir" not in provided_flags
+    )
+
+    raw_headers = None if headers_disabled else env_headers_obj
+    header_files_args = None if headers_disabled else env_header_files_obj
+    header_dirs_args = None if headers_disabled else env_header_dirs_obj
+
+    def _collect_metadata(entries: Sequence[str], base_source: str) -> None:
+        if not entries:
+            return
+        (
+            parsed,
+            removal_keys,
+            metadata_sources,
+            removal_source_map,
+        ) = _parse_metadata_entries(
+            entries,
+            parser=parser,
+            env=os.environ,
+            base_source=base_source,
+        )
+        if parsed:
+            custom_metadata_entries.extend(parsed)
+        if metadata_sources:
+            custom_metadata_sources.update(metadata_sources)
+        if removal_keys:
+            removal_keys_total.update(removal_keys)
+            if removal_source_map:
+                removal_sources.update(removal_source_map)
+            else:
+                for key in removal_keys:
+                    removal_sources.setdefault(key, base_source)
+
+    if raw_headers and "--header" not in provided_flags:
+        _collect_metadata(raw_headers, _ENV_HEADER_SOURCE)
+
+    if header_dirs_args:
+        dir_source_prefix = (
+            _CLI_HEADER_DIR_SOURCE
+            if "--headers-dir" in provided_flags
+            else _ENV_HEADER_DIR_SOURCE
+        )
+        for directory_path in header_dirs_args:
+            trimmed_dir = directory_path.strip()
+            if not trimmed_dir:
+                parser.error("Podano pustą ścieżkę w --headers-dir")
+            files, resolved_dir = _resolve_headers_directory(trimmed_dir, parser=parser)
+            if not files:
+                LOGGER.warning(
+                    "Katalog nagłówków gRPC %s nie zawiera żadnych plików", resolved_dir
+                )
+                continue
+            for file_path in files:
+                entries, resolved_path = _load_headers_file_entries(file_path, parser=parser)
+                if entries:
+                    _collect_metadata(entries, f"{dir_source_prefix}:{resolved_path}")
+
+    if header_files_args:
+        for file_path in header_files_args:
+            trimmed_path = file_path.strip()
+            if not trimmed_path:
+                parser.error("Podano pustą ścieżkę w --headers-file")
+            entries, resolved_path = _load_headers_file_entries(trimmed_path, parser=parser)
+            if entries:
+                _collect_metadata(entries, f"file:{resolved_path}")
+
+    if raw_headers and "--header" in provided_flags:
+        _collect_metadata(raw_headers, _CLI_HEADER_SOURCE)
+
+    args._custom_metadata = custom_metadata_entries
+    args._custom_metadata_sources = custom_metadata_sources or None
+    args._custom_metadata_remove = removal_keys_total
+    args._custom_metadata_remove_sources = removal_sources or None
+    args._headers_disabled = headers_disabled
+    if headers_disabled:
+        args.headers = None
+        args.headers_files = None
+        args.headers_dirs = None
     _apply_core_config_defaults(args, parser=parser, provided_flags=provided_flags)
+    _finalize_custom_metadata(args)
+    if getattr(args, "headers_report", False):
+        _print_headers_report(args)
+        if getattr(args, "headers_report_only", False):
+            return 0
     _load_custom_risk_profiles(args, parser)
     if (
         tls_env_present
@@ -1960,9 +2921,13 @@ def main(argv: list[str] | None = None) -> int:
         request.include_ui_metrics = True
 
         count = 0
-        metadata: list[tuple[str, str]] | None = None
+        metadata: list[tuple[str, MetadataValue]] = []
         if auth_token:
-            metadata = [("authorization", f"Bearer {auth_token}")]
+            metadata.append(("authorization", f"Bearer {auth_token}"))
+        custom_metadata_entries = getattr(args, "_custom_metadata", None)
+        if custom_metadata_entries:
+            metadata.extend(custom_metadata_entries)
+        metadata_to_send = metadata or None
 
         if decision_logger:
             decision_logger.write_metadata(
@@ -1980,7 +2945,9 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
 
-        for snapshot in _iter_stream(stub, request, timeout=args.timeout, metadata=metadata):
+        for snapshot in _iter_stream(
+            stub, request, timeout=args.timeout, metadata=metadata_to_send
+        ):
             if not _matches_time_filters(snapshot, since=since_dt, until=until_dt):
                 continue
             notes_payload = _parse_notes(snapshot.notes)

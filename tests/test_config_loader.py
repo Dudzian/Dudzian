@@ -20,6 +20,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, Iterable, Mapping, Optional, Tuple
 
+import base64
+import textwrap
+
 import yaml
 
 
@@ -195,6 +198,7 @@ class MetricsServiceConfig:
     ui_alerts_risk_profile: Optional[str] = None
     ui_alerts_risk_profiles_file: Optional[str] = None
     rbac_tokens: Tuple[ServiceTokenConfig, ...] = field(default_factory=tuple)
+    grpc_metadata: Tuple[Tuple[str, object], ...] = field(default_factory=tuple)
 
     # UI: reduce motion
     reduce_motion_alerts: Optional[bool] = None
@@ -818,6 +822,9 @@ def test_load_core_config_reads_metrics_service(tmp_path: Path) -> None:
               - token_id: reader
                 token_value: reader-secret
                 scopes: [metrics.read]
+            grpc_metadata:
+              x-trace: audit-stage
+              x-role: ops
         """,
         encoding="utf-8",
     )
@@ -856,11 +863,44 @@ def test_load_core_config_reads_metrics_service(tmp_path: Path) -> None:
     assert metrics.jank_alert_critical_over_ms == pytest.approx(7.5)
     assert metrics.rbac_tokens and metrics.rbac_tokens[0].token_id == "reader"
     assert metrics.rbac_tokens[0].scopes == ("metrics.read",)
+    assert metrics.grpc_metadata == (("x-trace", "audit-stage"), ("x-role", "ops"))
+    assert dict(metrics.grpc_metadata_sources) == {
+        "x-trace": "inline",
+        "x-role": "inline",
+    }
 
     # Metadane ścieżek źródłowych configu (ustawiane przez loader)
     assert Path(config.source_path or "").is_absolute()
     expected_dir = config_path.resolve(strict=False).parent
     assert config.source_directory == str(expected_dir)
+
+
+def test_load_core_config_resource_limits(tmp_path: Path) -> None:
+    config_path = tmp_path / "core.yaml"
+    config_path.write_text(
+        """
+        risk_profiles: {}
+        environments: {}
+        runtime:
+          resource_limits:
+            cpu_percent: 70
+            memory_mb: 3072
+            io_read_mb_s: 150
+            io_write_mb_s: 90
+            headroom_warning_threshold: 0.75
+        """,
+        encoding="utf-8",
+    )
+
+    config = load_core_config(config_path)
+
+    assert config.runtime_resource_limits is not None
+    limits = config.runtime_resource_limits
+    assert limits.cpu_percent == 70
+    assert limits.memory_mb == 3072
+    assert limits.io_read_mb_s == 150
+    assert limits.io_write_mb_s == 90
+    assert limits.headroom_warning_threshold == pytest.approx(0.75)
 
 
 def test_load_core_config_normalizes_ui_alert_modes(tmp_path: Path) -> None:
@@ -886,6 +926,246 @@ def test_load_core_config_normalizes_ui_alert_modes(tmp_path: Path) -> None:
     assert metrics.reduce_motion_mode == "enable"
     assert metrics.overlay_alert_mode == "jsonl"
     assert metrics.jank_alert_mode == "disable"
+
+
+def test_load_core_config_metrics_grpc_metadata_list(tmp_path: Path) -> None:
+    config_path = tmp_path / "core.yaml"
+    config_path.write_text(
+        """
+        risk_profiles: {}
+        environments: {}
+        runtime:
+          metrics_service:
+            host: 127.0.0.1
+            port: 55060
+            grpc_metadata:
+              - key: x-trace
+                value: config
+              - x-role=config
+        """,
+        encoding="utf-8",
+    )
+
+    config = load_core_config(config_path)
+
+    assert config.metrics_service is not None
+    assert config.metrics_service.grpc_metadata == (("x-trace", "config"), ("x-role", "config"))
+    assert dict(config.metrics_service.grpc_metadata_sources) == {
+        "x-trace": "inline",
+        "x-role": "inline",
+    }
+
+
+def test_load_core_config_metrics_grpc_metadata_env(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("BOT_CORE_TRACE_TOKEN", "env-secret")
+    config_path = tmp_path / "core.yaml"
+    config_path.write_text(
+        """
+        risk_profiles: {}
+        environments: {}
+        runtime:
+          metrics_service:
+            grpc_metadata:
+              - key: authorization
+                value_env: BOT_CORE_TRACE_TOKEN
+        """,
+        encoding="utf-8",
+    )
+
+    config = load_core_config(config_path)
+
+    assert config.metrics_service is not None
+    assert config.metrics_service.grpc_metadata == (("authorization", "env-secret"),)
+    assert dict(config.metrics_service.grpc_metadata_sources) == {
+        "authorization": "env:BOT_CORE_TRACE_TOKEN",
+    }
+
+
+def test_load_core_config_metrics_grpc_metadata_file(tmp_path: Path) -> None:
+    secrets_dir = tmp_path / "secrets"
+    secrets_dir.mkdir()
+    token_path = secrets_dir / "token.txt"
+    token_path.write_text("file-secret\n", encoding="utf-8")
+    config_path = tmp_path / "core.yaml"
+    config_path.write_text(
+        f"""
+        risk_profiles: {{}}
+        environments: {{}}
+        runtime:
+          metrics_service:
+            grpc_metadata:
+              - key: authorization
+                value_file: secrets/token.txt
+        """,
+        encoding="utf-8",
+    )
+
+    config = load_core_config(config_path)
+
+    assert config.metrics_service is not None
+    assert config.metrics_service.grpc_metadata == (("authorization", "file-secret"),)
+    expected_path = token_path.resolve(strict=False)
+    assert dict(config.metrics_service.grpc_metadata_sources) == {
+        "authorization": f"file:{expected_path}",
+    }
+
+
+def test_load_core_config_metrics_grpc_metadata_files(tmp_path: Path) -> None:
+    headers_dir = tmp_path / "headers"
+    headers_dir.mkdir()
+    file_primary = headers_dir / "primary.env"
+    file_primary.write_text("authorization=Bearer cfg\n", encoding="utf-8")
+    file_secondary = headers_dir / "secondary.env"
+    file_secondary.write_text("x-trace=from-second\n", encoding="utf-8")
+
+    config_path = tmp_path / "core.yaml"
+    config_path.write_text(
+        textwrap.dedent(
+            """
+            risk_profiles: {}
+            environments: {}
+            runtime:
+              metrics_service:
+                grpc_metadata_files:
+                  - headers/primary.env
+                  - headers/secondary.env
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_core_config(config_path)
+
+    assert config.metrics_service is not None
+    expected_primary = str(file_primary.resolve(strict=False))
+    expected_secondary = str(file_secondary.resolve(strict=False))
+    assert config.metrics_service.grpc_metadata_files == (
+        expected_primary,
+        expected_secondary,
+    )
+
+
+def test_load_core_config_metrics_grpc_metadata_directories(tmp_path: Path) -> None:
+    headers_dir = tmp_path / "headers"
+    headers_dir.mkdir()
+    nested_dir = tmp_path / "nested" / "headers"
+    nested_dir.mkdir(parents=True)
+
+    config_path = tmp_path / "core.yaml"
+    config_path.write_text(
+        textwrap.dedent(
+            """
+            risk_profiles: {}
+            environments: {}
+            runtime:
+              metrics_service:
+                grpc_metadata_directories:
+                  - headers
+                  - nested/headers
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_core_config(config_path)
+
+    assert config.metrics_service is not None
+    expected_primary = str(headers_dir.resolve(strict=False))
+    expected_secondary = str(nested_dir.resolve(strict=False))
+    assert config.metrics_service.grpc_metadata_directories == (
+        expected_primary,
+        expected_secondary,
+    )
+
+
+def test_load_core_config_metrics_grpc_metadata_base64_variants(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    inline_payload = base64.b64encode(b"Bearer inline").decode()
+    env_payload = base64.b64encode(b"env-bytes\x00\x01").decode()
+    file_payload = base64.b64encode(b"file-bytes\xff").decode()
+    monkeypatch.setenv("BOT_CORE_TRACE64", env_payload)
+
+    secrets_dir = tmp_path / "secrets"
+    secrets_dir.mkdir()
+    token_path = secrets_dir / "binary-token.txt"
+    token_path.write_text(file_payload, encoding="utf-8")
+
+    config_path = tmp_path / "core.yaml"
+    config_path.write_text(
+        textwrap.dedent(
+            f"""
+            runtime:
+              metrics_service:
+                grpc_metadata:
+                  authorization:
+                    value_base64: "{inline_payload}"
+                  trace-bin:
+                    value_env_base64: BOT_CORE_TRACE64
+                  signature-bin:
+                    value_file_base64: {token_path}
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_core_config(config_path)
+
+    assert config.metrics_service is not None
+    assert config.metrics_service.grpc_metadata == (
+        ("authorization", "Bearer inline"),
+        ("trace-bin", b"env-bytes\x00\x01"),
+        ("signature-bin", b"file-bytes\xff"),
+    )
+    assert dict(config.metrics_service.grpc_metadata_sources) == {
+        "authorization": "inline",
+        "trace-bin": "env:BOT_CORE_TRACE64",
+        "signature-bin": f"file:{token_path}",
+    }
+
+
+def test_load_core_config_metrics_grpc_metadata_mapping_styles(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("BOT_CORE_TRACE_TOKEN", "env-secret")
+    secrets_dir = tmp_path / "secrets"
+    secrets_dir.mkdir()
+    token_path = secrets_dir / "token.txt"
+    token_path.write_text("file-secret\n", encoding="utf-8")
+
+    config_path = tmp_path / "core.yaml"
+    config_path.write_text(
+        """
+        risk_profiles: {}
+        environments: {}
+        runtime:
+          metrics_service:
+            grpc_metadata:
+              authorization:
+                value_env: BOT_CORE_TRACE_TOKEN
+              x-trace:
+                value: inline
+              x-role: ops
+              x-file:
+                value_file: secrets/token.txt
+        """,
+        encoding="utf-8",
+    )
+
+    config = load_core_config(config_path)
+
+    assert config.metrics_service is not None
+    assert config.metrics_service.grpc_metadata == (
+        ("authorization", "env-secret"),
+        ("x-trace", "inline"),
+        ("x-role", "ops"),
+        ("x-file", "file-secret"),
+    )
+    expected_path = token_path.resolve(strict=False)
+    assert dict(config.metrics_service.grpc_metadata_sources) == {
+        "authorization": "env:BOT_CORE_TRACE_TOKEN",
+        "x-trace": "inline",
+        "x-role": "inline",
+        "x-file": f"file:{expected_path}",
+    }
 
 
 def test_load_core_config_rejects_unknown_ui_alert_mode(tmp_path: Path) -> None:

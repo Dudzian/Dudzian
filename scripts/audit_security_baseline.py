@@ -96,6 +96,16 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="Wymagany scope tokenu RBAC dla RiskService (można podać wielokrotnie)",
     )
     parser.add_argument(
+        "--scheduler-required-scope",
+        dest="scheduler_scopes",
+        action="append",
+        default=[],
+        help=(
+            "Wymagany scope tokenu RBAC dla scheduler-a (można wskazać wartość globalną"
+            " lub pary <scheduler>:<scope>)"
+        ),
+    )
+    parser.add_argument(
         "--print",
         dest="print_stdout",
         action="store_true",
@@ -178,6 +188,46 @@ def _resolve_metrics_scopes(args: argparse.Namespace) -> tuple[str, ...]:
 def _resolve_risk_scopes(args: argparse.Namespace) -> tuple[str, ...]:
     env_scopes = _env_list("RISK_SCOPES")
     return _normalize_scopes([*args.risk_scopes, *env_scopes], default=("risk.read",))
+
+
+def _normalize_scheduler_scope_entries(
+    entries: Iterable[str],
+) -> tuple[tuple[str, ...], dict[str, tuple[str, ...]]]:
+    default_entries: list[str] = []
+    overrides: dict[str, list[str]] = {}
+    for raw_entry in entries:
+        if raw_entry is None:
+            continue
+        text = str(raw_entry).strip()
+        if not text:
+            continue
+        if ":" in text:
+            scheduler_name, scope_part = text.split(":", 1)
+            scheduler_key = scheduler_name.strip()
+            scope_value = scope_part.strip()
+            if not scheduler_key:
+                default_entries.append(scope_value)
+                continue
+            overrides.setdefault(scheduler_key, []).append(scope_value)
+        else:
+            default_entries.append(text)
+
+    default_scopes = _normalize_scopes(
+        default_entries,
+        default=("runtime.schedule.read", "runtime.schedule.write"),
+    )
+    normalized_overrides = {
+        name: _normalize_scopes(values, default=default_scopes)
+        for name, values in overrides.items()
+    }
+    return default_scopes, normalized_overrides
+
+
+def _resolve_scheduler_scopes(
+    args: argparse.Namespace,
+) -> tuple[tuple[str, ...], dict[str, tuple[str, ...]]]:
+    env_entries = _env_list("SCHEDULER_SCOPES")
+    return _normalize_scheduler_scope_entries([*args.scheduler_scopes, *env_entries])
 
 
 def _should_print(args: argparse.Namespace) -> bool:
@@ -308,6 +358,7 @@ def main(argv: list[str] | None = None) -> int:
     fail_on_error = _should_fail_on_error(args)
     metrics_scopes = _resolve_metrics_scopes(args)
     risk_scopes = _resolve_risk_scopes(args)
+    scheduler_default_scopes, scheduler_overrides = _resolve_scheduler_scopes(args)
     signing_key, signing_key_id = _load_summary_signing_key(args)
 
     if load_core_config is None:
@@ -319,12 +370,15 @@ def main(argv: list[str] | None = None) -> int:
         raise FileNotFoundError(f"Plik konfiguracji '{config_path}' nie istnieje")
 
     core_config = load_core_config(str(config_path))
+    scheduler_scope_payload: dict[str, tuple[str, ...]] = {"*": scheduler_default_scopes}
+    scheduler_scope_payload.update(scheduler_overrides)
     report = generate_security_baseline_report(
         core_config,
         env=os.environ,
         warn_expiring_within_days=warn_days,
         metrics_required_scopes=metrics_scopes,
         risk_required_scopes=risk_scopes,
+        scheduler_required_scopes=scheduler_scope_payload,
     )
 
     payload = dict(report.as_dict())
