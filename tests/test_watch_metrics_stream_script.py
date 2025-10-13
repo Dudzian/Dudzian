@@ -1556,6 +1556,50 @@ def test_core_config_grpc_metadata_cli_override(monkeypatch, tmp_path):
     assert metadata == [("x-role", "config"), ("x-trace", "cli")]
 
 
+def test_core_config_grpc_metadata_sources_cli_override_logged(monkeypatch, tmp_path):
+    stub = _StubCollector()
+    stub.response = []
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
+    config_path = _write_core_config(
+        tmp_path,
+        profiles_path=profiles_path,
+        metrics_grpc_metadata={"x-trace": "config", "x-role": "config"},
+    )
+    decision_log = tmp_path / "logs" / "metrics.jsonl"
+
+    exit_code = watch_metrics_main(
+        [
+            "--core-config",
+            str(config_path),
+            "--header",
+            "x-trace=cli",
+            "--decision-log",
+            str(decision_log),
+        ]
+    )
+
+    assert exit_code == 0
+    entries = [ln for ln in decision_log.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    assert len(entries) == 1
+    metadata_entry = json.loads(entries[0])
+    assert metadata_entry["kind"] == "metadata"
+    custom_meta = metadata_entry["metadata"].get("custom_metadata")
+    assert custom_meta is not None
+    assert custom_meta["sources"] == {
+        "x-role": "inline",
+        "x-trace": "cli:--header",
+    }
+    core_config_meta = metadata_entry["metadata"].get("core_config")
+    assert core_config_meta is not None
+    metrics_meta = core_config_meta["metrics_service"]
+    assert metrics_meta["grpc_metadata_sources"] == {
+        "x-role": "inline",
+        "x-trace": "cli:--header",
+    }
+
+
 def test_watch_metrics_stream_header_invalid_format(monkeypatch):
     stub = _StubCollector()
     _install_dummy_loader(monkeypatch, stub)

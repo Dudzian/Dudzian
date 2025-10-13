@@ -116,6 +116,8 @@ except Exception as exc:  # pragma: no cover
 LOGGER = logging.getLogger("bot_core.scripts.watch_metrics_stream")
 
 _ENV_PREFIX = "BOT_CORE_WATCH_METRICS_"
+_CLI_HEADER_SOURCE = "cli:--header"
+_ENV_HEADER_SOURCE = f"env:{_ENV_PREFIX}HEADERS"
 _HEX_DIGITS = set("0123456789abcdef")
 _REQUIRED_METRICS_SCOPE = "metrics.read"
 _REQUIRED_RISK_SCOPE = "risk.read"
@@ -218,6 +220,41 @@ def _merge_metadata_entries(
             del deduplicated[key]
         deduplicated[key] = value
     return list(deduplicated.items())
+
+
+def _finalize_custom_metadata(args: argparse.Namespace) -> None:
+    entries = getattr(args, "_custom_metadata", None)
+    if not entries:
+        args._custom_metadata = None
+        args._custom_metadata_sources = None
+        core_meta = getattr(args, "_core_config_metadata", None)
+        if isinstance(core_meta, dict):
+            metrics_meta = core_meta.get("metrics_service")
+            if isinstance(metrics_meta, dict):
+                metrics_meta.pop("grpc_metadata_sources", None)
+        return
+
+    merged = _merge_metadata_entries(entries)
+    args._custom_metadata = merged
+
+    sources_map = dict(getattr(args, "_custom_metadata_sources", {}) or {})
+    merged_sources: dict[str, str] = {}
+    if sources_map:
+        for key, _ in merged:
+            source = sources_map.get(key)
+            if source:
+                merged_sources[key] = source
+
+    args._custom_metadata_sources = merged_sources or None
+
+    core_meta = getattr(args, "_core_config_metadata", None)
+    if isinstance(core_meta, dict):
+        metrics_meta = core_meta.get("metrics_service")
+        if isinstance(metrics_meta, dict):
+            if merged_sources:
+                metrics_meta["grpc_metadata_sources"] = dict(merged_sources)
+            else:
+                metrics_meta.pop("grpc_metadata_sources", None)
 
 
 def _load_grpc_components():
@@ -923,6 +960,9 @@ def _decision_log_metadata_grpc(
         }
         if any(_looks_like_sensitive_metadata_key(key) for key, _ in custom_metadata):
             custom_section["contains_sensitive"] = True
+        sources_map = getattr(args, "_custom_metadata_sources", None)
+        if sources_map:
+            custom_section["sources"] = dict(sources_map)
         metadata["custom_metadata"] = custom_section
     risk_profile = getattr(args, "_risk_profile_config", None)
     if risk_profile:
@@ -1335,6 +1375,10 @@ def _apply_core_config_defaults(
 
     config_metadata_entries = tuple(getattr(metrics_config, "grpc_metadata", ()) or ())
     metadata_sources = dict(getattr(metrics_config, "grpc_metadata_sources", {}) or {})
+    existing_custom_sources = dict(getattr(args, "_custom_metadata_sources", {}) or {})
+    combined_sources = dict(metadata_sources)
+    if existing_custom_sources:
+        combined_sources.update(existing_custom_sources)
     if config_metadata_entries:
         metrics_meta["grpc_metadata_keys"] = [key for key, _ in config_metadata_entries]
         metrics_meta["grpc_metadata_count"] = len(config_metadata_entries)
@@ -1344,8 +1388,12 @@ def _apply_core_config_defaults(
             metrics_meta["grpc_metadata_enabled"] = True
             existing_custom = list(getattr(args, "_custom_metadata", []) or [])
             args._custom_metadata = list(config_metadata_entries) + existing_custom
-    if metadata_sources:
-        metrics_meta["grpc_metadata_sources"] = dict(metadata_sources)
+    metadata_applied = bool(config_metadata_entries) and not getattr(
+        args, "_headers_disabled", False
+    )
+    if combined_sources and (metadata_applied or existing_custom_sources):
+        metrics_meta["grpc_metadata_sources"] = dict(combined_sources)
+        args._custom_metadata_sources = combined_sources
 
     default_host = parser.get_default("host")
     if (
@@ -1905,17 +1953,20 @@ def main(argv: list[str] | None = None) -> int:
         provided_flags=provided_flags,
     )
     custom_metadata: list[tuple[str, str]] | None = None
+    custom_metadata_sources: dict[str, str] | None = None
     headers_disabled = getattr(args, "headers", None) == []
     raw_headers = None if headers_disabled else getattr(args, "headers", None)
     if raw_headers:
         custom_metadata = _parse_metadata_entries(raw_headers, parser=parser)
+        source_label = _CLI_HEADER_SOURCE if "--header" in provided_flags else _ENV_HEADER_SOURCE
+        custom_metadata_sources = {key: source_label for key, _ in custom_metadata}
     args._custom_metadata = custom_metadata
+    args._custom_metadata_sources = custom_metadata_sources
     args._headers_disabled = headers_disabled
     if headers_disabled:
         args.headers = None
     _apply_core_config_defaults(args, parser=parser, provided_flags=provided_flags)
-    if getattr(args, "_custom_metadata", None):
-        args._custom_metadata = _merge_metadata_entries(args._custom_metadata)
+    _finalize_custom_metadata(args)
     _load_custom_risk_profiles(args, parser)
     if (
         tls_env_present

@@ -46,6 +46,7 @@ Pełne logi testów są wersjonowane w katalogu `logs/` wraz z podpisami HMAC ge
   - 4N – umożliwienie referencji `value_env`/`value_file` w `grpc_metadata`, pobieranie wartości z bezpiecznych źródeł oraz propagacja informacji o pochodzeniu nagłówków do decision logu telemetryki.
   - 4O – poprawa normalizacji wpisów `grpc_metadata`, aby wariant słownikowy korzystający z `value_env`/`value_file` działał zgodnie z oczekiwaniami oraz zachowywał informację o źródle w konfiguracji runtime.
   - 4P – deduplikacja nagłówków gRPC przy łączeniu konfiguracji `core.yaml` z parametrami CLI, co pozwala operatorowi nadpisywać preset bez dublowania kluczy w wywołaniach gRPC.
+  - 4Q – agregacja źródeł nagłówków gRPC (konfiguracja, ENV, CLI) oraz zapis ich pochodzenia w decision logu `watch_metrics_stream`, aby audyt mógł prześledzić końcową konfigurację telemetryki.
 - **Czynności otwarte**: brak – backlog Etapu 4 został zrealizowany w całości.
 - **Blokery**: brak nowych ryzyk; budżety zasobów monitorowane przez `runtime.resource_limits` i `resource_monitor` mieszczą się w zadeklarowanych progach.
 
