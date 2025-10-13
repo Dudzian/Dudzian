@@ -9,6 +9,7 @@ Etap 4 programu rozwoju bota handlowego `bot_core` skupiał się na rozszerzeniu
 - **Konfiguracja**: nowe modele Pydantic, loader presetów i walidatory koszyków instrumentów oraz mapowanie profili ryzyka (konserwatywny, zbalansowany, agresywny, manualny).
 - **Testy**: regresja obejmująca strategie, scheduler, ścieżkę runtime oraz scenariusze ryzyka (force liquidation, reset dziennego limitu strat, ograniczenia ekspozycji).
 - **Dokumentacja**: specyfikacja Etapu 4, plan testów, checklisty gate’ów, runbook paper tradingu i dedykowane opracowania strategii.
+- **Dane backtestowe**: biblioteka znormalizowanych datasetów (manifest + CSV) wraz z walidatorem `DataQualityValidator` i procedurą CLI `validate_backtest_datasets.py`.
 
 ## Testy regresyjne
 | Obszar | Komenda | Status |
@@ -17,6 +18,7 @@ Etap 4 programu rozwoju bota handlowego `bot_core` skupiał się na rozszerzeniu
 | Konfiguracja | `PYTHONPATH=. pytest tests/test_core_config_instrument_buckets.py` | ✅ |
 | Silnik ryzyka | `PYTHONPATH=. pytest tests/test_risk_engine.py::test_combined_strategy_orders_respect_max_position_pct tests/test_risk_engine.py::test_force_liquidation_due_to_drawdown_allows_only_reducing_orders tests/test_risk_engine.py::test_daily_loss_limit_resets_after_new_trading_day` | ✅ |
 | Runtime demo→paper→live | `PYTHONPATH=. pytest tests/test_runtime_pipeline.py` | ✅ |
+| Dane backtestowe | `PYTHONPATH=. pytest tests/test_backtest_dataset_library.py`, `python scripts/validate_backtest_datasets.py` | ✅ |
 
 Pełne logi testów są wersjonowane w katalogu `logs/` wraz z podpisami HMAC generowanymi przez `verify_decision_log.py`.
 
@@ -32,8 +34,8 @@ Pełne logi testów są wersjonowane w katalogu `logs/` wraz z podpisami HMAC ge
 3. **Przejście do Etapu 5**: Możemy rozpocząć prace planistyczne nad etapem dotyczącym optymalizacji kosztów transakcyjnych i rozbudowy decision engine’u, zachowując wymuszone bramki compliance.
 
 ## Status iteracji 4F (po rozszerzeniu zakresu)
-- **Postęp Etapu 4**: 22/40 (55 %) – pasek `[###########---------]`.
-- **Ostatnia zamknięta iteracja**: 4E – deliverables bazowe zatwierdzone w audycie papier tradingu; iteracja 4F obejmuje zadania danych/observability/CI/operacje.
-- **Czynności otwarte**: katalog danych backtestowych, metryki/alerty scheduler-a, integracja decyzji z centralnym logiem, smoke CLI, audyty RBAC/mTLS, testy obciążeniowe i playbook L1/L2.
-- **Blokery**: oczekiwane dane referencyjne do walidacji jakości danych oraz finalny budżet zasobów dla równoległych strategii; brak nowych ryzyk związanych z infrastrukturą (RBAC/mTLS/HMAC pozostają zgodne).
+- **Postęp Etapu 4**: 24/40 (60 %) – pasek `[############--------]`.
+- **Ostatnia zamknięta iteracja**: 4E – deliverables bazowe zatwierdzone w audycie papier tradingu; iteracja 4F obejmuje zadania obserwowalności/CI/operacji po dostarczeniu biblioteki danych.
+- **Czynności otwarte**: metryki/alerty scheduler-a, integracja decyzji z centralnym logiem, smoke CLI, audyty RBAC/mTLS, testy obciążeniowe i playbook L1/L2.
+- **Blokery**: finalny budżet zasobów dla równoległych strategii; brak nowych ryzyk związanych z infrastrukturą (RBAC/mTLS/HMAC pozostają zgodne).
 

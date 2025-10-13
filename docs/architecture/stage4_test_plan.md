@@ -11,7 +11,7 @@ Zapewnienie, że rozszerzona biblioteka strategii oraz scheduler przechodzą pip
 | Cross-Exchange Arbitrage | unit/integracja | `pytest tests/test_cross_exchange_arbitrage_strategy.py`, `run_trading_stub_server.py` | spread entry/exit, opóźnienia |
 | Scheduler | async/integracja | `pytest tests/test_multi_strategy_scheduler.py`, `run_paper_smoke_ci.py` | telemetria, decision log |
 | Ryzyko | regresja | `pytest tests/test_risk_engine.py::test_combined_strategy_orders_respect_max_position_pct`, `pytest tests/test_risk_engine.py::test_force_liquidation_due_to_drawdown_allows_only_reducing_orders` | limity pozycji multi-strategy, wymuszona likwidacja |
-| Dane backtestowe | walidacja/regresja | `python scripts/data/validate_backtest_sets.py`, `pytest tests/test_core_config_instrument_buckets.py` | spójność, braki, outliery, mapowanie profili |
+| Dane backtestowe | walidacja/regresja | `python scripts/validate_backtest_datasets.py`, `pytest tests/test_backtest_dataset_library.py tests/test_core_config_instrument_buckets.py` | spójność, braki, outliery, mapowanie profili |
 | Telemetria i dashboardy | integracja | `python scripts/telemetry_risk_profiles.py audit`, `python scripts/watch_metrics_stream.py --dry-run` | metryki strategii, latencja scheduler-a, widgety OTEL |
 | Alerty | scenariusze operacyjne | `python scripts/run_metrics_service.py --simulate-alerts`, `pytest tests/test_alert_thresholds.py` | progi PnL/ryzyko/opóźnienia, eskalacje |
 | CI/coverage | pipeline/regresja | `scripts/run_ci_pipeline.sh`, `pytest --cov=bot_core/strategies` | włączenie testów, progi coverage |
@@ -25,10 +25,10 @@ Zapewnienie, że rozszerzona biblioteka strategii oraz scheduler przechodzą pip
 3. **Live (kontrolowane)**: symulacja sucha – ładowanie konfigu `core_multi_pipeline`, walidacja RBAC (`security/token_audit.py`).
 
 ## Walidacja danych i procedury QA
-1. Generuj znormalizowane zestawy OHLCV i spreadów (`python scripts/data/build_backtest_sets.py --strategies mean_reversion volatility_target cross_exchange_arbitrage`).
-2. Uruchom `python scripts/data/validate_backtest_sets.py --schema schemas/backtest_dataset.schema.json` – raport braków i odchyleń trafia do `audit/data_quality/*.json`.
+1. Generuj znormalizowane zestawy OHLCV i spreadów (`python scripts/data/build_backtest_sets.py --strategies mean_reversion volatility_target cross_exchange_arbitrage`) – opcjonalne rozszerzenie poza próbkami repozytoryjnymi.
+2. Uruchom `python scripts/validate_backtest_datasets.py --manifest data/backtests/normalized/manifest.yaml` – raport braków i odchyleń trafia do `audit/data_quality/*.json`.
 3. Skoreluj wyniki z profilami ryzyka (`python scripts/telemetry_risk_profiles.py link-datasets --profile balanced`), aktualizując koszyki instrumentów.
-4. Dodaj regresję do pipeline’u CI (`scripts/run_ci_pipeline.sh data-quality`) i monitoruj raport `data/reports/backtest_quality.md`.
+4. Dodaj regresję do pipeline’u CI (`scripts/run_ci_pipeline.sh data-quality`) i monitoruj raport `data/reports/backtest_quality.md`; test `pytest tests/test_backtest_dataset_library.py` pełni rolę blokera schematu.
 
 ## Obserwowalność i alerty
 1. Rozszerz `telemetry_risk_profiles.py render --section scheduler` o metryki: `scheduler_loop_latency_ms`, `strategy_signal_hit_rate`, `arb_spread_capture_bps`.

@@ -3,16 +3,16 @@
 Aby uniknąć jednorazowego „skoku” statusu całego etapu, wprowadzamy jawny tracker stanu z rozbiciem na poszczególne zadania z backlogu. Status `[x]` oznacza pełną akceptację po przejściu wszystkich bramek (code review, testy regresyjne, audyt operacyjny), a `[ ]` – zadania nadal wymagające pracy, walidacji lub zatwierdzenia.
 
 ## Stan iteracji 4F
-- **Zakres ukończony:** 1.1 Specyfikacja Etapu 4, 1.2 Profile ryzyka + koszyki instrumentów, 1.3 Checklisty wejścia/wyjścia iteracji, 1.4 Plan testów regresyjnych, 2.1 Dokumentacja mean reversion, 2.2 Implementacja strategii, 2.3 Konfiguracja i presety, 2.4 Testy regresyjne mean reversion, 3.1 Dokumentacja volatility targeting, 3.2 Implementacja `VolatilityTargetSettings/Strategy`, 3.3 Konfiguracja presetów volatility targeting, 3.4 Testy jednostkowe/regresyjne volatility targeting, 4.1 Dokumentacja strategii arbitrażowej, 4.2 Silnik arbitrażowy, 4.3 Konfiguracja arbitrażu w modelach i `core.yaml`, 4.4 Testy integracyjne wejścia/wyjścia spreadu, 5.1 Projekt harmonogramu multi-strategy, 5.2 Implementacja scheduler-a z telemetryką i journalingiem, 5.3 Integracja scheduler-a z pipeline’em oraz CLI `run_multi_strategy_scheduler.py`, 5.4 Testy funkcjonalne schedulera i pipeline’u, 6.1 Rozszerzony harness silnika ryzyka (scenariusze likwidacji/daily reset), 6.2 Aktualizacja runbooka paper tradingu o audyty HMAC i obsługę multi-strategy.
+- **Zakres ukończony:** 1.1 Specyfikacja Etapu 4, 1.2 Profile ryzyka + koszyki instrumentów, 1.3 Checklisty wejścia/wyjścia iteracji, 1.4 Plan testów regresyjnych, 2.1 Dokumentacja mean reversion, 2.2 Implementacja strategii, 2.3 Konfiguracja i presety, 2.4 Testy regresyjne mean reversion, 3.1 Dokumentacja volatility targeting, 3.2 Implementacja `VolatilityTargetSettings/Strategy`, 3.3 Konfiguracja presetów volatility targeting, 3.4 Testy jednostkowe/regresyjne volatility targeting, 4.1 Dokumentacja strategii arbitrażowej, 4.2 Silnik arbitrażowy, 4.3 Konfiguracja arbitrażu w modelach i `core.yaml`, 4.4 Testy integracyjne wejścia/wyjścia spreadu, 5.1 Projekt harmonogramu multi-strategy, 5.2 Implementacja scheduler-a z telemetryką i journalingiem, 5.3 Integracja scheduler-a z pipeline’em oraz CLI `run_multi_strategy_scheduler.py`, 5.4 Testy funkcjonalne schedulera i pipeline’u, 6.1 Rozszerzony harness silnika ryzyka (scenariusze likwidacji/daily reset), 6.2 Aktualizacja runbooka paper tradingu o audyty HMAC i obsługę multi-strategy, 6.3 Biblioteka danych backtestowych (manifest + próbki), 6.4 Procedury walidacji jakości danych zautomatyzowane w `DataQualityValidator` + CLI.
 - **Czynności w toku:** plan rozszerzenia Etapu 4 o zadania 7.x–11.x (observability, CI, bezpieczeństwo, operacje, wydajność) – trwa inwentaryzacja braków i harmonogramowanie prac.
-- **Blokery:** oczekiwane dane referencyjne do walidacji jakości danych backtestowych (koordynacja z zespołem danych), analiza kosztów budżetu zasobów dla równoległych strategii.
+- **Blokery:** analiza kosztów budżetu zasobów dla równoległych strategii.
 
-**Postęp Etapu 4:** 22/40 (55 %)
-**Pasek:** `[###########---------]`
+**Postęp Etapu 4:** 24/40 (60 %)
+**Pasek:** `[############--------]`
 **Raport zamknięcia:** patrz dokument [Raport zamknięcia Etapu 4](stage4_final_report.md); aktualizacja zakresu opisane w [Specyfikacji Etapu 4](stage4_spec.md).
 
 ```json
-{"total_tasks":40,"completed":22,"percent":55}
+{"total_tasks":40,"completed":24,"percent":60}
 ```
 
 ## Backlog zadań (stan iteracji 4F)
@@ -44,8 +44,8 @@ Aby uniknąć jednorazowego „skoku” statusu całego etapu, wprowadzamy jawny
 6. Dane, ryzyko i dokumentacja
    - [x] 6.1 Rozszerzyć harness testowy silnika ryzyka o nowe scenariusze.
    - [x] 6.2 Zaktualizować runbook paper/dokumentację operacyjną.
-   - [ ] 6.3 Uzupełnić bibliotekę danych backtestowych o znormalizowane zestawy dla nowych strategii.
-   - [ ] 6.4 Przygotować procedury walidacji jakości danych (spójność, braki, outliery) dla profili ryzyka.
+   - [x] 6.3 Uzupełnić bibliotekę danych backtestowych o znormalizowane zestawy dla nowych strategii.
+   - [x] 6.4 Przygotować procedury walidacji jakości danych (spójność, braki, outliery) dla profili ryzyka.
 7. Observability i alerty
    - [ ] 7.1 Rozszerzyć `telemetry_risk_profiles.py` o metryki specyficzne dla nowych strategii.
    - [ ] 7.2 Zaktualizować dashboardy Prometheus/OTEL o widgety scheduler-a, latencję i skuteczność sygnałów.
