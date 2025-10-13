@@ -46,6 +46,7 @@ def _write_core_config(
     port: int = 50200,
     metrics_rbac_tokens: Sequence[dict[str, object]] | None = None,
     metrics_tls: Mapping[str, object] | None = None,
+    metrics_grpc_metadata: Mapping[str, object] | Sequence[tuple[str, object]] | None = None,
     risk_host: str = "127.0.0.1",
     risk_port: int = 60300,
     risk_enabled: bool = True,
@@ -108,6 +109,15 @@ def _write_core_config(
                 if isinstance(value, bool):
                     rendered = "true" if value else "false"
                 lines.append(f"{indent}{key}: {rendered}")
+
+    if metrics_grpc_metadata:
+        lines.append("    grpc_metadata:")
+        if isinstance(metrics_grpc_metadata, Mapping):
+            items = metrics_grpc_metadata.items()
+        else:
+            items = metrics_grpc_metadata
+        for key, value in items:
+            lines.append(f"      {key}: {value}")
 
     lines.extend(
         [
@@ -1443,6 +1453,45 @@ def test_environment_headers_none(monkeypatch):
     monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
 
     exit_code = watch_metrics_main([])
+
+    assert exit_code == 0
+    assert stub.calls
+    _request, _timeout, metadata = stub.calls[0]
+    assert metadata is None
+
+
+def test_core_config_grpc_metadata_applied(monkeypatch, tmp_path):
+    stub = _StubCollector()
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
+    config_path = _write_core_config(
+        tmp_path,
+        profiles_path=profiles_path,
+        metrics_grpc_metadata=[("x-trace", "config"), ("x-role", "ops")],
+    )
+
+    exit_code = watch_metrics_main(["--core-config", str(config_path)])
+
+    assert exit_code == 0
+    assert stub.calls
+    _request, _timeout, metadata = stub.calls[0]
+    assert metadata == [("x-trace", "config"), ("x-role", "ops")]
+
+
+def test_core_config_grpc_metadata_disabled_by_env(monkeypatch, tmp_path):
+    monkeypatch.setenv(f"{_ENV_PREFIX}HEADERS", "NONE")
+    stub = _StubCollector()
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
+    config_path = _write_core_config(
+        tmp_path,
+        profiles_path=profiles_path,
+        metrics_grpc_metadata={"x-trace": "config"},
+    )
+
+    exit_code = watch_metrics_main(["--core-config", str(config_path)])
 
     assert exit_code == 0
     assert stub.calls

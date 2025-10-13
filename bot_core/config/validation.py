@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
+import re
+
 from bot_core.config.models import CoreConfig
 
 _UI_ALERT_AUDIT_BACKEND_ALLOWED = {"auto", "file", "memory"}
@@ -18,6 +20,8 @@ _SUPPORTED_TOKEN_HASH_ALGORITHMS = {
     "sha3_384",
     "sha3_512",
 }
+
+_GRPC_METADATA_KEY_PATTERN = re.compile(r"^[0-9a-z._-]+$")
 
 # Mapowanie sufiksów interwałów na sekundy.
 _INTERVAL_SUFFIX_TO_SECONDS: Mapping[str, int] = {
@@ -404,6 +408,33 @@ def _validate_metrics_service(
             errors=errors,
             warnings=warnings,
         )
+
+    if hasattr(metrics, "grpc_metadata"):
+        metadata_entries = tuple(getattr(metrics, "grpc_metadata", ()) or ())
+        seen_keys: set[str] = set()
+        for entry in metadata_entries:
+            if not isinstance(entry, (tuple, list)) or len(entry) != 2:
+                errors.append(f"{context}: grpc_metadata zawiera nieprawidłowy wpis {entry!r}")
+                continue
+            key, _value = entry
+            key_str = str(key).strip()
+            if not key_str:
+                errors.append(f"{context}: grpc_metadata zawiera pusty klucz")
+                continue
+            normalized = key_str.lower()
+            if key_str != normalized:
+                errors.append(f"{context}: grpc_metadata klucz '{key}' musi być zapisany małymi literami")
+                continue
+            if not _GRPC_METADATA_KEY_PATTERN.fullmatch(normalized):
+                errors.append(
+                    f"{context}: grpc_metadata klucz '{key}' zawiera niedozwolone znaki"
+                )
+                continue
+            if normalized in seen_keys:
+                warnings.append(
+                    f"{context}: grpc_metadata zawiera duplikat klucza '{normalized}'"
+                )
+            seen_keys.add(normalized)
 
     tls = getattr(metrics, "tls", None)
     if tls is not None and getattr(tls, "enabled", False):

@@ -1132,13 +1132,13 @@ def _apply_environment_overrides(
         stripped = raw_value.strip()
         normalized = stripped.lower()
         if normalized in {"", "none", "null"}:
-            setattr(args, attr, None)
+            setattr(args, attr, [])
             return
         if normalized == "default":
             setattr(args, attr, parser.get_default(attr))
             return
         entries = [entry.strip() for entry in raw_value.split(";") if entry.strip()]
-        setattr(args, attr, entries or None)
+        setattr(args, attr, entries or [])
 
     _override_simple("host", "HOST", "--host")
     _override_numeric("port", "PORT", "--port", int)
@@ -1312,6 +1312,17 @@ def _apply_core_config_defaults(
 
     if getattr(metrics_config, "auth_token", None):
         metrics_meta["auth_token_configured"] = True
+
+    config_metadata_entries = tuple(getattr(metrics_config, "grpc_metadata", ()) or ())
+    if config_metadata_entries:
+        metrics_meta["grpc_metadata_keys"] = [key for key, _ in config_metadata_entries]
+        metrics_meta["grpc_metadata_count"] = len(config_metadata_entries)
+        if getattr(args, "_headers_disabled", False):
+            metrics_meta["grpc_metadata_enabled"] = False
+        else:
+            metrics_meta["grpc_metadata_enabled"] = True
+            existing_custom = list(getattr(args, "_custom_metadata", []) or [])
+            args._custom_metadata = list(config_metadata_entries) + existing_custom
 
     default_host = parser.get_default("host")
     if (
@@ -1871,10 +1882,14 @@ def main(argv: list[str] | None = None) -> int:
         provided_flags=provided_flags,
     )
     custom_metadata: list[tuple[str, str]] | None = None
-    raw_headers = getattr(args, "headers", None)
+    headers_disabled = getattr(args, "headers", None) == []
+    raw_headers = None if headers_disabled else getattr(args, "headers", None)
     if raw_headers:
         custom_metadata = _parse_metadata_entries(raw_headers, parser=parser)
     args._custom_metadata = custom_metadata
+    args._headers_disabled = headers_disabled
+    if headers_disabled:
+        args.headers = None
     _apply_core_config_defaults(args, parser=parser, provided_flags=provided_flags)
     _load_custom_risk_profiles(args, parser)
     if (

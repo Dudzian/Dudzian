@@ -3,7 +3,9 @@ from __future__ import annotations
 
 from dataclasses import fields
 from pathlib import Path
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping, Optional, Sequence
+
+import re
 
 import yaml
 
@@ -122,6 +124,9 @@ try:
     from bot_core.config.models import MetricsServiceTlsConfig  # type: ignore
 except Exception:
     MetricsServiceTlsConfig = None  # type: ignore
+
+
+_GRPC_METADATA_KEY_PATTERN = re.compile(r"^[0-9a-z._-]+$")
 
 
 def _core_has(field_name: str) -> bool:
@@ -830,6 +835,56 @@ def _load_service_tokens(raw_value: Any) -> tuple[ServiceTokenConfig, ...]:
     return tuple(tokens)
 
 
+def _normalize_grpc_metadata(raw_value: object) -> tuple[tuple[str, str], ...]:
+    """Normalizuje wpisy metadata gRPC do listy par (klucz, wartość)."""
+
+    if raw_value in (None, False, ""):
+        return ()
+
+    entries: list[tuple[str, str]] = []
+
+    def _append_entry(key: object, value: object) -> None:
+        if key is None:
+            raise ValueError("grpc_metadata wymaga niepustego klucza")
+        key_str = str(key).strip()
+        if not key_str:
+            raise ValueError("grpc_metadata wymaga niepustego klucza")
+        normalized_key = key_str.lower()
+        if key_str != normalized_key:
+            raise ValueError("grpc_metadata klucz musi być zapisany małymi literami")
+        if not _GRPC_METADATA_KEY_PATTERN.fullmatch(normalized_key):
+            raise ValueError(
+                "grpc_metadata klucz może zawierać wyłącznie [0-9a-z._-]"
+            )
+        value_str = "" if value is None else str(value)
+        entries.append((normalized_key, value_str.strip()))
+
+    if isinstance(raw_value, Mapping):
+        for key, value in raw_value.items():
+            _append_entry(key, value)
+    elif isinstance(raw_value, Sequence) and not isinstance(raw_value, (str, bytes, bytearray)):
+        for item in raw_value:
+            if isinstance(item, Mapping):
+                if "key" not in item or "value" not in item:
+                    raise ValueError("grpc_metadata wpis słownika wymaga pól key i value")
+                _append_entry(item["key"], item["value"])
+            else:
+                text = str(item)
+                if "=" in text:
+                    key, value = text.split("=", 1)
+                elif ":" in text:
+                    key, value = text.split(":", 1)
+                else:
+                    raise ValueError(
+                        "grpc_metadata element listy musi mieć format klucz=wartość lub klucz:wartość"
+                    )
+                _append_entry(key, value)
+    else:
+        raise TypeError("grpc_metadata musi być mapą lub listą wpisów")
+
+    return tuple(entries)
+
+
 def _load_metrics_service(
     runtime_section: Optional[Mapping[str, Any]], *, base_dir: Path | None = None
 ) -> MetricsServiceConfig | None:
@@ -861,6 +916,10 @@ def _load_metrics_service(
 
     if "rbac_tokens" in available_fields:
         kwargs["rbac_tokens"] = _load_service_tokens(metrics_raw.get("rbac_tokens"))
+
+    if "grpc_metadata" in available_fields:
+        raw_metadata = metrics_raw.get("grpc_metadata")
+        kwargs["grpc_metadata"] = _normalize_grpc_metadata(raw_metadata)
 
     # Opcjonalne: log sink, jsonl, fsync
     if "log_sink" in available_fields:

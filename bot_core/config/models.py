@@ -82,6 +82,7 @@ class MetricsServiceConfig:
     ui_alerts_risk_profiles_file: str | None = None
     tls: MetricsServiceTlsConfig | None = None
     rbac_tokens: Sequence[ServiceTokenConfig] = field(default_factory=tuple)
+    grpc_metadata: Sequence[tuple[str, str]] = field(default_factory=tuple)
 
     # Opcjonalne alerty związane z UI/performance
     reduce_motion_alerts: bool = False

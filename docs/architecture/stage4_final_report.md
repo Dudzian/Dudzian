@@ -36,12 +36,13 @@ Pełne logi testów są wersjonowane w katalogu `logs/` wraz z podpisami HMAC ge
 2. **Monitoring**: Dostarczono zintegrowane metryki scheduler-a/strategii oraz reguły Alertmanagera – zalecane jest bieżące monitorowanie paneli Grafany i logów decision logu w celu wychwycenia regresji budżetów ryzyka.
 3. **Przejście do Etapu 5**: Możemy rozpocząć prace planistyczne nad etapem dotyczącym optymalizacji kosztów transakcyjnych i rozbudowy decision engine’u, zachowując wymuszone bramki compliance.
 
-## Status iteracji 4L
+## Status iteracji 4M
 - **Postęp Etapu 4**: 40/40 (100 %) – pasek `[####################]`.
 - **Ostatnie iteracje utrzymaniowe**:
   - 4I – domknięte zadania bezpieczeństwa (RBAC/mTLS audyt `audit_security_baseline` z obsługą scheduler-a), rozszerzony schemat decision logu, playbook L1/L2, szkolenie operatorów, test obciążeniowy `load_test_scheduler.py` oraz procedury rollbacku.
   - 4K – hotfix obsługi strażników `NONE`/`NULL`/`DEFAULT` w `watch_metrics_stream` bez wymuszania TLS.
   - 4L – wsparcie dla niestandardowych nagłówków gRPC w `watch_metrics_stream` (flagi CLI i zmienne środowiskowe) wraz z sanitacją metadanych decision logu.
+  - 4M – wprowadzenie mapowania `grpc_metadata` w `core.yaml`, walidowanego przez loader i walidator konfiguracji oraz honorującego strażniki środowiskowe przy automatycznym wstrzykiwaniu nagłówków do połączeń gRPC telemetryki.
 - **Czynności otwarte**: brak – backlog Etapu 4 został zrealizowany w całości.
 - **Blokery**: brak nowych ryzyk; budżety zasobów monitorowane przez `runtime.resource_limits` i `resource_monitor` mieszczą się w zadeklarowanych progach.
 

@@ -179,6 +179,17 @@ def test_validate_core_config_checks_metrics_risk_profiles_file(
     assert result_ok.is_valid()
 
 
+def test_validate_core_config_rejects_invalid_grpc_metadata(base_config: CoreConfig) -> None:
+    metrics_config = MetricsServiceConfig(
+        enabled=True,
+        grpc_metadata=(("X-Trace", "value"),),
+    )
+    result = validate_core_config(replace(base_config, metrics_service=metrics_config))
+
+    assert not result.is_valid()
+    assert any("grpc_metadata" in err for err in result.errors)
+
+
 def _metrics_config_base() -> MetricsServiceConfig:
     tls = MetricsServiceTlsConfig()
     tls.enabled = True

@@ -195,6 +195,7 @@ class MetricsServiceConfig:
     ui_alerts_risk_profile: Optional[str] = None
     ui_alerts_risk_profiles_file: Optional[str] = None
     rbac_tokens: Tuple[ServiceTokenConfig, ...] = field(default_factory=tuple)
+    grpc_metadata: Tuple[Tuple[str, str], ...] = field(default_factory=tuple)
 
     # UI: reduce motion
     reduce_motion_alerts: Optional[bool] = None
@@ -818,6 +819,9 @@ def test_load_core_config_reads_metrics_service(tmp_path: Path) -> None:
               - token_id: reader
                 token_value: reader-secret
                 scopes: [metrics.read]
+            grpc_metadata:
+              x-trace: audit-stage
+              x-role: ops
         """,
         encoding="utf-8",
     )
@@ -856,6 +860,7 @@ def test_load_core_config_reads_metrics_service(tmp_path: Path) -> None:
     assert metrics.jank_alert_critical_over_ms == pytest.approx(7.5)
     assert metrics.rbac_tokens and metrics.rbac_tokens[0].token_id == "reader"
     assert metrics.rbac_tokens[0].scopes == ("metrics.read",)
+    assert metrics.grpc_metadata == (("x-trace", "audit-stage"), ("x-role", "ops"))
 
     # Metadane ścieżek źródłowych configu (ustawiane przez loader)
     assert Path(config.source_path or "").is_absolute()
@@ -914,6 +919,30 @@ def test_load_core_config_normalizes_ui_alert_modes(tmp_path: Path) -> None:
     assert metrics.reduce_motion_mode == "enable"
     assert metrics.overlay_alert_mode == "jsonl"
     assert metrics.jank_alert_mode == "disable"
+
+
+def test_load_core_config_metrics_grpc_metadata_list(tmp_path: Path) -> None:
+    config_path = tmp_path / "core.yaml"
+    config_path.write_text(
+        """
+        risk_profiles: {}
+        environments: {}
+        runtime:
+          metrics_service:
+            host: 127.0.0.1
+            port: 55060
+            grpc_metadata:
+              - key: x-trace
+                value: config
+              - x-role=config
+        """,
+        encoding="utf-8",
+    )
+
+    config = load_core_config(config_path)
+
+    assert config.metrics_service is not None
+    assert config.metrics_service.grpc_metadata == (("x-trace", "config"), ("x-role", "config"))
 
 
 def test_load_core_config_rejects_unknown_ui_alert_mode(tmp_path: Path) -> None:
