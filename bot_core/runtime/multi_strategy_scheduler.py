@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Callable, Mapping, MutableMapping, Protocol, Sequence
@@ -169,14 +170,59 @@ class MultiStrategyScheduler:
                     schedule.strategy.warm_up(history)
                 schedule.warmed_up = True
 
+            schedule.metrics.clear()
             snapshots = schedule.feed.fetch_latest(schedule.strategy_name)
             total_signals = 0
+            confidence_sum = 0.0
+            confidence_count = 0
+            mean_reversion_zscores: list[float] = []
+            mean_reversion_vols: list[float] = []
+            volatility_alloc_errors: list[float] = []
+            volatility_target_errors: list[float] = []
+            arbitrage_captures: list[float] = []
+            arbitrage_delays: list[float] = []
             for snapshot in snapshots:
                 signals = list(schedule.strategy.on_data(snapshot))
                 if not signals:
                     continue
                 bounded_signals = self._bounded_signals(signals, schedule.max_signals)
                 total_signals += len(bounded_signals)
+                for signal in bounded_signals:
+                    confidence_sum += float(signal.confidence)
+                    confidence_count += 1
+                    metadata = signal.metadata
+                    if schedule.strategy_name.startswith("mean_reversion"):
+                        zscore = metadata.get("zscore")
+                        if isinstance(zscore, (int, float)):
+                            mean_reversion_zscores.append(abs(float(zscore)))
+                        volatility = metadata.get("volatility")
+                        if isinstance(volatility, (int, float)):
+                            mean_reversion_vols.append(float(volatility))
+                    if "target_allocation" in metadata and "current_allocation" in metadata:
+                        target_alloc = metadata.get("target_allocation")
+                        current_alloc = metadata.get("current_allocation")
+                        if isinstance(target_alloc, (int, float)) and isinstance(
+                            current_alloc, (int, float)
+                        ) and target_alloc:
+                            diff_pct = abs(float(target_alloc) - float(current_alloc)) / max(
+                                abs(float(target_alloc)), 1e-9
+                            )
+                            volatility_alloc_errors.append(diff_pct * 100.0)
+                    realized_vol = metadata.get("realized_volatility")
+                    target_vol = metadata.get("target_volatility")
+                    if isinstance(realized_vol, (int, float)) and isinstance(target_vol, (int, float)) and target_vol:
+                        variance_pct = abs(float(realized_vol) - float(target_vol)) / max(
+                            abs(float(target_vol)), 1e-9
+                        )
+                        volatility_target_errors.append(variance_pct * 100.0)
+                    secondary_delay = metadata.get("secondary_delay_ms")
+                    if isinstance(secondary_delay, (int, float)):
+                        arbitrage_delays.append(float(secondary_delay))
+                    entry_spread = metadata.get("entry_spread")
+                    exit_spread = metadata.get("exit_spread")
+                    if isinstance(entry_spread, (int, float)) and isinstance(exit_spread, (int, float)) and entry_spread:
+                        capture = (float(entry_spread) - float(exit_spread)) / abs(float(entry_spread))
+                        arbitrage_captures.append(capture * 10_000.0)
                 self._record_decisions(schedule, bounded_signals, timestamp, snapshot.symbol)
                 schedule.sink.submit(
                     strategy_name=schedule.strategy_name,
@@ -189,6 +235,30 @@ class MultiStrategyScheduler:
             schedule.metrics["last_latency_ms"] = max(
                 0.0, (self._clock() - timestamp).total_seconds() * 1000
             )
+            if confidence_count:
+                schedule.metrics["avg_confidence"] = confidence_sum / confidence_count
+            if mean_reversion_zscores:
+                schedule.metrics["avg_abs_zscore"] = sum(mean_reversion_zscores) / len(
+                    mean_reversion_zscores
+                )
+            if mean_reversion_vols:
+                schedule.metrics["avg_realized_volatility"] = sum(mean_reversion_vols) / len(
+                    mean_reversion_vols
+                )
+            if volatility_alloc_errors:
+                schedule.metrics["allocation_error_pct"] = sum(volatility_alloc_errors) / len(
+                    volatility_alloc_errors
+                )
+            if volatility_target_errors:
+                schedule.metrics["realized_vs_target_vol_pct"] = sum(
+                    volatility_target_errors
+                ) / len(volatility_target_errors)
+            if arbitrage_delays:
+                schedule.metrics["secondary_delay_ms"] = max(arbitrage_delays)
+            if arbitrage_captures:
+                schedule.metrics["spread_capture_bps"] = sum(arbitrage_captures) / len(
+                    arbitrage_captures
+                )
             self._emit_metrics(schedule)
         except Exception:  # pragma: no cover - chronimy scheduler przed przerwaniem
             _LOGGER.exception("Błąd podczas wykonywania harmonogramu %s", schedule.name)
@@ -208,6 +278,11 @@ class MultiStrategyScheduler:
             "signals": schedule.metrics.get("signals", 0.0),
             "latency_ms": schedule.metrics.get("last_latency_ms", 0.0),
         }
+        for key, value in schedule.metrics.items():
+            if key in {"signals", "last_latency_ms"}:
+                continue
+            if isinstance(value, (int, float)):
+                payload[key] = float(value)
         self._telemetry(schedule.name, payload)
 
     def _record_decisions(
@@ -220,6 +295,7 @@ class MultiStrategyScheduler:
         if not self._decision_journal:
             return
         for signal in signals:
+            metadata_payload = {str(k): str(v) for k, v in signal.metadata.items()}
             event = TradingDecisionEvent(
                 event_type="strategy_signal",
                 timestamp=timestamp,
@@ -228,12 +304,12 @@ class MultiStrategyScheduler:
                 risk_profile=schedule.risk_profile,
                 symbol=symbol,
                 side=signal.side,
-                metadata={
-                    "schedule": schedule.name,
-                    "strategy": schedule.strategy_name,
-                    "confidence": f"{signal.confidence:.4f}",
-                    **{str(k): str(v) for k, v in signal.metadata.items()},
-                },
+                schedule=schedule.name,
+                strategy=schedule.strategy_name,
+                confidence=float(signal.confidence),
+                latency_ms=schedule.metrics.get("last_latency_ms"),
+                telemetry_namespace=f"{self._environment}.multi_strategy.{schedule.name}",
+                metadata=metadata_payload,
             )
             self._decision_journal.record(event)
 

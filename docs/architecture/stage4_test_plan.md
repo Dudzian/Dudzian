@@ -14,7 +14,8 @@ Zapewnienie, że rozszerzona biblioteka strategii oraz scheduler przechodzą pip
 | Dane backtestowe | walidacja/regresja | `python scripts/validate_backtest_datasets.py`, `pytest tests/test_backtest_dataset_library.py tests/test_core_config_instrument_buckets.py` | spójność, braki, outliery, mapowanie profili |
 | Telemetria i dashboardy | integracja | `python scripts/telemetry_risk_profiles.py audit`, `python scripts/watch_metrics_stream.py --dry-run` | metryki strategii, latencja scheduler-a, widgety OTEL |
 | Alerty | scenariusze operacyjne | `python scripts/run_metrics_service.py --simulate-alerts`, `pytest tests/test_alert_thresholds.py` | progi PnL/ryzyko/opóźnienia, eskalacje |
-| CI/coverage | pipeline/regresja | `scripts/run_ci_pipeline.sh`, `pytest --cov=bot_core/strategies` | włączenie testów, progi coverage |
+| CI/coverage | pipeline/regresja | `scripts/run_ci_pipeline.sh`, `pytest --cov=bot_core.strategies --cov=bot_core.runtime.multi_strategy_scheduler --cov-fail-under=85` | włączenie testów, progi coverage |
+| Smoke demo CLI | smoke/integracja | `python scripts/smoke_demo_strategies.py --cycles 3` | validacja multi-strategy na danych demo |
 | Bezpieczeństwo | audyt/manual | `python scripts/verify_decision_log.py audit`, `python scripts/rbac_audit.py` | HMAC, RBAC, mTLS, schemat decision log |
 | Operacje | smoke/manual | `python scripts/run_multi_strategy_scheduler.py --demo-smoke`, `docs/runbooks/paper_trading.md` checklist | CLI smoke, playbook L1/L2 |
 | Wydajność | obciążenie | `python scripts/run_scheduler_load_test.py`, `pytest tests/test_scheduler_performance.py` | latencja, jitter, budżety zasobów |
@@ -31,15 +32,15 @@ Zapewnienie, że rozszerzona biblioteka strategii oraz scheduler przechodzą pip
 4. Dodaj regresję do pipeline’u CI (`scripts/run_ci_pipeline.sh data-quality`) i monitoruj raport `data/reports/backtest_quality.md`; test `pytest tests/test_backtest_dataset_library.py` pełni rolę blokera schematu.
 
 ## Obserwowalność i alerty
-1. Rozszerz `telemetry_risk_profiles.py render --section scheduler` o metryki: `scheduler_loop_latency_ms`, `strategy_signal_hit_rate`, `arb_spread_capture_bps`.
-2. Zaktualizuj dashboard Prometheus (`deploy/prometheus/dashboards/multi_strategy.json`) oraz OTEL (`deploy/otel/strategies_dashboard.yaml`) – weryfikacja poprzez `python scripts/watch_metrics_stream.py --dashboard-check`.
-3. Skonfiguruj alerty w `deploy/alertmanager/multi_strategy_rules.yaml` z progami dla PnL, odchyleń ryzyka i opóźnień scheduler-a; zautomatyzuj eskalację `ops/oncall_rotation.yaml`.
-4. Upewnij się, że logowanie decyzji zapisuje pola `strategy_id`, `exchange`, `latency_ms`, `risk_profile`, podpisywane HMAC i agregowane w `audit/decision_log/`.
+1. Rozszerz `telemetry_risk_profiles.py render --section scheduler_metrics --section strategy_metrics` i potwierdź obecność metryk `avg_abs_zscore`, `avg_realized_volatility`, `allocation_error_pct`, `realized_vs_target_vol_pct`, `secondary_delay_ms`, `spread_capture_bps` oraz `decision_log_requirements`.
+2. Zaktualizuj dashboard Grafany (`deploy/grafana/provisioning/dashboards/kryptolowca_overview.json`) i OTEL (`deploy/otel/strategies_dashboard.yaml`) – weryfikacja poprzez `python scripts/watch_metrics_stream.py --dashboard-check`.
+3. Skonfiguruj alerty w `deploy/prometheus/rules/multi_strategy_rules.yml` z progami dla PnL, odchyleń ryzyka i opóźnień scheduler-a; zautomatyzuj eskalację `ops/oncall_rotation.yaml`.
+4. Upewnij się, że logowanie decyzji zapisuje pola `schedule`, `strategy`, `confidence`, `latency_ms`, `telemetry_namespace`, podpisywane HMAC i agregowane w `audit/decision_log/`.
 
 ## Automatyzacja CI i smoke CLI
 1. Włącz nowe testy i backtesty do `scripts/run_ci_pipeline.sh` (cele: `unit`, `integration`, `backtest`, `smoke_cli`, `coverage`).
-2. Uruchamiaj `python scripts/run_multi_strategy_scheduler.py --demo-smoke` jako bramkę przed deploymentem paper; wynik w `logs/smoke_cli/*.log`.
-3. Gating coverage: `pytest --cov=bot_core/strategies --cov-report xml` i walidacja progu (`python pytest_cov_stub.py validate --min 85`).
+2. Uruchamiaj `python scripts/smoke_demo_strategies.py --cycles 3` jako bramkę przed deploymentem paper; wynik w `logs/smoke_cli/*.log`.
+3. Gating coverage: `pytest --cov=bot_core.strategies --cov=bot_core.runtime.multi_strategy_scheduler --cov-report xml --cov-fail-under=85` i walidacja progu (`python pytest_cov_stub.py validate --min 85`).
 
 ## Testy bezpieczeństwa i compliance
 1. `python scripts/rbac_audit.py --config config/core.yaml` – walidacja przypisań ról dla scheduler-a i strategii.
@@ -52,7 +53,7 @@ Zapewnienie, że rozszerzona biblioteka strategii oraz scheduler przechodzą pip
 3. Procedura rollbacku: `python scripts/run_multi_strategy_scheduler.py --disable-strategy <id>` + checklistę `docs/runbooks/rollback_scheduler.md`.
 
 ## Kryteria wyjścia
-- 100 % pokrycia testów jednostkowych dla nowych strategii.
+- 100 % pokrycia testów jednostkowych dla nowych strategii oraz spełniony próg coverage ≥ 85 % dla modułów strategii/scheduler-a.
 - Telemetria scheduler-a raportuje `latency_ms < 250` oraz brak dryfu > `max_drift_seconds`; dashboardy Prometheus/OTEL i alerty przechodzą smoke testy.
 - Decision log podpisany HMAC dla wszystkich sygnałów, zawiera pola multi-strategy, audyt RBAC/mTLS zakończony sukcesem.
 - Risk engine blokuje przekroczenia `max_position_pct` przy kumulacji ekspozycji; smoke CLI oraz testy obciążeniowe zakończone bez regresji budżetów zasobów.

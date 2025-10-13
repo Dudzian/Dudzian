@@ -122,4 +122,9 @@ def test_scheduler_dispatches_signals_and_logs_decisions() -> None:
     exported = list(journal.export())
     assert exported
     assert exported[0]["strategy"] == "mean_reversion"
+    assert exported[0]["schedule"] == "mean_reversion_intraday"
+    assert exported[0]["confidence"] == "0.9"
+    assert exported[0]["telemetry_namespace"].endswith("mean_reversion_intraday")
     assert telemetry_calls and telemetry_calls[0][0] == "mean_reversion_intraday"
+    telemetry_payload = telemetry_calls[0][1]
+    assert telemetry_payload["avg_confidence"] == pytest.approx(0.9)

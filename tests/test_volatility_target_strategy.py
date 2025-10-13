@@ -1,20 +1,8 @@
-from bot_core.strategies.base import MarketSnapshot
 from bot_core.strategies.volatility_target import (
     VolatilityTargetSettings,
     VolatilityTargetStrategy,
 )
-
-
-def _snapshot(price: float, timestamp: int) -> MarketSnapshot:
-    return MarketSnapshot(
-        symbol="ETH_USDT",
-        timestamp=timestamp,
-        open=price,
-        high=price,
-        low=price,
-        close=price,
-        volume=1_000_000.0,
-    )
+from tests.fixtures import build_volatility_series_fixture
 
 
 def test_volatility_target_rebalances_when_threshold_exceeded() -> None:
@@ -28,17 +16,14 @@ def test_volatility_target_rebalances_when_threshold_exceeded() -> None:
     )
     strategy = VolatilityTargetStrategy(settings)
 
-    base_prices = [100.0, 100.5, 101.0, 102.0, 104.0]
-    history = [_snapshot(price, idx) for idx, price in enumerate(base_prices)]
-    strategy.warm_up(history)
+    fixtures = build_volatility_series_fixture()
+    strategy.warm_up(fixtures.history)
 
-    next_price = _snapshot(110.0, 10)
-    signals = strategy.on_data(next_price)
+    signals = strategy.on_data(fixtures.volatile_tick)
     assert signals and signals[0].side == "rebalance"
     metadata = signals[0].metadata
     assert "target_allocation" in metadata
     assert metadata["target_allocation"] <= settings.max_allocation
 
     # kolejny pomiar bez istotnej zmiany nie powinien generować sygnału
-    follow_up = _snapshot(110.1, 11)
-    assert not strategy.on_data(follow_up)
+    assert not strategy.on_data(fixtures.follow_up)

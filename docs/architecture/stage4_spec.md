@@ -11,8 +11,8 @@ Etap 4 programu rozwoju `bot_core` koncentruje się na budowie zdywersyfikowanej
 - Rozszerzenie harnessu testowego silnika ryzyka o scenariusze obejmujące nowe strategie i profile.
 - Przygotowanie testów jednostkowych, integracyjnych i regresyjnych umożliwiających utrzymanie pipeline’u demo → paper → live.
 - Uzupełnienie biblioteki danych backtestowych o zestawy dla multi-asset/multi-exchange oraz wprowadzenie procedur walidacji jakości (spójność, braki, outliery) skorelowanych z profilami ryzyka, w tym manifest `manifest.yaml`, próbki CSV dla każdej strategii i narzędzie CLI `validate_backtest_datasets.py`.
-- Rozbudowa warstwy obserwowalności: nowe metryki scheduler-a i strategii w `telemetry_risk_profiles.py`, widgety Prometheus/OTEL, alerty PnL/ryzyko/latencja oraz integracja logów decyzyjnych z centralnym decision logiem.
-- Automatyzacja CI: włączenie rozszerzonych testów (pytest, backtesty, smoke CLI) do pipeline’u, dostarczenie stubów/fixtures danych i raportów pokrycia z gatingiem jakości.
+- Rozbudowa warstwy obserwowalności: nowe metryki scheduler-a i strategii w `telemetry_risk_profiles.py` (progi dla `avg_abs_zscore`, `allocation_error_pct`, `spread_capture_bps`, `secondary_delay_ms`), dashboard Grafany z panelami latencji i skuteczności sygnałów, reguły Alertmanagera dla PnL/ryzyka/opóźnień oraz integracja logów decyzyjnych multi-strategy z centralnym decision logiem.
+- Automatyzacja CI: włączenie rozszerzonych testów (pytest, backtesty, smoke CLI `smoke_demo_strategies.py`) do pipeline’u, dostarczenie stubów/fixtures danych i raportów pokrycia z gatingiem jakości dla modułów strategii i scheduler-a.
 - Wzmocnienie bezpieczeństwa i compliance: przegląd RBAC/mTLS, aktualizacja schematu decision log JSONL o pola multi-strategy, mini-audyt podpisów HMAC i rotacji kluczy.
 - Wsparcie operacyjne i stabilność: playbook L1/L2, szkolenie operatorów, testy obciążeniowe scheduler-a/strategii, monitoring budżetów zasobów oraz procedury awaryjnego wyłączenia/rollbacku.
 
@@ -26,7 +26,7 @@ Etap 4 programu rozwoju `bot_core` koncentruje się na budowie zdywersyfikowanej
 - **Kod**: strategie, scheduler i integracje przechodzą linters/testy jednostkowe/integracyjne; brak regresji w istniejącym zestawie; moduły objęte raportem pokrycia z progami gatingu.
 - **Konfiguracja**: `core.yaml` zawiera komplet parametrów nowych strategii oraz profile ryzyka zaktualizowane o limity specyficzne dla mean reversion / arbitrage, a biblioteka danych backtestowych jest znormalizowana i powiązana z presetami profili wraz z raportem walidacyjnym `DataQualityValidator`.
 - **Dokumentacja**: dostępne są opisy strategii, plan testów regresyjnych, runbook paper tradingu, playbook wsparcia L1/L2 oraz procedury rollbacku.
-- **Testy**: istnieją testy jednostkowe, integracyjne, smoke CLI, backtesty i testy obciążeniowe pokrywające główne scenariusze (sygnały wejścia/wyjścia, scheduler, risk harness, latencja, jitter).
+- **Testy**: istnieją testy jednostkowe, integracyjne, smoke CLI (`smoke_demo_strategies.py`), backtesty i testy obciążeniowe pokrywające główne scenariusze (sygnały wejścia/wyjścia, scheduler, risk harness, latencja, jitter) oraz objęte progami coverage.
 - **Operacje i bezpieczeństwo**: checklisty demo/paper/live zawierają kryteria smoke testów paper, audytów decyzji, weryfikację RBAC/mTLS oraz monitoring budżetów zasobów; alerty i dashboardy Prometheus/OTEL są zaktualizowane.
 
 ## 5. Kamienie milowe

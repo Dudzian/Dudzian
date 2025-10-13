@@ -1,7 +1,7 @@
 # Raport zamknięcia Etapu 4
 
 ## Kontekst
-Etap 4 programu rozwoju bota handlowego `bot_core` skupiał się na rozszerzeniu biblioteki strategii o warianty mean reversion, volatility targeting i cross-exchange arbitrage oraz na budowie harmonogramu wielostrate-gicznego, który umożliwia równoległą orkiestrację profili ryzyka w ścieżce demo→paper→live. Dodatkowo wymagano wzmocnienia dokumentacji operacyjnej, harnessu testowego silnika ryzyka oraz procedur audytowych (HMAC, RBAC, mTLS) zgodnych z naszym reżimem compliance. Po audycie zamknięcia zakres został rozszerzony o pakiet obserwowalności, danych, CI i operacji (zadania 7.x–11.x w trackerze) – niniejszy raport dokumentuje ukończone deliverables iteracji 4E oraz wskazuje rozszerzenia przewidziane na iterację 4F.
+Etap 4 programu rozwoju bota handlowego `bot_core` skupiał się na rozszerzeniu biblioteki strategii o warianty mean reversion, volatility targeting i cross-exchange arbitrage oraz na budowie harmonogramu wielostrate-gicznego, który umożliwia równoległą orkiestrację profili ryzyka w ścieżce demo→paper→live. Dodatkowo wymagano wzmocnienia dokumentacji operacyjnej, harnessu testowego silnika ryzyka oraz procedur audytowych (HMAC, RBAC, mTLS) zgodnych z naszym reżimem compliance. Po audycie zamknięcia zakres został rozszerzony o pakiet obserwowalności, danych, CI i operacji (zadania 7.x–11.x w trackerze) – niniejszy raport dokumentuje ukończone deliverables iteracji 4H.
 
 ## Zakres dostarczony
 - **Strategie**: komplet ustawień (`Settings`) i klas strategii dla mean reversion, volatility targeting i arbitrażu międzygiełdowego zintegrowanych z warstwą danych, silnikiem ryzyka i modułem egzekucji.
@@ -10,15 +10,18 @@ Etap 4 programu rozwoju bota handlowego `bot_core` skupiał się na rozszerzeniu
 - **Testy**: regresja obejmująca strategie, scheduler, ścieżkę runtime oraz scenariusze ryzyka (force liquidation, reset dziennego limitu strat, ograniczenia ekspozycji).
 - **Dokumentacja**: specyfikacja Etapu 4, plan testów, checklisty gate’ów, runbook paper tradingu i dedykowane opracowania strategii.
 - **Dane backtestowe**: biblioteka znormalizowanych datasetów (manifest + CSV) wraz z walidatorem `DataQualityValidator` i procedurą CLI `validate_backtest_datasets.py`.
+- **Automatyzacja CI**: workflow GitHub Actions z zestawem testów strategii/scheduler-a, progiem coverage ≥ 85 % oraz smoke CLI `smoke_demo_strategies.py` bazującym na znormalizowanych datasetach.
 
 ## Testy regresyjne
 | Obszar | Komenda | Status |
 | --- | --- | --- |
 | Strategie i scheduler | `PYTHONPATH=. pytest tests/test_mean_reversion_strategy.py tests/test_volatility_target_strategy.py tests/test_cross_exchange_arbitrage_strategy.py tests/test_multi_strategy_scheduler.py` | ✅ |
+| Telemetria i journaling | `PYTHONPATH=. pytest tests/test_telemetry_risk_profiles.py tests/test_trading_decision_journal.py` | ✅ |
 | Konfiguracja | `PYTHONPATH=. pytest tests/test_core_config_instrument_buckets.py` | ✅ |
 | Silnik ryzyka | `PYTHONPATH=. pytest tests/test_risk_engine.py::test_combined_strategy_orders_respect_max_position_pct tests/test_risk_engine.py::test_force_liquidation_due_to_drawdown_allows_only_reducing_orders tests/test_risk_engine.py::test_daily_loss_limit_resets_after_new_trading_day` | ✅ |
 | Runtime demo→paper→live | `PYTHONPATH=. pytest tests/test_runtime_pipeline.py` | ✅ |
 | Dane backtestowe | `PYTHONPATH=. pytest tests/test_backtest_dataset_library.py`, `python scripts/validate_backtest_datasets.py` | ✅ |
+| Smoke CLI demo | `python scripts/smoke_demo_strategies.py --cycles 3` | ✅ |
 
 Pełne logi testów są wersjonowane w katalogu `logs/` wraz z podpisami HMAC generowanymi przez `verify_decision_log.py`.
 
@@ -30,12 +33,12 @@ Pełne logi testów są wersjonowane w katalogu `logs/` wraz z podpisami HMAC ge
 
 ## Wnioski i rekomendacje
 1. **Stabilność**: Harness ryzyka pokrywa scenariusze kumulacji ekspozycji w trybie multi-strategy – rekomendujemy uruchamianie suite’u regression co najmniej raz dziennie w pipeline’ie CI `run_paper_smoke_ci.py`.
-2. **Monitoring**: Telemetria scheduler-a powinna zostać skorelowana z alertami w warstwie ryzyka; konieczne jest utrzymanie dashboardu audytowego dla force liquidation.
+2. **Monitoring**: Dostarczono zintegrowane metryki scheduler-a/strategii oraz reguły Alertmanagera – zalecane jest bieżące monitorowanie paneli Grafany i logów decision logu w celu wychwycenia regresji budżetów ryzyka.
 3. **Przejście do Etapu 5**: Możemy rozpocząć prace planistyczne nad etapem dotyczącym optymalizacji kosztów transakcyjnych i rozbudowy decision engine’u, zachowując wymuszone bramki compliance.
 
-## Status iteracji 4F (po rozszerzeniu zakresu)
-- **Postęp Etapu 4**: 24/40 (60 %) – pasek `[############--------]`.
-- **Ostatnia zamknięta iteracja**: 4E – deliverables bazowe zatwierdzone w audycie papier tradingu; iteracja 4F obejmuje zadania obserwowalności/CI/operacji po dostarczeniu biblioteki danych.
-- **Czynności otwarte**: metryki/alerty scheduler-a, integracja decyzji z centralnym logiem, smoke CLI, audyty RBAC/mTLS, testy obciążeniowe i playbook L1/L2.
+## Status iteracji 4H
+- **Postęp Etapu 4**: 32/40 (80 %) – pasek `[################----]`.
+- **Ostatnia zamknięta iteracja**: 4H – zamknięte zadania automatyzacji CI (testy, fixtures, smoke CLI, coverage gating) po integracji pakietu obserwowalności.
+- **Czynności otwarte**: audyty RBAC/mTLS i schema decision log (9.x), playbook L1/L2 oraz testy obciążeniowe i procedury rollbacku (10.x–11.x).
 - **Blokery**: finalny budżet zasobów dla równoległych strategii; brak nowych ryzyk związanych z infrastrukturą (RBAC/mTLS/HMAC pozostają zgodne).
 

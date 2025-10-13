@@ -36,6 +36,11 @@ class TradingDecisionEvent:
     quantity: Optional[float] = None
     price: Optional[float] = None
     status: Optional[str] = None
+    schedule: Optional[str] = None
+    strategy: Optional[str] = None
+    confidence: Optional[float] = None
+    latency_ms: Optional[float] = None
+    telemetry_namespace: Optional[str] = None
     metadata: Mapping[str, str] = field(default_factory=dict)
 
     def as_dict(self) -> Mapping[str, str]:
@@ -58,6 +63,18 @@ class TradingDecisionEvent:
             payload["price"] = price
         if self.status:
             payload["status"] = self.status
+        if self.schedule:
+            payload["schedule"] = self.schedule
+        if self.strategy:
+            payload["strategy"] = self.strategy
+        confidence = _format_float(self.confidence)
+        if confidence is not None:
+            payload["confidence"] = confidence
+        latency = _format_float(self.latency_ms)
+        if latency is not None:
+            payload["latency_ms"] = latency
+        if self.telemetry_namespace:
+            payload["telemetry_namespace"] = self.telemetry_namespace
         for key, value in self.metadata.items():
             payload[str(key)] = str(value)
         return payload
