@@ -233,6 +233,39 @@ def test_watch_metrics_stream_print_risk_profiles_env(monkeypatch, capsys):
     assert payload.get("selected") is None
 
 
+def test_environment_numeric_override_allows_none_keyword(monkeypatch):
+    parser = watch_metrics_module.build_arg_parser()
+    args = parser.parse_args([])
+    args.limit = 25
+    monkeypatch.setenv(f"{_ENV_PREFIX}LIMIT", "NONE")
+    watch_metrics_module._apply_environment_overrides(
+        args, parser=parser, provided_flags=set()
+    )
+    assert args.limit is None
+
+
+def test_environment_numeric_override_allows_null_with_spaces(monkeypatch):
+    parser = watch_metrics_module.build_arg_parser()
+    args = parser.parse_args([])
+    args.timeout = 17.5
+    monkeypatch.setenv(f"{_ENV_PREFIX}TIMEOUT", "  null \t")
+    watch_metrics_module._apply_environment_overrides(
+        args, parser=parser, provided_flags=set()
+    )
+    assert args.timeout is None
+
+
+def test_environment_numeric_override_supports_default(monkeypatch):
+    parser = watch_metrics_module.build_arg_parser()
+    args = parser.parse_args([])
+    args.port = 60000
+    monkeypatch.setenv(f"{_ENV_PREFIX}PORT", "default")
+    watch_metrics_module._apply_environment_overrides(
+        args, parser=parser, provided_flags=set()
+    )
+    assert args.port == parser.get_default("port")
+
+
 def test_watch_metrics_stream_risk_profiles_file_cli(tmp_path, capsys):
     profiles_path = tmp_path / "telemetry_profiles.json"
     profiles_path.write_text(

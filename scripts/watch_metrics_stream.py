@@ -1023,11 +1023,16 @@ def _apply_environment_overrides(
         if env_key not in env:
             return
         raw_value = env[env_key]
-        if allow_none and raw_value.strip() == "":
+        stripped = raw_value.strip()
+        normalized = stripped.lower()
+        if allow_none and normalized in {"", "none", "null"}:
             setattr(args, attr, None)
             return
+        if normalized == "default":
+            setattr(args, attr, parser.get_default(attr))
+            return
         try:
-            setattr(args, attr, cast(raw_value))
+            setattr(args, attr, cast(stripped))
         except Exception:
             parser.error(
                 f"Nieprawidłowa wartość '{raw_value}' w zmiennej {env_key} dla parametru {attr}."
