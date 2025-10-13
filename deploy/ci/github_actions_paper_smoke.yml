@@ -49,6 +49,7 @@ jobs:
         run: |
           mkdir -p "$BOT_CORE_OUTPUT_DIR"
           mkdir -p docs/audit
+          mkdir -p "$BOT_CORE_OUTPUT_DIR/risk_simulation"
 
       - name: Run paper smoke orchestrator
         id: smoke
@@ -74,6 +75,36 @@ jobs:
             --env-file "$GITHUB_ENV" \
             $AUTO_PUBLISH_FLAGS \
             $EXTRA_ARGS
+
+      - name: Run risk simulation suite
+        run: |
+          python - <<'PY'
+from pathlib import Path
+
+from bot_core.risk.engine import ThresholdRiskEngine
+from bot_core.risk.simulation import write_default_smoke_scenarios
+
+manual_overrides = {
+    "max_positions": 4,
+    "max_leverage": 4.0,
+    "drawdown_limit": 0.2,
+    "daily_loss_limit": 0.05,
+    "max_position_pct": 0.2,
+    "target_volatility": 0.3,
+    "stop_loss_atr_multiple": 1.0,
+}
+
+parquet_path = Path("${{ env.BOT_CORE_OUTPUT_DIR }}/risk_simulation/smoke_scenarios.parquet")
+write_default_smoke_scenarios(parquet_path)
+
+report = ThresholdRiskEngine.generate_simulation_reports(
+    parquet_path,
+    output_dir="${{ env.BOT_CORE_OUTPUT_DIR }}/risk_simulation",
+    manual_overrides=manual_overrides,
+)
+print(f"Generated risk simulation JSON: {report['json_path']}")
+print(f"Generated risk simulation PDF: {report['pdf_path']}")
+PY
 
       - name: Validate summary (strict)
         if: steps.smoke.outcome == 'success'
@@ -120,6 +151,8 @@ jobs:
             ${{ env.BOT_CORE_OUTPUT_DIR }}/paper_trading_log.md
             ${{ env.BOT_CORE_OUTPUT_DIR }}/paper_precheck_reports
             ${{ env.BOT_CORE_OUTPUT_DIR }}/runs
+            ${{ env.BOT_CORE_OUTPUT_DIR }}/risk_simulation/risk_simulation_report.json
+            ${{ env.BOT_CORE_OUTPUT_DIR }}/risk_simulation/risk_simulation_report.pdf
 
       - name: Publish Markdown summary to job summary
         if: always()
