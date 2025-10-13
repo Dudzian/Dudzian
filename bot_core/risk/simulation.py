@@ -6,7 +6,7 @@ import logging
 import math
 import random
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from statistics import median, pstdev
 from typing import Iterable, Mapping, MutableMapping, Sequence, TYPE_CHECKING
@@ -594,18 +594,49 @@ def _compute_returns(candles: Sequence[Candle]) -> list[float]:
     return returns
 
 
-def _compute_daily_losses(candles: Sequence[Candle], pnl_series: Sequence[float], base_equity: float) -> float:
+def _compute_daily_losses(
+    streams: Sequence[tuple[Sequence[Candle], Sequence[float]]],
+    base_equity: float,
+) -> float:
+    """Compute worst intraday loss across all simulated symbols.
+
+    Each entry in ``streams`` represents the candle series and matching P&L deltas
+    for a symbol.  The events are merged chronologically to reconstruct equity
+    fluctuations across the portfolio, ensuring that losses from secondary
+    symbols are reflected in the daily loss metric.
+    """
+
+    if not streams:
+        return 0.0
+
+    events: list[tuple[int, float]] = []
+    for candles, pnl_series in streams:
+        if not candles:
+            continue
+        for candle, pnl in zip(candles[1:], pnl_series):
+            events.append((candle.timestamp_ms, pnl))
+
+    if not events:
+        return 0.0
+
+    events.sort(key=lambda item: item[0])
+
     worst_loss = 0.0
     equity = base_equity
-    by_day: dict[str, float] = {}
-    for candle, pnl in zip(candles[1:], pnl_series):
-        day = datetime.fromtimestamp(candle.timestamp_ms / 1000.0, tz=timezone.utc).date().isoformat()
-        by_day.setdefault(day, equity)
+    current_day: date | None = None
+    day_open_equity = base_equity
+
+    for timestamp_ms, pnl in events:
+        event_day = datetime.fromtimestamp(timestamp_ms / 1000.0, tz=timezone.utc).date()
+        if event_day != current_day:
+            current_day = event_day
+            day_open_equity = equity
+
         equity += pnl
-        change = equity - by_day[day]
-        if by_day[day] > 0 and change < 0:
-            loss_pct = abs(change) / by_day[day]
+        if day_open_equity > 0 and equity < day_open_equity:
+            loss_pct = (day_open_equity - equity) / day_open_equity
             worst_loss = max(worst_loss, loss_pct)
+
     return worst_loss
 
 
@@ -737,6 +768,7 @@ class RiskSimulationRunner:
     def _run_for_profile(self, *, profile: RiskProfile, base_equity: float) -> ProfileSimulationResult:
         total_returns: list[float] = []
         pnl_series: list[float] = []
+        symbol_streams: list[tuple[Sequence[Candle], Sequence[float]]] = []
         sample_size = 0
         leverage_limit = max(profile.max_leverage(), 1.0)
         position_pct = max(profile.max_position_exposure(), 0.0)
@@ -752,6 +784,7 @@ class RiskSimulationRunner:
             notional = min(notional, base_equity * leverage_limit)
             pnl = [notional * r for r in returns]
             pnl_series.extend(pnl)
+            symbol_streams.append((subset, pnl))
             total_returns.extend(returns)
             sample_size += len(returns)
         if not pnl_series:
@@ -775,7 +808,7 @@ class RiskSimulationRunner:
         total_pnl = sum(pnl_series)
         final_equity = base_equity + total_pnl
         max_drawdown = _compute_max_drawdown(pnl_series, base_equity)
-        worst_daily_loss = _compute_daily_losses(next(iter(self._candles_by_symbol.values())), pnl_series, base_equity)
+        worst_daily_loss = _compute_daily_losses(symbol_streams, base_equity)
         realized_vol = _realized_volatility(total_returns)
         breaches = []
         if max_drawdown > profile.drawdown_limit():
