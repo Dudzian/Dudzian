@@ -183,6 +183,15 @@ void Application::configureParser(QCommandLineParser& parser) const {
     parser.addOption({"metrics-server-name", tr("Override nazwy serwera TLS"), tr("name"), QString()});
     parser.addOption({"metrics-server-sha256", tr("Oczekiwany odcisk SHA-256 certyfikatu serwera"), tr("hex"),
                       QString()});
+
+    // TLS/mTLS dla TradingClient (gRPC)
+    parser.addOption({"use-tls", tr("Wymusza połączenie TLS z TradingService")});
+    parser.addOption({"tls-root-cert", tr("Plik root CA (PEM) dla TradingService"), tr("path"), QString()});
+    parser.addOption({"tls-client-cert", tr("Certyfikat klienta (PEM)"), tr("path"), QString()});
+    parser.addOption({"tls-client-key", tr("Klucz klienta (PEM)"), tr("path"), QString()});
+    parser.addOption({"tls-server-name", tr("Override nazwy serwera TLS"), tr("name"), QString()});
+    parser.addOption({"tls-pinned-sha256", tr("Oczekiwany fingerprint SHA-256 certyfikatu"), tr("hex"), QString()});
+    parser.addOption({"tls-require-client-auth", tr("Wymaga dostarczenia certyfikatu klienta (mTLS)")});
 }
 
 bool Application::applyParser(const QCommandLineParser& parser) {
@@ -198,6 +207,16 @@ bool Application::applyParser(const QCommandLineParser& parser) {
     m_client.setInstrument(instrument);
     m_instrument = instrument;
     Q_EMIT instrumentChanged();
+
+    TradingClient::TlsConfig tlsConfig;
+    tlsConfig.enabled = parser.isSet("use-tls");
+    tlsConfig.rootCertificatePath = parser.value("tls-root-cert");
+    tlsConfig.clientCertificatePath = parser.value("tls-client-cert");
+    tlsConfig.clientKeyPath = parser.value("tls-client-key");
+    tlsConfig.serverNameOverride = parser.value("tls-server-name");
+    tlsConfig.pinnedServerFingerprint = parser.value("tls-pinned-sha256");
+    tlsConfig.requireClientAuth = parser.isSet("tls-require-client-auth");
+    m_client.setTlsConfig(tlsConfig);
 
     const int historyLimit = parser.value("history-limit").toInt();
     m_client.setHistoryLimit(historyLimit);

@@ -1,6 +1,16 @@
 # Konfiguracja przykładowa dla powłoki Qt/QML korzystającej z trading stub server
 endpoint: 127.0.0.1:50061
 
+grpc:
+  tls:
+    enabled: false
+    root_cert: secrets/mtls/ca/ca.pem
+    client_cert: secrets/mtls/client/client.crt
+    client_key: secrets/mtls/client/client.key
+    server_name: trading.local
+    pinned_sha256: ""
+    require_client_auth: false
+
 instrument:
   exchange: BINANCE
   symbol: BTC/USDT
