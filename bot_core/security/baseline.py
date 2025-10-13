@@ -60,6 +60,9 @@ def generate_security_baseline_report(
     warn_expiring_within_days: float = 30.0,
     metrics_required_scopes: Sequence[str] | None = None,
     risk_required_scopes: Sequence[str] | None = None,
+    scheduler_required_scopes: Mapping[str, Sequence[str]]
+    | Sequence[str]
+    | None = None,
     warn_on_legacy_tokens: bool = True,
 ) -> SecurityBaselineReport:
     """Generuje zbiorczy raport bezpieczeństwa dla runtime.
@@ -81,6 +84,7 @@ def generate_security_baseline_report(
         env=env_map,
         metrics_required_scopes=metrics_required_scopes,
         risk_required_scopes=risk_required_scopes,
+        scheduler_required_scopes=scheduler_required_scopes,
         warn_on_legacy=warn_on_legacy_tokens,
     ).as_dict()
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from types import SimpleNamespace
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, MutableMapping, Sequence
 
@@ -234,11 +235,43 @@ def audit_service_tokens(
     env: Mapping[str, str] | None = None,
     metrics_required_scopes: Sequence[str] | None = None,
     risk_required_scopes: Sequence[str] | None = None,
+    scheduler_required_scopes: Mapping[str, Sequence[str]]
+    | Sequence[str]
+    | None = None,
     warn_on_legacy: bool = True,
 ) -> TokenAuditReport:
     env_map = env or {}
     metrics_scopes = metrics_required_scopes or ("metrics.read",)
     risk_scopes = risk_required_scopes or ("risk.read",)
+
+    scheduler_default_scopes: Sequence[str]
+    scheduler_overrides: Mapping[str, Sequence[str]]
+    scheduler_default_scopes = ("runtime.schedule.read", "runtime.schedule.write")
+    scheduler_overrides = {}
+    if scheduler_required_scopes:
+        if isinstance(scheduler_required_scopes, Mapping):
+            scheduler_overrides = {
+                str(name): tuple(str(scope).strip().lower() for scope in values if scope)
+                for name, values in scheduler_required_scopes.items()
+                if name not in {"*", "__default__"}
+            }
+            default_candidate = None
+            for key in ("*", "__default__"):
+                if key in scheduler_required_scopes:
+                    default_candidate = scheduler_required_scopes[key]
+                    break
+            if default_candidate:
+                scheduler_default_scopes = tuple(
+                    str(scope).strip().lower()
+                    for scope in default_candidate
+                    if str(scope).strip()
+                )
+        else:
+            scheduler_default_scopes = tuple(
+                str(scope).strip().lower()
+                for scope in scheduler_required_scopes
+                if str(scope).strip()
+            ) or scheduler_default_scopes
 
     services: list[TokenAuditServiceReport] = []
     services.append(
@@ -259,5 +292,26 @@ def audit_service_tokens(
             warn_on_legacy=warn_on_legacy,
         )
     )
+
+    scheduler_configs = getattr(core_config, "multi_strategy_schedulers", {}) or {}
+    for scheduler_name, scheduler_config in scheduler_configs.items():
+        tokens = tuple(getattr(scheduler_config, "rbac_tokens", ()) or ())
+        required_scopes = scheduler_overrides.get(
+            scheduler_name,
+            scheduler_default_scopes,
+        )
+        services.append(
+            audit_service_token_configs(
+                f"multi_strategy_scheduler:{scheduler_name}",
+                config=SimpleNamespace(
+                    enabled=True,
+                    auth_token=None,
+                    rbac_tokens=tokens,
+                ),
+                required_scopes=required_scopes,
+                env=env_map,
+                warn_on_legacy=False,
+            )
+        )
 
     return TokenAuditReport(tuple(services))

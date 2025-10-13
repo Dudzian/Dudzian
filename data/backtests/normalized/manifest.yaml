@@ -1,0 +1,73 @@
+version: 1
+interval_units:
+  m: 60
+  h: 3600
+  d: 86400
+datasets:
+  mean_reversion:
+    file: mean_reversion.csv
+    interval: 1m
+    timezone: UTC
+    strategies: [mean_reversion]
+    risk_profiles: [conservative, balanced, aggressive]
+    schema:
+      timestamp: int
+      instrument: str
+      exchange: str
+      open: float
+      high: float
+      low: float
+      close: float
+      volume: float
+      z_score: float
+    checks:
+      price_columns: [open, high, low, close]
+      volume_columns: [volume]
+      bounded_columns:
+        z_score:
+          min: -3.0
+          max: 3.0
+  volatility_target:
+    file: volatility_target.csv
+    interval: 1m
+    timezone: UTC
+    strategies: [volatility_target]
+    risk_profiles: [balanced, aggressive]
+    schema:
+      timestamp: int
+      instrument: str
+      exchange: str
+      close: float
+      volume: float
+      realized_volatility: float
+      target_volatility: float
+    checks:
+      price_columns: [close]
+      volume_columns: [volume]
+      bounded_columns:
+        realized_volatility:
+          min: 0.0
+        target_volatility:
+          min: 0.05
+          max: 0.30
+  cross_exchange_arbitrage:
+    file: cross_exchange_arbitrage.csv
+    interval: 1m
+    timezone: UTC
+    strategies: [cross_exchange_arbitrage]
+    risk_profiles: [balanced, aggressive]
+    schema:
+      timestamp: int
+      instrument: str
+      base_exchange: str
+      quote_exchange: str
+      base_bid: float
+      base_ask: float
+      quote_bid: float
+      quote_ask: float
+      available_volume: float
+    checks:
+      volume_columns: [available_volume]
+      bid_ask_pairs:
+        - [base_bid, base_ask]
+        - [quote_bid, quote_ask]

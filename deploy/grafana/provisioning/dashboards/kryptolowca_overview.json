@@ -69,6 +69,66 @@
         "showLabels": true,
         "wrapLogMessage": true
       }
+    },
+    {
+      "type": "timeseries",
+      "title": "Scheduler loop latency",
+      "gridPos": {"x": 0, "y": 24, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "max_over_time(bot_core_multi_strategy_latency_ms[5m])",
+          "legendFormat": "{{schedule}}"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "ms"}},
+      "datasource": {"type": "prometheus", "uid": "prometheus"}
+    },
+    {
+      "type": "timeseries",
+      "title": "Strategy confidence & vol tracking",
+      "gridPos": {"x": 12, "y": 24, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "avg_over_time(bot_core_multi_strategy_avg_confidence[5m])",
+          "legendFormat": "confidence {{schedule}}"
+        },
+        {
+          "expr": "avg_over_time(bot_core_multi_strategy_realized_vs_target_vol_pct[5m])",
+          "legendFormat": "vol drift {{schedule}}"
+        },
+        {
+          "expr": "avg_over_time(bot_core_multi_strategy_allocation_error_pct[5m])",
+          "legendFormat": "alloc error {{schedule}}"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "percent"}},
+      "datasource": {"type": "prometheus", "uid": "prometheus"}
+    },
+    {
+      "type": "stat",
+      "title": "Arbitrage spread capture (bps)",
+      "gridPos": {"x": 0, "y": 32, "w": 12, "h": 6},
+      "targets": [
+        {
+          "expr": "avg(bot_core_multi_strategy_spread_capture_bps)",
+          "legendFormat": "capture"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "bps", "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": 0}, {"color": "orange", "value": 3}, {"color": "green", "value": 6}]}}},
+      "datasource": {"type": "prometheus", "uid": "prometheus"}
+    },
+    {
+      "type": "stat",
+      "title": "Scheduler secondary delay (ms)",
+      "gridPos": {"x": 12, "y": 32, "w": 12, "h": 6},
+      "targets": [
+        {
+          "expr": "max(bot_core_multi_strategy_secondary_delay_ms)",
+          "legendFormat": "delay"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "ms", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": 0}, {"color": "orange", "value": 300}, {"color": "red", "value": 450}]}}},
+      "datasource": {"type": "prometheus", "uid": "prometheus"}
     }
   ]
 }
