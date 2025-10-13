@@ -169,10 +169,14 @@ def _looks_like_sensitive_metadata_key(key: str) -> bool:
     return any(token in lowered for token in ("auth", "token", "secret", "key"))
 
 
+_METADATA_CLEAR_SENTINELS = {"none", "null"}
+
+
 def _parse_metadata_entries(
     entries: Sequence[str], *, parser: argparse.ArgumentParser
-) -> list[tuple[str, str]]:
+) -> tuple[list[tuple[str, str]], set[str]]:
     metadata: list[tuple[str, str]] = []
+    removals: set[str] = set()
     for raw_entry in entries:
         entry = raw_entry.strip()
         if not entry:
@@ -198,8 +202,18 @@ def _parse_metadata_entries(
                 "Nagłówek gRPC '%s' zawiera niedozwolone znaki – dozwolone są małe litery, cyfry, '-', '_' i '.'"
                 % normalized_key
             )
-        metadata.append((normalized_key, value.strip()))
-    return metadata
+        normalized_value = value.strip()
+        sentinel = normalized_value.lower()
+        if sentinel in _METADATA_CLEAR_SENTINELS:
+            removals.add(normalized_key)
+            continue
+        if sentinel == "default":
+            # Przywracamy konfigurację domyślną – brak wpisu CLI/ENV.
+            removals.discard(normalized_key)
+            continue
+        removals.discard(normalized_key)
+        metadata.append((normalized_key, normalized_value))
+    return metadata, removals
 
 
 def _merge_metadata_entries(
@@ -223,29 +237,26 @@ def _merge_metadata_entries(
 
 
 def _finalize_custom_metadata(args: argparse.Namespace) -> None:
-    entries = getattr(args, "_custom_metadata", None)
-    if not entries:
-        args._custom_metadata = None
-        args._custom_metadata_sources = None
-        core_meta = getattr(args, "_core_config_metadata", None)
-        if isinstance(core_meta, dict):
-            metrics_meta = core_meta.get("metrics_service")
-            if isinstance(metrics_meta, dict):
-                metrics_meta.pop("grpc_metadata_sources", None)
-        return
+    removals = set(getattr(args, "_custom_metadata_remove", set()) or ())
+    entries = list(getattr(args, "_custom_metadata", []) or [])
 
-    merged = _merge_metadata_entries(entries)
-    args._custom_metadata = merged
+    if removals and entries:
+        entries = [pair for pair in entries if pair[0] not in removals]
+
+    merged = _merge_metadata_entries(entries) if entries else []
+    args._custom_metadata = merged or None
 
     sources_map = dict(getattr(args, "_custom_metadata_sources", {}) or {})
     merged_sources: dict[str, str] = {}
-    if sources_map:
+    if sources_map and merged:
         for key, _ in merged:
             source = sources_map.get(key)
             if source:
                 merged_sources[key] = source
 
     args._custom_metadata_sources = merged_sources or None
+
+    removal_sources = getattr(args, "_custom_metadata_remove_sources", {}) or {}
 
     core_meta = getattr(args, "_core_config_metadata", None)
     if isinstance(core_meta, dict):
@@ -255,6 +266,23 @@ def _finalize_custom_metadata(args: argparse.Namespace) -> None:
                 metrics_meta["grpc_metadata_sources"] = dict(merged_sources)
             else:
                 metrics_meta.pop("grpc_metadata_sources", None)
+            if merged:
+                metrics_meta["grpc_metadata_keys"] = [key for key, _ in merged]
+                metrics_meta["grpc_metadata_count"] = len(merged)
+                metrics_meta["grpc_metadata_enabled"] = True
+            else:
+                metrics_meta.pop("grpc_metadata_keys", None)
+                metrics_meta.pop("grpc_metadata_count", None)
+                metrics_meta["grpc_metadata_enabled"] = False
+            if removals:
+                metrics_meta["grpc_metadata_removed"] = sorted(removals)
+                if removal_sources:
+                    metrics_meta["grpc_metadata_removed_sources"] = dict(removal_sources)
+                else:
+                    metrics_meta.pop("grpc_metadata_removed_sources", None)
+            else:
+                metrics_meta.pop("grpc_metadata_removed", None)
+                metrics_meta.pop("grpc_metadata_removed_sources", None)
 
 
 def _load_grpc_components():
@@ -1956,12 +1984,17 @@ def main(argv: list[str] | None = None) -> int:
     custom_metadata_sources: dict[str, str] | None = None
     headers_disabled = getattr(args, "headers", None) == []
     raw_headers = None if headers_disabled else getattr(args, "headers", None)
+    removal_sources: dict[str, str] | None = None
     if raw_headers:
-        custom_metadata = _parse_metadata_entries(raw_headers, parser=parser)
+        custom_metadata, removal_keys = _parse_metadata_entries(raw_headers, parser=parser)
         source_label = _CLI_HEADER_SOURCE if "--header" in provided_flags else _ENV_HEADER_SOURCE
         custom_metadata_sources = {key: source_label for key, _ in custom_metadata}
+        if removal_keys:
+            removal_sources = {key: source_label for key in removal_keys}
     args._custom_metadata = custom_metadata
     args._custom_metadata_sources = custom_metadata_sources
+    args._custom_metadata_remove = set(removal_sources or ())
+    args._custom_metadata_remove_sources = removal_sources
     args._headers_disabled = headers_disabled
     if headers_disabled:
         args.headers = None

@@ -1600,6 +1600,81 @@ def test_core_config_grpc_metadata_sources_cli_override_logged(monkeypatch, tmp_
     }
 
 
+def test_core_config_grpc_metadata_cli_remove(monkeypatch, tmp_path):
+    stub = _StubCollector()
+    stub.response = []
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
+    config_path = _write_core_config(
+        tmp_path,
+        profiles_path=profiles_path,
+        metrics_grpc_metadata={"authorization": "Bearer config", "x-trace": "cfg"},
+    )
+    decision_log = tmp_path / "logs" / "metrics.jsonl"
+
+    exit_code = watch_metrics_main(
+        [
+            "--core-config",
+            str(config_path),
+            "--header",
+            "authorization=NONE",
+            "--decision-log",
+            str(decision_log),
+        ]
+    )
+
+    assert exit_code == 0
+    assert stub.calls
+    _request, _timeout, metadata = stub.calls[0]
+    assert metadata == [("x-trace", "cfg")]
+
+    entries = [ln for ln in decision_log.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    assert len(entries) == 1
+    metadata_entry = json.loads(entries[0])
+    metrics_meta = metadata_entry["metadata"]["core_config"]["metrics_service"]
+    assert metrics_meta["grpc_metadata_keys"] == ["x-trace"]
+    assert metrics_meta["grpc_metadata_sources"] == {"x-trace": "inline"}
+    assert metrics_meta["grpc_metadata_removed"] == ["authorization"]
+    assert metrics_meta["grpc_metadata_removed_sources"] == {
+        "authorization": watch_metrics_module._CLI_HEADER_SOURCE
+    }
+
+
+def test_environment_headers_remove_config_key(monkeypatch, tmp_path):
+    stub = _StubCollector()
+    stub.response = []
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
+    config_path = _write_core_config(
+        tmp_path,
+        profiles_path=profiles_path,
+        metrics_grpc_metadata={"authorization": "cfg-token"},
+    )
+    decision_log = tmp_path / "logs" / "metrics.jsonl"
+    monkeypatch.setenv(f"{_ENV_PREFIX}HEADERS", "authorization=NONE")
+
+    exit_code = watch_metrics_main(
+        ["--core-config", str(config_path), "--decision-log", str(decision_log)]
+    )
+
+    assert exit_code == 0
+    assert stub.calls
+    _request, _timeout, metadata = stub.calls[0]
+    assert metadata is None
+
+    entries = [ln for ln in decision_log.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    assert len(entries) == 1
+    metadata_entry = json.loads(entries[0])
+    metrics_meta = metadata_entry["metadata"]["core_config"]["metrics_service"]
+    assert metrics_meta["grpc_metadata_enabled"] is False
+    assert metrics_meta["grpc_metadata_removed"] == ["authorization"]
+    assert metrics_meta["grpc_metadata_removed_sources"] == {
+        "authorization": watch_metrics_module._ENV_HEADER_SOURCE
+    }
+
+
 def test_watch_metrics_stream_header_invalid_format(monkeypatch):
     stub = _StubCollector()
     _install_dummy_loader(monkeypatch, stub)
