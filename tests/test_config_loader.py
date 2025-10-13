@@ -1343,4 +1343,40 @@ def test_load_core_config_reads_security_baseline(tmp_path: Path) -> None:
     assert signing.signing_key_env == "BASELINE_KEY"
     assert signing.signing_key_id == "baseline-ci"
     assert signing.require_signature is True
+
+
+def test_load_core_config_reads_live_routing(tmp_path: Path) -> None:
+    config_path = tmp_path / "core.yaml"
+    config_path.write_text(
+        textwrap.dedent(
+            """
+            risk_profiles: {}
+            environments: {}
+            runtime:
+              live_routing:
+                enabled: true
+                default_route: [binance_spot, kraken_spot]
+                route_overrides:
+                  BTCUSDT: [binance_spot, kraken_spot]
+                latency_histogram_buckets: [0.05, 0.1, 0.25]
+                prometheus_alerts:
+                  - name: HighLatency
+                    expr: rate(live_router_latency_seconds_sum[5m]) > 1.0
+                    for: 2m
+                    labels:
+                      severity: warning
+                    annotations:
+                      summary: High latency detected
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_core_config(config_path)
+
+    assert config.live_routing is not None
+    assert config.live_routing.enabled is True
+    assert config.live_routing.default_route == ("binance_spot", "kraken_spot")
+    assert config.live_routing.latency_histogram_buckets == (0.05, 0.1, 0.25)
+    assert len(config.live_routing.prometheus_alerts) == 1
 '''

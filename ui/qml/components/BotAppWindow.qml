@@ -57,6 +57,15 @@ ApplicationWindow {
             }
 
             Button {
+                text: qsTr("Aktywacja")
+                icon.name: "emblem-verified"
+                onClicked: activationDialog.open()
+                ToolTip.visible: hovered
+                ToolTip.delay: 400
+                ToolTip.text: qsTr("Wyświetl fingerprint i licencje OEM")
+            }
+
+            Button {
                 text: qsTr("Ponów połączenie")
                 onClicked: {
                     appController.stop()
@@ -64,6 +73,11 @@ ApplicationWindow {
                 }
             }
         }
+    }
+
+    ActivationDialog {
+        id: activationDialog
+        controller: activationController
     }
 
     background: Rectangle {

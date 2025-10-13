@@ -7,6 +7,7 @@ from pathlib import Path
 
 from bot_core.security.base import SecretStorage, SecretStorageError
 from bot_core.security.file_storage import EncryptedFileSecretStorage
+from bot_core.security.fingerprint import HardwareFingerprintService, build_key_provider
 from bot_core.security.keyring_storage import KeyringSecretStorage
 
 _GUI_ENV_VARS = ("DISPLAY", "WAYLAND_DISPLAY", "DBUS_SESSION_BUS_ADDRESS")
@@ -44,4 +45,34 @@ def create_default_secret_storage(
     return KeyringSecretStorage(service_name=namespace)
 
 
-__all__ = ["create_default_secret_storage"]
+def create_default_fingerprint_service(
+    keys: dict[str, bytes | str],
+    *,
+    rotation_log: str | os.PathLike[str] = "var/licenses/fingerprint_rotation.json",
+    purpose: str = "hardware-fingerprint",
+    interval_days: float = 90.0,
+    cpu_probe=None,
+    tpm_probe=None,
+    mac_probe=None,
+    dongle_probe=None,
+    clock=None,
+) -> HardwareFingerprintService:
+    """Buduje domyślną usługę fingerprintu sprzętowego."""
+
+    provider = build_key_provider(
+        keys,
+        rotation_log,
+        purpose=purpose,
+        interval_days=interval_days,
+    )
+    return HardwareFingerprintService(
+        provider,
+        cpu_probe=cpu_probe,
+        tpm_probe=tpm_probe,
+        mac_probe=mac_probe,
+        dongle_probe=dongle_probe,
+        clock=clock,
+    )
+
+
+__all__ = ["create_default_secret_storage", "create_default_fingerprint_service"]

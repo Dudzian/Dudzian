@@ -49,6 +49,22 @@ jobs:
         run: |
           mkdir -p "$BOT_CORE_OUTPUT_DIR"
           mkdir -p docs/audit
+          mkdir -p "$BOT_CORE_OUTPUT_DIR/risk_simulation"
+
+      - name: Validate OEM license registry signatures
+        run: |
+          if [ ! -f "var/licenses/registry.jsonl" ]; then
+            echo "Brak rejestru licencji – pomijam walidację"
+            exit 0
+          fi
+          if [ -z "${{ secrets.OEM_LICENSE_KEY }}" ]; then
+            echo "Sekret OEM_LICENSE_KEY nie ustawiony – pomijam walidację" >&2
+            exit 0
+          fi
+          python scripts/oem_provision_license.py \
+            --registry "var/licenses/registry.jsonl" \
+            --license-key "lic-2024=${{ secrets.OEM_LICENSE_KEY }}" \
+            --validate-registry
 
       - name: Run paper smoke orchestrator
         id: smoke
@@ -75,19 +91,54 @@ jobs:
             $AUTO_PUBLISH_FLAGS \
             $EXTRA_ARGS
 
-      - name: Run risk simulations (Paper Labs)
+      - name: Run risk simulations
         if: always()
+        shell: bash
         run: |
-          python scripts/run_risk_simulation_lab.py \
-            --config "$BOT_CORE_CONFIG" \
-            --environment "$BOT_CORE_ENVIRONMENT" \
-            --output-dir "$BOT_CORE_OUTPUT_DIR/risk_simulation" \
-            --namespace binance_spot \
-            --symbols BTCUSDT ETHUSDT \
-            --interval 1h \
-            --synthetic-fallback \
-            --fail-on-breach \
-            --print-summary
+          set -e
+          if [ -f "scripts/run_risk_simulation_lab.py" ]; then
+            echo "▶ Running lab risk simulations…"
+            python scripts/run_risk_simulation_lab.py \
+              --config "$BOT_CORE_CONFIG" \
+              --environment "$BOT_CORE_ENVIRONMENT" \
+              --output-dir "$BOT_CORE_OUTPUT_DIR/risk_simulation" \
+              --namespace binance_spot \
+              --symbols BTCUSDT ETHUSDT \
+              --interval 1h \
+              --synthetic-fallback \
+              --fail-on-breach \
+              --print-summary
+          else
+            echo "▶ Lab script not found – running fallback suite…"
+            python - <<'PY'
+from pathlib import Path
+from bot_core.risk.engine import ThresholdRiskEngine
+from bot_core.risk.simulation import write_default_smoke_scenarios
+
+manual_overrides = {
+    "max_positions": 4,
+    "max_leverage": 4.0,
+    "drawdown_limit": 0.2,
+    "daily_loss_limit": 0.05,
+    "max_position_pct": 0.2,
+    "target_volatility": 0.3,
+    "stop_loss_atr_multiple": 1.0,
+}
+
+out_dir = Path("${{ env.BOT_CORE_OUTPUT_DIR }}/risk_simulation")
+out_dir.mkdir(parents=True, exist_ok=True)
+parquet_path = out_dir / "smoke_scenarios.parquet"
+write_default_smoke_scenarios(parquet_path)
+
+report = ThresholdRiskEngine.generate_simulation_reports(
+    parquet_path,
+    output_dir=str(out_dir),
+    manual_overrides=manual_overrides,
+)
+print(f"Generated risk simulation JSON: {report['json_path']}")
+print(f"Generated risk simulation PDF: {report['pdf_path']}")
+PY
+          fi
 
       - name: Validate summary (strict)
         if: steps.smoke.outcome == 'success'
@@ -134,6 +185,8 @@ jobs:
             ${{ env.BOT_CORE_OUTPUT_DIR }}/paper_trading_log.md
             ${{ env.BOT_CORE_OUTPUT_DIR }}/paper_precheck_reports
             ${{ env.BOT_CORE_OUTPUT_DIR }}/runs
+            ${{ env.BOT_CORE_OUTPUT_DIR }}/risk_simulation/risk_simulation_report.json
+            ${{ env.BOT_CORE_OUTPUT_DIR }}/risk_simulation/risk_simulation_report.pdf
 
       - name: Publish Markdown summary to job summary
         if: always()

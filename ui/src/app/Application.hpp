@@ -19,6 +19,7 @@
 
 class QQuickWindow;
 class QScreen;
+class ActivationController;
 
 class Application : public QObject {
     Q_OBJECT
@@ -27,6 +28,7 @@ class Application : public QObject {
     Q_PROPERTY(bool             reduceMotionActive  READ reduceMotionActive NOTIFY reduceMotionActiveChanged)
     Q_PROPERTY(QString          instrumentLabel     READ instrumentLabel    NOTIFY instrumentChanged)
     Q_PROPERTY(QObject*         riskModel           READ riskModel          CONSTANT)
+    Q_PROPERTY(QObject*         activationController READ activationController CONSTANT)
 
 public:
     explicit Application(QQmlApplicationEngine& engine, QObject* parent = nullptr);
@@ -46,6 +48,7 @@ public:
     QString          instrumentLabel() const;
     bool             reduceMotionActive() const { return m_reduceMotionActive; }
     QObject*         riskModel() const { return const_cast<RiskStateModel*>(&m_riskModel); }
+    QObject*         activationController() const;
 
 public slots:
     void start();
@@ -115,6 +118,8 @@ private:
 
     std::unique_ptr<FrameRateMonitor> m_frameMonitor;
     bool                              m_reduceMotionActive = false;
+
+    std::unique_ptr<ActivationController> m_activationController;
 
     // --- Telemetry state ---
     std::unique_ptr<TelemetryReporter> m_telemetry;

@@ -16,6 +16,7 @@ __all__ = [
     "verify_certificate_key_pair",
     "audit_tls_entry",
     "audit_tls_assets",
+    "audit_mtls_bundle",
 ]
 
 
@@ -193,6 +194,96 @@ def audit_tls_entry(
             errors.append(
                 "Żaden fingerprint certyfikatu nie pasuje do konfiguracji pinningu"
             )
+
+    report["warnings"] = list(dict.fromkeys(warnings)) if warnings else []
+    report["errors"] = list(dict.fromkeys(errors)) if errors else []
+    return report
+
+
+def audit_mtls_bundle(
+    bundle_path: str | Path,
+    *,
+    warn_expiring_within_days: float = 30.0,
+) -> dict[str, Any]:
+    """Zwraca raport audytowy dla pakietu certyfikatów mTLS."""
+
+    base = Path(bundle_path).expanduser()
+    report: dict[str, Any] = {
+        "bundle_path": str(base),
+        "ca": None,
+        "server": None,
+        "client": None,
+        "warnings": [],
+        "errors": [],
+    }
+
+    warnings: MutableSequence[str] = []
+    errors: MutableSequence[str] = []
+
+    ca_dir = base / "ca"
+    server_dir = base / "server"
+    client_dir = base / "client"
+
+    ca_cert = ca_dir / "ca.pem"
+    ca_key = ca_dir / "ca.key"
+    server_cert = server_dir / "server.crt"
+    server_key = server_dir / "server.key"
+    client_cert = client_dir / "client.crt"
+    client_key = client_dir / "client.key"
+
+    try:
+        ca_metadata = certificate_reference_metadata(
+            ca_cert, role="mtls_ca_certificate", warn_expiring_within_days=warn_expiring_within_days
+        )
+    except Exception as exc:  # pragma: no cover - diagnostyka ścieżek
+        errors.append(f"Nie udało się zbudować metadanych CA ({exc})")
+        ca_metadata = None
+    else:
+        report["ca"] = {"certificate": ca_metadata}
+        for entry in collect_security_warnings(ca_metadata):
+            warnings.extend(str(item) for item in entry.get("warnings", ()))
+
+    try:
+        ca_key_metadata = file_reference_metadata(ca_key, role="mtls_ca_key")
+    except Exception as exc:  # pragma: no cover - diagnostyka ścieżek
+        warnings.append(f"Nie udało się zebrać metadanych klucza CA ({exc})")
+    else:
+        if report.get("ca") is None:
+            report["ca"] = {"certificate": None}
+        report["ca"]["private_key"] = ca_key_metadata  # type: ignore[index]
+        for entry in collect_security_warnings(ca_key_metadata):
+            warnings.extend(str(item) for item in entry.get("warnings", ()))
+
+    def _audit_leaf(cert_path: Path, key_path: Path, *, label: str) -> Mapping[str, Any]:
+        certificate = certificate_reference_metadata(
+            cert_path,
+            role=f"{label}_certificate",
+            warn_expiring_within_days=warn_expiring_within_days,
+        )
+        key = file_reference_metadata(key_path, role=f"{label}_key")
+        for entry in collect_security_warnings(certificate):
+            warnings.extend(str(item) for item in entry.get("warnings", ()))
+        for entry in collect_security_warnings(key):
+            warnings.extend(str(item) for item in entry.get("warnings", ()))
+        matches, message = verify_certificate_key_pair(cert_path, key_path)
+        entry = {
+            "certificate": certificate,
+            "private_key": key,
+            "key_matches_certificate": matches,
+        }
+        if not matches and message:
+            errors.append(message)
+        return entry
+
+    try:
+        report["server"] = _audit_leaf(server_cert, server_key, label="mtls_server")
+    except Exception as exc:  # pragma: no cover - diagnostyka ścieżek
+        errors.append(f"Nie udało się zweryfikować certyfikatu serwera ({exc})")
+
+    try:
+        report["client"] = _audit_leaf(client_cert, client_key, label="mtls_client")
+    except Exception as exc:  # pragma: no cover - diagnostyka ścieżek
+        errors.append(f"Nie udało się zweryfikować certyfikatu klienta ({exc})")
 
     report["warnings"] = list(dict.fromkeys(warnings)) if warnings else []
     report["errors"] = list(dict.fromkeys(errors)) if errors else []

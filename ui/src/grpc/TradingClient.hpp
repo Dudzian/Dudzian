@@ -2,6 +2,7 @@
 
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <atomic>
 #include <memory>
 #include <mutex>
@@ -43,10 +44,19 @@ public:
 
     struct TlsConfig {
         bool enabled = false;
-        QString rootCertificatePath;
-        QString clientCertificatePath;
-        QString clientKeyPath;
-        QString targetNameOverride;
+        bool requireClientAuth = false;          // mTLS wymagany?
+        QString rootCertificatePath;             // PEM root CA
+        QString clientCertificatePath;           // PEM cert klienta (opcjonalnie)
+        QString clientKeyPath;                   // PEM klucz klienta  (opcjonalnie)
+        QString serverNameOverride;              // SNI override (używane w .cpp)
+        QString targetNameOverride;              // alias legacy używany w Application.cpp
+        QString pinnedServerFingerprint;         // oczekiwany SHA-256 cert/CA (hex, bez ':')
+    };
+
+    struct PreLiveChecklistResult {
+        bool ok = false;
+        QStringList warnings;
+        QStringList errors;
     };
 
     explicit TradingClient(QObject* parent = nullptr);
@@ -60,8 +70,11 @@ public:
 
     // Używane przez Application.cpp
     InstrumentConfig instrumentConfig() const { return m_instrumentConfig; }
+    TlsConfig tlsConfig() const { return m_tlsConfig; }
 
     bool isStreaming() const { return m_running.load(); }
+
+    PreLiveChecklistResult runPreLiveChecklist() const;
 
 public slots:
     void start();
@@ -84,6 +97,7 @@ private:
     void streamLoop();
     RiskSnapshotData convertRiskState(const botcore::trading::v1::RiskState& state) const;
 
+    // --- Konfiguracja połączenia/rynku ---
     QString m_endpoint = QStringLiteral("127.0.0.1:50061");
     InstrumentConfig m_instrumentConfig{
         QStringLiteral("BINANCE"),
@@ -97,10 +111,12 @@ private:
     int m_historyLimit = 500;
     TlsConfig m_tlsConfig{};
 
+    // --- gRPC ---
     std::shared_ptr<grpc::Channel> m_channel;
     std::unique_ptr<botcore::trading::v1::MarketDataService::Stub> m_marketDataStub;
     std::unique_ptr<botcore::trading::v1::RiskService::Stub> m_riskStub;
 
+    // --- Streaming ---
     std::atomic<bool> m_running{false};
     std::thread m_streamThread;
     std::mutex m_contextMutex;
