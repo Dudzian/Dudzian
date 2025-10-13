@@ -51,6 +51,21 @@ jobs:
           mkdir -p docs/audit
           mkdir -p "$BOT_CORE_OUTPUT_DIR/risk_simulation"
 
+      - name: Validate OEM license registry signatures
+        run: |
+          if [ ! -f "var/licenses/registry.jsonl" ]; then
+            echo "Brak rejestru licencji – pomijam walidację"
+            exit 0
+          fi
+          if [ -z "${{ secrets.OEM_LICENSE_KEY }}" ]; then
+            echo "Sekret OEM_LICENSE_KEY nie ustawiony – pomijam walidację" >&2
+            exit 0
+          fi
+          python scripts/oem_provision_license.py \
+            --registry "var/licenses/registry.jsonl" \
+            --license-key "lic-2024=${{ secrets.OEM_LICENSE_KEY }}" \
+            --validate-registry
+
       - name: Run paper smoke orchestrator
         id: smoke
         env:
