@@ -2,6 +2,7 @@
     <qresource prefix="/qml">
         <file>main.qml</file>
         <file>components/BotAppWindow.qml</file>
+        <file>components/ActivationDialog.qml</file>
         <file>components/SidePanel.qml</file>
         <file>components/CandlestickChartView.qml</file>
         <file>components/StatusFooter.qml</file>

@@ -18,6 +18,8 @@
 #include "telemetry/UiTelemetryReporter.hpp"
 #include "utils/FrameRateMonitor.hpp"
 
+#include "app/ActivationController.hpp"
+
 Q_LOGGING_CATEGORY(lcAppMetrics, "bot.shell.app.metrics")
 
 namespace {
@@ -89,6 +91,7 @@ QString readTokenFile(const QString& rawPath)
 Application::Application(QQmlApplicationEngine& engine, QObject* parent)
     : QObject(parent)
     , m_engine(engine) {
+    m_activationController = std::make_unique<ActivationController>(this);
     // Startowe ustawienia instrumentu z klienta (mogą być nadpisane przez CLI)
     m_instrument = m_client.instrumentConfig();
 
@@ -330,6 +333,7 @@ void Application::exposeToQml() {
     m_engine.rootContext()->setContextProperty(QStringLiteral("appController"), this);
     m_engine.rootContext()->setContextProperty(QStringLiteral("ohlcvModel"), &m_ohlcvModel);
     m_engine.rootContext()->setContextProperty(QStringLiteral("riskModel"), &m_riskModel);
+    m_engine.rootContext()->setContextProperty(QStringLiteral("activationController"), m_activationController.get());
 }
 
 void Application::ensureFrameMonitor() {
@@ -402,6 +406,11 @@ void Application::notifyWindowCount(int totalWindowCount) {
     if (m_telemetry) {
         m_telemetry->setWindowCount(m_windowCount);
     }
+}
+
+QObject* Application::activationController() const
+{
+    return m_activationController.get();
 }
 
 void Application::ingestFpsSampleForTesting(double fps) {

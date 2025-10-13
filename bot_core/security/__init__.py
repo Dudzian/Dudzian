@@ -6,8 +6,15 @@ from bot_core.security.base import (
     SecretStorage,
     SecretStorageError,
 )
-from bot_core.security.factory import create_default_secret_storage
+from bot_core.security.factory import (
+    create_default_fingerprint_service,
+    create_default_secret_storage,
+)
 from bot_core.security.file_storage import EncryptedFileSecretStorage
+from bot_core.security.fingerprint import (
+    HardwareFingerprintService,
+    RotatingHmacKeyProvider,
+)
 from bot_core.security.keyring_storage import KeyringSecretStorage
 from bot_core.security.rotation import RotationRegistry, RotationStatus
 from bot_core.security.signing import build_hmac_signature, canonical_json_bytes
@@ -33,10 +40,13 @@ __all__ = [
     "KeyringSecretStorage",
     "EncryptedFileSecretStorage",
     "create_default_secret_storage",
+    "create_default_fingerprint_service",
     "RotationRegistry",
     "RotationStatus",
     "canonical_json_bytes",
     "build_hmac_signature",
+    "HardwareFingerprintService",
+    "RotatingHmacKeyProvider",
     "ServiceToken",
     "ServiceTokenValidator",
     "build_service_token_validator",
