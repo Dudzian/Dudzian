@@ -900,6 +900,14 @@ def _normalize_grpc_metadata(
 
     if isinstance(raw_value, Mapping):
         for key, value in raw_value.items():
+            if isinstance(value, Mapping):
+                if any(
+                    candidate_key in value
+                    for candidate_key in ("value", "value_env", "env", "value_file", "value_path")
+                ):
+                    resolved_value, source = _resolve_mapping_value(value)
+                    _append_entry(key, resolved_value, source=source)
+                    continue
             _append_entry(key, value, source="inline")
     elif isinstance(raw_value, Sequence) and not isinstance(raw_value, (str, bytes, bytearray)):
         for item in raw_value:
