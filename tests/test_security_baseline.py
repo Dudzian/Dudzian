@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import os
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -47,7 +48,15 @@ def test_security_baseline_reports_errors_when_tokens_missing() -> None:
         tls=_tls_config(enabled=False),
         rbac_tokens=(),
     )
-    core_config = SimpleNamespace(metrics_service=metrics_service, risk_service=risk_service)
+    scheduler = SimpleNamespace(
+        name="core_multi",
+        rbac_tokens=(),
+    )
+    core_config = SimpleNamespace(
+        metrics_service=metrics_service,
+        risk_service=risk_service,
+        multi_strategy_schedulers={"core_multi": scheduler},
+    )
 
     report = generate_security_baseline_report(core_config, env={})
 
@@ -90,9 +99,29 @@ def test_security_baseline_reports_ok_for_hardened_config(tmp_path: Path) -> Non
         ),
         tls=_tls_config(enabled=True, cert=cert_path, key=key_path),
     )
-    core_config = SimpleNamespace(metrics_service=metrics_service, risk_service=risk_service)
+    scheduler = SimpleNamespace(
+        name="core_multi",
+        rbac_tokens=(
+            SimpleNamespace(
+                token_id="scheduler-writer",
+                token_value="secret",
+                token_env=None,
+                token_hash=None,
+                scopes=("runtime.schedule.read", "runtime.schedule.write"),
+            ),
+        ),
+    )
+    core_config = SimpleNamespace(
+        metrics_service=metrics_service,
+        risk_service=risk_service,
+        multi_strategy_schedulers={"core_multi": scheduler},
+    )
 
-    report = generate_security_baseline_report(core_config, env={})
+    report = generate_security_baseline_report(
+        core_config,
+        env={},
+        scheduler_required_scopes={"*": ("runtime.schedule.read", "runtime.schedule.write")},
+    )
 
     assert report.status == "ok"
     assert not report.errors

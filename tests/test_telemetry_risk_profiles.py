@@ -13,6 +13,11 @@ from bot_core.runtime.telemetry_risk_profiles import (
     get_metrics_service_env_overrides,
     get_metrics_service_overrides,
     get_risk_profile,
+    get_alert_policies,
+    get_data_quality_expectations,
+    get_decision_log_requirements,
+    get_scheduler_metrics,
+    get_strategy_metrics,
     load_risk_profiles_from_file,
     load_risk_profiles_with_metadata,
     register_risk_profiles,
@@ -88,6 +93,25 @@ def test_summarize_risk_profile_provides_limits() -> None:
     assert summary["severity_min"] == "warning"
     assert summary["max_event_counts"]["overlay_budget"] == 0
     assert "extends_chain" in summary
+
+
+def test_observability_mappings_exposed() -> None:
+    scheduler_metrics = get_scheduler_metrics("balanced")
+    assert scheduler_metrics["loop_latency_ms"]["critical"] == 220.0
+
+    strategy_metrics = get_strategy_metrics("balanced")
+    assert "mean_reversion" in strategy_metrics
+    assert "avg_abs_zscore" in strategy_metrics["mean_reversion"]
+
+    alerts = get_alert_policies("balanced")
+    assert alerts["scheduler_latency_ms"]["warning"] == 220.0
+
+    decision = get_decision_log_requirements("balanced")
+    assert decision["hmac_required"] is True
+    assert "schedule" in decision["required_fields"]
+
+    data_quality = get_data_quality_expectations("balanced")
+    assert data_quality["cross_exchange_arbitrage"]["max_delay_ms"] == 450
 
 
 def test_register_profile_extends_builtin(tmp_path: Path) -> None:
@@ -411,6 +435,27 @@ def test_cli_render_profile_json(
     assert payload["env_assignments_format"] == "dotenv"
     assert payload["risk_profile"]["severity_min"] == "warning"
     assert payload["sources"][0]["path"] == str(profile_path)
+
+
+def test_cli_render_observability_sections(capsys: pytest.CaptureFixture[str]) -> None:
+    exit_code = telemetry_profiles_cli.main(
+        [
+            "render",
+            "balanced",
+            "--format",
+            "json",
+            "--section",
+            "scheduler_metrics",
+            "--section",
+            "decision_log_requirements",
+        ]
+    )
+    assert exit_code == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["scheduler_metrics"]["loop_latency_ms"]["critical"] == 220.0
+    assert payload["decision_log_requirements"]["hmac_required"] is True
+    assert "schedule" in payload["decision_log_requirements"]["required_fields"]
 
 
 def test_cli_render_profile_cli_format(

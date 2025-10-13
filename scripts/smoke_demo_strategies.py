@@ -1,0 +1,250 @@
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Mapping, MutableMapping, Sequence
+
+from bot_core.config.loader import load_core_config
+from bot_core.data.backtest_library import BacktestDatasetLibrary
+from bot_core.runtime.journal import InMemoryTradingDecisionJournal
+from bot_core.runtime.multi_strategy_scheduler import MultiStrategyScheduler, StrategyDataFeed
+from bot_core.runtime.pipeline import InMemoryStrategySignalSink
+from bot_core.strategies.base import MarketSnapshot, StrategyEngine
+from bot_core.strategies.cross_exchange_arbitrage import (
+    CrossExchangeArbitrageSettings,
+    CrossExchangeArbitrageStrategy,
+)
+from bot_core.strategies.mean_reversion import MeanReversionSettings, MeanReversionStrategy
+from bot_core.strategies.volatility_target import (
+    VolatilityTargetSettings,
+    VolatilityTargetStrategy,
+)
+
+
+@dataclass(slots=True)
+class SmokeResult:
+    """Rezultat demonstracyjnego uruchomienia strategii."""
+
+    cycles: int
+    telemetry: Mapping[str, Mapping[str, float]]
+    emitted_signals: Mapping[str, int]
+
+
+class _ReplayFeed(StrategyDataFeed):
+    """Prosty feed odtwarzający dane z biblioteki backtestowej."""
+
+    def __init__(self, snapshots: Sequence[MarketSnapshot]):
+        self._history = tuple(snapshots)
+        self._cursor = 0
+
+    def load_history(self, strategy_name: str, bars: int) -> Sequence[MarketSnapshot]:
+        if bars <= 0:
+            return ()
+        return self._history[: min(len(self._history), bars)]
+
+    def fetch_latest(self, strategy_name: str) -> Sequence[MarketSnapshot]:
+        if self._cursor >= len(self._history):
+            return ()
+        snapshot = self._history[self._cursor]
+        self._cursor += 1
+        return (snapshot,)
+
+
+def _instantiate_strategies(core_config) -> Mapping[str, StrategyEngine]:
+    registry: dict[str, StrategyEngine] = {}
+    for name, cfg in getattr(core_config, "mean_reversion_strategies", {}).items():
+        registry[name] = MeanReversionStrategy(
+            MeanReversionSettings(
+                lookback=cfg.lookback,
+                entry_zscore=cfg.entry_zscore,
+                exit_zscore=cfg.exit_zscore,
+                max_holding_period=cfg.max_holding_period,
+                volatility_cap=cfg.volatility_cap,
+                min_volume_usd=cfg.min_volume_usd,
+            )
+        )
+    for name, cfg in getattr(core_config, "volatility_target_strategies", {}).items():
+        registry[name] = VolatilityTargetStrategy(
+            VolatilityTargetSettings(
+                target_volatility=cfg.target_volatility,
+                lookback=cfg.lookback,
+                rebalance_threshold=cfg.rebalance_threshold,
+                min_allocation=cfg.min_allocation,
+                max_allocation=cfg.max_allocation,
+                floor_volatility=cfg.floor_volatility,
+            )
+        )
+    for name, cfg in getattr(core_config, "cross_exchange_arbitrage_strategies", {}).items():
+        registry[name] = CrossExchangeArbitrageStrategy(
+            CrossExchangeArbitrageSettings(
+                primary_exchange=cfg.primary_exchange,
+                secondary_exchange=cfg.secondary_exchange,
+                spread_entry=cfg.spread_entry,
+                spread_exit=cfg.spread_exit,
+                max_notional=cfg.max_notional,
+                max_open_seconds=cfg.max_open_seconds,
+            )
+        )
+    return registry
+
+
+def _resolve_dataset_name(strategy_name: str) -> str:
+    lowered = strategy_name.lower()
+    if "mean_reversion" in lowered:
+        return "mean_reversion"
+    if "volatility_target" in lowered:
+        return "volatility_target"
+    if "cross_exchange" in lowered:
+        return "cross_exchange_arbitrage"
+    raise KeyError(f"Brak zmapowanego datasetu dla strategii {strategy_name}")
+
+
+def _row_to_snapshot(dataset: str, row: Mapping[str, object]) -> MarketSnapshot:
+    if dataset == "mean_reversion":
+        return MarketSnapshot(
+            symbol=str(row["instrument"]),
+            timestamp=int(row["timestamp"]),
+            open=float(row["open"]),
+            high=float(row["high"]),
+            low=float(row["low"]),
+            close=float(row["close"]),
+            volume=float(row["volume"]),
+        )
+    if dataset == "volatility_target":
+        price = float(row["close"])
+        return MarketSnapshot(
+            symbol=str(row["instrument"]),
+            timestamp=int(row["timestamp"]),
+            open=price,
+            high=price,
+            low=price,
+            close=price,
+            volume=float(row["volume"]),
+        )
+    if dataset == "cross_exchange_arbitrage":
+        price = float(row["base_ask"])
+        return MarketSnapshot(
+            symbol=str(row["instrument"]),
+            timestamp=int(row["timestamp"]),
+            open=price,
+            high=price,
+            low=float(row["base_bid"]),
+            close=price,
+            volume=float(row["available_volume"]),
+            indicators={
+                "primary_bid": float(row["base_bid"]),
+                "primary_ask": float(row["base_ask"]),
+                "secondary_bid": float(row["quote_bid"]),
+                "secondary_ask": float(row["quote_ask"]),
+                "secondary_timestamp": int(row["timestamp"]),
+            },
+        )
+    raise KeyError(f"Nieobsługiwany dataset {dataset}")
+
+
+def _build_feed(library: BacktestDatasetLibrary, dataset_name: str) -> _ReplayFeed:
+    rows = library.load_typed_rows(dataset_name)
+    snapshots = [_row_to_snapshot(dataset_name, row) for row in rows]
+    return _ReplayFeed(tuple(snapshots))
+
+
+async def _run_cycles(scheduler: MultiStrategyScheduler, cycles: int) -> None:
+    for _ in range(cycles):
+        await scheduler.run_once()
+
+
+def run_demo(
+    *,
+    config_path: Path,
+    manifest_path: Path,
+    environment: str,
+    scheduler_name: str | None,
+    cycles: int,
+) -> SmokeResult:
+    core_config = load_core_config(config_path)
+    schedulers = getattr(core_config, "multi_strategy_schedulers", {})
+    if not schedulers:
+        raise RuntimeError("Konfiguracja nie zawiera schedulerów multi-strategy")
+    resolved_name = scheduler_name or next(iter(schedulers))
+    scheduler_cfg = schedulers.get(resolved_name)
+    if scheduler_cfg is None:
+        raise KeyError(f"Scheduler {resolved_name} nie istnieje w konfiguracji")
+
+    strategies = _instantiate_strategies(core_config)
+    library = BacktestDatasetLibrary(manifest_path)
+    telemetry_payloads: MutableMapping[str, Mapping[str, float]] = {}
+
+    def telemetry_emitter(name: str, payload: Mapping[str, float]) -> None:
+        telemetry_payloads[name] = dict(payload)
+
+    journal = InMemoryTradingDecisionJournal()
+
+    scheduler = MultiStrategyScheduler(
+        environment=environment,
+        portfolio="demo-portfolio",
+        telemetry_emitter=telemetry_emitter,
+        decision_journal=journal,
+    )
+    sink = InMemoryStrategySignalSink()
+
+    for schedule in scheduler_cfg.schedules:
+        strategy = strategies.get(schedule.strategy)
+        if strategy is None:
+            raise KeyError(f"Brak strategii {schedule.strategy} w konfiguracji")
+        dataset = _resolve_dataset_name(schedule.strategy)
+        feed = _build_feed(library, dataset)
+        scheduler.register_schedule(
+            name=schedule.name,
+            strategy_name=schedule.strategy,
+            strategy=strategy,
+            feed=feed,
+            sink=sink,
+            cadence_seconds=schedule.cadence_seconds,
+            max_drift_seconds=schedule.max_drift_seconds,
+            warmup_bars=schedule.warmup_bars,
+            risk_profile=schedule.risk_profile,
+            max_signals=schedule.max_signals,
+        )
+
+    asyncio.run(_run_cycles(scheduler, cycles))
+
+    emitted: MutableMapping[str, int] = {schedule.name: 0 for schedule in scheduler_cfg.schedules}
+    for schedule_name, signals in sink.export():
+        emitted[schedule_name] = emitted.get(schedule_name, 0) + len(signals)
+
+    return SmokeResult(cycles=cycles, telemetry=dict(telemetry_payloads), emitted_signals=dict(emitted))
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Smoke test multi-strategy w trybie demo")
+    parser.add_argument("--config", default="config/core.yaml", help="Ścieżka do core.yaml")
+    parser.add_argument(
+        "--manifest",
+        default="data/backtests/normalized/manifest.yaml",
+        help="Manifest znormalizowanych danych backtestowych",
+    )
+    parser.add_argument("--environment", default="demo", help="Nazwa środowiska runtime")
+    parser.add_argument("--scheduler", default=None, help="Nazwa scheduler-a (opcjonalnie)")
+    parser.add_argument("--cycles", type=int, default=3, help="Liczba cykli run_once do wykonania")
+    args = parser.parse_args(argv)
+
+    result = run_demo(
+        config_path=Path(args.config).expanduser().resolve(),
+        manifest_path=Path(args.manifest).expanduser().resolve(),
+        environment=args.environment,
+        scheduler_name=args.scheduler,
+        cycles=max(1, args.cycles),
+    )
+    print(json.dumps({
+        "cycles": result.cycles,
+        "telemetry": result.telemetry,
+        "emitted_signals": result.emitted_signals,
+    }, indent=2, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover - skrypt CLI
+    raise SystemExit(main())

@@ -1,6 +1,6 @@
-# Runbook: Paper trading – Etap 1
+# Runbook: Paper trading – Etap 4 (multi-strategy)
 
-Ten runbook opisuje, jak uruchomić, monitorować i bezpiecznie zatrzymać tryb paper tradingu dla strategii trend-following na interwale dziennym (D1). Dokument przeznaczony jest dla operatorów i analityków, którzy realizują proces backtest → paper → ograniczony live. Wszystkie kroki wykonujemy na kontach demo/testnet z kluczami o minimalnych uprawnieniach (brak wypłat).
+Ten runbook opisuje, jak uruchomić, monitorować i bezpiecznie zatrzymać tryb paper tradingu w ramach Etapu 4 – z biblioteką strategii obejmującą trend-following D1, mean reversion, volatility targeting oraz arbitraż międzygiełdowy zarządzany przez harmonogram multi-strategy. Dokument przeznaczony jest dla operatorów i analityków, którzy realizują proces backtest → paper → ograniczony live przy zachowaniu rygorystycznej kontroli ryzyka (ThresholdRiskEngine + decision log podpisany HMAC). Wszystkie kroki wykonujemy na kontach demo/testnet z kluczami o minimalnych uprawnieniach (brak wypłat).
 
 ## 1. Prerekwizyty operacyjne
 
@@ -10,17 +10,21 @@ Ten runbook opisuje, jak uruchomić, monitorować i bezpiecznie zatrzymać tryb 
 - Pliki konfiguracyjne `config/core.yaml` oraz `config/credentials/` dopasowane do środowiska `paper`.
 - Każde środowisko w `config/core.yaml` ma ustawione pola `default_strategy` i `default_controller`, aby CLI automatycznie wybierało właściwą strategię i kontroler runtime.
 - Katalog roboczy danych: `data/ohlcv` (Parquet + manifest SQLite) oraz `data/reports` na raporty dzienne.
+- Sekcja `runtime.multi_strategy_schedulers.core_multi_pipeline` w `config/core.yaml` wskazuje kompletny zestaw strategii (trend-following, mean reversion, volatility targeting, cross-exchange arbitrage) wraz z mapowaniem na profile ryzyka i koszyki instrumentów.
+- Parametry `risk.decision_log` definiują ścieżkę JSONL, identyfikator klucza HMAC i algorytm podpisu – wartości muszą być spójne z `scripts/verify_decision_log.py`.
 
 ### Klucze API i bezpieczeństwo
 - Klucze `read-only` oraz `trade` dla Binance Testnet (spot i futures) zapisane w natywnym keychainie z etykietami odpowiadającymi polom `credential_purpose`.
 - Jeśli posiadamy klucze Zondy paper lub Kraken demo, również zapisujemy je w keychainie – jednak w Etapie 1 aktywujemy tylko Binance.
 - Lista dozwolonych IP: statyczny adres wyjściowy VPN + awaryjny adres stacji roboczej (paper). Potwierdź w panelu giełdy, że adresy są aktywne.
 - Rejestr rotacji kluczy (`security/rotation_log.json`) uzupełniony o datę ostatniej wymiany; kolejne przypomnienie ustawiamy na 90 dni od tej daty.
+- Klucz HMAC do podpisywania decision logu (`DECISION_LOG_HMAC_KEY`) przechowywany w keychainie z etykietą zgodną z `risk.decision_log.signing_key_id`; dostęp mają jedynie operatorzy paper tradingu (RBAC).
 
 ### Dane historyczne
 - Wykonany backfill OHLCV (D1 + 1h) dla koszyka: BTC/USDT, ETH/USDT, SOL/USDT, BNB/USDT, XRP/USDT, ADA/USDT, LTC/USDT, MATIC/USDT.
 - Dane zapisane w strukturze partycjonowanej Parquet: `exchange/symbol/granularity/year=YYYY/month=MM/`.
 - Manifest SQLite (`ohlcv_manifest.sqlite`) zawiera zaktualizowane liczniki świec i ostatnie znaczniki czasu.
+- Zapełnienie koszyków instrumentów (`config/core.yaml -> risk.instrument_buckets`) potwierdzone raportem `scripts/check_data_coverage.py --instrument-bucket <bucket>` dla presetów multi-strategy.
 - **Tryb offline (brak dostępu do API):** uruchom `PYTHONPATH=. python scripts/seed_paper_cache.py --environment binance_paper --days 60 --start-date 2024-01-01`, aby wygenerować deterministyczny cache D1 w katalogu `var/data/binance_paper`.
 
 ## 2. Checklista przed startem sesji
@@ -28,12 +32,16 @@ Ten runbook opisuje, jak uruchomić, monitorować i bezpiecznie zatrzymać tryb 
    - `git status` – brak lokalnych, niezatwierdzonych zmian.
    - `python scripts/validate_config.py --config config/core.yaml` – potwierdzenie spójności sekcji środowisk, profili ryzyka i kanałów alertowych.
    - `pytest --override-ini=addopts= tests/test_runtime_pipeline.py` – potwierdzenie, że pipeline przechodzi testy integracyjne.
+   - `pytest tests/test_mean_reversion_strategy.py tests/test_volatility_target_strategy.py tests/test_cross_exchange_arbitrage_strategy.py tests/test_multi_strategy_scheduler.py` – sanity check nowych strategii i scheduler-a.
+   - `PYTHONPATH=. pytest tests/test_risk_engine.py::test_force_liquidation_due_to_drawdown_allows_only_reducing_orders tests/test_risk_engine.py::test_daily_loss_limit_resets_after_new_trading_day` – regresje harnessu silnika ryzyka (scenariusz force liquidation + reset kolejnego dnia).
+   - `PYTHONPATH=. python scripts/run_multi_strategy_scheduler.py --config config/core.yaml --environment binance_paper --dry-run --emit-telemetry` – walidacja harmonogramu multi-strategy i emisji metryk przed startem sesji.
    - `scripts/check_key_rotation.py --dry-run` – upewnij się, że rotacja kluczy nie jest przeterminowana.
+   - `PYTHONPATH=. python scripts/verify_decision_log.py logs/decision_journal/paper_binance.jsonl --hmac-key-file <ścieżka_do_klucza> --expected-key-id risk-ci --allow-unsigned` – kontrola dostępności klucza HMAC oraz konfiguracji decision logu (plik można wygenerować z keychaina do katalogu tymczasowego).
 2. **Aktualizacja danych i pre-check**
    - Uruchom `scripts/backfill.py --environment paper --granularity 1d --since 2016-01-01`.
    - Sprawdź logi (`logs/backfill.log`) pod kątem błędów; w razie limitów API powtórz z większym interwałem throttlingu.
    - Zweryfikuj pokrycie cache: `PYTHONPATH=. python scripts/check_data_coverage.py --config config/core.yaml --environment binance_paper --json`. Status `ok` oznacza komplet danych wymaganych przez backfill. W razie potrzeby możesz ograniczyć raport do wybranych symboli (`--symbol BTC_USDT`) lub interwałów (`--interval 1d`, `--interval D1`) oraz zapisać wynik do pliku (`--output data/reports/coverage/binance_paper.json`).
-  - Uruchom kompleksowy pre-check: `PYTHONPATH=. python scripts/paper_precheck.py --config config/core.yaml --environment binance_paper --json`. Skrypt sprawdza poprawność konfiguracji, pokrycie manifestu oraz sanity-check silnika ryzyka. W kolumnie `risk_status` oczekuj wartości `ok`; ostrzeżenia (`warning`) wymagają przeglądu (np. brak docelowej zmienności), a `--skip-risk-check` stosuj wyłącznie w trybie debugowania. Raport JSON jest automatycznie zapisywany w `audit/paper_precheck_reports/` (plik z sygnaturą czasową i sumą SHA-256); `scripts/run_daily_trend.py --paper-smoke` potrafi tę ścieżkę dopisać do `docs/audit/paper_trading_log.md` wraz z hashem (`--paper-smoke-audit-log`, `--paper-smoke-operator`) oraz do ustrukturyzowanego dziennika JSONL (`docs/audit/paper_trading_log.jsonl`, flaga `--paper-smoke-json-log`). Po udanym zapisie wysyłany jest alert kategorii `paper_smoke_compliance` potwierdzający aktualizację logu. Jeżeli w `config/core.yaml` skonfigurowano sekcję `reporting.paper_smoke_json_sync`, CLI automatycznie tworzy kopię dziennika JSONL (np. w katalogu sieciowym lub w koszyku S3), weryfikuje zgodność sum SHA-256 repliki, zapisuje identyfikator wersji oraz numer potwierdzenia odbioru i dołącza lokalizację kopii do alertu compliance. Dodatkowo flaga `--paper-smoke-summary-json` pozwala zapisać znormalizowane podsumowanie smoke testu (hash `summary.json`, ścieżki, metadane potwierdzeń) w pliku JSON wykorzystywanym później przez pipeline CI; plik można natychmiast przekształcić w raport Markdown poleceniem `PYTHONPATH=. python scripts/render_paper_smoke_summary.py --summary-json <plik> --output <ścieżka.md>`, aby zasilić podsumowanie kroku CI. Z kolei `--paper-smoke-auto-publish` po pozytywnym zakończeniu smoke testu automatycznie wywołuje `publish_paper_smoke_artifacts.py`, aby zsynchronizować dziennik JSONL i archiwum ZIP zgodnie z konfiguracją reportingową. Jeśli publikacja artefaktów ma charakter obowiązkowy (np. wymagania CI/compliance), dodaj flagę `--paper-smoke-auto-publish-required` – pominięcie lub niepowodzenie uploadu zakończy smoke test kodem `6`, a alert `paper_smoke` otrzyma poziom `error`. **Uwaga:** `scripts/run_daily_trend.py --paper-smoke` uruchamia ten pre-check automatycznie i zakończy działanie, jeśli raport zwróci status `error`. Flaga `--paper-precheck-fail-on-warnings` wymusza traktowanie ostrzeżeń jako błędów, `--paper-precheck-audit-dir` pozwala wskazać własny katalog, a `--skip-paper-precheck` pozostaje wyłącznie narzędziem diagnostycznym.
+   - Uruchom kompleksowy pre-check: `PYTHONPATH=. python scripts/paper_precheck.py --config config/core.yaml --environment binance_paper --json`. Skrypt sprawdza poprawność konfiguracji, pokrycie manifestu oraz sanity-check silnika ryzyka. W kolumnie `risk_status` oczekuj wartości `ok`; ostrzeżenia (`warning`) wymagają przeglądu (np. brak docelowej zmienności), a `--skip-risk-check` stosuj wyłącznie w trybie debugowania. Raport JSON jest automatycznie zapisywany w `audit/paper_precheck_reports/` (plik z sygnaturą czasową i sumą SHA-256); `scripts/run_daily_trend.py --paper-smoke` potrafi tę ścieżkę dopisać do `docs/audit/paper_trading_log.md` wraz z hashem (`--paper-smoke-audit-log`, `--paper-smoke-operator`) oraz do ustrukturyzowanego dziennika JSONL (`docs/audit/paper_trading_log.jsonl`, flaga `--paper-smoke-json-log`). Po udanym zapisie wysyłany jest alert kategorii `paper_smoke_compliance` potwierdzający aktualizację logu. Jeżeli w `config/core.yaml` skonfigurowano sekcję `reporting.paper_smoke_json_sync`, CLI automatycznie tworzy kopię dziennika JSONL (np. w katalogu sieciowym lub w koszyku S3), weryfikuje zgodność sum SHA-256 repliki, zapisuje identyfikator wersji oraz numer potwierdzenia odbioru i dołącza lokalizację kopii do alertu compliance. Dodatkowo flaga `--paper-smoke-summary-json` pozwala zapisać znormalizowane podsumowanie smoke testu (hash `summary.json`, ścieżki, metadane potwierdzeń) w pliku JSON wykorzystywanym później przez pipeline CI; plik można natychmiast przekształcić w raport Markdown poleceniem `PYTHONPATH=. python scripts/render_paper_smoke_summary.py --summary-json <plik> --output <ścieżka.md>`, aby zasilić podsumowanie kroku CI. Z kolei `--paper-smoke-auto-publish` po pozytywnym zakończeniu smoke testu automatycznie wywołuje `publish_paper_smoke_artifacts.py`, aby zsynchronizować dziennik JSONL i archiwum ZIP zgodnie z konfiguracją reportingową. Jeśli publikacja artefaktów ma charakter obowiązkowy (np. wymagania CI/compliance), dodaj flagę `--paper-smoke-auto-publish-required` – pominięcie lub niepowodzenie uploadu zakończy smoke test kodem `6`, a alert `paper_smoke` otrzyma poziom `error`. **Uwaga:** `scripts/run_daily_trend.py --paper-smoke` uruchamia ten pre-check automatycznie i zakończy działanie, jeśli raport zwróci status `error`. Flaga `--paper-precheck-fail-on-warnings` wymusza traktowanie ostrzeżeń jako błędów, `--paper-precheck-audit-dir` pozwala wskazać własny katalog, a `--skip-paper-precheck` pozostaje wyłącznie narzędziem diagnostycznym.
 
    Jeżeli po smoke teście trzeba powtórzyć synchronizację dziennika JSONL (np. po ręcznej korekcie wpisu), uruchom `PYTHONPATH=. python scripts/sync_paper_smoke_json.py --environment <env> --json-log docs/audit/paper_trading_log.jsonl`. Skrypt korzysta z konfiguracji `reporting.paper_smoke_json_sync`, domyślnie wybiera ostatni rekord z logu i zwraca wynik w formacie tekstowym lub JSON (`--json`). Flaga `--dry-run` pozwala zweryfikować konfigurację bez transferu danych, a dla backendu S3 wymagane są parametry magazynu sekretów (`--secret-namespace`, `--headless-passphrase`, `--headless-storage`) identyczne jak w pozostałych narzędziach operacyjnych.
 
@@ -43,6 +51,7 @@ Ten runbook opisuje, jak uruchomić, monitorować i bezpiecznie zatrzymać tryb 
 3. **Konfiguracja środowiska**
    - Plik `config/core.yaml` ma aktywne środowisko `paper_binance` i profil ryzyka `balanced` (domyślny).
    - `config/alerts.yaml` (jeśli używany) zawiera aktywne kanały Telegram + e-mail + SMS (Orange jako operator referencyjny).
+   - `runtime.multi_strategy_schedulers.core_multi_pipeline` wskazuje właściwe strategie (`core_mean_reversion`, `core_volatility_target`, `core_cross_exchange`) oraz posiada skonfigurowany token `CORE_SCHEDULER_TOKEN` (sprawdź obecność w keychainie).
 4. **Alerty i health-checki**
    - Wyślij wiadomość testową: `python scripts/send_alert.py --channel telegram --message "Paper trading start test"`.
    - Zweryfikuj, że alert pojawił się w Telegramie oraz w logu audytu (`logs/alerts_audit.jsonl`).
@@ -135,6 +144,12 @@ Ten runbook opisuje, jak uruchomić, monitorować i bezpiecznie zatrzymać tryb 
 2. Potwierdź działanie przez `scripts/run_daily_trend.py --mode dry-run`.
 3. Zaktualizuj wpis w audycie z datą i osobą odpowiedzialną.
 
+### Force liquidation / przekroczony limit strat
+1. Zweryfikuj stan profilu: `PYTHONPATH=. python scripts/show_risk_state.py --environment paper_binance --profile balanced` – oczekuj flagi `force_liquidation: true` oraz bieżącej ekspozycji.
+2. Uruchom `PYTHONPATH=. pytest tests/test_risk_engine.py::test_force_liquidation_due_to_drawdown_allows_only_reducing_orders` – potwierdza, że jedyne dozwolone transakcje w trybie awaryjnym to redukcja pozycji.
+3. Po zamknięciu wszystkich pozycji i rozpoczęciu kolejnego dnia kalendarzowego uruchom `PYTHONPATH=. pytest tests/test_risk_engine.py::test_daily_loss_limit_resets_after_new_trading_day`, aby potwierdzić reset limitów.
+4. Wygeneruj wpis w dzienniku decyzji z podpisem HMAC (`logs/decision_journal/paper_binance.jsonl`) i zweryfikuj `scripts/verify_decision_log.py --expected-key-id risk-ci --hmac-key-file <ścieżka_do_klucza>` – zapis audytowy jest wymagany przed wznowieniem handlu.
+
 ## 6. Zatrzymanie sesji
 1. Wysyłamy sygnał `SIGINT`/`CTRL+C` do procesu `run_daily_trend.py`.
 2. Poczekaj na komunikat „Shutdown complete” w logu – system zamknie otwarte pozycje (paper) i zapisze raport końcowy.
@@ -155,6 +170,9 @@ Ten runbook opisuje, jak uruchomić, monitorować i bezpiecznie zatrzymać tryb 
 - [ ] Alerty krytyczne zamknięte lub eskalowane.
 - [ ] Raport dzienny zarchiwizowany i zabezpieczony.
 - [ ] Dziennik decyzji oraz logi runtime skompresowane (starsze niż 30 dni przeniesione do archiwum).
+- [ ] Telemetria scheduler-a (`audit/metrics/telemetry.jsonl`) zawiera wpis z `multi_strategy` oraz `latency_ms < 250`.
+- [ ] `PYTHONPATH=. python scripts/verify_decision_log.py --log audit/decisions --hmac-key $DECISION_KEY` potwierdził komplet podpisów dla sygnałów multi-strategy.
+- [ ] `PYTHONPATH=. python bot_core/runtime/telemetry_risk_profiles.py --summary core` potwierdził, że `strategy_allocations` mieściły się w limitach profilu ryzyka.
 - [ ] Rejestr rotacji kluczy zaktualizowany w razie zmian.
 - [ ] Plan na kolejną sesję (ew. zmiany w konfiguracji) potwierdzony w zespole.
 
@@ -164,3 +182,9 @@ Ten runbook opisuje, jak uruchomić, monitorować i bezpiecznie zatrzymać tryb 
 - Automatyczne generowanie tygodniowego PDF z metrykami portfela i logami zmian konfiguracji.
 
 > **Przypomnienie:** Wszystkie testy i pierwsze wdrożenia zawsze realizujemy w trybie paper/testnet. Przejście na ograniczony live wymaga kompletnego raportu z backtestu, zgodności P&L oraz review bezpieczeństwa (uprawnienia kluczy, IP allowlist, logi audytu).
+
+## Monitoring budżetów zasobów
+- Konfiguracja limitów znajduje się w `config/core.yaml` → `runtime.resource_limits`.
+- `python scripts/load_test_scheduler.py --iterations 60 --schedules 3 --output logs/load_tests/paper_mode.json` – weryfikuje latencję i status budżetów przed startem paper.
+- `pytest tests/test_resource_monitor.py` – szybkie potwierdzenie logiki monitoringu (`bot_core.runtime.resource_monitor`).
+- `python scripts/audit_security_baseline.py --print --scheduler-required-scope runtime.schedule.write` – łączy audyt RBAC/mTLS z walidacją budżetów CPU/RAM/I/O.

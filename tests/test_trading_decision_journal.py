@@ -48,3 +48,45 @@ def test_jsonl_journal_purges_old_files(tmp_path: Path) -> None:
     journal.record(_event(newer))
     assert not old_file.exists()
     assert (tmp_path / "decisions-20240103.jsonl").exists()
+
+
+def test_trading_decision_event_new_fields() -> None:
+    timestamp = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    event = TradingDecisionEvent(
+        event_type="strategy_signal",
+        timestamp=timestamp,
+        environment="demo",
+        portfolio="paper",
+        risk_profile="balanced",
+        schedule="mean_reversion_intraday",
+        strategy="mean_reversion",
+        schedule_run_id="mean_reversion_intraday:2024-01-01T00:00:00+00:00",
+        strategy_instance_id="mean_reversion_v1",
+        signal_id="signal-123",
+        primary_exchange="binance",
+        secondary_exchange="kraken",
+        base_asset="BTC",
+        quote_asset="USDT",
+        instrument_type="spot",
+        data_feed="normalized_backtest",
+        risk_budget_bucket="balanced",
+        confidence=0.75,
+        latency_ms=180.0,
+        telemetry_namespace="demo.multi_strategy.mean_reversion_intraday",
+    )
+    payload = event.as_dict()
+    assert payload["schedule"] == "mean_reversion_intraday"
+    assert payload["strategy"] == "mean_reversion"
+    assert payload["schedule_run_id"].startswith("mean_reversion_intraday")
+    assert payload["strategy_instance_id"] == "mean_reversion_v1"
+    assert payload["signal_id"] == "signal-123"
+    assert payload["primary_exchange"] == "binance"
+    assert payload["secondary_exchange"] == "kraken"
+    assert payload["base_asset"] == "BTC"
+    assert payload["quote_asset"] == "USDT"
+    assert payload["instrument_type"] == "spot"
+    assert payload["data_feed"] == "normalized_backtest"
+    assert payload["risk_budget_bucket"] == "balanced"
+    assert payload["confidence"] == "0.75"
+    assert payload["latency_ms"] == "180"
+    assert payload["telemetry_namespace"].startswith("demo.multi_strategy")

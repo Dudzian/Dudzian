@@ -49,7 +49,12 @@ try:  # pragma: no cover
         get_metrics_service_config_overrides,
         get_metrics_service_env_overrides,
         get_metrics_service_overrides,
+        get_alert_policies,
+        get_data_quality_expectations,
+        get_decision_log_requirements,
         get_risk_profile,
+        get_scheduler_metrics,
+        get_strategy_metrics,
         list_risk_profile_files,
         list_risk_profile_names,
         load_risk_profiles_from_file,
@@ -65,7 +70,12 @@ try:  # pragma: no cover
         "get_metrics_service_config_overrides",
         "get_metrics_service_env_overrides",
         "get_metrics_service_overrides",
+        "get_alert_policies",
+        "get_data_quality_expectations",
+        "get_decision_log_requirements",
         "get_risk_profile",
+        "get_scheduler_metrics",
+        "get_strategy_metrics",
         "list_risk_profile_files",
         "list_risk_profile_names",
         "load_risk_profiles_from_file",
@@ -488,6 +498,30 @@ except Exception:  # pragma: no cover - fallback lokalny
             env[env_name] = value
         return env
 
+    def get_scheduler_metrics(profile_name: str) -> Mapping[str, Any]:
+        profile = get_risk_profile(profile_name)
+        observability = profile.get("observability", {})
+        return deepcopy(observability.get("scheduler_metrics", {}))
+
+    def get_strategy_metrics(profile_name: str) -> Mapping[str, Any]:
+        profile = get_risk_profile(profile_name)
+        observability = profile.get("observability", {})
+        return deepcopy(observability.get("strategy_metrics", {}))
+
+    def get_alert_policies(profile_name: str) -> Mapping[str, Any]:
+        profile = get_risk_profile(profile_name)
+        observability = profile.get("observability", {})
+        return deepcopy(observability.get("alert_policies", {}))
+
+    def get_decision_log_requirements(profile_name: str) -> Mapping[str, Any]:
+        profile = get_risk_profile(profile_name)
+        observability = profile.get("observability", {})
+        return deepcopy(observability.get("decision_log", {}))
+
+    def get_data_quality_expectations(profile_name: str) -> Mapping[str, Any]:
+        profile = get_risk_profile(profile_name)
+        return deepcopy(profile.get("data_quality", {}))
+
     def summarize_risk_profile(metadata: Mapping[str, Any]) -> Mapping[str, Any]:
         summary: dict[str, Any] = {}
 
@@ -548,7 +582,12 @@ except Exception:  # pragma: no cover - fallback lokalny
         "get_metrics_service_config_overrides",
         "get_metrics_service_env_overrides",
         "get_metrics_service_overrides",
+        "get_alert_policies",
+        "get_data_quality_expectations",
+        "get_decision_log_requirements",
         "get_risk_profile",
+        "get_scheduler_metrics",
+        "get_strategy_metrics",
         "list_risk_profile_files",
         "list_risk_profile_names",
         "load_risk_profiles_from_file",
@@ -573,6 +612,11 @@ RENDER_SECTION_CHOICES: tuple[str, ...] = (
     "risk_profile",
     "summary",
     "core_config",
+    "scheduler_metrics",
+    "strategy_metrics",
+    "alert_policies",
+    "decision_log_requirements",
+    "data_quality_expectations",
 )
 
 
@@ -851,7 +895,20 @@ def build_parser() -> argparse.ArgumentParser:
         "--section",
         dest="sections",
         action="append",
-        choices=("diff", "summary", "cli", "env", "profiles", "core_config", "sources"),
+        choices=(
+            "diff",
+            "summary",
+            "cli",
+            "env",
+            "profiles",
+            "core_config",
+            "sources",
+            "scheduler_metrics",
+            "strategy_metrics",
+            "alert_policies",
+            "decision_log_requirements",
+            "data_quality_expectations",
+        ),
         metavar="NAME",
         help=(
             "Ogranicz wynik do wskazanych sekcji (można podać wielokrotnie). "
@@ -1104,6 +1161,21 @@ def _handle_show(
         "sources": sources,
     }
     payload["metrics_service_overrides"] = get_metrics_service_overrides(normalized)
+    scheduler_metrics = get_scheduler_metrics(normalized)
+    if scheduler_metrics:
+        payload["scheduler_metrics"] = scheduler_metrics
+    strategy_metrics = get_strategy_metrics(normalized)
+    if strategy_metrics:
+        payload["strategy_metrics"] = strategy_metrics
+    alert_policies = get_alert_policies(normalized)
+    if alert_policies:
+        payload["alert_policies"] = alert_policies
+    decision_requirements = get_decision_log_requirements(normalized)
+    if decision_requirements:
+        payload["decision_log_requirements"] = decision_requirements
+    data_quality = get_data_quality_expectations(normalized)
+    if data_quality:
+        payload["data_quality_expectations"] = data_quality
     if core_metadata:
         payload["core_config"] = dict(core_metadata)
     return payload
@@ -1201,6 +1273,21 @@ def _handle_render(
         "env_assignments_format": env_style,
         "sources": sources,
     }
+    scheduler_metrics = get_scheduler_metrics(normalized)
+    if scheduler_metrics:
+        payload["scheduler_metrics"] = scheduler_metrics
+    strategy_metrics = get_strategy_metrics(normalized)
+    if strategy_metrics:
+        payload["strategy_metrics"] = strategy_metrics
+    alert_policies = get_alert_policies(normalized)
+    if alert_policies:
+        payload["alert_policies"] = alert_policies
+    decision_requirements = get_decision_log_requirements(normalized)
+    if decision_requirements:
+        payload["decision_log_requirements"] = decision_requirements
+    data_quality = get_data_quality_expectations(normalized)
+    if data_quality:
+        payload["data_quality_expectations"] = data_quality
     if include_profile_section:
         payload["risk_profile"] = metadata
     if include_summary_section:
@@ -1245,6 +1332,16 @@ def _handle_diff(
     target_cfg = dict(get_metrics_service_config_overrides(target_name))
     base_env = dict(get_metrics_service_env_overrides(base_name))
     target_env = dict(get_metrics_service_env_overrides(target_name))
+    base_scheduler = dict(get_scheduler_metrics(base_name))
+    target_scheduler = dict(get_scheduler_metrics(target_name))
+    base_strategy_metrics = dict(get_strategy_metrics(base_name))
+    target_strategy_metrics = dict(get_strategy_metrics(target_name))
+    base_alerts = dict(get_alert_policies(base_name))
+    target_alerts = dict(get_alert_policies(target_name))
+    base_decision = dict(get_decision_log_requirements(base_name))
+    target_decision = dict(get_decision_log_requirements(target_name))
+    base_quality = dict(get_data_quality_expectations(base_name))
+    target_quality = dict(get_data_quality_expectations(target_name))
 
     cli_diff = _diff_mapping(base_cli, target_cli)
     cfg_diff = _diff_mapping(base_cfg, target_cfg)
@@ -1258,6 +1355,11 @@ def _handle_diff(
         dict(base_metadata.get("min_event_counts") or {}),
         dict(target_metadata.get("min_event_counts") or {}),
     )
+    scheduler_diff = _diff_mapping(base_scheduler, target_scheduler)
+    strategy_diff = _diff_mapping(base_strategy_metrics, target_strategy_metrics)
+    alert_diff = _diff_mapping(base_alerts, target_alerts)
+    decision_diff = _diff_mapping(base_decision, target_decision)
+    quality_diff = _diff_mapping(base_quality, target_quality)
 
     selected_sections = {section.strip().lower() for section in sections or [] if section}
 
@@ -1271,7 +1373,18 @@ def _handle_diff(
         base_metadata.get("require_screen_info"), target_metadata.get("require_screen_info")
     )
 
-    mapping_diffs = [cli_diff, cfg_diff, env_diff, max_counts_diff, min_counts_diff]
+    mapping_diffs = [
+        cli_diff,
+        cfg_diff,
+        env_diff,
+        max_counts_diff,
+        min_counts_diff,
+        scheduler_diff,
+        strategy_diff,
+        alert_diff,
+        decision_diff,
+        quality_diff,
+    ]
     has_changes = any(_diff_mapping_has_changes(item) for item in mapping_diffs) or any(
         _scalar_diff_has_changes(item)
         for item in (
@@ -1293,6 +1406,11 @@ def _handle_diff(
             "metrics_service_env_overrides": env_diff,
             "max_event_counts": max_counts_diff,
             "min_event_counts": min_counts_diff,
+            "scheduler_metrics": scheduler_diff,
+            "strategy_metrics": strategy_diff,
+            "alert_policies": alert_diff,
+            "decision_log_requirements": decision_diff,
+            "data_quality_expectations": quality_diff,
             "severity_min": severity_diff,
             "extends": extends_diff,
             "extends_chain": extends_chain_diff,
@@ -1303,6 +1421,11 @@ def _handle_diff(
             "base": summarize_risk_profile(base_metadata),
             "target": summarize_risk_profile(target_metadata),
         },
+        "scheduler_metrics": {"base": base_scheduler, "target": target_scheduler},
+        "strategy_metrics": {"base": base_strategy_metrics, "target": target_strategy_metrics},
+        "alert_policies": {"base": base_alerts, "target": target_alerts},
+        "decision_log_requirements": {"base": base_decision, "target": target_decision},
+        "data_quality_expectations": {"base": base_quality, "target": target_quality},
         "cli": {
             "base": _build_cli_flags(base_cli, style=cli_style),
             "target": _build_cli_flags(target_cli, style=cli_style),
@@ -1319,7 +1442,18 @@ def _handle_diff(
     }
 
     if not include_unchanged:
-        for section in (cli_diff, cfg_diff, env_diff, max_counts_diff, min_counts_diff):
+        for section in (
+            cli_diff,
+            cfg_diff,
+            env_diff,
+            max_counts_diff,
+            min_counts_diff,
+            scheduler_diff,
+            strategy_diff,
+            alert_diff,
+            decision_diff,
+            quality_diff,
+        ):
             section.pop("unchanged", None)
         for scalar_key in (
             "severity_min",

@@ -41,6 +41,58 @@ _RISK_PROFILE_PRESETS: dict[str, dict[str, Any]] = {
             "ui_alerts_jank_critical_severity": "error",
             "ui_alerts_jank_critical_over_ms": 12.0,
         },
+        "observability": {
+            "scheduler_metrics": {
+                "loop_latency_ms": {"warning": 120.0, "critical": 200.0},
+                "max_drift_seconds": {"warning": 5, "critical": 10},
+                "signals_per_run": {"warning": 12, "critical": 16},
+            },
+            "strategy_metrics": {
+                "mean_reversion": {
+                    "avg_abs_zscore": {"warning": 2.4, "critical": 2.9},
+                    "avg_realized_volatility": {"warning": 0.06, "critical": 0.08},
+                },
+                "volatility_targeting": {
+                    "allocation_error_pct": {"warning": 12.0, "critical": 18.0},
+                    "realized_vs_target_vol_pct": {"warning": 25.0, "critical": 35.0},
+                },
+                "cross_exchange_arbitrage": {
+                    "secondary_delay_ms": {"warning": 250.0, "critical": 400.0},
+                    "spread_capture_bps": {"warning": 8.0, "critical": 4.0},
+                },
+            },
+            "alert_policies": {
+                "pnl_drawdown_pct": {"warning": 1.5, "critical": 2.5, "window": "15m"},
+                "risk_exposure_deviation_pct": {"warning": 5.0, "critical": 7.5, "window": "10m"},
+                "scheduler_latency_ms": {"warning": 180.0, "critical": 220.0, "window": "5m"},
+            },
+            "decision_log": {
+                "required_fields": [
+                    "schedule",
+                    "strategy",
+                    "confidence",
+                    "latency_ms",
+                    "risk_profile",
+                    "telemetry_namespace",
+                ],
+                "hmac_required": True,
+                "retention_days": 730,
+            },
+        },
+        "data_quality": {
+            "mean_reversion": {
+                "expected_symbols": ["BTC_USDT", "ETH_USDT"],
+                "max_gap_minutes": 15,
+            },
+            "volatility_targeting": {
+                "expected_symbols": ["BTC_USDT"],
+                "max_gap_minutes": 10,
+            },
+            "cross_exchange_arbitrage": {
+                "expected_symbol_pairs": ["BTC_USDT@binance/binance_futures"],
+                "max_delay_ms": 400,
+            },
+        },
     },
     "balanced": {
         "expect_summary_enabled": True,
@@ -64,6 +116,61 @@ _RISK_PROFILE_PRESETS: dict[str, dict[str, Any]] = {
             "ui_alerts_jank_spike_severity": "notice",
             "ui_alerts_jank_critical_severity": "warning",
             "ui_alerts_jank_critical_over_ms": 18.0,
+        },
+        "observability": {
+            "scheduler_metrics": {
+                "loop_latency_ms": {"warning": 150.0, "critical": 220.0},
+                "max_drift_seconds": {"warning": 8, "critical": 14},
+                "signals_per_run": {"warning": 18, "critical": 24},
+            },
+            "strategy_metrics": {
+                "mean_reversion": {
+                    "avg_abs_zscore": {"warning": 2.8, "critical": 3.3},
+                    "avg_realized_volatility": {"warning": 0.07, "critical": 0.09},
+                },
+                "volatility_targeting": {
+                    "allocation_error_pct": {"warning": 16.0, "critical": 22.0},
+                    "realized_vs_target_vol_pct": {"warning": 30.0, "critical": 40.0},
+                },
+                "cross_exchange_arbitrage": {
+                    "secondary_delay_ms": {"warning": 300.0, "critical": 450.0},
+                    "spread_capture_bps": {"warning": 6.0, "critical": 3.0},
+                },
+            },
+            "alert_policies": {
+                "pnl_drawdown_pct": {"warning": 2.5, "critical": 4.0, "window": "30m"},
+                "risk_exposure_deviation_pct": {"warning": 7.5, "critical": 10.0, "window": "15m"},
+                "scheduler_latency_ms": {"warning": 220.0, "critical": 260.0, "window": "5m"},
+            },
+            "decision_log": {
+                "required_fields": [
+                    "schedule",
+                    "strategy",
+                    "confidence",
+                    "latency_ms",
+                    "risk_profile",
+                    "telemetry_namespace",
+                ],
+                "hmac_required": True,
+                "retention_days": 730,
+            },
+        },
+        "data_quality": {
+            "mean_reversion": {
+                "expected_symbols": ["BTC_USDT", "ETH_USDT", "BNB_USDT"],
+                "max_gap_minutes": 20,
+            },
+            "volatility_targeting": {
+                "expected_symbols": ["BTC_USDT", "ETH_USDT"],
+                "max_gap_minutes": 15,
+            },
+            "cross_exchange_arbitrage": {
+                "expected_symbol_pairs": [
+                    "BTC_USDT@binance/binance_futures",
+                    "ETH_USDT@kraken/binance",
+                ],
+                "max_delay_ms": 450,
+            },
         },
     },
     "aggressive": {
@@ -89,8 +196,75 @@ _RISK_PROFILE_PRESETS: dict[str, dict[str, Any]] = {
             "ui_alerts_jank_critical_severity": "warning",
             "ui_alerts_jank_critical_over_ms": 22.0,
         },
+        "observability": {
+            "scheduler_metrics": {
+                "loop_latency_ms": {"warning": 180.0, "critical": 260.0},
+                "max_drift_seconds": {"warning": 10, "critical": 18},
+                "signals_per_run": {"warning": 24, "critical": 32},
+            },
+            "strategy_metrics": {
+                "mean_reversion": {
+                    "avg_abs_zscore": {"warning": 3.1, "critical": 3.8},
+                    "avg_realized_volatility": {"warning": 0.08, "critical": 0.1},
+                },
+                "volatility_targeting": {
+                    "allocation_error_pct": {"warning": 20.0, "critical": 28.0},
+                    "realized_vs_target_vol_pct": {"warning": 40.0, "critical": 55.0},
+                },
+                "cross_exchange_arbitrage": {
+                    "secondary_delay_ms": {"warning": 350.0, "critical": 500.0},
+                    "spread_capture_bps": {"warning": 5.0, "critical": 2.5},
+                },
+            },
+            "alert_policies": {
+                "pnl_drawdown_pct": {"warning": 3.0, "critical": 5.0, "window": "30m"},
+                "risk_exposure_deviation_pct": {"warning": 10.0, "critical": 15.0, "window": "15m"},
+                "scheduler_latency_ms": {"warning": 250.0, "critical": 320.0, "window": "5m"},
+            },
+            "decision_log": {
+                "required_fields": [
+                    "schedule",
+                    "strategy",
+                    "confidence",
+                    "latency_ms",
+                    "risk_profile",
+                    "telemetry_namespace",
+                ],
+                "hmac_required": True,
+                "retention_days": 730,
+            },
+        },
+        "data_quality": {
+            "mean_reversion": {
+                "expected_symbols": ["BTC_USDT", "ETH_USDT", "SOL_USDT"],
+                "max_gap_minutes": 25,
+            },
+            "volatility_targeting": {
+                "expected_symbols": ["BTC_USDT", "ETH_USDT", "SOL_USDT"],
+                "max_gap_minutes": 20,
+            },
+            "cross_exchange_arbitrage": {
+                "expected_symbol_pairs": [
+                    "BTC_USDT@binance/binance_futures",
+                    "ETH_USDT@kraken/binance",
+                    "SOL_USDT@binance/okx",
+                ],
+                "max_delay_ms": 520,
+            },
+        },
     },
-    "manual": {},
+    "manual": {
+        "observability": {
+            "scheduler_metrics": {},
+            "strategy_metrics": {},
+            "alert_policies": {},
+            "decision_log": {
+                "required_fields": ["schedule", "strategy", "risk_profile"],
+                "hmac_required": False,
+            },
+        },
+        "data_quality": {},
+    },
 }
 
 # Mapowanie nazw opcji CLI na pola konfiguracji MetricsServiceConfig
@@ -442,6 +616,50 @@ def get_metrics_service_env_overrides(name: str) -> Mapping[str, Any]:
     return env_overrides
 
 
+def get_scheduler_metrics(name: str) -> Mapping[str, Any]:
+    """Zwraca progi metryk scheduler-a powiązane z profilem."""
+
+    profile = get_risk_profile(name)
+    observability = profile.get("observability", {})
+    scheduler_metrics = observability.get("scheduler_metrics", {})
+    return deepcopy(scheduler_metrics)
+
+
+def get_strategy_metrics(name: str) -> Mapping[str, Any]:
+    """Zwraca mapę progów metryk strategii dla profilu."""
+
+    profile = get_risk_profile(name)
+    observability = profile.get("observability", {})
+    strategy_metrics = observability.get("strategy_metrics", {})
+    return deepcopy(strategy_metrics)
+
+
+def get_alert_policies(name: str) -> Mapping[str, Any]:
+    """Zwraca polityki alertów operacyjnych przypisane do profilu."""
+
+    profile = get_risk_profile(name)
+    observability = profile.get("observability", {})
+    policies = observability.get("alert_policies", {})
+    return deepcopy(policies)
+
+
+def get_decision_log_requirements(name: str) -> Mapping[str, Any]:
+    """Zwraca wymagania dot. decision logu dla profilu ryzyka."""
+
+    profile = get_risk_profile(name)
+    observability = profile.get("observability", {})
+    requirements = observability.get("decision_log", {})
+    return deepcopy(requirements)
+
+
+def get_data_quality_expectations(name: str) -> Mapping[str, Any]:
+    """Zwraca oczekiwania jakości danych powiązane z profilem."""
+
+    profile = get_risk_profile(name)
+    expectations = profile.get("data_quality", {})
+    return deepcopy(expectations)
+
+
 def risk_profile_metadata(name: str) -> dict[str, Any]:
     """Buduje strukturę metadanych do logów i raportów."""
     profile = get_risk_profile(name)
@@ -482,6 +700,40 @@ def summarize_risk_profile(metadata: Mapping[str, Any]) -> dict[str, Any]:
         value = metadata.get(key)
         if value:
             summary[key] = deepcopy(value)
+
+    observability = metadata.get("observability")
+    if isinstance(observability, Mapping):
+        scheduler_metrics = observability.get("scheduler_metrics")
+        if isinstance(scheduler_metrics, Mapping):
+            summary["scheduler_metrics"] = sorted(scheduler_metrics.keys())
+        strategy_metrics = observability.get("strategy_metrics")
+        if isinstance(strategy_metrics, Mapping):
+            summary["strategy_metrics"] = {
+                str(name): sorted(metrics.keys())
+                for name, metrics in strategy_metrics.items()
+                if isinstance(metrics, Mapping)
+            }
+        alert_policies = observability.get("alert_policies")
+        if isinstance(alert_policies, Mapping):
+            summary["alert_policies"] = sorted(alert_policies.keys())
+        decision_requirements = observability.get("decision_log")
+        if isinstance(decision_requirements, Mapping):
+            summary["decision_log"] = {
+                "required_fields": list(decision_requirements.get("required_fields", [])),
+                "hmac_required": bool(decision_requirements.get("hmac_required", False)),
+            }
+
+    data_quality = metadata.get("data_quality")
+    if isinstance(data_quality, Mapping):
+        summary["data_quality"] = {
+            str(name): {
+                key: deepcopy(value)
+                for key, value in payload.items()
+                if key in {"max_gap_minutes", "max_delay_ms", "expected_symbols", "expected_symbol_pairs"}
+            }
+            for name, payload in data_quality.items()
+            if isinstance(payload, Mapping)
+        }
 
     return summary
 
@@ -642,6 +894,11 @@ __all__ = [
     "get_metrics_service_env_overrides",
     "get_metrics_service_overrides",
     "get_risk_profile",
+    "get_scheduler_metrics",
+    "get_strategy_metrics",
+    "get_alert_policies",
+    "get_decision_log_requirements",
+    "get_data_quality_expectations",
     "load_risk_profiles_with_metadata",
     "list_risk_profile_names",
     "load_risk_profiles_from_file",

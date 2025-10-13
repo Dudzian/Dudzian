@@ -36,6 +36,21 @@ class TradingDecisionEvent:
     quantity: Optional[float] = None
     price: Optional[float] = None
     status: Optional[str] = None
+    schedule: Optional[str] = None
+    strategy: Optional[str] = None
+    schedule_run_id: Optional[str] = None
+    strategy_instance_id: Optional[str] = None
+    signal_id: Optional[str] = None
+    primary_exchange: Optional[str] = None
+    secondary_exchange: Optional[str] = None
+    base_asset: Optional[str] = None
+    quote_asset: Optional[str] = None
+    instrument_type: Optional[str] = None
+    data_feed: Optional[str] = None
+    risk_budget_bucket: Optional[str] = None
+    confidence: Optional[float] = None
+    latency_ms: Optional[float] = None
+    telemetry_namespace: Optional[str] = None
     metadata: Mapping[str, str] = field(default_factory=dict)
 
     def as_dict(self) -> Mapping[str, str]:
@@ -58,6 +73,38 @@ class TradingDecisionEvent:
             payload["price"] = price
         if self.status:
             payload["status"] = self.status
+        if self.schedule:
+            payload["schedule"] = self.schedule
+        if self.strategy:
+            payload["strategy"] = self.strategy
+        if self.schedule_run_id:
+            payload["schedule_run_id"] = self.schedule_run_id
+        if self.strategy_instance_id:
+            payload["strategy_instance_id"] = self.strategy_instance_id
+        if self.signal_id:
+            payload["signal_id"] = self.signal_id
+        if self.primary_exchange:
+            payload["primary_exchange"] = self.primary_exchange
+        if self.secondary_exchange:
+            payload["secondary_exchange"] = self.secondary_exchange
+        if self.base_asset:
+            payload["base_asset"] = self.base_asset
+        if self.quote_asset:
+            payload["quote_asset"] = self.quote_asset
+        if self.instrument_type:
+            payload["instrument_type"] = self.instrument_type
+        if self.data_feed:
+            payload["data_feed"] = self.data_feed
+        if self.risk_budget_bucket:
+            payload["risk_budget_bucket"] = self.risk_budget_bucket
+        confidence = _format_float(self.confidence)
+        if confidence is not None:
+            payload["confidence"] = confidence
+        latency = _format_float(self.latency_ms)
+        if latency is not None:
+            payload["latency_ms"] = latency
+        if self.telemetry_namespace:
+            payload["telemetry_namespace"] = self.telemetry_namespace
         for key, value in self.metadata.items():
             payload[str(key)] = str(value)
         return payload

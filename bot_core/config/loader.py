@@ -3,7 +3,10 @@ from __future__ import annotations
 
 from dataclasses import fields
 from pathlib import Path
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping, Optional, Sequence
+
+import os
+import re
 
 import yaml
 
@@ -21,6 +24,7 @@ from bot_core.config.models import (
     ServiceTokenConfig,
     RiskProfileConfig,
     RiskServiceConfig,
+    RuntimeResourceLimitsConfig,
     SMSProviderSettings,
     TelegramChannelSettings,
 )
@@ -30,11 +34,13 @@ from bot_core.exchanges.base import Environment
 try:
     from bot_core.config.models import (
         InstrumentBackfillWindow,
+        InstrumentBucketConfig,
         InstrumentConfig,
         InstrumentUniverseConfig,
     )
 except Exception:  # brak rozszerzeń instrumentów
     InstrumentBackfillWindow = None  # type: ignore
+    InstrumentBucketConfig = None  # type: ignore
     InstrumentConfig = None  # type: ignore
     InstrumentUniverseConfig = None  # type: ignore
 
@@ -42,6 +48,21 @@ try:
     from bot_core.config.models import DailyTrendMomentumStrategyConfig
 except Exception:  # brak modułu strategii
     DailyTrendMomentumStrategyConfig = None  # type: ignore
+
+try:
+    from bot_core.config.models import (
+        CrossExchangeArbitrageStrategyConfig,
+        MeanReversionStrategyConfig,
+        MultiStrategySchedulerConfig,
+        StrategyScheduleConfig,
+        VolatilityTargetingStrategyConfig,
+    )
+except Exception:  # brak rozszerzonej biblioteki strategii
+    CrossExchangeArbitrageStrategyConfig = None  # type: ignore
+    MeanReversionStrategyConfig = None  # type: ignore
+    MultiStrategySchedulerConfig = None  # type: ignore
+    StrategyScheduleConfig = None  # type: ignore
+    VolatilityTargetingStrategyConfig = None  # type: ignore
 
 # Dodatkowe kanały komunikatorów – w pełni opcjonalne
 try:
@@ -106,6 +127,9 @@ except Exception:
     MetricsServiceTlsConfig = None  # type: ignore
 
 
+_GRPC_METADATA_KEY_PATTERN = re.compile(r"^[0-9a-z._-]+$")
+
+
 def _core_has(field_name: str) -> bool:
     """Sprawdza, czy CoreConfig posiada dane pole (bezpiecznie dla różnych gałęzi)."""
     return any(f.name == field_name for f in fields(CoreConfig))
@@ -149,6 +173,32 @@ def _load_instrument_universes(raw: Mapping[str, Any]):
             instruments=tuple(instruments),
         )
     return universes
+
+
+def _load_instrument_buckets(
+    raw: Mapping[str, Any],
+) -> Mapping[str, "InstrumentBucketConfig"]:
+    if InstrumentBucketConfig is None:
+        return {}
+    buckets: dict[str, InstrumentBucketConfig] = {}
+    for name, entry in (raw.get("instrument_buckets", {}) or {}).items():
+        buckets[name] = InstrumentBucketConfig(
+            name=name,
+            universe=str(entry.get("universe", "")),
+            symbols=tuple(str(symbol) for symbol in (entry.get("symbols", ()) or ())),
+            max_position_pct=(
+                float(entry["max_position_pct"])
+                if entry.get("max_position_pct") is not None
+                else None
+            ),
+            max_notional_usd=(
+                float(entry["max_notional_usd"])
+                if entry.get("max_notional_usd") is not None
+                else None
+            ),
+            tags=tuple(str(tag) for tag in (entry.get("tags", ()) or ())),
+        )
+    return buckets
 
 
 def _load_sms_providers(raw_alerts: Mapping[str, Any]) -> Mapping[str, SMSProviderSettings]:
@@ -235,6 +285,133 @@ def _load_strategies(raw: Mapping[str, Any]):
             min_momentum=float(params.get("min_momentum", 0.0)),
         )
     return strategies
+
+
+def _load_mean_reversion_strategies(raw: Mapping[str, Any]):
+    if MeanReversionStrategyConfig is None:
+        return {}
+    strategies: dict[str, MeanReversionStrategyConfig] = {}
+    for name, entry in (raw.get("mean_reversion_strategies", {}) or {}).items():
+        params = entry.get("parameters", entry) or {}
+        strategies[name] = MeanReversionStrategyConfig(
+            name=name,
+            lookback=int(params.get("lookback", 96)),
+            entry_zscore=float(params.get("entry_zscore", 1.8)),
+            exit_zscore=float(params.get("exit_zscore", 0.4)),
+            max_holding_period=int(params.get("max_holding_period", 12)),
+            volatility_cap=float(params.get("volatility_cap", 0.04)),
+            min_volume_usd=float(params.get("min_volume_usd", 1000.0)),
+        )
+    return strategies
+
+
+def _load_volatility_target_strategies(raw: Mapping[str, Any]):
+    if VolatilityTargetingStrategyConfig is None:
+        return {}
+    strategies: dict[str, VolatilityTargetingStrategyConfig] = {}
+    for name, entry in (raw.get("volatility_target_strategies", {}) or {}).items():
+        params = entry.get("parameters", entry) or {}
+        strategies[name] = VolatilityTargetingStrategyConfig(
+            name=name,
+            target_volatility=float(params.get("target_volatility", 0.12)),
+            lookback=int(params.get("lookback", 60)),
+            rebalance_threshold=float(params.get("rebalance_threshold", 0.1)),
+            min_allocation=float(params.get("min_allocation", 0.1)),
+            max_allocation=float(params.get("max_allocation", 1.0)),
+            floor_volatility=float(params.get("floor_volatility", 0.02)),
+        )
+    return strategies
+
+
+def _load_cross_exchange_arbitrage_strategies(raw: Mapping[str, Any]):
+    if CrossExchangeArbitrageStrategyConfig is None:
+        return {}
+    strategies: dict[str, CrossExchangeArbitrageStrategyConfig] = {}
+    for name, entry in (raw.get("cross_exchange_arbitrage_strategies", {}) or {}).items():
+        params = entry.get("parameters", entry) or {}
+        strategies[name] = CrossExchangeArbitrageStrategyConfig(
+            name=name,
+            primary_exchange=str(params.get("primary_exchange", "")),
+            secondary_exchange=str(params.get("secondary_exchange", "")),
+            spread_entry=float(params.get("spread_entry", 0.0015)),
+            spread_exit=float(params.get("spread_exit", 0.0005)),
+            max_notional=float(params.get("max_notional", 50_000.0)),
+            max_open_seconds=int(params.get("max_open_seconds", 120)),
+        )
+    return strategies
+
+
+def _load_strategy_schedule(entry_name: str, entry: Mapping[str, Any]) -> StrategyScheduleConfig:
+    assert StrategyScheduleConfig is not None
+    return StrategyScheduleConfig(
+        name=entry_name,
+        strategy=str(entry.get("strategy") or entry_name),
+        cadence_seconds=int(entry.get("cadence_seconds", entry.get("cadence", 300))),
+        max_drift_seconds=int(entry.get("max_drift_seconds", entry.get("max_drift", 30))),
+        warmup_bars=int(entry.get("warmup_bars", 0)),
+        risk_profile=str(entry.get("risk_profile", "balanced")),
+        max_signals=int(entry.get("max_signals", 10)),
+        interval=str(entry.get("interval")) if entry.get("interval") else None,
+    )
+
+
+def _load_multi_strategy_schedulers(raw: Mapping[str, Any]):
+    if MultiStrategySchedulerConfig is None or StrategyScheduleConfig is None:
+        return {}
+    schedulers: dict[str, MultiStrategySchedulerConfig] = {}
+    sources: list[Mapping[str, Any]] = []
+    top_level = raw.get("multi_strategy_schedulers")
+    if isinstance(top_level, Mapping):
+        sources.append(top_level)
+    runtime_section = raw.get("runtime")
+    if isinstance(runtime_section, Mapping):
+        runtime_schedulers = runtime_section.get("multi_strategy_schedulers")
+        if isinstance(runtime_schedulers, Mapping):
+            sources.append(runtime_schedulers)
+
+    for source in sources:
+        for name, entry in (source or {}).items():
+            if not isinstance(entry, Mapping):
+                continue
+            schedules_raw = entry.get("schedules", {}) or {}
+            schedules = [
+                _load_strategy_schedule(schedule_name, schedule_entry)
+                for schedule_name, schedule_entry in schedules_raw.items()
+                if isinstance(schedule_entry, Mapping)
+            ]
+            schedulers[name] = MultiStrategySchedulerConfig(
+                name=name,
+                schedules=tuple(schedules),
+                telemetry_namespace=str(
+                    entry.get("telemetry_namespace", f"scheduler.{name}")
+                ),
+                decision_log_category=str(
+                    entry.get("decision_log_category", "runtime.scheduler")
+                ),
+                health_check_interval=int(entry.get("health_check_interval", 300)),
+                rbac_tokens=_load_service_tokens(entry.get("rbac_tokens")),
+            )
+    return schedulers
+
+
+def _load_runtime_resource_limits(runtime_section: Mapping[str, Any]):
+    if RuntimeResourceLimitsConfig is None:
+        return None
+    entry = runtime_section.get("resource_limits")
+    if not isinstance(entry, Mapping) or not entry:
+        return None
+    cpu_percent = float(entry.get("cpu_percent", entry.get("cpu", 0.0)))
+    memory_mb = float(entry.get("memory_mb", entry.get("memory", 0.0)))
+    io_read = float(entry.get("io_read_mb_s", entry.get("io_read", 0.0)))
+    io_write = float(entry.get("io_write_mb_s", entry.get("io_write", 0.0)))
+    warning_threshold = float(entry.get("headroom_warning_threshold", entry.get("warning_threshold", 0.85)))
+    return RuntimeResourceLimitsConfig(
+        cpu_percent=cpu_percent,
+        memory_mb=memory_mb,
+        io_read_mb_s=io_read,
+        io_write_mb_s=io_write,
+        headroom_warning_threshold=warning_threshold,
+    )
 
 
 def _load_alert_throttle(entry: Optional[Mapping[str, Any]]) -> AlertThrottleConfig | None:
@@ -659,6 +836,103 @@ def _load_service_tokens(raw_value: Any) -> tuple[ServiceTokenConfig, ...]:
     return tuple(tokens)
 
 
+def _normalize_grpc_metadata(
+    raw_value: object, *, base_dir: Path | None
+) -> tuple[tuple[str, str], Mapping[str, str]]:
+    """Normalizuje wpisy metadata gRPC do listy par (klucz, wartość).
+
+    Zwraca pary `(key, value)` oraz mapę źródeł, aby można było odnotować
+    pochodzenie (inline/env/plik) w decision logu.
+    """
+
+    if raw_value in (None, False, ""):
+        return (), {}
+
+    entries: list[tuple[str, str]] = []
+    sources: dict[str, str] = {}
+
+    def _append_entry(key: object, value: object, *, source: str) -> None:
+        if key is None:
+            raise ValueError("grpc_metadata wymaga niepustego klucza")
+        key_str = str(key).strip()
+        if not key_str:
+            raise ValueError("grpc_metadata wymaga niepustego klucza")
+        normalized_key = key_str.lower()
+        if key_str != normalized_key:
+            raise ValueError("grpc_metadata klucz musi być zapisany małymi literami")
+        if not _GRPC_METADATA_KEY_PATTERN.fullmatch(normalized_key):
+            raise ValueError(
+                "grpc_metadata klucz może zawierać wyłącznie [0-9a-z._-]"
+            )
+        value_str = "" if value is None else str(value)
+        normalized_value = value_str.strip()
+        entries.append((normalized_key, normalized_value))
+        sources[normalized_key] = source
+
+    def _resolve_mapping_value(entry: Mapping[str, Any]) -> tuple[Any, str]:
+        if "value" in entry:
+            return entry.get("value"), "inline"
+        if "value_env" in entry or "env" in entry:
+            env_name = _normalize_env_var(entry.get("value_env") or entry.get("env"))
+            if not env_name:
+                raise ValueError("grpc_metadata value_env wymaga niepustej nazwy zmiennej")
+            if env_name not in os.environ:
+                raise ValueError(
+                    f"grpc_metadata value_env '{env_name}' nie jest ustawione w środowisku"
+                )
+            return os.environ[env_name], f"env:{env_name}"
+        if "value_file" in entry or "value_path" in entry:
+            raw_path = entry.get("value_file") or entry.get("value_path")
+            normalized_path = _normalize_runtime_path(raw_path, base_dir=base_dir)
+            if not normalized_path:
+                raise ValueError("grpc_metadata value_file wymaga ścieżki do pliku")
+            file_path = Path(normalized_path)
+            try:
+                contents = file_path.read_text(encoding="utf-8")
+            except FileNotFoundError as exc:  # noqa: PERF203 - informujemy o brakującym pliku
+                raise ValueError(
+                    f"grpc_metadata value_file '{normalized_path}' nie istnieje"
+                ) from exc
+            return contents, f"file:{normalized_path}"
+        raise ValueError(
+            "grpc_metadata wpis słownika wymaga pola value, value_env lub value_file"
+        )
+
+    if isinstance(raw_value, Mapping):
+        for key, value in raw_value.items():
+            if isinstance(value, Mapping):
+                if any(
+                    candidate_key in value
+                    for candidate_key in ("value", "value_env", "env", "value_file", "value_path")
+                ):
+                    resolved_value, source = _resolve_mapping_value(value)
+                    _append_entry(key, resolved_value, source=source)
+                    continue
+            _append_entry(key, value, source="inline")
+    elif isinstance(raw_value, Sequence) and not isinstance(raw_value, (str, bytes, bytearray)):
+        for item in raw_value:
+            if isinstance(item, Mapping):
+                if "key" not in item:
+                    raise ValueError("grpc_metadata wpis słownika wymaga pola key")
+                value, source = _resolve_mapping_value(item)
+                _append_entry(item["key"], value, source=source)
+            else:
+                text = str(item)
+                if "=" in text:
+                    key, value = text.split("=", 1)
+                elif ":" in text:
+                    key, value = text.split(":", 1)
+                else:
+                    raise ValueError(
+                        "grpc_metadata element listy musi mieć format klucz=wartość lub klucz:wartość"
+                    )
+                _append_entry(key, value, source="inline")
+    else:
+        raise TypeError("grpc_metadata musi być mapą lub listą wpisów")
+
+    return tuple(entries), sources
+
+
 def _load_metrics_service(
     runtime_section: Optional[Mapping[str, Any]], *, base_dir: Path | None = None
 ) -> MetricsServiceConfig | None:
@@ -690,6 +964,15 @@ def _load_metrics_service(
 
     if "rbac_tokens" in available_fields:
         kwargs["rbac_tokens"] = _load_service_tokens(metrics_raw.get("rbac_tokens"))
+
+    if "grpc_metadata" in available_fields:
+        raw_metadata = metrics_raw.get("grpc_metadata")
+        metadata_entries, metadata_sources = _normalize_grpc_metadata(
+            raw_metadata, base_dir=base_dir
+        )
+        kwargs["grpc_metadata"] = metadata_entries
+        if "grpc_metadata_sources" in available_fields:
+            kwargs["grpc_metadata_sources"] = dict(metadata_sources)
 
     # Opcjonalne: log sink, jsonl, fsync
     if "log_sink" in available_fields:
@@ -1003,6 +1286,7 @@ def load_core_config(path: str | Path) -> CoreConfig:
     config_base_dir = config_absolute_path.parent
 
     instrument_universes = _load_instrument_universes(raw)
+    instrument_buckets = _load_instrument_buckets(raw)
 
     # Środowiska – budujemy kwargs dynamicznie, tak by działało na różnych gałęziach modeli.
     environments: dict[str, EnvironmentConfig] = {}
@@ -1060,6 +1344,13 @@ def load_core_config(path: str | Path) -> CoreConfig:
             max_open_positions=int(entry["max_open_positions"]),
             hard_drawdown_pct=float(entry["hard_drawdown_pct"]),
             data_quality=_load_data_quality(entry.get("data_quality")),
+            strategy_allocations={
+                str(bucket): float(weight)
+                for bucket, weight in (entry.get("strategy_allocations", {}) or {}).items()
+            },
+            instrument_buckets=tuple(
+                str(bucket) for bucket in (entry.get("instrument_buckets", ()) or ())
+            ),
         )
         for name, entry in (raw.get("risk_profiles", {}) or {}).items()
     }
@@ -1078,6 +1369,10 @@ def load_core_config(path: str | Path) -> CoreConfig:
             )
 
     strategies = _load_strategies(raw)
+    mean_reversion_strategies = _load_mean_reversion_strategies(raw)
+    volatility_target_strategies = _load_volatility_target_strategies(raw)
+    cross_exchange_arbitrage_strategies = _load_cross_exchange_arbitrage_strategies(raw)
+    scheduler_configs = _load_multi_strategy_schedulers(raw)
 
     reporting = _load_reporting(raw.get("reporting"))
     runtime_section = raw.get("runtime") or {}
@@ -1120,8 +1415,18 @@ def load_core_config(path: str | Path) -> CoreConfig:
     }
     if _core_has("instrument_universes"):
         core_kwargs["instrument_universes"] = instrument_universes
+    if _core_has("instrument_buckets"):
+        core_kwargs["instrument_buckets"] = instrument_buckets
     if _core_has("strategies"):
         core_kwargs["strategies"] = strategies
+    if _core_has("mean_reversion_strategies"):
+        core_kwargs["mean_reversion_strategies"] = mean_reversion_strategies
+    if _core_has("volatility_target_strategies"):
+        core_kwargs["volatility_target_strategies"] = volatility_target_strategies
+    if _core_has("cross_exchange_arbitrage_strategies"):
+        core_kwargs["cross_exchange_arbitrage_strategies"] = cross_exchange_arbitrage_strategies
+    if _core_has("multi_strategy_schedulers"):
+        core_kwargs["multi_strategy_schedulers"] = scheduler_configs
     if _core_has("signal_channels"):
         core_kwargs["signal_channels"] = signal_channels
     if _core_has("whatsapp_channels"):
@@ -1148,6 +1453,10 @@ def load_core_config(path: str | Path) -> CoreConfig:
     risk_service_config = _load_risk_service(runtime_section, base_dir=config_base_dir)
     if risk_service_config is not None:
         core_kwargs["risk_service"] = risk_service_config
+
+    resource_limits_config = _load_runtime_resource_limits(runtime_section)
+    if resource_limits_config is not None and _core_has("runtime_resource_limits"):
+        core_kwargs["runtime_resource_limits"] = resource_limits_config
 
     risk_decision_log_config = _load_risk_decision_log(
         runtime_section, base_dir=config_base_dir

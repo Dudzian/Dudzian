@@ -47,7 +47,15 @@ def _stub_config_error() -> SimpleNamespace:
         ),
         rbac_tokens=(),
     )
-    return SimpleNamespace(metrics_service=metrics_service, risk_service=risk_service)
+    scheduler = SimpleNamespace(
+        name="core_multi",
+        rbac_tokens=(),
+    )
+    return SimpleNamespace(
+        metrics_service=metrics_service,
+        risk_service=risk_service,
+        multi_strategy_schedulers={"core_multi": scheduler},
+    )
 
 
 def _stub_config_secure(cert: Path, key: Path) -> SimpleNamespace:
@@ -90,7 +98,23 @@ def _stub_config_secure(cert: Path, key: Path) -> SimpleNamespace:
         ),
         tls=tls_config(),
     )
-    return SimpleNamespace(metrics_service=metrics_service, risk_service=risk_service)
+    scheduler = SimpleNamespace(
+        name="core_multi",
+        rbac_tokens=(
+            SimpleNamespace(
+                token_id="scheduler-writer",
+                token_value="secret",
+                token_env=None,
+                token_hash=None,
+                scopes=("runtime.schedule.read", "runtime.schedule.write"),
+            ),
+        ),
+    )
+    return SimpleNamespace(
+        metrics_service=metrics_service,
+        risk_service=risk_service,
+        multi_strategy_schedulers={"core_multi": scheduler},
+    )
 
 
 def test_audit_security_baseline_script_detects_failures(
@@ -149,6 +173,10 @@ def test_audit_security_baseline_script_env_configuration(
     monkeypatch.setenv("BOT_CORE_SECURITY_BASELINE_PRETTY", "true")
     monkeypatch.setenv("BOT_CORE_SECURITY_BASELINE_METRICS_SCOPES", "metrics.read")
     monkeypatch.setenv("BOT_CORE_SECURITY_BASELINE_RISK_SCOPES", "risk.read")
+    monkeypatch.setenv(
+        "BOT_CORE_SECURITY_BASELINE_SCHEDULER_SCOPES",
+        "core_multi:runtime.schedule.write,runtime.schedule.read",
+    )
 
     exit_code = audit_security_baseline_script.main([])
 

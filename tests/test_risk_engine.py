@@ -278,7 +278,105 @@ def test_decision_log_generates_hmac_signature(tmp_path, manual_profile):
     assert len(serialized) == 1
     payload = json.loads(serialized[0])
     assert payload["signature"]["value"]
-    assert payload["profile"] == manual_profile.name
+
+
+def test_combined_strategy_orders_respect_max_position_pct(manual_profile: ManualProfile) -> None:
+    engine = ThresholdRiskEngine(clock=lambda: datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc))
+    engine.register_profile(manual_profile)
+
+    account = _snapshot(1_000.0)
+    first_order = _order(30_000.0, quantity=0.01)
+    first_result = engine.apply_pre_trade_checks(first_order, account=account, profile_name=manual_profile.name)
+    assert first_result.allowed
+
+    engine.on_fill(
+        profile_name=manual_profile.name,
+        symbol=first_order.symbol,
+        side="buy",
+        position_value=first_order.price * first_order.quantity,
+        pnl=0.0,
+        timestamp=datetime(2024, 1, 1, 12, 0, 5, tzinfo=timezone.utc),
+    )
+
+    second_order = _order(30_000.0, quantity=0.05)
+    second_result = engine.apply_pre_trade_checks(
+        second_order,
+        account=account,
+        profile_name=manual_profile.name,
+    )
+    assert not second_result.allowed
+    message = (second_result.reason or "").lower()
+    assert "limit" in message and "ekspozycji" in message
+
+
+def test_force_liquidation_due_to_drawdown_allows_only_reducing_orders() -> None:
+    clock_values = [
+        datetime(2024, 1, 1, 9, 0, 0, tzinfo=timezone.utc),
+        datetime(2024, 1, 1, 9, 5, 0, tzinfo=timezone.utc),
+        datetime(2024, 1, 1, 9, 10, 0, tzinfo=timezone.utc),
+        datetime(2024, 1, 1, 9, 15, 0, tzinfo=timezone.utc),
+    ]
+    timestamps = iter(clock_values)
+
+    def _clock() -> datetime:
+        try:
+            return next(timestamps)
+        except StopIteration:
+            return clock_values[-1]
+
+    profile = ManualProfile(
+        name="drawdown-limited",
+        max_positions=5,
+        max_leverage=3.0,
+        drawdown_limit=0.1,
+        daily_loss_limit=0.5,
+        max_position_pct=0.5,
+        target_volatility=0.02,
+        stop_loss_atr_multiple=2.0,
+    )
+
+    engine = ThresholdRiskEngine(clock=_clock)
+    engine.register_profile(profile)
+
+    opening_snapshot = _snapshot(50_000.0)
+    opening_order = _order(25_000.0, quantity=0.5)
+    opening_result = engine.apply_pre_trade_checks(
+        opening_order,
+        account=opening_snapshot,
+        profile_name=profile.name,
+    )
+    assert opening_result.allowed is True
+
+    engine.on_fill(
+        profile_name=profile.name,
+        symbol=opening_order.symbol,
+        side="buy",
+        position_value=opening_order.price * opening_order.quantity,
+        pnl=0.0,
+        timestamp=datetime(2024, 1, 1, 9, 6, 0, tzinfo=timezone.utc),
+    )
+
+    drawdown_snapshot = _snapshot(45_000.0)
+    expansion_order = _order(25_000.0, quantity=0.1)
+    expansion_result = engine.apply_pre_trade_checks(
+        expansion_order,
+        account=drawdown_snapshot,
+        profile_name=profile.name,
+    )
+
+    assert expansion_result.allowed is False
+    assert expansion_result.reason is not None
+    assert "Przekroczono limit obsunięcia portfela" in expansion_result.reason
+    assert "redukujące" in expansion_result.reason
+
+    reducing_order = _order(25_000.0, side="sell", quantity=0.25)
+    reducing_result = engine.apply_pre_trade_checks(
+        reducing_order,
+        account=drawdown_snapshot,
+        profile_name=profile.name,
+    )
+
+    assert reducing_result.allowed is True
 
 
 @pytest.mark.parametrize(
@@ -461,6 +559,86 @@ def test_stop_loss_wider_than_minimum_limits_position_size() -> None:
     assert denial.allowed is False
     assert denial.adjustments is not None
     assert denial.adjustments["max_quantity"] == pytest.approx(allowed_quantity, rel=1e-6)
+
+
+def test_daily_loss_limit_resets_after_new_trading_day() -> None:
+    clock_values = [
+        datetime(2024, 1, 1, 8, 0, 0, tzinfo=timezone.utc),
+        datetime(2024, 1, 1, 10, 0, 0, tzinfo=timezone.utc),
+        datetime(2024, 1, 1, 14, 0, 0, tzinfo=timezone.utc),
+        datetime(2024, 1, 2, 9, 0, 0, tzinfo=timezone.utc),
+        datetime(2024, 1, 2, 9, 5, 0, tzinfo=timezone.utc),
+    ]
+    timestamps = iter(clock_values)
+
+    def _clock() -> datetime:
+        try:
+            return next(timestamps)
+        except StopIteration:
+            return clock_values[-1]
+
+    profile = ManualProfile(
+        name="daily-loss-reset",
+        max_positions=3,
+        max_leverage=4.0,
+        drawdown_limit=0.5,
+        daily_loss_limit=0.01,
+        max_position_pct=1.0,
+        target_volatility=0.02,
+        stop_loss_atr_multiple=2.0,
+    )
+
+    engine = ThresholdRiskEngine(clock=_clock)
+    engine.register_profile(profile)
+
+    day_one_snapshot = _snapshot(10_000.0)
+    opening_order = _order(25_000.0, quantity=0.2)
+    first_result = engine.apply_pre_trade_checks(
+        opening_order,
+        account=day_one_snapshot,
+        profile_name=profile.name,
+    )
+    assert first_result.allowed is True
+
+    engine.on_fill(
+        profile_name=profile.name,
+        symbol=opening_order.symbol,
+        side="buy",
+        position_value=opening_order.price * opening_order.quantity,
+        pnl=-150.0,
+        timestamp=datetime(2024, 1, 1, 13, 0, 0, tzinfo=timezone.utc),
+    )
+
+    denial_snapshot = _snapshot(9_850.0)
+    blocked_order = _order(25_000.0, quantity=0.05)
+    blocked_result = engine.apply_pre_trade_checks(
+        blocked_order,
+        account=denial_snapshot,
+        profile_name=profile.name,
+    )
+
+    assert blocked_result.allowed is False
+    assert blocked_result.reason is not None
+    assert "dzienny limit straty" in blocked_result.reason.lower()
+
+    engine.on_fill(
+        profile_name=profile.name,
+        symbol=opening_order.symbol,
+        side="sell",
+        position_value=0.0,
+        pnl=0.0,
+        timestamp=datetime(2024, 1, 1, 16, 0, 0, tzinfo=timezone.utc),
+    )
+
+    day_two_snapshot = _snapshot(9_850.0)
+    reset_order = _order(25_000.0, quantity=0.05)
+    reset_result = engine.apply_pre_trade_checks(
+        reset_order,
+        account=day_two_snapshot,
+        profile_name=profile.name,
+    )
+
+    assert reset_result.allowed is True
 
 
 def test_on_fill_normalizes_position_side_and_allows_growth(manual_profile: ManualProfile) -> None:

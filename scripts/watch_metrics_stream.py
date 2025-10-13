@@ -70,7 +70,7 @@ from __future__ import annotations
 
 import argparse
 import base64
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from contextlib import nullcontext
 from datetime import datetime, timezone
 import hashlib
@@ -79,6 +79,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
@@ -115,9 +116,12 @@ except Exception as exc:  # pragma: no cover
 LOGGER = logging.getLogger("bot_core.scripts.watch_metrics_stream")
 
 _ENV_PREFIX = "BOT_CORE_WATCH_METRICS_"
+_CLI_HEADER_SOURCE = "cli:--header"
+_ENV_HEADER_SOURCE = f"env:{_ENV_PREFIX}HEADERS"
 _HEX_DIGITS = set("0123456789abcdef")
 _REQUIRED_METRICS_SCOPE = "metrics.read"
 _REQUIRED_RISK_SCOPE = "risk.read"
+_METADATA_KEY_PATTERN = re.compile(r"^[0-9a-z._-]+$")
 
 
 def _parse_pinned_fingerprint(entry: object) -> tuple[str, str] | None:
@@ -158,6 +162,127 @@ def _select_sha256_fingerprint(entries: Sequence[object]) -> str | None:
             "Pomijam wpis pinningu TLS %r – obsługiwany jest wyłącznie SHA-256", entry
         )
     return None
+
+
+def _looks_like_sensitive_metadata_key(key: str) -> bool:
+    lowered = key.lower()
+    return any(token in lowered for token in ("auth", "token", "secret", "key"))
+
+
+_METADATA_CLEAR_SENTINELS = {"none", "null"}
+
+
+def _parse_metadata_entries(
+    entries: Sequence[str], *, parser: argparse.ArgumentParser
+) -> tuple[list[tuple[str, str]], set[str]]:
+    metadata: list[tuple[str, str]] = []
+    removals: set[str] = set()
+    for raw_entry in entries:
+        entry = raw_entry.strip()
+        if not entry:
+            continue
+        if "=" in entry:
+            key, value = entry.split("=", 1)
+        elif ":" in entry:
+            key, value = entry.split(":", 1)
+        else:
+            parser.error(
+                "Nieprawidłowy nagłówek gRPC '%s'. Użyj formatu klucz=wartość lub klucz:wartość." % raw_entry
+            )
+        stripped_key = key.strip()
+        normalized_key = stripped_key.lower()
+        if not normalized_key:
+            parser.error("Nagłówek gRPC o pustym kluczu jest niedozwolony")
+        if stripped_key != normalized_key:
+            parser.error(
+                "Nagłówek gRPC '%s' musi używać małych liter" % stripped_key
+            )
+        if not _METADATA_KEY_PATTERN.fullmatch(normalized_key):
+            parser.error(
+                "Nagłówek gRPC '%s' zawiera niedozwolone znaki – dozwolone są małe litery, cyfry, '-', '_' i '.'"
+                % normalized_key
+            )
+        normalized_value = value.strip()
+        sentinel = normalized_value.lower()
+        if sentinel in _METADATA_CLEAR_SENTINELS:
+            removals.add(normalized_key)
+            continue
+        if sentinel == "default":
+            # Przywracamy konfigurację domyślną – brak wpisu CLI/ENV.
+            removals.discard(normalized_key)
+            continue
+        removals.discard(normalized_key)
+        metadata.append((normalized_key, normalized_value))
+    return metadata, removals
+
+
+def _merge_metadata_entries(
+    entries: Sequence[tuple[str, str]]
+) -> list[tuple[str, str]]:
+    """Zwraca listę metadanych z usuniętymi duplikatami kluczy.
+
+    W przypadku powtórzeń ostatnia wartość wygrywa, dzięki czemu wpisy CLI
+    nadpisują konfigurację `core.yaml`, a kolejność wynikowa zachowuje ostatnie
+    wystąpienie każdego klucza (ważne dla serwera gRPC, który wykorzystuje
+    kolejność metadanych).
+    """
+
+    deduplicated: "OrderedDict[str, str]" = OrderedDict()
+    for key, value in entries:
+        if key in deduplicated:
+            # usuwamy poprzednie wystąpienie, aby odtworzyć kolejność "ostatni wygrywa"
+            del deduplicated[key]
+        deduplicated[key] = value
+    return list(deduplicated.items())
+
+
+def _finalize_custom_metadata(args: argparse.Namespace) -> None:
+    removals = set(getattr(args, "_custom_metadata_remove", set()) or ())
+    entries = list(getattr(args, "_custom_metadata", []) or [])
+
+    if removals and entries:
+        entries = [pair for pair in entries if pair[0] not in removals]
+
+    merged = _merge_metadata_entries(entries) if entries else []
+    args._custom_metadata = merged or None
+
+    sources_map = dict(getattr(args, "_custom_metadata_sources", {}) or {})
+    merged_sources: dict[str, str] = {}
+    if sources_map and merged:
+        for key, _ in merged:
+            source = sources_map.get(key)
+            if source:
+                merged_sources[key] = source
+
+    args._custom_metadata_sources = merged_sources or None
+
+    removal_sources = getattr(args, "_custom_metadata_remove_sources", {}) or {}
+
+    core_meta = getattr(args, "_core_config_metadata", None)
+    if isinstance(core_meta, dict):
+        metrics_meta = core_meta.get("metrics_service")
+        if isinstance(metrics_meta, dict):
+            if merged_sources:
+                metrics_meta["grpc_metadata_sources"] = dict(merged_sources)
+            else:
+                metrics_meta.pop("grpc_metadata_sources", None)
+            if merged:
+                metrics_meta["grpc_metadata_keys"] = [key for key, _ in merged]
+                metrics_meta["grpc_metadata_count"] = len(merged)
+                metrics_meta["grpc_metadata_enabled"] = True
+            else:
+                metrics_meta.pop("grpc_metadata_keys", None)
+                metrics_meta.pop("grpc_metadata_count", None)
+                metrics_meta["grpc_metadata_enabled"] = False
+            if removals:
+                metrics_meta["grpc_metadata_removed"] = sorted(removals)
+                if removal_sources:
+                    metrics_meta["grpc_metadata_removed_sources"] = dict(removal_sources)
+                else:
+                    metrics_meta.pop("grpc_metadata_removed_sources", None)
+            else:
+                metrics_meta.pop("grpc_metadata_removed", None)
+                metrics_meta.pop("grpc_metadata_removed_sources", None)
 
 
 def _load_grpc_components():
@@ -855,6 +980,18 @@ def _decision_log_metadata_grpc(
         "server_name": bool(args.server_name),
         "server_sha256": bool(args.server_sha256),
     }
+    custom_metadata = getattr(args, "_custom_metadata", None) or []
+    if custom_metadata:
+        custom_section: dict[str, Any] = {
+            "keys": [key for key, _ in custom_metadata],
+            "count": len(custom_metadata),
+        }
+        if any(_looks_like_sensitive_metadata_key(key) for key, _ in custom_metadata):
+            custom_section["contains_sensitive"] = True
+        sources_map = getattr(args, "_custom_metadata_sources", None)
+        if sources_map:
+            custom_section["sources"] = dict(sources_map)
+        metadata["custom_metadata"] = custom_section
     risk_profile = getattr(args, "_risk_profile_config", None)
     if risk_profile:
         metadata["risk_profile"] = dict(risk_profile)
@@ -987,18 +1124,35 @@ def _apply_environment_overrides(
 
     tls_env_present = False
 
-    def _override_simple(attr: str, suffix: str, flag: str) -> None:
+    def _override_simple(
+        attr: str,
+        suffix: str,
+        flag: str,
+        *,
+        allow_none: bool = False,
+        allow_default: bool = True,
+        strip_value: bool = False,
+    ) -> None:
         nonlocal tls_env_present
         if flag in provided_flags:
             return
         env_key = f"{_ENV_PREFIX}{suffix}"
         if env_key not in env:
             return
-        value = env[env_key]
+        raw_value = env[env_key]
+        stripped = raw_value.strip()
+        normalized = stripped.lower()
+        value: Any
+        if allow_none and normalized in {"", "none", "null"}:
+            value = None
+        elif allow_default and normalized == "default":
+            value = parser.get_default(attr)
+        else:
+            value = stripped if strip_value else raw_value
         setattr(args, attr, value)
-        if attr == "risk_profile":
+        if attr == "risk_profile" and value not in (None, ""):
             args._risk_profile_source = "env"
-        if attr == "server_sha256":
+        if attr == "server_sha256" and value not in (None, ""):
             args._server_sha256_source = "env"
         if attr in {
             "root_cert",
@@ -1007,7 +1161,7 @@ def _apply_environment_overrides(
             "server_name",
             "server_sha256",
         }:
-            tls_env_present = True
+            tls_env_present = bool(value)
 
     def _override_numeric(
         attr: str,
@@ -1023,11 +1177,16 @@ def _apply_environment_overrides(
         if env_key not in env:
             return
         raw_value = env[env_key]
-        if allow_none and raw_value.strip() == "":
+        stripped = raw_value.strip()
+        normalized = stripped.lower()
+        if allow_none and normalized in {"", "none", "null"}:
             setattr(args, attr, None)
             return
+        if normalized == "default":
+            setattr(args, attr, parser.get_default(attr))
+            return
         try:
-            setattr(args, attr, cast(raw_value))
+            setattr(args, attr, cast(stripped))
         except Exception:
             parser.error(
                 f"Nieprawidłowa wartość '{raw_value}' w zmiennej {env_key} dla parametru {attr}."
@@ -1040,24 +1199,67 @@ def _apply_environment_overrides(
         if env_key not in env:
             return
         raw_value = env[env_key]
+        stripped = raw_value.strip()
+        normalized = stripped.lower()
+        if normalized in {"", "none", "null"}:
+            setattr(args, attr, None)
+            return
+        if normalized == "default":
+            setattr(args, attr, parser.get_default(attr))
+            return
         values = [item.strip() for item in raw_value.split(",") if item.strip()]
         setattr(args, attr, values)
 
+    def _override_headers(attr: str, suffix: str, flag: str) -> None:
+        if flag in provided_flags:
+            return
+        env_key = f"{_ENV_PREFIX}{suffix}"
+        if env_key not in env:
+            return
+        raw_value = env[env_key]
+        stripped = raw_value.strip()
+        normalized = stripped.lower()
+        if normalized in {"", "none", "null"}:
+            setattr(args, attr, [])
+            return
+        if normalized == "default":
+            setattr(args, attr, parser.get_default(attr))
+            return
+        entries = [entry.strip() for entry in raw_value.split(";") if entry.strip()]
+        setattr(args, attr, entries or [])
+
     _override_simple("host", "HOST", "--host")
     _override_numeric("port", "PORT", "--port", int)
-    _override_numeric("timeout", "TIMEOUT", float, allow_none=True)
-    _override_numeric("limit", "LIMIT", int, allow_none=True)
-    _override_simple("event", "EVENT", "--event")
+    _override_numeric("timeout", "TIMEOUT", "--timeout", float, allow_none=True)
+    _override_numeric("limit", "LIMIT", "--limit", int, allow_none=True)
+    _override_simple("event", "EVENT", "--event", allow_none=True, strip_value=True)
     _override_list("severity", "SEVERITY", "--severity")
-    _override_simple("severity_min", "SEVERITY_MIN", "--severity-min")
-    _override_simple("risk_profile", "RISK_PROFILE", "--risk-profile")
-    _override_simple("risk_profiles_file", "RISK_PROFILES_FILE", "--risk-profiles-file")
-    _override_simple("core_config", "CORE_CONFIG", "--core-config")
+    _override_simple(
+        "severity_min",
+        "SEVERITY_MIN",
+        "--severity-min",
+        allow_none=True,
+        strip_value=True,
+    )
+    _override_simple(
+        "risk_profile",
+        "RISK_PROFILE",
+        "--risk-profile",
+        allow_none=True,
+        strip_value=True,
+    )
+    _override_simple(
+        "risk_profiles_file",
+        "RISK_PROFILES_FILE",
+        "--risk-profiles-file",
+        allow_none=True,
+    )
+    _override_simple("core_config", "CORE_CONFIG", "--core-config", allow_none=True)
     _override_numeric("screen_index", "SCREEN_INDEX", "--screen-index", int, allow_none=True)
-    _override_simple("screen_name", "SCREEN_NAME", "--screen-name")
-    _override_simple("since", "SINCE", "--since")
-    _override_simple("until", "UNTIL", "--until")
-    _override_simple("from_jsonl", "FROM_JSONL", "--from-jsonl")
+    _override_simple("screen_name", "SCREEN_NAME", "--screen-name", allow_none=True, strip_value=True)
+    _override_simple("since", "SINCE", "--since", allow_none=True, strip_value=True)
+    _override_simple("until", "UNTIL", "--until", allow_none=True, strip_value=True)
+    _override_simple("from_jsonl", "FROM_JSONL", "--from-jsonl", allow_none=True)
 
     if "--summary" not in provided_flags and not args.summary:
         env_key = f"{_ENV_PREFIX}SUMMARY"
@@ -1069,11 +1271,34 @@ def _apply_environment_overrides(
         if env_key in env:
             args.print_risk_profiles = _parse_env_bool(env[env_key], variable=env_key, parser=parser)
 
-    _override_simple("summary_output", "SUMMARY_OUTPUT", "--summary-output")
-    _override_simple("decision_log", "DECISION_LOG", "--decision-log")
-    _override_simple("decision_log_hmac_key", "DECISION_LOG_HMAC_KEY", "--decision-log-hmac-key")
-    _override_simple("decision_log_hmac_key_file", "DECISION_LOG_HMAC_KEY_FILE", "--decision-log-hmac-key-file")
-    _override_simple("decision_log_key_id", "DECISION_LOG_KEY_ID", "--decision-log-key-id")
+    _override_simple(
+        "summary_output",
+        "SUMMARY_OUTPUT",
+        "--summary-output",
+        allow_none=True,
+    )
+    _override_simple("decision_log", "DECISION_LOG", "--decision-log", allow_none=True)
+    _override_simple(
+        "decision_log_hmac_key",
+        "DECISION_LOG_HMAC_KEY",
+        "--decision-log-hmac-key",
+        allow_none=True,
+        strip_value=True,
+    )
+    _override_simple(
+        "decision_log_hmac_key_file",
+        "DECISION_LOG_HMAC_KEY_FILE",
+        "--decision-log-hmac-key-file",
+        allow_none=True,
+    )
+    _override_simple(
+        "decision_log_key_id",
+        "DECISION_LOG_KEY_ID",
+        "--decision-log-key-id",
+        allow_none=True,
+        strip_value=True,
+    )
+    _override_headers("headers", "HEADERS", "--header")
 
     if "--format" not in provided_flags:
         env_key = f"{_ENV_PREFIX}FORMAT"
@@ -1085,11 +1310,17 @@ def _apply_environment_overrides(
                 )
             args.format = candidate
 
-    _override_simple("root_cert", "ROOT_CERT", "--root-cert")
-    _override_simple("client_cert", "CLIENT_CERT", "--client-cert")
-    _override_simple("client_key", "CLIENT_KEY", "--client-key")
-    _override_simple("server_name", "SERVER_NAME", "--server-name")
-    _override_simple("server_sha256", "SERVER_SHA256", "--server-sha256")
+    _override_simple("root_cert", "ROOT_CERT", "--root-cert", allow_none=True, strip_value=True)
+    _override_simple("client_cert", "CLIENT_CERT", "--client-cert", allow_none=True, strip_value=True)
+    _override_simple("client_key", "CLIENT_KEY", "--client-key", allow_none=True, strip_value=True)
+    _override_simple("server_name", "SERVER_NAME", "--server-name", allow_none=True, strip_value=True)
+    _override_simple(
+        "server_sha256",
+        "SERVER_SHA256",
+        "--server-sha256",
+        allow_none=True,
+        strip_value=True,
+    )
 
     if "--auth-token" not in provided_flags and args.auth_token is None:
         env_key = f"{_ENV_PREFIX}AUTH_TOKEN"
@@ -1169,6 +1400,28 @@ def _apply_core_config_defaults(
 
     if getattr(metrics_config, "auth_token", None):
         metrics_meta["auth_token_configured"] = True
+
+    config_metadata_entries = tuple(getattr(metrics_config, "grpc_metadata", ()) or ())
+    metadata_sources = dict(getattr(metrics_config, "grpc_metadata_sources", {}) or {})
+    existing_custom_sources = dict(getattr(args, "_custom_metadata_sources", {}) or {})
+    combined_sources = dict(metadata_sources)
+    if existing_custom_sources:
+        combined_sources.update(existing_custom_sources)
+    if config_metadata_entries:
+        metrics_meta["grpc_metadata_keys"] = [key for key, _ in config_metadata_entries]
+        metrics_meta["grpc_metadata_count"] = len(config_metadata_entries)
+        if getattr(args, "_headers_disabled", False):
+            metrics_meta["grpc_metadata_enabled"] = False
+        else:
+            metrics_meta["grpc_metadata_enabled"] = True
+            existing_custom = list(getattr(args, "_custom_metadata", []) or [])
+            args._custom_metadata = list(config_metadata_entries) + existing_custom
+    metadata_applied = bool(config_metadata_entries) and not getattr(
+        args, "_headers_disabled", False
+    )
+    if combined_sources and (metadata_applied or existing_custom_sources):
+        metrics_meta["grpc_metadata_sources"] = dict(combined_sources)
+        args._custom_metadata_sources = combined_sources
 
     default_host = parser.get_default("host")
     if (
@@ -1695,6 +1948,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "(ułatwia rotację kluczy)."
         ),
     )
+    parser.add_argument(
+        "--header",
+        dest="headers",
+        action="append",
+        default=None,
+        help=(
+            "Dodatkowe nagłówki gRPC w formacie klucz=wartość lub klucz:wartość. "
+            "Można podać wielokrotnie, np. --header x-trace=abc123."
+        ),
+    )
     return parser
 
 
@@ -1717,7 +1980,26 @@ def main(argv: list[str] | None = None) -> int:
         parser=parser,
         provided_flags=provided_flags,
     )
+    custom_metadata: list[tuple[str, str]] | None = None
+    custom_metadata_sources: dict[str, str] | None = None
+    headers_disabled = getattr(args, "headers", None) == []
+    raw_headers = None if headers_disabled else getattr(args, "headers", None)
+    removal_sources: dict[str, str] | None = None
+    if raw_headers:
+        custom_metadata, removal_keys = _parse_metadata_entries(raw_headers, parser=parser)
+        source_label = _CLI_HEADER_SOURCE if "--header" in provided_flags else _ENV_HEADER_SOURCE
+        custom_metadata_sources = {key: source_label for key, _ in custom_metadata}
+        if removal_keys:
+            removal_sources = {key: source_label for key in removal_keys}
+    args._custom_metadata = custom_metadata
+    args._custom_metadata_sources = custom_metadata_sources
+    args._custom_metadata_remove = set(removal_sources or ())
+    args._custom_metadata_remove_sources = removal_sources
+    args._headers_disabled = headers_disabled
+    if headers_disabled:
+        args.headers = None
     _apply_core_config_defaults(args, parser=parser, provided_flags=provided_flags)
+    _finalize_custom_metadata(args)
     _load_custom_risk_profiles(args, parser)
     if (
         tls_env_present
@@ -1960,9 +2242,13 @@ def main(argv: list[str] | None = None) -> int:
         request.include_ui_metrics = True
 
         count = 0
-        metadata: list[tuple[str, str]] | None = None
+        metadata: list[tuple[str, str]] = []
         if auth_token:
-            metadata = [("authorization", f"Bearer {auth_token}")]
+            metadata.append(("authorization", f"Bearer {auth_token}"))
+        custom_metadata_entries = getattr(args, "_custom_metadata", None)
+        if custom_metadata_entries:
+            metadata.extend(custom_metadata_entries)
+        metadata_to_send = metadata or None
 
         if decision_logger:
             decision_logger.write_metadata(
@@ -1980,7 +2266,9 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
 
-        for snapshot in _iter_stream(stub, request, timeout=args.timeout, metadata=metadata):
+        for snapshot in _iter_stream(
+            stub, request, timeout=args.timeout, metadata=metadata_to_send
+        ):
             if not _matches_time_filters(snapshot, since=since_dt, until=until_dt):
                 continue
             notes_payload = _parse_notes(snapshot.notes)
