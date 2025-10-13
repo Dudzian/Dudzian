@@ -863,6 +863,34 @@ def test_load_core_config_reads_metrics_service(tmp_path: Path) -> None:
     assert config.source_directory == str(expected_dir)
 
 
+def test_load_core_config_resource_limits(tmp_path: Path) -> None:
+    config_path = tmp_path / "core.yaml"
+    config_path.write_text(
+        """
+        risk_profiles: {}
+        environments: {}
+        runtime:
+          resource_limits:
+            cpu_percent: 70
+            memory_mb: 3072
+            io_read_mb_s: 150
+            io_write_mb_s: 90
+            headroom_warning_threshold: 0.75
+        """,
+        encoding="utf-8",
+    )
+
+    config = load_core_config(config_path)
+
+    assert config.runtime_resource_limits is not None
+    limits = config.runtime_resource_limits
+    assert limits.cpu_percent == 70
+    assert limits.memory_mb == 3072
+    assert limits.io_read_mb_s == 150
+    assert limits.io_write_mb_s == 90
+    assert limits.headroom_warning_threshold == pytest.approx(0.75)
+
+
 def test_load_core_config_normalizes_ui_alert_modes(tmp_path: Path) -> None:
     config_path = tmp_path / "core.yaml"
     config_path.write_text(

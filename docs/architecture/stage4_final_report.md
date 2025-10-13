@@ -36,9 +36,9 @@ Pełne logi testów są wersjonowane w katalogu `logs/` wraz z podpisami HMAC ge
 2. **Monitoring**: Dostarczono zintegrowane metryki scheduler-a/strategii oraz reguły Alertmanagera – zalecane jest bieżące monitorowanie paneli Grafany i logów decision logu w celu wychwycenia regresji budżetów ryzyka.
 3. **Przejście do Etapu 5**: Możemy rozpocząć prace planistyczne nad etapem dotyczącym optymalizacji kosztów transakcyjnych i rozbudowy decision engine’u, zachowując wymuszone bramki compliance.
 
-## Status iteracji 4H
-- **Postęp Etapu 4**: 32/40 (80 %) – pasek `[################----]`.
-- **Ostatnia zamknięta iteracja**: 4H – zamknięte zadania automatyzacji CI (testy, fixtures, smoke CLI, coverage gating) po integracji pakietu obserwowalności.
-- **Czynności otwarte**: audyty RBAC/mTLS i schema decision log (9.x), playbook L1/L2 oraz testy obciążeniowe i procedury rollbacku (10.x–11.x).
-- **Blokery**: finalny budżet zasobów dla równoległych strategii; brak nowych ryzyk związanych z infrastrukturą (RBAC/mTLS/HMAC pozostają zgodne).
+## Status iteracji 4I
+- **Postęp Etapu 4**: 40/40 (100 %) – pasek `[####################]`.
+- **Ostatnia zamknięta iteracja**: 4I – domknięte zadania bezpieczeństwa (RBAC/mTLS audyt `audit_security_baseline` z obsługą scheduler-a), rozszerzony schemat decision logu, playbook L1/L2, szkolenie operatorów, test obciążeniowy `load_test_scheduler.py` oraz procedury rollbacku.
+- **Czynności otwarte**: brak – backlog Etapu 4 został zrealizowany w całości.
+- **Blokery**: brak nowych ryzyk; budżety zasobów monitorowane przez `runtime.resource_limits` i `resource_monitor` mieszczą się w zadeklarowanych progach.
 

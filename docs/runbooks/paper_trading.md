@@ -182,3 +182,9 @@ Ten runbook opisuje, jak uruchomić, monitorować i bezpiecznie zatrzymać tryb 
 - Automatyczne generowanie tygodniowego PDF z metrykami portfela i logami zmian konfiguracji.
 
 > **Przypomnienie:** Wszystkie testy i pierwsze wdrożenia zawsze realizujemy w trybie paper/testnet. Przejście na ograniczony live wymaga kompletnego raportu z backtestu, zgodności P&L oraz review bezpieczeństwa (uprawnienia kluczy, IP allowlist, logi audytu).
+
+## Monitoring budżetów zasobów
+- Konfiguracja limitów znajduje się w `config/core.yaml` → `runtime.resource_limits`.
+- `python scripts/load_test_scheduler.py --iterations 60 --schedules 3 --output logs/load_tests/paper_mode.json` – weryfikuje latencję i status budżetów przed startem paper.
+- `pytest tests/test_resource_monitor.py` – szybkie potwierdzenie logiki monitoringu (`bot_core.runtime.resource_monitor`).
+- `python scripts/audit_security_baseline.py --print --scheduler-required-scope runtime.schedule.write` – łączy audyt RBAC/mTLS z walidacją budżetów CPU/RAM/I/O.

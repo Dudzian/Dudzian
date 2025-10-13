@@ -421,6 +421,17 @@ class ControllerRuntimeConfig:
 
 
 @dataclass(slots=True)
+class RuntimeResourceLimitsConfig:
+    """Deklaracja budżetów zasobów dla runtime."""
+
+    cpu_percent: float
+    memory_mb: float
+    io_read_mb_s: float
+    io_write_mb_s: float
+    headroom_warning_threshold: float = 0.85
+
+
+@dataclass(slots=True)
 class SmokeArchiveLocalConfig:
     """Konfiguracja lokalnego magazynu archiwów smoke testów."""
     directory: str
@@ -513,6 +524,7 @@ class CoreConfig:
     risk_service: RiskServiceConfig | None = None
     risk_decision_log: RiskDecisionLogConfig | None = None
     security_baseline: SecurityBaselineConfig | None = None
+    runtime_resource_limits: RuntimeResourceLimitsConfig | None = None
     source_path: str | None = None
     source_directory: str | None = None
 
@@ -540,6 +552,7 @@ __all__ = [
     "WhatsAppChannelSettings",
     "MessengerChannelSettings",
     "ControllerRuntimeConfig",
+    "RuntimeResourceLimitsConfig",
     "SmokeArchiveLocalConfig",
     "SmokeArchiveS3Config",
     "SmokeArchiveUploadConfig",

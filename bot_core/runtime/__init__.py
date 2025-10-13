@@ -1,6 +1,17 @@
 """Infrastruktura runtime nowej architektury bota."""
 
 from bot_core.runtime.bootstrap import BootstrapContext, bootstrap_environment
+from bot_core.runtime.resource_monitor import (
+    ResourceBudgetEvaluation,
+    ResourceBudgets,
+    ResourceSample,
+    evaluate_resource_sample,
+)
+from bot_core.runtime.scheduler_load_test import (
+    LoadTestResult,
+    LoadTestSettings,
+    execute_scheduler_load_test,
+)
 
 # --- Metrics service (opcjonalny – zależy od dostępności gRPC i wygenerowanych stubów) ---
 try:
@@ -83,7 +94,17 @@ except Exception:  # pragma: no cover - starsze gałęzie mogą nie mieć moduł
     create_trading_controller = None  # type: ignore
 
 # --- Publiczny interfejs modułu ---
-__all__ = ["BootstrapContext", "bootstrap_environment"]
+__all__ = [
+    "BootstrapContext",
+    "bootstrap_environment",
+    "ResourceBudgets",
+    "ResourceSample",
+    "ResourceBudgetEvaluation",
+    "evaluate_resource_sample",
+    "LoadTestSettings",
+    "LoadTestResult",
+    "execute_scheduler_load_test",
+]
 
 # Eksport elementów metrics service tylko jeśli są dostępne
 if MetricsServer is not None:

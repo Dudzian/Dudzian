@@ -14,6 +14,29 @@ from bot_core.strategies.base import MarketSnapshot, StrategyEngine, StrategySig
 _LOGGER = logging.getLogger(__name__)
 
 
+def _split_symbol_components(symbol: str | None) -> tuple[str | None, str | None]:
+    if not symbol:
+        return None, None
+    upper_symbol = symbol.upper()
+    known_quotes = (
+        "USDT",
+        "USDC",
+        "USD",
+        "EUR",
+        "BTC",
+        "ETH",
+        "PLN",
+        "GBP",
+        "CHF",
+    )
+    for quote in known_quotes:
+        if upper_symbol.endswith(quote) and len(upper_symbol) > len(quote):
+            base = upper_symbol[: -len(quote)].rstrip("_-/")
+            if base:
+                return base, quote
+    return None, None
+
+
 class StrategyDataFeed(Protocol):
     """Źródło danych dla strategii."""
 
@@ -295,23 +318,57 @@ class MultiStrategyScheduler:
         if not self._decision_journal:
             return
         for signal in signals:
-            metadata_payload = {str(k): str(v) for k, v in signal.metadata.items()}
-            event = TradingDecisionEvent(
-                event_type="strategy_signal",
-                timestamp=timestamp,
-                environment=self._environment,
-                portfolio=self._portfolio,
-                risk_profile=schedule.risk_profile,
-                symbol=symbol,
-                side=signal.side,
-                schedule=schedule.name,
-                strategy=schedule.strategy_name,
-                confidence=float(signal.confidence),
-                latency_ms=schedule.metrics.get("last_latency_ms"),
-                telemetry_namespace=f"{self._environment}.multi_strategy.{schedule.name}",
-                metadata=metadata_payload,
-            )
-            self._decision_journal.record(event)
+                    metadata_payload = {str(k): str(v) for k, v in signal.metadata.items()}
+                    schedule_run_id = metadata_payload.get(
+                        "schedule_run_id",
+                        f"{schedule.name}:{timestamp.isoformat()}",
+                    )
+                    strategy_instance_id = metadata_payload.get(
+                        "strategy_instance_id",
+                        schedule.strategy_name,
+                    )
+                    signal_identifier = metadata_payload.get(
+                        "signal_id",
+                        f"{schedule.name}:{symbol}:{timestamp.isoformat()}",
+                    )
+                    primary_exchange = metadata_payload.get("primary_exchange")
+                    secondary_exchange = metadata_payload.get("secondary_exchange")
+                    base_asset, quote_asset = _split_symbol_components(symbol)
+                    instrument_type = metadata_payload.get("instrument_type")
+                    data_feed = metadata_payload.get(
+                        "data_feed",
+                        getattr(schedule.feed, "name", schedule.feed.__class__.__name__),
+                    )
+                    risk_bucket = metadata_payload.get(
+                        "risk_budget_bucket",
+                        schedule.risk_profile,
+                    )
+                    event = TradingDecisionEvent(
+                        event_type="strategy_signal",
+                        timestamp=timestamp,
+                        environment=self._environment,
+                        portfolio=self._portfolio,
+                        risk_profile=schedule.risk_profile,
+                        symbol=symbol,
+                        side=signal.side,
+                        schedule=schedule.name,
+                        strategy=schedule.strategy_name,
+                        schedule_run_id=schedule_run_id,
+                        strategy_instance_id=strategy_instance_id,
+                        signal_id=signal_identifier,
+                        primary_exchange=primary_exchange,
+                        secondary_exchange=secondary_exchange,
+                        base_asset=base_asset,
+                        quote_asset=quote_asset,
+                        instrument_type=instrument_type,
+                        data_feed=data_feed,
+                        risk_budget_bucket=risk_bucket,
+                        confidence=float(signal.confidence),
+                        latency_ms=schedule.metrics.get("last_latency_ms"),
+                        telemetry_namespace=f"{self._environment}.multi_strategy.{schedule.name}",
+                        metadata=metadata_payload,
+                    )
+                    self._decision_journal.record(event)
 
 
 __all__ = [

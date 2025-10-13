@@ -21,6 +21,7 @@ from bot_core.config.models import (
     ServiceTokenConfig,
     RiskProfileConfig,
     RiskServiceConfig,
+    RuntimeResourceLimitsConfig,
     SMSProviderSettings,
     TelegramChannelSettings,
 )
@@ -385,6 +386,26 @@ def _load_multi_strategy_schedulers(raw: Mapping[str, Any]):
                 rbac_tokens=_load_service_tokens(entry.get("rbac_tokens")),
             )
     return schedulers
+
+
+def _load_runtime_resource_limits(runtime_section: Mapping[str, Any]):
+    if RuntimeResourceLimitsConfig is None:
+        return None
+    entry = runtime_section.get("resource_limits")
+    if not isinstance(entry, Mapping) or not entry:
+        return None
+    cpu_percent = float(entry.get("cpu_percent", entry.get("cpu", 0.0)))
+    memory_mb = float(entry.get("memory_mb", entry.get("memory", 0.0)))
+    io_read = float(entry.get("io_read_mb_s", entry.get("io_read", 0.0)))
+    io_write = float(entry.get("io_write_mb_s", entry.get("io_write", 0.0)))
+    warning_threshold = float(entry.get("headroom_warning_threshold", entry.get("warning_threshold", 0.85)))
+    return RuntimeResourceLimitsConfig(
+        cpu_percent=cpu_percent,
+        memory_mb=memory_mb,
+        io_read_mb_s=io_read,
+        io_write_mb_s=io_write,
+        headroom_warning_threshold=warning_threshold,
+    )
 
 
 def _load_alert_throttle(entry: Optional[Mapping[str, Any]]) -> AlertThrottleConfig | None:
@@ -1320,6 +1341,10 @@ def load_core_config(path: str | Path) -> CoreConfig:
     risk_service_config = _load_risk_service(runtime_section, base_dir=config_base_dir)
     if risk_service_config is not None:
         core_kwargs["risk_service"] = risk_service_config
+
+    resource_limits_config = _load_runtime_resource_limits(runtime_section)
+    if resource_limits_config is not None and _core_has("runtime_resource_limits"):
+        core_kwargs["runtime_resource_limits"] = resource_limits_config
 
     risk_decision_log_config = _load_risk_decision_log(
         runtime_section, base_dir=config_base_dir

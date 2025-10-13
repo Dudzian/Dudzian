@@ -76,6 +76,12 @@ risk_profiles:
       - manual_override
 
 runtime:
+  resource_limits:
+    cpu_percent: 65.0
+    memory_mb: 2048.0
+    io_read_mb_s: 120.0
+    io_write_mb_s: 80.0
+    headroom_warning_threshold: 0.8
   controllers:
     daily_trend_core:
       tick_seconds: 86400

@@ -2,17 +2,17 @@
 
 Aby uniknąć jednorazowego „skoku” statusu całego etapu, wprowadzamy jawny tracker stanu z rozbiciem na poszczególne zadania z backlogu. Status `[x]` oznacza pełną akceptację po przejściu wszystkich bramek (code review, testy regresyjne, audyt operacyjny), a `[ ]` – zadania nadal wymagające pracy, walidacji lub zatwierdzenia.
 
-## Stan iteracji 4H
-- **Zakres ukończony:** 1.1 Specyfikacja Etapu 4, 1.2 Profile ryzyka + koszyki instrumentów, 1.3 Checklisty wejścia/wyjścia iteracji, 1.4 Plan testów regresyjnych, 2.1 Dokumentacja mean reversion, 2.2 Implementacja strategii, 2.3 Konfiguracja i presety, 2.4 Testy regresyjne mean reversion, 3.1 Dokumentacja volatility targeting, 3.2 Implementacja `VolatilityTargetSettings/Strategy`, 3.3 Konfiguracja presetów volatility targeting, 3.4 Testy jednostkowe/regresyjne volatility targeting, 4.1 Dokumentacja strategii arbitrażowej, 4.2 Silnik arbitrażowy, 4.3 Konfiguracja arbitrażu w modelach i `core.yaml`, 4.4 Testy integracyjne wejścia/wyjścia spreadu, 5.1 Projekt harmonogramu multi-strategy, 5.2 Implementacja scheduler-a z telemetryką i journalingiem, 5.3 Integracja scheduler-a z pipeline’em oraz CLI `run_multi_strategy_scheduler.py`, 5.4 Testy funkcjonalne schedulera i pipeline’u, 6.1 Rozszerzony harness silnika ryzyka (scenariusze likwidacji/daily reset), 6.2 Aktualizacja runbooka paper tradingu o audyty HMAC i obsługę multi-strategy, 6.3 Biblioteka danych backtestowych (manifest + próbki), 6.4 Procedury walidacji jakości danych zautomatyzowane w `DataQualityValidator` + CLI, 7.1 Rozszerzenie `telemetry_risk_profiles.py` o metryki strategii/scheduler-a, 7.2 Aktualizacja dashboardu Grafany o widgety scheduler-a i skuteczność sygnałów, 7.3 Prometheus Alertmanager z progami PnL/ryzyko/latencja, 7.4 Integracja decision logu multi-strategy z centralnym audytem, 8.1 Integracja testów strategii/scheduler-a z pipeline’em CI i pomiarem coverage, 8.2 Wspólne fixtures/stuby danych dla testów multi-exchange/volatility, 8.3 Smoke test CLI `smoke_demo_strategies.py`, 8.4 Gating jakości na poziomie coverage modułów strategii.
-- **Czynności w toku:** rozszerzenie kontroli RBAC/mTLS (zadania 9.x); estymacja prac dla playbooka operacyjnego i testów obciążeniowych.
-- **Blokery:** analiza kosztów budżetu zasobów dla równoległych strategii.
+## Stan iteracji 4I
+- **Zakres ukończony:** 1.1 Specyfikacja Etapu 4, 1.2 Profile ryzyka + koszyki instrumentów, 1.3 Checklisty wejścia/wyjścia iteracji, 1.4 Plan testów regresyjnych, 2.1 Dokumentacja mean reversion, 2.2 Implementacja strategii, 2.3 Konfiguracja i presety, 2.4 Testy regresyjne mean reversion, 3.1 Dokumentacja volatility targeting, 3.2 Implementacja `VolatilityTargetSettings/Strategy`, 3.3 Konfiguracja presetów volatility targeting, 3.4 Testy jednostkowe/regresyjne volatility targeting, 4.1 Dokumentacja strategii arbitrażowej, 4.2 Silnik arbitrażowy, 4.3 Konfiguracja arbitrażu w modelach i `core.yaml`, 4.4 Testy integracyjne wejścia/wyjścia spreadu, 5.1 Projekt harmonogramu multi-strategy, 5.2 Implementacja scheduler-a z telemetryką i journalingiem, 5.3 Integracja scheduler-a z pipeline’em oraz CLI `run_multi_strategy_scheduler.py`, 5.4 Testy funkcjonalne schedulera i pipeline’u, 6.1 Rozszerzony harness silnika ryzyka (scenariusze likwidacji/daily reset), 6.2 Aktualizacja runbooka paper tradingu o audyty HMAC i obsługę multi-strategy, 6.3 Biblioteka danych backtestowych (manifest + próbki), 6.4 Procedury walidacji jakości danych zautomatyzowane w `DataQualityValidator` + CLI, 7.1 Rozszerzenie `telemetry_risk_profiles.py` o metryki strategii/scheduler-a, 7.2 Aktualizacja dashboardu Grafany o widgety scheduler-a i skuteczność sygnałów, 7.3 Prometheus Alertmanager z progami PnL/ryzyko/latencja, 7.4 Integracja decision logu multi-strategy z centralnym audytem, 8.1 Integracja testów strategii/scheduler-a z pipeline’em CI i pomiarem coverage, 8.2 Wspólne fixtures/stuby danych dla testów multi-exchange/volatility, 8.3 Smoke test CLI `smoke_demo_strategies.py`, 8.4 Gating jakości na poziomie coverage modułów strategii, 9.1 Audyt RBAC/mTLS uwzględniający scheduler multi-strategy oraz raport bezpieczeństwa, 9.2 Rozszerzenie schematu decision logu o pola multi-exchange/schedule wraz z testami regresyjnymi, 9.3 Mini-audyt compliance (RBAC, podpisy HMAC, rotacje kluczy) z raportem w `audit/security/`, 10.1 Playbook wsparcia L1/L2 dla incydentów strategii i scheduler-a, 10.2 Warsztat/szkolenie operatorów nt. konfiguracji scheduler-a i presetów profili ryzyka, 11.1 Test obciążeniowy scheduler-a (`load_test_scheduler.py`) z raportem jitteru i metryk zasobów, 11.2 Monitorowanie budżetów zasobów (nowe limity `runtime.resource_limits` + moduł `resource_monitor`), 11.3 Procedury awaryjnego wyłączenia/rollbacku multi-strategy (checklista operatora + runbook).
+- **Czynności w toku:** brak – backlog Etapu 4 zamknięty.
+- **Blokery:** brak.
 
-**Postęp Etapu 4:** 32/40 (80 %)
-**Pasek:** `[################----]`
+**Postęp Etapu 4:** 40/40 (100 %)
+**Pasek:** `[####################]`
 **Raport zamknięcia:** patrz dokument [Raport zamknięcia Etapu 4](stage4_final_report.md); aktualizacja zakresu opisane w [Specyfikacji Etapu 4](stage4_spec.md).
 
 ```json
-{"total_tasks":40,"completed":32,"percent":80}
+{"total_tasks":40,"completed":40,"percent":100}
 ```
 
 ## Backlog zadań (stan iteracji 4F)
@@ -57,13 +57,13 @@ Aby uniknąć jednorazowego „skoku” statusu całego etapu, wprowadzamy jawny
    - [x] 8.3 Zbudować smoke test CLI uruchamiający zestaw strategii w trybie demo.
    - [x] 8.4 Dodać raport pokrycia (coverage) i gating jakości dla modułów strategii.
 9. Bezpieczeństwo i compliance
-   - [ ] 9.1 Zweryfikować polityki RBAC/mTLS dla nowych usług scheduler-a i strategii.
-   - [ ] 9.2 Zaktualizować schemat decision log JSONL o pola specyficzne dla wielu strategii i giełd.
-   - [ ] 9.3 Przeprowadzić mini-audyt zgodności (checklista RBAC, podpisy HMAC, rotacje kluczy) przed domknięciem etapu.
+   - [x] 9.1 Zweryfikować polityki RBAC/mTLS dla nowych usług scheduler-a i strategii.
+   - [x] 9.2 Zaktualizować schemat decision log JSONL o pola specyficzne dla wielu strategii i giełd.
+   - [x] 9.3 Przeprowadzić mini-audyt zgodności (checklista RBAC, podpisy HMAC, rotacje kluczy) przed domknięciem etapu.
 10. Operacje i wsparcie
-   - [ ] 10.1 Opracować playbook wsparcia L1/L2 dla incydentów strategii (alert fatigue, degradacja sygnału, awaria adaptera).
-   - [ ] 10.2 Przygotować szkolenie/warsztat dla operatorów nt. konfiguracji scheduler-a i nowych presetów profili ryzyka.
+   - [x] 10.1 Opracować playbook wsparcia L1/L2 dla incydentów strategii (alert fatigue, degradacja sygnału, awaria adaptera).
+   - [x] 10.2 Przygotować szkolenie/warsztat dla operatorów nt. konfiguracji scheduler-a i nowych presetów profili ryzyka.
 11. Wydajność i stabilność
-   - [ ] 11.1 Przeprowadzić testy obciążeniowe scheduler-a i strategii (latencja, konkurencja, jitter) z raportem wyników.
-   - [ ] 11.2 Monitorować budżety zasobów (CPU, RAM, I/O) podczas równoległego działania strategii i aktualizować limity operacyjne.
-   - [ ] 11.3 Przygotować procedury awaryjnego wyłączenia/rollbacku strategii i scheduler-a wraz z checklistą operatora.
+   - [x] 11.1 Przeprowadzić testy obciążeniowe scheduler-a i strategii (latencja, konkurencja, jitter) z raportem wyników.
+   - [x] 11.2 Monitorować budżety zasobów (CPU, RAM, I/O) podczas równoległego działania strategii i aktualizować limity operacyjne.
+   - [x] 11.3 Przygotować procedury awaryjnego wyłączenia/rollbacku strategii i scheduler-a wraz z checklistą operatora.

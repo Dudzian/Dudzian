@@ -16,9 +16,9 @@ Zapewnienie, że rozszerzona biblioteka strategii oraz scheduler przechodzą pip
 | Alerty | scenariusze operacyjne | `python scripts/run_metrics_service.py --simulate-alerts`, `pytest tests/test_alert_thresholds.py` | progi PnL/ryzyko/opóźnienia, eskalacje |
 | CI/coverage | pipeline/regresja | `scripts/run_ci_pipeline.sh`, `pytest --cov=bot_core.strategies --cov=bot_core.runtime.multi_strategy_scheduler --cov-fail-under=85` | włączenie testów, progi coverage |
 | Smoke demo CLI | smoke/integracja | `python scripts/smoke_demo_strategies.py --cycles 3` | validacja multi-strategy na danych demo |
-| Bezpieczeństwo | audyt/manual | `python scripts/verify_decision_log.py audit`, `python scripts/rbac_audit.py` | HMAC, RBAC, mTLS, schemat decision log |
+| Bezpieczeństwo | audyt/manual | `python scripts/verify_decision_log.py audit`, `python scripts/audit_security_baseline.py --scheduler-required-scope runtime.schedule.write` | HMAC, RBAC, mTLS, schemat decision log |
 | Operacje | smoke/manual | `python scripts/run_multi_strategy_scheduler.py --demo-smoke`, `docs/runbooks/paper_trading.md` checklist | CLI smoke, playbook L1/L2 |
-| Wydajność | obciążenie | `python scripts/run_scheduler_load_test.py`, `pytest tests/test_scheduler_performance.py` | latencja, jitter, budżety zasobów |
+| Wydajność | obciążenie | `python scripts/load_test_scheduler.py`, `pytest tests/test_scheduler_load_test.py` | latencja, jitter, budżety zasobów |
 
 ## Procedura demo → paper
 1. **Demo**: uruchom `run_trading_stub_server.py` z datasetem `tests/assets/scheduler_demo.yaml`; sprawdź telemetrię i decision log (`verify_decision_log.py`).
@@ -48,9 +48,9 @@ Zapewnienie, że rozszerzona biblioteka strategii oraz scheduler przechodzą pip
 3. Mini-audyt HMAC: `python scripts/key_rotation_check.py --context stage4` oraz aktualizacja `docs/architecture/iteration_gate_checklists.md`.
 
 ## Testy obciążeniowe i budżety zasobów
-1. `python scripts/run_scheduler_load_test.py --duration 900s --strategies all` – generuje raport `logs/load_tests/scheduler_profile.json`.
-2. `python scripts/metrics/resource_budget_monitor.py --profile balanced` monitoruje CPU/RAM/I/O; wyniki trafiają do `audit/resource_budgets/*.json`.
-3. Procedura rollbacku: `python scripts/run_multi_strategy_scheduler.py --disable-strategy <id>` + checklistę `docs/runbooks/rollback_scheduler.md`.
+1. `python scripts/load_test_scheduler.py --iterations 180 --schedules 3 --output logs/load_tests/scheduler_profile.json` – generuje raport średniej latencji, jitteru i statusu budżetów.
+2. `pytest tests/test_resource_monitor.py` oraz `python scripts/audit_security_baseline.py --print --scheduler-required-scope runtime.schedule.write` – walidacja budżetów CPU/RAM/I/O i audytu RBAC/mTLS.
+3. Procedura rollbacku: `python scripts/run_multi_strategy_scheduler.py --disable-strategy <id>` + checklistę `docs/runbooks/rollback_multi_strategy.md`.
 
 ## Kryteria wyjścia
 - 100 % pokrycia testów jednostkowych dla nowych strategii oraz spełniony próg coverage ≥ 85 % dla modułów strategii/scheduler-a.

@@ -15,6 +15,7 @@ Etap 4 programu rozwoju `bot_core` koncentruje się na budowie zdywersyfikowanej
 - Automatyzacja CI: włączenie rozszerzonych testów (pytest, backtesty, smoke CLI `smoke_demo_strategies.py`) do pipeline’u, dostarczenie stubów/fixtures danych i raportów pokrycia z gatingiem jakości dla modułów strategii i scheduler-a.
 - Wzmocnienie bezpieczeństwa i compliance: przegląd RBAC/mTLS, aktualizacja schematu decision log JSONL o pola multi-strategy, mini-audyt podpisów HMAC i rotacji kluczy.
 - Wsparcie operacyjne i stabilność: playbook L1/L2, szkolenie operatorów, testy obciążeniowe scheduler-a/strategii, monitoring budżetów zasobów oraz procedury awaryjnego wyłączenia/rollbacku.
+- Testy wydajności i monitoring zasobów: moduł `scheduler_load_test` z CLI `load_test_scheduler.py`, monitor budżetów `resource_monitor` oraz limity `runtime.resource_limits` konsumowane w audycie bezpieczeństwa.
 
 ## 3. Zależności
 - Strategia arbitrażowa wymaga danych z co najmniej dwóch adapterów giełdowych oraz interfejsów wykonawczych obsługujących ograniczenia RBAC.
@@ -27,7 +28,7 @@ Etap 4 programu rozwoju `bot_core` koncentruje się na budowie zdywersyfikowanej
 - **Konfiguracja**: `core.yaml` zawiera komplet parametrów nowych strategii oraz profile ryzyka zaktualizowane o limity specyficzne dla mean reversion / arbitrage, a biblioteka danych backtestowych jest znormalizowana i powiązana z presetami profili wraz z raportem walidacyjnym `DataQualityValidator`.
 - **Dokumentacja**: dostępne są opisy strategii, plan testów regresyjnych, runbook paper tradingu, playbook wsparcia L1/L2 oraz procedury rollbacku.
 - **Testy**: istnieją testy jednostkowe, integracyjne, smoke CLI (`smoke_demo_strategies.py`), backtesty i testy obciążeniowe pokrywające główne scenariusze (sygnały wejścia/wyjścia, scheduler, risk harness, latencja, jitter) oraz objęte progami coverage.
-- **Operacje i bezpieczeństwo**: checklisty demo/paper/live zawierają kryteria smoke testów paper, audytów decyzji, weryfikację RBAC/mTLS oraz monitoring budżetów zasobów; alerty i dashboardy Prometheus/OTEL są zaktualizowane.
+- **Operacje i bezpieczeństwo**: checklisty demo/paper/live zawierają kryteria smoke testów paper, audytów decyzji, weryfikację RBAC/mTLS (również dla scheduler-a) oraz monitoring budżetów zasobów (`resource_monitor`, `runtime.resource_limits`); alerty i dashboardy Prometheus/OTEL są zaktualizowane.
 
 ## 5. Kamienie milowe
 1. Specyfikacja i konfiguracja (bieżący dokument, aktualizacja `core.yaml`, plan danych i obserwowalności).

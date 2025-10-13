@@ -102,6 +102,7 @@ def validate_core_config(config: CoreConfig) -> ConfigValidationResult:
     _validate_risk_service(config, errors, warnings)
     _validate_risk_decision_log(config, errors, warnings)
     _validate_security_baseline(config, errors, warnings)
+    _validate_resource_limits(config, errors, warnings)
 
     return ConfigValidationResult(errors=errors, warnings=warnings)
 
@@ -968,3 +969,24 @@ def _validate_instrument_universes(
                     warnings.append(f"{inst_context}: interwał '{window.interval}' zdefiniowano wielokrotnie")
                 else:
                     intervals_seen.add(interval_key)
+
+
+def _validate_resource_limits(
+    config: CoreConfig, errors: list[str], warnings: list[str]
+) -> None:
+    limits = getattr(config, "runtime_resource_limits", None)
+    if limits is None:
+        return
+    context = "runtime.resource_limits"
+    if limits.cpu_percent <= 0:
+        errors.append(f"{context}: cpu_percent musi być dodatnie")
+    if limits.memory_mb <= 0:
+        errors.append(f"{context}: memory_mb musi być dodatnie")
+    if limits.io_read_mb_s < 0:
+        errors.append(f"{context}: io_read_mb_s nie może być ujemne")
+    if limits.io_write_mb_s < 0:
+        errors.append(f"{context}: io_write_mb_s nie może być ujemne")
+    if not 0 < limits.headroom_warning_threshold < 1:
+        warnings.append(
+            f"{context}: headroom_warning_threshold powinien mieścić się w przedziale (0,1)"
+        )

@@ -123,6 +123,11 @@ def test_scheduler_dispatches_signals_and_logs_decisions() -> None:
     assert exported
     assert exported[0]["strategy"] == "mean_reversion"
     assert exported[0]["schedule"] == "mean_reversion_intraday"
+    assert exported[0]["schedule_run_id"].startswith("mean_reversion_intraday")
+    assert exported[0]["strategy_instance_id"] == "mean_reversion"
+    assert exported[0]["base_asset"] == "BTC"
+    assert exported[0]["quote_asset"] == "USDT"
+    assert exported[0]["signal_id"].startswith("mean_reversion_intraday")
     assert exported[0]["confidence"] == "0.9"
     assert exported[0]["telemetry_namespace"].endswith("mean_reversion_intraday")
     assert telemetry_calls and telemetry_calls[0][0] == "mean_reversion_intraday"
