@@ -1,6 +1,7 @@
 """Moduł egzekucji zleceń."""
 
 from bot_core.execution.base import ExecutionContext, ExecutionService, RetryPolicy
+from bot_core.execution.live_router import LiveExecutionRouter, RoutingPlan
 from bot_core.execution.paper import (  # noqa: F401 - eksport publiczny
     InsufficientBalanceError,
     LedgerEntry,
@@ -13,6 +14,8 @@ __all__ = [
     "ExecutionContext",
     "ExecutionService",
     "RetryPolicy",
+    "LiveExecutionRouter",
+    "RoutingPlan",
     "PaperTradingExecutionService",
     "MarketMetadata",
     "LedgerEntry",

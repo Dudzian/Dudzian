@@ -2,6 +2,7 @@
 
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <atomic>
 #include <memory>
 #include <mutex>
@@ -41,6 +42,22 @@ public:
         QString granularityIso8601;
     };
 
+    struct TlsConfig {
+        bool enabled = false;
+        bool requireClientAuth = false;
+        QString rootCertificatePath;
+        QString clientCertificatePath;
+        QString clientKeyPath;
+        QString serverNameOverride;
+        QString pinnedServerFingerprint;
+    };
+
+    struct PreLiveChecklistResult {
+        bool ok = false;
+        QStringList warnings;
+        QStringList errors;
+    };
+
     explicit TradingClient(QObject* parent = nullptr);
     ~TradingClient() override;
 
@@ -48,11 +65,15 @@ public:
     void setInstrument(const InstrumentConfig& config);
     void setHistoryLimit(int limit);
     void setPerformanceGuard(const PerformanceGuard& guard);
+    void setTlsConfig(const TlsConfig& config);
 
     // Używane przez Application.cpp
     InstrumentConfig instrumentConfig() const { return m_instrumentConfig; }
+    TlsConfig tlsConfig() const { return m_tlsConfig; }
 
     bool isStreaming() const { return m_running.load(); }
+
+    PreLiveChecklistResult runPreLiveChecklist() const;
 
 public slots:
     void start();
@@ -86,6 +107,7 @@ private:
     };
     PerformanceGuard m_guard{};
     int m_historyLimit = 500;
+    TlsConfig m_tlsConfig{};
 
     std::shared_ptr<grpc::Channel> m_channel;
     std::unique_ptr<botcore::trading::v1::MarketDataService::Stub> m_marketDataStub;
