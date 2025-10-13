@@ -987,18 +987,35 @@ def _apply_environment_overrides(
 
     tls_env_present = False
 
-    def _override_simple(attr: str, suffix: str, flag: str) -> None:
+    def _override_simple(
+        attr: str,
+        suffix: str,
+        flag: str,
+        *,
+        allow_none: bool = False,
+        allow_default: bool = True,
+        strip_value: bool = False,
+    ) -> None:
         nonlocal tls_env_present
         if flag in provided_flags:
             return
         env_key = f"{_ENV_PREFIX}{suffix}"
         if env_key not in env:
             return
-        value = env[env_key]
+        raw_value = env[env_key]
+        stripped = raw_value.strip()
+        normalized = stripped.lower()
+        value: Any
+        if allow_none and normalized in {"", "none", "null"}:
+            value = None
+        elif allow_default and normalized == "default":
+            value = parser.get_default(attr)
+        else:
+            value = stripped if strip_value else raw_value
         setattr(args, attr, value)
-        if attr == "risk_profile":
+        if attr == "risk_profile" and value not in (None, ""):
             args._risk_profile_source = "env"
-        if attr == "server_sha256":
+        if attr == "server_sha256" and value not in (None, ""):
             args._server_sha256_source = "env"
         if attr in {
             "root_cert",
@@ -1007,7 +1024,7 @@ def _apply_environment_overrides(
             "server_name",
             "server_sha256",
         }:
-            tls_env_present = True
+            tls_env_present = bool(value)
 
     def _override_numeric(
         attr: str,
@@ -1045,6 +1062,14 @@ def _apply_environment_overrides(
         if env_key not in env:
             return
         raw_value = env[env_key]
+        stripped = raw_value.strip()
+        normalized = stripped.lower()
+        if normalized in {"", "none", "null"}:
+            setattr(args, attr, None)
+            return
+        if normalized == "default":
+            setattr(args, attr, parser.get_default(attr))
+            return
         values = [item.strip() for item in raw_value.split(",") if item.strip()]
         setattr(args, attr, values)
 
@@ -1052,17 +1077,34 @@ def _apply_environment_overrides(
     _override_numeric("port", "PORT", "--port", int)
     _override_numeric("timeout", "TIMEOUT", "--timeout", float, allow_none=True)
     _override_numeric("limit", "LIMIT", "--limit", int, allow_none=True)
-    _override_simple("event", "EVENT", "--event")
+    _override_simple("event", "EVENT", "--event", allow_none=True, strip_value=True)
     _override_list("severity", "SEVERITY", "--severity")
-    _override_simple("severity_min", "SEVERITY_MIN", "--severity-min")
-    _override_simple("risk_profile", "RISK_PROFILE", "--risk-profile")
-    _override_simple("risk_profiles_file", "RISK_PROFILES_FILE", "--risk-profiles-file")
-    _override_simple("core_config", "CORE_CONFIG", "--core-config")
+    _override_simple(
+        "severity_min",
+        "SEVERITY_MIN",
+        "--severity-min",
+        allow_none=True,
+        strip_value=True,
+    )
+    _override_simple(
+        "risk_profile",
+        "RISK_PROFILE",
+        "--risk-profile",
+        allow_none=True,
+        strip_value=True,
+    )
+    _override_simple(
+        "risk_profiles_file",
+        "RISK_PROFILES_FILE",
+        "--risk-profiles-file",
+        allow_none=True,
+    )
+    _override_simple("core_config", "CORE_CONFIG", "--core-config", allow_none=True)
     _override_numeric("screen_index", "SCREEN_INDEX", "--screen-index", int, allow_none=True)
-    _override_simple("screen_name", "SCREEN_NAME", "--screen-name")
-    _override_simple("since", "SINCE", "--since")
-    _override_simple("until", "UNTIL", "--until")
-    _override_simple("from_jsonl", "FROM_JSONL", "--from-jsonl")
+    _override_simple("screen_name", "SCREEN_NAME", "--screen-name", allow_none=True, strip_value=True)
+    _override_simple("since", "SINCE", "--since", allow_none=True, strip_value=True)
+    _override_simple("until", "UNTIL", "--until", allow_none=True, strip_value=True)
+    _override_simple("from_jsonl", "FROM_JSONL", "--from-jsonl", allow_none=True)
 
     if "--summary" not in provided_flags and not args.summary:
         env_key = f"{_ENV_PREFIX}SUMMARY"
@@ -1074,11 +1116,33 @@ def _apply_environment_overrides(
         if env_key in env:
             args.print_risk_profiles = _parse_env_bool(env[env_key], variable=env_key, parser=parser)
 
-    _override_simple("summary_output", "SUMMARY_OUTPUT", "--summary-output")
-    _override_simple("decision_log", "DECISION_LOG", "--decision-log")
-    _override_simple("decision_log_hmac_key", "DECISION_LOG_HMAC_KEY", "--decision-log-hmac-key")
-    _override_simple("decision_log_hmac_key_file", "DECISION_LOG_HMAC_KEY_FILE", "--decision-log-hmac-key-file")
-    _override_simple("decision_log_key_id", "DECISION_LOG_KEY_ID", "--decision-log-key-id")
+    _override_simple(
+        "summary_output",
+        "SUMMARY_OUTPUT",
+        "--summary-output",
+        allow_none=True,
+    )
+    _override_simple("decision_log", "DECISION_LOG", "--decision-log", allow_none=True)
+    _override_simple(
+        "decision_log_hmac_key",
+        "DECISION_LOG_HMAC_KEY",
+        "--decision-log-hmac-key",
+        allow_none=True,
+        strip_value=True,
+    )
+    _override_simple(
+        "decision_log_hmac_key_file",
+        "DECISION_LOG_HMAC_KEY_FILE",
+        "--decision-log-hmac-key-file",
+        allow_none=True,
+    )
+    _override_simple(
+        "decision_log_key_id",
+        "DECISION_LOG_KEY_ID",
+        "--decision-log-key-id",
+        allow_none=True,
+        strip_value=True,
+    )
 
     if "--format" not in provided_flags:
         env_key = f"{_ENV_PREFIX}FORMAT"
@@ -1090,11 +1154,17 @@ def _apply_environment_overrides(
                 )
             args.format = candidate
 
-    _override_simple("root_cert", "ROOT_CERT", "--root-cert")
-    _override_simple("client_cert", "CLIENT_CERT", "--client-cert")
-    _override_simple("client_key", "CLIENT_KEY", "--client-key")
-    _override_simple("server_name", "SERVER_NAME", "--server-name")
-    _override_simple("server_sha256", "SERVER_SHA256", "--server-sha256")
+    _override_simple("root_cert", "ROOT_CERT", "--root-cert", allow_none=True, strip_value=True)
+    _override_simple("client_cert", "CLIENT_CERT", "--client-cert", allow_none=True, strip_value=True)
+    _override_simple("client_key", "CLIENT_KEY", "--client-key", allow_none=True, strip_value=True)
+    _override_simple("server_name", "SERVER_NAME", "--server-name", allow_none=True, strip_value=True)
+    _override_simple(
+        "server_sha256",
+        "SERVER_SHA256",
+        "--server-sha256",
+        allow_none=True,
+        strip_value=True,
+    )
 
     if "--auth-token" not in provided_flags and args.auth_token is None:
         env_key = f"{_ENV_PREFIX}AUTH_TOKEN"

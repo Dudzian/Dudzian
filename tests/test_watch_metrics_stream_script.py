@@ -266,6 +266,63 @@ def test_environment_numeric_override_supports_default(monkeypatch):
     assert args.port == parser.get_default("port")
 
 
+def test_environment_simple_override_allows_default(monkeypatch):
+    parser = watch_metrics_module.build_arg_parser()
+    args = parser.parse_args([])
+    args.host = "10.20.30.40"
+    monkeypatch.setenv(f"{_ENV_PREFIX}HOST", "DEFAULT")
+    watch_metrics_module._apply_environment_overrides(
+        args, parser=parser, provided_flags=set()
+    )
+    assert args.host == parser.get_default("host")
+
+
+def test_environment_simple_override_allows_none(monkeypatch):
+    parser = watch_metrics_module.build_arg_parser()
+    args = parser.parse_args([])
+    args.event = "reduce_motion"
+    monkeypatch.setenv(f"{_ENV_PREFIX}EVENT", " none ")
+    watch_metrics_module._apply_environment_overrides(
+        args, parser=parser, provided_flags=set()
+    )
+    assert args.event is None
+
+
+def test_environment_list_override_allows_none(monkeypatch):
+    parser = watch_metrics_module.build_arg_parser()
+    args = parser.parse_args([])
+    args.severity = ["warning"]
+    monkeypatch.setenv(f"{_ENV_PREFIX}SEVERITY", "none")
+    watch_metrics_module._apply_environment_overrides(
+        args, parser=parser, provided_flags=set()
+    )
+    assert args.severity is None
+
+
+def test_environment_list_override_supports_default(monkeypatch):
+    parser = watch_metrics_module.build_arg_parser()
+    args = parser.parse_args([])
+    args.severity = ["info"]
+    monkeypatch.setenv(f"{_ENV_PREFIX}SEVERITY", "DEFAULT")
+    watch_metrics_module._apply_environment_overrides(
+        args, parser=parser, provided_flags=set()
+    )
+    assert args.severity == parser.get_default("severity")
+
+
+def test_environment_tls_none_does_not_force_tls(monkeypatch):
+    parser = watch_metrics_module.build_arg_parser()
+    args = parser.parse_args([])
+    args.use_tls = False
+    monkeypatch.setenv(f"{_ENV_PREFIX}ROOT_CERT", "NONE")
+    tls_env_present, env_use_tls_explicit = watch_metrics_module._apply_environment_overrides(
+        args, parser=parser, provided_flags=set()
+    )
+    assert tls_env_present is False
+    assert env_use_tls_explicit is False
+    assert args.root_cert is None
+
+
 def test_watch_metrics_stream_risk_profiles_file_cli(tmp_path, capsys):
     profiles_path = tmp_path / "telemetry_profiles.json"
     profiles_path.write_text(
