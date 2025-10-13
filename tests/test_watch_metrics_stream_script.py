@@ -1404,6 +1404,70 @@ def test_environment_auth_token(monkeypatch):
     assert metadata == [("authorization", "Bearer env-token")]
 
 
+def test_watch_metrics_stream_custom_headers_cli(monkeypatch):
+    stub = _StubCollector()
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+
+    exit_code = watch_metrics_main([
+        "--header",
+        "x-trace=abc123",
+        "--header",
+        "x-user:Ops",
+    ])
+
+    assert exit_code == 0
+    assert stub.calls
+    _request, _timeout, metadata = stub.calls[0]
+    assert metadata == [("x-trace", "abc123"), ("x-user", "Ops")]
+
+
+def test_environment_headers_override(monkeypatch):
+    monkeypatch.setenv(f"{_ENV_PREFIX}HEADERS", "x-trace=abc; x-team = ops ")
+    stub = _StubCollector()
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+
+    exit_code = watch_metrics_main([])
+
+    assert exit_code == 0
+    assert stub.calls
+    _request, _timeout, metadata = stub.calls[0]
+    assert metadata == [("x-trace", "abc"), ("x-team", "ops")]
+
+
+def test_environment_headers_none(monkeypatch):
+    monkeypatch.setenv(f"{_ENV_PREFIX}HEADERS", "NONE")
+    stub = _StubCollector()
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+
+    exit_code = watch_metrics_main([])
+
+    assert exit_code == 0
+    assert stub.calls
+    _request, _timeout, metadata = stub.calls[0]
+    assert metadata is None
+
+
+def test_watch_metrics_stream_header_invalid_format(monkeypatch):
+    stub = _StubCollector()
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+
+    with pytest.raises(SystemExit):
+        watch_metrics_main(["--header", "invalid"])
+
+
+def test_watch_metrics_stream_header_invalid_key(monkeypatch):
+    stub = _StubCollector()
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+
+    with pytest.raises(SystemExit):
+        watch_metrics_main(["--header", "X-Trace=abc"])
+
+
 def test_watch_metrics_stream_requires_use_tls_for_tls_flags(tmp_path):
     tls_file = tmp_path / "root.pem"
     tls_file.write_text("root")

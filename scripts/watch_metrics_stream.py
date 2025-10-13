@@ -79,6 +79,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
@@ -118,6 +119,7 @@ _ENV_PREFIX = "BOT_CORE_WATCH_METRICS_"
 _HEX_DIGITS = set("0123456789abcdef")
 _REQUIRED_METRICS_SCOPE = "metrics.read"
 _REQUIRED_RISK_SCOPE = "risk.read"
+_METADATA_KEY_PATTERN = re.compile(r"^[0-9a-z._-]+$")
 
 
 def _parse_pinned_fingerprint(entry: object) -> tuple[str, str] | None:
@@ -158,6 +160,44 @@ def _select_sha256_fingerprint(entries: Sequence[object]) -> str | None:
             "Pomijam wpis pinningu TLS %r – obsługiwany jest wyłącznie SHA-256", entry
         )
     return None
+
+
+def _looks_like_sensitive_metadata_key(key: str) -> bool:
+    lowered = key.lower()
+    return any(token in lowered for token in ("auth", "token", "secret", "key"))
+
+
+def _parse_metadata_entries(
+    entries: Sequence[str], *, parser: argparse.ArgumentParser
+) -> list[tuple[str, str]]:
+    metadata: list[tuple[str, str]] = []
+    for raw_entry in entries:
+        entry = raw_entry.strip()
+        if not entry:
+            continue
+        if "=" in entry:
+            key, value = entry.split("=", 1)
+        elif ":" in entry:
+            key, value = entry.split(":", 1)
+        else:
+            parser.error(
+                "Nieprawidłowy nagłówek gRPC '%s'. Użyj formatu klucz=wartość lub klucz:wartość." % raw_entry
+            )
+        stripped_key = key.strip()
+        normalized_key = stripped_key.lower()
+        if not normalized_key:
+            parser.error("Nagłówek gRPC o pustym kluczu jest niedozwolony")
+        if stripped_key != normalized_key:
+            parser.error(
+                "Nagłówek gRPC '%s' musi używać małych liter" % stripped_key
+            )
+        if not _METADATA_KEY_PATTERN.fullmatch(normalized_key):
+            parser.error(
+                "Nagłówek gRPC '%s' zawiera niedozwolone znaki – dozwolone są małe litery, cyfry, '-', '_' i '.'"
+                % normalized_key
+            )
+        metadata.append((normalized_key, value.strip()))
+    return metadata
 
 
 def _load_grpc_components():
@@ -855,6 +895,15 @@ def _decision_log_metadata_grpc(
         "server_name": bool(args.server_name),
         "server_sha256": bool(args.server_sha256),
     }
+    custom_metadata = getattr(args, "_custom_metadata", None) or []
+    if custom_metadata:
+        custom_section: dict[str, Any] = {
+            "keys": [key for key, _ in custom_metadata],
+            "count": len(custom_metadata),
+        }
+        if any(_looks_like_sensitive_metadata_key(key) for key, _ in custom_metadata):
+            custom_section["contains_sensitive"] = True
+        metadata["custom_metadata"] = custom_section
     risk_profile = getattr(args, "_risk_profile_config", None)
     if risk_profile:
         metadata["risk_profile"] = dict(risk_profile)
@@ -1073,6 +1122,24 @@ def _apply_environment_overrides(
         values = [item.strip() for item in raw_value.split(",") if item.strip()]
         setattr(args, attr, values)
 
+    def _override_headers(attr: str, suffix: str, flag: str) -> None:
+        if flag in provided_flags:
+            return
+        env_key = f"{_ENV_PREFIX}{suffix}"
+        if env_key not in env:
+            return
+        raw_value = env[env_key]
+        stripped = raw_value.strip()
+        normalized = stripped.lower()
+        if normalized in {"", "none", "null"}:
+            setattr(args, attr, None)
+            return
+        if normalized == "default":
+            setattr(args, attr, parser.get_default(attr))
+            return
+        entries = [entry.strip() for entry in raw_value.split(";") if entry.strip()]
+        setattr(args, attr, entries or None)
+
     _override_simple("host", "HOST", "--host")
     _override_numeric("port", "PORT", "--port", int)
     _override_numeric("timeout", "TIMEOUT", "--timeout", float, allow_none=True)
@@ -1143,6 +1210,7 @@ def _apply_environment_overrides(
         allow_none=True,
         strip_value=True,
     )
+    _override_headers("headers", "HEADERS", "--header")
 
     if "--format" not in provided_flags:
         env_key = f"{_ENV_PREFIX}FORMAT"
@@ -1770,6 +1838,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "(ułatwia rotację kluczy)."
         ),
     )
+    parser.add_argument(
+        "--header",
+        dest="headers",
+        action="append",
+        default=None,
+        help=(
+            "Dodatkowe nagłówki gRPC w formacie klucz=wartość lub klucz:wartość. "
+            "Można podać wielokrotnie, np. --header x-trace=abc123."
+        ),
+    )
     return parser
 
 
@@ -1792,6 +1870,11 @@ def main(argv: list[str] | None = None) -> int:
         parser=parser,
         provided_flags=provided_flags,
     )
+    custom_metadata: list[tuple[str, str]] | None = None
+    raw_headers = getattr(args, "headers", None)
+    if raw_headers:
+        custom_metadata = _parse_metadata_entries(raw_headers, parser=parser)
+    args._custom_metadata = custom_metadata
     _apply_core_config_defaults(args, parser=parser, provided_flags=provided_flags)
     _load_custom_risk_profiles(args, parser)
     if (
@@ -2035,9 +2118,13 @@ def main(argv: list[str] | None = None) -> int:
         request.include_ui_metrics = True
 
         count = 0
-        metadata: list[tuple[str, str]] | None = None
+        metadata: list[tuple[str, str]] = []
         if auth_token:
-            metadata = [("authorization", f"Bearer {auth_token}")]
+            metadata.append(("authorization", f"Bearer {auth_token}"))
+        custom_metadata_entries = getattr(args, "_custom_metadata", None)
+        if custom_metadata_entries:
+            metadata.extend(custom_metadata_entries)
+        metadata_to_send = metadata or None
 
         if decision_logger:
             decision_logger.write_metadata(
@@ -2055,7 +2142,9 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
 
-        for snapshot in _iter_stream(stub, request, timeout=args.timeout, metadata=metadata):
+        for snapshot in _iter_stream(
+            stub, request, timeout=args.timeout, metadata=metadata_to_send
+        ):
             if not _matches_time_filters(snapshot, since=since_dt, until=until_dt):
                 continue
             notes_payload = _parse_notes(snapshot.notes)
