@@ -83,6 +83,7 @@ class MetricsServiceConfig:
     tls: MetricsServiceTlsConfig | None = None
     rbac_tokens: Sequence[ServiceTokenConfig] = field(default_factory=tuple)
     grpc_metadata: Sequence[tuple[str, str]] = field(default_factory=tuple)
+    grpc_metadata_sources: Mapping[str, str] = field(default_factory=dict)
 
     # Opcjonalne alerty związane z UI/performance
     reduce_motion_alerts: bool = False

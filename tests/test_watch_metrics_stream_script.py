@@ -116,8 +116,19 @@ def _write_core_config(
             items = metrics_grpc_metadata.items()
         else:
             items = metrics_grpc_metadata
-        for key, value in items:
-            lines.append(f"      {key}: {value}")
+        for entry in items:
+            if isinstance(entry, Mapping):
+                key = entry.get("key")
+                lines.append(f"      - key: {key}")
+                if "value" in entry:
+                    lines.append(f"        value: {entry['value']}")
+                if "value_env" in entry:
+                    lines.append(f"        value_env: {entry['value_env']}")
+                if "value_file" in entry:
+                    lines.append(f"        value_file: {entry['value_file']}")
+            else:
+                key, value = entry
+                lines.append(f"      {key}: {value}")
 
     lines.extend(
         [
@@ -1477,6 +1488,31 @@ def test_core_config_grpc_metadata_applied(monkeypatch, tmp_path):
     assert stub.calls
     _request, _timeout, metadata = stub.calls[0]
     assert metadata == [("x-trace", "config"), ("x-role", "ops")]
+
+
+def test_core_config_grpc_metadata_sources_recorded(monkeypatch, tmp_path):
+    monkeypatch.setenv("BOT_CORE_TRACE", "trace-token")
+    stub = _StubCollector()
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
+    config_path = _write_core_config(
+        tmp_path,
+        profiles_path=profiles_path,
+        metrics_grpc_metadata=[{"key": "authorization", "value_env": "BOT_CORE_TRACE"}],
+    )
+
+    parser = watch_metrics_module.build_arg_parser()
+    args = parser.parse_args(["--core-config", str(config_path)])
+    watch_metrics_module._apply_core_config_defaults(
+        args,
+        parser=parser,
+        provided_flags={"--core-config"},
+    )
+
+    metrics_meta = getattr(args, "_core_config_metadata")["metrics_service"]
+    assert metrics_meta["grpc_metadata_keys"] == ["authorization"]
+    assert metrics_meta["grpc_metadata_sources"] == {"authorization": "env:BOT_CORE_TRACE"}
 
 
 def test_core_config_grpc_metadata_disabled_by_env(monkeypatch, tmp_path):

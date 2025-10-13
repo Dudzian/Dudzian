@@ -1314,6 +1314,7 @@ def _apply_core_config_defaults(
         metrics_meta["auth_token_configured"] = True
 
     config_metadata_entries = tuple(getattr(metrics_config, "grpc_metadata", ()) or ())
+    metadata_sources = dict(getattr(metrics_config, "grpc_metadata_sources", {}) or {})
     if config_metadata_entries:
         metrics_meta["grpc_metadata_keys"] = [key for key, _ in config_metadata_entries]
         metrics_meta["grpc_metadata_count"] = len(config_metadata_entries)
@@ -1323,6 +1324,8 @@ def _apply_core_config_defaults(
             metrics_meta["grpc_metadata_enabled"] = True
             existing_custom = list(getattr(args, "_custom_metadata", []) or [])
             args._custom_metadata = list(config_metadata_entries) + existing_custom
+    if metadata_sources:
+        metrics_meta["grpc_metadata_sources"] = dict(metadata_sources)
 
     default_host = parser.get_default("host")
     if (

@@ -43,6 +43,7 @@ Pełne logi testów są wersjonowane w katalogu `logs/` wraz z podpisami HMAC ge
   - 4K – hotfix obsługi strażników `NONE`/`NULL`/`DEFAULT` w `watch_metrics_stream` bez wymuszania TLS.
   - 4L – wsparcie dla niestandardowych nagłówków gRPC w `watch_metrics_stream` (flagi CLI i zmienne środowiskowe) wraz z sanitacją metadanych decision logu.
   - 4M – wprowadzenie mapowania `grpc_metadata` w `core.yaml`, walidowanego przez loader i walidator konfiguracji oraz honorującego strażniki środowiskowe przy automatycznym wstrzykiwaniu nagłówków do połączeń gRPC telemetryki.
+  - 4N – umożliwienie referencji `value_env`/`value_file` w `grpc_metadata`, pobieranie wartości z bezpiecznych źródeł oraz propagacja informacji o pochodzeniu nagłówków do decision logu telemetryki.
 - **Czynności otwarte**: brak – backlog Etapu 4 został zrealizowany w całości.
 - **Blokery**: brak nowych ryzyk; budżety zasobów monitorowane przez `runtime.resource_limits` i `resource_monitor` mieszczą się w zadeklarowanych progach.
 

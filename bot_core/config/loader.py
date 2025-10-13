@@ -5,6 +5,7 @@ from dataclasses import fields
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
+import os
 import re
 
 import yaml
@@ -835,15 +836,22 @@ def _load_service_tokens(raw_value: Any) -> tuple[ServiceTokenConfig, ...]:
     return tuple(tokens)
 
 
-def _normalize_grpc_metadata(raw_value: object) -> tuple[tuple[str, str], ...]:
-    """Normalizuje wpisy metadata gRPC do listy par (klucz, wartość)."""
+def _normalize_grpc_metadata(
+    raw_value: object, *, base_dir: Path | None
+) -> tuple[tuple[str, str], Mapping[str, str]]:
+    """Normalizuje wpisy metadata gRPC do listy par (klucz, wartość).
+
+    Zwraca pary `(key, value)` oraz mapę źródeł, aby można było odnotować
+    pochodzenie (inline/env/plik) w decision logu.
+    """
 
     if raw_value in (None, False, ""):
-        return ()
+        return (), {}
 
     entries: list[tuple[str, str]] = []
+    sources: dict[str, str] = {}
 
-    def _append_entry(key: object, value: object) -> None:
+    def _append_entry(key: object, value: object, *, source: str) -> None:
         if key is None:
             raise ValueError("grpc_metadata wymaga niepustego klucza")
         key_str = str(key).strip()
@@ -857,17 +865,49 @@ def _normalize_grpc_metadata(raw_value: object) -> tuple[tuple[str, str], ...]:
                 "grpc_metadata klucz może zawierać wyłącznie [0-9a-z._-]"
             )
         value_str = "" if value is None else str(value)
-        entries.append((normalized_key, value_str.strip()))
+        normalized_value = value_str.strip()
+        entries.append((normalized_key, normalized_value))
+        sources[normalized_key] = source
+
+    def _resolve_mapping_value(entry: Mapping[str, Any]) -> tuple[Any, str]:
+        if "value" in entry:
+            return entry.get("value"), "inline"
+        if "value_env" in entry or "env" in entry:
+            env_name = _normalize_env_var(entry.get("value_env") or entry.get("env"))
+            if not env_name:
+                raise ValueError("grpc_metadata value_env wymaga niepustej nazwy zmiennej")
+            if env_name not in os.environ:
+                raise ValueError(
+                    f"grpc_metadata value_env '{env_name}' nie jest ustawione w środowisku"
+                )
+            return os.environ[env_name], f"env:{env_name}"
+        if "value_file" in entry or "value_path" in entry:
+            raw_path = entry.get("value_file") or entry.get("value_path")
+            normalized_path = _normalize_runtime_path(raw_path, base_dir=base_dir)
+            if not normalized_path:
+                raise ValueError("grpc_metadata value_file wymaga ścieżki do pliku")
+            file_path = Path(normalized_path)
+            try:
+                contents = file_path.read_text(encoding="utf-8")
+            except FileNotFoundError as exc:  # noqa: PERF203 - informujemy o brakującym pliku
+                raise ValueError(
+                    f"grpc_metadata value_file '{normalized_path}' nie istnieje"
+                ) from exc
+            return contents, f"file:{normalized_path}"
+        raise ValueError(
+            "grpc_metadata wpis słownika wymaga pola value, value_env lub value_file"
+        )
 
     if isinstance(raw_value, Mapping):
         for key, value in raw_value.items():
-            _append_entry(key, value)
+            _append_entry(key, value, source="inline")
     elif isinstance(raw_value, Sequence) and not isinstance(raw_value, (str, bytes, bytearray)):
         for item in raw_value:
             if isinstance(item, Mapping):
-                if "key" not in item or "value" not in item:
-                    raise ValueError("grpc_metadata wpis słownika wymaga pól key i value")
-                _append_entry(item["key"], item["value"])
+                if "key" not in item:
+                    raise ValueError("grpc_metadata wpis słownika wymaga pola key")
+                value, source = _resolve_mapping_value(item)
+                _append_entry(item["key"], value, source=source)
             else:
                 text = str(item)
                 if "=" in text:
@@ -878,11 +918,11 @@ def _normalize_grpc_metadata(raw_value: object) -> tuple[tuple[str, str], ...]:
                     raise ValueError(
                         "grpc_metadata element listy musi mieć format klucz=wartość lub klucz:wartość"
                     )
-                _append_entry(key, value)
+                _append_entry(key, value, source="inline")
     else:
         raise TypeError("grpc_metadata musi być mapą lub listą wpisów")
 
-    return tuple(entries)
+    return tuple(entries), sources
 
 
 def _load_metrics_service(
@@ -919,7 +959,12 @@ def _load_metrics_service(
 
     if "grpc_metadata" in available_fields:
         raw_metadata = metrics_raw.get("grpc_metadata")
-        kwargs["grpc_metadata"] = _normalize_grpc_metadata(raw_metadata)
+        metadata_entries, metadata_sources = _normalize_grpc_metadata(
+            raw_metadata, base_dir=base_dir
+        )
+        kwargs["grpc_metadata"] = metadata_entries
+        if "grpc_metadata_sources" in available_fields:
+            kwargs["grpc_metadata_sources"] = dict(metadata_sources)
 
     # Opcjonalne: log sink, jsonl, fsync
     if "log_sink" in available_fields:

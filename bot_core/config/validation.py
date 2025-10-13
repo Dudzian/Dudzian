@@ -436,6 +436,24 @@ def _validate_metrics_service(
                 )
             seen_keys.add(normalized)
 
+        sources = getattr(metrics, "grpc_metadata_sources", None)
+        if sources:
+            try:
+                source_items = dict(sources)
+            except Exception:  # noqa: BLE001 - chcemy jasny komunikat konfiguracji
+                errors.append(f"{context}: grpc_metadata_sources musi być słownikiem")
+            else:
+                for key, origin in source_items.items():
+                    normalized = str(key).strip().lower()
+                    if normalized not in seen_keys:
+                        warnings.append(
+                            f"{context}: grpc_metadata_sources zawiera klucz '{key}' bez odpowiadającego wpisu metadata"
+                        )
+                    elif not str(origin).strip():
+                        warnings.append(
+                            f"{context}: grpc_metadata_sources dla klucza '{key}' jest puste – pomijam"
+                        )
+
     tls = getattr(metrics, "tls", None)
     if tls is not None and getattr(tls, "enabled", False):
         certificate = getattr(tls, "certificate_path", None)
