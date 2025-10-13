@@ -1045,8 +1045,8 @@ def _apply_environment_overrides(
 
     _override_simple("host", "HOST", "--host")
     _override_numeric("port", "PORT", "--port", int)
-    _override_numeric("timeout", "TIMEOUT", float, allow_none=True)
-    _override_numeric("limit", "LIMIT", int, allow_none=True)
+    _override_numeric("timeout", "TIMEOUT", "--timeout", float, allow_none=True)
+    _override_numeric("limit", "LIMIT", "--limit", int, allow_none=True)
     _override_simple("event", "EVENT", "--event")
     _override_list("severity", "SEVERITY", "--severity")
     _override_simple("severity_min", "SEVERITY_MIN", "--severity-min")
