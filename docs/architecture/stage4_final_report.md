@@ -1,7 +1,7 @@
 # Raport zamknięcia Etapu 4
 
 ## Kontekst
-Etap 4 programu rozwoju bota handlowego `bot_core` skupiał się na rozszerzeniu biblioteki strategii o warianty mean reversion, volatility targeting i cross-exchange arbitrage oraz na budowie harmonogramu wielostrate-gicznego, który umożliwia równoległą orkiestrację profili ryzyka w ścieżce demo→paper→live. Dodatkowo wymagano wzmocnienia dokumentacji operacyjnej, harnessu testowego silnika ryzyka oraz procedur audytowych (HMAC, RBAC, mTLS) zgodnych z naszym reżimem compliance.
+Etap 4 programu rozwoju bota handlowego `bot_core` skupiał się na rozszerzeniu biblioteki strategii o warianty mean reversion, volatility targeting i cross-exchange arbitrage oraz na budowie harmonogramu wielostrate-gicznego, który umożliwia równoległą orkiestrację profili ryzyka w ścieżce demo→paper→live. Dodatkowo wymagano wzmocnienia dokumentacji operacyjnej, harnessu testowego silnika ryzyka oraz procedur audytowych (HMAC, RBAC, mTLS) zgodnych z naszym reżimem compliance. Po audycie zamknięcia zakres został rozszerzony o pakiet obserwowalności, danych, CI i operacji (zadania 7.x–11.x w trackerze) – niniejszy raport dokumentuje ukończone deliverables iteracji 4E oraz wskazuje rozszerzenia przewidziane na iterację 4F.
 
 ## Zakres dostarczony
 - **Strategie**: komplet ustawień (`Settings`) i klas strategii dla mean reversion, volatility targeting i arbitrażu międzygiełdowego zintegrowanych z warstwą danych, silnikiem ryzyka i modułem egzekucji.
@@ -31,8 +31,9 @@ Pełne logi testów są wersjonowane w katalogu `logs/` wraz z podpisami HMAC ge
 2. **Monitoring**: Telemetria scheduler-a powinna zostać skorelowana z alertami w warstwie ryzyka; konieczne jest utrzymanie dashboardu audytowego dla force liquidation.
 3. **Przejście do Etapu 5**: Możemy rozpocząć prace planistyczne nad etapem dotyczącym optymalizacji kosztów transakcyjnych i rozbudowy decision engine’u, zachowując wymuszone bramki compliance.
 
-## Status końcowy
-- **Postęp Etapu 4**: 22/22 (100 %) – pasek `[####################]`.
-- **Ostatnia iteracja**: 4E – wszystkie deliverables zatwierdzone w audycie papier tradingu.
-- **Blokery**: brak (klucze HMAC i RBAC zweryfikowane, brak zależności od środowisk chmurowych, zidentyfikowany brak par GBP/CHF pozostaje zarejestrowany jako ryzyko znane, mitigowany przez fallback USD/EUR w schedulerze).
+## Status iteracji 4F (po rozszerzeniu zakresu)
+- **Postęp Etapu 4**: 22/40 (55 %) – pasek `[###########---------]`.
+- **Ostatnia zamknięta iteracja**: 4E – deliverables bazowe zatwierdzone w audycie papier tradingu; iteracja 4F obejmuje zadania danych/observability/CI/operacje.
+- **Czynności otwarte**: katalog danych backtestowych, metryki/alerty scheduler-a, integracja decyzji z centralnym logiem, smoke CLI, audyty RBAC/mTLS, testy obciążeniowe i playbook L1/L2.
+- **Blokery**: oczekiwane dane referencyjne do walidacji jakości danych oraz finalny budżet zasobów dla równoległych strategii; brak nowych ryzyk związanych z infrastrukturą (RBAC/mTLS/HMAC pozostają zgodne).
 
