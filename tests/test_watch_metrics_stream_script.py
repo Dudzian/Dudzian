@@ -46,6 +46,9 @@ def _write_core_config(
     port: int = 50200,
     metrics_rbac_tokens: Sequence[dict[str, object]] | None = None,
     metrics_tls: Mapping[str, object] | None = None,
+    metrics_grpc_metadata: Mapping[str, object] | Sequence[tuple[str, object]] | None = None,
+    metrics_grpc_metadata_files: Sequence[str] | None = None,
+    metrics_grpc_metadata_directories: Sequence[str] | None = None,
     risk_host: str = "127.0.0.1",
     risk_port: int = 60300,
     risk_enabled: bool = True,
@@ -108,6 +111,36 @@ def _write_core_config(
                 if isinstance(value, bool):
                     rendered = "true" if value else "false"
                 lines.append(f"{indent}{key}: {rendered}")
+
+    if metrics_grpc_metadata:
+        lines.append("    grpc_metadata:")
+        if isinstance(metrics_grpc_metadata, Mapping):
+            items = metrics_grpc_metadata.items()
+        else:
+            items = metrics_grpc_metadata
+        for entry in items:
+            if isinstance(entry, Mapping):
+                key = entry.get("key")
+                lines.append(f"      - key: {key}")
+                if "value" in entry:
+                    lines.append(f"        value: {entry['value']}")
+                if "value_env" in entry:
+                    lines.append(f"        value_env: {entry['value_env']}")
+                if "value_file" in entry:
+                    lines.append(f"        value_file: {entry['value_file']}")
+            else:
+                key, value = entry
+                lines.append(f"      {key}: {value}")
+
+    if metrics_grpc_metadata_files:
+        lines.append("    grpc_metadata_files:")
+        for entry in metrics_grpc_metadata_files:
+            lines.append(f"      - {entry}")
+
+    if metrics_grpc_metadata_directories:
+        lines.append("    grpc_metadata_directories:")
+        for entry in metrics_grpc_metadata_directories:
+            lines.append(f"      - {entry}")
 
     lines.extend(
         [
@@ -231,6 +264,96 @@ def test_watch_metrics_stream_print_risk_profiles_env(monkeypatch, capsys):
     assert "risk_profiles" in payload
     assert payload["risk_profiles"]["conservative"]["origin"] == "builtin"
     assert payload.get("selected") is None
+
+
+def test_environment_numeric_override_allows_none_keyword(monkeypatch):
+    parser = watch_metrics_module.build_arg_parser()
+    args = parser.parse_args([])
+    args.limit = 25
+    monkeypatch.setenv(f"{_ENV_PREFIX}LIMIT", "NONE")
+    watch_metrics_module._apply_environment_overrides(
+        args, parser=parser, provided_flags=set()
+    )
+    assert args.limit is None
+
+
+def test_environment_numeric_override_allows_null_with_spaces(monkeypatch):
+    parser = watch_metrics_module.build_arg_parser()
+    args = parser.parse_args([])
+    args.timeout = 17.5
+    monkeypatch.setenv(f"{_ENV_PREFIX}TIMEOUT", "  null \t")
+    watch_metrics_module._apply_environment_overrides(
+        args, parser=parser, provided_flags=set()
+    )
+    assert args.timeout is None
+
+
+def test_environment_numeric_override_supports_default(monkeypatch):
+    parser = watch_metrics_module.build_arg_parser()
+    args = parser.parse_args([])
+    args.port = 60000
+    monkeypatch.setenv(f"{_ENV_PREFIX}PORT", "default")
+    watch_metrics_module._apply_environment_overrides(
+        args, parser=parser, provided_flags=set()
+    )
+    assert args.port == parser.get_default("port")
+
+
+def test_environment_simple_override_allows_default(monkeypatch):
+    parser = watch_metrics_module.build_arg_parser()
+    args = parser.parse_args([])
+    args.host = "10.20.30.40"
+    monkeypatch.setenv(f"{_ENV_PREFIX}HOST", "DEFAULT")
+    watch_metrics_module._apply_environment_overrides(
+        args, parser=parser, provided_flags=set()
+    )
+    assert args.host == parser.get_default("host")
+
+
+def test_environment_simple_override_allows_none(monkeypatch):
+    parser = watch_metrics_module.build_arg_parser()
+    args = parser.parse_args([])
+    args.event = "reduce_motion"
+    monkeypatch.setenv(f"{_ENV_PREFIX}EVENT", " none ")
+    watch_metrics_module._apply_environment_overrides(
+        args, parser=parser, provided_flags=set()
+    )
+    assert args.event is None
+
+
+def test_environment_list_override_allows_none(monkeypatch):
+    parser = watch_metrics_module.build_arg_parser()
+    args = parser.parse_args([])
+    args.severity = ["warning"]
+    monkeypatch.setenv(f"{_ENV_PREFIX}SEVERITY", "none")
+    watch_metrics_module._apply_environment_overrides(
+        args, parser=parser, provided_flags=set()
+    )
+    assert args.severity is None
+
+
+def test_environment_list_override_supports_default(monkeypatch):
+    parser = watch_metrics_module.build_arg_parser()
+    args = parser.parse_args([])
+    args.severity = ["info"]
+    monkeypatch.setenv(f"{_ENV_PREFIX}SEVERITY", "DEFAULT")
+    watch_metrics_module._apply_environment_overrides(
+        args, parser=parser, provided_flags=set()
+    )
+    assert args.severity == parser.get_default("severity")
+
+
+def test_environment_tls_none_does_not_force_tls(monkeypatch):
+    parser = watch_metrics_module.build_arg_parser()
+    args = parser.parse_args([])
+    args.use_tls = False
+    monkeypatch.setenv(f"{_ENV_PREFIX}ROOT_CERT", "NONE")
+    tls_env_present, env_use_tls_explicit = watch_metrics_module._apply_environment_overrides(
+        args, parser=parser, provided_flags=set()
+    )
+    assert tls_env_present is False
+    assert env_use_tls_explicit is False
+    assert args.root_cert is None
 
 
 def test_watch_metrics_stream_risk_profiles_file_cli(tmp_path, capsys):
@@ -479,14 +602,16 @@ class _FakeSnapshot:
 
 class _StubCollector:
     def __init__(self) -> None:
-        self.calls: list[tuple[object, float | None, list[tuple[str, str]] | None]] = []
+        self.calls: list[
+            tuple[object, float | None, list[tuple[str, bytes | str]] | None]
+        ] = []
         self.response: Iterable[object] = ()
 
     def StreamMetrics(
         self,
         request,
         timeout: float | None = None,
-        metadata: list[tuple[str, str]] | None = None,
+        metadata: list[tuple[str, bytes | str]] | None = None,
     ) -> Iterable[object]:
         self.calls.append((request, timeout, metadata))
         return list(self.response)
@@ -1312,6 +1437,990 @@ def test_environment_auth_token(monkeypatch):
     assert stub.calls
     _request, _timeout, metadata = stub.calls[0]
     assert metadata == [("authorization", "Bearer env-token")]
+
+
+def test_watch_metrics_stream_custom_headers_cli(monkeypatch):
+    stub = _StubCollector()
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+
+    exit_code = watch_metrics_main([
+        "--header",
+        "x-trace=abc123",
+        "--header",
+        "x-user:Ops",
+    ])
+
+    assert exit_code == 0
+    assert stub.calls
+    _request, _timeout, metadata = stub.calls[0]
+    assert metadata == [("x-trace", "abc123"), ("x-user", "Ops")]
+
+
+def test_environment_headers_override(monkeypatch):
+    monkeypatch.setenv(f"{_ENV_PREFIX}HEADERS", "x-trace=abc; x-team = ops ")
+    stub = _StubCollector()
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+
+    exit_code = watch_metrics_main([])
+
+    assert exit_code == 0
+    assert stub.calls
+    _request, _timeout, metadata = stub.calls[0]
+    assert metadata == [("x-trace", "abc"), ("x-team", "ops")]
+
+
+def test_environment_headers_multiline(monkeypatch):
+    multiline = "\n".join(
+        [
+            " x-trace = abc ",
+            "x-team=ops;",  # separator średnika na końcu
+            " x-role = qa",
+            "",  # pusta linia powinna zostać pominięta
+        ]
+    )
+    monkeypatch.setenv(f"{_ENV_PREFIX}HEADERS", multiline)
+    stub = _StubCollector()
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+
+    exit_code = watch_metrics_main([])
+
+    assert exit_code == 0
+    assert stub.calls
+    _request, _timeout, metadata = stub.calls[0]
+    assert metadata == [
+        ("x-trace", "abc"),
+        ("x-team", "ops"),
+        ("x-role", "qa"),
+    ]
+
+
+def test_environment_headers_multiline_comments(monkeypatch):
+    multiline = "\n".join(
+        [
+            "x-trace=abc",
+            "   # komentarz powinien zostać pominięty",
+            "x-team=ops",
+        ]
+    )
+    monkeypatch.setenv(f"{_ENV_PREFIX}HEADERS", multiline)
+    stub = _StubCollector()
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+
+    exit_code = watch_metrics_main([])
+
+    assert exit_code == 0
+    assert stub.calls
+    _request, _timeout, metadata = stub.calls[0]
+    assert metadata == [
+        ("x-trace", "abc"),
+        ("x-team", "ops"),
+    ]
+
+
+def test_environment_headers_file_list(monkeypatch, tmp_path):
+    file_one = tmp_path / "headers_1.env"
+    file_one.write_text("x-trace=from-file-one\n", encoding="utf-8")
+    file_two = tmp_path / "headers_2.env"
+    file_two.write_text("x-team=ops\nx-trace=override\n", encoding="utf-8")
+    file_three = tmp_path / "headers_3.env"
+    file_three.write_text("x-role=qa\n", encoding="utf-8")
+
+    env_value = "\n".join([str(file_one), "# komentarz", str(file_two), str(file_three)])
+    monkeypatch.setenv(f"{_ENV_PREFIX}HEADERS_FILE", env_value)
+
+    stub = _StubCollector()
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+
+    exit_code = watch_metrics_main([])
+
+    assert exit_code == 0
+    assert stub.calls
+    _request, _timeout, metadata = stub.calls[0]
+    assert metadata == [
+        ("x-team", "ops"),
+        ("x-trace", "override"),
+        ("x-role", "qa"),
+    ]
+
+
+def test_environment_headers_file_none(monkeypatch):
+    monkeypatch.setenv(f"{_ENV_PREFIX}HEADERS_FILE", "NONE")
+    stub = _StubCollector()
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+
+    exit_code = watch_metrics_main([])
+
+    assert exit_code == 0
+    assert stub.calls
+    _request, _timeout, metadata = stub.calls[0]
+    assert metadata is None
+
+
+def test_headers_file_basic(monkeypatch, tmp_path):
+    headers_file = tmp_path / "headers.env"
+    headers_file.write_text(
+        "\n".join(
+            [
+                "  # komentarz nagłówków",
+                "x-trace=from-file",
+                "x-team = ops ; x-role = qa",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    stub = _StubCollector()
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+
+    exit_code = watch_metrics_main(["--headers-file", str(headers_file)])
+
+    assert exit_code == 0
+    assert stub.calls
+    _request, _timeout, metadata = stub.calls[0]
+    assert metadata == [
+        ("x-trace", "from-file"),
+        ("x-team", "ops"),
+        ("x-role", "qa"),
+    ]
+
+
+def test_headers_file_cli_override(monkeypatch, tmp_path):
+    headers_file = tmp_path / "headers.env"
+    headers_file.write_text("authorization=Bearer from-file", encoding="utf-8")
+
+    stub = _StubCollector()
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+
+    exit_code = watch_metrics_main(
+        [
+            "--headers-file",
+            str(headers_file),
+            "--header",
+            "authorization=Bearer override",
+        ]
+    )
+
+    assert exit_code == 0
+    assert stub.calls
+    _request, _timeout, metadata = stub.calls[0]
+    assert metadata == [("authorization", "Bearer override")]
+
+
+def test_headers_dir_basic(monkeypatch, tmp_path):
+    headers_dir = tmp_path / "headers"
+    headers_dir.mkdir()
+    (headers_dir / "01.env").write_text("x-team=ops\n", encoding="utf-8")
+    (headers_dir / "02.env").write_text("x-trace=dir\nx-role=qa\n", encoding="utf-8")
+
+    stub = _StubCollector()
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+
+    exit_code = watch_metrics_main(["--headers-dir", str(headers_dir)])
+
+    assert exit_code == 0
+    assert stub.calls
+    _request, _timeout, metadata = stub.calls[0]
+    assert metadata == [
+        ("x-team", "ops"),
+        ("x-trace", "dir"),
+        ("x-role", "qa"),
+    ]
+
+
+def test_environment_headers_dirs(monkeypatch, tmp_path):
+    dir_one = tmp_path / "d1"
+    dir_one.mkdir()
+    (dir_one / "a.env").write_text("x-trace=first\n", encoding="utf-8")
+    dir_two = tmp_path / "d2"
+    dir_two.mkdir()
+    (dir_two / "b.env").write_text("x-trace=second\nx-role=ops\n", encoding="utf-8")
+
+    env_value = "\n".join([str(dir_one), str(dir_two)])
+    monkeypatch.setenv(f"{_ENV_PREFIX}HEADERS_DIRS", env_value)
+
+    stub = _StubCollector()
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+
+    exit_code = watch_metrics_main([])
+
+    assert exit_code == 0
+    assert stub.calls
+    _request, _timeout, metadata = stub.calls[0]
+    assert metadata == [
+        ("x-trace", "second"),
+        ("x-role", "ops"),
+    ]
+
+
+def test_environment_headers_dirs_none(monkeypatch):
+    monkeypatch.setenv(f"{_ENV_PREFIX}HEADERS_DIRS", "NONE")
+    stub = _StubCollector()
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+
+    exit_code = watch_metrics_main([])
+
+    assert exit_code == 0
+    assert stub.calls
+    _request, _timeout, metadata = stub.calls[0]
+    assert metadata is None
+
+
+def test_environment_headers_none(monkeypatch):
+    monkeypatch.setenv(f"{_ENV_PREFIX}HEADERS", "NONE")
+    stub = _StubCollector()
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+
+    exit_code = watch_metrics_main([])
+
+    assert exit_code == 0
+    assert stub.calls
+    _request, _timeout, metadata = stub.calls[0]
+    assert metadata is None
+
+
+def test_core_config_grpc_metadata_applied(monkeypatch, tmp_path):
+    stub = _StubCollector()
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
+    config_path = _write_core_config(
+        tmp_path,
+        profiles_path=profiles_path,
+        metrics_grpc_metadata=[("x-trace", "config"), ("x-role", "ops")],
+    )
+
+    exit_code = watch_metrics_main(["--core-config", str(config_path)])
+
+    assert exit_code == 0
+    assert stub.calls
+    _request, _timeout, metadata = stub.calls[0]
+    assert metadata == [("x-trace", "config"), ("x-role", "ops")]
+
+
+def test_core_config_grpc_metadata_files_applied(monkeypatch, tmp_path):
+    stub = _StubCollector()
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
+    headers_file = tmp_path / "metrics_headers.env"
+    headers_file.write_text(
+        "authorization=Bearer from file\n"
+        "x-trace=from-file\n",
+        encoding="utf-8",
+    )
+    config_path = _write_core_config(
+        tmp_path,
+        profiles_path=profiles_path,
+        metrics_grpc_metadata=[("x-role", "inline")],
+        metrics_grpc_metadata_files=[str(headers_file)],
+    )
+
+    exit_code = watch_metrics_main(["--core-config", str(config_path)])
+
+    assert exit_code == 0
+    assert stub.calls
+    _request, _timeout, metadata = stub.calls[0]
+    assert metadata == [
+        ("authorization", "Bearer from file"),
+        ("x-trace", "from-file"),
+        ("x-role", "inline"),
+    ]
+
+
+def test_core_config_grpc_metadata_sources_recorded(monkeypatch, tmp_path):
+    monkeypatch.setenv("BOT_CORE_TRACE", "trace-token")
+    stub = _StubCollector()
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
+    config_path = _write_core_config(
+        tmp_path,
+        profiles_path=profiles_path,
+        metrics_grpc_metadata=[{"key": "authorization", "value_env": "BOT_CORE_TRACE"}],
+    )
+
+    parser = watch_metrics_module.build_arg_parser()
+    args = parser.parse_args(["--core-config", str(config_path)])
+    watch_metrics_module._apply_core_config_defaults(
+        args,
+        parser=parser,
+        provided_flags={"--core-config"},
+    )
+
+    metrics_meta = getattr(args, "_core_config_metadata")["metrics_service"]
+    assert metrics_meta["grpc_metadata_keys"] == ["authorization"]
+    assert metrics_meta["grpc_metadata_sources"] == {"authorization": "env:BOT_CORE_TRACE"}
+
+
+def test_core_config_grpc_metadata_files_sources_recorded(monkeypatch, tmp_path):
+    stub = _StubCollector()
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
+    headers_file = tmp_path / "metrics_headers.env"
+    headers_file.write_text(
+        "authorization=Bearer from file\n",
+        encoding="utf-8",
+    )
+    config_path = _write_core_config(
+        tmp_path,
+        profiles_path=profiles_path,
+        metrics_grpc_metadata={"x-trace": "config"},
+        metrics_grpc_metadata_files=[str(headers_file)],
+    )
+
+    parser = watch_metrics_module.build_arg_parser()
+    args = parser.parse_args(["--core-config", str(config_path)])
+    watch_metrics_module._apply_core_config_defaults(
+        args,
+        parser=parser,
+        provided_flags={"--core-config"},
+    )
+    watch_metrics_module._finalize_custom_metadata(args)
+
+    metrics_meta = getattr(args, "_core_config_metadata")["metrics_service"]
+    resolved_path = str(headers_file)
+    assert metrics_meta["grpc_metadata_files"] == [resolved_path]
+    assert metrics_meta["grpc_metadata_keys"] == ["authorization", "x-trace"]
+    assert metrics_meta["grpc_metadata_sources"] == {
+        "authorization": f"config-file:{resolved_path}",
+        "x-trace": "inline",
+    }
+
+
+def test_core_config_grpc_metadata_files_remove(monkeypatch, tmp_path):
+    stub = _StubCollector()
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
+    headers_file = tmp_path / "metrics_headers.env"
+    headers_file.write_text("authorization=NONE\n", encoding="utf-8")
+    config_path = _write_core_config(
+        tmp_path,
+        profiles_path=profiles_path,
+        metrics_grpc_metadata={
+            "authorization": "Bearer inline",
+            "x-trace": "config",
+        },
+        metrics_grpc_metadata_files=[str(headers_file)],
+    )
+
+    parser = watch_metrics_module.build_arg_parser()
+    args = parser.parse_args(["--core-config", str(config_path)])
+    watch_metrics_module._apply_core_config_defaults(
+        args,
+        parser=parser,
+        provided_flags={"--core-config"},
+    )
+    watch_metrics_module._finalize_custom_metadata(args)
+
+    metrics_meta = getattr(args, "_core_config_metadata")["metrics_service"]
+    resolved_path = str(headers_file)
+    assert metrics_meta["grpc_metadata_keys"] == ["x-trace"]
+    assert metrics_meta["grpc_metadata_removed"] == ["authorization"]
+    assert metrics_meta["grpc_metadata_removed_sources"] == {
+        "authorization": f"config-file:{resolved_path}",
+    }
+
+
+def test_core_config_grpc_metadata_directories_applied(monkeypatch, tmp_path):
+    stub = _StubCollector()
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
+
+    headers_dir = tmp_path / "headers_dir"
+    headers_dir.mkdir()
+    file_one = headers_dir / "01.env"
+    file_one.write_text("authorization=Bearer dir\n", encoding="utf-8")
+    file_two = headers_dir / "02.env"
+    file_two.write_text("x-trace=from-dir\n", encoding="utf-8")
+
+    config_path = _write_core_config(
+        tmp_path,
+        profiles_path=profiles_path,
+        metrics_grpc_metadata=[("x-role", "inline")],
+        metrics_grpc_metadata_directories=[str(headers_dir)],
+    )
+
+    exit_code = watch_metrics_main(["--core-config", str(config_path)])
+
+    assert exit_code == 0
+    assert stub.calls
+    _request, _timeout, metadata = stub.calls[0]
+    assert metadata == [
+        ("authorization", "Bearer dir"),
+        ("x-trace", "from-dir"),
+        ("x-role", "inline"),
+    ]
+
+
+def test_core_config_grpc_metadata_directories_sources_recorded(monkeypatch, tmp_path):
+    stub = _StubCollector()
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
+
+    headers_dir = tmp_path / "headers_dir"
+    headers_dir.mkdir()
+    headers_file = headers_dir / "auth.env"
+    headers_file.write_text("authorization=Bearer dir\n", encoding="utf-8")
+
+    config_path = _write_core_config(
+        tmp_path,
+        profiles_path=profiles_path,
+        metrics_grpc_metadata_directories=[str(headers_dir)],
+    )
+
+    parser = watch_metrics_module.build_arg_parser()
+    args = parser.parse_args(["--core-config", str(config_path)])
+    watch_metrics_module._apply_core_config_defaults(
+        args,
+        parser=parser,
+        provided_flags={"--core-config"},
+    )
+    watch_metrics_module._finalize_custom_metadata(args)
+
+    metrics_meta = getattr(args, "_core_config_metadata")["metrics_service"]
+    resolved_dir = str(headers_dir)
+    resolved_file = str(headers_file)
+    assert metrics_meta["grpc_metadata_directories"] == [resolved_dir]
+    assert metrics_meta["grpc_metadata_directory_files"][resolved_dir] == [resolved_file]
+    assert metrics_meta["grpc_metadata_directory_files_total"] == 1
+    assert metrics_meta["grpc_metadata_sources"]["authorization"].startswith(
+        f"config-dir:{resolved_file}"
+    )
+
+
+def test_core_config_grpc_metadata_directories_remove(monkeypatch, tmp_path):
+    stub = _StubCollector()
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
+
+    headers_dir = tmp_path / "headers_dir"
+    headers_dir.mkdir()
+    removal_file = headers_dir / "remove.env"
+    removal_file.write_text("authorization=NONE\n", encoding="utf-8")
+
+    config_path = _write_core_config(
+        tmp_path,
+        profiles_path=profiles_path,
+        metrics_grpc_metadata={
+            "authorization": "Bearer inline",
+            "x-trace": "config",
+        },
+        metrics_grpc_metadata_directories=[str(headers_dir)],
+    )
+
+    parser = watch_metrics_module.build_arg_parser()
+    args = parser.parse_args(["--core-config", str(config_path)])
+    watch_metrics_module._apply_core_config_defaults(
+        args,
+        parser=parser,
+        provided_flags={"--core-config"},
+    )
+    watch_metrics_module._finalize_custom_metadata(args)
+
+    metrics_meta = getattr(args, "_core_config_metadata")["metrics_service"]
+    resolved_path = str(removal_file)
+    assert metrics_meta["grpc_metadata_keys"] == ["x-trace"]
+    assert metrics_meta["grpc_metadata_removed"] == ["authorization"]
+    assert metrics_meta["grpc_metadata_removed_sources"] == {
+        "authorization": f"config-dir:{resolved_path}",
+    }
+
+
+def test_core_config_grpc_metadata_disabled_by_env(monkeypatch, tmp_path):
+    monkeypatch.setenv(f"{_ENV_PREFIX}HEADERS", "NONE")
+    stub = _StubCollector()
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
+    config_path = _write_core_config(
+        tmp_path,
+        profiles_path=profiles_path,
+        metrics_grpc_metadata={"x-trace": "config"},
+    )
+
+    exit_code = watch_metrics_main(["--core-config", str(config_path)])
+
+    assert exit_code == 0
+    assert stub.calls
+    _request, _timeout, metadata = stub.calls[0]
+    assert metadata is None
+
+
+def test_core_config_grpc_metadata_cli_override(monkeypatch, tmp_path):
+    stub = _StubCollector()
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
+    config_path = _write_core_config(
+        tmp_path,
+        profiles_path=profiles_path,
+        metrics_grpc_metadata={"x-trace": "config", "x-role": "config"},
+    )
+
+    exit_code = watch_metrics_main(
+        ["--core-config", str(config_path), "--header", "x-trace=cli"]
+    )
+
+    assert exit_code == 0
+    assert stub.calls
+    _request, _timeout, metadata = stub.calls[0]
+    assert metadata == [("x-role", "config"), ("x-trace", "cli")]
+
+
+def test_core_config_grpc_metadata_sources_cli_override_logged(monkeypatch, tmp_path):
+    stub = _StubCollector()
+    stub.response = []
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
+    config_path = _write_core_config(
+        tmp_path,
+        profiles_path=profiles_path,
+        metrics_grpc_metadata={"x-trace": "config", "x-role": "config"},
+    )
+    decision_log = tmp_path / "logs" / "metrics.jsonl"
+
+    exit_code = watch_metrics_main(
+        [
+            "--core-config",
+            str(config_path),
+            "--header",
+            "x-trace=cli",
+            "--decision-log",
+            str(decision_log),
+        ]
+    )
+
+    assert exit_code == 0
+    entries = [ln for ln in decision_log.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    assert len(entries) == 1
+    metadata_entry = json.loads(entries[0])
+    assert metadata_entry["kind"] == "metadata"
+    custom_meta = metadata_entry["metadata"].get("custom_metadata")
+    assert custom_meta is not None
+    assert custom_meta["sources"] == {
+        "x-role": "inline",
+        "x-trace": "cli:--header",
+    }
+    core_config_meta = metadata_entry["metadata"].get("core_config")
+    assert core_config_meta is not None
+    metrics_meta = core_config_meta["metrics_service"]
+    assert metrics_meta["grpc_metadata_sources"] == {
+        "x-role": "inline",
+        "x-trace": "cli:--header",
+    }
+
+
+def test_headers_report_only_outputs_summary(capsys):
+    exit_code = watch_metrics_main(
+        [
+            "--headers-report-only",
+            "--header",
+            "x-trace=cli",
+            "--header",
+            "auth-token=sekret",
+            "--header",
+            "x-old=value",
+            "--header",
+            "x-old=NONE",
+        ]
+    )
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    report = json.loads(captured.out)
+    assert report["headers_disabled"] is False
+    assert report["headers_count"] == 2
+    keys = [item["key"] for item in report["headers"]]
+    assert keys == ["x-trace", "auth-token"]
+    first = report["headers"][0]
+    second = report["headers"][1]
+    assert first["value_preview"] == "cli"
+    assert first.get("source") == "cli:--header"
+    assert second["value_preview"] == "<masked>"
+    assert second.get("masked") is True
+    assert report["removed_count"] == 1
+    assert report["removed"] == [{"key": "x-old", "source": "cli:--header"}]
+
+
+def test_headers_report_env_toggle(monkeypatch, capsys):
+    monkeypatch.setenv(f"{_ENV_PREFIX}HEADERS_REPORT_ONLY", "1")
+    exit_code = watch_metrics_main(["--header", "x-env=1"])
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    report = json.loads(captured.out)
+    assert report["headers_count"] == 1
+    assert report["headers"][0]["key"] == "x-env"
+    assert report["headers"][0]["value_preview"] == "1"
+    assert report["headers"][0].get("source") == "cli:--header"
+
+
+def test_headers_report_only_skips_grpc(monkeypatch, capsys):
+    called = False
+
+    def _fail_load():
+        nonlocal called
+        called = True
+        raise AssertionError("gRPC components should not load when --headers-report-only is used")
+
+    monkeypatch.setattr(watch_metrics_module, "_load_grpc_components", _fail_load)
+    exit_code = watch_metrics_main(["--headers-report-only"])
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    report = json.loads(captured.out)
+    assert report["headers_count"] == 0
+    assert called is False
+
+
+def test_cli_header_file_reference(monkeypatch, tmp_path):
+    stub = _StubCollector()
+    stub.response = []
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
+    config_path = _write_core_config(tmp_path, profiles_path=profiles_path)
+    token_path = tmp_path / "header_token.txt"
+    token_path.write_text("Bearer from file\n", encoding="utf-8")
+    decision_log = tmp_path / "logs" / "headers_file.jsonl"
+    decision_log.parent.mkdir(parents=True, exist_ok=True)
+
+    exit_code = watch_metrics_main(
+        [
+            "--core-config",
+            str(config_path),
+            "--header",
+            f"authorization=@file:{token_path}",
+            "--decision-log",
+            str(decision_log),
+        ]
+    )
+
+    assert exit_code == 0
+    assert stub.calls
+    _request, _timeout, metadata = stub.calls[0]
+    assert metadata == [("authorization", "Bearer from file")]
+    entries = [line for line in decision_log.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len(entries) == 1
+    metadata_entry = json.loads(entries[0])
+    assert metadata_entry["kind"] == "metadata"
+    custom_meta = metadata_entry["metadata"].get("custom_metadata")
+    assert custom_meta is not None
+    expected_source = f"cli:--header@file:{token_path}".replace("\\", "/")
+    # Porównujemy po normalizacji separatorów, bo Windows używa `\\`.
+    normalized_sources = {key: value.replace("\\", "/") for key, value in custom_meta["sources"].items()}
+    assert normalized_sources == {"authorization": expected_source}
+
+
+def test_cli_header_env_reference(monkeypatch, tmp_path):
+    stub = _StubCollector()
+    stub.response = []
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    monkeypatch.setenv("WATCH_HEADER_TOKEN", "env-token")
+    profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
+    config_path = _write_core_config(tmp_path, profiles_path=profiles_path)
+    decision_log = tmp_path / "logs" / "headers_env.jsonl"
+    decision_log.parent.mkdir(parents=True, exist_ok=True)
+
+    exit_code = watch_metrics_main(
+        [
+            "--core-config",
+            str(config_path),
+            "--header",
+            "authorization=@env:WATCH_HEADER_TOKEN",
+            "--decision-log",
+            str(decision_log),
+        ]
+    )
+
+    assert exit_code == 0
+    assert stub.calls
+    _request, _timeout, metadata = stub.calls[0]
+    assert metadata == [("authorization", "env-token")]
+    entries = [line for line in decision_log.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len(entries) == 1
+    metadata_entry = json.loads(entries[0])
+    custom_meta = metadata_entry["metadata"].get("custom_metadata")
+    assert custom_meta is not None
+    assert custom_meta["sources"] == {"authorization": "cli:--header@env:WATCH_HEADER_TOKEN"}
+
+
+def test_headers_file_sources_logged(monkeypatch, tmp_path):
+    stub = _StubCollector()
+    stub.response = []
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    headers_file = tmp_path / "headers.env"
+    headers_file.write_text("authorization=Bearer file", encoding="utf-8")
+    decision_log = tmp_path / "logs" / "headers_file_sources.jsonl"
+    decision_log.parent.mkdir(parents=True, exist_ok=True)
+
+    exit_code = watch_metrics_main(
+        [
+            "--headers-file",
+            str(headers_file),
+            "--decision-log",
+            str(decision_log),
+        ]
+    )
+
+    assert exit_code == 0
+    entries = [line for line in decision_log.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len(entries) == 1
+    metadata_entry = json.loads(entries[0])
+    custom_meta = metadata_entry["metadata"].get("custom_metadata")
+    assert custom_meta is not None
+    normalized_sources = {key: value.replace("\\", "/") for key, value in custom_meta["sources"].items()}
+    expected_source = f"file:{headers_file}".replace("\\", "/")
+    assert normalized_sources == {"authorization": expected_source}
+
+
+def test_cli_header_inline_base64_for_binary(monkeypatch, tmp_path):
+    stub = _StubCollector()
+    stub.response = []
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
+    config_path = _write_core_config(tmp_path, profiles_path=profiles_path)
+
+    exit_code = watch_metrics_main(
+        [
+            "--core-config",
+            str(config_path),
+            "--header",
+            "x-binary-bin=AQIDBA==",
+        ]
+    )
+
+    assert exit_code == 0
+    assert stub.calls
+    _request, _timeout, metadata = stub.calls[0]
+    assert metadata == [("x-binary-bin", b"\x01\x02\x03\x04")]
+
+
+def test_cli_header_file_base64_binary(monkeypatch, tmp_path):
+    stub = _StubCollector()
+    stub.response = []
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
+    config_path = _write_core_config(tmp_path, profiles_path=profiles_path)
+    payload = base64.b64encode(b"\xde\xad\xbe\xef").decode("ascii")
+    encoded_path = tmp_path / "binary_header.b64"
+    encoded_path.write_text(payload, encoding="utf-8")
+
+    exit_code = watch_metrics_main(
+        [
+            "--core-config",
+            str(config_path),
+            "--header",
+            f"trace-bin=@file64:{encoded_path}",
+        ]
+    )
+
+    assert exit_code == 0
+    assert stub.calls
+    _request, _timeout, metadata = stub.calls[0]
+    assert metadata == [("trace-bin", b"\xde\xad\xbe\xef")]
+
+
+def test_cli_header_env_base64_binary(monkeypatch, tmp_path):
+    stub = _StubCollector()
+    stub.response = []
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    monkeypatch.setenv("TRACE_TOKEN_B64", base64.b64encode(b"token-bytes").decode("ascii"))
+    profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
+    config_path = _write_core_config(tmp_path, profiles_path=profiles_path)
+
+    exit_code = watch_metrics_main(
+        [
+            "--core-config",
+            str(config_path),
+            "--header",
+            "trace-bin=@env64:TRACE_TOKEN_B64",
+        ]
+    )
+
+    assert exit_code == 0
+    assert stub.calls
+    _request, _timeout, metadata = stub.calls[0]
+    assert metadata == [("trace-bin", b"token-bytes")]
+
+
+def test_cli_header_file64_decodes_utf8_for_text(monkeypatch, tmp_path):
+    stub = _StubCollector()
+    stub.response = []
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
+    config_path = _write_core_config(tmp_path, profiles_path=profiles_path)
+    encoded_value = base64.b64encode("Bearer secret".encode("utf-8")).decode("ascii")
+    encoded_path = tmp_path / "auth_header.b64"
+    encoded_path.write_text(encoded_value + "\n", encoding="utf-8")
+
+    exit_code = watch_metrics_main(
+        [
+            "--core-config",
+            str(config_path),
+            "--header",
+            f"authorization=@file64:{encoded_path}",
+        ]
+    )
+
+    assert exit_code == 0
+    assert stub.calls
+    _request, _timeout, metadata = stub.calls[0]
+    assert metadata == [("authorization", "Bearer secret")]
+
+
+def test_cli_header_invalid_base64_raises(monkeypatch, tmp_path):
+    stub = _StubCollector()
+    stub.response = []
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
+    config_path = _write_core_config(tmp_path, profiles_path=profiles_path)
+
+    with pytest.raises(SystemExit):
+        watch_metrics_main(
+            [
+                "--core-config",
+                str(config_path),
+                "--header",
+                "trace-bin=invalid-base64",
+            ]
+        )
+
+
+def test_cli_header_literal_escape(monkeypatch, tmp_path):
+    stub = _StubCollector()
+    stub.response = []
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
+    config_path = _write_core_config(tmp_path, profiles_path=profiles_path)
+
+    exit_code = watch_metrics_main(
+        [
+            "--core-config",
+            str(config_path),
+            "--header",
+            "x-trace=@@observability",
+        ]
+    )
+
+    assert exit_code == 0
+    assert stub.calls
+    _request, _timeout, metadata = stub.calls[0]
+    assert metadata == [("x-trace", "@observability")]
+def test_core_config_grpc_metadata_cli_remove(monkeypatch, tmp_path):
+    stub = _StubCollector()
+    stub.response = []
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
+    config_path = _write_core_config(
+        tmp_path,
+        profiles_path=profiles_path,
+        metrics_grpc_metadata={"authorization": "Bearer config", "x-trace": "cfg"},
+    )
+    decision_log = tmp_path / "logs" / "metrics.jsonl"
+
+    exit_code = watch_metrics_main(
+        [
+            "--core-config",
+            str(config_path),
+            "--header",
+            "authorization=NONE",
+            "--decision-log",
+            str(decision_log),
+        ]
+    )
+
+    assert exit_code == 0
+    assert stub.calls
+    _request, _timeout, metadata = stub.calls[0]
+    assert metadata == [("x-trace", "cfg")]
+
+    entries = [ln for ln in decision_log.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    assert len(entries) == 1
+    metadata_entry = json.loads(entries[0])
+    metrics_meta = metadata_entry["metadata"]["core_config"]["metrics_service"]
+    assert metrics_meta["grpc_metadata_keys"] == ["x-trace"]
+    assert metrics_meta["grpc_metadata_sources"] == {"x-trace": "inline"}
+    assert metrics_meta["grpc_metadata_removed"] == ["authorization"]
+    assert metrics_meta["grpc_metadata_removed_sources"] == {
+        "authorization": watch_metrics_module._CLI_HEADER_SOURCE
+    }
+
+
+def test_environment_headers_remove_config_key(monkeypatch, tmp_path):
+    stub = _StubCollector()
+    stub.response = []
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+    profiles_path = _write_risk_profile_file(tmp_path, name="ops", severity="warning")
+    config_path = _write_core_config(
+        tmp_path,
+        profiles_path=profiles_path,
+        metrics_grpc_metadata={"authorization": "cfg-token"},
+    )
+    decision_log = tmp_path / "logs" / "metrics.jsonl"
+    monkeypatch.setenv(f"{_ENV_PREFIX}HEADERS", "authorization=NONE")
+
+    exit_code = watch_metrics_main(
+        ["--core-config", str(config_path), "--decision-log", str(decision_log)]
+    )
+
+    assert exit_code == 0
+    assert stub.calls
+    _request, _timeout, metadata = stub.calls[0]
+    assert metadata is None
+
+    entries = [ln for ln in decision_log.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    assert len(entries) == 1
+    metadata_entry = json.loads(entries[0])
+    metrics_meta = metadata_entry["metadata"]["core_config"]["metrics_service"]
+    assert metrics_meta["grpc_metadata_enabled"] is False
+    assert metrics_meta["grpc_metadata_removed"] == ["authorization"]
+    assert metrics_meta["grpc_metadata_removed_sources"] == {
+        "authorization": watch_metrics_module._ENV_HEADER_SOURCE
+    }
+
+
+def test_watch_metrics_stream_header_invalid_format(monkeypatch):
+    stub = _StubCollector()
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+
+    with pytest.raises(SystemExit):
+        watch_metrics_main(["--header", "invalid"])
+
+
+def test_watch_metrics_stream_header_invalid_key(monkeypatch):
+    stub = _StubCollector()
+    _install_dummy_loader(monkeypatch, stub)
+    monkeypatch.setattr(watch_metrics_module, "create_metrics_channel", lambda *args, **kwargs: "channel")
+
+    with pytest.raises(SystemExit):
+        watch_metrics_main(["--header", "X-Trace=abc"])
 
 
 def test_watch_metrics_stream_requires_use_tls_for_tls_flags(tmp_path):

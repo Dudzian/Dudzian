@@ -1,0 +1,17 @@
+{
+  "schedules": 2,
+  "iterations": 3,
+  "avg_latency_ms": 0.42453666659033235,
+  "max_latency_ms": 0.5061719998593617,
+  "jitter_ms": 0.18327699990550173,
+  "signals_emitted": 12,
+  "resource_status": "ok",
+  "settings": {
+    "iterations": 3,
+    "schedules": 2,
+    "signals_per_snapshot": 2,
+    "simulated_latency_ms": 0.5,
+    "cpu_budget_percent": 70.0,
+    "memory_budget_mb": 3072.0
+  }
+}

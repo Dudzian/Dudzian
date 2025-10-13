@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
+import re
+
 from bot_core.config.models import CoreConfig
 
 _UI_ALERT_AUDIT_BACKEND_ALLOWED = {"auto", "file", "memory"}
@@ -18,6 +20,8 @@ _SUPPORTED_TOKEN_HASH_ALGORITHMS = {
     "sha3_384",
     "sha3_512",
 }
+
+_GRPC_METADATA_KEY_PATTERN = re.compile(r"^[0-9a-z._-]+$")
 
 # Mapowanie sufiksów interwałów na sekundy.
 _INTERVAL_SUFFIX_TO_SECONDS: Mapping[str, int] = {
@@ -93,6 +97,7 @@ def validate_core_config(config: CoreConfig) -> ConfigValidationResult:
     warnings: list[str] = []
 
     _validate_risk_profiles(config, errors, warnings)
+    _validate_instrument_buckets(config, errors, warnings)
     _validate_strategies(config, errors, warnings)
     _validate_runtime_controllers(config, errors, warnings)
     _validate_instrument_universes(config, errors, warnings)
@@ -101,6 +106,7 @@ def validate_core_config(config: CoreConfig) -> ConfigValidationResult:
     _validate_risk_service(config, errors, warnings)
     _validate_risk_decision_log(config, errors, warnings)
     _validate_security_baseline(config, errors, warnings)
+    _validate_resource_limits(config, errors, warnings)
 
     return ConfigValidationResult(errors=errors, warnings=warnings)
 
@@ -136,6 +142,34 @@ def _validate_risk_profiles(
         if name.lower() != profile.name.lower():
             warnings.append(
                 f"profil ryzyka '{name}' ma nazwę '{profile.name}' – zalecana spójność"
+            )
+
+        for bucket_name in profile.instrument_buckets:
+            if bucket_name not in config.instrument_buckets:
+                errors.append(
+                    f"{context}: koszyk instrumentów '{bucket_name}' nie istnieje w konfiguracji"
+                )
+
+
+def _validate_instrument_buckets(
+    config: CoreConfig, errors: list[str], warnings: list[str]
+) -> None:
+    universes = set(config.instrument_universes)
+    for name, bucket in config.instrument_buckets.items():
+        context = f"koszyk instrumentów '{name}'"
+        if not bucket.symbols:
+            errors.append(f"{context}: lista symboli nie może być pusta")
+        if bucket.universe and bucket.universe not in universes:
+            errors.append(
+                f"{context}: referencja do nieistniejącego uniwersum '{bucket.universe}'"
+            )
+        if bucket.max_position_pct is not None and bucket.max_position_pct <= 0:
+            errors.append(
+                f"{context}: max_position_pct musi być dodatnie, otrzymano {bucket.max_position_pct}"
+            )
+        if bucket.max_notional_usd is not None and bucket.max_notional_usd <= 0:
+            errors.append(
+                f"{context}: max_notional_usd musi być dodatnie, otrzymano {bucket.max_notional_usd}"
             )
 
 
@@ -374,6 +408,51 @@ def _validate_metrics_service(
             errors=errors,
             warnings=warnings,
         )
+
+    if hasattr(metrics, "grpc_metadata"):
+        metadata_entries = tuple(getattr(metrics, "grpc_metadata", ()) or ())
+        seen_keys: set[str] = set()
+        for entry in metadata_entries:
+            if not isinstance(entry, (tuple, list)) or len(entry) != 2:
+                errors.append(f"{context}: grpc_metadata zawiera nieprawidłowy wpis {entry!r}")
+                continue
+            key, _value = entry
+            key_str = str(key).strip()
+            if not key_str:
+                errors.append(f"{context}: grpc_metadata zawiera pusty klucz")
+                continue
+            normalized = key_str.lower()
+            if key_str != normalized:
+                errors.append(f"{context}: grpc_metadata klucz '{key}' musi być zapisany małymi literami")
+                continue
+            if not _GRPC_METADATA_KEY_PATTERN.fullmatch(normalized):
+                errors.append(
+                    f"{context}: grpc_metadata klucz '{key}' zawiera niedozwolone znaki"
+                )
+                continue
+            if normalized in seen_keys:
+                warnings.append(
+                    f"{context}: grpc_metadata zawiera duplikat klucza '{normalized}'"
+                )
+            seen_keys.add(normalized)
+
+        sources = getattr(metrics, "grpc_metadata_sources", None)
+        if sources:
+            try:
+                source_items = dict(sources)
+            except Exception:  # noqa: BLE001 - chcemy jasny komunikat konfiguracji
+                errors.append(f"{context}: grpc_metadata_sources musi być słownikiem")
+            else:
+                for key, origin in source_items.items():
+                    normalized = str(key).strip().lower()
+                    if normalized not in seen_keys:
+                        warnings.append(
+                            f"{context}: grpc_metadata_sources zawiera klucz '{key}' bez odpowiadającego wpisu metadata"
+                        )
+                    elif not str(origin).strip():
+                        warnings.append(
+                            f"{context}: grpc_metadata_sources dla klucza '{key}' jest puste – pomijam"
+                        )
 
     tls = getattr(metrics, "tls", None)
     if tls is not None and getattr(tls, "enabled", False):
@@ -939,3 +1018,24 @@ def _validate_instrument_universes(
                     warnings.append(f"{inst_context}: interwał '{window.interval}' zdefiniowano wielokrotnie")
                 else:
                     intervals_seen.add(interval_key)
+
+
+def _validate_resource_limits(
+    config: CoreConfig, errors: list[str], warnings: list[str]
+) -> None:
+    limits = getattr(config, "runtime_resource_limits", None)
+    if limits is None:
+        return
+    context = "runtime.resource_limits"
+    if limits.cpu_percent <= 0:
+        errors.append(f"{context}: cpu_percent musi być dodatnie")
+    if limits.memory_mb <= 0:
+        errors.append(f"{context}: memory_mb musi być dodatnie")
+    if limits.io_read_mb_s < 0:
+        errors.append(f"{context}: io_read_mb_s nie może być ujemne")
+    if limits.io_write_mb_s < 0:
+        errors.append(f"{context}: io_write_mb_s nie może być ujemne")
+    if not 0 < limits.headroom_warning_threshold < 1:
+        warnings.append(
+            f"{context}: headroom_warning_threshold powinien mieścić się w przedziale (0,1)"
+        )

@@ -40,7 +40,25 @@ jobs:
         run: mypy
 
       - name: Pytest with coverage
-        run: pytest tests/test_pipeline_paper.py tests/test_risk_profiles.py KryptoLowca/tests/strategies/test_registry.py
+        run: >-
+          pytest
+          --cov=bot_core.strategies
+          --cov=bot_core.runtime.multi_strategy_scheduler
+          --cov=bot_core.runtime.journal
+          --cov-report=xml
+          --cov-report=term
+          --cov-fail-under=85
+          tests/test_pipeline_paper.py
+          tests/test_risk_profiles.py
+          tests/test_mean_reversion_strategy.py
+          tests/test_volatility_target_strategy.py
+          tests/test_cross_exchange_arbitrage_strategy.py
+          tests/test_multi_strategy_scheduler.py
+          tests/test_backtest_dataset_library.py
+          tests/test_telemetry_risk_profiles.py
+          tests/test_trading_decision_journal.py
+          tests/test_smoke_demo_strategies_cli.py
+          KryptoLowca/tests/strategies/test_registry.py
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
