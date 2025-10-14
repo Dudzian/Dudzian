@@ -567,23 +567,25 @@ def _generate_synthetic_candles(*, bars: int, seed: int = 42, interval_seconds: 
     return candles
 
 # --- Metryki z serii ---------------------------------------------------------
-def _compute_returns(candles: Sequence[Candle]) -> list[float]:
-    returns: list[float] = []
+def _compute_returns(candles: Sequence[Candle]) -> list[tuple[float, int]]:
+    """Return percentage change with the timestamp of the bar that realized it."""
+    samples: list[tuple[float, int]] = []
     for idx in range(1, len(candles)):
         prev = candles[idx - 1]
         current = candles[idx]
         if prev.close <= 0:
             continue
-        returns.append((current.close - prev.close) / prev.close)
-    return returns
+        change = (current.close - prev.close) / prev.close
+        samples.append((change, current.timestamp_ms))
+    return samples
 
 
-def _compute_daily_losses(candles: Sequence[Candle], pnl_series: Sequence[float], base_equity: float) -> float:
+def _compute_daily_losses(pnl_events: Sequence[tuple[int, float]], base_equity: float) -> float:
     worst_loss = 0.0
     equity = base_equity
     by_day: dict[str, float] = {}
-    for candle, pnl in zip(candles[1:], pnl_series):
-        day = datetime.fromtimestamp(candle.timestamp_ms / 1000.0, tz=timezone.utc).date().isoformat()
+    for timestamp_ms, pnl in sorted(pnl_events, key=lambda event: event[0]):
+        day = datetime.fromtimestamp(timestamp_ms / 1000.0, tz=timezone.utc).date().isoformat()
         by_day.setdefault(day, equity)
         equity += pnl
         change = equity - by_day[day]
@@ -712,6 +714,7 @@ class RiskSimulationRunner:
     def _run_for_profile(self, *, profile: RiskProfile, base_equity: float) -> ProfileSimulationResult:
         total_returns: list[float] = []
         pnl_series: list[float] = []
+        pnl_events: list[tuple[int, float]] = []
         sample_size = 0
         leverage_limit = max(_max_leverage(profile), 1.0)
         position_pct = max(_max_position_exposure(profile), 0.0)
@@ -725,9 +728,10 @@ class RiskSimulationRunner:
                 continue
             notional = base_equity * position_pct
             notional = min(notional, base_equity * leverage_limit)
-            pnl = [notional * r for r in returns]
+            pnl = [notional * r for r, _ in returns]
             pnl_series.extend(pnl)
-            total_returns.extend(returns)
+            total_returns.extend(r for r, _ in returns)
+            pnl_events.extend((timestamp_ms, pnl_value) for (_, timestamp_ms), pnl_value in zip(returns, pnl))
             sample_size += len(returns)
         if not pnl_series:
             stress_tests = (
@@ -750,7 +754,7 @@ class RiskSimulationRunner:
         total_pnl = sum(pnl_series)
         final_equity = base_equity + total_pnl
         max_drawdown = _compute_max_drawdown(pnl_series, base_equity)
-        worst_daily_loss = _compute_daily_losses(next(iter(self._candles_by_symbol.values())), pnl_series, base_equity)
+        worst_daily_loss = _compute_daily_losses(pnl_events, base_equity)
         realized_vol = _realized_volatility(total_returns)
         breaches = []
         if max_drawdown > _drawdown_limit(profile):
