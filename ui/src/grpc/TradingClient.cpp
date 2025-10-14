@@ -32,19 +32,6 @@ using botcore::trading::v1::RiskState;
 
 namespace {
 
-std::string readPemFile(const QString& path, const char* label)
-{
-    if (path.trimmed().isEmpty())
-        return {};
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        qWarning() << "Nie udało się odczytać pliku" << path << label << file.errorString();
-        return {};
-    }
-    const QByteArray data = file.readAll();
-    return std::string(data.constData(), static_cast<size_t>(data.size()));
-}
-
 qint64 timestampToMs(const google::protobuf::Timestamp& ts) {
     return static_cast<qint64>(ts.seconds()) * 1000 + ts.nanos() / 1000000;
 }
@@ -68,7 +55,7 @@ std::optional<QByteArray> readFileUtf8(const QString& rawPath) {
     if (!file.exists()) {
         return std::nullopt;
     }
-    if (!file.open(QIODevice::ReadOnly)) {
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
         return std::nullopt;
     }
     return file.readAll();
@@ -139,6 +126,7 @@ void TradingClient::setPerformanceGuard(const PerformanceGuard& guard) {
 
 void TradingClient::setTlsConfig(const TlsConfig& config) {
     m_tlsConfig = config;
+    // zmiana TLS wymaga odtworzenia kanału/stubów
     m_channel.reset();
     m_marketDataStub.reset();
     m_riskStub.reset();
@@ -202,11 +190,11 @@ void TradingClient::ensureStub() {
     if (!m_channel) {
         std::shared_ptr<grpc::ChannelCredentials> credentials;
         grpc::ChannelArguments args;
+
         if (m_tlsConfig.enabled) {
             grpc::SslCredentialsOptions options;
 
-            const auto rootPem = readFileUtf8(m_tlsConfig.rootCertificatePath);
-            if (rootPem) {
+            if (const auto rootPem = readFileUtf8(m_tlsConfig.rootCertificatePath)) {
                 options.pem_root_certs = std::string(rootPem->constData(),
                                                      static_cast<std::size_t>(rootPem->size()));
             }
@@ -222,9 +210,10 @@ void TradingClient::ensureStub() {
 
             credentials = grpc::SslCredentials(options);
 
-            if (!m_tlsConfig.serverNameOverride.isEmpty()) {
+            // Uwaga: w TlsConfig używamy targetNameOverride (zgodne z Application.cpp)
+            if (!m_tlsConfig.targetNameOverride.trimmed().isEmpty()) {
                 args.SetString(GRPC_SSL_TARGET_NAME_OVERRIDE_ARG,
-                               m_tlsConfig.serverNameOverride.toStdString());
+                               m_tlsConfig.targetNameOverride.toStdString());
             }
 
             m_channel = grpc::CreateCustomChannel(m_endpoint.toStdString(), credentials, args);
@@ -233,6 +222,7 @@ void TradingClient::ensureStub() {
             m_channel = grpc::CreateChannel(m_endpoint.toStdString(), credentials);
         }
     }
+
     m_marketDataStub = MarketDataService::NewStub(m_channel);
     m_riskStub = RiskService::NewStub(m_channel);
 }

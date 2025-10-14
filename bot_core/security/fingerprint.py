@@ -340,7 +340,9 @@ def verify_document(document: Mapping[str, object], *, key: bytes) -> bool:
     signature = document.get("signature")
     if not isinstance(payload, Mapping) or not isinstance(signature, Mapping):
         raise FingerprintError("Nieprawidłowa struktura dokumentu fingerprintu")
-    expected = _sign_payload(payload, key, signature.get("key_id"))  # type: ignore[arg-type]
+    key_id_val = signature.get("key_id")
+    key_id_str = key_id_val if isinstance(key_id_val, str) else None
+    expected = _sign_payload(payload, key, key_id_str)
     return expected["value"] == signature.get("value")
 
 

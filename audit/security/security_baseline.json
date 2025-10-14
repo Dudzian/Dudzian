@@ -15,48 +15,48 @@
         "rbac_tokens_configured": false,
         "tls": {
           "certificate": {
-            "absolute_path": "/workspace/Dudzian/config/secrets/dev-metrics-server.crt",
+            "absolute_path": "/workspace/Dudzian/config/secrets/runtime/metrics/server.crt",
             "exists": false,
             "parent": {
-              "absolute_path": "/workspace/Dudzian/config/secrets",
+              "absolute_path": "/workspace/Dudzian/config/secrets/runtime/metrics",
               "exists": false,
               "is_dir": false,
-              "path": "/workspace/Dudzian/config/secrets",
+              "path": "/workspace/Dudzian/config/secrets/runtime/metrics",
               "writable": false
             },
-            "parent_absolute_path": "/workspace/Dudzian/config/secrets",
-            "parent_directory": "/workspace/Dudzian/config/secrets",
+            "parent_absolute_path": "/workspace/Dudzian/config/secrets/runtime/metrics",
+            "parent_directory": "/workspace/Dudzian/config/secrets/runtime/metrics",
             "parent_exists": false,
             "parent_is_dir": false,
             "parent_writable": false,
-            "path": "/workspace/Dudzian/config/secrets/dev-metrics-server.crt",
+            "path": "/workspace/Dudzian/config/secrets/runtime/metrics/server.crt",
             "role": "metrics_tls_certificate",
             "security_warnings": [
               "Katalog nadrzędny nie istnieje – utwórz go przed startem procesu."
             ],
-            "stat_error": "[Errno 2] No such file or directory: '/workspace/Dudzian/config/secrets/dev-metrics-server.crt'"
+            "stat_error": "[Errno 2] No such file or directory: '/workspace/Dudzian/config/secrets/runtime/metrics/server.crt'"
           },
           "client_ca": {
-            "absolute_path": "/workspace/Dudzian/config/secrets/dev-metrics-clients.pem",
+            "absolute_path": "/workspace/Dudzian/config/secrets/runtime/metrics/clients.pem",
             "exists": false,
             "parent": {
-              "absolute_path": "/workspace/Dudzian/config/secrets",
+              "absolute_path": "/workspace/Dudzian/config/secrets/runtime/metrics",
               "exists": false,
               "is_dir": false,
-              "path": "/workspace/Dudzian/config/secrets",
+              "path": "/workspace/Dudzian/config/secrets/runtime/metrics",
               "writable": false
             },
-            "parent_absolute_path": "/workspace/Dudzian/config/secrets",
-            "parent_directory": "/workspace/Dudzian/config/secrets",
+            "parent_absolute_path": "/workspace/Dudzian/config/secrets/runtime/metrics",
+            "parent_directory": "/workspace/Dudzian/config/secrets/runtime/metrics",
             "parent_exists": false,
             "parent_is_dir": false,
             "parent_writable": false,
-            "path": "/workspace/Dudzian/config/secrets/dev-metrics-clients.pem",
+            "path": "/workspace/Dudzian/config/secrets/runtime/metrics/clients.pem",
             "role": "metrics_tls_client_ca",
             "security_warnings": [
               "Katalog nadrzędny nie istnieje – utwórz go przed startem procesu."
             ],
-            "stat_error": "[Errno 2] No such file or directory: '/workspace/Dudzian/config/secrets/dev-metrics-clients.pem'"
+            "stat_error": "[Errno 2] No such file or directory: '/workspace/Dudzian/config/secrets/runtime/metrics/clients.pem'"
           },
           "configured": true,
           "enabled": false,
@@ -66,28 +66,28 @@
           "pinned_fingerprint_match": null,
           "pinned_fingerprints": [],
           "private_key": {
-            "absolute_path": "/workspace/Dudzian/config/secrets/dev-metrics-server.key",
+            "absolute_path": "/workspace/Dudzian/config/secrets/runtime/metrics/server.key",
             "exists": false,
             "parent": {
-              "absolute_path": "/workspace/Dudzian/config/secrets",
+              "absolute_path": "/workspace/Dudzian/config/secrets/runtime/metrics",
               "exists": false,
               "is_dir": false,
-              "path": "/workspace/Dudzian/config/secrets",
+              "path": "/workspace/Dudzian/config/secrets/runtime/metrics",
               "writable": false
             },
-            "parent_absolute_path": "/workspace/Dudzian/config/secrets",
-            "parent_directory": "/workspace/Dudzian/config/secrets",
+            "parent_absolute_path": "/workspace/Dudzian/config/secrets/runtime/metrics",
+            "parent_directory": "/workspace/Dudzian/config/secrets/runtime/metrics",
             "parent_exists": false,
             "parent_is_dir": false,
             "parent_writable": false,
-            "path": "/workspace/Dudzian/config/secrets/dev-metrics-server.key",
+            "path": "/workspace/Dudzian/config/secrets/runtime/metrics/server.key",
             "role": "tls_key",
             "role_label": "metrics_tls_key",
             "security_warnings": [
               "Katalog nadrzędny nie istnieje – utwórz go przed startem procesu.",
               "Plik materiału TLS jest niedostępny – konfiguracja nie będzie kompletna."
             ],
-            "stat_error": "[Errno 2] No such file or directory: '/workspace/Dudzian/config/secrets/dev-metrics-server.key'"
+            "stat_error": "[Errno 2] No such file or directory: '/workspace/Dudzian/config/secrets/runtime/metrics/server.key'"
           },
           "warnings": [
             "Katalog nadrzędny nie istnieje – utwórz go przed startem procesu.",

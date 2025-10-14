@@ -160,7 +160,7 @@ runtime:
     host: 127.0.0.1
     port: 55060
     history_size: 1024
-    auth_token: changeme-telemetry-token
+    auth_token_env: METRICS_SERVICE_AUTH_TOKEN
     log_sink: true
     jsonl_path: audit/metrics/telemetry.jsonl
     jsonl_fsync: false
@@ -169,11 +169,11 @@ runtime:
     ui_alerts_risk_profile: balanced
     ui_alerts_risk_profiles_file: configs/telemetry_risk_profiles.yaml
     tls:
-      enabled: false
-      certificate_path: secrets/dev-metrics-server.crt
-      private_key_path: secrets/dev-metrics-server.key
-      client_ca_path: secrets/dev-metrics-clients.pem
-      require_client_auth: false
+      enabled: true
+      certificate_path: secrets/runtime/metrics/server.crt
+      private_key_path: secrets/runtime/metrics/server.key
+      client_ca_path: secrets/runtime/metrics/clients.pem
+      require_client_auth: true
     reduce_motion_alerts: true
     reduce_motion_category: ui.performance
     reduce_motion_severity_active: warning

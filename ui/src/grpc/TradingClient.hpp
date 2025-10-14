@@ -48,8 +48,8 @@ public:
         QString rootCertificatePath;             // PEM root CA
         QString clientCertificatePath;           // PEM cert klienta (opcjonalnie)
         QString clientKeyPath;                   // PEM klucz klienta  (opcjonalnie)
-        QString serverNameOverride;              // SNI override (używane w .cpp)
-        QString targetNameOverride;              // alias legacy używany w Application.cpp
+        QString serverNameOverride;              // opcjonalny override SNI (legacy / alternatywa)
+        QString targetNameOverride;              // używany w .cpp (GRPC_SSL_TARGET_NAME_OVERRIDE_ARG)
         QString pinnedServerFingerprint;         // oczekiwany SHA-256 cert/CA (hex, bez ':')
     };
 

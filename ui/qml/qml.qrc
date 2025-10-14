@@ -7,5 +7,6 @@
         <file>components/CandlestickChartView.qml</file>
         <file>components/StatusFooter.qml</file>
         <file>components/ChartWindow.qml</file>
+        <file>components/LicenseActivationOverlay.qml</file>
     </qresource>
 </RCC>

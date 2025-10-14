@@ -66,6 +66,7 @@ set(UI_SOURCES
     src/utils/PerformanceGuard.cpp
     src/utils/FrameRateMonitor.cpp
     src/telemetry/UiTelemetryReporter.cpp
+    src/license/LicenseActivationController.cpp
 )
 
 set(UI_HEADERS
@@ -79,6 +80,7 @@ set(UI_HEADERS
     src/utils/FrameRateMonitor.hpp
     src/telemetry/TelemetryReporter.hpp
     src/telemetry/UiTelemetryReporter.hpp
+    src/license/LicenseActivationController.hpp
 )
 
 qt_add_executable(bot_trading_shell
@@ -195,4 +197,16 @@ if(BUILD_TESTING)
             Qt6::Test
     )
     add_test(NAME side_panel_tests COMMAND side_panel_tests)
+
+    add_executable(license_activation_controller_tests
+        tests/LicenseActivationControllerTest.cpp
+        src/license/LicenseActivationController.cpp
+    )
+    target_include_directories(license_activation_controller_tests PRIVATE src)
+    target_link_libraries(license_activation_controller_tests
+        PRIVATE
+            Qt6::Core
+            Qt6::Test
+    )
+    add_test(NAME license_activation_controller_tests COMMAND license_activation_controller_tests)
 endif()

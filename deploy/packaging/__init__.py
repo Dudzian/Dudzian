@@ -1,10 +1,25 @@
 """Utilities for building OEM distribution bundles."""
 
-from .build_core_bundle import CoreBundleBuilder, BundleInputs, SignatureManager, build_from_cli
+from .build_core_bundle import (
+    BundleInputs,
+    CoreBundleBuilder,
+    SignatureManager,
+    build_from_cli as build_core_bundle_from_cli,
+)
+from .build_strategy_bundle import (
+    StrategyBundleBuilder,
+    build_from_cli as build_strategy_bundle_from_cli,
+)
+
+# Backwards compatibility: expose ``build_from_cli`` used by legacy tests.
+build_from_cli = build_core_bundle_from_cli
 
 __all__ = [
-    "CoreBundleBuilder",
     "BundleInputs",
+    "CoreBundleBuilder",
     "SignatureManager",
+    "StrategyBundleBuilder",
+    "build_core_bundle_from_cli",
+    "build_strategy_bundle_from_cli",
     "build_from_cli",
 ]

@@ -1,0 +1,186 @@
+name: Stage4 multi-strategy smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      cycles:
+        description: "Liczba cykli run_once wykonywana w smoke teście"
+        required: false
+        default: "12"
+      scheduler:
+        description: "Opcjonalna nazwa scheduler-a (domyślnie core_multi_pipeline)"
+        required: false
+        default: ""
+  schedule:
+    - cron: '45 2 * * 1'
+
+jobs:
+  stage4-smoke:
+    name: Multi-strategy demo smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      PYTHONUNBUFFERED: "1"
+      STAGE4_OUTPUT_DIR: var/stage4_smoke
+      STAGE4_CONFIG: config/core.yaml
+      STAGE4_MANIFEST: data/backtests/normalized/manifest.yaml
+      STAGE4_ENVIRONMENT: binance_paper
+      STAGE4_DEFAULT_SCHEDULER: core_multi_pipeline
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install '.[dev]'
+
+      - name: Prepare working directories
+        run: |
+          mkdir -p "$STAGE4_OUTPUT_DIR"
+
+      - name: Run targeted pytest suite with coverage
+        run: |
+          pytest \
+            --cov=bot_core.strategies \
+            --cov=bot_core.runtime.multi_strategy_scheduler \
+            --cov=scripts.smoke_demo_strategies \
+            --cov=scripts.load_test_scheduler \
+            --cov-report=xml \
+            --cov-report=term-missing \
+            tests/test_mean_reversion_strategy.py \
+            tests/test_volatility_target_strategy.py \
+            tests/test_cross_exchange_arbitrage_strategy.py \
+            tests/test_multi_strategy_scheduler.py \
+            tests/test_smoke_demo_strategies_cli.py \
+            tests/test_backtest_dataset_library.py \
+            tests/test_load_test_scheduler_script.py \
+            tests/test_enforce_coverage_script.py
+
+      - name: Enforce coverage thresholds
+        run: |
+          python scripts/enforce_coverage.py \
+            --coverage-file coverage.xml \
+            --minimum 85 \
+            --package bot_core.strategies=87 \
+            --package bot_core.runtime.multi_strategy_scheduler=85
+
+      - name: Execute multi-strategy smoke CLI
+        run: |
+          SCHEDULER_NAME=${{ github.event.inputs.scheduler }}
+          if [ -z "$SCHEDULER_NAME" ]; then
+            SCHEDULER_NAME="$STAGE4_DEFAULT_SCHEDULER"
+          fi
+          CYCLES=${{ github.event.inputs.cycles }}
+          if [ -z "$CYCLES" ]; then
+            CYCLES=12
+          fi
+          echo "STAGE4_SELECTED_SCHEDULER=$SCHEDULER_NAME" >> "$GITHUB_ENV"
+          echo "STAGE4_SELECTED_CYCLES=$CYCLES" >> "$GITHUB_ENV"
+          python scripts/smoke_demo_strategies.py \
+            --config "$STAGE4_CONFIG" \
+            --manifest "$STAGE4_MANIFEST" \
+            --environment "$STAGE4_ENVIRONMENT" \
+            --scheduler "$SCHEDULER_NAME" \
+            --cycles "$CYCLES" \
+            > "$STAGE4_OUTPUT_DIR/smoke_report.json"
+
+      - name: Run Paper Labs regression for multi-strategy bundle
+        run: |
+          python scripts/run_risk_simulation_lab.py \
+            --config "$STAGE4_CONFIG" \
+            --environment "$STAGE4_ENVIRONMENT" \
+            --output-dir "$STAGE4_OUTPUT_DIR/risk_simulation" \
+            --namespace binance_spot \
+            --symbols BTCUSDT ETHUSDT \
+            --interval 1h \
+            --synthetic-fallback \
+            --fail-on-breach \
+            --print-summary
+
+      - name: Execute scheduler load test
+        run: |
+          python scripts/load_test_scheduler.py \
+            --iterations 12 \
+            --schedules 4 \
+            --signals 3 \
+            --latency-ms 1.5 \
+            --cpu-budget 75 \
+            --memory-budget 4096 \
+            --output "$STAGE4_OUTPUT_DIR/load_test.json"
+
+      - name: Build Stage4 strategy bundle
+        run: |
+          BUNDLE_DIR="$STAGE4_OUTPUT_DIR/strategy_bundle"
+          mkdir -p "$BUNDLE_DIR"
+          KEY_PATH="$BUNDLE_DIR/signing.key"
+          python - <<'PY'
+          import os
+          import secrets
+          import stat
+          import pathlib
+
+          key_path = pathlib.Path(os.environ["KEY_PATH"])
+          key_path.write_bytes(secrets.token_bytes(48))
+          key_path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+          PY
+          VERSION="$(date -u +%Y%m%d)-run${GITHUB_RUN_NUMBER}"
+          python deploy/packaging/build_strategy_bundle.py \
+            --version "$VERSION" \
+            --signing-key-path "$KEY_PATH" \
+            --signing-key-id "ci-stage4" \
+            --output-dir "$BUNDLE_DIR" \
+            --log-level INFO
+          echo "STAGE4_STRATEGY_BUNDLE_VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Validate Prometheus alert rules
+        run: |
+          python scripts/validate_prometheus_rules.py \
+            --rules deploy/prometheus/rules/multi_strategy_rules.yml \
+            --metric-prefix bot_core_multi_strategy \
+            --require-label severity \
+            --require-label team \
+            --require-annotation summary \
+            --require-annotation description
+
+      - name: Record acceptance metadata
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          output_dir = Path(os.environ["STAGE4_OUTPUT_DIR"])
+          output_dir.mkdir(parents=True, exist_ok=True)
+
+          metadata = {
+              "config": os.environ["STAGE4_CONFIG"],
+              "environment": os.environ["STAGE4_ENVIRONMENT"],
+              "manifest": os.environ["STAGE4_MANIFEST"],
+              "scheduler": os.environ.get("STAGE4_SELECTED_SCHEDULER", os.environ["STAGE4_DEFAULT_SCHEDULER"]),
+              "cycles": os.environ.get("STAGE4_SELECTED_CYCLES", "12"),
+          }
+
+          (output_dir / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+          PY
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage4-multi-strategy-${{ github.run_number }}
+          path: |
+            ${{ env.STAGE4_OUTPUT_DIR }}/
+
+      - name: Publish summary
+        if: always()
+        run: |
+          if [ -f "$STAGE4_OUTPUT_DIR/smoke_report.json" ]; then
+            echo '### Multi-strategy smoke report' >> "$GITHUB_STEP_SUMMARY"
+            cat "$STAGE4_OUTPUT_DIR/smoke_report.json" >> "$GITHUB_STEP_SUMMARY"
+          fi

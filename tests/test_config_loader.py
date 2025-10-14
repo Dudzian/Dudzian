@@ -875,6 +875,56 @@ def test_load_core_config_reads_metrics_service(tmp_path: Path) -> None:
     assert config.source_directory == str(expected_dir)
 
 
+def test_load_core_config_resolves_metrics_auth_token_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("METRICS_SERVICE_AUTH_TOKEN", "env-secret")
+    config_path = tmp_path / "core.yaml"
+    config_path.write_text(
+        """
+        risk_profiles: {}
+        environments: {}
+        alerts: {}
+        runtime:
+          metrics_service:
+            enabled: true
+            auth_token_env: METRICS_SERVICE_AUTH_TOKEN
+            auth_token_file: secrets/runtime/metrics/token.txt
+        """,
+        encoding="utf-8",
+    )
+
+    config = load_core_config(config_path)
+
+    assert config.metrics_service is not None
+    metrics = config.metrics_service
+    assert metrics.auth_token_env == "METRICS_SERVICE_AUTH_TOKEN"
+    assert metrics.auth_token == "env-secret"
+    assert metrics.auth_token_file == "secrets/runtime/metrics/token.txt"
+
+
+def test_load_core_config_handles_missing_auth_token_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("METRICS_SERVICE_AUTH_TOKEN", raising=False)
+    config_path = tmp_path / "core.yaml"
+    config_path.write_text(
+        """
+        risk_profiles: {}
+        environments: {}
+        alerts: {}
+        runtime:
+          metrics_service:
+            enabled: true
+            auth_token_env: METRICS_SERVICE_AUTH_TOKEN
+        """,
+        encoding="utf-8",
+    )
+
+    config = load_core_config(config_path)
+
+    assert config.metrics_service is not None
+    metrics = config.metrics_service
+    assert metrics.auth_token_env == "METRICS_SERVICE_AUTH_TOKEN"
+    assert metrics.auth_token is None
+
+
 def test_load_core_config_resource_limits(tmp_path: Path) -> None:
     config_path = tmp_path / "core.yaml"
     config_path.write_text(

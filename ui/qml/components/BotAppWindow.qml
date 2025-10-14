@@ -22,6 +22,7 @@ ApplicationWindow {
     readonly property color accentColor: Qt.rgba(0.14, 0.58, 0.82, 1)
 
     header: ToolBar {
+        enabled: licenseController.licenseActive
         contentHeight: 48
         RowLayout {
             anchors.fill: parent
@@ -100,6 +101,7 @@ ApplicationWindow {
         anchors.fill: parent
         anchors.topMargin: header.height
         anchors.bottomMargin: footer.implicitHeight
+        enabled: licenseController.licenseActive
 
         RowLayout {
             anchors.fill: parent
@@ -133,6 +135,13 @@ ApplicationWindow {
     footer: StatusFooter {
         id: footer
         Layout.fillWidth: true
+    }
+
+    LicenseActivationOverlay {
+        anchors.fill: parent
+        visible: !licenseController.licenseActive
+        enabled: !licenseController.licenseActive
+        focus: visible
     }
 
     Settings {

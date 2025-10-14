@@ -71,6 +71,8 @@ class MetricsServiceConfig:
 
     # Rozszerzone pola (autoryzacja / logowanie / pliki)
     auth_token: str | None = None
+    auth_token_env: str | None = None
+    auth_token_file: str | None = None
     log_sink: bool = True
     jsonl_path: str | None = None
     jsonl_fsync: bool = False

@@ -285,6 +285,7 @@ def sign_with_rotating_keys(
     registry = RotationRegistry(rotation_log)
     now = _iso_now()
     statuses = {kid: registry.status(kid, purpose, interval_days=interval_days, now=now) for kid in keys}
+
     # priorytety: overdue > due > OK; w każdej grupie najstarszy
     def _prio(st):
         if not st.is_due and not st.is_overdue:

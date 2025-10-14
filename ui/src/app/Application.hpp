@@ -19,7 +19,8 @@
 
 class QQuickWindow;
 class QScreen;
-class ActivationController;
+class ActivationController;            // z app/ActivationController.hpp (forward decl)
+class LicenseActivationController;     // z license/LicenseActivationController.hpp (forward decl)
 
 class Application : public QObject {
     Q_OBJECT
@@ -119,7 +120,9 @@ private:
     std::unique_ptr<FrameRateMonitor> m_frameMonitor;
     bool                              m_reduceMotionActive = false;
 
-    std::unique_ptr<ActivationController> m_activationController;
+    // Oba kontrolery – aktywacja (app) i licencje OEM (license)
+    std::unique_ptr<ActivationController>        m_activationController;
+    std::unique_ptr<LicenseActivationController> m_licenseController;
 
     // --- Telemetry state ---
     std::unique_ptr<TelemetryReporter> m_telemetry;

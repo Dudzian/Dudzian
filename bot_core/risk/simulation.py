@@ -19,7 +19,7 @@ except Exception:  # pragma: no cover
     pa = None  # type: ignore
     pq = None  # type: ignore
 
-# konfiguracja i profile (gałąź codex)
+# konfiguracja i profile (gałąź "codex")
 try:  # pragma: no cover
     from bot_core.config import load_core_config
     from bot_core.risk.factory import build_risk_profile_from_config
@@ -27,7 +27,7 @@ except Exception:  # pragma: no cover
     load_core_config = None  # type: ignore[misc,assignment]
     build_risk_profile_from_config = None  # type: ignore[misc,assignment]
 
-# profile (gałąź main)
+# gotowe profile (gałąź "main")
 try:  # pragma: no cover
     from bot_core.risk.profiles import (
         AggressiveProfile,
@@ -38,19 +38,19 @@ try:  # pragma: no cover
 except Exception:  # pragma: no cover
     AggressiveProfile = BalancedProfile = ConservativeProfile = ManualProfile = None  # type: ignore
 
-# API exchanges (gałąź main)
+# API exchanges (gałąź "main")
 try:  # pragma: no cover
     from bot_core.exchanges.base import AccountSnapshot, OrderRequest
 except Exception:  # pragma: no cover
     AccountSnapshot = OrderRequest = None  # type: ignore
 
-# API ryzyka (gałąź main)
+# API ryzyka (gałąź "main")
 try:  # pragma: no cover
     from bot_core.risk.base import RiskEngine, RiskProfile
 except Exception:  # pragma: no cover
     RiskEngine = RiskProfile = None  # type: ignore
 
-if TYPE_CHECKING:  # tylko dla typowania
+if TYPE_CHECKING:  # tylko dla typowania w IDE
     from bot_core.risk.base import RiskProfile as _RiskProfileT  # noqa: F401
 
 _LOGGER = logging.getLogger(__name__)
@@ -64,7 +64,7 @@ _PDF_LINE_HEIGHT = 14
 _PDF_PAGE_WIDTH = 612
 _PDF_PAGE_HEIGHT = 792
 
-# smoke scenariusze (gałąź main)
+# smoke scenariusze (gałąź "main")
 _SMOKE_BASE_TIMESTAMP = datetime(2024, 1, 1, 12, 0, 0)
 DEFAULT_SMOKE_SCENARIOS: tuple[Mapping[str, object], ...] = (
     {
@@ -207,7 +207,7 @@ class ProfileSimulationResult:
         }
 
     def has_failures(self) -> bool:
-        return bool(self.breaches) or any(r.is_failure() for r in self.stress_tests)
+        return bool(self.breaches) or any(result.is_failure() for result in self.stress_tests)
 
 
 @dataclass(slots=True)
@@ -361,7 +361,7 @@ class SimulationOrder:
     position_value: float | None = None
     pnl: float | None = None
 
-    def to_order_request(self):  # zwracamy obiekt lub zgłaszamy błąd jeśli brak OrderRequest
+    def to_order_request(self):
         if OrderRequest is None:
             raise RuntimeError("OrderRequest is not available in this build.")
         return OrderRequest(
@@ -437,7 +437,7 @@ class SimulationOrder:
             pnl=_coerce_optional_float(data.get("pnl")),
         )
 
-# --- Funkcje pomocnicze ------------------------------------------------------
+# --- Funkcje pomocnicze (czas/konwersje) ------------------------------------
 def _parse_timestamp(value: object) -> datetime:
     if isinstance(value, datetime):
         return value
@@ -461,51 +461,35 @@ def _coerce_optional_float(value: object | None) -> float | None:
     except (TypeError, ValueError):
         return None
 
+# --- Helpery do pobierania wartości profilu (zgodność nazw/metod) -----------
+def _profile_float(profile: object, names: Sequence[str], default: float = 0.0) -> float:
+    """Spróbuj kolejno metod/atrybutów – zwróć pierwszą poprawną wartość float."""
+    for name in names:
+        if hasattr(profile, name):
+            obj = getattr(profile, name)
+            try:
+                return float(obj()) if callable(obj) else float(obj)
+            except Exception:
+                continue
+    return float(default)
 
-_PROFILE_FACTORY: dict[str, object] = {
-    "conservative": ConservativeProfile,
-    "balanced": BalancedProfile,
-    "aggressive": AggressiveProfile,
-}
+def _drawdown_limit(profile: RiskProfile) -> float:
+    return _profile_float(profile, ("drawdown_limit", "drawdown_limit_pct"), 0.0)
 
-def build_profile(profile_name: str, *, manual_overrides: Mapping[str, object] | None = None) -> RiskProfile:
-    if RiskProfile is None:
-        raise RuntimeError("RiskProfile base class is not available in this build.")
-    normalized = profile_name.strip().lower()
-    if normalized == "manual":
-        if ManualProfile is None:
-            raise RuntimeError("ManualProfile is not available in this build.")
-        if not manual_overrides:
-            raise ValueError("Manual profile requires overrides with explicit limits")
-        required = {
-            "max_positions",
-            "max_leverage",
-            "drawdown_limit",
-            "daily_loss_limit",
-            "max_position_pct",
-            "target_volatility",
-            "stop_loss_atr_multiple",
-        }
-        missing = [key for key in required if key not in manual_overrides]
-        if missing:
-            raise ValueError(f"Missing manual profile overrides: {', '.join(missing)}")
-        return ManualProfile(
-            name=str(manual_overrides.get("name", "manual")),
-            max_positions=int(manual_overrides["max_positions"]),
-            max_leverage=float(manual_overrides["max_leverage"]),
-            drawdown_limit=float(manual_overrides["drawdown_limit"]),
-            daily_loss_limit=float(manual_overrides["daily_loss_limit"]),
-            max_position_pct=float(manual_overrides["max_position_pct"]),
-            target_volatility=float(manual_overrides["target_volatility"]),
-            stop_loss_atr_multiple=float(manual_overrides["stop_loss_atr_multiple"]),
-        )
-    try:
-        factory = _PROFILE_FACTORY[normalized]
-    except KeyError as exc:  # pragma: no cover
-        raise KeyError(f"Unsupported risk profile: {profile_name}") from exc
-    if factory is None:  # pragma: no cover
-        raise RuntimeError(f"Profile '{profile_name}' is not available in this build.")
-    return factory()  # type: ignore[call-arg]
+def _daily_loss_limit(profile: RiskProfile) -> float:
+    return _profile_float(profile, ("daily_loss_limit", "max_daily_loss_limit"), 0.0)
+
+def _target_volatility(profile: RiskProfile) -> float:
+    return _profile_float(profile, ("target_volatility", "target_volatility_pct"), 0.0)
+
+def _stop_loss_atr_multiple(profile: RiskProfile) -> float:
+    return _profile_float(profile, ("stop_loss_atr_multiple", "stop_loss_atr_mult"), 1.0)
+
+def _max_leverage(profile: RiskProfile) -> float:
+    return _profile_float(profile, ("max_leverage", "leverage_limit"), 1.0)
+
+def _max_position_exposure(profile: RiskProfile) -> float:
+    return _profile_float(profile, ("max_position_exposure", "max_position_pct"), 0.0)
 
 # --- Loader świec Parquet (OHLCV) -------------------------------------------
 class MarketDatasetLoader:
@@ -638,15 +622,14 @@ def _run_flash_crash_test(profile: RiskProfile, candles: Sequence[Candle], base_
         drop = (current_low - prev_close) / prev_close
         max_drop = min(max_drop, drop)
     severity = abs(max_drop)
+    limit = _drawdown_limit(profile)
     metrics: dict[str, float] = {
         "max_low_gap_pct": severity,
-        "severity": severity / max(profile.drawdown_limit(), 1e-6),
+        "severity": severity / max(limit, 1e-6),
     }
-    allowed = severity <= profile.drawdown_limit()
+    allowed = severity <= limit
     status = "passed" if allowed else "failed"
-    notes = None
-    if not allowed:
-        notes = f"Observed crash {severity * 100:.2f}% breaches drawdown limit {profile.drawdown_limit() * 100:.2f}%"
+    notes = None if allowed else f"Observed crash {severity * 100:.2f}% breaches drawdown limit {limit * 100:.2f}%"
     return StressTestResult(name="flash_crash", status=status, metrics=metrics, notes=notes)
 
 
@@ -662,18 +645,14 @@ def _run_liquidity_dryout_test(profile: RiskProfile, candles: Sequence[Candle]) 
     median_volume = median(volumes)
     threshold = median_volume * 0.2
     low_volume_ratio = sum(1 for v in volumes if v <= threshold) / len(volumes)
-    allowed_ratio = max(0.05, 0.35 - profile.target_volatility())
+    allowed_ratio = max(0.05, 0.35 - _target_volatility(profile))
     metrics: dict[str, float] = {
         "low_volume_ratio": low_volume_ratio,
         "allowed_ratio": allowed_ratio,
         "severity": low_volume_ratio / max(allowed_ratio, 1e-6),
     }
     status = "passed" if low_volume_ratio <= allowed_ratio else "failed"
-    notes = (
-        None
-        if status == "passed"
-        else f"{low_volume_ratio * 100:.2f}% słabych wolumenów przekracza próg {allowed_ratio * 100:.2f}%"
-    )
+    notes = None if status == "passed" else f"{low_volume_ratio * 100:.2f}% słabych wolumenów przekracza próg {allowed_ratio * 100:.2f}%"
     return StressTestResult(name="dry_liquidity", status=status, metrics=metrics, notes=notes)
 
 
@@ -691,18 +670,14 @@ def _run_latency_spike_test(profile: RiskProfile, candles: Sequence[Candle]) -> 
             notes="Brak danych spreadu dla symulacji",
         )
     max_spread = max(spreads)
-    threshold = 0.01 + profile.stop_loss_atr_multiple() * 0.015
+    threshold = 0.01 + _stop_loss_atr_multiple(profile) * 0.015
     metrics: dict[str, float] = {
         "max_spread_pct": max_spread,
         "threshold": threshold,
         "severity": max_spread / max(threshold, 1e-6),
     }
     status = "passed" if max_spread <= threshold else "failed"
-    notes = (
-        None
-        if status == "passed"
-        else f"Spread {max_spread * 100:.2f}% przekracza próg {threshold * 100:.2f}% – ryzyko poślizgu"
-    )
+    notes = None if status == "passed" else f"Spread {max_spread * 100:.2f}% przekracza próg {threshold * 100:.2f}% – ryzyko poślizgu"
     return StressTestResult(name="latency_spike", status=status, metrics=metrics, notes=notes)
 
 # --- Runner OHLCV ------------------------------------------------------------
@@ -738,8 +713,8 @@ class RiskSimulationRunner:
         total_returns: list[float] = []
         pnl_series: list[float] = []
         sample_size = 0
-        leverage_limit = max(profile.max_leverage(), 1.0)
-        position_pct = max(profile.max_position_exposure(), 0.0)
+        leverage_limit = max(_max_leverage(profile), 1.0)
+        position_pct = max(_max_position_exposure(profile), 0.0)
         for candles in self._candles_by_symbol.values():
             if not candles:
                 continue
@@ -778,11 +753,11 @@ class RiskSimulationRunner:
         worst_daily_loss = _compute_daily_losses(next(iter(self._candles_by_symbol.values())), pnl_series, base_equity)
         realized_vol = _realized_volatility(total_returns)
         breaches = []
-        if max_drawdown > profile.drawdown_limit():
+        if max_drawdown > _drawdown_limit(profile):
             breaches.append("drawdown_limit")
-        if worst_daily_loss > profile.daily_loss_limit():
+        if worst_daily_loss > _daily_loss_limit(profile):
             breaches.append("daily_loss_limit")
-        if realized_vol > profile.target_volatility() * 1.6:
+        if realized_vol > _target_volatility(profile) * 1.6:
             breaches.append("volatility_target")
         stress_results = [
             _run_flash_crash_test(profile, candles, base_equity) for candles in self._candles_by_symbol.values() if candles
@@ -858,7 +833,7 @@ def run_simulations_from_config(
         report.synthetic_data = True
     return report
 
-# --- Scenariusze Parquet/engine (gałąź main) ---------------------------------
+# --- Scenariusze Parquet/engine (gałąź "main") -------------------------------
 def write_default_smoke_scenarios(path: str | Path) -> Path:
     """Zapisuje domyślne scenariusze smoke testu do pliku Parquet."""
     if pa is None or pq is None:
@@ -878,6 +853,51 @@ def load_orders_from_parquet(path: str | Path) -> Sequence[SimulationOrder]:
     orders.sort(key=lambda order: order.timestamp)
     return tuple(orders)
 
+def build_profile(profile_name: str, *, manual_overrides: Mapping[str, object] | None = None) -> RiskProfile:
+    """Buduje profil ryzyka z wbudowanych klas (aggressive/balanced/conservative/manual)."""
+    if RiskProfile is None:
+        raise RuntimeError("RiskProfile base class is not available in this build.")
+    normalized = profile_name.strip().lower()
+    if normalized == "manual":
+        if ManualProfile is None:
+            raise RuntimeError("ManualProfile is not available in this build.")
+        if not manual_overrides:
+            raise ValueError("Manual profile requires overrides with explicit limits")
+        required = {
+            "max_positions",
+            "max_leverage",
+            "drawdown_limit",
+            "daily_loss_limit",
+            "max_position_pct",
+            "target_volatility",
+            "stop_loss_atr_multiple",
+        }
+        missing = [key for key in required if key not in manual_overrides]
+        if missing:
+            raise ValueError(f"Missing manual profile overrides: {', '.join(missing)}")
+        return ManualProfile(
+            name=str(manual_overrides.get("name", "manual")),
+            max_positions=int(manual_overrides["max_positions"]),
+            max_leverage=float(manual_overrides["max_leverage"]),
+            drawdown_limit=float(manual_overrides["drawdown_limit"]),
+            daily_loss_limit=float(manual_overrides["daily_loss_limit"]),
+            max_position_pct=float(manual_overrides["max_position_pct"]),
+            target_volatility=float(manual_overrides["target_volatility"]),
+            stop_loss_atr_multiple=float(manual_overrides["stop_loss_atr_multiple"]),
+        )
+    mapping = {
+        "conservative": ConservativeProfile,
+        "balanced": BalancedProfile,
+        "aggressive": AggressiveProfile,
+    }
+    try:
+        factory = mapping[normalized]
+    except KeyError as exc:  # pragma: no cover
+        raise KeyError(f"Unsupported risk profile: {profile_name}") from exc
+    if factory is None:  # pragma: no cover
+        raise RuntimeError(f"Profile '{profile_name}' is not available in this build.")
+    return factory()  # type: ignore[call-arg]
+
 def run_profile_scenario(
     engine: RiskEngine,
     profile: RiskProfile,
@@ -896,7 +916,11 @@ def run_profile_scenario(
         snapshot = order.to_account_snapshot()
         request = order.to_order_request()
         result = engine.apply_pre_trade_checks(request, account=snapshot, profile_name=profile.name)
-        decision_payload: MutableMapping[str, object] = {"order": order.to_mapping(), "allowed": result.allowed, "reason": result.reason}
+        decision_payload: MutableMapping[str, object] = {
+            "order": order.to_mapping(),
+            "allowed": result.allowed,
+            "reason": result.reason,
+        }
         if result.adjustments is not None:
             decision_payload["adjustments"] = dict(result.adjustments)
         decisions.append(decision_payload)
@@ -931,7 +955,7 @@ def run_profile_scenario(
         final_state=state,
     )
 
-# --- PDF utils (wspólne) -----------------------------------------------------
+# --- PDF utils ---------------------------------------------------------------
 def _escape_pdf_text(value: str) -> str:
     return value.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
 

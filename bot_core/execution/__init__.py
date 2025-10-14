@@ -2,15 +2,16 @@
 
 from bot_core.execution.base import ExecutionContext, ExecutionService, RetryPolicy
 
-# Zgodność wstecz/naprzód: obsłuż zarówno RoutingPlan (main), jak i RouteDefinition (stara nazwa)
+# Zgodność wstecz/naprzód: obsłuż zarówno RoutingPlan (nowa nazwa),
+# jak i RouteDefinition (starsza nazwa) z live_router.
 try:
-    # gałąź main
+    # nowsza gałąź
     from bot_core.execution.live_router import LiveExecutionRouter, RoutingPlan
     RouteDefinition = RoutingPlan  # alias dla kompatybilności
 except ImportError:
-    # gałąź z wcześniejszą nazwą
+    # starsza gałąź
     from bot_core.execution.live_router import LiveExecutionRouter, RouteDefinition  # type: ignore
-    RoutingPlan = RouteDefinition  # alias do ujednolicenia API
+    RoutingPlan = RouteDefinition  # alias ujednolicający API
 
 from bot_core.execution.paper import (  # noqa: F401 - eksport publiczny
     InsufficientBalanceError,

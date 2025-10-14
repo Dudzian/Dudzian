@@ -1,5 +1,4 @@
 """Generuje pakiet certyfikatów mTLS (CA, serwer, klient) z audytem i wsparciem rotacji kluczy."""
-
 from __future__ import annotations
 
 import argparse
@@ -19,6 +18,7 @@ try:  # cryptography – preferowany backend
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
     from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
+
     _HAS_CRYPTO = True
 except Exception:  # pragma: no cover
     _HAS_CRYPTO = False
@@ -35,7 +35,6 @@ except Exception:  # pragma: no cover
         return {"role": role, "path": str(path)}
 
 from bot_core.security.rotation import RotationRegistry
-
 
 DEFAULT_HOSTNAMES = ("127.0.0.1", "localhost")
 
@@ -205,8 +204,8 @@ def _generate_with_cryptography(config: BundleConfig) -> Mapping[str, Path]:
             if not name:
                 continue
             try:
-                ip_address(name)
-                san_entries.append(x509.IPAddress(ip_address(name)))
+                ip_obj = ip_address(name)
+                san_entries.append(x509.IPAddress(ip_obj))
             except ValueError:
                 san_entries.append(x509.DNSName(name))
         if san_entries:
@@ -218,7 +217,8 @@ def _generate_with_cryptography(config: BundleConfig) -> Mapping[str, Path]:
         return builder.sign(private_key=issuer_key, algorithm=hashes.SHA384(), backend=default_backend())
 
     def _write_file(path: Path, data: bytes, *, mode: int = 0o600) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
+        path.parent.mkdir(parents=True, exist_ok=True
+        )
         path.write_bytes(data)
         try:
             os.chmod(path, mode)
@@ -462,7 +462,6 @@ def _write_metadata(
     # Opcjonalny audyt TLS
     if _audit_mtls_bundle is not None:  # pragma: no cover
         try:
-            # audytuje katalog bazowy pakietu
             audit = _audit_mtls_bundle(Path(files["ca_certificate"]).parent)
             payload["tls_audit"] = audit
         except Exception as exc:  # nie blokuj generowania pakietu

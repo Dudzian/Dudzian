@@ -769,3 +769,43 @@ def test_bootstrap_collects_metrics_security_metadata(tmp_path: Path, monkeypatc
     warnings = context.metrics_security_warnings
     assert warnings is not None
     assert any("MetricsService ma włączone API bez tokenu" in warning for warning in warnings)
+
+
+def test_bootstrap_warns_on_over_permissive_metrics_token_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    token_file = tmp_path / "metrics.token"
+    token_file.write_text("secret", encoding="utf-8")
+    token_file.chmod(0o644)
+
+    if "bot_core.runtime.bootstrap" in sys.modules:
+        monkeypatch.setattr(
+            sys.modules["bot_core.runtime.bootstrap"],
+            "build_metrics_server_from_config",
+            lambda *_, **__: None,
+        )
+
+    config_path = _write_config_custom(
+        tmp_path,
+        runtime_metrics={
+            "enabled": True,
+            "auth_token_file": str(token_file),
+        },
+    )
+
+    _, manager = _prepare_manager()
+    context = bootstrap_environment(
+        "binance_paper", config_path=config_path, secret_manager=manager
+    )
+
+    metadata = context.metrics_security_metadata
+    assert isinstance(metadata, Mapping)
+    auth_meta = metadata.get("auth")
+    assert isinstance(auth_meta, Mapping)
+    assert auth_meta.get("token_file") == str(token_file)
+    assert auth_meta.get("token_file_exists") is True
+    assert auth_meta.get("token_file_permissions") == "0o644"
+
+    warnings = context.metrics_security_warnings
+    assert warnings is not None
+    assert any("zbyt szerokie uprawnienia" in warning for warning in warnings)

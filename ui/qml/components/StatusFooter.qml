@@ -36,6 +36,21 @@ Pane {
         }
 
         Label {
+            text: licenseController.licenseActive
+                    ? qsTr("Licencja: %1 • ważna do %2 • FP %3")
+                          .arg(licenseController.licenseProfile)
+                          .arg(licenseController.licenseExpiresAt.length > 0
+                                   ? Qt.formatDateTime(new Date(licenseController.licenseExpiresAt), "yyyy-MM-dd")
+                                   : qsTr("-")
+                          )
+                          .arg(licenseController.licenseFingerprint)
+                    : qsTr("Licencja: nieaktywna")
+            color: licenseController.licenseActive
+                    ? palette.windowText
+                    : Qt.rgba(0.94, 0.36, 0.32, 1)
+        }
+
+        Label {
             text: appController.reduceMotionActive
                     ? qsTr("Animacje: ograniczone")
                     : qsTr("Animacje: pełne")

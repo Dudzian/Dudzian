@@ -11,6 +11,7 @@ Zapewnienie w pełni offline'owego procesu wydawania licencji dla bundla Core OE
 | Uruchom `scripts/oem_provision_license.py` z docelowym fingerprintem i parametrami profilu. | Operator OEM | `var/licenses/registry.jsonl`, logi CLI | OEM Ops |
 | (opcjonalnie) Wygeneruj kod QR (`--emit-qr`) i wydruk papierowy dla klienta. | Operator OEM | Wydruk QR | OEM Ops |
 | (opcjonalnie) Wyeksportuj licencję na nośnik (`--usb-target /media/.../license.json`). | Operator OEM | Plik licencyjny na USB | OEM Ops |
+| Zaimportuj licencję w kliencie Qt (ekran aktywacji) i zweryfikuj fingerprint/profil. | Operator OEM | Zrzut ekranu UI, `var/licenses/active/license.json` | Product Owner |
 | Załącz artefakty do biletu provisioningowego (hash licencji, podpisane logi, numer zamówienia). | Operator OEM | Hash SHA-384, log CLI | Product Owner |
 | Zaktualizuj decision log (`var/licenses/registry.jsonl`, `audit/decision_logs/*.jsonl`) podpisem i odnotuj kto zatwierdził wydanie. | Operator OEM | Decision log | Compliance |
 

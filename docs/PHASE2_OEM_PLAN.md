@@ -19,11 +19,13 @@
   - macOS: `codesign` + plan notarization (placeholder w jobie macOS, integracja z narzędziem Apple Notary w następnym kroku),
   - Linux: GPG + manifest SHA-384 (manifest generowany automatycznie, publikacja podpisu w `manifest.sig`).
 - [x] Udokumentować procedurę "Installer Acceptance" (lista kontrolna artefakty/akceptacja) w `docs/runbooks/OEM_INSTALLER_ACCEPTANCE.md`.
+- [x] Zautomatyzować dry-run akceptacyjny (`scripts/run_oem_acceptance.py`) generujący raport JSON z wynikami bundla/licencji/Paper Labs/mTLS.
 
 ### 2. Fingerprint i licencjonowanie offline
 - [x] Zaimplementować moduł `bot_core/security/fingerprint.py` generujący fingerprint (CPU, TPM, MAC, opcjonalny dongle) z podpisem HMAC.
 - [x] Zaprojektować rejestr licencji (`var/licenses/registry.jsonl`) z podpisami oraz narzędziem `scripts/oem_provision_license.py`.
 - [x] Stworzyć runbook provisioning (checklista + artefakty: request, approval, signed license).
+- [x] Uzupełnić UI o ekran aktywacji licencji z obsługą QR/USB.
 - [ ] Uzupełnić UI o ekran aktywacji licencji z obsługą QR/USB.
 
 ### 3. Rozszerzenie silnika ryzyka
