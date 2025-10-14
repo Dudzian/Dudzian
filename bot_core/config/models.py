@@ -113,6 +113,28 @@ class MetricsServiceConfig:
 
 
 @dataclass(slots=True)
+class PrometheusAlertRuleConfig:
+    """Definicja reguły alertu Prometheusa powiązanego z routerem live."""
+
+    name: str
+    expr: str
+    for_duration: str | None = None
+    labels: Mapping[str, str] = field(default_factory=dict)
+    annotations: Mapping[str, str] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class LiveRoutingConfig:
+    """Konfiguracja routera egzekucji live."""
+
+    enabled: bool = False
+    default_route: Sequence[str] = field(default_factory=tuple)
+    route_overrides: Mapping[str, Sequence[str]] = field(default_factory=dict)
+    latency_histogram_buckets: Sequence[float] = field(default_factory=tuple)
+    prometheus_alerts: Sequence[PrometheusAlertRuleConfig] = field(default_factory=tuple)
+
+
+@dataclass(slots=True)
 class RiskServiceConfig:
     """Ustawienia serwera `RiskService`."""
 
@@ -526,6 +548,7 @@ class CoreConfig:
     messenger_channels: Mapping[str, MessengerChannelSettings] = field(default_factory=dict)
     runtime_controllers: Mapping[str, ControllerRuntimeConfig] = field(default_factory=dict)
     coverage_monitoring: CoverageMonitoringConfig | None = None
+    live_routing: LiveRoutingConfig | None = None
     metrics_service: MetricsServiceConfig | None = None
     risk_service: RiskServiceConfig | None = None
     risk_decision_log: RiskDecisionLogConfig | None = None
@@ -574,6 +597,8 @@ __all__ = [
     "MetricsServiceTlsConfig",
     "MetricsServiceConfig",
     "RiskServiceConfig",
+    "LiveRoutingConfig",
+    "PrometheusAlertRuleConfig",
     "RiskDecisionLogConfig",
     "SecurityBaselineConfig",
     "SecurityBaselineSigningConfig",

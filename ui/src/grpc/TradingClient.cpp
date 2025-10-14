@@ -1,15 +1,22 @@
 #include "TradingClient.hpp"
 
 #include <QDateTime>
+#include <QCryptographicHash>
+#include <QDir>
 #include <QFile>
 #include <QIODevice>
 #include <QMetaObject>
 #include <QtGlobal>
+#include <QSslCertificate>
 
 #include <google/protobuf/timestamp.pb.h>
 #include <grpcpp/create_channel.h>
+#include <grpcpp/channel_arguments.h>
 #include <grpcpp/grpcpp.h>
 #include <grpcpp/security/credentials.h>
+
+#include <optional>
+#include <string>
 
 #include "trading.grpc.pb.h"
 
@@ -24,21 +31,49 @@ using botcore::trading::v1::RiskService;
 using botcore::trading::v1::RiskState;
 
 namespace {
-std::string readPemFile(const QString& path, const char* label)
-{
-    if (path.trimmed().isEmpty())
-        return {};
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        qWarning() << "Nie udało się odczytać pliku" << path << label << file.errorString();
-        return {};
-    }
-    const QByteArray data = file.readAll();
-    return std::string(data.constData(), static_cast<size_t>(data.size()));
-}
 
 qint64 timestampToMs(const google::protobuf::Timestamp& ts) {
     return static_cast<qint64>(ts.seconds()) * 1000 + ts.nanos() / 1000000;
+}
+
+QString expandUserPath(const QString& path) {
+    if (path == QStringLiteral("~")) {
+        return QDir::homePath();
+    }
+    if (path.startsWith(QStringLiteral("~/"))) {
+        return QDir::homePath() + path.mid(1);
+    }
+    return path;
+}
+
+std::optional<QByteArray> readFileUtf8(const QString& rawPath) {
+    const QString path = expandUserPath(rawPath);
+    if (path.trimmed().isEmpty()) {
+        return std::nullopt;
+    }
+    QFile file(path);
+    if (!file.exists()) {
+        return std::nullopt;
+    }
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return std::nullopt;
+    }
+    return file.readAll();
+}
+
+QString sha256Fingerprint(const QByteArray& pemData) {
+    const QList<QSslCertificate> certs = QSslCertificate::fromData(pemData, QSsl::Pem);
+    if (certs.isEmpty()) {
+        return {};
+    }
+    const QByteArray digest = certs.first().digest(QCryptographicHash::Sha256);
+    return QString::fromLatin1(digest.toHex()).toLower();
+}
+
+QString normalizeFingerprint(QString value) {
+    QString normalized = value.trimmed().toLower();
+    normalized.remove(QLatin1Char(':'));
+    return normalized;
 }
 
 Instrument makeInstrument(const TradingClient::InstrumentConfig& config) {
@@ -69,6 +104,9 @@ void TradingClient::setEndpoint(const QString& endpoint) {
         return;
     }
     m_endpoint = endpoint;
+    m_channel.reset();
+    m_marketDataStub.reset();
+    m_riskStub.reset();
 }
 
 void TradingClient::setInstrument(const InstrumentConfig& config) {
@@ -88,6 +126,10 @@ void TradingClient::setPerformanceGuard(const PerformanceGuard& guard) {
 
 void TradingClient::setTlsConfig(const TlsConfig& config) {
     m_tlsConfig = config;
+    // zmiana TLS wymaga odtworzenia kanału/stubów
+    m_channel.reset();
+    m_marketDataStub.reset();
+    m_riskStub.reset();
 }
 
 void TradingClient::start() {
@@ -145,24 +187,42 @@ void TradingClient::stop() {
 }
 
 void TradingClient::ensureStub() {
-    std::shared_ptr<grpc::ChannelCredentials> credentials;
-    grpc::ChannelArguments arguments;
-    if (m_tlsConfig.enabled) {
-        grpc::SslCredentialsOptions options;
-        options.pem_root_certs = readPemFile(m_tlsConfig.rootCertificatePath, "(root CA)");
-        if (!m_tlsConfig.clientCertificatePath.isEmpty() && !m_tlsConfig.clientKeyPath.isEmpty()) {
-            options.pem_cert_chain = readPemFile(m_tlsConfig.clientCertificatePath, "(cert klienta)");
-            options.pem_private_key = readPemFile(m_tlsConfig.clientKeyPath, "(klucz klienta)");
+    if (!m_channel) {
+        std::shared_ptr<grpc::ChannelCredentials> credentials;
+        grpc::ChannelArguments args;
+
+        if (m_tlsConfig.enabled) {
+            grpc::SslCredentialsOptions options;
+
+            if (const auto rootPem = readFileUtf8(m_tlsConfig.rootCertificatePath)) {
+                options.pem_root_certs = std::string(rootPem->constData(),
+                                                     static_cast<std::size_t>(rootPem->size()));
+            }
+
+            const auto clientCert = readFileUtf8(m_tlsConfig.clientCertificatePath);
+            const auto clientKey  = readFileUtf8(m_tlsConfig.clientKeyPath);
+            if (clientCert && clientKey) {
+                grpc::SslCredentialsOptions::PemKeyCertPair pair;
+                pair.private_key = std::string(clientKey->constData(),  static_cast<std::size_t>(clientKey->size()));
+                pair.cert_chain  = std::string(clientCert->constData(), static_cast<std::size_t>(clientCert->size()));
+                options.pem_key_cert_pairs.push_back(std::move(pair));
+            }
+
+            credentials = grpc::SslCredentials(options);
+
+            // Uwaga: w TlsConfig używamy targetNameOverride (zgodne z Application.cpp)
+            if (!m_tlsConfig.targetNameOverride.trimmed().isEmpty()) {
+                args.SetString(GRPC_SSL_TARGET_NAME_OVERRIDE_ARG,
+                               m_tlsConfig.targetNameOverride.toStdString());
+            }
+
+            m_channel = grpc::CreateCustomChannel(m_endpoint.toStdString(), credentials, args);
+        } else {
+            credentials = grpc::InsecureChannelCredentials();
+            m_channel = grpc::CreateChannel(m_endpoint.toStdString(), credentials);
         }
-        credentials = grpc::SslCredentials(options);
-        if (!m_tlsConfig.targetNameOverride.trimmed().isEmpty()) {
-            arguments.SetString(GRPC_SSL_TARGET_NAME_OVERRIDE_ARG, m_tlsConfig.targetNameOverride.toStdString());
-        }
-    } else {
-        credentials = grpc::InsecureChannelCredentials();
     }
 
-    m_channel = grpc::CreateCustomChannel(m_endpoint.toStdString(), credentials, arguments);
     m_marketDataStub = MarketDataService::NewStub(m_channel);
     m_riskStub = RiskService::NewStub(m_channel);
 }
@@ -302,4 +362,53 @@ RiskSnapshotData TradingClient::convertRiskState(const RiskState& state) const {
         snapshot.exposures.append(exposure);
     }
     return snapshot;
+}
+
+TradingClient::PreLiveChecklistResult TradingClient::runPreLiveChecklist() const {
+    PreLiveChecklistResult result;
+
+    if (m_endpoint.trimmed().isEmpty()) {
+        result.errors.append(tr("Endpoint gRPC nie może być pusty."));
+    }
+
+    if (m_tlsConfig.enabled) {
+        const QString rootPath = expandUserPath(m_tlsConfig.rootCertificatePath);
+        if (rootPath.trimmed().isEmpty()) {
+            result.errors.append(tr("Włączone TLS wymaga wskazania pliku root CA."));
+        } else if (!QFile::exists(rootPath)) {
+            result.errors.append(tr("Plik root CA nie istnieje: %1").arg(rootPath));
+        } else {
+            const auto rootPem = readFileUtf8(rootPath);
+            if (!rootPem) {
+                result.warnings.append(tr("Nie udało się odczytać pliku root CA."));
+            } else if (!m_tlsConfig.pinnedServerFingerprint.isEmpty()) {
+                const QString actual = sha256Fingerprint(*rootPem);
+                const QString expected = normalizeFingerprint(m_tlsConfig.pinnedServerFingerprint);
+                if (actual.isEmpty()) {
+                    result.warnings.append(tr("Nie udało się obliczyć odcisku SHA-256 certyfikatu root CA."));
+                } else if (actual != expected) {
+                    result.errors.append(tr("Fingerprint root CA nie pasuje do konfiguracji (oczekiwano %1, otrzymano %2).").arg(expected, actual));
+                }
+            }
+        }
+
+        const QString clientCert = expandUserPath(m_tlsConfig.clientCertificatePath);
+        const QString clientKey = expandUserPath(m_tlsConfig.clientKeyPath);
+        const bool hasClientCert = !clientCert.trimmed().isEmpty();
+        const bool hasClientKey = !clientKey.trimmed().isEmpty();
+
+        if (m_tlsConfig.requireClientAuth && (!hasClientCert || !hasClientKey)) {
+            result.errors.append(tr("mTLS wymaga dostarczenia certyfikatu oraz klucza klienta."));
+        } else {
+            if (hasClientCert && !QFile::exists(clientCert)) {
+                result.errors.append(tr("Certyfikat klienta nie istnieje: %1").arg(clientCert));
+            }
+            if (hasClientKey && !QFile::exists(clientKey)) {
+                result.errors.append(tr("Klucz klienta nie istnieje: %1").arg(clientKey));
+            }
+        }
+    }
+
+    result.ok = result.errors.isEmpty();
+    return result;
 }

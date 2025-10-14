@@ -59,6 +59,7 @@ target_link_libraries(trading_proto
 set(UI_SOURCES
     src/main.cpp
     src/app/Application.cpp
+    src/app/ActivationController.cpp
     src/grpc/TradingClient.cpp
     src/models/OhlcvListModel.cpp
     src/models/RiskStateModel.cpp
@@ -70,6 +71,7 @@ set(UI_SOURCES
 
 set(UI_HEADERS
     src/app/Application.hpp
+    src/app/ActivationController.hpp
     src/grpc/TradingClient.hpp
     src/models/OhlcvListModel.hpp
     src/models/RiskStateModel.hpp

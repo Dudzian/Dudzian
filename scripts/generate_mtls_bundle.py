@@ -1,23 +1,40 @@
-"""Generator pakietu mTLS dla demona tradingowego i klienta UI."""
+"""Generuje pakiet certyfikatów mTLS (CA, serwer, klient) z audytem i wsparciem rotacji kluczy."""
 from __future__ import annotations
 
 import argparse
 import json
 import os
+import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from ipaddress import ip_address
 from pathlib import Path
 from typing import Iterable, Mapping
 
-from cryptography import x509
-from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
+# --- opcjonalne zależności ---------------------------------------------------
+try:  # cryptography – preferowany backend
+    from cryptography import x509
+    from cryptography.hazmat.backends import default_backend
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
-from bot_core.security.certificates import certificate_reference_metadata
+    _HAS_CRYPTO = True
+except Exception:  # pragma: no cover
+    _HAS_CRYPTO = False
+
+try:  # audyt TLS (opcjonalny)
+    from bot_core.security.tls_audit import audit_mtls_bundle as _audit_mtls_bundle  # type: ignore
+except Exception:  # pragma: no cover
+    _audit_mtls_bundle = None  # type: ignore
+
+try:  # metadane referencyjne certyfikatów (opcjonalne)
+    from bot_core.security.certificates import certificate_reference_metadata  # type: ignore
+except Exception:  # pragma: no cover
+    def certificate_reference_metadata(path: Path, *, role: str) -> Mapping[str, object]:  # type: ignore
+        return {"role": role, "path": str(path)}
+
 from bot_core.security.rotation import RotationRegistry
-
 
 DEFAULT_HOSTNAMES = ("127.0.0.1", "localhost")
 
@@ -37,6 +54,9 @@ class BundleConfig:
     client_key_passphrase: bytes | None
 
 
+# -----------------------------------------------------------------------------
+# CLI
+# -----------------------------------------------------------------------------
 def _parse_args(argv: Iterable[str] | None = None) -> BundleConfig:
     parser = argparse.ArgumentParser(description="Generuje pakiet certyfikatów mTLS (CA/server/client).")
     parser.add_argument("--output-dir", required=True, help="Katalog docelowy na wygenerowany pakiet")
@@ -49,7 +69,7 @@ def _parse_args(argv: Iterable[str] | None = None) -> BundleConfig:
         "--server-hostname",
         action="append",
         dest="server_hostnames",
-        help="Hostname/IP wpisywane do SAN certyfikatu serwerowego (można podać wielokrotnie)",
+        help="Hostname/IP do SAN certyfikatu serwerowego (można podać wielokrotnie)",
     )
     parser.add_argument(
         "--rotation-registry",
@@ -57,16 +77,17 @@ def _parse_args(argv: Iterable[str] | None = None) -> BundleConfig:
     )
     parser.add_argument(
         "--ca-key-passphrase-env",
-        help="Nazwa zmiennej ENV zawierającej passphrase dla klucza CA (PKCS8)",
+        help="Nazwa ENV z passphrase dla klucza CA (PKCS#8).",
     )
     parser.add_argument(
         "--server-key-passphrase-env",
-        help="Nazwa zmiennej ENV z passphrase do klucza serwera (UWAGA: gRPC wymaga kluczy bez hasła)",
+        help="Nazwa ENV z passphrase dla klucza serwera (UWAGA: gRPC zwykle wymaga kluczy bez hasła).",
     )
     parser.add_argument(
         "--client-key-passphrase-env",
-        help="Nazwa zmiennej ENV z passphrase do klucza klienta",
+        help="Nazwa ENV z passphrase dla klucza klienta.",
     )
+
     args = parser.parse_args(argv)
 
     output_dir = Path(args.output_dir).expanduser().resolve()
@@ -80,9 +101,7 @@ def _parse_args(argv: Iterable[str] | None = None) -> BundleConfig:
         valid_days=max(1, int(args.valid_days)),
         key_size=max(2048, int(args.key_size)),
         server_hostnames=hostnames,
-        rotation_registry=Path(args.rotation_registry).expanduser().resolve()
-        if args.rotation_registry
-        else None,
+        rotation_registry=Path(args.rotation_registry).expanduser().resolve() if args.rotation_registry else None,
         ca_key_passphrase=_env_passphrase(args.ca_key_passphrase_env),
         server_key_passphrase=_env_passphrase(args.server_key_passphrase_env),
         client_key_passphrase=_env_passphrase(args.client_key_passphrase_env),
@@ -100,111 +119,112 @@ def _env_passphrase(env_name: str | None) -> bytes | None:
     return value.encode("utf-8")
 
 
-def _generate_private_key(key_size: int) -> rsa.RSAPrivateKey:
-    return rsa.generate_private_key(public_exponent=65537, key_size=key_size, backend=default_backend())
+# -----------------------------------------------------------------------------
+# Backend 1: cryptography (preferowany)
+# -----------------------------------------------------------------------------
+def _generate_with_cryptography(config: BundleConfig) -> Mapping[str, Path]:
+    def _generate_private_key(key_size: int) -> rsa.RSAPrivateKey:
+        return rsa.generate_private_key(public_exponent=65537, key_size=key_size, backend=default_backend())
 
-
-def _serialize_key(key: rsa.RSAPrivateKey, passphrase: bytes | None) -> bytes:
-    if passphrase:
-        encryption = serialization.BestAvailableEncryption(passphrase)
-    else:
-        encryption = serialization.NoEncryption()
-    return key.private_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PrivateFormat.PKCS8,
-        encryption_algorithm=encryption,
-    )
-
-
-def _build_name(common_name: str, organization: str) -> x509.Name:
-    return x509.Name(
-        [
-            x509.NameAttribute(NameOID.COMMON_NAME, common_name),
-            x509.NameAttribute(NameOID.ORGANIZATION_NAME, organization),
-        ]
-    )
-
-
-def _issue_certificate(
-    *,
-    subject: x509.Name,
-    issuer: x509.Name,
-    public_key,
-    issuer_key,
-    serial: int,
-    valid_from: datetime,
-    valid_to: datetime,
-    is_ca: bool,
-    hostnames: Iterable[str] = (),
-    usages: Iterable[x509.ExtendedKeyUsageOID] = (),
-) -> x509.Certificate:
-    builder = (
-        x509.CertificateBuilder()
-        .subject_name(subject)
-        .issuer_name(issuer)
-        .public_key(public_key)
-        .serial_number(serial)
-        .not_valid_before(valid_from)
-        .not_valid_after(valid_to)
-    )
-    if is_ca:
-        builder = builder.add_extension(x509.BasicConstraints(ca=True, path_length=1), critical=True)
-        builder = builder.add_extension(
-            x509.KeyUsage(
-                digital_signature=True,
-                content_commitment=True,
-                key_encipherment=False,
-                data_encipherment=False,
-                key_agreement=False,
-                key_cert_sign=True,
-                crl_sign=True,
-                encipher_only=False,
-                decipher_only=False,
-            ),
-            critical=True,
-        )
-    else:
-        builder = builder.add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
-        builder = builder.add_extension(
-            x509.KeyUsage(
-                digital_signature=True,
-                content_commitment=False,
-                key_encipherment=True,
-                data_encipherment=False,
-                key_agreement=False,
-                key_cert_sign=False,
-                crl_sign=False,
-                encipher_only=False,
-                decipher_only=False,
-            ),
-            critical=True,
+    def _serialize_key(key: rsa.RSAPrivateKey, passphrase: bytes | None) -> bytes:
+        if passphrase:
+            encryption = serialization.BestAvailableEncryption(passphrase)
+        else:
+            encryption = serialization.NoEncryption()
+        return key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=encryption,
         )
 
-    san_entries = [x509.DNSName(name) for name in hostnames if name]
-    if san_entries:
-        builder = builder.add_extension(x509.SubjectAlternativeName(san_entries), critical=False)
+    def _build_name(cn: str, org: str) -> x509.Name:
+        return x509.Name(
+            [x509.NameAttribute(NameOID.COMMON_NAME, cn), x509.NameAttribute(NameOID.ORGANIZATION_NAME, org)]
+        )
 
-    if usages:
-        builder = builder.add_extension(x509.ExtendedKeyUsage(list(usages)), critical=False)
+    def _issue_certificate(
+        *,
+        subject: x509.Name,
+        issuer: x509.Name,
+        public_key,
+        issuer_key,
+        serial: int,
+        valid_from: datetime,
+        valid_to: datetime,
+        is_ca: bool,
+        hostnames: Iterable[str] = (),
+        usages: Iterable[x509.ExtendedKeyUsageOID] = (),
+    ) -> x509.Certificate:
+        builder = (
+            x509.CertificateBuilder()
+            .subject_name(subject)
+            .issuer_name(issuer)
+            .public_key(public_key)
+            .serial_number(serial)
+            .not_valid_before(valid_from)
+            .not_valid_after(valid_to)
+        )
+        if is_ca:
+            builder = builder.add_extension(x509.BasicConstraints(ca=True, path_length=1), critical=True)
+            builder = builder.add_extension(
+                x509.KeyUsage(
+                    digital_signature=True,
+                    content_commitment=True,
+                    key_encipherment=False,
+                    data_encipherment=False,
+                    key_agreement=False,
+                    key_cert_sign=True,
+                    crl_sign=True,
+                    encipher_only=False,
+                    decipher_only=False,
+                ),
+                critical=True,
+            )
+        else:
+            builder = builder.add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+            builder = builder.add_extension(
+                x509.KeyUsage(
+                    digital_signature=True,
+                    content_commitment=False,
+                    key_encipherment=True,
+                    data_encipherment=False,
+                    key_agreement=False,
+                    key_cert_sign=False,
+                    crl_sign=False,
+                    encipher_only=False,
+                    decipher_only=False,
+                ),
+                critical=True,
+            )
 
-    return builder.sign(private_key=issuer_key, algorithm=hashes.SHA384(), backend=default_backend())
+        # SAN
+        san_entries: list[x509.GeneralName] = []
+        for name in hostnames:
+            name = name.strip()
+            if not name:
+                continue
+            try:
+                ip_obj = ip_address(name)
+                san_entries.append(x509.IPAddress(ip_obj))
+            except ValueError:
+                san_entries.append(x509.DNSName(name))
+        if san_entries:
+            builder = builder.add_extension(x509.SubjectAlternativeName(san_entries), critical=False)
 
+        if usages:
+            builder = builder.add_extension(x509.ExtendedKeyUsage(list(usages)), critical=False)
 
-def _write_file(path: Path, data: bytes, *, mode: int = 0o600) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(data)
-    try:
-        os.chmod(path, mode)
-    except PermissionError:
-        pass
+        return builder.sign(private_key=issuer_key, algorithm=hashes.SHA384(), backend=default_backend())
 
+    def _write_file(path: Path, data: bytes, *, mode: int = 0o600) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True
+        )
+        path.write_bytes(data)
+        try:
+            os.chmod(path, mode)
+        except PermissionError:  # pragma: no cover
+            pass
 
-def _metadata_entry(path: Path, *, role: str) -> Mapping[str, object]:
-    return certificate_reference_metadata(path, role=role)
-
-
-def generate_bundle(config: BundleConfig) -> Mapping[str, object]:
-    config.output_dir.mkdir(parents=True, exist_ok=True)
     now = datetime.now(timezone.utc)
     valid_to = now + timedelta(days=config.valid_days)
 
@@ -247,7 +267,7 @@ def generate_bundle(config: BundleConfig) -> Mapping[str, object]:
         usages=(ExtendedKeyUsageOID.CLIENT_AUTH,),
     )
 
-    bundle_files = {
+    files = {
         "ca_certificate": config.output_dir / f"{config.bundle_name}-ca.pem",
         "ca_key": config.output_dir / f"{config.bundle_name}-ca-key.pem",
         "server_certificate": config.output_dir / f"{config.bundle_name}-server.pem",
@@ -257,48 +277,232 @@ def generate_bundle(config: BundleConfig) -> Mapping[str, object]:
         "metadata": config.output_dir / f"{config.bundle_name}-metadata.json",
     }
 
-    _write_file(bundle_files["ca_certificate"], ca_cert.public_bytes(serialization.Encoding.PEM))
-    _write_file(bundle_files["ca_key"], _serialize_key(ca_key, config.ca_key_passphrase))
-    _write_file(bundle_files["server_certificate"], server_cert.public_bytes(serialization.Encoding.PEM))
-    _write_file(bundle_files["server_key"], _serialize_key(server_key, config.server_key_passphrase))
-    _write_file(bundle_files["client_certificate"], client_cert.public_bytes(serialization.Encoding.PEM))
-    _write_file(bundle_files["client_key"], _serialize_key(client_key, config.client_key_passphrase))
+    _write_file(files["ca_certificate"], ca_cert.public_bytes(serialization.Encoding.PEM))
+    _write_file(files["ca_key"], _serialize_key(ca_key, config.ca_key_passphrase))
+    _write_file(files["server_certificate"], server_cert.public_bytes(serialization.Encoding.PEM))
+    _write_file(files["server_key"], _serialize_key(server_key, config.server_key_passphrase))
+    _write_file(files["client_certificate"], client_cert.public_bytes(serialization.Encoding.PEM))
+    _write_file(files["client_key"], _serialize_key(client_key, config.client_key_passphrase))
 
-    metadata = {
+    return files
+
+
+# -----------------------------------------------------------------------------
+# Backend 2: OpenSSL (fallback – prostszy, bez passphrase’ów)
+# -----------------------------------------------------------------------------
+def _run_openssl(args: list[str], *, input_data: bytes | None = None) -> None:
+    try:
+        subprocess.run(args, input=input_data, check=True, capture_output=True)
+    except FileNotFoundError as exc:  # pragma: no cover
+        raise RuntimeError("Polecenie 'openssl' nie jest dostępne w PATH") from exc
+    except subprocess.CalledProcessError as exc:  # pragma: no cover
+        stderr = exc.stderr.decode("utf-8", errors="ignore") if exc.stderr else ""
+        raise RuntimeError(f"Polecenie {' '.join(args)} nie powiodło się: {stderr}") from exc
+
+
+def _generate_with_openssl(config: BundleConfig) -> Mapping[str, Path]:
+    cfg = config
+    base = cfg.output_dir
+    base.mkdir(parents=True, exist_ok=True)
+
+    files = {
+        "ca_certificate": base / f"{cfg.bundle_name}-ca.pem",
+        "ca_key": base / f"{cfg.bundle_name}-ca-key.pem",
+        "server_certificate": base / f"{cfg.bundle_name}-server.pem",
+        "server_key": base / f"{cfg.bundle_name}-server-key.pem",
+        "client_certificate": base / f"{cfg.bundle_name}-client.pem",
+        "client_key": base / f"{cfg.bundle_name}-client-key.pem",
+        "metadata": base / f"{cfg.bundle_name}-metadata.json",
+    }
+
+    # CA
+    _run_openssl(["openssl", "genrsa", "-out", str(files["ca_key"]), str(cfg.key_size)])
+    _run_openssl(
+        [
+            "openssl",
+            "req",
+            "-x509",
+            "-new",
+            "-key",
+            str(files["ca_key"]),
+            "-sha256",
+            "-days",
+            str(cfg.valid_days),
+            "-subj",
+            f"/CN={cfg.common_name} Root CA/O={cfg.organization}",
+            "-out",
+            str(files["ca_certificate"]),
+        ]
+    )
+
+    # Server
+    _run_openssl(["openssl", "genrsa", "-out", str(files["server_key"]), str(cfg.key_size)])
+    server_csr = base / f"{cfg.bundle_name}-server.csr"
+    _run_openssl(
+        [
+            "openssl",
+            "req",
+            "-new",
+            "-key",
+            str(files["server_key"]),
+            "-subj",
+            f"/CN={cfg.common_name} Trading Daemon/O={cfg.organization}",
+            "-out",
+            str(server_csr),
+        ]
+    )
+    # SAN + EKU przez -addext (OpenSSL 1.1.1+)
+    san_parts = []
+    for name in cfg.server_hostnames:
+        try:
+            ip_address(name)
+            san_parts.append(f"IP:{name}")
+        except ValueError:
+            san_parts.append(f"DNS:{name}")
+    san_value = ",".join(san_parts) if san_parts else "DNS:localhost,IP:127.0.0.1"
+    _run_openssl(
+        [
+            "openssl",
+            "x509",
+            "-req",
+            "-in",
+            str(server_csr),
+            "-CA",
+            str(files["ca_certificate"]),
+            "-CAkey",
+            str(files["ca_key"]),
+            "-CAcreateserial",
+            "-out",
+            str(files["server_certificate"]),
+            "-days",
+            str(cfg.valid_days),
+            "-sha256",
+            "-addext",
+            f"subjectAltName={san_value}",
+            "-addext",
+            "extendedKeyUsage=serverAuth",
+            "-addext",
+            "basicConstraints=CA:FALSE",
+            "-addext",
+            "keyUsage = digitalSignature, keyEncipherment",
+        ]
+    )
+    if server_csr.exists():
+        server_csr.unlink()
+
+    # Client
+    _run_openssl(["openssl", "genrsa", "-out", str(files["client_key"]), str(cfg.key_size)])
+    client_csr = base / f"{cfg.bundle_name}-client.csr"
+    _run_openssl(
+        [
+            "openssl",
+            "req",
+            "-new",
+            "-key",
+            str(files["client_key"]),
+            "-subj",
+            f"/CN={cfg.common_name} Desktop Shell/O={cfg.organization}",
+            "-out",
+            str(client_csr),
+        ]
+    )
+    _run_openssl(
+        [
+            "openssl",
+            "x509",
+            "-req",
+            "-in",
+            str(client_csr),
+            "-CA",
+            str(files["ca_certificate"]),
+            "-CAkey",
+            str(files["ca_key"]),
+            "-out",
+            str(files["client_certificate"]),
+            "-days",
+            str(cfg.valid_days),
+            "-sha256",
+            "-addext",
+            "extendedKeyUsage=clientAuth",
+            "-addext",
+            "basicConstraints=CA:FALSE",
+            "-addext",
+            "keyUsage = digitalSignature, keyEncipherment",
+        ]
+    )
+    if client_csr.exists():
+        client_csr.unlink()
+
+    return files
+
+
+# -----------------------------------------------------------------------------
+# Wspólne: zapis metadanych + audyt + rotacja
+# -----------------------------------------------------------------------------
+def _write_metadata(
+    files: Mapping[str, Path],
+    *,
+    bundle_name: str,
+    hostnames: Iterable[str],
+    rotation_registry: Path | None,
+) -> Mapping[str, object]:
+    now = datetime.now(timezone.utc)
+    payload: dict[str, object] = {
         "generated_at": now.isoformat(),
-        "valid_until": valid_to.isoformat(),
-        "bundle": config.bundle_name,
-        "hostnames": config.server_hostnames,
-        "files": {
-            key: str(path)
-            for key, path in bundle_files.items()
-            if key != "metadata"
-        },
+        "bundle": bundle_name,
+        "hostnames": tuple(hostnames),
+        "files": {k: str(p) for k, p in files.items() if k != "metadata"},
         "artifacts": {
-            "ca": _metadata_entry(bundle_files["ca_certificate"], role="tls_ca"),
-            "server": _metadata_entry(bundle_files["server_certificate"], role="tls_server_cert"),
-            "client": _metadata_entry(bundle_files["client_certificate"], role="tls_client_cert"),
+            "ca": certificate_reference_metadata(files["ca_certificate"], role="tls_ca"),
+            "server": certificate_reference_metadata(files["server_certificate"], role="tls_server_cert"),
+            "client": certificate_reference_metadata(files["client_certificate"], role="tls_client_cert"),
         },
     }
 
-    bundle_files["metadata"].write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    # Opcjonalny audyt TLS
+    if _audit_mtls_bundle is not None:  # pragma: no cover
+        try:
+            audit = _audit_mtls_bundle(Path(files["ca_certificate"]).parent)
+            payload["tls_audit"] = audit
+        except Exception as exc:  # nie blokuj generowania pakietu
+            payload["tls_audit_error"] = repr(exc)
 
-    if config.rotation_registry:
-        registry = RotationRegistry(config.rotation_registry)
-        registry.mark_rotated(config.bundle_name, "tls_ca", timestamp=now)
-        registry.mark_rotated(config.bundle_name, "tls_server", timestamp=now)
-        registry.mark_rotated(config.bundle_name, "tls_client", timestamp=now)
+    # Rotacja
+    if rotation_registry is not None:
+        reg = RotationRegistry(rotation_registry)
+        reg.mark_rotated(bundle_name, "tls_ca", timestamp=now)
+        reg.mark_rotated(bundle_name, "tls_server", timestamp=now)
+        reg.mark_rotated(bundle_name, "tls_client", timestamp=now)
 
+    meta_path = files["metadata"]
+    meta_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return payload
+
+
+def generate_bundle(config: BundleConfig) -> Mapping[str, object]:
+    config.output_dir.mkdir(parents=True, exist_ok=True)
+
+    if _HAS_CRYPTO:
+        files = _generate_with_cryptography(config)
+    else:
+        # Fallback – bez passphrase’ów (openssl nie jest tu konfigurowany pod szyfrowanie PKCS#8)
+        files = _generate_with_openssl(config)
+
+    metadata = _write_metadata(
+        files,
+        bundle_name=config.bundle_name,
+        hostnames=config.server_hostnames,
+        rotation_registry=config.rotation_registry,
+    )
     return metadata
 
 
 def main(argv: Iterable[str] | None = None) -> int:
-    config = _parse_args(argv)
-    metadata = generate_bundle(config)
+    cfg = _parse_args(argv)
+    metadata = generate_bundle(cfg)
     print(json.dumps(metadata, ensure_ascii=False, indent=2))
     return 0
 
 
 if __name__ == "__main__":  # pragma: no cover - punkt wejścia CLI
     raise SystemExit(main())
-

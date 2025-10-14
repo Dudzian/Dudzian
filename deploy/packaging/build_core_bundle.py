@@ -24,7 +24,6 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -59,13 +58,11 @@ _ALLOWED_FINGERPRINT_PLACEHOLDER_CHARS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ01234567
 
 def _casefold_path(value: str) -> str:
     """Return a POSIX-style path converted to a case-insensitive key."""
-
     return value.casefold()
 
 
 def _is_prefix(candidate: str, prefix: str) -> bool:
     """Return ``True`` if ``prefix`` is a direct prefix of ``candidate``."""
-
     return candidate == prefix or candidate.startswith(f"{prefix}/")
 
 
@@ -75,7 +72,6 @@ def _now_utc() -> str:
 
 def _validate_bundle_version(value: str) -> str:
     """Ensure bundle version strings are filename-safe across platforms."""
-
     if not value:
         raise ValueError("Version string cannot be empty")
     if len(value) > 64:
@@ -83,17 +79,11 @@ def _validate_bundle_version(value: str) -> str:
     for ch in value:
         codepoint = ord(ch)
         if codepoint < 32 or codepoint == 127:
-            raise ValueError(
-                f"Version string contains control character U+{codepoint:04X}"
-            )
+            raise ValueError(f"Version string contains control character U+{codepoint:04X}")
         if ch not in _ALLOWED_VERSION_CHARS:
-            raise ValueError(
-                f"Version string contains unsupported character: {ch!r}"
-            )
+            raise ValueError(f"Version string contains unsupported character: {ch!r}")
     if not value[0].isalnum():
-        raise ValueError(
-            "Version string must start with an alphanumeric character"
-        )
+        raise ValueError("Version string must start with an alphanumeric character")
     if not value[-1].isalnum():
         raise ValueError("Version string must end with an alphanumeric character")
     return value
@@ -101,105 +91,64 @@ def _validate_bundle_version(value: str) -> str:
 
 def _validate_fingerprint_placeholder(value: str) -> str:
     """Ensure fingerprint placeholders are simple, portable tokens."""
-
     if not value:
         raise ValueError("Fingerprint placeholder cannot be empty")
     if len(value) > 128:
-        raise ValueError(
-            "Fingerprint placeholder must be at most 128 characters"
-        )
+        raise ValueError("Fingerprint placeholder must be at most 128 characters")
     if value.strip() != value:
-        raise ValueError(
-            "Fingerprint placeholder must not start or end with whitespace"
-        )
+        raise ValueError("Fingerprint placeholder must not start or end with whitespace")
     for ch in value:
         codepoint = ord(ch)
         if codepoint < 32 or codepoint == 127:
-            raise ValueError(
-                "Fingerprint placeholder contains control characters"
-            )
+            raise ValueError("Fingerprint placeholder contains control characters")
         if ch not in _ALLOWED_FINGERPRINT_PLACEHOLDER_CHARS:
-            raise ValueError(
-                "Fingerprint placeholder contains unsupported character"
-            )
+            raise ValueError("Fingerprint placeholder contains unsupported character")
     return value
 
 
 def _ensure_windows_safe_component(*, component: str, label: str, context: str) -> None:
     """Validate a single path component for Windows compatibility."""
-
     trimmed = component.rstrip(" .")
     if trimmed != component:
-        raise ValueError(
-            f"{label} contains entry ending with a space or dot: {context}"
-        )
+        raise ValueError(f"{label} contains entry ending with a space or dot: {context}")
     if not trimmed:
         raise ValueError(f"{label} contains empty path component: {context}")
-    control_char = next(
-        (ch for ch in trimmed if ord(ch) < 32 or ord(ch) == 127),
-        None,
-    )
+    control_char = next((ch for ch in trimmed if ord(ch) < 32 or ord(ch) == 127), None)
     if control_char is not None:
         codepoint = ord(control_char)
-        raise ValueError(
-            f"{label} contains control character U+{codepoint:04X}: {context}"
-        )
+        raise ValueError(f"{label} contains control character U+{codepoint:04X}: {context}")
     base, _, _ = trimmed.partition(".")
     if base.casefold() in _WINDOWS_DEVICE_NAMES:
-        raise ValueError(
-            f"{label} contains Windows reserved device name: {context}"
-        )
+        raise ValueError(f"{label} contains Windows reserved device name: {context}")
     invalid_char = next((c for c in trimmed if c in _WINDOWS_INVALID_CHARS), None)
     if invalid_char is not None:
-        raise ValueError(
-            f"{label} contains character '{invalid_char}' disallowed on Windows: {context}"
-        )
+        raise ValueError(f"{label} contains character '{invalid_char}' disallowed on Windows: {context}")
 
 
 def _ensure_windows_safe_virtual_path(path: PurePosixPath, *, label: str) -> None:
     """Validate that bundle-internal path components are Windows compatible."""
-
     for component in path.parts:
-        _ensure_windows_safe_component(
-            component=component,
-            label=label,
-            context=path.as_posix(),
-        )
+        _ensure_windows_safe_component(component=component, label=label, context=path.as_posix())
 
 
 def _ensure_windows_safe_tree(path: Path, *, label: str) -> None:
     """Validate on-disk paths to avoid Windows-incompatible components."""
-
-    _ensure_windows_safe_component(
-        component=path.name,
-        label=label,
-        context=str(path),
-    )
+    _ensure_windows_safe_component(component=path.name, label=label, context=str(path))
     if not path.is_dir():
         return
-
     for current_root, dirnames, filenames in os.walk(path):
         current_path = Path(current_root)
         for dirname in dirnames:
             candidate = current_path / dirname
-            _ensure_windows_safe_component(
-                component=dirname,
-                label=label,
-                context=str(candidate),
-            )
+            _ensure_windows_safe_component(component=dirname, label=label, context=str(candidate))
         for filename in filenames:
             candidate = current_path / filename
-            _ensure_windows_safe_component(
-                component=filename,
-                label=label,
-                context=str(candidate),
-            )
+            _ensure_windows_safe_component(component=filename, label=label, context=str(candidate))
 
 
 @dataclass
 class BundleInputs:
     """Container for bundle inputs."""
-
     daemon_paths: List[Path]
     ui_paths: List[Path]
     config_paths: Dict[str, Path]
@@ -250,11 +199,7 @@ class SignatureManager:
             "signature": signature,
         }
 
-    def write_signature_document(
-        self,
-        payload: Mapping[str, Any],
-        destination: Path,
-    ) -> None:
+    def write_signature_document(self, payload: Mapping[str, Any], destination: Path) -> None:
         document = self.build_signature_document(payload)
         destination.write_text(
             json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
@@ -264,24 +209,17 @@ class SignatureManager:
 
 def _iter_symlinks(root: Path) -> Iterable[Path]:
     """Yield every symlink at or below ``root`` without following links."""
-
     if root.is_symlink():
         yield root
         return
-
     if not root.is_dir():
         return
-
     for current_root, dirnames, filenames in os.walk(root, followlinks=False):
         current_path = Path(current_root)
-
-        # Iterate over a snapshot of ``dirnames`` to avoid interfering with the
-        # traversal performed by ``os.walk``.
         for dirname in list(dirnames):
             candidate = current_path / dirname
             if candidate.is_symlink():
                 yield candidate
-
         for filename in filenames:
             candidate = current_path / filename
             if candidate.is_symlink():
@@ -290,22 +228,16 @@ def _iter_symlinks(root: Path) -> Iterable[Path]:
 
 def _ensure_no_symlinks(path: Path, *, label: str) -> None:
     """Raise ``ValueError`` if ``path`` or any children are symlinks."""
-
     if path.is_symlink():
         raise ValueError(f"{label} must not be a symlink: {path}")
-
     for candidate in _iter_symlinks(path):
-        raise ValueError(
-            f"{label} contains forbidden symlink: {candidate}"
-        )
+        raise ValueError(f"{label} contains forbidden symlink: {candidate}")
 
 
 def _ensure_casefold_safe_tree(path: Path, *, label: str) -> None:
     """Ensure ``path`` does not contain siblings differing only by case."""
-
     if not path.is_dir():
         return
-
     for current_root, dirnames, filenames in os.walk(path):
         seen: Dict[str, Path] = {}
         current_path = Path(current_root)
@@ -322,9 +254,7 @@ def _ensure_casefold_safe_tree(path: Path, *, label: str) -> None:
                 continue
             raise ValueError(
                 "{} contains entries that would conflict on a "
-                "case-insensitive filesystem: {} vs {}".format(
-                    label, existing, candidate
-                )
+                "case-insensitive filesystem: {} vs {}".format(label, existing, candidate)
             )
 
 
@@ -350,13 +280,9 @@ class CoreBundleBuilder:
         prepared_output_dir = output_dir.expanduser()
         if prepared_output_dir.exists():
             if prepared_output_dir.is_symlink():
-                raise ValueError(
-                    f"Output directory must not be a symlink: {prepared_output_dir}"
-                )
+                raise ValueError(f"Output directory must not be a symlink: {prepared_output_dir}")
             if not prepared_output_dir.is_dir():
-                raise ValueError(
-                    f"Output directory is not a directory: {prepared_output_dir}"
-                )
+                raise ValueError(f"Output directory is not a directory: {prepared_output_dir}")
         else:
             prepared_output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -365,13 +291,8 @@ class CoreBundleBuilder:
             daemon_paths=list(inputs.daemon_paths),
             ui_paths=list(inputs.ui_paths),
             config_paths=dict(inputs.config_paths),
-            resources={
-                directory: list(paths)
-                for directory, paths in inputs.resources.items()
-            },
-            fingerprint_placeholder=_validate_fingerprint_placeholder(
-                inputs.fingerprint_placeholder
-            ),
+            resources={directory: list(paths) for directory, paths in inputs.resources.items()},
+            fingerprint_placeholder=_validate_fingerprint_placeholder(inputs.fingerprint_placeholder),
         )
         self.logger = logger or logging.getLogger(__name__)
 
@@ -379,9 +300,7 @@ class CoreBundleBuilder:
         expected_archive_name = self._expected_archive_name()
         destination = self.output_dir / expected_archive_name
         if destination.exists():
-            raise FileExistsError(
-                f"Bundle archive already exists: {destination}"
-            )
+            raise FileExistsError(f"Bundle archive already exists: {destination}")
 
         with tempfile.TemporaryDirectory(prefix="core_oem_") as temp_dir:
             staging_root = Path(temp_dir) / "core_oem_staging"
@@ -389,21 +308,15 @@ class CoreBundleBuilder:
             self._stage_components(staging_root)
             manifest = self._build_manifest(staging_root)
             manifest_path = staging_root / "manifest.json"
-            manifest_path.write_text(
-                json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8"
-            )
+            manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
             manifest_payload = {
                 "path": "manifest.json",
                 "sha384": self.signatures.digest_file(manifest_path),
             }
-            self.signatures.write_signature_document(
-                manifest_payload, manifest_path.with_suffix(".sig")
-            )
+            self.signatures.write_signature_document(manifest_payload, manifest_path.with_suffix(".sig"))
             archive_path = self._archive(staging_root)
             if archive_path.name != expected_archive_name:
-                raise RuntimeError(
-                    "Archive name mismatch between expected and generated bundle"
-                )
+                raise RuntimeError("Archive name mismatch between expected and generated bundle")
             self.logger.info("Bundle created at %s", archive_path)
             shutil.copy2(archive_path, destination)
             return destination
@@ -466,9 +379,7 @@ class CoreBundleBuilder:
             "generated_at": _now_utc(),
         }
         document = self.signatures.build_signature_document(payload)
-        expected_path.write_text(
-            json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-        )
+        expected_path.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
     def _write_bootstrap_scripts(self, bootstrap_dir: Path) -> None:
         verify_script = bootstrap_dir / "verify_fingerprint.py"
@@ -645,7 +556,6 @@ def _normalize_bundle_relative(value: str) -> str:
     Absolute paths and parent directory traversals are rejected to prevent
     accidental escape from the bundle staging directory.
     """
-
     normalized = value.replace("\\", "/")
     candidate = PurePosixPath(normalized)
     if candidate.is_absolute():
@@ -656,9 +566,7 @@ def _normalize_bundle_relative(value: str) -> str:
     if any(part == ".." for part in parts):
         raise ValueError(f"Parent traversal is not allowed: {value}")
     normalized_path = PurePosixPath(*parts)
-    _ensure_windows_safe_virtual_path(
-        normalized_path, label="Bundle entry"
-    )
+    _ensure_windows_safe_virtual_path(normalized_path, label="Bundle entry")
     return normalized_path.as_posix()
 
 
@@ -676,73 +584,45 @@ def _parse_config_arguments(values: Iterable[str]) -> Dict[str, Path]:
         for reserved in _RESERVED_CONFIG_PATHS:
             reserved_lower = _casefold_path(reserved)
             if _is_prefix(normalized_lower, reserved_lower):
-                raise ValueError(
-                    "Config entry cannot use reserved name: "
-                    f"{normalized_name}"
-                )
+                raise ValueError("Config entry cannot use reserved name: " f"{normalized_name}")
         if normalized_lower.endswith(".sig"):
-            raise ValueError(
-                "Config entry must not end with '.sig' because signatures are "
-                "generated automatically"
-            )
+            raise ValueError("Config entry must not end with '.sig' because signatures are generated automatically")
 
         if normalized_lower in resolved_casefold:
-            raise ValueError(
-                "Config entry would conflict on a case-insensitive filesystem: "
-                f"{normalized_name}"
-            )
+            raise ValueError("Config entry would conflict on a case-insensitive filesystem: " f"{normalized_name}")
 
         for existing_lower, existing_name in resolved_casefold.items():
             if _is_prefix(normalized_lower, existing_lower):
-                raise ValueError(
-                    "Config entry nests within another entry: "
-                    f"{normalized_name}"
-                )
+                raise ValueError("Config entry nests within another entry: " f"{normalized_name}")
             if _is_prefix(existing_lower, normalized_lower):
                 raise ValueError(
-                    "Config entry would become a parent directory of another entry: "
-                    f"{normalized_name}"
+                    "Config entry would become a parent directory of another entry: " f"{normalized_name}"
                 )
 
         if normalized_lower in signature_targets_casefold or any(
-            _is_prefix(normalized_lower, signature_lower)
-            for signature_lower in signature_targets_casefold
+            _is_prefix(normalized_lower, signature_lower) for signature_lower in signature_targets_casefold
         ):
-            raise ValueError(
-                "Config entry conflicts with auto-generated signature file: "
-                f"{normalized_name}"
-            )
+            raise ValueError("Config entry conflicts with auto-generated signature file: " f"{normalized_name}")
 
         source_path = Path(path_str).expanduser()
         if not source_path.exists():
             raise FileNotFoundError(source_path)
         _ensure_no_symlinks(source_path, label=f"Config entry '{normalized_name}'")
         path = source_path.resolve()
-        _ensure_windows_safe_tree(
-            path, label=f"Config entry '{normalized_name}'"
-        )
+        _ensure_windows_safe_tree(path, label=f"Config entry '{normalized_name}'")
         if not path.is_file():
-            raise ValueError(
-                f"Config entry '{normalized_name}' must reference a file: {path}"
-            )
+            raise ValueError(f"Config entry '{normalized_name}' must reference a file: {path}")
         signature_name = f"{normalized_name}.sig"
         signature_lower = _casefold_path(signature_name)
         if signature_lower in resolved_casefold or any(
-            _is_prefix(existing_lower, signature_lower)
-            for existing_lower in resolved_casefold
+            _is_prefix(existing_lower, signature_lower) for existing_lower in resolved_casefold
         ):
-            raise ValueError(
-                "Config entry would collide with another entry's name: "
-                f"{signature_name}"
-            )
+            raise ValueError("Config entry would collide with another entry's name: " f"{signature_name}")
 
         for reserved in _RESERVED_CONFIG_PATHS:
             reserved_lower = _casefold_path(reserved)
             if signature_lower == reserved_lower or _is_prefix(reserved_lower, signature_lower):
-                raise ValueError(
-                    "Config entry would produce reserved signature path: "
-                    f"{signature_name}"
-                )
+                raise ValueError("Config entry would produce reserved signature path: " f"{signature_name}")
 
         resolved[normalized_name] = path
         resolved_casefold[normalized_lower] = normalized_name
@@ -768,8 +648,7 @@ def _resolve_paths(values: Iterable[str], *, label: str) -> List[Path]:
         existing = seen_names.get(name_key)
         if existing is not None:
             raise ValueError(
-                f"{label} names would conflict on a case-insensitive filesystem:"
-                f" {existing} vs {path}"
+                f"{label} names would conflict on a case-insensitive filesystem:" f" {existing} vs {path}"
             )
         seen_names[name_key] = path
         if path.is_dir():
@@ -837,15 +716,12 @@ def build_from_cli(argv: Optional[List[str]] = None) -> Path:
     key_path = raw_key_path.resolve()
     _ensure_windows_safe_tree(key_path, label="Signing key path")
     if not key_path.is_file():
-        raise ValueError(
-            f"Signing key path must reference a file: {key_path}"
-        )
+        raise ValueError(f"Signing key path must reference a file: {key_path}")
     if os.name != "nt":
         mode = key_path.stat().st_mode
         if mode & (stat.S_IRWXG | stat.S_IRWXO):
             raise ValueError(
-                "Signing key file permissions must restrict access to the owner: "
-                f"{key_path}"
+                "Signing key file permissions must restrict access to the owner: " f"{key_path}"
             )
 
     signing_key = key_path.read_bytes()
@@ -868,41 +744,28 @@ def build_from_cli(argv: Optional[List[str]] = None) -> Path:
             resource_dirs_casefold[normalized_directory_lower] = normalized_directory
         elif existing_directory != normalized_directory:
             raise ValueError(
-                "Resource directory would conflict on a case-insensitive filesystem: "
-                f"{normalized_directory}"
+                "Resource directory would conflict on a case-insensitive filesystem: " f"{normalized_directory}"
             )
         top_level = normalized_directory.split("/", 1)[0]
         if _casefold_path(top_level) in _RESERVED_RESOURCE_PREFIXES_CASEFOLD:
-            raise ValueError(
-                "Resource directory cannot use reserved prefix: "
-                f"{normalized_directory}"
-            )
+            raise ValueError("Resource directory cannot use reserved prefix: " f"{normalized_directory}")
         source_path = Path(raw_path).expanduser()
         if not source_path.exists():
             raise FileNotFoundError(source_path)
         _ensure_no_symlinks(source_path, label=f"Resource '{normalized_directory}'")
         resource_path = source_path.resolve()
-        _ensure_windows_safe_tree(
-            resource_path, label=f"Resource '{normalized_directory}'"
-        )
+        _ensure_windows_safe_tree(resource_path, label=f"Resource '{normalized_directory}'")
         if resource_path.is_dir():
-            _ensure_casefold_safe_tree(
-                resource_path, label=f"Resource '{normalized_directory}'"
-            )
+            _ensure_casefold_safe_tree(resource_path, label=f"Resource '{normalized_directory}'")
         basename = resource_path.name
         names = resource_names.setdefault(normalized_directory, set())
         basename_key = basename.casefold()
         if basename_key in names:
-            raise ValueError(
-                "Duplicate resource entry for "
-                f"{normalized_directory}/{basename}"
-            )
+            raise ValueError("Duplicate resource entry for " f"{normalized_directory}/{basename}")
         names.add(basename_key)
         resources.setdefault(normalized_directory, []).append(resource_path)
 
-    fingerprint_placeholder = _validate_fingerprint_placeholder(
-        args.fingerprint_placeholder
-    )
+    fingerprint_placeholder = _validate_fingerprint_placeholder(args.fingerprint_placeholder)
 
     inputs = BundleInputs(
         daemon_paths=daemon_paths,
@@ -915,13 +778,9 @@ def build_from_cli(argv: Optional[List[str]] = None) -> Path:
     raw_output_dir = Path(args.output_dir).expanduser()
     if raw_output_dir.exists():
         if raw_output_dir.is_symlink():
-            raise ValueError(
-                f"Output directory must not be a symlink: {raw_output_dir}"
-            )
+            raise ValueError(f"Output directory must not be a symlink: {raw_output_dir}")
         if not raw_output_dir.is_dir():
-            raise ValueError(
-                f"Output directory is not a directory: {raw_output_dir}"
-            )
+            raise ValueError(f"Output directory is not a directory: {raw_output_dir}")
     else:
         raw_output_dir.mkdir(parents=True, exist_ok=True)
 

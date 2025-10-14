@@ -42,6 +42,7 @@ potwierdzeniem statusów.
 * **Struktura UI:** Router (StackView) dla ekranów: Trading Dashboard, Risk Monitor, Order Blotter, Alert Center, Settings. Multi-window z synchronizacją kontekstu (gRPC session token) i pamięcią układu doków.
 * **Komponenty bazowe:**
   * Biblioteka QML z komponentami: `BotAppWindow`, `SidePanel`, `InstrumentPicker`, `OrderTicket`, `RiskBanner`, `AlertToast`, `MetricsPanel`, `LatencyIndicator`.
+  * `ActivationDialog` – prezentuje fingerprint hosta (CPU/TPM/MAC/dongle) oraz licencje OEM pobrane z `var/licenses/registry.jsonl`; korzysta z backendu `ActivationController`, który uruchamia moduł `bot_core.security.fingerprint` i waliduje podpisy HMAC.
   * Styleguide animacji (easing OutCubic/OutQuint) i mikrozachowania (Behaviors) zapisany w `ui/styleguide/animations.md` (to-do) wraz z przykładowymi nagraniami „before/after”.
   * Styleguide kolorów/typografii w `ui/styleguide/theme.md` z wariantami dark/light/high-contrast.
   * Biblioteka ikon i ilustracji (SVG) zoptymalizowana pod HiDPI/Retina (1×,2×,3×) oraz tryb „reduce motion”.

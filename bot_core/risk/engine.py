@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Callable, Dict, Mapping, MutableMapping, Sequence
@@ -9,6 +10,13 @@ from typing import Callable, Dict, Mapping, MutableMapping, Sequence
 from bot_core.exchanges.base import AccountSnapshot, OrderRequest
 from bot_core.risk.base import RiskCheckResult, RiskEngine, RiskProfile, RiskRepository
 from bot_core.risk.events import RiskDecisionLog
+from bot_core.risk.simulation import (
+    DEFAULT_PROFILES,
+    RiskSimulationSuite,
+    build_profile,
+    load_orders_from_parquet,
+    run_profile_scenario,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -607,6 +615,62 @@ class ThresholdRiskEngine(RiskEngine):
         """Zwraca listę zarejestrowanych profili ryzyka."""
 
         return tuple(self._profiles.keys())
+
+    @classmethod
+    def run_simulations_from_parquet(
+        cls,
+        parquet_path: str | Path,
+        *,
+        profiles: Sequence[str] | None = None,
+        manual_overrides: Mapping[str, object] | None = None,
+    ) -> RiskSimulationSuite:
+        """Uruchamia scenariusze symulacyjne dla wskazanych profili.
+
+        Symulacja korzysta z danych w formacie Parquet, oczekując kolumn
+        zgodnych z :class:`bot_core.risk.simulation.SimulationOrder`. Każdy
+        scenariusz wykonywany jest na świeżej instancji silnika, aby uniknąć
+        przecieków stanu pomiędzy profilami.
+        """
+
+        orders = load_orders_from_parquet(parquet_path)
+        scenarios: list[str] = [profile.lower() for profile in (profiles or DEFAULT_PROFILES)]
+        results = []
+        for profile_name in scenarios:
+            profile = build_profile(profile_name, manual_overrides=manual_overrides)
+            engine = cls(repository=InMemoryRiskRepository())
+            result = run_profile_scenario(engine, profile, orders)
+            results.append(result)
+        return RiskSimulationSuite(tuple(results))
+
+    @classmethod
+    def generate_simulation_reports(
+        cls,
+        parquet_path: str | Path,
+        *,
+        output_dir: str | Path,
+        profiles: Sequence[str] | None = None,
+        manual_overrides: Mapping[str, object] | None = None,
+        json_name: str = "risk_simulation_report.json",
+        pdf_name: str = "risk_simulation_report.pdf",
+    ) -> Mapping[str, object]:
+        """Generuje raporty JSON oraz PDF z przebiegu symulacji."""
+
+        suite = cls.run_simulations_from_parquet(
+            parquet_path,
+            profiles=profiles,
+            manual_overrides=manual_overrides,
+        )
+        target_dir = Path(output_dir)
+        target_dir.mkdir(parents=True, exist_ok=True)
+        json_path = target_dir / json_name
+        pdf_path = target_dir / pdf_name
+        suite.write_json(json_path)
+        suite.render_pdf(pdf_path)
+        return {
+            "summary": suite.to_mapping(),
+            "json_path": str(json_path),
+            "pdf_path": str(pdf_path),
+        }
 
 
 __all__ = ["InMemoryRiskRepository", "ThresholdRiskEngine", "RiskState", "PositionState"]

@@ -76,6 +76,41 @@ risk_profiles:
       - manual_override
 
 runtime:
+  live_routing:
+    enabled: true
+    default_route:
+      - binance_spot
+      - kraken_spot
+    route_overrides:
+      BTCUSDT:
+        - binance_spot
+        - kraken_spot
+      ETHUSDT:
+        - kraken_spot
+        - binance_spot
+    latency_histogram_buckets: [0.05, 0.1, 0.25, 0.5, 1.0, 2.5]
+    prometheus_alerts:
+      - name: LiveRouterHighLatency
+        expr: >-
+          histogram_quantile(0.95, rate(live_router_latency_seconds_bucket[5m])) > 0.75
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Wysoka latencja routera live
+          description: >-
+            95-centyl latencji egzekucji przekracza 750 ms w oknie 5 minut – sprawdź opóźnienia
+            API giełd i stan sieci.
+      - name: LiveRouterFailureRate
+        expr: rate(live_router_failures_total[10m]) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: Wysoki odsetek błędów routera live
+          description: >-
+            Ponad 5% zleceń w ostatnich 10 minutach zakończyło się błędem. Zweryfikuj połączenie
+            z adapterami live i uprawnienia API.
   resource_limits:
     cpu_percent: 65.0
     memory_mb: 2048.0
