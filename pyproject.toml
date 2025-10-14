@@ -53,6 +53,7 @@ dependencies = [
   "protobuf>=4.24",
   "grpcio>=1.62",
   "PyYAML>=6.0",
+  "cryptography>=42.0.0",
 ]
 
 [project.optional-dependencies]
@@ -63,6 +64,7 @@ dev = [
   "grpcio>=1.62",
   "protobuf>=4.24",
   "PyYAML>=6.0",
+  "cryptography>=42.0.0",
 ]
 
 [build-system]

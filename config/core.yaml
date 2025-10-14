@@ -125,7 +125,7 @@ runtime:
     host: 127.0.0.1
     port: 55060
     history_size: 1024
-    auth_token: changeme-telemetry-token
+    auth_token_env: METRICS_SERVICE_AUTH_TOKEN
     log_sink: true
     jsonl_path: audit/metrics/telemetry.jsonl
     jsonl_fsync: false
@@ -134,11 +134,11 @@ runtime:
     ui_alerts_risk_profile: balanced
     ui_alerts_risk_profiles_file: configs/telemetry_risk_profiles.yaml
     tls:
-      enabled: false
-      certificate_path: secrets/dev-metrics-server.crt
-      private_key_path: secrets/dev-metrics-server.key
-      client_ca_path: secrets/dev-metrics-clients.pem
-      require_client_auth: false
+      enabled: true
+      certificate_path: secrets/runtime/metrics/server.crt
+      private_key_path: secrets/runtime/metrics/server.key
+      client_ca_path: secrets/runtime/metrics/clients.pem
+      require_client_auth: true
     reduce_motion_alerts: true
     reduce_motion_category: ui.performance
     reduce_motion_severity_active: warning
@@ -154,6 +154,48 @@ runtime:
     jank_alert_severity_spike: warning
     jank_alert_severity_critical: critical
     jank_alert_critical_over_ms: 12.0
+
+execution:
+  live_router:
+    decision_log:
+      path: audit/decision_logs/live_execution.jsonl
+      hmac_key_env: LIVE_DECISION_LOG_HMAC
+      key_id: live-router
+    routes:
+      - name: core_spot
+        exchanges:
+          - binance_spot_live
+          - kraken_spot_live
+        symbols:
+          - BTCUSDT
+          - ETHUSDT
+          - ETHUSDC
+        risk_profiles:
+          - balanced
+          - aggressive
+        latency_budget_ms: 250.0
+        max_retries_per_exchange: 2
+        metadata:
+          escalation_channel: ops
+      - name: manual_control
+        exchanges:
+          - zonda_spot_live
+        risk_profiles:
+          - manual
+        max_retries_per_exchange: 1
+        metadata:
+          escalation_channel: compliance
+    metrics:
+      latency_alert_threshold_ms: 350.0
+      fallback_alert_threshold: 3
+  mtls:
+    bundle_directory: secrets/mtls
+    ca_certificate: secrets/mtls/core-oem-ca.pem
+    server_certificate: secrets/mtls/core-oem-server.pem
+    server_key: secrets/mtls/core-oem-server-key.pem
+    client_certificate: secrets/mtls/core-oem-client.pem
+    client_key: secrets/mtls/core-oem-client-key.pem
+    rotation_registry: var/security/tls_rotation.json
 
 strategies:
   core_daily_trend:

@@ -1691,10 +1691,33 @@ def _apply_core_metrics_config(
     # auth token (jeśli występuje w configu i nie nadpisany)
     if "auth_token" not in env_overrides and not flag_provided("--auth-token"):
         token = getattr(metrics_config, "auth_token", None)
+        token_env_name = getattr(metrics_config, "auth_token_env", None)
+        token_file_path = getattr(metrics_config, "auth_token_file", None)
         if token:
             args.auth_token = token
             sources.setdefault("auth_token", "core_config")
             value_sources.setdefault("auth_token", "core_config")
+        elif token_env_name:
+            env_name = str(token_env_name)
+            env_value = os.environ.get(env_name)
+            if env_value:
+                args.auth_token = env_value
+                sources.setdefault("auth_token", "env")
+                value_sources.setdefault("auth_token", f"env:{env_name}")
+            else:
+                value_sources.setdefault("auth_token", f"env_missing:{env_name}")
+        elif token_file_path:
+            file_path = Path(str(token_file_path)).expanduser()
+            try:
+                file_value = file_path.read_text(encoding="utf-8").strip()
+            except OSError:
+                file_value = ""
+            if file_value:
+                args.auth_token = file_value
+                sources.setdefault("auth_token", "file")
+                value_sources.setdefault("auth_token", f"file:{file_path}")
+            else:
+                value_sources.setdefault("auth_token", f"file_missing:{file_path}")
 
     # TLS – użyjemy getattr, by działać bez klas TLS w starszych gałęziach
     tls_cfg = getattr(metrics_config, "tls", None)

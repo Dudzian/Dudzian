@@ -1,7 +1,10 @@
 """Audyt konfiguracji tokenów usługowych i RBAC."""
 from __future__ import annotations
 
+import os
+import stat
 from collections import Counter, defaultdict
+from pathlib import Path
 from types import SimpleNamespace
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, MutableMapping, Sequence
@@ -146,6 +149,32 @@ def audit_service_token_configs(
     enabled = bool(getattr(config, "enabled", True))
     tokens_cfg = tuple(getattr(config, "rbac_tokens", ()) or ())
     auth_token = getattr(config, "auth_token", None)
+    auth_token_env = getattr(config, "auth_token_env", None)
+    auth_token_env_present = bool(
+        auth_token_env and env.get(str(auth_token_env))
+    )
+    auth_token_file = getattr(config, "auth_token_file", None)
+    auth_token_file_exists = False
+    auth_token_file_mode: str | None = None
+    auth_token_file_over_permissive = False
+    if auth_token_file:
+        try:
+            auth_token_path = Path(str(auth_token_file)).expanduser()
+        except (OSError, TypeError, ValueError):
+            auth_token_path = None
+        else:
+            try:
+                auth_token_file_exists = auth_token_path.is_file()
+            except OSError:
+                auth_token_file_exists = False
+            if auth_token_file_exists:
+                try:
+                    file_mode = stat.S_IMODE(auth_token_path.stat().st_mode)
+                    auth_token_file_mode = format(file_mode, "#04o")
+                    if os.name != "nt" and file_mode & 0o077:
+                        auth_token_file_over_permissive = True
+                except OSError:
+                    auth_token_file_mode = None
 
     tokens: list[Mapping[str, Any]] = []
     seen_ids: Counter[str] = Counter()
@@ -193,7 +222,42 @@ def audit_service_token_configs(
                     details={"service": service_name},
                 )
             )
-    if auth_token:
+    if auth_token_env and not auth_token_env_present:
+        findings.append(
+            TokenAuditFinding(
+                level="error" if enabled and not tokens_cfg else "warning",
+                message="Zmienna środowiskowa auth_token_env nie jest ustawiona",
+                details={
+                    "service": service_name,
+                    "token_env": str(auth_token_env),
+                },
+            )
+        )
+    if auth_token_file and not auth_token_file_exists:
+        findings.append(
+            TokenAuditFinding(
+                level="warning",
+                message="Plik legacy auth_token wskazany w konfiguracji nie istnieje",
+                details={
+                    "service": service_name,
+                    "token_file": str(auth_token_file),
+                },
+            )
+        )
+    if auth_token_file_exists and auth_token_file_over_permissive:
+        findings.append(
+            TokenAuditFinding(
+                level="warning",
+                message="Plik legacy auth_token ma zbyt szerokie uprawnienia",
+                details={
+                    "service": service_name,
+                    "token_file": str(auth_token_file),
+                    "mode": auth_token_file_mode or "<unknown>",
+                    "expected_max_mode": "0o600",
+                },
+            )
+        )
+    if auth_token or auth_token_env_present or auth_token_file_exists:
         if warn_on_legacy:
             findings.append(
                 TokenAuditFinding(
@@ -219,8 +283,8 @@ def audit_service_token_configs(
     return TokenAuditServiceReport(
         service=service_name,
         enabled=enabled,
-        configured=True,
-        legacy_token=bool(auth_token),
+        configured=bool(tokens_cfg) or bool(auth_token) or auth_token_env_present or auth_token_file_exists,
+        legacy_token=bool(auth_token or auth_token_env or auth_token_file),
         token_count=len(tokens_cfg),
         required_scopes=normalized_required,
         coverage={scope: tuple(ids) for scope, ids in coverage.items()},

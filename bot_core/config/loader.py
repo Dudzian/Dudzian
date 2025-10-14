@@ -1121,10 +1121,32 @@ def _load_metrics_service(
     }
 
     # Opcjonalne: token autoryzacyjny
+    token_env_value: str | None = None
+    token_file_path: str | None = None
     if "auth_token" in available_fields:
         kwargs["auth_token"] = (
             str(metrics_raw.get("auth_token")) if metrics_raw.get("auth_token") else None
         )
+    if "auth_token_env" in available_fields:
+        token_env_value = _normalize_env_var(metrics_raw.get("auth_token_env"))
+        kwargs["auth_token_env"] = token_env_value
+    if "auth_token_file" in available_fields:
+        token_file_path = _normalize_runtime_path(metrics_raw.get("auth_token_file"), base_dir=base_dir)
+        kwargs["auth_token_file"] = token_file_path
+    if kwargs.get("auth_token") is None and token_env_value:
+        env_token = os.environ.get(token_env_value)
+        if env_token:
+            kwargs["auth_token"] = env_token
+    if (
+        kwargs.get("auth_token") is None
+        and token_file_path
+    ):
+        try:
+            file_token = Path(token_file_path).expanduser().read_text(encoding="utf-8").strip()
+        except OSError:
+            file_token = ""
+        if file_token:
+            kwargs["auth_token"] = file_token
 
     if "rbac_tokens" in available_fields:
         kwargs["rbac_tokens"] = _load_service_tokens(metrics_raw.get("rbac_tokens"))

@@ -19,6 +19,7 @@
 
 class QQuickWindow;
 class QScreen;
+class LicenseActivationController;
 
 class Application : public QObject {
     Q_OBJECT
@@ -87,6 +88,7 @@ private:
     void applyMetricsEnvironmentOverrides(const QCommandLineParser& parser,
                                           bool cliTokenProvided,
                                           bool cliTokenFileProvided);
+    void applyTradingTlsEnvironmentOverrides(const QCommandLineParser& parser);
     void applyScreenEnvironmentOverrides(const QCommandLineParser& parser);
     void applyPreferredScreen(QQuickWindow* window);
     QScreen* resolvePreferredScreen() const;
@@ -101,6 +103,7 @@ private:
     QString          m_connectionStatus = QStringLiteral("idle");
     PerformanceGuard m_guard{};
     int              m_maxSamples = 10240;
+    TradingClient::TlsConfig m_tradingTlsConfig{};
 
     TradingClient::InstrumentConfig m_instrument{
         QStringLiteral("BINANCE"),
@@ -113,6 +116,8 @@ private:
 
     std::unique_ptr<FrameRateMonitor> m_frameMonitor;
     bool                              m_reduceMotionActive = false;
+
+    std::unique_ptr<LicenseActivationController> m_licenseController;
 
     // --- Telemetry state ---
     std::unique_ptr<TelemetryReporter> m_telemetry;
