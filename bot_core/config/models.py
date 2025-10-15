@@ -181,6 +181,270 @@ class SecurityBaselineConfig:
     signing: SecurityBaselineSigningConfig | None = None
 
 
+@dataclass(slots=True)
+class SLOThresholdConfig:
+    """Definicja pojedynczego SLO monitorowanego w Stage5."""
+
+    name: str
+    metric: str
+    objective: float
+    comparator: str = "<="
+    window_minutes: float = 1440.0
+    aggregation: str = "average"
+    label_filters: Mapping[str, str] = field(default_factory=dict)
+    min_samples: int = 1
+
+
+@dataclass(slots=True)
+class KeyRotationEntryConfig:
+    """Pojedynczy wpis w konfiguracji rotacji kluczy."""
+
+    key: str
+    purpose: str
+    interval_days: float | None = None
+    warn_within_days: float | None = None
+
+
+@dataclass(slots=True)
+class KeyRotationConfig:
+    """Parametry modułu rotacji kluczy i przypomnień."""
+
+    registry_path: str
+    default_interval_days: float = 90.0
+    default_warn_within_days: float = 14.0
+    entries: Sequence[KeyRotationEntryConfig] = field(default_factory=tuple)
+    signing_key_env: str | None = None
+    signing_key_path: str | None = None
+    signing_key_value: str | None = None
+    signing_key_id: str | None = None
+    audit_directory: str = "var/audit/keys"
+
+
+@dataclass(slots=True)
+class PortfolioGovernorScoringWeights:
+    """Wagi komponentów scoringu PortfolioGovernora."""
+
+    alpha: float = 1.0
+    cost: float = 1.0
+    slo: float = 1.0
+    risk: float = 0.5
+
+
+@dataclass(slots=True)
+class PortfolioGovernorStrategyConfig:
+    """Konfiguracja strategii zarządzanej przez PortfolioGovernora."""
+
+    baseline_weight: float
+    min_weight: float = 0.0
+    max_weight: float = 1.0
+    baseline_max_signals: int | None = None
+    max_signal_factor: float = 1.0
+    risk_profile: str | None = None
+    tags: Sequence[str] = field(default_factory=tuple)
+
+
+@dataclass(slots=True)
+class PortfolioGovernorConfig:
+    """Ustawienia PortfolioGovernora sterującego alokacją między strategiami."""
+
+    enabled: bool = False
+    rebalance_interval_minutes: float = 15.0
+    smoothing: float = 0.5
+    scoring: PortfolioGovernorScoringWeights = field(
+        default_factory=PortfolioGovernorScoringWeights
+    )
+    strategies: Mapping[str, PortfolioGovernorStrategyConfig] = field(
+        default_factory=dict
+    )
+    default_baseline_weight: float = 0.25
+    default_min_weight: float = 0.05
+    default_max_weight: float = 0.5
+    require_complete_metrics: bool = True
+    min_score_threshold: float = 0.0
+    default_cost_bps: float = 0.0
+    max_signal_floor: int = 1
+
+
+@dataclass(slots=True)
+class MarketIntelSqliteConfig:
+    """Źródło danych SQLite wykorzystywane przez agregator Market Intelligence."""
+
+    path: str
+    table: str = "market_metrics"
+    symbol_column: str = "symbol"
+    mid_price_column: str = "mid_price"
+    depth_column: str = "avg_depth_usd"
+    spread_column: str = "avg_spread_bps"
+    funding_column: str = "funding_rate_bps"
+    sentiment_column: str = "sentiment_score"
+    volatility_column: str = "realized_volatility"
+    weight_column: str | None = "weight"
+
+
+@dataclass(slots=True)
+class MarketIntelConfig:
+    """Konfiguracja sekcji Market Intelligence Stage6."""
+
+    enabled: bool = False
+    output_directory: str = "data/stage6/metrics"
+    manifest_path: str | None = None
+    sqlite: MarketIntelSqliteConfig | None = None
+    required_symbols: Sequence[str] = field(default_factory=tuple)
+    default_weight: float = 1.0
+
+
+@dataclass(slots=True)
+class StressLabDatasetConfig:
+    """Źródło danych używane przez Stress Lab dla konkretnego instrumentu."""
+
+    symbol: str
+    metrics_path: str
+    weight: float = 1.0
+    allow_synthetic: bool = False
+
+
+@dataclass(slots=True)
+class StressLabShockConfig:
+    """Opis pojedynczego szoku w scenariuszu Stress Lab."""
+
+    type: str
+    intensity: float = 1.0
+    duration_minutes: float | None = None
+    notes: str | None = None
+
+
+@dataclass(slots=True)
+class StressLabThresholdsConfig:
+    """Progi oceny scenariuszy Stress Lab."""
+
+    max_liquidity_loss_pct: float = 0.65
+    max_spread_increase_bps: float = 45.0
+    max_volatility_increase_pct: float = 0.85
+    max_sentiment_drawdown: float = 0.55
+    max_funding_change_bps: float = 30.0
+    max_latency_spike_ms: float = 160.0
+    max_blackout_minutes: float = 45.0
+    max_dispersion_bps: float = 55.0
+
+
+@dataclass(slots=True)
+class StressLabScenarioConfig:
+    """Konfiguracja scenariusza Stress Lab dla wielu rynków."""
+
+    name: str
+    severity: str = "medium"
+    markets: Sequence[str] = field(default_factory=tuple)
+    shocks: Sequence[StressLabShockConfig] = field(default_factory=tuple)
+    description: str | None = None
+    threshold_overrides: StressLabThresholdsConfig | None = None
+
+
+@dataclass(slots=True)
+class StressLabConfig:
+    """Konfiguracja modułu Stress Lab w Stage6."""
+
+    enabled: bool = False
+    require_success: bool = True
+    report_directory: str = "var/audit/stage6/stress_lab"
+    signing_key_env: str | None = None
+    signing_key_path: str | None = None
+    signing_key_id: str | None = None
+    datasets: Mapping[str, StressLabDatasetConfig] = field(default_factory=dict)
+    scenarios: Sequence[StressLabScenarioConfig] = field(default_factory=tuple)
+    thresholds: StressLabThresholdsConfig = field(default_factory=StressLabThresholdsConfig)
+
+
+@dataclass(slots=True)
+class ResilienceDrillThresholdsConfig:
+    """Progi akceptacyjne dla drillów failover w Stage6."""
+
+    max_latency_ms: float = 250.0
+    max_error_rate: float = 0.05
+    max_failover_duration_seconds: float = 120.0
+    max_orders_failed: int = 0
+
+
+@dataclass(slots=True)
+class ResilienceDrillConfig:
+    """Definicja pojedynczego drill'u failover."""
+
+    name: str
+    primary: str
+    fallbacks: Sequence[str] = field(default_factory=tuple)
+    dataset_path: str = ""
+    thresholds: ResilienceDrillThresholdsConfig = field(
+        default_factory=ResilienceDrillThresholdsConfig
+    )
+    description: str | None = None
+
+
+@dataclass(slots=True)
+class ResilienceConfig:
+    """Konfiguracja modułu resilience & failover (Stage6)."""
+
+    enabled: bool = False
+    require_success: bool = True
+    report_directory: str = "var/audit/stage6/resilience"
+    signing_key_env: str | None = None
+    signing_key_path: str | None = None
+    signing_key_id: str | None = None
+    drills: Sequence[ResilienceDrillConfig] = field(default_factory=tuple)
+
+
+@dataclass(slots=True)
+class ObservabilityConfig:
+    """Konfiguracja rozszerzonej obserwowalności Stage5."""
+
+    slo: Mapping[str, SLOThresholdConfig] = field(default_factory=dict)
+    key_rotation: KeyRotationConfig | None = None
+
+
+@dataclass(slots=True)
+class DecisionOrchestratorThresholds:
+    """Progi podejmowania decyzji przez DecisionOrchestrator."""
+
+    max_cost_bps: float
+    min_net_edge_bps: float
+    max_daily_loss_pct: float
+    max_drawdown_pct: float
+    max_position_ratio: float
+    max_open_positions: int
+    max_latency_ms: float | None = None
+    max_trade_notional: float | None = None
+
+
+@dataclass(slots=True)
+class DecisionStressTestConfig:
+    """Parametry testów stresowych wykorzystywanych przed przejściem live."""
+
+    cost_shock_bps: float = 0.0
+    latency_spike_ms: float = 0.0
+    slippage_multiplier: float = 1.0
+
+
+@dataclass(slots=True)
+class DecisionEngineTCOConfig:
+    """Ścieżki raportów TCO wykorzystywanych przez DecisionOrchestrator."""
+
+    report_paths: Sequence[str] = field(default_factory=tuple)
+    require_at_startup: bool = False
+
+
+@dataclass(slots=True)
+class DecisionEngineConfig:
+    """Konfiguracja rozszerzonego decision engine'u (Etap 5)."""
+
+    orchestrator: DecisionOrchestratorThresholds
+    profile_overrides: Mapping[str, DecisionOrchestratorThresholds] = field(
+        default_factory=dict
+    )
+    stress_tests: DecisionStressTestConfig | None = None
+    min_probability: float = 0.0
+    require_cost_data: bool = False
+    penalty_cost_bps: float = 0.0
+    tco: DecisionEngineTCOConfig | None = None
+
+
 # --- Środowiska / rdzeń ------------------------------------------------------
 
 @dataclass(slots=True)
@@ -539,6 +803,10 @@ class CoreConfig:
         str, CrossExchangeArbitrageStrategyConfig
     ] = field(default_factory=dict)
     multi_strategy_schedulers: Mapping[str, MultiStrategySchedulerConfig] = field(default_factory=dict)
+    decision_engine: DecisionEngineConfig | None = None
+    portfolio_governor: PortfolioGovernorConfig | None = None
+    stress_lab: StressLabConfig | None = None
+    resilience: ResilienceConfig | None = None
     reporting: CoreReportingConfig | None = None
     sms_providers: Mapping[str, SMSProviderSettings] = field(default_factory=dict)
     telegram_channels: Mapping[str, TelegramChannelSettings] = field(default_factory=dict)
@@ -553,7 +821,9 @@ class CoreConfig:
     risk_service: RiskServiceConfig | None = None
     risk_decision_log: RiskDecisionLogConfig | None = None
     security_baseline: SecurityBaselineConfig | None = None
+    observability: ObservabilityConfig | None = None
     runtime_resource_limits: RuntimeResourceLimitsConfig | None = None
+    market_intel: MarketIntelConfig | None = None
     source_path: str | None = None
     source_directory: str | None = None
 
@@ -602,4 +872,24 @@ __all__ = [
     "RiskDecisionLogConfig",
     "SecurityBaselineConfig",
     "SecurityBaselineSigningConfig",
+    "SLOThresholdConfig",
+    "KeyRotationEntryConfig",
+    "KeyRotationConfig",
+    "ObservabilityConfig",
+    "DecisionEngineConfig",
+    "DecisionOrchestratorThresholds",
+    "DecisionStressTestConfig",
+    "PortfolioGovernorConfig",
+    "PortfolioGovernorStrategyConfig",
+    "PortfolioGovernorScoringWeights",
+    "MarketIntelConfig",
+    "MarketIntelSqliteConfig",
+    "StressLabConfig",
+    "StressLabDatasetConfig",
+    "StressLabScenarioConfig",
+    "StressLabShockConfig",
+    "StressLabThresholdsConfig",
+    "ResilienceConfig",
+    "ResilienceDrillConfig",
+    "ResilienceDrillThresholdsConfig",
 ]

@@ -19,8 +19,8 @@ except Exception:  # pragma: no cover
     pa = None  # type: ignore
     pq = None  # type: ignore
 
-# konfiguracja i profile (gałąź "codex")
-try:  # pragma: no cover
+# konfiguracja i profile (różne gałęzie)
+try:
     from bot_core.config import load_core_config
     from bot_core.risk.factory import build_risk_profile_from_config
 except Exception:  # pragma: no cover
@@ -437,6 +437,7 @@ class SimulationOrder:
             pnl=_coerce_optional_float(data.get("pnl")),
         )
 
+
 # --- Funkcje pomocnicze (czas/konwersje) ------------------------------------
 def _parse_timestamp(value: object) -> datetime:
     if isinstance(value, datetime):
@@ -461,6 +462,7 @@ def _coerce_optional_float(value: object | None) -> float | None:
     except (TypeError, ValueError):
         return None
 
+
 # --- Helpery do pobierania wartości profilu (zgodność nazw/metod) -----------
 def _profile_float(profile: object, names: Sequence[str], default: float = 0.0) -> float:
     """Spróbuj kolejno metod/atrybutów – zwróć pierwszą poprawną wartość float."""
@@ -473,23 +475,30 @@ def _profile_float(profile: object, names: Sequence[str], default: float = 0.0) 
                 continue
     return float(default)
 
+
 def _drawdown_limit(profile: RiskProfile) -> float:
     return _profile_float(profile, ("drawdown_limit", "drawdown_limit_pct"), 0.0)
+
 
 def _daily_loss_limit(profile: RiskProfile) -> float:
     return _profile_float(profile, ("daily_loss_limit", "max_daily_loss_limit"), 0.0)
 
+
 def _target_volatility(profile: RiskProfile) -> float:
     return _profile_float(profile, ("target_volatility", "target_volatility_pct"), 0.0)
+
 
 def _stop_loss_atr_multiple(profile: RiskProfile) -> float:
     return _profile_float(profile, ("stop_loss_atr_multiple", "stop_loss_atr_mult"), 1.0)
 
+
 def _max_leverage(profile: RiskProfile) -> float:
     return _profile_float(profile, ("max_leverage", "leverage_limit"), 1.0)
 
+
 def _max_position_exposure(profile: RiskProfile) -> float:
     return _profile_float(profile, ("max_position_exposure", "max_position_pct"), 0.0)
+
 
 # --- Loader świec Parquet (OHLCV) -------------------------------------------
 class MarketDatasetLoader:
@@ -537,6 +546,7 @@ class MarketDatasetLoader:
             raise FileNotFoundError(partition)
         return candles
 
+
 # --- Generator syntetycznych świec ------------------------------------------
 def _generate_synthetic_candles(*, bars: int, seed: int = 42, interval_seconds: int = 3600) -> Sequence[Candle]:
     rng = random.Random(seed)
@@ -565,6 +575,7 @@ def _generate_synthetic_candles(*, bars: int, seed: int = 42, interval_seconds: 
         price = close_price
         timestamp += interval_seconds * 1000
     return candles
+
 
 # --- Metryki z serii ---------------------------------------------------------
 def _compute_returns(candles: Sequence[Candle]) -> list[float]:
@@ -610,6 +621,7 @@ def _realized_volatility(returns: Sequence[float]) -> float:
     if not returns:
         return 0.0
     return math.sqrt(pstdev(returns)) * math.sqrt(len(returns)) if len(returns) > 1 else abs(returns[0])
+
 
 # --- Stres testy -------------------------------------------------------------
 def _run_flash_crash_test(profile: RiskProfile, candles: Sequence[Candle], base_equity: float) -> StressTestResult:
@@ -679,6 +691,7 @@ def _run_latency_spike_test(profile: RiskProfile, candles: Sequence[Candle]) -> 
     status = "passed" if max_spread <= threshold else "failed"
     notes = None if status == "passed" else f"Spread {max_spread * 100:.2f}% przekracza próg {threshold * 100:.2f}% – ryzyko poślizgu"
     return StressTestResult(name="latency_spike", status=status, metrics=metrics, notes=notes)
+
 
 # --- Runner OHLCV ------------------------------------------------------------
 class RiskSimulationRunner:
@@ -782,6 +795,7 @@ class RiskSimulationRunner:
             sample_size=sample_size,
         )
 
+
 # --- Wczytywanie profili z konfiguracji --------------------------------------
 def load_profiles_from_config(path: str | Path) -> Sequence[RiskProfile]:
     """Wczytuje i instancjuje profile ryzyka na podstawie konfiguracji."""
@@ -794,6 +808,7 @@ def load_profiles_from_config(path: str | Path) -> Sequence[RiskProfile]:
     if not profiles:
         raise RuntimeError("Brak profili ryzyka w konfiguracji")
     return profiles
+
 
 def run_simulations_from_config(
     *,
@@ -833,6 +848,7 @@ def run_simulations_from_config(
         report.synthetic_data = True
     return report
 
+
 # --- Scenariusze Parquet/engine (gałąź "main") -------------------------------
 def write_default_smoke_scenarios(path: str | Path) -> Path:
     """Zapisuje domyślne scenariusze smoke testu do pliku Parquet."""
@@ -844,6 +860,7 @@ def write_default_smoke_scenarios(path: str | Path) -> Path:
     pq.write_table(table, target)
     return target
 
+
 def load_orders_from_parquet(path: str | Path) -> Sequence[SimulationOrder]:
     if pq is None:
         raise RuntimeError("pyarrow nie jest dostępny — nie można wczytać pliku Parquet")
@@ -852,6 +869,7 @@ def load_orders_from_parquet(path: str | Path) -> Sequence[SimulationOrder]:
     orders = [SimulationOrder.from_mapping(record) for record in records]
     orders.sort(key=lambda order: order.timestamp)
     return tuple(orders)
+
 
 def build_profile(profile_name: str, *, manual_overrides: Mapping[str, object] | None = None) -> RiskProfile:
     """Buduje profil ryzyka z wbudowanych klas (aggressive/balanced/conservative/manual)."""
@@ -898,6 +916,7 @@ def build_profile(profile_name: str, *, manual_overrides: Mapping[str, object] |
         raise RuntimeError(f"Profile '{profile_name}' is not available in this build.")
     return factory()  # type: ignore[call-arg]
 
+
 def run_profile_scenario(
     engine: RiskEngine,
     profile: RiskProfile,
@@ -921,7 +940,7 @@ def run_profile_scenario(
             "allowed": result.allowed,
             "reason": result.reason,
         }
-        if result.adjustments is not None:
+        if getattr(result, "adjustments", None) is not None:
             decision_payload["adjustments"] = dict(result.adjustments)
         decisions.append(decision_payload)
         if result.allowed:
@@ -955,9 +974,11 @@ def run_profile_scenario(
         final_state=state,
     )
 
+
 # --- PDF utils ---------------------------------------------------------------
 def _escape_pdf_text(value: str) -> str:
     return value.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
 
 def _build_simple_pdf(lines: Sequence[str]) -> bytes:
     content_lines = ["BT", "/F1 12 Tf", f"72 {_PDF_PAGE_HEIGHT - 72} Td"]
@@ -1000,9 +1021,11 @@ def _build_simple_pdf(lines: Sequence[str]) -> bytes:
     output.extend(b"\n%%EOF\n")
     return bytes(output)
 
+
 def _write_simple_pdf(path: str | Path, lines: Sequence[str]) -> None:
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     Path(path).write_bytes(_build_simple_pdf(lines))
+
 
 # --- Public API --------------------------------------------------------------
 __all__ = [

@@ -5,7 +5,7 @@ import logging
 from pathlib import Path
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from typing import Callable, Dict, Mapping, MutableMapping, Sequence
+from typing import Any, Callable, Dict, Mapping, MutableMapping, Sequence
 
 from bot_core.exchanges.base import AccountSnapshot, OrderRequest
 from bot_core.risk.base import RiskCheckResult, RiskEngine, RiskProfile, RiskRepository
@@ -17,6 +17,15 @@ from bot_core.risk.simulation import (
     load_orders_from_parquet,
     run_profile_scenario,
 )
+
+try:  # pragma: no cover - moduły decision/tco mogą być opcjonalne w innych gałęziach
+    from bot_core.decision import DecisionOrchestrator
+    from bot_core.decision.models import DecisionCandidate, DecisionEvaluation, RiskSnapshot
+except Exception:  # pragma: no cover - decyzje mogą nie być dostępne
+    DecisionOrchestrator = None  # type: ignore
+    DecisionCandidate = None  # type: ignore
+    DecisionEvaluation = None  # type: ignore
+    RiskSnapshot = None  # type: ignore
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -166,12 +175,14 @@ class ThresholdRiskEngine(RiskEngine):
         *,
         clock: Callable[[], datetime] | None = None,
         decision_log: RiskDecisionLog | None = None,
+        decision_orchestrator: Any | None = None,
     ) -> None:
         self._repository = repository or InMemoryRiskRepository()
         self._clock = clock or datetime.utcnow
         self._profiles: Dict[str, RiskProfile] = {}
         self._states: Dict[str, RiskState] = {}
         self._decision_log = decision_log
+        self._decision_orchestrator: Any | None = decision_orchestrator
 
     def register_profile(self, profile: RiskProfile) -> None:
         self._profiles[profile.name] = profile
@@ -183,6 +194,11 @@ class ThresholdRiskEngine(RiskEngine):
         else:
             self._states[profile.name] = RiskState.from_mapping(profile.name, state)
         _LOGGER.info("Zarejestrowano profil ryzyka %s", profile.name)
+
+    def attach_decision_orchestrator(self, orchestrator: Any | None) -> None:
+        """Podłącza DecisionOrchestrator do dodatkowych kontroli kosztowych."""
+
+        self._decision_orchestrator = orchestrator
 
     def apply_pre_trade_checks(
         self,
@@ -230,8 +246,14 @@ class ThresholdRiskEngine(RiskEngine):
             reason: str,
             *,
             adjustments: Mapping[str, float] | None = None,
+            metadata: Mapping[str, object] | None = None,
         ) -> RiskCheckResult:
-            result = RiskCheckResult(allowed=False, reason=reason, adjustments=adjustments)
+            result = RiskCheckResult(
+                allowed=False,
+                reason=reason,
+                adjustments=adjustments,
+                metadata=metadata,
+            )
             self._persist_state(profile_name)
             return self._finalize_decision(
                 profile_name=profile_name,
@@ -466,8 +488,26 @@ class ThresholdRiskEngine(RiskEngine):
                         adjustments={"max_quantity": max(0.0, allowed_additional_quantity)},
                     )
 
+        evaluation_metadata: Mapping[str, object] | None = None
+        if self._decision_orchestrator is not None:
+            evaluation, evaluation_payload = self._maybe_run_decision_orchestrator(
+                request=request,
+                profile_name=profile_name,
+                account=account,
+                state=state,
+            )
+            if evaluation_payload:
+                evaluation_metadata = {"decision_orchestrator": evaluation_payload}
+            if evaluation is None:
+                if evaluation_payload and evaluation_payload.get("status") == "error":
+                    reason = self._format_decision_error(evaluation_payload)
+                    return deny(reason, metadata=evaluation_metadata)
+            elif not evaluation.accepted:
+                reason = self._format_decision_denial_reason(evaluation)
+                return deny(reason, metadata=evaluation_metadata)
+
         self._persist_state(profile_name)
-        result = RiskCheckResult(allowed=True)
+        result = RiskCheckResult(allowed=True, metadata=evaluation_metadata)
         return self._finalize_decision(
             profile_name=profile_name,
             request=request,
@@ -546,6 +586,151 @@ class ThresholdRiskEngine(RiskEngine):
             return ()
         return self._decision_log.tail(profile=profile_name, limit=limit)
 
+    def _maybe_run_decision_orchestrator(
+        self,
+        *,
+        request: OrderRequest,
+        profile_name: str,
+        account: AccountSnapshot,
+        state: RiskState,
+    ) -> tuple[Any | None, Mapping[str, object] | None]:
+        if self._decision_orchestrator is None or DecisionCandidate is None:
+            return None, None
+
+        candidate_payload, error_payload = self._extract_candidate_payload(
+            request.metadata
+        )
+        if error_payload:
+            return None, error_payload
+        if candidate_payload is None:
+            return None, None
+
+        payload = dict(candidate_payload)
+        payload.setdefault("risk_profile", profile_name)
+        if request.symbol and "symbol" not in payload:
+            payload["symbol"] = request.symbol
+
+        if "notional" not in payload or payload["notional"] in (None, 0, 0.0):
+            price_value = _coerce_float(request.price)
+            if price_value and price_value > 0:
+                payload["notional"] = abs(request.quantity) * price_value
+
+        try:
+            candidate = DecisionCandidate.from_mapping(payload)
+        except Exception:
+            _LOGGER.warning(
+                "DecisionOrchestrator: nieprawidłowe dane kandydata", exc_info=True
+            )
+            return None, {"status": "error", "error": "invalid_candidate"}
+
+        snapshot = self._build_decision_snapshot(profile_name, state, account)
+        try:
+            evaluation = self._decision_orchestrator.evaluate_candidate(  # type: ignore[union-attr]
+                candidate,
+                snapshot,
+            )
+        except Exception:
+            _LOGGER.exception("DecisionOrchestrator: błąd ewaluacji")
+            return None, {"status": "error", "error": "evaluation_failed"}
+
+        return evaluation, self._serialize_decision_evaluation(evaluation)
+
+    def _extract_candidate_payload(
+        self, metadata: Mapping[str, object] | None
+    ) -> tuple[Mapping[str, object] | None, Mapping[str, object] | None]:
+        if not isinstance(metadata, Mapping):
+            return None, None
+
+        candidate_raw: object | None = metadata.get("decision_candidate")
+        if candidate_raw is None:
+            engine_section = metadata.get("decision_engine")
+            if isinstance(engine_section, Mapping):
+                nested = engine_section.get("candidate")
+                if isinstance(nested, Mapping):
+                    candidate_raw = nested
+                else:
+                    candidate_raw = engine_section
+
+        if candidate_raw is None:
+            return None, None
+
+        if not isinstance(candidate_raw, Mapping):
+            return None, {"status": "error", "error": "invalid_candidate_payload"}
+
+        return dict(candidate_raw), None
+
+    def _build_decision_snapshot(
+        self,
+        profile_name: str,
+        state: RiskState,
+        account: AccountSnapshot,
+    ) -> Mapping[str, object] | Any:
+        snapshot_payload: MutableMapping[str, object] = dict(state.to_mapping())
+        last_equity = state.last_equity or account.total_equity
+        snapshot_payload["last_equity"] = last_equity
+        snapshot_payload["start_of_day_equity"] = (
+            state.start_of_day_equity or account.total_equity
+        )
+        snapshot_payload["daily_realized_pnl"] = state.daily_realized_pnl
+        snapshot_payload["gross_notional"] = state.gross_notional()
+        snapshot_payload["active_positions"] = state.active_positions()
+        snapshot_payload["daily_loss_pct"] = state.daily_loss_pct()
+        snapshot_payload["drawdown_pct"] = state.drawdown_pct(last_equity)
+        snapshot_payload["force_liquidation"] = state.force_liquidation
+
+        if RiskSnapshot is not None:
+            try:
+                return RiskSnapshot.from_mapping(profile_name, snapshot_payload)
+            except Exception:  # pragma: no cover - diagnostyka snapshotu
+                _LOGGER.debug(
+                    "DecisionOrchestrator: nie udało się zbudować RiskSnapshot",
+                    exc_info=True,
+                )
+
+        snapshot_payload["profile"] = profile_name
+        return snapshot_payload
+
+    def _serialize_decision_evaluation(
+        self, evaluation: Any
+    ) -> Mapping[str, object]:
+        if DecisionEvaluation is not None and isinstance(evaluation, DecisionEvaluation):
+            return {
+                "status": "evaluated",
+                "accepted": evaluation.accepted,
+                "cost_bps": evaluation.cost_bps,
+                "net_edge_bps": evaluation.net_edge_bps,
+                "reasons": list(evaluation.reasons),
+                "risk_flags": list(evaluation.risk_flags),
+                "stress_failures": list(evaluation.stress_failures),
+                "candidate": evaluation.candidate.to_mapping(),
+            }
+        if isinstance(evaluation, Mapping):
+            return dict(evaluation)
+        return {"status": "evaluated", "accepted": bool(getattr(evaluation, "accepted", False))}
+
+    def _format_decision_denial_reason(self, evaluation: Any) -> str:
+        if DecisionEvaluation is not None and isinstance(evaluation, DecisionEvaluation):
+            reasons = list(evaluation.reasons)
+            reasons.extend(str(flag) for flag in evaluation.risk_flags)
+            reasons.extend(str(flag) for flag in evaluation.stress_failures)
+        else:
+            reasons = []
+            if isinstance(evaluation, Mapping):
+                reasons = [
+                    *(str(reason) for reason in evaluation.get("reasons", []) or []),
+                    *(str(reason) for reason in evaluation.get("risk_flags", []) or []),
+                    *(str(reason) for reason in evaluation.get("stress_failures", []) or []),
+                ]
+
+        reasons = [reason for reason in reasons if reason]
+        if not reasons:
+            return "DecisionOrchestrator odrzucił decyzję bez szczegółów."
+        return "DecisionOrchestrator odrzucił decyzję: " + "; ".join(reasons)
+
+    def _format_decision_error(self, payload: Mapping[str, object]) -> str:
+        detail = str(payload.get("error", "unknown_error"))
+        return f"DecisionOrchestrator nie mógł ocenić kandydata ({detail})."
+
     def _finalize_decision(
         self,
         *,
@@ -579,6 +764,9 @@ class ThresholdRiskEngine(RiskEngine):
             }
             if isinstance(request.metadata, Mapping) and request.metadata:
                 metadata["request_metadata"] = {str(k): v for k, v in request.metadata.items()}
+
+            if result.metadata:
+                metadata.update({str(k): v for k, v in result.metadata.items()})
 
             profile = self._profiles.get(profile_name)
             if profile is not None:

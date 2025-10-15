@@ -1,7 +1,7 @@
 """Core OEM bundle builder.
 
 This module assembles daemon/UI binaries together with signed configuration
-artifacts into a single archive per platform.  The generated bundle is offline
+artifacts into a single archive per platform. The generated bundle is offline
 friendly and ships with bootstrap scripts that verify device fingerprint data
 before installation.
 """
@@ -33,9 +33,7 @@ from bot_core.security.signing import canonical_json_bytes
 BUNDLE_NAME = "core-oem"
 SUPPORTED_PLATFORMS = {"linux", "macos", "windows"}
 _RESERVED_RESOURCE_PREFIXES = {"daemon", "ui", "config", "bootstrap"}
-_RESERVED_RESOURCE_PREFIXES_CASEFOLD = {
-    prefix.casefold() for prefix in _RESERVED_RESOURCE_PREFIXES
-}
+_RESERVED_RESOURCE_PREFIXES_CASEFOLD = {prefix.casefold() for prefix in _RESERVED_RESOURCE_PREFIXES}
 _RESERVED_CONFIG_PATHS = {
     "fingerprint.expected.json",
     "fingerprint.expected.json.sig",
@@ -50,9 +48,7 @@ _WINDOWS_DEVICE_NAMES = {
     *{f"lpt{i}" for i in range(1, 10)},
 }
 _WINDOWS_INVALID_CHARS = set("<>:\\|?*")
-_ALLOWED_VERSION_CHARS = set(
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-"
-)
+_ALLOWED_VERSION_CHARS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-")
 _ALLOWED_FINGERPRINT_PLACEHOLDER_CHARS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")
 
 
@@ -183,28 +179,18 @@ class SignatureManager:
         return hasher.hexdigest()
 
     def build_signature_document(self, payload: Mapping[str, Any]) -> Dict[str, Any]:
-        digest = hmac.new(
-            self._key,
-            canonical_json_bytes(payload),
-            getattr(hashlib, self._digest_algorithm),
-        ).digest()
+        digest = hmac.new(self._key, canonical_json_bytes(payload), getattr(hashlib, self._digest_algorithm)).digest()
         signature = {
             "algorithm": self._signature_algorithm,
             "value": base64.b64encode(digest).decode("ascii"),
         }
         if self._key_id:
             signature["key_id"] = self._key_id
-        return {
-            "payload": dict(payload),
-            "signature": signature,
-        }
+        return {"payload": dict(payload), "signature": signature}
 
     def write_signature_document(self, payload: Mapping[str, Any], destination: Path) -> None:
         document = self.build_signature_document(payload)
-        destination.write_text(
-            json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
+        destination.write_text(json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def _iter_symlinks(root: Path) -> Iterable[Path]:
@@ -647,9 +633,7 @@ def _resolve_paths(values: Iterable[str], *, label: str) -> List[Path]:
         name_key = path.name.casefold()
         existing = seen_names.get(name_key)
         if existing is not None:
-            raise ValueError(
-                f"{label} names would conflict on a case-insensitive filesystem:" f" {existing} vs {path}"
-            )
+            raise ValueError(f"{label} names would conflict on a case-insensitive filesystem:" f" {existing} vs {path}")
         seen_names[name_key] = path
         if path.is_dir():
             _ensure_casefold_safe_tree(path, label=label)
@@ -700,11 +684,7 @@ def build_from_cli(argv: Optional[List[str]] = None) -> Path:
         default="var/dist",
         help="Destination directory for bundle archives",
     )
-    parser.add_argument(
-        "--log-level",
-        default="INFO",
-        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-    )
+    parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=getattr(logging, args.log_level))
@@ -720,9 +700,7 @@ def build_from_cli(argv: Optional[List[str]] = None) -> Path:
     if os.name != "nt":
         mode = key_path.stat().st_mode
         if mode & (stat.S_IRWXG | stat.S_IRWXO):
-            raise ValueError(
-                "Signing key file permissions must restrict access to the owner: " f"{key_path}"
-            )
+            raise ValueError("Signing key file permissions must restrict access to the owner: " f"{key_path}")
 
     signing_key = key_path.read_bytes()
 

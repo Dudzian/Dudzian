@@ -1,3 +1,4 @@
+
 """Generowanie/pozyskiwanie i podpisywanie fingerprintów sprzętowych (OEM + host)."""
 
 from __future__ import annotations

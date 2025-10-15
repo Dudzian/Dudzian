@@ -1,0 +1,11 @@
+{
+  "max_latency_ms": 205.0,
+  "error_rate": 0.035,
+  "failover_duration_seconds": 72.0,
+  "orders_redirected": 180,
+  "orders_failed": 4,
+  "notes": [
+    "fallback: kraken_futures",
+    "fallback: zonda_spot"
+  ]
+}

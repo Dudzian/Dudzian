@@ -1,0 +1,18 @@
+{
+  "generated_at": "2025-10-15T16:31:58.271521+00:00",
+  "baseline": {
+    "symbol": "BTCUSDT",
+    "mid_price": 27123.5,
+    "avg_depth_usd": 2750000.0,
+    "avg_spread_bps": 5.4,
+    "funding_rate_bps": 8.5,
+    "sentiment_score": 0.35,
+    "realized_volatility": 0.42,
+    "weight": 1.0
+  },
+  "source": {
+    "type": "sqlite",
+    "path": "/workspace/var/stage6/market_intel/market_metrics.sqlite",
+    "table": "market_metrics"
+  }
+}

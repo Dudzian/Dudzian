@@ -48,9 +48,9 @@ public:
         QString rootCertificatePath;             // PEM root CA
         QString clientCertificatePath;           // PEM cert klienta (opcjonalnie)
         QString clientKeyPath;                   // PEM klucz klienta  (opcjonalnie)
-        QString serverNameOverride;              // opcjonalny override SNI (legacy / alternatywa)
-        QString targetNameOverride;              // używany w .cpp (GRPC_SSL_TARGET_NAME_OVERRIDE_ARG)
-        QString pinnedServerFingerprint;         // oczekiwany SHA-256 cert/CA (hex, bez ':')
+        QString serverNameOverride;              // opcjonalny override SNI (legacy)
+        QString targetNameOverride;              // GRPC_SSL_TARGET_NAME_OVERRIDE_ARG
+        QString pinnedServerFingerprint;         // oczekiwany SHA-256 (hex, bez ':')
     };
 
     struct PreLiveChecklistResult {

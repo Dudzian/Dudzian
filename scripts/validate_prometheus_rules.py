@@ -1,4 +1,4 @@
-"""Walidacja reguł alertów Prometheusa dla scenariuszy Stage 4."""
+"""Walidacja reguł alertów Prometheusa dla scenariuszy Stage 4/5/6."""
 from __future__ import annotations
 
 import argparse
@@ -26,8 +26,12 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--rules",
         action="append",
-        default=["deploy/prometheus/rules/multi_strategy_rules.yml"],
-        help="Ścieżka do pliku YAML z regułami (domyślnie multi_strategy_rules.yml)",
+        default=[
+            "deploy/prometheus/rules/multi_strategy_rules.yml",
+            "deploy/prometheus/stage5_alerts.yaml",
+            "deploy/prometheus/stage6_alerts.yaml",
+        ],
+        help="Ścieżka do pliku YAML z regułami (domyślnie pliki Stage4/Stage5/Stage6)",
     )
     parser.add_argument(
         "--require-label",
@@ -50,7 +54,14 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--metric-prefix",
         action="append",
-        default=["bot_core_multi_strategy"],
+        default=[
+            "bot_core_multi_strategy",
+            "bot_core_stage6",
+            "bot_core_decision",
+            "bot_core_trade_cost",
+            "bot_core_fill_rate",
+            "bot_core_key_rotation",
+        ],
         help="Prefiks metryk wymagany w wyrażeniu alertu",
     )
     return parser.parse_args(argv)
@@ -61,7 +72,7 @@ def _read_rules(path: Path) -> dict:
         raise PrometheusRuleValidationError(f"Plik z regułami '{path}' nie istnieje")
     try:
         loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except yaml.YAMLError as exc:  # pragma: no cover - uszkodzony YAML
+    except yaml.YAMLError as exc:  # pragma: no cover
         raise PrometheusRuleValidationError(
             f"Nie udało się sparsować pliku YAML '{path}'"
         ) from exc
@@ -104,6 +115,7 @@ def _validate_rule(
     def _error(message: str) -> None:
         errors.append(f"{ctx.file}: grupa='{ctx.group}' alert='{ctx.alert}': {message}")
 
+    # Polityka: wymagamy 'expr' i 'for'
     for field in ("expr", "for"):
         value = rule.get(field)
         if not isinstance(value, str) or not value.strip():
@@ -124,24 +136,18 @@ def _validate_rule(
             _error(f"brak wymaganej etykiety '{label}'")
             continue
         if label == "severity" and value.lower() not in {s.lower() for s in allowed_severity}:
-            _error(
-                f"etykieta severity='{value}' poza dozwolonym zakresem {allowed_severity}"
-            )
+            _error(f"etykieta severity='{value}' poza dozwolonym zakresem {allowed_severity}")
 
     for annotation in required_annotations:
         value = annotations.get(annotation)
         if not isinstance(value, str) or len(value.strip()) < 10:
-            _error(
-                f"adnotacja '{annotation}' musi zawierać co najmniej 10 znaków treści"
-            )
+            _error(f"adnotacja '{annotation}' musi zawierać co najmniej 10 znaków treści")
 
     expr = rule.get("expr")
     if isinstance(expr, str) and metric_prefixes:
         lowered = expr.lower()
         if not any(prefix.lower() in lowered for prefix in metric_prefixes):
-            _error(
-                "wyrażenie 'expr' nie zawiera wymaganego prefiksu metryk"
-            )
+            _error("wyrażenie 'expr' nie zawiera wymaganego prefiksu metryk")
 
     return errors
 
@@ -165,21 +171,15 @@ def _validate_file(
             continue
         rules = group.get("rules")
         if not isinstance(rules, list) or not rules:
-            errors.append(
-                f"{path}: grupa '{group_name}' musi zawierać niepustą listę reguł"
-            )
+            errors.append(f"{path}: grupa '{group_name}' musi zawierać niepustą listę reguł")
             continue
         for rule in rules:
             if not isinstance(rule, dict):
-                errors.append(
-                    f"{path}: grupa '{group_name}' zawiera regułę o niepoprawnym typie"
-                )
+                errors.append(f"{path}: grupa '{group_name}' zawiera regułę o niepoprawnym typie")
                 continue
             alert_name = rule.get("alert")
             if not isinstance(alert_name, str) or not alert_name.strip():
-                errors.append(
-                    f"{path}: grupa '{group_name}' zawiera regułę bez pola 'alert'"
-                )
+                errors.append(f"{path}: grupa '{group_name}' zawiera regułę bez pola 'alert'")
                 alert_name = "<bez_nazwy>"
             ctx = _ValidationContext(file=path, group=group_name, alert=alert_name)
             errors.extend(
@@ -229,4 +229,3 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":  # pragma: no cover - wejście CLI
     sys.exit(main())
-

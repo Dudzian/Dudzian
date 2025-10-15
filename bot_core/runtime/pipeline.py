@@ -57,6 +57,11 @@ try:
 except Exception:  # pragma: no cover
     TradingController = None  # type: ignore
 
+try:
+    from bot_core.portfolio import PortfolioGovernor  # type: ignore
+except Exception:  # pragma: no cover - PortfolioGovernor może być niedostępny
+    PortfolioGovernor = None  # type: ignore
+
 
 @dataclass(slots=True)
 class DailyTrendPipeline:
@@ -538,6 +543,7 @@ class MultiStrategyRuntime:
     signal_sink: StrategySignalSink
     strategies: Mapping[str, StrategyEngine]
     schedules: tuple[StrategyScheduleConfig, ...]
+    portfolio_governor: PortfolioGovernor | None = None
 
 
 class OHLCVStrategyFeed(StrategyDataFeed):
@@ -689,11 +695,13 @@ def build_multi_strategy_runtime(
 
     data_feed = OHLCVStrategyFeed(cached_source, symbols_map=symbols_map, interval_map=interval_map)
     signal_sink = InMemoryStrategySignalSink()
+    portfolio_governor = getattr(bootstrap_ctx, "portfolio_governor", None)
     scheduler = MultiStrategyScheduler(
         environment=environment_name,
         portfolio=str(paper_settings["portfolio_id"]),
         telemetry_emitter=telemetry_emitter,
         decision_journal=bootstrap_ctx.decision_journal,
+        portfolio_governor=portfolio_governor,
     )
 
     for schedule in scheduler_cfg.schedules:
@@ -720,6 +728,7 @@ def build_multi_strategy_runtime(
         signal_sink=signal_sink,
         strategies=strategies,
         schedules=tuple(scheduler_cfg.schedules),
+        portfolio_governor=portfolio_governor,
     )
 
 

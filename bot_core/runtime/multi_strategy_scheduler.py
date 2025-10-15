@@ -6,7 +6,7 @@ import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Callable, Mapping, MutableMapping, Protocol, Sequence
+from typing import TYPE_CHECKING, Callable, Mapping, MutableMapping, Protocol, Sequence
 
 from bot_core.runtime.journal import TradingDecisionEvent, TradingDecisionJournal
 from bot_core.strategies.base import MarketSnapshot, StrategyEngine, StrategySignal
@@ -64,6 +64,9 @@ class StrategySignalSink(Protocol):
 
 TelemetryEmitter = Callable[[str, Mapping[str, float]], None]
 
+if TYPE_CHECKING:  # pragma: no cover - tylko dla typowania
+    from bot_core.portfolio import PortfolioGovernor, PortfolioRebalanceDecision
+
 
 @dataclass(slots=True)
 class _ScheduleContext:
@@ -76,7 +79,9 @@ class _ScheduleContext:
     max_drift: float
     warmup_bars: int
     risk_profile: str
-    max_signals: int
+    base_max_signals: int
+    active_max_signals: int
+    portfolio_weight: float = 0.0
     last_run: datetime | None = None
     warmed_up: bool = False
     metrics: MutableMapping[str, float] = field(default_factory=dict)
@@ -93,15 +98,18 @@ class MultiStrategyScheduler:
         clock: Callable[[], datetime] | None = None,
         telemetry_emitter: TelemetryEmitter | None = None,
         decision_journal: TradingDecisionJournal | None = None,
+        portfolio_governor: "PortfolioGovernor | None" = None,
     ) -> None:
         self._environment = environment
         self._portfolio = portfolio
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._telemetry = telemetry_emitter
         self._decision_journal = decision_journal
+        self._portfolio_governor = portfolio_governor
         self._schedules: list[_ScheduleContext] = []
         self._stop_event: asyncio.Event | None = None
         self._tasks: list[asyncio.Task[None]] = []
+        self._last_portfolio_decision: "PortfolioRebalanceDecision | None" = None
 
     def register_schedule(
         self,
@@ -127,7 +135,8 @@ class MultiStrategyScheduler:
             max_drift=float(max(0, max_drift_seconds)),
             warmup_bars=max(0, warmup_bars),
             risk_profile=risk_profile,
-            max_signals=max(1, max_signals),
+            base_max_signals=max(1, max_signals),
+            active_max_signals=max(1, max_signals),
         )
         self._schedules.append(context)
         _LOGGER.debug("Zarejestrowano harmonogram %s dla strategii %s", name, strategy_name)
@@ -194,6 +203,29 @@ class MultiStrategyScheduler:
                 schedule.warmed_up = True
 
             schedule.metrics.clear()
+            schedule.metrics["base_max_signals"] = float(schedule.base_max_signals)
+            schedule.metrics["portfolio_weight_target"] = 0.0
+            schedule.metrics["portfolio_signal_factor"] = 1.0
+            if self._portfolio_governor is not None:
+                allocation = self._portfolio_governor.resolve_allocation(
+                    schedule.strategy_name,
+                    schedule.risk_profile,
+                )
+                if allocation.max_signal_hint is not None:
+                    schedule.base_max_signals = max(1, allocation.max_signal_hint)
+                    schedule.metrics["base_max_signals"] = float(schedule.base_max_signals)
+                factor = float(allocation.signal_factor)
+                computed = int(round(schedule.base_max_signals * factor))
+                schedule.active_max_signals = max(self._min_signal_floor(), computed)
+                schedule.portfolio_weight = float(allocation.weight)
+                schedule.metrics["portfolio_weight_target"] = float(allocation.weight)
+                schedule.metrics["portfolio_signal_factor"] = factor
+            else:
+                schedule.active_max_signals = schedule.base_max_signals
+                schedule.portfolio_weight = 0.0
+
+            schedule.metrics["portfolio_weight"] = float(schedule.portfolio_weight)
+
             snapshots = schedule.feed.fetch_latest(schedule.strategy_name)
             total_signals = 0
             confidence_sum = 0.0
@@ -208,7 +240,9 @@ class MultiStrategyScheduler:
                 signals = list(schedule.strategy.on_data(snapshot))
                 if not signals:
                     continue
-                bounded_signals = self._bounded_signals(signals, schedule.max_signals)
+                bounded_signals = self._bounded_signals(
+                    signals, schedule.active_max_signals
+                )
                 total_signals += len(bounded_signals)
                 for signal in bounded_signals:
                     confidence_sum += float(signal.confidence)
@@ -255,6 +289,7 @@ class MultiStrategyScheduler:
                     signals=bounded_signals,
                 )
             schedule.metrics["signals"] = float(total_signals)
+            schedule.metrics["active_max_signals"] = float(schedule.active_max_signals)
             schedule.metrics["last_latency_ms"] = max(
                 0.0, (self._clock() - timestamp).total_seconds() * 1000
             )
@@ -283,16 +318,63 @@ class MultiStrategyScheduler:
                     arbitrage_captures
                 )
             self._emit_metrics(schedule)
+
+            if self._portfolio_governor is not None:
+                observation_payload = dict(schedule.metrics)
+                observation_payload["signals"] = float(total_signals)
+                self._portfolio_governor.observe_strategy_metrics(
+                    schedule.strategy_name,
+                    observation_payload,
+                    timestamp=timestamp,
+                    risk_profile=schedule.risk_profile,
+                )
+                decision = self._portfolio_governor.maybe_rebalance(timestamp=timestamp)
+                if decision is not None:
+                    self._apply_portfolio_decision(decision)
         except Exception:  # pragma: no cover - chronimy scheduler przed przerwaniem
             _LOGGER.exception("Błąd podczas wykonywania harmonogramu %s", schedule.name)
 
     def _bounded_signals(
         self, signals: Sequence[StrategySignal], max_signals: int
     ) -> Sequence[StrategySignal]:
-        if len(signals) <= max_signals:
+        limit = max(0, max_signals)
+        if limit == 0:
+            return ()
+        if len(signals) <= limit:
             return signals
         ordered = sorted(signals, key=lambda signal: signal.confidence, reverse=True)
-        return tuple(ordered[:max_signals])
+        return tuple(ordered[:limit])
+
+    def _min_signal_floor(self) -> int:
+        if self._portfolio_governor is None:
+            return 1
+        floor = getattr(self._portfolio_governor, "min_signal_floor", 1)
+        try:
+            return max(0, int(floor))
+        except Exception:  # pragma: no cover - defensywnie
+            return 1
+
+    def _apply_portfolio_decision(
+        self, decision: "PortfolioRebalanceDecision"
+    ) -> None:
+        self._last_portfolio_decision = decision
+        if self._portfolio_governor is None:
+            return
+        floor = self._min_signal_floor()
+        for schedule in self._schedules:
+            allocation = self._portfolio_governor.resolve_allocation(
+                schedule.strategy_name,
+                schedule.risk_profile,
+            )
+            if allocation.max_signal_hint is not None:
+                schedule.base_max_signals = max(1, allocation.max_signal_hint)
+            computed = int(round(schedule.base_max_signals * allocation.signal_factor))
+            schedule.active_max_signals = max(floor, computed)
+            schedule.portfolio_weight = float(allocation.weight)
+            schedule.metrics["portfolio_weight"] = float(allocation.weight)
+            schedule.metrics["portfolio_signal_factor"] = float(allocation.signal_factor)
+            schedule.metrics["base_max_signals"] = float(schedule.base_max_signals)
+            schedule.metrics["active_max_signals"] = float(schedule.active_max_signals)
 
     def _emit_metrics(self, schedule: _ScheduleContext) -> None:
         if not self._telemetry:

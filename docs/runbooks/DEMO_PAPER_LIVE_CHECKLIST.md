@@ -9,7 +9,6 @@ Zapewnienie, że każda promocja środowiska tradingowego spełnia wymagania tec
 | 1. Zweryfikuj konfigurację `config/core.yaml` poleceniem `python scripts/validate_config.py --profile demo` | Inżynier Runtime | Raport walidacji, `config/core.yaml` (hash SHA-256) | Raport bez błędów, hash wpisany do decision logu |
 | 2. Uruchom `python scripts/run_metrics_service.py --shutdown-after 0 --jsonl logs/metrics_demo.jsonl` i zweryfikuj TLS/mTLS | Observability | `logs/metrics_demo.jsonl`, snapshot TLS | Potwierdzony status TLS/mTLS, brak ostrzeżeń o kluczach |
 | 3. Wykonaj smoke test strategii (`python scripts/smoke_demo_strategies.py --cycles 1`) **lub** potwierdź ostatni przebieg workflow `Stage4 multi-strategy smoke` (zob. `docs/runbooks/STAGE4_MULTI_STRATEGY_SMOKE.md`) | Zespół Strategii | `reports/demo_smoke/*.json`, logi, `var/audit/acceptance/<TS>/stage4_smoke/*` | Wynik PASS, numer joba zapisany w runbooku Stage4, brak odchyleń > tolerancji |
-| 3. Wykonaj smoke test strategii (`python scripts/smoke_demo_strategies.py --cycles 1`) | Zespół Strategii | `reports/demo_smoke/*.json`, logi | Wynik PASS, brak odchyleń > tolerancji |
 | 4. Dodaj wpis do decision logu (`python scripts/verify_decision_log.py summary --append`) | Operator Demo | `audit/decision_logs/demo.jsonl` | Wpis podpisany HMAC, `status=demo_ready` |
 
 ## Etap 2 – Promocja do paper

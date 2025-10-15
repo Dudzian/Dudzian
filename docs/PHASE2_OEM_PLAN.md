@@ -26,7 +26,6 @@
 - [x] Zaprojektować rejestr licencji (`var/licenses/registry.jsonl`) z podpisami oraz narzędziem `scripts/oem_provision_license.py`.
 - [x] Stworzyć runbook provisioning (checklista + artefakty: request, approval, signed license).
 - [x] Uzupełnić UI o ekran aktywacji licencji z obsługą QR/USB.
-- [ ] Uzupełnić UI o ekran aktywacji licencji z obsługą QR/USB.
 
 ### 3. Rozszerzenie silnika ryzyka
 - [x] Dodać moduł symulacji scenariuszy (`bot_core/risk/simulation.py`) z obsługą profili: konserwatywny, zbalansowany, agresywny, manualny.

@@ -1,0 +1,51 @@
+groups:
+  - name: stage5-compliance
+    rules:
+      - alert: Stage5DecisionLatencySLO
+        expr: histogram_quantile(0.95, sum(rate(bot_core_decision_latency_ms_bucket[5m])) by (le)) > 220
+        for: 10m
+        labels:
+          severity: critical
+          team: stage5
+          service: decision-orchestrator
+        annotations:
+          summary: "Decision latency SLO przekroczone"
+          description: |
+            95 percentyl latencji decyzji przekroczył próg 220 ms w ciągu ostatnich 10 minut.
+            Zweryfikuj działanie DecisionOrchestratora oraz zaległości w kolejkach zleceń.
+      - alert: Stage5TradeCostSLO
+        expr: avg_over_time(bot_core_trade_cost_bps[15m]) > 12
+        for: 15m
+        labels:
+          severity: warning
+          team: stage5
+          service: tco
+        annotations:
+          summary: "Średni koszt transakcyjny przekroczył próg 12 bps"
+          description: |
+            Średni koszt transakcyjny z raportu TCO przekroczył ustalony próg 12 bps.
+            Sprawdź slippage i prowizje na giełdach włączonych do DecisionOrchestratora.
+      - alert: Stage5FillRateDrop
+        expr: avg_over_time(bot_core_fill_rate_pct[15m]) < 0.93
+        for: 15m
+        labels:
+          severity: warning
+          team: stage5
+          service: execution
+        annotations:
+          summary: "Fill rate spadł poniżej 93%"
+          description: |
+            Wskaźnik fill rate w oknie 15 minut spadł poniżej 93%.
+            Zweryfikuj status giełd i priorytety routingu w LiveExecutionRouter.
+      - alert: Stage5KeyRotationDue
+        expr: max_over_time(bot_core_key_rotation_due_in_days[1h]) <= 14
+        for: 1h
+        labels:
+          severity: info
+          team: stage5
+          service: security
+        annotations:
+          summary: "Klucze zbliżają się do terminu rotacji"
+          description: |
+            Jeden lub więcej kluczy znajduje się w oknie rotacji <= 14 dni.
+            Uruchom `scripts/rotate_keys.py` w trybie execute i zaktualizuj decision log.

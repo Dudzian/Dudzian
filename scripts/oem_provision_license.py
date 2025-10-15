@@ -1,5 +1,4 @@
 """Provisioning licencji OEM – generacja, podpis HMAC, walidacja rejestru i obsługa fingerprintów JSON/Base32."""
-
 from __future__ import annotations
 
 import argparse

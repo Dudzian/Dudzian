@@ -11,7 +11,7 @@
 | Pasek | `####################` |
 | Stan czynności | brak elementów w toku, brak blokerów |
 
-**Raport zamknięcia:** patrz [Raport zamknięcia Etapu 4](stage4_final_report.md). Rozszerzony zakres opisano w [Specyfikacji Etapu 4](stage4_spec.md).
+**Raport zamknięcia:** patrz [Raport zamknięcia Etapu 4](stage4_final_report.md). Rozszerzony zakres opisano w [Specyfikacji Etapu 4](stage4_spec.md); plan kolejnego etapu znajduje się w [Specyfikacji Etapu 5](stage5_spec.md).
 
 ```json
 {"total_tasks":40,"completed":40,"percent":100}

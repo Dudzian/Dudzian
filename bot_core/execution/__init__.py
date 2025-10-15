@@ -6,11 +6,11 @@ from bot_core.execution.base import ExecutionContext, ExecutionService, RetryPol
 # jak i RouteDefinition (starsza nazwa) z live_router.
 try:
     # nowsza gałąź
-    from bot_core.execution.live_router import LiveExecutionRouter, RoutingPlan
+    from bot_core.execution.live_router import LiveExecutionRouter, RoutingPlan  # noqa: F401
     RouteDefinition = RoutingPlan  # alias dla kompatybilności
 except ImportError:
     # starsza gałąź
-    from bot_core.execution.live_router import LiveExecutionRouter, RouteDefinition  # type: ignore
+    from bot_core.execution.live_router import LiveExecutionRouter, RouteDefinition  # type: ignore  # noqa: F401
     RoutingPlan = RouteDefinition  # alias ujednolicający API
 
 from bot_core.execution.paper import (  # noqa: F401 - eksport publiczny

@@ -1,0 +1,141 @@
+{
+  "id": null,
+  "uid": "stage6-resilience",
+  "title": "Stage6 – Resilience & Portfolio Intelligence",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-12h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Portfolio weights & signal factor",
+      "description": "Średnie wagi przydzielone przez PortfolioGovernora oraz współczynnik sygnałów dla każdej strategii.",
+      "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "avg_over_time(bot_core_stage6_portfolio_weight[5m])",
+          "legendFormat": "waga {{strategy}}"
+        },
+        {
+          "expr": "avg_over_time(bot_core_stage6_portfolio_signal_factor[5m])",
+          "legendFormat": "signal factor {{strategy}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "mode": "percentage",
+            "steps": [
+              {"color": "red", "value": 0},
+              {"color": "orange", "value": 0.15},
+              {"color": "green", "value": 0.25}
+            ]
+          }
+        }
+      },
+      "datasource": {"type": "prometheus", "uid": "prometheus"}
+    },
+    {
+      "type": "timeseries",
+      "title": "Failover latency & error rate",
+      "description": "Latencja i błędy podczas przełączeń failover monitorowane przez ResilienceFailoverDrill oraz runtime.",
+      "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "max_over_time(bot_core_stage6_failover_latency_ms[15m])",
+          "legendFormat": "latencja {{primary}}→{{fallback}}"
+        },
+        {
+          "expr": "max_over_time(bot_core_stage6_failover_error_rate_pct[15m])",
+          "legendFormat": "error rate {{primary}}→{{fallback}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        }
+      },
+      "datasource": {"type": "prometheus", "uid": "prometheus"}
+    },
+    {
+      "type": "timeseries",
+      "title": "Stress Lab health",
+      "description": "Naruszenia progów w scenariuszach Stress Lab i zmiany płynności.",
+      "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "max_over_time(bot_core_stage6_stress_lab_failure_count[24h])",
+          "legendFormat": "naruszenia {{scenario}}"
+        },
+        {
+          "expr": "avg_over_time(bot_core_stage6_stress_lab_liquidity_loss_pct[24h])",
+          "legendFormat": "utrata płynności {{scenario}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent"
+        }
+      },
+      "datasource": {"type": "prometheus", "uid": "prometheus"}
+    },
+    {
+      "type": "stat",
+      "title": "SLO breach rate",
+      "description": "Udział naruszeń SLO z kanału Stage6 Observability++ (niższa wartość lepsza).",
+      "gridPos": {"x": 12, "y": 8, "w": 6, "h": 6},
+      "targets": [
+        {
+          "expr": "last_over_time(bot_core_stage6_slo_breach_rate_pct[10m])",
+          "legendFormat": "SLO naruszenia"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "mode": "percentage",
+            "steps": [
+              {"color": "green", "value": 0},
+              {"color": "orange", "value": 2},
+              {"color": "red", "value": 5}
+            ]
+          }
+        }
+      },
+      "datasource": {"type": "prometheus", "uid": "prometheus"}
+    },
+    {
+      "type": "stat",
+      "title": "Failover success ratio",
+      "description": "Stosunek udanych przełączeń failover z raportów resilience bundla.",
+      "gridPos": {"x": 18, "y": 8, "w": 6, "h": 6},
+      "targets": [
+        {
+          "expr": "last_over_time(bot_core_stage6_failover_success_ratio_pct[10m])",
+          "legendFormat": "udane failovery"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "mode": "percentage",
+            "steps": [
+              {"color": "red", "value": 70},
+              {"color": "orange", "value": 85},
+              {"color": "green", "value": 95}
+            ]
+          }
+        }
+      },
+      "datasource": {"type": "prometheus", "uid": "prometheus"}
+    }
+  ]
+}
