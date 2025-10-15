@@ -104,4 +104,4 @@ def test_stage6_dashboard_stat_thresholds_sorted() -> None:
         )
         assert thresholds, "each stat panel should define threshold steps"
         values = [step.get("value", 0) for step in thresholds]
-        assert values == sorted(values), panel["title"]
+        assert values == sorted(values), panel.get("title", "<stat panel>")

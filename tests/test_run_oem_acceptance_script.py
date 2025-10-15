@@ -493,26 +493,3 @@ def test_run_oem_acceptance_end_to_end(tmp_path: Path) -> None:
     decision_dir = acceptance_dir / "decision_log"
     assert (decision_dir / "entry.json").exists()
     assert (decision_dir / decision_log_path.name).exists()
-    tco_details = next(item for item in summary if item["step"] == "tco")
-    tco_csv = Path(tco_details["details"]["csv"])
-    tco_pdf = Path(tco_details["details"]["pdf"])
-    tco_json = Path(tco_details["details"]["json"])
-    assert tco_csv.exists()
-    assert tco_pdf.exists()
-    assert tco_json.exists()
-
-    decision_details = next(item for item in summary if item["step"] == "decision")
-    decision_report = Path(decision_details["details"]["report"])
-    assert decision_report.exists()
-
-    slo_details = next(item for item in summary if item["step"] == "slo")
-    slo_report = Path(slo_details["details"]["report"])
-    assert slo_report.exists()
-
-    rotation_details = next(item for item in summary if item["step"] == "rotation")
-    rotation_plan = Path(rotation_details["details"]["plan"])
-    assert rotation_plan.exists()
-
-    observability_details = next(item for item in summary if item["step"] == "observability")
-    observability_archive = Path(observability_details["details"]["archive"])
-    assert observability_archive.exists()

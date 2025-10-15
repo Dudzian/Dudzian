@@ -19,15 +19,17 @@
 
 class QQuickWindow;
 class QScreen;
-class LicenseActivationController;
+class ActivationController;            // forward decl (app/ActivationController.hpp)
+class LicenseActivationController;     // forward decl (license/LicenseActivationController.hpp)
 
 class Application : public QObject {
     Q_OBJECT
-    Q_PROPERTY(QString          connectionStatus    READ connectionStatus   NOTIFY connectionStatusChanged)
-    Q_PROPERTY(PerformanceGuard performanceGuard    READ performanceGuard   NOTIFY performanceGuardChanged)
-    Q_PROPERTY(bool             reduceMotionActive  READ reduceMotionActive NOTIFY reduceMotionActiveChanged)
-    Q_PROPERTY(QString          instrumentLabel     READ instrumentLabel    NOTIFY instrumentChanged)
-    Q_PROPERTY(QObject*         riskModel           READ riskModel          CONSTANT)
+    Q_PROPERTY(QString          connectionStatus     READ connectionStatus    NOTIFY connectionStatusChanged)
+    Q_PROPERTY(PerformanceGuard performanceGuard     READ performanceGuard    NOTIFY performanceGuardChanged)
+    Q_PROPERTY(bool             reduceMotionActive   READ reduceMotionActive  NOTIFY reduceMotionActiveChanged)
+    Q_PROPERTY(QString          instrumentLabel      READ instrumentLabel     NOTIFY instrumentChanged)
+    Q_PROPERTY(QObject*         riskModel            READ riskModel           CONSTANT)
+    Q_PROPERTY(QObject*         activationController READ activationController CONSTANT)
 
 public:
     explicit Application(QQmlApplicationEngine& engine, QObject* parent = nullptr);
@@ -47,6 +49,7 @@ public:
     QString          instrumentLabel() const;
     bool             reduceMotionActive() const { return m_reduceMotionActive; }
     QObject*         riskModel() const { return const_cast<RiskStateModel*>(&m_riskModel); }
+    QObject*         activationController() const;
 
 public slots:
     void start();
@@ -100,9 +103,9 @@ private:
     RiskStateModel         m_riskModel;
     TradingClient          m_client;
 
-    QString          m_connectionStatus = QStringLiteral("idle");
-    PerformanceGuard m_guard{};
-    int              m_maxSamples = 10240;
+    QString                m_connectionStatus = QStringLiteral("idle");
+    PerformanceGuard       m_guard{};
+    int                    m_maxSamples = 10240;
     TradingClient::TlsConfig m_tradingTlsConfig{};
 
     TradingClient::InstrumentConfig m_instrument{
@@ -114,9 +117,11 @@ private:
         QStringLiteral("PT1M")
     };
 
-    std::unique_ptr<FrameRateMonitor> m_frameMonitor;
-    bool                              m_reduceMotionActive = false;
+    std::unique_ptr<FrameRateMonitor>         m_frameMonitor;
+    bool                                      m_reduceMotionActive = false;
 
+    // Oba kontrolery – aktywacja (app) i licencje OEM (license)
+    std::unique_ptr<ActivationController>     m_activationController;
     std::unique_ptr<LicenseActivationController> m_licenseController;
 
     // --- Telemetry state ---
@@ -143,12 +148,12 @@ private:
         }
     };
 
-    std::optional<OverlayState> m_lastOverlayState;
-    std::optional<OverlayState> m_lastOverlayTelemetryReported;
-    std::optional<bool>         m_lastReduceMotionReported;
-    std::optional<bool>         m_pendingReduceMotionState;
-    std::optional<TelemetryReporter::ScreenInfo> m_screenInfo;
-    QElapsedTimer               m_lastJankTelemetry;
-    bool                        m_jankTelemetryTimerValid = false;
-    int                         m_jankTelemetryCooldownMs = 400;
+    std::optional<OverlayState>                        m_lastOverlayState;
+    std::optional<OverlayState>                        m_lastOverlayTelemetryReported;
+    std::optional<bool>                                m_lastReduceMotionReported;
+    std::optional<bool>                                m_pendingReduceMotionState;
+    std::optional<TelemetryReporter::ScreenInfo>       m_screenInfo;
+    QElapsedTimer                                      m_lastJankTelemetry;
+    bool                                               m_jankTelemetryTimerValid = false;
+    int                                                m_jankTelemetryCooldownMs = 400;
 };

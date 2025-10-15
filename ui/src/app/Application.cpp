@@ -13,11 +13,14 @@
 #include <QPoint>
 #include <QRect>
 #include <QScreen>
+#include <QCommandLineParser>
+#include <optional>
 
 #include "telemetry/TelemetryReporter.hpp"
 #include "telemetry/UiTelemetryReporter.hpp"
 #include "utils/FrameRateMonitor.hpp"
 #include "license/LicenseActivationController.hpp"
+#include "app/ActivationController.hpp"
 
 Q_LOGGING_CATEGORY(lcAppMetrics, "bot.shell.app.metrics")
 
@@ -89,7 +92,10 @@ QString readTokenFile(const QString& rawPath)
 
 Application::Application(QQmlApplicationEngine& engine, QObject* parent)
     : QObject(parent)
-    , m_engine(engine) {
+    , m_engine(engine)
+{
+    m_activationController = std::make_unique<ActivationController>(this);
+
     // Startowe ustawienia instrumentu z klienta (mogą być nadpisane przez CLI)
     m_instrument = m_client.instrumentConfig();
 
@@ -188,6 +194,15 @@ void Application::configureParser(QCommandLineParser& parser) const {
     parser.addOption({"grpc-client-key", tr("Klucz klienta (PEM)"), tr("path"), QString()});
     parser.addOption({"grpc-target-name", tr("Override nazwy hosta TLS"), tr("name"), QString()});
 
+    // TLS/mTLS dla TradingClient (ogólne przełączniki – mogą być nadpisane przez --grpc-*)
+    parser.addOption({"use-tls", tr("Wymusza połączenie TLS z TradingService")});
+    parser.addOption({"tls-root-cert", tr("Plik root CA (PEM) dla TradingService"), tr("path"), QString()});
+    parser.addOption({"tls-client-cert", tr("Certyfikat klienta (PEM)"), tr("path"), QString()});
+    parser.addOption({"tls-client-key", tr("Klucz klienta (PEM)"), tr("path"), QString()});
+    parser.addOption({"tls-server-name", tr("Override nazwy serwera TLS"), tr("name"), QString()});
+    parser.addOption({"tls-pinned-sha256", tr("Oczekiwany fingerprint SHA-256 certyfikatu"), tr("hex"), QString()});
+    parser.addOption({"tls-require-client-auth", tr("Wymaga dostarczenia certyfikatu klienta (mTLS)")});
+
     // TLS/mTLS dla MetricsService (opcjonalnie)
     parser.addOption({"metrics-use-tls", tr("Wymusza połączenie TLS z MetricsService")});
     parser.addOption({"metrics-root-cert", tr("Plik root CA (PEM)"), tr("path"), QString()});
@@ -217,6 +232,17 @@ bool Application::applyParser(const QCommandLineParser& parser) {
     m_client.setInstrument(instrument);
     m_instrument = instrument;
     Q_EMIT instrumentChanged();
+
+    // Ogólny TLS (może być nadpisany przez sekcję gRPC)
+    TradingClient::TlsConfig tlsConfig;
+    tlsConfig.enabled = parser.isSet("use-tls");
+    tlsConfig.rootCertificatePath = parser.value("tls-root-cert");
+    tlsConfig.clientCertificatePath = parser.value("tls-client-cert");
+    tlsConfig.clientKeyPath = parser.value("tls-client-key");
+    tlsConfig.serverNameOverride = parser.value("tls-server-name");
+    tlsConfig.pinnedServerFingerprint = parser.value("tls-pinned-sha256");
+    tlsConfig.requireClientAuth = parser.isSet("tls-require-client-auth");
+    m_client.setTlsConfig(tlsConfig);
 
     const int historyLimit = parser.value("history-limit").toInt();
     m_client.setHistoryLimit(historyLimit);
@@ -266,6 +292,7 @@ bool Application::applyParser(const QCommandLineParser& parser) {
     m_preferredScreenConfigured = m_forcePrimaryScreen || m_preferredScreenIndex >= 0
         || !m_preferredScreenName.isEmpty();
 
+    // gRPC TLS – nadpisuje ogólny TLS jeśli podany
     TradingClient::TlsConfig tradingTls;
     tradingTls.enabled = parser.isSet("grpc-use-mtls");
     const QString cliRootCert = parser.value("grpc-root-cert").trimmed();
@@ -309,15 +336,15 @@ bool Application::applyParser(const QCommandLineParser& parser) {
     applyTradingTlsEnvironmentOverrides(parser);
     m_client.setTlsConfig(m_tradingTlsConfig);
 
-    // TLS config
-    TelemetryTlsConfig tlsConfig;
-    tlsConfig.enabled = parser.isSet("metrics-use-tls");
-    tlsConfig.rootCertificatePath = parser.value("metrics-root-cert");
-    tlsConfig.clientCertificatePath = parser.value("metrics-client-cert");
-    tlsConfig.clientKeyPath = parser.value("metrics-client-key");
-    tlsConfig.serverNameOverride = parser.value("metrics-server-name");
-    tlsConfig.pinnedServerSha256 = parser.value("metrics-server-sha256");
-    m_tlsConfig = tlsConfig;
+    // TLS config (MetricsService)
+    TelemetryTlsConfig mtls;
+    mtls.enabled = parser.isSet("metrics-use-tls");
+    mtls.rootCertificatePath = parser.value("metrics-root-cert");
+    mtls.clientCertificatePath = parser.value("metrics-client-cert");
+    mtls.clientKeyPath = parser.value("metrics-client-key");
+    mtls.serverNameOverride = parser.value("metrics-server-name");
+    mtls.pinnedServerSha256 = parser.value("metrics-server-sha256");
+    m_tlsConfig = mtls;
 
     // Konfiguracja licencji OEM (CLI/ENV)
     const QString cliLicensePath = parser.value("license-storage").trimmed();
@@ -376,6 +403,12 @@ void Application::exposeToQml() {
     m_engine.rootContext()->setContextProperty(QStringLiteral("ohlcvModel"), &m_ohlcvModel);
     m_engine.rootContext()->setContextProperty(QStringLiteral("riskModel"), &m_riskModel);
     m_engine.rootContext()->setContextProperty(QStringLiteral("licenseController"), m_licenseController.get());
+    m_engine.rootContext()->setContextProperty(QStringLiteral("activationController"), m_activationController.get());
+}
+
+QObject* Application::activationController() const
+{
+    return m_activationController.get();
 }
 
 void Application::ensureFrameMonitor() {

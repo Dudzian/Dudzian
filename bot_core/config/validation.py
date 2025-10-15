@@ -103,6 +103,7 @@ def validate_core_config(config: CoreConfig) -> ConfigValidationResult:
     _validate_instrument_universes(config, errors, warnings)
     _validate_environments(config, errors, warnings)
     _validate_metrics_service(config, errors, warnings)
+    _validate_live_routing(config, errors, warnings)
     _validate_risk_service(config, errors, warnings)
     _validate_risk_decision_log(config, errors, warnings)
     _validate_security_baseline(config, errors, warnings)
@@ -198,12 +199,71 @@ def _validate_strategies(
             warnings.append(
                 f"{context}: min_trend_strength ma wartość ujemną ({strategy.min_trend_strength})"
             )
-        if strategy.min_momentum < 0:
+
+
+def _validate_live_routing(
+    config: CoreConfig, errors: list[str], warnings: list[str]
+) -> None:
+    routing = getattr(config, "live_routing", None)
+    if routing is None:
+        return
+
+    context = "runtime.live_routing"
+    if routing.enabled:
+        if not routing.default_route:
+            errors.append(f"{context}: enabled=true wymaga zdefiniowanego default_route")
+        else:
+            seen: set[str] = set()
+            for exchange in routing.default_route:
+                normalized = str(exchange).strip()
+                if not normalized:
+                    errors.append(f"{context}: default_route zawiera pustą nazwę giełdy")
+                    continue
+                if normalized in seen:
+                    warnings.append(
+                        f"{context}: default_route zawiera duplikat giełdy '{normalized}'"
+                    )
+                seen.add(normalized)
+
+    for symbol, route in routing.route_overrides.items():
+        if not route:
             warnings.append(
-                f"{context}: min_momentum ma wartość ujemną ({strategy.min_momentum})"
+                f"{context}.route_overrides[{symbol}]: lista giełd jest pusta – override zostanie pominięty"
             )
+            continue
+        for entry in route:
+            normalized = str(entry).strip()
+            if not normalized:
+                errors.append(
+                    f"{context}.route_overrides[{symbol}]: zawiera pustą nazwę giełdy"
+                )
 
+    buckets = tuple(getattr(routing, "latency_histogram_buckets", ()))
+    if buckets:
+        previous = None
+        for bucket in buckets:
+            if bucket <= 0:
+                errors.append(
+                    f"{context}: latency_histogram_buckets muszą być dodatnie (otrzymano {bucket})"
+                )
+            if previous is not None and bucket <= previous:
+                errors.append(
+                    f"{context}: latency_histogram_buckets muszą być ściśle rosnące"
+                )
+            previous = bucket
 
+    for alert in getattr(routing, "prometheus_alerts", ()):  # type: ignore[attr-defined]
+        name = getattr(alert, "name", "")
+        expr = getattr(alert, "expr", "")
+        if not name or not expr:
+            errors.append(
+                f"{context}.prometheus_alerts: każdy alert wymaga pól name oraz expr"
+            )
+        duration = getattr(alert, "for_duration", None)
+        if duration is not None and not duration.strip():
+            warnings.append(
+                f"{context}.prometheus_alerts[{name}]: parametr 'for' jest pusty – zostanie pominięty"
+            )
 def _validate_runtime_controllers(
     config: CoreConfig, errors: list[str], warnings: list[str]
 ) -> None:

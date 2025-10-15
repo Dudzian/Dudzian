@@ -1,12 +1,25 @@
 # Konfiguracja przykładowa dla powłoki Qt/QML korzystającej z trading stub server
 endpoint: 127.0.0.1:50061
 
+grpc:
+  tls:
+    enabled: true
+    root_cert: secrets/mtls/core-oem-ca.pem
+    client_cert: secrets/mtls/core-oem-client.pem
+    client_key: secrets/mtls/core-oem-client-key.pem
+    server_name: core-daemon.internal
+    pinned_sha256: ""          # opcjonalne – pinning certyfikatu serwera (SHA-256 SPKI)
+    require_client_auth: true  # mamy cert klienta, więc włączone
+
+# Wsteczna kompatybilność (starsze buildy czytają te klucze)
 tls:
   enabled: true
   root_certificate: secrets/mtls/core-oem-ca.pem
   client_certificate: secrets/mtls/core-oem-client.pem
   client_key: secrets/mtls/core-oem-client-key.pem
-  target_name_override: core-daemon.internal
+
+# Legacy override dla SNI / SAN serwera (nowe buildy używają grpc.tls.server_name)
+target_name_override: core-daemon.internal
 
 instrument:
   exchange: BINANCE

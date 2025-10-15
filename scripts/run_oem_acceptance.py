@@ -13,22 +13,60 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, List, Mapping, Sequence
 
 from deploy.packaging.build_core_bundle import SUPPORTED_PLATFORMS, build_from_cli
-from scripts.export_observability_bundle import main as run_observability_bundle
-from scripts.generate_mtls_bundle import main as generate_mtls_bundle
-from scripts.oem_provision_license import main as provision_license
-from scripts.rotate_keys import run as run_rotate_keys
-from scripts.run_decision_engine_smoke import main as run_decision_engine_smoke
-from scripts.run_risk_simulation_lab import main as run_risk_simulation
-from scripts.run_tco_analysis import run as run_tco_analysis
-from scripts.slo_monitor import run as run_slo_monitor
-from bot_core.config.loader import load_core_config
 from bot_core.security.signing import build_hmac_signature
+
+# --- opcjonalne zależności kroków --------------------------------------------
+# (kroki, których moduły nie są dostępne, zgłoszą czytelny błąd przy użyciu)
+
+try:
+    from scripts.export_observability_bundle import main as run_observability_bundle
+except Exception:  # pragma: no cover
+    run_observability_bundle = None  # type: ignore
+
+try:
+    from scripts.generate_mtls_bundle import main as generate_mtls_bundle
+except Exception:  # pragma: no cover
+    generate_mtls_bundle = None  # type: ignore
+
+try:
+    from scripts.oem_provision_license import main as provision_license
+except Exception:  # pragma: no cover
+    provision_license = None  # type: ignore
+
+try:
+    from scripts.rotate_keys import run as run_rotate_keys
+except Exception:  # pragma: no cover
+    run_rotate_keys = None  # type: ignore
+
+try:
+    from scripts.run_decision_engine_smoke import main as run_decision_engine_smoke
+except Exception:  # pragma: no cover
+    run_decision_engine_smoke = None  # type: ignore
+
+try:
+    from scripts.run_risk_simulation_lab import main as run_risk_simulation
+except Exception:  # pragma: no cover
+    run_risk_simulation = None  # type: ignore
+
+try:
+    from scripts.run_tco_analysis import run as run_tco_analysis
+except Exception:  # pragma: no cover
+    run_tco_analysis = None  # type: ignore
+
+try:
+    from scripts.slo_monitor import run as run_slo_monitor
+except Exception:  # pragma: no cover
+    run_slo_monitor = None  # type: ignore
+
+try:
+    from bot_core.config.loader import load_core_config
+except Exception:  # pragma: no cover
+    load_core_config = None  # type: ignore
 
 
 @dataclass(slots=True)
 class StepOutcome:
     """Reprezentuje wynik pojedynczego kroku akceptacyjnego."""
-
     step: str
     status: str
     details: dict[str, Any] = field(default_factory=dict)
@@ -40,7 +78,7 @@ class AcceptanceError(RuntimeError):
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Uruchamia pakiet kroków akceptacyjnych OEM (bundle -> licencja -> Paper Labs -> mTLS)."
+        description="Uruchamia pakiet kroków akceptacyjnych OEM (bundle -> licencja -> Paper Labs -> mTLS, TCO, Decision, SLO, rotacja, observability)."
     )
 
     parser.add_argument("--summary-path", help="Ścieżka do pliku JSON z podsumowaniem akceptacji")
@@ -58,49 +96,19 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--skip-risk", action="store_true", help="Pomiń symulacje Paper Labs")
     parser.add_argument("--skip-mtls", action="store_true", help="Pomiń generowanie pakietu mTLS")
     parser.add_argument("--skip-tco", action="store_true", help="Pomiń analizę kosztów transakcyjnych (TCO)")
-    parser.add_argument(
-        "--skip-decision",
-        action="store_true",
-        help="Pomiń smoke test DecisionOrchestratora",
-    )
-    parser.add_argument(
-        "--skip-slo",
-        action="store_true",
-        help="Pomiń generowanie raportu SLO observability",
-    )
-    parser.add_argument(
-        "--skip-rotation",
-        action="store_true",
-        help="Pomiń plan rotacji kluczy Stage5",
-    )
-    parser.add_argument(
-        "--skip-observability",
-        action="store_true",
-        help="Pomiń budowanie paczki obserwowalności Stage5",
-    )
+    parser.add_argument("--skip-decision", action="store_true", help="Pomiń smoke test DecisionOrchestratora")
+    parser.add_argument("--skip-slo", action="store_true", help="Pomiń generowanie raportu SLO")
+    parser.add_argument("--skip-rotation", action="store_true", help="Pomiń plan rotacji kluczy")
+    parser.add_argument("--skip-observability", action="store_true", help="Pomiń budowanie paczki obserwowalności")
 
     # Parametry decision logu
     parser.add_argument("--decision-log-path", help="Ścieżka do decision logu JSONL")
-    parser.add_argument(
-        "--decision-log-hmac-key",
-        help="Wartość klucza HMAC (ciąg znaków) do podpisu decision logu",
-    )
-    parser.add_argument(
-        "--decision-log-hmac-key-file",
-        help="Plik zawierający klucz HMAC do podpisu decision logu",
-    )
+    parser.add_argument("--decision-log-hmac-key", help="Wartość klucza HMAC (ciąg znaków) do podpisu decision logu")
+    parser.add_argument("--decision-log-hmac-key-file", help="Plik zawierający klucz HMAC do podpisu decision logu")
     parser.add_argument("--decision-log-key-id", help="Identyfikator klucza decision logu")
-    parser.add_argument(
-        "--decision-log-category",
-        default="release.oem.acceptance",
-        help="Kategoria wpisu decision logu",
-    )
+    parser.add_argument("--decision-log-category", default="release.oem.acceptance", help="Kategoria wpisu decision logu")
     parser.add_argument("--decision-log-notes", help="Notatka dołączana do wpisu decision logu")
-    parser.add_argument(
-        "--decision-log-allow-unsigned",
-        action="store_true",
-        help="Pozwól na dodanie wpisu decision logu bez podpisu (niezalecane)",
-    )
+    parser.add_argument("--decision-log-allow-unsigned", action="store_true", help="Pozwól na dodanie wpisu bez podpisu")
 
     # Parametry bundla
     parser.add_argument("--bundle-platform", choices=sorted(SUPPORTED_PLATFORMS))
@@ -108,27 +116,10 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--bundle-signing-key", help="Plik z kluczem HMAC do podpisu bundla")
     parser.add_argument("--bundle-daemon", action="append", default=[], help="Ścieżka do artefaktu demona (wielokrotna)")
     parser.add_argument("--bundle-ui", action="append", default=[], help="Ścieżka do artefaktu UI (wielokrotna)")
-    parser.add_argument(
-        "--bundle-config",
-        action="append",
-        default=[],
-        help="Wpis konfiguracyjny w formacie relatywna_sciezka=plik",
-    )
-    parser.add_argument(
-        "--bundle-resource",
-        action="append",
-        default=[],
-        help="Dodatkowy zasób w formacie katalog=plik",
-    )
-    parser.add_argument(
-        "--bundle-output-dir",
-        help="Katalog docelowy dla archiwum bundla (domyślnie var/dist)",
-    )
-    parser.add_argument(
-        "--bundle-fingerprint-placeholder",
-        default="UNPROVISIONED",
-        help="Wartość fingerprintu zapisywana w bundlu",
-    )
+    parser.add_argument("--bundle-config", action="append", default=[], help="Wpis konfiguracyjny rel_path=plik")
+    parser.add_argument("--bundle-resource", action="append", default=[], help="Dodatkowy zasób katalog=plik")
+    parser.add_argument("--bundle-output-dir", help="Katalog docelowy dla archiwum bundla (domyślnie var/dist)")
+    parser.add_argument("--bundle-fingerprint-placeholder", default="UNPROVISIONED", help="Wartość fingerprintu w bundlu")
 
     # Parametry licencji
     parser.add_argument("--license-signing-key", help="Plik z kluczem HMAC licencji")
@@ -136,72 +127,29 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--license-fingerprint", help="Fingerprint urządzenia OEM")
     parser.add_argument("--license-fingerprint-file", help="Plik z fingerprintem urządzenia")
     parser.add_argument("--license-profile", default="paper", help="Profil pracy zapisywany w licencji")
-    parser.add_argument(
-        "--license-valid-days",
-        type=int,
-        default=365,
-        help="Okres ważności licencji w dniach",
-    )
+    parser.add_argument("--license-valid-days", type=int, default=365, help="Okres ważności licencji w dniach")
     parser.add_argument("--license-registry", help="Ścieżka rejestru licencji JSONL")
-    parser.add_argument(
-        "--license-rotation-log",
-        help="Plik logu rotacji klucza licencji (jeśli wymagany)",
-    )
-    parser.add_argument(
-        "--license-rotation-interval-days",
-        type=float,
-        default=90.0,
-        help="Interwał rotacji klucza licencyjnego",
-    )
+    parser.add_argument("--license-rotation-log", help="Plik logu rotacji klucza licencji (jeśli wymagany)")
+    parser.add_argument("--license-rotation-interval-days", type=float, default=90.0, help="Interwał rotacji klucza")
     parser.add_argument("--license-notes", help="Notatka dołączana do licencji")
-    parser.add_argument(
-        "--license-feature",
-        action="append",
-        dest="license_features",
-        default=[],
-        help="Flagi funkcjonalne w licencji (można podać wielokrotnie)",
-    )
-    parser.add_argument(
-        "--license-bundle-version",
-        help="Wersja bundla wpisywana do licencji (domyślnie taka jak budowany bundle)",
-    )
+    parser.add_argument("--license-feature", action="append", dest="license_features", default=[], help="Flagi funkcjonalne")
+    parser.add_argument("--license-bundle-version", help="Wersja bundla wpisywana do licencji")
 
     # Parametry Paper Labs
     parser.add_argument("--risk-config", help="Plik config/core.yaml używany przez Paper Labs")
     parser.add_argument("--risk-environment", help="Nazwa środowiska konfiguracyjnego (np. paper)")
     parser.add_argument("--risk-dataset-root", help="Nadpisanie ścieżki do danych Parquet")
     parser.add_argument("--risk-namespace", default="binance_spot", help="Namespace danych Parquet")
-    parser.add_argument(
-        "--risk-symbol",
-        action="append",
-        dest="risk_symbols",
-        default=[],
-        help="Symbol instrumentu (można podać wielokrotnie)",
-    )
+    parser.add_argument("--risk-symbol", action="append", dest="risk_symbols", default=[], help="Symbol instrumentu")
     parser.add_argument("--risk-interval", default="1h", help="Interwał świec do symulacji")
     parser.add_argument("--risk-max-bars", type=int, default=720, help="Maks. liczba świec")
-    parser.add_argument(
-        "--risk-base-equity",
-        type=float,
-        default=100_000.0,
-        help="Kapitał początkowy w USD",
-    )
+    parser.add_argument("--risk-base-equity", type=float, default=100_000.0, help="Kapitał początkowy w USD")
     parser.add_argument("--risk-output-dir", help="Katalog na raporty Paper Labs")
     parser.add_argument("--risk-json-name", default="risk_simulation_report.json", help="Nazwa pliku JSON")
     parser.add_argument("--risk-pdf-name", default="risk_simulation_report.pdf", help="Nazwa pliku PDF")
-    parser.add_argument("--risk-fail-on-breach", action="store_true", help="Przerwij jeśli symulacje wykryją naruszenia")
-    parser.add_argument(
-        "--risk-synthetic-fallback",
-        action="store_true",
-        dest="risk_synthetic_fallback",
-        help="Wymuś generowanie syntetycznych danych",
-    )
-    parser.add_argument(
-        "--risk-disable-synthetic-fallback",
-        action="store_false",
-        dest="risk_synthetic_fallback",
-        help="Wyłącz generowanie syntetycznych danych",
-    )
+    parser.add_argument("--risk-fail-on-breach", action="store_true", help="Przerwij przy naruszeniach")
+    parser.add_argument("--risk-synthetic-fallback", action="store_true", dest="risk_synthetic_fallback", help="Wymuś syntetyczne dane")
+    parser.add_argument("--risk-disable-synthetic-fallback", action="store_false", dest="risk_synthetic_fallback", help="Wyłącz syntetyczne dane")
     parser.set_defaults(risk_synthetic_fallback=True)
 
     # Parametry mTLS
@@ -211,154 +159,58 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mtls-organization", default="Dudzian", help="Pole O certyfikatu")
     parser.add_argument("--mtls-valid-days", type=int, default=365, help="Ważność certyfikatów")
     parser.add_argument("--mtls-key-size", type=int, default=4096, help="Rozmiar klucza RSA")
-    parser.add_argument(
-        "--mtls-server-hostname",
-        action="append",
-        dest="mtls_server_hostnames",
-        default=[],
-        help="Hostname/IP dodawane do SAN certyfikatu serwera",
-    )
-    parser.add_argument(
-        "--mtls-rotation-registry",
-        help="Plik rejestru rotacji TLS (opcjonalny)",
-    )
-    parser.add_argument(
-        "--mtls-ca-passphrase-env",
-        help="Zmienne ENV z passphrase dla klucza CA",
-    )
-    parser.add_argument(
-        "--mtls-server-passphrase-env",
-        help="Zmienne ENV z passphrase klucza serwera",
-    )
-    parser.add_argument(
-        "--mtls-client-passphrase-env",
-        help="Zmienne ENV z passphrase klucza klienta",
-    )
+    parser.add_argument("--mtls-server-hostname", action="append", dest="mtls_server_hostnames", default=[], help="Hostname/IP do SAN serwera")
+    parser.add_argument("--mtls-rotation-registry", help="Plik rejestru rotacji TLS (opcjonalny)")
+    parser.add_argument("--mtls-ca-passphrase-env", help="ENV z passphrase dla klucza CA")
+    parser.add_argument("--mtls-server-passphrase-env", help="ENV z passphrase klucza serwera")
+    parser.add_argument("--mtls-client-passphrase-env", help="ENV z passphrase klucza klienta")
 
     # Parametry TCO
-    parser.add_argument("--tco-fill", action="append", dest="tco_fills", default=[], help="Plik JSONL z fillami (wielokrotnie)")
-    parser.add_argument(
-        "--tco-output-dir",
-        default="var/audit/tco",
-        help="Katalog docelowy raportu TCO",
-    )
-    parser.add_argument(
-        "--tco-basename",
-        default="oem_acceptance_tco",
-        help="Nazwa bazowa artefaktów raportu TCO",
-    )
+    parser.add_argument("--tco-fill", action="append", dest="tco_fills", default=[], help="Plik JSONL z fillami")
+    parser.add_argument("--tco-output-dir", default="var/audit/tco", help="Katalog raportu TCO")
+    parser.add_argument("--tco-basename", default="oem_acceptance_tco", help="Nazwa bazowa artefaktów TCO")
     parser.add_argument("--tco-signing-key", help="Klucz HMAC do podpisu raportu TCO")
     parser.add_argument("--tco-signing-key-id", help="Identyfikator klucza TCO")
-    parser.add_argument(
-        "--tco-cost-limit-bps",
-        type=float,
-        default=None,
-        help="Limit kosztów w bps generujący alert w raporcie TCO",
-    )
-    parser.add_argument(
-        "--tco-metadata",
-        action="append",
-        default=[],
-        help="Dodatkowe metadane TCO (klucz=wartość)",
-    )
+    parser.add_argument("--tco-cost-limit-bps", type=float, default=None, help="Limit kosztów w bps (alert)")
+    parser.add_argument("--tco-metadata", action="append", default=[], help="Dodatkowe metadane TCO (k=v)")
 
     # Parametry DecisionOrchestratora
     parser.add_argument("--decision-config", help="Konfiguracja core.yaml używana przez decision engine")
-    parser.add_argument("--decision-risk-snapshot", help="Plik JSON z snapshotem ryzyka profili")
+    parser.add_argument("--decision-risk-snapshot", help="Plik JSON ze snapshotem ryzyka profili")
     parser.add_argument("--decision-candidates", help="Plik JSON z kandydatami decyzji")
-    parser.add_argument(
-        "--decision-output",
-        help="Ścieżka wynikowego raportu DecisionOrchestratora",
-    )
-    parser.add_argument(
-        "--decision-allow-empty",
-        action="store_true",
-        help="Nie traktuj braku akceptowanych decyzji jako błędu",
-    )
+    parser.add_argument("--decision-output", help="Ścieżka wynikowego raportu DecisionOrchestratora")
+    parser.add_argument("--decision-allow-empty", action="store_true", help="Nie traktuj braku akceptacji jako błędu")
     parser.add_argument("--decision-signing-key", help="Wartość klucza podpisu raportu decision engine")
     parser.add_argument("--decision-signing-key-env", help="Nazwa zmiennej ENV z kluczem podpisu")
     parser.add_argument("--decision-signing-key-file", help="Plik z kluczem podpisu decision engine")
     parser.add_argument("--decision-signing-key-id", help="Identyfikator klucza decision engine")
-    parser.add_argument(
-        "--decision-tco-report",
-        help="Opcjonalna ścieżka do raportu TCO wykorzystywana przez orchestrator",
-    )
+    parser.add_argument("--decision-tco-report", help="Opcjonalna ścieżka do raportu TCO dla orchestratora")
 
-    # Parametry SLO observability
+    # Parametry SLO
     parser.add_argument("--slo-config", help="Konfiguracja core.yaml z definicjami SLO")
-    parser.add_argument("--slo-metric", action="append", dest="slo_metrics", default=[], help="Plik JSONL z metrykami SLO (wielokrotnie)")
+    parser.add_argument("--slo-metric", action="append", dest="slo_metrics", default=[], help="Plik JSONL z metrykami SLO")
     parser.add_argument("--slo-output-dir", default="var/audit/slo", help="Katalog raportów SLO")
     parser.add_argument("--slo-basename", default="oem_slo_report", help="Nazwa bazowa raportu SLO")
     parser.add_argument("--slo-signing-key", help="Klucz podpisu raportu SLO")
     parser.add_argument("--slo-signing-key-id", help="Identyfikator klucza raportu SLO")
-    parser.add_argument(
-        "--slo-metadata",
-        action="append",
-        default=[],
-        help="Metadane raportu SLO (klucz=wartość)",
-    )
+    parser.add_argument("--slo-metadata", action="append", default=[], help="Metadane raportu SLO (k=v)")
 
-    # Parametry rotacji kluczy Stage5
-    parser.add_argument(
-        "--rotation-config",
-        help="Konfiguracja core.yaml używana do planu rotacji kluczy",
-    )
-    parser.add_argument(
-        "--rotation-registry",
-        help="Ścieżka rejestru rotacji (nadpisuje konfigurację)",
-    )
-    parser.add_argument(
-        "--rotation-output-dir",
-        help="Katalog docelowy raportu rotacji (domyślnie z konfiguracji)",
-    )
-    parser.add_argument(
-        "--rotation-basename",
-        default="rotation_plan_oem",
-        help="Nazwa bazowa raportu rotacji",
-    )
-    parser.add_argument(
-        "--rotation-execute",
-        action="store_true",
-        help="Zapisz aktualizację rejestru rotacji podczas akceptacji",
-    )
-    parser.add_argument(
-        "--rotation-interval-override",
-        type=float,
-        default=None,
-        help="Globalne nadpisanie interwału rotacji (dni)",
-    )
-    parser.add_argument(
-        "--rotation-warn-override",
-        type=float,
-        default=None,
-        help="Globalne nadpisanie progu ostrzeżeń rotacji (dni)",
-    )
+    # Parametry rotacji kluczy
+    parser.add_argument("--rotation-config", help="Konfiguracja core.yaml używana do planu rotacji kluczy")
+    parser.add_argument("--rotation-registry", help="Ścieżka rejestru rotacji (nadpisuje konfigurację)")
+    parser.add_argument("--rotation-output-dir", help="Katalog docelowy raportu rotacji")
+    parser.add_argument("--rotation-basename", default="rotation_plan_oem", help="Nazwa bazowa raportu rotacji")
+    parser.add_argument("--rotation-execute", action="store_true", help="Zapisz aktualizację rejestru rotacji")
+    parser.add_argument("--rotation-interval-override", type=float, default=None, help="Override interwału rotacji (dni)")
+    parser.add_argument("--rotation-warn-override", type=float, default=None, help="Override progu ostrzeżeń (dni)")
 
     # Parametry paczki obserwowalności
-    parser.add_argument("--observability-version", help="Wersja paczki observability Stage5")
-    parser.add_argument(
-        "--observability-output-dir",
-        help="Katalog docelowy paczki observability",
-    )
-    parser.add_argument(
-        "--observability-signing-key",
-        help="Plik z kluczem podpisu paczki observability",
-    )
+    parser.add_argument("--observability-version", help="Wersja paczki observability")
+    parser.add_argument("--observability-output-dir", help="Katalog docelowy paczki observability")
+    parser.add_argument("--observability-signing-key", help="Plik z kluczem podpisu paczki observability")
     parser.add_argument("--observability-key-id", help="Identyfikator klucza paczki observability")
-    parser.add_argument(
-        "--observability-dashboard",
-        action="append",
-        dest="observability_dashboards",
-        default=[],
-        help="Dodatkowy plik dashboardu Grafany",
-    )
-    parser.add_argument(
-        "--observability-alert",
-        action="append",
-        dest="observability_alerts",
-        default=[],
-        help="Dodatkowy plik reguł alertowych Prometheusa",
-    )
+    parser.add_argument("--observability-dashboard", action="append", dest="observability_dashboards", default=[], help="Plik dashboardu Grafany")
+    parser.add_argument("--observability-alert", action="append", dest="observability_alerts", default=[], help="Plik reguł alertowych Prometheusa")
 
     return parser
 
@@ -367,6 +219,11 @@ def _ensure_paths_exist(values: Iterable[str], description: str) -> None:
     missing = [candidate for candidate in values if candidate and not Path(candidate).expanduser().exists()]
     if missing:
         raise AcceptanceError(f"{description}: brakujące ścieżki: {', '.join(missing)}")
+
+
+def _require(step_name: str, fn) -> None:
+    if fn is None:
+        raise AcceptanceError(f"Krok '{step_name}' jest niedostępny: brak wymaganego modułu skryptu.")
 
 
 def _run_bundle_step(args: argparse.Namespace) -> dict[str, Any]:
@@ -394,12 +251,9 @@ def _run_bundle_step(args: argparse.Namespace) -> dict[str, Any]:
         _ensure_paths_exist([path], "Etap bundla (config/resource)")
 
     cli_args: List[str] = [
-        "--platform",
-        args.bundle_platform,
-        "--version",
-        args.bundle_version,
-        "--signing-key-path",
-        args.bundle_signing_key,
+        "--platform", args.bundle_platform,
+        "--version", args.bundle_version,
+        "--signing-key-path", args.bundle_signing_key,
     ]
     for path in args.bundle_daemon:
         cli_args.extend(["--daemon", path])
@@ -419,6 +273,7 @@ def _run_bundle_step(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _run_license_step(args: argparse.Namespace) -> dict[str, Any]:
+    _require("license", provision_license)
     required = {
         "--license-signing-key": args.license_signing_key,
         "--license-registry": args.license_registry,
@@ -436,25 +291,17 @@ def _run_license_step(args: argparse.Namespace) -> dict[str, Any]:
     bundle_version = args.license_bundle_version or args.bundle_version or "0.0.0"
 
     cli_args: List[str] = [
-        "--signing-key-path",
-        args.license_signing_key,
-        "--profile",
-        args.license_profile,
-        "--bundle-version",
-        bundle_version,
-        "--output",
-        args.license_registry,
-        "--valid-days",
-        str(args.license_valid_days),
+        "--signing-key-path", args.license_signing_key,
+        "--profile", args.license_profile,
+        "--bundle-version", bundle_version,
+        "--output", args.license_registry,
+        "--valid-days", str(args.license_valid_days),
     ]
     if args.license_key_id:
         cli_args.extend(["--key-id", args.license_key_id])
     if args.license_rotation_log:
-        cli_args.extend(["--rotation-log", args.license_rotation_log])
-        cli_args.extend([
-            "--rotation-interval-days",
-            str(args.license_rotation_interval_days),
-        ])
+        cli_args.extend(["--rotation-log", args.license_rotation_log,
+                         "--rotation-interval-days", str(args.license_rotation_interval_days)])
     if args.license_notes:
         cli_args.extend(["--notes", args.license_notes])
     for feature in args.license_features:
@@ -464,7 +311,7 @@ def _run_license_step(args: argparse.Namespace) -> dict[str, Any]:
     elif args.license_fingerprint:
         cli_args.extend(["--fingerprint", args.license_fingerprint])
 
-    exit_code = provision_license(cli_args)
+    exit_code = provision_license(cli_args)  # type: ignore
     if exit_code != 0:
         raise AcceptanceError(f"Provisioning licencji zakończony kodem {exit_code}")
 
@@ -476,6 +323,7 @@ def _run_license_step(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _run_risk_step(args: argparse.Namespace) -> dict[str, Any]:
+    _require("risk", run_risk_simulation)
     required = {
         "--risk-config": args.risk_config,
         "--risk-output-dir": args.risk_output_dir,
@@ -489,20 +337,13 @@ def _run_risk_step(args: argparse.Namespace) -> dict[str, Any]:
         _ensure_paths_exist([args.risk_dataset_root], "Paper Labs dataset")
 
     cli_args: List[str] = [
-        "--config",
-        args.risk_config,
-        "--output-dir",
-        args.risk_output_dir,
-        "--interval",
-        args.risk_interval,
-        "--max-bars",
-        str(args.risk_max_bars),
-        "--base-equity",
-        str(args.risk_base_equity),
-        "--json-output",
-        args.risk_json_name,
-        "--pdf-output",
-        args.risk_pdf_name,
+        "--config", args.risk_config,
+        "--output-dir", args.risk_output_dir,
+        "--interval", args.risk_interval,
+        "--max-bars", str(args.risk_max_bars),
+        "--base-equity", str(args.risk_base_equity),
+        "--json-output", args.risk_json_name,
+        "--pdf-output", args.risk_pdf_name,
     ]
     if args.risk_environment:
         cli_args.extend(["--environment", args.risk_environment])
@@ -519,7 +360,7 @@ def _run_risk_step(args: argparse.Namespace) -> dict[str, Any]:
     if args.risk_fail_on_breach:
         cli_args.append("--fail-on-breach")
 
-    exit_code = run_risk_simulation(cli_args)
+    exit_code = run_risk_simulation(cli_args)  # type: ignore
     if exit_code != 0:
         raise AcceptanceError(f"Paper Labs zakończyło się kodem {exit_code}")
 
@@ -531,26 +372,19 @@ def _run_risk_step(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _run_mtls_step(args: argparse.Namespace) -> dict[str, Any]:
-    required = {
-        "--mtls-output-dir": args.mtls_output_dir,
-    }
+    _require("mtls", generate_mtls_bundle)
+    required = {"--mtls-output-dir": args.mtls_output_dir}
     for flag, value in required.items():
         if not value:
             raise AcceptanceError(f"Brak parametru {flag} dla generowania mTLS")
 
     cli_args: List[str] = [
-        "--output-dir",
-        args.mtls_output_dir,
-        "--bundle-name",
-        args.mtls_bundle_name,
-        "--common-name",
-        args.mtls_common_name,
-        "--organization",
-        args.mtls_organization,
-        "--valid-days",
-        str(args.mtls_valid_days),
-        "--key-size",
-        str(args.mtls_key_size),
+        "--output-dir", args.mtls_output_dir,
+        "--bundle-name", args.mtls_bundle_name,
+        "--common-name", args.mtls_common_name,
+        "--organization", args.mtls_organization,
+        "--valid-days", str(args.mtls_valid_days),
+        "--key-size", str(args.mtls_key_size),
     ]
     for host in args.mtls_server_hostnames or []:
         cli_args.extend(["--server-hostname", host])
@@ -563,7 +397,7 @@ def _run_mtls_step(args: argparse.Namespace) -> dict[str, Any]:
     if args.mtls_client_passphrase_env:
         cli_args.extend(["--client-key-passphrase-env", args.mtls_client_passphrase_env])
 
-    exit_code = generate_mtls_bundle(cli_args)
+    exit_code = generate_mtls_bundle(cli_args)  # type: ignore
     if exit_code != 0:
         raise AcceptanceError(f"Generowanie pakietu mTLS zakończyło się kodem {exit_code}")
 
@@ -578,6 +412,7 @@ def _run_mtls_step(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _run_tco_step(args: argparse.Namespace) -> dict[str, Any]:
+    _require("tco", run_tco_analysis)
     if not args.tco_fills:
         raise AcceptanceError("Należy wskazać co najmniej jeden plik z transakcjami (--tco-fill)")
     if not args.tco_signing_key:
@@ -600,7 +435,7 @@ def _run_tco_step(args: argparse.Namespace) -> dict[str, Any]:
     for metadata in args.tco_metadata:
         cli_args.extend(["--metadata", metadata])
 
-    exit_code = run_tco_analysis(cli_args)
+    exit_code = run_tco_analysis(cli_args)  # type: ignore
     if exit_code != 0:
         raise AcceptanceError(f"Analiza TCO zakończyła się kodem {exit_code}")
 
@@ -629,6 +464,7 @@ def _run_tco_step(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _run_decision_step(args: argparse.Namespace) -> dict[str, Any]:
+    _require("decision", run_decision_engine_smoke)
     required = {
         "--decision-risk-snapshot": args.decision_risk_snapshot,
         "--decision-candidates": args.decision_candidates,
@@ -644,14 +480,10 @@ def _run_decision_step(args: argparse.Namespace) -> dict[str, Any]:
         _ensure_paths_exist([args.decision_signing_key_file], "DecisionOrchestrator (klucz plikowy)")
 
     cli_args: List[str] = [
-        "--config",
-        str(Path(config_path).expanduser()),
-        "--risk-snapshot",
-        str(Path(args.decision_risk_snapshot).expanduser()),
-        "--candidates",
-        str(Path(args.decision_candidates).expanduser()),
-        "--output",
-        str(Path(args.decision_output).expanduser()),
+        "--config", str(Path(config_path).expanduser()),
+        "--risk-snapshot", str(Path(args.decision_risk_snapshot).expanduser()),
+        "--candidates", str(Path(args.decision_candidates).expanduser()),
+        "--output", str(Path(args.decision_output).expanduser()),
     ]
 
     tco_report = args.decision_tco_report or getattr(args, "_tco_report_path", None)
@@ -660,11 +492,9 @@ def _run_decision_step(args: argparse.Namespace) -> dict[str, Any]:
     if args.decision_allow_empty:
         cli_args.append("--allow-empty")
 
-    signing_args = [value for value in (args.decision_signing_key, args.decision_signing_key_env, args.decision_signing_key_file) if value]
+    signing_args = [v for v in (args.decision_signing_key, args.decision_signing_key_env, args.decision_signing_key_file) if v]
     if len(signing_args) > 1:
-        raise AcceptanceError(
-            "Podaj klucz decision engine w jednej formie: wartość, zmienna ENV lub plik"
-        )
+        raise AcceptanceError("Podaj klucz decision engine w jednej formie: wartość, zmienna ENV lub plik")
     if args.decision_signing_key:
         cli_args.extend(["--signing-key", args.decision_signing_key])
     elif args.decision_signing_key_env:
@@ -674,7 +504,7 @@ def _run_decision_step(args: argparse.Namespace) -> dict[str, Any]:
     if args.decision_signing_key_id:
         cli_args.extend(["--signing-key-id", args.decision_signing_key_id])
 
-    exit_code = run_decision_engine_smoke(cli_args)
+    exit_code = run_decision_engine_smoke(cli_args)  # type: ignore
     if exit_code != 0:
         raise AcceptanceError(f"DecisionOrchestrator zakończył się kodem {exit_code}")
 
@@ -689,6 +519,7 @@ def _run_decision_step(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _run_slo_step(args: argparse.Namespace) -> dict[str, Any]:
+    _require("slo", run_slo_monitor)
     if not args.slo_metrics:
         raise AcceptanceError("Należy wskazać co najmniej jeden plik metryk (--slo-metric)")
 
@@ -711,7 +542,7 @@ def _run_slo_step(args: argparse.Namespace) -> dict[str, Any]:
     for metadata in args.slo_metadata:
         cli_args.extend(["--metadata", metadata])
 
-    exit_code = run_slo_monitor(cli_args)
+    exit_code = run_slo_monitor(cli_args)  # type: ignore
     if exit_code != 0:
         raise AcceptanceError(f"Monitor SLO zakończył się kodem {exit_code}")
 
@@ -727,6 +558,7 @@ def _run_slo_step(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _run_rotation_step(args: argparse.Namespace) -> dict[str, Any]:
+    _require("rotation", run_rotate_keys)
     config_path = args.rotation_config or args.slo_config or args.risk_config or str(Path("config") / "core.yaml")
     _ensure_paths_exist([config_path], "Etap rotacji kluczy (konfiguracja)")
     if args.rotation_registry:
@@ -746,27 +578,29 @@ def _run_rotation_step(args: argparse.Namespace) -> dict[str, Any]:
     if args.rotation_warn_override is not None:
         cli_args.extend(["--warn-within-override", str(args.rotation_warn_override)])
 
-    exit_code = run_rotate_keys(cli_args)
+    exit_code = run_rotate_keys(cli_args)  # type: ignore
     if exit_code != 0:
         raise AcceptanceError(f"Plan rotacji kluczy zakończył się kodem {exit_code}")
 
-    config_resolved = Path(config_path).expanduser().resolve()
-    core_config = load_core_config(str(config_resolved))
-    observability = getattr(core_config, "observability", None)
-    rotation_cfg = getattr(observability, "key_rotation", None)
-    if rotation_cfg is None:
-        raise AcceptanceError("Konfiguracja nie zawiera sekcji observability.key_rotation")
-
-    if args.rotation_output_dir:
-        output_root = Path(args.rotation_output_dir).expanduser()
-    else:
-        output_root = Path(rotation_cfg.audit_directory)
-    if not output_root.is_absolute():
-        output_root = (config_resolved.parent / output_root).resolve()
-    else:
-        output_root = output_root.resolve()
-
+    # Ustal ścieżkę planu
     basename = args.rotation_basename or "rotation_plan_oem"
+    if args.rotation_output_dir:
+        output_root = Path(args.rotation_output_dir).expanduser().resolve()
+    else:
+        if load_core_config is None:
+            raise AcceptanceError("Brak bot_core.config.loader; podaj --rotation-output-dir aby wskazać lokalizację planu.")
+        config_resolved = Path(config_path).expanduser().resolve()
+        core_config = load_core_config(str(config_resolved))  # type: ignore
+        observability = getattr(core_config, "observability", None)
+        rotation_cfg = getattr(observability, "key_rotation", None)
+        if rotation_cfg is None:
+            raise AcceptanceError("Konfiguracja nie zawiera sekcji observability.key_rotation")
+        output_root = Path(rotation_cfg.audit_directory)
+        if not output_root.is_absolute():
+            output_root = (config_resolved.parent / output_root).resolve()
+        else:
+            output_root = output_root.resolve()
+
     plan_path = output_root / f"{basename}.json"
     if not plan_path.exists():
         raise AcceptanceError(f"Nie udało się odnaleźć wygenerowanego planu rotacji: {plan_path}")
@@ -774,6 +608,7 @@ def _run_rotation_step(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _run_observability_step(args: argparse.Namespace) -> dict[str, Any]:
+    _require("observability", run_observability_bundle)
     required = {
         "--observability-version": args.observability_version,
         "--observability-output-dir": args.observability_output_dir,
@@ -788,12 +623,9 @@ def _run_observability_step(args: argparse.Namespace) -> dict[str, Any]:
     _ensure_paths_exist(args.observability_alerts or [], "Paczka obserwowalności (alert)")
 
     cli_args: List[str] = [
-        "--version",
-        args.observability_version,
-        "--output-dir",
-        args.observability_output_dir,
-        "--signing-key",
-        args.observability_signing_key,
+        "--version", args.observability_version,
+        "--output-dir", args.observability_output_dir,
+        "--signing-key", args.observability_signing_key,
     ]
     if args.observability_key_id:
         cli_args.extend(["--key-id", args.observability_key_id])
@@ -802,7 +634,7 @@ def _run_observability_step(args: argparse.Namespace) -> dict[str, Any]:
     for alert in args.observability_alerts:
         cli_args.extend(["--alert-rule", alert])
 
-    exit_code = run_observability_bundle(cli_args)
+    exit_code = run_observability_bundle(cli_args)  # type: ignore
     if exit_code != 0:
         raise AcceptanceError(f"Budowanie paczki obserwowalności zakończyło się kodem {exit_code}")
 
@@ -936,7 +768,7 @@ def _prepare_artifact_directory(root: str | None) -> Path | None:
     counter = 1
     while candidate.exists():
         counter += 1
-        candidate = base / f"{slug}-{counter:02d}"
+        candidate = base / f"{slug}-{counter:02d}"`
     candidate.mkdir(parents=True, exist_ok=False)
     return candidate
 
@@ -978,10 +810,7 @@ def _extract_bundle_metadata(archive_path: Path, destination: Path) -> list[str]
             for info in archive.infolist():
                 if info.is_dir():
                     continue
-                try:
-                    _store_member(info.filename, archive.read(info))
-                except AcceptanceError:
-                    raise
+                _store_member(info.filename, archive.read(info))
     else:
         mode = "r:gz" if archive_path.suffixes[-2:] == [".tar", ".gz"] or archive_path.suffix == ".tgz" else "r"
         with tarfile.open(archive_path, mode) as archive:
@@ -1024,10 +853,7 @@ def _publish_artifacts(
     }
 
     summary_path = artifact_dir / "summary.json"
-    summary_path.write_text(
-        json.dumps(serialized_summary, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    summary_path.write_text(json.dumps(serialized_summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     metadata["summary_path"] = str(summary_path)
     if args.summary_path:
         metadata["source_summary_path"] = str(Path(args.summary_path).expanduser())
@@ -1087,14 +913,8 @@ def _publish_artifacts(
         copied_log = decision_dir / log_path.name
         copied_log_path = _copy_artifact(log_path, copied_log)
         entry_path = decision_dir / "entry.json"
-        entry_path.write_text(
-            json.dumps(entry, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
-        metadata["decision_log"] = {
-            "log_path": copied_log_path,
-            "entry_path": str(entry_path),
-        }
+        entry_path.write_text(json.dumps(entry, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        metadata["decision_log"] = {"log_path": copied_log_path, "entry_path": str(entry_path)}
 
     tco_details = details_by_step.get("tco")
     if tco_details:
@@ -1157,10 +977,7 @@ def _publish_artifacts(
             metadata.setdefault("observability", {})["archive"] = copied_path
 
     metadata_path = artifact_dir / "metadata.json"
-    metadata_path.write_text(
-        json.dumps(metadata, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return artifact_dir
 
 
@@ -1194,12 +1011,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     for name, handler in steps:
         try:
             details = handler(args)
-        except AcceptanceError as exc:  # noqa: PERF203 - chcemy zatrzymać się na pierwszym błędzie
+        except AcceptanceError as exc:  # zatrzymaj na błędzie jeśli --fail-fast
             _record(summary, StepOutcome(step=name, status="failed", details={"error": str(exc)}))
             exit_code = 1
             if args.fail_fast:
                 break
-        except Exception as exc:  # pragma: no cover - zabezpieczenie przed nieoczekiwanymi wyjątkami
+        except Exception as exc:  # pragma: no cover
             _record(summary, StepOutcome(step=name, status="failed", details={"error": str(exc)}))
             exit_code = 1
             if args.fail_fast:

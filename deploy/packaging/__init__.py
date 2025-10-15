@@ -11,6 +11,9 @@ from .build_strategy_bundle import (  # noqa: F401
     build_from_cli as build_strategy_bundle_from_cli,
 )
 
+# Backwards compatibility: expose ``build_from_cli`` used by legacy tests.
+build_from_cli = build_core_bundle_from_cli
+
 __all__ = [
     "BundleInputs",
     "CoreBundleBuilder",
@@ -20,6 +23,3 @@ __all__ = [
     "build_strategy_bundle_from_cli",
     "build_from_cli",
 ]
-
-# Backwards compatibility: expose ``build_from_cli`` used by legacy tests.
-build_from_cli = build_core_bundle_from_cli

@@ -16,13 +16,20 @@ from bot_core.risk.simulation import (
     load_profiles_from_config,
     run_simulations_from_config,
 )
-from bot_core.risk.stress_lab import (
-    MarketBaseline,
-    MarketStressMetrics,
-    StressLab,
-    StressLabReport,
-    StressScenarioResult,
-)
+
+# Opcjonalne: w niektórych gałęziach `stress_lab` może nie istnieć.
+try:  # pragma: no cover
+    from bot_core.risk.stress_lab import (
+        MarketBaseline,
+        MarketStressMetrics,
+        StressLab,
+        StressLabReport,
+        StressScenarioResult,
+    )
+    _HAS_STRESS_LAB = True
+except Exception:  # pragma: no cover
+    _HAS_STRESS_LAB = False
+
 from bot_core.risk.profiles.aggressive import AggressiveProfile
 from bot_core.risk.profiles.balanced import BalancedProfile
 from bot_core.risk.profiles.conservative import ConservativeProfile
@@ -52,9 +59,15 @@ __all__ = [
     "RiskRepository",
     "run_simulations_from_config",
     "ThresholdRiskEngine",
-    "StressLab",
-    "StressLabReport",
-    "StressScenarioResult",
-    "MarketStressMetrics",
-    "MarketBaseline",
 ]
+
+if _HAS_STRESS_LAB:
+    __all__.extend(
+        [
+            "StressLab",
+            "StressLabReport",
+            "StressScenarioResult",
+            "MarketStressMetrics",
+            "MarketBaseline",
+        ]
+    )

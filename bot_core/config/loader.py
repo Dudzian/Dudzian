@@ -141,6 +141,7 @@ try:
 except Exception:
     MetricsServiceTlsConfig = None  # type: ignore
 
+# --- sekcja z konfliktu: scala oba warianty i zachowuje wszystkie typy opcjonalne ---
 try:
     from bot_core.config.models import (  # type: ignore
         ObservabilityConfig,
@@ -199,6 +200,12 @@ except Exception:
     ResilienceConfig = None  # type: ignore
     ResilienceDrillConfig = None  # type: ignore
     ResilienceDrillThresholdsConfig = None  # type: ignore
+
+try:
+    from bot_core.config.models import LiveRoutingConfig, PrometheusAlertRuleConfig  # type: ignore
+except Exception:
+    LiveRoutingConfig = None  # type: ignore
+    PrometheusAlertRuleConfig = None  # type: ignore
 
 
 _GRPC_METADATA_KEY_PATTERN = re.compile(r"^[0-9a-z._-]+$")
@@ -1473,6 +1480,90 @@ def _load_metrics_service(
     return MetricsServiceConfig(**kwargs)  # type: ignore[call-arg]
 
 
+def _load_live_routing(
+    runtime_section: Optional[Mapping[str, Any]], *, base_dir: Path | None = None
+) -> LiveRoutingConfig | None:
+    if LiveRoutingConfig is None or not _core_has("live_routing"):
+        return None
+
+    runtime = runtime_section or {}
+    raw = runtime.get("live_routing")
+    if not raw:
+        return None
+
+    enabled = bool(raw.get("enabled", False))
+    default_route = tuple(
+        str(entry).strip()
+        for entry in raw.get("default_route", [])
+        if str(entry).strip()
+    )
+    if enabled and not default_route:
+        raise ValueError("runtime.live_routing.default_route musi zawierać co najmniej jedną giełdę")
+
+    overrides_raw = raw.get("route_overrides") or {}
+    overrides: dict[str, tuple[str, ...]] = {}
+    if isinstance(overrides_raw, Mapping):
+        for symbol, route in overrides_raw.items():
+            if not route:
+                continue
+            normalized = tuple(
+                str(entry).strip()
+                for entry in route
+                if str(entry).strip()
+            )
+            if normalized:
+                overrides[str(symbol)] = normalized
+
+    buckets_raw = raw.get("latency_histogram_buckets") or ()
+    buckets: list[float] = []
+    for entry in buckets_raw:
+        if entry in (None, ""):
+            continue
+        try:
+            buckets.append(float(entry))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("latency_histogram_buckets musi zawierać wartości liczbowe") from exc
+
+    alerts: list[PrometheusAlertRuleConfig] = []
+    alerts_raw = raw.get("prometheus_alerts") or ()
+    for entry in alerts_raw:
+        if not isinstance(entry, Mapping):
+            continue
+        name = str(entry.get("name", "")).strip()
+        expr = str(entry.get("expr", "")).strip()
+        if not name or not expr:
+            raise ValueError(
+                "Każdy alert w runtime.live_routing.prometheus_alerts wymaga pól name i expr"
+            )
+        duration_raw = entry.get("for") if "for" in entry else entry.get("for_duration")
+        duration = str(duration_raw).strip() if duration_raw not in (None, "") else None
+        labels_raw = entry.get("labels") or {}
+        annotations_raw = entry.get("annotations") or {}
+        if not isinstance(labels_raw, Mapping):
+            raise ValueError("labels w prometheus_alerts musi być mapą")
+        if not isinstance(annotations_raw, Mapping):
+            raise ValueError("annotations w prometheus_alerts musi być mapą")
+        labels = {str(k): str(v) for k, v in labels_raw.items() if str(k).strip()}
+        annotations = {str(k): str(v) for k, v in annotations_raw.items() if str(k).strip()}
+        alerts.append(
+            PrometheusAlertRuleConfig(
+                name=name,
+                expr=expr,
+                for_duration=duration,
+                labels=labels,
+                annotations=annotations,
+            )
+        )
+
+    return LiveRoutingConfig(
+        enabled=enabled,
+        default_route=default_route,
+        route_overrides=overrides,
+        latency_histogram_buckets=tuple(buckets),
+        prometheus_alerts=tuple(alerts),
+    )
+
+
 def _load_risk_service(
     runtime_section: Optional[Mapping[str, Any]], *, base_dir: Path | None = None
 ) -> RiskServiceConfig | None:
@@ -2451,6 +2542,10 @@ def load_core_config(path: str | Path) -> CoreConfig:
     if metrics_config is not None:
         core_kwargs["metrics_service"] = metrics_config
 
+    live_routing_config = _load_live_routing(runtime_section, base_dir=config_base_dir)
+    if live_routing_config is not None:
+        core_kwargs["live_routing"] = live_routing_config
+
     risk_service_config = _load_risk_service(runtime_section, base_dir=config_base_dir)
     if risk_service_config is not None:
         core_kwargs["risk_service"] = risk_service_config
@@ -2511,4 +2606,3 @@ def load_core_config(path: str | Path) -> CoreConfig:
 
 
 __all__ = ["load_core_config"]
-

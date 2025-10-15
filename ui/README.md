@@ -51,6 +51,17 @@ ui/build/bot_trading_shell \
   --metrics-auth-token dev-secret
 ```
 
+Aby włączyć TLS/mTLS gRPC, dodaj dodatkowe opcje:
+
+```bash
+  --use-tls \
+  --tls-root-cert secrets/mtls/ca/ca.pem \
+  --tls-server-name trading.local \
+  --tls-client-cert secrets/mtls/client/client.crt \
+  --tls-client-key secrets/mtls/client/client.key \
+  --tls-pinned-sha256 0123deadbeef...
+```
+
 Domyślne parametry są zgodne z plikiem `ui/config/example.yaml`. Wartości `--max-samples` oraz `--history-limit` pozwalają kontrolować rozmiar buforów i wpływają na wymagania pamięciowe.
 
 ## Aktywacja licencji OEM
