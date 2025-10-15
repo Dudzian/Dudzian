@@ -16,6 +16,7 @@ class RiskCheckResult:
     allowed: bool
     reason: str | None = None
     adjustments: Mapping[str, float] | None = None
+    metadata: Mapping[str, object] | None = None
 
 
 class RiskProfile(abc.ABC):

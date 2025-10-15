@@ -1,0 +1,8 @@
+{
+  "max_latency_ms": 230.0,
+  "error_rate": 0.028,
+  "failover_duration_seconds": 88.0,
+  "orders_redirected": 150,
+  "orders_failed": 5,
+  "notes": "fallback: binance_futures"
+}

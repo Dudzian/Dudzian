@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
 import os
+import stat
 from typing import Any, Mapping, MutableMapping, Sequence
 
 from bot_core.alerts import (
@@ -66,6 +67,11 @@ from bot_core.runtime.file_metadata import (
 )
 from bot_core.observability.metrics import get_global_metrics_registry
 
+try:  # pragma: no cover - DecisionOrchestrator może być opcjonalny
+    from bot_core.decision import DecisionOrchestrator  # type: ignore
+except Exception:  # pragma: no cover
+    DecisionOrchestrator = None  # type: ignore
+
 # --- Metrics service (opcjonalny – w niektórych gałęziach może nie istnieć) ---
 try:  # pragma: no cover - środowiska bez grpcio lub wygenerowanych stubów
     from bot_core.runtime.metrics_service import (  # type: ignore
@@ -93,6 +99,11 @@ try:  # pragma: no cover - eksporter metryk może być niedostępny
     from bot_core.runtime.risk_metrics import RiskMetricsExporter  # type: ignore
 except Exception:  # pragma: no cover
     RiskMetricsExporter = None  # type: ignore
+
+try:  # pragma: no cover - PortfolioGovernor może nie istnieć w tej gałęzi
+    from bot_core.portfolio import PortfolioGovernor  # type: ignore
+except Exception:
+    PortfolioGovernor = None  # type: ignore
 
 try:  # pragma: no cover - sink telemetrii może być pominięty
     from bot_core.runtime.metrics_alerts import (  # type: ignore
@@ -191,6 +202,74 @@ def _config_value(source: object, *names: str) -> Any:
     return None
 
 
+def _load_initial_tco_costs(
+    config: Any,
+    orchestrator: Any,
+    portfolio_governor: Any | None = None,
+) -> tuple[str | None, Sequence[str]]:
+    """Ładuje raporty TCO z konfiguracji do DecisionOrchestratora."""
+
+    warnings: list[str] = []
+    tco_config = getattr(config, "tco", None)
+    if not tco_config:
+        return None, ()
+
+    report_paths = tuple(getattr(tco_config, "report_paths", ()) or ())
+    require_at_startup = bool(getattr(tco_config, "require_at_startup", False))
+    for raw_path in report_paths:
+        path = Path(str(raw_path)).expanduser()
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except FileNotFoundError:
+            warning = f"missing:{path}"
+            warnings.append(warning)
+            _LOGGER.warning("Raport TCO %s nie istnieje", path)
+            continue
+        except Exception:
+            warning = f"invalid:{path}"
+            warnings.append(warning)
+            _LOGGER.warning("Nie udało się wczytać raportu TCO %s", path, exc_info=True)
+            continue
+
+        loaded = False
+        if orchestrator is not None:
+            try:
+                orchestrator.update_costs_from_report(payload)
+            except Exception:
+                warning = f"update_failed:{path}"
+                warnings.append(warning)
+                _LOGGER.warning(
+                    "Nie udało się załadować raportu TCO %s do DecisionOrchestratora",
+                    path,
+                    exc_info=True,
+                )
+            else:
+                loaded = True
+        if portfolio_governor is not None:
+            try:
+                portfolio_governor.update_costs_from_report(payload)
+            except Exception:  # pragma: no cover - defensywnie
+                _LOGGER.debug(
+                    "Nie udało się zaktualizować kosztów TCO w PortfolioGovernor %s",
+                    path,
+                    exc_info=True,
+                )
+            else:
+                loaded = True
+        if loaded:
+            _LOGGER.info("Załadowano raport TCO: %s", path)
+            return str(path), tuple(warnings)
+
+    if require_at_startup:
+        warnings.append("missing_required_tco_report")
+        _LOGGER.error(
+            "Wymagany raport TCO nie został znaleziony (kandydaci=%s)",
+            [str(path) for path in report_paths],
+        )
+    return None, tuple(warnings)
+
+
 @dataclass(slots=True)
 class BootstrapContext:
     """Zawiera wszystkie komponenty zainicjalizowane dla danego środowiska."""
@@ -208,6 +287,12 @@ class BootstrapContext:
     decision_journal: TradingDecisionJournal | None
     risk_decision_log: RiskDecisionLog | None
     risk_profile_name: str
+    decision_engine_config: Any | None = None
+    decision_orchestrator: Any | None = None
+    decision_tco_report_path: str | None = None
+    decision_tco_warnings: Sequence[str] | None = None
+    portfolio_governor_config: Any | None = None
+    portfolio_governor: Any | None = None
     metrics_server: Any | None = None
     metrics_ui_alerts_path: Path | None = None
     metrics_jsonl_path: Path | None = None
@@ -256,6 +341,52 @@ def bootstrap_environment(
         repository=risk_repository,
         decision_log=risk_decision_log,
     )
+    decision_engine_config = getattr(core_config, "decision_engine", None)
+    portfolio_governor_config = getattr(core_config, "portfolio_governor", None)
+    decision_orchestrator: Any | None = None
+    decision_tco_report_path: str | None = None
+    decision_tco_warnings: list[str] = []
+    portfolio_governor: Any | None = None
+    if portfolio_governor_config and PortfolioGovernor is not None:
+        try:
+            portfolio_governor = PortfolioGovernor(portfolio_governor_config)
+        except Exception:  # pragma: no cover - diagnostyka inicjalizacji
+            portfolio_governor = None
+            _LOGGER.exception("Nie udało się zainicjalizować PortfolioGovernora")
+    elif portfolio_governor_config:
+        _LOGGER.debug("Konfiguracja portfolio_governor jest dostępna, ale moduł nie został załadowany")
+    if decision_engine_config and DecisionOrchestrator is not None:
+        try:
+            decision_orchestrator = DecisionOrchestrator(decision_engine_config)
+        except Exception:  # pragma: no cover - diagnostyka inicjalizacji
+            decision_orchestrator = None
+            _LOGGER.exception("Nie udało się zainicjalizować DecisionOrchestratora")
+        else:
+            try:
+                risk_engine.attach_decision_orchestrator(decision_orchestrator)
+            except Exception:  # pragma: no cover - diagnostyka integracji
+                decision_orchestrator = None
+                _LOGGER.exception(
+                    "Nie udało się podłączyć DecisionOrchestratora do silnika ryzyka"
+                )
+            else:
+                report_path, warnings = _load_initial_tco_costs(
+                    decision_engine_config,
+                    decision_orchestrator,
+                    portfolio_governor,
+                )
+                if report_path is not None:
+                    decision_tco_report_path = report_path
+                if warnings:
+                    decision_tco_warnings.extend(str(entry) for entry in warnings)
+    elif portfolio_governor is not None and decision_engine_config:
+        _, warnings = _load_initial_tco_costs(
+            decision_engine_config,
+            None,
+            portfolio_governor,
+        )
+        if warnings:
+            decision_tco_warnings.extend(str(entry) for entry in warnings)
     profile = build_risk_profile_from_config(risk_profile_config)
     risk_engine.register_profile(profile)
     # Aktualizujemy konfigurację środowiska, aby dalsze komponenty znały aktywny profil.
@@ -371,6 +502,30 @@ def bootstrap_environment(
             metrics_tls_enabled = False
         token_value = _config_value(metrics_config, "auth_token", "token")
         token_str = str(token_value).strip() if token_value else ""
+        token_env_name = _config_value(metrics_config, "auth_token_env")
+        token_env_present = bool(token_env_name and os.environ.get(str(token_env_name)))
+        token_file_entry = _config_value(metrics_config, "auth_token_file")
+        token_file_exists = False
+        token_file_permissions: str | None = None
+        token_file_over_permissive = False
+        if token_file_entry:
+            try:
+                token_file_path = Path(str(token_file_entry)).expanduser()
+            except (OSError, TypeError, ValueError):
+                token_file_path = None
+            else:
+                try:
+                    token_file_exists = token_file_path.is_file()
+                except OSError:
+                    token_file_exists = False
+                if token_file_exists:
+                    try:
+                        file_mode = stat.S_IMODE(token_file_path.stat().st_mode)
+                        token_file_permissions = format(file_mode, "#04o")
+                        if os.name != "nt" and file_mode & 0o077:
+                            token_file_over_permissive = True
+                    except OSError:
+                        token_file_permissions = None
         rbac_entries = tuple(getattr(metrics_config, "rbac_tokens", ()) or ())
         if rbac_entries:
             try:
@@ -386,11 +541,41 @@ def bootstrap_environment(
                 )
             else:
                 metrics_security_payload["rbac_tokens"] = metrics_token_validator.metadata()
+        token_configured = bool(token_str) or token_env_present or token_file_exists or bool(metrics_token_validator)
         metrics_auth_metadata = {
-            "token_configured": bool(token_str) or bool(metrics_token_validator),
+            "token_configured": token_configured,
         }
         if token_str:
             metrics_auth_metadata["token_length"] = len(token_str)
+        if token_env_name:
+            metrics_auth_metadata["token_env"] = str(token_env_name)
+            metrics_auth_metadata["token_env_present"] = token_env_present
+            if not token_env_present:
+                metrics_security_warnings.append(
+                    (
+                        "Zmienna środowiskowa tokenu MetricsService nie jest ustawiona "
+                        "(runtime.metrics_service.auth_token_env)."
+                    )
+                )
+        if token_file_entry:
+            metrics_auth_metadata["token_file"] = str(token_file_entry)
+            metrics_auth_metadata["token_file_exists"] = token_file_exists
+            if token_file_permissions:
+                metrics_auth_metadata["token_file_permissions"] = token_file_permissions
+            if not token_file_exists:
+                metrics_security_warnings.append(
+                    (
+                        "Wskazany plik legacy tokenu MetricsService nie istnieje "
+                        "(runtime.metrics_service.auth_token_file)."
+                    )
+                )
+            elif token_file_over_permissive:
+                metrics_security_warnings.append(
+                    (
+                        "Plik tokenu MetricsService ma zbyt szerokie uprawnienia "
+                        f"({token_file_permissions or '<unknown>'}); ustaw chmod 600."
+                    )
+                )
         if metrics_token_validator is not None:
             validator_meta = metrics_token_validator.metadata()
             metrics_auth_metadata["rbac_tokens"] = validator_meta.get("tokens", [])
@@ -699,7 +884,10 @@ def bootstrap_environment(
     if metrics_service_enabled:
         if metrics_auth_metadata and not metrics_auth_metadata.get("token_configured"):
             metrics_security_warnings.append(
-                "MetricsService ma włączone API bez tokenu autoryzacyjnego – ustaw runtime.metrics_service.auth_token."
+                (
+                    "MetricsService ma włączone API bez tokenu autoryzacyjnego – "
+                    "ustaw runtime.metrics_service.auth_token_env lub skonfiguruj RBAC."
+                )
             )
         if metrics_tls_enabled is False:
             metrics_security_warnings.append(
@@ -939,6 +1127,14 @@ def bootstrap_environment(
         decision_journal=decision_journal,
         risk_decision_log=risk_decision_log,
         risk_profile_name=selected_profile,
+        decision_engine_config=decision_engine_config,
+        decision_orchestrator=decision_orchestrator,
+        decision_tco_report_path=decision_tco_report_path,
+        decision_tco_warnings=tuple(decision_tco_warnings)
+        if decision_tco_warnings
+        else None,
+        portfolio_governor_config=portfolio_governor_config,
+        portfolio_governor=portfolio_governor,
         metrics_server=metrics_server,
         metrics_ui_alerts_path=metrics_ui_alert_path,
         metrics_jsonl_path=metrics_jsonl_path,

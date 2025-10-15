@@ -75,6 +75,20 @@ jobs:
             $AUTO_PUBLISH_FLAGS \
             $EXTRA_ARGS
 
+      - name: Run risk simulations (Paper Labs)
+        if: always()
+        run: |
+          python scripts/run_risk_simulation_lab.py \
+            --config "$BOT_CORE_CONFIG" \
+            --environment "$BOT_CORE_ENVIRONMENT" \
+            --output-dir "$BOT_CORE_OUTPUT_DIR/risk_simulation" \
+            --namespace binance_spot \
+            --symbols BTCUSDT ETHUSDT \
+            --interval 1h \
+            --synthetic-fallback \
+            --fail-on-breach \
+            --print-summary
+
       - name: Validate summary (strict)
         if: steps.smoke.outcome == 'success'
         run: |

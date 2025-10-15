@@ -58,7 +58,6 @@ risk_profiles:
       - spot_core_major
       - spot_alt_liquidity
       - stat_arb_intraday
-      - cross_exchange_major
   manual:
     max_daily_loss_pct: 0.0
     max_position_pct: 0.0
@@ -74,6 +73,250 @@ risk_profiles:
       manual_override: 1.0
     instrument_buckets:
       - manual_override
+
+decision_engine:
+  orchestrator:
+    max_cost_bps: 12.0
+    min_net_edge_bps: 3.0
+    max_daily_loss_pct: 0.022
+    max_drawdown_pct: 0.08
+    max_position_ratio: 0.35
+    max_open_positions: 8
+    max_latency_ms: 250.0
+  min_probability: 0.55
+  require_cost_data: true
+  penalty_cost_bps: 1.0
+  profile_overrides:
+    conservative:
+      max_cost_bps: 9.0
+      min_net_edge_bps: 2.0
+      max_daily_loss_pct: 0.012
+      max_drawdown_pct: 0.05
+      max_position_ratio: 0.22
+      max_open_positions: 3
+      max_latency_ms: 180.0
+      max_trade_notional: 15000.0
+    balanced:
+      max_cost_bps: 12.0
+      min_net_edge_bps: 3.5
+      max_daily_loss_pct: 0.02
+      max_drawdown_pct: 0.09
+      max_position_ratio: 0.32
+      max_open_positions: 6
+      max_latency_ms: 220.0
+      max_trade_notional: 25000.0
+    aggressive:
+      max_cost_bps: 15.0
+      min_net_edge_bps: 4.5
+      max_daily_loss_pct: 0.035
+      max_drawdown_pct: 0.18
+      max_position_ratio: 0.5
+      max_open_positions: 10
+      max_latency_ms: 300.0
+      max_trade_notional: 40000.0
+  stress_tests:
+    cost_shock_bps: 2.5
+    latency_spike_ms: 80.0
+    slippage_multiplier: 1.35
+  tco:
+    reports:
+      - var/audit/tco/latest_report.json
+      - var/audit/acceptance/latest/tco_summary.json
+    require_at_startup: false
+portfolio_governor:
+  enabled: true
+  rebalance_interval_minutes: 30
+  smoothing: 0.6
+  default_baseline_weight: 0.3
+  default_min_weight: 0.05
+  default_max_weight: 0.55
+  require_complete_metrics: true
+  min_score_threshold: 0.05
+  default_cost_bps: 4.5
+  max_signal_floor: 1
+  scoring:
+    alpha: 1.0
+    cost: 1.2
+    slo: 1.1
+    risk: 0.6
+  strategies:
+    core_daily_trend:
+      baseline_weight: 0.4
+      min_weight: 0.25
+      max_weight: 0.65
+      baseline_max_signals: 4
+      max_signal_factor: 1.3
+      risk_profile: balanced
+      tags:
+        - core
+        - trend
+    core_mean_reversion:
+      baseline_weight: 0.3
+      min_weight: 0.1
+      max_weight: 0.5
+      baseline_max_signals: 6
+      max_signal_factor: 1.6
+      risk_profile: conservative
+      tags:
+        - core
+        - mean_reversion
+    core_volatility_target:
+      baseline_weight: 0.2
+      min_weight: 0.1
+      max_weight: 0.45
+      baseline_max_signals: 3
+      max_signal_factor: 1.2
+      risk_profile: balanced
+      tags:
+        - volatility
+        - stabilizer
+    core_cross_exchange:
+      baseline_weight: 0.1
+      min_weight: 0.05
+      max_weight: 0.3
+      baseline_max_signals: 5
+      max_signal_factor: 1.4
+      risk_profile: aggressive
+      tags:
+        - arbitrage
+        - liquidity
+
+
+market_intel:
+  enabled: true
+  output_directory: ../data/stage6/metrics
+  manifest_path: ../var/audit/stage6/market_intel/manifest.json
+  default_weight: 1.0
+  required_symbols:
+    - BTCUSDT
+    - ETHUSDT
+  sqlite:
+    path: ../var/stage6/market_intel/market_metrics.sqlite
+    table: market_metrics
+
+stress_lab:
+  enabled: true
+  require_success: true
+  report_directory: var/audit/stage6/stress_lab
+  signing_key_env: STRESS_LAB_SIGNING_KEY
+  thresholds:
+    max_liquidity_loss_pct: 0.7
+    max_spread_increase_bps: 60.0
+    max_volatility_increase_pct: 0.95
+    max_sentiment_drawdown: 0.6
+    max_funding_change_bps: 35.0
+    max_latency_spike_ms: 190.0
+    max_blackout_minutes: 60.0
+    max_dispersion_bps: 70.0
+  datasets:
+    BTCUSDT:
+      symbol: BTCUSDT
+      metrics_path: ../data/stage6/metrics/btcusdt.json
+      weight: 1.0
+      allow_synthetic: false
+    ETHUSDT:
+      symbol: ETHUSDT
+      metrics_path: ../data/stage6/metrics/ethusdt.json
+      weight: 0.8
+      allow_synthetic: false
+  scenarios:
+    - name: cross_market_liquidity_crunch
+      severity: high
+      description: Symulacja globalnej utraty płynności i wzrostu spreadów.
+      markets:
+        - BTCUSDT
+        - ETHUSDT
+      shocks:
+        - type: liquidity_crunch
+          intensity: 0.6
+        - type: volatility_spike
+          intensity: 0.6
+        - type: price_gap
+          intensity: 0.4
+    - name: exchange_blackout_and_latency
+      severity: medium
+      description: Blackout infrastrukturalny z opóźnieniami i zmianą sentymentu.
+      markets:
+        - BTCUSDT
+      shocks:
+        - type: latency_spike
+          intensity: 0.7
+        - type: blackout
+          intensity: 0.6
+          duration_minutes: 45
+        - type: sentiment_crash
+          intensity: 0.5
+      threshold_overrides:
+        max_latency_spike_ms: 220.0
+        max_blackout_minutes: 75.0
+
+
+resilience:
+  enabled: true
+  require_success: true
+  report_directory: var/audit/stage6/resilience
+  signing_key_env: STAGE6_RESILIENCE_SIGNING_KEY
+  drills:
+    - name: binance_failover
+      primary: binance_futures
+      fallbacks:
+        - kraken_futures
+        - zonda_spot
+      dataset_path: ../data/stage6/resilience/binance_failover.json
+      thresholds:
+        max_latency_ms: 220.0
+        max_error_rate: 0.08
+        max_failover_duration_seconds: 90.0
+        max_orders_failed: 8
+      description: Failover z Binance Futures na zapasowe giełdy podczas problemów infrastrukturalnych.
+    - name: kraken_failover
+      primary: kraken_futures
+      fallbacks:
+        - binance_futures
+      dataset_path: ../data/stage6/resilience/kraken_failover.json
+      thresholds:
+        max_latency_ms: 240.0
+        max_error_rate: 0.07
+        max_failover_duration_seconds: 110.0
+        max_orders_failed: 10
+      description: Failover z Kraken Futures na Binance Futures.
+
+
+observability:
+  slo:
+    decision_latency:
+      metric: bot_core_decision_latency_ms
+      objective: 220.0
+      comparator: "<="
+      aggregation: p95
+      window_minutes: 1440.0
+      label_filters:
+        schedule: core_multi_pipeline
+    trade_cost:
+      metric: bot_core_trade_cost_bps
+      objective: 12.0
+      comparator: "<="
+      aggregation: average
+      window_minutes: 1440.0
+    fill_rate:
+      metric: bot_core_fill_rate_pct
+      objective: 0.94
+      comparator: ">="
+      aggregation: average
+      window_minutes: 1440.0
+  key_rotation:
+    registry_path: var/security/key_rotation.json
+    default_interval_days: 90.0
+    default_warn_within_days: 14.0
+    audit_directory: var/audit/keys
+    entries:
+      - key: binance-api
+        purpose: trading
+        interval_days: 60.0
+        warn_within_days: 10.0
+      - key: core-mtls
+        purpose: cert
+        interval_days: 45.0
 
 runtime:
   resource_limits:
@@ -125,7 +368,7 @@ runtime:
     host: 127.0.0.1
     port: 55060
     history_size: 1024
-    auth_token: changeme-telemetry-token
+    auth_token_env: METRICS_SERVICE_AUTH_TOKEN
     log_sink: true
     jsonl_path: audit/metrics/telemetry.jsonl
     jsonl_fsync: false
@@ -134,11 +377,11 @@ runtime:
     ui_alerts_risk_profile: balanced
     ui_alerts_risk_profiles_file: configs/telemetry_risk_profiles.yaml
     tls:
-      enabled: false
-      certificate_path: secrets/dev-metrics-server.crt
-      private_key_path: secrets/dev-metrics-server.key
-      client_ca_path: secrets/dev-metrics-clients.pem
-      require_client_auth: false
+      enabled: true
+      certificate_path: secrets/runtime/metrics/server.crt
+      private_key_path: secrets/runtime/metrics/server.key
+      client_ca_path: secrets/runtime/metrics/clients.pem
+      require_client_auth: true
     reduce_motion_alerts: true
     reduce_motion_category: ui.performance
     reduce_motion_severity_active: warning
@@ -154,6 +397,48 @@ runtime:
     jank_alert_severity_spike: warning
     jank_alert_severity_critical: critical
     jank_alert_critical_over_ms: 12.0
+
+execution:
+  live_router:
+    decision_log:
+      path: audit/decision_logs/live_execution.jsonl
+      hmac_key_env: LIVE_DECISION_LOG_HMAC
+      key_id: live-router
+    routes:
+      - name: core_spot
+        exchanges:
+          - binance_spot_live
+          - kraken_spot_live
+        symbols:
+          - BTCUSDT
+          - ETHUSDT
+          - ETHUSDC
+        risk_profiles:
+          - balanced
+          - aggressive
+        latency_budget_ms: 250.0
+        max_retries_per_exchange: 2
+        metadata:
+          escalation_channel: ops
+      - name: manual_control
+        exchanges:
+          - zonda_spot_live
+        risk_profiles:
+          - manual
+        max_retries_per_exchange: 1
+        metadata:
+          escalation_channel: compliance
+    metrics:
+      latency_alert_threshold_ms: 350.0
+      fallback_alert_threshold: 3
+  mtls:
+    bundle_directory: secrets/mtls
+    ca_certificate: secrets/mtls/core-oem-ca.pem
+    server_certificate: secrets/mtls/core-oem-server.pem
+    server_key: secrets/mtls/core-oem-server-key.pem
+    client_certificate: secrets/mtls/core-oem-client.pem
+    client_key: secrets/mtls/core-oem-client-key.pem
+    rotation_registry: var/security/tls_rotation.json
 
 strategies:
   core_daily_trend:

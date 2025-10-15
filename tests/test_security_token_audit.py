@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from bot_core.config.models import (
     CoreConfig,
     MetricsServiceConfig,
@@ -85,6 +87,85 @@ def test_audit_warns_when_env_missing_and_legacy_only():
     assert any("nie jest ustawiona" in finding["message"] for finding in metrics["findings"])
     risk = next(service for service in payload["services"] if service["service"] == "risk_service")
     assert any(finding["level"] == "warning" for finding in risk["findings"])
+
+
+def test_audit_reports_missing_metrics_auth_token_env() -> None:
+    core_config = _base_core_config(
+        metrics_service=MetricsServiceConfig(
+            enabled=True,
+            auth_token_env="METRICS_SERVICE_AUTH_TOKEN",
+            rbac_tokens=(),
+        ),
+        risk_service=RiskServiceConfig(enabled=False),
+    )
+
+    report = audit_service_tokens(core_config, env={})
+    payload = report.as_dict()
+
+    metrics = next(service for service in payload["services"] if service["service"] == "metrics_service")
+    assert metrics["configured"] is False
+    assert any(
+        finding["level"] == "error"
+        and "auth_token_env" in (finding.get("message") or "")
+        for finding in metrics["findings"]
+    )
+
+
+def test_audit_accepts_metrics_auth_token_env_present() -> None:
+    core_config = _base_core_config(
+        metrics_service=MetricsServiceConfig(
+            enabled=True,
+            auth_token_env="METRICS_SERVICE_AUTH_TOKEN",
+            rbac_tokens=(),
+        ),
+        risk_service=RiskServiceConfig(enabled=False),
+    )
+
+    report = audit_service_tokens(
+        core_config,
+        env={"METRICS_SERVICE_AUTH_TOKEN": "secret"},
+    )
+    payload = report.as_dict()
+
+    metrics = next(service for service in payload["services"] if service["service"] == "metrics_service")
+    assert metrics["configured"] is True
+    assert not any(
+        "auth_token_env" in (finding.get("message") or "") for finding in metrics["findings"]
+    )
+
+
+def test_audit_reports_over_permissive_auth_token_file(tmp_path: Path) -> None:
+    token_file = tmp_path / "metrics.token"
+    token_file.write_text("secret", encoding="utf-8")
+    token_file.chmod(0o644)
+
+    core_config = _base_core_config(
+        metrics_service=MetricsServiceConfig(
+            enabled=True,
+            auth_token_file=str(token_file),
+            rbac_tokens=(),
+        ),
+        risk_service=RiskServiceConfig(enabled=False),
+    )
+
+    report = audit_service_tokens(core_config, env={})
+    payload = report.as_dict()
+
+    metrics = next(service for service in payload["services"] if service["service"] == "metrics_service")
+    assert metrics["configured"] is True
+    assert any(
+        finding["level"] == "warning"
+        and "zbyt szerokie uprawnienia" in (finding.get("message") or "")
+        for finding in metrics["findings"]
+    )
+    details = next(
+        finding["details"]
+        for finding in metrics["findings"]
+        if "zbyt szerokie uprawnienia" in (finding.get("message") or "")
+    )
+    assert details
+    assert details.get("mode") == "0o644"
+    assert details.get("expected_max_mode") == "0o600"
 
 
 def test_audit_reports_error_when_scope_missing():

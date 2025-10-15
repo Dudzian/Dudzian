@@ -1,6 +1,8 @@
 #include "TradingClient.hpp"
 
 #include <QDateTime>
+#include <QFile>
+#include <QIODevice>
 #include <QMetaObject>
 #include <QtGlobal>
 
@@ -22,6 +24,19 @@ using botcore::trading::v1::RiskService;
 using botcore::trading::v1::RiskState;
 
 namespace {
+std::string readPemFile(const QString& path, const char* label)
+{
+    if (path.trimmed().isEmpty())
+        return {};
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        qWarning() << "Nie udało się odczytać pliku" << path << label << file.errorString();
+        return {};
+    }
+    const QByteArray data = file.readAll();
+    return std::string(data.constData(), static_cast<size_t>(data.size()));
+}
+
 qint64 timestampToMs(const google::protobuf::Timestamp& ts) {
     return static_cast<qint64>(ts.seconds()) * 1000 + ts.nanos() / 1000000;
 }
@@ -69,6 +84,10 @@ void TradingClient::setHistoryLimit(int limit) {
 void TradingClient::setPerformanceGuard(const PerformanceGuard& guard) {
     m_guard = guard;
     Q_EMIT performanceGuardUpdated(m_guard);
+}
+
+void TradingClient::setTlsConfig(const TlsConfig& config) {
+    m_tlsConfig = config;
 }
 
 void TradingClient::start() {
@@ -126,7 +145,24 @@ void TradingClient::stop() {
 }
 
 void TradingClient::ensureStub() {
-    m_channel = grpc::CreateChannel(m_endpoint.toStdString(), grpc::InsecureChannelCredentials());
+    std::shared_ptr<grpc::ChannelCredentials> credentials;
+    grpc::ChannelArguments arguments;
+    if (m_tlsConfig.enabled) {
+        grpc::SslCredentialsOptions options;
+        options.pem_root_certs = readPemFile(m_tlsConfig.rootCertificatePath, "(root CA)");
+        if (!m_tlsConfig.clientCertificatePath.isEmpty() && !m_tlsConfig.clientKeyPath.isEmpty()) {
+            options.pem_cert_chain = readPemFile(m_tlsConfig.clientCertificatePath, "(cert klienta)");
+            options.pem_private_key = readPemFile(m_tlsConfig.clientKeyPath, "(klucz klienta)");
+        }
+        credentials = grpc::SslCredentials(options);
+        if (!m_tlsConfig.targetNameOverride.trimmed().isEmpty()) {
+            arguments.SetString(GRPC_SSL_TARGET_NAME_OVERRIDE_ARG, m_tlsConfig.targetNameOverride.toStdString());
+        }
+    } else {
+        credentials = grpc::InsecureChannelCredentials();
+    }
+
+    m_channel = grpc::CreateCustomChannel(m_endpoint.toStdString(), credentials, arguments);
     m_marketDataStub = MarketDataService::NewStub(m_channel);
     m_riskStub = RiskService::NewStub(m_channel);
 }

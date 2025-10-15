@@ -1,0 +1,30 @@
+# Runbook: OEM Installer Acceptance
+
+## Cel
+Zweryfikowanie, że bundel "Core OEM" spełnia wymagania dystrybucji offline (podpisy HMAC, struktura katalogów, checklisty bezpieczeństwa) przed przekazaniem klientowi.
+
+## Lista kontrolna
+| Krok | Odpowiedzialny | Artefakty | Akceptacja |
+| --- | --- | --- | --- |
+| 0. Uruchom `scripts/run_oem_acceptance.py --artifact-root var/audit/acceptance` lub workflow CI | Release Engineer | `var/audit/acceptance/<TS>/metadata.json`, log CLI | Wszystkie kroki oznaczone jako `ok`, brak statusów `failed` |
+| 1. Zweryfikuj podpis HMAC `manifest.json` | Security | `var/audit/acceptance/<TS>/bundle/manifest.json`, `.../signatures/manifest.json.sig`, klucz HMAC | `OEM_BUNDLE_HMAC_KEY` potwierdzony, podpis poprawny |
+| 2. Sprawdź sumy SHA-384 wszystkich plików | Release Engineer | `var/audit/acceptance/<TS>/bundle/manifest.json` | Porównanie sum zakończone bez różnic |
+| 3. Potwierdź podpisy plików konfiguracyjnych | Release Engineer | `var/audit/acceptance/<TS>/bundle/signatures/config/*.sig`, `OEM_BUNDLE_HMAC_KEY` | Dokumenty `.sig` zawierają prawidłowy `payload` oraz podpis `HMAC-SHA384` |
+| 4. Uruchom `bootstrap/verify_fingerprint.py` na stacji testowej | QA | Log z konsoli, fingerprint urządzenia | Skrypt kończy się sukcesem, fingerprint zgodny |
+| 5. Waliduj strukturę bundla (daemon/ui/config/bootstrap) | QA | Zawartość archiwum z `var/audit/acceptance/<TS>/bundle` | Katalogi kompletne, brak plików tymczasowych |
+| 6. Wykonaj instalację próbna (Linux/macOS/Windows) | QA + DevOps | Raport instalacyjny, logi systemowe | Daemon i UI uruchamiają się poprawnie |
+| 7. Zweryfikuj licencję i raport Paper Labs | Release Manager | `var/audit/acceptance/<TS>/license`, `.../paper_labs` | Licencja zawiera poprawny fingerprint/profil, raport Paper Labs bez naruszeń |
+| 8. Zweryfikuj pakiet mTLS | Security | `var/audit/acceptance/<TS>/mtls` | Certyfikaty ważne, zgodne z polityką CN/O, rotacja wpisana |
+| 9. Zweryfikuj raport TCO i podpisy | Cost Analyst | `var/audit/acceptance/<TS>/tco` | Raport CSV/PDF/JSON istnieje, dokumenty `.sig` ważne, alerty w normie |
+| 10. Zweryfikuj raport DecisionOrchestratora | Security + Trading | `var/audit/acceptance/<TS>/decision` | Raport smoke podpisany, brak odrzuconych decyzji krytycznych |
+| 11. Zweryfikuj raport SLO i alerty | Observability | `var/audit/acceptance/<TS>/slo` | Raport zawiera status `pass`, podpis HMAC poprawny |
+| 12. Potwierdź plan rotacji kluczy | Security | `var/audit/acceptance/<TS>/rotation` | Plan JSON istnieje, terminy rotacji aktualne |
+| 13. Zweryfikuj paczkę obserwowalności | Observability | `var/audit/acceptance/<TS>/observability` | Archiwum `.tar.gz` oraz podpis poprawne |
+| 14. Zarchiwizuj logi i artefakty kontroli | Release Manager | `var/audit/acceptance/<TS>/decision_log`, raport PDF | Wpis w decision log podpisany, link do raportu |
+
+## Artefakty końcowe
+- Paczka bundla oraz wszystkie dokumenty `.sig` wyeksportowane do `var/audit/acceptance/<TS>/bundle`.
+- Rejestr licencji, raport Paper Labs (JSON/PDF), raport TCO, DecisionOrchestrator, SLO oraz pakiet mTLS z katalogu `var/audit/acceptance/<TS>`.
+- Plan rotacji kluczy i paczka obserwowalności Stage5 z `var/audit/acceptance/<TS>/rotation` oraz `.../observability`.
+- Plik `metadata.json` z podsumowaniem runbooka i `summary.json` z krokami akceptacji.
+- Wpis w `var/audit/acceptance/<TS>/decision_log/entry.json` oraz kopia podpisanego decision logu.

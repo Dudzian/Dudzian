@@ -1,0 +1,119 @@
+{
+  "id": null,
+  "uid": "stage5-compliance",
+  "title": "Stage5 – Compliance & Cost Control",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-12h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Decision latency p95",
+      "description": "95. percentyl latencji decyzji DecisionOrchestratora",
+      "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(bot_core_decision_latency_ms_bucket[5m])) by (le))",
+          "legendFormat": "latency"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": 0},
+              {"color": "orange", "value": 220},
+              {"color": "red", "value": 260}
+            ]
+          }
+        }
+      },
+      "datasource": {"type": "prometheus", "uid": "prometheus"}
+    },
+    {
+      "type": "timeseries",
+      "title": "Average trade cost (bps)",
+      "description": "Średni koszt transakcyjny (bps) agregowany przez TCO analyzer",
+      "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "avg_over_time(bot_core_trade_cost_bps[15m])",
+          "legendFormat": "trade cost"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bps",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": 0},
+              {"color": "orange", "value": 12},
+              {"color": "red", "value": 16}
+            ]
+          }
+        }
+      },
+      "datasource": {"type": "prometheus", "uid": "prometheus"}
+    },
+    {
+      "type": "timeseries",
+      "title": "Fill rate",
+      "description": "Średni fill rate zleceń w oknie 15 minut",
+      "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "avg_over_time(bot_core_fill_rate_pct[15m])",
+          "legendFormat": "fill rate"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": 0.0},
+              {"color": "orange", "value": 0.92},
+              {"color": "green", "value": 0.95}
+            ]
+          }
+        }
+      },
+      "datasource": {"type": "prometheus", "uid": "prometheus"}
+    },
+    {
+      "type": "stat",
+      "title": "Keys due for rotation",
+      "description": "Liczba kluczy wymagających rotacji w ciągu 14 dni",
+      "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "sum(bot_core_key_rotation_due_in_days < 14)",
+          "legendFormat": "due soon"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": 0},
+              {"color": "orange", "value": 1},
+              {"color": "red", "value": 3}
+            ]
+          }
+        }
+      },
+      "datasource": {"type": "prometheus", "uid": "prometheus"}
+    }
+  ]
+}

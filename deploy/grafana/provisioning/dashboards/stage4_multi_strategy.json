@@ -1,0 +1,131 @@
+{
+  "id": null,
+  "uid": "stage4-multi",
+  "title": "Stage4 – Multi-Strategy Operations",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Scheduler loop latency",
+      "description": "Maksymalna latencja wykonania harmonogramu multi-strategy",
+      "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "max_over_time(bot_core_multi_strategy_latency_ms[5m])",
+          "legendFormat": "{{schedule}}"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "ms"}},
+      "datasource": {"type": "prometheus", "uid": "prometheus"}
+    },
+    {
+      "type": "timeseries",
+      "title": "Signals per run",
+      "description": "Średnia liczba sygnałów emitowanych w każdym przebiegu scheduler-a",
+      "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "avg_over_time(bot_core_multi_strategy_signals[5m])",
+          "legendFormat": "{{schedule}}"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}},
+      "datasource": {"type": "prometheus", "uid": "prometheus"}
+    },
+    {
+      "type": "timeseries",
+      "title": "Mean reversion – avg |z-score|",
+      "description": "Średnia bezwzględna wartość z-score sygnałów mean reversion",
+      "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "avg_over_time(bot_core_multi_strategy_avg_abs_zscore[5m])",
+          "legendFormat": "{{schedule}}"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "none", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": 0}, {"color": "orange", "value": 2.8}, {"color": "red", "value": 3.3}]}}},
+      "datasource": {"type": "prometheus", "uid": "prometheus"}
+    },
+    {
+      "type": "timeseries",
+      "title": "Volatility targeting – allocation error",
+      "description": "Średni błąd alokacji względem docelowej zmienności",
+      "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "avg_over_time(bot_core_multi_strategy_allocation_error_pct[5m])",
+          "legendFormat": "{{schedule}}"
+        },
+        {
+          "expr": "avg_over_time(bot_core_multi_strategy_realized_vs_target_vol_pct[5m])",
+          "legendFormat": "vol drift {{schedule}}"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "percent"}},
+      "datasource": {"type": "prometheus", "uid": "prometheus"}
+    },
+    {
+      "type": "stat",
+      "title": "Arbitrage spread capture (bps)",
+      "description": "Średnia wartość spreadu przechwyconego przez strategię arbitrażową",
+      "gridPos": {"x": 0, "y": 16, "w": 12, "h": 6},
+      "targets": [
+        {
+          "expr": "avg(bot_core_multi_strategy_spread_capture_bps)",
+          "legendFormat": "capture"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "bps", "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": 0}, {"color": "orange", "value": 3}, {"color": "green", "value": 6}]}}},
+      "datasource": {"type": "prometheus", "uid": "prometheus"}
+    },
+    {
+      "type": "stat",
+      "title": "Arbitrage secondary delay (ms)",
+      "description": "Maksymalny czas opóźnienia źródła pomocniczego w strategii arbitrażowej",
+      "gridPos": {"x": 12, "y": 16, "w": 12, "h": 6},
+      "targets": [
+        {
+          "expr": "max(bot_core_multi_strategy_secondary_delay_ms)",
+          "legendFormat": "delay"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "ms", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": 0}, {"color": "orange", "value": 300}, {"color": "red", "value": 450}]}}},
+      "datasource": {"type": "prometheus", "uid": "prometheus"}
+    },
+    {
+      "type": "timeseries",
+      "title": "PnL drawdown",
+      "description": "Minimalny drawdown PnL raportowany przez multi-strategy",
+      "gridPos": {"x": 0, "y": 22, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "min_over_time(bot_core_multi_strategy_pnl_drawdown_pct[30m])",
+          "legendFormat": "{{schedule}}"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "percent"}},
+      "datasource": {"type": "prometheus", "uid": "prometheus"}
+    },
+    {
+      "type": "timeseries",
+      "title": "Risk exposure deviation",
+      "description": "Średnie odchylenie ekspozycji ryzyka od profilu",
+      "gridPos": {"x": 12, "y": 22, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "avg_over_time(bot_core_multi_strategy_risk_exposure_deviation_pct[15m])",
+          "legendFormat": "{{schedule}}"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "percent"}},
+      "datasource": {"type": "prometheus", "uid": "prometheus"}
+    }
+  ]
+}

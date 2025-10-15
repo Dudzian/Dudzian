@@ -10,7 +10,7 @@ Etap 4 programu rozwoju bota handlowego `bot_core` skupiał się na rozszerzeniu
 - **Testy**: regresja obejmująca strategie, scheduler, ścieżkę runtime oraz scenariusze ryzyka (force liquidation, reset dziennego limitu strat, ograniczenia ekspozycji).
 - **Dokumentacja**: specyfikacja Etapu 4, plan testów, checklisty gate’ów, runbook paper tradingu i dedykowane opracowania strategii.
 - **Dane backtestowe**: biblioteka znormalizowanych datasetów (manifest + CSV) wraz z walidatorem `DataQualityValidator` i procedurą CLI `validate_backtest_datasets.py`.
-- **Automatyzacja CI**: workflow GitHub Actions z zestawem testów strategii/scheduler-a, progiem coverage ≥ 85 % oraz smoke CLI `smoke_demo_strategies.py` bazującym na znormalizowanych datasetach.
+- **Automatyzacja CI**: workflow GitHub Actions z zestawem testów strategii/scheduler-a, progiem coverage ≥ 85 % oraz smoke CLI `smoke_demo_strategies.py` bazującym na znormalizowanych datasetach; bundler `deploy/packaging/build_strategy_bundle.py` generuje podpisany pakiet `stage4-strategies-<wersja>.zip` i publikuje manifest w artefaktach acceptance.
 
 ## Testy regresyjne
 | Obszar | Komenda | Status |
@@ -27,14 +27,15 @@ Pełne logi testów są wersjonowane w katalogu `logs/` wraz z podpisami HMAC ge
 
 ## Profil ryzyka i compliance
 - Zachowany brak wykorzystania WebSocketów – wszystkie integracje korzystają z gRPC/HTTP2 lub IPC.
-- Wymuszone RBAC oraz mTLS w kanałach komunikacyjnych runtime’u i modułu scheduler-a, certyfikaty przypięte w konfiguracji.
+- Wymuszone RBAC oraz mTLS w kanałach komunikacyjnych runtime’u i modułu scheduler-a, certyfikaty przypięte w konfiguracji;
+  automatyczny audyt `scripts/audit_stage4_compliance.py` monitoruje tokeny, TLS i rotacje.
 - Decision log w formacie JSONL podpisywany HMAC, z aktualizacją procedury reagowania na force liquidation i dzienne limity strat.
 - Kompatybilność multiplatformowa (Windows/macOS/Linux) utrzymana poprzez abstrakcję ścieżek i brak zależności chmurowych.
 
 ## Wnioski i rekomendacje
 1. **Stabilność**: Harness ryzyka pokrywa scenariusze kumulacji ekspozycji w trybie multi-strategy – rekomendujemy uruchamianie suite’u regression co najmniej raz dziennie w pipeline’ie CI `run_paper_smoke_ci.py`.
 2. **Monitoring**: Dostarczono zintegrowane metryki scheduler-a/strategii oraz reguły Alertmanagera – zalecane jest bieżące monitorowanie paneli Grafany i logów decision logu w celu wychwycenia regresji budżetów ryzyka.
-3. **Przejście do Etapu 5**: Możemy rozpocząć prace planistyczne nad etapem dotyczącym optymalizacji kosztów transakcyjnych i rozbudowy decision engine’u, zachowując wymuszone bramki compliance.
+3. **Przejście do Etapu 5**: Przygotowano pełną specyfikację kolejnego etapu (`docs/architecture/stage5_spec.md`) oraz dokument discovery (`docs/architecture/stage5_discovery.md`). Zadania obejmują optymalizację kosztów transakcyjnych, rozszerzenie decision engine’u i Observability+, przy zachowaniu rygorów compliance oraz podpisów HMAC.
 
 ## Status iteracji 4AA
 - **Postęp Etapu 4**: 40/40 (100 %) – pasek `[####################]`.
@@ -57,6 +58,7 @@ Pełne logi testów są wersjonowane w katalogu `logs/` wraz z podpisami HMAC ge
   - 4Y – rozszerzenie `core.yaml` o pole `grpc_metadata_files`, które pozwala centralnie wskazać pliki z nagłówkami gRPC. Loader normalizuje ścieżki względem katalogu konfiguracji, a `watch_metrics_stream` wczytuje wpisy przed presetami `grpc_metadata`, respektując strażników `NONE/NULL` i raportując źródła oraz usunięcia w decision logu.
   - 4Z – wsparcie katalogów z nagłówkami gRPC poprzez pola `grpc_metadata_directories`, flagę `--headers-dir` oraz zmienne `BOT_CORE_WATCH_METRICS_HEADERS_DIRS/FILE`, co umożliwia operacyjne utrzymywanie zestawów plików, ich deterministyczne scalanie i audyt pełnej mapy źródeł w decision logu.
   - 4AA – raport `--headers-report`/`--headers-report-only` w `watch_metrics_stream`, umożliwiający wypisanie scalonych nagłówków gRPC (klucz, typ, źródło, usunięcia) z maskowaniem wrażliwych wartości i bez konieczności zestawiania kanału gRPC.
-- **Czynności otwarte**: brak – backlog Etapu 4 został zrealizowany w całości.
+- **Czynności otwarte**: brak – backlog Etapu 4 został zrealizowany w całości (warsztat `docs/training/stage4_operations_workshop.md`
+  i playbook `STAGE4_SUPPORT_PLAYBOOK.md` utrzymują gotowość operacyjną).
 - **Blokery**: brak nowych ryzyk; budżety zasobów monitorowane przez `runtime.resource_limits` i `resource_monitor` mieszczą się w zadeklarowanych progach.
 

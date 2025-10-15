@@ -12,6 +12,7 @@ import yaml
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from bot_core.alerts import EmailChannel, SMSChannel, TelegramChannel
+from bot_core.decision.models import DecisionCandidate, RiskSnapshot
 from bot_core.exchanges.base import (
     AccountSnapshot,
     Environment,
@@ -769,3 +770,119 @@ def test_bootstrap_collects_metrics_security_metadata(tmp_path: Path, monkeypatc
     warnings = context.metrics_security_warnings
     assert warnings is not None
     assert any("MetricsService ma włączone API bez tokenu" in warning for warning in warnings)
+
+
+def test_bootstrap_warns_on_over_permissive_metrics_token_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    token_file = tmp_path / "metrics.token"
+    token_file.write_text("secret", encoding="utf-8")
+    token_file.chmod(0o644)
+
+    if "bot_core.runtime.bootstrap" in sys.modules:
+        monkeypatch.setattr(
+            sys.modules["bot_core.runtime.bootstrap"],
+            "build_metrics_server_from_config",
+            lambda *_, **__: None,
+        )
+
+    config_path = _write_config_custom(
+        tmp_path,
+        runtime_metrics={
+            "enabled": True,
+            "auth_token_file": str(token_file),
+        },
+    )
+
+    _, manager = _prepare_manager()
+    context = bootstrap_environment(
+        "binance_paper", config_path=config_path, secret_manager=manager
+    )
+
+    metadata = context.metrics_security_metadata
+    assert isinstance(metadata, Mapping)
+    auth_meta = metadata.get("auth")
+    assert isinstance(auth_meta, Mapping)
+    assert auth_meta.get("token_file") == str(token_file)
+    assert auth_meta.get("token_file_exists") is True
+    assert auth_meta.get("token_file_permissions") == "0o644"
+
+    warnings = context.metrics_security_warnings
+    assert warnings is not None
+    assert any("zbyt szerokie uprawnienia" in warning for warning in warnings)
+
+
+def test_bootstrap_loads_tco_report_for_decision_engine(tmp_path: Path) -> None:
+    config_path = _write_config(tmp_path)
+    config_data = yaml.safe_load(Path(config_path).read_text(encoding="utf-8"))
+
+    reports_dir = tmp_path / "reports"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    tco_report_path = reports_dir / "stage5_tco.json"
+    tco_report_payload = {
+        "total": {"cost_bps": 9.5},
+        "strategies": {
+            "mean_reversion": {
+                "total": {"cost_bps": 14.0},
+                "profiles": {"balanced": {"cost_bps": 11.0}},
+            }
+        },
+    }
+    tco_report_path.write_text(json.dumps(tco_report_payload), encoding="utf-8")
+
+    config_data["decision_engine"] = {
+        "orchestrator": {
+            "max_cost_bps": 20.0,
+            "min_net_edge_bps": 5.0,
+            "max_daily_loss_pct": 0.2,
+            "max_drawdown_pct": 0.3,
+            "max_position_ratio": 3.0,
+            "max_open_positions": 10,
+            "max_latency_ms": 200.0,
+            "max_trade_notional": 20000.0,
+        },
+        "min_probability": 0.4,
+        "require_cost_data": True,
+        "tco": {
+            "reports": ["reports/stage5_tco.json"],
+            "require_at_startup": True,
+        },
+    }
+    Path(config_path).write_text(
+        yaml.safe_dump(config_data, sort_keys=False), encoding="utf-8"
+    )
+
+    _, manager = _prepare_manager()
+    context = bootstrap_environment(
+        "binance_paper", config_path=config_path, secret_manager=manager
+    )
+
+    assert context.decision_orchestrator is not None
+    assert context.decision_tco_report_path == str(tco_report_path.resolve())
+    assert context.decision_tco_warnings is None
+
+    candidate = DecisionCandidate(
+        strategy="mean_reversion",
+        action="enter",
+        risk_profile="balanced",
+        symbol="BTCUSDT",
+        notional=2000.0,
+        expected_return_bps=25.0,
+        expected_probability=0.7,
+        latency_ms=90.0,
+    )
+    snapshot = RiskSnapshot(
+        profile="balanced",
+        start_of_day_equity=100000.0,
+        daily_realized_pnl=0.0,
+        peak_equity=100000.0,
+        last_equity=100000.0,
+        gross_notional=1000.0,
+        active_positions=1,
+        symbols=("BTCUSDT",),
+        force_liquidation=False,
+    )
+
+    evaluation = context.decision_orchestrator.evaluate_candidate(candidate, snapshot)
+    assert evaluation.accepted is True
+    assert evaluation.cost_bps == pytest.approx(11.0)

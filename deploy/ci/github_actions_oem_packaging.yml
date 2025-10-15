@@ -1,0 +1,284 @@
+name: OEM Packaging
+
+on:
+  schedule:
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Wersja bundla"
+        required: true
+        type: string
+      fingerprint_placeholder:
+        description: "Opcjonalny placeholder fingerprintu"
+        required: false
+        default: UNPROVISIONED
+        type: string
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+      fingerprint_placeholder:
+        required: false
+        type: string
+        default: UNPROVISIONED
+
+jobs:
+  package-linux:
+    runs-on: [self-hosted, linux-oem]
+    env:
+      OEM_VERSION: ${{ inputs.version }}
+      OEM_FINGERPRINT_PLACEHOLDER: ${{ inputs.fingerprint_placeholder }}
+      OEM_HMAC_KEY_B64: ${{ secrets.OEM_HMAC_KEY_B64 }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Prepare signing key
+        run: |
+          if [ -z "$OEM_HMAC_KEY_B64" ]; then
+            echo "OEM_HMAC_KEY_B64 secret is required" >&2
+            exit 1
+          fi
+          echo "$OEM_HMAC_KEY_B64" | base64 -d > /tmp/oem_hmac.key
+      - name: Build Linux bundle
+        run: |
+          python deploy/packaging/build_core_bundle.py \
+            --platform linux \
+            --version "$OEM_VERSION" \
+            --signing-key-path /tmp/oem_hmac.key \
+            --daemon core/dist/linux \
+            --ui ui/dist/linux \
+            --config core.yaml=config/core.yaml \
+            --config env=.env.example \
+            --resource scripts=scripts/install/linux \
+            --fingerprint-placeholder "$OEM_FINGERPRINT_PLACEHOLDER" \
+            --output-dir var/dist
+      - name: Publish artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: core-oem-linux
+          path: var/dist/core-oem-*linux*.tar.gz
+
+  package-macos:
+    runs-on: [self-hosted, macos-oem]
+    needs: package-linux
+    env:
+      OEM_VERSION: ${{ inputs.version }}
+      OEM_FINGERPRINT_PLACEHOLDER: ${{ inputs.fingerprint_placeholder }}
+      OEM_HMAC_KEY_B64: ${{ secrets.OEM_HMAC_KEY_B64 }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Prepare signing key
+        run: |
+          if [ -z "$OEM_HMAC_KEY_B64" ]; then
+            echo "OEM_HMAC_KEY_B64 secret is required" >&2
+            exit 1
+          fi
+          echo "$OEM_HMAC_KEY_B64" | base64 -d > /tmp/oem_hmac.key
+      - name: Build macOS bundle
+        run: |
+          python3 deploy/packaging/build_core_bundle.py \
+            --platform macos \
+            --version "$OEM_VERSION" \
+            --signing-key-path /tmp/oem_hmac.key \
+            --daemon core/dist/macos \
+            --ui ui/dist/macos \
+            --config core.yaml=config/core.yaml \
+            --config env=.env.example \
+            --resource scripts=scripts/install/macos \
+            --fingerprint-placeholder "$OEM_FINGERPRINT_PLACEHOLDER" \
+            --output-dir var/dist
+      - name: Publish artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: core-oem-macos
+          path: var/dist/core-oem-*macos*.tar.gz
+
+  package-windows:
+    runs-on: [self-hosted, windows-oem]
+    needs: package-macos
+    env:
+      OEM_VERSION: ${{ inputs.version }}
+      OEM_FINGERPRINT_PLACEHOLDER: ${{ inputs.fingerprint_placeholder }}
+      OEM_HMAC_KEY_B64: ${{ secrets.OEM_HMAC_KEY_B64 }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Prepare signing key
+        shell: pwsh
+        run: |
+          if (-not $env:OEM_HMAC_KEY_B64) {
+            Write-Error "OEM_HMAC_KEY_B64 secret is required"
+          }
+          [IO.File]::WriteAllBytes("C:/oem_hmac.key", [Convert]::FromBase64String($env:OEM_HMAC_KEY_B64))
+      - name: Build Windows bundle
+        shell: pwsh
+        run: |
+          python deploy/packaging/build_core_bundle.py `
+            --platform windows `
+            --version $env:OEM_VERSION `
+            --signing-key-path C:/oem_hmac.key `
+            --daemon core/dist/windows `
+            --ui ui/dist/windows `
+            --config core.yaml=config/core.yaml `
+            --config env=.env.example `
+            --resource scripts=scripts/install/windows `
+            --fingerprint-placeholder $env:OEM_FINGERPRINT_PLACEHOLDER `
+            --output-dir var/dist
+      - name: Publish artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: core-oem-windows
+          path: var/dist/core-oem-*windows*.zip
+
+  acceptance-dry-run:
+    if: github.event_name == 'schedule'
+    runs-on: [self-hosted, linux-oem]
+    env:
+      OEM_VERSION_INPUT: ${{ inputs.version }}
+      OEM_FINGERPRINT_PLACEHOLDER: ${{ inputs.fingerprint_placeholder }}
+      OEM_BUNDLE_KEY_B64: ${{ secrets.OEM_HMAC_KEY_B64 }}
+      OEM_LICENSE_KEY_B64: ${{ secrets.OEM_LICENSE_HMAC_KEY_B64 }}
+      OEM_DECISION_KEY_B64: ${{ secrets.OEM_DECISION_HMAC_KEY_B64 }}
+      OEM_DEVICE_FINGERPRINT: ${{ secrets.OEM_ACCEPTANCE_FINGERPRINT }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Przygotuj katalogi artefaktów
+        run: |
+          mkdir -p var/dist var/licenses var/reports var/reports/tco var/reports/slo var/mtls var/observability var/audit/acceptance var/data var/decision
+      - name: Przygotuj klucze podpisujące
+        run: |
+          if [ -z "$OEM_BUNDLE_KEY_B64" ] || [ -z "$OEM_LICENSE_KEY_B64" ] || [ -z "$OEM_DECISION_KEY_B64" ]; then
+            echo "Brakuje sekretów OEM_BUNDLE_KEY_B64/OEM_LICENSE_HMAC_KEY_B64/OEM_DECISION_HMAC_KEY_B64" >&2
+            exit 1
+          fi
+          echo "$OEM_BUNDLE_KEY_B64" | base64 -d > /tmp/oem_bundle.key
+          echo "$OEM_LICENSE_KEY_B64" | base64 -d > /tmp/oem_license.key
+          echo "$OEM_DECISION_KEY_B64" | base64 -d > /tmp/oem_decision.key
+          head -c 48 /dev/urandom > /tmp/oem_tco.key
+          head -c 48 /dev/urandom > /tmp/oem_slo.key
+          head -c 48 /dev/urandom > /tmp/oem_observability.key
+          head -c 48 /dev/urandom > /tmp/oem_orchestrator.key
+          chmod 600 /tmp/oem_bundle.key /tmp/oem_license.key /tmp/oem_decision.key /tmp/oem_tco.key /tmp/oem_slo.key /tmp/oem_observability.key /tmp/oem_orchestrator.key
+      - name: Uruchom dry-run akceptacyjny OEM
+        env:
+          ACCEPTANCE_VERSION: ${{ inputs.version }}
+        run: |
+          VERSION="$ACCEPTANCE_VERSION"
+          if [ -z "$VERSION" ]; then
+            VERSION=$(date -u +%Y.%m.%d)
+          fi
+          if [ -z "$OEM_DEVICE_FINGERPRINT" ]; then
+            echo "Brakuje sekretu OEM_ACCEPTANCE_FINGERPRINT" >&2
+            exit 1
+          fi
+          for path in core/dist/linux ui/dist/linux; do
+            if [ ! -e "$path" ]; then
+              echo "Brakuje artefaktu $path" >&2
+              exit 1
+            fi
+          done
+          cat <<'JSONL' > var/data/tco_fills.jsonl
+          {"timestamp":"2024-03-01T12:00:00Z","strategy":"mean_reversion","risk_profile":"conservative","instrument":"BTC/USDT","exchange":"binance","side":"buy","quantity":0.25,"price":20000,"commission":2.5,"slippage":1.0}
+          {"timestamp":"2024-03-01T12:05:00Z","strategy":"volatility_target","risk_profile":"conservative","instrument":"ETH/USDT","exchange":"kraken","side":"sell","quantity":1.5,"price":3000,"commission":3.0,"slippage":0.5,"funding":0.1}
+          JSONL
+          cat <<'JSON' > var/data/risk_snapshot.json
+          {
+            "conservative": {
+              "start_of_day_equity": 100000.0,
+              "last_equity": 101000.0,
+              "peak_equity": 101000.0,
+              "daily_realized_pnl": 500.0,
+              "positions": {
+                "BTC/USDT": {"notional": 10000.0}
+              }
+            }
+          }
+          JSON
+          cat <<'JSON' > var/data/decision_candidates.json
+          {
+            "candidates": [
+              {
+                "strategy": "mean_reversion",
+                "action": "enter",
+                "risk_profile": "conservative",
+                "symbol": "BTC/USDT",
+                "notional": 5000.0,
+                "expected_return_bps": 8.0,
+                "expected_probability": 0.9,
+                "latency_ms": 120.0
+              }
+            ]
+          }
+          JSON
+          cat <<'JSONL' > var/data/slo_metrics.jsonl
+          {"metric":"scheduler_latency_ms","value":120.0,"timestamp":"2024-03-01T12:00:00Z","labels":{"profile":"conservative"}}
+          {"metric":"scheduler_latency_ms","value":100.0,"timestamp":"2024-03-01T13:00:00Z","labels":{"profile":"conservative"}}
+          JSONL
+          if [ ! -f config/rotation_registry.json ]; then
+            printf '{}' > config/rotation_registry.json
+          fi
+          python scripts/run_oem_acceptance.py \
+            --bundle-platform linux \
+            --bundle-version "$VERSION" \
+            --bundle-signing-key /tmp/oem_bundle.key \
+            --bundle-daemon core/dist/linux \
+            --bundle-ui ui/dist/linux \
+            --bundle-config core.yaml=config/core.yaml \
+            --bundle-config env=.env.example \
+            --bundle-resource scripts=scripts/install/linux \
+            --bundle-output-dir var/dist \
+            --bundle-fingerprint-placeholder "${OEM_FINGERPRINT_PLACEHOLDER:-UNPROVISIONED}" \
+            --license-signing-key /tmp/oem_license.key \
+            --license-fingerprint "$OEM_DEVICE_FINGERPRINT" \
+            --license-registry var/licenses/registry.jsonl \
+            --license-bundle-version "$VERSION" \
+            --license-valid-days 30 \
+            --license-feature paper \
+            --risk-config config/core.yaml \
+            --risk-environment paper \
+            --risk-output-dir var/reports/paper_labs \
+            --risk-json-name report.json \
+            --risk-pdf-name report.pdf \
+            --risk-fail-on-breach \
+            --mtls-output-dir var/mtls \
+            --mtls-bundle-name core-oem \
+            --mtls-server-hostname localhost \
+            --tco-fill var/data/tco_fills.jsonl \
+            --tco-output-dir var/reports/tco \
+            --tco-basename oem_tco \
+            --tco-signing-key /tmp/oem_tco.key \
+            --tco-signing-key-id stage5-tco \
+            --decision-config config/core.yaml \
+            --decision-risk-snapshot var/data/risk_snapshot.json \
+            --decision-candidates var/data/decision_candidates.json \
+            --decision-output var/decision/decision_report.json \
+            --decision-tco-report var/reports/tco/oem_tco.json \
+            --decision-allow-empty \
+            --decision-signing-key-file /tmp/oem_orchestrator.key \
+            --decision-signing-key-id stage5-decision \
+            --slo-config config/core.yaml \
+            --slo-metric var/data/slo_metrics.jsonl \
+            --slo-output-dir var/reports/slo \
+            --slo-basename slo_oem \
+            --slo-signing-key /tmp/oem_slo.key \
+            --slo-signing-key-id stage5-slo \
+            --rotation-config config/core.yaml \
+            --rotation-output-dir config/rotation_audit \
+            --rotation-basename rotation_plan_oem \
+            --observability-version "$VERSION" \
+            --observability-output-dir var/observability \
+            --observability-signing-key /tmp/oem_observability.key \
+            --observability-key-id stage5-observability \
+            --summary-path var/audit/acceptance/acceptance_summary.json \
+            --artifact-root var/audit/acceptance \
+            --decision-log-path var/audit/acceptance/decision_log.jsonl \
+            --decision-log-hmac-key-file /tmp/oem_decision.key \
+            --decision-log-key-id oem-acceptance \
+            --decision-log-category release.oem.acceptance \
+            --decision-log-notes "Scheduled OEM acceptance dry-run" \
+            --fail-fast
+      - name: Opublikuj artefakty akceptacyjne
+        uses: actions/upload-artifact@v3
+        with:
+          name: oem-acceptance-artifacts
+          path: var/audit/acceptance

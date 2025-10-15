@@ -1,0 +1,64 @@
+name: Stage6 stress lab
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '20 3 * * 2'
+
+jobs:
+  stage6-stress-lab:
+    name: Stage6 Stress Lab acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PYTHONUNBUFFERED: "1"
+      STRESS_LAB_OUTPUT: var/audit/stage6/stress_lab
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install '.[dev]'
+
+      - name: Prepare directories
+        run: |
+          mkdir -p "$STRESS_LAB_OUTPUT"
+
+      - name: Generate signing key
+        id: signing
+        run: |
+          KEY=$(python - <<'PY'
+import secrets
+print(secrets.token_hex(32))
+PY
+)
+          echo "STRESS_LAB_SIGNING_KEY=$KEY" >> "$GITHUB_ENV"
+
+      - name: Run Stress Lab
+        run: |
+          python scripts/run_stress_lab.py \
+            --config config/core.yaml \
+            --output "$STRESS_LAB_OUTPUT/stress_lab_report.json"
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage6-stress-lab-${{ github.run_number }}
+          path: |
+            ${{ env.STRESS_LAB_OUTPUT }}/
+
+      - name: Publish summary
+        if: always()
+        run: |
+          if [ -f "$STRESS_LAB_OUTPUT/stress_lab_report.json" ]; then
+            echo '### Stress Lab report' >> "$GITHUB_STEP_SUMMARY"
+            cat "$STRESS_LAB_OUTPUT/stress_lab_report.json" >> "$GITHUB_STEP_SUMMARY"
+          fi

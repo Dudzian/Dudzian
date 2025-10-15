@@ -1,0 +1,80 @@
+name: Stage6 resilience drill
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '35 4 * * 2'
+
+jobs:
+  stage6-resilience-drill:
+    name: Stage6 Resilience Drill
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PYTHONUNBUFFERED: "1"
+      RESILIENCE_OUTPUT: var/audit/stage6/resilience
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install '.[dev]'
+
+      - name: Prepare directories
+        run: |
+          mkdir -p "$RESILIENCE_OUTPUT"
+
+      - name: Generate signing key
+        id: signing
+        run: |
+          KEY=$(python - <<'PY'
+import secrets
+print(secrets.token_hex(32))
+PY
+)
+          echo "STAGE6_RESILIENCE_SIGNING_KEY=$KEY" >> "$GITHUB_ENV"
+
+      - name: Run resilience drill
+        run: |
+          python scripts/failover_drill.py \
+            --config config/core.yaml \
+            --signing-key-env STAGE6_RESILIENCE_SIGNING_KEY \
+            --output "$RESILIENCE_OUTPUT/resilience_failover_report.json" \
+            --fail-on-breach
+
+      - name: Build resilience bundle
+        run: |
+          python scripts/export_resilience_bundle.py \
+            --version "${{ github.run_number }}" \
+            --report "$RESILIENCE_OUTPUT/resilience_failover_report.json" \
+            --output-dir "$RESILIENCE_OUTPUT" \
+            --signing-key-env STAGE6_RESILIENCE_SIGNING_KEY
+
+      - name: Verify resilience bundle
+        run: |
+          python scripts/verify_resilience_bundle.py \
+            --bundle "$RESILIENCE_OUTPUT/resilience-bundle-${{ github.run_number }}.tar.gz" \
+            --signing-key-env STAGE6_RESILIENCE_SIGNING_KEY
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage6-resilience-${{ github.run_number }}
+          path: |
+            ${{ env.RESILIENCE_OUTPUT }}/
+
+      - name: Publish summary
+        if: always()
+        run: |
+          if [ -f "$RESILIENCE_OUTPUT/resilience_failover_report.json" ]; then
+            echo '### Resilience drill report' >> "$GITHUB_STEP_SUMMARY"
+            cat "$RESILIENCE_OUTPUT/resilience_failover_report.json" >> "$GITHUB_STEP_SUMMARY"
+          fi

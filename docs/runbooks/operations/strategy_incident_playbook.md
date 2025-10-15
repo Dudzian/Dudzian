@@ -12,8 +12,10 @@ Zapewnić zespołowi operacyjnemu powtarzalną procedurę reagowania na incydent
    - Sprawdź kanał alertowy (`ops/oncall_rotation.yaml`) i zidentyfikuj typ alertu: PnL, ryzyko, latencja, brak sygnałów.
    - Zaloguj zdarzenie w decision logu (`verify_decision_log.py summary --incident`).
 2. **Wstępna diagnoza**:
-   - Dashboard Grafana → panel *Multi-Strategy Scheduler* (`deploy/grafana/provisioning/dashboards/kryptolowca_overview.json`).
-   - `python scripts/load_test_scheduler.py --iterations 5 --schedules 3` (opcjonalne) – potwierdź lokalnie, czy scheduler generuje sygnały.
+ - Dashboard Grafana → panel *Multi-Strategy Scheduler* (`deploy/grafana/provisioning/dashboards/kryptolowca_overview.json`).
+  - `python scripts/audit_stage4_compliance.py --mtls-bundle-name core-oem --allow-missing-env` – szybki audyt RBAC/mTLS/rotacji
+    (status `fail` = natychmiastowa eskalacja).
+  - `python scripts/load_test_scheduler.py --iterations 5 --schedules 3` (opcjonalne) – potwierdź lokalnie, czy scheduler generuje sygnały.
    - `python scripts/audit_security_baseline.py --print --scheduler-required-scope runtime.schedule.write` – upewnij się, że RBAC/mTLS nie zgłasza błędów.
 3. **Decyzja**:
    - Jeśli alert jest falsy (np. krótkotrwały spike, brak przekroczeń budżetów) → oznacz w logu jako *acknowledged*.

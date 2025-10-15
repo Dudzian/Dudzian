@@ -10,6 +10,12 @@ import pytest
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
+from bot_core.config.models import (
+    DecisionEngineConfig,
+    DecisionOrchestratorThresholds,
+    DecisionStressTestConfig,
+)
+from bot_core.decision import DecisionOrchestrator
 from bot_core.exchanges.base import AccountSnapshot, OrderRequest
 from bot_core.risk.engine import InMemoryRiskRepository, ThresholdRiskEngine
 from bot_core.risk.events import RiskDecisionLog
@@ -60,6 +66,29 @@ def _order(
         stop_price=stop_price,
         atr=atr,
         metadata={"atr": atr, "stop_price": stop_price},
+    )
+
+
+def _decision_engine_config() -> DecisionEngineConfig:
+    return DecisionEngineConfig(
+        orchestrator=DecisionOrchestratorThresholds(
+            max_cost_bps=15.0,
+            min_net_edge_bps=1.0,
+            max_daily_loss_pct=0.05,
+            max_drawdown_pct=0.1,
+            max_position_ratio=0.6,
+            max_open_positions=10,
+            max_latency_ms=400.0,
+        ),
+        profile_overrides={},
+        stress_tests=DecisionStressTestConfig(
+            cost_shock_bps=1.0,
+            latency_spike_ms=25.0,
+            slippage_multiplier=1.1,
+        ),
+        min_probability=0.4,
+        require_cost_data=False,
+        penalty_cost_bps=0.0,
     )
 
 
@@ -847,3 +876,115 @@ def test_snapshot_state_returns_enriched_metrics(manual_profile: ManualProfile) 
     assert limits["max_leverage"] == manual_profile.max_leverage()
     assert limits["daily_loss_limit"] == manual_profile.daily_loss_limit()
     assert limits["max_position_pct"] == manual_profile.max_position_exposure()
+
+
+def test_decision_orchestrator_metadata_when_candidate_passes(
+    manual_profile: ManualProfile,
+) -> None:
+    orchestrator = DecisionOrchestrator(_decision_engine_config())
+    clock_value = datetime(2024, 7, 1, 9, 0, 0)
+    engine = ThresholdRiskEngine(
+        clock=lambda: clock_value,
+        decision_orchestrator=orchestrator,
+    )
+    engine.register_profile(manual_profile)
+
+    snapshot = _snapshot(1_000.0)
+    request = _order(25_000.0)
+    assert isinstance(request.metadata, dict)
+    request.metadata["decision_candidate"] = {
+        "strategy": "mean_reversion",
+        "action": "enter",
+        "risk_profile": manual_profile.name,
+        "symbol": request.symbol,
+        "notional": 200.0,
+        "expected_return_bps": 15.0,
+        "expected_probability": 0.9,
+        "cost_bps_override": 3.0,
+        "latency_ms": 150.0,
+    }
+
+    result = engine.apply_pre_trade_checks(
+        request,
+        account=snapshot,
+        profile_name=manual_profile.name,
+    )
+
+    assert result.allowed is True
+    assert result.metadata is not None
+    decision_meta = result.metadata.get("decision_orchestrator")  # type: ignore[index]
+    assert isinstance(decision_meta, dict)
+    assert decision_meta.get("status") == "evaluated"
+    assert decision_meta.get("accepted") is True
+    assert decision_meta.get("candidate", {}).get("strategy") == "mean_reversion"
+
+
+def test_decision_orchestrator_blocks_when_thresholds_exceeded(
+    manual_profile: ManualProfile,
+) -> None:
+    orchestrator = DecisionOrchestrator(_decision_engine_config())
+    engine = ThresholdRiskEngine(
+        clock=lambda: datetime(2024, 7, 1, 9, 0, 0),
+        decision_orchestrator=orchestrator,
+    )
+    engine.register_profile(manual_profile)
+
+    snapshot = _snapshot(1_000.0)
+    request = _order(25_000.0)
+    assert isinstance(request.metadata, dict)
+    request.metadata["decision_candidate"] = {
+        "strategy": "cross_exchange",
+        "action": "enter",
+        "risk_profile": manual_profile.name,
+        "symbol": request.symbol,
+        "notional": 400.0,
+        "expected_return_bps": 6.0,
+        "expected_probability": 0.7,
+        "cost_bps_override": 20.0,
+        "latency_ms": 150.0,
+    }
+
+    result = engine.apply_pre_trade_checks(
+        request,
+        account=snapshot,
+        profile_name=manual_profile.name,
+    )
+
+    assert result.allowed is False
+    assert result.reason is not None and "DecisionOrchestrator" in result.reason
+    assert result.metadata is not None
+    decision_meta = result.metadata.get("decision_orchestrator")  # type: ignore[index]
+    assert isinstance(decision_meta, dict)
+    assert decision_meta.get("accepted") is False
+    reasons_text = " ".join(str(item) for item in decision_meta.get("reasons", []))
+    assert "koszt" in reasons_text or "edge" in reasons_text
+
+
+def test_decision_orchestrator_reports_invalid_payload(
+    manual_profile: ManualProfile,
+) -> None:
+    orchestrator = DecisionOrchestrator(_decision_engine_config())
+    engine = ThresholdRiskEngine(
+        clock=lambda: datetime(2024, 7, 1, 9, 0, 0),
+        decision_orchestrator=orchestrator,
+    )
+    engine.register_profile(manual_profile)
+
+    snapshot = _snapshot(1_000.0)
+    request = _order(25_000.0)
+    assert isinstance(request.metadata, dict)
+    request.metadata["decision_candidate"] = "INVALID"
+
+    result = engine.apply_pre_trade_checks(
+        request,
+        account=snapshot,
+        profile_name=manual_profile.name,
+    )
+
+    assert result.allowed is False
+    assert result.reason is not None
+    assert "nie mógł ocenić" in result.reason
+    assert result.metadata is not None
+    decision_meta = result.metadata.get("decision_orchestrator")  # type: ignore[index]
+    assert isinstance(decision_meta, dict)
+    assert decision_meta.get("status") == "error"
