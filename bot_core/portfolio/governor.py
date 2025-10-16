@@ -1,15 +1,93 @@
-"""PortfolioGovernor odpowiedzialny za adaptacyjną alokację Stage6."""
+"""Scalony PortfolioGovernor: wariant Stage6 (asset-level z HEAD) + wariant strategy-level (z main)
+
+Zawiera DWIE kompletne implementacje pod jedną biblioteką:
+
+1) AssetPortfolioGovernor  (alias: PortfolioGovernor)
+   - bazuje na Market Intel snapshotach
+   - wspiera SLO overrides, Stress overrides
+   - emituje PortfolioDecision i zapis do PortfolioDecisionLog (opcjonalnie)
+
+2) StrategyPortfolioGovernor
+   - zarządza alokacją między strategiami (alpha / SLO / risk / cost)
+   - smoothing, progi, TCO/report koszty
+   - emituje PortfolioRebalanceDecision i StrategyAllocationDecision
+"""
+
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Callable, Mapping, MutableMapping, Sequence
+from datetime import datetime, timedelta, timezone
+from typing import Callable, Mapping, MutableMapping, Sequence, Any
+import logging
 
-from bot_core.market_intel import MarketIntelSnapshot
-from bot_core.observability.slo import SLOStatus
-from bot_core.portfolio.decision_log import PortfolioDecisionLog
-from bot_core.risk import StressOverrideRecommendation
+# -----------------------------------------------------------------------------
+# Opcjonalne zależności domenowe — zapewniamy fallbacki, by plik był samowystarczalny
+# -----------------------------------------------------------------------------
+
+try:  # decision log (opcjonalne)
+    from bot_core.portfolio.decision_log import PortfolioDecisionLog  # type: ignore
+except Exception:  # pragma: no cover
+    class PortfolioDecisionLog:  # type: ignore
+        def record(self, *_args: Any, **_kw: Any) -> None:
+            pass
+
+try:  # Market Intel snapshot (HEAD)
+    from bot_core.market_intel import MarketIntelSnapshot  # type: ignore
+except Exception:  # pragma: no cover
+    @dataclass(slots=True)
+    class MarketIntelSnapshot:  # minimalny fallback
+        symbol: str
+        interval: str
+        start: datetime | None
+        end: datetime | None
+        bar_count: int
+        price_change_pct: float | None = None
+        volatility_pct: float | None = None
+        max_drawdown_pct: float | None = None
+        average_volume: float | None = None
+        liquidity_usd: float | None = None
+        momentum_score: float | None = None
+        metadata: Mapping[str, float] = field(default_factory=dict)
+
+try:  # SLO status (HEAD)
+    from bot_core.observability.slo import SLOStatus  # type: ignore
+except Exception:  # pragma: no cover
+    @dataclass(slots=True)
+    class SLOStatus:  # fallback minimalny
+        status: str | None = None
+        severity: str = "warning"
+        error_budget_pct: float | None = None
+
+        @property
+        def is_breach(self) -> bool:
+            return (self.status or "").lower() == "breach"
+
+try:  # Stress overrides (HEAD)
+    from bot_core.risk import StressOverrideRecommendation  # type: ignore
+except Exception:  # pragma: no cover
+    @dataclass(slots=True)
+    class StressOverrideRecommendation:  # fallback minimalny
+        symbol: str | None = None
+        risk_budget: str | None = None
+        reason: str = ""
+        severity: str | None = "warning"
+        weight_multiplier: float | None = None
+        min_weight: float | None = None
+        max_weight: float | None = None
+        force_rebalance: bool = False
+
+# TCO/report (opcjonalne dla wariantu strategii)
+try:  # pragma: no cover
+    from bot_core.tco.models import ProfileCostSummary, StrategyCostSummary, TCOReport  # type: ignore
+except Exception:  # pragma: no cover
+    ProfileCostSummary = None  # type: ignore
+    StrategyCostSummary = None  # type: ignore
+    TCOReport = None  # type: ignore
+
+
+# =============================================================================
+# WARIANT 1 — STAGE6 (HEAD): Asset-level Portfolio Governor
+# =============================================================================
 
 _SEVERITY_ORDER = {
     "debug": -1,
@@ -24,15 +102,13 @@ _SEVERITY_ORDER = {
 @dataclass(slots=True)
 class PortfolioDriftTolerance:
     """Parametry tolerancji dryfu od alokacji docelowej."""
-
     absolute: float = 0.01
     relative: float = 0.25
 
 
 @dataclass(slots=True)
 class PortfolioRiskBudgetConfig:
-    """Deklaracja budżetów ryzyka przypisanych do aktywów."""
-
+    """Budżety ryzyka przypisane do aktywów."""
     name: str
     max_var_pct: float | None = None
     max_drawdown_pct: float | None = None
@@ -43,8 +119,7 @@ class PortfolioRiskBudgetConfig:
 
 @dataclass(slots=True)
 class PortfolioAssetConfig:
-    """Konfiguracja aktywa zarządzanego przez PortfolioGovernor."""
-
+    """Konfiguracja pojedynczego aktywa."""
     symbol: str
     target_weight: float
     min_weight: float | None = None
@@ -58,8 +133,7 @@ class PortfolioAssetConfig:
 
 @dataclass(slots=True)
 class PortfolioSloOverrideConfig:
-    """Reguła nakładająca ograniczenia w reakcji na statusy SLO."""
-
+    """Reguły reagujące na statusy SLO."""
     slo_name: str
     apply_on: Sequence[str] = field(default_factory=lambda: ("warning", "breach"))
     weight_multiplier: float | None = None
@@ -71,9 +145,8 @@ class PortfolioSloOverrideConfig:
 
 
 @dataclass(slots=True)
-class PortfolioGovernorConfig:
-    """Konfiguracja instancji PortfolioGovernora."""
-
+class AssetPortfolioGovernorConfig:
+    """Konfiguracja asset-level governora."""
     name: str
     portfolio_id: str
     drift_tolerance: PortfolioDriftTolerance = field(default_factory=PortfolioDriftTolerance)
@@ -90,8 +163,7 @@ class PortfolioGovernorConfig:
 
 @dataclass(slots=True)
 class PortfolioAdjustment:
-    """Sugestia korekty alokacji dla aktywa."""
-
+    """Sugestia korekty alokacji."""
     symbol: str
     current_weight: float
     proposed_weight: float
@@ -114,8 +186,7 @@ class PortfolioAdjustment:
 
 @dataclass(slots=True)
 class PortfolioAdvisory:
-    """Informacja pomocnicza dotycząca ryzyka."""
-
+    """Informacja o ryzyku."""
     code: str
     severity: str
     message: str
@@ -136,8 +207,7 @@ class PortfolioAdvisory:
 
 @dataclass(slots=True)
 class PortfolioDecision:
-    """Wynik ewaluacji alokacji portfelowej."""
-
+    """Wynik ewaluacji alokacji portfela (asset-level)."""
     timestamp: datetime
     portfolio_id: str
     portfolio_value: float
@@ -151,17 +221,17 @@ class PortfolioDecision:
             "portfolio_id": self.portfolio_id,
             "portfolio_value": self.portfolio_value,
             "rebalance_required": self.rebalance_required,
-            "adjustments": [adjustment.to_dict() for adjustment in self.adjustments],
-            "advisories": [advisory.to_dict() for advisory in self.advisories],
+            "adjustments": [a.to_dict() for a in self.adjustments],
+            "advisories": [a.to_dict() for a in self.advisories],
         }
 
 
-class PortfolioGovernor:
-    """Kontroluje dryf alokacji portfela z wykorzystaniem metryk Stage6."""
+class AssetPortfolioGovernor:
+    """Kontroluje dryf alokacji portfela (asset-level, Stage6)."""
 
     def __init__(
         self,
-        config: PortfolioGovernorConfig,
+        config: AssetPortfolioGovernorConfig,
         *,
         clock: Callable[[], datetime] | None = None,
         decision_log: PortfolioDecisionLog | None = None,
@@ -170,8 +240,8 @@ class PortfolioGovernor:
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._asset_map = {asset.symbol: asset for asset in config.assets}
         self._risk_budgets = dict(config.risk_budgets)
-        self._last_rebalance: datetime | None = None
         self._slo_overrides = tuple(config.slo_overrides)
+        self._last_rebalance: datetime | None = None
         self._decision_log = decision_log
 
     @property
@@ -197,9 +267,7 @@ class PortfolioGovernor:
         advisories: list[PortfolioAdvisory] = []
         rebalance_required = False
 
-        overrides_by_symbol, overrides_by_budget, generic_overrides = (
-            self._prepare_stress_override_index(stress_overrides)
-        )
+        overrides_by_symbol, overrides_by_budget, generic_overrides = self._prepare_stress_index(stress_overrides)
 
         for symbol, asset in self._asset_map.items():
             current_weight = float(allocations.get(symbol, 0.0))
@@ -233,11 +301,8 @@ class PortfolioGovernor:
                                 snapshot.volatility_pct, asset.max_volatility_pct
                             )
                         )
-                        proposed_weight = min(
-                            proposed_weight,
-                            max(0.0, asset.min_weight or 0.0),
-                        )
-                        metadata["volatility_pct"] = snapshot.volatility_pct
+                        proposed_weight = min(proposed_weight, max(0.0, asset.min_weight or 0.0))
+                        metadata["volatility_pct"] = float(snapshot.volatility_pct)
                 if asset.min_liquidity_usd is not None and snapshot.liquidity_usd is not None:
                     if snapshot.liquidity_usd < asset.min_liquidity_usd:
                         severity = "warning"
@@ -246,39 +311,23 @@ class PortfolioGovernor:
                                 snapshot.liquidity_usd, asset.min_liquidity_usd
                             )
                         )
-                        proposed_weight = min(
-                            proposed_weight,
-                            max(0.0, asset.min_weight or 0.0),
-                        )
-                        metadata["liquidity_usd"] = snapshot.liquidity_usd
-                self._evaluate_risk_budget(
-                    asset, snapshot, current_weight, metadata, advisories
-                )
+                        proposed_weight = min(proposed_weight, max(0.0, asset.min_weight or 0.0))
+                        metadata["liquidity_usd"] = float(snapshot.liquidity_usd)
 
-            relevant_overrides = self._collect_stress_overrides(
-                symbol,
-                asset,
-                overrides_by_symbol,
-                overrides_by_budget,
-                generic_overrides,
+                self._evaluate_risk_budget(asset, snapshot, current_weight, metadata, advisories)
+
+            relevant = self._collect_stress_overrides(
+                symbol, asset, overrides_by_symbol, overrides_by_budget, generic_overrides
             )
             proposed_weight, severity, stress_force = self._apply_stress_overrides(
-                asset,
-                proposed_weight,
-                severity,
-                reasons,
-                metadata,
-                relevant_overrides,
+                asset, proposed_weight, severity, reasons, metadata, relevant
             )
+
             proposed_weight = max(0.0, proposed_weight)
             proposed_weight, severity, slo_force = self._apply_slo_overrides(
-                asset,
-                proposed_weight,
-                severity,
-                reasons,
-                metadata,
-                slo_statuses,
+                asset, proposed_weight, severity, reasons, metadata, slo_statuses
             )
+
             tolerance = self._drift_tolerance(asset, proposed_weight)
             drift = proposed_weight - current_weight
             value_delta = abs(drift) * float(portfolio_value)
@@ -287,7 +336,6 @@ class PortfolioGovernor:
             metadata["value_delta"] = value_delta
 
             override_force = stress_force or slo_force
-
             if not override_force:
                 if abs(drift) < tolerance:
                     continue
@@ -319,22 +367,19 @@ class PortfolioGovernor:
         )
         if rebalance_required:
             self._last_rebalance = moment
+
         if self._decision_log is not None:
-            metadata = self._build_log_metadata(
-                adjustments,
-                advisories,
-                market_data,
-                stress_overrides,
-                slo_statuses,
-                log_context,
+            meta = self._build_log_metadata(
+                adjustments, advisories, market_data, stress_overrides, slo_statuses, log_context
             )
             try:
-                self._decision_log.record(decision, metadata=metadata)
-            except Exception:  # pragma: no cover - logowanie nie może zatrzymać procesu
-                logging.getLogger(__name__).exception(
-                    "Nie udało się zapisać wpisu decision logu portfela"
-                )
+                self._decision_log.record(decision, metadata=meta)
+            except Exception:  # pragma: no cover
+                logging.getLogger(__name__).exception("Nie udało się zapisać wpisu decision logu portfela")
+
         return decision
+
+    # ------------------------ helpers (asset-level) ------------------------
 
     def _bounded_target(self, target: float, asset: PortfolioAssetConfig) -> float:
         bounded = float(max(0.0, target))
@@ -344,9 +389,8 @@ class PortfolioGovernor:
             bounded = min(bounded, float(asset.max_weight))
         return bounded
 
-    def _prepare_stress_override_index(
-        self,
-        overrides: Sequence[StressOverrideRecommendation] | None,
+    def _prepare_stress_index(
+        self, overrides: Sequence[StressOverrideRecommendation] | None,
     ) -> tuple[
         Mapping[str, Sequence[StressOverrideRecommendation]],
         Mapping[str, Sequence[StressOverrideRecommendation]],
@@ -354,7 +398,6 @@ class PortfolioGovernor:
     ]:
         if not overrides:
             return {}, {}, ()
-
         by_symbol: MutableMapping[str, list[StressOverrideRecommendation]] = {}
         by_budget: MutableMapping[str, list[StressOverrideRecommendation]] = {}
         generic: list[StressOverrideRecommendation] = []
@@ -363,11 +406,10 @@ class PortfolioGovernor:
             risk_budget = (override.risk_budget or "").strip()
             if symbol:
                 by_symbol.setdefault(symbol, []).append(override)
-                continue
-            if risk_budget:
+            elif risk_budget:
                 by_budget.setdefault(risk_budget, []).append(override)
-                continue
-            generic.append(override)
+            else:
+                generic.append(override)
         return by_symbol, by_budget, tuple(generic)
 
     def _collect_stress_overrides(
@@ -402,11 +444,7 @@ class PortfolioGovernor:
         if not overrides:
             return proposed_weight, severity, False
 
-        ordered = sorted(
-            overrides,
-            key=lambda item: self._severity_rank(item.severity),
-            reverse=True,
-        )
+        ordered = sorted(overrides, key=lambda item: self._severity_rank(item.severity), reverse=True)
         metadata["stress::count"] = float(len(ordered))
         override_force = False
 
@@ -521,49 +559,41 @@ class PortfolioGovernor:
         if not budget:
             return
 
-        metrics: MutableMapping[str, float] = {
-            "current_weight": current_weight,
-        }
+        metrics: MutableMapping[str, float] = {"current_weight": current_weight}
         if snapshot.volatility_pct is not None:
-            metrics["volatility_pct"] = snapshot.volatility_pct
+            metrics["volatility_pct"] = float(snapshot.volatility_pct)
         if snapshot.max_drawdown_pct is not None:
-            metrics["max_drawdown_pct"] = snapshot.max_drawdown_pct
+            metrics["max_drawdown_pct"] = float(snapshot.max_drawdown_pct)
 
         triggers: list[str] = []
         if budget.max_var_pct is not None and snapshot.volatility_pct is not None:
-            if snapshot.volatility_pct > budget.max_var_pct:
+            if float(snapshot.volatility_pct) > budget.max_var_pct:
                 triggers.append(
                     "volatility {:.2f}% > limit {:.2f}%".format(
-                        snapshot.volatility_pct, budget.max_var_pct
+                        float(snapshot.volatility_pct), budget.max_var_pct
                     )
                 )
         if budget.max_drawdown_pct is not None and snapshot.max_drawdown_pct is not None:
-            if snapshot.max_drawdown_pct > budget.max_drawdown_pct:
+            if float(snapshot.max_drawdown_pct) > budget.max_drawdown_pct:
                 triggers.append(
                     "drawdown {:.2f}% > limit {:.2f}%".format(
-                        snapshot.max_drawdown_pct, budget.max_drawdown_pct
+                        float(snapshot.max_drawdown_pct), budget.max_drawdown_pct
                     )
                 )
         if budget.max_leverage is not None:
             if abs(current_weight) > budget.max_leverage:
-                triggers.append(
-                    "weight {:.2f} > leverage {:.2f}".format(
-                        abs(current_weight), budget.max_leverage
-                    )
+                triggers.append("weight {:.2f} > leverage {:.2f}".format(abs(current_weight), budget.max_leverage))
+
+        if triggers:
+            advisories.append(
+                PortfolioAdvisory(
+                    code=f"risk_budget.{budget.name}",
+                    severity=budget.severity,
+                    message="; ".join(triggers),
+                    symbols=(asset.symbol,),
+                    metrics=dict(metrics),
                 )
-
-        if not triggers:
-            return
-
-        advisories.append(
-            PortfolioAdvisory(
-                code=f"risk_budget.{budget.name}",
-                severity=budget.severity,
-                message="; ".join(triggers),
-                symbols=(asset.symbol,),
-                metrics=dict(metrics),
             )
-        )
 
     def _build_log_metadata(
         self,
@@ -583,7 +613,11 @@ class PortfolioGovernor:
         if missing:
             metadata["missing_market_intel"] = missing
         if stress_overrides:
-            metadata["stress_overrides"] = [override.to_dict() for override in stress_overrides]
+            # nie zakładamy .to_dict() — bierzemy __dict__ gdy dostępne
+            metadata["stress_overrides"] = [
+                getattr(override, "to_dict", lambda: getattr(override, "__dict__", {}))()
+                for override in stress_overrides
+            ]
         if slo_statuses:
             metadata["slo_statuses"] = {
                 name: {
@@ -599,14 +633,511 @@ class PortfolioGovernor:
         return metadata
 
 
+# =============================================================================
+# WARIANT 2 — Strategy-level Portfolio Governor (main)
+# =============================================================================
+
+@dataclass(slots=True)
+class PortfolioGovernorScoringWeights:
+    alpha: float = 1.0
+    cost: float = 1.0
+    slo: float = 1.0
+    risk: float = 0.5
+
+
+@dataclass(slots=True)
+class PortfolioGovernorStrategyConfig:
+    baseline_weight: float
+    min_weight: float = 0.0
+    max_weight: float = 1.0
+    baseline_max_signals: int | None = None
+    max_signal_factor: float = 1.0
+    risk_profile: str | None = None
+    tags: Sequence[str] = field(default_factory=tuple)
+
+
+@dataclass(slots=True)
+class StrategyPortfolioGovernorConfig:
+    enabled: bool = False
+    rebalance_interval_minutes: float = 15.0
+    smoothing: float = 0.5
+    scoring: PortfolioGovernorScoringWeights = field(default_factory=PortfolioGovernorScoringWeights)
+    strategies: Mapping[str, PortfolioGovernorStrategyConfig] = field(default_factory=dict)
+    default_baseline_weight: float = 0.25
+    default_min_weight: float = 0.05
+    default_max_weight: float = 0.5
+    require_complete_metrics: bool = True
+    min_score_threshold: float = 0.0
+    default_cost_bps: float = 0.0
+    max_signal_floor: int = 1
+
+
+@dataclass(slots=True)
+class StrategyMetricsSnapshot:
+    timestamp: datetime
+    alpha_score: float
+    slo_violation_rate: float
+    risk_penalty: float
+    cost_bps: float | None = None
+    net_edge_bps: float | None = None
+    sample_weight: float = 1.0
+    metrics: Mapping[str, float] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class PortfolioRebalanceDecision:
+    timestamp: datetime
+    weights: Mapping[str, float]
+    scores: Mapping[str, float]
+    alpha_components: Mapping[str, float]
+    slo_components: Mapping[str, float]
+    cost_components: Mapping[str, float]
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class StrategyAllocationDecision:
+    strategy: str
+    weight: float
+    baseline_weight: float
+    signal_factor: float
+    max_signal_hint: int | None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class _CostIndex:
+    lookup: MutableMapping[tuple[str, str], float]
+    default_cost: float
+
+
+@dataclass(slots=True)
+class _StrategyState:
+    config: PortfolioGovernorStrategyConfig
+    baseline_weight: float
+    min_weight: float
+    max_weight: float
+    smoothed_alpha: float = 0.0
+    smoothed_slo: float = 0.0
+    risk_penalty: float = 0.0
+    net_edge_bps: float = 0.0
+    last_timestamp: datetime | None = None
+    samples: float = 0.0
+    cost_override_bps: float | None = None
+
+
+class StrategyPortfolioGovernor:
+    """Autonomiczny moduł zarządzania alokacją między strategiami."""
+
+    def __init__(self, config: StrategyPortfolioGovernorConfig, *, clock: Callable[[], datetime] | None = None) -> None:
+        self._config = config
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._states: dict[str, _StrategyState] = {}
+        self._current_weights: dict[str, float] = {}
+        self._last_rebalance: datetime | None = None
+        self._last_decision: PortfolioRebalanceDecision | None = None
+        self._cost_index = _CostIndex(lookup={}, default_cost=max(0.0, config.default_cost_bps))
+        self._initialize_states()
+
+    # ------------------------------------------------------------------ helpers --
+    def _initialize_states(self) -> None:
+        strategies = self._config.strategies or {}
+        for name, strategy_cfg in strategies.items():
+            state = self._build_state(name, strategy_cfg)
+            self._states[name] = state
+        if not self._states:
+            return
+        self._renormalize_baselines()
+        for name, state in self._states.items():
+            self._current_weights[name] = state.baseline_weight
+
+    def _build_state(
+        self,
+        name: str,
+        strategy_cfg: PortfolioGovernorStrategyConfig,
+        *,
+        risk_profile: str | None = None,
+    ) -> _StrategyState:
+        baseline = float(strategy_cfg.baseline_weight or self._config.default_baseline_weight)
+        min_weight = float(strategy_cfg.min_weight if strategy_cfg.min_weight is not None else self._config.default_min_weight)
+        max_weight = float(strategy_cfg.max_weight if strategy_cfg.max_weight is not None else self._config.default_max_weight)
+        if max_weight < min_weight:
+            max_weight = min_weight
+        baseline = min(max_weight, max(min_weight, baseline))
+        if risk_profile and not strategy_cfg.risk_profile:
+            strategy_cfg.risk_profile = risk_profile
+        return _StrategyState(
+            config=strategy_cfg,
+            baseline_weight=baseline,
+            min_weight=min_weight,
+            max_weight=max_weight,
+        )
+
+    def _renormalize_baselines(self) -> None:
+        if not self._states:
+            return
+        total = sum(state.baseline_weight for state in self._states.values())
+        if total <= 0:
+            equal = 1.0 / len(self._states)
+            for state in self._states.values():
+                state.baseline_weight = min(state.max_weight, max(state.min_weight, equal))
+        else:
+            for state in self._states.values():
+                state.baseline_weight = min(
+                    state.max_weight,
+                    max(state.min_weight, state.baseline_weight / total),
+                )
+
+    def _ensure_state(self, strategy: str, risk_profile: str | None) -> _StrategyState:
+        state = self._states.get(strategy)
+        if state is not None:
+            if risk_profile and not state.config.risk_profile:
+                state.config.risk_profile = risk_profile
+            return state
+        cfg = PortfolioGovernorStrategyConfig(
+            baseline_weight=self._config.default_baseline_weight,
+            min_weight=self._config.default_min_weight,
+            max_weight=self._config.default_max_weight,
+            baseline_max_signals=None,
+            max_signal_factor=1.0,
+            risk_profile=risk_profile,
+        )
+        state = self._build_state(strategy, cfg, risk_profile=risk_profile)
+        self._states[strategy] = state
+        self._renormalize_baselines()
+        self._current_weights.setdefault(strategy, state.baseline_weight)
+        return state
+
+    def _coerce_snapshot(
+        self,
+        metrics: StrategyMetricsSnapshot | Mapping[str, float],
+        *,
+        timestamp: datetime | None,
+    ) -> StrategyMetricsSnapshot:
+        if isinstance(metrics, StrategyMetricsSnapshot):
+            if timestamp is not None and metrics.timestamp != timestamp:
+                return StrategyMetricsSnapshot(
+                    timestamp=timestamp,
+                    alpha_score=metrics.alpha_score,
+                    slo_violation_rate=metrics.slo_violation_rate,
+                    risk_penalty=metrics.risk_penalty,
+                    cost_bps=metrics.cost_bps,
+                    net_edge_bps=metrics.net_edge_bps,
+                    sample_weight=metrics.sample_weight,
+                    metrics=metrics.metrics,
+                )
+            return metrics
+        payload = dict(metrics)
+        ts = timestamp or self._clock()
+        alpha = float(payload.get("alpha_score", payload.get("avg_confidence", 0.0)))
+        slo_raw = payload.get("slo_violation_rate")
+        if slo_raw is None:
+            slo_raw = payload.get("allocation_error_pct", payload.get("slo_breach_pct", 0.0))
+        slo = float(slo_raw or 0.0)
+        risk_penalty = float(payload.get("risk_penalty", payload.get("drawdown_pct", 0.0)) or 0.0)
+        cost_value = payload.get("cost_bps")
+        cost_bps = float(cost_value) if cost_value not in (None, "") else None
+        net_edge_value = payload.get("net_edge_bps", payload.get("net_edge", None))
+        net_edge = float(net_edge_value) if net_edge_value not in (None, "") else None
+        sample_weight = float(payload.get("sample_weight", 1.0) or 0.0)
+        metrics_map = {
+            str(key): float(value)
+            for key, value in payload.items()
+            if isinstance(value, (int, float))
+        }
+        return StrategyMetricsSnapshot(
+            timestamp=ts,
+            alpha_score=alpha,
+            slo_violation_rate=max(0.0, slo),
+            risk_penalty=max(0.0, risk_penalty),
+            cost_bps=cost_bps,
+            net_edge_bps=net_edge,
+            sample_weight=max(0.0, sample_weight),
+            metrics=metrics_map,
+        )
+
+    def _resolve_cost(self, strategy: str, state: _StrategyState) -> float:
+        if state.cost_override_bps is not None:
+            return max(0.0, float(state.cost_override_bps))
+        profile = state.config.risk_profile or "__total__"
+        value = self._cost_index.lookup.get((strategy, profile))
+        if value is None:
+            value = self._cost_index.lookup.get((strategy, "__total__"))
+        if value is None:
+            value = self._cost_index.default_cost
+        return max(0.0, float(value))
+
+    def _distribution_weights(self, scores: Mapping[str, float]) -> dict[str, float]:
+        positive = {
+            name: max(0.0, float(scores.get(name, 0.0)))
+            for name in self._states
+        }
+        total = sum(positive.values())
+        if total <= 0.0:
+            baseline = {
+                name: state.baseline_weight
+                for name, state in self._states.items()
+            }
+            total_baseline = sum(baseline.values())
+            if total_baseline <= 0:
+                equal = 1.0 / len(self._states) if self._states else 1.0
+                return {name: equal for name in self._states}
+            return {
+                name: baseline[name] / total_baseline
+                for name in self._states
+            }
+        return {
+            name: positive.get(name, 0.0) / total
+            for name in self._states
+        }
+
+    def _allocate_weights(self, scores: Mapping[str, float]) -> dict[str, float]:
+        if not self._states:
+            return {}
+        weights = {
+            name: state.min_weight
+            for name, state in self._states.items()
+        }
+        remaining = max(0.0, 1.0 - sum(weights.values()))
+        if remaining <= 1e-9:
+            return weights
+        distribution = self._distribution_weights(scores)
+        available = {
+            name: max(0.0, state.max_weight - weights[name])
+            for name, state in self._states.items()
+        }
+        active = {name for name, avail in available.items() if avail > 1e-9}
+        while active and remaining > 1e-9:
+            total_share = sum(distribution[name] for name in active)
+            if total_share <= 0:
+                share = remaining / len(active)
+                consumed = 0.0
+                for name in list(active):
+                    delta = min(available[name], share)
+                    weights[name] += delta
+                    available[name] -= delta
+                    consumed += delta
+                    if available[name] <= 1e-9:
+                        active.remove(name)
+                if consumed <= 1e-9:
+                    break
+                remaining = max(0.0, remaining - consumed)
+                continue
+            consumed = 0.0
+            for name in list(active):
+                share = distribution[name] / total_share
+                delta = min(available[name], remaining * share)
+                weights[name] += delta
+                available[name] -= delta
+                consumed += delta
+                if available[name] <= 1e-9:
+                    active.remove(name)
+            if consumed <= 1e-9:
+                break
+            remaining = max(0.0, remaining - consumed)
+        return weights
+
+    def _build_decision(
+        self,
+        timestamp: datetime,
+        weights: Mapping[str, float],
+        scores: Mapping[str, float],
+        alpha: Mapping[str, float],
+        slo: Mapping[str, float],
+        costs: Mapping[str, float],
+        remaining: float,
+    ) -> PortfolioRebalanceDecision:
+        metadata = {
+            "remaining_cash": max(0.0, remaining),
+            "require_complete_metrics": bool(self._config.require_complete_metrics),
+        }
+        return PortfolioRebalanceDecision(
+            timestamp=timestamp,
+            weights=dict(weights),
+            scores=dict(scores),
+            alpha_components=dict(alpha),
+            slo_components=dict(slo),
+            cost_components=dict(costs),
+            metadata=metadata,
+        )
+
+    # ------------------------------------------------------------------ API --
+    @property
+    def min_signal_floor(self) -> int:
+        return max(0, int(self._config.max_signal_floor))
+
+    @property
+    def current_weights(self) -> Mapping[str, float]:
+        return dict(self._current_weights)
+
+    @property
+    def last_decision(self) -> PortfolioRebalanceDecision | None:
+        return self._last_decision
+
+    def observe_strategy_metrics(
+        self,
+        strategy: str,
+        metrics: StrategyMetricsSnapshot | Mapping[str, float],
+        *,
+        timestamp: datetime | None = None,
+        risk_profile: str | None = None,
+    ) -> None:
+        state = self._ensure_state(strategy, risk_profile)
+        snapshot = self._coerce_snapshot(metrics, timestamp=timestamp)
+        factor = min(max(self._config.smoothing, 0.0), 1.0)
+        alpha = float(snapshot.alpha_score)
+        slo = max(0.0, float(snapshot.slo_violation_rate))
+        if state.samples <= 0 or factor >= 1.0:
+            state.smoothed_alpha = alpha
+            state.smoothed_slo = slo
+        else:
+            state.smoothed_alpha = factor * alpha + (1.0 - factor) * state.smoothed_alpha
+            state.smoothed_slo = factor * slo + (1.0 - factor) * state.smoothed_slo
+        state.risk_penalty = max(0.0, float(snapshot.risk_penalty))
+        state.net_edge_bps = float(snapshot.net_edge_bps or 0.0)
+        if snapshot.cost_bps is not None:
+            state.cost_override_bps = float(snapshot.cost_bps)
+        state.last_timestamp = snapshot.timestamp
+        state.samples += max(0.0, snapshot.sample_weight)
+
+    def maybe_rebalance(self, *, timestamp: datetime | None = None, force: bool = False) -> PortfolioRebalanceDecision | None:
+        if not self._config.enabled or not self._states:
+            return None
+        now = timestamp or self._clock()
+        if not force and self._last_rebalance is not None:
+            interval = timedelta(minutes=max(0.0, self._config.rebalance_interval_minutes))
+            if now - self._last_rebalance < interval:
+                return None
+        if self._config.require_complete_metrics and any(state.samples <= 0 for state in self._states.values()):
+            return None
+
+        scores: dict[str, float] = {}
+        alpha: dict[str, float] = {}
+        slo: dict[str, float] = {}
+        costs: dict[str, float] = {}
+
+        for name, state in self._states.items():
+            cost = self._resolve_cost(name, state)
+            score = (
+                state.smoothed_alpha * self._config.scoring.alpha
+                - cost * self._config.scoring.cost
+                - state.smoothed_slo * self._config.scoring.slo
+                - state.risk_penalty * self._config.scoring.risk
+            )
+            if score <= self._config.min_score_threshold:
+                score = 0.0
+            else:
+                score -= self._config.min_score_threshold
+            scores[name] = max(0.0, float(score))
+            alpha[name] = state.smoothed_alpha
+            slo[name] = state.smoothed_slo
+            costs[name] = cost
+
+        weights = self._allocate_weights(scores)
+        if not weights:
+            return None
+        remaining = max(0.0, 1.0 - sum(weights.values()))
+        decision = self._build_decision(now, weights, scores, alpha, slo, costs, remaining)
+        self._current_weights = dict(weights)
+        self._last_rebalance = now
+        self._last_decision = decision
+        return decision
+
+    def resolve_allocation(self, strategy: str, risk_profile: str | None = None) -> StrategyAllocationDecision:
+        state = self._ensure_state(strategy, risk_profile)
+        weight = float(self._current_weights.get(strategy, state.baseline_weight))
+        baseline = state.baseline_weight or max(weight, 1e-9)
+        factor = weight / baseline if baseline else 1.0
+        max_factor = max(0.0, float(state.config.max_signal_factor or 0.0))
+        if max_factor > 0:
+            factor = min(factor, max_factor)
+        metadata = {
+            "weight": weight,
+            "baseline_weight": baseline,
+        }
+        return StrategyAllocationDecision(
+            strategy=strategy,
+            weight=weight,
+            baseline_weight=baseline,
+            signal_factor=max(0.0, factor),
+            max_signal_hint=state.config.baseline_max_signals,
+            metadata=metadata,
+        )
+
+    # -------------------------------------------------------------- koszty --
+    def set_strategy_cost(self, strategy: str, cost_bps: float, *, risk_profile: str | None = None) -> None:
+        profile = risk_profile or "__total__"
+        self._cost_index.lookup[(strategy, profile)] = max(0.0, float(cost_bps))
+
+    def update_costs_from_report(self, report: Mapping[str, object] | object) -> None:
+        lookup: MutableMapping[tuple[str, str], float] = {}
+        default_cost = self._cost_index.default_cost
+        if TCOReport is not None and isinstance(report, TCOReport):  # pragma: no cover
+            default_cost = float(getattr(getattr(report, "total", None), "cost_bps", default_cost))
+            for summary in getattr(report, "strategies", {}).values():
+                self._ingest_strategy_summary(summary, lookup)
+        else:
+            data = dict(report) if isinstance(report, Mapping) else {}
+            strategies_data = data.get("strategies", {}) or {}
+            for strategy_name, summary_raw in strategies_data.items():
+                if not isinstance(summary_raw, Mapping):
+                    continue
+                total_raw = summary_raw.get("total")
+                if total_raw is not None:
+                    lookup[(str(strategy_name), "__total__")] = self._extract_cost_bps(total_raw)
+                profiles = summary_raw.get("profiles", {}) or {}
+                for profile_name, profile_raw in profiles.items():
+                    lookup[(str(strategy_name), str(profile_name))] = self._extract_cost_bps(profile_raw)
+            total_raw = data.get("total")
+            if total_raw is not None:
+                default_cost = self._extract_cost_bps(total_raw)
+        self._cost_index = _CostIndex(lookup=lookup, default_cost=max(0.0, float(default_cost)))
+
+    def _ingest_strategy_summary(self, summary: object, lookup: MutableMapping[tuple[str, str], float]) -> None:
+        if StrategyCostSummary is None or not isinstance(summary, StrategyCostSummary):  # pragma: no cover
+            return
+        lookup[(summary.strategy, "__total__")] = float(summary.total.cost_bps)
+        for profile_name, profile_summary in summary.profiles.items():
+            lookup[(summary.strategy, profile_name)] = float(profile_summary.cost_bps)
+
+    def _extract_cost_bps(self, payload: object) -> float:
+        if payload is None:
+            return 0.0
+        if ProfileCostSummary is not None and isinstance(payload, ProfileCostSummary):  # pragma: no cover
+            return float(payload.cost_bps)
+        if isinstance(payload, Mapping):
+            value = payload.get("cost_bps")
+            if value is None:
+                return 0.0
+            return float(value)
+        return float(payload)
+
+
+# =============================================================================
+# Publiczne symbole
+# =============================================================================
+
+# Zgodność z HEAD: alias o tej samej nazwie
+PortfolioGovernor = AssetPortfolioGovernor
+
 __all__ = [
-    "PortfolioGovernor",
-    "PortfolioGovernorConfig",
-    "PortfolioAssetConfig",
+    # Asset-level (HEAD)
+    "AssetPortfolioGovernor",
+    "AssetPortfolioGovernorConfig",
+    "PortfolioGovernor",  # alias
     "PortfolioDriftTolerance",
     "PortfolioRiskBudgetConfig",
+    "PortfolioAssetConfig",
+    "PortfolioSloOverrideConfig",
     "PortfolioAdjustment",
     "PortfolioAdvisory",
     "PortfolioDecision",
-    "PortfolioSloOverrideConfig",
+    # Strategy-level (main)
+    "StrategyPortfolioGovernor",
+    "StrategyPortfolioGovernorConfig",
+    "PortfolioGovernorScoringWeights",
+    "PortfolioGovernorStrategyConfig",
+    "PortfolioRebalanceDecision",
+    "StrategyAllocationDecision",
+    "StrategyMetricsSnapshot",
 ]

@@ -68,6 +68,11 @@ from bot_core.runtime.file_metadata import (
 from bot_core.observability.metrics import get_global_metrics_registry
 from bot_core.portfolio import PortfolioDecisionLog
 
+try:  # pragma: no cover - DecisionOrchestrator może być opcjonalny
+    from bot_core.decision import DecisionOrchestrator  # type: ignore
+except Exception:  # pragma: no cover
+    DecisionOrchestrator = None  # type: ignore
+
 # --- Metrics service (opcjonalny – w niektórych gałęziach może nie istnieć) ---
 try:  # pragma: no cover - środowiska bez grpcio lub wygenerowanych stubów
     from bot_core.runtime.metrics_service import (  # type: ignore
@@ -95,6 +100,11 @@ try:  # pragma: no cover - eksporter metryk może być niedostępny
     from bot_core.runtime.risk_metrics import RiskMetricsExporter  # type: ignore
 except Exception:  # pragma: no cover
     RiskMetricsExporter = None  # type: ignore
+
+try:  # pragma: no cover - PortfolioGovernor może nie istnieć w tej gałęzi
+    from bot_core.portfolio import PortfolioGovernor  # type: ignore
+except Exception:
+    PortfolioGovernor = None  # type: ignore
 
 try:  # pragma: no cover - sink telemetrii może być pominięty
     from bot_core.runtime.metrics_alerts import (  # type: ignore
@@ -193,6 +203,74 @@ def _config_value(source: object, *names: str) -> Any:
     return None
 
 
+def _load_initial_tco_costs(
+    config: Any,
+    orchestrator: Any,
+    portfolio_governor: Any | None = None,
+) -> tuple[str | None, Sequence[str]]:
+    """Ładuje raporty TCO z konfiguracji do DecisionOrchestratora."""
+
+    warnings: list[str] = []
+    tco_config = getattr(config, "tco", None)
+    if not tco_config:
+        return None, ()
+
+    report_paths = tuple(getattr(tco_config, "report_paths", ()) or ())
+    require_at_startup = bool(getattr(tco_config, "require_at_startup", False))
+    for raw_path in report_paths:
+        path = Path(str(raw_path)).expanduser()
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except FileNotFoundError:
+            warning = f"missing:{path}"
+            warnings.append(warning)
+            _LOGGER.warning("Raport TCO %s nie istnieje", path)
+            continue
+        except Exception:
+            warning = f"invalid:{path}"
+            warnings.append(warning)
+            _LOGGER.warning("Nie udało się wczytać raportu TCO %s", path, exc_info=True)
+            continue
+
+        loaded = False
+        if orchestrator is not None:
+            try:
+                orchestrator.update_costs_from_report(payload)
+            except Exception:
+                warning = f"update_failed:{path}"
+                warnings.append(warning)
+                _LOGGER.warning(
+                    "Nie udało się załadować raportu TCO %s do DecisionOrchestratora",
+                    path,
+                    exc_info=True,
+                )
+            else:
+                loaded = True
+        if portfolio_governor is not None:
+            try:
+                portfolio_governor.update_costs_from_report(payload)
+            except Exception:  # pragma: no cover - defensywnie
+                _LOGGER.debug(
+                    "Nie udało się zaktualizować kosztów TCO w PortfolioGovernor %s",
+                    path,
+                    exc_info=True,
+                )
+            else:
+                loaded = True
+        if loaded:
+            _LOGGER.info("Załadowano raport TCO: %s", path)
+            return str(path), tuple(warnings)
+
+    if require_at_startup:
+        warnings.append("missing_required_tco_report")
+        _LOGGER.error(
+            "Wymagany raport TCO nie został znaleziony (kandydaci=%s)",
+            [str(path) for path in report_paths],
+        )
+    return None, tuple(warnings)
+
+
 @dataclass(slots=True)
 class BootstrapContext:
     """Zawiera wszystkie komponenty zainicjalizowane dla danego środowiska."""
@@ -211,6 +289,12 @@ class BootstrapContext:
     risk_decision_log: RiskDecisionLog | None
     risk_profile_name: str
     portfolio_decision_log: PortfolioDecisionLog | None = None
+    decision_engine_config: Any | None = None
+    decision_orchestrator: Any | None = None
+    decision_tco_report_path: str | None = None
+    decision_tco_warnings: Sequence[str] | None = None
+    portfolio_governor_config: Any | None = None
+    portfolio_governor: Any | None = None
     metrics_server: Any | None = None
     metrics_ui_alerts_path: Path | None = None
     metrics_jsonl_path: Path | None = None
@@ -259,6 +343,52 @@ def bootstrap_environment(
         repository=risk_repository,
         decision_log=risk_decision_log,
     )
+    decision_engine_config = getattr(core_config, "decision_engine", None)
+    portfolio_governor_config = getattr(core_config, "portfolio_governor", None)
+    decision_orchestrator: Any | None = None
+    decision_tco_report_path: str | None = None
+    decision_tco_warnings: list[str] = []
+    portfolio_governor: Any | None = None
+    if portfolio_governor_config and PortfolioGovernor is not None:
+        try:
+            portfolio_governor = PortfolioGovernor(portfolio_governor_config)
+        except Exception:  # pragma: no cover - diagnostyka inicjalizacji
+            portfolio_governor = None
+            _LOGGER.exception("Nie udało się zainicjalizować PortfolioGovernora")
+    elif portfolio_governor_config:
+        _LOGGER.debug("Konfiguracja portfolio_governor jest dostępna, ale moduł nie został załadowany")
+    if decision_engine_config and DecisionOrchestrator is not None:
+        try:
+            decision_orchestrator = DecisionOrchestrator(decision_engine_config)
+        except Exception:  # pragma: no cover - diagnostyka inicjalizacji
+            decision_orchestrator = None
+            _LOGGER.exception("Nie udało się zainicjalizować DecisionOrchestratora")
+        else:
+            try:
+                risk_engine.attach_decision_orchestrator(decision_orchestrator)
+            except Exception:  # pragma: no cover - diagnostyka integracji
+                decision_orchestrator = None
+                _LOGGER.exception(
+                    "Nie udało się podłączyć DecisionOrchestratora do silnika ryzyka"
+                )
+            else:
+                report_path, warnings = _load_initial_tco_costs(
+                    decision_engine_config,
+                    decision_orchestrator,
+                    portfolio_governor,
+                )
+                if report_path is not None:
+                    decision_tco_report_path = report_path
+                if warnings:
+                    decision_tco_warnings.extend(str(entry) for entry in warnings)
+    elif portfolio_governor is not None and decision_engine_config:
+        _, warnings = _load_initial_tco_costs(
+            decision_engine_config,
+            None,
+            portfolio_governor,
+        )
+        if warnings:
+            decision_tco_warnings.extend(str(entry) for entry in warnings)
     profile = build_risk_profile_from_config(risk_profile_config)
     risk_engine.register_profile(profile)
     # Aktualizujemy konfigurację środowiska, aby dalsze komponenty znały aktywny profil.
@@ -1000,6 +1130,14 @@ def bootstrap_environment(
         decision_journal=decision_journal,
         risk_decision_log=risk_decision_log,
         risk_profile_name=selected_profile,
+        decision_engine_config=decision_engine_config,
+        decision_orchestrator=decision_orchestrator,
+        decision_tco_report_path=decision_tco_report_path,
+        decision_tco_warnings=tuple(decision_tco_warnings)
+        if decision_tco_warnings
+        else None,
+        portfolio_governor_config=portfolio_governor_config,
+        portfolio_governor=portfolio_governor,
         metrics_server=metrics_server,
         metrics_ui_alerts_path=metrics_ui_alert_path,
         metrics_jsonl_path=metrics_jsonl_path,

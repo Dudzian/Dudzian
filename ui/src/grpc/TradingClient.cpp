@@ -219,7 +219,7 @@ void TradingClient::ensureStub() {
             m_channel = grpc::CreateCustomChannel(m_endpoint.toStdString(), credentials, args);
         } else {
             credentials = grpc::InsecureChannelCredentials();
-            m_channel = grpc::CreateChannel(m_endpoint.toStdString(), credentials);
+            m_channel = grpc::CreateCustomChannel(m_endpoint.toStdString(), credentials, args);
         }
     }
 

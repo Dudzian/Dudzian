@@ -1,0 +1,73 @@
+# Alerty Stage6 – Resilience & Portfolio Intelligence
+# Wszystkie alerty korzystają z metryk z prefiksem bot_core_stage6_*
+# i są weryfikowane skryptem validate_prometheus_rules.py.
+
+groups:
+  - name: stage6_portfolio_governor
+    rules:
+      - alert: Stage6PortfolioGovernorDegraded
+        expr: avg_over_time(bot_core_stage6_portfolio_signal_factor[5m]) < 0.6
+        for: 5m
+        labels:
+          severity: warning
+          team: trading-ops
+          service: stage6-portfolio
+        annotations:
+          summary: "PortfolioGovernor sygnalizuje obniżoną przepustowość sygnałów"
+          description: "Średni współczynnik sygnałów Stage6 spadł poniżej 0.6 przez pięć minut – sprawdź wyniki Stress Lab i koszty TCO."
+      - alert: Stage6PortfolioGovernorHardBlock
+        expr: min_over_time(bot_core_stage6_portfolio_weight[10m]) < 0.05
+        for: 10m
+        labels:
+          severity: critical
+          team: trading-ops
+          service: stage6-portfolio
+        annotations:
+          summary: "PortfolioGovernor zredukował wagę strategii poniżej 5%"
+          description: "Waga którejkolwiek strategii spadła poniżej 5% przez ponad dziesięć minut, co może oznaczać automatyczny rollback."
+
+  - name: stage6_resilience_failover
+    rules:
+      - alert: Stage6FailoverLatencyHigh
+        expr: max_over_time(bot_core_stage6_failover_latency_ms[15m]) > 450
+        for: 3m
+        labels:
+          severity: warning
+          team: trading-ops
+          service: stage6-resilience
+        annotations:
+          summary: "Latencja failover przekracza próg Stage6"
+          description: "Zmierzona latencja failover przekroczyła 450 ms w ciągu ostatnich 15 minut – zweryfikuj raport ResilienceFailoverDrill."
+      - alert: Stage6FailoverSuccessRatioLow
+        expr: min_over_time(bot_core_stage6_failover_success_ratio_pct[30m]) < 92
+        for: 10m
+        labels:
+          severity: critical
+          team: trading-ops
+          service: stage6-resilience
+        annotations:
+          summary: "Spadek współczynnika udanych przełączeń failover"
+          description: "Stosunek udanych przełączeń failover spadł poniżej 92% w ostatnich 30 minutach, konieczna natychmiastowa analiza DR."
+
+  - name: stage6_stress_lab
+    rules:
+      - alert: Stage6StressLabFailuresDetected
+        expr: max_over_time(bot_core_stage6_stress_lab_failure_count[24h]) > 0
+        for: 15m
+        labels:
+          severity: warning
+          team: trading-ops
+          service: stage6-stress-lab
+        annotations:
+          summary: "Stress Lab zidentyfikował naruszenia progów"
+          description: "Co najmniej jeden scenariusz Stress Lab zakończył się naruszeniem progów w ostatnich 24 h. Sprawdź raport w var/audit/stage6/stress_lab."
+      - alert: Stage6SLOBreachRateHigh
+        expr: avg_over_time(bot_core_stage6_slo_breach_rate_pct[1h]) > 3
+        for: 30m
+        labels:
+          severity: warning
+          team: trading-ops
+          service: stage6-observability
+        annotations:
+          summary: "Wzrost naruszeń SLO Stage6"
+          description: "Średni odsetek naruszeń SLO Stage6 przekroczył 3% w ciągu ostatniej godziny – zweryfikuj raport Observability++."

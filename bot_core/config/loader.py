@@ -73,6 +73,19 @@ except Exception:  # brak rozszerzonej biblioteki strategii
     StrategyScheduleConfig = None  # type: ignore
     VolatilityTargetingStrategyConfig = None  # type: ignore
 
+try:
+    from bot_core.config.models import (  # type: ignore
+        DecisionEngineConfig,
+        DecisionEngineTCOConfig,
+        DecisionOrchestratorThresholds,
+        DecisionStressTestConfig,
+    )
+except Exception:
+    DecisionEngineConfig = None  # type: ignore
+    DecisionEngineTCOConfig = None  # type: ignore
+    DecisionOrchestratorThresholds = None  # type: ignore
+    DecisionStressTestConfig = None  # type: ignore
+
 # Dodatkowe kanały komunikatorów – w pełni opcjonalne
 try:
     from bot_core.config.models import SignalChannelSettings  # type: ignore
@@ -134,6 +147,66 @@ try:
     from bot_core.config.models import MetricsServiceTlsConfig  # type: ignore
 except Exception:
     MetricsServiceTlsConfig = None  # type: ignore
+
+# --- sekcja z konfliktu: scala oba warianty i zachowuje wszystkie typy opcjonalne ---
+try:
+    from bot_core.config.models import (  # type: ignore
+        ObservabilityConfig,
+        SLOThresholdConfig,
+        KeyRotationConfig,
+        KeyRotationEntryConfig,
+    )
+except Exception:
+    ObservabilityConfig = None  # type: ignore
+    SLOThresholdConfig = None  # type: ignore
+    KeyRotationConfig = None  # type: ignore
+    KeyRotationEntryConfig = None  # type: ignore
+
+try:
+    from bot_core.config.models import (  # type: ignore
+        PortfolioGovernorConfig,
+        PortfolioGovernorStrategyConfig,
+        PortfolioGovernorScoringWeights,
+    )
+except Exception:
+    PortfolioGovernorConfig = None  # type: ignore
+    PortfolioGovernorStrategyConfig = None  # type: ignore
+    PortfolioGovernorScoringWeights = None  # type: ignore
+
+try:
+    from bot_core.config.models import (  # type: ignore
+        MarketIntelConfig,
+        MarketIntelSqliteConfig,
+    )
+except Exception:
+    MarketIntelConfig = None  # type: ignore
+    MarketIntelSqliteConfig = None  # type: ignore
+
+try:
+    from bot_core.config.models import (  # type: ignore
+        StressLabConfig,
+        StressLabDatasetConfig,
+        StressLabScenarioConfig,
+        StressLabShockConfig,
+        StressLabThresholdsConfig,
+    )
+except Exception:
+    StressLabConfig = None  # type: ignore
+    StressLabDatasetConfig = None  # type: ignore
+    StressLabScenarioConfig = None  # type: ignore
+    StressLabShockConfig = None  # type: ignore
+    StressLabThresholdsConfig = None  # type: ignore
+
+try:
+    from bot_core.config.models import (  # type: ignore
+        ResilienceConfig,
+        ResilienceDrillConfig,
+        ResilienceDrillThresholdsConfig,
+    )
+except Exception:
+    ResilienceConfig = None  # type: ignore
+    ResilienceDrillConfig = None  # type: ignore
+    ResilienceDrillThresholdsConfig = None  # type: ignore
 
 try:
     from bot_core.config.models import LiveRoutingConfig, PrometheusAlertRuleConfig  # type: ignore
@@ -1007,6 +1080,88 @@ def _normalize_pinned_fingerprints(raw_value: Any) -> tuple[str, ...]:
     return tuple(dict.fromkeys(normalized))
 
 
+def _load_market_intel_config(
+    section: Mapping[str, Any] | None, *, base_dir: Path | None
+) -> MarketIntelConfig | None:
+    if MarketIntelConfig is None:
+        return None
+    if not isinstance(section, Mapping):
+        return None
+
+    enabled = bool(section.get("enabled", False))
+    output_raw = section.get("output_directory") or "../data/stage6/metrics"
+    output_directory = _normalize_runtime_path(output_raw, base_dir=base_dir)
+    if output_directory is None:
+        output_directory = "../data/stage6/metrics"
+
+    manifest_path = _normalize_runtime_path(section.get("manifest_path"), base_dir=base_dir)
+    default_weight = float(section.get("default_weight", 1.0))
+
+    required_raw = section.get("required_symbols") or ()
+    if not isinstance(required_raw, Sequence):
+        raise ValueError("market_intel.required_symbols musi być listą")
+    required_symbols = tuple(
+        str(value).strip() for value in required_raw if str(value).strip()
+    )
+
+    sqlite_cfg: MarketIntelSqliteConfig | None = None
+    sqlite_raw = section.get("sqlite")
+    if sqlite_raw not in (None, False):
+        if not isinstance(sqlite_raw, Mapping):
+            raise ValueError("market_intel.sqlite musi być mapą")
+        path_raw = sqlite_raw.get("path")
+        if path_raw in (None, ""):
+            raise ValueError("market_intel.sqlite wymaga pola 'path'")
+        sqlite_path = _normalize_runtime_path(path_raw, base_dir=base_dir)
+        if sqlite_path is None:
+            raise ValueError("market_intel.sqlite.path jest niepoprawny")
+        table_value = sqlite_raw.get("table", "market_metrics")
+        table = str(table_value).strip() or "market_metrics"
+
+        sqlite_kwargs: dict[str, Any] = {"path": sqlite_path, "table": table}
+
+        for column_name in (
+            "symbol_column",
+            "mid_price_column",
+            "depth_column",
+            "spread_column",
+            "funding_column",
+            "sentiment_column",
+            "volatility_column",
+            "weight_column",
+        ):
+            if column_name not in sqlite_raw:
+                continue
+            value = sqlite_raw[column_name]
+            if column_name == "weight_column":
+                sqlite_kwargs[column_name] = (
+                    None if value in (None, "", False) else str(value)
+                )
+                continue
+            text = str(value).strip()
+            if not text:
+                raise ValueError(
+                    f"market_intel.sqlite.{column_name} nie może być puste"
+                )
+            sqlite_kwargs[column_name] = text
+
+        sqlite_cfg = MarketIntelSqliteConfig(**sqlite_kwargs)  # type: ignore[arg-type]
+
+    config_kwargs: dict[str, Any] = {
+        "enabled": enabled,
+        "output_directory": output_directory,
+        "default_weight": default_weight,
+    }
+    if manifest_path is not None:
+        config_kwargs["manifest_path"] = manifest_path
+    if sqlite_cfg is not None:
+        config_kwargs["sqlite"] = sqlite_cfg
+    if required_symbols:
+        config_kwargs["required_symbols"] = required_symbols
+
+    return MarketIntelConfig(**config_kwargs)  # type: ignore[arg-type]
+
+
 def _load_service_tokens(raw_value: Any) -> tuple[ServiceTokenConfig, ...]:
     if raw_value in (None, ""):
         return ()
@@ -1712,6 +1867,657 @@ def _load_security_baseline(
     return SecurityBaselineConfig(signing=signing_config)
 
 
+def _build_decision_threshold(
+    entry: Mapping[str, Any] | None,
+    *,
+    fallback: DecisionOrchestratorThresholds | None = None,
+) -> DecisionOrchestratorThresholds:
+    if DecisionOrchestratorThresholds is None:
+        raise RuntimeError("DecisionOrchestratorThresholds nie jest dostępne w tej gałęzi")
+    required_keys = (
+        "max_cost_bps",
+        "min_net_edge_bps",
+        "max_daily_loss_pct",
+        "max_drawdown_pct",
+        "max_position_ratio",
+        "max_open_positions",
+    )
+    if entry is None:
+        if fallback is None:
+            raise ValueError("Brak sekcji 'orchestrator' w decision_engine")
+        return fallback
+    data = dict(entry)
+    values: dict[str, float | int | None] = {}
+    for key in required_keys:
+        if key in data:
+            raw_value = data[key]
+        elif fallback is not None:
+            raw_value = getattr(fallback, key)
+        else:
+            raise ValueError(
+                f"Brak wymaganego pola '{key}' w konfiguracji decision orchestratora"
+            )
+        if key == "max_open_positions":
+            values[key] = int(raw_value)
+        else:
+            values[key] = float(raw_value)
+    max_latency = data.get("max_latency_ms")
+    if max_latency is None and fallback is not None:
+        max_latency = fallback.max_latency_ms
+    max_trade_notional = data.get("max_trade_notional")
+    if max_trade_notional is None and fallback is not None:
+        max_trade_notional = fallback.max_trade_notional
+    return DecisionOrchestratorThresholds(
+        max_cost_bps=float(values["max_cost_bps"]),
+        min_net_edge_bps=float(values["min_net_edge_bps"]),
+        max_daily_loss_pct=float(values["max_daily_loss_pct"]),
+        max_drawdown_pct=float(values["max_drawdown_pct"]),
+        max_position_ratio=float(values["max_position_ratio"]),
+        max_open_positions=int(values["max_open_positions"]),
+        max_latency_ms=(None if max_latency is None else float(max_latency)),
+        max_trade_notional=(
+            None if max_trade_notional in (None, "") else float(max_trade_notional)
+        ),
+    )
+
+
+def _load_decision_engine_config(
+    raw: Mapping[str, Any] | None, *, base_dir: Path | None
+) -> DecisionEngineConfig | None:
+    if raw is None or DecisionEngineConfig is None:
+        return None
+    orchestrator_raw = raw.get("orchestrator")
+    if orchestrator_raw is None and raw.get("profile_overrides") is None:
+        return None
+    base_threshold = _build_decision_threshold(orchestrator_raw, fallback=None)
+    overrides_raw = raw.get("profile_overrides") or {}
+    overrides: dict[str, DecisionOrchestratorThresholds] = {}
+    for profile, entry in overrides_raw.items():
+        overrides[str(profile)] = _build_decision_threshold(entry, fallback=base_threshold)
+    stress_config: DecisionStressTestConfig | None = None
+    stress_raw = raw.get("stress_tests") or {}
+    if DecisionStressTestConfig is not None and stress_raw:
+        stress_config = DecisionStressTestConfig(
+            cost_shock_bps=float(stress_raw.get("cost_shock_bps", 0.0)),
+            latency_spike_ms=float(stress_raw.get("latency_spike_ms", 0.0)),
+            slippage_multiplier=float(stress_raw.get("slippage_multiplier", 1.0)),
+        )
+    min_probability = float(raw.get("min_probability", 0.0))
+    require_cost_data = bool(raw.get("require_cost_data", False))
+    penalty_cost_bps = float(raw.get("penalty_cost_bps", 0.0))
+    tco_config: DecisionEngineTCOConfig | None = None
+    tco_raw = raw.get("tco")
+    if DecisionEngineTCOConfig is not None and tco_raw:
+        if not isinstance(tco_raw, Mapping):
+            raise ValueError("Sekcja decision_engine.tco musi być mapą")
+        paths_raw = tco_raw.get("reports")
+        if not paths_raw:
+            raise ValueError(
+                "Sekcja decision_engine.tco wymaga listy 'reports' z co najmniej jedną ścieżką"
+            )
+        if isinstance(paths_raw, (str, bytes)):
+            reports_source: Sequence[str] = [str(paths_raw)]
+        else:
+            if not isinstance(paths_raw, Sequence):
+                raise ValueError(
+                    "Pole decision_engine.tco.reports musi być listą ścieżek"
+                )
+            reports_source = [str(entry) for entry in paths_raw if str(entry).strip()]
+        if not reports_source:
+            raise ValueError(
+                "Pole decision_engine.tco.reports nie może być puste"
+            )
+        normalized_reports = tuple(
+            str(_normalize_runtime_path(path, base_dir=base_dir)) for path in reports_source
+        )
+        require_at_startup = bool(tco_raw.get("require_at_startup", False))
+        tco_config = DecisionEngineTCOConfig(
+            report_paths=normalized_reports,
+            require_at_startup=require_at_startup,
+        )
+    return DecisionEngineConfig(
+        orchestrator=base_threshold,
+        profile_overrides=overrides,
+        stress_tests=stress_config,
+        min_probability=min_probability,
+        require_cost_data=require_cost_data,
+        penalty_cost_bps=penalty_cost_bps,
+        tco=tco_config,
+    )
+
+
+_ALLOWED_SLO_COMPARATORS = {"<=", ">=", "<", ">"}
+_ALLOWED_SLO_AGGREGATIONS = {"average", "avg", "p95", "max", "min"}
+
+
+def _load_key_rotation_config(
+    raw: Mapping[str, Any] | None, *, base_dir: Path | None
+) -> KeyRotationConfig | None:
+    if raw is None or KeyRotationConfig is None:
+        return None
+    if "registry_path" not in raw or not raw["registry_path"]:
+        raise ValueError("Konfiguracja key_rotation wymaga pola 'registry_path'")
+    registry_path = _normalize_runtime_path(raw["registry_path"], base_dir=base_dir)
+    default_interval = float(raw.get("default_interval_days", 90.0))
+    warn_within = float(raw.get("default_warn_within_days", 14.0))
+    audit_directory = str(
+        _normalize_runtime_path(raw.get("audit_directory"), base_dir=base_dir)
+        if raw.get("audit_directory")
+        else raw.get("audit_directory", "var/audit/keys")
+    )
+
+    entries_raw = raw.get("entries") or []
+    entries: list[KeyRotationEntryConfig] = []
+    for entry in entries_raw:
+        if not isinstance(entry, Mapping):
+            raise ValueError("Element 'entries' w key_rotation musi być mapą")
+        key_value = str(entry.get("key", "")).strip()
+        if not key_value:
+            raise ValueError("Element 'entries' wymaga pola 'key'")
+        purpose_value = str(entry.get("purpose", "")).strip()
+        if not purpose_value:
+            raise ValueError("Element 'entries' wymaga pola 'purpose'")
+        interval_value = entry.get("interval_days")
+        warn_value = entry.get("warn_within_days")
+        entries.append(
+            KeyRotationEntryConfig(
+                key=key_value,
+                purpose=purpose_value,
+                interval_days=(
+                    None if interval_value in (None, "") else float(interval_value)
+                ),
+                warn_within_days=(
+                    None if warn_value in (None, "") else float(warn_value)
+                ),
+            )
+        )
+
+    config_kwargs: dict[str, Any] = {
+        "registry_path": registry_path,
+        "default_interval_days": default_interval,
+        "default_warn_within_days": warn_within,
+        "entries": tuple(entries),
+        "audit_directory": audit_directory,
+    }
+
+    for field_name in ("signing_key_env", "signing_key_path", "signing_key_value", "signing_key_id"):
+        if field_name in raw and raw[field_name] not in (None, ""):
+            value = raw[field_name]
+            if field_name.endswith("_path"):
+                config_kwargs[field_name] = _normalize_runtime_path(value, base_dir=base_dir)
+            else:
+                config_kwargs[field_name] = str(value)
+
+    return KeyRotationConfig(**config_kwargs)  # type: ignore[arg-type]
+
+
+def _load_observability_config(
+    raw: Mapping[str, Any] | None, *, base_dir: Path | None
+) -> ObservabilityConfig | None:
+    if raw is None or ObservabilityConfig is None:
+        return None
+
+    slo_entries: dict[str, SLOThresholdConfig] = {}
+    slo_raw = raw.get("slo") or {}
+    for name, entry in slo_raw.items():
+        if not isinstance(entry, Mapping):
+            raise ValueError("Definicja SLO musi być mapą z parametrami")
+        metric = str(entry.get("metric", "")).strip()
+        if not metric:
+            raise ValueError(f"SLO '{name}' wymaga pola 'metric'")
+        comparator = str(entry.get("comparator", "<=")).strip() or "<="
+        if comparator not in _ALLOWED_SLO_COMPARATORS:
+            raise ValueError(f"SLO '{name}' używa nieobsługiwanego komparatora: {comparator}")
+        aggregation = str(entry.get("aggregation", "average")).strip().lower()
+        if aggregation == "avg":
+            aggregation = "average"
+        if aggregation not in _ALLOWED_SLO_AGGREGATIONS:
+            raise ValueError(f"SLO '{name}' używa nieobsługiwanej agregacji: {aggregation}")
+        window_minutes = float(entry.get("window_minutes", 1440.0))
+        objective = float(entry.get("objective"))
+        label_filters_raw = entry.get("label_filters") or {}
+        if not isinstance(label_filters_raw, Mapping):
+            raise ValueError("label_filters w SLO musi być mapą")
+        label_filters = {str(key): str(value) for key, value in label_filters_raw.items()}
+        min_samples = int(entry.get("min_samples", 1))
+        slo_entries[str(name)] = SLOThresholdConfig(
+            name=str(name),
+            metric=metric,
+            objective=objective,
+            comparator=comparator,
+            window_minutes=window_minutes,
+            aggregation=aggregation,
+            label_filters=label_filters,
+            min_samples=max(1, min_samples),
+        )
+
+    key_rotation = _load_key_rotation_config(raw.get("key_rotation"), base_dir=base_dir)
+
+    if not slo_entries and key_rotation is None:
+        return None
+
+    return ObservabilityConfig(slo=slo_entries, key_rotation=key_rotation)
+
+
+def _load_portfolio_governor_config(
+    raw_root: Mapping[str, Any], *, base_dir: Path | None
+) -> PortfolioGovernorConfig | None:
+    if PortfolioGovernorConfig is None:
+        return None
+
+    section: Mapping[str, Any] | None = None
+    top_level = raw_root.get("portfolio_governor")
+    if isinstance(top_level, Mapping):
+        section = top_level
+    if section is None:
+        runtime_section = raw_root.get("runtime")
+        if isinstance(runtime_section, Mapping):
+            runtime_entry = runtime_section.get("portfolio_governor")
+            if isinstance(runtime_entry, Mapping):
+                section = runtime_entry
+    if not section:
+        return None
+
+    enabled = bool(section.get("enabled", False))
+    interval_value = float(section.get("rebalance_interval_minutes", 15.0))
+    smoothing_value = float(section.get("smoothing", 0.5))
+    default_baseline = float(section.get("default_baseline_weight", 0.25))
+    default_min = float(section.get("default_min_weight", 0.05))
+    default_max = float(section.get("default_max_weight", 0.5))
+    require_complete = bool(section.get("require_complete_metrics", True))
+    min_score_threshold = float(section.get("min_score_threshold", 0.0))
+    default_cost_bps = float(section.get("default_cost_bps", 0.0))
+    max_signal_floor = int(section.get("max_signal_floor", 1))
+
+    scoring_raw = section.get("scoring") or {}
+    scoring = PortfolioGovernorScoringWeights(
+        alpha=float(scoring_raw.get("alpha", 1.0)),
+        cost=float(scoring_raw.get("cost", 1.0)),
+        slo=float(scoring_raw.get("slo", 1.0)),
+        risk=float(scoring_raw.get("risk", 0.5)),
+    )
+
+    strategies_raw = section.get("strategies") or {}
+    strategies: dict[str, PortfolioGovernorStrategyConfig] = {}
+    for name, entry in strategies_raw.items():
+        if not isinstance(entry, Mapping):
+            continue
+        baseline_weight = float(entry.get("baseline_weight", default_baseline))
+        min_weight = float(entry.get("min_weight", default_min))
+        max_weight = float(entry.get("max_weight", default_max))
+        baseline_max_signals_raw = entry.get("baseline_max_signals")
+        baseline_max_signals = None
+        if baseline_max_signals_raw not in (None, ""):
+            baseline_max_signals = int(baseline_max_signals_raw)
+        max_signal_factor = float(entry.get("max_signal_factor", 1.0))
+        risk_profile_raw = entry.get("risk_profile")
+        risk_profile = (
+            str(risk_profile_raw).strip()
+            if isinstance(risk_profile_raw, str) and risk_profile_raw.strip()
+            else None
+        )
+        tags = tuple(str(tag) for tag in (entry.get("tags") or ()))
+        strategies[str(name)] = PortfolioGovernorStrategyConfig(
+            baseline_weight=baseline_weight,
+            min_weight=min_weight,
+            max_weight=max_weight,
+            baseline_max_signals=baseline_max_signals,
+            max_signal_factor=max_signal_factor,
+            risk_profile=risk_profile,
+            tags=tags,
+        )
+
+    return PortfolioGovernorConfig(
+        enabled=enabled,
+        rebalance_interval_minutes=max(0.0, interval_value),
+        smoothing=min(max(smoothing_value, 0.0), 1.0),
+        scoring=scoring,
+        strategies=strategies,
+        default_baseline_weight=default_baseline,
+        default_min_weight=default_min,
+        default_max_weight=default_max,
+        require_complete_metrics=require_complete,
+        min_score_threshold=min_score_threshold,
+        default_cost_bps=default_cost_bps,
+        max_signal_floor=max(0, max_signal_floor),
+    )
+
+
+def _parse_stress_lab_thresholds(
+    raw: Mapping[str, Any] | None, *, context: str
+) -> StressLabThresholdsConfig | None:
+    if StressLabThresholdsConfig is None:
+        return None
+
+    defaults = StressLabThresholdsConfig()
+    values: dict[str, float] = {
+        field.name: float(getattr(defaults, field.name))
+        for field in fields(StressLabThresholdsConfig)
+    }
+
+    if raw is not None:
+        if not isinstance(raw, Mapping):
+            raise ValueError(f"{context}: sekcja thresholds musi być mapą")
+        for field in fields(StressLabThresholdsConfig):
+            if field.name not in raw:
+                continue
+            value = raw[field.name]
+            if value in (None, ""):
+                continue
+            try:
+                numeric = float(value)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"{context}: wartość '{field.name}' musi być liczbą"
+                ) from exc
+            values[field.name] = max(0.0, numeric)
+
+    return StressLabThresholdsConfig(**values)
+
+
+def _load_stress_lab_config(
+    raw_root: Mapping[str, Any], *, base_dir: Path | None
+) -> StressLabConfig | None:
+    if StressLabConfig is None:
+        return None
+
+    section: Mapping[str, Any] | None = None
+    top_level = raw_root.get("stress_lab")
+    if isinstance(top_level, Mapping):
+        section = top_level
+    if section is None:
+        runtime_section = raw_root.get("runtime")
+        if isinstance(runtime_section, Mapping):
+            runtime_entry = runtime_section.get("stress_lab")
+            if isinstance(runtime_entry, Mapping):
+                section = runtime_entry
+    if section is None:
+        return None
+
+    enabled = bool(section.get("enabled", False))
+    require_success = bool(section.get("require_success", True))
+
+    report_dir_raw = section.get("report_directory") or "var/audit/stage6/stress_lab"
+    report_directory = _normalize_runtime_path(report_dir_raw, base_dir=base_dir)
+    if report_directory is None:
+        report_directory = "var/audit/stage6/stress_lab"
+
+    signing_key_env = _normalize_env_var(section.get("signing_key_env"))
+    signing_key_path = _normalize_runtime_path(section.get("signing_key_path"), base_dir=base_dir)
+    signing_key_id = _normalize_env_var(section.get("signing_key_id"))
+
+    datasets_raw = section.get("datasets") or {}
+    if not isinstance(datasets_raw, Mapping):
+        raise ValueError("stress_lab.datasets musi być mapą")
+    datasets: dict[str, StressLabDatasetConfig] = {}
+    for symbol, entry in datasets_raw.items():
+        if not isinstance(entry, Mapping):
+            raise ValueError("Element stress_lab.datasets musi być mapą")
+        metrics_path_raw = entry.get("metrics_path")
+        if metrics_path_raw in (None, ""):
+            raise ValueError(f"Dataset Stress Lab '{symbol}' wymaga pola 'metrics_path'")
+        metrics_path = _normalize_runtime_path(metrics_path_raw, base_dir=base_dir)
+        weight_raw = entry.get("weight", 1.0)
+        try:
+            weight = float(weight_raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Dataset Stress Lab '{symbol}' posiada niepoprawną wagę") from exc
+        dataset_symbol = str(entry.get("symbol", symbol)).strip() or str(symbol)
+        allow_synthetic = bool(entry.get("allow_synthetic", False))
+        datasets[str(symbol)] = StressLabDatasetConfig(
+            symbol=dataset_symbol,
+            metrics_path=str(metrics_path),
+            weight=max(0.0, weight),
+            allow_synthetic=allow_synthetic,
+        )
+
+    scenarios_raw = section.get("scenarios") or []
+    if not isinstance(scenarios_raw, Sequence):
+        raise ValueError("stress_lab.scenarios musi być listą")
+    scenarios: list[StressLabScenarioConfig] = []
+    for entry in scenarios_raw:
+        if not isinstance(entry, Mapping):
+            raise ValueError("Element stress_lab.scenarios musi być mapą")
+        name = str(entry.get("name", "")).strip()
+        if not name:
+            raise ValueError("Scenariusz Stress Lab wymaga pola 'name'")
+        severity = str(entry.get("severity", "medium")).strip().lower() or "medium"
+        markets_raw = entry.get("markets") or ()
+        if not isinstance(markets_raw, Sequence):
+            raise ValueError(f"Scenariusz '{name}' wymaga listy 'markets'")
+        markets = tuple(str(value).strip() for value in markets_raw if str(value).strip())
+        if not markets:
+            raise ValueError(f"Scenariusz '{name}' musi zawierać co najmniej jeden rynek")
+        shocks_raw = entry.get("shocks") or ()
+        if not isinstance(shocks_raw, Sequence):
+            raise ValueError(f"Scenariusz '{name}' wymaga listy 'shocks'")
+        shocks: list[StressLabShockConfig] = []
+        for index, shock_entry in enumerate(shocks_raw, start=1):
+            if not isinstance(shock_entry, Mapping):
+                raise ValueError(
+                    f"Scenariusz '{name}' posiada nieprawidłowy shock nr {index} (oczekiwano mapy)"
+                )
+            shock_type = str(shock_entry.get("type", "")).strip().lower()
+            if not shock_type:
+                raise ValueError(
+                    f"Scenariusz '{name}' wymaga pola 'type' dla shock nr {index}"
+                )
+            try:
+                intensity = float(shock_entry.get("intensity", 1.0))
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"Scenariusz '{name}' posiada niepoprawną wartość 'intensity' (shock {index})"
+                ) from exc
+            duration_raw = shock_entry.get("duration_minutes")
+            if duration_raw in (None, ""):
+                duration_value = None
+            else:
+                try:
+                    duration_value = float(duration_raw)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        f"Scenariusz '{name}' posiada niepoprawną wartość 'duration_minutes' (shock {index})"
+                    ) from exc
+            notes_value = shock_entry.get("notes")
+            notes = (
+                str(notes_value).strip()
+                if isinstance(notes_value, str) and notes_value.strip()
+                else None
+            )
+            shocks.append(
+                StressLabShockConfig(
+                    type=shock_type,
+                    intensity=max(0.0, intensity),
+                    duration_minutes=None if duration_value is None else max(0.0, duration_value),
+                    notes=notes,
+                )
+            )
+
+        threshold_overrides = _parse_stress_lab_thresholds(
+            entry.get("threshold_overrides"),
+            context=f"stress_lab.scenarios['{name}']",
+        )
+
+        description_value = entry.get("description")
+        description = (
+            str(description_value).strip()
+            if isinstance(description_value, str) and description_value.strip()
+            else None
+        )
+
+        scenarios.append(
+            StressLabScenarioConfig(
+                name=name,
+                severity=severity,
+                markets=markets,
+                shocks=tuple(shocks),
+                description=description,
+                threshold_overrides=threshold_overrides,
+            )
+        )
+
+    thresholds = _parse_stress_lab_thresholds(
+        section.get("thresholds"), context="stress_lab"
+    )
+
+    config_kwargs: dict[str, Any] = {
+        "enabled": enabled,
+        "require_success": require_success,
+        "report_directory": report_directory,
+        "datasets": datasets,
+        "scenarios": tuple(scenarios),
+    }
+    if thresholds is not None:
+        config_kwargs["thresholds"] = thresholds
+    if signing_key_env is not None:
+        config_kwargs["signing_key_env"] = signing_key_env
+    if signing_key_path is not None:
+        config_kwargs["signing_key_path"] = signing_key_path
+    if signing_key_id is not None:
+        config_kwargs["signing_key_id"] = signing_key_id
+
+    return StressLabConfig(**config_kwargs)  # type: ignore[arg-type]
+
+
+def _parse_resilience_thresholds(
+    raw: Mapping[str, Any] | None, *, context: str
+) -> ResilienceDrillThresholdsConfig | None:
+    if ResilienceDrillThresholdsConfig is None:
+        return None
+
+    defaults = ResilienceDrillThresholdsConfig()
+    values: dict[str, float | int] = {
+        field.name: getattr(defaults, field.name)
+        for field in fields(ResilienceDrillThresholdsConfig)
+    }
+
+    if raw is not None:
+        if not isinstance(raw, Mapping):
+            raise ValueError(f"{context}: sekcja thresholds musi być mapą")
+        for field in fields(ResilienceDrillThresholdsConfig):
+            if field.name not in raw:
+                continue
+            value = raw[field.name]
+            if value in (None, ""):
+                continue
+            default_value = getattr(defaults, field.name)
+            try:
+                if isinstance(default_value, int) and not isinstance(default_value, bool):
+                    numeric = int(float(value))
+                    values[field.name] = max(0, numeric)
+                else:
+                    numeric_float = float(value)
+                    values[field.name] = max(0.0, numeric_float)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"{context}: wartość '{field.name}' musi być liczbą"
+                ) from exc
+
+    return ResilienceDrillThresholdsConfig(**values)
+
+
+def _load_resilience_config(
+    raw_root: Mapping[str, Any], *, base_dir: Path | None
+) -> ResilienceConfig | None:
+    if ResilienceConfig is None:
+        return None
+
+    section: Mapping[str, Any] | None = None
+    top_level = raw_root.get("resilience")
+    if isinstance(top_level, Mapping):
+        section = top_level
+    if section is None:
+        runtime_section = raw_root.get("runtime")
+        if isinstance(runtime_section, Mapping):
+            runtime_entry = runtime_section.get("resilience")
+            if isinstance(runtime_entry, Mapping):
+                section = runtime_entry
+    if section is None:
+        return None
+
+    enabled = bool(section.get("enabled", False))
+    require_success = bool(section.get("require_success", True))
+
+    report_dir_raw = section.get("report_directory") or "var/audit/stage6/resilience"
+    report_directory = _normalize_runtime_path(report_dir_raw, base_dir=base_dir)
+    if report_directory is None:
+        report_directory = "var/audit/stage6/resilience"
+
+    signing_key_env = _normalize_env_var(section.get("signing_key_env"))
+    signing_key_path = _normalize_runtime_path(section.get("signing_key_path"), base_dir=base_dir)
+    signing_key_id = _normalize_env_var(section.get("signing_key_id"))
+
+    drills_raw = section.get("drills") or []
+    if not isinstance(drills_raw, Sequence):
+        raise ValueError("resilience.drills musi być listą")
+
+    drills: list[ResilienceDrillConfig] = []
+    for entry in drills_raw:
+        if not isinstance(entry, Mapping):
+            raise ValueError("Element resilience.drills musi być mapą")
+        name = str(entry.get("name", "")).strip()
+        if not name:
+            raise ValueError("resilience.drills wymaga pola 'name'")
+        primary = str(entry.get("primary", "")).strip()
+        if not primary:
+            raise ValueError(f"resilience.drills['{name}'] wymaga pola 'primary'")
+        dataset_path_raw = entry.get("dataset_path")
+        if dataset_path_raw in (None, ""):
+            raise ValueError(
+                f"resilience.drills['{name}'] wymaga pola 'dataset_path'"
+            )
+        dataset_path = _normalize_runtime_path(dataset_path_raw, base_dir=base_dir)
+        if dataset_path is None:
+            raise ValueError(
+                f"resilience.drills['{name}']: niepoprawna ścieżka datasetu"
+            )
+        fallbacks_raw = entry.get("fallbacks") or ()
+        if not isinstance(fallbacks_raw, Sequence):
+            raise ValueError(
+                f"resilience.drills['{name}']: pole 'fallbacks' musi być listą"
+            )
+        fallbacks = tuple(
+            str(value).strip()
+            for value in fallbacks_raw
+            if str(value).strip()
+        )
+        thresholds = _parse_resilience_thresholds(
+            entry.get("thresholds"), context=f"resilience.drills['{name}']"
+        )
+        description_value = entry.get("description")
+        description = (
+            str(description_value).strip()
+            if isinstance(description_value, str) and description_value.strip()
+            else None
+        )
+        config_kwargs: dict[str, Any] = {
+            "name": name,
+            "primary": primary,
+            "fallbacks": fallbacks,
+            "dataset_path": str(dataset_path),
+        }
+        if thresholds is not None:
+            config_kwargs["thresholds"] = thresholds
+        if description is not None:
+            config_kwargs["description"] = description
+        drills.append(ResilienceDrillConfig(**config_kwargs))
+
+    config_kwargs: dict[str, Any] = {
+        "enabled": enabled,
+        "require_success": require_success,
+        "report_directory": report_directory,
+        "drills": tuple(drills),
+    }
+    if signing_key_env is not None:
+        config_kwargs["signing_key_env"] = signing_key_env
+    if signing_key_path is not None:
+        config_kwargs["signing_key_path"] = signing_key_path
+    if signing_key_id is not None:
+        config_kwargs["signing_key_id"] = signing_key_id
+
+    return ResilienceConfig(**config_kwargs)  # type: ignore[arg-type]
+
+
 def _load_risk_decision_log(
     runtime_section: Optional[Mapping[str, Any]], *, base_dir: Path | None = None
 ) -> RiskDecisionLogConfig | None:
@@ -2006,6 +2812,39 @@ def load_core_config(path: str | Path) -> CoreConfig:
     if security_baseline_config is not None:
         core_kwargs["security_baseline"] = security_baseline_config
 
+    observability_config = _load_observability_config(
+        raw.get("observability"), base_dir=config_base_dir
+    )
+    if observability_config is not None and _core_has("observability"):
+        core_kwargs["observability"] = observability_config
+
+    market_intel_config = _load_market_intel_config(
+        raw.get("market_intel"), base_dir=config_base_dir
+    )
+    if market_intel_config is not None and _core_has("market_intel"):
+        core_kwargs["market_intel"] = market_intel_config
+
+    portfolio_governor_config = _load_portfolio_governor_config(
+        raw,
+        base_dir=config_base_dir,
+    )
+    if portfolio_governor_config is not None and _core_has("portfolio_governor"):
+        core_kwargs["portfolio_governor"] = portfolio_governor_config
+
+    stress_lab_config = _load_stress_lab_config(raw, base_dir=config_base_dir)
+    if stress_lab_config is not None and _core_has("stress_lab"):
+        core_kwargs["stress_lab"] = stress_lab_config
+
+    resilience_config = _load_resilience_config(raw, base_dir=config_base_dir)
+    if resilience_config is not None and _core_has("resilience"):
+        core_kwargs["resilience"] = resilience_config
+
+    decision_engine_config = _load_decision_engine_config(
+        raw.get("decision_engine"), base_dir=config_base_dir
+    )
+    if decision_engine_config is not None and _core_has("decision_engine"):
+        core_kwargs["decision_engine"] = decision_engine_config
+
     core_kwargs["source_path"] = str(config_absolute_path)
     core_kwargs["source_directory"] = str(config_base_dir)
 
@@ -2013,4 +2852,3 @@ def load_core_config(path: str | Path) -> CoreConfig:
 
 
 __all__ = ["load_core_config"]
-

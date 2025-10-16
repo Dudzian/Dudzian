@@ -55,7 +55,7 @@ class BundleConfig:
 
 
 # -----------------------------------------------------------------------------
-# CLI
+// CLI
 # -----------------------------------------------------------------------------
 def _parse_args(argv: Iterable[str] | None = None) -> BundleConfig:
     parser = argparse.ArgumentParser(description="Generuje pakiet certyfikatów mTLS (CA/server/client).")
@@ -87,7 +87,6 @@ def _parse_args(argv: Iterable[str] | None = None) -> BundleConfig:
         "--client-key-passphrase-env",
         help="Nazwa ENV z passphrase dla klucza klienta.",
     )
-
     args = parser.parse_args(argv)
 
     output_dir = Path(args.output_dir).expanduser().resolve()
@@ -120,7 +119,7 @@ def _env_passphrase(env_name: str | None) -> bytes | None:
 
 
 # -----------------------------------------------------------------------------
-# Backend 1: cryptography (preferowany)
+// Backend 1: cryptography (preferowany)
 # -----------------------------------------------------------------------------
 def _generate_with_cryptography(config: BundleConfig) -> Mapping[str, Path]:
     def _generate_private_key(key_size: int) -> rsa.RSAPrivateKey:
@@ -217,8 +216,7 @@ def _generate_with_cryptography(config: BundleConfig) -> Mapping[str, Path]:
         return builder.sign(private_key=issuer_key, algorithm=hashes.SHA384(), backend=default_backend())
 
     def _write_file(path: Path, data: bytes, *, mode: int = 0o600) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True
-        )
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
         try:
             os.chmod(path, mode)
@@ -284,11 +282,11 @@ def _generate_with_cryptography(config: BundleConfig) -> Mapping[str, Path]:
     _write_file(files["client_certificate"], client_cert.public_bytes(serialization.Encoding.PEM))
     _write_file(files["client_key"], _serialize_key(client_key, config.client_key_passphrase))
 
-    return files
+    return files, valid_to
 
 
 # -----------------------------------------------------------------------------
-# Backend 2: OpenSSL (fallback – prostszy, bez passphrase’ów)
+// Backend 2: OpenSSL (fallback – prostszy, bez passphrase’ów)
 # -----------------------------------------------------------------------------
 def _run_openssl(args: list[str], *, input_data: bytes | None = None) -> None:
     try:
@@ -437,7 +435,7 @@ def _generate_with_openssl(config: BundleConfig) -> Mapping[str, Path]:
 
 
 # -----------------------------------------------------------------------------
-# Wspólne: zapis metadanych + audyt + rotacja
+// Wspólne: zapis metadanych + audyt + rotacja
 # -----------------------------------------------------------------------------
 def _write_metadata(
     files: Mapping[str, Path],
@@ -445,10 +443,12 @@ def _write_metadata(
     bundle_name: str,
     hostnames: Iterable[str],
     rotation_registry: Path | None,
+    valid_until: datetime | None,
 ) -> Mapping[str, object]:
     now = datetime.now(timezone.utc)
     payload: dict[str, object] = {
         "generated_at": now.isoformat(),
+        "valid_until": valid_until.isoformat() if valid_until else None,
         "bundle": bundle_name,
         "hostnames": tuple(hostnames),
         "files": {k: str(p) for k, p in files.items() if k != "metadata"},
@@ -459,12 +459,12 @@ def _write_metadata(
         },
     }
 
-    # Opcjonalny audyt TLS
+    # Opcjonalny audyt TLS (nie blokuje generacji)
     if _audit_mtls_bundle is not None:  # pragma: no cover
         try:
             audit = _audit_mtls_bundle(Path(files["ca_certificate"]).parent)
             payload["tls_audit"] = audit
-        except Exception as exc:  # nie blokuj generowania pakietu
+        except Exception as exc:
             payload["tls_audit_error"] = repr(exc)
 
     # Rotacja
@@ -483,16 +483,18 @@ def generate_bundle(config: BundleConfig) -> Mapping[str, object]:
     config.output_dir.mkdir(parents=True, exist_ok=True)
 
     if _HAS_CRYPTO:
-        files = _generate_with_cryptography(config)
+        files, valid_to = _generate_with_cryptography(config)
     else:
         # Fallback – bez passphrase’ów (openssl nie jest tu konfigurowany pod szyfrowanie PKCS#8)
         files = _generate_with_openssl(config)
+        valid_to = datetime.now(timezone.utc) + timedelta(days=config.valid_days)
 
     metadata = _write_metadata(
         files,
         bundle_name=config.bundle_name,
         hostnames=config.server_hostnames,
         rotation_registry=config.rotation_registry,
+        valid_until=valid_to,
     )
     return metadata
 

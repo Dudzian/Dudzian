@@ -1,4 +1,4 @@
-# Checklisty bramek iteracyjnych Etapu 4
+# Checklisty bramek iteracyjnych Etapów 4–5
 
 Dokument zbiera rozszerzone checklisty wejścia i wyjścia dla iteracji rozwojowych Etapu 4. Wszystkie punkty odnoszą się do pipeline'u demo → paper → live i muszą być odhaczone przed przejściem do kolejnej fazy. Kryteria integrują smoke testy środowiska paper, audyty decyzji oraz zgodność z profilami ryzyka.
 
@@ -23,4 +23,4 @@ Dokument zbiera rozszerzone checklisty wejścia i wyjścia dla iteracji rozwojow
 | 5 | Review operacyjny i bezpieczeństwa potwierdzony w `docs/audit/paper_trading_log.md` wraz z podpisem operatora | Nowy wpis z datą i identyfikatorem operatora |
 | 6 | Zatwierdzona aktualizacja `docs/architecture/stage4_progress.md` oraz `iteration_gate_checklists.md` z procentami postępu | Merge request + notatka w decision logu |
 
-> **Uwaga:** Każdy punkt checklisty wymaga dokumentacji w decision logu podpisanym kluczem HMAC oraz oznaczenia statusu w `stage4_progress.md`. W przypadku regresu (np. nieudany smoke test) pozycje należy przywrócić do `[ ]`, a metryki postępu zaktualizować przed kolejnym podejściem.
+> **Uwaga:** Każdy punkt checklisty wymaga dokumentacji w decision logu podpisanym kluczem HMAC oraz oznaczenia statusu w `stage4_progress.md`. W przypadku regresu (np. nieudany smoke test) pozycje należy przywrócić do `[ ]`, a metryki postępu zaktualizować przed kolejnym podejściem. Na potrzeby Etapu 5 należy dodatkowo odnotować spełnienie wymagań TCO/DecisionOrchestrator zgodnie ze specyfikacją `docs/architecture/stage5_spec.md`.

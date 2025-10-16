@@ -1,0 +1,18 @@
+{
+  "generated_at": "2025-10-15T16:31:58.271521+00:00",
+  "baseline": {
+    "symbol": "ETHUSDT",
+    "mid_price": 1811.2,
+    "avg_depth_usd": 1350000.0,
+    "avg_spread_bps": 6.7,
+    "funding_rate_bps": 6.1,
+    "sentiment_score": 0.28,
+    "realized_volatility": 0.55,
+    "weight": 0.8
+  },
+  "source": {
+    "type": "sqlite",
+    "path": "/workspace/var/stage6/market_intel/market_metrics.sqlite",
+    "table": "market_metrics"
+  }
+}

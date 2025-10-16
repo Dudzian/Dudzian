@@ -49,7 +49,7 @@ except Exception:  # pragma: no cover
         from bot_core.observability import MetricsRegistry, get_global_metrics_registry  # type: ignore
     except Exception:  # pragma: no cover
         class _NoopMetric:
-            def inc(self, *_args, **_kwargs) -> None:
+            def inc(self, *_args, **_kwargs) -> None:  # noqa: D401
                 return None
 
             def observe(self, *_args, **_kwargs) -> None:
@@ -75,7 +75,7 @@ except Exception:  # pragma: no cover
             return MetricsRegistry()
 
 
-# --- Podpisywanie decision logu (opcjonalne)
+# --- Podpisywanie decision logu (opcjonalne, z fallbackiem)
 try:  # pragma: no cover
     from bot_core.security.signing import build_hmac_signature as _build_hmac_signature  # type: ignore
 except Exception:  # pragma: no cover
@@ -183,7 +183,8 @@ class RouteDefinition:
     exchanges: Sequence[str]
     symbols: Sequence[str] = ()
     risk_profiles: Sequence[str] = ()
-    max_retries_per_exchange: int = 1
+    # Domyślnie 2 (wartość ze starszej gałęzi); minimalny retry i tak jest egzekwowany niżej.
+    max_retries_per_exchange: int = 2
     latency_budget_ms: float = 250.0
     metadata: Mapping[str, str] = field(default_factory=dict)
 
@@ -200,8 +201,8 @@ class LiveExecutionRouter(ExecutionService):
     """
     Router egzekucji live. Dwa tryby:
 
-    * 'routes' — przekazujesz `routes: Sequence[RouteDefinition]` (opcjonalnie `default_route=<nazwa>`).
-    * 'plan'   — przekazujesz `default_route: Iterable[str]` (+ opcjonalne `route_overrides` per symbol).
+    * 'routes' — przekaż `routes: Sequence[RouteDefinition]` (opcjonalnie `default_route=<nazwa>`).
+    * 'plan'   — przekaż `default_route: Iterable[str]` (+ opcjonalnie `route_overrides` per symbol).
 
     Dodatki operacyjne:
     - circuit-breaker per giełda,
@@ -209,7 +210,7 @@ class LiveExecutionRouter(ExecutionService):
     - budżet opóźnień per trasa,
     - LRU dla powiązań order_id→exchange,
     - decision-log JSONL (opcjonalny) z podpisem HMAC i rotacją rozmiaru,
-    - rozbudowane metryki (latencja, próby, fallbacki, błędy, stan breakerów).
+    - metryki (latencja, próby, fallbacki, błędy, stan breakerów).
     """
 
     def __init__(
