@@ -243,6 +243,103 @@ class RiskSimulationReport:
     profiles: Sequence[ProfileSimulationResult]
     synthetic_data: bool = False
 
+    @classmethod
+    def from_mapping(cls, payload: Mapping[str, object]) -> "RiskSimulationReport":
+        """Buduje instancję raportu na podstawie struktury JSON."""
+
+        generated_at_raw = payload.get("generated_at")
+        if not generated_at_raw:
+            raise ValueError("Brak pola 'generated_at' w raporcie symulacji ryzyka")
+        generated_at = str(generated_at_raw)
+
+        try:
+            base_equity_value = float(payload.get("base_equity", 0.0))
+        except (TypeError, ValueError) as exc:  # noqa: PERF203 - komunikat dla użytkownika
+            raise ValueError("Pole 'base_equity' musi być liczbą") from exc
+
+        synthetic_data = bool(payload.get("synthetic_data", False))
+
+        profiles_payload = payload.get("profiles") or []
+        if not isinstance(profiles_payload, Sequence):
+            raise ValueError("Pole 'profiles' musi być sekwencją obiektów profili")
+
+        profiles: list[ProfileSimulationResult] = []
+        for entry in profiles_payload:
+            if not isinstance(entry, Mapping):
+                raise ValueError("Każdy profil w raporcie musi być obiektem mapującym")
+
+            stress_results: list[StressTestResult] = []
+            for stress_entry in entry.get("stress_tests", ()) or ():
+                if not isinstance(stress_entry, Mapping):
+                    raise ValueError("Element stress_tests musi być mapą")
+
+                metrics_raw = stress_entry.get("metrics") or {}
+                if isinstance(metrics_raw, Mapping):
+                    metrics = {str(key): value for key, value in metrics_raw.items()}
+                else:
+                    raise ValueError("Pole 'metrics' w stress_tests musi być mapą")
+
+                stress_results.append(
+                    StressTestResult(
+                        name=str(stress_entry.get("name", "unknown")),
+                        status=str(stress_entry.get("status", "unknown")),
+                        metrics=metrics,
+                        notes=(
+                            None
+                            if stress_entry.get("notes") in (None, "")
+                            else str(stress_entry.get("notes"))
+                        ),
+                    )
+                )
+
+            breaches_raw = entry.get("breaches", ()) or ()
+            if isinstance(breaches_raw, Sequence) and not isinstance(breaches_raw, (str, bytes)):
+                breaches = tuple(str(item) for item in breaches_raw)
+            else:
+                raise ValueError("Pole 'breaches' musi być listą lub krotką")
+
+            profiles.append(
+                ProfileSimulationResult(
+                    profile=str(entry.get("profile", "unknown")),
+                    base_equity=float(entry.get("base_equity", base_equity_value)),
+                    final_equity=float(entry.get("final_equity", 0.0)),
+                    total_return_pct=float(entry.get("total_return_pct", 0.0)),
+                    max_drawdown_pct=float(entry.get("max_drawdown_pct", 0.0)),
+                    worst_daily_loss_pct=float(entry.get("worst_daily_loss_pct", 0.0)),
+                    realized_volatility=float(entry.get("realized_volatility", 0.0)),
+                    breaches=breaches,
+                    stress_tests=tuple(stress_results),
+                    sample_size=int(entry.get("sample_size", 0)),
+                )
+            )
+
+        return cls(
+            generated_at=generated_at,
+            base_equity=base_equity_value,
+            profiles=tuple(profiles),
+            synthetic_data=synthetic_data,
+        )
+
+    @classmethod
+    def from_json(cls, path: Path | str) -> "RiskSimulationReport":
+        """Ładuje raport z pliku JSON."""
+
+        source = Path(path)
+        try:
+            raw_text = source.read_text(encoding="utf-8")
+        except FileNotFoundError as exc:  # noqa: BLE001 - komunikat użytkownika
+            raise FileNotFoundError(f"Nie znaleziono raportu symulacji ryzyka: {source}") from exc
+
+        try:
+            payload = json.loads(raw_text)
+        except json.JSONDecodeError as exc:  # noqa: PERF203 - szczegóły dla operatora
+            raise ValueError(f"Niepoprawny JSON w raporcie symulacji: {source}") from exc
+
+        if not isinstance(payload, Mapping):
+            raise ValueError("Raport symulacji musi być obiektem JSON")
+
+        return cls.from_mapping(payload)
+
     def to_mapping(self) -> Mapping[str, object]:
         return {
             "generated_at": self.generated_at,

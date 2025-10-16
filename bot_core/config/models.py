@@ -164,6 +164,20 @@ class RiskDecisionLogConfig:
 
 
 @dataclass(slots=True)
+class PortfolioDecisionLogConfig:
+    """Konfiguracja dziennika decyzji PortfolioGovernora."""
+
+    enabled: bool = True
+    path: str | None = None
+    max_entries: int = 512
+    signing_key_env: str | None = None
+    signing_key_path: str | None = None
+    signing_key_value: str | None = None
+    signing_key_id: str | None = None
+    jsonl_fsync: bool = False
+
+
+@dataclass(slots=True)
 class SecurityBaselineSigningConfig:
     """Ustawienia podpisywania raportów audytu bezpieczeństwa."""
 
@@ -368,6 +382,18 @@ class MultiStrategySchedulerConfig:
     decision_log_category: str = "runtime.scheduler"
     health_check_interval: int = 300
     rbac_tokens: Sequence[ServiceTokenConfig] = field(default_factory=tuple)
+    portfolio_governor: str | None = None
+    portfolio_inputs: "PortfolioRuntimeInputsConfig" | None = None
+
+
+@dataclass(slots=True)
+class PortfolioRuntimeInputsConfig:
+    """Ścieżki artefaktów wykorzystywanych przez PortfolioGovernora w runtime."""
+
+    slo_report_path: str | None = None
+    slo_max_age_minutes: int | None = None
+    stress_lab_report_path: str | None = None
+    stress_max_age_minutes: int | None = None
 
 
 # --- Kanały alertów -----------------------------------------------------------
@@ -440,6 +466,76 @@ class MessengerChannelSettings:
 
 
 # --- Runtime ------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class PortfolioDriftToleranceConfig:
+    """Parametry dryfu akceptowanego przez PortfolioGovernor."""
+
+    absolute: float = 0.01
+    relative: float = 0.25
+
+
+@dataclass(slots=True)
+class PortfolioRiskBudgetConfig:
+    """Budżet ryzyka przypisywany do koszyka aktywów."""
+
+    name: str
+    max_var_pct: float | None = None
+    max_drawdown_pct: float | None = None
+    max_leverage: float | None = None
+    severity: str = "warning"
+    tags: Sequence[str] = field(default_factory=tuple)
+
+
+@dataclass(slots=True)
+class PortfolioAssetConfig:
+    """Konfiguracja aktywa zarządzanego przez PortfolioGovernor."""
+
+    symbol: str
+    target_weight: float
+    min_weight: float | None = None
+    max_weight: float | None = None
+    max_volatility_pct: float | None = None
+    min_liquidity_usd: float | None = None
+    risk_budget: str | None = None
+    notes: str | None = None
+    tags: Sequence[str] = field(default_factory=tuple)
+
+
+@dataclass(slots=True)
+class PortfolioSloOverrideConfig:
+    """Reguła reagująca na statusy SLO w Observability Stage6."""
+
+    slo_name: str
+    apply_on: Sequence[str] = field(default_factory=lambda: ("warning", "breach"))
+    weight_multiplier: float | None = None
+    min_weight: float | None = None
+    max_weight: float | None = None
+    severity: str | None = None
+    tags: Sequence[str] = field(default_factory=tuple)
+    force_rebalance: bool = False
+
+
+@dataclass(slots=True)
+class PortfolioGovernorConfig:
+    """Deklaracja PortfolioGovernora Stage6."""
+
+    name: str
+    portfolio_id: str
+    drift_tolerance: PortfolioDriftToleranceConfig = field(
+        default_factory=PortfolioDriftToleranceConfig
+    )
+    rebalance_cooldown_seconds: int = 900
+    min_rebalance_value: float = 0.0
+    min_rebalance_weight: float = 0.0
+    assets: Sequence[PortfolioAssetConfig] = field(default_factory=tuple)
+    risk_budgets: Mapping[str, PortfolioRiskBudgetConfig] = field(default_factory=dict)
+    risk_overrides: Sequence[str] = field(default_factory=tuple)
+    slo_overrides: Sequence[PortfolioSloOverrideConfig] = field(default_factory=tuple)
+    market_intel_interval: str | None = None
+    market_intel_lookback_bars: int = 168
+
 
 @dataclass(slots=True)
 class ControllerRuntimeConfig:
@@ -539,6 +635,7 @@ class CoreConfig:
         str, CrossExchangeArbitrageStrategyConfig
     ] = field(default_factory=dict)
     multi_strategy_schedulers: Mapping[str, MultiStrategySchedulerConfig] = field(default_factory=dict)
+    portfolio_governors: Mapping[str, PortfolioGovernorConfig] = field(default_factory=dict)
     reporting: CoreReportingConfig | None = None
     sms_providers: Mapping[str, SMSProviderSettings] = field(default_factory=dict)
     telegram_channels: Mapping[str, TelegramChannelSettings] = field(default_factory=dict)
@@ -552,6 +649,7 @@ class CoreConfig:
     metrics_service: MetricsServiceConfig | None = None
     risk_service: RiskServiceConfig | None = None
     risk_decision_log: RiskDecisionLogConfig | None = None
+    portfolio_decision_log: PortfolioDecisionLogConfig | None = None
     security_baseline: SecurityBaselineConfig | None = None
     runtime_resource_limits: RuntimeResourceLimitsConfig | None = None
     source_path: str | None = None
@@ -580,6 +678,12 @@ __all__ = [
     "SignalChannelSettings",
     "WhatsAppChannelSettings",
     "MessengerChannelSettings",
+    "PortfolioGovernorConfig",
+    "PortfolioAssetConfig",
+    "PortfolioRiskBudgetConfig",
+    "PortfolioDriftToleranceConfig",
+    "PortfolioSloOverrideConfig",
+    "PortfolioRuntimeInputsConfig",
     "ControllerRuntimeConfig",
     "RuntimeResourceLimitsConfig",
     "SmokeArchiveLocalConfig",
@@ -600,6 +704,7 @@ __all__ = [
     "LiveRoutingConfig",
     "PrometheusAlertRuleConfig",
     "RiskDecisionLogConfig",
+    "PortfolioDecisionLogConfig",
     "SecurityBaselineConfig",
     "SecurityBaselineSigningConfig",
 ]

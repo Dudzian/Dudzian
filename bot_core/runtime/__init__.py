@@ -12,6 +12,33 @@ from bot_core.runtime.scheduler_load_test import (
     LoadTestSettings,
     execute_scheduler_load_test,
 )
+from bot_core.runtime.stage5_hypercare import (
+    Stage5ComplianceConfig,
+    Stage5HypercareConfig,
+    Stage5HypercareCycle,
+    Stage5HypercareResult,
+    Stage5HypercareVerificationResult,
+    Stage5OemAcceptanceConfig,
+    Stage5RotationConfig,
+    Stage5SloConfig,
+    Stage5TcoConfig,
+    Stage5TrainingConfig,
+    verify_stage5_hypercare_summary,
+)
+from bot_core.runtime.full_hypercare import (
+    FullHypercareSummaryBuilder,
+    FullHypercareSummaryConfig,
+    FullHypercareSummaryResult,
+    FullHypercareVerificationResult,
+    verify_full_hypercare_summary,
+)
+from bot_core.runtime.stage6_hypercare import (
+    Stage6HypercareConfig,
+    Stage6HypercareCycle,
+    Stage6HypercareResult,
+    Stage6HypercareVerificationResult,
+    verify_stage6_hypercare_summary,
+)
 
 # --- Metrics service (opcjonalny – zależy od dostępności gRPC i wygenerowanych stubów) ---
 try:
@@ -104,6 +131,27 @@ __all__ = [
     "LoadTestSettings",
     "LoadTestResult",
     "execute_scheduler_load_test",
+    "Stage5HypercareCycle",
+    "Stage5HypercareConfig",
+    "Stage5HypercareResult",
+    "Stage5HypercareVerificationResult",
+    "Stage5TcoConfig",
+    "Stage5RotationConfig",
+    "Stage5ComplianceConfig",
+    "Stage5TrainingConfig",
+    "Stage5SloConfig",
+    "Stage5OemAcceptanceConfig",
+    "verify_stage5_hypercare_summary",
+    "FullHypercareSummaryBuilder",
+    "FullHypercareSummaryConfig",
+    "FullHypercareSummaryResult",
+    "FullHypercareVerificationResult",
+    "verify_full_hypercare_summary",
+    "Stage6HypercareCycle",
+    "Stage6HypercareConfig",
+    "Stage6HypercareResult",
+    "Stage6HypercareVerificationResult",
+    "verify_stage6_hypercare_summary",
 ]
 
 # Eksport elementów metrics service tylko jeśli są dostępne

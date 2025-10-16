@@ -63,6 +63,16 @@ class DummySink(StrategySignalSink):
         self.calls.append((schedule_name, tuple(signals)))
 
 
+class DummyCoordinator:
+    def __init__(self) -> None:
+        self.calls: list[bool] = []
+        self.cooldown_seconds = 5.0
+
+    def evaluate(self, *, force: bool = False):
+        self.calls.append(force)
+        return None
+
+
 def _snapshot(price: float, ts: int) -> MarketSnapshot:
     return MarketSnapshot(
         symbol="BTC_USDT",
@@ -133,3 +143,17 @@ def test_scheduler_dispatches_signals_and_logs_decisions() -> None:
     assert telemetry_calls and telemetry_calls[0][0] == "mean_reversion_intraday"
     telemetry_payload = telemetry_calls[0][1]
     assert telemetry_payload["avg_confidence"] == pytest.approx(0.9)
+
+
+def test_scheduler_invokes_portfolio_coordinator_once() -> None:
+    scheduler = MultiStrategyScheduler(
+        environment="paper",
+        portfolio="demo",
+        clock=lambda: datetime(2024, 1, 1, tzinfo=timezone.utc),
+    )
+    coordinator = DummyCoordinator()
+    scheduler.attach_portfolio_coordinator(coordinator)
+
+    asyncio.run(scheduler.run_once())
+
+    assert coordinator.calls == [True]

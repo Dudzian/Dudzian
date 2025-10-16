@@ -29,6 +29,13 @@ from bot_core.config.models import (
     RuntimeResourceLimitsConfig,
     SMSProviderSettings,
     TelegramChannelSettings,
+    PortfolioGovernorConfig,
+    PortfolioAssetConfig,
+    PortfolioRiskBudgetConfig,
+    PortfolioDriftToleranceConfig,
+    PortfolioSloOverrideConfig,
+    PortfolioDecisionLogConfig,
+    PortfolioRuntimeInputsConfig,
 )
 from bot_core.exchanges.base import Environment
 
@@ -226,6 +233,18 @@ def _load_instrument_buckets(
     return buckets
 
 
+def _maybe_float(value: Any) -> float | None:
+    if value in (None, "", False):
+        return None
+    return float(value)
+
+
+def _maybe_int(value: Any) -> int | None:
+    if value in (None, "", False):
+        return None
+    return int(value)
+
+
 def _load_sms_providers(raw_alerts: Mapping[str, Any]) -> Mapping[str, SMSProviderSettings]:
     providers: dict[str, SMSProviderSettings] = {}
     for name, entry in (raw_alerts.get("sms_providers", {}) or {}).items():
@@ -404,6 +423,26 @@ def _load_multi_strategy_schedulers(raw: Mapping[str, Any]):
                 for schedule_name, schedule_entry in schedules_raw.items()
                 if isinstance(schedule_entry, Mapping)
             ]
+            inputs_entry = entry.get("portfolio_inputs")
+            inputs_config = None
+            if isinstance(inputs_entry, Mapping):
+                slo_path_value = inputs_entry.get("slo_report_path") or inputs_entry.get("slo_report")
+                stress_path_value = (
+                    inputs_entry.get("stress_lab_report_path")
+                    or inputs_entry.get("stress_lab_report")
+                    or inputs_entry.get("stress_report")
+                )
+                slo_age_value = inputs_entry.get("slo_max_age_minutes") or inputs_entry.get("slo_max_age")
+                stress_age_value = (
+                    inputs_entry.get("stress_max_age_minutes")
+                    or inputs_entry.get("stress_max_age")
+                )
+                inputs_config = PortfolioRuntimeInputsConfig(
+                    slo_report_path=_format_optional_text(slo_path_value),
+                    slo_max_age_minutes=_maybe_int(slo_age_value),
+                    stress_lab_report_path=_format_optional_text(stress_path_value),
+                    stress_max_age_minutes=_maybe_int(stress_age_value),
+                )
             schedulers[name] = MultiStrategySchedulerConfig(
                 name=name,
                 schedules=tuple(schedules),
@@ -415,8 +454,165 @@ def _load_multi_strategy_schedulers(raw: Mapping[str, Any]):
                 ),
                 health_check_interval=int(entry.get("health_check_interval", 300)),
                 rbac_tokens=_load_service_tokens(entry.get("rbac_tokens")),
+                portfolio_governor=(
+                    str(entry.get("portfolio_governor")).strip()
+                    if entry.get("portfolio_governor") not in (None, "")
+                    else None
+                ),
+                portfolio_inputs=inputs_config,
             )
     return schedulers
+
+
+def _load_portfolio_governors(raw: Mapping[str, Any]):
+    if PortfolioGovernorConfig is None:
+        return {}
+    entries = raw.get("portfolio_governors") or {}
+    if not isinstance(entries, Mapping):
+        return {}
+    governors: dict[str, PortfolioGovernorConfig] = {}
+    for name, entry in entries.items():
+        if not isinstance(entry, Mapping):
+            continue
+        drift_entry = entry.get("drift_tolerance") or entry.get("drift") or {}
+        if not isinstance(drift_entry, Mapping):
+            drift_entry = {}
+        drift = PortfolioDriftToleranceConfig(
+            absolute=float(drift_entry.get("absolute", drift_entry.get("abs", 0.01))),
+            relative=float(drift_entry.get("relative", drift_entry.get("rel", 0.25))),
+        )
+
+        risk_budgets: dict[str, PortfolioRiskBudgetConfig] = {}
+        for budget_name, budget_entry in (entry.get("risk_budgets", {}) or {}).items():
+            if not isinstance(budget_entry, Mapping):
+                continue
+            risk_budgets[budget_name] = PortfolioRiskBudgetConfig(
+                name=budget_name,
+                max_var_pct=_maybe_float(
+                    budget_entry.get("max_var_pct")
+                    or budget_entry.get("max_var_percent")
+                ),
+                max_drawdown_pct=_maybe_float(
+                    budget_entry.get("max_drawdown_pct")
+                    or budget_entry.get("max_drawdown_percent")
+                ),
+                max_leverage=_maybe_float(budget_entry.get("max_leverage")),
+                severity=str(budget_entry.get("severity", "warning")),
+                tags=tuple(
+                    str(tag) for tag in (budget_entry.get("tags", ()) or ())
+                ),
+            )
+
+        slo_overrides: list[PortfolioSloOverrideConfig] = []
+        for override_entry in (entry.get("slo_overrides") or ()):  # type: ignore[arg-type]
+            if not isinstance(override_entry, Mapping):
+                continue
+            name_value = override_entry.get("slo") or override_entry.get("slo_name")
+            if name_value in (None, ""):
+                continue
+            apply_on_source = override_entry.get("apply_on") or override_entry.get("statuses")
+            apply_on = (
+                tuple(str(item) for item in (apply_on_source or ("warning", "breach")))
+                or ("warning", "breach")
+            )
+            slo_overrides.append(
+                PortfolioSloOverrideConfig(
+                    slo_name=str(name_value),
+                    apply_on=apply_on,
+                    weight_multiplier=_maybe_float(override_entry.get("weight_multiplier")),
+                    min_weight=_maybe_float(override_entry.get("min_weight")),
+                    max_weight=_maybe_float(override_entry.get("max_weight")),
+                    severity=(
+                        str(override_entry.get("severity"))
+                        if override_entry.get("severity") not in (None, "")
+                        else None
+                    ),
+                    tags=tuple(
+                        str(tag) for tag in (override_entry.get("tags", ()) or ())
+                    ),
+                    force_rebalance=bool(override_entry.get("force_rebalance", False)),
+                )
+            )
+
+        assets: list[PortfolioAssetConfig] = []
+        for asset_entry in (entry.get("assets") or ()):  # type: ignore[arg-type]
+            if not isinstance(asset_entry, Mapping):
+                continue
+            symbol = asset_entry.get("symbol")
+            target_weight = asset_entry.get("target_weight")
+            if symbol is None or target_weight is None:
+                continue
+            risk_budget_value = asset_entry.get("risk_budget")
+            risk_budget = (
+                str(risk_budget_value)
+                if risk_budget_value not in (None, "")
+                else None
+            )
+            notes_value = asset_entry.get("notes")
+            notes = str(notes_value) if notes_value not in (None, "") else None
+            assets.append(
+                PortfolioAssetConfig(
+                    symbol=str(symbol),
+                    target_weight=float(target_weight),
+                    min_weight=_maybe_float(asset_entry.get("min_weight")),
+                    max_weight=_maybe_float(asset_entry.get("max_weight")),
+                    max_volatility_pct=_maybe_float(
+                        asset_entry.get("max_volatility_pct")
+                        or asset_entry.get("max_volatility_percent")
+                    ),
+                    min_liquidity_usd=_maybe_float(
+                        asset_entry.get("min_liquidity_usd")
+                        or asset_entry.get("min_liquidity")
+                    ),
+                    risk_budget=risk_budget,
+                    notes=notes,
+                    tags=tuple(
+                        str(tag) for tag in (asset_entry.get("tags", ()) or ())
+                    ),
+                )
+            )
+
+        intel_entry = entry.get("market_intel") if isinstance(entry.get("market_intel"), Mapping) else {}
+        interval_value = entry.get("market_intel_interval")
+        if isinstance(intel_entry, Mapping):
+            interval_value = interval_value or intel_entry.get("interval")
+        interval = (
+            str(interval_value).strip()
+            if interval_value not in (None, "")
+            else None
+        )
+        lookback_value = entry.get("market_intel_lookback_bars")
+        if isinstance(intel_entry, Mapping):
+            lookback_value = lookback_value or intel_entry.get("lookback_bars") or intel_entry.get("lookback")
+        try:
+            lookback_bars = int(lookback_value) if lookback_value not in (None, "") else 168
+        except (TypeError, ValueError):  # pragma: no cover - diagnostyka konfiguracji
+            lookback_bars = 168
+
+        governors[name] = PortfolioGovernorConfig(
+            name=name,
+            portfolio_id=str(entry.get("portfolio_id", name)),
+            drift_tolerance=drift,
+            rebalance_cooldown_seconds=int(
+                entry.get("rebalance_cooldown_seconds", entry.get("rebalance_cooldown", 900))
+            ),
+            min_rebalance_value=float(
+                entry.get("min_rebalance_value", entry.get("min_rebalance_notional", 0.0) or 0.0)
+            ),
+            min_rebalance_weight=float(
+                entry.get("min_rebalance_weight", entry.get("min_weight_delta", 0.0) or 0.0)
+            ),
+            assets=tuple(assets),
+            risk_budgets=risk_budgets,
+            risk_overrides=tuple(
+                str(item) for item in (entry.get("risk_overrides", ()) or ())
+            ),
+            slo_overrides=tuple(override for override in slo_overrides if override.slo_name),
+            market_intel_interval=interval,
+            market_intel_lookback_bars=lookback_bars,
+        )
+
+    return governors
 
 
 def _load_runtime_resource_limits(runtime_section: Mapping[str, Any]):
@@ -1559,6 +1755,47 @@ def _load_risk_decision_log(
     return RiskDecisionLogConfig(**kwargs)  # type: ignore[call-arg]
 
 
+def _load_portfolio_decision_log(
+    runtime_section: Optional[Mapping[str, Any]], *, base_dir: Path | None = None
+) -> PortfolioDecisionLogConfig | None:
+    if not _core_has("portfolio_decision_log"):
+        return None
+
+    runtime = runtime_section or {}
+    log_raw = runtime.get("portfolio_decision_log")
+    if not log_raw:
+        return None
+
+    available_fields = {f.name for f in fields(PortfolioDecisionLogConfig)}
+    kwargs: dict[str, Any] = {
+        "enabled": bool(log_raw.get("enabled", True)),
+    }
+
+    if "path" in available_fields:
+        kwargs["path"] = _normalize_runtime_path(log_raw.get("path"), base_dir=base_dir)
+    if "max_entries" in available_fields:
+        kwargs["max_entries"] = int(log_raw.get("max_entries", 512))
+    if "signing_key_env" in available_fields:
+        env_value = log_raw.get("signing_key_env")
+        kwargs["signing_key_env"] = (
+            str(env_value).strip() if isinstance(env_value, str) and env_value.strip() else None
+        )
+    if "signing_key_path" in available_fields:
+        kwargs["signing_key_path"] = _normalize_runtime_path(
+            log_raw.get("signing_key_path"), base_dir=base_dir
+        )
+    if "signing_key_value" in available_fields:
+        value = log_raw.get("signing_key_value")
+        kwargs["signing_key_value"] = str(value) if value not in (None, "") else None
+    if "signing_key_id" in available_fields:
+        key_id = log_raw.get("signing_key_id")
+        kwargs["signing_key_id"] = str(key_id) if key_id not in (None, "") else None
+    if "jsonl_fsync" in available_fields:
+        kwargs["jsonl_fsync"] = bool(log_raw.get("jsonl_fsync", False))
+
+    return PortfolioDecisionLogConfig(**kwargs)  # type: ignore[call-arg]
+
+
 def load_core_config(path: str | Path) -> CoreConfig:
     """Wczytuje plik YAML i mapuje go na dataclasses."""
     config_path = Path(path).expanduser()
@@ -1659,6 +1896,7 @@ def load_core_config(path: str | Path) -> CoreConfig:
     volatility_target_strategies = _load_volatility_target_strategies(raw)
     cross_exchange_arbitrage_strategies = _load_cross_exchange_arbitrage_strategies(raw)
     scheduler_configs = _load_multi_strategy_schedulers(raw)
+    portfolio_governor_configs = _load_portfolio_governors(raw)
 
     reporting = _load_reporting(raw.get("reporting"))
     runtime_section = raw.get("runtime") or {}
@@ -1713,6 +1951,8 @@ def load_core_config(path: str | Path) -> CoreConfig:
         core_kwargs["cross_exchange_arbitrage_strategies"] = cross_exchange_arbitrage_strategies
     if _core_has("multi_strategy_schedulers"):
         core_kwargs["multi_strategy_schedulers"] = scheduler_configs
+    if _core_has("portfolio_governors"):
+        core_kwargs["portfolio_governors"] = portfolio_governor_configs
     if _core_has("signal_channels"):
         core_kwargs["signal_channels"] = signal_channels
     if _core_has("whatsapp_channels"):
@@ -1753,6 +1993,12 @@ def load_core_config(path: str | Path) -> CoreConfig:
     )
     if risk_decision_log_config is not None:
         core_kwargs["risk_decision_log"] = risk_decision_log_config
+
+    portfolio_decision_log_config = _load_portfolio_decision_log(
+        runtime_section, base_dir=config_base_dir
+    )
+    if portfolio_decision_log_config is not None:
+        core_kwargs["portfolio_decision_log"] = portfolio_decision_log_config
 
     security_baseline_config = _load_security_baseline(
         runtime_section, base_dir=config_base_dir

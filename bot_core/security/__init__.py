@@ -26,6 +26,12 @@ from bot_core.security.fingerprint import (
 )
 from bot_core.security.keyring_storage import KeyringSecretStorage
 from bot_core.security.rotation import RotationRegistry, RotationStatus
+from bot_core.security.rotation_report import (
+    RotationRecord,
+    RotationSummary,
+    build_rotation_summary_entry,
+    write_rotation_summary,
+)
 from bot_core.security.signing import build_hmac_signature, canonical_json_bytes
 from bot_core.security.token_audit import (
     TokenAuditReport,
@@ -112,6 +118,10 @@ __all__ = [
     "create_default_fingerprint_service",
     "RotationRegistry",
     "RotationStatus",
+    "RotationRecord",
+    "RotationSummary",
+    "build_rotation_summary_entry",
+    "write_rotation_summary",
     "DeviceFingerprintGenerator",
     "FingerprintDocument",
     "FingerprintError",
