@@ -74,6 +74,53 @@ risk_profiles:
     instrument_buckets:
       - manual_override
 
+portfolio_governors:
+  stage6_core:
+    portfolio_id: stage6_core
+    drift_tolerance:
+      absolute: 0.02
+      relative: 0.25
+    rebalance_cooldown_seconds: 900
+    min_rebalance_value: 1000.0
+    min_rebalance_weight: 0.01
+    market_intel_interval: 1h
+    market_intel_lookback_bars: 168
+    risk_budgets:
+      balanced:
+        max_drawdown_pct: 0.18
+        severity: warning
+      aggressive:
+        max_drawdown_pct: 0.25
+        severity: critical
+    slo_overrides:
+      - slo: router_latency
+        apply_on: [warning, breach]
+        weight_multiplier: 0.5
+        force_rebalance: true
+        tags: [latency, stage6]
+      - slo: order_throughput
+        apply_on: [breach]
+        min_weight: 0.05
+        severity: warning
+    assets:
+      - symbol: BTC_USDT
+        target_weight: 0.5
+        min_weight: 0.2
+        max_weight: 0.6
+        risk_budget: balanced
+        tags: [core, stage6]
+      - symbol: ETH_USDT
+        target_weight: 0.3
+        min_weight: 0.1
+        max_weight: 0.4
+        risk_budget: balanced
+      - symbol: BNB_USDT
+        target_weight: 0.2
+        min_weight: 0.05
+        max_weight: 0.25
+        risk_budget: aggressive
+        tags: [liquidity]
+
 decision_engine:
   orchestrator:
     max_cost_bps: 12.0
@@ -123,6 +170,7 @@ decision_engine:
       - var/audit/tco/latest_report.json
       - var/audit/acceptance/latest/tco_summary.json
     require_at_startup: false
+
 portfolio_governor:
   enabled: true
   rebalance_interval_minutes: 30
@@ -180,7 +228,6 @@ portfolio_governor:
       tags:
         - arbitrage
         - liquidity
-
 
 market_intel:
   enabled: true
@@ -250,7 +297,6 @@ stress_lab:
         max_latency_spike_ms: 220.0
         max_blackout_minutes: 75.0
 
-
 resilience:
   enabled: true
   require_success: true
@@ -280,7 +326,6 @@ resilience:
         max_failover_duration_seconds: 110.0
         max_orders_failed: 10
       description: Failover z Kraken Futures na Binance Futures.
-
 
 observability:
   slo:
@@ -369,6 +414,12 @@ runtime:
       telemetry_namespace: runtime.multi_strategy.core
       decision_log_category: runtime.scheduler.core
       health_check_interval: 120
+      portfolio_governor: stage6_core
+      portfolio_inputs:
+        slo_report_path: var/audit/observability/slo_report.json
+        slo_max_age_minutes: 120
+        stress_lab_report_path: var/audit/stage6/stress_lab_report.json
+        stress_max_age_minutes: 240
       rbac_tokens:
         - token_id: scheduler-local
           token_env: CORE_SCHEDULER_TOKEN

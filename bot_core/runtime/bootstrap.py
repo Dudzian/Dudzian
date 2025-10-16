@@ -66,6 +66,7 @@ from bot_core.runtime.file_metadata import (
     log_security_warnings,
 )
 from bot_core.observability.metrics import get_global_metrics_registry
+from bot_core.portfolio import PortfolioDecisionLog
 
 try:  # pragma: no cover - DecisionOrchestrator może być opcjonalny
     from bot_core.decision import DecisionOrchestrator  # type: ignore
@@ -287,6 +288,7 @@ class BootstrapContext:
     decision_journal: TradingDecisionJournal | None
     risk_decision_log: RiskDecisionLog | None
     risk_profile_name: str
+    portfolio_decision_log: PortfolioDecisionLog | None = None
     decision_engine_config: Any | None = None
     decision_orchestrator: Any | None = None
     decision_tco_report_path: str | None = None
@@ -422,6 +424,7 @@ def bootstrap_environment(
     )
 
     decision_journal = _build_decision_journal(environment)
+    portfolio_decision_log = _build_portfolio_decision_log(core_config, environment)
 
     # --- MetricsService (opcjonalny, kompatybilny z różnymi sygnaturami funkcji) ---
     metrics_server: Any | None = None
@@ -1156,6 +1159,7 @@ def bootstrap_environment(
         risk_security_metadata=risk_security_payload if risk_security_payload else None,
         risk_security_warnings=tuple(risk_security_warnings) if risk_security_warnings else None,
         risk_token_validator=risk_token_validator,
+        portfolio_decision_log=portfolio_decision_log,
     )
 
 
@@ -1331,6 +1335,73 @@ def _build_decision_journal(environment: EnvironmentConfig) -> TradingDecisionJo
             retention_days=config.retention_days,
             fsync=config.fsync,
         )
+    return None
+
+
+def _build_portfolio_decision_log(
+    core_config: CoreConfig, environment: EnvironmentConfig
+) -> PortfolioDecisionLog | None:
+    config = getattr(core_config, "portfolio_decision_log", None)
+    if config is None or not getattr(config, "enabled", True):
+        return None
+
+    configured_path = getattr(config, "path", None)
+    if configured_path:
+        candidate = Path(str(configured_path)).expanduser()
+        if not candidate.is_absolute():
+            log_path = Path(environment.data_cache_path) / candidate
+        else:
+            log_path = candidate
+    else:
+        log_path = Path(environment.data_cache_path) / "portfolio_decisions.jsonl"
+
+    max_entries = int(getattr(config, "max_entries", 512) or 512)
+    signing_key = _load_portfolio_decision_log_key(config)
+    signing_key_id = getattr(config, "signing_key_id", None)
+    jsonl_fsync = bool(getattr(config, "jsonl_fsync", False))
+
+    try:
+        return PortfolioDecisionLog(
+            max_entries=max_entries,
+            jsonl_path=log_path,
+            signing_key=signing_key,
+            signing_key_id=str(signing_key_id) if signing_key_id else None,
+            jsonl_fsync=jsonl_fsync,
+        )
+    except Exception:  # pragma: no cover - log portfelowy jest opcjonalny
+        _LOGGER.exception("Nie udało się zainicjalizować PortfolioDecisionLog")
+        return None
+
+
+def _load_portfolio_decision_log_key(config: object) -> bytes | None:
+    env_name = getattr(config, "signing_key_env", None)
+    if env_name:
+        env_value = os.environ.get(str(env_name))
+        if env_value:
+            return env_value.encode("utf-8")
+        _LOGGER.warning(
+            "PortfolioDecisionLog: zmienna środowiskowa %s nie jest ustawiona", env_name
+        )
+
+    key_path = getattr(config, "signing_key_path", None)
+    if key_path:
+        try:
+            content = Path(str(key_path)).expanduser().read_bytes()
+            stripped = content.strip()
+            if stripped:
+                return stripped
+            _LOGGER.warning(
+                "PortfolioDecisionLog: plik %s nie zawiera klucza", key_path
+            )
+        except Exception as exc:  # pragma: no cover - diagnostyka konfiguracji
+            _LOGGER.warning(
+                "PortfolioDecisionLog: błąd odczytu klucza z %s: %s", key_path, exc
+            )
+
+    key_value = getattr(config, "signing_key_value", None)
+    if key_value not in (None, ""):
+        return str(key_value).encode("utf-8")
+
     return None
 
 

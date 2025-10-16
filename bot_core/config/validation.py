@@ -106,6 +106,7 @@ def validate_core_config(config: CoreConfig) -> ConfigValidationResult:
     _validate_live_routing(config, errors, warnings)
     _validate_risk_service(config, errors, warnings)
     _validate_risk_decision_log(config, errors, warnings)
+    _validate_portfolio_decision_log(config, errors, warnings)
     _validate_security_baseline(config, errors, warnings)
     _validate_resource_limits(config, errors, warnings)
 
@@ -768,6 +769,45 @@ def _validate_risk_decision_log(
         return
 
     context = "runtime.risk_decision_log"
+
+    max_entries = getattr(log_config, "max_entries", 0)
+    if max_entries is None or int(max_entries) <= 0:
+        errors.append(f"{context}: max_entries musi być dodatnie")
+
+    path_value = getattr(log_config, "path", None)
+    if path_value is not None and not str(path_value).strip():
+        errors.append(f"{context}: path nie może być puste")
+
+    key_sources: list[str] = []
+    for source in ("signing_key_env", "signing_key_path", "signing_key_value"):
+        value = getattr(log_config, source, None)
+        if value not in (None, ""):
+            key_sources.append(source)
+
+    if len(key_sources) > 1:
+        errors.append(
+            f"{context}: skonfiguruj tylko jedno źródło klucza podpisu (env/path/value)"
+        )
+
+    if not key_sources:
+        warnings.append(
+            f"{context}: brak klucza podpisu – podpisy HMAC nie będą generowane"
+        )
+
+    if getattr(log_config, "signing_key_value", None):
+        warnings.append(
+            f"{context}: signing_key_value w pliku YAML może naruszać politykę bezpieczeństwa"
+        )
+
+
+def _validate_portfolio_decision_log(
+    config: CoreConfig, errors: list[str], warnings: list[str]
+) -> None:
+    log_config = getattr(config, "portfolio_decision_log", None)
+    if log_config is None or not getattr(log_config, "enabled", True):
+        return
+
+    context = "runtime.portfolio_decision_log"
 
     max_entries = getattr(log_config, "max_entries", 0)
     if max_entries is None or int(max_entries) <= 0:

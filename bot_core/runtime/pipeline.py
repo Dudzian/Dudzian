@@ -1,6 +1,7 @@
 """Budowanie gotowych pipeline'ów strategii trend-following na podstawie konfiguracji."""
 from __future__ import annotations
 
+import logging
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
@@ -32,11 +33,18 @@ from bot_core.data.ohlcv import (
 from bot_core.execution.base import ExecutionContext, ExecutionService
 from bot_core.execution.paper import MarketMetadata, PaperTradingExecutionService
 from bot_core.exchanges.base import AccountSnapshot, Environment, ExchangeAdapterFactory
+from bot_core.market_intel import MarketIntelAggregator, MarketIntelQuery, MarketIntelSnapshot
+from bot_core.portfolio import PortfolioDecisionLog, PortfolioGovernor
 from bot_core.runtime.bootstrap import BootstrapContext, bootstrap_environment
 from bot_core.runtime.multi_strategy_scheduler import (
     MultiStrategyScheduler,
     StrategyDataFeed,
     StrategySignalSink,
+)
+from bot_core.runtime.portfolio_coordinator import PortfolioRuntimeCoordinator
+from bot_core.runtime.portfolio_inputs import (
+    build_slo_status_provider,
+    build_stress_override_provider,
 )
 from bot_core.runtime.controller import DailyTrendController
 from bot_core.security import SecretManager
@@ -50,6 +58,14 @@ from bot_core.strategies.cross_exchange_arbitrage import (
 from bot_core.strategies.base import StrategyEngine, StrategySignal, MarketSnapshot
 
 _DEFAULT_LEDGER_SUBDIR = Path("audit/ledger")
+_LOGGER = logging.getLogger(__name__)
+
+
+def _minutes_to_timedelta(value: float | int | None, default_minutes: float) -> timedelta | None:
+    minutes = default_minutes if value in (None, "") else float(value)
+    if minutes <= 0:
+        return None
+    return timedelta(minutes=minutes)
 
 # Opcjonalny kontroler handlu – może nie istnieć w starszych gałęziach.
 try:
@@ -543,6 +559,7 @@ class MultiStrategyRuntime:
     signal_sink: StrategySignalSink
     strategies: Mapping[str, StrategyEngine]
     schedules: tuple[StrategyScheduleConfig, ...]
+    portfolio_coordinator: PortfolioRuntimeCoordinator | None = None
     portfolio_governor: PortfolioGovernor | None = None
 
 
@@ -683,6 +700,7 @@ def build_multi_strategy_runtime(
     storage = DualCacheStorage(primary=parquet_storage, manifest=manifest_storage)
     public_source = PublicAPIDataSource(exchange_adapter=bootstrap_ctx.adapter)
     cached_source = CachedOHLCVSource(storage=storage, upstream=public_source)
+    market_intel = MarketIntelAggregator(storage)
 
     strategies = _instantiate_strategies(core_config)
     interval_map: dict[str, str] = {}
@@ -703,6 +721,118 @@ def build_multi_strategy_runtime(
         decision_journal=bootstrap_ctx.decision_journal,
         portfolio_governor=portfolio_governor,
     )
+
+    portfolio_coordinator: PortfolioRuntimeCoordinator | None = None
+    governor_name = getattr(scheduler_cfg, "portfolio_governor", None)
+    if governor_name:
+        governor_cfg = core_config.portfolio_governors.get(governor_name)
+        if governor_cfg is None:
+            raise KeyError(
+                f"Scheduler {resolved_scheduler_name} wskazuje PortfolioGovernora '{governor_name}', którego nie ma w konfiguracji"
+            )
+
+        decision_log = (
+            bootstrap_ctx.portfolio_decision_log
+            if getattr(bootstrap_ctx, "portfolio_decision_log", None) is not None
+            else PortfolioDecisionLog()
+        )
+        governor = PortfolioGovernor(governor_cfg, decision_log=decision_log)
+
+        asset_symbols = [asset.symbol for asset in governor_cfg.assets]
+        interval = governor_cfg.market_intel_interval or "1h"
+        lookback = int(getattr(governor_cfg, "market_intel_lookback_bars", 168) or 168)
+        inputs_cfg = getattr(scheduler_cfg, "portfolio_inputs", None)
+        data_cache_root = Path(environment.data_cache_path).expanduser()
+        fallback_candidates = (
+            data_cache_root,
+            data_cache_root.parent,
+        )
+        fallback_directories = tuple(dict.fromkeys(candidate for candidate in fallback_candidates if str(candidate)))
+
+        slo_provider = None
+        stress_provider = None
+        if inputs_cfg is not None:
+            slo_age = _minutes_to_timedelta(
+                getattr(inputs_cfg, "slo_max_age_minutes", None),
+                default_minutes=120.0,
+            )
+            stress_age = _minutes_to_timedelta(
+                getattr(inputs_cfg, "stress_max_age_minutes", None),
+                default_minutes=240.0,
+            )
+            slo_path = getattr(inputs_cfg, "slo_report_path", None)
+            if slo_path:
+                slo_provider = build_slo_status_provider(
+                    slo_path,
+                    fallback_directories=fallback_directories,
+                    max_age=slo_age,
+                )
+            stress_path = getattr(inputs_cfg, "stress_lab_report_path", None)
+            if stress_path:
+                stress_provider = build_stress_override_provider(
+                    stress_path,
+                    fallback_directories=fallback_directories,
+                    max_age=stress_age,
+                )
+
+        def _market_data_provider() -> Mapping[str, MarketIntelSnapshot]:
+            if not asset_symbols:
+                return {}
+            queries = [
+                MarketIntelQuery(symbol=symbol, interval=interval, lookback_bars=lookback)
+                for symbol in asset_symbols
+            ]
+            try:
+                return market_intel.build_many(queries)
+            except Exception:  # pragma: no cover - diagnostyka danych
+                _LOGGER.exception("PortfolioGovernor: błąd budowania metryk Market Intel")
+                snapshots: dict[str, MarketIntelSnapshot] = {}
+                for query in queries:
+                    try:
+                        snapshots[query.symbol] = market_intel.build_snapshot(query)
+                    except Exception:
+                        _LOGGER.debug(
+                            "Brak metryk Market Intel dla %s", query.symbol, exc_info=True
+                        )
+                return snapshots
+
+        def _allocation_provider() -> tuple[float, Mapping[str, float]]:
+            latest: dict[str, float] = {symbol: 0.0 for symbol in asset_symbols}
+            for _, signals in signal_sink.export():
+                for signal in signals:
+                    if signal.symbol not in latest:
+                        continue
+                    weight = signal.metadata.get("current_allocation")
+                    if weight is None:
+                        continue
+                    try:
+                        latest[signal.symbol] = float(weight)
+                    except (TypeError, ValueError):  # pragma: no cover - diagnostyka metadanych
+                        _LOGGER.debug(
+                            "Niepoprawna wartość current_allocation=%s dla %s",
+                            weight,
+                            signal.symbol,
+                            exc_info=True,
+                        )
+                        continue
+            return 1.0, latest
+
+        def _metadata_provider() -> Mapping[str, object]:
+            return {
+                "environment": environment_name,
+                "scheduler": resolved_scheduler_name,
+                "governor": governor_name,
+            }
+
+        portfolio_coordinator = PortfolioRuntimeCoordinator(
+            governor,
+            allocation_provider=_allocation_provider,
+            market_data_provider=_market_data_provider,
+            stress_override_provider=stress_provider,
+            slo_status_provider=slo_provider,
+            metadata_provider=_metadata_provider,
+        )
+        scheduler.attach_portfolio_coordinator(portfolio_coordinator)
 
     for schedule in scheduler_cfg.schedules:
         strategy = strategies.get(schedule.strategy)
@@ -728,6 +858,7 @@ def build_multi_strategy_runtime(
         signal_sink=signal_sink,
         strategies=strategies,
         schedules=tuple(scheduler_cfg.schedules),
+        portfolio_coordinator=portfolio_coordinator,
         portfolio_governor=portfolio_governor,
     )
 

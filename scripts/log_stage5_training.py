@@ -1,21 +1,33 @@
-"""Rejestracja warsztatów Stage5 wraz z podpisanym logiem i wpisem decision logu."""
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Stage5 Training – merged CLI (HEAD + main)
 
+Subcommands:
+  - report    : zapisuje podpisany raport szkolenia (pojedynczy JSON)
+  - register  : rejestruje warsztaty w JSONL + (opcjonalnie) decision logu
+"""
 from __future__ import annotations
 
 import argparse
+import base64
 import datetime as _dt
 import hashlib
 import json
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
-
+from typing import Any, Iterable, Mapping, Optional, Sequence, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+# --- HEAD branch API (pojedynczy raport + podpis Base64) ---
+from bot_core.compliance.training import TrainingSession, write_training_log
+
+# --- main branch utils (JSONL, decision log, artefakty, HMAC) ---
 from bot_core.security.signing import build_hmac_signature
 from deploy.packaging.build_core_bundle import (  # type: ignore
     _ensure_casefold_safe_tree,
@@ -23,125 +35,185 @@ from deploy.packaging.build_core_bundle import (  # type: ignore
     _ensure_windows_safe_tree,
 )
 
+# =====================================================================
+# Helpers wspólne
+# =====================================================================
+
+def _now_iso() -> str:
+    return _dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+
+
+# =====================================================================
+# Subcommand: report (HEAD)
+# =====================================================================
+
+def _decode_key_b64(value: str | None) -> bytes | None:
+    if not value:
+        return None
+    try:
+        return base64.b64decode(value, validate=True)
+    except Exception as exc:  # pragma: no cover
+        raise SystemExit(f"Niepoprawny klucz HMAC (Base64): {exc}")
+
+def _parse_csv_list(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+def _parse_actions(values: Sequence[str]) -> dict[str, str]:
+    actions: dict[str, str] = {}
+    for value in values:
+        if ":" in value:
+            key, _, rest = value.partition(":")
+            actions[key.strip()] = rest.strip()
+        else:
+            idx = len(actions) + 1
+            actions[f"action_{idx}"] = value.strip()
+    return actions
+
+def _parse_dt_iso(value: str) -> datetime:
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:  # pragma: no cover
+        raise SystemExit(f"Niepoprawna data ISO8601: {value!r} ({exc})")
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+def _resolve_key_report(args: argparse.Namespace) -> bytes | None:
+    if args.signing_key:
+        return _decode_key_b64(args.signing_key)
+    if args.signing_key_file:
+        return _decode_key_b64(Path(args.signing_key_file).read_text(encoding="utf-8"))
+    if args.signing_key_env:
+        value = os.environ.get(args.signing_key_env)
+        if value:
+            return _decode_key_b64(value)
+    return None
+
+def _resolve_output_report(args: argparse.Namespace) -> Path:
+    if args.output:
+        return Path(args.output)
+    base = Path("var/audit/stage5/training")
+    sanitized = args.session_id.replace("/", "-")
+    filename = f"training_{sanitized}.json"
+    return base / filename
+
+def _build_parser_report(sub: argparse._SubParsersAction) -> argparse.ArgumentParser:
+    p = sub.add_parser(
+        "report",
+        help="Zapis podpisanego raportu szkolenia (pojedynczy JSON)",
+        description="Zapisuje raport szkoleniowy Stage5 i opcjonalnie podpisuje go HMAC (Base64).",
+    )
+    p.add_argument("session_id", help="Identyfikator szkolenia (np. data lub numer sesji)")
+    p.add_argument("title", help="Temat szkolenia")
+    p.add_argument("trainer", help="Prowadzący szkolenie")
+    p.add_argument("--occurred-at", default=None, help="Znacznik czasu szkolenia w ISO8601 (domyślnie teraz)")
+    p.add_argument("--duration-minutes", type=float, default=90.0, help="Czas trwania (domyślnie 90)")
+    p.add_argument("--participants", help="Lista uczestników (CSV)")
+    p.add_argument("--topics", help="Lista tematów (CSV)")
+    p.add_argument("--materials", help="Materiały referencyjne (CSV)")
+    p.add_argument("--compliance-tags", help="Tagi zgodności (CSV, np. stage5,aml)")
+    p.add_argument("--summary", required=True, help="Podsumowanie kluczowych wniosków")
+    p.add_argument("--action", action="append", default=[], help="Działanie następcze w formacie klucz:opis (wiele razy)")
+    p.add_argument("--metadata", help="Dodatkowe metadane w formacie JSON")
+    p.add_argument("--output", default=None, help="Ścieżka docelowa raportu (domyślna wg session_id)")
+    p.add_argument("--signing-key", help="Klucz HMAC (Base64)")
+    p.add_argument("--signing-key-file", help="Plik z kluczem HMAC (Base64)")
+    p.add_argument("--signing-key-env", help="Zmienna środowiskowa z kluczem HMAC (Base64)")
+    p.add_argument("--signing-key-id", help="Identyfikator klucza podpisującego")
+    p.set_defaults(_handler=_handle_report)
+    return p
+
+def _handle_report(args: argparse.Namespace) -> int:
+    occurred_at = (
+        _parse_dt_iso(args.occurred_at)
+        if args.occurred_at
+        else datetime.now(timezone.utc).replace(microsecond=0)
+    )
+    participants = _parse_csv_list(args.participants)
+    topics = _parse_csv_list(args.topics)
+    materials = _parse_csv_list(args.materials)
+    tags = _parse_csv_list(args.compliance_tags)
+    actions = _parse_actions(args.action)
+    metadata = json.loads(args.metadata) if args.metadata else {}
+
+    session = TrainingSession(
+        session_id=args.session_id,
+        title=args.title,
+        trainer=args.trainer,
+        participants=participants,
+        topics=topics,
+        occurred_at=occurred_at,
+        duration_minutes=args.duration_minutes,
+        summary=args.summary,
+        actions=actions,
+        materials=materials,
+        compliance_tags=tags,
+        metadata=metadata,
+    )
+
+    signing_key = _resolve_key_report(args)
+    output = _resolve_output_report(args)
+    path = write_training_log(
+        session,
+        output=output,
+        signing_key=signing_key,
+        signing_key_id=args.signing_key_id,
+    )
+    print(json.dumps({"output": str(path), "signed": bool(signing_key)}, ensure_ascii=False))
+    return 0
+
+
+# =====================================================================
+# Subcommand: register (main)
+# =====================================================================
 
 DEFAULT_LOG_PATH = REPO_ROOT / "var/audit/training/stage5_training_log.jsonl"
 
+def _parse_args_register(sub: argparse._SubParsersAction) -> argparse.ArgumentParser:
+    p = sub.add_parser(
+        "register",
+        help="Rejestruje warsztaty (JSONL + opcjonalny decision log)",
+        description="Rejestracja warsztatów Stage5 – log szkoleniowy JSONL oraz wpis w decision logu (z HMAC).",
+    )
+    p.add_argument("--log-path", default=str(DEFAULT_LOG_PATH), help="Plik JSONL z logiem szkoleń Stage5")
+    p.add_argument("--training-date", help="Data szkolenia (YYYY-MM-DD); domyślnie dzisiejsza data UTC")
+    p.add_argument("--start-time", help="Godzina rozpoczęcia (HH:MM, czas lokalny)")
+    p.add_argument("--duration-minutes", type=int, default=210, help="Czas trwania w minutach (domyślnie 210)")
+    p.add_argument("--session-id", help="Niestandardowy identyfikator sesji")
 
-def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description=(
-            "Rejestruje warsztaty Stage5 – zapisuje log szkolenia oraz wpis w decision logu."
-        )
-    )
+    p.add_argument("--facilitator", required=True, help="Prowadzący warsztat")
+    p.add_argument("--location", required=True, help="Lokalizacja (np. sala, call)")
+    p.add_argument("--participant", action="append", dest="participants", default=[], help="Uczestnik (wiele razy)")
+    p.add_argument("--topic", action="append", dest="topics", default=[], help="Temat/sekcja (wiele razy)")
+    p.add_argument("--material", action="append", dest="materials", default=[], help="Materiał (wiele razy)")
+    p.add_argument("--artifact", action="append", dest="artifacts", default=[], help="Ścieżka artefaktu (wiele razy)")
+    p.add_argument("--notes", help="Dodatkowe uwagi/wnioski")
 
-    parser.add_argument(
-        "--log-path",
-        default=str(DEFAULT_LOG_PATH),
-        help="Ścieżka do pliku JSONL z logiem szkoleń Stage5",
-    )
-    parser.add_argument(
-        "--training-date",
-        help="Data szkolenia (YYYY-MM-DD); domyślnie dzisiejsza data w UTC",
-    )
-    parser.add_argument(
-        "--start-time",
-        help="Opcjonalna godzina rozpoczęcia szkolenia (HH:MM, czas lokalny)",
-    )
-    parser.add_argument(
-        "--duration-minutes",
-        type=int,
-        default=210,
-        help="Czas trwania szkolenia w minutach (domyślnie 210 = 3,5 h)",
-    )
-    parser.add_argument("--session-id", help="Niestandardowy identyfikator sesji szkoleniowej")
+    p.add_argument("--log-hmac-key", help="Klucz HMAC (inline) do podpisania wpisu logu szkoleniowego")
+    p.add_argument("--log-hmac-key-file", help="Plik z kluczem HMAC do podpisania wpisu logu szkoleniowego")
 
-    parser.add_argument("--facilitator", required=True, help="Prowadzący warsztat")
-    parser.add_argument("--location", required=True, help="Lokalizacja (np. sala, call)")
-    parser.add_argument(
-        "--participant",
-        action="append",
-        dest="participants",
-        default=[],
-        help="Uczestnik warsztatu (podaj wiele razy)",
-    )
-    parser.add_argument(
-        "--topic",
-        action="append",
-        dest="topics",
-        default=[],
-        help="Dodatkowy temat/sekcja przerobiona podczas warsztatu",
-    )
-    parser.add_argument(
-        "--material",
-        action="append",
-        dest="materials",
-        default=[],
-        help="Materiał udostępniony uczestnikom (np. link, dokument)",
-    )
-    parser.add_argument(
-        "--artifact",
-        action="append",
-        dest="artifacts",
-        default=[],
-        help="Ścieżka do artefaktu (np. PDF, nagranie) dołączonego do logu",
-    )
-    parser.add_argument("--notes", help="Dodatkowe uwagi lub wnioski po warsztacie")
+    p.add_argument("--decision-log-path", help="Ścieżka do decision logu JSONL")
+    p.add_argument("--decision-log-hmac-key", help="Klucz HMAC (inline) dla decision logu")
+    p.add_argument("--decision-log-hmac-key-file", help="Plik z kluczem HMAC dla decision logu")
+    p.add_argument("--decision-log-key-id", help="Id klucza użytego do podpisu wpisu decision logu")
+    p.add_argument("--decision-log-category", default="stage5_training", help="Kategoria decision logu")
+    p.add_argument("--decision-log-notes", help="Notatka dołączana do wpisu decision logu")
+    p.add_argument("--decision-log-allow-unsigned", action="store_true", help="Pozwól na wpis bez HMAC")
 
-    parser.add_argument(
-        "--log-hmac-key",
-        help="Klucz HMAC (inline) do podpisania wpisu w logu szkoleniowym",
-    )
-    parser.add_argument(
-        "--log-hmac-key-file",
-        help="Plik z kluczem HMAC do podpisania wpisu w logu szkoleniowym",
-    )
-
-    parser.add_argument("--decision-log-path", help="Ścieżka do decision logu JSONL")
-    parser.add_argument(
-        "--decision-log-hmac-key",
-        help="Klucz HMAC (inline) do podpisania wpisu decision logu",
-    )
-    parser.add_argument(
-        "--decision-log-hmac-key-file",
-        help="Plik z kluczem HMAC decision logu",
-    )
-    parser.add_argument(
-        "--decision-log-key-id",
-        help="Identyfikator klucza użytego do podpisania wpisu decision logu",
-    )
-    parser.add_argument(
-        "--decision-log-category",
-        default="stage5_training",
-        help="Kategoria wpisu decision logu (domyślnie stage5_training)",
-    )
-    parser.add_argument(
-        "--decision-log-notes",
-        help="Notatka dołączana do wpisu decision logu",
-    )
-    parser.add_argument(
-        "--decision-log-allow-unsigned",
-        action="store_true",
-        help="Pozwól na wpis decision logu bez podpisu HMAC",
-    )
-
-    parser.add_argument(
-        "--print-entry",
-        action="store_true",
-        help="Wyświetl wygenerowany wpis na stdout",
-    )
-
-    return parser.parse_args(argv)
-
+    p.add_argument("--print-entry", action="store_true", help="Wypisz wygenerowany wpis na stdout")
+    p.set_defaults(_handler=_handle_register)
+    return p
 
 def _parse_date(value: str | None) -> str:
     if not value:
         return _dt.datetime.utcnow().date().isoformat()
     try:
         parsed = _dt.datetime.strptime(value, "%Y-%m-%d").date()
-    except ValueError as exc:  # pragma: no cover - defensive
+    except ValueError as exc:  # pragma: no cover
         raise ValueError("Data szkolenia musi mieć format YYYY-MM-DD") from exc
     return parsed.isoformat()
-
 
 def _parse_time(value: str | None) -> str | None:
     if value is None:
@@ -151,7 +223,6 @@ def _parse_time(value: str | None) -> str | None:
     except ValueError as exc:
         raise ValueError("Godzina rozpoczęcia musi mieć format HH:MM") from exc
     return value
-
 
 def _normalize_unique(items: Iterable[str], *, label: str) -> list[str]:
     normalized: list[str] = []
@@ -167,7 +238,6 @@ def _normalize_unique(items: Iterable[str], *, label: str) -> list[str]:
         normalized.append(item)
     return normalized
 
-
 def _sha256_digest(path: Path) -> dict[str, Any]:
     digest = hashlib.sha256()
     size = 0
@@ -179,6 +249,11 @@ def _sha256_digest(path: Path) -> dict[str, Any]:
             digest.update(chunk)
     return {"sha256": digest.hexdigest(), "size_bytes": size}
 
+def _relative_or_absolute(path: Path) -> str:
+    try:
+        return str(path.relative_to(REPO_ROOT))
+    except ValueError:
+        return str(path)
 
 def _prepare_artifacts(paths: Sequence[str]) -> dict[str, Mapping[str, Any]]:
     artifacts: dict[str, Mapping[str, Any]] = {}
@@ -195,19 +270,9 @@ def _prepare_artifacts(paths: Sequence[str]) -> dict[str, Mapping[str, Any]]:
         artifacts[label] = _sha256_digest(resolved)
     return artifacts
 
-
-def _relative_or_absolute(path: Path) -> str:
-    try:
-        return str(path.relative_to(REPO_ROOT))
-    except ValueError:
-        return str(path)
-
-
-def _load_hmac_key(inline: str | None, file_path: str | None, *, label: str) -> bytes | None:
+def _load_hmac_key_inline_or_file(inline: str | None, file_path: str | None, *, label: str) -> bytes | None:
     if inline and file_path:
-        raise ValueError(
-            f"Podaj klucz {label} jako parametr inline lub plik – nie jednocześnie"
-        )
+        raise ValueError(f"Podaj klucz {label} inline lub jako plik – nie jednocześnie")
     if inline:
         key = inline.encode("utf-8")
     elif file_path:
@@ -219,17 +284,13 @@ def _load_hmac_key(inline: str | None, file_path: str | None, *, label: str) -> 
         if os.name != "nt":
             mode = resolved.stat().st_mode
             if mode & 0o077:
-                raise ValueError(
-                    f"Plik klucza {label} musi mieć uprawnienia maks. 600"
-                )
+                raise ValueError(f"Plik klucza {label} musi mieć uprawnienia maks. 600")
         key = resolved.read_bytes()
     else:
         return None
-
     if len(key) < 32:
         raise ValueError(f"Klucz {label} musi mieć co najmniej 32 bajty")
     return key
-
 
 def _prepare_log_path(path: str) -> Path:
     log_path = Path(path).expanduser()
@@ -239,18 +300,7 @@ def _prepare_log_path(path: str) -> Path:
     _ensure_windows_safe_tree(log_path, label="Plik logu szkoleniowego")
     return log_path.resolve()
 
-
-def _now_iso() -> str:
-    return _dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
-
-
-def _derive_session_id(
-    *,
-    explicit: str | None,
-    training_date: str,
-    facilitator: str,
-    recorded_at: str,
-) -> str:
+def _derive_session_id(*, explicit: str | None, training_date: str, facilitator: str, recorded_at: str) -> str:
     if explicit:
         cleaned = explicit.strip()
         if not cleaned:
@@ -262,11 +312,9 @@ def _derive_session_id(
     digest.update(recorded_at.encode("utf-8"))
     return f"stage5-training-{digest.hexdigest()[:12]}"
 
-
 def _append_jsonl(path: Path, payload: Mapping[str, Any]) -> None:
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
-
 
 def _append_decision_log(
     *,
@@ -302,10 +350,7 @@ def _append_decision_log(
     _ensure_windows_safe_tree(target, label="Decision log")
     _append_jsonl(target, entry)
 
-
-def run(argv: Sequence[str] | None = None) -> int:
-    args = _parse_args(argv)
-
+def _handle_register(args: argparse.Namespace) -> int:
     training_date = _parse_date(args.training_date)
     start_time = _parse_time(args.start_time)
     facilitator = args.facilitator.strip()
@@ -321,7 +366,6 @@ def run(argv: Sequence[str] | None = None) -> int:
 
     topics = _normalize_unique(args.topics, label="Tematy warsztatu") if args.topics else []
     materials = _normalize_unique(args.materials, label="Materiały warsztatowe") if args.materials else []
-
     artifacts = _prepare_artifacts(args.artifacts)
 
     recorded_at = _now_iso()
@@ -332,8 +376,8 @@ def run(argv: Sequence[str] | None = None) -> int:
         recorded_at=recorded_at,
     )
 
-    log_key = _load_hmac_key(args.log_hmac_key, args.log_hmac_key_file, label="logu szkoleniowego")
-    decision_key = _load_hmac_key(
+    log_key = _load_hmac_key_inline_or_file(args.log_hmac_key, args.log_hmac_key_file, label="logu szkoleniowego")
+    decision_key = _load_hmac_key_inline_or_file(
         args.decision_log_hmac_key,
         args.decision_log_hmac_key_file,
         label="decision logu",
@@ -354,7 +398,6 @@ def run(argv: Sequence[str] | None = None) -> int:
         "artifacts": artifacts,
         "notes": args.notes or "",
     }
-    # Usuń puste pola, aby podpis obejmował tylko wypełnione informacje
     entry_payload = {k: v for k, v in entry_payload.items() if v not in (None, [], "")}
 
     if log_key is not None:
@@ -397,13 +440,28 @@ def run(argv: Sequence[str] | None = None) -> int:
 
     if args.print_entry:
         print(json.dumps(entry_with_sig, ensure_ascii=False, indent=2, sort_keys=True))
-
+    else:
+        print(json.dumps({"log_path": str(log_path), "session_id": session_id}, ensure_ascii=False))
     return 0
 
 
-def main() -> None:  # pragma: no cover - deleguje do run()
-    sys.exit(run())
+# =====================================================================
+# Entrypoint
+# =====================================================================
 
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Stage5 Training – merged CLI (report + register)"
+    )
+    sub = parser.add_subparsers(dest="_cmd", metavar="{report|register}", required=True)
+    _build_parser_report(sub)
+    _parse_args_register(sub)
+    return parser
 
-if __name__ == "__main__":  # pragma: no cover - punkt wejścia CLI
-    main()
+def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    return args._handler(args)
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())

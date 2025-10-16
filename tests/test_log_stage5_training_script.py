@@ -11,8 +11,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from bot_core.security.signing import build_hmac_signature
-from scripts.log_stage5_training import run as log_training
+from bot_core.security.signing import build_hmac_signature  # noqa: E402
+from scripts.log_stage5_training import run as log_training  # noqa: E402
 
 
 def _write_key(path: Path) -> bytes:
@@ -28,7 +28,56 @@ def _read_jsonl(path: Path) -> list[dict[str, object]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
 
 
+def test_log_stage5_training_writes_signed_file(tmp_path: Path) -> None:
+    """
+    Zastępuje starszy test z HEAD: weryfikuje, że narzędzie zapisuje
+    podpisany wpis szkoleniowy (JSONL) – sprawdzamy strukturę i algorytm.
+    """
+    training_log = tmp_path / "var" / "audit" / "training" / "stage5.jsonl"
+    log_key_path = tmp_path / "keys" / "training.key"
+    _write_key(log_key_path)
+
+    exit_code = log_training(
+        [
+            "--log-path",
+            str(training_log),
+            "--training-date",
+            "2024-05-18",
+            "--start-time",
+            "10:00",
+            "--duration-minutes",
+            "90",
+            "--facilitator",
+            "Anna Trainer",
+            "--location",
+            "Sala 101",
+            "--participant",
+            "Anna",
+            "--participant",
+            "Bob",
+            "--topic",
+            "Stage5",
+            "--topic",
+            "Compliance",
+            "--log-hmac-key-file",
+            str(log_key_path),
+        ]
+    )
+    assert exit_code == 0
+    assert training_log.is_file()
+
+    entries = _read_jsonl(training_log)
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry["participants"] == ["Anna", "Bob"]
+    assert "signature" in entry and isinstance(entry["signature"], dict)
+    assert entry["signature"]["algorithm"] == "HMAC-SHA256"
+
+
 def test_log_stage5_training_end_to_end(tmp_path: Path) -> None:
+    """
+    Pełny scenariusz z 'main': log szkoleniowy + wpis decision logu, oba z podpisami.
+    """
     training_log = tmp_path / "var" / "audit" / "training" / "stage5.jsonl"
     decision_log = tmp_path / "var" / "audit" / "decisions" / "stage5.jsonl"
     log_key_path = tmp_path / "keys" / "training.key"

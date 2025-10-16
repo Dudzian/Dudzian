@@ -1,0 +1,35 @@
+groups:
+  - name: stage6-resilience
+    interval: 1m
+    rules:
+      - alert: Stage6SLODegradation
+        expr: stage6_slo_error_budget_remaining < 0.05
+        for: 5m
+        labels:
+          severity: critical
+          stage: stage6
+        annotations:
+          summary: "Stage6: Budżet błędów SLO jest na wyczerpaniu"
+          description: |
+            Pozostały budżet błędów SLO spadł poniżej 5%. PortfolioGovernor powinien ograniczyć ekspozycję.
+      - alert: Stage6FailoverDrillStale
+        expr: time() - stage6_failover_last_success_timestamp > 86400
+        for: 10m
+        labels:
+          severity: warning
+          stage: stage6
+        annotations:
+          summary: "Stage6: Ćwiczenie failover nie było wykonywane w ciągu 24h"
+          description: |
+            Ostatni udany failover drill był ponad 24 godziny temu. Zaplanuj ponowne uruchomienie.
+      - alert: Stage6ObservabilityBundleLagging
+        expr: time() - stage6_observability_bundle_generated_timestamp > 43200
+        for: 10m
+        labels:
+          severity: warning
+          stage: stage6
+        annotations:
+          summary: "Stage6: Paczka obserwowalności jest przeterminowana"
+          description: |
+            Paczka obserwowalności Stage6 nie była regenerowana od ponad 12 godzin. Uruchom eksport.
+

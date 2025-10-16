@@ -1,76 +1,90 @@
-"""Build signed observability bundles for Grafana dashboards and alert rules.
-
-The Stage4 release pipeline requires shipping a reproducible package that
-contains the Grafana dashboards and Prometheus alert definitions used by the
-multi-strategy runtime.  This script assembles the artefacts into a tarball,
-generates a manifest with file metadata and signs it using the same HMAC
-mechanism as the OEM bundle builders.
-
-The resulting archive is suitable for offline deployment – operators can copy
-the tarball to the observability host, verify the manifest signature and then
-extract the dashboards/alerts into the provisioning directories described in
-the Stage4 runbooks.
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
+Buduje podpisane paczki obserwowalności (Grafana + Prometheus) dla Stage6.
 
+Tryby:
+- builder: używa bot_core.observability.bundle.ObservabilityBundleBuilder (jeśli dostępny).
+- fallback: samodzielnie pakuje pliki do tar.gz, generuje manifest i podpis HMAC.
+
+Argumenty z obu światów są zachowane:
+- --source kategoria=ścieżka (domyślnie dashboards/alerts z repo)
+- --include/--exclude (glob)
+- --bundle-name oraz --version (dla nazwy artefaktu)
+- HMAC: --hmac-key / --hmac-key-file / --hmac-key-env / --hmac-key-id
+- overrides: --overrides (JSON Stage6) – z podsumowaniem w metadanych
+"""
 from __future__ import annotations
 
 import argparse
 import datetime as _dt
 import hashlib
+import hmac
 import json
 import logging
 import os
 import shutil
 import stat
-import subprocess
 import sys
 import tarfile
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Dict, List, Mapping, Optional, Sequence
-
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+# --- Próbujemy API „HEAD”
+try:  # pragma: no cover
+    from bot_core.observability import (
+        AlertOverrideManager,
+        load_overrides_document,
+    )
+    from bot_core.observability.bundle import (
+        AssetSource,
+        ObservabilityBundleBuilder,
+    )
 
-from deploy.packaging.build_core_bundle import (  # type: ignore  # noqa: E402
-    SignatureManager,
-    _ensure_casefold_safe_tree,
-    _ensure_no_symlinks,
-    _ensure_windows_safe_component,
-    _ensure_windows_safe_tree,
-    _validate_bundle_version,
+    _HAS_BUILDER = True
+except Exception:  # pragma: no cover
+    AssetSource = None  # type: ignore
+    ObservabilityBundleBuilder = None  # type: ignore
+    AlertOverrideManager = None  # type: ignore
+    load_overrides_document = None  # type: ignore
+    _HAS_BUILDER = False
+
+# --- Próbujemy pomocników „main”
+try:  # pragma: no cover
+    from deploy.packaging.build_core_bundle import (  # type: ignore
+        SignatureManager,
+        _ensure_casefold_safe_tree,
+        _ensure_no_symlinks,
+        _ensure_windows_safe_component,
+        _ensure_windows_safe_tree,
+        _validate_bundle_version,
+    )
+    _HAS_SIG_MANAGER = True
+except Exception:  # pragma: no cover
+    SignatureManager = None  # type: ignore
+    _HAS_SIG_MANAGER = False
+
+_LOGGER = logging.getLogger("stage6.observability.bundle")
+
+DEFAULT_SOURCES = (
+    ("dashboards", REPO_ROOT / "deploy" / "grafana" / "provisioning" / "dashboards"),
+    ("alerts", REPO_ROOT / "deploy" / "prometheus"),
 )
 
-
-DEFAULT_DASHBOARD_DIRS = [
-    REPO_ROOT / "deploy" / "grafana" / "provisioning" / "dashboards"
-]
-DEFAULT_ALERT_RULES = [
-    REPO_ROOT / "deploy" / "prometheus" / "rules" / "multi_strategy_rules.yml",
-    REPO_ROOT / "deploy" / "prometheus" / "stage5_alerts.yaml",
-    REPO_ROOT / "deploy" / "prometheus" / "stage6_alerts.yaml",
-]
-ARCHIVE_PREFIX = "observability-bundle"
-
-
-@dataclass(frozen=True)
-class ObservabilityAsset:
-    """Represents a dashboard or alert file included in the bundle."""
-
-    virtual_path: PurePosixPath
-    source: Path
-    kind: str
-
-
-def _now_utc() -> str:
+# ------------------------- Utils wspólne -------------------------
+def _now_utc_iso() -> str:
     return _dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
 
 
 def _git_revision() -> Optional[str]:
+    import subprocess
+
     try:
         output = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO_ROOT)
     except (FileNotFoundError, subprocess.CalledProcessError):
@@ -78,26 +92,161 @@ def _git_revision() -> Optional[str]:
     return output.decode("ascii").strip()
 
 
+def _parse_metadata(values: list[str] | None) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    if not values:
+        return metadata
+    for item in values:
+        if "=" not in item:
+            raise ValueError("Metadane muszą mieć format klucz=wartość")
+        key, value = item.split("=", 1)
+        key = key.strip()
+        if not key:
+            raise ValueError("Klucz metadanych nie może być pusty")
+        metadata[key] = value.strip()
+    return metadata
+
+
+@dataclass(frozen=True)
+class _SourceDecl:
+    category: str
+    root: Path
+
+
+def _parse_sources(values: list[str] | None) -> list[_SourceDecl]:
+    if values:
+        out: list[_SourceDecl] = []
+        for item in values:
+            if "=" not in item:
+                raise ValueError("Źródło musi mieć format kategoria=ścieżka")
+            category, raw_path = item.split("=", 1)
+            category = category.strip()
+            if not category:
+                raise ValueError("Kategoria źródła nie może być pusta")
+            out.append(_SourceDecl(category=category, root=Path(raw_path.strip())))
+        return out
+    return [ _SourceDecl(category=c, root=p) for c, p in DEFAULT_SOURCES ]
+
+
+def _load_hmac_key(args: argparse.Namespace) -> tuple[bytes | None, str | None]:
+    inline = args.hmac_key
+    file_path = args.hmac_key_file
+    env_name = args.hmac_key_env
+    key_id = args.hmac_key_id
+
+    if inline and file_path:
+        raise ValueError("Podaj klucz HMAC jako wartość lub plik, nie oba jednocześnie")
+
+    if inline:
+        key = inline.encode("utf-8")
+    elif file_path:
+        path = Path(file_path).expanduser()
+        if not path.is_file():
+            raise ValueError(f"Plik klucza HMAC nie istnieje: {path}")
+        if os.name != "nt":
+            mode = path.stat().st_mode
+            if mode & 0o077:
+                raise ValueError("Plik klucza HMAC powinien mieć uprawnienia maks. 600")
+        key = path.read_bytes()
+    elif env_name:
+        value = os.getenv(env_name)
+        if not value:
+            raise ValueError(f"Zmienna środowiskowa {env_name} nie zawiera klucza HMAC")
+        key = value.encode("utf-8")
+    else:
+        return None, None
+
+    if len(key) < 16:
+        raise ValueError("Klucz HMAC powinien mieć co najmniej 16 bajtów")
+    return key, key_id
+
+
 def _ensure_parent(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
 
-def _load_signing_key(path: Path) -> bytes:
-    _ensure_no_symlinks(path, label="Signing key path")
-    resolved = path.resolve()
-    _ensure_windows_safe_tree(resolved, label="Signing key path")
-    if not resolved.is_file():
-        raise ValueError(f"Signing key path must reference a file: {resolved}")
-    if os.name != "nt":
-        mode = resolved.stat().st_mode
-        if mode & (stat.S_IRWXG | stat.S_IRWXO):
-            raise ValueError(
-                "Signing key permissions are too permissive; expected 600-style access"
-            )
-    return resolved.read_bytes()
+def _glob_match_any(path: str, patterns: Sequence[str] | None) -> bool:
+    if not patterns:
+        return True
+    from fnmatch import fnmatch
+    return any(fnmatch(path, pat) for pat in patterns)
 
 
-def _validate_target_directory(path: Path) -> Path:
+def _sha256_of(path: Path) -> str:
+    d = hashlib.sha256()
+    with path.open("rb") as h:
+        for chunk in iter(lambda: h.read(1024 * 1024), b""):
+            d.update(chunk)
+    return d.hexdigest()
+
+
+# ------------------------- Tryb 1: Builder jeśli jest -------------------------
+def _run_with_builder(args: argparse.Namespace) -> dict[str, Any]:
+    assert ObservabilityBundleBuilder is not None  # for type-checkers
+    assert AssetSource is not None
+
+    sources = [
+        AssetSource(category=decl.category, root=decl.root)
+        for decl in _parse_sources(args.source)
+    ]
+    include = args.include or ["stage6*", "**/stage6*"]
+    metadata = _parse_metadata(args.metadata)
+
+    if args.overrides:
+        overrides_path = Path(args.overrides)
+        overrides_data = json.loads(overrides_path.read_text(encoding="utf-8"))
+        if load_overrides_document and AlertOverrideManager:
+            overrides = load_overrides_document(overrides_data)
+            overrides_manager = AlertOverrideManager(overrides)
+            overrides_manager.prune_expired()
+            overrides_payload = overrides_manager.to_payload()
+            metadata["alert_overrides"] = {
+                "path": overrides_path.as_posix(),
+                "summary": overrides_payload.get("summary"),
+                "annotations": overrides_payload.get("annotations"),
+            }
+        else:
+            metadata["alert_overrides_path"] = overrides_path.as_posix()
+
+    signing_key, key_id = _load_hmac_key(args)
+
+    # Wersja w nazwie paczki (jeśli podano)
+    bundle_name = args.bundle_name
+    if args.version:
+        bundle_name = f"{bundle_name}-{args.version}"
+
+    builder = ObservabilityBundleBuilder(
+        sources,
+        include=include,
+        exclude=args.exclude or None,
+    )
+    artifacts = builder.build(
+        bundle_name=bundle_name,
+        output_dir=Path(args.output_dir),
+        metadata=metadata,
+        signing_key=signing_key,
+        signing_key_id=key_id,
+    )
+    summary = {
+        "bundle": artifacts.bundle_path.as_posix(),
+        "manifest": artifacts.manifest_path.as_posix(),
+        "files": artifacts.manifest.get("file_count"),
+        "size_bytes": artifacts.manifest.get("total_size_bytes"),
+    }
+    if artifacts.signature_path:
+        summary["signature"] = artifacts.signature_path.as_posix()
+    return summary
+
+
+# --------------------- Tryb 2: fallback samodzielny ---------------------
+@dataclass(frozen=True)
+class _Asset:
+    virtual_path: PurePosixPath
+    source: Path
+    kind: str  # "dashboard" | "alert" | "asset"
+
+
+def _validate_out_dir(path: Path) -> Path:
     path = path.expanduser()
     if path.exists():
         if path.is_symlink():
@@ -109,285 +258,272 @@ def _validate_target_directory(path: Path) -> Path:
     return path
 
 
-def _collect_dashboard_files(
-    directories: Sequence[Path], additional_files: Sequence[Path]
-) -> List[ObservabilityAsset]:
-    assets: List[ObservabilityAsset] = []
-    seen: Dict[str, PurePosixPath] = {}
-
-    def add_asset(source: Path, *, prefix: str) -> None:
-        _ensure_no_symlinks(source, label=f"{prefix} source")
-        resolved = source.resolve()
-        _ensure_windows_safe_tree(resolved, label=f"{prefix} source")
-        if not resolved.exists():
-            raise FileNotFoundError(f"{prefix} not found: {resolved}")
-        if resolved.is_dir():
-            _ensure_casefold_safe_tree(resolved, label=f"{prefix} directory")
-            raise ValueError(f"{prefix} path must be a file, not a directory: {resolved}")
-        name = resolved.name
-        _ensure_windows_safe_component(component=name, label=f"{prefix} name", context=name)
-        virtual_path = PurePosixPath("dashboards") / name
-        key = virtual_path.as_posix().casefold()
-        if key in seen:
-            raise ValueError(
-                f"Duplicate dashboard entry detected: {virtual_path} clashes with {seen[key]}"
-            )
-        seen[key] = virtual_path
-        assets.append(
-            ObservabilityAsset(virtual_path=virtual_path, source=resolved, kind="dashboard")
-        )
-
-    for directory in directories:
-        resolved = directory.resolve()
-        if not resolved.exists():
-            raise FileNotFoundError(f"Dashboard directory does not exist: {resolved}")
-        if not resolved.is_dir():
-            raise ValueError(f"Dashboard directory must be a directory: {resolved}")
-        _ensure_no_symlinks(resolved, label="Dashboard directory")
-        _ensure_windows_safe_tree(resolved, label="Dashboard directory")
-        _ensure_casefold_safe_tree(resolved, label="Dashboard directory")
-        for candidate in sorted(resolved.glob("*.json")):
-            add_asset(candidate, prefix="Dashboard file")
-
-    for file_path in additional_files:
-        add_asset(file_path, prefix="Dashboard file")
-
-    if not assets:
-        raise ValueError("No dashboards were discovered; specify --dashboard or --dashboards-dir")
-    return assets
-
-
-def _collect_alert_files(files: Sequence[Path]) -> List[ObservabilityAsset]:
-    assets: List[ObservabilityAsset] = []
-    seen: Dict[str, PurePosixPath] = {}
-
-    for file_path in files:
-        _ensure_no_symlinks(file_path, label="Alert rule path")
-        resolved = file_path.resolve()
-        _ensure_windows_safe_tree(resolved, label="Alert rule path")
-        if not resolved.exists():
-            raise FileNotFoundError(f"Alert rule does not exist: {resolved}")
-        if resolved.is_dir():
-            _ensure_casefold_safe_tree(resolved, label="Alert rule directory")
-            raise ValueError(f"Alert rule path must be a file: {resolved}")
-        name = resolved.name
-        _ensure_windows_safe_component(
-            component=name, label="Alert rule name", context=name
-        )
-        virtual_path = PurePosixPath("alert_rules") / name
-        key = virtual_path.as_posix().casefold()
-        if key in seen:
-            raise ValueError(
-                f"Duplicate alert rule entry detected: {virtual_path} clashes with {seen[key]}"
-            )
-        seen[key] = virtual_path
-        assets.append(
-            ObservabilityAsset(virtual_path=virtual_path, source=resolved, kind="alert_rule")
-        )
-
-    if not assets:
-        raise ValueError("At least one alert rule file must be provided")
-    return assets
-
-
-def _compute_sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _build_manifest(
-    *,
-    version: str,
-    assets: Sequence[ObservabilityAsset],
-    staging_root: Path,
-    dashboard_entries: Sequence[str],
-    alert_entries: Sequence[str],
-) -> Mapping[str, object]:
-    files: List[Mapping[str, object]] = []
-    for asset in assets:
-        target = staging_root / asset.virtual_path.as_posix()
-        files.append(
-            {
-                "path": asset.virtual_path.as_posix(),
-                "kind": asset.kind,
-                "sha256": _compute_sha256(target),
-                "size_bytes": target.stat().st_size,
-            }
-        )
-
-    manifest: Dict[str, object] = {
-        "version": version,
-        "generated_at": _now_utc(),
-        "files": sorted(files, key=lambda entry: entry["path"]),
-        "dashboards": list(dashboard_entries),
-        "alert_rules": list(alert_entries),
-    }
-
-    revision = _git_revision()
-    if revision:
-        manifest["git_revision"] = revision
-    return manifest
-
-
-def _tar_directory(source: Path, destination: Path) -> None:
-    with tarfile.open(destination, "w:gz") as archive:
-        archive.add(source, arcname=".")
-
-
-def build_observability_bundle(
-    *,
-    version: str,
-    dashboards: Sequence[Path],
-    alerts: Sequence[Path],
-    output_dir: Path,
-    signing_key: bytes,
-    digest_algorithm: str = "sha384",
-    key_id: Optional[str] = None,
-    logger: Optional[logging.Logger] = None,
-) -> Path:
-    log = logger or logging.getLogger("observability_bundle")
-    version = _validate_bundle_version(version)
-
-    output_dir = _validate_target_directory(output_dir)
-    archive_name = f"{ARCHIVE_PREFIX}-{version}.tar.gz"
-    archive_path = output_dir / archive_name
-    if archive_path.exists():
-        raise FileExistsError(f"Bundle already exists: {archive_path}")
-
-    dashboards = [path.expanduser() for path in dashboards]
-    alerts = [path.expanduser() for path in alerts]
-
-    dashboard_dirs: List[Path] = []
-    dashboard_files: List[Path] = []
-    for candidate in dashboards:
-        if candidate.is_dir():
-            dashboard_dirs.append(candidate)
+def _safe_tree_checks(path: Path, label: str) -> None:
+    # Jeżeli mamy helpery z „main”, używamy ich. W przeciwnym razie lekkie sprawdzenia lokalne.
+    if _HAS_SIG_MANAGER:
+        _ensure_no_symlinks(path, label=label)
+        _ensure_windows_safe_tree(path, label=label)
+        if path.is_dir():
+            _ensure_casefold_safe_tree(path, label=label)
         else:
-            dashboard_files.append(candidate)
+            _ensure_windows_safe_component(component=path.name, label=label, context=path.name)
+    else:
+        if path.is_symlink():
+            raise ValueError(f"{label}: symlinki są zabronione: {path}")
 
-    dashboard_assets = _collect_dashboard_files(dashboard_dirs, dashboard_files)
-    alert_assets = _collect_alert_files(alerts)
-    assets = dashboard_assets + alert_assets
 
+def _collect_assets_fallback(
+    sources: Sequence[_SourceDecl],
+    *,
+    include: Sequence[str] | None,
+    exclude: Sequence[str] | None,
+) -> list[_Asset]:
+    assets: list[_Asset] = []
+    seen: set[str] = set()
+
+    def _should_take(rel: str) -> bool:
+        if not _glob_match_any(rel, include):
+            return False
+        if exclude and _glob_match_any(rel, exclude):
+            return False
+        return True
+
+    for decl in sources:
+        root = decl.root
+        _safe_tree_checks(root, label=f"{decl.category} root")
+        if not root.exists():
+            raise FileNotFoundError(f"Nie znaleziono ścieżki źródłowej: {root}")
+        if root.is_file():
+            rel = root.name
+            if not _should_take(rel):
+                continue
+            kind = "dashboard" if decl.category.lower().startswith("dash") else (
+                "alert" if decl.category.lower().startswith("alert") else "asset"
+            )
+            virt = PurePosixPath(decl.category) / root.name
+            key = virt.as_posix().casefold()
+            if key in seen:
+                raise ValueError(f"Duplikat w paczce: {virt}")
+            seen.add(key)
+            assets.append(_Asset(virt, root, kind))
+            continue
+
+        for candidate in sorted(root.rglob("*")):
+            if candidate.is_dir():
+                continue
+            rel = candidate.relative_to(root).as_posix()
+            if not _should_take(rel):
+                continue
+            kind = "dashboard" if decl.category.lower().startswith("dash") else (
+                "alert" if decl.category.lower().startswith("alert") else "asset"
+            )
+            virt = PurePosixPath(decl.category) / PurePosixPath(rel).name
+            key = virt.as_posix().casefold()
+            if key in seen:
+                raise ValueError(f"Duplikat w paczce: {virt}")
+            seen.add(key)
+            _safe_tree_checks(candidate, label=f"{decl.category} file")
+            assets.append(_Asset(virt, candidate.resolve(), kind))
+    if not assets:
+        raise ValueError("Nie wykryto żadnych plików do spakowania (sprawdź --include/--exclude)")
+    return assets
+
+
+def _sign_manifest_fallback(
+    manifest_path: Path, *, key: bytes, algorithm: str = "sha256", key_id: str | None = None
+) -> Path:
+    alg = algorithm.lower().replace("hmac-", "")
+    if alg not in {"sha256", "sha384", "sha512"}:
+        alg = "sha256"
+    digest = hmac.new(key, manifest_path.read_bytes(), getattr(hashlib, alg)).hexdigest()
+    doc = {
+        "schema": "stage6.observability.signature",
+        "signed_at": _now_utc_iso(),
+        "algorithm": f"HMAC-{alg.upper()}",
+        "key_id": key_id,
+        "target": "manifest.json",
+        "digest": digest,
+    }
+    sig_path = manifest_path.with_suffix(".sig")
+    sig_path.write_text(json.dumps(doc, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return sig_path
+
+
+def _write_tar_gz(source_dir: Path, dest: Path) -> None:
+    with tarfile.open(dest, "w:gz") as tar:
+        tar.add(source_dir, arcname=".")
+
+
+def _run_fallback(args: argparse.Namespace) -> dict[str, Any]:
+    # Wejście
+    out_dir = _validate_out_dir(Path(args.output_dir))
+    version = args.version or _dt.datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    if _HAS_SIG_MANAGER:
+        version = _validate_bundle_version(version)
+    bundle_base = f"{args.bundle_name}-{version}"
+
+    # Zbierz pliki
+    sources = _parse_sources(args.source)
+    include = args.include or ["stage6*", "**/stage6*"]
+    assets = _collect_assets_fallback(sources, include=include, exclude=args.exclude or None)
+
+    # Staging
     staging_root = Path(tempfile.mkdtemp(prefix="observability_bundle_"))
     try:
+        # Kopiuj pliki do stagingu
         for asset in assets:
-            destination = staging_root / asset.virtual_path.as_posix()
-            _ensure_parent(destination)
-            shutil.copy2(asset.source, destination)
+            dst = staging_root / asset.virtual_path.as_posix()
+            _ensure_parent(dst)
+            shutil.copy2(asset.source, dst)
 
-        manifest = _build_manifest(
-            version=version,
-            assets=assets,
-            staging_root=staging_root,
-            dashboard_entries=[asset.virtual_path.as_posix() for asset in dashboard_assets],
-            alert_entries=[asset.virtual_path.as_posix() for asset in alert_assets],
-        )
+        # Manifest
+        files: List[Mapping[str, object]] = []
+        total_size = 0
+        for asset in assets:
+            target = staging_root / asset.virtual_path.as_posix()
+            size = target.stat().st_size
+            total_size += size
+            files.append(
+                {
+                    "path": asset.virtual_path.as_posix(),
+                    "kind": asset.kind,
+                    "sha256": _sha256_of(target),
+                    "size_bytes": size,
+                }
+            )
+        manifest: Dict[str, object] = {
+            "schema": "stage6.observability.manifest",
+            "version": version,
+            "bundle_name": args.bundle_name,
+            "generated_at": _now_utc_iso(),
+            "git_revision": _git_revision(),
+            "file_count": len(files),
+            "total_size_bytes": int(total_size),
+            "files": sorted(files, key=lambda x: x["path"]),
+        }
+
+        # Metadane & overrides (opcjonalnie)
+        meta = _parse_metadata(args.metadata)
+        if args.overrides:
+            overrides_path = Path(args.overrides)
+            try:
+                overrides_data = json.loads(overrides_path.read_text(encoding="utf-8"))
+                if load_overrides_document and AlertOverrideManager:
+                    overrides = load_overrides_document(overrides_data)
+                    mgr = AlertOverrideManager(overrides)
+                    mgr.prune_expired()
+                    payload = mgr.to_payload()
+                    meta["alert_overrides"] = {
+                        "path": overrides_path.as_posix(),
+                        "summary": payload.get("summary"),
+                        "annotations": payload.get("annotations"),
+                    }
+                else:
+                    meta["alert_overrides_path"] = overrides_path.as_posix()
+            except Exception as exc:
+                _LOGGER.warning("Nie udało się wczytać overrides: %s", exc)
+        if meta:
+            manifest["metadata"] = meta
 
         manifest_path = staging_root / "manifest.json"
         manifest_path.write_text(
-            json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
         )
 
-        signature_manager = SignatureManager(
-            signing_key, digest_algorithm=digest_algorithm, key_id=key_id
-        )
-        manifest_digest = signature_manager.digest_file(manifest_path)
-        signature_manager.write_signature_document(
-            {"path": "manifest.json", digest_algorithm: manifest_digest},
-            manifest_path.with_suffix(".sig"),
-        )
+        # Podpis
+        signing_key, key_id = _load_hmac_key(args)
+        sig_path: Optional[Path] = None
+        if signing_key:
+            if _HAS_SIG_MANAGER:
+                # Użyjemy menedżera podpisu z „main”
+                mgr = SignatureManager(signing_key, digest_algorithm=args.digest.lower(), key_id=key_id)
+                digest_val = mgr.digest_file(manifest_path)
+                sig_path = manifest_path.with_suffix(".sig")
+                mgr.write_signature_document(
+                    {"path": "manifest.json", args.digest.lower(): digest_val}, sig_path
+                )
+            else:
+                sig_path = _sign_manifest_fallback(
+                    manifest_path, key=signing_key, algorithm=args.digest, key_id=key_id
+                )
 
-        _tar_directory(staging_root, archive_path)
-        log.info("Created observability bundle: %s", archive_path)
-        return archive_path
+        # Archiwum
+        archive_path = out_dir / f"{bundle_base}.tar.gz"
+        if archive_path.exists():
+            raise FileExistsError(f"Paczka już istnieje: {archive_path}")
+        _write_tar_gz(staging_root, archive_path)
+
+        # Skopiuj manifest i podpis obok archiwum (wygodniej do weryfikacji offline)
+        final_manifest = out_dir / f"{bundle_base}.manifest.json"
+        shutil.copy2(manifest_path, final_manifest)
+        final_sig: Optional[Path] = None
+        if sig_path:
+            final_sig = out_dir / f"{bundle_base}.manifest.sig"
+            shutil.copy2(sig_path, final_sig)
+
+        summary = {
+            "bundle": archive_path.as_posix(),
+            "manifest": final_manifest.as_posix(),
+            "files": manifest["file_count"],
+            "size_bytes": manifest["total_size_bytes"],
+        }
+        if final_sig:
+            summary["signature"] = final_sig.as_posix()
+        return summary
     finally:
         shutil.rmtree(staging_root, ignore_errors=True)
 
 
-def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--version", required=True, help="Bundle version identifier")
-    parser.add_argument(
-        "--output-dir",
-        required=True,
-        type=Path,
-        help="Directory where the signed bundle will be written",
+# ------------------------- CLI -------------------------
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        description="Buduje paczkę obserwowalności Stage6 (z manifestem i podpisem HMAC)."
     )
-    parser.add_argument(
-        "--signing-key",
-        required=True,
-        type=Path,
-        help="Path to the HMAC key used to sign the manifest",
-    )
-    parser.add_argument(
-        "--digest",
-        default="sha384",
-        help="Digest algorithm for HMAC signatures (default: sha384)",
-    )
-    parser.add_argument("--key-id", help="Optional key identifier embedded in the signature")
-    parser.add_argument(
-        "--dashboard",
-        action="append",
-        default=[],
-        type=Path,
-        help="Additional dashboard JSON file to include",
-    )
-    parser.add_argument(
-        "--dashboards-dir",
-        action="append",
-        default=[],
-        type=Path,
-        help="Directory containing Grafana dashboard JSON files",
-    )
-    parser.add_argument(
-        "--alert-rule",
-        action="append",
-        default=[],
-        type=Path,
-        help="Prometheus alert rule file to include",
-    )
-    parser.add_argument(
-        "--log-level",
-        default="INFO",
-        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
-    )
-    return parser.parse_args(argv)
+    # wspólne
+    p.add_argument("--output-dir", default=str(REPO_ROOT / "var" / "observability"),
+                   help="Katalog docelowy dla paczki")
+    p.add_argument("--bundle-name", default="stage6-observability",
+                   help="Prefiks nazwy paczki (domyślnie stage6-observability)")
+    p.add_argument("--version", help="Identyfikator wersji paczki (np. 2025.10.16)")
+    p.add_argument("--metadata", action="append", help="Metadane w formacie klucz=wartość (wielokrotnie)")
+    p.add_argument("--source", action="append",
+                   help="Źródło w formacie kategoria=ścieżka (domyślnie Stage6 dashboards/alerts)")
+    p.add_argument("--include", action="append",
+                   help="Wzorce plików do uwzględnienia (glob, wielokrotnie; domyślnie stage6*)")
+    p.add_argument("--exclude", action="append",
+                   help="Wzorce plików do pominięcia (glob, wielokrotnie)")
+    p.add_argument("--overrides", help="Ścieżka do pliku override alertów (JSON Stage6)")
+    # podpis
+    p.add_argument("--hmac-key", help="Wartość klucza HMAC")
+    p.add_argument("--hmac-key-file", help="Plik z kluczem HMAC (UTF-8)")
+    p.add_argument("--hmac-key-env", help="Nazwa zmiennej środowiskowej z kluczem HMAC")
+    p.add_argument("--hmac-key-id", help="Identyfikator klucza HMAC umieszczony w podpisie")
+    p.add_argument("--digest", default="sha384",
+                   help="Algorytm skrótu dla HMAC (sha256/sha384/sha512; domyślnie sha384)")
+    # logowanie
+    p.add_argument("--log-level", default="INFO",
+                   choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"])
+    return p
 
 
-def main(argv: Optional[Sequence[str]] = None) -> int:
-    args = _parse_args(argv)
+def run(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
     logging.basicConfig(level=getattr(logging, args.log_level))
 
-    dashboards: List[Path] = list(args.dashboard)
-    dashboards.extend(args.dashboards_dir)
-    if not dashboards:
-        dashboards = list(DEFAULT_DASHBOARD_DIRS)
-
-    alerts: List[Path] = list(args.alert_rule)
-    if not alerts:
-        alerts = list(DEFAULT_ALERT_RULES)
-
-    signing_key = _load_signing_key(args.signing_key)
-
     try:
-        build_observability_bundle(
-            version=args.version,
-            dashboards=dashboards,
-            alerts=alerts,
-            output_dir=args.output_dir,
-            signing_key=signing_key,
-            digest_algorithm=args.digest,
-            key_id=args.key_id,
-        )
-    except Exception as exc:  # pragma: no cover - error reporting
-        logging.getLogger("observability_bundle").error("%s", exc)
+        if _HAS_BUILDER:
+            summary = _run_with_builder(args)
+        else:
+            summary = _run_fallback(args)
+    except Exception as exc:  # pragma: no cover
+        print(f"Błąd: {exc}", file=sys.stderr)
         return 1
+
+    print(json.dumps(summary, ensure_ascii=False, sort_keys=True, indent=2))
     return 0
 
 
-if __name__ == "__main__":
-    raise SystemExit(main())
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(run())

@@ -8,6 +8,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Callable, Mapping, MutableMapping, Protocol, Sequence
 
+if TYPE_CHECKING:
+    from bot_core.runtime.portfolio_coordinator import PortfolioRuntimeCoordinator
+
 from bot_core.runtime.journal import TradingDecisionEvent, TradingDecisionJournal
 from bot_core.strategies.base import MarketSnapshot, StrategyEngine, StrategySignal
 
@@ -109,6 +112,8 @@ class MultiStrategyScheduler:
         self._schedules: list[_ScheduleContext] = []
         self._stop_event: asyncio.Event | None = None
         self._tasks: list[asyncio.Task[None]] = []
+        self._portfolio_coordinator: "PortfolioRuntimeCoordinator" | None = None
+        self._portfolio_lock: asyncio.Lock | None = None
         self._last_portfolio_decision: "PortfolioRebalanceDecision | None" = None
 
     def register_schedule(
@@ -141,6 +146,14 @@ class MultiStrategyScheduler:
         self._schedules.append(context)
         _LOGGER.debug("Zarejestrowano harmonogram %s dla strategii %s", name, strategy_name)
 
+    def attach_portfolio_coordinator(
+        self, coordinator: "PortfolioRuntimeCoordinator"
+    ) -> None:
+        """Podpina koordynatora PortfolioGovernora do schedulera."""
+
+        self._portfolio_coordinator = coordinator
+        self._portfolio_lock = asyncio.Lock()
+
     async def run_forever(self) -> None:
         if self._tasks:
             raise RuntimeError("Scheduler został już uruchomiony")
@@ -150,6 +163,10 @@ class MultiStrategyScheduler:
             asyncio.create_task(self._run_schedule(schedule), name=f"strategy:{schedule.name}")
             for schedule in self._schedules
         ]
+        if self._portfolio_coordinator is not None:
+            self._tasks.append(
+                asyncio.create_task(self._run_portfolio_loop(), name="portfolio:governor")
+            )
 
         try:
             await asyncio.gather(*self._tasks)
@@ -172,6 +189,7 @@ class MultiStrategyScheduler:
         timestamp = self._clock()
         for schedule in self._schedules:
             await self._execute_schedule(schedule, timestamp)
+        await self._evaluate_portfolio(force=True)
 
     async def _run_schedule(self, schedule: _ScheduleContext) -> None:
         assert self._stop_event is not None, "Scheduler musi zostać zainicjalizowany"
@@ -193,6 +211,29 @@ class MultiStrategyScheduler:
                 await asyncio.wait_for(self._stop_event.wait(), timeout=sleep_for)
             except asyncio.TimeoutError:
                 continue
+
+    async def _run_portfolio_loop(self) -> None:
+        assert self._stop_event is not None, "Scheduler musi zostać zainicjalizowany"
+        if self._portfolio_coordinator is None:
+            return
+        while not self._stop_event.is_set():
+            await self._evaluate_portfolio(force=False)
+            cooldown = max(1.0, float(self._portfolio_coordinator.cooldown_seconds))
+            try:
+                await asyncio.wait_for(self._stop_event.wait(), timeout=cooldown)
+            except asyncio.TimeoutError:
+                continue
+
+    async def _evaluate_portfolio(self, *, force: bool) -> None:
+        coordinator = self._portfolio_coordinator
+        lock = self._portfolio_lock
+        if coordinator is None or lock is None:
+            return
+        async with lock:
+            try:
+                coordinator.evaluate(force=force)
+            except Exception:  # pragma: no cover - diagnostyka runtime
+                _LOGGER.exception("PortfolioGovernor: błąd ewaluacji w schedulerze")
 
     async def _execute_schedule(self, schedule: _ScheduleContext, timestamp: datetime) -> None:
         try:
