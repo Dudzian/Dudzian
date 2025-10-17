@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Mapping, MutableMapping, Sequence
 
+from bot_core.ai import DecisionModelInference, ModelScore
 from bot_core.config.models import (
     DecisionEngineConfig,
     DecisionOrchestratorThresholds,
@@ -28,9 +29,20 @@ class _CostIndex:
 class DecisionOrchestrator:
     """Klasa realizująca logikę DecisionOrchestratora Etapu 5."""
 
-    def __init__(self, config: DecisionEngineConfig) -> None:
+    def __init__(
+        self,
+        config: DecisionEngineConfig,
+        *,
+        inference: DecisionModelInference | None = None,
+    ) -> None:
         self._config = config
         self._cost_index = _CostIndex(lookup={}, default_cost=None)
+        self._inference = inference
+
+    def attach_inference_service(self, inference: DecisionModelInference | None) -> None:
+        """Podłącza usługę inference dostarczającą prognozy modelu AI."""
+
+        self._inference = inference
 
     # ------------------------------------------------------------------ koszty --
     def update_costs_from_report(
@@ -93,14 +105,23 @@ class DecisionOrchestrator:
     ) -> DecisionEvaluation:
         thresholds = self._thresholds_for_profile(candidate.risk_profile)
         snapshot = self._ensure_snapshot(candidate.risk_profile, risk_snapshot)
+        model_score = self._score_with_model(candidate)
+        if model_score is not None:
+            expected_probability = model_score.success_probability
+            expected_value_bps = model_score.expected_return_bps * model_score.success_probability
+            expected_return_bps = model_score.expected_return_bps
+        else:
+            expected_probability = candidate.expected_probability
+            expected_value_bps = candidate.expected_value_bps
+            expected_return_bps = candidate.expected_return_bps
         reasons: list[str] = []
         risk_flags: list[str] = []
 
-        if candidate.expected_probability < self._config.min_probability:
+        if expected_probability < self._config.min_probability:
             reasons.append(
                 (
                     "prawdopodobieństwo {p:.3f} poniżej progu {threshold:.3f}"
-                ).format(p=candidate.expected_probability, threshold=self._config.min_probability)
+                ).format(p=expected_probability, threshold=self._config.min_probability)
             )
 
         cost_bps, missing_cost = self._resolve_cost(candidate)
@@ -115,7 +136,7 @@ class DecisionOrchestrator:
                 ).format(cost=cost_bps, limit=thresholds.max_cost_bps)
             )
 
-        net_edge = candidate.expected_value_bps - effective_cost
+        net_edge = expected_value_bps - effective_cost
         if net_edge < thresholds.min_net_edge_bps:
             reasons.append(
                 (
@@ -144,6 +165,8 @@ class DecisionOrchestrator:
             reasons=tuple(reasons),
             risk_flags=tuple(risk_flags),
             stress_failures=tuple(stress_failures),
+            model_expected_return_bps=expected_return_bps if model_score else None,
+            model_success_probability=expected_probability if model_score else None,
         )
 
     def evaluate_candidates(
@@ -202,6 +225,39 @@ class DecisionOrchestrator:
         if cost is None and self._config.penalty_cost_bps > 0:
             cost = self._config.penalty_cost_bps
         return cost, missing
+
+    def _score_with_model(self, candidate: DecisionCandidate) -> ModelScore | None:
+        inference = self._inference
+        if inference is None or not getattr(inference, "is_ready", True):
+            return None
+        features = self._extract_features(candidate)
+        if not features:
+            return None
+        try:
+            return inference.score(features)
+        except Exception:  # pragma: no cover - inference nie powinno zatrzymać ewaluacji
+            return None
+
+    def _extract_features(self, candidate: DecisionCandidate) -> Mapping[str, float] | None:
+        metadata = candidate.metadata or {}
+        sources = [
+            metadata.get("model_features"),
+            metadata.get("features"),
+            metadata.get("decision_engine", {}).get("features")
+            if isinstance(metadata.get("decision_engine"), Mapping)
+            else None,
+        ]
+        for raw in sources:
+            if isinstance(raw, Mapping):
+                features: dict[str, float] = {}
+                for key, value in raw.items():
+                    try:
+                        features[str(key)] = float(value)
+                    except (TypeError, ValueError):
+                        continue
+                if features:
+                    return features
+        return None
 
     def _check_risk_limits(
         self,
