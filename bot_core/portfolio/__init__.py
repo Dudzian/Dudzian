@@ -10,15 +10,16 @@ from __future__ import annotations
 # --- Stage6 / rozszerzone API ---
 from bot_core.portfolio.decision_log import PortfolioDecisionLog
 from bot_core.portfolio.governor import (
+    AssetPortfolioGovernorConfig,
     PortfolioAdjustment,
     PortfolioAdvisory,
     PortfolioAssetConfig,
     PortfolioDecision,
     PortfolioDriftTolerance,
     PortfolioGovernor,
-    PortfolioGovernorConfig,
     PortfolioRiskBudgetConfig,
     PortfolioSloOverrideConfig,
+    StrategyPortfolioGovernorConfig,
 )
 from bot_core.portfolio.hypercare import (
     PortfolioCycleConfig,
@@ -36,6 +37,8 @@ from bot_core.portfolio.io import (
     parse_stress_overrides_payload,
     resolve_decision_log_config,
 )
+
+PortfolioGovernorConfig = AssetPortfolioGovernorConfig
 
 # --- Prostszе typy z gałęzi main (opcjonalnie) ---
 # Nie wszystkie repozytoria mają plik .models – import warunkowy zachowuje kompatybilność.
