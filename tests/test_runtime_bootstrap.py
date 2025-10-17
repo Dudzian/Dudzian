@@ -9,7 +9,7 @@ from textwrap import dedent
 import pytest
 import yaml
 
-sys.path.append(str(Path(__file__).resolve().parents[1]))
+import tests._pathbootstrap  # noqa: F401  # pylint: disable=unused-import
 
 from bot_core.alerts import EmailChannel, SMSChannel, TelegramChannel
 from bot_core.decision.models import DecisionCandidate, RiskSnapshot
@@ -59,6 +59,13 @@ _BASE_CONFIG = dedent(
         stop_loss_atr_multiple: 2.0
         max_open_positions: 12
         hard_drawdown_pct: 0.25
+    permission_profiles:
+      trading_default:
+        required_permissions: [read, trade]
+        forbidden_permissions: [withdraw]
+      read_only:
+        required_permissions: [read]
+        forbidden_permissions: []
     environments:
       binance_paper:
         exchange: binance_spot
@@ -92,6 +99,21 @@ _BASE_CONFIG = dedent(
           exclude_severities: [critical]
           exclude_categories: [health]
           max_entries: 32
+      nowa_gielda_paper:
+        exchange: nowa_gielda_spot
+        environment: paper
+        keychain_key: nowa_gielda_paper_key
+        credential_purpose: trading
+        data_cache_path: ./var/data/nowa_gielda_paper
+        risk_profile: balanced
+        permission_profile: trading_default
+        alert_channels: ["telegram:primary"]
+        ip_allowlist: ["127.0.0.1"]
+        alert_throttle:
+          window_seconds: 45
+          exclude_severities: [critical]
+          exclude_categories: [health]
+          max_entries: 16
     reporting: {}
     alerts:
       telegram_channels:
@@ -226,6 +248,7 @@ def _prepare_manager() -> tuple[_MemorySecretStorage, SecretManager]:
     }
     storage.set_secret("tests:binance_paper_key:trading", json.dumps(credentials_payload))
     storage.set_secret("tests:zonda_paper_key:trading", json.dumps(credentials_payload))
+    storage.set_secret("tests:nowa_gielda_paper_key:trading", json.dumps(credentials_payload))
     manager.store_secret_value("telegram_token", "telegram-secret", purpose="alerts:telegram")
     manager.store_secret_value(
         "smtp_credentials",
@@ -488,6 +511,19 @@ def test_bootstrap_environment_supports_zonda(tmp_path: Path) -> None:
     assert context.credentials.key_id == "zonda-key"
     assert context.environment.exchange == "zonda_spot"
     assert context.adapter_settings == {}
+
+
+def test_bootstrap_environment_applies_permission_profile_defaults(tmp_path: Path) -> None:
+    config_path = _write_config(tmp_path)
+    _, manager = _prepare_manager()
+
+    context = bootstrap_environment(
+        "nowa_gielda_paper", config_path=config_path, secret_manager=manager
+    )
+
+    assert context.environment.permission_profile == "trading_default"
+    assert tuple(context.environment.required_permissions) == ("read", "trade")
+    assert tuple(context.environment.forbidden_permissions) == ("withdraw",)
 
 
 def test_bootstrap_metrics_ui_alerts_audit_requested_file_without_backend(tmp_path: Path) -> None:
