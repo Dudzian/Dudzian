@@ -24,6 +24,7 @@ from bot_core.observability.metrics import (
     get_global_metrics_registry,
 )
 from bot_core.observability.server import MetricsHTTPServer, start_http_server
+from bot_core.observability.ui_metrics import UiTelemetryPrometheusExporter
 from bot_core.observability.slo import (
     SLOCompositeDefinition,
     SLOCompositeStatus,
@@ -74,6 +75,7 @@ __all__ = [
     "get_global_metrics_registry",
     "MetricsHTTPServer",
     "start_http_server",
+    "UiTelemetryPrometheusExporter",
     "AlertOverride",
     "AlertOverrideBuilder",
     "AlertOverrideManager",

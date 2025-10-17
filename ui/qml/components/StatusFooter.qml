@@ -59,6 +59,21 @@ Pane {
                     : palette.windowText
         }
 
+        Label {
+            objectName: "telemetryStatusLabel"
+            readonly property bool backlog: appController.telemetryPendingRetryCount > 0
+            text: backlog
+                    ? qsTr("Telemetria: offline (%1 próbek w kolejce)")
+                          .arg(appController.telemetryPendingRetryCount)
+                    : qsTr("Telemetria: online")
+            color: backlog ? Qt.rgba(0.94, 0.36, 0.32, 1) : palette.windowText
+            font.bold: backlog
+            hoverEnabled: true
+            ToolTip.visible: hovered && backlog
+            ToolTip.delay: 400
+            ToolTip.text: qsTr("Aplikacja ponawia wysyłkę próbek telemetrii do serwisu MetricsService")
+        }
+
         Item { Layout.fillWidth: true }
 
         Label {

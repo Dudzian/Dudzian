@@ -61,18 +61,21 @@ set(UI_SOURCES
     src/app/Application.cpp
     src/app/ActivationController.cpp
     src/grpc/TradingClient.cpp
+    src/grpc/MetricsClient.cpp
     src/models/OhlcvListModel.cpp
     src/models/RiskStateModel.cpp
     src/utils/PerformanceGuard.cpp
     src/utils/FrameRateMonitor.cpp
     src/telemetry/UiTelemetryReporter.cpp
     src/license/LicenseActivationController.cpp
+    src/security/SecurityAdminController.cpp
 )
 
 set(UI_HEADERS
     src/app/Application.hpp
     src/app/ActivationController.hpp
     src/grpc/TradingClient.hpp
+    src/grpc/MetricsClient.hpp
     src/models/OhlcvListModel.hpp
     src/models/RiskStateModel.hpp
     src/models/RiskTypes.hpp
@@ -81,6 +84,7 @@ set(UI_HEADERS
     src/telemetry/TelemetryReporter.hpp
     src/telemetry/UiTelemetryReporter.hpp
     src/license/LicenseActivationController.hpp
+    src/security/SecurityAdminController.hpp
 )
 
 qt_add_executable(bot_trading_shell
@@ -209,4 +213,32 @@ if(BUILD_TESTING)
             Qt6::Test
     )
     add_test(NAME license_activation_controller_tests COMMAND license_activation_controller_tests)
+
+    add_executable(security_admin_controller_tests
+        tests/SecurityAdminControllerTest.cpp
+        src/security/SecurityAdminController.cpp
+    )
+    target_include_directories(security_admin_controller_tests PRIVATE src)
+    target_link_libraries(security_admin_controller_tests PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME security_admin_controller_tests COMMAND security_admin_controller_tests)
+
+    add_executable(admin_dialog_e2e_tests
+        tests/AdminDialogE2ETest.cpp
+        src/security/SecurityAdminController.cpp
+    )
+    target_include_directories(admin_dialog_e2e_tests PRIVATE src)
+    qt_add_resources(admin_dialog_e2e_tests admin_dialog_e2e_qml
+        PREFIX "/qml"
+        FILES qml/components/AdminDialog.qml
+    )
+    target_link_libraries(admin_dialog_e2e_tests
+        PRIVATE
+            Qt6::Core
+            Qt6::Gui
+            Qt6::Qml
+            Qt6::Quick
+            Qt6::QuickControls2
+            Qt6::Test
+    )
+    add_test(NAME admin_dialog_e2e_tests COMMAND admin_dialog_e2e_tests)
 endif()
