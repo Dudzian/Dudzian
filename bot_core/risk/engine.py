@@ -703,6 +703,8 @@ class ThresholdRiskEngine(RiskEngine):
                 "risk_flags": list(evaluation.risk_flags),
                 "stress_failures": list(evaluation.stress_failures),
                 "candidate": evaluation.candidate.to_mapping(),
+                "model_expected_return_bps": evaluation.model_expected_return_bps,
+                "model_success_probability": evaluation.model_success_probability,
             }
         if isinstance(evaluation, Mapping):
             return dict(evaluation)

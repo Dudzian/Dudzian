@@ -15,6 +15,13 @@ from typing import (
     Mapping as TypingMapping,
 )
 
+try:  # pragma: no cover - w niektórych gałęziach warstwa AI może nie być zainstalowana
+    from bot_core.ai import DecisionModelInference, FeatureDataset, FeatureEngineer
+except Exception:  # pragma: no cover
+    DecisionModelInference = Any  # type: ignore
+    FeatureDataset = Any  # type: ignore
+    FeatureEngineer = Any  # type: ignore
+
 # --- elastyczne importy (różne gałęzie mogą mieć różne ścieżki modułów) -----
 
 # Alerts
@@ -41,6 +48,14 @@ try:
     from bot_core.strategies import StrategySignal, MarketSnapshot  # gałąź z interfejsami w pakiecie
 except Exception:  # pragma: no cover
     from bot_core.strategies.base import StrategySignal, MarketSnapshot  # alternatywna ścieżka
+
+# Decision Engine (opcjonalnie)
+try:  # pragma: no cover
+    from bot_core.decision import DecisionCandidate, DecisionEvaluation, DecisionOrchestrator  # type: ignore
+except Exception:  # pragma: no cover
+    DecisionCandidate = None  # type: ignore
+    DecisionEvaluation = Any  # type: ignore
+    DecisionOrchestrator = None  # type: ignore
 
 # Dane OHLCV – w zależności od gałęzi
 try:
@@ -999,4 +1014,59 @@ class DailyTrendController:
         )
 
 
-__all__ = ["TradingController", "DailyTrendController", "ControllerSignal"]
+@dataclass(slots=True)
+class AIDecisionLoop:
+    """Prosta pętla on-line generująca kandydatów i oceniająca je w DecisionOrchestratorze."""
+
+    feature_engineer: FeatureEngineer
+    orchestrator: Any
+    inference: DecisionModelInference
+    risk_snapshot_provider: Callable[[str], Mapping[str, object] | Any]
+    symbols: Sequence[str]
+    interval: str
+    strategy: str
+    risk_profile: str
+    default_notional: float = 1_000.0
+    action: str = "enter"
+
+    def run_online_loop(self, *, start: int, end: int) -> Sequence[DecisionEvaluation]:
+        if DecisionCandidate is None:
+            raise RuntimeError("Pakiet decision nie jest dostępny w tej gałęzi")
+        if DecisionOrchestrator is not None and not isinstance(self.orchestrator, DecisionOrchestrator):
+            _LOGGER.debug("AIDecisionLoop: używam niestandardowej implementacji orchestratora %s", type(self.orchestrator))
+        if not getattr(self.inference, "is_ready", False):
+            raise RuntimeError("Model inference nie został przygotowany (brak wag)")
+
+        dataset: FeatureDataset = self.feature_engineer.build_dataset(
+            symbols=self.symbols,
+            interval=self.interval,
+            start=start,
+            end=end,
+        )
+        evaluations: list[DecisionEvaluation] = []
+        snapshots_cache: dict[str, Mapping[str, object] | Any] = {}
+        for vector in dataset.vectors:
+            metadata = {
+                "model_features": dict(vector.features),
+                "generated_at": vector.timestamp,
+            }
+            candidate = DecisionCandidate(
+                strategy=self.strategy,
+                action=self.action,
+                risk_profile=self.risk_profile,
+                symbol=vector.symbol,
+                notional=self.default_notional,
+                expected_return_bps=vector.target_bps,
+                expected_probability=0.5,
+                metadata=metadata,
+            )
+            snapshot = snapshots_cache.get(self.risk_profile)
+            if snapshot is None:
+                snapshot = self.risk_snapshot_provider(self.risk_profile)
+                snapshots_cache[self.risk_profile] = snapshot
+            evaluation = self.orchestrator.evaluate_candidate(candidate, snapshot)
+            evaluations.append(evaluation)
+        return evaluations
+
+
+__all__ = ["TradingController", "DailyTrendController", "ControllerSignal", "AIDecisionLoop"]
