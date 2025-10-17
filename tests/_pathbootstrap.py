@@ -10,6 +10,7 @@ __all__ = [
     "PATHBOOTSTRAP_MODULE",
     "REPO_ROOT",
     "ensure_repo_root_on_sys_path",
+    "get_repo_info",
     "get_repo_root",
     "clear_cache",
     "repo_on_sys_path",
@@ -20,7 +21,6 @@ __all__ = [
 
 def load_pathbootstrap() -> ModuleType:
     """Załaduj moduł :mod:`pathbootstrap`, niezależnie od bieżącego sys.path."""
-
     repo_root = Path(__file__).resolve().parents[1]
     try:
         return importlib.import_module("pathbootstrap")
@@ -39,6 +39,7 @@ REPO_ROOT = PATHBOOTSTRAP_MODULE.get_repo_root(Path(__file__).resolve().parents[
 PATHBOOTSTRAP_MODULE.ensure_repo_root_on_sys_path(REPO_ROOT)
 
 ensure_repo_root_on_sys_path = PATHBOOTSTRAP_MODULE.ensure_repo_root_on_sys_path
+get_repo_info = PATHBOOTSTRAP_MODULE.get_repo_info
 get_repo_root = PATHBOOTSTRAP_MODULE.get_repo_root
 clear_cache = PATHBOOTSTRAP_MODULE.clear_cache
 repo_on_sys_path = PATHBOOTSTRAP_MODULE.repo_on_sys_path
