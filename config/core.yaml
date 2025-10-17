@@ -491,6 +491,20 @@ runtime:
     jank_alert_severity_spike: warning
     jank_alert_severity_critical: critical
     jank_alert_critical_over_ms: 12.0
+    performance_alerts: true
+    performance_alert_mode: enable
+    performance_category: ui.performance
+    performance_severity_warning: warning
+    performance_severity_critical: critical
+    performance_severity_recovered: info
+    performance_event_to_frame_warning_ms: 55.0
+    performance_event_to_frame_critical_ms: 75.0
+    cpu_utilization_warning_percent: 80.0
+    cpu_utilization_critical_percent: 95.0
+    gpu_utilization_warning_percent: 70.0
+    gpu_utilization_critical_percent: 85.0
+    ram_usage_warning_megabytes: 6144
+    ram_usage_critical_megabytes: 8192
 
 execution:
   live_router:

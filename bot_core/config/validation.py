@@ -632,6 +632,94 @@ def _validate_metrics_service(
         warnings=warnings,
     )
 
+    _validate_ui_alert_block(
+        context=context,
+        block_name="performance",
+        enabled_flag=bool(getattr(metrics, "performance_alerts", False)),
+        mode_value=getattr(metrics, "performance_alert_mode", None),
+        category_value=getattr(metrics, "performance_category", ""),
+        required_severities={
+            "performance_severity_warning": getattr(
+                metrics, "performance_severity_warning", ""
+            ),
+            "performance_severity_critical": getattr(
+                metrics, "performance_severity_critical", ""
+            ),
+            "performance_severity_recovered": getattr(
+                metrics, "performance_severity_recovered", ""
+            ),
+        },
+        optional_severities={},
+        threshold_value=None,
+        threshold_label=None,
+        errors=errors,
+        warnings=warnings,
+    )
+
+    performance_mode_raw = getattr(metrics, "performance_alert_mode", None)
+    performance_mode_normalized: str | None = None
+    if performance_mode_raw is not None:
+        performance_mode_normalized = str(performance_mode_raw).strip().lower()
+        if not performance_mode_normalized:
+            performance_mode_normalized = None
+        elif performance_mode_normalized not in {"enable", "jsonl", "disable"}:
+            performance_mode_normalized = None
+    if performance_mode_normalized is None:
+        performance_mode_normalized = (
+            "enable" if bool(getattr(metrics, "performance_alerts", False)) else "disable"
+        )
+
+    if performance_mode_normalized != "disable":
+
+        def _validate_threshold_value(field_name: str) -> float | None:
+            value = getattr(metrics, field_name, None)
+            if value in (None, ""):
+                return None
+            try:
+                numeric = float(value)
+            except (TypeError, ValueError):
+                errors.append(
+                    f"{context}: {field_name} musi być wartością liczbową"
+                )
+                return None
+            if numeric <= 0:
+                errors.append(
+                    f"{context}: {field_name} musi być dodatnie (otrzymano {value})"
+                )
+                return None
+            return numeric
+
+        def _validate_threshold_pair(
+            warning_field: str, critical_field: str
+        ) -> None:
+            warning_value = _validate_threshold_value(warning_field)
+            critical_value = _validate_threshold_value(critical_field)
+            if (
+                warning_value is not None
+                and critical_value is not None
+                and critical_value < warning_value
+            ):
+                errors.append(
+                    f"{context}: {critical_field} nie może być mniejsze niż {warning_field}"
+                )
+
+        _validate_threshold_pair(
+            "performance_event_to_frame_warning_ms",
+            "performance_event_to_frame_critical_ms",
+        )
+        _validate_threshold_pair(
+            "cpu_utilization_warning_percent",
+            "cpu_utilization_critical_percent",
+        )
+        _validate_threshold_pair(
+            "gpu_utilization_warning_percent",
+            "gpu_utilization_critical_percent",
+        )
+        _validate_threshold_pair(
+            "ram_usage_warning_megabytes",
+            "ram_usage_critical_megabytes",
+        )
+
     backend_value = getattr(metrics, "ui_alerts_audit_backend", None)
     if backend_value is not None:
         normalized = str(backend_value).strip().lower()

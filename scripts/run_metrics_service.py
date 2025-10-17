@@ -92,6 +92,19 @@ _DEFAULT_JANK_SEVERITY_CRITICAL: str | None = None
 _DEFAULT_JANK_CRITICAL_THRESHOLD_MS: float | None = None
 _DEFAULT_UI_ALERT_AUDIT_PATTERN = "metrics-ui-alerts-%Y%m%d.jsonl"
 _DEFAULT_UI_ALERT_AUDIT_RETENTION_DAYS = 90
+_DEFAULT_PERFORMANCE_MODE = "enable"
+_DEFAULT_PERFORMANCE_CATEGORY = "ui.performance"
+_DEFAULT_PERFORMANCE_SEVERITY_WARNING = "warning"
+_DEFAULT_PERFORMANCE_SEVERITY_CRITICAL = "critical"
+_DEFAULT_PERFORMANCE_SEVERITY_RECOVERED = "info"
+_DEFAULT_PERFORMANCE_EVENT_WARNING_MS: float | None = 45.0
+_DEFAULT_PERFORMANCE_EVENT_CRITICAL_MS: float | None = 60.0
+_DEFAULT_PERFORMANCE_CPU_WARNING_PERCENT: float | None = 85.0
+_DEFAULT_PERFORMANCE_CPU_CRITICAL_PERCENT: float | None = 95.0
+_DEFAULT_PERFORMANCE_GPU_WARNING_PERCENT: float | None = None
+_DEFAULT_PERFORMANCE_GPU_CRITICAL_PERCENT: float | None = None
+_DEFAULT_PERFORMANCE_RAM_WARNING_MEGABYTES: float | None = None
+_DEFAULT_PERFORMANCE_RAM_CRITICAL_MEGABYTES: float | None = None
 
 
 def _configure_logging(level: str) -> None:
@@ -144,6 +157,8 @@ def _initial_value_sources(provided_flags: Iterable[str]) -> dict[str, str]:
         sources["ui_alerts_reduce_mode"] = "cli"
     if "--ui-alerts-overlay-mode" in provided:
         sources["ui_alerts_overlay_mode"] = "cli"
+    if "--ui-alerts-performance-mode" in provided:
+        sources["ui_alerts_performance_mode"] = "cli"
     if "--ui-alerts-reduce-category" in provided:
         sources["ui_alerts_reduce_category"] = "cli"
     if "--ui-alerts-reduce-active-severity" in provided:
@@ -158,6 +173,14 @@ def _initial_value_sources(provided_flags: Iterable[str]) -> dict[str, str]:
         sources["ui_alerts_overlay_recovered_severity"] = "cli"
     if "--ui-alerts-overlay-critical-severity" in provided:
         sources["ui_alerts_overlay_critical_severity"] = "cli"
+    if "--ui-alerts-performance-category" in provided:
+        sources["ui_alerts_performance_category"] = "cli"
+    if "--ui-alerts-performance-warning-severity" in provided:
+        sources["ui_alerts_performance_warning_severity"] = "cli"
+    if "--ui-alerts-performance-critical-severity" in provided:
+        sources["ui_alerts_performance_critical_severity"] = "cli"
+    if "--ui-alerts-performance-recovered-severity" in provided:
+        sources["ui_alerts_performance_recovered_severity"] = "cli"
     if "--ui-alerts-overlay-critical-threshold" in provided:
         sources["ui_alerts_overlay_critical_threshold"] = "cli"
     if "--ui-alerts-jank-mode" in provided:
@@ -170,6 +193,22 @@ def _initial_value_sources(provided_flags: Iterable[str]) -> dict[str, str]:
         sources["ui_alerts_jank_critical_severity"] = "cli"
     if "--ui-alerts-jank-critical-over-ms" in provided:
         sources["ui_alerts_jank_critical_over_ms"] = "cli"
+    if "--ui-alerts-performance-event-to-frame-warning-ms" in provided:
+        sources["ui_alerts_performance_event_to_frame_warning_ms"] = "cli"
+    if "--ui-alerts-performance-event-to-frame-critical-ms" in provided:
+        sources["ui_alerts_performance_event_to_frame_critical_ms"] = "cli"
+    if "--ui-alerts-performance-cpu-warning-percent" in provided:
+        sources["ui_alerts_performance_cpu_warning_percent"] = "cli"
+    if "--ui-alerts-performance-cpu-critical-percent" in provided:
+        sources["ui_alerts_performance_cpu_critical_percent"] = "cli"
+    if "--ui-alerts-performance-gpu-warning-percent" in provided:
+        sources["ui_alerts_performance_gpu_warning_percent"] = "cli"
+    if "--ui-alerts-performance-gpu-critical-percent" in provided:
+        sources["ui_alerts_performance_gpu_critical_percent"] = "cli"
+    if "--ui-alerts-performance-ram-warning-megabytes" in provided:
+        sources["ui_alerts_performance_ram_warning_megabytes"] = "cli"
+    if "--ui-alerts-performance-ram-critical-megabytes" in provided:
+        sources["ui_alerts_performance_ram_critical_megabytes"] = "cli"
     if "--ui-alerts-audit-dir" in provided:
         sources["ui_alerts_audit_dir"] = "cli"
     if "--ui-alerts-audit-backend" in provided:
@@ -540,6 +579,14 @@ def _apply_environment_overrides(
                 )
             args.ui_alerts_overlay_mode = normalized
             apply_value(option, env_var, raw, normalized)
+        elif option == "ui_alerts_performance_mode":
+            normalized = raw.strip().lower()
+            if normalized not in UI_ALERT_MODE_CHOICES:
+                parser.error(
+                    f"Nieprawidłowa wartość '{raw}' w {env_var} – dozwolone: {', '.join(UI_ALERT_MODE_CHOICES)}."
+                )
+            args.ui_alerts_performance_mode = normalized
+            apply_value(option, env_var, raw, normalized)
         elif option == "ui_alerts_jank_mode":
             normalized = raw.strip().lower()
             if normalized not in UI_ALERT_MODE_CHOICES:
@@ -556,6 +603,10 @@ def _apply_environment_overrides(
             "ui_alerts_overlay_exceeded_severity",
             "ui_alerts_overlay_recovered_severity",
             "ui_alerts_overlay_critical_severity",
+            "ui_alerts_performance_category",
+            "ui_alerts_performance_warning_severity",
+            "ui_alerts_performance_critical_severity",
+            "ui_alerts_performance_recovered_severity",
         }:
             setattr(args, option, raw)
             apply_value(option, env_var, raw, raw)
@@ -591,6 +642,38 @@ def _apply_environment_overrides(
                 )
             args.ui_alerts_jank_critical_over_ms = threshold_ms
             apply_value(option, env_var, raw, threshold_ms)
+        elif option in {
+            "ui_alerts_performance_event_to_frame_warning_ms",
+            "ui_alerts_performance_event_to_frame_critical_ms",
+            "ui_alerts_performance_cpu_warning_percent",
+            "ui_alerts_performance_cpu_critical_percent",
+            "ui_alerts_performance_gpu_warning_percent",
+            "ui_alerts_performance_gpu_critical_percent",
+            "ui_alerts_performance_ram_warning_megabytes",
+            "ui_alerts_performance_ram_critical_megabytes",
+        }:
+            normalized = raw.strip().lower()
+            if normalized in {"", "none", "null", "off", "disable", "disabled"}:
+                setattr(args, option, None)
+                value_sources[option] = "env_disabled"
+                override_keys.add(option)
+                record_entry(
+                    option=option,
+                    variable=env_var,
+                    raw_value=raw,
+                    applied=True,
+                    parsed_value=None,
+                    note="performance_threshold_disabled",
+                )
+            else:
+                try:
+                    numeric = float(raw)
+                except ValueError:
+                    parser.error(
+                        f"Zmienna {env_var} musi zawierać liczbę zmiennoprzecinkową – otrzymano '{raw}'."
+                    )
+                setattr(args, option, numeric)
+                apply_value(option, env_var, raw, numeric)
         elif option == "ui_alerts_audit_dir":
             normalized = raw.strip().lower()
             if normalized in {"", "none", "null", "off", "disable", "disabled"}:
@@ -775,6 +858,7 @@ def _ui_alerts_config_from_args(args: argparse.Namespace) -> dict[str, object]:
     return {
         "reduce_mode": args.ui_alerts_reduce_mode or "enable",
         "overlay_mode": args.ui_alerts_overlay_mode or "enable",
+        "performance_mode": args.ui_alerts_performance_mode or _DEFAULT_PERFORMANCE_MODE,
         "jank_mode": args.ui_alerts_jank_mode or "enable",
         "reduce_motion_category": args.ui_alerts_reduce_category or _DEFAULT_UI_CATEGORY,
         "reduce_motion_severity_active": (
@@ -797,6 +881,61 @@ def _ui_alerts_config_from_args(args: argparse.Namespace) -> dict[str, object]:
             args.ui_alerts_overlay_critical_threshold
             if args.ui_alerts_overlay_critical_threshold is not None
             else _DEFAULT_OVERLAY_THRESHOLD
+        ),
+        "performance_category": (
+            args.ui_alerts_performance_category or _DEFAULT_PERFORMANCE_CATEGORY
+        ),
+        "performance_severity_warning": (
+            args.ui_alerts_performance_warning_severity
+            or _DEFAULT_PERFORMANCE_SEVERITY_WARNING
+        ),
+        "performance_severity_critical": (
+            args.ui_alerts_performance_critical_severity
+            or _DEFAULT_PERFORMANCE_SEVERITY_CRITICAL
+        ),
+        "performance_severity_recovered": (
+            args.ui_alerts_performance_recovered_severity
+            or _DEFAULT_PERFORMANCE_SEVERITY_RECOVERED
+        ),
+        "performance_event_to_frame_warning_ms": (
+            args.ui_alerts_performance_event_to_frame_warning_ms
+            if args.ui_alerts_performance_event_to_frame_warning_ms is not None
+            else _DEFAULT_PERFORMANCE_EVENT_WARNING_MS
+        ),
+        "performance_event_to_frame_critical_ms": (
+            args.ui_alerts_performance_event_to_frame_critical_ms
+            if args.ui_alerts_performance_event_to_frame_critical_ms is not None
+            else _DEFAULT_PERFORMANCE_EVENT_CRITICAL_MS
+        ),
+        "performance_cpu_warning_percent": (
+            args.ui_alerts_performance_cpu_warning_percent
+            if args.ui_alerts_performance_cpu_warning_percent is not None
+            else _DEFAULT_PERFORMANCE_CPU_WARNING_PERCENT
+        ),
+        "performance_cpu_critical_percent": (
+            args.ui_alerts_performance_cpu_critical_percent
+            if args.ui_alerts_performance_cpu_critical_percent is not None
+            else _DEFAULT_PERFORMANCE_CPU_CRITICAL_PERCENT
+        ),
+        "performance_gpu_warning_percent": (
+            args.ui_alerts_performance_gpu_warning_percent
+            if args.ui_alerts_performance_gpu_warning_percent is not None
+            else _DEFAULT_PERFORMANCE_GPU_WARNING_PERCENT
+        ),
+        "performance_gpu_critical_percent": (
+            args.ui_alerts_performance_gpu_critical_percent
+            if args.ui_alerts_performance_gpu_critical_percent is not None
+            else _DEFAULT_PERFORMANCE_GPU_CRITICAL_PERCENT
+        ),
+        "performance_ram_warning_megabytes": (
+            args.ui_alerts_performance_ram_warning_megabytes
+            if args.ui_alerts_performance_ram_warning_megabytes is not None
+            else _DEFAULT_PERFORMANCE_RAM_WARNING_MEGABYTES
+        ),
+        "performance_ram_critical_megabytes": (
+            args.ui_alerts_performance_ram_critical_megabytes
+            if args.ui_alerts_performance_ram_critical_megabytes is not None
+            else _DEFAULT_PERFORMANCE_RAM_CRITICAL_MEGABYTES
         ),
         "jank_category": args.ui_alerts_jank_category or _DEFAULT_UI_CATEGORY,
         "jank_severity_spike": args.ui_alerts_jank_spike_severity or _DEFAULT_JANK_SEVERITY_SPIKE,
@@ -946,6 +1085,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Steruje wysyłką alertów budżetu overlayów (enable/disable).",
     )
     parser.add_argument(
+        "--ui-alerts-performance-mode",
+        choices=UI_ALERT_MODE_CHOICES,
+        default=None,
+        help="Steruje wysyłką alertów metryk wydajności (enable/jsonl/disable).",
+    )
+    parser.add_argument(
         "--ui-alerts-reduce-category",
         default=None,
         help="Nadpisuje kategorię alertów reduce-motion (domyślnie ui.performance).",
@@ -985,6 +1130,74 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Liczba nakładek powyżej limitu wymuszająca severity krytyczne.",
+    )
+    parser.add_argument(
+        "--ui-alerts-performance-category",
+        default=None,
+        help="Nadpisuje kategorię alertów wydajności UI (domyślnie ui.performance).",
+    )
+    parser.add_argument(
+        "--ui-alerts-performance-warning-severity",
+        default=None,
+        help="Severity alertu wydajności przy progu ostrzegawczym (domyślnie warning).",
+    )
+    parser.add_argument(
+        "--ui-alerts-performance-critical-severity",
+        default=None,
+        help="Severity alertu wydajności przy progu krytycznym (domyślnie critical).",
+    )
+    parser.add_argument(
+        "--ui-alerts-performance-recovered-severity",
+        default=None,
+        help="Severity alertu wydajności przy odzyskaniu (domyślnie info).",
+    )
+    parser.add_argument(
+        "--ui-alerts-performance-event-to-frame-warning-ms",
+        type=float,
+        default=None,
+        help="Próg ostrzegawczy opóźnienia zdarzenie→klatka w milisekundach.",
+    )
+    parser.add_argument(
+        "--ui-alerts-performance-event-to-frame-critical-ms",
+        type=float,
+        default=None,
+        help="Próg krytyczny opóźnienia zdarzenie→klatka w milisekundach.",
+    )
+    parser.add_argument(
+        "--ui-alerts-performance-cpu-warning-percent",
+        type=float,
+        default=None,
+        help="Próg ostrzegawczy wykorzystania CPU w procentach.",
+    )
+    parser.add_argument(
+        "--ui-alerts-performance-cpu-critical-percent",
+        type=float,
+        default=None,
+        help="Próg krytyczny wykorzystania CPU w procentach.",
+    )
+    parser.add_argument(
+        "--ui-alerts-performance-gpu-warning-percent",
+        type=float,
+        default=None,
+        help="Próg ostrzegawczy wykorzystania GPU w procentach.",
+    )
+    parser.add_argument(
+        "--ui-alerts-performance-gpu-critical-percent",
+        type=float,
+        default=None,
+        help="Próg krytyczny wykorzystania GPU w procentach.",
+    )
+    parser.add_argument(
+        "--ui-alerts-performance-ram-warning-megabytes",
+        type=float,
+        default=None,
+        help="Próg ostrzegawczy użycia RAM w megabajtach.",
+    )
+    parser.add_argument(
+        "--ui-alerts-performance-ram-critical-megabytes",
+        type=float,
+        default=None,
+        help="Próg krytyczny użycia RAM w megabajtach.",
     )
     parser.add_argument(
         "--ui-alerts-jank-mode",
@@ -1261,12 +1474,19 @@ def _build_server(
                     options = dict(ui_alerts_options or {})
                     reduce_mode = str(options.get("reduce_mode") or "enable").lower()
                     overlay_mode = str(options.get("overlay_mode") or "enable").lower()
+                    performance_mode = (
+                        str(options.get("performance_mode") or _DEFAULT_PERFORMANCE_MODE)
+                        .strip()
+                        .lower()
+                    )
                     jank_mode = str(options.get("jank_mode") or "enable").lower()
                     reduce_dispatch = reduce_mode == "enable"
                     overlay_dispatch = overlay_mode == "enable"
+                    performance_dispatch = performance_mode == "enable"
                     jank_dispatch = jank_mode == "enable"
                     reduce_logging = reduce_mode in {"enable", "jsonl"}
                     overlay_logging = overlay_mode in {"enable", "jsonl"}
+                    performance_logging = performance_mode in {"enable", "jsonl"}
                     jank_logging = jank_mode in {"enable", "jsonl"}
                     reduce_category = options.get("reduce_category") or _DEFAULT_UI_CATEGORY
                     reduce_active = options.get("reduce_active_severity") or _DEFAULT_UI_SEVERITY_ACTIVE
@@ -1281,6 +1501,64 @@ def _build_server(
                         if overlay_threshold_opt is not None
                         else _DEFAULT_OVERLAY_THRESHOLD
                     )
+                    performance_category = (
+                        options.get("performance_category") or _DEFAULT_PERFORMANCE_CATEGORY
+                    )
+                    performance_warning = (
+                        options.get("performance_warning_severity")
+                        or _DEFAULT_PERFORMANCE_SEVERITY_WARNING
+                    )
+                    performance_critical = (
+                        options.get("performance_critical_severity")
+                        or _DEFAULT_PERFORMANCE_SEVERITY_CRITICAL
+                    )
+                    performance_recovered = (
+                        options.get("performance_recovered_severity")
+                        or _DEFAULT_PERFORMANCE_SEVERITY_RECOVERED
+                    )
+
+                    def _read_threshold(option_name: str, default: float | None) -> float | None:
+                        raw_value = options.get(option_name)
+                        if raw_value is None:
+                            return default
+                        try:
+                            return float(raw_value)
+                        except (TypeError, ValueError):
+                            return default
+
+                    perf_event_warning = _read_threshold(
+                        "performance_event_to_frame_warning_ms",
+                        _DEFAULT_PERFORMANCE_EVENT_WARNING_MS,
+                    )
+                    perf_event_critical = _read_threshold(
+                        "performance_event_to_frame_critical_ms",
+                        _DEFAULT_PERFORMANCE_EVENT_CRITICAL_MS,
+                    )
+                    perf_cpu_warning = _read_threshold(
+                        "performance_cpu_warning_percent",
+                        _DEFAULT_PERFORMANCE_CPU_WARNING_PERCENT,
+                    )
+                    perf_cpu_critical = _read_threshold(
+                        "performance_cpu_critical_percent",
+                        _DEFAULT_PERFORMANCE_CPU_CRITICAL_PERCENT,
+                    )
+                    perf_gpu_warning = _read_threshold(
+                        "performance_gpu_warning_percent",
+                        _DEFAULT_PERFORMANCE_GPU_WARNING_PERCENT,
+                    )
+                    perf_gpu_critical = _read_threshold(
+                        "performance_gpu_critical_percent",
+                        _DEFAULT_PERFORMANCE_GPU_CRITICAL_PERCENT,
+                    )
+                    perf_ram_warning = _read_threshold(
+                        "performance_ram_warning_megabytes",
+                        _DEFAULT_PERFORMANCE_RAM_WARNING_MEGABYTES,
+                    )
+                    perf_ram_critical = _read_threshold(
+                        "performance_ram_critical_megabytes",
+                        _DEFAULT_PERFORMANCE_RAM_CRITICAL_MEGABYTES,
+                    )
+
                     jank_category = options.get("jank_category") or _DEFAULT_UI_CATEGORY
                     jank_spike = options.get("jank_spike_severity") or _DEFAULT_JANK_SEVERITY_SPIKE
                     jank_critical = options.get("jank_critical_severity")
@@ -1298,9 +1576,11 @@ def _build_server(
                         jsonl_path=ui_alerts_path,
                         enable_reduce_motion_alerts=reduce_dispatch,
                         enable_overlay_alerts=overlay_dispatch,
+                        enable_performance_alerts=performance_dispatch,
                         enable_jank_alerts=jank_dispatch,
                         log_reduce_motion_events=reduce_logging,
                         log_overlay_events=overlay_logging,
+                        log_performance_events=performance_logging,
                         log_jank_events=jank_logging,
                         reduce_motion_category=reduce_category,
                         reduce_motion_severity_active=reduce_active,
@@ -1308,6 +1588,18 @@ def _build_server(
                         overlay_category=overlay_category,
                         overlay_severity_exceeded=overlay_exceeded,
                         overlay_severity_recovered=overlay_recovered,
+                        performance_category=performance_category,
+                        performance_severity_warning=performance_warning,
+                        performance_severity_critical=performance_critical,
+                        performance_severity_recovered=performance_recovered,
+                        performance_event_to_frame_warning_ms=perf_event_warning,
+                        performance_event_to_frame_critical_ms=perf_event_critical,
+                        cpu_utilization_warning_percent=perf_cpu_warning,
+                        cpu_utilization_critical_percent=perf_cpu_critical,
+                        gpu_utilization_warning_percent=perf_gpu_warning,
+                        gpu_utilization_critical_percent=perf_gpu_critical,
+                        ram_usage_warning_megabytes=perf_ram_warning,
+                        ram_usage_critical_megabytes=perf_ram_critical,
                         jank_category=jank_category,
                         jank_severity_spike=jank_spike,
                     )
@@ -1324,12 +1616,15 @@ def _build_server(
                         "path": str(ui_alerts_path),
                         "reduce_mode": reduce_mode,
                         "overlay_mode": overlay_mode,
+                        "performance_mode": performance_mode,
                         "jank_mode": jank_mode,
                         "reduce_motion_alerts": reduce_dispatch,
                         "overlay_alerts": overlay_dispatch,
+                        "performance_alerts": performance_dispatch,
                         "jank_alerts": jank_dispatch,
                         "reduce_motion_logging": reduce_logging,
                         "overlay_logging": overlay_logging,
+                        "performance_logging": performance_logging,
                         "jank_logging": jank_logging,
                         "reduce_motion_category": reduce_category,
                         "reduce_motion_severity_active": reduce_active,
@@ -1339,6 +1634,18 @@ def _build_server(
                         "overlay_severity_recovered": overlay_recovered,
                         "overlay_severity_critical": overlay_critical,
                         "overlay_critical_threshold": overlay_threshold,
+                        "performance_category": performance_category,
+                        "performance_severity_warning": performance_warning,
+                        "performance_severity_critical": performance_critical,
+                        "performance_severity_recovered": performance_recovered,
+                        "performance_event_to_frame_warning_ms": perf_event_warning,
+                        "performance_event_to_frame_critical_ms": perf_event_critical,
+                        "performance_cpu_warning_percent": perf_cpu_warning,
+                        "performance_cpu_critical_percent": perf_cpu_critical,
+                        "performance_gpu_warning_percent": perf_gpu_warning,
+                        "performance_gpu_critical_percent": perf_gpu_critical,
+                        "performance_ram_warning_megabytes": perf_ram_warning,
+                        "performance_ram_critical_megabytes": perf_ram_critical,
                         "jank_category": jank_category,
                         "jank_severity_spike": jank_spike,
                         "jank_severity_critical": jank_critical,
@@ -1555,6 +1862,18 @@ def _apply_core_metrics_config(
             sources["ui_alerts_overlay_mode"] = origin
             value_sources.setdefault("ui_alerts_overlay_mode", origin)
 
+    if "ui_alerts_performance_mode" not in env_overrides:
+        if flag_provided("--ui-alerts-performance-mode"):
+            sources.setdefault("ui_alerts_performance_mode", "cli")
+        else:
+            normalized, origin = _mode_from_config(
+                dispatch_attr="performance_alerts",
+                mode_attr="performance_alert_mode",
+            )
+            args.ui_alerts_performance_mode = normalized
+            sources["ui_alerts_performance_mode"] = origin
+            value_sources.setdefault("ui_alerts_performance_mode", origin)
+
     if "ui_alerts_jank_mode" not in env_overrides:
         if flag_provided("--ui-alerts-jank-mode"):
             sources.setdefault("ui_alerts_jank_mode", "cli")
@@ -1644,6 +1963,90 @@ def _apply_core_metrics_config(
         "ui_alerts_jank_critical_severity",
         "jank_alert_severity_critical",
         _DEFAULT_JANK_SEVERITY_CRITICAL,
+    )
+    _assign_if_present(
+        "ui_alerts_performance_category",
+        "performance_category",
+        _DEFAULT_PERFORMANCE_CATEGORY,
+    )
+    _assign_if_present(
+        "ui_alerts_performance_warning_severity",
+        "performance_severity_warning",
+        _DEFAULT_PERFORMANCE_SEVERITY_WARNING,
+    )
+    _assign_if_present(
+        "ui_alerts_performance_critical_severity",
+        "performance_severity_critical",
+        _DEFAULT_PERFORMANCE_SEVERITY_CRITICAL,
+    )
+    _assign_if_present(
+        "ui_alerts_performance_recovered_severity",
+        "performance_severity_recovered",
+        _DEFAULT_PERFORMANCE_SEVERITY_RECOVERED,
+    )
+
+    def _assign_optional_float(option: str, attr_name: str, default_value: float | None) -> None:
+        if option in env_overrides:
+            return
+        cli_flag = f"--{option.replace('_', '-')}"
+        if flag_provided(cli_flag):
+            sources.setdefault(option, "cli")
+            return
+        raw_value = getattr(metrics_config, attr_name, None)
+        if raw_value is not None:
+            try:
+                numeric = float(raw_value)
+            except (TypeError, ValueError):
+                setattr(args, option, None)
+                return
+            else:
+                setattr(args, option, numeric)
+                sources[option] = "core_config"
+                value_sources.setdefault(option, "core_config")
+                return
+        setattr(args, option, default_value)
+        sources.setdefault(option, "default")
+        value_sources.setdefault(option, "default")
+
+    _assign_optional_float(
+        "ui_alerts_performance_event_to_frame_warning_ms",
+        "performance_event_to_frame_warning_ms",
+        _DEFAULT_PERFORMANCE_EVENT_WARNING_MS,
+    )
+    _assign_optional_float(
+        "ui_alerts_performance_event_to_frame_critical_ms",
+        "performance_event_to_frame_critical_ms",
+        _DEFAULT_PERFORMANCE_EVENT_CRITICAL_MS,
+    )
+    _assign_optional_float(
+        "ui_alerts_performance_cpu_warning_percent",
+        "cpu_utilization_warning_percent",
+        _DEFAULT_PERFORMANCE_CPU_WARNING_PERCENT,
+    )
+    _assign_optional_float(
+        "ui_alerts_performance_cpu_critical_percent",
+        "cpu_utilization_critical_percent",
+        _DEFAULT_PERFORMANCE_CPU_CRITICAL_PERCENT,
+    )
+    _assign_optional_float(
+        "ui_alerts_performance_gpu_warning_percent",
+        "gpu_utilization_warning_percent",
+        _DEFAULT_PERFORMANCE_GPU_WARNING_PERCENT,
+    )
+    _assign_optional_float(
+        "ui_alerts_performance_gpu_critical_percent",
+        "gpu_utilization_critical_percent",
+        _DEFAULT_PERFORMANCE_GPU_CRITICAL_PERCENT,
+    )
+    _assign_optional_float(
+        "ui_alerts_performance_ram_warning_megabytes",
+        "ram_usage_warning_megabytes",
+        _DEFAULT_PERFORMANCE_RAM_WARNING_MEGABYTES,
+    )
+    _assign_optional_float(
+        "ui_alerts_performance_ram_critical_megabytes",
+        "ram_usage_critical_megabytes",
+        _DEFAULT_PERFORMANCE_RAM_CRITICAL_MEGABYTES,
     )
 
     if "ui_alerts_overlay_critical_threshold" not in env_overrides:
@@ -1966,12 +2369,17 @@ def _build_config_plan_payload(
 
     reduce_mode_value = (args.ui_alerts_reduce_mode or "enable").lower()
     overlay_mode_value = (args.ui_alerts_overlay_mode or "enable").lower()
+    performance_mode_value = (
+        (args.ui_alerts_performance_mode or _DEFAULT_PERFORMANCE_MODE).strip().lower()
+    )
     jank_mode_value = (args.ui_alerts_jank_mode or "enable").lower()
     reduce_dispatch = reduce_mode_value == "enable"
     overlay_dispatch = overlay_mode_value == "enable"
+    performance_dispatch = performance_mode_value == "enable"
     jank_dispatch = jank_mode_value == "enable"
     reduce_logging = reduce_mode_value in {"enable", "jsonl"}
     overlay_logging = overlay_mode_value in {"enable", "jsonl"}
+    performance_logging = performance_mode_value in {"enable", "jsonl"}
     jank_logging = jank_mode_value in {"enable", "jsonl"}
 
     ui_alerts_section: dict[str, object] = {
@@ -1979,12 +2387,15 @@ def _build_config_plan_payload(
         "disabled": bool(args.disable_ui_alerts),
         "reduce_mode": reduce_mode_value,
         "overlay_mode": overlay_mode_value,
+        "performance_mode": performance_mode_value,
         "jank_mode": jank_mode_value,
         "reduce_motion_dispatch": reduce_dispatch,
         "overlay_dispatch": overlay_dispatch,
+        "performance_dispatch": performance_dispatch,
         "jank_dispatch": jank_dispatch,
         "reduce_motion_logging": reduce_logging,
         "overlay_logging": overlay_logging,
+        "performance_logging": performance_logging,
         "jank_logging": jank_logging,
     }
     audit_dir_path = (
@@ -2046,6 +2457,63 @@ def _build_config_plan_payload(
                 args.ui_alerts_overlay_critical_threshold
                 if args.ui_alerts_overlay_critical_threshold is not None
                 else _DEFAULT_OVERLAY_THRESHOLD
+            ),
+            "performance_mode": args.ui_alerts_performance_mode or _DEFAULT_PERFORMANCE_MODE,
+            "performance_alerts": performance_dispatch,
+            "performance_logging": performance_logging,
+            "performance_category": args.ui_alerts_performance_category
+            or _DEFAULT_PERFORMANCE_CATEGORY,
+            "performance_severity_warning": (
+                args.ui_alerts_performance_warning_severity
+                or _DEFAULT_PERFORMANCE_SEVERITY_WARNING
+            ),
+            "performance_severity_critical": (
+                args.ui_alerts_performance_critical_severity
+                or _DEFAULT_PERFORMANCE_SEVERITY_CRITICAL
+            ),
+            "performance_severity_recovered": (
+                args.ui_alerts_performance_recovered_severity
+                or _DEFAULT_PERFORMANCE_SEVERITY_RECOVERED
+            ),
+            "performance_event_to_frame_warning_ms": (
+                args.ui_alerts_performance_event_to_frame_warning_ms
+                if args.ui_alerts_performance_event_to_frame_warning_ms is not None
+                else _DEFAULT_PERFORMANCE_EVENT_WARNING_MS
+            ),
+            "performance_event_to_frame_critical_ms": (
+                args.ui_alerts_performance_event_to_frame_critical_ms
+                if args.ui_alerts_performance_event_to_frame_critical_ms is not None
+                else _DEFAULT_PERFORMANCE_EVENT_CRITICAL_MS
+            ),
+            "performance_cpu_warning_percent": (
+                args.ui_alerts_performance_cpu_warning_percent
+                if args.ui_alerts_performance_cpu_warning_percent is not None
+                else _DEFAULT_PERFORMANCE_CPU_WARNING_PERCENT
+            ),
+            "performance_cpu_critical_percent": (
+                args.ui_alerts_performance_cpu_critical_percent
+                if args.ui_alerts_performance_cpu_critical_percent is not None
+                else _DEFAULT_PERFORMANCE_CPU_CRITICAL_PERCENT
+            ),
+            "performance_gpu_warning_percent": (
+                args.ui_alerts_performance_gpu_warning_percent
+                if args.ui_alerts_performance_gpu_warning_percent is not None
+                else _DEFAULT_PERFORMANCE_GPU_WARNING_PERCENT
+            ),
+            "performance_gpu_critical_percent": (
+                args.ui_alerts_performance_gpu_critical_percent
+                if args.ui_alerts_performance_gpu_critical_percent is not None
+                else _DEFAULT_PERFORMANCE_GPU_CRITICAL_PERCENT
+            ),
+            "performance_ram_warning_megabytes": (
+                args.ui_alerts_performance_ram_warning_megabytes
+                if args.ui_alerts_performance_ram_warning_megabytes is not None
+                else _DEFAULT_PERFORMANCE_RAM_WARNING_MEGABYTES
+            ),
+            "performance_ram_critical_megabytes": (
+                args.ui_alerts_performance_ram_critical_megabytes
+                if args.ui_alerts_performance_ram_critical_megabytes is not None
+                else _DEFAULT_PERFORMANCE_RAM_CRITICAL_MEGABYTES
             ),
             "jank_category": args.ui_alerts_jank_category or _DEFAULT_UI_CATEGORY,
             "jank_severity_spike": args.ui_alerts_jank_spike_severity or _DEFAULT_JANK_SEVERITY_SPIKE,
@@ -2140,6 +2608,16 @@ def _build_config_plan_payload(
             if sink.__class__.__name__ == "LoggingSink":
                 logging_sink_active = True
 
+        runtime_jsonl_meta = runtime_metadata.get("jsonl_sink", {})
+        jsonl_runtime_active = bool(jsonl_runtime_details)
+        if not jsonl_runtime_active:
+            if "active" in runtime_jsonl_meta:
+                jsonl_runtime_active = bool(runtime_jsonl_meta.get("active"))
+            elif runtime_jsonl_meta.get("path"):
+                jsonl_runtime_active = True
+            elif jsonl_arg_path is not None:
+                jsonl_runtime_active = True
+
         runtime_state = {
             "available": True,
             "reason": None,
@@ -2148,11 +2626,11 @@ def _build_config_plan_payload(
             "sink_count": len(sinks_info),
             "sinks": sinks_info,
             "logging_sink_active": logging_sink_active,
-            "jsonl_sink_active": bool(jsonl_runtime_details),
+            "jsonl_sink_active": jsonl_runtime_active,
             "metadata_source": "runtime_metadata" if runtime_metadata else "args_only",
         }
 
-        jsonl_runtime_path = runtime_metadata.get("jsonl_sink", {}).get("path")
+        jsonl_runtime_path = runtime_jsonl_meta.get("path")
         if jsonl_runtime_path:
             runtime_state["jsonl_sink"] = {
                 "path": jsonl_runtime_path,
@@ -2524,6 +3002,7 @@ def main(argv: list[str] | None = None) -> int:
     ui_alerts_options = {
         "reduce_mode": args.ui_alerts_reduce_mode,
         "overlay_mode": args.ui_alerts_overlay_mode,
+        "performance_mode": args.ui_alerts_performance_mode,
         "reduce_category": args.ui_alerts_reduce_category,
         "reduce_active_severity": args.ui_alerts_reduce_active_severity,
         "reduce_recovered_severity": args.ui_alerts_reduce_recovered_severity,
@@ -2532,6 +3011,22 @@ def main(argv: list[str] | None = None) -> int:
         "overlay_recovered_severity": args.ui_alerts_overlay_recovered_severity,
         "overlay_critical_severity": args.ui_alerts_overlay_critical_severity,
         "overlay_critical_threshold": args.ui_alerts_overlay_critical_threshold,
+        "performance_category": args.ui_alerts_performance_category,
+        "performance_warning_severity": args.ui_alerts_performance_warning_severity,
+        "performance_critical_severity": args.ui_alerts_performance_critical_severity,
+        "performance_recovered_severity": args.ui_alerts_performance_recovered_severity,
+        "performance_event_to_frame_warning_ms": (
+            args.ui_alerts_performance_event_to_frame_warning_ms
+        ),
+        "performance_event_to_frame_critical_ms": (
+            args.ui_alerts_performance_event_to_frame_critical_ms
+        ),
+        "performance_cpu_warning_percent": args.ui_alerts_performance_cpu_warning_percent,
+        "performance_cpu_critical_percent": args.ui_alerts_performance_cpu_critical_percent,
+        "performance_gpu_warning_percent": args.ui_alerts_performance_gpu_warning_percent,
+        "performance_gpu_critical_percent": args.ui_alerts_performance_gpu_critical_percent,
+        "performance_ram_warning_megabytes": args.ui_alerts_performance_ram_warning_megabytes,
+        "performance_ram_critical_megabytes": args.ui_alerts_performance_ram_critical_megabytes,
         "jank_mode": args.ui_alerts_jank_mode,
         "jank_category": args.ui_alerts_jank_category,
         "jank_spike_severity": args.ui_alerts_jank_spike_severity,
@@ -2543,12 +3038,17 @@ def main(argv: list[str] | None = None) -> int:
     if not args.disable_ui_alerts:
         reduce_mode = (args.ui_alerts_reduce_mode or "enable").lower()
         overlay_mode = (args.ui_alerts_overlay_mode or "enable").lower()
+        performance_mode = (
+            (args.ui_alerts_performance_mode or _DEFAULT_PERFORMANCE_MODE).strip().lower()
+        )
         jank_mode = (args.ui_alerts_jank_mode or "enable").lower()
         reduce_dispatch = reduce_mode == "enable"
         overlay_dispatch = overlay_mode == "enable"
+        performance_dispatch = performance_mode == "enable"
         jank_dispatch = jank_mode == "enable"
         reduce_logging = reduce_mode in {"enable", "jsonl"}
         overlay_logging = overlay_mode in {"enable", "jsonl"}
+        performance_logging = performance_mode in {"enable", "jsonl"}
         jank_logging = jank_mode in {"enable", "jsonl"}
         reduce_category = args.ui_alerts_reduce_category or _DEFAULT_UI_CATEGORY
         reduce_active = args.ui_alerts_reduce_active_severity or _DEFAULT_UI_SEVERITY_ACTIVE
@@ -2569,6 +3069,61 @@ def main(argv: list[str] | None = None) -> int:
             args.ui_alerts_overlay_critical_threshold
             if args.ui_alerts_overlay_critical_threshold is not None
             else _DEFAULT_OVERLAY_THRESHOLD
+        )
+        performance_category = (
+            args.ui_alerts_performance_category or _DEFAULT_PERFORMANCE_CATEGORY
+        )
+        performance_warning = (
+            args.ui_alerts_performance_warning_severity
+            or _DEFAULT_PERFORMANCE_SEVERITY_WARNING
+        )
+        performance_critical = (
+            args.ui_alerts_performance_critical_severity
+            or _DEFAULT_PERFORMANCE_SEVERITY_CRITICAL
+        )
+        performance_recovered = (
+            args.ui_alerts_performance_recovered_severity
+            or _DEFAULT_PERFORMANCE_SEVERITY_RECOVERED
+        )
+        performance_event_warning = (
+            float(args.ui_alerts_performance_event_to_frame_warning_ms)
+            if args.ui_alerts_performance_event_to_frame_warning_ms is not None
+            else _DEFAULT_PERFORMANCE_EVENT_WARNING_MS
+        )
+        performance_event_critical = (
+            float(args.ui_alerts_performance_event_to_frame_critical_ms)
+            if args.ui_alerts_performance_event_to_frame_critical_ms is not None
+            else _DEFAULT_PERFORMANCE_EVENT_CRITICAL_MS
+        )
+        performance_cpu_warning = (
+            float(args.ui_alerts_performance_cpu_warning_percent)
+            if args.ui_alerts_performance_cpu_warning_percent is not None
+            else _DEFAULT_PERFORMANCE_CPU_WARNING_PERCENT
+        )
+        performance_cpu_critical = (
+            float(args.ui_alerts_performance_cpu_critical_percent)
+            if args.ui_alerts_performance_cpu_critical_percent is not None
+            else _DEFAULT_PERFORMANCE_CPU_CRITICAL_PERCENT
+        )
+        performance_gpu_warning = (
+            float(args.ui_alerts_performance_gpu_warning_percent)
+            if args.ui_alerts_performance_gpu_warning_percent is not None
+            else _DEFAULT_PERFORMANCE_GPU_WARNING_PERCENT
+        )
+        performance_gpu_critical = (
+            float(args.ui_alerts_performance_gpu_critical_percent)
+            if args.ui_alerts_performance_gpu_critical_percent is not None
+            else _DEFAULT_PERFORMANCE_GPU_CRITICAL_PERCENT
+        )
+        performance_ram_warning = (
+            float(args.ui_alerts_performance_ram_warning_megabytes)
+            if args.ui_alerts_performance_ram_warning_megabytes is not None
+            else _DEFAULT_PERFORMANCE_RAM_WARNING_MEGABYTES
+        )
+        performance_ram_critical = (
+            float(args.ui_alerts_performance_ram_critical_megabytes)
+            if args.ui_alerts_performance_ram_critical_megabytes is not None
+            else _DEFAULT_PERFORMANCE_RAM_CRITICAL_MEGABYTES
         )
         jank_category = args.ui_alerts_jank_category or _DEFAULT_UI_CATEGORY
         jank_spike = args.ui_alerts_jank_spike_severity or _DEFAULT_JANK_SEVERITY_SPIKE
@@ -2636,12 +3191,15 @@ def main(argv: list[str] | None = None) -> int:
             "path": str(ui_path),
             "reduce_mode": reduce_mode,
             "overlay_mode": overlay_mode,
+            "performance_mode": performance_mode,
             "jank_mode": jank_mode,
             "reduce_motion_alerts": reduce_dispatch,
             "overlay_alerts": overlay_dispatch,
+            "performance_alerts": performance_dispatch,
             "jank_alerts": jank_dispatch,
             "reduce_motion_logging": reduce_logging,
             "overlay_logging": overlay_logging,
+            "performance_logging": performance_logging,
             "jank_logging": jank_logging,
             "reduce_motion_category": reduce_category,
             "reduce_motion_severity_active": reduce_active,
@@ -2651,6 +3209,18 @@ def main(argv: list[str] | None = None) -> int:
             "overlay_severity_recovered": overlay_recovered,
             "overlay_severity_critical": overlay_critical,
             "overlay_critical_threshold": overlay_threshold,
+            "performance_category": performance_category,
+            "performance_severity_warning": performance_warning,
+            "performance_severity_critical": performance_critical,
+            "performance_severity_recovered": performance_recovered,
+            "performance_event_to_frame_warning_ms": performance_event_warning,
+            "performance_event_to_frame_critical_ms": performance_event_critical,
+            "performance_cpu_warning_percent": performance_cpu_warning,
+            "performance_cpu_critical_percent": performance_cpu_critical,
+            "performance_gpu_warning_percent": performance_gpu_warning,
+            "performance_gpu_critical_percent": performance_gpu_critical,
+            "performance_ram_warning_megabytes": performance_ram_warning,
+            "performance_ram_critical_megabytes": performance_ram_critical,
             "jank_category": jank_category,
             "jank_severity_spike": jank_spike,
             "jank_severity_critical": jank_critical,
@@ -2658,16 +3228,35 @@ def main(argv: list[str] | None = None) -> int:
             "audit": audit_config,
         }
 
+    jsonl_destination = Path(args.jsonl).expanduser() if args.jsonl else None
+    if jsonl_destination is not None:
+        jsonl_destination.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            jsonl_destination.touch(exist_ok=True)
+        except OSError:
+            LOGGER.warning(
+                "Nie udało się utworzyć pliku JSONL %s przed startem serwera – runtime spróbuje ponownie podczas zapisu",
+                jsonl_destination,
+            )
+        args.jsonl = jsonl_destination
+
+    ui_alerts_destination = (
+        Path(args.ui_alerts_jsonl).expanduser() if args.ui_alerts_jsonl else None
+    )
+    if ui_alerts_destination is not None:
+        ui_alerts_destination.parent.mkdir(parents=True, exist_ok=True)
+        args.ui_alerts_jsonl = ui_alerts_destination
+
     server = _build_server(
         host=args.host,
         port=args.port,
         history_size=args.history_size,
         enable_logging_sink=not args.no_log_sink,
-        jsonl_path=Path(args.jsonl) if args.jsonl else None,
+        jsonl_path=jsonl_destination,
         jsonl_fsync=args.jsonl_fsync,
         auth_token=args.auth_token,
         enable_ui_alerts=not args.disable_ui_alerts,
-        ui_alerts_jsonl_path=Path(args.ui_alerts_jsonl) if args.ui_alerts_jsonl else None,
+        ui_alerts_jsonl_path=ui_alerts_destination,
         ui_alerts_options=ui_alerts_options,
         ui_alerts_config=ui_alerts_config_payload,
         ui_alerts_audit_dir=audit_directory,

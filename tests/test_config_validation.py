@@ -228,6 +228,20 @@ def _metrics_config_base() -> MetricsServiceConfig:
         jank_alert_severity_spike="warning",
         jank_alert_severity_critical="critical",
         jank_alert_critical_over_ms=10.0,
+        performance_alerts=True,
+        performance_alert_mode="enable",
+        performance_category="ui.performance.metrics",
+        performance_severity_warning="warning",
+        performance_severity_critical="critical",
+        performance_severity_recovered="info",
+        performance_event_to_frame_warning_ms=45.0,
+        performance_event_to_frame_critical_ms=60.0,
+        cpu_utilization_warning_percent=75.0,
+        cpu_utilization_critical_percent=90.0,
+        gpu_utilization_warning_percent=65.0,
+        gpu_utilization_critical_percent=80.0,
+        ram_usage_warning_megabytes=4096.0,
+        ram_usage_critical_megabytes=6144.0,
     )
 
 
@@ -514,6 +528,35 @@ def test_validate_core_config_detects_nonpositive_jank_threshold(
 
     assert not result.is_valid()
     assert any("jank_alert_critical_over_ms" in err for err in result.errors)
+
+
+def test_validate_core_config_detects_invalid_performance_thresholds(
+    base_config: CoreConfig,
+) -> None:
+    metrics = _metrics_config_base()
+    metrics.performance_event_to_frame_warning_ms = 55.0
+    metrics.performance_event_to_frame_critical_ms = 50.0
+    config = replace(base_config, metrics_service=metrics)
+
+    result = validate_core_config(config)
+
+    assert not result.is_valid()
+    assert any(
+        "performance_event_to_frame_critical_ms" in err for err in result.errors
+    )
+
+
+def test_validate_core_config_detects_nonpositive_performance_threshold(
+    base_config: CoreConfig,
+) -> None:
+    metrics = _metrics_config_base()
+    metrics.cpu_utilization_warning_percent = 0.0
+    config = replace(base_config, metrics_service=metrics)
+
+    result = validate_core_config(config)
+
+    assert not result.is_valid()
+    assert any("cpu_utilization_warning_percent" in err for err in result.errors)
 
 
 def test_validate_core_config_detects_missing_tls_material(base_config: CoreConfig) -> None:

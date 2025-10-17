@@ -694,6 +694,7 @@ def bootstrap_environment(
             reduce_mode = "enable"
             overlay_mode = "enable"
             jank_mode = "disable"
+            performance_mode = "disable"
 
             reduce_candidate = _resolve_metrics_value("reduce_motion_mode", None)
             if reduce_candidate is not None:
@@ -725,12 +726,28 @@ def bootstrap_environment(
                     "enable" if bool(_resolve_metrics_value("jank_alerts", False)) else "disable"
                 )
 
+            performance_candidate = _resolve_metrics_value(
+                "performance_alert_mode", None
+            )
+            if performance_candidate is not None:
+                candidate = str(performance_candidate).lower()
+                if candidate in {"enable", "jsonl", "disable"}:
+                    performance_mode = candidate
+            elif metrics_config is not None:
+                performance_mode = (
+                    "enable"
+                    if bool(_resolve_metrics_value("performance_alerts", False))
+                    else "disable"
+                )
+
             reduce_dispatch = reduce_mode == "enable"
             overlay_dispatch = overlay_mode == "enable"
             jank_dispatch = jank_mode == "enable"
+            performance_dispatch = performance_mode == "enable"
             reduce_logging = reduce_mode in {"enable", "jsonl"}
             overlay_logging = overlay_mode in {"enable", "jsonl"}
             jank_logging = jank_mode in {"enable", "jsonl"}
+            performance_logging = performance_mode in {"enable", "jsonl"}
 
             # Kategorie / severity / progi (z możliwością override przez resolver)
             reduce_category = _resolve_metrics_value("reduce_motion_category", "ui.performance")
@@ -748,6 +765,43 @@ def bootstrap_environment(
             jank_critical = _resolve_metrics_value("jank_alert_severity_critical", None)
             jank_threshold_raw = _resolve_metrics_value("jank_alert_critical_over_ms", None)
 
+            performance_category = _resolve_metrics_value(
+                "performance_category", "ui.performance"
+            )
+            performance_warning = _resolve_metrics_value(
+                "performance_severity_warning", "warning"
+            )
+            performance_critical = _resolve_metrics_value(
+                "performance_severity_critical", "critical"
+            )
+            performance_recovered = _resolve_metrics_value(
+                "performance_severity_recovered", "info"
+            )
+            performance_event_warning_raw = _resolve_metrics_value(
+                "performance_event_to_frame_warning_ms", 45.0
+            )
+            performance_event_critical_raw = _resolve_metrics_value(
+                "performance_event_to_frame_critical_ms", 60.0
+            )
+            cpu_warning_raw = _resolve_metrics_value(
+                "cpu_utilization_warning_percent", 85.0
+            )
+            cpu_critical_raw = _resolve_metrics_value(
+                "cpu_utilization_critical_percent", 95.0
+            )
+            gpu_warning_raw = _resolve_metrics_value(
+                "gpu_utilization_warning_percent", None
+            )
+            gpu_critical_raw = _resolve_metrics_value(
+                "gpu_utilization_critical_percent", None
+            )
+            ram_warning_raw = _resolve_metrics_value(
+                "ram_usage_warning_megabytes", None
+            )
+            ram_critical_raw = _resolve_metrics_value(
+                "ram_usage_critical_megabytes", None
+            )
+
             sink_kwargs: dict[str, object] = {
                 "jsonl_path": telemetry_log,
                 "enable_reduce_motion_alerts": reduce_dispatch,
@@ -756,6 +810,8 @@ def bootstrap_environment(
                 "log_overlay_events": overlay_logging,
                 "enable_jank_alerts": jank_dispatch,
                 "log_jank_events": jank_logging,
+                "enable_performance_alerts": performance_dispatch,
+                "log_performance_events": performance_logging,
                 "reduce_motion_category": reduce_category,
                 "reduce_motion_severity_active": reduce_active,
                 "reduce_motion_severity_recovered": reduce_recovered,
@@ -764,6 +820,10 @@ def bootstrap_environment(
                 "overlay_severity_recovered": overlay_recovered,
                 "jank_category": jank_category,
                 "jank_severity_spike": jank_spike,
+                "performance_category": performance_category,
+                "performance_severity_warning": performance_warning,
+                "performance_severity_critical": performance_critical,
+                "performance_severity_recovered": performance_recovered,
             }
 
             # Walidacja/projekcja progów
@@ -789,6 +849,56 @@ def bootstrap_environment(
                 else:
                     sink_kwargs["jank_critical_over_ms"] = jank_threshold_value
 
+            def _normalize_optional_float(value: object, *, field_name: str) -> float | None:
+                if value in (None, ""):
+                    return None
+                try:
+                    numeric = float(value)
+                except (TypeError, ValueError):
+                    _LOGGER.debug("Nieprawidłowy próg %s=%s", field_name, value)
+                    return None
+                return numeric
+
+            performance_event_warning = _normalize_optional_float(
+                performance_event_warning_raw,
+                field_name="performance_event_to_frame_warning_ms",
+            )
+            performance_event_critical = _normalize_optional_float(
+                performance_event_critical_raw,
+                field_name="performance_event_to_frame_critical_ms",
+            )
+            cpu_warning_percent = _normalize_optional_float(
+                cpu_warning_raw, field_name="cpu_utilization_warning_percent"
+            )
+            cpu_critical_percent = _normalize_optional_float(
+                cpu_critical_raw, field_name="cpu_utilization_critical_percent"
+            )
+            gpu_warning_percent = _normalize_optional_float(
+                gpu_warning_raw, field_name="gpu_utilization_warning_percent"
+            )
+            gpu_critical_percent = _normalize_optional_float(
+                gpu_critical_raw, field_name="gpu_utilization_critical_percent"
+            )
+            ram_warning_megabytes = _normalize_optional_float(
+                ram_warning_raw, field_name="ram_usage_warning_megabytes"
+            )
+            ram_critical_megabytes = _normalize_optional_float(
+                ram_critical_raw, field_name="ram_usage_critical_megabytes"
+            )
+
+            sink_kwargs["performance_event_to_frame_warning_ms"] = (
+                performance_event_warning
+            )
+            sink_kwargs["performance_event_to_frame_critical_ms"] = (
+                performance_event_critical
+            )
+            sink_kwargs["cpu_utilization_warning_percent"] = cpu_warning_percent
+            sink_kwargs["cpu_utilization_critical_percent"] = cpu_critical_percent
+            sink_kwargs["gpu_utilization_warning_percent"] = gpu_warning_percent
+            sink_kwargs["gpu_utilization_critical_percent"] = gpu_critical_percent
+            sink_kwargs["ram_usage_warning_megabytes"] = ram_warning_megabytes
+            sink_kwargs["ram_usage_critical_megabytes"] = ram_critical_megabytes
+
             if overlay_critical is not None:
                 sink_kwargs["overlay_severity_critical"] = overlay_critical
             if jank_critical is not None:
@@ -799,12 +909,15 @@ def bootstrap_environment(
                 "reduce_mode": reduce_mode,
                 "overlay_mode": overlay_mode,
                 "jank_mode": jank_mode,
+                "performance_mode": performance_mode,
                 "reduce_motion_alerts": reduce_dispatch,
                 "overlay_alerts": overlay_dispatch,
                 "jank_alerts": jank_dispatch,
+                "performance_alerts": performance_dispatch,
                 "reduce_motion_logging": reduce_logging,
                 "overlay_logging": overlay_logging,
                 "jank_logging": jank_logging,
+                "performance_logging": performance_logging,
                 "reduce_motion_category": reduce_category,
                 "reduce_motion_severity_active": reduce_active,
                 "reduce_motion_severity_recovered": reduce_recovered,
@@ -817,6 +930,18 @@ def bootstrap_environment(
                 "jank_severity_spike": jank_spike,
                 "jank_severity_critical": jank_critical,
                 "jank_critical_over_ms": jank_threshold_value,
+                "performance_category": performance_category,
+                "performance_severity_warning": performance_warning,
+                "performance_severity_critical": performance_critical,
+                "performance_severity_recovered": performance_recovered,
+                "performance_event_to_frame_warning_ms": performance_event_warning,
+                "performance_event_to_frame_critical_ms": performance_event_critical,
+                "cpu_utilization_warning_percent": cpu_warning_percent,
+                "cpu_utilization_critical_percent": cpu_critical_percent,
+                "gpu_utilization_warning_percent": gpu_warning_percent,
+                "gpu_utilization_critical_percent": gpu_critical_percent,
+                "ram_usage_warning_megabytes": ram_warning_megabytes,
+                "ram_usage_critical_megabytes": ram_critical_megabytes,
             }
             if resolver is not None:
                 risk_profile_meta = resolver.metadata()
