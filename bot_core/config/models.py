@@ -478,6 +478,7 @@ class EnvironmentConfig:
     credential_purpose: str = "trading"
     instrument_universe: str | None = None
     adapter_settings: Mapping[str, Any] = field(default_factory=dict)
+    permission_profile: str | None = None
     required_permissions: Sequence[str] = field(default_factory=tuple)
     forbidden_permissions: Sequence[str] = field(default_factory=tuple)
     alert_throttle: AlertThrottleConfig | None = None
@@ -541,6 +542,15 @@ class InstrumentBucketConfig:
     max_position_pct: float | None = None
     max_notional_usd: float | None = None
     tags: Sequence[str] = field(default_factory=tuple)
+
+
+@dataclass(slots=True)
+class PermissionProfileConfig:
+    """Zawiera listy minimalnych i zabronionych uprawnień API."""
+
+    name: str
+    required_permissions: Sequence[str] = field(default_factory=tuple)
+    forbidden_permissions: Sequence[str] = field(default_factory=tuple)
 
 
 # --- Strategie ----------------------------------------------------------------
@@ -851,6 +861,7 @@ class CoreConfig:
     """Najwyższego poziomu konfiguracja aplikacji."""
     environments: Mapping[str, EnvironmentConfig]
     risk_profiles: Mapping[str, RiskProfileConfig]
+    permission_profiles: Mapping[str, PermissionProfileConfig] = field(default_factory=dict)
     instrument_universes: Mapping[str, InstrumentUniverseConfig] = field(default_factory=dict)
     instrument_buckets: Mapping[str, InstrumentBucketConfig] = field(default_factory=dict)
     strategies: Mapping[str, DailyTrendMomentumStrategyConfig] = field(default_factory=dict)
@@ -900,6 +911,7 @@ __all__ = [
     "InstrumentConfig",
     "InstrumentUniverseConfig",
     "InstrumentBucketConfig",
+    "PermissionProfileConfig",
     "DailyTrendMomentumStrategyConfig",
     "MeanReversionStrategyConfig",
     "VolatilityTargetingStrategyConfig",

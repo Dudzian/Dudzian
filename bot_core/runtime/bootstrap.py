@@ -47,6 +47,7 @@ from bot_core.exchanges.base import (
 )
 from bot_core.exchanges.binance import BinanceFuturesAdapter, BinanceSpotAdapter
 from bot_core.exchanges.kraken import KrakenFuturesAdapter, KrakenSpotAdapter
+from bot_core.exchanges.nowa_gielda import NowaGieldaSpotAdapter
 from bot_core.exchanges.zonda import ZondaSpotAdapter
 from bot_core.risk.base import RiskRepository
 from bot_core.risk.engine import ThresholdRiskEngine
@@ -133,6 +134,7 @@ _DEFAULT_ADAPTERS: Mapping[str, ExchangeAdapterFactory] = {
     "binance_futures": BinanceFuturesAdapter,
     "kraken_spot": KrakenSpotAdapter,
     "kraken_futures": KrakenFuturesAdapter,
+    "nowa_gielda_spot": NowaGieldaSpotAdapter,
     "zonda_spot": ZondaSpotAdapter,
 }
 
@@ -215,7 +217,10 @@ def _load_initial_tco_costs(
     if not tco_config:
         return None, ()
 
-    report_paths = tuple(getattr(tco_config, "report_paths", ()) or ())
+    report_paths_attr = getattr(tco_config, "report_paths", None)
+    if not report_paths_attr:
+        report_paths_attr = getattr(tco_config, "reports", ())
+    report_paths = tuple(report_paths_attr or ())
     require_at_startup = bool(getattr(tco_config, "require_at_startup", False))
     for raw_path in report_paths:
         path = Path(str(raw_path)).expanduser()
@@ -233,7 +238,8 @@ def _load_initial_tco_costs(
             _LOGGER.warning("Nie udało się wczytać raportu TCO %s", path, exc_info=True)
             continue
 
-        loaded = False
+        loaded = True
+        loaded_path = str(path)
         if orchestrator is not None:
             try:
                 orchestrator.update_costs_from_report(payload)
@@ -260,7 +266,7 @@ def _load_initial_tco_costs(
                 loaded = True
         if loaded:
             _LOGGER.info("Załadowano raport TCO: %s", path)
-            return str(path), tuple(warnings)
+            return loaded_path, tuple(warnings)
 
     if require_at_startup:
         warnings.append("missing_required_tco_report")

@@ -19,6 +19,7 @@ from bot_core.exchanges.errors import (
 )
 from bot_core.exchanges.kraken.futures import KrakenFuturesAdapter
 from bot_core.exchanges.kraken.spot import KrakenSpotAdapter
+from bot_core.exchanges.nowa_gielda.spot import NowaGieldaSpotAdapter
 from bot_core.exchanges.zonda.spot import ZondaSpotAdapter
 
 __all__ = [
@@ -35,6 +36,7 @@ __all__ = [
     "ExchangeNetworkError",
     "KrakenFuturesAdapter",
     "KrakenSpotAdapter",
+    "NowaGieldaSpotAdapter",
     "OrderRequest",
     "OrderResult",
     "ZondaSpotAdapter",

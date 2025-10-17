@@ -435,6 +435,7 @@ class UiTelemetryAlertSink:
             return
 
         event = payload.get("event")
+        self._handle_retry_backlog(snapshot, payload)
         if event == "reduce_motion":
             self._update_reduce_motion_incident_state(
                 snapshot, payload, bool(payload.get("active"))

@@ -1364,6 +1364,368 @@ def test_tag_inactivity_alerts_and_recovers(monkeypatch, tmp_path: Path) -> None
     assert tag_records[1]["payload"]["event"] == "tag_inactivity_recovered"
 
 
+def test_retry_backlog_alerts_trigger_and_recover(tmp_path: Path) -> None:
+    router, channel = _build_router()
+    sink = UiTelemetryAlertSink(
+        router,
+        jsonl_path=tmp_path / "ui_alerts.jsonl",
+        retry_backlog_threshold=3,
+    )
+
+    degraded = _make_snapshot(
+        {
+            "event": "reduce_motion",
+            "active": True,
+            "retry_backlog_before_send": 2,
+            "retry_backlog_after_flush": 5,
+            "window_count": 2,
+        }
+    )
+    sink.handle_snapshot(degraded)
+
+    backlog_messages = [
+        msg for msg in channel.messages if msg.category == "ui.performance.retry_backlog"
+    ]
+    assert backlog_messages, "Powinien zostać wysłany alert backlogu"
+    message = backlog_messages[-1]
+    assert message.severity == "warning"
+    assert message.context["retry_backlog_after"] == "5"
+    assert message.context["retry_backlog_threshold"] == "3"
+    started_at = message.context.get("retry_backlog_started_at")
+    assert started_at, "Alert powinien zawierać czas rozpoczęcia degradacji"
+    start_dt = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+    assert start_dt.tzinfo == timezone.utc
+
+    # Powtórzony snapshot nie generuje kolejnego alertu
+    sink.handle_snapshot(degraded)
+    assert len([
+        msg for msg in channel.messages if msg.category == "ui.performance.retry_backlog"
+    ]) == 1
+
+    recovered = _make_snapshot(
+        {
+            "event": "overlay_budget",
+            "retry_backlog_before_send": 1,
+            "retry_backlog_after_flush": 0,
+        }
+    )
+    sink.handle_snapshot(recovered)
+
+    backlog_messages = [
+        msg for msg in channel.messages if msg.category == "ui.performance.retry_backlog"
+    ]
+    assert len(backlog_messages) == 2
+    recovery = backlog_messages[-1]
+    assert recovery.severity == "info"
+    recovery_started_at = recovery.context.get("retry_backlog_started_at")
+    assert recovery_started_at == started_at
+    recovered_at = recovery.context.get("retry_backlog_recovered_at")
+    assert recovered_at, "Komunikat o odzyskaniu powinien zawierać czas zakończenia"
+    recovered_dt = datetime.fromisoformat(recovered_at.replace("Z", "+00:00"))
+    assert recovered_dt.tzinfo == timezone.utc
+
+    records = [
+        json.loads(line)
+        for line in (tmp_path / "ui_alerts.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    backlog_records = [
+        record
+        for record in records
+        if record.get("category") == "ui.performance.retry_backlog"
+    ]
+    assert backlog_records
+    assert backlog_records[0]["context"]["retry_backlog_started_at"] == started_at
+
+
+def test_retry_backlog_alerts_can_be_disabled(tmp_path: Path) -> None:
+    router, channel = _build_router()
+    sink = UiTelemetryAlertSink(
+        router,
+        jsonl_path=tmp_path / "ui_alerts.jsonl",
+        enable_retry_backlog_alerts=False,
+        retry_backlog_threshold=1,
+        log_reduce_motion_events=False,
+        log_overlay_events=False,
+        log_jank_events=False,
+        log_retry_backlog_events=False,
+    )
+
+    snapshot = _make_snapshot(
+        {
+            "event": "reduce_motion",
+            "retry_backlog_after_flush": 2,
+        }
+    )
+
+    sink.handle_snapshot(snapshot)
+
+    assert all(
+        message.category != "ui.performance.retry_backlog" for message in channel.messages
+    ), "Alert backlogu nie powinien zostać wysłany"
+    assert not (tmp_path / "ui_alerts.jsonl").exists(), "Log backlogu nie powinien powstać"
+
+
+def test_retry_backlog_realert_on_growth(tmp_path: Path) -> None:
+    router, channel = _build_router()
+    sink = UiTelemetryAlertSink(
+        router,
+        jsonl_path=tmp_path / "ui_alerts.jsonl",
+        retry_backlog_threshold=3,
+        retry_backlog_realert_delta=2,
+    )
+
+    initial = _make_snapshot(
+        {
+            "retry_backlog_before_send": 1,
+            "retry_backlog_after_flush": 3,
+        }
+    )
+    sink.handle_snapshot(initial)
+
+    below_delta = _make_snapshot(
+        {
+            "retry_backlog_before_send": 2,
+            "retry_backlog_after_flush": 4,
+        }
+    )
+    sink.handle_snapshot(below_delta)
+
+    above_delta = _make_snapshot(
+        {
+            "retry_backlog_before_send": 4,
+            "retry_backlog_after_flush": 6,
+        }
+    )
+    sink.handle_snapshot(above_delta)
+
+    backlog_messages = [
+        message
+        for message in channel.messages
+        if message.category == "ui.performance.retry_backlog"
+        and message.severity == "warning"
+    ]
+    assert len(backlog_messages) == 2
+    assert backlog_messages[-1].context["retry_backlog_after"] == "6"
+    assert backlog_messages[-1].context["retry_backlog_delta"] == "3"
+    assert (
+        backlog_messages[0].context.get("retry_backlog_started_at")
+        == backlog_messages[-1].context.get("retry_backlog_started_at")
+    )
+    assert "+3" in backlog_messages[-1].body
+
+    records = [
+        json.loads(line)
+        for line in (tmp_path / "ui_alerts.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    recorded_backlog = [
+        record
+        for record in records
+        if record.get("category") == "ui.performance.retry_backlog"
+        and record.get("severity") == "warning"
+    ]
+    assert len(recorded_backlog) == 2
+    assert recorded_backlog[-1]["context"]["retry_backlog_delta"] == "3"
+
+
+def test_retry_backlog_realert_respects_cooldown(monkeypatch, tmp_path: Path) -> None:
+    router, channel = _build_router()
+    sink = UiTelemetryAlertSink(
+        router,
+        jsonl_path=tmp_path / "ui_alerts.jsonl",
+        retry_backlog_threshold=2,
+        retry_backlog_realert_delta=1,
+        retry_backlog_realert_cooldown_seconds=30,
+    )
+
+    monotonic_time = {"value": 100.0}
+
+    def fake_monotonic() -> float:
+        return monotonic_time["value"]
+
+    monkeypatch.setattr("bot_core.runtime.metrics_alerts.time.monotonic", fake_monotonic)
+
+    first = _make_snapshot(
+        {
+            "retry_backlog_before_send": 0,
+            "retry_backlog_after_flush": 2,
+        }
+    )
+    sink.handle_snapshot(first)
+
+    assert any(
+        msg.category == "ui.performance.retry_backlog" for msg in channel.messages
+    ), "Pierwszy alert powinien zostać wysłany"
+
+    monotonic_time["value"] = 120.0
+
+    suppressed = _make_snapshot(
+        {
+            "retry_backlog_before_send": 2,
+            "retry_backlog_after_flush": 3,
+        }
+    )
+    sink.handle_snapshot(suppressed)
+
+    backlog_messages = [
+        msg for msg in channel.messages if msg.category == "ui.performance.retry_backlog"
+    ]
+    assert len(backlog_messages) == 1, "Alert nie powinien przełamać cooldownu"
+
+    monotonic_time["value"] = 140.0
+
+    after_cooldown = _make_snapshot(
+        {
+            "retry_backlog_before_send": 3,
+            "retry_backlog_after_flush": 4,
+        }
+    )
+    sink.handle_snapshot(after_cooldown)
+
+    backlog_messages = [
+        msg for msg in channel.messages if msg.category == "ui.performance.retry_backlog"
+    ]
+    assert len(backlog_messages) == 2, "Po cooldownie alert powinien zostać wysłany"
+    assert backlog_messages[-1].context["retry_backlog_delta"] == "2"
+    assert backlog_messages[-1].context.get("retry_backlog_started_at")
+
+
+def test_retry_backlog_escalates_to_critical(tmp_path: Path) -> None:
+    router, channel = _build_router()
+    sink = UiTelemetryAlertSink(
+        router,
+        jsonl_path=tmp_path / "ui_alerts.jsonl",
+        retry_backlog_threshold=3,
+        retry_backlog_critical_threshold=6,
+        retry_backlog_realert_delta=5,
+    )
+
+    warning_snapshot = _make_snapshot(
+        {
+            "retry_backlog_before_send": 2,
+            "retry_backlog_after_flush": 4,
+        }
+    )
+    sink.handle_snapshot(warning_snapshot)
+
+    critical_snapshot = _make_snapshot(
+        {
+            "retry_backlog_before_send": 4,
+            "retry_backlog_after_flush": 6,
+        }
+    )
+    sink.handle_snapshot(critical_snapshot)
+
+    backlog_messages = [
+        message
+        for message in channel.messages
+        if message.category == "ui.performance.retry_backlog"
+    ]
+    assert len(backlog_messages) == 2
+    assert backlog_messages[0].severity == "warning"
+    assert backlog_messages[1].severity == "critical"
+    assert backlog_messages[1].context["retry_backlog_severity"] == "critical"
+    assert backlog_messages[1].context["retry_backlog_delta"] == "2"
+    assert backlog_messages[0].context.get("retry_backlog_started_at")
+    assert (
+        backlog_messages[0].context.get("retry_backlog_started_at")
+        == backlog_messages[1].context.get("retry_backlog_started_at")
+    )
+
+    records = [
+        json.loads(line)
+        for line in (tmp_path / "ui_alerts.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    critical_records = [
+        record
+        for record in records
+        if record.get("category") == "ui.performance.retry_backlog"
+        and record.get("severity") == "critical"
+    ]
+    assert critical_records
+    assert critical_records[-1]["context"]["retry_backlog_severity"] == "critical"
+
+
+def test_retry_backlog_escalates_after_duration(
+    monkeypatch, tmp_path: Path
+) -> None:
+    router, channel = _build_router()
+    jsonl_path = tmp_path / "ui_alerts.jsonl"
+    monotonic_time = {"value": 100.0}
+
+    def fake_monotonic() -> float:
+        return monotonic_time["value"]
+
+    monkeypatch.setattr(
+        "bot_core.runtime.metrics_alerts.time.monotonic", fake_monotonic
+    )
+
+    sink = UiTelemetryAlertSink(
+        router,
+        jsonl_path=jsonl_path,
+        retry_backlog_threshold=2,
+        retry_backlog_realert_delta=5,
+        retry_backlog_critical_after_seconds=120,
+    )
+
+    first_snapshot = _make_snapshot(
+        {
+            "retry_backlog_before_send": 1,
+            "retry_backlog_after_flush": 2,
+        }
+    )
+    sink.handle_snapshot(first_snapshot)
+
+    assert channel.messages
+    assert channel.messages[-1].severity == "warning"
+
+    monotonic_time["value"] += 130.0
+    followup_snapshot = _make_snapshot(
+        {
+            "retry_backlog_before_send": 2,
+            "retry_backlog_after_flush": 2,
+        }
+    )
+    sink.handle_snapshot(followup_snapshot)
+
+    backlog_messages = [
+        message
+        for message in channel.messages
+        if message.category == "ui.performance.retry_backlog"
+    ]
+    assert len(backlog_messages) == 2
+    critical_message = backlog_messages[-1]
+    assert critical_message.severity == "critical"
+    assert critical_message.context["retry_backlog_severity"] == "critical"
+    assert critical_message.context["retry_backlog_escalation"] == "duration"
+    assert float(critical_message.context["retry_backlog_duration_seconds"]) == pytest.approx(
+        130.0, rel=0.0, abs=0.01
+    )
+    assert critical_message.context.get("retry_backlog_started_at")
+    assert "czas degradacji" in critical_message.body.lower()
+
+    records = [
+        json.loads(line)
+        for line in jsonl_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    critical_records = [
+        record
+        for record in records
+        if record.get("category") == "ui.performance.retry_backlog"
+        and record.get("severity") == "critical"
+    ]
+    assert critical_records
+    context = critical_records[-1]["context"]
+    assert context["retry_backlog_escalation"] == "duration"
+    assert float(context["retry_backlog_duration_seconds"]) == pytest.approx(
+        130.0, rel=0.0, abs=0.01
+    )
+    assert context.get("retry_backlog_started_at")
+
+
 def test_overlay_alert_logging_can_be_disabled(tmp_path: Path):
     router, channel = _build_router()
     jsonl_path = tmp_path / "ui_alerts.jsonl"

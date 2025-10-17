@@ -74,6 +74,14 @@ risk_profiles:
     instrument_buckets:
       - manual_override
 
+permission_profiles:
+  trading_default:
+    required_permissions: [read, trade]
+    forbidden_permissions: [withdraw]
+  trading_read_only:
+    required_permissions: [read]
+    forbidden_permissions: []
+
 portfolio_governors:
   stage6_core:
     portfolio_id: stage6_core
@@ -1193,6 +1201,42 @@ environments:
       filename_pattern: decisions-%Y%m%d.jsonl
       retention_days: 730
       fsync: true
+
+  nowa_gielda_paper:
+    exchange: nowa_gielda_spot
+    environment: paper
+    keychain_key: nowa_gielda_paper_trading
+    data_cache_path: ./var/data/nowa_gielda_paper
+    risk_profile: balanced
+    alert_channels: []
+    ip_allowlist: []
+    permission_profile: trading_default
+    instrument_universe: core_multi_exchange
+    adapter_settings:
+      rest_base_url: https://api.nowa-gielda.test
+    alert_throttle:
+      window_seconds: 180
+      exclude_severities: [critical]
+      exclude_categories: [health]
+      max_entries: 1024
+
+  nowa_gielda_live:
+    exchange: nowa_gielda_spot
+    environment: live
+    keychain_key: nowa_gielda_live_trading
+    data_cache_path: ./var/data/nowa_gielda_live
+    risk_profile: conservative
+    alert_channels:
+      - telegram:primary
+      - email:ops
+    ip_allowlist: []
+    permission_profile: trading_default
+    instrument_universe: core_multi_exchange
+    alert_throttle:
+      window_seconds: 120
+      exclude_severities: [critical]
+      exclude_categories: [health]
+      max_entries: 1024
 
   zonda_paper:
     exchange: zonda_spot
