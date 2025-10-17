@@ -33,6 +33,13 @@ from bot_core.security.rotation_report import (
     write_rotation_summary,
 )
 from bot_core.security.signing import build_hmac_signature, canonical_json_bytes
+from bot_core.security.profiles import (
+    UserProfile,
+    load_profiles,
+    save_profiles,
+    upsert_profile,
+    log_admin_event,
+)
 from bot_core.security.token_audit import (
     TokenAuditReport,
     TokenAuditServiceReport,
@@ -130,6 +137,12 @@ __all__ = [
     "verify_document",
     "canonical_json_bytes",
     "build_hmac_signature",
+    "UserProfile",
+    "load_profiles",
+    "save_profiles",
+    "upsert_profile",
+    "log_admin_event",
+    "remove_profile",
     # tokeny i audyty
     "ServiceToken",
     "ServiceTokenValidator",

@@ -58,9 +58,16 @@ try:  # pragma: no cover - sink telemetrii UI jest opcjonalny
         DEFAULT_UI_ALERTS_JSONL_PATH,
         UiTelemetryAlertSink,
     )
+    from bot_core.alerts import DefaultAlertRouter  # type: ignore
 except Exception:  # pragma: no cover - brak modułu telemetrii UI
     UiTelemetryAlertSink = None  # type: ignore
     DEFAULT_UI_ALERTS_JSONL_PATH = Path("logs/ui_telemetry_alerts.jsonl")
+    DefaultAlertRouter = None  # type: ignore
+
+try:  # pragma: no cover - eksport Prometheus może być opcjonalny
+    from bot_core.observability.ui_metrics import UiTelemetryPrometheusExporter  # type: ignore
+except Exception:  # pragma: no cover
+    UiTelemetryPrometheusExporter = None  # type: ignore
 
 # Presety profili ryzyka telemetrii (opcjonalne)
 try:  # pragma: no cover - presety profili ryzyka mogą nie być dostępne
@@ -387,7 +394,24 @@ class MetricsServiceServicer(_MetricsServicerBase):
         except Exception:
             pass
         self._store = store
-        self._sinks: tuple[MetricsSink, ...] = tuple(sinks or ())
+        sink_list = list(sinks or ())
+        self._alert_sink: UiTelemetryAlertSink | None = None
+        if UiTelemetryAlertSink is not None and DefaultAlertRouter is not None:
+            if not any(isinstance(sink, UiTelemetryAlertSink) for sink in sink_list):
+                try:
+                    router = DefaultAlertRouter()
+                    alert_sink = UiTelemetryAlertSink(router, jsonl_path=DEFAULT_UI_ALERTS_JSONL_PATH)
+                    sink_list.append(alert_sink)
+                    self._alert_sink = alert_sink
+                except Exception:  # pragma: no cover - brak konfiguracji alertów
+                    _LOGGER.exception("Nie udało się zainicjalizować UiTelemetryAlertSink")
+        if UiTelemetryPrometheusExporter is not None:
+            if not any(isinstance(sink, UiTelemetryPrometheusExporter) for sink in sink_list):
+                try:
+                    sink_list.append(UiTelemetryPrometheusExporter(alert_sink=self._alert_sink))
+                except Exception:  # pragma: no cover - błędna konfiguracja Prometheusa
+                    _LOGGER.exception("Nie udało się zainicjalizować eksportera Prometheus dla telemetrii UI")
+        self._sinks = tuple(sink_list)
         self._auth_token = auth_token
         self._token_validator = token_validator
 

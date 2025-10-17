@@ -30,6 +30,7 @@ public:
     virtual void setWindowCount(int count) = 0;
     virtual void setTlsConfig(const TelemetryTlsConfig& config) = 0;
     virtual void setAuthToken(const QString& token) = 0;
+    virtual void setRbacRole(const QString& role) = 0;
     virtual void setScreenInfo(const ScreenInfo& info) = 0;
     virtual void clearScreenInfo() = 0;
     virtual bool isEnabled() const = 0;

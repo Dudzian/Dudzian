@@ -157,6 +157,8 @@ class DecisionEvaluation:
     reasons: Sequence[str] = field(default_factory=tuple)
     risk_flags: Sequence[str] = field(default_factory=tuple)
     stress_failures: Sequence[str] = field(default_factory=tuple)
+    model_expected_return_bps: float | None = None
+    model_success_probability: float | None = None
 
     def to_mapping(self) -> Mapping[str, object]:
         return {
@@ -167,6 +169,8 @@ class DecisionEvaluation:
             "reasons": list(self.reasons),
             "risk_flags": list(self.risk_flags),
             "stress_failures": list(self.stress_failures),
+            "model_expected_return_bps": self.model_expected_return_bps,
+            "model_success_probability": self.model_success_probability,
         }
 
 

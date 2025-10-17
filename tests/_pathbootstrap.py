@@ -21,7 +21,6 @@ __all__ = [
 
 def load_pathbootstrap() -> ModuleType:
     """Załaduj moduł :mod:`pathbootstrap`, niezależnie od bieżącego sys.path."""
-
     repo_root = Path(__file__).resolve().parents[1]
     try:
         return importlib.import_module("pathbootstrap")

@@ -136,8 +136,6 @@ def test_ensure_repo_root_on_sys_path_merges_env_and_argument_paths(
     ensure_repo_root_on_sys_path(repo_root, additional_paths=("docs",))
 
     assert sys.path[:3] == [repo_str, tests_extra, docs_extra]
-
-
 def test_ensure_repo_root_on_sys_path_expands_env_and_user_paths(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -157,12 +155,9 @@ def test_ensure_repo_root_on_sys_path_expands_env_and_user_paths(
         os.pathsep.join(["~/lib", "${CUSTOM_LIB_DIR}/pkg"]),
     )
     monkeypatch.setattr(sys, "path", ["/tmp/base"], raising=False)
-
     ensure_repo_root_on_sys_path(repo_root)
-
     expected_home = str(home_lib.resolve())
     expected_env = str(env_pkg.resolve())
-
     assert sys.path[:3] == [repo_str, expected_home, expected_env]
 
 
@@ -217,7 +212,6 @@ def test_get_repo_root_respects_max_depth(tmp_path: Path) -> None:
     nested = repo_root / "pkg" / "module"
     nested.mkdir(parents=True)
     (repo_root / "pyproject.toml").write_text("{}", encoding="utf-8")
-
     with pytest.raises(FileNotFoundError):
         get_repo_root(
             nested,
@@ -225,14 +219,12 @@ def test_get_repo_root_respects_max_depth(tmp_path: Path) -> None:
             allow_git=False,
             max_depth=1,
         )
-
     discovered = get_repo_root(
         nested,
         sentinels=("pyproject.toml",),
         allow_git=False,
         max_depth=2,
     )
-
     assert discovered == repo_root
 
 
@@ -261,17 +253,14 @@ def test_get_repo_root_allows_git_fallback_when_enabled(
     _init_git_repository(repo_root)
     nested = repo_root / "pkg"
     nested.mkdir()
-
     clear_cache()
     try:
         with pytest.raises(FileNotFoundError):
             get_repo_root(nested, sentinels=("missing.marker",), allow_git=False)
-
         clear_cache()
         discovered = get_repo_root(nested, sentinels=("missing.marker",), allow_git=True)
     finally:
         clear_cache()
-
     assert discovered == repo_root.resolve()
 
 
@@ -284,13 +273,11 @@ def test_get_repo_root_git_fallback_respects_env(
     _init_git_repository(repo_root)
     nested = repo_root / "pkg"
     nested.mkdir()
-
     clear_cache()
     try:
         monkeypatch.setenv("PATHBOOTSTRAP_ALLOW_GIT", "1")
         discovered = get_repo_root(nested, sentinels=("missing.marker",))
         assert discovered == repo_root.resolve()
-
         clear_cache()
         monkeypatch.setenv("PATHBOOTSTRAP_ALLOW_GIT", "0")
         with pytest.raises(FileNotFoundError):
@@ -302,9 +289,7 @@ def test_get_repo_root_git_fallback_respects_env(
 
 def test_get_repo_info_reports_sentinel_details() -> None:
     repo_root = Path(__file__).resolve().parents[1]
-
     info = get_repo_info(repo_root, sentinels=("pyproject.toml",))
-
     assert info.root == repo_root
     assert info.method == "sentinel"
     assert info.sentinel == "pyproject.toml"
@@ -319,7 +304,6 @@ def test_get_repo_info_uses_git_when_requested(tmp_path: Path) -> None:
     _init_git_repository(repo_root)
     nested = repo_root / "pkg"
     nested.mkdir()
-
     clear_cache()
     try:
         info = get_repo_info(
@@ -329,14 +313,11 @@ def test_get_repo_info_uses_git_when_requested(tmp_path: Path) -> None:
         )
     finally:
         clear_cache()
-
     assert info.root == repo_root.resolve()
     assert info.method == "git"
     assert info.sentinel is None
     assert info.depth is None
     assert info.start == nested.resolve()
-
-
 def test_ensure_repo_root_on_sys_path_requires_sentinel(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
         ensure_repo_root_on_sys_path(tmp_path, sentinels=("pyproject.toml",))
@@ -352,7 +333,7 @@ def test_cache_is_used(monkeypatch: pytest.MonkeyPatch) -> None:
 
     calls: list[int] = []
 
-    def fake_discover(
+def fake_discover(
         start: Path, sentinels: tuple[str, ...], allow_git: bool, *, max_depth: Optional[int]
     ) -> pathbootstrap.RepoDiscovery:  # type: ignore[override]
         calls.append(1)
@@ -373,7 +354,7 @@ def test_clear_cache_forces_rediscovery(monkeypatch: pytest.MonkeyPatch) -> None
 
     calls: list[int] = []
 
-    def fake_discover(
+def fake_discover(
         start: Path, sentinels: tuple[str, ...], allow_git: bool, *, max_depth: Optional[int]
     ) -> pathbootstrap.RepoDiscovery:  # type: ignore[override]
         calls.append(1)
@@ -585,6 +566,36 @@ def test_main_prints_repo_root_windows_style(capsys: pytest.CaptureFixture[str])
     assert captured.out.strip() == expected
 
 
+def test_main_with_ensure_adds_repo_root(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    repo_str = str(repo_root)
+    monkeypatch.setattr(sys, "path", ["/tmp/other"], raising=False)
+
+    clear_cache()
+    try:
+        exit_code = main(["--ensure"])
+        captured = capsys.readouterr()
+    finally:
+        clear_cache()
+
+    assert exit_code == 0
+    assert captured.err == ""
+    assert captured.out.strip() == repo_str
+    assert sys.path[0] == repo_str
+        captured = capsys.readouterr()
+    finally:
+        clear_cache()
+
+    repo_root = Path(__file__).resolve().parents[1]
+    expected = str(repo_root).replace("/", "\\")
+
+    assert exit_code == 0
+    assert captured.err == ""
+    assert captured.out.strip() == expected
+
+
 def test_main_prints_json_when_requested(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -593,6 +604,22 @@ def test_main_prints_json_when_requested(
     clear_cache()
     try:
         exit_code = main(["--format", "json"])
+    assert exit_code == 0
+    assert captured.err == ""
+    assert captured.out.strip() == repo_str
+    assert sys.path[0] == repo_str
+
+
+def test_main_with_position_append_places_repo_at_end(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    repo_str = str(repo_root)
+    monkeypatch.setattr(sys, "path", ["/tmp/gamma"], raising=False)
+
+    clear_cache()
+    try:
+        exit_code = main(["--ensure", "--position", "append"])
         captured = capsys.readouterr()
     finally:
         clear_cache()
@@ -617,6 +644,24 @@ def test_main_prints_json_with_additional_paths(
     clear_cache()
     try:
         exit_code = main(["--format", "json", "--add-path", "tests"])
+    assert exit_code == 0
+    assert captured.err == ""
+    assert captured.out.strip() == repo_str
+    assert sys.path[-1] == repo_str
+    assert sys.path[0] == "/tmp/gamma"
+
+
+def test_main_with_add_path_includes_additional_entries(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    repo_str = str(repo_root)
+    extra = str((repo_root / "tests").resolve())
+    monkeypatch.setattr(sys, "path", ["/tmp/gamma"], raising=False)
+
+    clear_cache()
+    try:
+        exit_code = main(["--ensure", "--add-path", "tests"])
         captured = capsys.readouterr()
     finally:
         clear_cache()
@@ -649,6 +694,36 @@ def test_main_print_pythonpath_windows_style_json(
                 "windows",
             ]
         )
+    assert exit_code == 0
+    assert captured.err == ""
+    assert captured.out.strip() == repo_str
+    assert sys.path[0] == repo_str
+    assert sys.path[1] == extra
+
+
+def test_main_with_set_env_prints_assignment(capsys: pytest.CaptureFixture[str]) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+
+    clear_cache()
+    try:
+        exit_code = main(["--set-env", "REPO_ROOT"])
+        captured = capsys.readouterr()
+    finally:
+        clear_cache()
+
+    assert exit_code == 0
+    assert captured.err == ""
+    assert captured.out.strip() == f"REPO_ROOT={repo_root}"
+
+
+def test_main_with_set_env_and_export_prints_export_command(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+
+    clear_cache()
+    try:
+        exit_code = main(["--export", "--set-env", "REPO_ROOT"])
         captured = capsys.readouterr()
     finally:
         clear_cache()
@@ -702,6 +777,50 @@ def test_main_combines_additional_paths_file_env_and_cli(
     monkeypatch.setenv("PATHBOOTSTRAP_ADD_PATHS", "data")
     path_file = tmp_path / "paths.txt"
     path_file.write_text("docs\n", encoding="utf-8")
+    assert exit_code == 0
+    assert captured.err == ""
+    assert captured.out.strip() == f"export REPO_ROOT={repo_root}"
+
+
+def test_main_requires_set_env_for_export(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        main(["--export"])
+
+    captured = capsys.readouterr()
+
+    assert excinfo.value.code == 2
+    assert "--set-env" in captured.err
+
+
+def test_main_with_chdir_prints_repo_root(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    original_cwd = Path.cwd()
+
+    clear_cache()
+    try:
+        exit_code = main(["--chdir"])
+        captured = capsys.readouterr()
+        assert Path.cwd() == original_cwd
+    finally:
+        clear_cache()
+        os.chdir(original_cwd)
+
+    assert exit_code == 0
+    assert captured.err == ""
+    assert captured.out.strip() == str(repo_root)
+
+
+def test_main_accepts_custom_sentinels(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo_root = tmp_path / "alt_repo"
+    repo_root.mkdir()
+    sentinel = repo_root / "custom.sentinel"
+    sentinel.write_text("", encoding="utf-8")
+    nested = repo_root / "pkg"
+    nested.mkdir()
 
     clear_cache()
     try:
@@ -738,6 +857,33 @@ def test_main_prints_pythonpath_value(
     clear_cache()
     try:
         exit_code = main(["--print-pythonpath", "--add-path", "tests"])
+    assert exit_code == 0
+    assert captured.err == ""
+    assert captured.out.strip() == str(repo_root)
+
+
+def test_main_runs_command_with_repo_on_path(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    code = (
+        "import sys\n"
+        "target = sys.argv[1]\n"
+        "import pathlib\n"
+        "from pathlib import Path\n"
+        "target_path = Path(target).resolve()\n"
+        "sys.exit(0 if str(target_path) in sys.path else 5)\n"
+    )
+
+    clear_cache()
+    try:
+        exit_code = main([
+            "--",
+            sys.executable,
+            "-c",
+            code,
+            str(repo_root),
+        ])
         captured = capsys.readouterr()
     finally:
         clear_cache()
@@ -755,11 +901,39 @@ def test_main_prints_pythonpath_json(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.delenv("PATHBOOTSTRAP_ADD_PATHS", raising=False)
+    assert exit_code == 0
+    assert captured.err == ""
+    assert captured.out == ""
+
+
+def test_main_runs_command_propagating_additional_paths_to_pythonpath(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    repo_str = str(repo_root)
+    extra = str((repo_root / "tests").resolve())
+    code = (
+        "import os\n"
+        "import sys\n"
+        "repo = sys.argv[1]\n"
+        "extra = sys.argv[2]\n"
+        "parts = [part for part in os.environ.get('PYTHONPATH', '').split(os.pathsep) if part]\n"
+        "sys.exit(0 if parts[:2] == [repo, extra] else 17)\n"
+    )
 
     clear_cache()
     try:
         exit_code = main(
-            ["--print-pythonpath", "--format", "json", "--add-path", "tests"]
+            [
+                "--add-path",
+                "tests",
+                "--",
+                sys.executable,
+                "-c",
+                code,
+                repo_str,
+                extra,
+            ]
         )
         captured = capsys.readouterr()
     finally:

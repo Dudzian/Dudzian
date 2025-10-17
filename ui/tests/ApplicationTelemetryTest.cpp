@@ -7,15 +7,20 @@
 #include <QGuiApplication>
 #include <QQuickWindow>
 #include <QScreen>
+#include <QSignalSpy>
 #include <QTemporaryDir>
 
 #include "app/Application.hpp"
 #include "telemetry/TelemetryReporter.hpp"
 #include "telemetry/TelemetryTlsConfig.hpp"
+#include "telemetry/UiTelemetryReporter.hpp"
+#include "grpc/MetricsClient.hpp"
+#include "trading.grpc.pb.h"
 
 #include <memory>
 #include <optional>
 #include <vector>
+#include <deque>
 
 class FakeTelemetryReporter final : public TelemetryReporter {
 public:
@@ -49,6 +54,7 @@ public:
         tlsConfigured = true;
     }
     void setAuthToken(const QString& token) override { authToken = token; }
+    void setRbacRole(const QString& role) override { rbacRole = role; }
     void setScreenInfo(const ScreenInfo& info) override { screenInfo = info; }
     void clearScreenInfo() override {
         screenInfo.reset();
@@ -111,6 +117,7 @@ public:
     TelemetryTlsConfig m_tlsConfig;
     bool tlsConfigured = false;
     QString authToken;
+    QString rbacRole;
     std::optional<ScreenInfo> screenInfo;
     bool clearedScreen = false;
     std::vector<ReduceMotionEvent> reduceMotionEvents;
@@ -130,6 +137,53 @@ private slots:
     void testPreferredScreenSelectionCli();
     void testPreferredScreenSelectionEnvironment();
     void testScreenMetadataForwarding();
+    void testTelemetryPendingRetryExposure();
+    void testTelemetryPendingRetryResetOnReporterSwap();
+};
+
+class RejectingMetricsClient final : public MetricsClientInterface {
+public:
+    struct Result {
+        bool ok = true;
+        QString error;
+    };
+
+    void setEndpoint(const QString& endpoint) override { m_endpoint = endpoint; }
+    void setTlsConfig(const TelemetryTlsConfig& config) override { m_tlsConfig = config; }
+    void setAuthToken(const QString& token) override { m_authToken = token; }
+    void setRbacRole(const QString& role) override { m_role = role; }
+
+    bool pushSnapshot(const botcore::trading::v1::MetricsSnapshot& snapshot,
+                      QString* errorMessage = nullptr) override {
+        m_snapshots.push_back(snapshot);
+        if (m_results.empty()) {
+            return true;
+        }
+        const Result result = m_results.front();
+        m_results.pop_front();
+        if (!result.ok && errorMessage) {
+            *errorMessage = result.error;
+        }
+        return result.ok;
+    }
+
+    void enqueueResult(bool ok, const QString& error = QString()) {
+        m_results.push_back(Result{ok, error});
+    }
+
+    QString endpoint() const { return m_endpoint; }
+    TelemetryTlsConfig tlsConfig() const { return m_tlsConfig; }
+    QString authToken() const { return m_authToken; }
+    QString role() const { return m_role; }
+    std::vector<botcore::trading::v1::MetricsSnapshot> snapshots() const { return m_snapshots; }
+
+private:
+    QString m_endpoint;
+    TelemetryTlsConfig m_tlsConfig;
+    QString m_authToken;
+    QString m_role;
+    std::deque<Result> m_results;
+    std::vector<botcore::trading::v1::MetricsSnapshot> m_snapshots;
 };
 
 void ApplicationTelemetryTest::testReduceMotionEventDispatch() {
@@ -286,6 +340,89 @@ void ApplicationTelemetryTest::testScreenMetadataForwarding() {
     QVERIFY(reporterPtr->clearedScreen);
 }
 
+void ApplicationTelemetryTest::testTelemetryPendingRetryExposure() {
+    QQmlApplicationEngine engine;
+    Application app(engine);
+
+    auto reporter = std::make_unique<UiTelemetryReporter>();
+    auto metricsClient = std::make_shared<RejectingMetricsClient>();
+    reporter->setMetricsClientForTesting(metricsClient);
+    UiTelemetryReporter* reporterPtr = reporter.get();
+    app.setTelemetryReporter(std::move(reporter));
+
+    QCommandLineParser parser;
+    app.configureParser(parser);
+    const QStringList args{QStringLiteral("test"), QStringLiteral("--metrics-endpoint"), QStringLiteral("dummy:5000")};
+    parser.process(args);
+    QVERIFY(app.applyParser(parser));
+
+    QCOMPARE(app.telemetryPendingRetryCount(), 0);
+
+    QSignalSpy spy(&app, &Application::telemetryPendingRetryCountChanged);
+
+    app.notifyWindowCount(2);
+    app.notifyOverlayUsage(1, 3, false);
+    app.ingestFpsSampleForTesting(58.0);
+
+    metricsClient->enqueueResult(false, QStringLiteral("offline"));
+    app.setReduceMotionStateForTesting(true);
+
+    QCOMPARE(app.telemetryPendingRetryCount(), 1);
+    QCOMPARE(spy.count(), 1);
+    QCOMPARE(spy.first().at(0).toInt(), 1);
+
+    spy.clear();
+    metricsClient->enqueueResult(true);
+    app.ingestFpsSampleForTesting(60.0);
+    app.setReduceMotionStateForTesting(false);
+
+    QCOMPARE(app.telemetryPendingRetryCount(), 0);
+    QCOMPARE(spy.count(), 1);
+    QCOMPARE(spy.first().at(0).toInt(), 0);
+
+    QCOMPARE(reporterPtr->pendingRetryCount(), 0);
+}
+
+void ApplicationTelemetryTest::testTelemetryPendingRetryResetOnReporterSwap() {
+    QQmlApplicationEngine engine;
+    Application app(engine);
+
+    auto reporter = std::make_unique<UiTelemetryReporter>();
+    auto metricsClient = std::make_shared<RejectingMetricsClient>();
+    reporter->setMetricsClientForTesting(metricsClient);
+    app.setTelemetryReporter(std::move(reporter));
+
+    QCommandLineParser parser;
+    app.configureParser(parser);
+    const QStringList args{QStringLiteral("test"), QStringLiteral("--metrics-endpoint"), QStringLiteral("dummy:5000")};
+    parser.process(args);
+    QVERIFY(app.applyParser(parser));
+
+    QSignalSpy spy(&app, &Application::telemetryPendingRetryCountChanged);
+
+    // Wymuś wpis w buforze ponowień.
+    metricsClient->enqueueResult(false, QStringLiteral("offline"));
+    app.ingestFpsSampleForTesting(60.0);
+    app.setReduceMotionStateForTesting(true);
+    QCOMPARE(app.telemetryPendingRetryCount(), 1);
+    QCOMPARE(spy.count(), 1);
+    QCOMPARE(spy.last().at(0).toInt(), 1);
+
+    // Podmień reporter na mock bez obsługi kolejki – aplikacja powinna wyzerować stan.
+    spy.clear();
+    auto fallbackReporter = std::make_unique<FakeTelemetryReporter>();
+    FakeTelemetryReporter* fallbackPtr = fallbackReporter.get();
+    app.setTelemetryReporter(std::move(fallbackReporter));
+
+    QCOMPARE(app.telemetryPendingRetryCount(), 0);
+    QCOMPARE(spy.count(), 1);
+    QCOMPARE(spy.last().at(0).toInt(), 0);
+
+    // Nowy reporter otrzymuje konfigurację telemetrii.
+    QCOMPARE(fallbackPtr->m_endpoint, QStringLiteral("dummy:5000"));
+    QCOMPARE(fallbackPtr->m_windowCount, 1);
+}
+
 void ApplicationTelemetryTest::testPreferredScreenSelectionCli()
 {
     QQmlApplicationEngine engine;
@@ -408,12 +545,14 @@ void ApplicationTelemetryTest::testEnvironmentOverrides() {
     qputenv("BOT_CORE_UI_METRICS_ENDPOINT", QByteArray("env-host:6001"));
     qputenv("BOT_CORE_UI_METRICS_TAG", QByteArray("env-tag"));
     qputenv("BOT_CORE_UI_METRICS_ENABLED", QByteArray("false"));
+    qputenv("BOT_CORE_UI_METRICS_RBAC_ROLE", QByteArray("env-role"));
     qputenv("BOT_CORE_UI_METRICS_ROOT_CERT", tokenPath.toUtf8());
     qputenv("BOT_CORE_UI_METRICS_AUTH_TOKEN_FILE", tokenPath.toUtf8());
     const auto envGuard = qScopeGuard([] {
         qunsetenv("BOT_CORE_UI_METRICS_ENDPOINT");
         qunsetenv("BOT_CORE_UI_METRICS_TAG");
         qunsetenv("BOT_CORE_UI_METRICS_ENABLED");
+        qunsetenv("BOT_CORE_UI_METRICS_RBAC_ROLE");
         qunsetenv("BOT_CORE_UI_METRICS_ROOT_CERT");
         qunsetenv("BOT_CORE_UI_METRICS_AUTH_TOKEN_FILE");
     });
@@ -430,6 +569,7 @@ void ApplicationTelemetryTest::testEnvironmentOverrides() {
     QCOMPARE(reporterPtr->m_tlsConfig.enabled, true);
     QCOMPARE(reporterPtr->m_tlsConfig.rootCertificatePath, tokenPath);
     QCOMPARE(reporterPtr->authToken, QStringLiteral("env-token"));
+    QCOMPARE(reporterPtr->rbacRole, QStringLiteral("env-role"));
 
 }
 

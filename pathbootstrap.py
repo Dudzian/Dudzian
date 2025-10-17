@@ -14,12 +14,17 @@ import os
 import shlex
 import subprocess
 import sys
-import tomllib
 from contextlib import contextmanager, nullcontext
 from os import PathLike
 from pathlib import Path
 from typing import Iterable, Iterator, Optional, Sequence, Tuple
 from typing import Literal, NamedTuple
+
+# tomllib is built-in since Python 3.11; provide a safe fallback for older versions
+try:
+    import tomllib  # type: ignore[attr-defined]
+except ModuleNotFoundError:  # pragma: no cover
+    import tomli as tomllib  # type: ignore[no-redef]
 
 DEFAULT_SENTINELS: Tuple[str, ...] = ("pyproject.toml",)
 ENV_ROOT_HINT = "PATHBOOTSTRAP_ROOT_HINT"
@@ -964,6 +969,7 @@ def clear_cache() -> None:
 
     _discover_repo_root_cached.cache_clear()
 
+
 __all__ = [
     "ensure_repo_root_on_sys_path",
     "get_repo_info",
@@ -1541,6 +1547,100 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     for profile_name in selected_profiles:
         effective_config.update(profile_resolution_cache[profile_name])
 
+    if args.export and not args.set_env:
+        parser.error("opcja --export wymaga jednoczesnego użycia z --set-env")
+
+    sentinel_cli = tuple(args.sentinels) if args.sentinels else ()
+    sentinel_from_file: Tuple[str, ...] = ()
+    sentinel_file_path: Optional[Path] = None
+    if args.sentinel_file:
+        sentinel_path = _expand_pathlike(args.sentinel_file)
+        sentinel_file_path = sentinel_path
+        try:
+            sentinel_from_file = _load_sentinels_from_file(sentinel_path)
+        except FileNotFoundError:
+            parser.error(f"plik sentinel {sentinel_path} nie istnieje")
+        except OSError as exc:
+            parser.error(f"nie można odczytać pliku sentinel {sentinel_path}: {exc}")
+        except ValueError as exc:
+            parser.error(str(exc))
+
+    if args.export and not args.set_env:
+        parser.error("opcja --export wymaga jednoczesnego użycia z --set-env")
+
+    if args.format == "json" and args.set_env:
+        parser.error("opcja --format=json nie jest dostępna razem z --set-env")
+
+    if sentinel_from_file or sentinel_cli or effective_config.get("sentinels"):
+        sentinel_candidates: Tuple[str, ...] = (
+            *tuple(effective_config.get("sentinels", ())),
+            *sentinel_from_file,
+            *sentinel_cli,
+        )
+    else:
+        sentinel_candidates = DEFAULT_SENTINELS
+    env_sentinels_raw = os.environ.get(ENV_SENTINELS)
+    if env_sentinels_raw:
+        env_sentinels = tuple(
+            part.strip() for part in env_sentinels_raw.split(os.pathsep) if part.strip()
+        )
+    else:
+        env_sentinels = ()
+
+    env_allow_git_raw = os.environ.get(ENV_ALLOW_GIT)
+    env_allow_git = (
+        _interpret_env_flag(env_allow_git_raw) if env_allow_git_raw is not None else None
+    )
+    config_allow_git_value = effective_config.get("allow_git")
+    allow_git_param: Optional[bool]
+    if args.allow_git is not None:
+        allow_git_param = args.allow_git
+    elif config_allow_git_value is not None:
+        allow_git_param = bool(config_allow_git_value)
+    else:
+        allow_git_param = env_allow_git
+    effective_allow_git = allow_git_param if allow_git_param is not None else False
+
+    env_max_depth_raw = os.environ.get(ENV_MAX_DEPTH)
+    env_max_depth: Optional[int] = None
+    if env_max_depth_raw is not None:
+        stripped = env_max_depth_raw.strip()
+        if not stripped:
+            parser.error(
+                f"zmienna środowiskowa {ENV_MAX_DEPTH} nie może być pusta"
+            )
+        try:
+            env_max_depth_candidate = int(stripped)
+        except ValueError:
+            parser.error(
+                f"zmienna środowiskowa {ENV_MAX_DEPTH} musi być liczbą całkowitą"
+            )
+        if env_max_depth_candidate < 0:
+            parser.error(
+                f"zmienna środowiskowa {ENV_MAX_DEPTH} nie może być ujemna"
+            )
+        env_max_depth = env_max_depth_candidate
+
+    config_max_depth_value = effective_config.get("max_depth")
+    if config_max_depth_value is not None and not isinstance(config_max_depth_value, int):
+        parser.error("wartość 'max_depth' w konfiguracji musi być liczbą całkowitą nieujemną")
+
+    position = (
+        args.position
+        if args.position is not None
+        else effective_config.get("position") if effective_config.get("position") is not None else "prepend"
+    )
+    path_style = (
+        args.path_style
+        if args.path_style is not None
+        else effective_config.get("path_style") if effective_config.get("path_style") is not None else "auto"
+    )
+    pythonpath_var = (
+        args.pythonpath_var
+        if args.pythonpath_var is not None
+        else effective_config.get("pythonpath_var") if effective_config.get("pythonpath_var") is not None else "PYTHONPATH"
+    )
+
     command = list(args.command)
     if command and command[0] == "--":
         command = command[1:]
@@ -1553,33 +1653,446 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     should_run_command = bool(command or module_name or shell_requested)
 
+    # Early "list" style commands
+    sentinel_arg = _resolve_sentinels(sentinel_candidates)
+    prefix = "[pathbootstrap]"
+
+    # Helpers for output path formatting
+    def _format_path(p: str) -> str:
+        return _format_path_value(p, path_style)
+
+    def _fmt_seq(seq: Sequence[str]) -> Tuple[str, ...]:
+        return _format_path_sequence(seq, path_style)
+
+    # Root-hint listing
+    if args.list_root_hints:
+        if any([args.set_env, args.export, args.ensure, should_run_command,
+                args.print_pythonpath, args.print_sys_path, args.print_config,
+                args.print_discovery, args.list_profiles, args.list_sentinels,
+                args.list_add_paths, args.list_config_files]):
+            parser.error("--list-root-hints nie może być łączone z innymi trybami wypisywania/uruchamiania")
+
+        default_root_hint_path = Path(__file__).resolve().parent
+        default_root_hint_raw = str(default_root_hint_path)
+
+        def format_optional_hint(value: Optional[PathLike[str] | str]) -> Optional[str]:
+            if value is None:
+                return None
+            path_obj = _expand_pathlike(value)
+            try:
+                resolved = path_obj.resolve()
+            except FileNotFoundError:
+                resolved = path_obj
+            return _format_path(str(resolved))
+
+        cli_root_hint_raw = args.root_hint
+        config_root_hint_raw = effective_config.get("root_hint")
+        env_root_hint_raw = os.environ.get(ENV_ROOT_HINT)
+        env_root_hint_display = format_optional_hint(env_root_hint_raw)
+        cli_root_hint_display = format_optional_hint(cli_root_hint_raw)
+        config_root_hint_display = format_optional_hint(config_root_hint_raw)
+        default_root_hint_display = format_optional_hint(default_root_hint_raw)
+
+        if args.root_hint is not None:
+            effective_source = "cli"
+            effective_raw = args.root_hint
+            normalize_input: Optional[PathLike[str] | str] = args.root_hint
+        elif config_root_hint_raw is not None:
+            effective_source = "config"
+            effective_raw = config_root_hint_raw
+            normalize_input = config_root_hint_raw
+        elif env_root_hint_raw is not None:
+            effective_source = "env"
+            effective_raw = env_root_hint_raw
+            normalize_input = None
+        else:
+            effective_source = "default"
+            effective_raw = default_root_hint_raw
+            normalize_input = None
+
+        effective_hint_path = _normalize_hint(normalize_input)
+        effective_path_str = str(effective_hint_path)
+        effective_display = _format_path(effective_path_str)
+
+        if args.format == "json":
+            payload = {
+                "effective_source": effective_source,
+                "effective_raw": effective_raw,
+                "effective_path": effective_path_str,
+                "effective_display": effective_display,
+                "cli_raw": cli_root_hint_raw,
+                "cli_display": cli_root_hint_display,
+                "config_raw": config_root_hint_raw,
+                "config_display": config_root_hint_display,
+                "env_var": ENV_ROOT_HINT,
+                "env_raw": env_root_hint_raw,
+                "env_display": env_root_hint_display,
+                "default_raw": default_root_hint_raw,
+                "default_display": default_root_hint_display,
+            }
+            output_text = json.dumps(payload, **json_kwargs)
+        else:
+            lines: list[str] = []
+
+            def append_line(label: str, value: Optional[str]) -> None:
+                if value is None:
+                    lines.append(f"{label}: (brak)")
+                else:
+                    lines.append(f"{label}: {value}")
+
+            append_line("root_hint_effective_source", effective_source)
+            append_line("root_hint_effective_raw", effective_raw)
+            append_line("root_hint_effective_path", effective_path_str)
+            append_line("root_hint_effective_display", effective_display)
+            append_line("root_hint_cli", cli_root_hint_raw)
+            append_line("root_hint_cli_display", cli_root_hint_display)
+            append_line("root_hint_config", config_root_hint_raw)
+            append_line("root_hint_config_display", config_root_hint_display)
+            lines.append(f"root_hint_env_var: {ENV_ROOT_HINT}")
+            append_line("root_hint_env", env_root_hint_raw)
+            append_line("root_hint_env_display", env_root_hint_display)
+            append_line("root_hint_default", default_root_hint_raw)
+            append_line("root_hint_default_display", default_root_hint_display)
+
+            output_text = "\n".join(lines)
+
+        if args.output:
+            output_path = _expand_pathlike(args.output)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(output_text + "\n", encoding="utf-8")
+        else:
+            print(output_text)
+        return 0
+
+    # Sentinels listing
+    if args.list_sentinels:
+        if any([args.set_env, args.export, args.ensure, should_run_command,
+                args.print_pythonpath, args.print_sys_path, args.print_config,
+                args.print_discovery, args.list_profiles, args.list_config_files,
+                args.list_add_paths, args.list_root_hints]):
+            parser.error("--list-sentinels nie może być łączone z innymi trybami wypisywania/uruchamiania")
+
+        sentinel_file_cli = (
+            (str(_expand_pathlike(args.sentinel_file)),)
+            if args.sentinel_file is not None
+            else ()
+        )
+        if args.format == "json":
+            payload = {
+                "effective": list(sentinel_arg),
+                "candidates": list(sentinel_candidates),
+                "default": list(DEFAULT_SENTINELS),
+                "config": list(tuple(effective_config.get("sentinels", ()) )),
+                "env": list(env_sentinels),
+                "cli": list(tuple(args.sentinels) if args.sentinels else ()),
+                "file": list(tuple(_load_sentinels_from_file(_expand_pathlike(args.sentinel_file))) if args.sentinel_file else ()),
+                "sentinel_file": sentinel_file_cli[0] if sentinel_file_cli else None,
+            }
+            output_text = json.dumps(payload, **json_kwargs)
+        else:
+            lines: list[str] = []
+
+            def append_section(title: str, entries: Sequence[str]) -> None:
+                if entries:
+                    lines.append(f"{title}:")
+                    for item in entries:
+                        lines.append(f"  - {item}")
+                else:
+                    lines.append(f"{title}: (brak)")
+
+            append_section("sentinels_effective", sentinel_arg)
+            append_section("sentinels_candidates", sentinel_candidates)
+            append_section("sentinels_default", DEFAULT_SENTINELS)
+            append_section("sentinels_config", tuple(effective_config.get("sentinels", ()) ))
+            append_section("sentinels_env", env_sentinels)
+            append_section("sentinels_cli", tuple(args.sentinels) if args.sentinels else ())
+            append_section("sentinels_file", tuple(_load_sentinels_from_file(_expand_pathlike(args.sentinel_file))) if args.sentinel_file else ())
+            append_section("sentinel_file_cli", sentinel_file_cli)
+
+            output_text = "\n".join(lines)
+
+        if args.output:
+            output_path = _expand_pathlike(args.output)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(output_text + "\n", encoding="utf-8")
+        else:
+            print(output_text)
+
+        return 0
+
+    # Config files listing
+    if args.list_config_files:
+        if any([args.set_env, args.export, args.ensure, should_run_command,
+                args.print_pythonpath, args.print_sys_path, args.print_config,
+                args.print_discovery, args.list_profiles, args.list_sentinels,
+                args.list_add_paths, args.list_root_hints]):
+            parser.error("--list-config-files nie może być łączone z innymi trybami wypisywania/uruchamiania")
+
+        env_config_display = _fmt_seq(env_config_entries_display_raw)
+        cli_config_display = _fmt_seq(cli_config_entries_display_raw)
+        config_roots_display = _fmt_seq(config_root_entries_display_raw)
+        config_loaded_display = _fmt_seq(config_files_used)
+        include_edges_display = tuple(
+            f"{_format_path(parent)} -> {_format_path(child)}"
+            for parent, child in config_include_edges
+        )
+        include_edges_payload = [
+            {
+                "parent": parent,
+                "child": child,
+                "parent_display": _format_path(parent),
+                "child_display": _format_path(child),
+            }
+            for parent, child in config_include_edges
+        ]
+        inline_definitions_payload = [
+            {"source": source, "definition": definition}
+            for source, definition in config_inline_serialized
+        ]
+
+        if args.format == "json":
+            payload = {
+                "env": list(env_config_files),
+                "env_display": list(env_config_display),
+                "env_var": ENV_CONFIG_FILES,
+                "cli": list(config_cli),
+                "cli_display": list(cli_config_display),
+                "roots": list(config_root_entries_display_raw),
+                "roots_display": list(config_roots_display),
+                "loaded": list(config_files_used),
+                "loaded_display": list(config_loaded_display),
+                "inline_sources": list(config_inline_sources),
+                "inline_definitions": inline_definitions_payload,
+                "include_edges": include_edges_payload,
+                "include_edges_display": list(include_edges_display),
+            }
+            output_text = json.dumps(payload, **json_kwargs)
+        else:
+            lines: list[str] = []
+
+            def append_section(title: str, entries: Sequence[str]) -> None:
+                if entries:
+                    lines.append(f"{title}:")
+                    for item in entries:
+                        lines.append(f"  - {item}")
+                else:
+                    lines.append(f"{title}: (brak)")
+
+            append_section("config_files_env", env_config_files)
+            append_section("config_files_env_display", env_config_display)
+            append_section("config_files_cli", config_cli)
+            append_section("config_files_cli_display", cli_config_display)
+            append_section("config_files_roots", config_root_entries_display_raw)
+            append_section("config_files_roots_display", config_roots_display)
+            append_section("config_files_loaded", config_files_used)
+            append_section("config_files_loaded_display", config_loaded_display)
+            append_section("config_inline_sources", config_inline_sources)
+            for source, definition in config_inline_serialized:
+                keys = sorted(definition.keys())
+                keys_display = ", ".join(keys) if keys else "(brak)"
+                lines.append(f"config_inline_definition_{source}_keys: {keys_display}")
+            append_section("config_include_edges", tuple(
+                f"{parent} -> {child}" for parent, child in config_include_edges
+            ))
+            append_section("config_include_edges_display", include_edges_display)
+            lines.append(f"config_files_env_var: {ENV_CONFIG_FILES}")
+
+            output_text = "\n".join(lines)
+
+        if args.output:
+            output_path = _expand_pathlike(args.output)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(output_text + "\n", encoding="utf-8")
+        else:
+            print(output_text)
+
+        return 0
+
+    if args.export and not args.set_env:
+        parser.error("opcja --export wymaga jednoczesnego użycia z --set-env")
+
+    if args.format == "json" and args.set_env:
+        parser.error("opcja --format=json nie jest dostępna razem z --set-env")
+
+    # Compute repo discovery
+    root_hint_candidate = args.root_hint if args.root_hint is not None else effective_config.get("root_hint")
+    max_depth_param: Optional[int]
+    if args.max_depth is not None:
+        max_depth_param = args.max_depth
+    elif config_max_depth_value is not None:
+        max_depth_param = int(config_max_depth_value)
+    else:
+        max_depth_param = env_max_depth
+    repo_discovery = get_repo_info(
+        root_hint_candidate,
+        sentinels=sentinel_arg,
+        allow_git=allow_git_param,
+        max_depth=max_depth_param,
+    )
+    repo_root_path = repo_discovery.root
+    additional_paths_cli = tuple(args.additional_paths) if args.additional_paths else ()
+    config_additional_paths = tuple(effective_config.get("additional_paths", ()))
+    config_additional_path_files = tuple(effective_config.get("additional_path_files", ()))
+    additional_paths_from_config_files: Tuple[str, ...] = ()
+    if config_additional_path_files:
+        collected_config: list[str] = []
+        for file_entry in config_additional_path_files:
+            file_path = _expand_pathlike(file_entry)
+            try:
+                collected_config.extend(_load_additional_paths_from_file(file_path))
+            except FileNotFoundError:
+                parser.error(f"plik ścieżek {file_path} z konfiguracji nie istnieje")
+            except OSError as exc:
+                parser.error(f"nie można odczytać pliku ścieżek {file_path}: {exc}")
+            except ValueError as exc:
+                parser.error(str(exc))
+        additional_paths_from_config_files = tuple(collected_config)
+    additional_paths_from_cli_files: Tuple[str, ...] = ()
+    additional_cli_file_paths: Tuple[str, ...] = ()
+    if args.additional_path_files:
+        collected_cli: list[str] = []
+        cli_files_resolved: list[str] = []
+        for file_entry in args.additional_path_files:
+            file_path = _expand_pathlike(file_entry)
+            cli_files_resolved.append(str(file_path))
+            try:
+                collected_cli.extend(_load_additional_paths_from_file(file_path))
+            except FileNotFoundError:
+                parser.error(f"plik ścieżek {file_path} nie istnieje")
+            except OSError as exc:
+                parser.error(f"nie można odczytać pliku ścieżek {file_path}: {exc}")
+            except ValueError as exc:
+                parser.error(str(exc))
+        additional_paths_from_cli_files = tuple(collected_cli)
+        additional_cli_file_paths = tuple(cli_files_resolved)
+    include_env_paths = not args.no_env_add_paths
+    config_use_env_paths = effective_config.get("use_env_additional_paths")
+    if not args.no_env_add_paths and config_use_env_paths is not None:
+        include_env_paths = bool(config_use_env_paths)
+    env_additional: Tuple[str, ...] = _get_env_additional_paths() if include_env_paths else ()
+    combined_additional: Tuple[str, ...] = (
+        *additional_paths_from_config_files,
+        *config_additional_paths,
+        *additional_paths_from_cli_files,
+        *additional_paths_cli,
+    )
+    normalized_additional = _resolve_additional_paths(
+        repo_root_path, combined_additional, include_env=include_env_paths
+    )
+    normalized_additional_display = _fmt_seq(normalized_additional)
+    additional_cli_display_raw = tuple(str(Path(entry)) for entry in additional_paths_cli)
+    additional_cli_display = _fmt_seq(additional_cli_display_raw)
+    additional_config_display_raw = tuple(str(Path(entry)) for entry in config_additional_paths)
+    additional_config_display = _fmt_seq(additional_config_display_raw)
+    additional_cli_path_files_display_raw = tuple(
+        str(Path(entry)) for entry in additional_cli_file_paths
+    )
+    additional_cli_path_files_display = _fmt_seq(
+        additional_cli_path_files_display_raw
+    )
+    additional_config_files_display_raw = tuple(
+        str(Path(entry)) for entry in config_additional_path_files
+    )
+    additional_config_files_display = _fmt_seq(
+        additional_config_files_display_raw
+    )
+    additional_cli_file_entries_display_raw = tuple(
+        str(Path(entry)) for entry in additional_paths_from_cli_files
+    )
+    additional_cli_file_entries_display = _fmt_seq(
+        additional_cli_file_entries_display_raw
+    )
+    additional_cli_files_display = additional_cli_file_entries_display
+    additional_config_file_entries_display_raw = tuple(
+        str(Path(entry)) for entry in additional_paths_from_config_files
+    )
+    additional_config_file_entries_display = _fmt_seq(
+        additional_config_file_entries_display_raw
+    )
+    env_additional_display = _fmt_seq(env_additional)
+
+    # list-add-paths
+    if args.list_add_paths:
+        if any([args.set_env, args.export, args.ensure, should_run_command,
+                args.print_pythonpath, args.print_sys_path, args.print_config,
+                args.print_discovery, args.list_profiles, args.list_sentinels,
+                args.list_config_files, args.list_root_hints]):
+            parser.error("--list-add-paths nie może być łączone z innymi trybami wypisywania/uruchamiania")
+
+        if args.format == "json":
+            payload = {
+                "effective": list(normalized_additional),
+                "effective_display": list(normalized_additional_display),
+                "config": list(config_additional_paths),
+                "config_display": list(additional_config_display),
+                "config_file_entries": list(additional_paths_from_config_files),
+                "config_file_entries_display": list(
+                    additional_config_file_entries_display
+                ),
+                "config_files": list(config_additional_path_files),
+                "config_files_display": list(additional_config_files_display),
+                "env_included": include_env_paths,
+                "env": list(env_additional),
+                "env_display": list(env_additional_display),
+                "env_var": ENV_ADDITIONAL_PATHS,
+                "cli": list(additional_paths_cli),
+                "cli_display": list(additional_cli_display),
+                "cli_file_entries": list(additional_paths_from_cli_files),
+                "cli_file_entries_display": list(additional_cli_file_entries_display),
+                "cli_files": list(additional_cli_file_paths),
+                "cli_files_display": list(additional_cli_path_files_display),
+            }
+            output_text = json.dumps(payload, **json_kwargs)
+        else:
+            lines: list[str] = []
+
+            def append_section(title: str, entries: Sequence[str]) -> None:
+                if entries:
+                    lines.append(f"{title}:")
+                    for item in entries:
+                        lines.append(f"  - {item}")
+                else:
+                    lines.append(f"{title}: (brak)")
+
+            append_section("additional_paths_effective", normalized_additional_display)
+            append_section("additional_paths_config", additional_config_display)
+            append_section(
+                "additional_paths_config_file_entries", additional_config_file_entries_display
+            )
+            append_section("additional_paths_config_files", additional_config_files_display)
+            lines.append(
+                "additional_paths_env_included: "
+                + ("true" if include_env_paths else "false")
+            )
+            if include_env_paths:
+                append_section("additional_paths_env", env_additional_display)
+            else:
+                lines.append("additional_paths_env: (wyłączone)")
+            lines.append(f"additional_paths_env_var: {ENV_ADDITIONAL_PATHS}")
+            append_section("additional_paths_cli", additional_cli_display)
+            append_section(
+                "additional_paths_cli_file_entries", additional_cli_file_entries_display
+            )
+            append_section("additional_paths_cli_files", additional_cli_path_files_display)
+
+            output_text = "\n".join(lines)
+
+        if args.output:
+            output_path = _expand_pathlike(args.output)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(output_text + "\n", encoding="utf-8")
+        else:
+            print(output_text)
+
+        return 0
+
+    # Profiles listing
     if args.list_profiles:
-        if args.set_env:
-            parser.error("opcja --list-profiles nie może być używana razem z --set-env")
-        if args.export:
-            parser.error("opcja --list-profiles nie może być używana razem z --export")
-        if args.ensure:
-            parser.error("opcja --list-profiles nie może być używana razem z --ensure")
-        if should_run_command:
-            parser.error("opcja --list-profiles nie może być używana razem z poleceniem")
-        if args.print_pythonpath:
-            parser.error("opcja --list-profiles nie może być używana razem z --print-pythonpath")
-        if args.print_sys_path:
-            parser.error("opcja --list-profiles nie może być używana razem z --print-sys-path")
-        if args.print_config:
-            parser.error("opcja --list-profiles nie może być używana razem z --print-config")
-        if args.print_discovery:
-            parser.error(
-                "opcja --list-profiles nie może być używana razem z --print-discovery"
-            )
-        if args.list_config_files:
-            parser.error(
-                "opcja --list-profiles nie może być używana razem z --list-config-files"
-            )
-        if args.list_root_hints:
-            parser.error(
-                "opcja --list-profiles nie może być używana razem z --list-root-hints"
-            )
+        if any([args.set_env, args.export, args.ensure, should_run_command,
+                args.print_pythonpath, args.print_sys_path, args.print_config,
+                args.print_discovery, args.list_sentinels,
+                args.list_config_files, args.list_add_paths, args.list_root_hints]):
+            parser.error("--list-profiles nie może być łączone z innymi trybami wypisywania/uruchamiania")
 
         defined_profiles = []
         for name in sorted(config_profiles):
@@ -1653,808 +2166,487 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             output_path = _expand_pathlike(args.output)
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_text(output_text + "\n", encoding="utf-8")
-            if args.verbose:
-                print(
-                    f"{prefix} zapisano wynik do pliku {output_path}",
-                    file=sys.stderr,
-                )
         else:
             print(output_text)
 
         return 0
 
-    config_sentinels = tuple(effective_config.get("sentinels", ()))
-    config_additional_paths = tuple(effective_config.get("additional_paths", ()))
-    config_additional_path_files = tuple(
-        effective_config.get("additional_path_files", ())
-    )
-    config_allow_git_value = effective_config.get("allow_git")
-    config_max_depth_value = effective_config.get("max_depth")
-    config_use_env_paths = effective_config.get("use_env_additional_paths")
-    config_root_hint = effective_config.get("root_hint")
-    config_position = effective_config.get("position")
-    config_path_style = effective_config.get("path_style")
-    config_pythonpath_var = effective_config.get("pythonpath_var")
-    env_root_hint_raw = os.environ.get(ENV_ROOT_HINT)
-
-    env_max_depth_raw = os.environ.get(ENV_MAX_DEPTH)
-    env_max_depth: Optional[int] = None
-    if env_max_depth_raw is not None:
-        stripped = env_max_depth_raw.strip()
-        if not stripped:
-            parser.error(
-                f"zmienna środowiskowa {ENV_MAX_DEPTH} nie może być pusta"
-            )
-        try:
-            env_max_depth_candidate = int(stripped)
-        except ValueError:
-            parser.error(
-                f"zmienna środowiskowa {ENV_MAX_DEPTH} musi być liczbą całkowitą"
-            )
-        if env_max_depth_candidate < 0:
-            parser.error(
-                f"zmienna środowiskowa {ENV_MAX_DEPTH} nie może być ujemna"
-            )
-        env_max_depth = env_max_depth_candidate
-
-    if config_max_depth_value is not None and not isinstance(config_max_depth_value, int):
-        parser.error("wartość 'max_depth' w konfiguracji musi być liczbą całkowitą nieujemną")
-
-    if args.export and not args.set_env:
-        parser.error("opcja --export wymaga jednoczesnego użycia z --set-env")
-
-    if args.format == "json" and args.set_env:
-        parser.error("opcja --format=json nie jest dostępna razem z --set-env")
-
-    sentinel_cli = tuple(args.sentinels) if args.sentinels else ()
-    sentinel_from_file: Tuple[str, ...] = ()
-    sentinel_file_path: Optional[Path] = None
-    if args.sentinel_file:
-        sentinel_path = _expand_pathlike(args.sentinel_file)
-        sentinel_file_path = sentinel_path
-        try:
-            sentinel_from_file = _load_sentinels_from_file(sentinel_path)
-        except FileNotFoundError:
-            parser.error(f"plik sentinel {sentinel_path} nie istnieje")
-        except OSError as exc:
-            parser.error(f"nie można odczytać pliku sentinel {sentinel_path}: {exc}")
-        except ValueError as exc:
-            parser.error(str(exc))
-
-    if sentinel_from_file or sentinel_cli or config_sentinels:
-        sentinel_candidates: Tuple[str, ...] = (
-            *config_sentinels,
-            *sentinel_from_file,
-            *sentinel_cli,
-        )
-    else:
-        sentinel_candidates = DEFAULT_SENTINELS
-    env_sentinels_raw = os.environ.get(ENV_SENTINELS)
-    if env_sentinels_raw:
-        env_sentinels = tuple(
-            part.strip() for part in env_sentinels_raw.split(os.pathsep) if part.strip()
-        )
-    else:
-        env_sentinels = ()
-    env_allow_git_raw = os.environ.get(ENV_ALLOW_GIT)
-    env_allow_git = (
-        _interpret_env_flag(env_allow_git_raw) if env_allow_git_raw is not None else None
-    )
-    allow_git_param: Optional[bool]
-    if args.allow_git is not None:
-        allow_git_param = args.allow_git
-    elif config_allow_git_value is not None:
-        allow_git_param = bool(config_allow_git_value)
-    else:
-        allow_git_param = env_allow_git
-    effective_allow_git = allow_git_param if allow_git_param is not None else False
-    max_depth_param: Optional[int]
-    if args.max_depth is not None:
-        max_depth_param = args.max_depth
-    elif config_max_depth_value is not None:
-        max_depth_param = config_max_depth_value
-    else:
-        max_depth_param = env_max_depth
-    position = (
-        args.position
-        if args.position is not None
-        else config_position if config_position is not None else "prepend"
-    )
-    path_style = (
-        args.path_style
-        if args.path_style is not None
-        else config_path_style if config_path_style is not None else "auto"
-    )
-    sentinel_arg = _resolve_sentinels(sentinel_candidates)
-    prefix = "[pathbootstrap]"
-
-    if args.list_root_hints:
-        if args.set_env:
-            parser.error("opcja --list-root-hints nie może być używana razem z --set-env")
-        if args.export:
-            parser.error("opcja --list-root-hints nie może być używana razem z --export")
-        if args.ensure:
-            parser.error("opcja --list-root-hints nie może być używana razem z --ensure")
-        if should_run_command:
-            parser.error("opcja --list-root-hints nie może być używana razem z poleceniem")
-        if args.print_pythonpath:
-            parser.error(
-                "opcja --list-root-hints nie może być używana razem z --print-pythonpath"
-            )
-        if args.print_sys_path:
-            parser.error(
-                "opcja --list-root-hints nie może być używana razem z --print-sys-path"
-            )
-        if args.print_config:
-            parser.error("opcja --list-root-hints nie może być używana razem z --print-config")
-        if args.print_discovery:
-            parser.error(
-                "opcja --list-root-hints nie może być używana razem z --print-discovery"
-            )
-        if args.list_profiles:
-            parser.error(
-                "opcja --list-root-hints nie może być używana razem z --list-profiles"
-            )
-        if args.list_sentinels:
-            parser.error(
-                "opcja --list-root-hints nie może być używana razem z --list-sentinels"
-            )
-        if args.list_add_paths:
-            parser.error(
-                "opcja --list-root-hints nie może być używana razem z --list-add-paths"
-            )
-        if args.list_config_files:
-            parser.error(
-                "opcja --list-root-hints nie może być używana razem z --list-config-files"
-            )
-
-        default_root_hint_path = Path(__file__).resolve().parent
-        default_root_hint_raw = str(default_root_hint_path)
-
-        def format_optional_hint(value: Optional[PathLike[str] | str]) -> Optional[str]:
-            if value is None:
-                return None
-            path_obj = _expand_pathlike(value)
-            try:
-                resolved = path_obj.resolve()
-            except FileNotFoundError:
-                resolved = path_obj
-            return _format_path_value(str(resolved), path_style)
-
-        cli_root_hint_raw = args.root_hint
-        config_root_hint_raw = config_root_hint
-        env_root_hint_display = format_optional_hint(env_root_hint_raw)
-        cli_root_hint_display = format_optional_hint(cli_root_hint_raw)
-        config_root_hint_display = format_optional_hint(config_root_hint_raw)
-        default_root_hint_display = format_optional_hint(default_root_hint_raw)
-
-        if args.root_hint is not None:
-            effective_source = "cli"
-            effective_raw = args.root_hint
-            normalize_input: Optional[PathLike[str] | str] = args.root_hint
-        elif config_root_hint is not None:
-            effective_source = "config"
-            effective_raw = config_root_hint
-            normalize_input = config_root_hint
-        elif env_root_hint_raw is not None:
-            effective_source = "env"
-            effective_raw = env_root_hint_raw
-            normalize_input = None
-        else:
-            effective_source = "default"
-            effective_raw = default_root_hint_raw
-            normalize_input = None
-
-        effective_hint_path = _normalize_hint(normalize_input)
-        effective_path_str = str(effective_hint_path)
-        effective_display = _format_path_value(effective_path_str, path_style)
-
-        if args.format == "json":
-            payload = {
-                "effective_source": effective_source,
-                "effective_raw": effective_raw,
-                "effective_path": effective_path_str,
-                "effective_display": effective_display,
-                "cli_raw": cli_root_hint_raw,
-                "cli_display": cli_root_hint_display,
-                "config_raw": config_root_hint_raw,
-                "config_display": config_root_hint_display,
-                "env_var": ENV_ROOT_HINT,
-                "env_raw": env_root_hint_raw,
-                "env_display": env_root_hint_display,
-                "default_raw": default_root_hint_raw,
-                "default_display": default_root_hint_display,
-            }
-            output_text = json.dumps(payload, **json_kwargs)
-        else:
-            lines: list[str] = []
-
-            def append_line(label: str, value: Optional[str]) -> None:
-                if value is None:
-                    lines.append(f"{label}: (brak)")
-                else:
-                    lines.append(f"{label}: {value}")
-
-            append_line("root_hint_effective_source", effective_source)
-            append_line("root_hint_effective_raw", effective_raw)
-            append_line("root_hint_effective_path", effective_path_str)
-            append_line("root_hint_effective_display", effective_display)
-            append_line("root_hint_cli", cli_root_hint_raw)
-            append_line("root_hint_cli_display", cli_root_hint_display)
-            append_line("root_hint_config", config_root_hint_raw)
-            append_line("root_hint_config_display", config_root_hint_display)
-            lines.append(f"root_hint_env_var: {ENV_ROOT_HINT}")
-            append_line("root_hint_env", env_root_hint_raw)
-            append_line("root_hint_env_display", env_root_hint_display)
-            append_line("root_hint_default", default_root_hint_raw)
-            append_line("root_hint_default_display", default_root_hint_display)
-
-            output_text = "\n".join(lines)
-
-        if args.output:
-            output_path = _expand_pathlike(args.output)
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            output_path.write_text(output_text + "\n", encoding="utf-8")
-            if args.verbose:
-                print(
-                    f"{prefix} zapisano wynik do pliku {output_path}",
-                    file=sys.stderr,
-                )
-        else:
-            print(output_text)
-
-        return 0
-
-    if args.list_sentinels:
-        if args.set_env:
-            parser.error("opcja --list-sentinels nie może być używana razem z --set-env")
-        if args.export:
-            parser.error("opcja --list-sentinels nie może być używana razem z --export")
-        if args.ensure:
-            parser.error("opcja --list-sentinels nie może być używana razem z --ensure")
-        if should_run_command:
-            parser.error("opcja --list-sentinels nie może być używana razem z poleceniem")
-        if args.print_pythonpath:
-            parser.error(
-                "opcja --list-sentinels nie może być używana razem z --print-pythonpath"
-            )
-        if args.print_sys_path:
-            parser.error(
-                "opcja --list-sentinels nie może być używana razem z --print-sys-path"
-            )
-        if args.print_config:
-            parser.error("opcja --list-sentinels nie może być używana razem z --print-config")
-        if args.print_discovery:
-            parser.error(
-                "opcja --list-sentinels nie może być używana razem z --print-discovery"
-            )
-        if args.list_profiles:
-            parser.error(
-                "opcja --list-sentinels nie może być używana razem z --list-profiles"
-            )
-        if args.list_config_files:
-            parser.error(
-                "opcja --list-sentinels nie może być używana razem z --list-config-files"
-            )
-        if args.list_root_hints:
-            parser.error(
-                "opcja --list-sentinels nie może być używana razem z --list-root-hints"
-            )
-
-        sentinel_file_cli = (
-            (str(sentinel_file_path),)
-            if sentinel_file_path is not None
-            else ()
-        )
-        if args.format == "json":
-            payload = {
-                "effective": list(sentinel_arg),
-                "candidates": list(sentinel_candidates),
-                "default": list(DEFAULT_SENTINELS),
-                "config": list(config_sentinels),
-                "env": list(env_sentinels),
-                "cli": list(sentinel_cli),
-                "file": list(sentinel_from_file),
-                "sentinel_file": sentinel_file_cli[0] if sentinel_file_cli else None,
-            }
-            output_text = json.dumps(payload, **json_kwargs)
-        else:
-            lines: list[str] = []
-
-            def append_section(title: str, entries: Sequence[str]) -> None:
-                if entries:
-                    lines.append(f"{title}:")
-                    for item in entries:
-                        lines.append(f"  - {item}")
-                else:
-                    lines.append(f"{title}: (brak)")
-
-            append_section("sentinels_effective", sentinel_arg)
-            append_section("sentinels_candidates", sentinel_candidates)
-            append_section("sentinels_default", DEFAULT_SENTINELS)
-            append_section("sentinels_config", config_sentinels)
-            append_section("sentinels_env", env_sentinels)
-            append_section("sentinels_cli", sentinel_cli)
-            append_section("sentinels_file", sentinel_from_file)
-            append_section("sentinel_file_cli", sentinel_file_cli)
-
-            output_text = "\n".join(lines)
-
-        if args.output:
-            output_path = _expand_pathlike(args.output)
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            output_path.write_text(output_text + "\n", encoding="utf-8")
-            if args.verbose:
-                print(
-                    f"{prefix} zapisano wynik do pliku {output_path}",
-                    file=sys.stderr,
-                )
-        else:
-            print(output_text)
-
-        return 0
-
-    if args.list_config_files:
-        if args.set_env:
-            parser.error("opcja --list-config-files nie może być używana razem z --set-env")
-        if args.export:
-            parser.error("opcja --list-config-files nie może być używana razem z --export")
-        if args.ensure:
-            parser.error("opcja --list-config-files nie może być używana razem z --ensure")
-        if should_run_command:
-            parser.error("opcja --list-config-files nie może być używana razem z poleceniem")
-        if args.print_pythonpath:
-            parser.error(
-                "opcja --list-config-files nie może być używana razem z --print-pythonpath"
-            )
-        if args.print_sys_path:
-            parser.error(
-                "opcja --list-config-files nie może być używana razem z --print-sys-path"
-            )
-        if args.print_config:
-            parser.error("opcja --list-config-files nie może być używana razem z --print-config")
-        if args.print_discovery:
-            parser.error(
-                "opcja --list-config-files nie może być używana razem z --print-discovery"
-            )
-        if args.list_profiles:
-            parser.error(
-                "opcja --list-config-files nie może być używana razem z --list-profiles"
-            )
-        if args.list_sentinels:
-            parser.error(
-                "opcja --list-config-files nie może być używana razem z --list-sentinels"
-            )
-        if args.list_add_paths:
-            parser.error(
-                "opcja --list-config-files nie może być używana razem z --list-add-paths"
-            )
-        if args.list_root_hints:
-            parser.error(
-                "opcja --list-config-files nie może być używana razem z --list-root-hints"
-            )
-
-        env_config_display = _format_path_sequence(
-            env_config_entries_display_raw, path_style
-        )
-        cli_config_display = _format_path_sequence(
-            cli_config_entries_display_raw, path_style
-        )
-        config_roots_display = _format_path_sequence(
-            config_root_entries_display_raw, path_style
-        )
-        config_loaded_display = _format_path_sequence(config_files_used, path_style)
-        include_edges_display = tuple(
-            f"{_format_path_value(parent, path_style)} -> "
-            f"{_format_path_value(child, path_style)}"
-            for parent, child in config_include_edges
-        )
-        include_edges_payload = [
-            {
-                "parent": parent,
-                "child": child,
-                "parent_display": _format_path_value(parent, path_style),
-                "child_display": _format_path_value(child, path_style),
-            }
-            for parent, child in config_include_edges
-        ]
-        inline_definitions_payload = [
-            {"source": source, "definition": definition}
-            for source, definition in config_inline_serialized
-        ]
-
-        if args.format == "json":
-            payload = {
-                "env": list(env_config_files),
-                "env_display": list(env_config_display),
-                "env_var": ENV_CONFIG_FILES,
-                "cli": list(config_cli),
-                "cli_display": list(cli_config_display),
-                "roots": list(config_root_entries_display_raw),
-                "roots_display": list(config_roots_display),
-                "loaded": list(config_files_used),
-                "loaded_display": list(config_loaded_display),
-                "inline_sources": list(config_inline_sources),
-                "inline_definitions": inline_definitions_payload,
-                "include_edges": include_edges_payload,
-                "include_edges_display": list(include_edges_display),
-            }
-            output_text = json.dumps(payload, **json_kwargs)
-        else:
-            lines: list[str] = []
-
-            def append_section(title: str, entries: Sequence[str]) -> None:
-                if entries:
-                    lines.append(f"{title}:")
-                    for item in entries:
-                        lines.append(f"  - {item}")
-                else:
-                    lines.append(f"{title}: (brak)")
-
-            append_section("config_files_env", env_config_files)
-            append_section("config_files_env_display", env_config_display)
-            append_section("config_files_cli", config_cli)
-            append_section("config_files_cli_display", cli_config_display)
-            append_section("config_files_roots", config_root_entries_display_raw)
-            append_section("config_files_roots_display", config_roots_display)
-            append_section("config_files_loaded", config_files_used)
-            append_section("config_files_loaded_display", config_loaded_display)
-            append_section("config_inline_sources", config_inline_sources)
-            for source, definition in config_inline_serialized:
-                keys = sorted(definition.keys())
-                keys_display = ", ".join(keys) if keys else "(brak)"
-                lines.append(f"config_inline_definition_{source}_keys: {keys_display}")
-            append_section("config_include_edges", tuple(
-                f"{parent} -> {child}" for parent, child in config_include_edges
-            ))
-            append_section("config_include_edges_display", include_edges_display)
-            lines.append(f"config_files_env_var: {ENV_CONFIG_FILES}")
-
-            output_text = "\n".join(lines)
-
-        if args.output:
-            output_path = _expand_pathlike(args.output)
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            output_path.write_text(output_text + "\n", encoding="utf-8")
-            if args.verbose:
-                print(
-                    f"{prefix} zapisano wynik do pliku {output_path}",
-                    file=sys.stderr,
-                )
-        else:
-            print(output_text)
-
-        return 0
-
-    if args.verbose:
-        if args.allow_git is not None:
-            allow_git_source = "cli"
-        elif config_allow_git_value is not None:
-            allow_git_source = "config"
-        elif env_allow_git is not None:
-            allow_git_source = "env"
-        else:
-            allow_git_source = "default"
-        print(
-            f"{prefix} allow_git={effective_allow_git} (źródło: {allow_git_source})",
-            file=sys.stderr,
-        )
-        if args.max_depth is not None:
-            max_depth_source = "cli"
-        elif config_max_depth_value is not None:
-            max_depth_source = "config"
-        elif env_max_depth is not None:
-            max_depth_source = "env"
-        else:
-            max_depth_source = "default"
-        max_depth_display = (
-            str(max_depth_param) if max_depth_param is not None else "(brak)"
-        )
-        print(
-            f"{prefix} max_depth={max_depth_display} (źródło: {max_depth_source})",
-            file=sys.stderr,
-        )
-    pythonpath_var_cli = args.pythonpath_var
-    if pythonpath_var_cli is not None and not pythonpath_var_cli:
-        parser.error("opcja --pythonpath-var nie może być pusta")
-    pythonpath_var = (
-        pythonpath_var_cli
-        if pythonpath_var_cli is not None
-        else config_pythonpath_var if config_pythonpath_var is not None else "PYTHONPATH"
-    )
-
-    if module_name and not args.python_executable:
-        parser.error("opcja --python-executable wymaga niepustej wartości")
-
-    if args.shell_path and not shell_requested:
-        parser.error("opcja --shell-path wymaga jednoczesnego użycia z --shell")
-
-    if shell_requested and module_name:
-        parser.error("opcja --shell nie może być używana razem z --module")
-
-    if args.output and should_run_command:
-        parser.error("opcja --output nie może być używana jednocześnie z poleceniem")
-
-    if args.print_pythonpath and args.set_env:
-        parser.error("opcja --print-pythonpath nie może być używana razem z --set-env")
-
-    if args.print_pythonpath and should_run_command:
-        parser.error("opcja --print-pythonpath nie może być używana jednocześnie z poleceniem")
-
-    if args.print_sys_path and args.set_env:
-        parser.error("opcja --print-sys-path nie może być używana razem z --set-env")
-
-    if args.print_sys_path and should_run_command:
-        parser.error("opcja --print-sys-path nie może być używana jednocześnie z poleceniem")
-
-    if args.print_sys_path and args.print_pythonpath:
-        parser.error(
-            "opcja --print-sys-path nie może być używana jednocześnie z --print-pythonpath"
-        )
-
-    if args.print_config and args.set_env:
-        parser.error("opcja --print-config nie może być używana razem z --set-env")
-
-    if args.print_config and should_run_command:
-        parser.error("opcja --print-config nie może być używana jednocześnie z poleceniem")
-
-    if args.print_config and args.print_pythonpath:
-        parser.error(
-            "opcja --print-config nie może być używana jednocześnie z --print-pythonpath"
-        )
-
-    if args.print_config and args.print_sys_path:
-        parser.error("opcja --print-config nie może być używana jednocześnie z --print-sys-path")
-    if args.print_config and args.print_discovery:
-        parser.error("opcja --print-config nie może być używana jednocześnie z --print-discovery")
-
-    if args.set_env_format != "plain" and not args.set_env:
-        parser.error("opcja --set-env-format wymaga jednoczesnego użycia z --set-env")
-
+    # Discovery details
     if args.print_discovery:
-        if args.set_env:
-            parser.error("opcja --print-discovery nie może być używana razem z --set-env")
-        if args.export:
-            parser.error("opcja --print-discovery nie może być używana razem z --export")
-        if args.ensure:
-            parser.error("opcja --print-discovery nie może być używana razem z --ensure")
-        if should_run_command:
-            parser.error("opcja --print-discovery nie może być używana razem z poleceniem")
-        if args.print_pythonpath:
-            parser.error(
-                "opcja --print-discovery nie może być używana razem z --print-pythonpath"
-            )
-        if args.print_sys_path:
-            parser.error(
-                "opcja --print-discovery nie może być używana razem z --print-sys-path"
-            )
-        if args.list_profiles:
-            parser.error(
-                "opcja --print-discovery nie może być używana razem z --list-profiles"
-            )
-        if args.list_sentinels:
-            parser.error(
-                "opcja --print-discovery nie może być używana razem z --list-sentinels"
-            )
-        if args.list_add_paths:
-            parser.error(
-                "opcja --print-discovery nie może być używana razem z --list-add-paths"
-            )
-        if args.list_config_files:
-            parser.error(
-                "opcja --print-discovery nie może być używana razem z --list-config-files"
-            )
-        if args.list_root_hints:
-            parser.error(
-                "opcja --print-discovery nie może być używana razem z --list-root-hints"
-            )
-
-    set_env_format = args.set_env_format
-    if args.export:
-        if set_env_format not in ("plain", "posix"):
-            parser.error(
-                "opcja --export nie może być łączona z --set-env-format innym niż posix"
-            )
-        set_env_format = "posix"
-
-    root_hint_candidate = args.root_hint if args.root_hint is not None else config_root_hint
-    repo_discovery = get_repo_info(
-        root_hint_candidate,
-        sentinels=sentinel_arg,
-        allow_git=allow_git_param,
-        max_depth=max_depth_param,
-    )
-    repo_root_path = repo_discovery.root
-    additional_paths_cli = tuple(args.additional_paths) if args.additional_paths else ()
-    additional_paths_from_config_files: Tuple[str, ...] = ()
-    if config_additional_path_files:
-        collected_config: list[str] = []
-        for file_entry in config_additional_path_files:
-            file_path = _expand_pathlike(file_entry)
-            try:
-                collected_config.extend(_load_additional_paths_from_file(file_path))
-            except FileNotFoundError:
-                parser.error(f"plik ścieżek {file_path} z konfiguracji nie istnieje")
-            except OSError as exc:
-                parser.error(f"nie można odczytać pliku ścieżek {file_path}: {exc}")
-            except ValueError as exc:
-                parser.error(str(exc))
-        additional_paths_from_config_files = tuple(collected_config)
-    additional_paths_from_cli_files: Tuple[str, ...] = ()
-    additional_cli_file_paths: Tuple[str, ...] = ()
-    if args.additional_path_files:
-        collected_cli: list[str] = []
-        cli_files_resolved: list[str] = []
-        for file_entry in args.additional_path_files:
-            file_path = _expand_pathlike(file_entry)
-            cli_files_resolved.append(str(file_path))
-            try:
-                collected_cli.extend(_load_additional_paths_from_file(file_path))
-            except FileNotFoundError:
-                parser.error(f"plik ścieżek {file_path} nie istnieje")
-            except OSError as exc:
-                parser.error(f"nie można odczytać pliku ścieżek {file_path}: {exc}")
-            except ValueError as exc:
-                parser.error(str(exc))
-        additional_paths_from_cli_files = tuple(collected_cli)
-        additional_cli_file_paths = tuple(cli_files_resolved)
-    include_env_paths = not args.no_env_add_paths
-    if not args.no_env_add_paths and config_use_env_paths is not None:
-        include_env_paths = bool(config_use_env_paths)
-    env_additional: Tuple[str, ...] = _get_env_additional_paths() if include_env_paths else ()
-    combined_additional: Tuple[str, ...] = (
-        *additional_paths_from_config_files,
-        *config_additional_paths,
-        *additional_paths_from_cli_files,
-        *additional_paths_cli,
-    )
-    normalized_additional = _resolve_additional_paths(
-        repo_root_path, combined_additional, include_env=include_env_paths
-    )
-    normalized_additional_display = _format_path_sequence(normalized_additional, path_style)
-    additional_cli_display_raw = tuple(str(Path(entry)) for entry in additional_paths_cli)
-    additional_cli_display = _format_path_sequence(additional_cli_display_raw, path_style)
-    additional_config_display_raw = tuple(str(Path(entry)) for entry in config_additional_paths)
-    additional_config_display = _format_path_sequence(additional_config_display_raw, path_style)
-    additional_cli_path_files_display_raw = tuple(
-        str(Path(entry)) for entry in additional_cli_file_paths
-    )
-    additional_cli_path_files_display = _format_path_sequence(
-        additional_cli_path_files_display_raw, path_style
-    )
-    additional_config_files_display_raw = tuple(
-        str(Path(entry)) for entry in config_additional_path_files
-    )
-    additional_config_files_display = _format_path_sequence(
-        additional_config_files_display_raw, path_style
-    )
-    additional_cli_file_entries_display_raw = tuple(
-        str(Path(entry)) for entry in additional_paths_from_cli_files
-    )
-    additional_cli_file_entries_display = _format_path_sequence(
-        additional_cli_file_entries_display_raw, path_style
-    )
-    additional_cli_files_display = additional_cli_file_entries_display
-    additional_config_file_entries_display_raw = tuple(
-        str(Path(entry)) for entry in additional_paths_from_config_files
-    )
-    additional_config_file_entries_display = _format_path_sequence(
-        additional_config_file_entries_display_raw, path_style
-    )
-    env_additional_display = _format_path_sequence(env_additional, path_style)
-
-    if args.list_add_paths:
-        if args.set_env:
-            parser.error("opcja --list-add-paths nie może być używana razem z --set-env")
-        if args.export:
-            parser.error("opcja --list-add-paths nie może być używana razem z --export")
-        if args.ensure:
-            parser.error("opcja --list-add-paths nie może być używana razem z --ensure")
-        if should_run_command:
-            parser.error("opcja --list-add-paths nie może być używana razem z poleceniem")
-        if args.print_pythonpath:
-            parser.error(
-                "opcja --list-add-paths nie może być używana razem z --print-pythonpath"
-            )
-        if args.print_sys_path:
-            parser.error(
-                "opcja --list-add-paths nie może być używana razem z --print-sys-path"
-            )
-        if args.print_config:
-            parser.error("opcja --list-add-paths nie może być używana razem z --print-config")
-        if args.print_discovery:
-            parser.error(
-                "opcja --list-add-paths nie może być używana razem z --print-discovery"
-            )
-        if args.list_profiles:
-            parser.error(
-                "opcja --list-add-paths nie może być używana razem z --list-profiles"
-            )
-        if args.list_sentinels:
-            parser.error(
-                "opcja --list-add-paths nie może być używana razem z --list-sentinels"
-            )
-        if args.list_config_files:
-            parser.error(
-                "opcja --list-add-paths nie może być używana razem z --list-config-files"
-            )
-        if args.list_root_hints:
-            parser.error(
-                "opcja --list-add-paths nie może być używana razem z --list-root-hints"
-            )
-
+        start_str = str(repo_discovery.start)
+        start_display = _format_path(start_str)
+        sentinel_value = repo_discovery.sentinel
+        depth_value = repo_discovery.depth
+        allow_git_details = {
+            "effective": effective_allow_git,
+            "cli": args.allow_git,
+            "config": config_allow_git_value,
+            "env": env_allow_git,
+            "env_raw": env_allow_git_raw,
+        }
+        max_depth_details = {
+            "effective": max_depth_param,
+            "cli": args.max_depth,
+            "config": config_max_depth_value,
+            "env": env_max_depth,
+            "env_raw": env_max_depth_raw,
+        }
         if args.format == "json":
             payload = {
-                "effective": list(normalized_additional),
-                "effective_display": list(normalized_additional_display),
-                "config": list(config_additional_paths),
-                "config_display": list(additional_config_display),
-                "config_file_entries": list(additional_paths_from_config_files),
-                "config_file_entries_display": list(
-                    additional_config_file_entries_display
-                ),
-                "config_files": list(config_additional_path_files),
-                "config_files_display": list(additional_config_files_display),
-                "env_included": include_env_paths,
-                "env": list(env_additional),
-                "env_display": list(env_additional_display),
-                "env_var": ENV_ADDITIONAL_PATHS,
-                "cli": list(additional_paths_cli),
-                "cli_display": list(additional_cli_display),
-                "cli_file_entries": list(additional_paths_from_cli_files),
-                "cli_file_entries_display": list(additional_cli_file_entries_display),
-                "cli_files": list(additional_cli_file_paths),
-                "cli_files_display": list(additional_cli_path_files_display),
+                "root": _format_path(str(repo_root_path)),
+                "root_raw": str(repo_root_path),
+                "method": repo_discovery.method,
+                "sentinel": sentinel_value,
+                "depth": depth_value,
+                "start": start_str,
+                "start_display": start_display,
+                "allow_git": allow_git_details,
+                "max_depth": max_depth_details,
+                "sentinels": list(sentinel_arg),
+                "sentinel_candidates": list(sentinel_candidates),
             }
             output_text = json.dumps(payload, **json_kwargs)
         else:
-            lines: list[str] = []
-
-            def append_section(title: str, entries: Sequence[str]) -> None:
-                if entries:
-                    lines.append(f"{title}:")
-                    for item in entries:
-                        lines.append(f"  - {item}")
-                else:
-                    lines.append(f"{title}: (brak)")
-
-            append_section("additional_paths_effective", normalized_additional_display)
-            append_section("additional_paths_config", additional_config_display)
-            append_section(
-                "additional_paths_config_file_entries", additional_config_file_entries_display
-            )
-            append_section("additional_paths_config_files", additional_config_files_display)
+            lines = [
+                f"discovery_root: {_format_path(str(repo_root_path))}",
+                f"discovery_root_raw: {str(repo_root_path)}",
+                f"discovery_method: {repo_discovery.method}",
+            ]
             lines.append(
-                "additional_paths_env_included: "
-                + ("true" if include_env_paths else "false")
+                "discovery_sentinel: "
+                + (sentinel_value if sentinel_value is not None else "(brak)")
             )
-            if include_env_paths:
-                append_section("additional_paths_env", env_additional_display)
-            else:
-                lines.append("additional_paths_env: (wyłączone)")
-            lines.append(f"additional_paths_env_var: {ENV_ADDITIONAL_PATHS}")
-            append_section("additional_paths_cli", additional_cli_display)
-            append_section(
-                "additional_paths_cli_file_entries", additional_cli_file_entries_display
+            lines.append(
+                "discovery_depth: "
+                + (str(depth_value) if depth_value is not None else "(brak)")
             )
-            append_section("additional_paths_cli_files", additional_cli_path_files_display)
+            lines.append(f"discovery_start: {start_str}")
+            lines.append(f"discovery_start_display: {start_display}")
+            lines.append(f"discovery_allow_git_effective: {effective_allow_git}")
+            lines.append(
+                "discovery_allow_git_cli: "
+                + (str(args.allow_git) if args.allow_git is not None else "(brak)")
+            )
+            lines.append(
+                "discovery_allow_git_config: "
+                + (
+                    str(config_allow_git_value)
+                    if config_allow_git_value is not None
+                    else "(brak)"
+                )
+            )
+            lines.append(
+                "discovery_allow_git_env: "
+                + (str(env_allow_git) if env_allow_git is not None else "(brak)")
+            )
+            lines.append(
+                "discovery_allow_git_env_raw: "
+                + (env_allow_git_raw if env_allow_git_raw is not None else "(brak)")
+            )
+            lines.append(
+                "discovery_max_depth_effective: "
+                + (str(max_depth_param) if max_depth_param is not None else "(brak)")
+            )
+            lines.append(
+                "discovery_max_depth_cli: "
+                + (str(args.max_depth) if args.max_depth is not None else "(brak)")
+            )
+            lines.append(
+                "discovery_max_depth_config: "
+                + (
+                    str(config_max_depth_value)
+                    if config_max_depth_value is not None
+                    else "(brak)"
+                )
+            )
+            lines.append(
+                "discovery_max_depth_env: "
+                + (
+                    str(env_max_depth) if env_max_depth is not None else "(brak)"
+                )
+            )
+            lines.append(
+                "discovery_max_depth_env_raw: "
+                + (env_max_depth_raw if env_max_depth_raw is not None else "(brak)")
+            )
+            lines.append(
+                "discovery_sentinels_effective: "
+                + (", ".join(sentinel_arg) if sentinel_arg else "(brak)")
+            )
+            lines.append(
+                "discovery_sentinels_candidates: "
+                + (", ".join(sentinel_candidates) if sentinel_candidates else "(brak)")
+            )
+            output_text = "\n".join(lines)
+        if args.output:
+            output_path = _expand_pathlike(args.output)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(output_text + "\n", encoding="utf-8")
+        else:
+            print(output_text)
 
+        return 0
+
+    # Print-config
+    if args.print_config:
+        if args.format == "json":
+            payload = {
+                "repo_root": _format_path(str(repo_root_path)),
+                "sentinels": list(sentinel_arg),
+                "sentinels_cli": list(tuple(args.sentinels) if args.sentinels else ()),
+                "sentinels_file": list(tuple(_load_sentinels_from_file(_expand_pathlike(args.sentinel_file))) if args.sentinel_file else ()),
+                "sentinels_env": list(env_sentinels),
+                "allow_git": {
+                            "effective": effective_allow_git,
+                            "cli": args.allow_git,
+                            "env": env_allow_git,
+                            "env_raw": env_allow_git_raw,
+                        },
+                "max_depth": {
+                            "effective": max_depth_param,
+                            "cli": args.max_depth,
+                            "config": config_max_depth_value,
+                            "env": env_max_depth,
+                            "env_raw": env_max_depth_raw,
+                        },
+                "position": position,
+                "include_env_additional_paths": include_env_paths,
+                "set_env_format": args.set_env_format,
+                "additional_paths": {
+                    "normalized": list(normalized_additional_display),
+                    "cli": list(additional_cli_display),
+                    "cli_files": list(additional_cli_files_display),
+                    "config": list(additional_config_display),
+                    "config_files": list(additional_config_files_display),
+                    "env": list(env_additional),
+                },
+                "pythonpath_var": pythonpath_var,
+                "ensure": bool(args.ensure),
+                "chdir": bool(args.chdir),
+                "path_style": path_style,
+                "discovery": {
+                    "method": repo_discovery.method,
+                    "sentinel": repo_discovery.sentinel,
+                    "depth": repo_discovery.depth,
+                    "start": str(repo_discovery.start),
+                    "start_display": _format_path(str(repo_discovery.start)),
+                },
+                "config": {
+                    "files": list(config_files_used),
+                    "includes": [
+                        {"parent": parent, "child": child}
+                        for parent, child in config_include_edges
+                    ],
+                    "inline": {
+                        "sources": list(config_inline_sources),
+                        "entries": [
+                            {"source": source, "values": definition}
+                            for source, definition in config_inline_serialized
+                        ],
+                    },
+                    "values": {
+                        "root_hint": effective_config.get("root_hint"),
+                        "sentinels": list(tuple(effective_config.get("sentinels", ()) )),
+                        "additional_paths": list(tuple(effective_config.get("additional_paths", ()) )),
+                        "additional_path_files": list(tuple(effective_config.get("additional_path_files", ()) )),
+                        "allow_git": config_allow_git_value,
+                        "max_depth": config_max_depth_value,
+                        "use_env_additional_paths": effective_config.get("use_env_additional_paths"),
+                        "position": effective_config.get("position"),
+                        "path_style": effective_config.get("path_style"),
+                        "pythonpath_var": effective_config.get("pythonpath_var"),
+                    },
+                    "profiles": {
+                        "defined": list(config_profiles_defined),
+                        "default": list(config_default_profiles),
+                        "env": list(env_profiles_added),
+                        "env_removed": list(env_profiles_removed),
+                        "cli": list(cli_profiles_added),
+                        "cli_removed": list(cli_profiles_removed),
+                        "selected": list(selected_profiles),
+                        "definitions": {
+                            name: {
+                                "extends": list(config_profiles[name].extends),
+                                "values": _serialize_profile_values(
+                                    config_profiles[name].values
+                                ),
+                                "resolved": _serialize_profile_values(
+                                    profile_resolution_cache[name]
+                                ),
+                            }
+                            for name in config_profiles_defined
+                        },
+                    },
+                },
+                "shell": {
+                    "enabled": shell_requested,
+                    "path": args.shell_path if shell_requested else None,
+                    "args": list(command) if shell_requested else [],
+                },
+            }
+            output_text = json.dumps(payload, **json_kwargs)
+        else:
+            def format_section(name: str, entries: Iterable[str]) -> list[str]:
+                sequence = list(entries)
+                lines = [f"{name}:"]
+                if sequence:
+                    lines.extend(f"  - {item}" for item in sequence)
+                else:
+                    lines.append("  (brak)")
+                return lines
+
+            lines = [
+                f"repo_root: {_format_path(str(repo_root_path))}",
+                "sentinels: " + (", ".join(sentinel_arg) if sentinel_arg else "(brak)"),
+                "sentinels_cli: "
+                + (", ".join(args.sentinels) if args.sentinels else "(brak)"),
+                "sentinels_file: "
+                + (", ".join(_load_sentinels_from_file(_expand_pathlike(args.sentinel_file))) if args.sentinel_file else "(brak)"),
+                "sentinels_env: "
+                + (", ".join(env_sentinels) if env_sentinels else "(brak)"),
+                f"allow_git_effective: {effective_allow_git}",
+                "allow_git_cli: "
+                + (str(args.allow_git) if args.allow_git is not None else "(brak)"),
+                "allow_git_env: "
+                + (str(env_allow_git) if env_allow_git is not None else "(brak)"),
+                "allow_git_env_raw: "
+                + (env_allow_git_raw if env_allow_git_raw is not None else "(brak)"),
+                "max_depth_effective: "
+                + (
+                    str(max_depth_param)
+                    if max_depth_param is not None
+                    else "(brak)"
+                ),
+                "max_depth_cli: "
+                + (str(args.max_depth) if args.max_depth is not None else "(brak)"),
+                "max_depth_config: "
+                + (
+                    str(config_max_depth_value)
+                    if config_max_depth_value is not None
+                    else "(brak)"
+                ),
+                "max_depth_env: "
+                + (
+                    str(env_max_depth) if env_max_depth is not None else "(brak)"
+                ),
+                "max_depth_env_raw: "
+                + (env_max_depth_raw if env_max_depth_raw is not None else "(brak)"),
+                f"position: {position}",
+                f"include_env_additional_paths: {include_env_paths}",
+                f"set_env_format: {args.set_env_format}",
+                f"path_style: {path_style}",
+            ]
+            lines.extend(
+                format_section(
+                    "additional_paths_normalized",
+                    normalized_additional_display,
+                )
+            )
+            lines.extend(
+                format_section(
+                    "additional_paths_config", additional_config_display
+                )
+            )
+            lines.extend(
+                format_section("additional_paths_cli", additional_cli_display)
+            )
+            lines.extend(
+                format_section(
+                    "additional_paths_config_files",
+                    additional_config_files_display,
+                )
+            )
+            lines.extend(
+                format_section(
+                    "additional_paths_cli_files", additional_cli_files_display
+                )
+            )
+            lines.extend(
+                format_section("additional_paths_env", env_additional_display)
+            )
+            lines.append(f"pythonpath_var: {pythonpath_var}")
+            lines.append(f"ensure: {bool(args.ensure)}")
+            lines.append(f"chdir: {bool(args.chdir)}")
+            lines.append(f"shell_enabled: {shell_requested}")
+            lines.append(f"discovery_method: {repo_discovery.method}")
+            lines.append(
+                "discovery_sentinel: "
+                + (repo_discovery.sentinel if repo_discovery.sentinel else "(brak)")
+            )
+            lines.append(
+                "discovery_depth: "
+                + (str(repo_discovery.depth) if repo_discovery.depth is not None else "(brak)")
+            )
+            lines.append(f"discovery_start: {str(repo_discovery.start)}")
+            lines.append(f"discovery_start_display: {_format_path(str(repo_discovery.start))}")
+            lines.extend(format_section("config_files", config_files_used))
+            lines.extend(
+                format_section("config_inline_sources", config_inline_sources)
+            )
+            if config_inline_serialized:
+                lines.append("config_inline_definitions:")
+                for source, definition in config_inline_serialized:
+                    lines.append(f"  - {source}:")
+                    if not definition:
+                        lines.append("      (brak)")
+                        continue
+                    for key, value in definition.items():
+                        if key == "profiles" and isinstance(value, dict):
+                            lines.append("      profiles:")
+                            if value:
+                                for profile_name, profile_data in value.items():
+                                    lines.append(f"        {profile_name}:")
+                                    extends = profile_data.get("extends", [])
+                                    extends_display = (
+                                        ", ".join(extends)
+                                        if extends
+                                        else "(brak)"
+                                    )
+                                    lines.append(
+                                        f"          extends: {extends_display}"
+                                    )
+                                    profile_values = profile_data.get("values", {})
+                                    if profile_values:
+                                        lines.append("          values:")
+                                        for sub_key, sub_value in profile_values.items():
+                                            lines.append(
+                                                "            "
+                                                f"{sub_key}: {_format_config_value(sub_value)}"
+                                            )
+                                    else:
+                                        lines.append("          values: (brak)")
+                            else:
+                                lines.append("        (brak)")
+                        else:
+                            lines.append(
+                                f"      {key}: {_format_config_value(value)}"
+                            )
+            else:
+                lines.append("config_inline_definitions: (brak)")
+            if config_include_edges:
+                def edges():
+                    for parent, child in config_include_edges:
+                        yield f"{parent} -> {child}"
+                lines.extend(format_section("config_includes", tuple(edges())))
+            lines.append(
+                "config_root_hint: "
+                + (str(effective_config.get("root_hint")) if effective_config.get("root_hint") else "(brak)")
+            )
+            lines.extend(
+                format_section("config_sentinels", tuple(effective_config.get("sentinels", ()) ))
+            )
+            lines.extend(
+                format_section("config_additional_paths", tuple(effective_config.get("additional_paths", ()) ))
+            )
+            lines.extend(
+                format_section(
+                    "config_additional_path_files", tuple(effective_config.get("additional_path_files", ()) )
+                )
+            )
+            lines.append(
+                "config_allow_git: "
+                + (
+                    str(config_allow_git_value)
+                    if config_allow_git_value is not None
+                    else "(brak)"
+                )
+            )
+            lines.append(
+                "config_max_depth: "
+                + (
+                    str(config_max_depth_value)
+                    if config_max_depth_value is not None
+                    else "(brak)"
+                )
+            )
+            lines.append(
+                "config_use_env_additional_paths: "
+                + (
+                    str(effective_config.get("use_env_additional_paths"))
+                    if effective_config.get("use_env_additional_paths") is not None
+                    else "(brak)"
+                )
+            )
+            lines.append(
+                "config_position: "
+                + (str(effective_config.get("position")) if effective_config.get("position") else "(brak)")
+            )
+            lines.append(
+                "config_path_style: "
+                + (str(effective_config.get("path_style")) if effective_config.get("path_style") else "(brak)")
+            )
+            lines.append(
+                "config_pythonpath_var: "
+                + (
+                    str(effective_config.get("pythonpath_var")) if effective_config.get("pythonpath_var") else "(brak)"
+                )
+            )
+            lines.extend(
+                format_section(
+                    "config_profiles_defined", config_profiles_defined
+                )
+            )
+            lines.extend(
+                format_section(
+                    "config_default_profiles", config_default_profiles
+                )
+            )
+            lines.extend(
+                format_section("profiles_env", env_profiles_added)
+            )
+            lines.extend(
+                format_section("profiles_env_removed", env_profiles_removed)
+            )
+            lines.extend(
+                format_section("profiles_cli", cli_profiles_added)
+            )
+            lines.extend(
+                format_section("profiles_cli_removed", cli_profiles_removed)
+            )
+            lines.extend(
+                format_section("profiles_selected", selected_profiles)
+            )
+            if config_profiles_defined:
+                lines.append("config_profiles_definitions:")
+                for name in config_profiles_defined:
+                    profile = config_profiles[name]
+                    lines.append(f"  - {name}:")
+                    extends_display = (
+                        ", ".join(profile.extends)
+                        if profile.extends
+                        else "(brak)"
+                    )
+                    lines.append(f"      extends: {extends_display}")
+                    if profile.values:
+                        lines.append("      values:")
+                        for key, value in profile.values.items():
+                            lines.append(
+                                f"        {key}: {_format_config_value(value)}"
+                            )
+                    else:
+                        lines.append("      values: (brak)")
+                    resolved_values = profile_resolution_cache[name]
+                    if resolved_values:
+                        lines.append("      resolved:")
+                        for key, value in resolved_values.items():
+                            lines.append(
+                                f"        {key}: {_format_config_value(value)}"
+                            )
+                    else:
+                        lines.append("      resolved: (brak)")
+            else:
+                lines.append("config_profiles_definitions: (brak)")
             output_text = "\n".join(lines)
 
         if args.output:
             output_path = _expand_pathlike(args.output)
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_text(output_text + "\n", encoding="utf-8")
-            if args.verbose:
-                print(
-                    f"{prefix} zapisano wynik do pliku {output_path}",
-                    file=sys.stderr,
-                )
         else:
             print(output_text)
-
         return 0
 
+    # If we got here, we may need to add paths and/or run a command
     context = (
         chdir_repo_root(
             repo_root_path,
@@ -2469,9 +2661,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     with context as repo_root:
         repo_str = str(repo_root)
         display_separator = PATH_STYLE_SEPARATORS[path_style]
-        repo_display = _format_path_value(repo_str, path_style)
+        repo_display = _format_path(repo_str)
         discovery_start_str = str(repo_discovery.start)
-        discovery_start_display = _format_path_value(discovery_start_str, path_style)
+        discovery_start_display = _format_path(discovery_start_str)
         python_executable = args.python_executable
         command_to_run = list(command)
         if module_name:
@@ -2494,320 +2686,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         sys_path_display_value: Optional[str] = None
         sys_path_snapshot = list(sys.path)
 
-        if args.verbose:
-            def emit(message: str) -> None:
-                print(f"{prefix} {message}", file=sys.stderr)
-
-            emit(f"katalog repozytorium: {repo_display}")
-            emit(
-                "sentinele: " + (", ".join(sentinel_arg) if sentinel_arg else "(brak)")
-            )
-            emit(
-                "pliki konfiguracji: "
-                + (", ".join(config_files_used) if config_files_used else "(brak)")
-            )
-            emit(
-                "konfiguracje inline: "
-                + (", ".join(config_inline_sources) if config_inline_sources else "(brak)")
-            )
-            for source, definition in config_inline_serialized:
-                keys = list(definition.keys())
-                keys_display = ", ".join(keys) if keys else "(brak)"
-                emit(f"inline {source} klucze: {keys_display}")
-                profiles_block = definition.get("profiles")
-                if isinstance(profiles_block, dict):
-                    profile_names = list(profiles_block.keys())
-                    emit(
-                        "inline "
-                        + source
-                        + " profile: "
-                        + (", ".join(profile_names) if profile_names else "(brak)")
-                    )
-            if config_include_edges:
-                emit(
-                    "include'y konfiguracji: "
-                    + (
-                        ", ".join(
-                            f"{parent} -> {child}" for parent, child in config_include_edges
-                        )
-                        if config_include_edges
-                        else "(brak)"
-                    )
-                )
-            emit(
-                "konfiguracyjny root_hint: "
-                + (config_root_hint if config_root_hint else "(brak)")
-            )
-            emit(
-                "konfiguracyjne sentinele: "
-                + (", ".join(config_sentinels) if config_sentinels else "(brak)")
-            )
-            emit(f"pozycja na sys.path: {position}")
-            emit(
-                "PATHBOOTSTRAP_SENTINELS: "
-                + (", ".join(env_sentinels) if env_sentinels else "(brak)")
-            )
-            emit(
-                "konfiguracyjne dodatkowe ścieżki: "
-                + (", ".join(additional_config_display)
-                    if additional_config_display
-                    else "(brak)"
-                )
-            )
-            if include_env_paths:
-                emit(
-                    "PATHBOOTSTRAP_ADD_PATHS: "
-                    + (", ".join(env_additional) if env_additional else "(brak)")
-                )
-            else:
-                emit("PATHBOOTSTRAP_ADD_PATHS: (wyłączone)")
-            emit(
-                "dodatkowe ścieżki CLI: "
-                + (
-                    ", ".join(additional_cli_display)
-                    if additional_cli_display
-                    else "(brak)"
-                )
-            )
-            emit(
-                "konfiguracyjne pliki ścieżek: "
-                + (
-                    ", ".join(additional_config_files_display)
-                    if additional_config_files_display
-                    else "(brak)"
-                )
-            )
-            emit(
-                "profile zdefiniowane: "
-                + (
-                    ", ".join(config_profiles_defined)
-                    if config_profiles_defined
-                    else "(brak)"
-                )
-            )
-            emit(
-                "profile domyślne: "
-                + (
-                    ", ".join(config_default_profiles)
-                    if config_default_profiles
-                    else "(brak)"
-                )
-            )
-            emit(
-                "profile z env: "
-                + (
-                    ", ".join(env_profiles_added)
-                    if env_profiles_added
-                    else "(brak)"
-                )
-            )
-            emit(
-                "profile usunięte z env: "
-                + (
-                    ", ".join(env_profiles_removed)
-                    if env_profiles_removed
-                    else "(brak)"
-                )
-            )
-            emit(
-                "profile z CLI: "
-                + (
-                    ", ".join(cli_profiles_added)
-                    if cli_profiles_added
-                    else "(brak)"
-                )
-            )
-            emit(
-                "profile usunięte z CLI: "
-                + (
-                    ", ".join(cli_profiles_removed)
-                    if cli_profiles_removed
-                    else "(brak)"
-                )
-            )
-            emit(
-                "profile aktywne: "
-                + (
-                    ", ".join(selected_profiles)
-                    if selected_profiles
-                    else "(brak)"
-                )
-            )
-            emit(
-                "dodatkowe ścieżki z plików: "
-                + (
-                    ", ".join(additional_cli_files_display)
-                    if additional_cli_files_display
-                    else "(brak)"
-                )
-            )
-            emit(
-                "znormalizowane dodatkowe ścieżki: "
-                + (
-                    ", ".join(normalized_additional_display)
-                    if normalized_additional_display
-                    else "(brak)"
-                )
-            )
-            discovery_sentinel = repo_discovery.sentinel or "(brak)"
-            discovery_depth = (
-                str(repo_discovery.depth)
-                if repo_discovery.depth is not None
-                else "(brak)"
-            )
-            emit(
-                "metoda wykrycia: "
-                + repo_discovery.method
-                + ", sentinel: "
-                + discovery_sentinel
-                + ", głębokość: "
-                + discovery_depth
-            )
-            emit(
-                "punkt startowy wykrycia: "
-                + discovery_start_display
-            )
-            if shell_requested:
-                emit("powłoka: " + (shell_path_used if shell_path_used else "(domyślna)"))
-                if shell_command_display:
-                    emit(f"polecenie powłoki: {shell_command_display}")
-
-        if args.print_discovery:
-            start_str = discovery_start_str
-            start_display = discovery_start_display
-            sentinel_value = repo_discovery.sentinel
-            depth_value = repo_discovery.depth
-            allow_git_details = {
-                "effective": effective_allow_git,
-                "cli": args.allow_git,
-                "config": config_allow_git_value,
-                "env": env_allow_git,
-                "env_raw": env_allow_git_raw,
-            }
-            max_depth_details = {
-                "effective": max_depth_param,
-                "cli": args.max_depth,
-                "config": config_max_depth_value,
-                "env": env_max_depth,
-                "env_raw": env_max_depth_raw,
-            }
-            if args.format == "json":
-                payload = {
-                    "root": repo_display,
-                    "root_raw": repo_str,
-                    "method": repo_discovery.method,
-                    "sentinel": sentinel_value,
-                    "depth": depth_value,
-                    "start": start_str,
-                    "start_display": start_display,
-                    "allow_git": allow_git_details,
-                    "max_depth": max_depth_details,
-                    "sentinels": list(sentinel_arg),
-                    "sentinel_candidates": list(sentinel_candidates),
-                }
-                output_text = json.dumps(payload, **json_kwargs)
-            else:
-                lines = [
-                    f"discovery_root: {repo_display}",
-                    f"discovery_root_raw: {repo_str}",
-                    f"discovery_method: {repo_discovery.method}",
-                ]
-                lines.append(
-                    "discovery_sentinel: "
-                    + (sentinel_value if sentinel_value is not None else "(brak)")
-                )
-                lines.append(
-                    "discovery_depth: "
-                    + (str(depth_value) if depth_value is not None else "(brak)")
-                )
-                lines.append(f"discovery_start: {start_str}")
-                lines.append(f"discovery_start_display: {start_display}")
-                lines.append(f"discovery_allow_git_effective: {effective_allow_git}")
-                lines.append(
-                    "discovery_allow_git_cli: "
-                    + (str(args.allow_git) if args.allow_git is not None else "(brak)")
-                )
-                lines.append(
-                    "discovery_allow_git_config: "
-                    + (
-                        str(config_allow_git_value)
-                        if config_allow_git_value is not None
-                        else "(brak)"
-                    )
-                )
-                lines.append(
-                    "discovery_allow_git_env: "
-                    + (str(env_allow_git) if env_allow_git is not None else "(brak)")
-                )
-                lines.append(
-                    "discovery_allow_git_env_raw: "
-                    + (env_allow_git_raw if env_allow_git_raw is not None else "(brak)")
-                )
-                lines.append(
-                    "discovery_max_depth_effective: "
-                    + (str(max_depth_param) if max_depth_param is not None else "(brak)")
-                )
-                lines.append(
-                    "discovery_max_depth_cli: "
-                    + (str(args.max_depth) if args.max_depth is not None else "(brak)")
-                )
-                lines.append(
-                    "discovery_max_depth_config: "
-                    + (
-                        str(config_max_depth_value)
-                        if config_max_depth_value is not None
-                        else "(brak)"
-                    )
-                )
-                lines.append(
-                    "discovery_max_depth_env: "
-                    + (
-                        str(env_max_depth) if env_max_depth is not None else "(brak)"
-                    )
-                )
-                lines.append(
-                    "discovery_max_depth_env_raw: "
-                    + (env_max_depth_raw if env_max_depth_raw is not None else "(brak)")
-                )
-                lines.append(
-                    "discovery_sentinels_effective: "
-                    + (", ".join(sentinel_arg) if sentinel_arg else "(brak)")
-                )
-                lines.append(
-                    "discovery_sentinels_candidates: "
-                    + (", ".join(sentinel_candidates) if sentinel_candidates else "(brak)")
-                )
-                output_text = "\n".join(lines)
-            if args.output:
-                output_path = _expand_pathlike(args.output)
-                output_path.parent.mkdir(parents=True, exist_ok=True)
-                output_path.write_text(output_text + "\n", encoding="utf-8")
-                if args.verbose:
-                    print(
-                        f"{prefix} zapisano wynik do pliku {output_path}",
-                        file=sys.stderr,
-                    )
-            else:
-                print(output_text)
-
-            return 0
-
-        if args.ensure or should_run_command:
-            if args.verbose:
-                print(
-                    f"{prefix} dodawanie katalogu repozytorium do sys.path",
-                    file=sys.stderr,
-                )
-            repo_str = ensure_repo_root_on_sys_path(
-                repo_root,
-                sentinels=sentinel_arg,
-                allow_git=allow_git_param,
-                max_depth=max_depth_param,
-                position=position,
-                additional_paths=combined_additional,
-                use_env_additional_paths=include_env_paths,
-            )
-            repo_display = _format_path_value(repo_str, path_style)
+        if args.print_discovery and args.verbose:
+            print(f"{prefix} punkt startowy wykrycia: {discovery_start_display}", file=sys.stderr)
 
         if args.print_pythonpath:
             pythonpath_buffer: list[str] = []
@@ -2822,11 +2702,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             pythonpath_display_value = display_separator.join(
                 pythonpath_display_entries
             )
-            if args.verbose:
-                print(
-                    f"{prefix} symulowana wartość {pythonpath_var}: {pythonpath_display_value}",
-                    file=sys.stderr,
-                )
 
         if args.print_sys_path:
             if args.ensure or should_run_command:
@@ -2841,11 +2716,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 sys_path_entries, path_style
             )
             sys_path_display_value = "\n".join(sys_path_display_entries)
-            if args.verbose:
-                print(
-                    f"{prefix} symulowany sys.path: {sys_path_display_value}",
-                    file=sys.stderr,
-                )
 
         if should_run_command:
             env = os.environ.copy()
@@ -2856,54 +2726,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             )
             env[pythonpath_var] = os.pathsep.join(path_entries) if path_entries else repo_str
 
-            if args.verbose:
-                print(
-                    f"{prefix} aktualizacja {pythonpath_var}: "
-                    + (
-                        display_separator.join(
-                            _format_path_sequence(path_entries, path_style)
-                        )
-                        if path_entries
-                        else repo_display
-                    ),
-                    file=sys.stderr,
-                )
-                if inserted:
-                    print(
-                        f"{prefix} dodane wpisy do {pythonpath_var}: "
-                        + ", ".join(
-                            _format_path_sequence(inserted, path_style)
-                        ),
-                        file=sys.stderr,
-                    )
-
             if args.set_env:
                 env[args.set_env] = repo_str
-                if args.verbose:
-                    print(
-                        f"{prefix} ustawienie zmiennej {args.set_env} na {repo_display}",
-                        file=sys.stderr,
-                    )
 
-            if args.verbose:
-                print(
-                    f"{prefix} uruchamianie polecenia: {shlex.join(command_to_run)}",
-                    file=sys.stderr,
-                )
             completed = subprocess.run(command_to_run, check=False, env=env)
             return completed.returncode
 
         output_text: Optional[str]
         if args.set_env:
             assignment = _format_env_assignment(
-                args.set_env, repo_display, set_env_format
+                args.set_env, repo_display, args.set_env_format
             )
             output_text = assignment
-            if args.verbose:
-                print(
-                    f"{prefix} ustawienie zmiennej {args.set_env} na {repo_display}",
-                    file=sys.stderr,
-                )
         else:
             if args.print_pythonpath:
                 assert pythonpath_value is not None
@@ -2936,370 +2770,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 else:
                     output_text = sys_path_display_value
             elif args.print_config:
-                if args.format == "json":
-                    payload = {
-                        "repo_root": repo_display,
-                        "sentinels": list(sentinel_arg),
-                        "sentinels_cli": list(sentinel_cli),
-                        "sentinels_file": list(sentinel_from_file),
-                        "sentinels_env": list(env_sentinels),
-                        "allow_git": {
-                            "effective": effective_allow_git,
-                            "cli": args.allow_git,
-                            "env": env_allow_git,
-                            "env_raw": env_allow_git_raw,
-                        },
-                        "max_depth": {
-                            "effective": max_depth_param,
-                            "cli": args.max_depth,
-                            "config": config_max_depth_value,
-                            "env": env_max_depth,
-                            "env_raw": env_max_depth_raw,
-                        },
-                        "position": position,
-                        "include_env_additional_paths": include_env_paths,
-                        "set_env_format": set_env_format,
-                        "additional_paths": {
-                            "normalized": list(normalized_additional_display),
-                            "cli": list(additional_cli_display),
-                            "cli_files": list(additional_cli_files_display),
-                            "config": list(additional_config_display),
-                            "config_files": list(additional_config_files_display),
-                            "env": list(env_additional),
-                        },
-                        "pythonpath_var": pythonpath_var,
-                        "ensure": bool(args.ensure),
-                        "chdir": bool(args.chdir),
-                        "path_style": path_style,
-                        "discovery": {
-                            "method": repo_discovery.method,
-                            "sentinel": repo_discovery.sentinel,
-                            "depth": repo_discovery.depth,
-                            "start": discovery_start_str,
-                            "start_display": discovery_start_display,
-                        },
-                        "config": {
-                            "files": list(config_files_used),
-                            "includes": [
-                                {"parent": parent, "child": child}
-                                for parent, child in config_include_edges
-                            ],
-                            "inline": {
-                                "sources": list(config_inline_sources),
-                                "entries": [
-                                    {"source": source, "values": definition}
-                                    for source, definition in config_inline_serialized
-                                ],
-                            },
-                            "values": {
-                                "root_hint": config_root_hint,
-                                "sentinels": list(config_sentinels),
-                                "additional_paths": list(config_additional_paths),
-                                "additional_path_files": list(
-                                    config_additional_path_files
-                                ),
-                                "allow_git": config_allow_git_value,
-                                "max_depth": config_max_depth_value,
-                                "use_env_additional_paths": config_use_env_paths,
-                                "position": config_position,
-                                "path_style": config_path_style,
-                                "pythonpath_var": config_pythonpath_var,
-                            },
-                            "profiles": {
-                                "defined": list(config_profiles_defined),
-                                "default": list(config_default_profiles),
-                                "env": list(env_profiles_added),
-                                "env_removed": list(env_profiles_removed),
-                                "cli": list(cli_profiles_added),
-                                "cli_removed": list(cli_profiles_removed),
-                                "selected": list(selected_profiles),
-                                "definitions": {
-                                    name: {
-                                        "extends": list(config_profiles[name].extends),
-                                        "values": _serialize_profile_values(
-                                            config_profiles[name].values
-                                        ),
-                                        "resolved": _serialize_profile_values(
-                                            profile_resolution_cache[name]
-                                        ),
-                                    }
-                                    for name in config_profiles_defined
-                                },
-                            },
-                        },
-                        "shell": {
-                            "enabled": shell_requested,
-                            "path": shell_path_used,
-                            "args": list(command) if shell_requested else [],
-                        },
-                    }
-                    output_text = json.dumps(payload, **json_kwargs)
-                else:
-                    def format_section(name: str, entries: Iterable[str]) -> list[str]:
-                        sequence = list(entries)
-                        lines = [f"{name}:"]
-                        if sequence:
-                            lines.extend(f"  - {item}" for item in sequence)
-                        else:
-                            lines.append("  (brak)")
-                        return lines
-
-                    lines = [
-                        f"repo_root: {repo_display}",
-                        "sentinels: " + (", ".join(sentinel_arg) if sentinel_arg else "(brak)"),
-                        "sentinels_cli: "
-                        + (", ".join(sentinel_cli) if sentinel_cli else "(brak)"),
-                        "sentinels_file: "
-                        + (", ".join(sentinel_from_file) if sentinel_from_file else "(brak)"),
-                        "sentinels_env: "
-                        + (", ".join(env_sentinels) if env_sentinels else "(brak)"),
-                        f"allow_git_effective: {effective_allow_git}",
-                        "allow_git_cli: "
-                        + (str(args.allow_git) if args.allow_git is not None else "(brak)"),
-                        "allow_git_env: "
-                        + (str(env_allow_git) if env_allow_git is not None else "(brak)"),
-                        "allow_git_env_raw: "
-                        + (env_allow_git_raw if env_allow_git_raw is not None else "(brak)"),
-                        "max_depth_effective: "
-                        + (
-                            str(max_depth_param)
-                            if max_depth_param is not None
-                            else "(brak)"
-                        ),
-                        "max_depth_cli: "
-                        + (str(args.max_depth) if args.max_depth is not None else "(brak)"),
-                        "max_depth_config: "
-                        + (
-                            str(config_max_depth_value)
-                            if config_max_depth_value is not None
-                            else "(brak)"
-                        ),
-                        "max_depth_env: "
-                        + (
-                            str(env_max_depth) if env_max_depth is not None else "(brak)"
-                        ),
-                        "max_depth_env_raw: "
-                        + (
-                            env_max_depth_raw if env_max_depth_raw is not None else "(brak)"
-                        ),
-                        f"position: {position}",
-                        f"include_env_additional_paths: {include_env_paths}",
-                        f"set_env_format: {set_env_format}",
-                        f"path_style: {path_style}",
-                    ]
-                    lines.extend(
-                        format_section(
-                            "additional_paths_normalized",
-                            normalized_additional_display,
-                        )
-                    )
-                    lines.extend(
-                        format_section(
-                            "additional_paths_config", additional_config_display
-                        )
-                    )
-                    lines.extend(
-                        format_section("additional_paths_cli", additional_cli_display)
-                    )
-                    lines.extend(
-                        format_section(
-                            "additional_paths_config_files",
-                            additional_config_files_display,
-                        )
-                    )
-                    lines.extend(
-                        format_section(
-                            "additional_paths_cli_files", additional_cli_files_display
-                        )
-                    )
-                    lines.extend(
-                        format_section("additional_paths_env", env_additional)
-                    )
-                    lines.append(f"pythonpath_var: {pythonpath_var}")
-                    lines.append(f"ensure: {bool(args.ensure)}")
-                    lines.append(f"chdir: {bool(args.chdir)}")
-                    lines.append(f"shell_enabled: {shell_requested}")
-                    lines.append(f"discovery_method: {repo_discovery.method}")
-                    lines.append(
-                        "discovery_sentinel: "
-                        + (repo_discovery.sentinel if repo_discovery.sentinel else "(brak)")
-                    )
-                    lines.append(
-                        "discovery_depth: "
-                        + (str(repo_discovery.depth) if repo_discovery.depth is not None else "(brak)")
-                    )
-                    lines.append(f"discovery_start: {discovery_start_str}")
-                    lines.append(f"discovery_start_display: {discovery_start_display}")
-                    if shell_requested:
-                        lines.append(
-                            "shell_path: "
-                            + (shell_path_used if shell_path_used else "(domyślna)")
-                        )
-                        if command:
-                            lines.append(
-                                "shell_args: "
-                                + (shell_command_display if shell_command_display else "")
-                            )
-                    lines.extend(format_section("config_files", config_files_used))
-                    lines.extend(
-                        format_section("config_inline_sources", config_inline_sources)
-                    )
-                    if config_inline_serialized:
-                        lines.append("config_inline_definitions:")
-                        for source, definition in config_inline_serialized:
-                            lines.append(f"  - {source}:")
-                            if not definition:
-                                lines.append("      (brak)")
-                                continue
-                            for key, value in definition.items():
-                                if key == "profiles" and isinstance(value, dict):
-                                    lines.append("      profiles:")
-                                    if value:
-                                        for profile_name, profile_data in value.items():
-                                            lines.append(f"        {profile_name}:")
-                                            extends = profile_data.get("extends", [])
-                                            extends_display = (
-                                                ", ".join(extends)
-                                                if extends
-                                                else "(brak)"
-                                            )
-                                            lines.append(
-                                                f"          extends: {extends_display}"
-                                            )
-                                            profile_values = profile_data.get("values", {})
-                                            if profile_values:
-                                                lines.append("          values:")
-                                                for sub_key, sub_value in profile_values.items():
-                                                    lines.append(
-                                                        "            "
-                                                        f"{sub_key}: {_format_config_value(sub_value)}"
-                                                    )
-                                            else:
-                                                lines.append("          values: (brak)")
-                                    else:
-                                        lines.append("        (brak)")
-                                else:
-                                    lines.append(
-                                        f"      {key}: {_format_config_value(value)}"
-                                    )
-                    else:
-                        lines.append("config_inline_definitions: (brak)")
-                    if config_include_edges:
-                        lines.extend(
-                            format_section(
-                                "config_includes",
-                                (f"{parent} -> {child}" for parent, child in config_include_edges),
-                            )
-                        )
-                    lines.append(
-                        "config_root_hint: "
-                        + (config_root_hint if config_root_hint else "(brak)")
-                    )
-                    lines.extend(
-                        format_section("config_sentinels", config_sentinels)
-                    )
-                    lines.extend(
-                        format_section("config_additional_paths", config_additional_paths)
-                    )
-                    lines.extend(
-                        format_section(
-                            "config_additional_path_files", config_additional_path_files
-                        )
-                    )
-                    lines.append(
-                        "config_allow_git: "
-                        + (
-                            str(config_allow_git_value)
-                            if config_allow_git_value is not None
-                            else "(brak)"
-                        )
-                    )
-                    lines.append(
-                        "config_max_depth: "
-                        + (
-                            str(config_max_depth_value)
-                            if config_max_depth_value is not None
-                            else "(brak)"
-                        )
-                    )
-                    lines.append(
-                        "config_use_env_additional_paths: "
-                        + (
-                            str(config_use_env_paths)
-                            if config_use_env_paths is not None
-                            else "(brak)"
-                        )
-                    )
-                    lines.append(
-                        "config_position: "
-                        + (config_position if config_position else "(brak)")
-                    )
-                    lines.append(
-                        "config_path_style: "
-                        + (config_path_style if config_path_style else "(brak)")
-                    )
-                    lines.append(
-                        "config_pythonpath_var: "
-                        + (
-                            config_pythonpath_var if config_pythonpath_var else "(brak)"
-                        )
-                    )
-                    lines.extend(
-                        format_section(
-                            "config_profiles_defined", config_profiles_defined
-                        )
-                    )
-                    lines.extend(
-                        format_section(
-                            "config_default_profiles", config_default_profiles
-                        )
-                    )
-                    lines.extend(
-                        format_section("profiles_env", env_profiles_added)
-                    )
-                    lines.extend(
-                        format_section("profiles_env_removed", env_profiles_removed)
-                    )
-                    lines.extend(
-                        format_section("profiles_cli", cli_profiles_added)
-                    )
-                    lines.extend(
-                        format_section("profiles_cli_removed", cli_profiles_removed)
-                    )
-                    lines.extend(
-                        format_section("profiles_selected", selected_profiles)
-                    )
-                    if config_profiles_defined:
-                        lines.append("config_profiles_definitions:")
-                        for name in config_profiles_defined:
-                            profile = config_profiles[name]
-                            lines.append(f"  - {name}:")
-                            extends_display = (
-                                ", ".join(profile.extends)
-                                if profile.extends
-                                else "(brak)"
-                            )
-                            lines.append(f"      extends: {extends_display}")
-                            if profile.values:
-                                lines.append("      values:")
-                                for key, value in profile.values.items():
-                                    lines.append(
-                                        f"        {key}: {_format_config_value(value)}"
-                                    )
-                            else:
-                                lines.append("      values: (brak)")
-                            resolved_values = profile_resolution_cache[name]
-                            if resolved_values:
-                                lines.append("      resolved:")
-                                for key, value in resolved_values.items():
-                                    lines.append(
-                                        f"        {key}: {_format_config_value(value)}"
-                                    )
-                            else:
-                                lines.append("      resolved: (brak)")
-                    else:
-                        lines.append("config_profiles_definitions: (brak)")
-                    output_text = "\n".join(lines)
+                # Already handled earlier; keeping branch for completeness
+                output_text = ""
             else:
                 if args.format == "json":
                     payload = {
@@ -3314,11 +2786,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             output_path = _expand_pathlike(args.output)
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_text(output_text + "\n", encoding="utf-8")
-            if args.verbose:
-                print(
-                    f"{prefix} zapisano wynik do pliku {output_path}",
-                    file=sys.stderr,
-                )
         else:
             print(output_text)
         return 0
