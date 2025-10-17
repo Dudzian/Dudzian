@@ -21,6 +21,7 @@ class QQuickWindow;
 class QScreen;
 class ActivationController;            // forward decl (app/ActivationController.hpp)
 class LicenseActivationController;     // forward decl (license/LicenseActivationController.hpp)
+class SecurityAdminController;         // forward decl (security/SecurityAdminController.hpp)
 
 class Application : public QObject {
     Q_OBJECT
@@ -30,6 +31,7 @@ class Application : public QObject {
     Q_PROPERTY(QString          instrumentLabel      READ instrumentLabel     NOTIFY instrumentChanged)
     Q_PROPERTY(QObject*         riskModel            READ riskModel           CONSTANT)
     Q_PROPERTY(QObject*         activationController READ activationController CONSTANT)
+    Q_PROPERTY(int              telemetryPendingRetryCount READ telemetryPendingRetryCount NOTIFY telemetryPendingRetryCountChanged)
 
 public:
     explicit Application(QQmlApplicationEngine& engine, QObject* parent = nullptr);
@@ -50,6 +52,7 @@ public:
     bool             reduceMotionActive() const { return m_reduceMotionActive; }
     QObject*         riskModel() const { return const_cast<RiskStateModel*>(&m_riskModel); }
     QObject*         activationController() const;
+    int              telemetryPendingRetryCount() const { return m_pendingRetryCount; }
 
 public slots:
     void start();
@@ -69,11 +72,13 @@ signals:
     void performanceGuardChanged();
     void instrumentChanged();
     void reduceMotionActiveChanged();
+    void telemetryPendingRetryCountChanged(int pending);
 
 private slots:
     void handleHistory(const QList<OhlcvPoint>& candles);
     void handleCandle(const OhlcvPoint& candle);
     void handleRiskState(const RiskSnapshotData& snapshot);
+    void handleTelemetryPendingRetryCountChanged(int pending);
 
 private:
     // Rejestracja obiektów w kontekście QML
@@ -96,6 +101,7 @@ private:
     void applyPreferredScreen(QQuickWindow* window);
     QScreen* resolvePreferredScreen() const;
     void updateScreenInfo(QScreen* screen);
+    void updateTelemetryPendingRetryCount(int pending);
 
     // --- Stan i komponenty ---
     QQmlApplicationEngine& m_engine;
@@ -123,6 +129,7 @@ private:
     // Oba kontrolery – aktywacja (app) i licencje OEM (license)
     std::unique_ptr<ActivationController>     m_activationController;
     std::unique_ptr<LicenseActivationController> m_licenseController;
+    std::unique_ptr<SecurityAdminController>   m_securityController;
 
     // --- Telemetry state ---
     std::unique_ptr<TelemetryReporter> m_telemetry;
@@ -130,6 +137,7 @@ private:
     QString                            m_metricsTag;
     bool                               m_metricsEnabled = false;
     QString                            m_metricsAuthToken;
+    QString                            m_metricsRbacRole;
     double                             m_latestFpsSample = 0.0;
     int                                m_windowCount = 1;
     TelemetryTlsConfig                 m_tlsConfig;
@@ -156,4 +164,5 @@ private:
     QElapsedTimer                                      m_lastJankTelemetry;
     bool                                               m_jankTelemetryTimerValid = false;
     int                                                m_jankTelemetryCooldownMs = 400;
+    int                                                m_pendingRetryCount = 0;
 };

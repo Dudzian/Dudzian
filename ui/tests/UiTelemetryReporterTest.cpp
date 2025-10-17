@@ -1,4 +1,5 @@
 #include <QtTest/QtTest>
+#include <QSignalSpy>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QRect>
@@ -10,7 +11,10 @@
 #include "telemetry/UiTelemetryReporter.hpp"
 #include "utils/PerformanceGuard.hpp"
 #include "trading.grpc.pb.h"
+#include "grpc/MetricsClient.hpp"
 
+#include <deque>
+#include <memory>
 #include <mutex>
 #include <vector>
 
@@ -51,11 +55,61 @@ private slots:
     void testOverlayBudgetEvent();
     void testJankEvent();
     void testScreenMetadataIncluded();
+    void testRetryBufferFlushes();
 
 private:
     std::unique_ptr<grpc::Server> m_server;
     std::unique_ptr<MetricsCaptureService> m_service;
     QString m_address;
+};
+
+struct FakeResult {
+    bool ok = true;
+    QString error;
+};
+
+class FakeMetricsClient final : public MetricsClientInterface {
+public:
+    void setEndpoint(const QString& endpoint) override { endpointCalled = endpoint; }
+    void setTlsConfig(const TelemetryTlsConfig& config) override { tlsConfig = config; }
+    void setAuthToken(const QString& token) override { authToken = token; }
+    void setRbacRole(const QString& role) override { rbacRole = role; }
+
+    bool pushSnapshot(const botcore::trading::v1::MetricsSnapshot& snapshot,
+                      QString* errorMessage = nullptr) override {
+        CallRecord record;
+        record.notes = QString::fromStdString(snapshot.notes());
+        record.fps = snapshot.has_fps() ? snapshot.fps() : 0.0;
+        const QJsonObject json = QJsonDocument::fromJson(record.notes.toUtf8()).object();
+        record.event = json.value(QStringLiteral("event")).toString();
+        calls.push_back(record);
+        if (results.empty()) {
+            return true;
+        }
+        const FakeResult result = results.front();
+        results.pop_front();
+        if (!result.ok && errorMessage) {
+            *errorMessage = result.error;
+        }
+        return result.ok;
+    }
+
+    void enqueueResult(bool ok, const QString& error = QString()) {
+        results.push_back(FakeResult{ok, error});
+    }
+
+    struct CallRecord {
+        QString event;
+        QString notes;
+        double fps = 0.0;
+    };
+
+    QString endpointCalled;
+    TelemetryTlsConfig tlsConfig;
+    QString authToken;
+    QString rbacRole;
+    std::deque<FakeResult> results;
+    std::vector<CallRecord> calls;
 };
 
 void UiTelemetryReporterTest::initTestCase() {
@@ -212,6 +266,59 @@ void UiTelemetryReporterTest::testScreenMetadataIncluded() {
     QCOMPARE(geometry.value(QStringLiteral("height")).toInt(), 1440);
     const auto available = screen.value(QStringLiteral("available_geometry_px")).toObject();
     QCOMPARE(available.value(QStringLiteral("height")).toInt(), 1400);
+}
+
+void UiTelemetryReporterTest::testRetryBufferFlushes() {
+    auto fakeClient = std::make_shared<FakeMetricsClient>();
+
+    UiTelemetryReporter reporter;
+    reporter.setEndpoint(QStringLiteral("fake-endpoint"));
+    reporter.setAuthToken(QStringLiteral("secret"));
+    reporter.setRbacRole(QStringLiteral("metrics.admin"));
+    TelemetryTlsConfig tlsConfig;
+    tlsConfig.enabled = true;
+    tlsConfig.serverNameOverride = QStringLiteral("override");
+    reporter.setTlsConfig(tlsConfig);
+    reporter.setMetricsClientForTesting(fakeClient);
+    reporter.setRetryBufferLimitForTesting(4);
+    reporter.setEnabled(true);
+
+    QSignalSpy retrySpy(&reporter, &UiTelemetryReporter::pendingRetryCountChanged);
+    QVERIFY(retrySpy.isValid());
+    QCOMPARE(reporter.pendingRetryCount(), 0);
+
+    PerformanceGuard guard;
+    guard.fpsTarget = 60;
+    guard.jankThresholdMs = 18.0;
+
+    fakeClient->enqueueResult(false, QStringLiteral("UNAVAILABLE"));
+    fakeClient->enqueueResult(true);
+    fakeClient->enqueueResult(true);
+
+    reporter.reportOverlayBudget(guard, 1, 3, false);
+    QCOMPARE(fakeClient->calls.size(), std::size_t{1});
+    QCOMPARE(fakeClient->calls.front().event, QStringLiteral("overlay_budget"));
+    QCOMPARE(reporter.pendingRetryCount(), 1);
+    QCOMPARE(retrySpy.count(), 1);
+    const QList<QVariant> firstArgs = retrySpy.takeFirst();
+    QCOMPARE(firstArgs.size(), 1);
+    QCOMPARE(firstArgs.front().toInt(), 1);
+
+    reporter.reportJankEvent(guard, 28.0, 18.0, false, 2, 3);
+
+    QCOMPARE(fakeClient->calls.size(), std::size_t{3});
+    QCOMPARE(fakeClient->calls.at(1).event, QStringLiteral("overlay_budget"));
+    QCOMPARE(fakeClient->calls.at(2).event, QStringLiteral("jank_spike"));
+    QCOMPARE(reporter.pendingRetryCount(), 0);
+    QCOMPARE(retrySpy.count(), 1);
+    const QList<QVariant> secondArgs = retrySpy.takeFirst();
+    QCOMPARE(secondArgs.front().toInt(), 0);
+
+    QCOMPARE(fakeClient->endpointCalled, QStringLiteral("fake-endpoint"));
+    QCOMPARE(fakeClient->authToken, QStringLiteral("secret"));
+    QCOMPARE(fakeClient->rbacRole, QStringLiteral("metrics.admin"));
+    QCOMPARE(fakeClient->tlsConfig.serverNameOverride, QStringLiteral("override"));
+    QVERIFY(fakeClient->tlsConfig.enabled);
 }
 
 QTEST_MAIN(UiTelemetryReporterTest)

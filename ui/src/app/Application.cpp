@@ -21,6 +21,7 @@
 #include "utils/FrameRateMonitor.hpp"
 #include "license/LicenseActivationController.hpp"
 #include "app/ActivationController.hpp"
+#include "security/SecurityAdminController.hpp"
 
 Q_LOGGING_CATEGORY(lcAppMetrics, "bot.shell.app.metrics")
 
@@ -101,8 +102,15 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
 
     m_licenseController = std::make_unique<LicenseActivationController>();
     m_licenseController->setParent(this);
-    m_licenseController->setConfigDirectory(QDir::current().absoluteFilePath(QStringLiteral("config")));
-    m_licenseController->setLicenseStoragePath(QDir::current().absoluteFilePath(QStringLiteral("var/licenses/active/license.json")));
+    const QString configDir = QDir::current().absoluteFilePath(QStringLiteral("config"));
+    const QString defaultLicensePath = QDir::current().absoluteFilePath(QStringLiteral("var/licenses/active/license.json"));
+    m_licenseController->setConfigDirectory(configDir);
+    m_licenseController->setLicenseStoragePath(defaultLicensePath);
+
+    m_securityController = std::make_unique<SecurityAdminController>(this);
+    m_securityController->setProfilesPath(QDir::current().absoluteFilePath(QStringLiteral("config/user_profiles.json")));
+    m_securityController->setLicensePath(defaultLicensePath);
+    m_securityController->setLogPath(QDir::current().absoluteFilePath(QStringLiteral("logs/security_admin.log")));
 
     exposeToQml();
 
@@ -184,6 +192,7 @@ void Application::configureParser(QCommandLineParser& parser) const {
     parser.addOption({"metrics-tag", tr("Etykieta notatek telemetrii"), tr("tag"), QString()});
     parser.addOption({"metrics-auth-token", tr("Token autoryzacyjny MetricsService"), tr("token")});
     parser.addOption({"metrics-auth-token-file", tr("Ścieżka pliku z tokenem MetricsService"), tr("path")});
+    parser.addOption({"metrics-rbac-role", tr("Rola RBAC przekazywana do MetricsService"), tr("role"), QString()});
     parser.addOption({"disable-metrics", tr("Wyłącza wysyłkę telemetrii")});
     parser.addOption({"no-metrics", tr("Alias: wyłącza wysyłkę telemetrii")});
 
@@ -217,6 +226,9 @@ void Application::configureParser(QCommandLineParser& parser) const {
                       QStringLiteral("var/licenses/active/license.json")});
     parser.addOption({"expected-fingerprint-path", tr("Ścieżka oczekiwanego fingerprintu OEM (JSON/tekst)"), tr("path"),
                       QString()});
+    parser.addOption({"security-profiles-path", tr("Ścieżka profili użytkowników UI"), tr("path"), QString()});
+    parser.addOption({"security-python", tr("Ścieżka do interpretera Pythona dla bridge"), tr("path"), QString()});
+    parser.addOption({"security-log-path", tr("Plik logu zdarzeń administracyjnych"), tr("path"), QString()});
 }
 
 bool Application::applyParser(const QCommandLineParser& parser) {
@@ -333,6 +345,8 @@ bool Application::applyParser(const QCommandLineParser& parser) {
         m_metricsAuthToken.clear();
     }
 
+    m_metricsRbacRole = parser.value("metrics-rbac-role").trimmed();
+
     applyTradingTlsEnvironmentOverrides(parser);
     m_client.setTlsConfig(m_tradingTlsConfig);
 
@@ -356,6 +370,19 @@ bool Application::applyParser(const QCommandLineParser& parser) {
     m_licenseController->initialize();
 
     applyMetricsEnvironmentOverrides(parser, cliTokenProvided, cliTokenFileProvided);
+
+    if (m_securityController) {
+        if (!parser.value("security-profiles-path").trimmed().isEmpty()) {
+            m_securityController->setProfilesPath(expandUserPath(parser.value("security-profiles-path")));
+        }
+        if (!parser.value("security-python").trimmed().isEmpty()) {
+            m_securityController->setPythonExecutable(parser.value("security-python"));
+        }
+        if (!parser.value("security-log-path").trimmed().isEmpty()) {
+            m_securityController->setLogPath(expandUserPath(parser.value("security-log-path")));
+        }
+        m_securityController->refresh();
+    }
 
     // Inicjalizacja/reportera + token
     ensureTelemetry();
@@ -404,6 +431,7 @@ void Application::exposeToQml() {
     m_engine.rootContext()->setContextProperty(QStringLiteral("riskModel"), &m_riskModel);
     m_engine.rootContext()->setContextProperty(QStringLiteral("licenseController"), m_licenseController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("activationController"), m_activationController.get());
+    m_engine.rootContext()->setContextProperty(QStringLiteral("securityController"), m_securityController.get());
 }
 
 QObject* Application::activationController() const
@@ -462,7 +490,12 @@ void Application::attachWindow(QObject* object) {
 }
 
 void Application::setTelemetryReporter(std::unique_ptr<TelemetryReporter> reporter) {
+    if (auto* uiReporter = dynamic_cast<UiTelemetryReporter*>(m_telemetry.get())) {
+        disconnect(uiReporter, &UiTelemetryReporter::pendingRetryCountChanged,
+                   this, &Application::handleTelemetryPendingRetryCountChanged);
+    }
     m_telemetry = std::move(reporter);
+    updateTelemetryPendingRetryCount(0);
     ensureTelemetry();
 }
 
@@ -633,6 +666,12 @@ void Application::applyMetricsEnvironmentOverrides(const QCommandLineParser& par
             m_metricsAuthToken.clear();
         }
     }
+
+    if (m_metricsRbacRole.trimmed().isEmpty()) {
+        if (const auto roleEnv = envValue(QByteArrayLiteral("BOT_CORE_UI_METRICS_RBAC_ROLE")); roleEnv.has_value()) {
+            m_metricsRbacRole = roleEnv->trimmed();
+        }
+    }
 }
 
 void Application::applyScreenEnvironmentOverrides(const QCommandLineParser& parser)
@@ -791,19 +830,31 @@ void Application::updateScreenInfo(QScreen* screen)
 void Application::ensureTelemetry() {
     const bool shouldEnable = m_metricsEnabled && !m_metricsEndpoint.isEmpty();
     if (!m_telemetry) {
-        if (!shouldEnable)
+        if (!shouldEnable) {
+            updateTelemetryPendingRetryCount(0);
             return;
+        }
         auto reporter = std::make_unique<UiTelemetryReporter>(this);
         m_telemetry = std::move(reporter);
     }
     if (!m_telemetry)
         return;
 
+    if (auto* uiReporter = dynamic_cast<UiTelemetryReporter*>(m_telemetry.get())) {
+        connect(uiReporter, &UiTelemetryReporter::pendingRetryCountChanged,
+                this, &Application::handleTelemetryPendingRetryCountChanged,
+                Qt::UniqueConnection);
+        updateTelemetryPendingRetryCount(uiReporter->pendingRetryCount());
+    } else {
+        updateTelemetryPendingRetryCount(0);
+    }
+
     m_telemetry->setWindowCount(m_windowCount);
     m_telemetry->setNotesTag(m_metricsTag);
     m_telemetry->setEndpoint(m_metricsEndpoint);
     m_telemetry->setTlsConfig(m_tlsConfig);
     m_telemetry->setAuthToken(m_metricsAuthToken);
+    m_telemetry->setRbacRole(m_metricsRbacRole);
     if (m_screenInfo.has_value()) {
         m_telemetry->setScreenInfo(m_screenInfo.value());
     } else {
@@ -882,4 +933,15 @@ void Application::reportReduceMotionTelemetry(bool enabled) {
     m_telemetry->reportReduceMotion(m_guard, enabled, m_latestFpsSample, overlay.active, overlay.allowed);
     m_lastReduceMotionReported = enabled;
     m_pendingReduceMotionState.reset();
+}
+
+void Application::handleTelemetryPendingRetryCountChanged(int pending) {
+    updateTelemetryPendingRetryCount(pending);
+}
+
+void Application::updateTelemetryPendingRetryCount(int pending) {
+    if (m_pendingRetryCount == pending)
+        return;
+    m_pendingRetryCount = pending;
+    Q_EMIT telemetryPendingRetryCountChanged(pending);
 }
