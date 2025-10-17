@@ -1,0 +1,14 @@
+[
+  {
+    "user_id": "ops",
+    "display_name": "Operations",
+    "roles": ["metrics.read", "metrics.write"],
+    "updated_at": "2024-01-01T00:00:00Z"
+  },
+  {
+    "user_id": "compliance",
+    "display_name": "Compliance",
+    "roles": ["metrics.read"],
+    "updated_at": "2024-01-01T00:00:00Z"
+  }
+]

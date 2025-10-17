@@ -67,6 +67,15 @@ ApplicationWindow {
             }
 
             Button {
+                text: qsTr("Administracja")
+                icon.name: "preferences-system"
+                onClicked: adminDialog.open()
+                ToolTip.visible: hovered
+                ToolTip.delay: 400
+                ToolTip.text: qsTr("Zarządzaj licencją i profilami użytkowników")
+            }
+
+            Button {
                 text: qsTr("Ponów połączenie")
                 onClicked: {
                     appController.stop()
@@ -79,6 +88,20 @@ ApplicationWindow {
     ActivationDialog {
         id: activationDialog
         controller: activationController
+    }
+
+    AdminDialog {
+        id: adminDialog
+        visible: false
+        x: Math.max(0, (window.width - width) / 2)
+        y: Math.max(0, (window.height - height) / 2)
+    }
+
+    Connections {
+        target: securityController
+        function onAdminEventLogged(message) {
+            console.info("Security event:", message)
+        }
     }
 
     background: Rectangle {
