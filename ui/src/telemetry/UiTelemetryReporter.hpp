@@ -4,25 +4,19 @@
 #include <QJsonObject>
 #include <QString>
 
+#include <deque>
 #include <memory>
-#include <mutex>
 #include <optional>
 
 #include "telemetry/TelemetryReporter.hpp"
 #include "telemetry/TelemetryTlsConfig.hpp"
 #include "utils/PerformanceGuard.hpp"
 
-namespace botcore::trading::v1 {
-class MetricsService;
-class MetricsSnapshot;
-} // namespace botcore::trading::v1
-
-namespace grpc {
-class Channel;
-} // namespace grpc
+#include "grpc/MetricsClient.hpp"
 
 class UiTelemetryReporter : public QObject, public TelemetryReporter {
     Q_OBJECT
+    Q_PROPERTY(int pendingRetryCount READ pendingRetryCount NOTIFY pendingRetryCountChanged)
 public:
     explicit UiTelemetryReporter(QObject* parent = nullptr);
     ~UiTelemetryReporter() override;
@@ -34,6 +28,7 @@ public:
     void setWindowCount(int count) override;
     void setTlsConfig(const TelemetryTlsConfig& config) override;
     void setAuthToken(const QString& token) override;
+    void setRbacRole(const QString& role) override;
     void setScreenInfo(const ScreenInfo& info) override;
     void clearScreenInfo() override;
     bool isEnabled() const override { return m_enabled && !m_endpoint.isEmpty(); }
@@ -56,9 +51,16 @@ public:
                          int overlayActive,
                          int overlayAllowed) override;
 
+    void setMetricsClientForTesting(const std::shared_ptr<MetricsClientInterface>& client);
+    void setRetryBufferLimitForTesting(int limit);
+
+    int pendingRetryCount() const;
+
 private:
     void pushSnapshot(const QJsonObject& notes, std::optional<double> fpsValue);
-    botcore::trading::v1::MetricsService::Stub* ensureStub();
+    void flushRetryBuffer();
+    void resetRetryBuffer();
+    void publishRetryBufferSizeIfNeeded();
     QJsonObject buildScreenJson() const;
 
     // Konfiguracja / stan
@@ -66,12 +68,17 @@ private:
     QString     m_endpoint;
     QString     m_notesTag;
     QString     m_authToken;
+    QString     m_rbacRole;
     int         m_windowCount = 1;
     std::optional<ScreenInfo> m_screenInfo;
 
-    // gRPC / TLS
-    std::mutex m_mutex;
-    std::shared_ptr<grpc::Channel> m_channel;
-    std::unique_ptr<botcore::trading::v1::MetricsService::Stub> m_stub;
+    // gRPC client wrapper i retry buffer
+    std::shared_ptr<MetricsClientInterface> m_client;
+    std::deque<botcore::trading::v1::MetricsSnapshot> m_retryBuffer;
+    int m_retryBufferLimit = 16;
     TelemetryTlsConfig m_tlsConfig;
+    int m_lastPublishedRetryCount = 0;
+
+Q_SIGNALS:
+    void pendingRetryCountChanged(int pending);
 };

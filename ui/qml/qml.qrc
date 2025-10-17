@@ -8,5 +8,6 @@
         <file>components/StatusFooter.qml</file>
         <file>components/ChartWindow.qml</file>
         <file>components/LicenseActivationOverlay.qml</file>
+        <file>components/AdminDialog.qml</file>
     </qresource>
 </RCC>
