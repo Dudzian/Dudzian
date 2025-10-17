@@ -36,6 +36,7 @@ from bot_core.config.models import (
     PortfolioSloOverrideConfig,
     PortfolioDecisionLogConfig,
     PortfolioRuntimeInputsConfig,
+    PermissionProfileConfig,
 )
 from bot_core.exchanges.base import Environment
 
@@ -304,6 +305,24 @@ def _load_instrument_buckets(
             tags=tuple(str(tag) for tag in (entry.get("tags", ()) or ())),
         )
     return buckets
+
+
+def _load_permission_profiles(raw: Mapping[str, Any]) -> Mapping[str, PermissionProfileConfig]:
+    if PermissionProfileConfig is None or not _core_has("permission_profiles"):
+        return {}
+    profiles: dict[str, PermissionProfileConfig] = {}
+    for name, entry in (raw.get("permission_profiles", {}) or {}).items():
+        profiles[name] = PermissionProfileConfig(
+            name=name,
+            required_permissions=tuple(
+                str(value).lower() for value in (entry.get("required_permissions", ()) or ())
+            ),
+            forbidden_permissions=tuple(
+                str(value).lower()
+                for value in (entry.get("forbidden_permissions", ()) or ())
+            ),
+        )
+    return profiles
 
 
 def _maybe_float(value: Any) -> float | None:
@@ -1971,10 +1990,15 @@ def _load_decision_engine_config(
             str(_normalize_runtime_path(path, base_dir=base_dir)) for path in reports_source
         )
         require_at_startup = bool(tco_raw.get("require_at_startup", False))
-        tco_config = DecisionEngineTCOConfig(
-            report_paths=normalized_reports,
-            require_at_startup=require_at_startup,
-        )
+        tco_kwargs: dict[str, Any] = {}
+        tco_fields = {field.name for field in fields(DecisionEngineTCOConfig)}
+        if "report_paths" in tco_fields:
+            tco_kwargs["report_paths"] = normalized_reports
+        else:
+            tco_kwargs["reports"] = normalized_reports
+        if "require_at_startup" in tco_fields or require_at_startup:
+            tco_kwargs["require_at_startup"] = require_at_startup
+        tco_config = DecisionEngineTCOConfig(**tco_kwargs)  # type: ignore[arg-type]
     return DecisionEngineConfig(
         orchestrator=base_threshold,
         profile_overrides=overrides,
@@ -2616,10 +2640,40 @@ def load_core_config(path: str | Path) -> CoreConfig:
 
     instrument_universes = _load_instrument_universes(raw)
     instrument_buckets = _load_instrument_buckets(raw)
+    permission_profiles = _load_permission_profiles(raw)
 
     # Środowiska – budujemy kwargs dynamicznie, tak by działało na różnych gałęziach modeli.
     environments: dict[str, EnvironmentConfig] = {}
     for name, entry in (raw.get("environments", {}) or {}).items():
+        permission_profile_name: str | None = None
+        profile_required: Sequence[str] = ()
+        profile_forbidden: Sequence[str] = ()
+        if _env_has("permission_profile"):
+            raw_profile = entry.get("permission_profile")
+            if isinstance(raw_profile, str) and raw_profile.strip():
+                permission_profile_name = raw_profile.strip()
+                profile = permission_profiles.get(permission_profile_name)
+                if profile is not None:
+                    profile_required = profile.required_permissions
+                    profile_forbidden = profile.forbidden_permissions
+        raw_required = entry.get("required_permissions")
+        if raw_required is None:
+            required_permissions = tuple(profile_required)
+        else:
+            required_permissions = tuple(
+                str(value).lower() for value in (raw_required or ())
+            )
+            if not required_permissions and profile_required:
+                required_permissions = tuple(profile_required)
+        raw_forbidden = entry.get("forbidden_permissions")
+        if raw_forbidden is None:
+            forbidden_permissions = tuple(profile_forbidden)
+        else:
+            forbidden_permissions = tuple(
+                str(value).lower() for value in (raw_forbidden or ())
+            )
+            if not forbidden_permissions and profile_forbidden:
+                forbidden_permissions = tuple(profile_forbidden)
         env_kwargs: dict[str, Any] = {
             "name": name,
             "exchange": entry["exchange"],
@@ -2635,13 +2689,11 @@ def load_core_config(path: str | Path) -> CoreConfig:
                 str(key): value
                 for key, value in (entry.get("adapter_settings", {}) or {}).items()
             },
-            "required_permissions": tuple(
-                str(value).lower() for value in (entry.get("required_permissions", ()) or ())
-            ),
-            "forbidden_permissions": tuple(
-                str(value).lower() for value in (entry.get("forbidden_permissions", ()) or ())
-            ),
+            "required_permissions": required_permissions,
+            "forbidden_permissions": forbidden_permissions,
         }
+        if _env_has("permission_profile"):
+            env_kwargs["permission_profile"] = permission_profile_name
         if _env_has("default_strategy"):
             strategy_value = entry.get("default_strategy")
             env_kwargs["default_strategy"] = (
@@ -2743,6 +2795,8 @@ def load_core_config(path: str | Path) -> CoreConfig:
         "telegram_channels": telegram_channels,
         "email_channels": email_channels,
     }
+    if permission_profiles and _core_has("permission_profiles"):
+        core_kwargs["permission_profiles"] = permission_profiles
     if _core_has("instrument_universes"):
         core_kwargs["instrument_universes"] = instrument_universes
     if _core_has("instrument_buckets"):
