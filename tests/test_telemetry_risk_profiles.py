@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import scripts.telemetry_risk_profiles as telemetry_profiles_cli
 
 from bot_core.runtime.telemetry_risk_profiles import (
+    get_metrics_service_config_overrides,
     get_metrics_service_env_overrides,
     get_metrics_service_overrides,
     get_risk_profile,
@@ -173,6 +174,13 @@ def test_metrics_service_env_overrides() -> None:
         env_overrides["RUN_METRICS_SERVICE_UI_ALERTS_REDUCE_ACTIVE_SEVERITY"]
         == "critical"
     )
+    assert (
+        env_overrides["RUN_METRICS_SERVICE_UI_ALERTS_PERFORMANCE_MODE"] == "enable"
+    )
+    assert (
+        env_overrides["RUN_METRICS_SERVICE_UI_ALERTS_PERFORMANCE_CPU_WARNING_PERCENT"]
+        == 75.0
+    )
 
 
 def test_register_profile_extends_unknown() -> None:
@@ -186,6 +194,18 @@ def test_register_profile_extends_cycle() -> None:
             {"alpha": {"extends": "beta"}, "beta": {"extends": "alpha"}},
             origin="tests",
         )
+
+
+def test_metrics_service_performance_overrides() -> None:
+    overrides = get_metrics_service_overrides("balanced")
+    assert overrides["ui_alerts_performance_mode"] == "enable"
+    assert overrides["ui_alerts_performance_category"] == "ui.performance"
+    assert overrides["ui_alerts_performance_event_to_frame_warning_ms"] == 55.0
+    assert overrides["ui_alerts_performance_cpu_critical_percent"] == 92.0
+
+    config_overrides = get_metrics_service_config_overrides("balanced")
+    assert config_overrides["performance_event_to_frame_critical_ms"] == 75.0
+    assert config_overrides["cpu_utilization_warning_percent"] == 80.0
 
 
 def test_cli_list_profiles(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

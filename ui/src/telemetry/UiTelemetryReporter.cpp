@@ -1,7 +1,5 @@
 #include "UiTelemetryReporter.hpp"
 
-#include <QCryptographicHash>
-#include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLoggingCategory>
@@ -11,12 +9,6 @@
 #include <chrono>
 #include <optional>
 #include <string>
-
-#include <grpcpp/channel.h>
-#include <grpcpp/channel_arguments.h>
-#include <grpcpp/client_context.h>
-#include <grpcpp/create_channel.h>
-#include <grpcpp/security/credentials.h>
 
 #include "trading.grpc.pb.h"
 
@@ -45,7 +37,8 @@ void stampNow(botcore::trading::v1::MetricsSnapshot& snapshot) {
 } // namespace
 
 UiTelemetryReporter::UiTelemetryReporter(QObject* parent)
-    : QObject(parent) {}
+    : QObject(parent)
+    , m_client(std::make_shared<MetricsClient>()) {}
 
 UiTelemetryReporter::~UiTelemetryReporter() = default;
 
@@ -54,16 +47,19 @@ void UiTelemetryReporter::setEnabled(bool enabled) {
         return;
     }
     m_enabled = enabled;
+    if (!m_enabled) {
+        resetRetryBuffer();
+    }
 }
 
 void UiTelemetryReporter::setEndpoint(const QString& endpoint) {
-    std::lock_guard<std::mutex> lock(m_mutex);
     if (m_endpoint == endpoint) {
         return;
     }
     m_endpoint = endpoint;
-    m_channel.reset();
-    m_stub.reset();
+    if (m_client) {
+        m_client->setEndpoint(endpoint);
+    }
 }
 
 void UiTelemetryReporter::setNotesTag(const QString& tag) {
@@ -75,7 +71,6 @@ void UiTelemetryReporter::setWindowCount(int count) {
 }
 
 void UiTelemetryReporter::setTlsConfig(const TelemetryTlsConfig& config) {
-    std::lock_guard<std::mutex> lock(m_mutex);
     m_tlsConfig = config;
     if (!m_tlsConfig.enabled) {
         m_tlsConfig.rootCertificatePath.clear();
@@ -84,12 +79,23 @@ void UiTelemetryReporter::setTlsConfig(const TelemetryTlsConfig& config) {
         m_tlsConfig.serverNameOverride.clear();
         m_tlsConfig.pinnedServerSha256.clear();
     }
-    m_channel.reset();
-    m_stub.reset();
+    if (m_client) {
+        m_client->setTlsConfig(m_tlsConfig);
+    }
 }
 
 void UiTelemetryReporter::setAuthToken(const QString& token) {
     m_authToken = token;
+    if (m_client) {
+        m_client->setAuthToken(token);
+    }
+}
+
+void UiTelemetryReporter::setRbacRole(const QString& role) {
+    m_rbacRole = role.trimmed();
+    if (m_client) {
+        m_client->setRbacRole(m_rbacRole);
+    }
 }
 
 void UiTelemetryReporter::setScreenInfo(const ScreenInfo& info) {
@@ -166,18 +172,37 @@ void UiTelemetryReporter::reportJankEvent(const PerformanceGuard& guard,
     pushSnapshot(payload, fpsEstimate > 0.0 ? std::optional<double>(fpsEstimate) : std::nullopt);
 }
 
+void UiTelemetryReporter::setMetricsClientForTesting(const std::shared_ptr<MetricsClientInterface>& client) {
+    if (!client) {
+        return;
+    }
+    m_client = client;
+    m_client->setEndpoint(m_endpoint);
+    m_client->setTlsConfig(m_tlsConfig);
+    m_client->setAuthToken(m_authToken);
+    m_client->setRbacRole(m_rbacRole);
+}
+
+void UiTelemetryReporter::setRetryBufferLimitForTesting(int limit) {
+    m_retryBufferLimit = qMax(0, limit);
+    while (static_cast<int>(m_retryBuffer.size()) > m_retryBufferLimit) {
+        m_retryBuffer.pop_front();
+    }
+    publishRetryBufferSizeIfNeeded();
+}
+
 void UiTelemetryReporter::pushSnapshot(const QJsonObject& notes, std::optional<double> fpsValue) {
-    if (!m_enabled || m_endpoint.isEmpty()) {
+    if (!m_enabled || m_endpoint.isEmpty() || !m_client) {
         return;
     }
 
-    auto* stub = ensureStub();
-    if (!stub) {
-        qCWarning(lcTelemetry) << "Metrics stub unavailable for" << m_endpoint;
-        return;
-    }
+    const int backlogBeforeFlush = pendingRetryCount();
+    flushRetryBuffer();
 
     QJsonObject enrichedNotes = notes;
+    enrichedNotes.insert(QStringLiteral("retry_backlog_before_send"), backlogBeforeFlush);
+    enrichedNotes.insert(QStringLiteral("retry_backlog_after_flush"), pendingRetryCount());
+
     if (m_screenInfo.has_value()) {
         enrichedNotes.insert(QStringLiteral("screen"), buildScreenJson());
     }
@@ -189,50 +214,47 @@ void UiTelemetryReporter::pushSnapshot(const QJsonObject& notes, std::optional<d
     }
     snapshot.set_notes(buildNotesJson(enrichedNotes, m_notesTag, m_windowCount).toStdString());
 
-    grpc::ClientContext context;
-    if (!m_authToken.isEmpty()) {
-        const std::string token = m_authToken.toStdString();
-        context.AddMetadata("authorization", std::string("Bearer ") + token);
-    }
-
-    botcore::trading::v1::MetricsAck ack;
-    const auto status = stub->PushMetrics(&context, snapshot, &ack);
-    if (!status.ok()) {
-        qCWarning(lcTelemetry) << "PushMetrics failed"
-                               << QString::fromStdString(status.error_message());
+    QString error;
+    if (!m_client->pushSnapshot(snapshot, &error)) {
+        if (!error.isEmpty()) {
+            qCWarning(lcTelemetry) << "PushMetrics failed" << error;
+        } else {
+            qCWarning(lcTelemetry) << "PushMetrics failed (unknown error)";
+        }
+        if (m_retryBufferLimit > 0) {
+            if (static_cast<int>(m_retryBuffer.size()) >= m_retryBufferLimit) {
+                qCWarning(lcTelemetry) << "Bufor retry telemetry pełny, najstarsza próbka zostanie odrzucona";
+                m_retryBuffer.pop_front();
+            }
+            m_retryBuffer.push_back(snapshot);
+            publishRetryBufferSizeIfNeeded();
+        }
     }
 }
 
-namespace {
-
-std::optional<std::string> readFileUtf8(const QString& path) {
-    if (path.isEmpty()) {
-        return std::nullopt;
-    }
-    QFile file(path);
-    if (!file.exists()) {
-        return std::nullopt;
-    }
-    if (!file.open(QIODevice::ReadOnly)) {
-        qCWarning(lcTelemetry) << "Nie można otworzyć pliku TLS" << path << file.errorString();
-        return std::nullopt;
-    }
-    const QByteArray data = file.readAll();
-    return std::string(data.constData(), static_cast<std::size_t>(data.size()));
-}
-
-void verifyPinnedFingerprint(const TelemetryTlsConfig& config, const QByteArray& certificate) {
-    if (config.pinnedServerSha256.isEmpty() || certificate.isEmpty()) {
+void UiTelemetryReporter::flushRetryBuffer() {
+    if (!m_client || m_retryBuffer.empty()) {
         return;
     }
-    const QByteArray digest = QCryptographicHash::hash(certificate, QCryptographicHash::Sha256).toHex();
-    const QString hex = QString::fromUtf8(digest);
-    if (hex.compare(config.pinnedServerSha256, Qt::CaseInsensitive) != 0) {
-        qCWarning(lcTelemetry) << "Niepoprawny odcisk SHA-256 certyfikatu serwera MetricsService";
+    bool changed = false;
+    for (int attempt = 0; attempt < m_retryBufferLimit && !m_retryBuffer.empty(); ++attempt) {
+        botcore::trading::v1::MetricsSnapshot& pending = m_retryBuffer.front();
+        QString error;
+        if (!m_client->pushSnapshot(pending, &error)) {
+            if (!error.isEmpty()) {
+                qCWarning(lcTelemetry) << "Ponowna wysyłka telemetrii nie powiodła się" << error;
+            } else {
+                qCWarning(lcTelemetry) << "Ponowna wysyłka telemetrii nie powiodła się (unknown error)";
+            }
+            break;
+        }
+        m_retryBuffer.pop_front();
+        changed = true;
+    }
+    if (changed) {
+        publishRetryBufferSizeIfNeeded();
     }
 }
-
-} // namespace
 
 QJsonObject UiTelemetryReporter::buildScreenJson() const {
     QJsonObject screen;
@@ -269,60 +291,24 @@ QJsonObject UiTelemetryReporter::buildScreenJson() const {
     return screen;
 }
 
-botcore::trading::v1::MetricsService::Stub* UiTelemetryReporter::ensureStub() {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    if (m_endpoint.isEmpty()) {
-        return nullptr;
-    }
-    if (!m_channel) {
-        std::shared_ptr<grpc::ChannelCredentials> credentials;
-        grpc::ChannelArguments args;
-        if (m_tlsConfig.enabled) {
-            grpc::SslCredentialsOptions options;
-            QByteArray rootPem;
-            if (!m_tlsConfig.rootCertificatePath.isEmpty()) {
-                QFile rootFile(m_tlsConfig.rootCertificatePath);
-                if (rootFile.open(QIODevice::ReadOnly)) {
-                    rootPem = rootFile.readAll();
-                    options.pem_root_certs = std::string(rootPem.constData(), static_cast<std::size_t>(rootPem.size()));
-                } else {
-                    qCWarning(lcTelemetry) << "Nie udało się odczytać root CA" << m_tlsConfig.rootCertificatePath
-                                           << rootFile.errorString();
-                }
-            }
-            if (!m_tlsConfig.clientCertificatePath.isEmpty() && !m_tlsConfig.clientKeyPath.isEmpty()) {
-                auto cert = readFileUtf8(m_tlsConfig.clientCertificatePath);
-                auto key  = readFileUtf8(m_tlsConfig.clientKeyPath);
-                if (cert && key) {
-                    options.pem_key_cert_pairs.push_back({*key, *cert});
-                } else {
-                    qCWarning(lcTelemetry) << "Nie można odczytać certyfikatu lub klucza klienta TLS";
-                }
-            }
-            credentials = grpc::SslCredentials(options);
-            if (!m_tlsConfig.serverNameOverride.isEmpty()) {
-                args.SetString(GRPC_SSL_TARGET_NAME_OVERRIDE_ARG,
-                               m_tlsConfig.serverNameOverride.toStdString());
-            }
-            if (!rootPem.isEmpty()) {
-                verifyPinnedFingerprint(m_tlsConfig, rootPem);
-            }
-        } else {
-            credentials = grpc::InsecureChannelCredentials();
-        }
-
-        if (!credentials) {
-            qCWarning(lcTelemetry) << "Brak kredencji TLS dla MetricsService";
-            return nullptr;
-        }
-        if (m_tlsConfig.enabled) {
-            m_channel = grpc::CreateCustomChannel(m_endpoint.toStdString(), credentials, args);
-        } else {
-            m_channel = grpc::CreateChannel(m_endpoint.toStdString(), credentials);
-        }
-    }
-    if (!m_stub && m_channel) {
-        m_stub = botcore::trading::v1::MetricsService::NewStub(m_channel);
-    }
-    return m_stub.get();
+int UiTelemetryReporter::pendingRetryCount() const {
+    return static_cast<int>(m_retryBuffer.size());
 }
+
+void UiTelemetryReporter::resetRetryBuffer() {
+    if (m_retryBuffer.empty()) {
+        return;
+    }
+    m_retryBuffer.clear();
+    publishRetryBufferSizeIfNeeded();
+}
+
+void UiTelemetryReporter::publishRetryBufferSizeIfNeeded() {
+    const int current = pendingRetryCount();
+    if (current == m_lastPublishedRetryCount) {
+        return;
+    }
+    m_lastPublishedRetryCount = current;
+    Q_EMIT pendingRetryCountChanged(current);
+}
+

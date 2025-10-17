@@ -224,6 +224,22 @@ class MetricsServiceConfig:
     jank_alert_severity_critical: Optional[str] = None
     jank_alert_critical_over_ms: Optional[float] = None
 
+    # UI: performance
+    performance_alerts: Optional[bool] = None
+    performance_alert_mode: Optional[str] = None
+    performance_category: Optional[str] = None
+    performance_severity_warning: Optional[str] = None
+    performance_severity_critical: Optional[str] = None
+    performance_severity_recovered: Optional[str] = None
+    performance_event_to_frame_warning_ms: Optional[float] = None
+    performance_event_to_frame_critical_ms: Optional[float] = None
+    cpu_utilization_warning_percent: Optional[float] = None
+    cpu_utilization_critical_percent: Optional[float] = None
+    gpu_utilization_warning_percent: Optional[float] = None
+    gpu_utilization_critical_percent: Optional[float] = None
+    ram_usage_warning_megabytes: Optional[float] = None
+    ram_usage_critical_megabytes: Optional[float] = None
+
     tls: Optional[MetricsTLSConfig] = None
 
 
@@ -867,6 +883,20 @@ def test_load_core_config_reads_metrics_service(tmp_path: Path) -> None:
             jank_alert_severity_spike: major
             jank_alert_severity_critical: critical
             jank_alert_critical_over_ms: 7.5
+            performance_alerts: true
+            performance_alert_mode: jsonl
+            performance_category: ui.performance.metrics
+            performance_severity_warning: minor
+            performance_severity_critical: major
+            performance_severity_recovered: normal
+            performance_event_to_frame_warning_ms: 55.0
+            performance_event_to_frame_critical_ms: 70.0
+            cpu_utilization_warning_percent: 75.0
+            cpu_utilization_critical_percent: 90.0
+            gpu_utilization_warning_percent: 65.0
+            gpu_utilization_critical_percent: 80.0
+            ram_usage_warning_megabytes: 4096
+            ram_usage_critical_megabytes: 6144
             rbac_tokens:
               - token_id: reader
                 token_value: reader-secret
@@ -910,6 +940,20 @@ def test_load_core_config_reads_metrics_service(tmp_path: Path) -> None:
     assert metrics.jank_alert_severity_spike == "major"
     assert metrics.jank_alert_severity_critical == "critical"
     assert metrics.jank_alert_critical_over_ms == pytest.approx(7.5)
+    assert metrics.performance_alerts is True
+    assert metrics.performance_alert_mode == "jsonl"
+    assert metrics.performance_category == "ui.performance.metrics"
+    assert metrics.performance_severity_warning == "minor"
+    assert metrics.performance_severity_critical == "major"
+    assert metrics.performance_severity_recovered == "normal"
+    assert metrics.performance_event_to_frame_warning_ms == pytest.approx(55.0)
+    assert metrics.performance_event_to_frame_critical_ms == pytest.approx(70.0)
+    assert metrics.cpu_utilization_warning_percent == pytest.approx(75.0)
+    assert metrics.cpu_utilization_critical_percent == pytest.approx(90.0)
+    assert metrics.gpu_utilization_warning_percent == pytest.approx(65.0)
+    assert metrics.gpu_utilization_critical_percent == pytest.approx(80.0)
+    assert metrics.ram_usage_warning_megabytes == pytest.approx(4096)
+    assert metrics.ram_usage_critical_megabytes == pytest.approx(6144)
     assert metrics.rbac_tokens and metrics.rbac_tokens[0].token_id == "reader"
     assert metrics.rbac_tokens[0].scopes == ("metrics.read",)
     assert metrics.grpc_metadata == (("x-trace", "audit-stage"), ("x-role", "ops"))

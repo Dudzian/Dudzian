@@ -58,9 +58,16 @@ try:  # pragma: no cover - sink telemetrii UI jest opcjonalny
         DEFAULT_UI_ALERTS_JSONL_PATH,
         UiTelemetryAlertSink,
     )
+    from bot_core.alerts import DefaultAlertRouter  # type: ignore
 except Exception:  # pragma: no cover - brak modułu telemetrii UI
     UiTelemetryAlertSink = None  # type: ignore
     DEFAULT_UI_ALERTS_JSONL_PATH = Path("logs/ui_telemetry_alerts.jsonl")
+    DefaultAlertRouter = None  # type: ignore
+
+try:  # pragma: no cover - eksport Prometheus może być opcjonalny
+    from bot_core.observability.ui_metrics import UiTelemetryPrometheusExporter  # type: ignore
+except Exception:  # pragma: no cover
+    UiTelemetryPrometheusExporter = None  # type: ignore
 
 # Presety profili ryzyka telemetrii (opcjonalne)
 try:  # pragma: no cover - presety profili ryzyka mogą nie być dostępne
@@ -387,7 +394,24 @@ class MetricsServiceServicer(_MetricsServicerBase):
         except Exception:
             pass
         self._store = store
-        self._sinks: tuple[MetricsSink, ...] = tuple(sinks or ())
+        sink_list = list(sinks or ())
+        self._alert_sink: UiTelemetryAlertSink | None = None
+        if UiTelemetryAlertSink is not None and DefaultAlertRouter is not None:
+            if not any(isinstance(sink, UiTelemetryAlertSink) for sink in sink_list):
+                try:
+                    router = DefaultAlertRouter()
+                    alert_sink = UiTelemetryAlertSink(router, jsonl_path=DEFAULT_UI_ALERTS_JSONL_PATH)
+                    sink_list.append(alert_sink)
+                    self._alert_sink = alert_sink
+                except Exception:  # pragma: no cover - brak konfiguracji alertów
+                    _LOGGER.exception("Nie udało się zainicjalizować UiTelemetryAlertSink")
+        if UiTelemetryPrometheusExporter is not None:
+            if not any(isinstance(sink, UiTelemetryPrometheusExporter) for sink in sink_list):
+                try:
+                    sink_list.append(UiTelemetryPrometheusExporter(alert_sink=self._alert_sink))
+                except Exception:  # pragma: no cover - błędna konfiguracja Prometheusa
+                    _LOGGER.exception("Nie udało się zainicjalizować eksportera Prometheus dla telemetrii UI")
+        self._sinks = tuple(sink_list)
         self._auth_token = auth_token
         self._token_validator = token_validator
 
@@ -822,13 +846,19 @@ def build_metrics_server_from_config(
     jank_mode = _normalize_mode(
         _resolve_config_value("jank_alert_mode", None), fallback_attr="jank_alerts"
     )
+    performance_mode = _normalize_mode(
+        _resolve_config_value("performance_alert_mode", None),
+        fallback_attr="performance_alerts",
+    )
 
     reduce_dispatch = reduce_mode == "enable"
     overlay_dispatch = overlay_mode == "enable"
     jank_dispatch = jank_mode == "enable"
+    performance_dispatch = performance_mode == "enable"
     reduce_logging = reduce_mode in {"enable", "jsonl"}
     overlay_logging = overlay_mode in {"enable", "jsonl"}
     jank_logging = jank_mode in {"enable", "jsonl"}
+    performance_logging = performance_mode in {"enable", "jsonl"}
     ui_sink_attached = False
 
     if alerts_router is not None and UiTelemetryAlertSink is not None:
@@ -851,6 +881,18 @@ def build_metrics_server_from_config(
             jank_critical = _resolve_config_value("jank_alert_severity_critical", None)
             jank_threshold_raw = _resolve_config_value("jank_alert_critical_over_ms", None)
 
+            def _normalize_optional_float(field_name: str, default: Any) -> float | None:
+                raw_value = _resolve_config_value(field_name, default)
+                if raw_value in (None, ""):
+                    return None
+                try:
+                    return float(raw_value)
+                except (TypeError, ValueError):
+                    _LOGGER.debug(
+                        "Nieprawidłowy próg %s=%s", field_name, raw_value
+                    )
+                    return None
+
             sink_kwargs = dict(
                 jsonl_path=path_value,
                 enable_reduce_motion_alerts=reduce_dispatch,
@@ -859,6 +901,8 @@ def build_metrics_server_from_config(
                 log_overlay_events=overlay_logging,
                 enable_jank_alerts=jank_dispatch,
                 log_jank_events=jank_logging,
+                enable_performance_alerts=performance_dispatch,
+                log_performance_events=performance_logging,
                 reduce_motion_category=reduce_category,
                 reduce_motion_severity_active=reduce_active,
                 reduce_motion_severity_recovered=reduce_recovered,
@@ -867,6 +911,18 @@ def build_metrics_server_from_config(
                 overlay_severity_recovered=overlay_recovered,
                 jank_category=jank_category,
                 jank_severity_spike=jank_spike,
+                performance_category=_resolve_config_value(
+                    "performance_category", "ui.performance"
+                ),
+                performance_severity_warning=_resolve_config_value(
+                    "performance_severity_warning", "warning"
+                ),
+                performance_severity_critical=_resolve_config_value(
+                    "performance_severity_critical", "critical"
+                ),
+                performance_severity_recovered=_resolve_config_value(
+                    "performance_severity_recovered", "info"
+                ),
             )
             if overlay_critical is not None:
                 sink_kwargs["overlay_severity_critical"] = overlay_critical
@@ -896,11 +952,49 @@ def build_metrics_server_from_config(
             if jank_critical is not None:
                 sink_kwargs["jank_severity_critical"] = jank_critical
 
+            performance_event_warning = _normalize_optional_float(
+                "performance_event_to_frame_warning_ms", 45.0
+            )
+            performance_event_critical = _normalize_optional_float(
+                "performance_event_to_frame_critical_ms", 60.0
+            )
+            cpu_warning_percent = _normalize_optional_float(
+                "cpu_utilization_warning_percent", 85.0
+            )
+            cpu_critical_percent = _normalize_optional_float(
+                "cpu_utilization_critical_percent", 95.0
+            )
+            gpu_warning_percent = _normalize_optional_float(
+                "gpu_utilization_warning_percent", None
+            )
+            gpu_critical_percent = _normalize_optional_float(
+                "gpu_utilization_critical_percent", None
+            )
+            ram_warning_megabytes = _normalize_optional_float(
+                "ram_usage_warning_megabytes", None
+            )
+            ram_critical_megabytes = _normalize_optional_float(
+                "ram_usage_critical_megabytes", None
+            )
+
+            sink_kwargs["performance_event_to_frame_warning_ms"] = (
+                performance_event_warning
+            )
+            sink_kwargs["performance_event_to_frame_critical_ms"] = (
+                performance_event_critical
+            )
+            sink_kwargs["cpu_utilization_warning_percent"] = cpu_warning_percent
+            sink_kwargs["cpu_utilization_critical_percent"] = cpu_critical_percent
+            sink_kwargs["gpu_utilization_warning_percent"] = gpu_warning_percent
+            sink_kwargs["gpu_utilization_critical_percent"] = gpu_critical_percent
+            sink_kwargs["ram_usage_warning_megabytes"] = ram_warning_megabytes
+            sink_kwargs["ram_usage_critical_megabytes"] = ram_critical_megabytes
+
             if resolver is not None:
                 risk_profile_meta = resolver.metadata()
             if risk_profile_meta is not None:
                 sink_kwargs["risk_profile"] = dict(risk_profile_meta)
-
+            
             sink_list.append(UiTelemetryAlertSink(alerts_router, **sink_kwargs))
             ui_alerts_path = path_value
             ui_sink_attached = True
@@ -909,12 +1003,15 @@ def build_metrics_server_from_config(
                 "reduce_mode": reduce_mode,
                 "overlay_mode": overlay_mode,
                 "jank_mode": jank_mode,
+                "performance_mode": performance_mode,
                 "reduce_motion_alerts": reduce_dispatch,
                 "overlay_alerts": overlay_dispatch,
                 "jank_alerts": jank_dispatch,
+                "performance_alerts": performance_dispatch,
                 "reduce_motion_logging": reduce_logging,
                 "overlay_logging": overlay_logging,
                 "jank_logging": jank_logging,
+                "performance_logging": performance_logging,
                 "reduce_motion_category": sink_kwargs.get("reduce_motion_category"),
                 "reduce_motion_severity_active": sink_kwargs.get("reduce_motion_severity_active"),
                 "reduce_motion_severity_recovered": sink_kwargs.get("reduce_motion_severity_recovered"),
@@ -927,6 +1024,24 @@ def build_metrics_server_from_config(
                 "jank_severity_spike": sink_kwargs.get("jank_severity_spike"),
                 "jank_severity_critical": sink_kwargs.get("jank_severity_critical"),
                 "jank_critical_over_ms": sink_kwargs.get("jank_critical_over_ms"),
+                "performance_category": sink_kwargs.get("performance_category"),
+                "performance_severity_warning": sink_kwargs.get(
+                    "performance_severity_warning"
+                ),
+                "performance_severity_critical": sink_kwargs.get(
+                    "performance_severity_critical"
+                ),
+                "performance_severity_recovered": sink_kwargs.get(
+                    "performance_severity_recovered"
+                ),
+                "performance_event_to_frame_warning_ms": performance_event_warning,
+                "performance_event_to_frame_critical_ms": performance_event_critical,
+                "cpu_utilization_warning_percent": cpu_warning_percent,
+                "cpu_utilization_critical_percent": cpu_critical_percent,
+                "gpu_utilization_warning_percent": gpu_warning_percent,
+                "gpu_utilization_critical_percent": gpu_critical_percent,
+                "ram_usage_warning_megabytes": ram_warning_megabytes,
+                "ram_usage_critical_megabytes": ram_critical_megabytes,
             }
             if risk_profile_meta is not None:
                 ui_alerts_settings["risk_profile"] = dict(risk_profile_meta)

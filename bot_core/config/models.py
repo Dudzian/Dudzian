@@ -110,6 +110,21 @@ class MetricsServiceConfig:
     jank_alert_severity_critical: str | None = None
     jank_alert_critical_over_ms: float | None = None
 
+    performance_alerts: bool = False
+    performance_alert_mode: str | None = None
+    performance_category: str = "ui.performance"
+    performance_severity_warning: str = "warning"
+    performance_severity_critical: str = "critical"
+    performance_severity_recovered: str = "info"
+    performance_event_to_frame_warning_ms: float | None = 45.0
+    performance_event_to_frame_critical_ms: float | None = 60.0
+    cpu_utilization_warning_percent: float | None = 85.0
+    cpu_utilization_critical_percent: float | None = 95.0
+    gpu_utilization_warning_percent: float | None = None
+    gpu_utilization_critical_percent: float | None = None
+    ram_usage_warning_megabytes: float | None = None
+    ram_usage_critical_megabytes: float | None = None
+
 
 @dataclass(slots=True)
 class PrometheusAlertRuleConfig:

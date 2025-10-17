@@ -701,16 +701,74 @@ def test_metrics_service_risk_profile_overrides(monkeypatch: pytest.MonkeyPatch,
     assert ui_section["overlay_severity_exceeded"] == "critical"
     assert ui_section["overlay_critical_threshold"] == 1
     assert ui_section["jank_severity_spike"] == "warning"
+    assert ui_section["performance_severity_recovered"] == "notice"
+    assert ui_section["performance_cpu_warning_percent"] == 75.0
     runtime_config = payload["runtime_state"]["ui_alerts_sink"]["config"]
     assert runtime_config["risk_profile"]["name"] == "conservative"
     assert runtime_config["risk_profile"]["severity_min"] == "warning"
     # preserved additional assertions from other branch
     assert runtime_config["risk_profile_summary"]["name"] == "conservative"
     assert runtime_config["risk_profile_summary"]["severity_min"] == "warning"
+    assert runtime_config["performance_event_to_frame_warning_ms"] == 45.0
+    assert runtime_config["performance_gpu_critical_percent"] == 80.0
     runtime_applied = runtime_config["risk_profile"].get("applied_overrides")
     if runtime_applied is not None:
         assert runtime_applied["overlay_alert_severity_critical"] == "critical"
         assert runtime_applied["jank_alert_severity_critical"] == "error"
+        assert runtime_applied["performance_severity_recovered"] == "notice"
+
+
+def test_metrics_service_cli_performance_flags(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    monkeypatch.setattr(run_metrics_service, "METRICS_RUNTIME_AVAILABLE", False)
+    monkeypatch.setattr(run_metrics_service, "METRICS_RUNTIME_UNAVAILABLE_MESSAGE", "no runtime")
+
+    exit_code = run_metrics_service.main(
+        [
+            "--print-config-plan",
+            "--ui-alerts-performance-mode",
+            "jsonl",
+            "--ui-alerts-performance-category",
+            "ui.perf.cli",
+            "--ui-alerts-performance-warning-severity",
+            "notice",
+            "--ui-alerts-performance-critical-severity",
+            "error",
+            "--ui-alerts-performance-recovered-severity",
+            "info",
+            "--ui-alerts-performance-event-to-frame-warning-ms",
+            "70",
+            "--ui-alerts-performance-event-to-frame-critical-ms",
+            "110",
+            "--ui-alerts-performance-cpu-warning-percent",
+            "72",
+            "--ui-alerts-performance-cpu-critical-percent",
+            "90",
+            "--ui-alerts-performance-gpu-warning-percent",
+            "60",
+            "--ui-alerts-performance-gpu-critical-percent",
+            "84",
+            "--ui-alerts-performance-ram-warning-megabytes",
+            "2048",
+            "--ui-alerts-performance-ram-critical-megabytes",
+            "4096",
+        ]
+    )
+    assert exit_code == 0
+
+    payload = json.loads(capsys.readouterr().out.strip())
+    ui_section = payload["ui_alerts"]
+    assert ui_section["performance_mode"] == "jsonl"
+    assert ui_section["performance_category"] == "ui.perf.cli"
+    assert ui_section["performance_event_to_frame_warning_ms"] == 70.0
+    assert ui_section["performance_cpu_critical_percent"] == 90.0
+    assert ui_section["performance_ram_warning_megabytes"] == 2048.0
+
+    runtime_config = payload["runtime_state"]["ui_alerts_sink"]["config"]
+    assert runtime_config["performance_mode"] == "jsonl"
+    assert runtime_config["performance_severity_warning"] == "notice"
+    assert runtime_config["performance_event_to_frame_critical_ms"] == 110.0
+    assert runtime_config["performance_gpu_warning_percent"] == 60.0
+    assert runtime_config["performance_ram_critical_megabytes"] == 4096.0
 
 
 

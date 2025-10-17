@@ -1587,6 +1587,21 @@ def _load_metrics_service(
                 ),
             )
 
+    sentinel = object()
+
+    def _normalize_optional_float_field(
+        field_name: str, default: float | None
+    ) -> float | None:
+        raw_value = metrics_raw.get(field_name, sentinel)
+        if raw_value is sentinel:
+            return default
+        if raw_value in (None, ""):
+            return None
+        try:
+            return float(raw_value)
+        except (TypeError, ValueError) as exc:  # pragma: no cover - walidacja wejścia
+            raise ValueError(f"{field_name} musi być liczbą") from exc
+
     # Opcjonalne: alerty reduce_motion
     if "reduce_motion_alerts" in available_fields:
         kwargs["reduce_motion_alerts"] = bool(metrics_raw.get("reduce_motion_alerts", False))
@@ -1672,6 +1687,64 @@ def _load_metrics_service(
                 raise ValueError(
                     "jank_alert_critical_over_ms musi być liczbą"
                 ) from exc
+
+    # Opcjonalne: alerty wydajności
+    if "performance_alerts" in available_fields:
+        kwargs["performance_alerts"] = bool(
+            metrics_raw.get("performance_alerts", False)
+        )
+    if "performance_alert_mode" in available_fields:
+        kwargs["performance_alert_mode"] = _normalize_alert_mode(
+            metrics_raw.get("performance_alert_mode"), field_name="performance_alert_mode"
+        )
+    if "performance_category" in available_fields:
+        kwargs["performance_category"] = str(
+            metrics_raw.get("performance_category", "ui.performance")
+        )
+    if "performance_severity_warning" in available_fields:
+        kwargs["performance_severity_warning"] = str(
+            metrics_raw.get("performance_severity_warning", "warning")
+        )
+    if "performance_severity_critical" in available_fields:
+        kwargs["performance_severity_critical"] = str(
+            metrics_raw.get("performance_severity_critical", "critical")
+        )
+    if "performance_severity_recovered" in available_fields:
+        kwargs["performance_severity_recovered"] = str(
+            metrics_raw.get("performance_severity_recovered", "info")
+        )
+    if "performance_event_to_frame_warning_ms" in available_fields:
+        kwargs["performance_event_to_frame_warning_ms"] = _normalize_optional_float_field(
+            "performance_event_to_frame_warning_ms", 45.0
+        )
+    if "performance_event_to_frame_critical_ms" in available_fields:
+        kwargs["performance_event_to_frame_critical_ms"] = _normalize_optional_float_field(
+            "performance_event_to_frame_critical_ms", 60.0
+        )
+    if "cpu_utilization_warning_percent" in available_fields:
+        kwargs["cpu_utilization_warning_percent"] = _normalize_optional_float_field(
+            "cpu_utilization_warning_percent", 85.0
+        )
+    if "cpu_utilization_critical_percent" in available_fields:
+        kwargs["cpu_utilization_critical_percent"] = _normalize_optional_float_field(
+            "cpu_utilization_critical_percent", 95.0
+        )
+    if "gpu_utilization_warning_percent" in available_fields:
+        kwargs["gpu_utilization_warning_percent"] = _normalize_optional_float_field(
+            "gpu_utilization_warning_percent", None
+        )
+    if "gpu_utilization_critical_percent" in available_fields:
+        kwargs["gpu_utilization_critical_percent"] = _normalize_optional_float_field(
+            "gpu_utilization_critical_percent", None
+        )
+    if "ram_usage_warning_megabytes" in available_fields:
+        kwargs["ram_usage_warning_megabytes"] = _normalize_optional_float_field(
+            "ram_usage_warning_megabytes", None
+        )
+    if "ram_usage_critical_megabytes" in available_fields:
+        kwargs["ram_usage_critical_megabytes"] = _normalize_optional_float_field(
+            "ram_usage_critical_megabytes", None
+        )
 
     return MetricsServiceConfig(**kwargs)  # type: ignore[call-arg]
 
