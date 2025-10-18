@@ -490,6 +490,37 @@ class DecisionEngineConfig:
     tco: DecisionEngineTCOConfig | None = None
 
 
+# --- AI ---------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class EnvironmentAIModelConfig:
+    """Definicja modelu AI przypiętego do konkretnego symbolu."""
+
+    symbol: str
+    model_type: str
+    path: str
+    strategy: str | None = None
+    risk_profile: str | None = None
+    notional: float | None = None
+    action: str | None = None
+
+
+@dataclass(slots=True)
+class EnvironmentAIConfig:
+    """Konfiguracja integracji AIManagera w środowisku runtime."""
+
+    enabled: bool = True
+    model_dir: str | None = None
+    threshold_bps: float = 5.0
+    default_strategy: str | None = None
+    default_risk_profile: str | None = None
+    default_notional: float | None = None
+    default_action: str = "enter"
+    preload: Sequence[str] = field(default_factory=tuple)
+    models: Sequence[EnvironmentAIModelConfig] = field(default_factory=tuple)
+
+
 # --- Środowiska / rdzeń ------------------------------------------------------
 
 @dataclass(slots=True)
@@ -543,6 +574,7 @@ class EnvironmentConfig:
     decision_journal: DecisionJournalConfig | None = None
     default_strategy: str | None = None
     default_controller: str | None = None
+    ai: EnvironmentAIConfig | None = None
 
 
 @dataclass(slots=True)
@@ -1016,6 +1048,8 @@ __all__ = [
     "KeyRotationConfig",
     "ObservabilityConfig",
     "DecisionEngineConfig",
+    "EnvironmentAIConfig",
+    "EnvironmentAIModelConfig",
     "DecisionEngineTCOConfig",
     "DecisionOrchestratorThresholds",
     "DecisionStressTestConfig",

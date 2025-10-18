@@ -33,6 +33,20 @@ from KryptoLowca.core.services.data_provider import ExchangeDataProvider
 from KryptoLowca.core.services.paper_adapter import PaperTradingAdapter
 from KryptoLowca.strategies.base import DataProvider, StrategyMetadata, StrategySignal
 
+try:  # pragma: no cover - zależności bot_core mogą nie być dostępne w każdym środowisku
+    from bot_core.decision.ai_connector import AIManagerDecisionConnector  # type: ignore
+    from bot_core.execution.base import ExecutionContext as CoreExecutionContext  # type: ignore
+    from bot_core.execution.base import ExecutionService as CoreExecutionService  # type: ignore
+    from bot_core.exchanges.base import AccountSnapshot, OrderRequest  # type: ignore
+    from bot_core.risk.engine import ThresholdRiskEngine  # type: ignore
+except Exception:  # pragma: no cover - fallback gdy bot_core nie jest kompletny
+    AIManagerDecisionConnector = None  # type: ignore
+    CoreExecutionContext = None  # type: ignore
+    CoreExecutionService = None  # type: ignore
+    AccountSnapshot = None  # type: ignore
+    OrderRequest = None  # type: ignore
+    ThresholdRiskEngine = None  # type: ignore
+
 if TYPE_CHECKING:  # pragma: no cover
     from KryptoLowca.data.market_data import MarketDataProvider, MarketDataRequest
 
@@ -119,6 +133,10 @@ class AutoTrader:
         risk_service: Optional[RiskService] = None,
         execution_service: Optional[ExecutionService] = None,
         data_provider: Optional[DataProvider] = None,
+        bootstrap_context: Any | None = None,
+        core_risk_engine: Any | None = None,
+        core_execution_service: Any | None = None,
+        ai_connector: Any | None = None,
     ) -> None:
         self.emitter = emitter
         self.gui = gui
@@ -138,7 +156,8 @@ class AutoTrader:
         self.walkforward_interval_s = walkforward_interval_s
         self.walkforward_min_closed_trades = walkforward_min_closed_trades
 
-        self.enable_auto_trade = enable_auto_trade
+        self.enable_auto_trade = bool(enable_auto_trade)
+        self._auto_trade_user_confirmed = False
         self.auto_trade_interval_s = auto_trade_interval_s
 
         self._closed_pnls: deque = deque(maxlen=max(10, metrics_window))
@@ -169,6 +188,89 @@ class AutoTrader:
         self._exchange_config: Optional[Dict[str, Any]] = None
         self._refresh_execution_mode()
 
+        self._bootstrap_context = bootstrap_context
+        self._core_risk_engine = None
+        self._core_execution_service = None
+        self._core_execution_environment = "paper"
+        self._core_portfolio_id = "autotrader"
+        self._core_risk_profile: Optional[str] = None
+        self._core_ai_connector: Optional[AIManagerDecisionConnector] = None
+        self._core_ai_notional_by_symbol: Dict[str, float] = {}
+        self._core_ai_default_notional: float | None = None
+        self._core_account_equity: float = 1_000_000.0
+
+        if bootstrap_context is not None:
+            self._core_risk_engine = core_risk_engine or getattr(
+                bootstrap_context, "risk_engine", None
+            )
+            # TODO(core-risk): confirm register_profile downstream gets real profile
+            # objects when bootstrap_context is missing or incomplete.
+            env = getattr(bootstrap_context, "environment", None)
+            if env is not None:
+                self._core_portfolio_id = getattr(env, "name", self._core_portfolio_id)
+                env_value = getattr(getattr(env, "environment", None), "value", None)
+                if env_value:
+                    self._core_execution_environment = str(env_value)
+            self._core_risk_profile = getattr(bootstrap_context, "risk_profile_name", None)
+            candidate_execution_service = core_execution_service
+            if (
+                candidate_execution_service is None
+                and CoreExecutionService is not None
+                and isinstance(execution_service, CoreExecutionService)
+            ):
+                candidate_execution_service = execution_service
+            if (
+                candidate_execution_service is None
+                and CoreExecutionService is not None
+            ):
+                context_service = getattr(bootstrap_context, "execution_service", None)
+                if isinstance(context_service, CoreExecutionService):
+                    candidate_execution_service = context_service
+            self._core_execution_service = candidate_execution_service
+
+            ai_manager_ctx = getattr(bootstrap_context, "ai_manager", None)
+            env_ai_cfg = getattr(env, "ai", None) if env is not None else None
+            default_strategy = None
+            default_action = "enter"
+            default_notional = None
+            threshold_bps = getattr(bootstrap_context, "ai_threshold_bps", None)
+            if env_ai_cfg is not None:
+                default_strategy = getattr(env_ai_cfg, "default_strategy", None)
+                default_action = getattr(env_ai_cfg, "default_action", default_action)
+                default_notional = getattr(env_ai_cfg, "default_notional", None)
+            if ai_manager_ctx is not None and AIManagerDecisionConnector is not None and self._core_risk_profile:
+                try:
+                    connector = ai_connector or AIManagerDecisionConnector(
+                        ai_manager=ai_manager_ctx,
+                        strategy=str(
+                            default_strategy
+                            or getattr(env, "default_strategy", "auto_ai_signal")
+                        ),
+                        risk_profile=self._core_risk_profile,
+                        default_notional=float(default_notional or 1_000.0),
+                        action=str(default_action or "enter"),
+                        threshold_bps=threshold_bps,
+                    )
+                except Exception:  # pragma: no cover - diagnostyka inicjalizacji
+                    logger.exception("Failed to initialise AIManagerDecisionConnector")
+                    connector = None
+                self._core_ai_connector = connector
+                if connector is not None:
+                    self._core_ai_default_notional = connector.default_notional
+            if getattr(bootstrap_context, "ai_model_bindings", None):
+                for binding in getattr(bootstrap_context, "ai_model_bindings", ()):  # type: ignore[attr-defined]
+                    notional_value = getattr(binding, "notional", None)
+                    symbol_value = getattr(binding, "symbol", None)
+                    if notional_value and symbol_value:
+                        normalized = self._normalize_symbol(symbol_value)
+                        self._core_ai_notional_by_symbol[normalized] = float(notional_value)
+
+        if self._core_ai_default_notional is None and self._core_ai_connector is not None:
+            self._core_ai_default_notional = self._core_ai_connector.default_notional
+
+        self._started = False
+        self._auto_trade_thread_active = False
+
         # Subscribe to events
         emitter.on("trade_closed", self._on_trade_closed, tag="autotrader")
         emitter.on("bar", self._on_bar, tag="autotrader")
@@ -186,18 +288,34 @@ class AutoTrader:
 
     def start(self) -> None:
         self._stop.clear()
+        self._started = True
         self._threads = []
         # Walk-forward loop only if configured
         if self.walkforward_interval_s:
             t = threading.Thread(target=self._walkforward_loop, daemon=True)
             t.start()
             self._threads.append(t)
-        # Auto-trade loop ALWAYS started; respects enable_auto_trade flag at runtime
+        if self.enable_auto_trade and self._auto_trade_user_confirmed:
+            self._start_auto_trade_thread()
+        elif self.enable_auto_trade:
+            message = (
+                "Auto-trade awaiting explicit activation. Użyj panelu sterowania, "
+                "aby włączyć handel automatyczny."
+            )
+            try:
+                self.emitter.log(message, level="WARNING", component="AutoTrader")
+            except Exception:
+                logger.warning(message)
+        self.emitter.log("AutoTrader started.", component="AutoTrader")
+        logger.info("AutoTrader worker threads started")
+
+    def _start_auto_trade_thread(self) -> None:
+        if self._auto_trade_thread_active:
+            return
         t2 = threading.Thread(target=self._auto_trade_loop, daemon=True)
         t2.start()
         self._threads.append(t2)
-        self.emitter.log("AutoTrader started.", component="AutoTrader")
-        logger.info("AutoTrader worker threads started")
+        self._auto_trade_thread_active = True
 
     def stop(self) -> None:
         self._stop.set()
@@ -212,11 +330,42 @@ class AutoTrader:
             except Exception:
                 logger.exception("Error while joining AutoTrader thread")
         self._threads.clear()
+        self._auto_trade_thread_active = False
+        self._auto_trade_user_confirmed = False
+        self._started = False
 
     def set_enable_auto_trade(self, flag: bool) -> None:
         with self._lock:
             self.enable_auto_trade = bool(flag)
+            if not self.enable_auto_trade:
+                self._auto_trade_user_confirmed = False
+            if (
+                self.enable_auto_trade
+                and self._auto_trade_user_confirmed
+                and self._started
+                and not self._auto_trade_thread_active
+            ):
+                self._start_auto_trade_thread()
         self.emitter.log(f"Auto-Trade {'ENABLED' if flag else 'DISABLED'}.", component="AutoTrader")
+
+    def confirm_auto_trade(self, confirmed: bool = True) -> None:
+        """Ustawia ręczne potwierdzenie niezbędne do startu auto-trade."""
+
+        with self._lock:
+            self._auto_trade_user_confirmed = bool(confirmed)
+            status = "CONFIRMED" if self._auto_trade_user_confirmed else "REVOKED"
+            should_start = (
+                self.enable_auto_trade
+                and self._auto_trade_user_confirmed
+                and self._started
+                and not self._auto_trade_thread_active
+            )
+        self.emitter.log(
+            f"Auto-Trade confirmation {status}.",
+            component="AutoTrader",
+        )
+        if should_start:
+            self._start_auto_trade_thread()
 
     def configure(self, **kwargs: Any) -> None:
         """Runtime reconfiguration from the ControlPanel."""
@@ -230,6 +379,12 @@ class AutoTrader:
                         self._exchange_config = dict(val)
                     else:
                         self._exchange_config = None
+                    continue
+                if key == "enable_auto_trade":
+                    self.set_enable_auto_trade(bool(val))
+                    continue
+                if key == "confirm_auto_trade":
+                    self.confirm_auto_trade(bool(val))
                     continue
                 if not hasattr(self, key):
                     continue
@@ -542,7 +697,7 @@ class AutoTrader:
     async def _symbol_service_loop(self, symbol: str, timeframe: str) -> None:
         interval = max(0.1, float(self.auto_trade_interval_s))
         while not self._stop.is_set():
-            if not self.enable_auto_trade:
+            if not self.enable_auto_trade or not self._auto_trade_user_confirmed:
                 await asyncio.sleep(interval)
                 continue
             if self._is_symbol_on_cooldown(symbol):
@@ -841,9 +996,17 @@ class AutoTrader:
         if self._service_mode_enabled:
             self._run_service_loop()
             return
+        core_mode = (
+            self._core_risk_engine is not None
+            and self._core_execution_service is not None
+            and self._core_ai_connector is not None
+            and OrderRequest is not None
+            and AccountSnapshot is not None
+            and CoreExecutionContext is not None
+        )
         while not self._stop.is_set():
             try:
-                if not self.enable_auto_trade:
+                if not self.enable_auto_trade or not self._auto_trade_user_confirmed:
                     self._stop.wait(self.auto_trade_interval_s)
                     continue
                 symbol = self.symbol_getter()
@@ -860,6 +1023,12 @@ class AutoTrader:
 
                 ex = getattr(self.gui, "ex_mgr", None)
                 ai = getattr(self.gui, "ai_mgr", None)
+
+                if core_mode:
+                    handled = self._handle_core_auto_trade(symbol, timeframe)
+                    self._stop.wait(self.auto_trade_interval_s)
+                    if handled:
+                        continue
 
                 if hasattr(self.gui, "is_demo_mode_active"):
                     try:
@@ -958,6 +1127,220 @@ class AutoTrader:
                 logger.exception("Unhandled exception inside auto trade loop")
             self._stop.wait(self.auto_trade_interval_s)
 
+    def _handle_core_auto_trade(self, symbol: str, timeframe: str) -> bool:
+        connector = self._core_ai_connector
+        risk_engine = self._core_risk_engine
+        execution_service = self._core_execution_service
+        if (
+            connector is None
+            or risk_engine is None
+            or execution_service is None
+            or OrderRequest is None
+            or AccountSnapshot is None
+            or CoreExecutionContext is None
+        ):
+            return False
+
+        ai_manager = getattr(connector, "ai_manager", None)
+        if ai_manager is None:
+            return False
+
+        ex_mgr = getattr(self.gui, "ex_mgr", None)
+        try:
+            last_pred, df, last_price = self._obtain_prediction(
+                ai_manager, symbol, timeframe, ex_mgr
+            )
+        except Exception as exc:  # pragma: no cover - diagnostyka awarii AI
+            self.emitter.log(
+                f"AI prediction failed: {exc!r}", level="ERROR", component="AutoTrader"
+            )
+            logger.exception("AI prediction failed during core auto trade loop")
+            return True
+
+        if df is None or df.empty:
+            self.emitter.log(
+                f"Auto-trade skipped for {symbol}: brak danych rynkowych.",
+                level="WARNING",
+                component="AutoTrader",
+            )
+            return True
+
+        if last_pred is None:
+            self.emitter.log(
+                f"Auto-trade skipped for {symbol}: brak sygnału AI.",
+                level="WARNING",
+                component="AutoTrader",
+            )
+            return True
+
+        price = float(last_price if last_price is not None else df["close"].iloc[-1])
+        normalized_symbol = self._normalize_symbol(symbol)
+        candidate = connector.candidate_from_signal(
+            symbol=normalized_symbol,
+            signal=float(last_pred),
+            timestamp=df.index[-1] if not df.empty else None,
+            notional=self._resolve_core_notional(normalized_symbol),
+        )
+        if candidate is None:
+            self.emitter.log(
+                f"Auto-trade skipped for {symbol}: sygnał poniżej progu.",
+                level="WARNING",
+                component="AutoTrader",
+            )
+            return True
+
+        side = "BUY" if float(last_pred) >= 0 else "SELL"
+        quantity = candidate.notional / max(price, 1e-9)
+        if quantity <= 0:
+            self.emitter.log(
+                f"Auto-trade skipped for {symbol}: nieprawidłowa wielkość zlecenia.",
+                level="WARNING",
+                component="AutoTrader",
+            )
+            return True
+
+        metadata: Dict[str, object] = {"decision_candidate": candidate.to_mapping()}
+        order_request = OrderRequest(
+            symbol=normalized_symbol,
+            side=side.lower(),
+            quantity=quantity,
+            order_type="market",
+            price=price,
+            metadata=metadata,
+        )
+
+        try:
+            account_snapshot = self._core_account_snapshot()
+        except Exception:  # pragma: no cover - brak klas bot_core
+            return False
+
+        profile_name = self._core_risk_profile or candidate.risk_profile
+
+        try:
+            risk_result = risk_engine.apply_pre_trade_checks(
+                order_request,
+                account=account_snapshot,
+                profile_name=profile_name,
+            )
+        except Exception as exc:  # pragma: no cover - diagnostyka silnika ryzyka
+            self.emitter.log(
+                f"Core risk checks failed: {exc!r}",
+                level="ERROR",
+                component="AutoTrader",
+            )
+            logger.exception("Core risk engine error during auto trade")
+            return True
+
+        if not risk_result.allowed:
+            reason_text = risk_result.reason or "risk_denied"
+            self.emitter.log(
+                f"Core auto-trade denied for {symbol}: {reason_text}",
+                level="WARNING",
+                component="AutoTrader",
+            )
+            return True
+
+        try:
+            context = self._build_core_execution_context(metadata)
+            result = execution_service.execute(order_request, context)
+        except Exception as exc:  # pragma: no cover - diagnostyka egzekucji
+            self.emitter.log(
+                f"Core execution failed: {exc!r}",
+                level="ERROR",
+                component="AutoTrader",
+            )
+            logger.exception("Core execution service failed")
+            return True
+
+        self._post_core_fill(normalized_symbol, side, order_request, result)
+        try:
+            prometheus_metrics.record_order(normalized_symbol, side, quantity)
+        except Exception:
+            logger.debug("Prometheus record_order skipped", exc_info=True)
+        self.emitter.emit("auto_trade_tick", symbol=normalized_symbol, ts=time.time())
+        self.emitter.log(
+            f"Auto-trade executed (core): {normalized_symbol} {side}",
+            component="AutoTrader",
+        )
+        logger.info("Core auto trade executed for %s (%s)", normalized_symbol, side)
+        return True
+
+    def _normalize_symbol(self, symbol: str) -> str:
+        return str(symbol).replace("/", "").upper()
+
+    def _resolve_core_notional(self, symbol: str) -> float:
+        normalized = self._normalize_symbol(symbol)
+        if normalized in self._core_ai_notional_by_symbol:
+            return float(self._core_ai_notional_by_symbol[normalized])
+        if self._core_ai_default_notional is not None:
+            return float(self._core_ai_default_notional)
+        if self._core_ai_connector is not None:
+            return float(self._core_ai_connector.default_notional)
+        return 0.0
+
+    def _core_account_snapshot(self) -> Any:
+        if AccountSnapshot is None:
+            raise RuntimeError("AccountSnapshot class unavailable")
+        balances = {"USDT": float(self._core_account_equity)}
+        return AccountSnapshot(
+            balances=balances,
+            total_equity=float(self._core_account_equity),
+            available_margin=float(self._core_account_equity),
+            maintenance_margin=float(self._core_account_equity) * 0.1,
+        )
+
+    def _build_core_execution_context(
+        self, metadata: Mapping[str, object]
+    ) -> Any:
+        if CoreExecutionContext is None:
+            raise RuntimeError("ExecutionContext class unavailable")
+        meta: Dict[str, object] = {"source": "AutoTrader"}
+        meta.update(dict(metadata))
+        risk_profile = self._core_risk_profile
+        if not risk_profile and self._core_ai_connector is not None:
+            risk_profile = self._core_ai_connector.risk_profile
+        return CoreExecutionContext(
+            portfolio_id=self._core_portfolio_id,
+            risk_profile=str(risk_profile or "default"),
+            environment=str(self._core_execution_environment),
+            metadata=meta,
+        )
+
+    def _post_core_fill(
+        self,
+        symbol: str,
+        side: str,
+        request: Any,
+        result: Any,
+    ) -> None:
+        if self._core_risk_engine is None:
+            return
+        avg_price = getattr(result, "avg_price", None)
+        if avg_price is None:
+            avg_price = getattr(request, "price", 0.0)
+        filled_quantity = getattr(result, "filled_quantity", None)
+        if filled_quantity is None:
+            filled_quantity = getattr(request, "quantity", 0.0)
+        try:
+            notional = float(avg_price or 0.0) * float(filled_quantity or 0.0)
+        except Exception:
+            notional = 0.0
+        side_lower = side.lower()
+        position_value = notional if side_lower == "buy" else 0.0
+        try:
+            profile_name = self._core_risk_profile
+            if not profile_name and self._core_ai_connector is not None:
+                profile_name = self._core_ai_connector.risk_profile
+            self._core_risk_engine.on_fill(
+                profile_name=profile_name or "default",
+                symbol=symbol,
+                side=side_lower,
+                position_value=position_value,
+                pnl=0.0,
+            )
+        except Exception:
+            # TODO(core-risk): validate metadata merging and risk logging clarity here.
+            logger.debug("Failed to update risk engine post fill", exc_info=True)
     # --- Prediction helpers ---
     def _resolve_prediction_result(self, result: Any, *, context: str) -> Any:
         if not inspect.isawaitable(result):

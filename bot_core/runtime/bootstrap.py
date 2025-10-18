@@ -1,6 +1,7 @@
 """Procedury rozruchowe spinające konfigurację z modułami runtime."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass
@@ -8,8 +9,39 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import os
 import stat
-from typing import Any, Mapping, MutableMapping, Sequence, TYPE_CHECKING
+from typing import Any, Mapping, MutableMapping, Sequence
 
+from bot_core.alerts import (
+    AlertThrottle,
+    DefaultAlertRouter,
+    EmailChannel,
+    FileAlertAuditLog,
+    InMemoryAlertAuditLog,
+    MessengerChannel,
+    SMSChannel,
+    SignalChannel,
+    TelegramChannel,
+    WhatsAppChannel,
+    get_sms_provider,
+)
+from bot_core.alerts.base import AlertAuditLog, AlertChannel
+from bot_core.alerts.channels.providers import SmsProviderConfig
+from bot_core.config.loader import load_core_config
+from bot_core.config.models import (
+    CoreConfig,
+    DecisionJournalConfig,
+    EmailChannelSettings,
+    EnvironmentAIConfig,
+    EnvironmentAIModelConfig,
+    EnvironmentConfig,
+    MessengerChannelSettings,
+    RiskProfileConfig,
+    SMSProviderSettings,
+    SignalChannelSettings,
+    TelegramChannelSettings,
+    WhatsAppChannelSettings,
+)
+from bot_core.config.validation import assert_core_config_valid
 from bot_core.exchanges.base import (
     Environment,
     ExchangeAdapter,
@@ -95,6 +127,11 @@ try:  # pragma: no cover - DecisionOrchestrator może być opcjonalny
     from bot_core.decision import DecisionOrchestrator  # type: ignore
 except Exception:  # pragma: no cover
     DecisionOrchestrator = None  # type: ignore
+
+try:  # pragma: no cover - integracja z AIManagerem jest opcjonalna
+    from KryptoLowca.ai_manager import AIManager  # type: ignore
+except Exception:  # pragma: no cover - środowiska bez modułu KryptoLowca
+    AIManager = None  # type: ignore
 
 # --- Metrics service (opcjonalny – w niektórych gałęziach może nie istnieć) ---
 try:  # pragma: no cover - środowiska bez grpcio lub wygenerowanych stubów
@@ -501,6 +538,10 @@ class BootstrapContext:
     risk_security_metadata: Mapping[str, Any] | None = None
     risk_security_warnings: tuple[str, ...] | None = None
     risk_token_validator: ServiceTokenValidator | None = None
+    ai_manager: Any | None = None
+    ai_models_loaded: Sequence[str] | None = None
+    ai_threshold_bps: float | None = None
+    ai_model_bindings: Sequence[EnvironmentAIModelConfig] | None = None
 
 
 def bootstrap_environment(
@@ -546,6 +587,11 @@ def bootstrap_environment(
     decision_tco_warnings: list[str] = []
     tco_reporter: RuntimeTCOReporter | None = None
     portfolio_governor: Any | None = None
+    ai_manager_instance: Any | None = None
+    ai_models_loaded: list[str] = []
+    ai_model_bindings: Sequence[EnvironmentAIModelConfig] | None = None
+    ai_threshold_bps: float | None = None
+    environment_ai: EnvironmentAIConfig | None = getattr(environment, "ai", None)
     if portfolio_governor_config and PortfolioGovernor is not None:
         try:
             portfolio_governor = PortfolioGovernor(portfolio_governor_config)
@@ -586,15 +632,62 @@ def bootstrap_environment(
         )
         if warnings:
             decision_tco_warnings.extend(str(entry) for entry in warnings)
-    tco_config = getattr(decision_engine_config, "tco", None)
-    if tco_config is not None:
-        reporter_candidate = _initialize_runtime_tco_reporter(
-            tco_config,
-            environment=environment,
-            risk_profile=selected_profile,
-        )
-        if reporter_candidate is not None:
-            tco_reporter = reporter_candidate
+
+    if isinstance(environment_ai, EnvironmentAIConfig) and environment_ai.enabled:
+        ai_model_bindings = environment_ai.models
+        ai_threshold_bps = float(environment_ai.threshold_bps)
+        if AIManager is None:
+            _LOGGER.warning(
+                "Sekcja environment.ai została zignorowana: moduł KryptoLowca.ai_manager nie jest dostępny"
+            )
+        else:
+            model_dir_value = environment_ai.model_dir
+            model_dir_path = (
+                Path(model_dir_value).expanduser()
+                if model_dir_value
+                else Path(environment.data_cache_path) / "models" / "ai_manager"
+            )
+            try:
+                model_dir_path.mkdir(parents=True, exist_ok=True)
+            except Exception:  # pragma: no cover - brak uprawnień nie powinien zatrzymać bootstrapu
+                _LOGGER.debug(
+                    "Nie udało się utworzyć katalogu modeli AI %s", model_dir_path, exc_info=True
+                )
+            try:
+                ai_manager_instance = AIManager(
+                    ai_threshold_bps=ai_threshold_bps,
+                    model_dir=model_dir_path,
+                )
+            except Exception:  # pragma: no cover - diagnostyka inicjalizacji
+                ai_manager_instance = None
+                _LOGGER.exception("Nie udało się zainicjalizować AIManagera")
+            else:
+                for binding in environment_ai.models:
+                    model_name = f"{binding.symbol}:{binding.model_type}"
+                    try:
+                        asyncio.run(
+                            ai_manager_instance.import_model(
+                                binding.symbol,
+                                binding.model_type,
+                                binding.path,
+                            )
+                        )
+                    except FileNotFoundError:
+                        _LOGGER.warning(
+                            "Model AI %s nie został znaleziony pod ścieżką %s",
+                            model_name,
+                            binding.path,
+                        )
+                    except Exception:  # pragma: no cover - logujemy i kontynuujemy bootstrap
+                        _LOGGER.exception(
+                            "Nie udało się załadować modelu AI %s", model_name
+                        )
+                    else:
+                        ai_models_loaded.append(model_name)
+                for preload_entry in environment_ai.preload:
+                    if preload_entry not in ai_models_loaded:
+                        ai_models_loaded.append(preload_entry)
+
     profile = build_risk_profile_from_config(risk_profile_config)
     risk_engine.register_profile(profile)
     # Aktualizujemy konfigurację środowiska, aby dalsze komponenty znały aktywny profil.
@@ -1514,6 +1607,10 @@ def bootstrap_environment(
         risk_security_warnings=tuple(risk_security_warnings) if risk_security_warnings else None,
         risk_token_validator=risk_token_validator,
         portfolio_decision_log=portfolio_decision_log,
+        ai_manager=ai_manager_instance,
+        ai_models_loaded=tuple(ai_models_loaded) if ai_models_loaded else None,
+        ai_threshold_bps=ai_threshold_bps,
+        ai_model_bindings=ai_model_bindings,
     )
 
 

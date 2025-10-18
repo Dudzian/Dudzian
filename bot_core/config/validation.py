@@ -7,7 +7,7 @@ from typing import Mapping
 
 import re
 
-from bot_core.config.models import CoreConfig
+from bot_core.config.models import CoreConfig, EnvironmentAIConfig
 
 _UI_ALERT_AUDIT_BACKEND_ALLOWED = {"auto", "file", "memory"}
 _SUPPORTED_TOKEN_HASH_ALGORITHMS = {
@@ -404,6 +404,16 @@ def _validate_environments(
                 f" dla giełdy '{environment.exchange}'"
             )
 
+        ai_config = getattr(environment, "ai", None)
+        if isinstance(ai_config, EnvironmentAIConfig):
+            _validate_environment_ai(
+                ai_config,
+                context,
+                risk_profiles,
+                errors,
+                warnings,
+            )
+
 
 def _validate_permissions(
     required: Mapping | tuple | list | set,
@@ -419,6 +429,69 @@ def _validate_permissions(
         errors.append(
             f"{context}: uprawnienia {overlap_list} nie mogą jednocześnie znajdować się w required i forbidden"
         )
+
+
+def _validate_environment_ai(
+    ai_config: EnvironmentAIConfig,
+    context: str,
+    available_profiles: set[str],
+    errors: list[str],
+    warnings: list[str],
+) -> None:
+    ai_context = f"{context}.ai"
+    if ai_config.threshold_bps < 0:
+        errors.append(f"{ai_context}: threshold_bps nie może być ujemne")
+    if ai_config.default_notional is not None and ai_config.default_notional <= 0:
+        errors.append(f"{ai_context}: default_notional musi być dodatnie")
+    if (
+        ai_config.default_risk_profile
+        and ai_config.default_risk_profile not in available_profiles
+    ):
+        errors.append(
+            f"{ai_context}: domyślny profil ryzyka '{ai_config.default_risk_profile}' nie istnieje w sekcji risk_profiles"
+        )
+    if ai_config.model_dir:
+        try:
+            model_dir = Path(ai_config.model_dir)
+        except Exception:  # noqa: BLE001 - ostrożność wobec niestandardowych ścieżek
+            warnings.append(
+                f"{ai_context}: nie udało się zinterpretować model_dir='{ai_config.model_dir}' jako ścieżki"
+            )
+        else:
+            if not model_dir.exists():
+                warnings.append(
+                    f"{ai_context}: katalog modeli {model_dir} nie istnieje (modele zostaną załadowane leniwie)"
+                )
+
+    defined_models: set[str] = set()
+    for model in ai_config.models:
+        entry_context = f"{ai_context}.models[{model.symbol}:{model.model_type}]"
+        profile_name = model.risk_profile or ai_config.default_risk_profile
+        if profile_name and profile_name not in available_profiles:
+            errors.append(
+                f"{entry_context}: profil ryzyka '{profile_name}' nie istnieje w konfiguracji"
+            )
+        if model.notional is not None and model.notional <= 0:
+            errors.append(f"{entry_context}: notional musi być dodatnie")
+        defined_name = f"{model.symbol}:{model.model_type}"
+        defined_models.add(defined_name)
+        try:
+            model_path = Path(model.path)
+        except Exception:  # noqa: BLE001
+            warnings.append(
+                f"{entry_context}: ścieżka '{model.path}' nie jest prawidłową ścieżką systemową"
+            )
+            continue
+        if not model_path.exists():
+            warnings.append(
+                f"{entry_context}: plik modelu {model_path} nie istnieje"
+            )
+
+    for preload_name in ai_config.preload:
+        if preload_name not in defined_models:
+            warnings.append(
+                f"{ai_context}: preload zawiera model '{preload_name}' nieobecny w sekcji models"
+            )
 
 
 def _validate_alert_channels(

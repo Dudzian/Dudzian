@@ -18,6 +18,8 @@ from bot_core.config.models import (
     CoverageMonitorTargetConfig,
     CoverageMonitoringConfig,
     EmailChannelSettings,
+    EnvironmentAIConfig,
+    EnvironmentAIModelConfig,
     EnvironmentConfig,
     EnvironmentDataSourceConfig,
     EnvironmentDataQualityConfig,
@@ -874,6 +876,96 @@ def _load_decision_journal(entry: Optional[Mapping[str, Any]]):
         filename_pattern=filename_pattern,
         retention_days=retention_days,
         fsync=fsync,
+    )
+
+
+def _resolve_optional_path(value: object, *, base_dir: Path) -> str | None:
+    if value in (None, ""):
+        return None
+    path = Path(str(value)).expanduser()
+    if not path.is_absolute():
+        path = (base_dir / path).resolve()
+    return str(path)
+
+
+def _load_environment_ai(
+    entry: Optional[Mapping[str, Any]], *, base_dir: Path
+) -> EnvironmentAIConfig | None:
+    if EnvironmentAIConfig is None or EnvironmentAIModelConfig is None or not entry:
+        return None
+
+    enabled = bool(entry.get("enabled", True))
+    threshold_raw = entry.get("threshold_bps", entry.get("threshold"))
+    threshold_bps = float(threshold_raw) if threshold_raw not in (None, "") else 5.0
+    model_dir = _resolve_optional_path(entry.get("model_dir"), base_dir=base_dir)
+    default_strategy_value = entry.get("default_strategy")
+    default_strategy = (
+        str(default_strategy_value).strip() if default_strategy_value else None
+    )
+    default_profile_value = entry.get("default_risk_profile")
+    default_risk_profile = (
+        str(default_profile_value).strip() if default_profile_value else None
+    )
+    default_notional_raw = entry.get("default_notional")
+    default_notional = (
+        float(default_notional_raw)
+        if default_notional_raw not in (None, "")
+        else None
+    )
+    default_action_value = entry.get("default_action", "enter")
+    default_action = str(default_action_value) or "enter"
+
+    preload = tuple(str(item) for item in (entry.get("preload", ()) or ()))
+
+    models_raw = entry.get("models", ()) or ()
+    models: list[EnvironmentAIModelConfig] = []
+    for model_entry in models_raw:
+        if not isinstance(model_entry, Mapping):
+            raise ValueError("environment.ai.models musi zawierać obiekty mapujące")
+        symbol_raw = model_entry.get("symbol")
+        model_type_raw = model_entry.get("model_type", model_entry.get("type"))
+        path_raw = model_entry.get("path")
+        if not symbol_raw or not model_type_raw or not path_raw:
+            raise ValueError(
+                "Każdy model AI musi mieć pola 'symbol', 'model_type' oraz 'path'"
+            )
+        symbol = str(symbol_raw)
+        model_type = str(model_type_raw)
+        path = _resolve_optional_path(path_raw, base_dir=base_dir)
+        if path is None:
+            raise ValueError("environment.ai.models[].path nie może być puste")
+        strategy_value = model_entry.get("strategy")
+        risk_profile_value = model_entry.get("risk_profile")
+        action_value = model_entry.get("action")
+        notional_raw = model_entry.get("notional")
+        models.append(
+            EnvironmentAIModelConfig(
+                symbol=symbol,
+                model_type=model_type,
+                path=path,
+                strategy=str(strategy_value).strip() if strategy_value else None,
+                risk_profile=(
+                    str(risk_profile_value).strip() if risk_profile_value else None
+                ),
+                notional=(
+                    float(notional_raw)
+                    if notional_raw not in (None, "")
+                    else None
+                ),
+                action=str(action_value) if action_value else None,
+            )
+        )
+
+    return EnvironmentAIConfig(
+        enabled=enabled,
+        model_dir=model_dir,
+        threshold_bps=threshold_bps,
+        default_strategy=default_strategy,
+        default_risk_profile=default_risk_profile,
+        default_notional=default_notional,
+        default_action=default_action,
+        preload=preload,
+        models=tuple(models),
     )
 
 
@@ -2887,6 +2979,8 @@ def load_core_config(path: str | Path) -> CoreConfig:
             env_kwargs["decision_journal"] = _load_decision_journal(entry.get("decision_journal"))
         if _env_has("data_quality"):
             env_kwargs["data_quality"] = _load_data_quality(entry.get("data_quality"))
+        if _env_has("ai"):
+            env_kwargs["ai"] = _load_environment_ai(entry.get("ai"), base_dir=config_base_dir)
         environments[name] = EnvironmentConfig(**env_kwargs)
 
     risk_profiles = {
