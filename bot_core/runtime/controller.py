@@ -7,6 +7,7 @@ import math
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import (
+    TYPE_CHECKING,
     Any,
     Callable,
     Mapping,
@@ -71,9 +72,9 @@ except Exception:  # pragma: no cover
     )
 
 # Konfiguracja runtime kontrolerów – tylko jeśli istnieje w danej gałęzi
-try:
-    from bot_core.config.models import CoreConfig, ControllerRuntimeConfig  # type: ignore
-except Exception:  # pragma: no cover
+if TYPE_CHECKING:
+    from bot_core.config.models import CoreConfig, ControllerRuntimeConfig
+else:  # pragma: no cover - w czasie runtime korzystamy z typu ogólnego
     CoreConfig = Any  # type: ignore
     ControllerRuntimeConfig = Any  # type: ignore
 

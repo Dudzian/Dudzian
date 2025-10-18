@@ -114,6 +114,18 @@ _BASE_CONFIG = dedent(
           exclude_severities: [critical]
           exclude_categories: [health]
           max_entries: 16
+      coinbase_offline:
+        exchange: coinbase_spot
+        environment: paper
+        keychain_key: coinbase_offline_key
+        credential_purpose: trading
+        data_cache_path: ./var/data/coinbase_offline
+        risk_profile: balanced
+        alert_channels: ["telegram:primary", "email:ops", "sms:orange_local"]
+        offline_mode: true
+        report_storage:
+          backend: file
+          directory: ./audit/offline/reports
     reporting: {}
     alerts:
       telegram_channels:
@@ -249,6 +261,7 @@ def _prepare_manager() -> tuple[_MemorySecretStorage, SecretManager]:
     storage.set_secret("tests:binance_paper_key:trading", json.dumps(credentials_payload))
     storage.set_secret("tests:zonda_paper_key:trading", json.dumps(credentials_payload))
     storage.set_secret("tests:nowa_gielda_paper_key:trading", json.dumps(credentials_payload))
+    storage.set_secret("tests:coinbase_offline_key:trading", json.dumps(credentials_payload))
     manager.store_secret_value("telegram_token", "telegram-secret", purpose="alerts:telegram")
     manager.store_secret_value(
         "smtp_credentials",
@@ -361,6 +374,41 @@ def test_bootstrap_environment_initialises_components(tmp_path: Path) -> None:
     assert audit_info["requested"] == "inherit"
     assert audit_info["backend"] == "memory"
     assert audit_info["note"] == "inherited_environment_router"
+
+
+def test_bootstrap_environment_offline_disables_network_channels(tmp_path: Path) -> None:
+    runtime_metrics = {
+        "enabled": True,
+        "host": "127.0.0.1",
+        "port": 0,
+        "log_sink": False,
+    }
+    runtime_risk_service = {
+        "enabled": True,
+        "host": "127.0.0.1",
+        "port": 0,
+    }
+    config_path = _write_config_custom(
+        tmp_path,
+        runtime_metrics=runtime_metrics,
+        runtime_risk_service=runtime_risk_service,
+    )
+    _, manager = _prepare_manager()
+
+    context = bootstrap_environment(
+        "coinbase_offline", config_path=config_path, secret_manager=manager
+    )
+
+    assert context.environment.offline_mode is True
+    assert context.alert_channels == {}
+    assert len(context.alert_router.channels) == 0
+    assert context.alert_router.throttle is None
+    assert context.alert_router.audit_log is context.audit_log
+    assert context.metrics_server is None
+    assert context.metrics_service_enabled is False
+    assert context.risk_server is None
+    assert context.risk_service_enabled is False
+    assert context.risk_snapshot_publisher is None
 
 
 def test_bootstrap_environment_creates_signed_risk_decision_log(

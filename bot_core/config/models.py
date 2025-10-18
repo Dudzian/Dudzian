@@ -39,6 +39,25 @@ class DecisionJournalConfig:
 
 
 @dataclass(slots=True)
+class EnvironmentDataSourceConfig:
+    """Parametry źródła danych środowiska (cache + snapshot REST)."""
+
+    enable_snapshots: bool = True
+    cache_namespace: str | None = None
+
+
+@dataclass(slots=True)
+class EnvironmentReportStorageConfig:
+    """Opisuje sposób przechowywania raportów operacyjnych środowiska."""
+
+    backend: str
+    directory: str | None = None
+    filename_pattern: str = "reports-%Y%m%d.json"
+    retention_days: int | None = 730
+    fsync: bool = False
+
+
+@dataclass(slots=True)
 class ServiceTokenConfig:
     """Definicja tokenu usługowego wykorzystywanego do RBAC."""
     token_id: str
@@ -478,6 +497,9 @@ class EnvironmentConfig:
     credential_purpose: str = "trading"
     instrument_universe: str | None = None
     adapter_settings: Mapping[str, Any] = field(default_factory=dict)
+    offline_mode: bool = False
+    data_source: EnvironmentDataSourceConfig | None = None
+    report_storage: EnvironmentReportStorageConfig | None = None
     permission_profile: str | None = None
     required_permissions: Sequence[str] = field(default_factory=tuple)
     forbidden_permissions: Sequence[str] = field(default_factory=tuple)
@@ -903,6 +925,8 @@ class CoreConfig:
 
 __all__ = [
     "EnvironmentConfig",
+    "EnvironmentDataSourceConfig",
+    "EnvironmentReportStorageConfig",
     "EnvironmentDataQualityConfig",
     "CoverageMonitorTargetConfig",
     "CoverageMonitoringConfig",

@@ -3,9 +3,10 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Iterable, Sequence
+from typing import Callable, Iterable, Sequence
 
 from bot_core.data.base import CacheStorage, DataSource, OHLCVRequest, OHLCVResponse
+from bot_core.exchanges.errors import ExchangeNetworkError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -19,12 +20,16 @@ _DEFAULT_COLUMNS: tuple[str, ...] = (
 )
 
 
+SnapshotFetcher = Callable[[OHLCVRequest], Sequence[Sequence[float]]]
+
+
 @dataclass(slots=True)
 class CachedOHLCVSource(DataSource):
     """Łączy publiczne API z lokalnym cache, zapewniając minimalne hit-rate API."""
 
     storage: CacheStorage
     upstream: DataSource
+    snapshot_fetcher: SnapshotFetcher | None = None
 
     def _cache_key(self, symbol: str, interval: str) -> str:
         return f"{symbol}::{interval}"
@@ -52,7 +57,16 @@ class CachedOHLCVSource(DataSource):
         cached_rows: Sequence[Sequence[float]] = cached_payload.get("rows", [])
         columns = tuple(cached_payload.get("columns", ()))
 
-        upstream_response = self.upstream.fetch_ohlcv(request)
+        try:
+            upstream_response = self.upstream.fetch_ohlcv(request)
+        except ExchangeNetworkError as exc:
+            _LOGGER.warning(
+                "Upstream OHLCV niedostępny – używam danych z cache (%s %s): %s",
+                request.symbol,
+                request.interval,
+                exc,
+            )
+            upstream_response = OHLCVResponse(columns=columns or _DEFAULT_COLUMNS, rows=[])
         rows = cached_rows
         if upstream_response.rows:
             rows = self._merge_rows(cached_rows, upstream_response.rows)
@@ -66,6 +80,32 @@ class CachedOHLCVSource(DataSource):
                 },
             )
             columns = selected_columns
+        if self.snapshot_fetcher is not None:
+            try:
+                snapshot_rows = tuple(self.snapshot_fetcher(request))
+            except ExchangeNetworkError as exc:
+                _LOGGER.warning(
+                    "Snapshot API niedostępne – pozostaję przy danych z cache (%s %s): %s",
+                    request.symbol,
+                    request.interval,
+                    exc,
+                )
+                snapshot_rows = ()
+            except Exception as exc:  # pragma: no cover - logowanie diagnostyczne
+                _LOGGER.exception("Nieudany snapshot OHLCV (%s %s): %s", request.symbol, request.interval, exc)
+                snapshot_rows = ()
+
+            if snapshot_rows:
+                rows = self._merge_rows(rows, snapshot_rows)
+                if not columns:
+                    columns = _DEFAULT_COLUMNS
+                self.storage.write(
+                    cache_key,
+                    {
+                        "columns": list(columns),
+                        "rows": rows,
+                    },
+                )
         if not columns:
             columns = _DEFAULT_COLUMNS
 
@@ -113,7 +153,37 @@ class PublicAPIDataSource(DataSource):
         )
 
 
+@dataclass(slots=True)
+class OfflineOnlyDataSource(DataSource):
+    """Źródło danych działające wyłącznie na cache, bez dostępu do sieci."""
+
+    exchange_name: str | None = None
+
+    def fetch_ohlcv(self, request: OHLCVRequest) -> OHLCVResponse:
+        if self.exchange_name:
+            _LOGGER.debug(
+                "Tryb offline: pomijam upstream OHLCV dla %s (%s %s)",
+                self.exchange_name,
+                request.symbol,
+                request.interval,
+            )
+        else:
+            _LOGGER.debug(
+                "Tryb offline: pomijam upstream OHLCV (%s %s)",
+                request.symbol,
+                request.interval,
+            )
+        return OHLCVResponse(columns=_DEFAULT_COLUMNS, rows=())
+
+    def warm_cache(self, symbols: Iterable[str], intervals: Iterable[str]) -> None:
+        _LOGGER.debug(
+            "Tryb offline: warm_cache bez działania (symbole=%s, interwały=%s)",
+            list(symbols),
+            list(intervals),
+        )
+
+
 # Aby uniknąć cyklicznych importów, importujemy w runtime.
 from bot_core.exchanges.base import ExchangeAdapter  # noqa: E402  pylint: disable=wrong-import-position
 
-__all__ = ["CachedOHLCVSource", "PublicAPIDataSource"]
+__all__ = ["CachedOHLCVSource", "PublicAPIDataSource", "OfflineOnlyDataSource"]

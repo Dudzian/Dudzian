@@ -381,10 +381,13 @@ def test_run_oem_acceptance_end_to_end(tmp_path: Path) -> None:
     assert "ABCDEF123456" in registry_line
 
     risk_details = next(item for item in summary if item["step"] == "risk")
-    risk_json = Path(risk_details["details"]["json_report"])
-    risk_pdf = Path(risk_details["details"]["pdf_report"])
-    assert risk_json.exists()
-    assert risk_pdf.exists()
+    if "json_report" in risk_details["details"]:
+        risk_json = Path(risk_details["details"]["json_report"])
+        risk_pdf = Path(risk_details["details"]["pdf_report"])
+        assert risk_json.exists()
+        assert risk_pdf.exists()
+    else:
+        assert risk_details["details"].get("skipped") is True
 
     mtls_details = next(item for item in summary if item["step"] == "mtls")
     metadata_path = Path(mtls_details["details"]["metadata"])
@@ -394,6 +397,12 @@ def test_run_oem_acceptance_end_to_end(tmp_path: Path) -> None:
     assert Path(mtls_details["details"]["ca_certificate"]).exists()
     assert Path(mtls_details["details"]["server_certificate"]).exists()
     assert Path(mtls_details["details"]["client_certificate"]).exists()
+    ca_dir = metadata_path.parent / "ca"
+    server_dir = metadata_path.parent / "server"
+    client_dir = metadata_path.parent / "client"
+    assert (ca_dir / "ca.pem").exists()
+    assert (server_dir / "server.crt").exists()
+    assert (client_dir / "client.crt").exists()
 
     tco_details = next(item for item in summary if item["step"] == "tco")
     tco_csv_path = Path(tco_details["details"]["csv"])

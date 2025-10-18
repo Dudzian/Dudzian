@@ -8,37 +8,8 @@ from datetime import timedelta
 from pathlib import Path
 import os
 import stat
-from typing import Any, Mapping, MutableMapping, Sequence
+from typing import Any, Mapping, MutableMapping, Sequence, TYPE_CHECKING
 
-from bot_core.alerts import (
-    AlertThrottle,
-    DefaultAlertRouter,
-    EmailChannel,
-    FileAlertAuditLog,
-    InMemoryAlertAuditLog,
-    MessengerChannel,
-    SMSChannel,
-    SignalChannel,
-    TelegramChannel,
-    WhatsAppChannel,
-    get_sms_provider,
-)
-from bot_core.alerts.base import AlertAuditLog, AlertChannel
-from bot_core.alerts.channels.providers import SmsProviderConfig
-from bot_core.config.loader import load_core_config
-from bot_core.config.models import (
-    CoreConfig,
-    DecisionJournalConfig,
-    EmailChannelSettings,
-    EnvironmentConfig,
-    MessengerChannelSettings,
-    RiskProfileConfig,
-    SMSProviderSettings,
-    SignalChannelSettings,
-    TelegramChannelSettings,
-    WhatsAppChannelSettings,
-)
-from bot_core.config.validation import assert_core_config_valid
 from bot_core.exchanges.base import (
     Environment,
     ExchangeAdapter,
@@ -46,8 +17,11 @@ from bot_core.exchanges.base import (
     ExchangeCredentials,
 )
 from bot_core.exchanges.binance import BinanceFuturesAdapter, BinanceSpotAdapter
+from bot_core.exchanges.bitfinex import BitfinexSpotAdapter
+from bot_core.exchanges.coinbase import CoinbaseSpotAdapter
 from bot_core.exchanges.kraken import KrakenFuturesAdapter, KrakenSpotAdapter
 from bot_core.exchanges.nowa_gielda import NowaGieldaSpotAdapter
+from bot_core.exchanges.okx import OKXSpotAdapter
 from bot_core.exchanges.zonda import ZondaSpotAdapter
 from bot_core.risk.base import RiskRepository
 from bot_core.risk.engine import ThresholdRiskEngine
@@ -56,6 +30,53 @@ from bot_core.risk.factory import build_risk_profile_from_config
 from bot_core.risk.repository import FileRiskRepository
 from bot_core.security import SecretManager, SecretStorageError, build_service_token_validator
 from bot_core.security.tokens import ServiceTokenValidator
+
+if TYPE_CHECKING:  # pragma: no cover - tylko do typów
+    from bot_core.alerts import (
+        DefaultAlertRouter,
+        EmailChannel,
+        MessengerChannel,
+        SMSChannel,
+        SignalChannel,
+        TelegramChannel,
+        WhatsAppChannel,
+    )
+    from bot_core.alerts.base import AlertAuditLog, AlertChannel
+    from bot_core.alerts.channels.providers import SmsProviderConfig
+    from bot_core.config.models import (
+        CoreConfig,
+        DecisionJournalConfig,
+        EmailChannelSettings,
+        EnvironmentConfig,
+        MessengerChannelSettings,
+        RiskProfileConfig,
+        SMSProviderSettings,
+        SignalChannelSettings,
+        TelegramChannelSettings,
+        WhatsAppChannelSettings,
+    )
+else:  # pragma: no cover - w runtime typy nie są wymagane
+    DefaultAlertRouter = Any  # type: ignore[misc,assignment]
+    AlertAuditLog = Any  # type: ignore[misc,assignment]
+    AlertChannel = Any  # type: ignore[misc,assignment]
+    EmailChannel = Any  # type: ignore[misc,assignment]
+    SMSChannel = Any  # type: ignore[misc,assignment]
+    TelegramChannel = Any  # type: ignore[misc,assignment]
+    SignalChannel = Any  # type: ignore[misc,assignment]
+    WhatsAppChannel = Any  # type: ignore[misc,assignment]
+    MessengerChannel = Any  # type: ignore[misc,assignment]
+    SmsProviderConfig = Any  # type: ignore[misc,assignment]
+    CoreConfig = Any  # type: ignore[misc,assignment]
+    DecisionJournalConfig = Any  # type: ignore[misc,assignment]
+    EmailChannelSettings = Any  # type: ignore[misc,assignment]
+    EnvironmentConfig = Any  # type: ignore[misc,assignment]
+    MessengerChannelSettings = Any  # type: ignore[misc,assignment]
+    RiskProfileConfig = Any  # type: ignore[misc,assignment]
+    SMSProviderSettings = Any  # type: ignore[misc,assignment]
+    SignalChannelSettings = Any  # type: ignore[misc,assignment]
+    TelegramChannelSettings = Any  # type: ignore[misc,assignment]
+    WhatsAppChannelSettings = Any  # type: ignore[misc,assignment]
+
 from bot_core.runtime.journal import (
     InMemoryTradingDecisionJournal,
     JsonlTradingDecisionJournal,
@@ -134,11 +155,61 @@ _DEFAULT_ADAPTERS: Mapping[str, ExchangeAdapterFactory] = {
     "binance_futures": BinanceFuturesAdapter,
     "kraken_spot": KrakenSpotAdapter,
     "kraken_futures": KrakenFuturesAdapter,
+    "coinbase_spot": CoinbaseSpotAdapter,
+    "bitfinex_spot": BitfinexSpotAdapter,
+    "okx_spot": OKXSpotAdapter,
     "nowa_gielda_spot": NowaGieldaSpotAdapter,
     "zonda_spot": ZondaSpotAdapter,
 }
 
 _LOGGER = logging.getLogger(__name__)
+
+
+_ALERT_COMPONENTS: dict[str, Any] | None = None
+
+
+def _get_alert_components() -> dict[str, Any]:
+    """Leniwie importuje moduł alertów, aby uniknąć cyklicznych zależności."""
+
+    global _ALERT_COMPONENTS
+    if _ALERT_COMPONENTS is None:
+        from bot_core.alerts import (  # noqa: WPS433 - import lokalny
+            AlertThrottle,
+            DefaultAlertRouter,
+            EmailChannel,
+            FileAlertAuditLog,
+            InMemoryAlertAuditLog,
+            MessengerChannel,
+            SMSChannel,
+            SignalChannel,
+            TelegramChannel,
+            WhatsAppChannel,
+            get_sms_provider,
+        )
+        from bot_core.alerts.base import AlertAuditLog as _AlertAuditLog  # noqa: WPS433
+        from bot_core.alerts.base import AlertChannel as _AlertChannel  # noqa: WPS433
+        from bot_core.alerts.channels.providers import (  # noqa: WPS433
+            SmsProviderConfig,
+        )
+
+        _ALERT_COMPONENTS = {
+            "AlertThrottle": AlertThrottle,
+            "DefaultAlertRouter": DefaultAlertRouter,
+            "EmailChannel": EmailChannel,
+            "FileAlertAuditLog": FileAlertAuditLog,
+            "InMemoryAlertAuditLog": InMemoryAlertAuditLog,
+            "MessengerChannel": MessengerChannel,
+            "SMSChannel": SMSChannel,
+            "SignalChannel": SignalChannel,
+            "TelegramChannel": TelegramChannel,
+            "WhatsAppChannel": WhatsAppChannel,
+            "get_sms_provider": get_sms_provider,
+            "AlertAuditLog": _AlertAuditLog,
+            "AlertChannel": _AlertChannel,
+            "SmsProviderConfig": SmsProviderConfig,
+        }
+
+    return _ALERT_COMPONENTS
 
 
 def _build_ui_alert_audit_metadata(
@@ -148,12 +219,16 @@ def _build_ui_alert_audit_metadata(
 ) -> dict[str, object]:
     """Zwraca metadane backendu audytu alertów UI dostępne w runtime."""
 
+    components = _get_alert_components()
+    FileAlertAuditLogCls = components["FileAlertAuditLog"]
+    InMemoryAlertAuditLogCls = components["InMemoryAlertAuditLog"]
+
     normalized_request = (requested_backend or "inherit").lower()
     metadata: dict[str, object] = {"requested": normalized_request}
 
     audit_log = getattr(router, "audit_log", None)
 
-    if isinstance(audit_log, FileAlertAuditLog):
+    if isinstance(audit_log, FileAlertAuditLogCls):
         metadata.update(
             {
                 "backend": "file",
@@ -163,7 +238,7 @@ def _build_ui_alert_audit_metadata(
                 "fsync": bool(getattr(audit_log, "fsync", False)),
             }
         )
-    elif isinstance(audit_log, InMemoryAlertAuditLog):
+    elif isinstance(audit_log, InMemoryAlertAuditLogCls):
         metadata["backend"] = "memory"
     elif audit_log is None:
         metadata["backend"] = None
@@ -331,7 +406,10 @@ def bootstrap_environment(
     risk_profile_name: str | None = None,
 ) -> BootstrapContext:
     """Tworzy kompletny kontekst uruchomieniowy dla wskazanego środowiska."""
-    core_config = load_core_config(config_path)
+    from bot_core.config.loader import load_core_config as _load_core_config
+    from bot_core.config.validation import assert_core_config_valid
+
+    core_config = _load_core_config(config_path)
     validation = assert_core_config_valid(core_config)
     for warning in validation.warnings:
         _LOGGER.warning("Walidacja konfiguracji: %s", warning)
@@ -339,6 +417,12 @@ def bootstrap_environment(
         raise KeyError(f"Środowisko '{environment_name}' nie istnieje w konfiguracji")
 
     environment = core_config.environments[environment_name]
+    offline_mode = bool(getattr(environment, "offline_mode", False))
+    if offline_mode:
+        _LOGGER.info(
+            "Środowisko %s działa w trybie offline – pomijam komponenty wymagające sieci.",
+            environment.name,
+        )
     selected_profile = risk_profile_name or environment.risk_profile
     risk_profile_config = _resolve_risk_profile(core_config.risk_profiles, selected_profile)
 
@@ -420,6 +504,7 @@ def bootstrap_environment(
         factories,
         environment.environment,
         settings=environment.adapter_settings,
+        offline_mode=offline_mode,
     )
     adapter.configure_network(ip_allowlist=environment.ip_allowlist or None)
 
@@ -487,7 +572,13 @@ def bootstrap_environment(
             _LOGGER.debug("Nie udało się zainicjalizować eksportera metryk ryzyka", exc_info=True)
     metrics_config = getattr(core_config, "metrics_service", None)
     if metrics_config is not None:
-        metrics_service_enabled = bool(getattr(metrics_config, "enabled", False))
+        metrics_service_enabled = bool(getattr(metrics_config, "enabled", True))
+        if offline_mode and metrics_service_enabled:
+            _LOGGER.info(
+                "Tryb offline: pomijam uruchomienie MetricsService w środowisku %s.",
+                environment.name,
+            )
+            metrics_service_enabled = False
         tls_config = getattr(metrics_config, "tls", None)
         if tls_config is not None:
             from bot_core.security import tls_audit as _tls_audit
@@ -1031,7 +1122,11 @@ def bootstrap_environment(
     if metrics_security_warnings:
         metrics_security_warnings = list(dict.fromkeys(metrics_security_warnings))
 
-    if build_metrics_server_from_config is not None:
+    if (
+        build_metrics_server_from_config is not None
+        and metrics_service_enabled
+        and not offline_mode
+    ):
         try:
             # Najpierw spróbuj najnowszej sygnatury (cfg, sinks, alerts_router, token_validator)
             try:
@@ -1083,6 +1178,12 @@ def bootstrap_environment(
     risk_config = getattr(core_config, "risk_service", None)
     if risk_config is not None:
         risk_service_enabled = bool(getattr(risk_config, "enabled", True))
+        if offline_mode and risk_service_enabled:
+            _LOGGER.info(
+                "Tryb offline: pomijam uruchomienie RiskService w środowisku %s.",
+                environment.name,
+            )
+            risk_service_enabled = False
         tls_config = getattr(risk_config, "tls", None)
         if tls_config is not None:
             from bot_core.security import tls_audit as _tls_audit
@@ -1132,7 +1233,12 @@ def bootstrap_environment(
             risk_auth_metadata["default_scope"] = validator_meta.get("default_scope")
         risk_security_payload["auth"] = risk_auth_metadata
 
-    if build_risk_server_from_config is not None and risk_config is not None:
+    if (
+        build_risk_server_from_config is not None
+        and risk_config is not None
+        and risk_service_enabled
+        and not offline_mode
+    ):
         try:
             try:
                 candidate = build_risk_server_from_config(
@@ -1301,14 +1407,41 @@ def _instantiate_adapter(
     environment: Environment,
     *,
     settings: Mapping[str, Any] | None = None,
+    offline_mode: bool = False,
 ) -> ExchangeAdapter:
     try:
         factory = factories[exchange_name]
     except KeyError as exc:
         raise KeyError(f"Brak fabryki adaptera dla giełdy '{exchange_name}'") from exc
-    if settings:
-        return factory(credentials, environment=environment, settings=settings)
-    return factory(credentials, environment=environment)
+    try:
+        if settings:
+            return factory(credentials, environment=environment, settings=settings)
+        return factory(credentials, environment=environment)
+    except RuntimeError as exc:
+        if offline_mode and "ccxt" in str(exc).lower():
+            from bot_core.exchanges.ccxt_adapter import (  # noqa: WPS433 - import lokalny
+                CCXTExchange,
+            )
+
+            dummy_client = CCXTExchange()  # type: ignore[call-arg]
+            if not hasattr(dummy_client, "symbols"):
+                dummy_client.symbols = []  # type: ignore[attr-defined]
+            try:
+                if settings:
+                    return factory(
+                        credentials,
+                        environment=environment,
+                        settings=settings,
+                        client=dummy_client,
+                    )
+                return factory(
+                    credentials,
+                    environment=environment,
+                    client=dummy_client,
+                )
+            except TypeError:
+                pass
+        raise
 
 
 def _build_risk_decision_log(
@@ -1391,40 +1524,58 @@ def build_alert_channels(
     secret_manager: SecretManager,
 ) -> tuple[Mapping[str, AlertChannel], DefaultAlertRouter, AlertAuditLog]:
     """Tworzy i rejestruje kanały alertów + router + backend audytu."""
-    # audit_log: InMemory (domyślnie) albo FileAlertAuditLog, jeśli skonfigurowano alert_audit
+    components = _get_alert_components()
+    FileAlertAuditLogCls = components["FileAlertAuditLog"]
+    InMemoryAlertAuditLogCls = components["InMemoryAlertAuditLog"]
+    AlertThrottleCls = components["AlertThrottle"]
+    DefaultAlertRouterCls = components["DefaultAlertRouter"]
+
     audit_config = getattr(environment, "alert_audit", None)
     if audit_config and getattr(audit_config, "backend", "memory") == "file":
         directory = Path(audit_config.directory) if audit_config.directory else Path("alerts")
         if not directory.is_absolute():
             base = Path(environment.data_cache_path)
             directory = base / directory
-        audit_log: AlertAuditLog = FileAlertAuditLog(
+        audit_log: AlertAuditLog = FileAlertAuditLogCls(
             directory=directory,
             filename_pattern=audit_config.filename_pattern,
             retention_days=audit_config.retention_days,
             fsync=audit_config.fsync,
         )
     else:
-        audit_log = InMemoryAlertAuditLog()
+        audit_log = InMemoryAlertAuditLogCls()
 
-    # throttle (opcjonalny)
     throttle_cfg = getattr(environment, "alert_throttle", None)
     throttle: AlertThrottle | None = None
     if throttle_cfg is not None:
-        throttle = AlertThrottle(
+        throttle = AlertThrottleCls(
             window=timedelta(seconds=float(throttle_cfg.window_seconds)),
             exclude_severities=frozenset(throttle_cfg.exclude_severities),
             exclude_categories=frozenset(throttle_cfg.exclude_categories),
             max_entries=int(throttle_cfg.max_entries),
         )
 
-    router = DefaultAlertRouter(audit_log=audit_log, throttle=throttle)
+    router = DefaultAlertRouterCls(audit_log=audit_log, throttle=throttle)
     channels: MutableMapping[str, AlertChannel] = {}
+    offline_mode = bool(getattr(environment, "offline_mode", False))
+    skipped_offline: list[str] = []
 
     for entry in environment.alert_channels:
         channel_type, _, channel_key = entry.partition(":")
         channel_type = channel_type.strip().lower()
         channel_key = channel_key.strip() or "default"
+
+        requires_network = channel_type in {
+            "telegram",
+            "email",
+            "sms",
+            "signal",
+            "whatsapp",
+            "messenger",
+        }
+        if offline_mode and requires_network:
+            skipped_offline.append(entry)
+            continue
 
         if channel_type == "telegram":
             channel = _build_telegram_channel(core_config.telegram_channels, channel_key, secret_manager)
@@ -1443,6 +1594,13 @@ def build_alert_channels(
 
         router.register(channel)
         channels[channel.name] = channel
+
+    if skipped_offline:
+        _LOGGER.info(
+            "Tryb offline środowiska %s: pominięto kanały alertów wymagające sieci: %s",
+            environment.name,
+            ", ".join(skipped_offline),
+        )
 
     return channels, router, audit_log
 
@@ -1541,6 +1699,8 @@ def _build_telegram_channel(
     channel_key: str,
     secret_manager: SecretManager,
 ) -> TelegramChannel:
+    components = _get_alert_components()
+    TelegramChannelCls = components["TelegramChannel"]
     try:
         settings = definitions[channel_key]
     except KeyError as exc:
@@ -1548,7 +1708,7 @@ def _build_telegram_channel(
 
     token = secret_manager.load_secret_value(settings.token_secret, purpose="alerts:telegram")
 
-    return TelegramChannel(
+    return TelegramChannelCls(
         bot_token=token,
         chat_id=settings.chat_id,
         parse_mode=settings.parse_mode,
@@ -1561,6 +1721,8 @@ def _build_email_channel(
     channel_key: str,
     secret_manager: SecretManager,
 ) -> EmailChannel:
+    components = _get_alert_components()
+    EmailChannelCls = components["EmailChannel"]
     try:
         settings = definitions[channel_key]
     except KeyError as exc:
@@ -1579,7 +1741,7 @@ def _build_email_channel(
         username = parsed.get("username")
         password = parsed.get("password")
 
-    return EmailChannel(
+    return EmailChannelCls(
         host=settings.host,
         port=settings.port,
         from_address=settings.from_address,
@@ -1596,6 +1758,9 @@ def _build_sms_channel(
     channel_key: str,
     secret_manager: SecretManager,
 ) -> SMSChannel:
+    components = _get_alert_components()
+    SMSChannelCls = components["SMSChannel"]
+    get_sms_provider_fn = components["get_sms_provider"]
     try:
         settings = definitions[channel_key]
     except KeyError as exc:
@@ -1621,7 +1786,7 @@ def _build_sms_channel(
             "Sekret dostawcy SMS musi zawierać pola 'account_sid' oraz 'auth_token'."
         )
 
-    provider_config = _resolve_sms_provider(settings)
+    provider_config = _resolve_sms_provider(settings, get_sms_provider_fn)
     sender = (
         settings.sender_id
         if settings.allow_alphanumeric_sender and settings.sender_id
@@ -1638,7 +1803,7 @@ def _build_sms_channel(
             f"Konfiguracja dostawcy SMS '{channel_key}' wymaga co najmniej jednego odbiorcy."
         )
 
-    return SMSChannel(
+    return SMSChannelCls(
         account_sid=str(account_sid),
         auth_token=str(auth_token),
         from_number=sender,
@@ -1653,6 +1818,8 @@ def _build_signal_channel(
     channel_key: str,
     secret_manager: SecretManager,
 ) -> SignalChannel:
+    components = _get_alert_components()
+    SignalChannelCls = components.get("SignalChannel")
     try:
         settings = definitions[channel_key]
     except KeyError as exc:
@@ -1662,7 +1829,10 @@ def _build_signal_channel(
     if settings.credential_secret:
         token = secret_manager.load_secret_value(settings.credential_secret, purpose="alerts:signal")
 
-    return SignalChannel(
+    if SignalChannelCls is None:
+        raise KeyError("Kanał Signal jest niedostępny w tej dystrybucji")
+
+    return SignalChannelCls(
         service_url=settings.service_url,
         sender_number=settings.sender_number,
         recipients=settings.recipients,
@@ -1677,6 +1847,8 @@ def _build_whatsapp_channel(
     channel_key: str,
     secret_manager: SecretManager,
 ) -> WhatsAppChannel:
+    components = _get_alert_components()
+    WhatsAppChannelCls = components.get("WhatsAppChannel")
     try:
         settings = definitions[channel_key]
     except KeyError as exc:
@@ -1684,7 +1856,10 @@ def _build_whatsapp_channel(
 
     token = secret_manager.load_secret_value(settings.token_secret, purpose="alerts:whatsapp")
 
-    return WhatsAppChannel(
+    if WhatsAppChannelCls is None:
+        raise KeyError("Kanał WhatsApp nie jest dostępny w tej dystrybucji")
+
+    return WhatsAppChannelCls(
         phone_number_id=settings.phone_number_id,
         access_token=token,
         recipients=settings.recipients,
@@ -1699,6 +1874,8 @@ def _build_messenger_channel(
     channel_key: str,
     secret_manager: SecretManager,
 ) -> MessengerChannel:
+    components = _get_alert_components()
+    MessengerChannelCls = components.get("MessengerChannel")
     try:
         settings = definitions[channel_key]
     except KeyError as exc:
@@ -1706,7 +1883,10 @@ def _build_messenger_channel(
 
     token = secret_manager.load_secret_value(settings.token_secret, purpose="alerts:messenger")
 
-    return MessengerChannel(
+    if MessengerChannelCls is None:
+        raise KeyError("Kanał Messenger nie jest dostępny w tej instalacji")
+
+    return MessengerChannelCls(
         page_id=settings.page_id,
         access_token=token,
         recipients=settings.recipients,
@@ -1716,9 +1896,16 @@ def _build_messenger_channel(
     )
 
 
-def _resolve_sms_provider(settings: SMSProviderSettings) -> SmsProviderConfig:
-    base = get_sms_provider(settings.provider_key)
-    return SmsProviderConfig(
+def _resolve_sms_provider(
+    settings: SMSProviderSettings, get_sms_provider_fn: Any
+) -> SmsProviderConfig:
+    components = _get_alert_components()
+    SmsProviderConfigCls = components.get("SmsProviderConfig")
+    if SmsProviderConfigCls is None:
+        raise KeyError("Typ SmsProviderConfig nie jest dostępny w module alertów")
+
+    base = get_sms_provider_fn(settings.provider_key)
+    return SmsProviderConfigCls(
         provider_id=base.provider_id,
         display_name=base.display_name,
         api_base_url=settings.api_base_url or base.api_base_url,

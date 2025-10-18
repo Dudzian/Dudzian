@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import base64
+import bz2
 import gzip
 import hashlib
 import hmac
 import json
 import io
+import lzma
 import sys
 import types
+import zipfile
+import tarfile
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
@@ -44,6 +49,7 @@ def _write_core_config(
     profile_name: str = "ops",
     host: str = "10.20.30.40",
     port: int = 50200,
+    metrics_enabled: bool = True,
     metrics_rbac_tokens: Sequence[dict[str, object]] | None = None,
     metrics_tls: Mapping[str, object] | None = None,
     metrics_grpc_metadata: Mapping[str, object] | Sequence[tuple[str, object]] | None = None,
@@ -54,6 +60,7 @@ def _write_core_config(
     risk_enabled: bool = True,
     risk_rbac_tokens: Sequence[dict[str, object]] | None = None,
     risk_tls: Mapping[str, object] | None = None,
+    offline_environments: Sequence[str] | None = None,
 ) -> Path:
     config_path = tmp_path / "core.yaml"
     profiles_str = str(profiles_path)
@@ -67,14 +74,37 @@ def _write_core_config(
         "    stop_loss_atr_multiple: 1.5",
         "    max_open_positions: 5",
         "    hard_drawdown_pct: 0.25",
-        "environments: {}",
-        "runtime:",
-        "  metrics_service:",
-        f"    host: {host}",
-        f"    port: {port}",
-        f"    ui_alerts_risk_profile: {profile_name}",
-        f"    ui_alerts_risk_profiles_file: {profiles_str}",
     ]
+
+    if offline_environments:
+        lines.append("environments:")
+        for name in offline_environments:
+            lines.extend(
+                [
+                    f"  {name}:",
+                    "    exchange: coinbase",
+                    "    environment: paper",
+                    f"    keychain_key: {name}_key",
+                    f"    data_cache_path: {str(tmp_path / ('data_' + name))}",
+                    "    risk_profile: conservative",
+                    "    alert_channels: []",
+                    "    offline_mode: true",
+                ]
+            )
+    else:
+        lines.append("environments: {}")
+
+    lines.extend(
+        [
+            "runtime:",
+            "  metrics_service:",
+            f"    enabled: {'true' if metrics_enabled else 'false'}",
+            f"    host: {host}",
+            f"    port: {port}",
+            f"    ui_alerts_risk_profile: {profile_name}",
+            f"    ui_alerts_risk_profiles_file: {profiles_str}",
+        ]
+    )
 
     if metrics_rbac_tokens:
         lines.append("    rbac_tokens:")
@@ -668,6 +698,42 @@ def test_watch_metrics_stream_from_jsonl(tmp_path, capsys):
     assert "screen" in captured.out
 
 
+def test_watch_metrics_stream_from_multiple_jsonl_sources(tmp_path, capsys):
+    first_records = [
+        {
+            "generated_at": "2024-01-02T00:00:00+00:00",
+            "notes": json.dumps({"event": "reduce_motion", "severity": "info"}, ensure_ascii=False),
+        }
+    ]
+    second_records = [
+        {
+            "generated_at": "2024-01-03T00:00:00+00:00",
+            "notes": json.dumps({"event": "overlay_budget", "severity": "warning"}, ensure_ascii=False),
+        }
+    ]
+    first_path = tmp_path / "metrics_a.jsonl"
+    first_path.write_text("\n".join(json.dumps(item, ensure_ascii=False) for item in first_records) + "\n")
+    second_path = tmp_path / "metrics_b.jsonl"
+    second_path.write_text("\n".join(json.dumps(item, ensure_ascii=False) for item in second_records) + "\n")
+
+    exit_code = watch_metrics_main(
+        [
+            "--from-jsonl",
+            str(first_path),
+            "--from-jsonl",
+            str(second_path),
+            "--format",
+            "json",
+            "--summary",
+        ]
+    )
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "reduce_motion" in captured.out
+    assert "overlay_budget" in captured.out
+    assert '"summary"' in captured.out
+
+
 def test_watch_metrics_stream_from_gzip_jsonl(tmp_path, capsys):
     records = [
         {
@@ -697,6 +763,449 @@ def test_watch_metrics_stream_from_gzip_jsonl(tmp_path, capsys):
     captured = capsys.readouterr()
     assert exit_code == 0
     assert "overlay_budget" in captured.out
+
+
+def test_watch_metrics_stream_from_lzma_jsonl(tmp_path, capsys):
+    records = [
+        {
+            "generated_at": "2024-05-01T00:00:00+00:00",
+            "notes": json.dumps({"event": "overlay_budget", "severity": "warning"}, ensure_ascii=False),
+        },
+        {
+            "generated_at": "2024-05-01T00:00:05+00:00",
+            "notes": json.dumps({"event": "reduce_motion", "severity": "info"}, ensure_ascii=False),
+        },
+    ]
+    lzma_path = tmp_path / "metrics.jsonl.xz"
+    with lzma.open(lzma_path, "wt", encoding="utf-8") as handle:
+        for record in records:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    exit_code = watch_metrics_main(
+        [
+            "--from-jsonl",
+            str(lzma_path),
+            "--format",
+            "json",
+            "--limit",
+            "1",
+        ]
+    )
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "overlay_budget" in captured.out
+
+
+def test_watch_metrics_stream_from_bz2_jsonl(tmp_path, capsys):
+    records = [
+        {
+            "generated_at": "2024-06-01T00:00:00+00:00",
+            "notes": json.dumps({"event": "overlay_budget", "severity": "warning"}, ensure_ascii=False),
+        },
+        {
+            "generated_at": "2024-06-01T00:00:05+00:00",
+            "notes": json.dumps({"event": "reduce_motion", "severity": "info"}, ensure_ascii=False),
+        },
+    ]
+    bz2_path = tmp_path / "metrics.jsonl.bz2"
+    with bz2.open(bz2_path, "wt", encoding="utf-8") as handle:
+        for record in records:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    exit_code = watch_metrics_main(
+        [
+            "--from-jsonl",
+            str(bz2_path),
+            "--format",
+            "json",
+            "--limit",
+            "1",
+        ]
+    )
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "overlay_budget" in captured.out
+
+
+def test_watch_metrics_stream_from_zip_jsonl(tmp_path, capsys):
+    archive_path = tmp_path / "metrics_bundle.zip"
+    records = [
+        {
+            "generated_at": "2024-07-01T00:00:00+00:00",
+            "notes": json.dumps({"event": "overlay_budget", "severity": "warning"}, ensure_ascii=False),
+        },
+        {
+            "generated_at": "2024-07-01T00:00:05+00:00",
+            "notes": json.dumps({"event": "reduce_motion", "severity": "info"}, ensure_ascii=False),
+        },
+        {
+            "generated_at": "2024-07-01T00:00:10+00:00",
+            "notes": json.dumps({"event": "hud_toggle", "severity": "info"}, ensure_ascii=False),
+        },
+    ]
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        payload = "\n".join(json.dumps(record, ensure_ascii=False) for record in records)
+        archive.writestr("nested/metrics.jsonl", payload)
+
+    exit_code = watch_metrics_main(
+        [
+            "--from-jsonl",
+            str(archive_path),
+            "--format",
+            "json",
+            "--limit",
+            "1",
+        ]
+    )
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "overlay_budget" in captured.out
+
+
+def _write_tar_with_payload(path: Path, members: Mapping[str, str], *, mode: str = "w") -> None:
+    with tarfile.open(path, mode) as archive:
+        for name, payload in members.items():
+            data = payload.encode("utf-8")
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            archive.addfile(info, io.BytesIO(data))
+
+
+def test_watch_metrics_stream_from_tar_jsonl(tmp_path, capsys):
+    tar_path = tmp_path / "metrics_bundle.tar"
+    records = [
+        {
+            "generated_at": "2024-08-01T00:00:00+00:00",
+            "notes": json.dumps({"event": "overlay_budget", "severity": "warning"}, ensure_ascii=False),
+        },
+        {
+            "generated_at": "2024-08-01T00:00:10+00:00",
+            "notes": json.dumps({"event": "hud_toggle", "severity": "info"}, ensure_ascii=False),
+        },
+    ]
+    payload = "\n".join(json.dumps(record, ensure_ascii=False) for record in records)
+    _write_tar_with_payload(tar_path, {"nested/metrics.jsonl": payload})
+
+    exit_code = watch_metrics_main(
+        [
+            "--from-jsonl",
+            str(tar_path),
+            "--format",
+            "json",
+            "--limit",
+            "1",
+        ]
+    )
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "overlay_budget" in captured.out
+
+
+def test_watch_metrics_stream_from_tgz_jsonl(tmp_path, capsys):
+    tgz_path = tmp_path / "metrics_bundle.tgz"
+    records = [
+        {
+            "generated_at": "2024-09-01T00:00:00+00:00",
+            "notes": json.dumps({"event": "overlay_budget", "severity": "warning"}, ensure_ascii=False),
+        },
+        {
+            "generated_at": "2024-09-01T00:00:05+00:00",
+            "notes": json.dumps({"event": "reduce_motion", "severity": "info"}, ensure_ascii=False),
+        },
+    ]
+    payload = "\n".join(json.dumps(record, ensure_ascii=False) for record in records)
+    _write_tar_with_payload(tgz_path, {"metrics.jsonl": payload}, mode="w:gz")
+
+    exit_code = watch_metrics_main(
+        [
+            "--from-jsonl",
+            str(tgz_path),
+            "--format",
+            "json",
+            "--limit",
+            "1",
+        ]
+    )
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "overlay_budget" in captured.out
+
+
+def test_watch_metrics_stream_from_directory_jsonl(tmp_path, capsys):
+    segments_dir = tmp_path / "segments"
+    segments_dir.mkdir()
+
+    gz_path = segments_dir / "001_part.jsonl.gz"
+    gz_records = [
+        {
+            "generated_at": "2024-10-01T00:00:00+00:00",
+            "notes": json.dumps(
+                {"event": "reduce_motion", "severity": "info"}, ensure_ascii=False
+            ),
+        },
+        {
+            "generated_at": "2024-10-01T00:00:10+00:00",
+            "notes": json.dumps(
+                {"event": "hud_toggle", "severity": "warning"}, ensure_ascii=False
+            ),
+        },
+    ]
+    with gzip.open(gz_path, "wt", encoding="utf-8") as handle:
+        for record in gz_records:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    plain_path = segments_dir / "010_part.jsonl"
+    plain_records = [
+        {
+            "generated_at": "2024-10-01T00:00:20+00:00",
+            "notes": json.dumps(
+                {"event": "overlay_budget", "severity": "error"}, ensure_ascii=False
+            ),
+        }
+    ]
+    plain_payload = "\n".join(json.dumps(record, ensure_ascii=False) for record in plain_records)
+    plain_path.write_text(plain_payload + "\n", encoding="utf-8")
+
+    exit_code = watch_metrics_main(
+        [
+            "--from-jsonl",
+            str(segments_dir),
+            "--format",
+            "json",
+        ]
+    )
+    captured = capsys.readouterr()
+    assert exit_code == 0
+
+    parsed_lines = [
+        json.loads(line)
+        for line in captured.out.splitlines()
+        if line.strip()
+    ]
+    events: list[str] = []
+    for entry in parsed_lines:
+        raw_notes = entry.get("notes")
+        notes_obj = json.loads(raw_notes) if isinstance(raw_notes, str) else raw_notes
+        if isinstance(notes_obj, Mapping):
+            events.append(str(notes_obj.get("event")))
+
+    assert events == ["reduce_motion", "hud_toggle", "overlay_budget"]
+
+
+def test_watch_metrics_stream_from_glob_pattern(tmp_path, capsys):
+    segments_dir = tmp_path / "segments"
+    segments_dir.mkdir()
+
+    plain_path = segments_dir / "metrics_2024_part1.jsonl"
+    plain_records = [
+        {
+            "generated_at": "2024-11-01T00:00:05+00:00",
+            "notes": json.dumps(
+                {"event": "reduce_motion", "severity": "info"}, ensure_ascii=False
+            ),
+        }
+    ]
+    plain_payload = "\n".join(json.dumps(entry, ensure_ascii=False) for entry in plain_records)
+    plain_path.write_text(plain_payload + "\n", encoding="utf-8")
+
+    gz_path = segments_dir / "metrics_2024_part2.jsonl.gz"
+    gz_records = [
+        {
+            "generated_at": "2024-11-01T00:00:10+00:00",
+            "notes": json.dumps(
+                {"event": "hud_toggle", "severity": "warning"}, ensure_ascii=False
+            ),
+        },
+        {
+            "generated_at": "2024-11-01T00:00:20+00:00",
+            "notes": json.dumps(
+                {"event": "overlay_budget", "severity": "error"}, ensure_ascii=False
+            ),
+        },
+    ]
+    with gzip.open(gz_path, "wt", encoding="utf-8") as handle:
+        for record in gz_records:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    pattern = str(segments_dir / "metrics_2024_part*.jsonl*")
+    exit_code = watch_metrics_main(["--from-jsonl", pattern, "--format", "json"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+
+    parsed_lines = [
+        json.loads(line)
+        for line in captured.out.splitlines()
+        if line.strip()
+    ]
+    events = []
+    for entry in parsed_lines:
+        raw_notes = entry.get("notes")
+        notes_obj = json.loads(raw_notes) if isinstance(raw_notes, str) else raw_notes
+        if isinstance(notes_obj, Mapping):
+            events.append(str(notes_obj.get("event")))
+
+    assert events == ["reduce_motion", "hud_toggle", "overlay_budget"]
+
+
+def test_watch_metrics_stream_directory_without_jsonl(tmp_path, caplog):
+    segments_dir = tmp_path / "segments"
+    segments_dir.mkdir()
+
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(SystemExit) as excinfo:
+            watch_metrics_main(["--from-jsonl", str(segments_dir)])
+
+    assert excinfo.value.code == 2
+    assert "nie zawiera obsługiwanych artefaktów JSONL" in caplog.text
+
+
+def test_watch_metrics_stream_glob_without_matches(tmp_path, caplog):
+    pattern = str(tmp_path / "segments" / "*.jsonl")
+
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(SystemExit) as excinfo:
+            watch_metrics_main(["--from-jsonl", pattern])
+
+    assert excinfo.value.code == 2
+    assert "nie pasuje do żadnych artefaktów JSONL" in caplog.text
+
+
+def test_watch_metrics_stream_from_manifest_text_file(tmp_path, capsys):
+    bundle_dir = tmp_path / "bundle"
+    bundle_dir.mkdir()
+
+    first_segment = bundle_dir / "segment_a.jsonl"
+    first_records = [
+        {
+            "generated_at": "2024-12-01T00:00:00+00:00",
+            "notes": json.dumps(
+                {"event": "reduce_motion", "severity": "info"}, ensure_ascii=False
+            ),
+        }
+    ]
+    first_segment.write_text(
+        "\n".join(json.dumps(entry, ensure_ascii=False) for entry in first_records) + "\n",
+        encoding="utf-8",
+    )
+
+    second_segment = bundle_dir / "segment_b.jsonl.gz"
+    second_records = [
+        {
+            "generated_at": "2024-12-01T00:00:10+00:00",
+            "notes": json.dumps(
+                {"event": "hud_toggle", "severity": "warning"}, ensure_ascii=False
+            ),
+        },
+        {
+            "generated_at": "2024-12-01T00:00:20+00:00",
+            "notes": json.dumps(
+                {"event": "overlay_budget", "severity": "error"}, ensure_ascii=False
+            ),
+        },
+    ]
+    with gzip.open(second_segment, "wt", encoding="utf-8") as handle:
+        for record in second_records:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    manifest_path = bundle_dir / "segments.txt"
+    manifest_path.write_text(
+        "# komentarz\nsegment_a.jsonl\n./segment_b.jsonl.gz\n",
+        encoding="utf-8",
+    )
+
+    exit_code = watch_metrics_main(
+        ["--from-jsonl", f"@manifest:{manifest_path}", "--format", "json"]
+    )
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+
+    parsed_lines = [
+        json.loads(line)
+        for line in captured.out.splitlines()
+        if line.strip()
+    ]
+    events: list[str] = []
+    for entry in parsed_lines:
+        raw_notes = entry.get("notes")
+        notes_obj = json.loads(raw_notes) if isinstance(raw_notes, str) else raw_notes
+        if isinstance(notes_obj, Mapping):
+            events.append(str(notes_obj.get("event")))
+
+    assert events == ["reduce_motion", "hud_toggle", "overlay_budget"]
+
+
+def test_watch_metrics_stream_from_manifest_json_list(tmp_path, capsys):
+    segments_dir = tmp_path / "segments"
+    segments_dir.mkdir()
+
+    plain_path = segments_dir / "metrics_part1.jsonl"
+    plain_payload = [
+        {
+            "generated_at": "2025-01-01T00:00:05+00:00",
+            "notes": json.dumps(
+                {"event": "reduce_motion", "severity": "info"}, ensure_ascii=False
+            ),
+        }
+    ]
+    plain_path.write_text(
+        "\n".join(json.dumps(entry, ensure_ascii=False) for entry in plain_payload) + "\n",
+        encoding="utf-8",
+    )
+
+    gz_path = segments_dir / "metrics_part2.jsonl.gz"
+    gz_payload = [
+        {
+            "generated_at": "2025-01-01T00:00:15+00:00",
+            "notes": json.dumps(
+                {"event": "hud_toggle", "severity": "warning"}, ensure_ascii=False
+            ),
+        }
+    ]
+    with gzip.open(gz_path, "wt", encoding="utf-8") as handle:
+        for record in gz_payload:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    manifest_path = tmp_path / "segments_manifest.json"
+    manifest_payload = [
+        "segments/metrics_part1.jsonl",
+        "segments/metrics_part2.jsonl.gz",
+    ]
+    manifest_path.write_text(json.dumps(manifest_payload, ensure_ascii=False), encoding="utf-8")
+
+    exit_code = watch_metrics_main(
+        ["--from-jsonl", f"@manifest:{manifest_path}", "--format", "json"]
+    )
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+
+    parsed_lines = [
+        json.loads(line)
+        for line in captured.out.splitlines()
+        if line.strip()
+    ]
+    events = []
+    for entry in parsed_lines:
+        raw_notes = entry.get("notes")
+        notes_obj = json.loads(raw_notes) if isinstance(raw_notes, str) else raw_notes
+        if isinstance(notes_obj, Mapping):
+            events.append(str(notes_obj.get("event")))
+
+    assert events == ["reduce_motion", "hud_toggle"]
+
+
+def test_watch_metrics_stream_manifest_without_entries(tmp_path, caplog):
+    manifest_path = tmp_path / "empty_segments.txt"
+    manifest_path.write_text("# brak wpisów\n\n", encoding="utf-8")
+
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(SystemExit) as excinfo:
+            watch_metrics_main(["--from-jsonl", f"@manifest:{manifest_path}"])
+
+    assert excinfo.value.code == 2
+    assert "nie zawiera ścieżek JSONL" in caplog.text
 
 
 def test_watch_metrics_stream_from_jsonl_stdin(monkeypatch, capsys):
@@ -832,12 +1341,54 @@ def test_watch_metrics_stream_decision_log_offline(tmp_path, capsys):
     metadata_entry = json.loads(lines[0])
     assert metadata_entry["kind"] == "metadata"
     assert metadata_entry["metadata"]["mode"] == "jsonl"
+    assert metadata_entry["metadata"]["input_file"] == str(jsonl_path)
+    assert metadata_entry["metadata"].get("input_sources") == [str(jsonl_path)]
     snapshot_entry = json.loads(lines[1])
     assert snapshot_entry["kind"] == "snapshot"
     assert snapshot_entry["source"] == "jsonl"
     assert snapshot_entry["event"] == "reduce_motion"
     assert snapshot_entry["severity"] == "warning"
     assert snapshot_entry["screen"]["index"] == 1
+
+
+def test_watch_metrics_stream_decision_log_multiple_sources(tmp_path, capsys):
+    first_path = tmp_path / "metrics_a.jsonl"
+    first_path.write_text(
+        json.dumps({"generated_at": "2024-02-02T00:00:00Z", "notes": {"event": "reduce_motion"}}, ensure_ascii=False)
+        + "\n",
+        encoding="utf-8",
+    )
+    second_path = tmp_path / "metrics_b.jsonl"
+    second_path.write_text(
+        json.dumps({"generated_at": "2024-02-02T00:01:00Z", "notes": {"event": "overlay_budget"}}, ensure_ascii=False)
+        + "\n",
+        encoding="utf-8",
+    )
+
+    decision_log = tmp_path / "audit" / "combined.jsonl"
+
+    exit_code = watch_metrics_main(
+        [
+            "--from-jsonl",
+            str(first_path),
+            "--from-jsonl",
+            str(second_path),
+            "--decision-log",
+            str(decision_log),
+        ]
+    )
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "reduce_motion" in captured.out
+    assert "overlay_budget" in captured.out
+
+    lines = [ln for ln in decision_log.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    metadata_entry = json.loads(lines[0])
+    assert metadata_entry["metadata"]["input_file"] == str(first_path)
+    assert metadata_entry["metadata"].get("input_files") == [str(first_path), str(second_path)]
+    assert metadata_entry["metadata"].get("input_sources") == [str(first_path), str(second_path)]
+    events = [json.loads(entry)["event"] for entry in lines[1:]]
+    assert {"reduce_motion", "overlay_budget"}.issubset(set(events))
 
 
 def test_watch_metrics_stream_decision_log_from_stdin(monkeypatch, tmp_path, capsys):
@@ -865,6 +1416,7 @@ def test_watch_metrics_stream_decision_log_from_stdin(monkeypatch, tmp_path, cap
     lines = [ln for ln in decision_log.read_text(encoding="utf-8").splitlines() if ln.strip()]
     metadata_entry = json.loads(lines[0])
     assert metadata_entry["metadata"]["input_file"] == "stdin"
+    assert metadata_entry["metadata"].get("input_sources") == ["-"]
 
 
 def test_watch_metrics_stream_time_filters_in_decision_log(tmp_path, capsys):
@@ -1089,6 +1641,7 @@ def test_watch_metrics_stream_core_config_summary_metadata(tmp_path, capsys):
     metadata = summary_payload["metadata"]
     assert metadata["core_config"]["path"] == str(config_path)
     assert metadata["core_config"]["metrics_service"]["risk_profile"] == "ops"
+    assert metadata["core_config"]["metrics_service"]["enabled"] is True
     assert metadata["core_config"]["risk_service"]["auth_token_scope_required"] == "risk.read"
     assert metadata["core_config"]["risk_service"]["required_scopes"] == {
         "risk.read": ["core_config.risk_service"]
@@ -1128,6 +1681,7 @@ def test_apply_core_config_defaults_uses_rbac_token(monkeypatch, tmp_path):
     assert args.auth_token == "rbac-secret"
     metadata = getattr(args, "_core_config_metadata")
     metrics_meta = metadata["metrics_service"]
+    assert metrics_meta["enabled"] is True
     assert metrics_meta["rbac_tokens"] == 1
     assert metrics_meta["auth_token_source"] == "rbac_token"
     assert metrics_meta["auth_token_scope_required"] == "metrics.read"
@@ -1176,6 +1730,65 @@ def test_apply_core_config_defaults_records_risk_rbac_token(monkeypatch, tmp_pat
     assert risk_meta["auth_token_scope_match"] is True
     assert risk_meta["auth_token_token_id"] == "risk-reader"
     assert risk_meta["auth_token_scopes"] == ["risk.read"]
+
+
+def test_apply_core_config_defaults_records_offline_environments(tmp_path):
+    profiles_path = _write_risk_profile_file(tmp_path)
+    config_path = _write_core_config(
+        tmp_path,
+        profiles_path=profiles_path,
+        offline_environments=("paper_offline", "audit_only"),
+    )
+
+    parser = watch_metrics_module.build_arg_parser()
+    args = parser.parse_args(["--core-config", str(config_path)])
+    provided = {"--core-config"}
+
+    watch_metrics_module._apply_core_config_defaults(
+        args,
+        parser=parser,
+        provided_flags=provided,
+    )
+
+    metadata = getattr(args, "_core_config_metadata")
+    offline_meta = metadata.get("offline_environments")
+    assert offline_meta == ["audit_only", "paper_offline"]
+    assert getattr(args, "_offline_environments") == ("audit_only", "paper_offline")
+    metrics_meta = metadata["metrics_service"]
+    assert metrics_meta["enabled"] is True
+
+
+def test_watch_metrics_stream_metrics_disabled_requires_artifact(tmp_path, capsys, caplog):
+    profiles_path = _write_risk_profile_file(tmp_path)
+    config_path = _write_core_config(
+        tmp_path,
+        profiles_path=profiles_path,
+        metrics_enabled=False,
+        offline_environments=("paper_offline",),
+    )
+
+    parser = watch_metrics_module.build_arg_parser()
+    args = parser.parse_args(["--core-config", str(config_path)])
+    provided = {"--core-config"}
+    watch_metrics_module._apply_core_config_defaults(
+        args,
+        parser=parser,
+        provided_flags=provided,
+    )
+
+    metadata = getattr(args, "_core_config_metadata")
+    metrics_meta = metadata["metrics_service"]
+    assert metrics_meta["enabled"] is False
+    assert getattr(args, "_metrics_service_enabled") is False
+
+    caplog.set_level(logging.ERROR, logger="bot_core.scripts.watch_metrics_stream")
+
+    exit_code = watch_metrics_main(["--core-config", str(config_path)])
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert captured.err == ""
+    assert "MetricsService jest wyłączony" in caplog.text
+    assert "paper_offline" in caplog.text
 
 
 def test_watch_metrics_stream_signed_summary(tmp_path, capsys):
