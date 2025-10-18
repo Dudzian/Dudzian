@@ -986,6 +986,26 @@ class RuntimeEntrypointConfig:
 
 
 @dataclass(slots=True)
+class LicenseValidationConfig:
+    """Ścieżki i artefakty wymagane do weryfikacji licencji OEM."""
+
+    license_path: str = "var/licenses/active/license.json"
+    fingerprint_path: str | None = "var/licenses/active/fingerprint.json"
+    license_keys_path: str | None = None
+    fingerprint_keys_path: str | None = None
+    allowed_profiles: tuple[str, ...] = ()
+    allowed_issuers: tuple[str, ...] = ()
+    max_validity_days: float | None = None
+    required_schema: str | None = "core.oem.license"
+    allowed_schema_versions: tuple[str, ...] = ("1.0",)
+    revocation_list_path: str | None = None
+    revocation_required: bool = False
+    revocation_list_max_age_hours: float | None = None
+    revocation_keys_path: str | None = None
+    revocation_signature_required: bool = False
+
+
+@dataclass(slots=True)
 class CoreConfig:
     """Najwyższego poziomu konfiguracja aplikacji."""
     environments: Mapping[str, EnvironmentConfig]
@@ -1027,6 +1047,7 @@ class CoreConfig:
     observability: ObservabilityConfig | None = None
     runtime_resource_limits: RuntimeResourceLimitsConfig | None = None
     market_intel: MarketIntelConfig | None = None
+    license: LicenseValidationConfig | None = None
     source_path: str | None = None
     source_directory: str | None = None
 
@@ -1072,6 +1093,7 @@ __all__ = [
     "PaperSmokeJsonSyncConfig",
     "CoreReportingConfig",
     "RuntimeEntrypointConfig",
+    "LicenseValidationConfig",
     "CoreConfig",
     "AlertThrottleConfig",
     "ServiceTokenConfig",

@@ -82,6 +82,22 @@ permission_profiles:
     required_permissions: [read]
     forbidden_permissions: []
 
+license:
+  license_path: var/licenses/active/license.json
+  fingerprint_path: var/licenses/active/fingerprint.json
+  license_keys_path: secrets/license_keys.json
+  fingerprint_keys_path: secrets/fingerprint_keys.json
+  allowed_profiles: [paper, trading_gui]
+  allowed_issuers: [qa, security]
+  max_validity_days: 1095
+  required_schema: core.oem.license
+  allowed_schema_versions: ["1.0"]
+  revocation_list_path: var/licenses/active/revocations.json
+  revocation_required: true
+  revocation_list_max_age_hours: 12
+  revocation_keys_path: secrets/revocation_keys.json
+  revocation_signature_required: true
+
 runtime_entrypoints:
   auto_trader:
     environment: binance_paper
