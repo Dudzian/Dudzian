@@ -1,13 +1,14 @@
 #pragma once
 
 #include <QObject>
-#include <QFileSystemWatcher>
-#include <QTimer>
+#include <QString>
 #include <QStringList>
+#include <QVariantList>
 
-class ReportCenterController : public QObject
-{
+class ReportCenterController : public QObject {
     Q_OBJECT
+    Q_PROPERTY(QVariantList reports READ reports NOTIFY reportsChanged)
+    Q_PROPERTY(bool busy READ isBusy NOTIFY busyChanged)
 
 public:
     explicit ReportCenterController(QObject* parent = nullptr);

@@ -22,6 +22,7 @@
 #include "license/LicenseActivationController.hpp"
 #include "app/ActivationController.hpp"
 #include "security/SecurityAdminController.hpp"
+#include "reporting/ReportCenterController.hpp"
 
 Q_LOGGING_CATEGORY(lcAppMetrics, "bot.shell.app.metrics")
 
@@ -111,6 +112,9 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
     m_securityController->setProfilesPath(QDir::current().absoluteFilePath(QStringLiteral("config/user_profiles.json")));
     m_securityController->setLicensePath(defaultLicensePath);
     m_securityController->setLogPath(QDir::current().absoluteFilePath(QStringLiteral("logs/security_admin.log")));
+
+    m_reportController = std::make_unique<ReportCenterController>(this);
+    m_reportController->setReportsRoot(QDir::current().absoluteFilePath(QStringLiteral("var/reports")));
 
     exposeToQml();
 
@@ -432,6 +436,7 @@ void Application::exposeToQml() {
     m_engine.rootContext()->setContextProperty(QStringLiteral("licenseController"), m_licenseController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("activationController"), m_activationController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("securityController"), m_securityController.get());
+    m_engine.rootContext()->setContextProperty(QStringLiteral("reportController"), m_reportController.get());
 }
 
 QObject* Application::activationController() const
