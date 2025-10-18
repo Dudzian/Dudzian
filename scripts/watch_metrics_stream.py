@@ -46,6 +46,27 @@ Przykłady użycia::
     # Analiza artefaktu skompresowanego gzipem
     python -m scripts.watch_metrics_stream --from-jsonl artifacts/metrics.jsonl.gz --summary
 
+    # Analiza artefaktu skompresowanego XZ lub BZ2
+    python -m scripts.watch_metrics_stream --from-jsonl artifacts/metrics.jsonl.xz --summary
+
+    # Analiza artefaktu spakowanego do archiwum ZIP
+    python -m scripts.watch_metrics_stream --from-jsonl artifacts/metrics_bundle.zip --summary
+
+    # Analiza artefaktu spakowanego do archiwum TAR (np. .tar.gz)
+    python -m scripts.watch_metrics_stream --from-jsonl artifacts/metrics_bundle.tar.gz --summary
+
+    # Analiza katalogu z segmentami JSONL i skompresowanymi artefaktami
+    python -m scripts.watch_metrics_stream --from-jsonl artifacts/metrics_segments/ --summary
+
+    # Analiza wielu artefaktów pasujących do wzorca glob
+    python -m scripts.watch_metrics_stream --from-jsonl "artifacts/metrics_*/*.jsonl*" --summary
+
+    # Analiza manifestu z listą artefaktów JSONL i wzorcami glob
+    python -m scripts.watch_metrics_stream --from-jsonl @manifest:artifacts/segments.txt --summary
+
+    # Analiza kilku artefaktów JSONL bez manifestu
+    python -m scripts.watch_metrics_stream --from-jsonl a.jsonl --from-jsonl b.jsonl --summary
+
     # Wczytaj snapshoty z STDIN (np. po rozpakowaniu artefaktu w potoku)
     zcat artifacts/metrics.jsonl.gz | python -m scripts.watch_metrics_stream --from-jsonl -
 
@@ -78,6 +99,9 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
+import bz2
+import io
+import glob
 from collections import OrderedDict, defaultdict
 from contextlib import nullcontext
 from datetime import datetime, timezone
@@ -86,11 +110,15 @@ import gzip
 import hmac
 import json
 import logging
+import lzma
 import os
 import re
 import sys
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
+import zipfile
+import tarfile
+from types import MethodType
 
 MetadataValue = str | bytes
 
@@ -182,6 +210,39 @@ def _looks_like_sensitive_metadata_key(key: str) -> bool:
 
 
 _METADATA_CLEAR_SENTINELS = {"none", "null"}
+
+_JSONL_TEXT_SUFFIXES = (".jsonl", ".json")
+_JSONL_COMPRESSION_SUFFIXES = {
+    ".gz",
+    ".gzip",
+    ".xz",
+    ".lzma",
+    ".bz2",
+    ".bzip2",
+}
+_JSONL_ZIP_SUFFIXES = {".zip"}
+_JSONL_TAR_SUFFIXES = {
+    ".tar",
+    ".tar.gz",
+    ".tar.xz",
+    ".tar.lzma",
+    ".tar.bz2",
+    ".tgz",
+    ".tbz",
+    ".tbz2",
+    ".txz",
+    ".tlz",
+}
+_JSONL_DIRECTORY_SUFFIXES = {
+    *_JSONL_TEXT_SUFFIXES,
+    *{
+        text_suffix + compression
+        for text_suffix in _JSONL_TEXT_SUFFIXES
+        for compression in _JSONL_COMPRESSION_SUFFIXES
+    },
+    *_JSONL_ZIP_SUFFIXES,
+    *_JSONL_TAR_SUFFIXES,
+}
 
 
 def _split_header_entries(raw_value: str) -> list[str]:
@@ -833,59 +894,402 @@ class _OfflineSnapshot:
         return False
 
 
-def _iter_jsonl_snapshots(source: str) -> Iterable[_OfflineSnapshot]:
-    source_label = "stdin" if source == "-" else str(Path(source).expanduser())
+class _JsonlDecompressionError(RuntimeError):
+    """Błąd podczas dekompresji artefaktu JSONL."""
 
-    handle = None
-    close_handle = False
-    if source == "-":
-        handle = sys.stdin
+
+class _JsonlManifestError(RuntimeError):
+    """Błąd podczas wczytywania manifestu artefaktów JSONL."""
+
+
+def _normalize_manifest_entry(entry: str, base_dir: Path) -> str:
+    path_candidate = Path(entry).expanduser()
+    if not path_candidate.is_absolute():
+        path_candidate = base_dir / path_candidate
+    return str(path_candidate)
+
+
+def _load_jsonl_manifest_entries(path: Path) -> list[str]:
+    try:
+        content = path.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        raise _JsonlManifestError(f"Nie znaleziono manifestu JSONL: {path}") from exc
+    except OSError as exc:  # pragma: no cover - zależne od platformy
+        raise _JsonlManifestError(f"Nie można odczytać manifestu JSONL {path}: {exc}") from exc
+
+    stripped = content.strip()
+    if not stripped:
+        raise _JsonlManifestError(f"Manifest JSONL {path} nie zawiera ścieżek JSONL.")
+
+    base_dir = path.parent
+
+    entries: list[str] = []
+    try:
+        parsed = json.loads(content)
+    except json.JSONDecodeError:
+        parsed = None
+    if isinstance(parsed, list):
+        for index, item in enumerate(parsed):
+            if not isinstance(item, str):
+                raise _JsonlManifestError(
+                    f"Manifest JSONL {path} zawiera nieobsługiwany wpis pod indeksem {index} "
+                    "(oczekiwano łańcucha znaków)."
+                )
+            normalized = item.strip()
+            if normalized:
+                entries.append(_normalize_manifest_entry(normalized, base_dir))
+        if not entries:
+            raise _JsonlManifestError(
+                f"Manifest JSONL {path} nie zawiera ścieżek JSONL."
+            )
+        return entries
+
+    for line in content.splitlines():
+        stripped_line = line.strip()
+        if not stripped_line or stripped_line.startswith("#"):
+            continue
+        entries.append(_normalize_manifest_entry(stripped_line, base_dir))
+
+    if not entries:
+        raise _JsonlManifestError(f"Manifest JSONL {path} nie zawiera ścieżek JSONL.")
+
+    return entries
+
+
+def _split_jsonl_source_entries(raw_value: str) -> list[str]:
+    """Zwraca listę wpisów --from-jsonl na podstawie łańcucha wejściowego."""
+
+    if not raw_value:
+        return []
+    if "\n" in raw_value or "\r" in raw_value:
+        normalized = raw_value.replace("\r\n", "\n").split("\n")
     else:
-        path = Path(source).expanduser()
-        try:
-            if path.suffix.lower() in {".gz", ".gzip"}:
-                handle = gzip.open(path, "rt", encoding="utf-8")
-            else:
-                handle = path.open("r", encoding="utf-8")
-        except FileNotFoundError as exc:
-            LOGGER.error("Nie znaleziono pliku JSONL: %s", path)
-            raise SystemExit(2) from exc
-        except gzip.BadGzipFile as exc:
-            LOGGER.error("Nie udało się zdekompresować pliku JSONL %s: %s", path, exc)
-            raise SystemExit(2) from exc
-        except OSError as exc:  # pragma: no cover - zależne od platformy
-            LOGGER.error("Nie udało się odczytać pliku JSONL %s: %s", path, exc)
-            raise SystemExit(2) from exc
-        close_handle = True
+        normalized = [raw_value]
+    entries: list[str] = []
+    for chunk in normalized:
+        candidate = chunk.strip()
+        if candidate:
+            entries.append(candidate)
+    return entries
 
-    assert handle is not None  # dla mypy
+
+def _coerce_jsonl_sources(value: object) -> list[str]:
+    """Normalizuje wartość --from-jsonl do listy źródeł w kolejności wystąpień."""
+
+    if value is None:
+        return []
+    sources: list[str] = []
+    if isinstance(value, str):
+        sources.extend(_split_jsonl_source_entries(value))
+    else:
+        for entry in value:  # type: ignore[assignment]
+            if isinstance(entry, str):
+                sources.extend(_split_jsonl_source_entries(entry))
+    normalized: list[str] = []
+    for candidate in sources:
+        trimmed = candidate.strip()
+        if trimmed:
+            normalized.append(trimmed)
+    return normalized
+
+
+def _describe_jsonl_source(source: str) -> str:
+    """Zwraca etykietę źródła JSONL dla logów i metadanych."""
+
+    if source == "-":
+        return "stdin"
+    if source.startswith("@@"):
+        source = source[1:]
+    if source.startswith("@"):
+        directive, separator, remainder = source[1:].partition(":")
+        if separator:
+            directive_lower = directive.lower()
+            if directive_lower in {"manifest", "list"}:
+                manifest_path = Path(remainder.strip()).expanduser()
+                return f"@{directive_lower}:{manifest_path}"
+        return source
+    return str(Path(source).expanduser())
+
+
+def _open_zip_jsonl_handle(path: Path):
+    try:
+        archive = zipfile.ZipFile(path, "r")
+    except FileNotFoundError:
+        raise
+    except zipfile.BadZipFile as exc:
+        raise _JsonlDecompressionError(str(exc)) from exc
 
     try:
-        for line_number, line in enumerate(handle, start=1):
-            stripped = line.strip()
-            if not stripped:
-                continue
+        candidates = [
+            info
+            for info in archive.infolist()
+            if not info.is_dir()
+            and info.filename.lower().endswith((".jsonl", ".json"))
+        ]
+        if not candidates:
+            raise _JsonlDecompressionError(
+                "Archiwum ZIP nie zawiera plików JSON ani JSONL"
+            )
+        selected = sorted(
+            candidates,
+            key=lambda info: (
+                0 if info.filename.lower().endswith(".jsonl") else 1,
+                info.filename.lower(),
+            ),
+        )[0]
+        raw_handle = archive.open(selected, "r")
+        text_handle = io.TextIOWrapper(raw_handle, encoding="utf-8")
+
+        original_close = text_handle.close
+
+        def _close_wrapper(self):
             try:
-                record = json.loads(stripped)
-            except json.JSONDecodeError as exc:
-                LOGGER.warning(
-                    "Pominięto wiersz %s w %s – niepoprawny JSON: %s",
-                    line_number,
-                    source_label,
-                    exc,
+                original_close()
+            finally:
+                try:
+                    archive.close()
+                except Exception:  # pragma: no cover - defensywne zamykanie
+                    pass
+
+        text_handle.close = MethodType(_close_wrapper, text_handle)
+        return text_handle
+    except Exception:
+        archive.close()
+        raise
+
+
+def _open_tar_jsonl_handle(path: Path):
+    try:
+        archive = tarfile.open(path, "r:*")
+    except FileNotFoundError:
+        raise
+    except tarfile.TarError as exc:
+        raise _JsonlDecompressionError(str(exc)) from exc
+
+    try:
+        candidates = [
+            member
+            for member in archive.getmembers()
+            if member.isfile()
+            and member.name.lower().endswith((".jsonl", ".json"))
+        ]
+        if not candidates:
+            raise _JsonlDecompressionError(
+                "Archiwum TAR nie zawiera plików JSON ani JSONL"
+            )
+        selected = sorted(
+            candidates,
+            key=lambda member: (
+                0 if member.name.lower().endswith(".jsonl") else 1,
+                member.name.lower(),
+            ),
+        )[0]
+        raw_handle = archive.extractfile(selected)
+        if raw_handle is None:
+            raise _JsonlDecompressionError(
+                f"Nie można odczytać {selected.name} z archiwum TAR"
+            )
+        text_handle = io.TextIOWrapper(raw_handle, encoding="utf-8")
+
+        original_close = text_handle.close
+
+        def _close_wrapper(self):
+            try:
+                original_close()
+            finally:
+                try:
+                    archive.close()
+                except Exception:  # pragma: no cover - defensywne zamykanie
+                    pass
+
+        text_handle.close = MethodType(_close_wrapper, text_handle)
+        return text_handle
+    except Exception:
+        archive.close()
+        raise
+
+
+def _open_jsonl_text_handle(path: Path):
+    suffix = path.suffix.lower()
+    suffixes = [part.lower() for part in path.suffixes]
+    name = path.name.lower()
+
+    try:
+        if any(name.endswith(entry) for entry in _JSONL_TAR_SUFFIXES):
+            return _open_tar_jsonl_handle(path)
+        if (
+            len(suffixes) >= 2
+            and suffixes[-2] == ".tar"
+            and suffixes[-1] in _JSONL_COMPRESSION_SUFFIXES
+            and suffixes[-1] != ""
+        ):
+            return _open_tar_jsonl_handle(path)
+        if suffix in {".gz", ".gzip"}:
+            return gzip.open(path, "rt", encoding="utf-8")
+        if suffix in {".xz", ".lzma"}:
+            return lzma.open(path, "rt", encoding="utf-8")
+        if suffix in {".bz2", ".bzip2"}:
+            return bz2.open(path, "rt", encoding="utf-8")
+        if suffix in _JSONL_ZIP_SUFFIXES:
+            return _open_zip_jsonl_handle(path)
+        return path.open("r", encoding="utf-8")
+    except FileNotFoundError:
+        raise
+    except gzip.BadGzipFile as exc:
+        raise _JsonlDecompressionError(str(exc)) from exc
+    except lzma.LZMAError as exc:
+        raise _JsonlDecompressionError(str(exc)) from exc
+    except zipfile.BadZipFile as exc:
+        raise _JsonlDecompressionError(str(exc)) from exc
+    except tarfile.TarError as exc:
+        raise _JsonlDecompressionError(str(exc)) from exc
+    except OSError as exc:
+        if suffix in _JSONL_COMPRESSION_SUFFIXES or any(
+            name.endswith(entry) for entry in _JSONL_TAR_SUFFIXES
+        ):
+            raise _JsonlDecompressionError(str(exc)) from exc
+        raise
+
+
+def _looks_like_glob_pattern(text: str) -> bool:
+    return any(char in text for char in ("*", "?", "["))
+
+
+def _resolve_glob_paths(pattern: str) -> list[Path]:
+    matches = sorted(Path(candidate) for candidate in glob.glob(pattern, recursive=True))
+    # glob może zwracać duplikaty dla aliasów ścieżek – usuwamy je zachowując kolejność
+    unique: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in matches:
+        if candidate in seen:
+            continue
+        unique.append(candidate)
+        seen.add(candidate)
+    return unique
+
+
+def _list_directory_jsonl_artifacts(path: Path) -> list[Path]:
+    artifacts: list[Path] = []
+    for entry in path.iterdir():
+        if not entry.is_file():
+            continue
+        lowered = entry.name.lower()
+        if any(lowered.endswith(suffix) for suffix in _JSONL_DIRECTORY_SUFFIXES):
+            artifacts.append(entry)
+    artifacts.sort(key=lambda candidate: candidate.name.lower())
+    return artifacts
+
+
+def _iter_snapshots_from_text_handle(handle: Iterable[str], source_label: str):
+    for line_number, line in enumerate(handle, start=1):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            record = json.loads(stripped)
+        except json.JSONDecodeError as exc:
+            LOGGER.warning(
+                "Pominięto wiersz %s w %s – niepoprawny JSON: %s",
+                line_number,
+                source_label,
+                exc,
+            )
+            continue
+        if not isinstance(record, Mapping):
+            LOGGER.warning(
+                "Pominięto wiersz %s w %s – oczekiwano obiektu JSON.",
+                line_number,
+                source_label,
+            )
+            continue
+        yield _OfflineSnapshot(record)
+
+
+def _iter_jsonl_snapshots(source: str) -> Iterable[_OfflineSnapshot]:
+    if source.startswith("@@"):
+        source = source[1:]
+    elif source.startswith("@"):
+        directive, separator, remainder = source[1:].partition(":")
+        if separator:
+            directive_lower = directive.lower()
+            if directive_lower in {"manifest", "list"}:
+                manifest_spec = remainder.strip()
+                if not manifest_spec:
+                    LOGGER.error(
+                        "Dyrektywa @%s wymaga ścieżki do manifestu JSONL.",
+                        directive_lower,
+                    )
+                    raise SystemExit(2)
+                manifest_path = Path(manifest_spec).expanduser()
+                try:
+                    manifest_entries = _load_jsonl_manifest_entries(manifest_path)
+                except _JsonlManifestError as exc:
+                    LOGGER.error(str(exc))
+                    raise SystemExit(2) from exc
+                for entry in manifest_entries:
+                    yield from _iter_jsonl_snapshots(entry)
+                return
+    if source == "-":
+        yield from _iter_snapshots_from_text_handle(sys.stdin, "stdin")
+        return
+
+    path = Path(source).expanduser()
+
+    if not path.exists():
+        pattern = str(path)
+        if _looks_like_glob_pattern(pattern):
+            matches = _resolve_glob_paths(pattern)
+            if not matches:
+                LOGGER.error("Wzorzec %s nie pasuje do żadnych artefaktów JSONL.", pattern)
+                raise SystemExit(2)
+            for match in matches:
+                yield from _iter_jsonl_snapshots(str(match))
+            return
+
+    if path.is_dir():
+        artifacts = _list_directory_jsonl_artifacts(path)
+        if not artifacts:
+            LOGGER.error(
+                "Katalog %s nie zawiera obsługiwanych artefaktów JSONL ani archiwów.",
+                path,
+            )
+            raise SystemExit(2)
+        for artifact in artifacts:
+            try:
+                handle = _open_jsonl_text_handle(artifact)
+            except FileNotFoundError as exc:  # pragma: no cover - warunek wyścigu
+                LOGGER.error("Nie znaleziono pliku JSONL: %s", artifact)
+                raise SystemExit(2) from exc
+            except _JsonlDecompressionError as exc:
+                LOGGER.error(
+                    "Nie udało się zdekompresować pliku JSONL %s: %s", artifact, exc
                 )
-                continue
-            if not isinstance(record, Mapping):
-                LOGGER.warning(
-                    "Pominięto wiersz %s w %s – oczekiwano obiektu JSON.",
-                    line_number,
-                    source_label,
-                )
-                continue
-            yield _OfflineSnapshot(record)
+                raise SystemExit(2) from exc
+            except OSError as exc:  # pragma: no cover - zależne od platformy
+                LOGGER.error("Nie udało się odczytać pliku JSONL %s: %s", artifact, exc)
+                raise SystemExit(2) from exc
+            try:
+                yield from _iter_snapshots_from_text_handle(handle, str(artifact))
+            finally:
+                handle.close()
+        return
+
+    try:
+        handle = _open_jsonl_text_handle(path)
+    except FileNotFoundError as exc:
+        LOGGER.error("Nie znaleziono pliku JSONL: %s", path)
+        raise SystemExit(2) from exc
+    except _JsonlDecompressionError as exc:
+        LOGGER.error("Nie udało się zdekompresować pliku JSONL %s: %s", path, exc)
+        raise SystemExit(2) from exc
+    except OSError as exc:  # pragma: no cover - zależne od platformy
+        LOGGER.error("Nie udało się odczytać pliku JSONL %s: %s", path, exc)
+        raise SystemExit(2) from exc
+
+    try:
+        yield from _iter_snapshots_from_text_handle(handle, str(path))
     finally:
-        if close_handle and handle is not None:
-            handle.close()
+        handle.close()
 
 
 class _SummaryCollector:
@@ -1248,12 +1652,18 @@ def _decision_log_metadata_offline(
     since_iso: str | None,
     until_iso: str | None,
     signing_info: Mapping[str, Any] | None,
+    sources: Sequence[str],
 ) -> dict[str, Any]:
-    input_location = "stdin" if args.from_jsonl == "-" else str(Path(args.from_jsonl).expanduser())
-    metadata: dict[str, Any] = {
-        "mode": "jsonl",
-        "input_file": input_location,
-    }
+    resolved_sources = [_describe_jsonl_source(source) for source in sources]
+    metadata: dict[str, Any] = {"mode": "jsonl"}
+    if not resolved_sources:
+        metadata["input_file"] = None
+    elif len(resolved_sources) == 1:
+        metadata["input_file"] = resolved_sources[0]
+    else:
+        metadata["input_file"] = resolved_sources[0]
+        metadata["input_files"] = resolved_sources
+    metadata["input_sources"] = list(sources)
     filters = _decision_log_filters(
         args,
         severity_filters,
@@ -1757,7 +2167,23 @@ def _apply_core_config_defaults(
         parser.error(f"Nie udało się wczytać konfiguracji {target}: {exc}")
 
     metadata: dict[str, Any] = {"path": str(target)}
+
+    offline_environments: list[str] = []
+    env_mapping = getattr(core_config, "environments", None)
+    if isinstance(env_mapping, Mapping):
+        for name, env_cfg in env_mapping.items():
+            try:
+                if getattr(env_cfg, "offline_mode", False):
+                    offline_environments.append(str(name))
+            except Exception:  # pragma: no cover - defensywnie wobec nietypowych modeli
+                continue
+    offline_environments = sorted(set(offline_environments))
+    args._offline_environments = tuple(offline_environments)
+    if offline_environments:
+        metadata["offline_environments"] = offline_environments
+
     metrics_config = getattr(core_config, "metrics_service", None)
+    args._metrics_service_enabled = None
     if metrics_config is None:
         metadata["warning"] = "metrics_service_missing"
         args._core_config_metadata = metadata
@@ -1773,6 +2199,10 @@ def _apply_core_config_defaults(
     }
     metrics_meta["auth_token_scope_required"] = _REQUIRED_METRICS_SCOPE
     metrics_meta["auth_token_scope_checked"] = False
+
+    metrics_enabled = bool(getattr(metrics_config, "enabled", True))
+    args._metrics_service_enabled = metrics_enabled
+    metrics_meta["enabled"] = metrics_enabled
 
     rbac_tokens = tuple(getattr(metrics_config, "rbac_tokens", ()) or ())
     if rbac_tokens:
@@ -2459,10 +2889,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--server-sha256", default=None, help="Oczekiwany odcisk SHA-256 certyfikatu serwera (pinning)")
     parser.add_argument(
         "--from-jsonl",
+        dest="from_jsonl",
+        action="append",
         default=None,
+        metavar="ŚCIEŻKA",
         help=(
             "Odczytaj snapshoty z pliku JSONL (np. artefakt CI) zamiast łączyć się z serwerem. "
-            "Flagi TLS i autoryzacji są ignorowane w tym trybie."
+            "Obsługiwane są katalogi, archiwa (ZIP/TAR), wzorce glob oraz manifesty "
+            "(@manifest:path, @list:path). Flagi TLS i autoryzacji są ignorowane w tym trybie. "
+            "Można podać wielokrotnie, aby scalić wiele artefaktów bez manifestu."
         ),
     )
     parser.add_argument(
@@ -2854,15 +3289,19 @@ def main(argv: list[str] | None = None) -> int:
         else nullcontext()
     )
 
+    from_jsonl_sources = _coerce_jsonl_sources(getattr(args, "from_jsonl", None))
+    if from_jsonl_sources:
+        args._from_jsonl_sources = tuple(from_jsonl_sources)
+
     with decision_context as decision_logger:
-        if args.from_jsonl:
+        if from_jsonl_sources:
             if args.use_tls or any(tls_args):
                 LOGGER.warning("Ignoruję ustawienia TLS w trybie odczytu z pliku JSONL")
             if auth_token:
                 LOGGER.warning("Ignoruję token autoryzacyjny w trybie odczytu z pliku JSONL")
 
-            count = 0
-            source_label = "stdin" if args.from_jsonl == "-" else str(Path(args.from_jsonl).expanduser())
+            total_count = 0
+            printed_anything = False
             if decision_logger:
                 decision_logger.write_metadata(
                     _decision_log_metadata_offline(
@@ -2874,45 +3313,62 @@ def main(argv: list[str] | None = None) -> int:
                         since_iso=since_iso,
                         until_iso=until_iso,
                         signing_info=decision_log_signing_info,
+                        sources=from_jsonl_sources,
                     )
                 )
-            for snapshot in _iter_jsonl_snapshots(args.from_jsonl):
-                if not _matches_time_filters(snapshot, since=since_dt, until=until_dt):
-                    continue
-                notes_payload = _parse_notes(snapshot.notes)
-                if args.event and notes_payload.get("event") != args.event:
-                    continue
-                if not _matches_severity_filter(
-                    notes_payload,
-                    severities=severity_filters,
-                    severity_min=severity_min,
-                ):
-                    continue
-                if not _matches_screen_filters(
-                    notes_payload,
-                    screen_index=args.screen_index,
-                    screen_name=args.screen_name,
-                ):
-                    continue
-                print(
-                    _format_snapshot(
-                        snapshot,
-                        fmt=args.format,
-                        notes_payload=notes_payload,
+            limit_reached = False
+            for source in from_jsonl_sources:
+                source_label = _describe_jsonl_source(source)
+                matched_in_source = False
+                for snapshot in _iter_jsonl_snapshots(source):
+                    if not _matches_time_filters(snapshot, since=since_dt, until=until_dt):
+                        continue
+                    notes_payload = _parse_notes(snapshot.notes)
+                    if args.event and notes_payload.get("event") != args.event:
+                        continue
+                    if not _matches_severity_filter(
+                        notes_payload,
+                        severities=severity_filters,
+                        severity_min=severity_min,
+                    ):
+                        continue
+                    if not _matches_screen_filters(
+                        notes_payload,
+                        screen_index=args.screen_index,
+                        screen_name=args.screen_name,
+                    ):
+                        continue
+                    print(
+                        _format_snapshot(
+                            snapshot,
+                            fmt=args.format,
+                            notes_payload=notes_payload,
+                        )
                     )
-                )
-                if summary_collector:
-                    summary_collector.add(snapshot, notes_payload)
-                if decision_logger:
-                    decision_logger.record(snapshot, notes_payload, source="jsonl")
-                count += 1
-                if args.limit is not None and count >= args.limit:
+                    printed_anything = True
+                    matched_in_source = True
+                    if summary_collector:
+                        summary_collector.add(snapshot, notes_payload)
+                    if decision_logger:
+                        decision_logger.record(snapshot, notes_payload, source="jsonl")
+                    total_count += 1
+                    if args.limit is not None and total_count >= args.limit:
+                        limit_reached = True
+                        break
+                if not matched_in_source:
+                    LOGGER.warning(
+                        "Nie znaleziono snapshotów w źródle %s spełniających filtry",
+                        source_label,
+                    )
+                if limit_reached:
                     break
 
-            if count == 0:
-                LOGGER.warning("Nie znaleziono snapshotów w źródle %s spełniających filtry", source_label)
+            if total_count == 0:
+                LOGGER.warning(
+                    "Nie znaleziono snapshotów w żadnym źródle JSONL spełniających filtry"
+                )
             if summary_collector:
-                if args.summary and count:
+                if args.summary and printed_anything:
                     print()
                 _emit_summary(
                     summary_collector,
@@ -2925,6 +3381,20 @@ def main(argv: list[str] | None = None) -> int:
                     core_metadata=core_metadata,
                 )
             return 0
+
+        metrics_enabled_flag = getattr(args, "_metrics_service_enabled", True)
+        if metrics_enabled_flag is False:
+            offline_names = getattr(args, "_offline_environments", ())
+            if offline_names:
+                LOGGER.error(
+                    "MetricsService jest wyłączony w core.yaml; środowiska offline (%s) wymagają analizy artefaktów JSONL (--from-jsonl).",
+                    ", ".join(sorted(set(offline_names))),
+                )
+            else:
+                LOGGER.error(
+                    "MetricsService jest wyłączony w core.yaml – aby przeanalizować telemetrię, podaj artefakt JSONL (--from-jsonl)."
+                )
+            return 2
 
         if not args.use_tls and any(tls_args):
             parser.error("Flagi TLS wymagają ustawienia --use-tls")

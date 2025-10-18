@@ -109,6 +109,7 @@ def validate_core_config(config: CoreConfig) -> ConfigValidationResult:
     _validate_portfolio_decision_log(config, errors, warnings)
     _validate_security_baseline(config, errors, warnings)
     _validate_resource_limits(config, errors, warnings)
+    _validate_decision_engine(config, errors, warnings)
 
     return ConfigValidationResult(errors=errors, warnings=warnings)
 
@@ -1299,4 +1300,40 @@ def _validate_resource_limits(
     if not 0 < limits.headroom_warning_threshold < 1:
         warnings.append(
             f"{context}: headroom_warning_threshold powinien mieścić się w przedziale (0,1)"
+        )
+
+
+def _validate_decision_engine(
+    config: CoreConfig, errors: list[str], warnings: list[str]
+) -> None:
+    decision_config = getattr(config, "decision_engine", None)
+    if decision_config is None:
+        return
+
+    tco_config = getattr(decision_config, "tco", None)
+    if tco_config is None:
+        return
+
+    report_paths = getattr(tco_config, "report_paths", ())
+    if not report_paths:
+        errors.append("decision_engine.tco: lista raportów nie może być pusta")
+
+    warn_age = getattr(tco_config, "warn_report_age_hours", None)
+    max_age = getattr(tco_config, "max_report_age_hours", None)
+
+    if warn_age is not None and warn_age <= 0:
+        errors.append(
+            "decision_engine.tco.warn_report_age_hours musi być dodatnie, jeśli jest ustawione"
+        )
+    if max_age is not None and max_age <= 0:
+        errors.append(
+            "decision_engine.tco.max_report_age_hours musi być dodatnie, jeśli jest ustawione"
+        )
+    if (
+        warn_age is not None
+        and max_age is not None
+        and warn_age > max_age
+    ):
+        errors.append(
+            "decision_engine.tco.warn_report_age_hours nie może przekraczać max_report_age_hours"
         )

@@ -732,11 +732,24 @@ try:  # pragma: no cover - środowiska testowe mogą nie mieć pełnego runtime
         ResourceSample,
         evaluate_resource_sample,
     )
+except Exception:  # pragma: no cover - brak monitoringu zasobów w tej dystrybucji
+    ResourceBudgetEvaluation = None  # type: ignore
+    ResourceBudgets = None  # type: ignore
+    ResourceSample = None  # type: ignore
+    evaluate_resource_sample = None  # type: ignore
+
+try:  # pragma: no cover - testy mogą działać bez modułu load testu
     from bot_core.runtime.scheduler_load_test import (
         LoadTestResult,
         LoadTestSettings,
         execute_scheduler_load_test,
     )
+except Exception:  # pragma: no cover - brak modułu load testu
+    LoadTestResult = None  # type: ignore
+    LoadTestSettings = None  # type: ignore
+    execute_scheduler_load_test = None  # type: ignore
+
+try:  # pragma: no cover - zależne od gałęzi
     from bot_core.runtime.stage5_hypercare import (
         Stage5ComplianceConfig,
         Stage5HypercareConfig,
@@ -750,30 +763,7 @@ try:  # pragma: no cover - środowiska testowe mogą nie mieć pełnego runtime
         Stage5TrainingConfig,
         verify_stage5_hypercare_summary,
     )
-    from bot_core.runtime.full_hypercare import (
-        FullHypercareSummaryBuilder,
-        FullHypercareSummaryConfig,
-        FullHypercareSummaryResult,
-        FullHypercareVerificationResult,
-        verify_full_hypercare_summary,
-    )
-    from bot_core.runtime.stage6_hypercare import (
-        Stage6HypercareConfig,
-        Stage6HypercareCycle,
-        Stage6HypercareResult,
-        Stage6HypercareVerificationResult,
-        verify_stage6_hypercare_summary,
-    )
-except Exception:  # pragma: no cover - fallback gdy zależności runtime są niekompletne
-    BootstrapContext = None  # type: ignore
-    bootstrap_environment = None  # type: ignore
-    ResourceBudgetEvaluation = None  # type: ignore
-    ResourceBudgets = None  # type: ignore
-    ResourceSample = None  # type: ignore
-    evaluate_resource_sample = None  # type: ignore
-    LoadTestResult = None  # type: ignore
-    LoadTestSettings = None  # type: ignore
-    execute_scheduler_load_test = None  # type: ignore
+except Exception:  # pragma: no cover - brak modułu stage5 w tej dystrybucji
     Stage5ComplianceConfig = None  # type: ignore
     Stage5HypercareConfig = None  # type: ignore
     Stage5HypercareCycle = None  # type: ignore
@@ -785,11 +775,31 @@ except Exception:  # pragma: no cover - fallback gdy zależności runtime są ni
     Stage5TcoConfig = None  # type: ignore
     Stage5TrainingConfig = None  # type: ignore
     verify_stage5_hypercare_summary = None  # type: ignore
+
+try:  # pragma: no cover - moduł full hypercare może być opcjonalny
+    from bot_core.runtime.full_hypercare import (
+        FullHypercareSummaryBuilder,
+        FullHypercareSummaryConfig,
+        FullHypercareSummaryResult,
+        FullHypercareVerificationResult,
+        verify_full_hypercare_summary,
+    )
+except Exception:  # pragma: no cover - brak modułu full hypercare
     FullHypercareSummaryBuilder = None  # type: ignore
     FullHypercareSummaryConfig = None  # type: ignore
     FullHypercareSummaryResult = None  # type: ignore
     FullHypercareVerificationResult = None  # type: ignore
     verify_full_hypercare_summary = None  # type: ignore
+
+try:  # pragma: no cover - moduł stage6 może nie istnieć
+    from bot_core.runtime.stage6_hypercare import (
+        Stage6HypercareConfig,
+        Stage6HypercareCycle,
+        Stage6HypercareResult,
+        Stage6HypercareVerificationResult,
+        verify_stage6_hypercare_summary,
+    )
+except Exception:  # pragma: no cover - brak modułu stage6
     Stage6HypercareConfig = None  # type: ignore
     Stage6HypercareCycle = None  # type: ignore
     Stage6HypercareResult = None  # type: ignore
@@ -848,10 +858,10 @@ except Exception:  # pragma: no cover - brak zależności opcjonalnych
     RiskMetricsExporter = None  # type: ignore
 
 # --- Kontrolery / pipeline (opcjonalne – różnice między gałęziami) ---
-try:
-    from bot_core.runtime.controller import TradingController as _TradingController  # type: ignore
-except Exception:
-    _TradingController = None  # type: ignore
+_TRADING_CONTROLLER_IMPORT_ERROR: Exception | None = None
+_TRADING_CONTROLLER_IMPORT_TRACEBACK: str | None = None
+
+_TradingController = None  # type: ignore
 
 try:
     from bot_core.runtime.controller import DailyTrendController as _DailyTrendController  # type: ignore

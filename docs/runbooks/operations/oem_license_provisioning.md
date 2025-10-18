@@ -106,3 +106,13 @@ Polecenie zwraca kod wyjścia `0`, jeśli wszystkie wpisy mają poprawne podpisy
 - W razie potrzeby użyj `python -m bot_core.security.fingerprint --help` oraz
   `python scripts/oem_provision_license.py --help`.
 
+## Sprzątanie raportów w UI
+
+Panel desktopowy udostępnia zakładkę **Raporty** (przycisk w górnym pasku). Widok
+korzysta z `ReportCenterController`, który komunikuje się z mostkiem CLI
+`bot_core.reporting.ui_bridge`. Operator może odświeżyć listę artefaktów z katalogu
+`var/reports`, sprawdzić metadane (ścieżka, rozmiar, liczba plików) oraz usunąć
+zaznaczony raport. Usunięcie wymaga potwierdzenia w oknie dialogowym i automatycznie
+odświeża listę. Mostek waliduje, że wskazana ścieżka znajduje się w katalogu raportów,
+co zapobiega przypadkowemu usunięciu niepowiązanych plików.
+

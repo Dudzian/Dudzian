@@ -869,7 +869,13 @@ def _validate_metadata(
         if mode != "jsonl":
             raise VerificationError("Oczekiwano metadanych trybu jsonl dla weryfikacji input_file")
         input_file = metadata.get("input_file")
-        if input_file != expect_input_file:
+        input_files = metadata.get("input_files")
+        candidates: list[str] = []
+        if isinstance(input_files, Sequence):
+            candidates.extend(str(item) for item in input_files)
+        if input_file is not None:
+            candidates.append(str(input_file))
+        if expect_input_file not in candidates:
             raise VerificationError(
                 f"Metadane input_file mają wartość {input_file!r}, oczekiwano {expect_input_file!r}"
             )

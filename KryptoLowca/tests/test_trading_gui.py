@@ -11,6 +11,7 @@ import pandas as pd
 import numpy as np
 import asyncio
 from pathlib import Path
+from textwrap import dedent
 
 sys.path.append(os.getcwd())
 
@@ -231,12 +232,83 @@ async def test_dashboard_update(app):
     assert "Positions: 0" in app.positions_var.get()
 
 @pytest.mark.asyncio
+async def test_risk_profile_section_updates(app):
+    app.set_risk_profile_context("balanced")
+    app.risk_manager_settings = {
+        "risk_per_trade": 0.015,
+        "portfolio_risk": 0.25,
+    }
+    await asyncio.sleep(0)
+
+    assert app.risk_profile_display_var.get() == "balanced"
+    limits = app.risk_limits_display_var.get()
+    assert "1.5% per trade" in limits
+    assert "25.0% exposure cap" in limits
+
+
+@pytest.mark.asyncio
 async def test_invalid_symbol_selection(app):
     await app._load_markets()
     app._apply_symbol_selection()
     assert not app.selected_symbols
     # Should not crash
     await app._run_backtest()
+
+
+def _write_core_config(path: Path, *, max_daily_loss: float, max_position: float, hard_drawdown: float) -> None:
+    path.write_text(
+        dedent(
+            f"""
+            risk_profiles:
+              balanced:
+                max_daily_loss_pct: {max_daily_loss}
+                max_position_pct: {max_position}
+                target_volatility: 0.1
+                max_leverage: 3.0
+                stop_loss_atr_multiple: 1.5
+                max_open_positions: 5
+                hard_drawdown_pct: {hard_drawdown}
+            environments:
+              paper_env:
+                name: paper_env
+                exchange: binance_spot
+                environment: paper
+                keychain_key: dummy
+                data_cache_path: ./cache
+                risk_profile: balanced
+                alert_channels: []
+                required_permissions: []
+                forbidden_permissions: []
+            """
+        ).strip()
+    )
+
+
+@pytest.mark.asyncio
+async def test_reload_risk_manager_settings_updates_gui(app, tmp_path):
+    core_path = tmp_path / "core.yaml"
+    _write_core_config(core_path, max_daily_loss=0.02, max_position=0.05, hard_drawdown=0.08)
+
+    app.core_config_path = core_path
+    app.core_environment = "paper_env"
+
+    old_mgr = app.risk_mgr
+    profile_name, settings, _ = app.reload_risk_manager_settings()
+
+    assert profile_name == "balanced"
+    assert settings["max_daily_loss_pct"] == pytest.approx(0.02)
+    assert app.max_daily_loss_pct == pytest.approx(0.02)
+    assert app.risk_per_trade.get() == pytest.approx(0.05)
+    assert app.portfolio_risk.get() == pytest.approx(0.08)
+    assert app.risk_profile_var.get() == "balanced"
+    assert app.risk_mgr is not old_mgr
+
+    _write_core_config(core_path, max_daily_loss=0.03, max_position=0.07, hard_drawdown=0.1)
+
+    profile_name2, settings2, _ = app.reload_risk_manager_settings()
+    assert profile_name2 == "balanced"
+    assert settings2["max_daily_loss_pct"] == pytest.approx(0.03)
+    assert app.max_daily_loss_pct == pytest.approx(0.03)
 
 
 def test_sync_positions_from_service_spot(tmp_path, monkeypatch):

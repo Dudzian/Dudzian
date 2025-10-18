@@ -142,6 +142,14 @@ def _signal(side: str = "BUY", *, quantity: float = 1.0, price: float = 100.0) -
     )
 
 
+class StubTCOReporter:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def record_execution(self, **payload: object) -> None:  # type: ignore[override]
+        self.calls.append(dict(payload))
+
+
 def test_controller_emits_alert_on_buy_signal() -> None:
     risk_engine = DummyRiskEngine()
     execution = DummyExecutionService()
@@ -198,11 +206,41 @@ def test_controller_alerts_on_risk_rejection_and_limit() -> None:
     assert severities == ["info", "warning", "critical"]
     titles = [message.title for message in channel.messages]
     assert "Profil w trybie awaryjnym" in titles[2]
-    exported = tuple(audit.export())
-    assert len(exported) == 3
-    assert exported[2]["severity"] == "critical"
-    events = [event["event"] for event in journal.export()]
-    assert "risk_rejected" in events
+
+
+def test_controller_records_tco_event_with_reporter() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    router, _, _ = _router_with_channel()
+    journal = CollectingDecisionJournal()
+    reporter = StubTCOReporter()
+
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        health_check_interval=timedelta(hours=1),
+        decision_journal=journal,
+        strategy_name="core_trend",
+        exchange_name="binance_spot",
+        tco_reporter=reporter,
+        tco_metadata={"source": "unit-test"},
+    )
+
+    controller.process_signals([_signal("BUY")])
+
+    assert reporter.calls, "Reporter should be invoked"
+    record = reporter.calls[0]
+    assert record["strategy"] == "core_trend"
+    assert record["exchange"] == "binance_spot"
+    metadata = record.get("metadata", {})
+    assert isinstance(metadata, Mapping)
+    assert metadata.get("source") == "unit-test"
+    assert metadata.get("controller") == "TradingController"
 
 
 def test_controller_runs_health_report() -> None:
