@@ -1094,6 +1094,206 @@ environments:
       retention_days: 730
       fsync: true
 
+  coinbase_paper:
+    exchange: coinbase_spot
+    environment: paper
+    keychain_key: coinbase_paper_trading
+    data_cache_path: ./var/data/coinbase_paper
+    risk_profile: balanced
+    default_strategy: core_daily_trend
+    default_controller: daily_trend_core
+    alert_channels: []
+    ip_allowlist: []
+    permission_profile: trading_default
+    instrument_universe: core_multi_exchange
+    data_quality:
+      max_gap_minutes: 240
+      min_ok_ratio: 0.95
+    adapter_settings:
+      ccxt_config:
+        timeout: 12000
+      paper_trading:
+        valuation_asset: USDT
+        position_size: 0.1
+        initial_balances:
+          USDT: 75000.0
+        default_market:
+          min_quantity: 0.001
+          min_notional: 10.0
+        ledger_directory: audit/ledger
+        ledger_retention_days: 730
+        ledger_fsync: true
+    data_source:
+      cache_namespace: coinbase_spot
+    alert_throttle:
+      window_seconds: 300
+      exclude_severities: [critical]
+      exclude_categories: [health]
+      max_entries: 4096
+    alert_audit:
+      backend: file
+      directory: audit/alerts
+      filename_pattern: alerts-%Y%m%d.jsonl
+      retention_days: 730
+      fsync: true
+    decision_journal:
+      backend: file
+      directory: audit/decisions
+      filename_pattern: decisions-%Y%m%d.jsonl
+      retention_days: 730
+      fsync: true
+
+  okx_paper:
+    exchange: okx_spot
+    environment: paper
+    keychain_key: okx_paper_trading
+    data_cache_path: ./var/data/okx_paper
+    risk_profile: balanced
+    default_strategy: core_daily_trend
+    default_controller: daily_trend_core
+    alert_channels: []
+    ip_allowlist: []
+    permission_profile: trading_default
+    instrument_universe: core_multi_exchange
+    data_quality:
+      max_gap_minutes: 240
+      min_ok_ratio: 0.95
+    adapter_settings:
+      ccxt_config:
+        timeout: 20000
+      fetch_ohlcv_params:
+        price: mark
+      paper_trading:
+        valuation_asset: USDT
+        position_size: 0.1
+        initial_balances:
+          USDT: 80000.0
+        default_market:
+          min_quantity: 0.001
+          min_notional: 10.0
+        ledger_directory: audit/ledger
+        ledger_retention_days: 730
+        ledger_fsync: true
+    data_source:
+      cache_namespace: okx_spot
+    alert_throttle:
+      window_seconds: 300
+      exclude_severities: [critical]
+      exclude_categories: [health]
+      max_entries: 4096
+    alert_audit:
+      backend: file
+      directory: audit/alerts
+      filename_pattern: alerts-%Y%m%d.jsonl
+      retention_days: 730
+      fsync: true
+    decision_journal:
+      backend: file
+      directory: audit/decisions
+      filename_pattern: decisions-%Y%m%d.jsonl
+      retention_days: 730
+      fsync: true
+
+  kucoin_paper:
+    exchange: kucoin_spot
+    environment: paper
+    keychain_key: kucoin_paper_trading
+    data_cache_path: ./var/data/kucoin_paper
+    risk_profile: balanced
+    default_strategy: core_daily_trend
+    default_controller: daily_trend_core
+    alert_channels: []
+    ip_allowlist: []
+    permission_profile: trading_default
+    instrument_universe: core_multi_exchange
+    data_quality:
+      max_gap_minutes: 240
+      min_ok_ratio: 0.95
+    adapter_settings:
+      ccxt_config:
+        timeout: 15000
+      paper_trading:
+        valuation_asset: USDT
+        position_size: 0.1
+        initial_balances:
+          USDT: 60000.0
+        default_market:
+          min_quantity: 0.001
+          min_notional: 10.0
+        ledger_directory: audit/ledger
+        ledger_retention_days: 730
+        ledger_fsync: true
+    data_source:
+      cache_namespace: kucoin_spot
+    alert_throttle:
+      window_seconds: 300
+      exclude_severities: [critical]
+      exclude_categories: [health]
+      max_entries: 4096
+    alert_audit:
+      backend: file
+      directory: audit/alerts
+      filename_pattern: alerts-%Y%m%d.jsonl
+      retention_days: 730
+      fsync: true
+    decision_journal:
+      backend: file
+      directory: audit/decisions
+      filename_pattern: decisions-%Y%m%d.jsonl
+      retention_days: 730
+      fsync: true
+
+  bybit_paper:
+    exchange: bybit_spot
+    environment: paper
+    keychain_key: bybit_paper_trading
+    data_cache_path: ./var/data/bybit_paper
+    risk_profile: balanced
+    default_strategy: core_daily_trend
+    default_controller: daily_trend_core
+    alert_channels: []
+    ip_allowlist: []
+    permission_profile: trading_default
+    instrument_universe: core_multi_exchange
+    data_quality:
+      max_gap_minutes: 240
+      min_ok_ratio: 0.95
+    adapter_settings:
+      ccxt_config:
+        timeout: 20000
+      paper_trading:
+        valuation_asset: USDT
+        position_size: 0.1
+        initial_balances:
+          USDT: 70000.0
+        default_market:
+          min_quantity: 0.001
+          min_notional: 10.0
+        ledger_directory: audit/ledger
+        ledger_retention_days: 730
+        ledger_fsync: true
+      cancel_order_params:
+        category: spot
+    data_source:
+      cache_namespace: bybit_spot
+    alert_throttle:
+      window_seconds: 300
+      exclude_severities: [critical]
+      exclude_categories: [health]
+      max_entries: 4096
+    alert_audit:
+      backend: file
+      directory: audit/alerts
+      filename_pattern: alerts-%Y%m%d.jsonl
+      retention_days: 730
+      fsync: true
+    decision_journal:
+      backend: file
+      directory: audit/decisions
+      filename_pattern: decisions-%Y%m%d.jsonl
+      retention_days: 730
+      fsync: true
+
   kraken_paper:
     exchange: kraken_spot
     environment: paper

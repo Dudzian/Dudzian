@@ -3159,6 +3159,10 @@ def load_core_config(path: str | Path) -> CoreConfig:
                 str(key): value
                 for key, value in (entry.get("adapter_settings", {}) or {}).items()
             },
+            "adapter_factories": {
+                str(key): value
+                for key, value in (entry.get("adapter_factories", {}) or {}).items()
+            },
             "required_permissions": required_permissions,
             "forbidden_permissions": forbidden_permissions,
         }

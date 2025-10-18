@@ -1,4 +1,4 @@
-"""Adapter CCXT dla rynku spot OKX."""
+"""Adapter CCXT dla rynku spot KuCoin."""
 from __future__ import annotations
 
 from typing import Any, Mapping
@@ -7,10 +7,10 @@ from bot_core.exchanges.base import Environment, ExchangeCredentials
 from bot_core.exchanges.ccxt_adapter import CCXTSpotAdapter, merge_adapter_settings
 
 
-class OKXSpotAdapter(CCXTSpotAdapter):
-    """Adapter OKX wykorzystujący CCXT oraz snapshoty REST."""
+class KuCoinSpotAdapter(CCXTSpotAdapter):
+    """Adapter KuCoin spot oparty na CCXT."""
 
-    name = "okx_spot"
+    name = "kucoin_spot"
 
     def __init__(
         self,
@@ -21,17 +21,20 @@ class OKXSpotAdapter(CCXTSpotAdapter):
         client=None,
         metrics_registry=None,
     ) -> None:
-        combined_settings = merge_adapter_settings(
-            {
-                "ccxt_config": {"timeout": 20_000},
-                "fetch_ohlcv_params": {"price": "mark"},
+        defaults: dict[str, Any] = {
+            "ccxt_config": {
+                "timeout": 15_000,
+                "options": {"defaultType": "spot"},
             },
-            settings or {},
+            "fetch_ohlcv_params": {"type": "spot"},
+        }
+        combined_settings = merge_adapter_settings(defaults, settings or {})
+        combined_settings.setdefault(
+            "sandbox_mode", environment in (Environment.PAPER, Environment.TESTNET)
         )
-        combined_settings.setdefault("sandbox_mode", environment in (Environment.PAPER, Environment.TESTNET))
         super().__init__(
             credentials,
-            exchange_id=combined_settings.pop("exchange_id", "okx"),
+            exchange_id=combined_settings.pop("exchange_id", "kucoin"),
             environment=environment,
             settings=combined_settings,
             client=client,
@@ -39,5 +42,4 @@ class OKXSpotAdapter(CCXTSpotAdapter):
         )
 
 
-__all__ = ["OKXSpotAdapter"]
-
+__all__ = ["KuCoinSpotAdapter"]

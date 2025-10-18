@@ -19,7 +19,7 @@ from pathlib import Path
 from collections import deque
 from collections.abc import Iterable, Mapping, MutableMapping, Sequence
 from dataclasses import asdict, dataclass
-from typing import Any, Callable, TYPE_CHECKING, Type
+from typing import Any, Callable, TYPE_CHECKING, Type, cast
 
 
 _RAW_OUTPUT_MAX_LEN = 4096
@@ -50,6 +50,7 @@ from bot_core.reporting.upload import (
 )
 from bot_core.data.ohlcv import evaluate_coverage
 from bot_core.security import SecretManager, SecretStorageError, create_default_secret_storage
+from bot_core.runtime.bootstrap import parse_adapter_factory_cli_specs
 from bot_core.runtime.file_metadata import (
     directory_metadata as _directory_metadata,
     file_reference_metadata as _file_reference_metadata,
@@ -1408,6 +1409,17 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         "--controller",
         default=None,
         help="Nazwa kontrolera runtime (domyślnie pobierana z konfiguracji środowiska)",
+    )
+    parser.add_argument(
+        "--adapter-factory",
+        action="append",
+        dest="adapter_factories",
+        metavar="NAME=SPEC",
+        help=(
+            "Override fabryk adapterów przekazywane do bootstrapu. "
+            "Przykład: binance_spot=bot_core.exchanges.mock:MockAdapter. "
+            "Użyj '!remove', aby usunąć wpis – opcję można podawać wielokrotnie."
+        ),
     )
     parser.add_argument(
         "--pipeline-module",
@@ -3816,15 +3828,27 @@ def main(argv: Sequence[str] | None = None) -> int:
         if precheck_exit != 0:
             return int(precheck_exit)
 
-    adapter_factories: Mapping[str, ExchangeAdapterFactory] | None = None
+    cli_adapter_specs = parse_adapter_factory_cli_specs(
+        getattr(args, "adapter_factories", None)
+    )
+    adapter_factories_payload: dict[str, object] | None = None
     if args.paper_smoke:
-        adapter_factories = {
+        adapter_factories_payload = {
             "binance_spot": _offline_adapter_factory,
             "binance_futures": _offline_adapter_factory,
             "kraken_spot": _offline_adapter_factory,
             "kraken_futures": _offline_adapter_factory,
             "zonda_spot": _offline_adapter_factory,
         }
+
+    if cli_adapter_specs:
+        if adapter_factories_payload is None:
+            adapter_factories_payload = {}
+        adapter_factories_payload.update(cli_adapter_specs)
+
+    adapter_factories: Mapping[str, object] | None = (
+        adapter_factories_payload if adapter_factories_payload else None
+    )
 
     try:
         pipeline = build_daily_trend_pipeline(
@@ -3833,7 +3857,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             controller_name=validated_controller,
             config_path=config_path,
             secret_manager=secret_manager,
-            adapter_factories=adapter_factories,
+            adapter_factories=cast(Mapping[str, ExchangeAdapterFactory] | None, adapter_factories),
             risk_profile_name=validated_risk_profile,
         )
     except Exception as exc:  # noqa: BLE001

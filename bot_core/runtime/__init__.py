@@ -724,15 +724,42 @@ def configure_optional_exports_logging_from_env(
     )
 
 
-try:  # pragma: no cover - środowiska testowe mogą nie mieć pełnego runtime
+BootstrapContext = None  # type: ignore
+RuntimeEntrypoint = None  # type: ignore
+bootstrap_environment = None  # type: ignore
+catalog_runtime_entrypoints = None  # type: ignore
+resolve_runtime_entrypoint = None  # type: ignore
+get_registered_adapter_factories = None  # type: ignore
+register_adapter_factory = None  # type: ignore
+unregister_adapter_factory = None  # type: ignore
+temporary_adapter_factories = None  # type: ignore
+register_adapter_factory_from_path = None  # type: ignore
+parse_adapter_factory_cli_specs = None  # type: ignore
+
+try:  # pragma: no cover - minimalne importy dostępne nawet przy brakach zależności
     from bot_core.runtime.bootstrap import (
         BootstrapContext,
         RuntimeEntrypoint,
         bootstrap_environment,
         catalog_runtime_entrypoints,
         resolve_runtime_entrypoint,
+        get_registered_adapter_factories,
+        register_adapter_factory,
+        unregister_adapter_factory,
+        register_adapter_factory_from_path,
+        parse_adapter_factory_cli_specs,
+        temporary_adapter_factories,
     )
+except Exception:  # pragma: no cover - bootstrap może być niedostępny w tej dystrybucji
+    pass
+
+PaperTradingAdapter = None  # type: ignore
+try:  # pragma: no cover - PaperTradingAdapter zależy od modułów KryptoLowca
     from bot_core.runtime.paper_trading import PaperTradingAdapter
+except Exception:  # pragma: no cover - brak modułów backtestowych
+    PaperTradingAdapter = None  # type: ignore
+
+try:  # pragma: no cover - monitoring zasobów może być opcjonalny
     from bot_core.runtime.resource_monitor import (
         ResourceBudgetEvaluation,
         ResourceBudgets,
@@ -785,15 +812,6 @@ try:  # pragma: no cover - zależne od gałęzi
         verify_stage6_hypercare_summary,
     )
 except Exception:  # pragma: no cover - fallback gdy zależności runtime są niekompletne
-    BootstrapContext = None  # type: ignore
-    RuntimeEntrypoint = None  # type: ignore
-    bootstrap_environment = None  # type: ignore
-    catalog_runtime_entrypoints = None  # type: ignore
-    resolve_runtime_entrypoint = None  # type: ignore
-    ResourceBudgetEvaluation = None  # type: ignore
-    ResourceBudgets = None  # type: ignore
-    ResourceSample = None  # type: ignore
-    evaluate_resource_sample = None  # type: ignore
     LoadTestResult = None  # type: ignore
     LoadTestSettings = None  # type: ignore
     execute_scheduler_load_test = None  # type: ignore
@@ -927,6 +945,12 @@ __all__ = [
     "bootstrap_environment",
     "catalog_runtime_entrypoints",
     "resolve_runtime_entrypoint",
+    "get_registered_adapter_factories",
+    "register_adapter_factory",
+    "unregister_adapter_factory",
+    "register_adapter_factory_from_path",
+    "parse_adapter_factory_cli_specs",
+    "temporary_adapter_factories",
     "RuntimeEntrypointMetadata",
     "RiskManagerSettings",
     "derive_risk_manager_settings",

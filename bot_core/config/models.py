@@ -590,6 +590,7 @@ class EnvironmentConfig:
     credential_purpose: str = "trading"
     instrument_universe: str | None = None
     adapter_settings: Mapping[str, Any] = field(default_factory=dict)
+    adapter_factories: Mapping[str, Any] = field(default_factory=dict)
     offline_mode: bool = False
     data_source: EnvironmentDataSourceConfig | None = None
     report_storage: EnvironmentReportStorageConfig | None = None
