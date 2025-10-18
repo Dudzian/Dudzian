@@ -48,6 +48,8 @@ def test_load_core_config_parses_decision_engine_tco(tmp_path: Path) -> None:
             "tco": {
                 "reports": ["data/tco/baseline.json", "../shared/tco.json"],
                 "require_at_startup": True,
+                "warn_report_age_hours": 12,
+                "max_report_age_hours": 36,
             },
         },
     }
@@ -66,3 +68,5 @@ def test_load_core_config_parses_decision_engine_tco(tmp_path: Path) -> None:
         assert Path(path).is_absolute()
     assert tco_config.report_paths[0].endswith("data/tco/baseline.json")
     assert tco_config.report_paths[1].endswith("shared/tco.json")
+    assert tco_config.warn_report_age_hours == 12.0
+    assert tco_config.max_report_age_hours == 36.0

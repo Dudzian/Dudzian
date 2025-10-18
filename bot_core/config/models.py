@@ -440,8 +440,33 @@ class DecisionStressTestConfig:
 @dataclass(slots=True)
 class DecisionEngineTCOConfig:
     """Ścieżki raportów TCO wykorzystywanych przez DecisionOrchestrator."""
-    reports: Sequence[str] = field(default_factory=tuple)  # kompatybilne z YAML: tco.reports
+
+    report_paths: Sequence[str] = field(default_factory=tuple)
+    reports: Sequence[str] | None = field(default=None, repr=False)
     require_at_startup: bool = False
+    warn_report_age_hours: float | None = 24.0
+    max_report_age_hours: float | None = 72.0
+
+    def __post_init__(self) -> None:
+        if self.reports and self.report_paths:
+            raise ValueError(
+                "DecisionEngineTCOConfig nie może otrzymać jednocześnie 'reports' i 'report_paths'"
+            )
+
+        paths_source: Sequence[str]
+        if self.reports:
+            paths_source = self.reports
+        else:
+            paths_source = self.report_paths
+
+        normalized_paths = tuple(str(path) for path in paths_source if str(path).strip())
+        self.report_paths = normalized_paths
+        self.reports = normalized_paths
+
+        if self.warn_report_age_hours is not None:
+            self.warn_report_age_hours = float(self.warn_report_age_hours)
+        if self.max_report_age_hours is not None:
+            self.max_report_age_hours = float(self.max_report_age_hours)
 
 
 @dataclass(slots=True)
@@ -982,6 +1007,7 @@ __all__ = [
     "KeyRotationConfig",
     "ObservabilityConfig",
     "DecisionEngineConfig",
+    "DecisionEngineTCOConfig",
     "DecisionOrchestratorThresholds",
     "DecisionStressTestConfig",
     "PortfolioGovernorStrategyConfig",

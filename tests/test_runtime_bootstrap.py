@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
+import time
 from pathlib import Path
 from typing import Mapping, Sequence
 from textwrap import dedent
+from types import SimpleNamespace
 
 import pytest
 import yaml
 
 import tests._pathbootstrap  # noqa: F401  # pylint: disable=unused-import
 
+from bot_core.config.models import DecisionEngineTCOConfig
 from bot_core.alerts import EmailChannel, SMSChannel, TelegramChannel
 from bot_core.decision.models import DecisionCandidate, RiskSnapshot
 from bot_core.exchanges.base import (
@@ -22,6 +26,7 @@ from bot_core.exchanges.base import (
 from bot_core.risk.engine import ThresholdRiskEngine
 from bot_core.risk.repository import FileRiskRepository
 from bot_core.runtime import BootstrapContext, bootstrap_environment
+from bot_core.runtime.bootstrap import _load_initial_tco_costs
 from bot_core.runtime.metrics_alerts import DEFAULT_UI_ALERTS_JSONL_PATH
 from bot_core.security import SecretManager, SecretStorage, SecretStorageError
 
@@ -970,3 +975,75 @@ def test_bootstrap_loads_tco_report_for_decision_engine(tmp_path: Path) -> None:
     evaluation = context.decision_orchestrator.evaluate_candidate(candidate, snapshot)
     assert evaluation.accepted is True
     assert evaluation.cost_bps == pytest.approx(11.0)
+
+
+class _StubOrchestrator:
+    def __init__(self) -> None:
+        self.reports: list[object] = []
+
+    def update_costs_from_report(self, payload: object) -> None:
+        self.reports.append(payload)
+
+
+def _tco_config_with_report(
+    report_path: Path,
+    *,
+    warn_hours: float | None,
+    max_hours: float | None,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        tco=DecisionEngineTCOConfig(
+            report_paths=(str(report_path),),
+            warn_report_age_hours=warn_hours,
+            max_report_age_hours=max_hours,
+        )
+    )
+
+
+def _write_tco_report(path: Path) -> None:
+    payload = {"generated_at": "2025-01-01T00:00:00Z", "total_cost_bps": 12.5}
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def test_load_initial_tco_costs_warns_about_stale_report(tmp_path: Path) -> None:
+    report_path = tmp_path / "tco.json"
+    _write_tco_report(report_path)
+    two_hours_ago = time.time() - 2 * 3600
+    os.utime(report_path, (two_hours_ago, two_hours_ago))
+
+    orchestrator = _StubOrchestrator()
+    config = _tco_config_with_report(
+        report_path,
+        warn_hours=1.0,
+        max_hours=5.0,
+    )
+
+    loaded_path, warnings = _load_initial_tco_costs(config, orchestrator, None)
+
+    assert loaded_path == str(report_path)
+    assert orchestrator.reports, "stale raport powinien zostać załadowany mimo ostrzeżenia"
+    assert any(
+        entry.startswith(f"stale_warning:{report_path}") for entry in warnings
+    )
+
+
+def test_load_initial_tco_costs_skips_report_past_max_age(tmp_path: Path) -> None:
+    report_path = tmp_path / "expired_tco.json"
+    _write_tco_report(report_path)
+    ten_hours_ago = time.time() - 10 * 3600
+    os.utime(report_path, (ten_hours_ago, ten_hours_ago))
+
+    orchestrator = _StubOrchestrator()
+    config = _tco_config_with_report(
+        report_path,
+        warn_hours=1.0,
+        max_hours=2.0,
+    )
+
+    loaded_path, warnings = _load_initial_tco_costs(config, orchestrator, None)
+
+    assert loaded_path is None
+    assert not orchestrator.reports
+    assert any(
+        entry.startswith(f"stale_critical:{report_path}") for entry in warnings
+    )
