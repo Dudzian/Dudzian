@@ -141,6 +141,81 @@ _DEFAULT_ADAPTERS: Mapping[str, ExchangeAdapterFactory] = {
 _LOGGER = logging.getLogger(__name__)
 
 
+@dataclass(slots=True, frozen=True)
+class RuntimeEntrypoint:
+    """Deklaracja punktu wejścia korzystającego z bootstrap_environment."""
+
+    name: str
+    environment: str
+    description: str | None
+    controller: str | None
+    strategy: str | None
+    risk_profile: str | None
+    tags: tuple[str, ...]
+    bootstrap_required: bool
+
+
+def catalog_runtime_entrypoints(core_config: CoreConfig) -> dict[str, RuntimeEntrypoint]:
+    """Buduje indeks punktów wejścia zadeklarowanych w konfiguracji."""
+
+    result: dict[str, RuntimeEntrypoint] = {}
+    entrypoint_cfg = getattr(core_config, "runtime_entrypoints", {}) or {}
+    for name, cfg in entrypoint_cfg.items():
+        tags = tuple(getattr(cfg, "tags", ()) or ())
+        result[name] = RuntimeEntrypoint(
+            name=name,
+            environment=cfg.environment,
+            description=getattr(cfg, "description", None),
+            controller=getattr(cfg, "controller", None),
+            strategy=getattr(cfg, "strategy", None),
+            risk_profile=getattr(cfg, "risk_profile", None),
+            tags=tags,
+            bootstrap_required=bool(getattr(cfg, "bootstrap", True)),
+        )
+    return result
+
+
+def resolve_runtime_entrypoint(
+    entrypoint_name: str,
+    *,
+    config_path: str | Path,
+    secret_manager: SecretManager | None = None,
+    adapter_factories: Mapping[str, ExchangeAdapterFactory] | None = None,
+    risk_profile_name: str | None = None,
+    bootstrap: bool | None = None,
+) -> tuple[RuntimeEntrypoint, BootstrapContext | None]:
+    """Zwraca deklarację punktu wejścia i opcjonalnie inicjalizuje runtime."""
+
+    core_config = load_core_config(config_path)
+    entrypoints = catalog_runtime_entrypoints(core_config)
+    if entrypoint_name not in entrypoints:
+        available = ", ".join(sorted(entrypoints)) or "<none>"
+        raise KeyError(
+            f"Punkt wejścia '{entrypoint_name}' nie istnieje w konfiguracji. Dostępne: {available}."
+        )
+
+    entrypoint = entrypoints[entrypoint_name]
+    should_bootstrap = entrypoint.bootstrap_required if bootstrap is None else bool(bootstrap)
+    context: BootstrapContext | None = None
+    effective_profile = risk_profile_name or entrypoint.risk_profile
+
+    if should_bootstrap:
+        if secret_manager is None:
+            raise ValueError(
+                "resolve_runtime_entrypoint wymaga SecretManager, gdy bootstrap jest aktywny."
+            )
+        context = bootstrap_environment(
+            entrypoint.environment,
+            config_path=config_path,
+            secret_manager=secret_manager,
+            adapter_factories=adapter_factories,
+            risk_profile_name=effective_profile,
+            core_config=core_config,
+        )
+
+    return entrypoint, context
+
+
 def _build_ui_alert_audit_metadata(
     router: DefaultAlertRouter | None,
     *,
@@ -329,9 +404,11 @@ def bootstrap_environment(
     secret_manager: SecretManager,
     adapter_factories: Mapping[str, ExchangeAdapterFactory] | None = None,
     risk_profile_name: str | None = None,
+    core_config: CoreConfig | None = None,
 ) -> BootstrapContext:
     """Tworzy kompletny kontekst uruchomieniowy dla wskazanego środowiska."""
-    core_config = load_core_config(config_path)
+    if core_config is None:
+        core_config = load_core_config(config_path)
     validation = assert_core_config_valid(core_config)
     for warning in validation.warnings:
         _LOGGER.warning("Walidacja konfiguracji: %s", warning)
@@ -1729,4 +1806,11 @@ def _resolve_sms_provider(settings: SMSProviderSettings) -> SmsProviderConfig:
     )
 
 
-__all__ = ["BootstrapContext", "bootstrap_environment", "build_alert_channels"]
+__all__ = [
+    "BootstrapContext",
+    "RuntimeEntrypoint",
+    "bootstrap_environment",
+    "catalog_runtime_entrypoints",
+    "resolve_runtime_entrypoint",
+    "build_alert_channels",
+]

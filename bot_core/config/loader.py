@@ -37,6 +37,7 @@ from bot_core.config.models import (
     PortfolioDecisionLogConfig,
     PortfolioRuntimeInputsConfig,
     PermissionProfileConfig,
+    RuntimeEntrypointConfig,
 )
 from bot_core.exchanges.base import Environment
 
@@ -2971,6 +2972,21 @@ def load_core_config(path: str | Path) -> CoreConfig:
     )
     if decision_engine_config is not None and _core_has("decision_engine"):
         core_kwargs["decision_engine"] = decision_engine_config
+
+    if _core_has("runtime_entrypoints"):
+        entrypoints_raw = raw.get("runtime_entrypoints") or {}
+        core_kwargs["runtime_entrypoints"] = {
+            name: RuntimeEntrypointConfig(
+                environment=str(cfg.get("environment", "")),
+                description=cfg.get("description"),
+                controller=cfg.get("controller"),
+                strategy=cfg.get("strategy"),
+                risk_profile=cfg.get("risk_profile"),
+                tags=tuple(cfg.get("tags", []) or ()),
+                bootstrap=bool(cfg.get("bootstrap", True)),
+            )
+            for name, cfg in entrypoints_raw.items()
+        }
 
     core_kwargs["source_path"] = str(config_absolute_path)
     core_kwargs["source_directory"] = str(config_base_dir)

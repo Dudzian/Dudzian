@@ -15,7 +15,6 @@ BANNED_PATHS = [
 # because they implement the legacy surface itself.
 _ALLOWED_KRYPTLOWCA_IMPORT_ROOTS = {
     pathlib.Path("KryptoLowca"),
-    pathlib.Path("legacy_bridge"),
     pathlib.Path("archive"),
 }
 
@@ -49,7 +48,7 @@ def main() -> int:
         failures.append(
             "Found imports of KryptoLowca in new modules: "
             + ", ".join(sorted(forbidden_imports))
-            + ". Use legacy_bridge or bot_core instead."
+            + ". Use bot_core instead."
         )
 
     if failures:

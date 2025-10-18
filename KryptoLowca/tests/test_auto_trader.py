@@ -8,6 +8,7 @@ from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple
 
 import pytest
 import pandas as pd
+from bot_core.runtime.metadata import RiskManagerSettings
 
 from KryptoLowca.auto_trader import AutoTrader
 from KryptoLowca.backtest.simulation import BacktestFill
@@ -153,6 +154,82 @@ def strategy_harness() -> StrategyHarness:
             )
 
     return StrategyHarness(registry=registry, signal_service=SignalService(strategy_registry=registry))
+
+
+def test_autotrader_applies_runtime_risk_profile() -> None:
+    emitter = DummyEmitter()
+    gui = DummyGUI()
+    adapter = RecordingExecutionAdapter()
+    trader = AutoTrader(
+        emitter,
+        gui,
+        lambda: "BTC/USDT",
+        auto_trade_interval_s=0.5,
+        walkforward_interval_s=None,
+        signal_service=SignalService(),
+        risk_service=RiskService(),
+        execution_service=ExecutionService(adapter),
+        data_provider=StubDataProvider(),
+    )
+
+    cfg = trader._get_strategy_config()
+    assert cfg.max_position_notional_pct == pytest.approx(0.05)
+    assert cfg.trade_risk_pct == pytest.approx(0.015)
+    assert cfg.max_leverage == pytest.approx(3.0)
+    assert trader._risk_manager_settings.max_risk_per_trade == pytest.approx(0.05)
+    assert trader._risk_manager_settings.max_daily_loss_pct == pytest.approx(0.015)
+    assert trader._risk_service.max_position_notional_pct == pytest.approx(0.05)
+    assert trader._risk_service.max_daily_loss_pct == pytest.approx(0.015)
+    assert trader._risk_service.max_portfolio_risk_pct == pytest.approx(0.10)
+    assert trader._risk_service.max_positions == 5
+    assert trader._risk_service.emergency_stop_drawdown_pct == pytest.approx(0.10)
+
+
+def test_autotrader_update_risk_manager_settings_applies_changes() -> None:
+    emitter = DummyEmitter()
+    gui = DummyGUI()
+    adapter = RecordingExecutionAdapter()
+    trader = AutoTrader(
+        emitter,
+        gui,
+        lambda: "BTC/USDT",
+        auto_trade_interval_s=0.5,
+        walkforward_interval_s=None,
+        signal_service=SignalService(),
+        risk_service=RiskService(),
+        execution_service=ExecutionService(adapter),
+        data_provider=StubDataProvider(),
+    )
+
+    new_settings = RiskManagerSettings(
+        max_risk_per_trade=0.08,
+        max_daily_loss_pct=0.18,
+        max_portfolio_risk=0.3,
+        max_positions=9,
+        emergency_stop_drawdown=0.28,
+    )
+    profile_payload = {
+        "max_position_pct": 0.08,
+        "max_daily_loss_pct": 0.18,
+        "trade_risk_pct": 0.03,
+        "max_open_positions": 9,
+        "hard_drawdown_pct": 0.28,
+        "max_leverage": 2.5,
+    }
+
+    trader.update_risk_manager_settings(
+        new_settings,
+        profile_name="growth",
+        profile_config=profile_payload,
+    )
+
+    assert trader._risk_manager_settings is new_settings
+    assert trader._risk_profile_name == "growth"
+    assert trader._risk_service.max_portfolio_risk_pct == pytest.approx(0.3)
+    assert trader._risk_service.max_positions == 9
+    cfg = trader._get_strategy_config()
+    assert cfg.max_position_notional_pct == pytest.approx(0.08)
+    assert cfg.trade_risk_pct == pytest.approx(0.08)
 
 
 def _configured_trader(

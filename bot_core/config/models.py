@@ -857,6 +857,19 @@ class CoreReportingConfig:
 
 
 @dataclass(slots=True)
+class RuntimeEntrypointConfig:
+    """Deklaracja wspólnego punktu startowego runtime dla aplikacji klienckich."""
+
+    environment: str
+    description: str | None = None
+    controller: str | None = None
+    strategy: str | None = None
+    risk_profile: str | None = None
+    tags: Sequence[str] = field(default_factory=tuple)
+    bootstrap: bool = True
+
+
+@dataclass(slots=True)
 class CoreConfig:
     """Najwyższego poziomu konfiguracja aplikacji."""
     environments: Mapping[str, EnvironmentConfig]
@@ -869,6 +882,7 @@ class CoreConfig:
     volatility_target_strategies: Mapping[str, VolatilityTargetingStrategyConfig] = field(default_factory=dict)
     cross_exchange_arbitrage_strategies: Mapping[str, CrossExchangeArbitrageStrategyConfig] = field(default_factory=dict)
     multi_strategy_schedulers: Mapping[str, MultiStrategySchedulerConfig] = field(default_factory=dict)
+    runtime_entrypoints: Mapping[str, RuntimeEntrypointConfig] = field(default_factory=dict)
 
     # Stage5
     portfolio_governors: Mapping[str, PortfolioGovernorConfig] = field(default_factory=dict)
@@ -939,6 +953,7 @@ __all__ = [
     "PaperSmokeJsonSyncS3Config",
     "PaperSmokeJsonSyncConfig",
     "CoreReportingConfig",
+    "RuntimeEntrypointConfig",
     "CoreConfig",
     "AlertThrottleConfig",
     "ServiceTokenConfig",

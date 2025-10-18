@@ -1,16 +1,19 @@
-"""Paper trading adapter using the unified matching engine."""
+"""Paper trading adapter backed by the unified matching engine."""
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Dict, Mapping, MutableMapping
 
 import pandas as pd
 
-from KryptoLowca.logging_utils import get_logger
-from KryptoLowca.backtest.simulation import BacktestFill, MatchingConfig, MatchingEngine
+try:  # pragma: no cover - optional dependency outside desktop builds
+    from KryptoLowca.backtest.simulation import BacktestFill, MatchingConfig, MatchingEngine  # type: ignore
+except Exception:  # pragma: no cover - backtest module not packaged
+    BacktestFill = MatchingConfig = MatchingEngine = None  # type: ignore
 
-logger = get_logger(__name__)
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
@@ -24,9 +27,24 @@ class _PortfolioState:
 
 
 class PaperTradingAdapter:
-    """Adapter zgodny z ExecutionService wykorzystujący symulator matching engine."""
+    """ExecutionService-compatible adapter that simulates fills locally."""
 
     def __init__(self, *, initial_balance: float = 10_000.0, matching: MatchingConfig | None = None) -> None:
+        if MatchingEngine is None or MatchingConfig is None:
+            try:
+                from KryptoLowca.backtest.simulation import (  # type: ignore
+                    MatchingConfig as _MatchingConfig,
+                    MatchingEngine as _MatchingEngine,
+                )
+            except Exception as exc:  # pragma: no cover - diagnostyka środowiska
+                raise RuntimeError(
+                    "PaperTradingAdapter wymaga modułu KryptoLowca.backtest.simulation"
+                ) from exc
+            else:
+                globals()["MatchingEngine"] = _MatchingEngine
+                globals()["MatchingConfig"] = _MatchingConfig
+        if MatchingEngine is None or MatchingConfig is None:
+            raise RuntimeError("PaperTradingAdapter wymaga modułu KryptoLowca.backtest.simulation")
         self._initial_balance = float(initial_balance)
         self._matching_cfg = matching or MatchingConfig()
         self._portfolios: MutableMapping[str, _PortfolioState] = {}
@@ -68,7 +86,7 @@ class PaperTradingAdapter:
             stop_loss=kwargs.get("stop_loss"),
             take_profit=kwargs.get("take_profit"),
         )
-        logger.debug("Paper order submitted: %s %s size=%s", symbol, side, size)
+        LOGGER.debug("Paper order submitted: %s %s size=%s", symbol, side, size)
         return {"status": "accepted", "order_id": order_id, "timestamp": timestamp.isoformat()}
 
     def portfolio_snapshot(self, symbol: str) -> Mapping[str, float]:
@@ -82,11 +100,9 @@ class PaperTradingAdapter:
         trade_notional = fill.price * fill.size
         previous_position = state.position
 
-        # gotówka: notional * kierunek + opłata (opłata zawsze zmniejsza cash)
         state.cash -= direction * trade_notional
         state.cash -= fee_paid
 
-        # pozycja i cena średnia
         state.position = previous_position + direction * fill.size
         if state.position:
             state.avg_price = ((state.avg_price * previous_position) + fill.price * fill.size) / state.position
@@ -94,7 +110,7 @@ class PaperTradingAdapter:
             state.avg_price = 0.0
 
         state.fills.append(fill)
-        logger.info(
+        LOGGER.info(
             "Paper fill: side=%s price=%.4f size=%.4f cash=%.2f position=%.4f",
             fill.side,
             fill.price,

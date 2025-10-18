@@ -20,31 +20,18 @@ from typing import Any, Callable, Dict, Optional, Tuple, Union
 import pandas as pd
 
 # centralny dispatcher alertów
-from KryptoLowca.alerts import AlertEvent, AlertSeverity, get_alert_dispatcher
+from bot_core.alerts import AlertEvent, AlertSeverity, get_alert_dispatcher
 
-# Odporne importy: najpierw przestrzeń nazw KryptoLowca, potem lokalne
-try:  # pragma: no cover
-    from KryptoLowca.core.order_executor import ExecutionResult, OrderExecutor  # type: ignore
-    from KryptoLowca.managers.ai_manager import AIManager  # type: ignore
-    from KryptoLowca.managers.database_manager import DatabaseManager  # type: ignore
-    from KryptoLowca.managers.exchange_manager import ExchangeManager  # type: ignore
-    from KryptoLowca.managers.risk_manager_adapter import RiskManager  # type: ignore
-    from KryptoLowca.trading_strategies import (  # type: ignore
-        EngineConfig,
-        TradingParameters,
-        TradingStrategies,
-    )
-except Exception:  # pragma: no cover
-    from legacy_bridge.core.order_executor import ExecutionResult, OrderExecutor
-    from legacy_bridge.managers.ai_manager import AIManager
-    from legacy_bridge.managers.database_manager import DatabaseManager
-    from legacy_bridge.managers.exchange_manager import ExchangeManager
-    from legacy_bridge.managers.risk_manager_adapter import RiskManager
-    from legacy_bridge.trading_strategies import (
-        EngineConfig,
-        TradingParameters,
-        TradingStrategies,
-    )
+from KryptoLowca.core.order_executor import ExecutionResult, OrderExecutor  # type: ignore
+from KryptoLowca.managers.ai_manager import AIManager  # type: ignore
+from KryptoLowca.managers.database_manager import DatabaseManager  # type: ignore
+from KryptoLowca.managers.exchange_manager import ExchangeManager  # type: ignore
+from KryptoLowca.managers.risk_manager_adapter import RiskManager  # type: ignore
+from KryptoLowca.trading_strategies import (  # type: ignore
+    EngineConfig,
+    TradingParameters,
+    TradingStrategies,
+)
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:

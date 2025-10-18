@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from enum import Enum
 import math
 
-from KryptoLowca.alerts import AlertSeverity, emit_alert
+from bot_core.alerts import AlertSeverity, emit_alert
 
 
 # --- logging ---

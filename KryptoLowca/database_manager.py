@@ -15,15 +15,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
-# Odporne importy: najpierw namespacowane, potem lokalne
-try:  # pragma: no cover
-    from KryptoLowca.managers import database_manager as _core  # type: ignore
-    from KryptoLowca.managers.database_manager import (  # type: ignore
-        DatabaseManager as _CoreDatabaseManager,
-    )
-except Exception:  # pragma: no cover
-    from legacy_bridge import database_manager as _core
-    from legacy_bridge.database_manager import DatabaseManager as _CoreDatabaseManager
+from KryptoLowca.managers import database_manager as _core  # type: ignore
+from KryptoLowca.managers.database_manager import (  # type: ignore
+    DatabaseManager as _CoreDatabaseManager,
+)
 
 from sqlalchemy import DateTime, Integer, String, Text, UniqueConstraint, select
 from sqlalchemy.engine import make_url

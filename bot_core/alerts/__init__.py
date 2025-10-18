@@ -8,6 +8,14 @@ from bot_core.alerts.base import (
     AlertMessage,
     AlertRouter,
 )
+from bot_core.alerts.dispatcher import (
+    AlertDispatcher,
+    AlertEvent,
+    AlertSeverity,
+    BotError,
+    emit_alert,
+    get_alert_dispatcher,
+)
 from bot_core.alerts.channels import (
     DEFAULT_SMS_PROVIDERS,
     EmailChannel,
@@ -61,6 +69,12 @@ __all__ = [
     "get_sms_provider",
     "InMemoryAlertAuditLog",
     "FileAlertAuditLog",
+    "AlertDispatcher",
+    "AlertEvent",
+    "AlertSeverity",
+    "BotError",
+    "emit_alert",
+    "get_alert_dispatcher",
 ]
 
 # Expose optional channels only when available

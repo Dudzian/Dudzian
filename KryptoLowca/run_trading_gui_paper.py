@@ -1,7 +1,7 @@
 # run_trading_gui_paper.py
 # -*- coding: utf-8 -*-
 """
-Launcher PAPER do istniejącego trading_gui.py (GUI nie modyfikujemy).
+Launcher PAPER dla modułowego Trading GUI (pakiet ``KryptoLowca.ui.trading``).
 Funkcje:
 - Kierunek: LONG / SHORT (futures paper, bez nettingu – dwie niezależne pozycje na symbol).
 - Market/Limit: otwieranie i zamykanie dla obu kierunków.
@@ -43,11 +43,24 @@ if __package__ in (None, ""):
     _ensure_repo_root()
 
 
-import KryptoLowca.trading_gui  # oryginalne GUI
+from KryptoLowca.ui.trading import (
+    RiskSnapshot,
+    TradingGUI,
+    build_risk_profile_hint as _build_hint,
+    compute_default_notional as _compute_notional,
+    format_decimal as _format_decimal,
+    format_notional as _format_notional,
+    snapshot_from_app,
+)
 from KryptoLowca.managers.database_manager import DatabaseManager
 
 
 # ----------------- KONFIG / POMOCNICZE -----------------
+
+DEFAULT_NOTIONAL_USDT = 12.0
+DEFAULT_CAPITAL_USDT = 10_000.0
+DEFAULT_RISK_PCT = 1.0
+DEFAULT_PORTFOLIO_PCT = 20.0
 
 FEE_RATE = 0.001       # 0.1% koszt (paper)
 ENGINE_TICK_MS = 1500  # ms: cykl silnika symulacji
@@ -71,13 +84,41 @@ TP_PORTION_PRESETS: Dict[str, Tuple[float,float,float]] = {
 }
 
 
+def _derive_risk_defaults(snapshot: RiskSnapshot) -> tuple[float, float, float, float]:
+    """Zwraca (kapitał, ryzyko %, ekspozycja %, notional) zgodne z profilem runtime."""
+
+    capital = snapshot.paper_balance if snapshot.paper_balance > 0 else DEFAULT_CAPITAL_USDT
+
+    if snapshot.settings is not None:
+        try:
+            risk_pct = max(float(snapshot.settings.max_risk_per_trade) * 100.0, 0.0)
+        except Exception:
+            risk_pct = DEFAULT_RISK_PCT
+        try:
+            portfolio_pct = max(float(snapshot.settings.max_portfolio_risk) * 100.0, 0.0)
+        except Exception:
+            portfolio_pct = DEFAULT_PORTFOLIO_PCT
+    else:
+        risk_pct = DEFAULT_RISK_PCT
+        portfolio_pct = DEFAULT_PORTFOLIO_PCT
+
+    if risk_pct <= 0:
+        risk_pct = DEFAULT_RISK_PCT
+    if portfolio_pct <= 0:
+        portfolio_pct = DEFAULT_PORTFOLIO_PCT
+
+    notional = _compute_notional(snapshot, default_notional=DEFAULT_NOTIONAL_USDT)
+
+    return capital, risk_pct, portfolio_pct, notional
+
+
 def _fmt_float(x: float, max_dec: int = 8) -> float:
     s = f"{float(x):.{max_dec}f}"
     if "." in s:
         s = s.rstrip("0").rstrip(".")
     return float(s) if s else 0.0
 
-def _get_last_price(app: trading_gui.TradingGUI, symbol: str) -> Optional[float]:
+def _get_last_price(app: TradingGUI, symbol: str) -> Optional[float]:
     try:
         app._ensure_exchange()
         ex = getattr(app, "ex_mgr", None)
@@ -93,7 +134,7 @@ def _get_last_price(app: trading_gui.TradingGUI, symbol: str) -> Optional[float]
         pass
     return None
 
-def _fetch_ohlcv(app: trading_gui.TradingGUI, symbol: str, timeframe: str, limit: int) -> Optional[List[List[float]]]:
+def _fetch_ohlcv(app: TradingGUI, symbol: str, timeframe: str, limit: int) -> Optional[List[List[float]]]:
     """Pobiera świece przez exchange manager GUI (ccxt). Format: [ts, o, h, l, c, v] rosnąco."""
     try:
         app._ensure_exchange()
@@ -128,7 +169,7 @@ def _compute_atr(ohlcv: List[List[float]], length: int) -> Optional[float]:
 class QuickPaperTrade(tk.Toplevel):
     _last_instance: "QuickPaperTrade" = None  # referencja do ostatniego okna (dla podbijania komunikatów)
 
-    def __init__(self, app: trading_gui.TradingGUI):
+    def __init__(self, app: TradingGUI):
         super().__init__(app.root)
         self.title("Quick Paper Trade")
         self.app = app
@@ -204,6 +245,9 @@ class QuickPaperTrade(tk.Toplevel):
         tab_trade = ttk.Frame(main); main.add(tab_trade, text="Trade")
 
         # Górny pasek: symbol + kwota + market
+        snapshot = snapshot_from_app(self.app)
+        capital_default, risk_pct_default, portfolio_pct_default, notional_default = _derive_risk_defaults(snapshot)
+
         frm_top = ttk.Frame(tab_trade); frm_top.pack(fill="x", padx=8, pady=6)
         ttk.Label(frm_top, text="Symbol:").grid(row=0, column=0, sticky="w")
         default_symbol = getattr(self.app, "symbol_var", None)
@@ -212,7 +256,7 @@ class QuickPaperTrade(tk.Toplevel):
         ttk.Entry(frm_top, textvariable=self.symbol_var, width=18).grid(row=0, column=1, sticky="w", padx=4)
 
         ttk.Label(frm_top, text="Kwota (USDT):").grid(row=0, column=2, sticky="w", padx=(12,0))
-        self.notional_var = tk.StringVar(value="12")
+        self.notional_var = tk.StringVar(value=_format_notional(notional_default))
         ttk.Entry(frm_top, textvariable=self.notional_var, width=10).grid(row=0, column=3, sticky="w", padx=4)
 
         # Przełącznik „Zawsze na wierzchu”
@@ -230,16 +274,26 @@ class QuickPaperTrade(tk.Toplevel):
         ttk.Button(frm_top, text="Market BUY",  command=self._on_mkt_buy).grid(row=0, column=7, padx=(12,4))
         ttk.Button(frm_top, text="Market SELL", command=self._on_mkt_sell).grid(row=0, column=8, padx=4)
 
+        risk_hint = _build_hint(snapshot)
+        if risk_hint:
+            ttk.Label(frm_top, text=risk_hint, foreground="gray25").grid(
+                row=1, column=0, columnspan=9, sticky="w", pady=(6, 0)
+            )
+
         # Risk sizing
         frm_risk = ttk.LabelFrame(tab_trade, text="Risk sizing (paper)")
         frm_risk.pack(fill="x", padx=8, pady=(0,6))
 
         ttk.Label(frm_risk, text="Kapitał (USDT):").grid(row=0, column=0, sticky="w")
-        self.capital_var = tk.StringVar(value="10000")
+        self.capital_var = tk.StringVar(
+            value=_format_decimal(capital_default, decimals=2, fallback=str(int(DEFAULT_CAPITAL_USDT)))
+        )
         ttk.Entry(frm_risk, textvariable=self.capital_var, width=10).grid(row=0, column=1, sticky="w", padx=4)
 
         ttk.Label(frm_risk, text="Ryzyko % na trade:").grid(row=0, column=2, sticky="w", padx=(12,0))
-        self.risk_pct_var = tk.StringVar(value="1.0")
+        self.risk_pct_var = tk.StringVar(
+            value=_format_decimal(risk_pct_default, decimals=2, fallback=str(DEFAULT_RISK_PCT))
+        )
         ttk.Entry(frm_risk, textvariable=self.risk_pct_var, width=8).grid(row=0, column=3, sticky="w", padx=4)
 
         # FUTURES / LEVERAGE
@@ -253,12 +307,16 @@ class QuickPaperTrade(tk.Toplevel):
         self.ent_leverage.grid(row=1, column=1, sticky="w", padx=4, pady=(6,0))
 
         ttk.Label(frm_risk, text="Max margin % kapitału:").grid(row=1, column=2, sticky="w", padx=(12,0), pady=(6,0))
-        self.max_margin_pct_var = tk.StringVar(value="20")
+        self.max_margin_pct_var = tk.StringVar(
+            value=_format_decimal(portfolio_pct_default, decimals=2, fallback=str(DEFAULT_PORTFOLIO_PCT))
+        )
         self.ent_max_margin = ttk.Entry(frm_risk, textvariable=self.max_margin_pct_var, width=8)
         self.ent_max_margin.grid(row=1, column=3, sticky="w", padx=4, pady=(6,0))
 
         ttk.Label(frm_risk, text="Max wielkość pozycji % kapitału:").grid(row=1, column=4, sticky="w", padx=(12,0), pady=(6,0))
-        self.max_notional_pct_var = tk.StringVar(value="20")
+        self.max_notional_pct_var = tk.StringVar(
+            value=_format_decimal(portfolio_pct_default, decimals=2, fallback=str(DEFAULT_PORTFOLIO_PCT))
+        )
         self.ent_max_notional = ttk.Entry(frm_risk, textvariable=self.max_notional_pct_var, width=8)
         self.ent_max_notional.grid(row=1, column=5, sticky="w", padx=4, pady=(6,0))
 
@@ -1356,45 +1414,43 @@ class QuickPaperTrade(tk.Toplevel):
             pass
 
 
-# --- Patch stabilności komunikatów z oryginalnego mostka GUI -----------------
+# --- Executor stabilizujący komunikaty z mostka GUI -----------------
 
-_ORIG_EXEC = trading_gui.TradingGUI._bridge_execute_trade
-
-def _patched_bridge_execute_trade(self, symbol: str, side: str, mkt_price: float):
+def _paper_trade_executor(gui: TradingGUI, symbol: str, side: str, mkt_price: float) -> None:
     try:
-        return _ORIG_EXEC(self, symbol, side, mkt_price)
-    except Exception as e:
+        gui.default_trade_executor(symbol, side, mkt_price)
+    except Exception as exc:
         tb = traceback.format_exc()
         try:
-            self._log(f"AI Manager: failed in _bridge_execute_trade: {e}\n{tb}", "ERROR")
+            gui._log(f"AI Manager: failed in _bridge_execute_trade: {exc}\n{tb}", "ERROR")
         except Exception:
-            print(f"[ERROR] _bridge_execute_trade: {e}\n{tb}")
+            print(f"[ERROR] _bridge_execute_trade: {exc}\n{tb}")
         # Jeśli istnieje okno QuickPaperTrade – użyj jego „topmost” i pokaż komunikat nad nim
         qp = getattr(QuickPaperTrade, "_last_instance", None)
         if isinstance(qp, QuickPaperTrade):
-            qp._error("Paper", f"Nieoczekiwany błąd: {e}\n{tb}")
+            qp._error("Paper", f"Nieoczekiwany błąd: {exc}\n{tb}")
         else:
             # awaryjnie nad głównym oknem
             try:
-                self.root.lift()
-                self.root.attributes("-topmost", True)
-                messagebox.showerror("Paper", f"Nieoczekiwany błąd: {e}\n{tb}", parent=self.root)
+                gui.root.lift()
+                gui.root.attributes("-topmost", True)
+                messagebox.showerror(
+                    "Paper", f"Nieoczekiwany błąd: {exc}\n{tb}", parent=gui.root
+                )
             finally:
                 try:
-                    self.root.attributes("-topmost", False)
+                    gui.root.attributes("-topmost", False)
                 except Exception:
                     pass
-
-trading_gui.TradingGUI._bridge_execute_trade = _patched_bridge_execute_trade
 
 
 # --- Start GUI + auto-okno ----------------------------------------------------
 
-def _open_paper_panel_on_start(app: trading_gui.TradingGUI):
+def _open_paper_panel_on_start(app: TradingGUI):
     app.root.after(800, lambda: QuickPaperTrade(app))
 
 if __name__ == "__main__":
     root = tk.Tk()
-    app = trading_gui.TradingGUI(root)
+    app = TradingGUI(root, trade_executor=_paper_trade_executor)
     _open_paper_panel_on_start(app)
     root.mainloop()

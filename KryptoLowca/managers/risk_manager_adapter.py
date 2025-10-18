@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional, Tuple
 
 import pandas as pd
 
-from KryptoLowca.alerts import AlertSeverity, emit_alert
+from bot_core.alerts import AlertSeverity, emit_alert
 from KryptoLowca.risk_management import create_risk_manager  # istniejący moduł
 
 

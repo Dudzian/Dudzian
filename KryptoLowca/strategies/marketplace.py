@@ -381,10 +381,10 @@ class StrategyConfig:
 
         if self.max_leverage <= 0:
             raise ValidationError("max_leverage musi być dodatnie")
-        if not (0.0 < self.max_position_notional_pct <= 1.0):
-            raise ValidationError("max_position_notional_pct musi być w zakresie (0, 1]")
-        if not (0.0 < self.trade_risk_pct <= 1.0):
-            raise ValidationError("trade_risk_pct musi być w zakresie (0, 1]")
+        if not (0.0 <= self.max_position_notional_pct <= 1.0):
+            raise ValidationError("max_position_notional_pct musi być w zakresie [0, 1]")
+        if not (0.0 <= self.trade_risk_pct <= 1.0):
+            raise ValidationError("trade_risk_pct musi być w zakresie [0, 1]")
         if self.default_sl < 0 or self.default_tp < 0:
             raise ValidationError("default_sl i default_tp muszą być nieujemne")
         if self.violation_cooldown_s <= 0:

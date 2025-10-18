@@ -10,7 +10,7 @@ from typing import List, Tuple
 
 import pytest
 
-from KryptoLowca.alerts import AlertSeverity, get_alert_dispatcher
+from bot_core.alerts import AlertSeverity, get_alert_dispatcher
 from KryptoLowca.managers.security_manager import SecurityError, SecurityManager
 
 

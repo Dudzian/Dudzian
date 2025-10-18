@@ -1,13 +1,13 @@
 # run_trading_gui_paper.py
 # -*- coding: utf-8 -*-
 """
-Launcher PAPER do istniejącego trading_gui.py:
+Launcher PAPER dla modułowego Trading GUI (pakiet ``KryptoLowca.ui.trading``):
 - Nie wymaga żadnych kluczy API.
 - Dodaje okno "Quick Paper Trade" do ręcznego wysyłania MARKET BUY/SELL w trybie paper.
 - Zapisuje do bazy: orders, trades, positions (korzysta z managers.database_manager.DatabaseManager).
 - Pokazuje ostatnie pozycje i 10 ostatnich transakcji z trybu paper.
 
-NIC nie modyfikuje trading_gui.py – importujemy i „doklejamy” funkcjonalność.
+NIC nie modyfikuje modułowego Trading GUI – importujemy i „doklejamy” funkcjonalność.
 """
 
 from __future__ import annotations
@@ -37,7 +37,30 @@ if __package__ in (None, ""):
     _ensure_repo_root()
 
 
-import KryptoLowca.trading_gui  # Twój oryginalny plik GUI (NIE MODYFIKUJEMY GO)
+from KryptoLowca.ui.trading import (
+    TradingGUI,
+    build_risk_profile_hint as _build_hint,
+    compute_default_notional as _compute_notional,
+    format_notional as _fmt_notional,
+    snapshot_from_app,
+)
+
+
+DEFAULT_NOTIONAL_USDT = 12.0
+
+
+def _compute_default_notional(app: TradingGUI) -> float:
+    snapshot = snapshot_from_app(app)
+    return _compute_notional(snapshot, default_notional=DEFAULT_NOTIONAL_USDT)
+
+
+def _format_notional(value: float) -> str:
+    return _fmt_notional(value)
+
+
+def _build_risk_profile_hint(app: TradingGUI) -> Optional[str]:
+    snapshot = snapshot_from_app(app)
+    return _build_hint(snapshot)
 
 # DB manager (używamy tego samego co w testach earlier)
 from KryptoLowca.managers.database_manager import DatabaseManager
@@ -53,7 +76,7 @@ def _fmt_float(x: float, max_dec: int = 8) -> float:
     return float(s) if s else 0.0
 
 
-def _get_last_price(app: trading_gui.TradingGUI, symbol: str) -> Optional[float]:
+def _get_last_price(app: TradingGUI, symbol: str) -> Optional[float]:
     """
     Pobiera cenę ostatnią z publicznego tickera przez ExchangeManager (bez kluczy).
     Jeśli się nie uda, zwraca None.
@@ -74,24 +97,17 @@ def _get_last_price(app: trading_gui.TradingGUI, symbol: str) -> Optional[float]
     return None
 
 
-# ----------------- PATCH – zostawiamy paper po staremu -----------------
+# ----------------- EXECUTOR PAPER – delikatne rozszerzenie -----------------
 
-# Oryginalna metoda GUI (paper – nie ruszamy jej, tylko zachowujemy dla ręcznych BUY/SELL w GUI)
-_ORIG_EXEC = trading_gui.TradingGUI._bridge_execute_trade
+def _paper_trade_executor(gui: TradingGUI, symbol: str, side: str, mkt_price: float) -> None:
+    """Wywołuje domyślną symulację i przechwytuje błędy dla launchera paper."""
 
-def _patched_bridge_execute_trade(self, symbol: str, side: str, mkt_price: float):
-    """
-    Pozostawiamy PAPER tak jak było: wywołujemy oryginalną metodę GUI.
-    (Ten launcher NIE wysyła nic do CCXT; całość jest paper.)
-    """
     try:
-        return _ORIG_EXEC(self, symbol, side, mkt_price)
-    except Exception as e:
+        gui._bridge_execute_trade(symbol, side, mkt_price)
+    except Exception as exc:
         tb = traceback.format_exc()
-        self._log(f"[Paper] Wyjątek w _bridge_execute_trade: {e}\n{tb}", "ERROR")
-        messagebox.showerror("Paper", f"Nieoczekiwany błąd: {e}")
-
-trading_gui.TradingGUI._bridge_execute_trade = _patched_bridge_execute_trade
+        gui._log(f"[Paper] Wyjątek podczas symulacji transakcji: {exc}\n{tb}", "ERROR")
+        messagebox.showerror("Paper", f"Nieoczekiwany błąd: {exc}")
 
 
 # ----------------- OKNO QUICK PAPER TRADE -----------------
@@ -103,7 +119,7 @@ class QuickPaperTrade(tk.Toplevel):
     - zapisuje zlecenie, trade i aktualizuje pozycję w DB,
     - pokazuje pozycje (paper) i 10 ostatnich transakcji (paper).
     """
-    def __init__(self, app: trading_gui.TradingGUI):
+    def __init__(self, app: TradingGUI):
         super().__init__(app.root)
         self.title("Quick Paper Trade")
         self.app = app
@@ -130,11 +146,18 @@ class QuickPaperTrade(tk.Toplevel):
         ttk.Entry(frm_top, textvariable=self.symbol_var, width=18).grid(row=0, column=1, sticky="w", padx=4)
 
         ttk.Label(frm_top, text="Kwota (USDT):").grid(row=0, column=2, sticky="w", padx=(12,0))
-        self.notional_var = tk.StringVar(value="12")
+        notional_value = _format_notional(_compute_default_notional(self.app))
+        self.notional_var = tk.StringVar(value=notional_value)
         ttk.Entry(frm_top, textvariable=self.notional_var, width=10).grid(row=0, column=3, sticky="w", padx=4)
 
         ttk.Button(frm_top, text="Market BUY", command=self._on_buy).grid(row=0, column=4, padx=(12,4))
         ttk.Button(frm_top, text="Market SELL", command=self._on_sell).grid(row=0, column=5, padx=4)
+
+        risk_hint = _build_risk_profile_hint(self.app)
+        if risk_hint:
+            ttk.Label(frm_top, text=risk_hint, foreground="gray25").grid(
+                row=1, column=0, columnspan=6, sticky="w", pady=(6, 0)
+            )
 
         # Listy: Pozycje + Ostatnie transakcje
         sep = ttk.Separator(self)
@@ -300,11 +323,11 @@ class QuickPaperTrade(tk.Toplevel):
 
 # --- Start GUI + auto-okno ----------------------------------------------------
 
-def _open_paper_panel_on_start(app: trading_gui.TradingGUI):
+def _open_paper_panel_on_start(app: TradingGUI):
     app.root.after(800, lambda: QuickPaperTrade(app))
 
 if __name__ == "__main__":
     root = tk.Tk()
-    app = trading_gui.TradingGUI(root)
+    app = TradingGUI(root, trade_executor=_paper_trade_executor)
     _open_paper_panel_on_start(app)
     root.mainloop()

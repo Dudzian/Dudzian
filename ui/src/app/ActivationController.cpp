@@ -1,6 +1,7 @@
 #include "ActivationController.hpp"
 
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -18,40 +19,6 @@ QString envValue(const char* key, const QString& fallback = QString())
     if (env.isEmpty())
         return fallback;
     return QString::fromUtf8(env).trimmed();
-}
-
-QStringList readKeyArguments(const QString& path)
-{
-    QFile file(path);
-    if (!file.exists()) {
-        qCWarning(lcActivation) << "Plik z kluczami fingerprint nie istnieje:" << path;
-        return {};
-    }
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        qCWarning(lcActivation) << "Nie udało się otworzyć pliku z kluczami" << path << file.errorString();
-        return {};
-    }
-    const QByteArray data = file.readAll();
-    QJsonParseError error{};
-    const QJsonDocument doc = QJsonDocument::fromJson(data, &error);
-    if (error.error != QJsonParseError::NoError) {
-        qCWarning(lcActivation) << "Nie udało się sparsować pliku z kluczami" << path << error.errorString();
-        return {};
-    }
-    const QJsonObject object = doc.object();
-    const QJsonObject keysObject = object.value(QStringLiteral("keys")).toObject();
-    if (keysObject.isEmpty()) {
-        qCWarning(lcActivation) << "Plik" << path << "nie zawiera sekcji 'keys'.";
-        return {};
-    }
-    QStringList entries;
-    for (auto it = keysObject.begin(); it != keysObject.end(); ++it) {
-        const QString value = it.value().toString();
-        if (value.trimmed().isEmpty())
-            continue;
-        entries.append(QStringLiteral("%1=%2").arg(it.key(), value));
-    }
-    return entries;
 }
 
 QVariantList parseRegistryRecords(const QString& registryPath)
@@ -155,21 +122,20 @@ void ActivationController::reloadRegistry()
 
 void ActivationController::updateFingerprint()
 {
-    const QStringList keyArgs = loadKeyArguments();
-    if (keyArgs.isEmpty()) {
-        setError(tr("Brak skonfigurowanych kluczy do podpisywania fingerprintu."));
+    QFileInfo keyInfo(m_keysFile);
+    if (!keyInfo.exists()) {
+        setError(tr("Plik z kluczami fingerprint nie istnieje: %1").arg(m_keysFile));
         return;
     }
 
     QStringList args;
-    args << QStringLiteral("-m") << QStringLiteral("bot_core.security.fingerprint");
+    args << QStringLiteral("-m") << QStringLiteral("bot_core.security.ui_bridge") << QStringLiteral("fingerprint");
+    args << QStringLiteral("--keys-file") << m_keysFile;
     args << QStringLiteral("--rotation-log") << m_rotationLog;
     args << QStringLiteral("--purpose") << QStringLiteral("hardware-fingerprint");
     args << QStringLiteral("--interval-days") << QStringLiteral("180");
     if (!m_dongleHint.isEmpty())
         args << QStringLiteral("--dongle") << m_dongleHint;
-    for (const QString& entry : keyArgs)
-        args << QStringLiteral("--key") << entry;
 
     QProcess process;
     process.start(m_pythonExecutable, args);
@@ -224,11 +190,6 @@ void ActivationController::clearError()
         return;
     m_lastError.clear();
     Q_EMIT errorChanged();
-}
-
-QStringList ActivationController::loadKeyArguments() const
-{
-    return readKeyArguments(m_keysFile);
 }
 
 QVariantMap ActivationController::enrichFingerprintPayload(const QVariantMap& payload) const

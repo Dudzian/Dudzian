@@ -13,7 +13,7 @@ import pytest
 
 import ccxt  # type: ignore
 
-from KryptoLowca.alerts import get_alert_dispatcher
+from bot_core.alerts import get_alert_dispatcher
 from KryptoLowca.config_manager import ExchangeConfig
 from KryptoLowca.exchange_manager import (
     AuthenticationError,

@@ -1,7 +1,29 @@
 """Infrastruktura runtime nowej architektury bota."""
 
+from bot_core.config.models import CoreConfig as _CoreConfig  # noqa: F401
+from bot_core.runtime.paths import (  # noqa: F401
+    DesktopAppPaths,
+    build_desktop_app_paths,
+    resolve_core_config_path,
+)
+from bot_core.runtime.metadata import (  # noqa: F401
+    RuntimeEntrypointMetadata,
+    RiskManagerSettings,
+    derive_risk_manager_settings,
+    load_risk_manager_settings,
+    load_risk_profile_config,
+    load_runtime_entrypoint_metadata,
+)
+
 try:  # pragma: no cover - środowiska testowe mogą nie mieć pełnego runtime
-    from bot_core.runtime.bootstrap import BootstrapContext, bootstrap_environment
+    from bot_core.runtime.bootstrap import (
+        BootstrapContext,
+        RuntimeEntrypoint,
+        bootstrap_environment,
+        catalog_runtime_entrypoints,
+        resolve_runtime_entrypoint,
+    )
+    from bot_core.runtime.paper_trading import PaperTradingAdapter
     from bot_core.runtime.resource_monitor import (
         ResourceBudgetEvaluation,
         ResourceBudgets,
@@ -42,7 +64,10 @@ try:  # pragma: no cover - środowiska testowe mogą nie mieć pełnego runtime
     )
 except Exception:  # pragma: no cover - fallback gdy zależności runtime są niekompletne
     BootstrapContext = None  # type: ignore
+    RuntimeEntrypoint = None  # type: ignore
     bootstrap_environment = None  # type: ignore
+    catalog_runtime_entrypoints = None  # type: ignore
+    resolve_runtime_entrypoint = None  # type: ignore
     ResourceBudgetEvaluation = None  # type: ignore
     ResourceBudgets = None  # type: ignore
     ResourceSample = None  # type: ignore
@@ -71,6 +96,7 @@ except Exception:  # pragma: no cover - fallback gdy zależności runtime są ni
     Stage6HypercareResult = None  # type: ignore
     Stage6HypercareVerificationResult = None  # type: ignore
     verify_stage6_hypercare_summary = None  # type: ignore
+    PaperTradingAdapter = None  # type: ignore
 
 # --- Metrics service (opcjonalny – zależy od dostępności gRPC i wygenerowanych stubów) ---
 try:
@@ -155,7 +181,16 @@ except Exception:  # pragma: no cover - starsze gałęzie mogą nie mieć moduł
 # --- Publiczny interfejs modułu ---
 __all__ = [
     "BootstrapContext",
+    "RuntimeEntrypoint",
     "bootstrap_environment",
+    "catalog_runtime_entrypoints",
+    "resolve_runtime_entrypoint",
+    "RuntimeEntrypointMetadata",
+    "RiskManagerSettings",
+    "derive_risk_manager_settings",
+    "load_risk_profile_config",
+    "load_runtime_entrypoint_metadata",
+    "PaperTradingAdapter",
     "ResourceBudgets",
     "ResourceSample",
     "ResourceBudgetEvaluation",

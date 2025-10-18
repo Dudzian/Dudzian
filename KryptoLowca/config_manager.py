@@ -5,10 +5,15 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from dataclasses import dataclass, field, asdict, fields
+from dataclasses import dataclass, field, asdict, fields, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, TYPE_CHECKING, ClassVar
+from typing import Any, Dict, List, Optional, TYPE_CHECKING, ClassVar, Mapping
+
+from bot_core.runtime.metadata import (
+    RiskManagerSettings,
+    derive_risk_manager_settings,
+)
 
 import yaml
 from cryptography.fernet import Fernet, InvalidToken
@@ -146,7 +151,9 @@ class StrategyConfig:
     mode: str = "demo"
     max_leverage: float = 1.0
     max_position_usd: float = 100.0
+    max_position_notional_pct: float = 0.02
     max_daily_loss_usd: float = 50.0
+    trade_risk_pct: float = 0.01
     default_sl: float = 0.01
     default_tp: float = 0.02
     violation_cooldown_s: float = 300.0
@@ -163,7 +170,9 @@ class StrategyConfig:
     def validate(self) -> "StrategyConfig":
         self.max_leverage = float(self.max_leverage)
         self.max_position_usd = float(self.max_position_usd)
+        self.max_position_notional_pct = float(self.max_position_notional_pct)
         self.max_daily_loss_usd = float(self.max_daily_loss_usd)
+        self.trade_risk_pct = float(self.trade_risk_pct)
         self.default_sl = float(self.default_sl)
         self.default_tp = float(self.default_tp)
         self.violation_cooldown_s = float(self.violation_cooldown_s)
@@ -172,8 +181,14 @@ class StrategyConfig:
             raise ValidationError("max_leverage musi być dodatnie")
         if self.max_position_usd <= 0:
             raise ValidationError("max_position_usd musi być dodatnie")
+        if self.max_position_notional_pct < 0 or self.max_position_notional_pct > 1:
+            raise ValidationError(
+                "max_position_notional_pct musi być w zakresie [0, 1]"
+            )
         if self.max_daily_loss_usd <= 0:
             raise ValidationError("max_daily_loss_usd musi być dodatnie")
+        if not (0 <= self.trade_risk_pct <= 1):
+            raise ValidationError("trade_risk_pct musi być w zakresie [0, 1]")
         if not (0 <= self.default_sl < 1) or not (0 <= self.default_tp < 1):
             raise ValidationError("default_sl i default_tp muszą być w [0,1)")
         if self.default_sl < 0 or self.default_tp < 0:
@@ -218,6 +233,82 @@ class StrategyConfig:
 
         self.preset = (self.preset or "").strip().upper() or "CUSTOM"
         return self
+
+    def derive_risk_manager_settings(
+        self,
+        profile: Mapping[str, Any] | Any | None,
+        *,
+        profile_name: str | None = None,
+        defaults: Mapping[str, Any] | RiskManagerSettings | None = None,
+    ) -> RiskManagerSettings:
+        """Buduje ``RiskManagerSettings`` na bazie profilu runtime i lokalnych limitów."""
+
+        default_mapping: Mapping[str, Any]
+        if isinstance(defaults, RiskManagerSettings):
+            return derive_risk_manager_settings(
+                profile,
+                profile_name=profile_name,
+                defaults=defaults,
+            )
+        if isinstance(defaults, Mapping):
+            merged: Dict[str, Any] = dict(defaults)
+            merged.setdefault("max_risk_per_trade", self.max_position_notional_pct)
+            merged.setdefault(
+                "max_daily_loss_pct",
+                self.trade_risk_pct or self.max_position_notional_pct,
+            )
+            default_mapping = merged
+        else:
+            default_mapping = {
+                "max_risk_per_trade": self.max_position_notional_pct,
+                "max_daily_loss_pct": self.trade_risk_pct or self.max_position_notional_pct,
+            }
+        return derive_risk_manager_settings(
+            profile,
+            profile_name=profile_name,
+            defaults=default_mapping,
+        )
+
+    def apply_risk_profile(
+        self,
+        profile: Mapping[str, Any] | Any,
+        *,
+        prefer_profile_leverage: bool = True,
+        profile_name: str | None = None,
+    ) -> "StrategyConfig":
+        """Zwraca kopię konfiguracji zaktualizowaną o limity z profilu ryzyka."""
+
+        clone = replace(self)
+
+        leverage: float = float(clone.max_leverage)
+        if hasattr(profile, "max_leverage"):
+            try:
+                leverage = float(getattr(profile, "max_leverage"))
+            except Exception:
+                leverage = float(clone.max_leverage)
+        elif isinstance(profile, Mapping) and "max_leverage" in profile:
+            try:
+                leverage = float(profile["max_leverage"])
+            except Exception:
+                leverage = float(clone.max_leverage)
+
+        settings = self.derive_risk_manager_settings(
+            profile,
+            profile_name=profile_name,
+        )
+
+        clone.max_position_notional_pct = min(1.0, max(0.0, settings.max_risk_per_trade))
+        per_trade = min(settings.max_risk_per_trade, settings.max_daily_loss_pct)
+        clone.trade_risk_pct = min(1.0, max(0.0, per_trade))
+
+        leverage_value = max(0.0, leverage)
+        if leverage_value > 0:
+            if prefer_profile_leverage:
+                clone.max_leverage = leverage_value
+            else:
+                clone.max_leverage = max(clone.max_leverage, leverage_value)
+
+        return clone.validate()
 
     @classmethod
     def presets(cls) -> Dict[str, "StrategyConfig"]:

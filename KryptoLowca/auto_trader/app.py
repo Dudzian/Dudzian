@@ -9,6 +9,7 @@ import asyncio
 from typing import Iterable, Mapping, Optional, List, Dict, Any, Callable, Tuple, TYPE_CHECKING
 import inspect
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import pandas as pd
 try:
@@ -23,21 +24,36 @@ except Exception:
                 del self[0]
         def popleft(self): return super().pop(0)
 
-from KryptoLowca.alerts import AlertSeverity, emit_alert
+from importlib import import_module
+
+from bot_core.alerts import AlertSeverity, emit_alert as _core_emit_alert
 from KryptoLowca.event_emitter_adapter import EventEmitter
 from KryptoLowca.logging_utils import get_logger
 from KryptoLowca.config_manager import StrategyConfig
 from KryptoLowca.telemetry.prometheus_exporter import metrics as prometheus_metrics
 from KryptoLowca.core.services import ExecutionService, RiskService, SignalService, exception_guard
 from KryptoLowca.core.services.data_provider import ExchangeDataProvider
-from KryptoLowca.core.services.paper_adapter import PaperTradingAdapter
+from bot_core.runtime import PaperTradingAdapter, resolve_core_config_path
+from bot_core.runtime.metadata import (
+    RiskManagerSettings,
+    load_risk_manager_settings,
+    load_runtime_entrypoint_metadata,
+)
 from KryptoLowca.strategies.base import DataProvider, StrategyMetadata, StrategySignal
 
 if TYPE_CHECKING:  # pragma: no cover
+    from bot_core.config.models import RiskProfileConfig
     from KryptoLowca.data.market_data import MarketDataProvider, MarketDataRequest
 
 logger = get_logger(__name__)
 
+
+def _emit_alert(*args: Any, **kwargs: Any) -> None:
+    """Deleguje alerty do funkcji eksportowanej przez pakiet."""
+
+    module = import_module(__package__ or "KryptoLowca.auto_trader")
+    handler: Callable[..., None] = getattr(module, "emit_alert", _core_emit_alert)
+    handler(*args, **kwargs)
 
 @dataclass(slots=True)
 class RiskDecision:
@@ -156,9 +172,67 @@ class AutoTrader:
         self._last_risk_audit: Optional[Dict[str, Any]] = None
         self._market_data_provider = market_data_provider
         self._signal_service = signal_service or SignalService()
-        self._risk_service = risk_service or RiskService()
+        self._provided_risk_service = risk_service
         self._execution_service = execution_service or ExecutionService(_NullExchangeAdapter(self.emitter))
         self._live_execution_adapter = getattr(self._execution_service, "_adapter", None)
+        self._core_config_path: Path | None = None
+        self._risk_profile_name: Optional[str] = None
+        self._risk_profile_config: Optional["RiskProfileConfig"] = None
+
+        try:
+            self._core_config_path = resolve_core_config_path()
+        except Exception:  # pragma: no cover - środowiska bez pełnego runtime
+            logger.debug("Nie udało się ustalić ścieżki konfiguracji core", exc_info=True)
+            self._core_config_path = None
+
+        runtime_metadata = load_runtime_entrypoint_metadata(
+            "auto_trader",
+            config_path=self._core_config_path,
+            logger=logger,
+        )
+        self._runtime_metadata = runtime_metadata.to_dict() if runtime_metadata else {}
+        if runtime_metadata:
+            self._risk_profile_name = getattr(runtime_metadata, "risk_profile", None)
+            logger.info("Runtime entrypoint auto_trader: %s", self._runtime_metadata)
+
+        (
+            resolved_name,
+            profile_config,
+            risk_manager_settings,
+        ) = load_risk_manager_settings(
+            "auto_trader",
+            profile_name=self._risk_profile_name,
+            config_path=self._core_config_path,
+            logger=logger,
+        )
+        if resolved_name:
+            self._risk_profile_name = resolved_name
+        self._risk_profile_config = profile_config
+        self._risk_manager_settings = risk_manager_settings
+        if self._provided_risk_service is None:
+            service_kwargs = self._risk_manager_settings.risk_service_kwargs()
+            self._risk_service = RiskService(**service_kwargs)
+        else:
+            self._risk_service = self._provided_risk_service
+            service_kwargs = self._risk_manager_settings.risk_service_kwargs()
+            for attr, value in service_kwargs.items():
+                if hasattr(self._risk_service, attr):
+                    try:
+                        setattr(self._risk_service, attr, value)
+                    except Exception:  # pragma: no cover - defensywne
+                        logger.debug("Nie udało się zaktualizować %s w RiskService", attr, exc_info=True)
+        self._provided_risk_service = None
+        if self._risk_profile_config is not None:
+            applied = self._apply_runtime_risk_budget(self._strategy_config, force=True)
+            if applied is not self._strategy_config:
+                self._strategy_config = applied
+                logger.info(
+                    "Zastosowano profil ryzyka %s: max_notional=%.4f trade_risk=%.4f max_leverage=%.2f",
+                    self._risk_profile_name,
+                    self._strategy_config.max_position_notional_pct,
+                    self._strategy_config.trade_risk_pct,
+                    self._strategy_config.max_leverage,
+                )
         self._data_provider: Optional[DataProvider] = data_provider or self._build_data_provider()
         self._service_mode_enabled = self._data_provider is not None
         self._cooldowns: Dict[str, float] = {}
@@ -183,6 +257,64 @@ class AutoTrader:
         except Exception:  # pragma: no cover - defensywne
             logger.exception("Failed to initialise ExchangeDataProvider")
             return None
+
+    def _apply_runtime_risk_budget(
+        self,
+        cfg: StrategyConfig,
+        *,
+        force: bool = False,
+    ) -> StrategyConfig:
+        if self._risk_profile_config is None:
+            return cfg
+        if not force and self._strategy_override:
+            return cfg
+        try:
+            return cfg.apply_risk_profile(self._risk_profile_config)
+        except Exception:
+            logger.debug(
+                "Nie udało się zastosować profilu ryzyka %s do konfiguracji strategii",
+                self._risk_profile_name,
+                exc_info=True,
+            )
+            return cfg
+
+    def update_risk_manager_settings(
+        self,
+        settings: RiskManagerSettings,
+        *,
+        profile_name: str | None = None,
+        profile_config: Any | None = None,
+    ) -> None:
+        if not isinstance(settings, RiskManagerSettings):
+            raise TypeError("Oczekiwano instancji RiskManagerSettings")
+
+        with self._lock:
+            self._risk_manager_settings = settings
+            if profile_name:
+                self._risk_profile_name = profile_name
+            if profile_config is not None:
+                self._risk_profile_config = profile_config
+
+            service_kwargs = settings.risk_service_kwargs()
+            for attr, value in service_kwargs.items():
+                if hasattr(self._risk_service, attr):
+                    try:
+                        setattr(self._risk_service, attr, value)
+                    except Exception:
+                        logger.debug(
+                            "Nie udało się zaktualizować atrybutu %s w RiskService",
+                            attr,
+                            exc_info=True,
+                        )
+
+            if self._risk_profile_config is not None:
+                updated = self._apply_runtime_risk_budget(self._strategy_config, force=True)
+                if updated is not self._strategy_config:
+                    self._strategy_config = updated
+                    logger.info(
+                        "Zaktualizowano konfigurację strategii na podstawie profilu %s",
+                        self._risk_profile_name,
+                    )
 
     def start(self) -> None:
         self._stop.clear()
@@ -508,7 +640,7 @@ class AutoTrader:
             )
 
             try:
-                emit_alert(
+                _emit_alert(
                     message,
                     severity=AlertSeverity.ERROR,
                     source="autotrader",
@@ -727,11 +859,94 @@ class AutoTrader:
         market_payload: Mapping[str, Any],
     ) -> Dict[str, Any]:
         price = float(market_payload.get("price") or 0.0)
-        daily_loss = float(portfolio_snapshot.get("daily_loss_pct") or portfolio_snapshot.get("daily_loss") or 0.0)
+        daily_loss = float(
+            portfolio_snapshot.get("daily_loss_pct")
+            or portfolio_snapshot.get("daily_loss")
+            or 0.0
+        )
+        portfolio_value = float(
+            portfolio_snapshot.get("value")
+            or portfolio_snapshot.get("portfolio_value")
+            or portfolio_snapshot.get("equity")
+            or 0.0
+        )
+        position_qty = float(
+            portfolio_snapshot.get("position")
+            or portfolio_snapshot.get("qty")
+            or 0.0
+        )
+        notional = abs(position_qty * price)
+        position_fraction = notional / portfolio_value if portfolio_value > 0 else 0.0
+        drawdown = portfolio_snapshot.get("drawdown_pct") or portfolio_snapshot.get("max_drawdown_pct")
+        if drawdown is None:
+            drawdown = portfolio_snapshot.get("drawdown")
+        try:
+            drawdown_value = float(drawdown) if drawdown is not None else 0.0
+        except Exception:
+            drawdown_value = 0.0
+
+        open_positions_raw = (
+            portfolio_snapshot.get("open_positions")
+            or portfolio_snapshot.get("positions")
+            or portfolio_snapshot.get("active_positions")
+        )
+        open_positions = self._infer_open_positions(open_positions_raw, position_qty)
+
+        portfolio_exposure = portfolio_snapshot.get("portfolio_exposure_pct")
+        try:
+            exposure_value = float(portfolio_exposure)
+        except Exception:
+            exposure_value = position_fraction
+
         return {
             "price": price,
             "daily_loss_pct": daily_loss,
+            "portfolio_value": portfolio_value,
+            "position_notional_pct": position_fraction,
+            "portfolio_exposure_pct": max(0.0, exposure_value),
+            "open_positions": open_positions,
+            "drawdown_pct": drawdown_value,
         }
+
+    @staticmethod
+    def _infer_open_positions(raw: Any, current_position: float) -> int:
+        if raw is None:
+            return 1 if current_position else 0
+        if isinstance(raw, (int, float)):
+            try:
+                value = int(raw)
+            except Exception:
+                value = 0
+            return max(0, value)
+        if isinstance(raw, Mapping):
+            count = 0
+            for entry in raw.values():
+                if isinstance(entry, Mapping):
+                    qty = entry.get("qty") or entry.get("quantity")
+                    try:
+                        if float(qty):
+                            count += 1
+                    except Exception:
+                        continue
+                elif entry:
+                    count += 1
+            if count:
+                return count
+            return 1 if current_position else 0
+        if isinstance(raw, Iterable) and not isinstance(raw, (str, bytes)):
+            count = 0
+            for entry in raw:
+                if isinstance(entry, Mapping):
+                    qty = entry.get("qty") or entry.get("quantity")
+                    try:
+                        if float(qty):
+                            count += 1
+                    except Exception:
+                        continue
+                elif entry:
+                    count += 1
+            return count
+        return 1 if current_position else 0
 
     def _extract_price_from_payload(self, market_payload: Mapping[str, Any]) -> float:
         ticker = market_payload.get("ticker") if isinstance(market_payload, Mapping) else None
@@ -1262,8 +1477,9 @@ class AutoTrader:
                     )
                     logger.warning("Failed to refresh strategy config", exc_info=True)
                     self._strategy_config_error_notified = True
-        self._strategy_config = cfg
-        return cfg
+        cfg_applied = self._apply_runtime_risk_budget(cfg)
+        self._strategy_config = cfg_applied
+        return cfg_applied
 
     @staticmethod
     def _build_signal_payload(symbol: str, side: str, prediction: Optional[float]) -> Dict[str, Any]:
@@ -1392,47 +1608,27 @@ class AutoTrader:
 
         if risk_mgr is not None and hasattr(risk_mgr, "calculate_position_size"):
             try:
-                prepared_kwargs, request_details = self._prepare_risk_kwargs(
-                    risk_mgr,
-                    symbol=symbol,
-                    signal_payload=signal_payload,
-                    market_payload=market_payload,
-                    portfolio_ctx=portfolio_ctx,
-                    price=price,
-                )
-                result: Any = None
-                if prepared_kwargs is not None:
-                    try:
-                        result = risk_mgr.calculate_position_size(**prepared_kwargs)
-                    except TypeError as exc:
-                        logger.warning(
-                            "Risk manager %s signature call failed (%s); falling back to legacy invocation",
-                            type(risk_mgr).__name__,
-                            exc,
-                        )
-                        result = None
-                if result is None:
-                    legacy_args = [symbol, signal_payload, market_payload, portfolio_ctx]
-                    if request_details:
-                        legacy_args.append(True)
-                    try:
-                        result = risk_mgr.calculate_position_size(*legacy_args)
-                    except TypeError as exc:
-                        if request_details:
-                            logger.warning(
-                                "Risk manager %s rejected return_details flag (%s); retrying without details",
-                                type(risk_mgr).__name__,
-                                exc,
-                            )
-                            result = risk_mgr.calculate_position_size(
-                                symbol,
-                                signal_payload,
-                                market_payload,
-                                portfolio_ctx,
-                            )
-                            request_details = False
-                        else:
-                            raise
+                try:
+                    result = risk_mgr.calculate_position_size(
+                        symbol=symbol,
+                        signal=signal_payload,
+                        market_data=market_payload,
+                        portfolio=portfolio_ctx,
+                        return_details=True,
+                    )
+                except TypeError as exc:
+                    logger.warning(
+                        "Risk manager %s signature rejected keyword invocation (%s); retrying positional",
+                        type(risk_mgr).__name__,
+                        exc,
+                    )
+                    result = risk_mgr.calculate_position_size(
+                        symbol,
+                        signal_payload,
+                        market_payload,
+                        portfolio_ctx,
+                    )
+
                 fraction_val, details_val, sl_override, tp_override = self._normalize_risk_result(result)
                 if fraction_val is not None:
                     fraction = fraction_val
@@ -1692,7 +1888,7 @@ class AutoTrader:
         self.emitter.log(msg, level=level, component="AutoTrader")
         if decision.state != "ok":
             severity = AlertSeverity.WARNING if decision.state == "warn" else AlertSeverity.ERROR
-            emit_alert(
+            _emit_alert(
                 f"Risk guard {decision.state} ({decision.reason}) dla {symbol}",
                 severity=severity,
                 source="risk_guard",
@@ -1706,120 +1902,6 @@ class AutoTrader:
                     "cooldown_until": decision.details.get("cooldown_until"),
                 },
             )
-
-    @staticmethod
-    def _supports_return_details(
-        risk_mgr: Any, signature: inspect.Signature | None = None
-    ) -> bool:
-        if signature is None:
-            try:
-                signature = inspect.signature(risk_mgr.calculate_position_size)  # type: ignore[attr-defined]
-            except (TypeError, ValueError, AttributeError):
-                return False
-        return "return_details" in signature.parameters
-
-    # --- wariant używany w tej wersji ---
-    @staticmethod
-    def _prepare_risk_kwargs(
-        risk_mgr: Any,
-        *,
-        symbol: str,
-        signal_payload: Dict[str, Any],
-        market_payload: Any,
-        portfolio_ctx: Dict[str, Any],
-        price: float,
-    ) -> Tuple[Optional[Dict[str, Any]], bool]:
-        try:
-            method = risk_mgr.calculate_position_size  # type: ignore[attr-defined]
-        except AttributeError:
-            return None, False
-        try:
-            signature = inspect.signature(method)
-        except (TypeError, ValueError) as exc:
-            logger.warning(
-                "Unable to inspect %s.calculate_position_size signature: %s",
-                type(risk_mgr).__name__,
-                exc,
-            )
-            return None, False
-
-        kwargs: Dict[str, Any] = {}
-        missing_required: List[str] = []
-        has_signal_param = False
-        has_portfolio_param = False
-
-        for name, param in signature.parameters.items():
-            if name == "self":
-                continue
-            if param.kind in (
-                inspect.Parameter.VAR_POSITIONAL,
-                inspect.Parameter.VAR_KEYWORD,
-            ):
-                continue
-            if name == "symbol":
-                kwargs[name] = symbol
-            elif name in {"signal", "signal_data"}:
-                kwargs[name] = signal_payload
-                has_signal_param = True
-            elif name in {"portfolio", "current_portfolio"}:
-                kwargs[name] = portfolio_ctx
-                has_portfolio_param = True
-            elif name in {"market_data", "market", "market_payload", "market_ctx", "market_context"}:
-                kwargs[name] = market_payload
-            elif name == "price":
-                kwargs[name] = price
-            elif name == "return_details":
-                kwargs[name] = True
-            elif param.default is inspect._empty:
-                missing_required.append(name)
-
-        request_details = AutoTrader._supports_return_details(risk_mgr, signature)
-
-        if missing_required:
-            logger.warning(
-                "Risk manager %s.calculate_position_size has unsupported required parameters: %s",
-                type(risk_mgr).__name__,
-                ", ".join(missing_required),
-            )
-            return None, request_details
-
-        if not has_signal_param and any(
-            alias in signature.parameters for alias in ("signal", "signal_data")
-        ):
-            logger.warning(
-                "Risk manager %s.calculate_position_size signature declares signal data but mapping failed",
-                type(risk_mgr).__name__,
-            )
-            return None, request_details
-
-        if not has_signal_param and not any(
-            alias in signature.parameters for alias in ("signal", "signal_data")
-        ):
-            logger.warning(
-                "Risk manager %s.calculate_position_size is missing signal parameter (expected 'signal' or 'signal_data')",
-                type(risk_mgr).__name__,
-            )
-            return None, request_details
-
-        if not has_portfolio_param and any(
-            alias in signature.parameters for alias in ("portfolio", "current_portfolio")
-        ):
-            logger.warning(
-                "Risk manager %s.calculate_position_size signature declares portfolio data but mapping failed",
-                type(risk_mgr).__name__,
-            )
-            return None, request_details
-
-        if not has_portfolio_param and not any(
-            alias in signature.parameters for alias in ("portfolio", "current_portfolio")
-        ):
-            logger.warning(
-                "Risk manager %s.calculate_position_size is missing portfolio parameter (expected 'portfolio' or 'current_portfolio')",
-                type(risk_mgr).__name__,
-            )
-            return None, request_details
-
-        return kwargs, request_details
 
     @staticmethod
     def _normalize_risk_result(
@@ -1902,111 +1984,6 @@ class AutoTrader:
 
         return fraction, details, stop_loss_override, take_profit_override
 
-    # --- alternatywne (zachowane) API wołania risk engine z innej gałęzi ---
-    @staticmethod
-    def _supports_return_details_legacy(risk_mgr: Any) -> bool:
-        try:
-            sig = inspect.signature(risk_mgr.calculate_position_size)  # type: ignore[attr-defined]
-        except (TypeError, ValueError, AttributeError):
-            return False
-        return "return_details" in sig.parameters
-
-    def _call_risk_manager(
-        self,
-        risk_mgr: Any,
-        symbol: str,
-        signal_payload: Dict[str, Any],
-        market_payload: Any,
-        portfolio_ctx: Dict[str, Any],
-    ) -> Tuple[float, Optional[Dict[str, Any]]]:
-        supports_details = self._supports_return_details_legacy(risk_mgr)
-        args = [symbol, signal_payload, market_payload, portfolio_ctx]
-        kwargs: Dict[str, Any] = {"return_details": True} if supports_details else {}
-
-        try:
-            result = risk_mgr.calculate_position_size(*args, **kwargs)  # type: ignore[misc]
-        except TypeError:
-            mapped_kwargs = self._build_risk_kwargs(
-                risk_mgr,
-                symbol,
-                signal_payload,
-                market_payload,
-                portfolio_ctx,
-                request_details=supports_details,
-            )
-            result = risk_mgr.calculate_position_size(**mapped_kwargs)  # type: ignore[misc]
-
-        fraction: float
-        risk_details: Optional[Dict[str, Any]] = None
-
-        if isinstance(result, tuple):
-            primary = result[0]
-            fraction = float(primary)
-            if len(result) > 1:
-                extra = result[1]
-                if isinstance(extra, dict):
-                    risk_details = dict(extra)
-                else:
-                    risk_details = {"context": extra}
-        elif hasattr(result, "recommended_size"):
-            fraction = float(getattr(result, "recommended_size", 0.0) or 0.0)
-            risk_details = {
-                "recommended_size": float(getattr(result, "recommended_size", 0.0) or 0.0),
-                "max_allowed_size": float(getattr(result, "max_allowed_size", 0.0) or 0.0),
-                "kelly_size": float(getattr(result, "kelly_size", 0.0) or 0.0),
-                "risk_adjusted_size": float(getattr(result, "risk_adjusted_size", 0.0) or 0.0),
-                "confidence_level": float(getattr(result, "confidence_level", 0.0) or 0.0),
-                "reasoning": getattr(result, "reasoning", "") or "",
-            }
-        else:
-            fraction = float(result)
-
-        if risk_details is not None:
-            risk_details.setdefault("requested_details", supports_details)
-        return fraction, risk_details
-
-    @staticmethod
-    def _build_risk_kwargs(
-        risk_mgr: Any,
-        symbol: str,
-        signal_payload: Dict[str, Any],
-        market_payload: Any,
-        portfolio_ctx: Dict[str, Any],
-        *,
-        request_details: bool,
-    ) -> Dict[str, Any]:
-        try:
-            sig = inspect.signature(risk_mgr.calculate_position_size)  # type: ignore[attr-defined]
-        except (TypeError, ValueError, AttributeError):
-            kwargs = {
-                "symbol": symbol,
-                "signal": signal_payload,
-                "market_data": market_payload,
-                "portfolio": portfolio_ctx,
-            }
-            if request_details:
-                kwargs["return_details"] = True
-            return kwargs
-
-        kwargs: Dict[str, Any] = {}
-        for name, param in sig.parameters.items():
-            if name == "self":
-                continue
-            lname = name.lower()
-            if lname in {"symbol", "pair", "instrument"}:
-                kwargs[name] = symbol
-            elif lname in {"signal", "signal_data", "signal_payload", "signal_ctx"}:
-                kwargs[name] = signal_payload
-            elif lname in {"market_data", "market", "market_df", "data", "market_ctx"}:
-                kwargs[name] = market_payload
-            elif lname in {"portfolio", "portfolio_ctx", "current_portfolio"}:
-                kwargs[name] = portfolio_ctx
-            elif lname == "return_details" and request_details:
-                kwargs[name] = True
-            elif param.default is inspect._empty:
-                kwargs[name] = portfolio_ctx
-        return kwargs
-
     def _resolve_account_value(self, portfolio_ctx: Dict[str, Any]) -> float:
         account_value = portfolio_ctx.get("equity")
         try:
@@ -2080,7 +2057,7 @@ class AutoTrader:
             level="WARNING",
             component="AutoTrader",
         )
-        emit_alert(
+        _emit_alert(
             f"Reduce-only dla {symbol} przez {cooldown:.0f}s",
             severity=AlertSeverity.ERROR,
             source="risk_guard",
@@ -2128,7 +2105,7 @@ class AutoTrader:
             level="WARNING",
             component="AutoTrader",
         )
-        emit_alert(
+        _emit_alert(
             f"Cooldown ryzyka dla {symbol}",
             severity=AlertSeverity.WARNING if decision.state == "warn" else AlertSeverity.ERROR,
             source="risk_guard",

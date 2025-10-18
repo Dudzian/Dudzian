@@ -24,7 +24,7 @@ import logging
 import os
 import threading
 import time
-from typing import Any, List
+from typing import Any, List, Optional
 
 # Logging – czytelne, po PL
 LOG_LEVEL = os.getenv("APP_LOG_LEVEL", "INFO").upper()
@@ -44,12 +44,28 @@ from KryptoLowca.event_emitter_adapter import (
     EventType,
 )
 
-# Import GUI (Twoje GUI musi udostępniać klasę TradingGUI z konstruktorem wymagającym 'root')
+# Import GUI (pakiet modułowy udostępnia klasę TradingGUI)
 try:
-    from run_trading_gui_paper import TradingGUI  # plik z Twoim GUI
-except Exception as e:
-    logger.exception("Nie udało się zaimportować TradingGUI z run_trading_gui_paper.py")
+    from KryptoLowca.ui.trading import (
+        TradingGUI,
+        build_risk_profile_hint,
+        compute_default_notional,
+        format_notional,
+        snapshot_from_app,
+    )
+except Exception:
+    logger.exception(
+        "Nie udało się zaimportować TradingGUI z KryptoLowca.ui.trading"
+    )
     raise
+
+try:
+    from bot_core.runtime.metadata import load_risk_manager_settings
+except Exception:  # pragma: no cover - środowisko bez runtime
+    load_risk_manager_settings = None  # type: ignore[assignment]
+
+
+DEFAULT_PAPER_ORDER_NOTIONAL = 25.0
 
 
 # ==========================================
@@ -104,6 +120,85 @@ class DemoFeeder(threading.Thread):
 # ==========================================
 # Helper: integracja z GUI (bez twardych zależności)
 # ==========================================
+
+
+def _configure_runtime_risk(
+    gui: TradingGUI,
+    *,
+    entrypoint: str = "trading_gui",
+    config_path: Optional[str] = None,
+) -> None:
+    """Uzupełnia GUI o dane profilu ryzyka oraz loguje domyślne wartości."""
+
+    profile_name: str | None = None
+    profile_payload: object | None = None
+    settings = getattr(gui, "risk_manager_settings", None)
+
+    if callable(load_risk_manager_settings):
+        try:
+            profile_name, profile_payload, settings = load_risk_manager_settings(
+                entrypoint,
+                config_path=config_path,
+                logger=logger,
+            )
+        except Exception:
+            logger.debug(
+                "Nie udało się wczytać ustawień risk managera dla %s",
+                entrypoint,
+                exc_info=True,
+            )
+
+    if profile_name and hasattr(gui, "risk_profile_name"):
+        try:
+            gui.risk_profile_name = profile_name
+        except Exception:
+            logger.debug("Nie udało się ustawić nazwy profilu ryzyka w GUI.", exc_info=True)
+
+    if profile_payload is not None and hasattr(gui, "risk_profile_config"):
+        try:
+            gui.risk_profile_config = profile_payload
+        except Exception:
+            logger.debug(
+                "Nie udało się ustawić konfiguracji profilu ryzyka w GUI.",
+                exc_info=True,
+            )
+
+    if settings is not None and hasattr(gui, "risk_manager_settings"):
+        try:
+            gui.risk_manager_settings = settings
+        except Exception:
+            logger.debug(
+                "Nie udało się ustawić obiektu RiskManagerSettings w GUI.",
+                exc_info=True,
+            )
+
+    snapshot = snapshot_from_app(gui)
+    notional = compute_default_notional(
+        snapshot,
+        default_notional=DEFAULT_PAPER_ORDER_NOTIONAL,
+    )
+    hint = build_risk_profile_hint(snapshot)
+
+    if hint:
+        logger.info("%s", hint)
+    logger.info(
+        "Domyślny notional (paper): %s USDT",
+        format_notional(notional),
+    )
+
+    try:
+        setattr(gui, "default_paper_notional", notional)
+    except Exception:
+        logger.debug("Nie udało się zapisać domyślnego notional w GUI.", exc_info=True)
+
+    root = getattr(gui, "root", None)
+    if hint and root is not None:
+        try:
+            current_title = root.title()
+            if current_title:
+                root.title(f"{current_title} — {hint}")
+        except Exception:
+            logger.debug("Nie udało się zaktualizować tytułu okna GUI.", exc_info=True)
 
 def _wire_gui_with_bus(root, gui: Any, bus: EventBus) -> None:
     """
@@ -182,6 +277,8 @@ def main() -> None:
         except TypeError:
             # Ostatecznie – znów klasyczny
             gui = TradingGUI(root)
+
+    _configure_runtime_risk(gui)
 
     # 4) Miękkie spięcie EventBus -> GUI (jeśli GUI ma odpowiednie metody)
     _wire_gui_with_bus(root, gui, bus)

@@ -10,7 +10,7 @@
 ### Etap 1 – Audyt i przygotowanie kodu
 1. **Inwentaryzacja zależności GUI**: spisać funkcje, które dziś wywołują menedżery (AI, Exchange, Risk, Database).
 2. **Wydzielenie konfiguracji**: przenieść ustawienia Tkinter (`tk.Variable`) do klas DTO/Pydantic, aby backend mógł je przyjmować w API.
-3. **Centralne logowanie i alerty**: wszystkie moduły korzystają z `KryptoLowca.alerts`, co upraszcza przekierowanie zdarzeń do backendu.
+3. **Centralne logowanie i alerty**: wszystkie moduły korzystają z `bot_core.alerts`, co upraszcza przekierowanie zdarzeń do backendu.
 
 ### Etap 2 – Backend FastAPI
 1. **Serwis `trading-service` (FastAPI)**

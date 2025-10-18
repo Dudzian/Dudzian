@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from KryptoLowca.alerts import AlertSeverity, get_alert_dispatcher
+from bot_core.alerts import AlertSeverity, get_alert_dispatcher
 from KryptoLowca.managers.database_manager import DatabaseManager
 from KryptoLowca.managers.risk_manager_adapter import RiskManager
 from KryptoLowca.risk_management import RiskLevel, RiskManagement
