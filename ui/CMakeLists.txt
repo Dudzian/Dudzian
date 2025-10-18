@@ -69,6 +69,7 @@ set(UI_SOURCES
     src/telemetry/UiTelemetryReporter.cpp
     src/license/LicenseActivationController.cpp
     src/security/SecurityAdminController.cpp
+    src/reporting/ReportCenterController.cpp
 )
 
 set(UI_HEADERS
@@ -85,6 +86,7 @@ set(UI_HEADERS
     src/telemetry/UiTelemetryReporter.hpp
     src/license/LicenseActivationController.hpp
     src/security/SecurityAdminController.hpp
+    src/reporting/ReportCenterController.hpp
 )
 
 qt_add_executable(bot_trading_shell
@@ -241,4 +243,12 @@ if(BUILD_TESTING)
             Qt6::Test
     )
     add_test(NAME admin_dialog_e2e_tests COMMAND admin_dialog_e2e_tests)
+
+    add_executable(report_center_controller_tests
+        tests/ReportCenterControllerTest.cpp
+        src/reporting/ReportCenterController.cpp
+    )
+    target_include_directories(report_center_controller_tests PRIVATE src)
+    target_link_libraries(report_center_controller_tests PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME report_center_controller_tests COMMAND report_center_controller_tests)
 endif()
