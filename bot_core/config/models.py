@@ -509,6 +509,30 @@ class EnvironmentAIModelConfig:
 
 
 @dataclass(slots=True)
+class EnvironmentAIEnsembleConfig:
+    """Definicja zespołu modeli dostępnego w środowisku."""
+
+    name: str
+    components: Sequence[str]
+    aggregation: str = "mean"
+    weights: Sequence[float] | None = None
+
+
+@dataclass(slots=True)
+class EnvironmentAIPipelineScheduleConfig:
+    """Konfiguracja harmonogramu pipeline'u selekcji modeli."""
+
+    symbol: str
+    model_types: Sequence[str]
+    data_source: str
+    interval_seconds: float = 3600.0
+    seq_len: int = 64
+    folds: int = 3
+    baseline_source: str | None = None
+    result_callback: str | None = None
+
+
+@dataclass(slots=True)
 class EnvironmentAIConfig:
     """Konfiguracja integracji AIManagera w środowisku runtime."""
 
@@ -521,6 +545,8 @@ class EnvironmentAIConfig:
     default_action: str = "enter"
     preload: Sequence[str] = field(default_factory=tuple)
     models: Sequence[EnvironmentAIModelConfig] = field(default_factory=tuple)
+    ensembles: Sequence[EnvironmentAIEnsembleConfig] = field(default_factory=tuple)
+    pipeline_schedules: Sequence[EnvironmentAIPipelineScheduleConfig] = field(default_factory=tuple)
 
 
 # --- Środowiska / rdzeń ------------------------------------------------------
@@ -1067,6 +1093,8 @@ __all__ = [
     "DecisionEngineConfig",
     "EnvironmentAIConfig",
     "EnvironmentAIModelConfig",
+    "EnvironmentAIEnsembleConfig",
+    "EnvironmentAIPipelineScheduleConfig",
     "DecisionEngineTCOConfig",
     "DecisionOrchestratorThresholds",
     "DecisionStressTestConfig",
