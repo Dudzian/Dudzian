@@ -53,6 +53,7 @@ def test_load_core_config_parses_decision_engine_tco(tmp_path: Path) -> None:
                 "require_at_startup": True,
                 "warn_report_age_hours": 12,
                 "max_report_age_hours": 36,
+                "runtime_clear_after_export": True,
             },
         },
     }
@@ -74,6 +75,7 @@ def test_load_core_config_parses_decision_engine_tco(tmp_path: Path) -> None:
         assert Path(path).is_absolute()
     assert report_paths[0].endswith("data/tco/baseline.json")
     assert report_paths[1].endswith("shared/tco.json")
+    assert tco_config.runtime_clear_after_export is True
 
 
 def test_load_core_config_maps_thresholds_and_overrides(tmp_path: Path) -> None:

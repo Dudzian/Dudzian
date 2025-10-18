@@ -66,11 +66,23 @@ class RuntimeTCOReporter:
     basename: str | None = None
     export_formats: Sequence[str] | None = None
     flush_events: int | None = None
+    clear_after_export: bool = False
     signing_key: bytes | None = None
     signing_key_id: str | None = None
     metadata: Mapping[str, object] = field(default_factory=dict)
     cost_limit_bps: float | Decimal | None = None
     clock: Callable[[], datetime] = field(default=lambda: datetime.now(timezone.utc))
+    _analyzer: TCOAnalyzer = field(init=False, repr=False)
+    _events: list[TradeCostEvent] = field(init=False, repr=False)
+    _output_dir: Path | None = field(init=False, repr=False)
+    _formats: tuple[str, ...] = field(init=False, repr=False)
+    _flush_every: int | None = field(init=False, repr=False)
+    _metadata: MutableMapping[str, object] = field(init=False, repr=False)
+    _basename: str | None = field(init=False, repr=False)
+    _signing_key: bytes | None = field(init=False, repr=False)
+    _signing_key_id: str | None = field(init=False, repr=False)
+    _last_export: MutableMapping[str, Path] | None = field(init=False, repr=False)
+    _clear_after_export: bool = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         cost_limit = self.cost_limit_bps
@@ -86,6 +98,7 @@ class RuntimeTCOReporter:
         self._signing_key = self.signing_key
         self._signing_key_id = self.signing_key_id
         self._last_export: MutableMapping[str, Path] | None = None
+        self._clear_after_export = bool(self.clear_after_export)
 
     def record_execution(
         self,
@@ -135,12 +148,12 @@ class RuntimeTCOReporter:
         if self._flush_every and self._output_dir is not None:
             if len(self._events) % self._flush_every == 0:
                 try:
-                    self.export()
+                    self.export(clear_events=self._clear_after_export)
                 except Exception:  # pragma: no cover - export errors should not block trading
                     _LOGGER.exception("Failed to export runtime TCO report")
         return event
 
-    def export(self) -> Mapping[str, Path] | None:
+    def export(self, *, clear_events: bool | None = None) -> Mapping[str, Path] | None:
         """Aggregates collected events and writes artifacts to disk."""
 
         if self._output_dir is None:
@@ -175,6 +188,9 @@ class RuntimeTCOReporter:
                 for label, artifact in signed.items():
                     artifacts[f"{label}_signature"] = artifact.signature_path
         self._last_export = dict(artifacts)
+        should_clear = self._clear_after_export if clear_events is None else bool(clear_events)
+        if should_clear:
+            self._events.clear()
         return dict(artifacts)
 
     def events(self) -> tuple[TradeCostEvent, ...]:
@@ -186,3 +202,8 @@ class RuntimeTCOReporter:
         """Returns the mapping of artifacts produced during the last export."""
 
         return dict(self._last_export) if self._last_export else None
+
+    def clear_events(self) -> None:
+        """Usuwa wszystkie zapisane zdarzenia kosztowe (np. po eksporcie)."""
+
+        self._events.clear()

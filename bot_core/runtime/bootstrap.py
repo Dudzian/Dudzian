@@ -418,6 +418,7 @@ def _initialize_runtime_tco_reporter(
     formats = getattr(config, "runtime_export_formats", None)
     flush_events = getattr(config, "runtime_flush_events", None)
     flush_normalized = int(flush_events) if flush_events not in (None, "", 0) else None
+    clear_after_export = bool(getattr(config, "runtime_clear_after_export", False))
 
     signing_key_env = getattr(config, "runtime_signing_key_env", None)
     signing_key: bytes | None = None
@@ -445,6 +446,7 @@ def _initialize_runtime_tco_reporter(
             basename=basename,
             export_formats=formats,
             flush_events=flush_normalized,
+            clear_after_export=clear_after_export,
             signing_key=signing_key,
             signing_key_id=signing_key_id,
             metadata=metadata,

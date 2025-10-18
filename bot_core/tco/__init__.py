@@ -11,6 +11,7 @@ from .costs import (
 from .models import (
     CostBreakdown,
     ProfileCostSummary,
+    SchedulerCostSummary,
     StrategyCostSummary,
     TCOReport,
     TradeCostEvent,
@@ -22,6 +23,7 @@ from .services import (
     CostAggregationContext,
     CostComponentSummary,
     CostReportExtension,
+    SchedulerCostView,
     StrategyCostView,
 )
 
@@ -38,6 +40,8 @@ __all__ = [
     "CostReportExtension",
     "FundingCost",
     "ProfileCostSummary",
+    "SchedulerCostSummary",
+    "SchedulerCostView",
     "SignedArtifact",
     "SlippageCost",
     "StrategyCostSummary",

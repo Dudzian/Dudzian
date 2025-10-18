@@ -4,9 +4,16 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Iterable, Mapping, MutableMapping
+from typing import Any, Iterable, Mapping, MutableMapping
 
-from .models import CostBreakdown, ProfileCostSummary, StrategyCostSummary, TCOReport, TradeCostEvent
+from .models import (
+    CostBreakdown,
+    ProfileCostSummary,
+    SchedulerCostSummary,
+    StrategyCostSummary,
+    TCOReport,
+    TradeCostEvent,
+)
 
 
 @dataclass(slots=True)
@@ -29,6 +36,29 @@ class _Accumulator:
         )
 
 
+@dataclass(slots=True)
+class _SchedulerAggregation:
+    scheduler: str
+    strategies: MutableMapping[str, _Accumulator] = field(default_factory=dict)
+    total: _Accumulator = field(default_factory=_Accumulator)
+
+    def add_event(self, event: TradeCostEvent) -> None:
+        strategy_bucket = self.strategies.setdefault(event.strategy, _Accumulator())
+        strategy_bucket.add_event(event)
+        self.total.add_event(event)
+
+
+def _resolve_scheduler(metadata: Mapping[str, Any]) -> str:
+    for key in ("scheduler", "scheduler_id", "schedule"):
+        value = metadata.get(key)
+        if value in (None, ""):
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return "default"
+
+
 class TCOAnalyzer:
     """Agreguje koszty transakcyjne i buduje raport TCO."""
 
@@ -43,6 +73,7 @@ class TCOAnalyzer:
     ) -> TCOReport:
         metadata = dict(metadata or {})
         by_strategy: MutableMapping[str, MutableMapping[str, _Accumulator]] = {}
+        by_scheduler: MutableMapping[str, _SchedulerAggregation] = {}
         totals = _Accumulator()
 
         for event in events:
@@ -50,8 +81,14 @@ class TCOAnalyzer:
             profile_bucket = strategy_bucket.setdefault(event.risk_profile, _Accumulator())
             profile_bucket.add_event(event)
             totals.add_event(event)
+            scheduler_name = _resolve_scheduler(event.metadata)
+            scheduler_bucket = by_scheduler.setdefault(
+                scheduler_name, _SchedulerAggregation(scheduler=scheduler_name)
+            )
+            scheduler_bucket.add_event(event)
 
         strategy_summaries: MutableMapping[str, StrategyCostSummary] = {}
+        scheduler_summaries: MutableMapping[str, SchedulerCostSummary] = {}
         alerts: list[str] = []
 
         for strategy, profiles in sorted(by_strategy.items()):
@@ -75,10 +112,21 @@ class TCOAnalyzer:
             strategy_summaries[strategy] = strategy_summary
             self._check_threshold(strategy, strategy_summary.total, alerts)
 
+        for scheduler_name, aggregation in sorted(by_scheduler.items()):
+            strategy_breakdowns: MutableMapping[str, ProfileCostSummary] = {}
+            for strategy, accumulator in sorted(aggregation.strategies.items()):
+                strategy_breakdowns[strategy] = accumulator.to_summary(profile=strategy)
+            scheduler_summaries[scheduler_name] = SchedulerCostSummary(
+                scheduler=scheduler_name,
+                strategies=dict(strategy_breakdowns),
+                total=aggregation.total.to_summary(profile="all"),
+            )
+
         if self._cost_limit_bps is not None:
             metadata.setdefault("cost_limit_bps", float(self._cost_limit_bps))
         metadata.setdefault("events_count", totals.trade_count)
         metadata.setdefault("strategy_count", len(strategy_summaries))
+        metadata.setdefault("scheduler_count", len(scheduler_summaries))
         generated_at = datetime.now(tz=timezone.utc)
         report = TCOReport(
             generated_at=generated_at,
@@ -86,6 +134,7 @@ class TCOAnalyzer:
             strategies=dict(strategy_summaries),
             total=totals.to_summary(profile="all"),
             alerts=alerts,
+            schedulers=dict(scheduler_summaries),
         )
         return report
 

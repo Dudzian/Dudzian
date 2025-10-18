@@ -14,6 +14,7 @@ __all__ = [
     "CostAggregationContext",
     "CostComponentSummary",
     "CostReportExtension",
+    "SchedulerCostView",
     "StrategyCostView",
 ]
 
@@ -88,11 +89,13 @@ class AggregatedCostReport:
     currency: str
     totals: CostComponentSummary
     strategies: Mapping[str, StrategyCostView]
+    schedulers: Mapping[str, "SchedulerCostView"]
     metadata: Mapping[str, Any]
     component_count: int
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "strategies", MappingProxyType(dict(self.strategies)))
+        object.__setattr__(self, "schedulers", MappingProxyType(dict(self.schedulers)))
         object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
 
     def to_dict(self) -> dict[str, Any]:
@@ -100,6 +103,7 @@ class AggregatedCostReport:
             "currency": self.currency,
             "totals": self.totals.to_dict(),
             "strategies": {name: view.to_dict() for name, view in self.strategies.items()},
+            "schedulers": {name: view.to_dict() for name, view in self.schedulers.items()},
             "metadata": dict(self.metadata),
             "component_count": self.component_count,
         }
@@ -118,6 +122,37 @@ class _StrategyAggregation:
 
 
 @dataclass(slots=True)
+class _SchedulerAggregation:
+    scheduler: str
+    strategies: MutableMapping[str, _CostBucket] = field(default_factory=dict)
+    total: _CostBucket = field(default_factory=_CostBucket)
+
+    def add_component(self, strategy: str, component: BaseCostComponent) -> None:
+        strategy_bucket = self.strategies.setdefault(strategy, _CostBucket())
+        strategy_bucket.add_component(component)
+        self.total.add_component(component)
+
+
+@dataclass(slots=True, frozen=True)
+class SchedulerCostView:
+    """Widok kosztów przypisanych do scheduler-a."""
+
+    scheduler: str
+    strategies: Mapping[str, CostComponentSummary]
+    total: CostComponentSummary
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "strategies", MappingProxyType(dict(self.strategies)))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "scheduler": self.scheduler,
+            "strategies": {name: summary.to_dict() for name, summary in self.strategies.items()},
+            "total": self.total.to_dict(),
+        }
+
+
+@dataclass(slots=True)
 class CostAggregationContext:
     """Stan agregacji używany podczas budowy raportu."""
 
@@ -125,7 +160,18 @@ class CostAggregationContext:
     metadata: MutableMapping[str, Any]
     totals: _CostBucket = field(default_factory=_CostBucket)
     strategies: MutableMapping[str, _StrategyAggregation] = field(default_factory=dict)
+    schedulers: MutableMapping[str, _SchedulerAggregation] = field(default_factory=dict)
     components: list[BaseCostComponent] = field(default_factory=list)
+
+    def _scheduler_name(self, component: BaseCostComponent) -> str:
+        metadata = component.metadata
+        for key in ("scheduler", "scheduler_id", "schedule"):
+            value = metadata.get(key)
+            if value not in (None, ""):
+                text = str(value).strip()
+                if text:
+                    return text
+        return "default"
 
     def add_component(self, component: BaseCostComponent) -> None:
         if self.currency is None:
@@ -146,6 +192,11 @@ class CostAggregationContext:
         )
         strategy_bucket = self.strategies.setdefault(strategy, _StrategyAggregation(strategy=strategy))
         strategy_bucket.add_component(profile, component)
+        scheduler_name = self._scheduler_name(component)
+        scheduler_bucket = self.schedulers.setdefault(
+            scheduler_name, _SchedulerAggregation(scheduler=scheduler_name)
+        )
+        scheduler_bucket.add_component(strategy, component)
 
     @property
     def component_count(self) -> int:
@@ -163,14 +214,27 @@ class CostAggregationContext:
                 profiles=profiles,
                 total=aggregation.total.to_summary(),
             )
+        schedulers: dict[str, SchedulerCostView] = {}
+        for name, aggregation in sorted(self.schedulers.items()):
+            scheduler_strategies = {
+                strategy: bucket.to_summary()
+                for strategy, bucket in sorted(aggregation.strategies.items())
+            }
+            schedulers[name] = SchedulerCostView(
+                scheduler=name,
+                strategies=scheduler_strategies,
+                total=aggregation.total.to_summary(),
+            )
         metadata = dict(self.metadata)
         metadata.setdefault("strategy_count", len(strategies))
+        metadata.setdefault("scheduler_count", len(schedulers))
         metadata.setdefault("component_count", self.component_count)
         report_currency = self.currency or ""
         return AggregatedCostReport(
             currency=report_currency,
             totals=self.totals.to_summary(),
             strategies=strategies,
+            schedulers=schedulers,
             metadata=metadata,
             component_count=self.component_count,
         )

@@ -2146,6 +2146,8 @@ def _load_decision_engine_config(
             tco_kwargs["runtime_export_formats"] = tuple(formats)
         if "runtime_flush_events" in tco_fields and tco_raw.get("runtime_flush_events") not in (None, ""):
             tco_kwargs["runtime_flush_events"] = int(float(tco_raw.get("runtime_flush_events", 0)))
+        if "runtime_clear_after_export" in tco_fields and tco_raw.get("runtime_clear_after_export") is not None:
+            tco_kwargs["runtime_clear_after_export"] = bool(tco_raw.get("runtime_clear_after_export"))
         if "runtime_signing_key_env" in tco_fields:
             env_value = _normalize_env_var(tco_raw.get("runtime_signing_key_env"))
             if env_value:

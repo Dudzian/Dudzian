@@ -977,6 +977,77 @@ def test_bootstrap_loads_tco_report_for_decision_engine(tmp_path: Path) -> None:
     assert evaluation.cost_bps == pytest.approx(11.0)
 
 
+def test_bootstrap_runtime_tco_reporter_clears_after_export(tmp_path: Path) -> None:
+    config_path = _write_config(tmp_path)
+    config_data = yaml.safe_load(Path(config_path).read_text(encoding="utf-8"))
+
+    reports_dir = tmp_path / "reports"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    tco_report_path = reports_dir / "stage5_tco.json"
+    tco_report_path.write_text(
+        json.dumps(
+            {
+                "generated_at": "2024-04-01T00:00:00Z",
+                "total": {"cost_bps": 5.0},
+                "strategies": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    runtime_dir = tmp_path / "runtime" / "tco"
+    config_data["decision_engine"] = {
+        "orchestrator": {
+            "max_cost_bps": 12.0,
+            "min_net_edge_bps": 3.0,
+            "max_daily_loss_pct": 0.02,
+            "max_drawdown_pct": 0.05,
+            "max_position_ratio": 0.25,
+            "max_open_positions": 5,
+            "max_latency_ms": 200.0,
+        },
+        "min_probability": 0.5,
+        "require_cost_data": True,
+        "tco": {
+            "reports": [f"reports/{tco_report_path.name}"],
+            "runtime_enabled": True,
+            "runtime_report_directory": str(runtime_dir),
+            "runtime_clear_after_export": True,
+        },
+    }
+    Path(config_path).write_text(
+        yaml.safe_dump(config_data, sort_keys=False), encoding="utf-8"
+    )
+
+    _, manager = _prepare_manager()
+    context = bootstrap_environment(
+        "binance_paper", config_path=config_path, secret_manager=manager
+    )
+
+    reporter = context.tco_reporter
+    assert reporter is not None
+
+    reporter.record_execution(
+        strategy="trend_follow",
+        risk_profile="balanced",
+        instrument="BTCUSDT",
+        exchange="binance",
+        side="buy",
+        quantity=1.0,
+        executed_price=20000.0,
+        reference_price=19995.0,
+        commission=2.0,
+    )
+    assert reporter.events()
+
+    artifacts = reporter.export()
+
+    assert artifacts is not None
+    assert reporter.events() == ()
+    assert runtime_dir.exists()
+    assert any(runtime_dir.glob("*.json"))
+
+
 class _StubOrchestrator:
     def __init__(self) -> None:
         self.reports: list[object] = []
