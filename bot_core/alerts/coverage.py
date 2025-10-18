@@ -4,11 +4,16 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Mapping, Sequence, TYPE_CHECKING, Any
 
 from bot_core.alerts.base import AlertMessage
 from bot_core.alerts.router import DefaultAlertRouter
-from bot_core.config.models import CoreConfig, EnvironmentConfig
+
+if TYPE_CHECKING:
+    from bot_core.config.models import CoreConfig, EnvironmentConfig
+else:  # pragma: no cover - używane tylko dla typowania
+    CoreConfig = Any  # type: ignore
+    EnvironmentConfig = Any  # type: ignore
 from bot_core.data.ohlcv import (
     CoverageReportPayload,
     CoverageSummary,

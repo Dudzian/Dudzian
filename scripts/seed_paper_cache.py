@@ -11,6 +11,7 @@ from typing import Sequence
 
 from bot_core.config.loader import load_core_config
 from bot_core.config.models import CoreConfig, EnvironmentConfig, InstrumentConfig
+from bot_core.data import resolve_cache_namespace
 from bot_core.data.ohlcv import ParquetCacheStorage, SQLiteCacheStorage
 from bot_core.exchanges.base import Environment as ExchangeEnvironment
 
@@ -195,7 +196,8 @@ def generate_smoke_cache(
         )
 
     cache_root = Path(environment.data_cache_path)
-    parquet_storage = ParquetCacheStorage(cache_root / "ohlcv_parquet", namespace=environment.exchange)
+    cache_namespace = resolve_cache_namespace(environment)
+    parquet_storage = ParquetCacheStorage(cache_root / "ohlcv_parquet", namespace=cache_namespace)
     manifest_storage = SQLiteCacheStorage(cache_root / "ohlcv_manifest.sqlite", store_rows=False)
     metadata = parquet_storage.metadata()
 

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
 from bot_core.alerts import AlertMessage, DefaultAlertRouter, build_coverage_alert_context
+from bot_core.data import resolve_cache_namespace
 from bot_core.config.loader import load_core_config
 from bot_core.config.models import (
     CoreConfig,
@@ -770,7 +771,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     cache_root = Path(environment.data_cache_path)
-    parquet_storage = ParquetCacheStorage(cache_root / "ohlcv_parquet", namespace=environment.exchange)
+    cache_namespace = resolve_cache_namespace(environment)
+    parquet_storage = ParquetCacheStorage(cache_root / "ohlcv_parquet", namespace=cache_namespace)
     manifest_path = cache_root / "ohlcv_manifest.sqlite"
     manifest_storage = SQLiteCacheStorage(manifest_path, store_rows=False)
     storage = DualCacheStorage(primary=parquet_storage, manifest=manifest_storage)

@@ -9,6 +9,7 @@ from typing import Callable, Sequence
 
 from bot_core.config.loader import load_core_config
 from bot_core.config.models import InstrumentUniverseConfig
+from bot_core.data import resolve_cache_namespace
 from bot_core.data.ohlcv import (
     CachedOHLCVSource,
     DualCacheStorage,
@@ -181,7 +182,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     symbols = _resolve_symbols(universe, env_cfg.exchange, args.symbols)
 
     cache_root = Path(env_cfg.data_cache_path)
-    parquet_storage = ParquetCacheStorage(cache_root / "ohlcv_parquet", namespace=env_cfg.exchange)
+    cache_namespace = resolve_cache_namespace(env_cfg)
+    parquet_storage = ParquetCacheStorage(cache_root / "ohlcv_parquet", namespace=cache_namespace)
     manifest_storage = SQLiteCacheStorage(cache_root / "ohlcv_manifest.sqlite", store_rows=False)
     storage = DualCacheStorage(primary=parquet_storage, manifest=manifest_storage)
 
