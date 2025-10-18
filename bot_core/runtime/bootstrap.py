@@ -5,12 +5,22 @@ import asyncio
 import importlib
 import json
 import logging
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import os
 import stat
-from typing import TYPE_CHECKING, Any, Callable, Mapping, MutableMapping, Sequence
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Iterable,
+    Iterator,
+    Mapping,
+    MutableMapping,
+    Sequence,
+)
 
 from bot_core.alerts import (
     AlertThrottle,
@@ -53,9 +63,11 @@ from bot_core.exchanges.base import (
 )
 from bot_core.exchanges.binance import BinanceFuturesAdapter, BinanceSpotAdapter
 from bot_core.exchanges.bitfinex import BitfinexSpotAdapter
+from bot_core.exchanges.bybit import BybitSpotAdapter
 from bot_core.exchanges.coinbase import CoinbaseSpotAdapter
 from bot_core.exchanges.kraken import KrakenFuturesAdapter, KrakenSpotAdapter
 from bot_core.exchanges.nowa_gielda import NowaGieldaSpotAdapter
+from bot_core.exchanges.kucoin import KuCoinSpotAdapter
 from bot_core.exchanges.okx import OKXSpotAdapter
 from bot_core.exchanges.zonda import ZondaSpotAdapter
 from bot_core.risk.base import RiskRepository
@@ -191,7 +203,7 @@ except Exception:  # pragma: no cover - brak presetów
     reset_risk_profile_store = None  # type: ignore
     summarize_risk_profile = None  # type: ignore
 
-_DEFAULT_ADAPTERS: Mapping[str, ExchangeAdapterFactory] = {
+_DEFAULT_ADAPTERS: dict[str, ExchangeAdapterFactory] = {
     "binance_spot": BinanceSpotAdapter,
     "binance_futures": BinanceFuturesAdapter,
     "kraken_spot": KrakenSpotAdapter,
@@ -201,7 +213,322 @@ _DEFAULT_ADAPTERS: Mapping[str, ExchangeAdapterFactory] = {
     "okx_spot": OKXSpotAdapter,
     "nowa_gielda_spot": NowaGieldaSpotAdapter,
     "zonda_spot": ZondaSpotAdapter,
+    "bybit_spot": BybitSpotAdapter,
+    "kucoin_spot": KuCoinSpotAdapter,
 }
+
+_MISSING = object()
+
+
+def get_registered_adapter_factories() -> dict[str, ExchangeAdapterFactory]:
+    """Zwraca aktualną mapę fabryk adapterów dostępnych w bootstrapie."""
+
+    return dict(_DEFAULT_ADAPTERS)
+
+
+def register_adapter_factory(
+    name: str, factory: ExchangeAdapterFactory, *, override: bool = False
+) -> None:
+    """Dodaje lub aktualizuje wpis fabryki adaptera dostępnej w bootstrapie."""
+
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError("Nazwa fabryki adaptera musi być niepustym łańcuchem.")
+
+    if not callable(factory):
+        raise TypeError("Fabryka adaptera musi być wywoływalna.")
+
+    normalized = name.strip()
+    if normalized in _DEFAULT_ADAPTERS and not override:
+        raise ValueError(
+            f"Fabryka adaptera '{normalized}' jest już zarejestrowana – użyj override=True."
+        )
+
+    _DEFAULT_ADAPTERS[normalized] = factory
+
+
+def unregister_adapter_factory(name: str) -> bool:
+    """Usuwa fabrykę adaptera z domyślnego rejestru bootstrapu."""
+
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError("Nazwa fabryki adaptera musi być niepustym łańcuchem.")
+
+    normalized = name.strip()
+    return _DEFAULT_ADAPTERS.pop(normalized, None) is not None
+
+
+def register_adapter_factory_from_path(
+    name: str,
+    target: str,
+    *,
+    override: bool = False,
+) -> ExchangeAdapterFactory:
+    """Rozwiązuje ścieżkę do obiektu i rejestruje go jako fabrykę adaptera."""
+
+    factory = _load_callable_from_path(target)
+    register_adapter_factory(name, factory, override=override)
+    return factory
+
+
+def _normalize_adapter_factory_spec(
+    name: str,
+    spec: object,
+    *,
+    source: str,
+) -> tuple[ExchangeAdapterFactory | None, bool, bool]:
+    """Zwraca fabrykę, flagę usunięcia i override dla zadeklarowanej specyfikacji."""
+
+    override = False
+    candidate = spec
+
+    if isinstance(spec, Mapping):
+        raw_override = spec.get("override")
+        if raw_override is not None and not isinstance(raw_override, bool):
+            raise TypeError(
+                f"Pole 'override' dla fabryki '{name}' w {source} musi być wartością logiczną."
+            )
+        override = bool(raw_override)
+
+        raw_remove = spec.get("remove")
+        if raw_remove is not None and not isinstance(raw_remove, bool):
+            raise TypeError(
+                f"Pole 'remove' dla fabryki '{name}' w {source} musi być wartością logiczną."
+            )
+        if raw_remove:
+            unexpected_keys = {"path", "factory", "callable"} & set(spec)
+            if unexpected_keys:
+                joined = ", ".join(sorted(unexpected_keys))
+                raise ValueError(
+                    f"Specyfikacja fabryki '{name}' w {source} ustawia remove=True i jednocześnie "
+                    f"deklaruje klucze: {joined}."
+                )
+            return None, True, override
+
+        if "factory" in spec:
+            candidate = spec["factory"]
+        elif "callable" in spec:
+            candidate = spec["callable"]
+        elif "path" in spec:
+            candidate = spec["path"]
+        else:
+            raise ValueError(
+                f"Specyfikacja fabryki '{name}' w {source} musi zawierać klucz 'path' lub 'factory'."
+            )
+
+    if candidate is None:
+        return None, True, override
+
+    if isinstance(candidate, str):
+        path = candidate.strip()
+        if not path:
+            raise ValueError(
+                f"Fabryka adaptera '{name}' w {source} wymaga niepustej ścieżki do obiektu."
+            )
+        factory = _load_callable_from_path(path)
+        return factory, False, override
+
+    if callable(candidate):
+        return candidate, False, override
+
+    raise TypeError(
+        f"Fabryka adaptera '{name}' w {source} musi być wywoływalna lub ścieżką do obiektu."
+    )
+
+
+def _apply_adapter_factory_specs(
+    factories: dict[str, ExchangeAdapterFactory],
+    specs: Mapping[str, object],
+    *,
+    source: str,
+    require_override: bool,
+) -> None:
+    """Aktualizuje lokalną mapę fabryk zgodnie ze specyfikacją."""
+
+    if not isinstance(specs, Mapping):
+        raise TypeError(
+            f"Specyfikacja fabryk w {source} musi być mapowaniem nazw na definicje fabryk."
+        )
+
+    for raw_name, spec in specs.items():
+        if not isinstance(raw_name, str) or not raw_name.strip():
+            raise ValueError(
+                f"Nazwy fabryk w {source} muszą być niepustymi łańcuchami znaków."
+            )
+        name = raw_name.strip()
+        factory, remove, override = _normalize_adapter_factory_spec(
+            name,
+            spec,
+            source=source,
+        )
+
+        if remove:
+            factories.pop(name, None)
+            continue
+
+        effective_override = override or not require_override
+        if name in factories and not effective_override:
+            raise ValueError(
+                f"Fabryka adaptera '{name}' w {source} jest już zdefiniowana – ustaw override=True."
+            )
+
+        factories[name] = factory
+
+
+def parse_adapter_factory_cli_specs(
+    entries: Sequence[str] | None,
+) -> dict[str, object]:
+    """Normalizuje deklaracje CLI na mapę specyfikacji fabryk adapterów."""
+
+    if entries is None:
+        return {}
+
+    if not isinstance(entries, Sequence):
+        raise TypeError("Lista specyfikacji fabryk musi być sekwencją łańcuchów.")
+
+    result: dict[str, object] = {}
+    for index, raw_entry in enumerate(entries, start=1):
+        if not isinstance(raw_entry, str):
+            raise TypeError(
+                "Specyfikacje fabryk przekazane przez CLI muszą być łańcuchami znaków."
+            )
+
+        entry = raw_entry.strip()
+        if not entry:
+            raise ValueError(
+                f"Pusta specyfikacja fabryki na pozycji {index} w argumentach CLI."
+            )
+
+        if "=" not in entry:
+            raise ValueError(
+                "Każda specyfikacja fabryki musi mieć format 'nazwa=wartość'."
+            )
+
+        name_part, spec_part = entry.split("=", 1)
+        name = name_part.strip()
+        spec = spec_part.strip()
+
+        if not name:
+            raise ValueError(
+                f"Specyfikacja fabryki na pozycji {index} nie ma poprawnej nazwy."
+            )
+
+        if not spec:
+            raise ValueError(
+                f"Specyfikacja fabryki '{name}' nie ma zdefiniowanej wartości."
+            )
+
+        if name in result:
+            raise ValueError(f"Fabryka '{name}' została podana wielokrotnie w argumentach CLI.")
+
+        lowered = spec.lower()
+        if lowered in {"!remove", "remove"}:
+            result[name] = {"remove": True}
+            continue
+
+        if lowered.startswith("json:"):
+            payload = spec[5:].lstrip()
+            if not payload:
+                raise ValueError(
+                    f"Specyfikacja fabryki '{name}' ma prefiks json:, ale nie zawiera ładunku."
+                )
+            try:
+                decoded = json.loads(payload)
+            except json.JSONDecodeError as exc:  # pragma: no cover - defensywnie
+                raise ValueError(
+                    f"Nie udało się zdekodować JSON dla fabryki '{name}' w argumencie CLI."
+                ) from exc
+            if not isinstance(decoded, Mapping):
+                raise TypeError(
+                    f"Specyfikacja json: dla fabryki '{name}' musi dekodować się do mapowania."
+                )
+            result[name] = dict(decoded)
+            continue
+
+        if spec.startswith("{"):
+            try:
+                decoded = json.loads(spec)
+            except json.JSONDecodeError as exc:  # pragma: no cover - defensywnie
+                raise ValueError(
+                    f"Nie udało się zdekodować JSON dla fabryki '{name}' w argumencie CLI."
+                ) from exc
+            if not isinstance(decoded, Mapping):
+                raise TypeError(
+                    f"Specyfikacja JSON dla fabryki '{name}' musi być mapowaniem."
+                )
+            result[name] = dict(decoded)
+            continue
+
+        result[name] = spec
+
+    return result
+
+
+@contextmanager
+def temporary_adapter_factories(
+    *,
+    add: Mapping[str, ExchangeAdapterFactory] | None = None,
+    remove: Iterable[str] | None = None,
+    override: bool = False,
+) -> Iterator[dict[str, ExchangeAdapterFactory]]:
+    """Tymczasowo modyfikuje rejestr fabryk adapterów w kontrolowanym kontekście."""
+
+    additions: dict[str, ExchangeAdapterFactory] = {}
+    if add is not None and not isinstance(add, Mapping):
+        raise TypeError("Parametr 'add' musi być mapowaniem.")
+
+    if add:
+        for raw_name, factory in add.items():
+            if not isinstance(raw_name, str) or not raw_name.strip():
+                raise ValueError("Nazwy fabryk w 'add' muszą być niepustymi łańcuchami.")
+            if not callable(factory):
+                raise TypeError("Fabryki dodawane w 'add' muszą być wywoływalne.")
+            normalized = raw_name.strip()
+            if normalized in additions:
+                raise ValueError(
+                    f"Fabryka adaptera '{normalized}' została podana wielokrotnie w 'add'."
+                )
+            additions[normalized] = factory
+
+    removals: list[str] = []
+    if remove is not None and not isinstance(remove, Iterable):
+        raise TypeError("Parametr 'remove' musi być iterowalny.")
+
+    if remove:
+        for raw_name in remove:
+            if not isinstance(raw_name, str) or not raw_name.strip():
+                raise ValueError("Nazwy fabryk w 'remove' muszą być niepustymi łańcuchami.")
+            normalized = raw_name.strip()
+            if normalized not in removals:
+                removals.append(normalized)
+
+    overlap = [name for name in removals if name in additions]
+    if overlap:
+        joined = ", ".join(sorted(overlap))
+        raise ValueError(
+            f"Nie można jednocześnie usuwać i dodawać tych samych fabryk: {joined}."
+        )
+
+    snapshot: dict[str, object] = {}
+    try:
+        for name in removals:
+            snapshot[name] = _DEFAULT_ADAPTERS.pop(name, _MISSING)
+
+        for name, factory in additions.items():
+            existing = _DEFAULT_ADAPTERS.get(name, _MISSING)
+            if existing is not _MISSING and not override and name not in snapshot:
+                raise ValueError(
+                    f"Fabryka adaptera '{name}' jest już zarejestrowana – użyj override=True."
+                )
+            if name not in snapshot:
+                snapshot[name] = existing
+            _DEFAULT_ADAPTERS[name] = factory
+
+        yield get_registered_adapter_factories()
+    finally:
+        for name, previous in reversed(list(snapshot.items())):
+            if previous is _MISSING:
+                _DEFAULT_ADAPTERS.pop(name, None)
+            else:
+                _DEFAULT_ADAPTERS[name] = previous  # type: ignore[assignment]
 
 
 def _load_callable_from_path(target: str) -> Callable[..., Any]:
@@ -865,8 +1192,21 @@ def bootstrap_environment(
     )
 
     factories = dict(_DEFAULT_ADAPTERS)
+    env_factories = getattr(environment, "adapter_factories", None)
+    if env_factories:
+        _apply_adapter_factory_specs(
+            factories,
+            env_factories,
+            source=f"konfiguracji środowiska '{environment.name}'",
+            require_override=True,
+        )
     if adapter_factories:
-        factories.update(adapter_factories)
+        _apply_adapter_factory_specs(
+            factories,
+            adapter_factories,
+            source="parametrze 'adapter_factories'",
+            require_override=False,
+        )
     adapter = _instantiate_adapter(
         environment.exchange,
         credentials,
@@ -2303,5 +2643,11 @@ __all__ = [
     "bootstrap_environment",
     "catalog_runtime_entrypoints",
     "resolve_runtime_entrypoint",
+    "get_registered_adapter_factories",
+    "register_adapter_factory",
+    "unregister_adapter_factory",
+    "register_adapter_factory_from_path",
+    "parse_adapter_factory_cli_specs",
+    "temporary_adapter_factories",
     "build_alert_channels",
 ]
