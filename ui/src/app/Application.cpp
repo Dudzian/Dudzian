@@ -22,6 +22,7 @@
 #include "license/LicenseActivationController.hpp"
 #include "app/ActivationController.hpp"
 #include "security/SecurityAdminController.hpp"
+#include "reporting/ReportCenterController.hpp"
 
 Q_LOGGING_CATEGORY(lcAppMetrics, "bot.shell.app.metrics")
 
@@ -111,6 +112,9 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
     m_securityController->setProfilesPath(QDir::current().absoluteFilePath(QStringLiteral("config/user_profiles.json")));
     m_securityController->setLicensePath(defaultLicensePath);
     m_securityController->setLogPath(QDir::current().absoluteFilePath(QStringLiteral("logs/security_admin.log")));
+
+    m_reportController = std::make_unique<ReportCenterController>(this);
+    m_reportController->setReportsDirectory(QDir::current().absoluteFilePath(QStringLiteral("var/reports")));
 
     exposeToQml();
 
@@ -229,6 +233,9 @@ void Application::configureParser(QCommandLineParser& parser) const {
     parser.addOption({"security-profiles-path", tr("Ścieżka profili użytkowników UI"), tr("path"), QString()});
     parser.addOption({"security-python", tr("Ścieżka do interpretera Pythona dla bridge"), tr("path"), QString()});
     parser.addOption({"security-log-path", tr("Plik logu zdarzeń administracyjnych"), tr("path"), QString()});
+    parser.addOption({"reports-directory", tr("Katalog raportów pipeline"), tr("path"),
+                      QStringLiteral("var/reports")});
+    parser.addOption({"reporting-python", tr("Interpreter Pythona mostka raportów"), tr("path"), QString()});
 }
 
 bool Application::applyParser(const QCommandLineParser& parser) {
@@ -384,6 +391,49 @@ bool Application::applyParser(const QCommandLineParser& parser) {
         m_securityController->refresh();
     }
 
+    if (m_reportController) {
+        const auto applyReportsDirectory = [this](const QString& candidate) {
+            const QString trimmed = candidate.trimmed();
+            if (trimmed.isEmpty())
+                return;
+            m_reportController->setReportsDirectory(expandUserPath(trimmed));
+        };
+        if (parser.isSet("reports-directory")) {
+            applyReportsDirectory(parser.value("reports-directory"));
+        } else {
+            const auto envReports = envValue("BOT_CORE_UI_REPORTS_DIR");
+            if (envReports.has_value()) {
+                const QString envReportsValue = envReports->trimmed();
+                if (!envReportsValue.isEmpty()) {
+                    applyReportsDirectory(envReportsValue);
+                } else {
+                    applyReportsDirectory(parser.value("reports-directory"));
+                }
+            } else {
+                applyReportsDirectory(parser.value("reports-directory"));
+            }
+        }
+
+        const auto applyPythonExecutable = [this](const QString& candidate) {
+            const QString trimmed = candidate.trimmed();
+            if (trimmed.isEmpty())
+                return;
+            m_reportController->setPythonExecutable(expandUserPath(trimmed));
+        };
+        if (parser.isSet("reporting-python")) {
+            applyPythonExecutable(parser.value("reporting-python"));
+        } else {
+            const auto envPython = envValue("BOT_CORE_UI_REPORTS_PYTHON");
+            if (envPython.has_value()) {
+                const QString envPythonValue = envPython->trimmed();
+                if (!envPythonValue.isEmpty())
+                    applyPythonExecutable(envPythonValue);
+            }
+        }
+
+        m_reportController->refresh();
+    }
+
     // Inicjalizacja/reportera + token
     ensureTelemetry();
 
@@ -432,11 +482,17 @@ void Application::exposeToQml() {
     m_engine.rootContext()->setContextProperty(QStringLiteral("licenseController"), m_licenseController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("activationController"), m_activationController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("securityController"), m_securityController.get());
+    m_engine.rootContext()->setContextProperty(QStringLiteral("reportController"), m_reportController.get());
 }
 
 QObject* Application::activationController() const
 {
     return m_activationController.get();
+}
+
+QObject* Application::reportController() const
+{
+    return m_reportController.get();
 }
 
 void Application::ensureFrameMonitor() {
@@ -514,6 +570,84 @@ void Application::notifyWindowCount(int totalWindowCount) {
     if (m_telemetry) {
         m_telemetry->setWindowCount(m_windowCount);
     }
+}
+
+QVariantMap Application::instrumentConfigSnapshot() const {
+    QVariantMap map;
+    map.insert(QStringLiteral("exchange"), m_instrument.exchange);
+    map.insert(QStringLiteral("symbol"), m_instrument.symbol);
+    map.insert(QStringLiteral("venueSymbol"), m_instrument.venueSymbol);
+    map.insert(QStringLiteral("quoteCurrency"), m_instrument.quoteCurrency);
+    map.insert(QStringLiteral("baseCurrency"), m_instrument.baseCurrency);
+    map.insert(QStringLiteral("granularity"), m_instrument.granularityIso8601);
+    return map;
+}
+
+QVariantMap Application::performanceGuardSnapshot() const {
+    QVariantMap map;
+    map.insert(QStringLiteral("fpsTarget"), m_guard.fpsTarget);
+    map.insert(QStringLiteral("reduceMotionAfter"), m_guard.reduceMotionAfterSeconds);
+    map.insert(QStringLiteral("jankThresholdMs"), m_guard.jankThresholdMs);
+    map.insert(QStringLiteral("maxOverlayCount"), m_guard.maxOverlayCount);
+    map.insert(QStringLiteral("disableSecondaryWhenBelow"), m_guard.disableSecondaryWhenFpsBelow);
+    return map;
+}
+
+bool Application::updateInstrument(const QString& exchange,
+                                   const QString& symbol,
+                                   const QString& venueSymbol,
+                                   const QString& quoteCurrency,
+                                   const QString& baseCurrency,
+                                   const QString& granularityIso8601) {
+    TradingClient::InstrumentConfig config;
+    config.exchange = exchange.trimmed();
+    config.symbol = symbol.trimmed();
+    config.venueSymbol = venueSymbol.trimmed();
+    config.quoteCurrency = quoteCurrency.trimmed();
+    config.baseCurrency = baseCurrency.trimmed();
+    config.granularityIso8601 = granularityIso8601.trimmed();
+
+    if (config.exchange.isEmpty() || config.symbol.isEmpty() || config.venueSymbol.isEmpty()
+        || config.quoteCurrency.isEmpty() || config.baseCurrency.isEmpty()
+        || config.granularityIso8601.isEmpty()) {
+        qCWarning(lcAppMetrics) << "Odmowa aktualizacji instrumentu – wymagane pola są puste";
+        return false;
+    }
+
+    const bool wasStreaming = m_client.isStreaming();
+    if (wasStreaming)
+        m_client.stop();
+
+    m_client.setInstrument(config);
+    m_instrument = config;
+    Q_EMIT instrumentChanged();
+
+    if (wasStreaming)
+        m_client.start();
+
+    return true;
+}
+
+bool Application::updatePerformanceGuard(int fpsTarget,
+                                         double reduceMotionAfter,
+                                         double jankThresholdMs,
+                                         int maxOverlayCount,
+                                         int disableSecondaryWhenBelow) {
+    PerformanceGuard guard;
+    guard.fpsTarget = qMax(1, fpsTarget);
+    guard.reduceMotionAfterSeconds = qMax(0.0, reduceMotionAfter);
+    guard.jankThresholdMs = qMax(0.0, jankThresholdMs);
+    guard.maxOverlayCount = qMax(0, maxOverlayCount);
+    guard.disableSecondaryWhenFpsBelow = qMax(0, disableSecondaryWhenBelow);
+
+    m_client.setPerformanceGuard(guard);
+    m_guard = guard;
+    Q_EMIT performanceGuardChanged();
+
+    if (m_frameMonitor)
+        m_frameMonitor->setPerformanceGuard(m_guard);
+
+    return true;
 }
 
 void Application::applyTradingTlsEnvironmentOverrides(const QCommandLineParser& parser)

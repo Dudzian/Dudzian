@@ -33,6 +33,8 @@ public:
     Q_INVOKABLE bool loadLicenseFile(const QString& path);
     Q_INVOKABLE bool applyLicenseText(const QString& text);
     Q_INVOKABLE QString licenseStoragePath() const;
+    Q_INVOKABLE bool saveExpectedFingerprint(const QString& fingerprint);
+    Q_INVOKABLE void overrideExpectedFingerprint(const QString& fingerprint);
 
     bool licenseActive() const { return m_licenseActive; }
     QString statusMessage() const { return m_statusMessage; }
@@ -77,6 +79,7 @@ private:
     bool parseLicenseDocument(const QJsonDocument& document, LicenseInfo& info, QString& error) const;
     bool persistLicense(const QJsonDocument& document);
     void setStatusMessage(const QString& message, bool isError);
+    bool persistExpectedFingerprint(const QString& fingerprint, QString* errorMessage);
     static QString expandPath(const QString& path);
 
     bool m_initialized = false;

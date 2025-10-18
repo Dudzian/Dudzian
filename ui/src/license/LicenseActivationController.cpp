@@ -150,6 +150,42 @@ QString LicenseActivationController::licenseStoragePath() const
     return resolveLicenseOutputPath();
 }
 
+bool LicenseActivationController::saveExpectedFingerprint(const QString& fingerprint)
+{
+    if (!ensureInitialized())
+        return false;
+
+    const QString normalized = normalizeFingerprint(fingerprint);
+    if (normalized.isEmpty()) {
+        setStatusMessage(tr("Fingerprint nie może być pusty"), true);
+        return false;
+    }
+
+    QString errorMessage;
+    if (!persistExpectedFingerprint(normalized, &errorMessage)) {
+        setStatusMessage(errorMessage, true);
+        return false;
+    }
+
+    if (m_expectedFingerprint != normalized) {
+        m_expectedFingerprint = normalized;
+        Q_EMIT expectedFingerprintChanged();
+    }
+    setStatusMessage(tr("Zapisano oczekiwany fingerprint: %1").arg(normalized), false);
+    return true;
+}
+
+void LicenseActivationController::overrideExpectedFingerprint(const QString& fingerprint)
+{
+    const QString normalized = normalizeFingerprint(fingerprint);
+    if (normalized.isEmpty())
+        return;
+    if (m_expectedFingerprint == normalized)
+        return;
+    m_expectedFingerprint = normalized;
+    Q_EMIT expectedFingerprintChanged();
+}
+
 QString LicenseActivationController::resolveLicenseOutputPath() const
 {
     if (!m_licenseOutputPath.isEmpty())
@@ -493,4 +529,48 @@ QString LicenseActivationController::expandPath(const QString& path)
     if (!info.isAbsolute())
         expanded = QDir::current().absoluteFilePath(expanded);
     return QDir::cleanPath(expanded);
+}
+
+bool LicenseActivationController::persistExpectedFingerprint(const QString& fingerprint, QString* errorMessage)
+{
+    const QString path = resolveFingerprintDocumentPath();
+    if (path.isEmpty()) {
+        if (errorMessage)
+            *errorMessage = tr("Brak ścieżki docelowej dla fingerprintu");
+        return false;
+    }
+
+    QFileInfo info(path);
+    QDir dir = info.dir();
+    if (!dir.exists() && !dir.mkpath(QStringLiteral("."))) {
+        if (errorMessage)
+            *errorMessage = tr("Nie udało się utworzyć katalogu %1").arg(dir.path());
+        return false;
+    }
+
+    QJsonObject root;
+    root.insert(QStringLiteral("fingerprint"), fingerprint);
+    root.insert(QStringLiteral("updated_at"), QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
+    QJsonDocument document(root);
+
+    QSaveFile file(path);
+    file.setDirectWriteFallback(true);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        if (errorMessage)
+            *errorMessage = tr("Nie można zapisać fingerprintu do %1: %2").arg(path, file.errorString());
+        return false;
+    }
+
+    const QByteArray payload = document.toJson(QJsonDocument::Indented);
+    if (file.write(payload) != payload.size()) {
+        if (errorMessage)
+            *errorMessage = tr("Błąd zapisu fingerprintu: %1").arg(file.errorString());
+        return false;
+    }
+    if (!file.commit()) {
+        if (errorMessage)
+            *errorMessage = tr("Nie udało się zatwierdzić pliku fingerprintu: %1").arg(file.errorString());
+        return false;
+    }
+    return true;
 }

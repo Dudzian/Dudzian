@@ -21,6 +21,7 @@ public:
 
     Q_INVOKABLE void refresh();
     Q_INVOKABLE void reloadRegistry();
+    Q_INVOKABLE bool exportFingerprint(const QUrl& destination) const;
 
     void setPythonExecutable(const QString& value);
     void setKeysFile(const QString& value);
