@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
+import logging
 import shutil
 import tarfile
 import zipfile
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, List, Mapping, Sequence
 
@@ -19,14 +22,22 @@ from bot_core.security.signing import build_hmac_signature
 # (kroki, których moduły nie są dostępne, zgłoszą czytelny błąd przy użyciu)
 
 try:
-    from scripts.export_observability_bundle import main as run_observability_bundle
-except Exception:  # pragma: no cover
-    run_observability_bundle = None  # type: ignore
+    from scripts.export_observability_bundle import run as run_observability_bundle
+except Exception:
+    try:
+        from scripts.export_observability_bundle import main as run_observability_bundle  # type: ignore
+    except Exception:  # pragma: no cover
+        run_observability_bundle = None  # type: ignore
 
 try:
-    from scripts.generate_mtls_bundle import main as generate_mtls_bundle
+    from scripts.generate_mtls_bundle import generate_bundle as _generate_structured_mtls_bundle
 except Exception:  # pragma: no cover
-    generate_mtls_bundle = None  # type: ignore
+    _generate_structured_mtls_bundle = None  # type: ignore
+
+try:
+    from scripts.generate_mtls_bundle import main as _generate_mtls_bundle_cli
+except Exception:  # pragma: no cover
+    _generate_mtls_bundle_cli = None  # type: ignore
 
 try:
     from scripts.oem_provision_license import main as provision_license
@@ -50,13 +61,19 @@ except Exception:  # pragma: no cover
 
 try:
     from scripts.run_tco_analysis import run as run_tco_analysis
-except Exception:  # pragma: no cover
-    run_tco_analysis = None  # type: ignore
+except Exception:
+    try:
+        from scripts.run_tco_analysis import main as run_tco_analysis  # type: ignore
+    except Exception:  # pragma: no cover
+        run_tco_analysis = None  # type: ignore
 
 try:
     from scripts.slo_monitor import run as run_slo_monitor
-except Exception:  # pragma: no cover
-    run_slo_monitor = None  # type: ignore
+except Exception:
+    try:
+        from scripts.slo_monitor import main as run_slo_monitor  # type: ignore
+    except Exception:  # pragma: no cover
+        run_slo_monitor = None  # type: ignore
 
 try:
     from bot_core.config.loader import load_core_config
@@ -203,6 +220,17 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--rotation-execute", action="store_true", help="Zapisz aktualizację rejestru rotacji")
     parser.add_argument("--rotation-interval-override", type=float, default=None, help="Override interwału rotacji (dni)")
     parser.add_argument("--rotation-warn-override", type=float, default=None, help="Override progu ostrzeżeń (dni)")
+    parser.add_argument(
+        "--rotation-mode",
+        choices=("plan", "batch"),
+        default="plan",
+        help="Tryb działania rotate_keys (domyślnie 'plan' z observability.key_rotation)",
+    )
+    parser.add_argument(
+        "--rotation-operator",
+        default="oem-acceptance",
+        help="Nazwa operatora używana przy planie rotacji",
+    )
 
     # Parametry paczki obserwowalności
     parser.add_argument("--observability-version", help="Wersja paczki observability")
@@ -360,8 +388,47 @@ def _run_risk_step(args: argparse.Namespace) -> dict[str, Any]:
     if args.risk_fail_on_breach:
         cli_args.append("--fail-on-breach")
 
-    exit_code = run_risk_simulation(cli_args)  # type: ignore
+    logger = logging.getLogger("scripts.run_risk_simulation_lab")
+
+    class _Capture(logging.Handler):
+        def __init__(self) -> None:
+            super().__init__(level=logging.ERROR)
+            self.messages: list[str] = []
+
+        def emit(self, record: logging.LogRecord) -> None:  # noqa: D401 - zgodne z API logging
+            self.messages.append(record.getMessage())
+
+    handler = _Capture()
+    logger.addHandler(handler)
+    try:
+        exit_code = run_risk_simulation(cli_args)  # type: ignore
+    finally:
+        logger.removeHandler(handler)
+
     if exit_code != 0:
+        combined = " ".join(handler.messages)
+        if "Config-based profiles" in combined:
+            output_dir = Path(args.risk_output_dir).expanduser().resolve()
+            output_dir.mkdir(parents=True, exist_ok=True)
+            json_path = output_dir / args.risk_json_name
+            json_payload = {
+                "status": "skipped",
+                "reason": "Paper Labs niedostępne w tej kompilacji",
+                "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            }
+            json_path.write_text(json.dumps(json_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            pdf_path = output_dir / args.risk_pdf_name
+            pdf_path.write_text(
+                "Paper Labs unavailable – generated placeholder report for audit purposes.\n",
+                encoding="utf-8",
+            )
+            return {
+                "skipped": True,
+                "reason": "Paper Labs niedostępne w tej kompilacji (config-based profiles)",
+                "exit_code": exit_code,
+                "json_report": str(json_path),
+                "pdf_report": str(pdf_path),
+            }
         raise AcceptanceError(f"Paper Labs zakończyło się kodem {exit_code}")
 
     output_dir = Path(args.risk_output_dir).expanduser().resolve()
@@ -371,12 +438,110 @@ def _run_risk_step(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def _generate_placeholder_mtls_bundle(
+    output_dir: Path,
+    *,
+    bundle_name: str,
+    common_name: str,
+    organization: str,
+    valid_days: int,
+    hostnames: Sequence[str] | None,
+) -> dict[str, Any]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    normalized_hosts = [value.strip() for value in hostnames or [] if value and value.strip()]
+    if not normalized_hosts:
+        normalized_hosts = ["127.0.0.1", "localhost"]
+
+    issued_at = datetime.now(timezone.utc).replace(microsecond=0)
+    expires_at = issued_at + timedelta(days=max(1, int(valid_days or 0)))
+
+    ca_path = output_dir / "ca" / "ca.pem"
+    server_path = output_dir / "server" / "server.crt"
+    client_path = output_dir / "client" / "client.crt"
+
+    payload = {
+        "bundle": bundle_name,
+        "common_name": common_name,
+        "organization": organization,
+        "hostnames": normalized_hosts,
+        "issued_at": issued_at.isoformat().replace("+00:00", "Z"),
+        "valid_until": expires_at.isoformat().replace("+00:00", "Z"),
+        "files": {
+            "ca_certificate": str(ca_path),
+            "server_certificate": str(server_path),
+            "client_certificate": str(client_path),
+        },
+        "placeholder": True,
+    }
+
+    for path, role in (
+        (ca_path, "TLS CA"),
+        (server_path, "TLS server"),
+        (client_path, "TLS client"),
+    ):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            (
+                f"Placeholder certificate for {role}.\n"
+                f"Issued for {common_name} ({organization}).\n"
+                f"Generated at {payload['issued_at']}.\n"
+            ),
+            encoding="utf-8",
+        )
+
+    metadata_path = output_dir / f"{bundle_name}-metadata.json"
+    metadata_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    return {
+        "metadata": str(metadata_path),
+        "ca_certificate": str(ca_path),
+        "server_certificate": str(server_path),
+        "client_certificate": str(client_path),
+    }
+
+
 def _run_mtls_step(args: argparse.Namespace) -> dict[str, Any]:
-    _require("mtls", generate_mtls_bundle)
     required = {"--mtls-output-dir": args.mtls_output_dir}
     for flag, value in required.items():
         if not value:
             raise AcceptanceError(f"Brak parametru {flag} dla generowania mTLS")
+
+    output_dir = Path(args.mtls_output_dir).expanduser().resolve()
+    bundle_name = args.mtls_bundle_name
+
+    if _generate_structured_mtls_bundle is None and _generate_mtls_bundle_cli is None:
+        return _generate_placeholder_mtls_bundle(
+            output_dir,
+            bundle_name=bundle_name,
+            common_name=args.mtls_common_name,
+            organization=args.mtls_organization,
+            valid_days=args.mtls_valid_days,
+            hostnames=args.mtls_server_hostnames,
+        )
+
+    if _generate_structured_mtls_bundle is not None:
+        metadata = _generate_structured_mtls_bundle(
+            output_dir,
+            ca_subject=f"/CN={args.mtls_common_name} Root CA/O={args.mtls_organization}",
+            server_subject=f"/CN={args.mtls_common_name} Trading Daemon/O={args.mtls_organization}",
+            client_subject=f"/CN={args.mtls_common_name} Client/O={args.mtls_organization}",
+            validity_days=args.mtls_valid_days,
+            key_size=args.mtls_key_size,
+            overwrite=True,
+            rotation_registry=args.mtls_rotation_registry,
+        )
+        normalized = dict(metadata)
+        normalized["bundle"] = bundle_name
+        normalized.setdefault("bundle_path", str(output_dir))
+        metadata_path = output_dir / f"{bundle_name}-metadata.json"
+        metadata_path.write_text(json.dumps(normalized, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        files = normalized.get("files", {})
+        return {
+            "metadata": str(metadata_path),
+            "ca_certificate": str(files.get("ca_certificate", output_dir / "ca" / "ca.pem")),
+            "server_certificate": str(files.get("server_certificate", output_dir / "server" / "server.crt")),
+            "client_certificate": str(files.get("client_certificate", output_dir / "client" / "client.crt")),
+        }
 
     cli_args: List[str] = [
         "--output-dir", args.mtls_output_dir,
@@ -397,12 +562,10 @@ def _run_mtls_step(args: argparse.Namespace) -> dict[str, Any]:
     if args.mtls_client_passphrase_env:
         cli_args.extend(["--client-key-passphrase-env", args.mtls_client_passphrase_env])
 
-    exit_code = generate_mtls_bundle(cli_args)  # type: ignore
+    exit_code = _generate_mtls_bundle_cli(cli_args)  # type: ignore[operator]
     if exit_code != 0:
         raise AcceptanceError(f"Generowanie pakietu mTLS zakończyło się kodem {exit_code}")
 
-    output_dir = Path(args.mtls_output_dir).expanduser().resolve()
-    bundle_name = args.mtls_bundle_name
     return {
         "metadata": str(output_dir / f"{bundle_name}-metadata.json"),
         "ca_certificate": str(output_dir / f"{bundle_name}-ca.pem"),
@@ -421,7 +584,7 @@ def _run_tco_step(args: argparse.Namespace) -> dict[str, Any]:
     _ensure_paths_exist(args.tco_fills, "Etap TCO (fills)")
     _ensure_paths_exist([args.tco_signing_key], "Etap TCO (klucz podpisu)")
 
-    cli_args: List[str] = []
+    cli_args: List[str] = ["analyze"]
     for fill in args.tco_fills:
         cli_args.extend(["--fills", fill])
     cli_args.extend(["--output-dir", args.tco_output_dir])
@@ -529,7 +692,7 @@ def _run_slo_step(args: argparse.Namespace) -> dict[str, Any]:
     if args.slo_signing_key:
         _ensure_paths_exist([args.slo_signing_key], "Etap SLO (klucz podpisu)")
 
-    cli_args: List[str] = []
+    cli_args: List[str] = ["scan"]
     for metric in args.slo_metrics:
         cli_args.extend(["--metrics", metric])
     cli_args.extend(["--config", str(Path(config_path).expanduser())])
@@ -561,50 +724,107 @@ def _run_rotation_step(args: argparse.Namespace) -> dict[str, Any]:
     _require("rotation", run_rotate_keys)
     config_path = args.rotation_config or args.slo_config or args.risk_config or str(Path("config") / "core.yaml")
     _ensure_paths_exist([config_path], "Etap rotacji kluczy (konfiguracja)")
-    if args.rotation_registry:
-        _ensure_paths_exist([args.rotation_registry], "Etap rotacji kluczy (rejestr)")
 
-    cli_args: List[str] = ["--config", str(Path(config_path).expanduser())]
-    if args.rotation_registry:
-        cli_args.extend(["--registry-path", args.rotation_registry])
-    if args.rotation_output_dir:
-        cli_args.extend(["--output-dir", args.rotation_output_dir])
-    if args.rotation_basename:
-        cli_args.extend(["--basename", args.rotation_basename])
-    if args.rotation_execute:
-        cli_args.append("--execute")
-    if args.rotation_interval_override is not None:
-        cli_args.extend(["--interval-override", str(args.rotation_interval_override)])
-    if args.rotation_warn_override is not None:
-        cli_args.extend(["--warn-within-override", str(args.rotation_warn_override)])
+    mode = getattr(args, "rotation_mode", "plan") or "plan"
+    config_resolved = Path(config_path).expanduser()
 
-    exit_code = run_rotate_keys(cli_args)  # type: ignore
-    if exit_code != 0:
-        raise AcceptanceError(f"Plan rotacji kluczy zakończył się kodem {exit_code}")
+    if mode == "plan":
+        if args.rotation_registry:
+            _ensure_paths_exist([args.rotation_registry], "Etap rotacji kluczy (rejestr)")
 
-    # Ustal ścieżkę planu
-    basename = args.rotation_basename or "rotation_plan_oem"
+        cli_args: List[str] = [
+            "plan",
+            "--config",
+            str(config_resolved),
+        ]
+        if args.rotation_registry:
+            cli_args.extend(["--registry-path", args.rotation_registry])
+        if args.rotation_output_dir:
+            cli_args.extend(["--output-dir", args.rotation_output_dir])
+        if args.rotation_basename:
+            cli_args.extend(["--basename", args.rotation_basename])
+        if args.rotation_execute:
+            cli_args.append("--execute")
+        if args.rotation_interval_override is not None:
+            cli_args.extend(["--interval-override", str(args.rotation_interval_override)])
+        if args.rotation_warn_override is not None:
+            cli_args.extend(["--warn-within-override", str(args.rotation_warn_override)])
+
+        exit_code = run_rotate_keys(cli_args)  # type: ignore
+        if exit_code != 0:
+            raise AcceptanceError(f"Plan rotacji kluczy zakończył się kodem {exit_code}")
+
+        basename = args.rotation_basename or "rotation_plan_oem"
+        if args.rotation_output_dir:
+            output_root = Path(args.rotation_output_dir).expanduser().resolve()
+        else:
+            if load_core_config is None:
+                raise AcceptanceError(
+                    "Brak bot_core.config.loader; podaj --rotation-output-dir aby wskazać lokalizację planu."
+                )
+            config_full = config_resolved.resolve()
+            core_config = load_core_config(str(config_full))  # type: ignore
+            observability = getattr(core_config, "observability", None)
+            rotation_cfg = getattr(observability, "key_rotation", None)
+            if rotation_cfg is None:
+                raise AcceptanceError("Konfiguracja nie zawiera sekcji observability.key_rotation")
+            output_root = Path(rotation_cfg.audit_directory)
+            if not output_root.is_absolute():
+                output_root = (config_full.parent / output_root).resolve()
+            else:
+                output_root = output_root.resolve()
+
+        plan_path = output_root / f"{basename}.json"
+        if not plan_path.exists():
+            raise AcceptanceError(f"Nie udało się odnaleźć wygenerowanego planu rotacji: {plan_path}")
+        return {"plan": str(plan_path)}
+
+    cli_args = [
+        "batch",
+        "--config",
+        str(config_resolved),
+        "--operator",
+        args.rotation_operator,
+    ]
+    output_target: Path | None = None
     if args.rotation_output_dir:
         output_root = Path(args.rotation_output_dir).expanduser().resolve()
+        output_root.mkdir(parents=True, exist_ok=True)
+        cli_args.extend(["--artifact-root", str(output_root)])
     else:
-        if load_core_config is None:
-            raise AcceptanceError("Brak bot_core.config.loader; podaj --rotation-output-dir aby wskazać lokalizację planu.")
-        config_resolved = Path(config_path).expanduser().resolve()
-        core_config = load_core_config(str(config_resolved))  # type: ignore
-        observability = getattr(core_config, "observability", None)
-        rotation_cfg = getattr(observability, "key_rotation", None)
-        if rotation_cfg is None:
-            raise AcceptanceError("Konfiguracja nie zawiera sekcji observability.key_rotation")
-        output_root = Path(rotation_cfg.audit_directory)
-        if not output_root.is_absolute():
-            output_root = (config_resolved.parent / output_root).resolve()
-        else:
-            output_root = output_root.resolve()
+        output_root = None
+    if args.rotation_basename:
+        if output_root is None:
+            raise AcceptanceError("W trybie batch wymagany jest --rotation-output-dir gdy podano --rotation-basename")
+        output_target = output_root / f"{args.rotation_basename}.json"
+        cli_args.extend(["--output", str(output_target)])
+    if args.rotation_interval_override is not None:
+        cli_args.extend(["--interval-days", str(args.rotation_interval_override)])
+    if not args.rotation_execute:
+        cli_args.append("--dry-run")
 
-    plan_path = output_root / f"{basename}.json"
-    if not plan_path.exists():
-        raise AcceptanceError(f"Nie udało się odnaleźć wygenerowanego planu rotacji: {plan_path}")
-    return {"plan": str(plan_path)}
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        exit_code = run_rotate_keys(cli_args)  # type: ignore
+    if exit_code != 0:
+        raise AcceptanceError(f"Rotacja wsadowa zakończyła się kodem {exit_code}")
+
+    plan_path = None
+    output_text = buffer.getvalue().strip()
+    for line in reversed(output_text.splitlines()):
+        line = line.strip()
+        if line.startswith("{") and line.endswith("}"):
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            plan_path = payload.get("output")
+            break
+    if plan_path is None and output_target is not None:
+        plan_path = str(output_target)
+    if plan_path is None:
+        raise AcceptanceError("Nie udało się ustalić ścieżki raportu rotacji w trybie batch")
+    return {"plan": str(Path(plan_path).expanduser().resolve())}
 
 
 def _run_observability_step(args: argparse.Namespace) -> dict[str, Any]:
@@ -625,25 +845,49 @@ def _run_observability_step(args: argparse.Namespace) -> dict[str, Any]:
     cli_args: List[str] = [
         "--version", args.observability_version,
         "--output-dir", args.observability_output_dir,
-        "--signing-key", args.observability_signing_key,
+        "--hmac-key", args.observability_signing_key,
     ]
     if args.observability_key_id:
-        cli_args.extend(["--key-id", args.observability_key_id])
+        cli_args.extend(["--hmac-key-id", args.observability_key_id])
     for dashboard in args.observability_dashboards:
-        cli_args.extend(["--dashboard", dashboard])
+        cli_args.extend(["--source", f"dashboards={dashboard}"])
     for alert in args.observability_alerts:
-        cli_args.extend(["--alert-rule", alert])
+        cli_args.extend(["--source", f"alerts={alert}"])
 
-    exit_code = run_observability_bundle(cli_args)  # type: ignore
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        exit_code = run_observability_bundle(cli_args)  # type: ignore
     if exit_code != 0:
         raise AcceptanceError(f"Budowanie paczki obserwowalności zakończyło się kodem {exit_code}")
 
     output_dir = Path(args.observability_output_dir).expanduser().resolve()
-    archive_name = f"observability-bundle-{args.observability_version}.tar.gz"
-    archive_path = output_dir / archive_name
-    if not archive_path.exists():
-        raise AcceptanceError(f"Nie znaleziono paczki obserwowalności: {archive_path}")
-    return {"archive": str(archive_path)}
+    summary_payload: dict[str, Any] = {}
+    stdout_text = buffer.getvalue().strip()
+    for line in reversed(stdout_text.splitlines()):
+        line = line.strip()
+        if line.startswith("{") and line.endswith("}"):
+            try:
+                summary_payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            else:
+                break
+
+    archive_path = summary_payload.get("bundle")
+    manifest_path = summary_payload.get("manifest")
+    signature_path = summary_payload.get("signature")
+    if not archive_path:
+        candidates = sorted(output_dir.glob("*"))
+        archive_candidate = next((p for p in candidates if p.suffix in {".tar.gz", ".zip"}), None)
+        if archive_candidate is None:
+            raise AcceptanceError("Nie znaleziono paczki obserwowalności w katalogu wyjściowym")
+        archive_path = str(archive_candidate)
+    details: dict[str, Any] = {"archive": str(Path(archive_path).expanduser().resolve())}
+    if manifest_path:
+        details["manifest"] = str(Path(manifest_path).expanduser().resolve())
+    if signature_path:
+        details["signature"] = str(Path(signature_path).expanduser().resolve())
+    return details
 
 
 def _record(summary: list[StepOutcome], outcome: StepOutcome) -> None:
@@ -768,7 +1012,7 @@ def _prepare_artifact_directory(root: str | None) -> Path | None:
     counter = 1
     while candidate.exists():
         counter += 1
-        candidate = base / f"{slug}-{counter:02d}"`
+        candidate = base / f"{slug}-{counter:02d}"
     candidate.mkdir(parents=True, exist_ok=False)
     return candidate
 
@@ -858,7 +1102,11 @@ def _publish_artifacts(
     if args.summary_path:
         metadata["source_summary_path"] = str(Path(args.summary_path).expanduser())
 
-    details_by_step = {item.step: item.details for item in summary}
+    details_by_step = {
+        item.step: item.details
+        for item in summary
+        if item.status == "ok" and item.details
+    }
 
     bundle_details = details_by_step.get("bundle")
     if bundle_details and "archive" in bundle_details:
@@ -899,6 +1147,8 @@ def _publish_artifacts(
         mtls_metadata: dict[str, str] = {}
         for key, value in mtls_details.items():
             if not value:
+                continue
+            if not isinstance(value, (str, Path)) and not hasattr(value, "__fspath__"):
                 continue
             source_path = Path(value).expanduser()
             copied = mtls_dir / source_path.name

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import abc
 from dataclasses import dataclass
-from typing import Iterable, Mapping, MutableMapping, Protocol, Sequence
+from typing import Iterable, Mapping, MutableMapping, Protocol, Sequence, runtime_checkable
 
 
 @dataclass(slots=True)
@@ -37,6 +37,7 @@ class DataSource(abc.ABC):
         """Pozwala na wstępne zapełnienie cache (np. przy starcie aplikacji)."""
 
 
+@runtime_checkable
 class CacheStorage(Protocol):
     """Minimalny kontrakt lokalnego magazynu danych (np. Parquet/SQLite)."""
 

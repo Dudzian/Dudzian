@@ -115,6 +115,7 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
 
     m_reportController = std::make_unique<ReportCenterController>(this);
     m_reportController->setReportsDirectory(QDir::current().absoluteFilePath(QStringLiteral("var/reports")));
+    m_reportController->setReportsRoot(QDir::current().absoluteFilePath(QStringLiteral("var/reports")));
 
     exposeToQml();
 

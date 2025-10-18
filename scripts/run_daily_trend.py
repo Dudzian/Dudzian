@@ -43,6 +43,7 @@ from bot_core.reporting.audit import (
     PaperSmokeJsonSynchronizer,
     PaperSmokeJsonSyncResult,
 )
+from bot_core.reporting.environment_storage import store_environment_report
 from bot_core.reporting.upload import (
     SmokeArchiveUploader,
     SmokeArchiveUploadResult,
@@ -3842,6 +3843,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     # Bezpieczne logowanie (mock/test może nie mieć pól)
     strategy_name = getattr(pipeline, "strategy_name", args.strategy)
     controller_name = getattr(pipeline, "controller_name", args.controller)
+    environment_cfg = getattr(pipeline, "bootstrap", None)
+    environment_cfg = getattr(environment_cfg, "environment", None)
+    offline_mode = bool(getattr(environment_cfg, "offline_mode", False))
+    if offline_mode:
+        _LOGGER.info(
+            "Środowisko %s działa w trybie offline – pomijam operacje wymagające sieci.",
+            args.environment,
+        )
     _LOGGER.info(
         "Pipeline gotowy: środowisko=%s, strategia=%s, kontroler=%s",
         args.environment,
@@ -4037,6 +4046,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         summary_hash = _hash_file(summary_path)
         try:
+            stored_report_path = store_environment_report(
+                summary_path,
+                pipeline.bootstrap.environment,
+                now=datetime.now(timezone.utc),
+            )
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.error(
+                "Nie udało się zapisać kopii raportu w magazynie środowiska: %s",
+                exc,
+            )
+            stored_report_path = None
+        else:
+            if stored_report_path is not None:
+                _LOGGER.info(
+                    "Kopia raportu smoke zapisana w %s",
+                    stored_report_path,
+                )
+        try:
             summary_payload = json.loads(summary_path.read_text(encoding="utf-8"))
         except Exception as exc:  # noqa: BLE001
             _LOGGER.error("Nie udało się odczytać summary.json: %s", exc)
@@ -4057,17 +4084,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         _LOGGER.info("Podsumowanie smoke testu:%s%s", os.linesep, summary_text)
 
         archive_path: Path | None = None
-        archive_required = bool(
-            args.archive_smoke
-            or (
-                SmokeArchiveUploader.resolve_config(
-                    getattr(getattr(pipeline.bootstrap, "core_config", None), "reporting", None)
-                )
-            )
-        )
         reporting_cfg = getattr(getattr(pipeline.bootstrap, "core_config", None), "reporting", None)
-        upload_cfg = SmokeArchiveUploader.resolve_config(reporting_cfg)
-        json_sync_cfg = PaperSmokeJsonSynchronizer.resolve_config(reporting_cfg)
+        resolved_upload_cfg = SmokeArchiveUploader.resolve_config(reporting_cfg)
+        resolved_json_sync_cfg = PaperSmokeJsonSynchronizer.resolve_config(reporting_cfg)
+
+        upload_cfg = None
+        json_sync_cfg = None
+        if offline_mode:
+            if resolved_upload_cfg is not None:
+                _LOGGER.info(
+                    "Tryb offline: pomijam upload archiwum smoke testu (backend=%s)",
+                    getattr(resolved_upload_cfg, "backend", "unknown"),
+                )
+            if resolved_json_sync_cfg is not None:
+                _LOGGER.info("Tryb offline: pomijam synchronizację dziennika JSON smoke testów")
+        else:
+            upload_cfg = resolved_upload_cfg
+            json_sync_cfg = resolved_json_sync_cfg
+
+        archive_required = bool(args.archive_smoke or upload_cfg)
 
         if archive_required:
             archive_path = _archive_smoke_report(report_dir)
@@ -4189,6 +4224,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             **storage_context,
             **precheck_context,
         }
+        if offline_mode:
+            alert_context["offline_mode"] = "true"
 
         markdown_entry_id: str | None = None
         json_record: Mapping[str, object] | None = None
@@ -4286,6 +4323,23 @@ def main(argv: Sequence[str] | None = None) -> int:
             required=auto_publish_required,
         )
         publish_requirement_failed = False
+
+        if offline_mode:
+            if auto_publish_enabled:
+                _LOGGER.info(
+                    "Tryb offline: automatyczna publikacja artefaktów zostanie pominięta."
+                )
+            if auto_publish_required:
+                _LOGGER.warning(
+                    "Tryb offline: wymaganie automatycznej publikacji artefaktów zostaje pominięte."
+                )
+            auto_publish_enabled = False
+            auto_publish_required = False
+            publish_result = _normalize_publish_result(
+                {"status": "skipped", "reason": "offline_mode"},
+                exit_code=None,
+                required=False,
+            )
 
         if auto_publish_enabled:
             publish_exit_code, publish_payload = _auto_publish_smoke_artifacts(

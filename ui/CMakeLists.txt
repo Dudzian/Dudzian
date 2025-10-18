@@ -243,4 +243,12 @@ if(BUILD_TESTING)
             Qt6::Test
     )
     add_test(NAME admin_dialog_e2e_tests COMMAND admin_dialog_e2e_tests)
+
+    add_executable(report_center_controller_tests
+        tests/ReportCenterControllerTest.cpp
+        src/reporting/ReportCenterController.cpp
+    )
+    target_include_directories(report_center_controller_tests PRIVATE src)
+    target_link_libraries(report_center_controller_tests PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME report_center_controller_tests COMMAND report_center_controller_tests)
 endif()

@@ -33,7 +33,8 @@ import webbrowser
 import asyncio
 import inspect
 from datetime import datetime, timezone
-from typing import Dict, List, Any, Optional
+from types import SimpleNamespace
+from typing import Any, Dict, List, Mapping, Optional
 
 # --- alias zgodności: core/trading_engine może importować managers.database_manager
 try:
@@ -100,11 +101,16 @@ from KryptoLowca.managers.ai_manager import AIManager
 from KryptoLowca.managers.report_manager import ReportManager
 from KryptoLowca.managers.risk_manager_adapter import RiskManager
 from KryptoLowca.core.trading_engine import TradingEngine
+from KryptoLowca.risk_settings_loader import (
+    DEFAULT_CORE_CONFIG_PATH,
+    load_risk_settings_from_core,
+)
 
 # istniejące moduły w repo
 from KryptoLowca.trading_strategies import TradingStrategies
 from reporting import TradeInfo
 from KryptoLowca.database_manager import DatabaseManager  # klasyczny (bezargumentowy) konstruktor
+from KryptoLowca.ui.trading import view as trading_view
 
 # =====================================
 # Pomocnicze
@@ -224,6 +230,10 @@ class TradingGUI:
         self.cooldown_var = tk.IntVar(value=30)
         self.minmove_var = tk.DoubleVar(value=0.15)
         self.max_daily_loss_pct = 0.05
+        self.max_daily_loss_var = tk.DoubleVar(value=self.max_daily_loss_pct * 100.0)
+        self._max_daily_loss_trace = self.max_daily_loss_var.trace_add(
+            "write", lambda *_: self._on_max_daily_loss_changed()
+        )
         self.soft_halt_losses = 3
         self.trade_cooldown_on_error = 30
         self.risk_per_trade = tk.DoubleVar(value=0.01)
@@ -258,6 +268,13 @@ class TradingGUI:
         self.live_secret = tk.StringVar(value="")
         self.password_var = tk.StringVar(value="")
 
+        # Risk profile presentation state
+        self.state = SimpleNamespace(risk_profile_name=None)
+        self._risk_section: Optional[trading_view.RiskProfileSection] = None
+        self.risk_profile_display_var = tk.StringVar(value="—")
+        self.risk_limits_display_var = tk.StringVar(value="—")
+        self._risk_manager_settings = self._current_risk_manager_settings()
+
         # wewn.
         self.selected_symbols: List[str] = []
         self.symbol_vars: Dict[str, tk.BooleanVar] = {}
@@ -276,16 +293,28 @@ class TradingGUI:
         self._open_positions: Dict[str, Dict[str, Any]] = {}
         self._market_data: Dict[str, pd.DataFrame] = {}
 
+        # Risk profile (core.yaml)
+        self.core_config_path: Path = Path(
+            os.environ.get("KRYPTLOWCA_CORE_CONFIG", DEFAULT_CORE_CONFIG_PATH)
+        )
+        self.core_environment: Optional[str] = None
+        self.risk_profile_name: Optional[str] = None
+        self.risk_manager_settings: Dict[str, Any] = {}
+        self.risk_manager_config: Optional[Any] = None
+        self.risk_profile_var = tk.StringVar(value="—")
+
         # ====== MENEDŻERY ======
         self.db = DatabaseManager()  # bezargumentowy
         self.sec = SecurityManager(KEYS_FILE, SALT_FILE)
         self.cfg = ConfigManager(PRESETS_DIR)
         self.reporter = ReportManager(str(DB_FILE))
-        self.risk_mgr = RiskManager(config={
-            "risk_per_trade": self.risk_per_trade.get(),
-            "portfolio_risk": self.portfolio_risk.get(),
-            "max_daily_loss_pct": self.max_daily_loss_pct
-        })
+        self.risk_mgr = RiskManager(
+            config={
+                "max_risk_per_trade": float(self.risk_per_trade.get()),
+                "max_portfolio_risk": float(self.portfolio_risk.get()),
+                "max_daily_loss_pct": float(self.max_daily_loss_pct),
+            }
+        )
         # --- AIManager: zgodność z różnymi sygnaturami konstruktora
         try:
             self.ai_mgr = AIManager(models_dir=MODELS_DIR, logger_=logger)
@@ -322,11 +351,61 @@ class TradingGUI:
 
         # ====== UI ======
         self._build_ui()
+        try:
+            self.reload_risk_manager_settings()
+        except Exception:
+            self._log("Failed to load risk settings from core.yaml", "WARNING")
         self.network_var.trace_add("write", lambda *_: self._on_network_changed())
         self._on_network_changed()
         self.ai_threshold_var.trace_add("write", lambda *_: self._on_ai_threshold_changed())
         self._log("GUI ready", "INFO")
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        self._on_risk_limit_changed()
+
+    def _current_risk_manager_settings(self) -> Dict[str, Any]:
+        return {
+            "risk_per_trade": float(self.risk_per_trade.get()),
+            "portfolio_risk": float(self.portfolio_risk.get()),
+            "max_daily_loss_pct": float(self.max_daily_loss_pct),
+        }
+
+    @property
+    def risk_manager_settings(self) -> Dict[str, Any]:
+        return dict(self._risk_manager_settings)
+
+    @risk_manager_settings.setter
+    def risk_manager_settings(self, value: Mapping[str, Any]):
+        self._risk_manager_settings = dict(value or {})
+        if self._risk_section is not None:
+            self._risk_section.update(
+                profile_name=self.state.risk_profile_name,
+                settings=self._risk_manager_settings,
+            )
+            self.risk_profile_display_var = self._risk_section.profile_var
+            self.risk_limits_display_var = self._risk_section.limits_var
+
+    def set_risk_profile_context(
+        self,
+        name: Optional[str] = None,
+        settings: Optional[Mapping[str, Any]] = None,
+    ) -> None:
+        if name is not None:
+            self.state.risk_profile_name = name
+        if settings is not None:
+            self.risk_manager_settings = settings
+        elif self._risk_section is not None:
+            self._risk_section.update(
+                profile_name=self.state.risk_profile_name,
+                settings=self._risk_manager_settings,
+            )
+
+    def _on_risk_limit_changed(self, *_: Any) -> None:
+        self._risk_manager_settings.update(self._current_risk_manager_settings())
+        if self._risk_section is not None:
+            self._risk_section.update(
+                profile_name=self.state.risk_profile_name,
+                settings=self._risk_manager_settings,
+            )
 
     # ===================== UI budowa =====================
     def _build_ui(self):
@@ -356,6 +435,14 @@ class TradingGUI:
         ttk.Label(top, textvariable=self.account_balance_var).pack(side="left")
         ttk.Label(top, text="Paper:").pack(side="left", padx=(12,4))
         ttk.Label(top, textvariable=self.paper_balance_var).pack(side="left")
+        self._risk_section = trading_view.build_risk_profile_section(
+            top,
+            self.state,
+            self._risk_manager_settings,
+        )
+        self._risk_section.container.pack(side="left", padx=(12, 0))
+        self.risk_profile_display_var = self._risk_section.profile_var
+        self.risk_limits_display_var = self._risk_section.limits_var
         exp_btn = ttk.Button(top, text="Export PDF", command=self._export_pdf_report)
         exp_btn.pack(side="left", padx=8); Tooltip(exp_btn, "Eksportuj raport do PDF: zestawienie transakcji i metryk.")
         self.btn_start = tk.Button(top, text="Start trading", command=self._on_start)
@@ -655,10 +742,16 @@ class TradingGUI:
 
         lfR = ttk.Labelframe(parent, text="Risk & Safeguards"); lfR.pack(fill="x", padx=8, pady=6)
         ttk.Label(lfR, text="Max daily loss [%]").grid(row=0, column=0, sticky="e", padx=6)
-        e1 = ttk.Spinbox(lfR, from_=0.5, to=50.0, increment=0.5, width=8); e1.grid(row=0, column=1, sticky="w")
-        e1.delete(0,"end"); e1.insert(0, str(self.max_daily_loss_pct*100.0))
-        e1.bind("<FocusOut>", lambda *_: setattr(self, "max_daily_loss_pct", float(e1.get())/100.0))
-        Tooltip(e1, "Maksymalny dzienny spadek wartości portfela, po którym bot przestaje handlować (soft stop).")
+        sp_mdl = ttk.Spinbox(
+            lfR,
+            textvariable=self.max_daily_loss_var,
+            from_=0.1,
+            to=50.0,
+            increment=0.1,
+            width=8,
+        )
+        sp_mdl.grid(row=0, column=1, sticky="w")
+        Tooltip(sp_mdl, "Maksymalny dzienny spadek wartości portfela, po którym bot przestaje handlować (soft stop).")
         ttk.Label(lfR, text="Soft-halt after losses").grid(row=0, column=2, sticky="e", padx=6)
         sp_soft = ttk.Spinbox(lfR, from_=0, to=10, increment=1, width=8); sp_soft.grid(row=0, column=3, sticky="w")
         sp_soft.delete(0,"end"); sp_soft.insert(0, str(self.soft_halt_losses))
@@ -670,12 +763,127 @@ class TradingGUI:
         e2.bind("<FocusOut>", lambda *_: setattr(self, "trade_cooldown_on_error", int(e2.get())))
         Tooltip(e2, "Przerwa (sekundy) po błędzie sieci/egzekucji przed kolejną próbą.")
         ttk.Label(lfR, text="Risk per trade [%]").grid(row=1, column=2, sticky="e", padx=6)
-        sp_rpt = ttk.Spinbox(lfR, textvariable=self.risk_per_trade, from_=0.1, to=10.0, increment=0.1, width=8)
+        sp_rpt = ttk.Spinbox(
+            lfR,
+            textvariable=self.risk_per_trade,
+            from_=0.001,
+            to=1.0,
+            increment=0.001,
+            width=8,
+        )
         sp_rpt.grid(row=1, column=3, sticky="w"); Tooltip(sp_rpt, "Procent kapitału ryzykowany w pojedynczej transakcji (w paperze używany do wyliczenia wolumenu).")
         ttk.Label(lfR, text="Portfolio risk [%]").grid(row=2, column=0, sticky="e", padx=6)
-        sp_pr = ttk.Spinbox(lfR, textvariable=self.portfolio_risk, from_=1.0, to=100.0, increment=1.0, width=8)
+        sp_pr = ttk.Spinbox(
+            lfR,
+            textvariable=self.portfolio_risk,
+            from_=0.01,
+            to=2.0,
+            increment=0.01,
+            width=8,
+        )
         sp_pr.grid(row=2, column=1, sticky="w"); Tooltip(sp_pr, "Łączny dopuszczalny poziom ryzyka portfela (kontroluje łączną ekspozycję).")
+        ttk.Label(lfR, text="Risk profile").grid(row=3, column=0, sticky="e", padx=6)
+        ttk.Label(lfR, textvariable=self.risk_profile_var).grid(row=3, column=1, sticky="w")
+        reload_btn = ttk.Button(lfR, text="Reload core.yaml", command=self.reload_risk_manager_settings)
+        reload_btn.grid(row=3, column=3, sticky="w", padx=6)
+        Tooltip(reload_btn, "Ponownie wczytaj limity ryzyka z pliku config/core.yaml bez restartu GUI.")
         for i in range(4): lfR.columnconfigure(i, weight=1)
+
+    def _on_max_daily_loss_changed(self, *_):
+        try:
+            value = float(self.max_daily_loss_var.get())
+        except (tk.TclError, ValueError):
+            return
+        self.max_daily_loss_pct = max(0.0, value / 100.0)
+
+    def _map_network_to_environment(self) -> Optional[str]:
+        try:
+            network = (self.network_var.get() or "").strip().lower()
+        except Exception:
+            network = ""
+        if network.startswith("testnet") or network.startswith("paper"):
+            return "binance_paper"
+        if network.startswith("live"):
+            return "binance_live"
+        return None
+
+    def load_risk_manager_settings(
+        self,
+        *,
+        config_path: Optional[Path | str] = None,
+        environment: Optional[str] = None,
+    ) -> tuple[str, Dict[str, Any], Optional[Any]]:
+        target_path = Path(config_path) if config_path is not None else self.core_config_path
+        if config_path is not None:
+            self.core_config_path = target_path
+
+        env_name = environment or self.core_environment
+        profile_name, settings, profile_cfg, _core = load_risk_settings_from_core(
+            target_path,
+            environment=env_name,
+        )
+        if environment:
+            self.core_environment = environment
+        elif env_name is None and _core.environments:
+            # Zapamiętaj środowisko wybrane domyślnie przez loader
+            self.core_environment = next(iter(_core.environments))
+
+        return profile_name, dict(settings), profile_cfg
+
+    def reload_risk_manager_settings(
+        self,
+        *,
+        environment: Optional[str] = None,
+    ) -> tuple[str, Dict[str, Any], Optional[Any]]:
+        env_hint = environment or self.core_environment or self._map_network_to_environment()
+        profile_name, settings, profile_cfg = self.load_risk_manager_settings(
+            config_path=self.core_config_path,
+            environment=env_hint,
+        )
+
+        if not settings:
+            self._log("Risk profile settings unavailable in core.yaml", "WARNING")
+            return profile_name, settings, profile_cfg
+
+        try:
+            self.risk_mgr = RiskManager(config=dict(settings))
+        except Exception as exc:
+            self._log(f"Risk manager reload failed: {exc}", "ERROR")
+            raise
+
+        self.risk_profile_name = profile_name
+        self.risk_manager_settings = dict(settings)
+        self.risk_manager_config = profile_cfg
+        self._apply_risk_settings_to_ui(settings, profile_name)
+        self._log(f"Risk settings reloaded ({profile_name})", "INFO")
+        return profile_name, dict(settings), profile_cfg
+
+    def _apply_risk_settings_to_ui(
+        self,
+        settings: Mapping[str, Any],
+        profile_name: Optional[str],
+    ) -> None:
+        if profile_name:
+            self.risk_profile_var.set(str(profile_name))
+        if not settings:
+            return
+        try:
+            risk_per_trade = float(settings.get("max_risk_per_trade", self.risk_per_trade.get()))
+        except Exception:
+            risk_per_trade = self.risk_per_trade.get()
+        try:
+            portfolio_risk = float(settings.get("max_portfolio_risk", self.portfolio_risk.get()))
+        except Exception:
+            portfolio_risk = self.portfolio_risk.get()
+        self.risk_per_trade.set(risk_per_trade)
+        self.portfolio_risk.set(portfolio_risk)
+
+        if "max_daily_loss_pct" in settings:
+            try:
+                self.max_daily_loss_pct = float(settings["max_daily_loss_pct"])
+                self.max_daily_loss_var.set(self.max_daily_loss_pct * 100.0)
+            except Exception:
+                pass
 
         lfT = ttk.Labelframe(parent, text="DCA & Trailing (ATR)"); lfT.pack(fill="x", padx=8, pady=6)
         cb_tr = ttk.Checkbutton(lfT, text="Use trailing stops", variable=self.use_trailing)
@@ -1107,6 +1315,7 @@ class TradingGUI:
                 "trade_cooldown_on_error": self.trade_cooldown_on_error,
                 "risk_per_trade": self.risk_per_trade.get(),
                 "portfolio_risk": self.portfolio_risk.get(),
+                "profile_name": self.state.risk_profile_name,
                 "one_trade_per_bar": self.onebar_var.get(),
                 "cooldown_s": self.cooldown_var.get(),
                 "min_move_pct": self.minmove_var.get(),
@@ -1175,6 +1384,9 @@ class TradingGUI:
             self.trade_cooldown_on_error = int(rk.get("trade_cooldown_on_error", self.trade_cooldown_on_error))
             self.risk_per_trade.set(float(rk.get("risk_per_trade", self.risk_per_trade.get())))
             self.portfolio_risk.set(float(rk.get("portfolio_risk", self.portfolio_risk.get())))
+            profile_name = rk.get("profile_name")
+            if profile_name is not None:
+                self.state.risk_profile_name = profile_name
             self.onebar_var.set(bool(rk.get("one_trade_per_bar", self.onebar_var.get())))
             self.cooldown_var.set(int(rk.get("cooldown_s", self.cooldown_var.get())))
             self.minmove_var.set(float(rk.get("min_move_pct", self.minmove_var.get())))
@@ -1212,6 +1424,8 @@ class TradingGUI:
                 self.selected_symbols = list(sel)
         except Exception as e:
             self._log(f"Apply settings error: {e}", "ERROR")
+        finally:
+            self._on_risk_limit_changed()
 
     def _apply_paper_capital(self):
         try:

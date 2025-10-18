@@ -76,6 +76,15 @@ ApplicationWindow {
             }
 
             Button {
+                text: qsTr("Raporty")
+                icon.name: "view-list-details"
+                onClicked: reportDialog.open()
+                ToolTip.visible: hovered
+                ToolTip.delay: 400
+                ToolTip.text: qsTr("Przeglądaj i usuwaj raporty z magazynu UI")
+            }
+
+            Button {
                 text: qsTr("Ponów połączenie")
                 onClicked: {
                     appController.stop()
@@ -94,6 +103,26 @@ ApplicationWindow {
         id: adminPanelDrawer
         parent: window.contentItem
         height: window.height
+    }
+
+    Dialog {
+        id: reportDialog
+        objectName: "reportDialog"
+        title: qsTr("Przegląd raportów")
+        modal: true
+        standardButtons: Dialog.Close
+        width: 720
+        height: 480
+
+        onOpened: {
+            if (reportController)
+                reportController.refresh()
+        }
+
+        ReportBrowser {
+            anchors.fill: parent
+            controller: reportController
+        }
     }
 
     Connections {

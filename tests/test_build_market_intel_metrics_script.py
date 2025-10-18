@@ -9,6 +9,88 @@ import pytest
 from scripts.build_market_intel_metrics import main as build_metrics
 
 
+def test_build_market_intel_metrics_ohlcv_respects_cache_namespace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from scripts import build_market_intel_metrics as cli
+
+    captured: dict[str, object] = {}
+
+    class _StubStorage:
+        def __init__(self, base, *, namespace):
+            captured["base"] = Path(base)
+            captured["namespace"] = namespace
+
+    class _StubSnapshot:
+        def __init__(self, symbol: str) -> None:
+            self.symbol = symbol
+
+        def to_dict(self) -> dict[str, object]:
+            return {"symbol": self.symbol}
+
+    class _StubAggregator:
+        def __init__(self, storage) -> None:
+            captured["storage"] = storage
+
+        def build_many(self, queries):
+            captured["queries"] = tuple(queries)
+            return {query.symbol: _StubSnapshot(query.symbol) for query in queries}
+
+    class _StubQuery:
+        def __init__(self, symbol: str, interval: str, lookback_bars: int) -> None:
+            self.symbol = symbol
+            self.interval = interval
+            self.lookback_bars = lookback_bars
+
+    class _StubAsset:
+        def __init__(self, symbol: str) -> None:
+            self.symbol = symbol
+
+    class _StubGovernor:
+        def __init__(self) -> None:
+            self.assets = (_StubAsset("BTC/USDT"),)
+
+    class _StubEnv:
+        def __init__(self) -> None:
+            self.exchange = "coinbase_spot"
+            self.data_cache_path = str(tmp_path / "cache")
+            self.data_source = type("DS", (), {"cache_namespace": "custom_offline"})()
+
+    class _StubConfig:
+        def __init__(self) -> None:
+            self.environments = {"coinbase_offline": _StubEnv()}
+            self.portfolio_governors = {"offline_gov": _StubGovernor()}
+
+    monkeypatch.setattr(cli, "load_core_config", lambda path: _StubConfig())
+    monkeypatch.setattr(cli, "_HAS_OHLCV", True)
+    monkeypatch.setattr(cli, "OHLCVAggregator", _StubAggregator)
+    monkeypatch.setattr(cli, "MarketIntelQuery", _StubQuery)
+    monkeypatch.setattr(
+        "bot_core.data.ohlcv.parquet_storage.ParquetCacheStorage", _StubStorage
+    )
+
+    output_path = tmp_path / "metrics.json"
+    exit_code = build_metrics(
+        [
+            "--mode",
+            "ohlcv",
+            "--config",
+            "config/core.yaml",
+            "--environment",
+            "coinbase_offline",
+            "--governor",
+            "offline_gov",
+            "--output",
+            str(output_path),
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["namespace"] == "custom_offline"
+    assert captured["base"] == tmp_path / "cache"
+    assert output_path.exists()
+
+
 @pytest.fixture()
 def sqlite_dataset(tmp_path: Path) -> Path:
     db_path = tmp_path / "market_metrics.sqlite"

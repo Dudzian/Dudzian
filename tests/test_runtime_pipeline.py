@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping, Optional, Protocol, Sequence
@@ -21,8 +22,12 @@ from bot_core.exchanges.base import (
     OrderRequest,
     OrderResult,
 )
-from bot_core.runtime import build_daily_trend_pipeline, create_trading_controller
-from bot_core.runtime.pipeline import _build_account_loader
+from bot_core.decision.models import DecisionCandidate, RiskSnapshot
+from bot_core.runtime.pipeline import (
+    _build_account_loader,
+    build_daily_trend_pipeline,
+    create_trading_controller,
+)
 from bot_core.security import SecretManager, SecretStorage
 from bot_core.strategies import StrategySignal
 from bot_core.strategies.daily_trend import DailyTrendMomentumStrategy
@@ -367,6 +372,213 @@ def test_create_trading_controller_executes_signal(
     assert results[0].status == "filled"
     assert channel.messages
     assert channel.messages[0].category == "strategy"
+
+
+def test_pipeline_bootstrap_integrates_tco_reports(tmp_path: Path) -> None:
+    candles = [
+        [1_700_000_000_000, 100.0, 105.0, 95.0, 102.0, 12.0],
+        [1_700_086_400_000, 102.0, 108.0, 100.0, 105.0, 11.0],
+    ]
+    adapter = FakeExchangeAdapter(
+        ExchangeCredentials(key_id="public", environment=Environment.PAPER),
+        fixtures=(_OhlcvFixture(symbol="BTCUSDT", rows=candles),),
+    )
+
+    reports_dir = tmp_path / "reports"
+    reports_dir.mkdir()
+    tco_report_path = reports_dir / "tco_latest.json"
+    tco_report_path.write_text(
+        json.dumps(
+            {
+                "generated_at": "2024-03-01T00:00:00Z",
+                "metadata": {"events_count": 5, "strategy_count": 1},
+                "alerts": [],
+                "total": {"cost_bps": 6.5},
+                "strategies": {
+                    "core_daily_trend": {
+                        "total": {"cost_bps": 7.2},
+                        "profiles": {"balanced": {"cost_bps": 7.2}},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = {
+        "risk_profiles": {
+            "balanced": {
+                "max_daily_loss_pct": 0.015,
+                "max_position_pct": 0.05,
+                "target_volatility": 0.11,
+                "max_leverage": 3.0,
+                "stop_loss_atr_multiple": 1.5,
+                "max_open_positions": 5,
+                "hard_drawdown_pct": 0.1,
+            }
+        },
+        "runtime": {
+            "controllers": {"daily_trend_core": {"tick_seconds": 86400, "interval": "1d"}}
+        },
+        "strategies": {
+            "core_daily_trend": {
+                "engine": "daily_trend_momentum",
+                "parameters": {
+                    "fast_ma": 3,
+                    "slow_ma": 5,
+                    "breakout_lookback": 4,
+                    "momentum_window": 3,
+                    "atr_window": 5,
+                    "atr_multiplier": 1.5,
+                    "min_trend_strength": 0.0,
+                    "min_momentum": 0.0,
+                },
+            }
+        },
+        "instrument_universes": {
+            "core_universe": {
+                "description": "fixture",
+                "instruments": {
+                    "BTC_USDT": {
+                        "base_asset": "BTC",
+                        "quote_asset": "USDT",
+                        "categories": ["core"],
+                        "exchanges": {"fake_exchange": "BTCUSDT"},
+                        "backfill": [{"interval": "1d", "lookback_days": 10}],
+                    }
+                },
+            }
+        },
+        "environments": {
+            "fake_paper": {
+                "exchange": "fake_exchange",
+                "environment": "paper",
+                "keychain_key": "fake_key",
+                "data_cache_path": str(tmp_path / "data"),
+                "risk_profile": "balanced",
+                "default_strategy": "core_daily_trend",
+                "default_controller": "daily_trend_core",
+                "alert_channels": [],
+                "instrument_universe": "core_universe",
+                "adapter_settings": {
+                    "paper_trading": {
+                        "valuation_asset": "USDT",
+                        "position_size": 0.2,
+                        "initial_balances": {"USDT": 20_000},
+                        "default_market": {"min_quantity": 0.001, "min_notional": 10.0},
+                    }
+                },
+            }
+        },
+        "portfolio_governor": {
+            "enabled": True,
+            "rebalance_interval_minutes": 30,
+            "smoothing": 0.6,
+            "default_cost_bps": 4.0,
+            "strategies": {
+                "core_daily_trend": {
+                    "baseline_weight": 0.4,
+                    "min_weight": 0.2,
+                    "max_weight": 0.6,
+                    "baseline_max_signals": 3,
+                    "max_signal_factor": 1.5,
+                    "risk_profile": "balanced",
+                }
+            },
+        },
+        "decision_engine": {
+            "orchestrator": {
+                "max_cost_bps": 15.0,
+                "min_net_edge_bps": 5.0,
+                "max_daily_loss_pct": 0.02,
+                "max_drawdown_pct": 0.08,
+                "max_position_ratio": 0.3,
+                "max_open_positions": 5,
+                "max_latency_ms": 250.0,
+            },
+            "profile_overrides": {
+                "balanced": {
+                    "max_cost_bps": 14.0,
+                    "max_latency_ms": 220.0,
+                    "max_trade_notional": 25000.0,
+                }
+            },
+            "stress_tests": {
+                "cost_shock_bps": 2.0,
+                "latency_spike_ms": 60.0,
+                "slippage_multiplier": 1.2,
+            },
+            "min_probability": 0.5,
+            "require_cost_data": True,
+            "penalty_cost_bps": 1.0,
+            "tco": {
+                "reports": [f"reports/{tco_report_path.name}"],
+                "require_at_startup": True,
+            },
+        },
+        "alerts": {},
+    }
+
+    config_path = tmp_path / "core.yaml"
+    import yaml  # type: ignore
+
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+
+    storage = _InMemorySecretStorage()
+    manager = SecretManager(storage)
+    manager.store_exchange_credentials(
+        "fake_key",
+        ExchangeCredentials(key_id="public", secret="sekret", environment=Environment.PAPER),
+    )
+
+    pipeline = build_daily_trend_pipeline(
+        environment_name="fake_paper",
+        strategy_name="core_daily_trend",
+        controller_name="daily_trend_core",
+        config_path=config_path,
+        secret_manager=manager,
+        adapter_factories={"fake_exchange": lambda credentials, **_: adapter},
+    )
+
+    assert pipeline.bootstrap.decision_orchestrator is not None
+    assert pipeline.bootstrap.decision_tco_report_path == str(tco_report_path.resolve())
+    assert pipeline.bootstrap.decision_tco_warnings is None
+    portfolio_governor = pipeline.bootstrap.portfolio_governor
+
+    candidate = DecisionCandidate(
+        strategy="core_daily_trend",
+        action="enter",
+        risk_profile="balanced",
+        symbol="BTCUSDT",
+        notional=5_000.0,
+        expected_return_bps=20.0,
+        expected_probability=0.9,
+        latency_ms=150.0,
+    )
+    snapshot = RiskSnapshot(
+        profile="balanced",
+        start_of_day_equity=100_000.0,
+        daily_realized_pnl=0.0,
+        peak_equity=100_000.0,
+        last_equity=100_000.0,
+        gross_notional=10_000.0,
+        active_positions=1,
+        symbols=("BTCUSDT",),
+        force_liquidation=False,
+    )
+
+    evaluation = pipeline.bootstrap.decision_orchestrator.evaluate_candidate(candidate, snapshot)
+    assert evaluation.accepted is True
+    assert evaluation.cost_bps == pytest.approx(7.2)
+    assert evaluation.reasons == ()
+
+    if portfolio_governor is not None:
+        cost_index = getattr(portfolio_governor, "_cost_index")
+        assert cost_index.lookup[("core_daily_trend", "__total__")] == pytest.approx(7.2)
+        assert cost_index.lookup[("core_daily_trend", "balanced")] == pytest.approx(7.2)
+    else:
+        # Etapy bez asset-level governora nadal powinny dostarczyć konfigurację.
+        assert pipeline.bootstrap.portfolio_governor_config is not None
 
 
 def test_account_loader_handles_multi_currency_and_shorts(tmp_path: Path) -> None:
