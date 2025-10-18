@@ -5,8 +5,9 @@ import logging
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
+import time
 from pathlib import Path
-from typing import Callable, Mapping, MutableMapping, Sequence
+from typing import Callable, Iterable, Mapping, MutableMapping, Sequence
 
 from bot_core.alerts import DefaultAlertRouter
 from bot_core.config.models import (
@@ -32,6 +33,7 @@ from bot_core.exchanges.base import (
     ExchangeAdapter,
     ExchangeAdapterFactory,
 )
+from bot_core.exchanges.streaming import StreamBatch
 from bot_core.market_intel import MarketIntelAggregator, MarketIntelQuery, MarketIntelSnapshot
 from bot_core.portfolio import PortfolioDecisionLog, PortfolioGovernor
 from bot_core.runtime.bootstrap import BootstrapContext, bootstrap_environment
@@ -283,6 +285,82 @@ def create_trading_controller(
             "controller": pipeline.controller_name,
         },
     )
+
+
+# --------------------------------------------------------------------------------------
+# Konsumpcja streamów long-pollowych
+# --------------------------------------------------------------------------------------
+
+
+def consume_stream(
+    stream: Iterable[StreamBatch],
+    *,
+    handle_batch: Callable[[StreamBatch], None],
+    heartbeat_interval: float = 15.0,
+    idle_timeout: float | None = 60.0,
+    on_heartbeat: Callable[[float], None] | None = None,
+    stop_condition: Callable[[], bool] | None = None,
+    clock: Callable[[], float] | None = None,
+) -> None:
+    """Przetwarza paczki danych ze strumienia REST/gRPC.
+
+    Funkcja jest synchroniczna – zakłada, że `stream` jest iteratorem zwracającym
+    kolejne obiekty :class:`StreamBatch`. Obsługuje podstawowe heartbeaty oraz
+    raportowanie braku danych poprzez wyjątek :class:`TimeoutError`.
+    """
+
+    iterator = iter(stream)
+    closers: list[Callable[[], None]] = []
+    for candidate in (getattr(iterator, "close", None), getattr(stream, "close", None)):
+        if callable(candidate):
+            closers.append(candidate)
+    if closers:
+        # deduplikacja referencji, np. gdy iterator i stream to ten sam obiekt
+        unique_closers: dict[tuple[object | None, object], Callable[[], None]] = {}
+        for closer in closers:
+            key = (getattr(closer, "__self__", None), getattr(closer, "__func__", closer))
+            unique_closers[key] = closer
+        closers = list(unique_closers.values())
+    time_source = clock or time.monotonic
+    last_event_at = time_source()
+    last_heartbeat_at = last_event_at
+    heartbeat_interval = max(0.0, float(heartbeat_interval))
+    timeout_value = None if idle_timeout is None else max(0.0, float(idle_timeout))
+
+    try:
+        while True:
+            if stop_condition and stop_condition():
+                break
+
+            try:
+                batch = next(iterator)
+            except StopIteration:
+                break
+
+            observed_at = float(getattr(batch, "received_at", time_source()))
+            if batch.events:
+                handle_batch(batch)
+                last_event_at = observed_at
+                last_heartbeat_at = observed_at
+            else:
+                if batch.heartbeat:
+                    if on_heartbeat:
+                        on_heartbeat(observed_at)
+                    last_heartbeat_at = observed_at
+                elif on_heartbeat and (observed_at - last_heartbeat_at) >= heartbeat_interval:
+                    on_heartbeat(observed_at)
+                    last_heartbeat_at = observed_at
+
+            if timeout_value is not None and (observed_at - last_event_at) >= timeout_value:
+                raise TimeoutError(
+                    f"Brak nowych danych w streamie '{batch.channel}' przez {timeout_value:.1f} s"
+                )
+    finally:
+        for closer in closers:
+            try:
+                closer()
+            except Exception:  # pragma: no cover - logowanie zamiast przerywania finalizacji
+                _LOGGER.warning("Nie udało się zamknąć streamu long-pollowego", exc_info=True)
 
 
 # --------------------------------------------------------------------------------------

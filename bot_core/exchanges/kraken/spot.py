@@ -29,6 +29,7 @@ from bot_core.exchanges.errors import (
     ExchangeNetworkError,
     ExchangeThrottlingError,
 )
+from bot_core.exchanges.streaming import LocalLongPollStream
 from bot_core.observability.metrics import MetricsRegistry, get_global_metrics_registry
 
 
@@ -211,6 +212,134 @@ class KrakenSpotAdapter(ExchangeAdapter):
         self._metric_orderbook_levels = self._metrics.gauge(
             "kraken_spot_orderbook_levels",
             "Łączna liczba poziomów orderbooka (bids+asks) zwracanych przez Kraken Spot.",
+        )
+
+    # ------------------------------------------------------------------
+    # Konfiguracja streamingu long-pollowego
+    # ------------------------------------------------------------------
+    def _stream_settings(self) -> Mapping[str, object]:
+        raw = self._settings.get("stream")
+        if isinstance(raw, Mapping):
+            return raw
+        return {}
+
+    def _build_stream(self, scope: str, channels: Sequence[str]) -> LocalLongPollStream:
+        stream_settings = dict(self._stream_settings())
+        base_url = str(
+            stream_settings.get("base_url", self._settings.get("stream_base_url", "http://127.0.0.1:8765"))
+        )
+        default_path = f"/stream/{self.name}/{scope}"
+        path = str(
+            stream_settings.get(
+                f"{scope}_path",
+                self._settings.get(f"stream_{scope}_path", default_path),
+            )
+            or default_path
+        )
+        poll_interval = float(
+            stream_settings.get(
+                "poll_interval",
+                self._settings.get("stream_poll_interval", 0.5),
+            )
+        )
+        timeout = float(stream_settings.get("timeout", self._settings.get("stream_timeout", 10.0)))
+        max_retries = int(stream_settings.get("max_retries", self._settings.get("stream_max_retries", 3)))
+        backoff_base = float(
+            stream_settings.get("backoff_base", self._settings.get("stream_backoff_base", 0.25))
+        )
+        backoff_cap = float(
+            stream_settings.get("backoff_cap", self._settings.get("stream_backoff_cap", 2.0))
+        )
+        jitter = stream_settings.get("jitter", self._settings.get("stream_jitter", (0.05, 0.30)))
+        channel_param = stream_settings.get(f"{scope}_channel_param")
+        if channel_param is None:
+            channel_param = stream_settings.get(
+                "channel_param", self._settings.get("stream_channel_param", "channels")
+            )
+        cursor_param = stream_settings.get(f"{scope}_cursor_param")
+        if cursor_param is None:
+            cursor_param = stream_settings.get(
+                "cursor_param", self._settings.get("stream_cursor_param", "cursor")
+            )
+        initial_cursor = stream_settings.get(f"{scope}_initial_cursor")
+        if initial_cursor is None:
+            initial_cursor = stream_settings.get("initial_cursor")
+        channel_serializer = None
+        serializer_candidate = stream_settings.get(f"{scope}_channel_serializer")
+        if not callable(serializer_candidate):
+            serializer_candidate = stream_settings.get("channel_serializer")
+        if callable(serializer_candidate):
+            channel_serializer = serializer_candidate
+        else:
+            separator = stream_settings.get(f"{scope}_channel_separator")
+            if separator is None:
+                separator = stream_settings.get(
+                    "channel_separator", self._settings.get("stream_channel_separator", ",")
+                )
+            if isinstance(separator, str):
+                channel_serializer = lambda values, sep=separator: sep.join(values)  # noqa: E731
+        headers_raw = stream_settings.get("headers")
+        header_map = dict(headers_raw) if isinstance(headers_raw, Mapping) else None
+        params: dict[str, object] = {}
+        base_params = stream_settings.get("params")
+        if isinstance(base_params, Mapping):
+            params.update(base_params)
+        scope_params = stream_settings.get(f"{scope}_params")
+        if isinstance(scope_params, Mapping):
+            params.update(scope_params)
+        token_key = f"{scope}_token"
+        if isinstance(stream_settings.get(token_key), str):
+            params.setdefault("token", stream_settings[token_key])
+        elif isinstance(stream_settings.get("auth_token"), str):
+            params.setdefault("token", stream_settings["auth_token"])
+        http_method = stream_settings.get(f"{scope}_method")
+        if http_method is None:
+            http_method = stream_settings.get("method", "GET")
+        params_in_body = stream_settings.get(f"{scope}_params_in_body")
+        if params_in_body is None:
+            params_in_body = stream_settings.get("params_in_body", False)
+        channels_in_body = stream_settings.get(f"{scope}_channels_in_body")
+        if channels_in_body is None:
+            channels_in_body = stream_settings.get("channels_in_body", False)
+        cursor_in_body = stream_settings.get(f"{scope}_cursor_in_body")
+        if cursor_in_body is None:
+            cursor_in_body = stream_settings.get("cursor_in_body", False)
+        body_params: dict[str, object] = {}
+        base_body = stream_settings.get("body_params")
+        if isinstance(base_body, Mapping):
+            body_params.update(base_body)
+        scope_body = stream_settings.get(f"{scope}_body_params")
+        if isinstance(scope_body, Mapping):
+            body_params.update(scope_body)
+        body_encoder = stream_settings.get(f"{scope}_body_encoder")
+        if body_encoder is None:
+            body_encoder = stream_settings.get("body_encoder")
+
+        return LocalLongPollStream(
+            base_url=base_url,
+            path=path,
+            channels=channels,
+            adapter=self.name,
+            scope=scope,
+            environment=self._environment.value,
+            params=params,
+            headers=header_map,
+            poll_interval=poll_interval,
+            timeout=timeout,
+            max_retries=max_retries,
+            backoff_base=backoff_base,
+            backoff_cap=backoff_cap,
+            jitter=jitter if isinstance(jitter, Sequence) else (0.05, 0.30),
+            channel_param=str(channel_param).strip() if channel_param not in (None, "") else "",
+            cursor_param=str(cursor_param).strip() if cursor_param not in (None, "") else "",
+            initial_cursor=initial_cursor,
+            channel_serializer=channel_serializer,
+            http_method=str(http_method or "GET"),
+            params_in_body=bool(params_in_body),
+            channels_in_body=bool(channels_in_body),
+            cursor_in_body=bool(cursor_in_body),
+            body_params=body_params or None,
+            body_encoder=body_encoder,
         )
 
     # ------------------------------------------------------------------
@@ -624,10 +753,12 @@ class KrakenSpotAdapter(ExchangeAdapter):
     # Streaming (do implementacji w dalszych etapach)
     # ------------------------------------------------------------------
     def stream_public_data(self, *, channels: Sequence[str]):  # type: ignore[override]
-        raise NotImplementedError("Streaming publiczny Kraken zostanie dodany w przyszłym etapie.")
+        return self._build_stream("public", channels)
 
     def stream_private_data(self, *, channels: Sequence[str]):  # type: ignore[override]
-        raise NotImplementedError("Streaming prywatny Kraken zostanie dodany w przyszłym etapie.")
+        if not ({"read", "trade"} & self._permission_set):
+            raise PermissionError("Poświadczenia Kraken nie pozwalają na prywatny stream danych.")
+        return self._build_stream("private", channels)
 
     # ------------------------------------------------------------------
     # Wewnętrzne narzędzia HTTP/podpisy
