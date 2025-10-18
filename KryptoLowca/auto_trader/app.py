@@ -197,6 +197,11 @@ class AutoTrader:
         self._core_config_path: Path | None = None
         self._risk_profile_name: Optional[str] = None
         self._risk_profile_config: Optional["RiskProfileConfig"] = None
+        self._risk_manager_settings: RiskManagerSettings | None = None
+        self._risk_watch_interval = 5.0
+        self._risk_watch_stop = threading.Event()
+        self._risk_watch_thread: threading.Thread | None = None
+        self._risk_config_mtime: float | None = None
 
         try:
             self._core_config_path = resolve_core_config_path()
@@ -245,13 +250,14 @@ class AutoTrader:
             applied = self._apply_runtime_risk_budget(self._strategy_config, force=True)
             if applied is not self._strategy_config:
                 self._strategy_config = applied
-                logger.info(
-                    "Zastosowano profil ryzyka %s: max_notional=%.4f trade_risk=%.4f max_leverage=%.2f",
-                    self._risk_profile_name,
-                    self._strategy_config.max_position_notional_pct,
-                    self._strategy_config.trade_risk_pct,
-                    self._strategy_config.max_leverage,
-                )
+            logger.info(
+                "Zastosowano profil ryzyka %s: max_notional=%.4f trade_risk=%.4f max_leverage=%.2f",
+                self._risk_profile_name,
+                self._strategy_config.max_position_notional_pct,
+                self._strategy_config.trade_risk_pct,
+                self._strategy_config.max_leverage,
+            )
+        self._risk_config_mtime = self._get_risk_config_mtime()
         self._data_provider: Optional[DataProvider] = data_provider or self._build_data_provider()
         self._service_mode_enabled = self._data_provider is not None
         self._cooldowns: Dict[str, float] = {}
@@ -418,6 +424,100 @@ class AutoTrader:
                         self._risk_profile_name,
                     )
 
+        message = f"Risk profile active: {self._risk_profile_name or 'default'}"
+        try:
+            self.emitter.log(message, component="AutoTrader")
+        except Exception:  # pragma: no cover - defensywne logowanie
+            logger.info(message)
+
+    def reload_risk_manager_settings(
+        self,
+        *,
+        profile_name: str | None = None,
+        config_path: Path | None = None,
+    ) -> tuple[str | None, RiskManagerSettings, Any | None]:
+        """Ponownie wczytuje ustawienia profilu ryzyka z runtime metadata."""
+
+        candidate = profile_name or self._risk_profile_name
+        cfg_path = config_path or self._core_config_path
+        try:
+            resolved_name, profile_cfg, settings = load_risk_manager_settings(
+                "auto_trader",
+                profile_name=candidate,
+                config_path=cfg_path,
+                logger=logger,
+            )
+        except Exception:
+            logger.exception("Nie udało się przeładować profilu ryzyka AutoTradera")
+            if self._risk_manager_settings is None:
+                raise
+            return self._risk_profile_name, self._risk_manager_settings, self._risk_profile_config
+
+        final_name = resolved_name or candidate
+        self.update_risk_manager_settings(
+            settings,
+            profile_name=final_name,
+            profile_config=profile_cfg,
+        )
+        self._risk_config_mtime = self._get_risk_config_mtime()
+        return final_name, settings, profile_cfg
+
+    def _get_risk_config_mtime(self) -> float | None:
+        if not self._core_config_path:
+            return None
+        try:
+            return Path(self._core_config_path).stat().st_mtime
+        except FileNotFoundError:
+            return None
+        except Exception:  # pragma: no cover - defensywne logowanie
+            logger.debug("Nie udało się pobrać mtime konfiguracji core", exc_info=True)
+            return None
+
+    def _start_risk_watcher(self) -> None:
+        if self._core_config_path is None:
+            return
+        if self._risk_watch_thread and self._risk_watch_thread.is_alive():
+            return
+
+        self._risk_watch_stop.clear()
+
+        def _loop() -> None:
+            while not self._risk_watch_stop.wait(self._risk_watch_interval):
+                try:
+                    self._check_risk_config_change()
+                except Exception:  # pragma: no cover - defensywne
+                    logger.exception("Watcher profilu ryzyka AutoTradera zgłosił wyjątek")
+
+        thread = threading.Thread(target=_loop, name="autotrader-risk-watch", daemon=True)
+        thread.start()
+        self._risk_watch_thread = thread
+
+    def _stop_risk_watcher(self) -> None:
+        self._risk_watch_stop.set()
+        thread = self._risk_watch_thread
+        if thread and thread.is_alive():
+            thread.join(timeout=1.5)
+        self._risk_watch_thread = None
+        self._risk_watch_stop = threading.Event()
+
+    def _check_risk_config_change(self) -> bool:
+        new_mtime = self._get_risk_config_mtime()
+        if new_mtime is None:
+            self._risk_config_mtime = None
+            return False
+        if self._risk_config_mtime is None:
+            self._risk_config_mtime = new_mtime
+            return False
+        if new_mtime <= self._risk_config_mtime:
+            return False
+        self._risk_config_mtime = new_mtime
+        try:
+            self.reload_risk_manager_settings()
+        except Exception:  # pragma: no cover - diagnostyka runtime
+            logger.exception("Automatyczne przeładowanie profilu ryzyka nie powiodło się")
+            return False
+        return True
+
     def start(self) -> None:
         self._stop.clear()
         self._started = True
@@ -438,6 +538,7 @@ class AutoTrader:
                 self.emitter.log(message, level="WARNING", component="AutoTrader")
             except Exception:
                 logger.warning(message)
+        self._start_risk_watcher()
         self.emitter.log("AutoTrader started.", component="AutoTrader")
         logger.info("AutoTrader worker threads started")
 
@@ -453,6 +554,7 @@ class AutoTrader:
         self._stop.set()
         self.emitter.off("trade_closed", tag="autotrader")
         self.emitter.off("bar", tag="autotrader")
+        self._stop_risk_watcher()
         self.emitter.log("AutoTrader stopped.", component="AutoTrader")
         logger.info("AutoTrader stop requested")
         for t in list(self._threads):

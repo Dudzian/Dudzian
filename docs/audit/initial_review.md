@@ -7,13 +7,21 @@ nowej architektury `bot_core` oraz przy planowaniu kolejnych iteracji rozwoju.
 
 ## 1. Struktura i modularność
 
-- **Pakiet `KryptoLowca`** pozostaje monolityczny: klasy GUI (`trading_gui.py`), logika
-  strategii (`trading_strategies/engine.py`), zarządzanie giełdą (`exchange_manager.py`) i
-  polityka ryzyka (`risk_management.py`) są ze sobą silnie sprzężone.
-- **Aliasowe moduły w katalogu głównym** (`auto_trader`, `trading_gui`,
-  `trading_strategies.py`) duplikują importy i utrudniają zrozumienie punktu wejścia.
-- Brak formalnych interfejsów dla adapterów giełdowych, strategii i warstwy egzekucji,
-  co blokuje rozszerzanie systemu o nowe rynki lub algorytmy bez zmian w kodzie głównym.
+- **Warstwa `bot_core`** agreguje wspólne elementy runtime: loader konfiguracji
+  (`runtime/metadata.py`), modele ryzyka (`risk/`), adaptery paper tradingu i
+  bootstrap środowisk. Dzięki temu logika niezależna od UI nie jest już
+  powielana w launcherach.
+- **Pakiet `KryptoLowca.ui.trading`** udostępnia modularny interfejs graficzny
+  (podział na `app.py`, `controller.py`, `state.py`, `view.py`). GUI renderuje
+  baner profilu ryzyka i kontrolki frakcji wprost z runtime settings i potrafi
+  przeładowywać `core.yaml` z poziomu przycisku.
+- **Launchery AutoTradera** zostały wydzielone do pakietu
+  `KryptoLowca.auto_trader` oraz zgodnościowych wrapperów (`run_autotrade_paper.py`,
+  `paper_auto_trade_app.py`). Moduły headless i GUI korzystają ze wspólnego
+  loadera profilu ryzyka i rejestrują nasłuchy przeładowań (GUI, SIGHUP,
+  watcher pliku).
+- W katalogu głównym nadal znajdują się aliasowe pliki z epoki monolitu, jednak
+  stopniowo delegują one działanie do nowych pakietów.
 
 ## 2. Funkcjonalność względem wymagań produktowych
 
