@@ -972,6 +972,9 @@ environments:
         ledger_directory: audit/ledger
         ledger_retention_days: 730
         ledger_fsync: true
+    stream:
+      host: 127.0.0.1
+      port: 8765
     alert_throttle:
       window_seconds: 300
       exclude_severities: [critical]
@@ -1023,6 +1026,9 @@ environments:
       filename_pattern: decisions-%Y%m%d.jsonl
       retention_days: 730
       fsync: true
+    stream:
+      host: 127.0.0.1
+      port: 8765
 
   binance_futures_paper:
     exchange: binance_futures
@@ -1059,6 +1065,9 @@ environments:
       filename_pattern: decisions-%Y%m%d.jsonl
       retention_days: 730
       fsync: true
+    stream:
+      host: 127.0.0.1
+      port: 8765
 
   binance_futures_live:
     exchange: binance_futures
@@ -1093,6 +1102,9 @@ environments:
       filename_pattern: decisions-%Y%m%d.jsonl
       retention_days: 730
       fsync: true
+    stream:
+      host: 127.0.0.1
+      port: 8765
 
   coinbase_paper:
     exchange: coinbase_spot
@@ -1125,6 +1137,9 @@ environments:
         ledger_fsync: true
     data_source:
       cache_namespace: coinbase_spot
+    stream:
+      host: 127.0.0.1
+      port: 8765
     alert_throttle:
       window_seconds: 300
       exclude_severities: [critical]

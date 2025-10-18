@@ -577,6 +577,24 @@ class CoverageMonitoringConfig:
 
 
 @dataclass(slots=True)
+class EnvironmentStreamConfig:
+    """Parametry gateway'a streamingu long-pollowego."""
+
+    enabled: bool = True
+    host: str = "127.0.0.1"
+    port: int = 8765
+    scheme: str = "http"
+    retry_after: float | None = None
+    poll_interval: float | None = None
+
+    @property
+    def base_url(self) -> str:
+        host = self.host.strip() or "127.0.0.1"
+        scheme = (self.scheme or "http").strip() or "http"
+        return f"{scheme}://{host}:{int(self.port)}"
+
+
+@dataclass(slots=True)
 class EnvironmentConfig:
     """Konfiguracja środowiska (np. live, paper, testnet)."""
     name: str
@@ -604,6 +622,7 @@ class EnvironmentConfig:
     default_strategy: str | None = None
     default_controller: str | None = None
     ai: EnvironmentAIConfig | None = None
+    stream: EnvironmentStreamConfig | None = None
 
 
 @dataclass(slots=True)
@@ -1058,6 +1077,7 @@ __all__ = [
     "EnvironmentDataSourceConfig",
     "EnvironmentReportStorageConfig",
     "EnvironmentDataQualityConfig",
+    "EnvironmentStreamConfig",
     "CoverageMonitorTargetConfig",
     "CoverageMonitoringConfig",
     "RiskProfileConfig",
