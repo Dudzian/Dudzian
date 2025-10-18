@@ -89,6 +89,19 @@ Opcje CLI `--license-storage` oraz `--expected-fingerprint-path` pozwalają wska
 
 Po uruchomieniu głównego okna można otwierać kolejne wykresy (`Nowe okno` lub `Ctrl+N`). Aplikacja zapamiętuje pozycję i liczbę okien między sesjami (`Qt.labs.settings`), a stopka informuje o aktywnym trybie „reduce motion”, kiedy `FrameRateMonitor` zasygnalizuje spadek FPS.
 
+## Panel administratora – raporty i archiwizacja
+
+Zakładka **Raporty** w panelu administratora korzysta z mostka
+`bot_core.reporting.ui_bridge`. Operacje „Usuń” i „Archiwizuj” są mapowane na
+komendy `delete` oraz `archive`, a tryb podglądu w UI uruchamia flagę
+`--dry-run`. Konfiguracja wymaga ustawienia katalogu raportów (`var/reports` lub
+ścieżka wskazana w `BOT_CORE_UI_REPORTS_DIR`) oraz interpretera Pythona z
+zainstalowanym modułem `bot_core`.
+
+Szczegółowe procedury, scenariusze krok-po-kroku i checklisty bezpieczeństwa
+znajdują się w runbooku
+[`docs/runbooks/report_maintenance.md`](../docs/runbooks/report_maintenance.md).
+
 ## Kolejne kroki
 
 * Podpięcie realnego demona C++ (`/core`) przez TLS i RBAC.
