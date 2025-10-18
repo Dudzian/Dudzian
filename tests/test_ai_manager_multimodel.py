@@ -200,6 +200,65 @@ def test_schedule_pipeline_runs_and_updates_active_model(tmp_path, monkeypatch):
     results, manager = asyncio.run(_run())
 
     assert results, "Pipeline schedule should produce at least one selection"
+    assert manager.get_active_model("BTCUSDT") == "alpha"
+    history = manager.get_pipeline_history("BTCUSDT")
+    assert history, "Historia pipeline'u powinna zawierać wpisy"
+    assert all(entry.best_model == "alpha" for entry in history)
+
+
+def test_pipeline_history_captures_improving_model(tmp_path, monkeypatch):
+    class AdaptiveModel:
+        def __init__(self, input_size: int, seq_len: int, model_type: str, *, model_dir: Path | None = None):
+            self.input_size = input_size
+            self.seq_len = seq_len
+            self.model_type = model_type
+            self.prediction = 1.0 if model_type == "alpha" else -1.0
+            self.train_calls = 0
+
+        def train(self, X, y, **_):
+            self.train_calls += 1
+            if self.model_type == "beta" and self.train_calls >= 2:
+                self.prediction = 1.0
+
+        def predict(self, X):
+            return np.full((len(X),), self.prediction, dtype=float)
+
+        def predict_series(self, df, feature_cols):
+            return pd.Series(np.full(len(df), self.prediction, dtype=float), index=df.index)
+
+    monkeypatch.setattr(ai_manager_module, "_AIModels", AdaptiveModel)
+
+    manager = ai_manager_module.AIManager(ai_threshold_bps=5.0, model_dir=tmp_path)
+    df = _make_df(60)
+
+    selection_first = asyncio.run(
+        manager.run_pipeline(
+            "BTCUSDT",
+            df,
+            ["alpha", "beta"],
+            seq_len=4,
+            folds=2,
+        )
+    )
+
+    selection_second = asyncio.run(
+        manager.run_pipeline(
+            "BTCUSDT",
+            df,
+            ["alpha", "beta"],
+            seq_len=4,
+            folds=2,
+        )
+    )
+
+    history = manager.get_pipeline_history("BTCUSDT")
+    assert len(history) == 2
+    assert selection_first.best_model == "alpha"
+    assert selection_second.best_model in {"alpha", "beta"}
+    first_eval = {ev.model_type: ev.hit_rate for ev in history[0].evaluations}
+    second_eval = {ev.model_type: ev.hit_rate for ev in history[1].evaluations}
+    assert first_eval["alpha"] >= first_eval.get("beta", 0.0)
+    assert second_eval["beta"] >= first_eval.get("beta", 0.0)
 
 
 def test_ensemble_registry_snapshot_and_diff_roundtrip(tmp_path):

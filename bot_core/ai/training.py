@@ -5,10 +5,84 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Iterable, Mapping, MutableMapping, Sequence
+from typing import (
+    Callable,
+    Iterable,
+    Mapping,
+    MutableMapping,
+    Protocol,
+    Sequence,
+    runtime_checkable,
+)
 
 from .feature_engineering import FeatureDataset
 from .models import ModelArtifact
+
+
+@runtime_checkable
+class SupportsInference(Protocol):
+    """Minimalny interfejs wymagany od modelu inference."""
+
+    feature_names: Sequence[str]
+
+    def predict(self, features: Mapping[str, float]) -> float: ...
+
+    def batch_predict(self, samples: Sequence[Mapping[str, float]]) -> Sequence[float]: ...
+
+
+@dataclass(slots=True)
+class ExternalTrainingContext:
+    """Dane przekazywane adapterowi modelu zewnętrznego."""
+
+    feature_names: Sequence[str]
+    scalers: Mapping[str, tuple[float, float]]
+    train_matrix: Sequence[Sequence[float]]
+    train_targets: Sequence[float]
+    validation_matrix: Sequence[Sequence[float]]
+    validation_targets: Sequence[float]
+    options: Mapping[str, object]
+
+
+@dataclass(slots=True)
+class ExternalTrainingResult:
+    """Wynik treningu modelu zewnętrznego."""
+
+    state: Mapping[str, object]
+    trained_model: SupportsInference | None = None
+    metrics: Mapping[str, float] | None = None
+    metadata: Mapping[str, object] | None = None
+
+
+@dataclass(slots=True)
+class ExternalModelAdapter:
+    """Adapter obsługujący cykl życia modeli trenowanych poza modułem wbudowanym."""
+
+    backend: str
+    train: Callable[[ExternalTrainingContext], ExternalTrainingResult]
+    load: Callable[[Mapping[str, object], Sequence[str], Mapping[str, object]], SupportsInference]
+
+
+_EXTERNAL_ADAPTERS: dict[str, ExternalModelAdapter] = {}
+
+
+def register_external_model_adapter(adapter: ExternalModelAdapter) -> None:
+    """Rejestruje adapter modelu zewnętrznego."""
+
+    backend = adapter.backend.lower()
+    _EXTERNAL_ADAPTERS[backend] = ExternalModelAdapter(
+        backend=backend,
+        train=adapter.train,
+        load=adapter.load,
+    )
+
+
+def get_external_model_adapter(name: str) -> ExternalModelAdapter:
+    """Zwraca adapter dla wskazanego backendu."""
+
+    backend = name.lower()
+    if backend not in _EXTERNAL_ADAPTERS:
+        raise KeyError(f"Brak adaptera dla backendu '{name}'")
+    return _EXTERNAL_ADAPTERS[backend]
 
 
 @dataclass(slots=True)
@@ -240,7 +314,7 @@ class SimpleGradientBoostingModel:
 
 
 class ModelTrainer:
-    """Łączy FeatureDataset i SimpleGradientBoostingModel, zwracając artefakt."""
+    """Łączy FeatureDataset i wybrany backend modelu, zwracając artefakt."""
 
     def __init__(
         self,
@@ -248,20 +322,22 @@ class ModelTrainer:
         learning_rate: float = 0.1,
         n_estimators: int = 25,
         validation_split: float = 0.0,
+        backend: str = "builtin",
+        adapter_options: Mapping[str, object] | None = None,
     ) -> None:
         if not 0.0 <= validation_split < 1.0:
             raise ValueError("validation_split musi zawierać się w przedziale [0, 1)")
         self.learning_rate = float(learning_rate)
         self.n_estimators = int(n_estimators)
         self.validation_split = float(validation_split)
+        self.backend = backend.lower().strip() or "builtin"
+        self.adapter_options = dict(adapter_options or {})
+        if self.backend != "builtin" and self.backend not in _EXTERNAL_ADAPTERS:
+            raise KeyError(f"Nieznany backend modelu: {backend}")
 
     def train(self, dataset: FeatureDataset) -> ModelArtifact:
         if not dataset.vectors:
             raise ValueError("Dataset nie zawiera danych")
-        model = SimpleGradientBoostingModel(
-            learning_rate=self.learning_rate,
-            n_estimators=self.n_estimators,
-        )
         matrix, targets, feature_names = dataset.to_learning_arrays()
         (
             train_matrix,
@@ -273,6 +349,52 @@ class ModelTrainer:
             raise ValueError("Za mało danych do trenowania po podziale walidacyjnym")
 
         scalers = self._compute_scalers(train_matrix, feature_names)
+        metadata: MutableMapping[str, object] = dict(dataset.metadata)
+        metadata.setdefault("target_scale", dataset.target_scale)
+        metadata["feature_scalers"] = {
+            name: {"mean": mean, "stdev": stdev}
+            for name, (mean, stdev) in scalers.items()
+        }
+        metadata["training_rows"] = len(train_matrix)
+        metadata["validation_rows"] = len(validation_matrix)
+        metadata["backend"] = self.backend
+        if self.validation_split > 0.0:
+            metadata["validation_split"] = self.validation_split
+
+        if self.backend == "builtin":
+            return self._train_builtin(
+                train_matrix,
+                train_targets,
+                validation_matrix,
+                validation_targets,
+                feature_names,
+                scalers,
+                metadata,
+            )
+        return self._train_external(
+            train_matrix,
+            train_targets,
+            validation_matrix,
+            validation_targets,
+            feature_names,
+            scalers,
+            metadata,
+        )
+
+    def _train_builtin(
+        self,
+        train_matrix: Sequence[Sequence[float]],
+        train_targets: Sequence[float],
+        validation_matrix: Sequence[Sequence[float]],
+        validation_targets: Sequence[float],
+        feature_names: Sequence[str],
+        scalers: Mapping[str, tuple[float, float]],
+        metadata: MutableMapping[str, object],
+    ) -> ModelArtifact:
+        model = SimpleGradientBoostingModel(
+            learning_rate=self.learning_rate,
+            n_estimators=self.n_estimators,
+        )
         model.fit_matrix(
             train_matrix,
             feature_names,
@@ -289,16 +411,6 @@ class ModelTrainer:
             validation_predictions = model.batch_predict(validation_samples)
             validation_metrics = self._compute_metrics(validation_targets, validation_predictions)
             metrics = self._compose_metrics(train_metrics, validation_metrics)
-        metadata: MutableMapping[str, object] = dict(dataset.metadata)
-        metadata.setdefault("target_scale", dataset.target_scale)
-        metadata["feature_scalers"] = {
-            name: {"mean": mean, "stdev": stdev}
-            for name, (mean, stdev) in scalers.items()
-        }
-        metadata["training_rows"] = len(train_matrix)
-        metadata["validation_rows"] = len(validation_matrix)
-        if self.validation_split > 0.0:
-            metadata["validation_split"] = self.validation_split
         if validation_metrics:
             metadata["validation_metrics"] = dict(validation_metrics)
         artifact = ModelArtifact(
@@ -307,6 +419,57 @@ class ModelTrainer:
             trained_at=datetime.now(timezone.utc),
             metrics=metrics,
             metadata=metadata,
+            backend=self.backend,
+        )
+        return artifact
+
+    def _train_external(
+        self,
+        train_matrix: Sequence[Sequence[float]],
+        train_targets: Sequence[float],
+        validation_matrix: Sequence[Sequence[float]],
+        validation_targets: Sequence[float],
+        feature_names: Sequence[str],
+        scalers: Mapping[str, tuple[float, float]],
+        metadata: MutableMapping[str, object],
+    ) -> ModelArtifact:
+        adapter = get_external_model_adapter(self.backend)
+        context = ExternalTrainingContext(
+            feature_names=feature_names,
+            scalers=scalers,
+            train_matrix=train_matrix,
+            train_targets=train_targets,
+            validation_matrix=validation_matrix,
+            validation_targets=validation_targets,
+            options=self.adapter_options,
+        )
+        result = adapter.train(context)
+        model = result.trained_model
+        if model is None:
+            model = adapter.load(result.state, feature_names, metadata)
+        train_samples = self._rows_to_samples(train_matrix, feature_names)
+        train_predictions = list(model.batch_predict(train_samples))
+        train_metrics = self._compute_metrics(train_targets, train_predictions)
+        metrics = self._compose_metrics(train_metrics)
+        validation_metrics: Mapping[str, float] | None = None
+        if validation_matrix:
+            validation_samples = self._rows_to_samples(validation_matrix, feature_names)
+            validation_predictions = list(model.batch_predict(validation_samples))
+            validation_metrics = self._compute_metrics(validation_targets, validation_predictions)
+            metrics = self._compose_metrics(train_metrics, validation_metrics)
+        if validation_metrics:
+            metadata["validation_metrics"] = dict(validation_metrics)
+        if result.metrics:
+            metrics = {**metrics, **result.metrics}
+        if result.metadata:
+            metadata.update(result.metadata)
+        artifact = ModelArtifact(
+            feature_names=tuple(feature_names),
+            model_state=dict(result.state),
+            trained_at=datetime.now(timezone.utc),
+            metrics=metrics,
+            metadata=metadata,
+            backend=self.backend,
         )
         return artifact
 
@@ -406,4 +569,166 @@ class ModelTrainer:
         return metrics
 
 
-__all__ = ["DecisionStump", "ModelTrainer", "SimpleGradientBoostingModel"]
+class _LinearAdapterModel:
+    """Lekki model liniowy wykorzystywany przez domyślne adaptery zewnętrzne."""
+
+    def __init__(
+        self,
+        feature_names: Sequence[str],
+        scalers: Mapping[str, tuple[float, float]],
+        weights: Sequence[float],
+        bias: float,
+    ) -> None:
+        self.feature_names = [str(name) for name in feature_names]
+        self.feature_scalers = {
+            str(name): (float(pair[0]), float(pair[1])) for name, pair in scalers.items()
+        }
+        self._weights = [float(value) for value in weights]
+        self._bias = float(bias)
+
+    def predict(self, features: Mapping[str, float]) -> float:
+        vector = self._vector_from_mapping(features)
+        return self._bias + sum(weight * value for weight, value in zip(self._weights, vector))
+
+    def batch_predict(self, samples: Sequence[Mapping[str, float]]) -> Sequence[float]:
+        return [self.predict(sample) for sample in samples]
+
+    def _vector_from_mapping(self, features: Mapping[str, float]) -> list[float]:
+        vector: list[float] = []
+        for name in self.feature_names:
+            mean, stdev = self.feature_scalers.get(name, (0.0, 1.0))
+            raw = features.get(name, mean)
+            value = float(raw)
+            if stdev > 0:
+                vector.append((value - mean) / stdev)
+            else:
+                vector.append(value - mean)
+        return vector
+
+
+def _normalize_matrix(
+    matrix: Sequence[Sequence[float]],
+    feature_names: Sequence[str],
+    scalers: Mapping[str, tuple[float, float]],
+) -> list[list[float]]:
+    normalized: list[list[float]] = []
+    for row in matrix:
+        vector: list[float] = []
+        for idx, name in enumerate(feature_names):
+            mean, stdev = scalers.get(name, (0.0, 1.0))
+            value = float(row[idx])
+            if stdev > 0:
+                vector.append((value - mean) / stdev)
+            else:
+                vector.append(value - mean)
+        normalized.append(vector)
+    return normalized
+
+
+def _fit_linear_regression(
+    matrix: Sequence[Sequence[float]],
+    targets: Sequence[float],
+    *,
+    iterations: int,
+    learning_rate: float,
+    l2: float,
+) -> tuple[list[float], float]:
+    if not matrix:
+        return [], 0.0
+    width = len(matrix[0])
+    weights = [0.0 for _ in range(width)]
+    bias = sum(targets) / len(targets) if targets else 0.0
+    count = len(matrix)
+    for _ in range(iterations):
+        grad_w = [0.0 for _ in range(width)]
+        grad_b = 0.0
+        for row, target in zip(matrix, targets):
+            prediction = bias + sum(weight * value for weight, value in zip(weights, row))
+            error = prediction - target
+            grad_b += error
+            for idx, value in enumerate(row):
+                grad_w[idx] += error * value
+        count_safe = max(count, 1)
+        bias -= learning_rate * (grad_b / count_safe)
+        for idx in range(width):
+            grad = grad_w[idx] / count_safe + l2 * weights[idx]
+            weights[idx] -= learning_rate * grad
+    return weights, bias
+
+
+def _linear_adapter_train(context: ExternalTrainingContext) -> ExternalTrainingResult:
+    iterations = int(context.options.get("iterations", 300))
+    learning_rate = float(context.options.get("learning_rate", 0.05))
+    l2 = float(context.options.get("l2", 0.0))
+    normalized = _normalize_matrix(context.train_matrix, context.feature_names, context.scalers)
+    weights, bias = _fit_linear_regression(
+        normalized,
+        context.train_targets,
+        iterations=max(iterations, 1),
+        learning_rate=max(learning_rate, 1e-4),
+        l2=max(l2, 0.0),
+    )
+    model = _LinearAdapterModel(
+        feature_names=context.feature_names,
+        scalers=context.scalers,
+        weights=weights,
+        bias=bias,
+    )
+    state: MutableMapping[str, object] = {
+        "weights": list(weights),
+        "bias": bias,
+        "iterations": iterations,
+        "learning_rate": learning_rate,
+        "l2": l2,
+    }
+    return ExternalTrainingResult(
+        state=state,
+        trained_model=model,
+        metadata={"external_adapter": "linear_regression"},
+    )
+
+
+def _linear_adapter_load(
+    state: Mapping[str, object],
+    feature_names: Sequence[str],
+    metadata: Mapping[str, object],
+) -> SupportsInference:
+    scalers_raw = metadata.get("feature_scalers", {})
+    scalers: dict[str, tuple[float, float]] = {}
+    if isinstance(scalers_raw, Mapping):
+        for name, payload in scalers_raw.items():
+            if not isinstance(payload, Mapping):
+                continue
+            mean = float(payload.get("mean", 0.0))
+            stdev = float(payload.get("stdev", 0.0))
+            scalers[str(name)] = (mean, stdev)
+    weights = [float(value) for value in state.get("weights", [])]
+    bias = float(state.get("bias", 0.0))
+    return _LinearAdapterModel(feature_names, scalers, weights, bias)
+
+
+def _ensure_default_external_adapters() -> None:
+    for name in ("pytorch", "lightgbm", "linear"):
+        if name not in _EXTERNAL_ADAPTERS:
+            register_external_model_adapter(
+                ExternalModelAdapter(
+                    backend=name,
+                    train=_linear_adapter_train,
+                    load=_linear_adapter_load,
+                )
+            )
+
+
+_ensure_default_external_adapters()
+
+
+__all__ = [
+    "DecisionStump",
+    "ExternalModelAdapter",
+    "ExternalTrainingContext",
+    "ExternalTrainingResult",
+    "ModelTrainer",
+    "SimpleGradientBoostingModel",
+    "get_external_model_adapter",
+    "register_external_model_adapter",
+]

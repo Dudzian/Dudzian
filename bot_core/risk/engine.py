@@ -5,7 +5,8 @@ import logging
 from pathlib import Path
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from typing import Any, Callable, Dict, Mapping, MutableMapping, Sequence
+from time import perf_counter
+from typing import Any, Callable, Dict, Iterable, Mapping, MutableMapping, Sequence
 
 from bot_core.exchanges.base import AccountSnapshot, OrderRequest
 from bot_core.risk.base import RiskCheckResult, RiskEngine, RiskProfile, RiskRepository
@@ -20,11 +21,19 @@ from bot_core.risk.simulation import (
 
 try:  # pragma: no cover - moduły decision/tco mogą być opcjonalne w innych gałęziach
     from bot_core.decision import DecisionOrchestrator
-    from bot_core.decision.models import DecisionCandidate, DecisionEvaluation, RiskSnapshot
+    from bot_core.decision.models import (
+        DecisionCandidate,
+        DecisionEvaluation,
+        ModelSelectionDetail,
+        ModelSelectionMetadata,
+        RiskSnapshot,
+    )
 except Exception:  # pragma: no cover - decyzje mogą nie być dostępne
     DecisionOrchestrator = None  # type: ignore
     DecisionCandidate = None  # type: ignore
     DecisionEvaluation = None  # type: ignore
+    ModelSelectionDetail = None  # type: ignore
+    ModelSelectionMetadata = None  # type: ignore
     RiskSnapshot = None  # type: ignore
 
 _LOGGER = logging.getLogger(__name__)
@@ -183,6 +192,21 @@ class ThresholdRiskEngine(RiskEngine):
         self._states: Dict[str, RiskState] = {}
         self._decision_log = decision_log
         self._decision_orchestrator: Any | None = decision_orchestrator
+        self._decision_model_outcomes: MutableMapping[str, MutableMapping[str, int]] = {}
+        self._decision_model_rejections: MutableMapping[
+            str, MutableMapping[str, int]
+        ] = {}
+        self._decision_model_metrics: MutableMapping[
+            str, MutableMapping[str, float | int]
+        ] = {}
+        self._decision_model_selection: MutableMapping[
+            str,
+            MutableMapping[str, object],
+        ] = {}
+        self._decision_orchestrator_activity: MutableMapping[
+            str, float | int | None
+        ] = self._init_decision_orchestrator_activity()
+        self._decision_orchestrator_errors: MutableMapping[str, int] = {}
 
     def register_profile(self, profile: RiskProfile) -> None:
         self._profiles[profile.name] = profile
@@ -194,6 +218,22 @@ class ThresholdRiskEngine(RiskEngine):
         else:
             self._states[profile.name] = RiskState.from_mapping(profile.name, state)
         _LOGGER.info("Zarejestrowano profil ryzyka %s", profile.name)
+
+    def _init_decision_orchestrator_activity(
+        self,
+    ) -> MutableMapping[str, float | int | None]:
+        return {
+            "attempts": 0,
+            "evaluated": 0,
+            "accepted": 0,
+            "rejected": 0,
+            "errors": 0,
+            "skipped": 0,
+            "duration_ms_sum": 0.0,
+            "duration_ms_count": 0,
+            "duration_ms_max": None,
+            "duration_ms_min": None,
+        }
 
     def attach_decision_orchestrator(self, orchestrator: Any | None) -> None:
         """Podłącza DecisionOrchestrator do dodatkowych kontroli kosztowych."""
@@ -490,7 +530,11 @@ class ThresholdRiskEngine(RiskEngine):
 
         evaluation_metadata: Mapping[str, object] | None = None
         if self._decision_orchestrator is not None:
-            evaluation, evaluation_payload = self._maybe_run_decision_orchestrator(
+            (
+                evaluation,
+                evaluation_payload,
+                orchestrator_stats,
+            ) = self._maybe_run_decision_orchestrator(
                 request=request,
                 profile_name=profile_name,
                 account=account,
@@ -498,13 +542,44 @@ class ThresholdRiskEngine(RiskEngine):
             )
             if evaluation_payload:
                 evaluation_metadata = {"decision_orchestrator": evaluation_payload}
+            accepted_flag: bool | None = None
+            raw_model_name: str | None = None
+            if evaluation is not None:
+                raw_model_name, accepted_value = self._extract_model_and_acceptance(
+                    evaluation
+                )
+                if accepted_value is not None:
+                    accepted_flag = bool(accepted_value)
+            if orchestrator_stats:
+                self._record_decision_orchestrator_activity(
+                    orchestrator_stats,
+                    accepted=accepted_flag,
+                )
             if evaluation is None:
                 if evaluation_payload and evaluation_payload.get("status") == "error":
                     reason = self._format_decision_error(evaluation_payload)
                     return deny(reason, metadata=evaluation_metadata)
-            elif not evaluation.accepted:
-                reason = self._format_decision_denial_reason(evaluation)
-                return deny(reason, metadata=evaluation_metadata)
+            else:
+                outcome = self._record_decision_model_outcome(
+                    evaluation,
+                    model_name=raw_model_name,
+                    accepted=accepted_flag,
+                )
+                if outcome is not None:
+                    normalized_model, accepted_flag = outcome
+                else:
+                    normalized_model = str(raw_model_name or "__unknown__").lower()
+                    accepted_flag = accepted_flag
+                self._record_decision_model_metrics(
+                    normalized_model, evaluation, accepted_flag
+                )
+                self._record_decision_model_selection(evaluation)
+                if accepted_flag is False:
+                    self._record_decision_model_rejection(
+                        normalized_model, evaluation
+                    )
+                    reason = self._format_decision_denial_reason(evaluation)
+                    return deny(reason, metadata=evaluation_metadata)
 
         self._persist_state(profile_name)
         result = RiskCheckResult(allowed=True, metadata=evaluation_metadata)
@@ -586,6 +661,155 @@ class ThresholdRiskEngine(RiskEngine):
             return ()
         return self._decision_log.tail(profile=profile_name, limit=limit)
 
+    def decision_orchestrator_activity(
+        self, *, reset: bool = False
+    ) -> Mapping[str, object]:
+        """Zwraca zbiorcze statystyki aktywności DecisionOrchestratora."""
+
+        counters = self._decision_orchestrator_activity
+        duration_count = int(counters.get("duration_ms_count", 0))
+        duration_sum = float(counters.get("duration_ms_sum", 0.0) or 0.0)
+        duration_average = (
+            duration_sum / duration_count if duration_count else None
+        )
+        duration_max = counters.get("duration_ms_max") if duration_count else None
+        duration_min = counters.get("duration_ms_min") if duration_count else None
+
+        snapshot: dict[str, object] = {
+            "attempts": int(counters.get("attempts", 0)),
+            "evaluated": int(counters.get("evaluated", 0)),
+            "accepted": int(counters.get("accepted", 0)),
+            "rejected": int(counters.get("rejected", 0)),
+            "errors": int(counters.get("errors", 0)),
+            "skipped": int(counters.get("skipped", 0)),
+            "duration_ms": {
+                "sum": duration_sum if duration_count else 0.0,
+                "average": duration_average,
+                "max": (
+                    float(duration_max)
+                    if duration_max is not None and duration_count
+                    else None
+                ),
+                "min": (
+                    float(duration_min)
+                    if duration_min is not None and duration_count
+                    else None
+                ),
+                "count": duration_count,
+            },
+            "error_reasons": {
+                str(reason): int(count)
+                for reason, count in self._decision_orchestrator_errors.items()
+            },
+        }
+
+        if reset:
+            self._decision_orchestrator_activity = (
+                self._init_decision_orchestrator_activity()
+            )
+            self._decision_orchestrator_errors = {}
+
+        return snapshot
+
+    def decision_model_outcomes(self, *, reset: bool = False) -> Mapping[str, Mapping[str, int]]:
+        """Zwraca agregację przyjęć i odrzuceń per model DecisionOrchestratora."""
+
+        snapshot: dict[str, Mapping[str, int]] = {}
+        for name, counters in self._decision_model_outcomes.items():
+            snapshot[name] = {
+                "accepted": int(counters.get("accepted", 0)),
+                "rejected": int(counters.get("rejected", 0)),
+            }
+        if reset:
+            self._decision_model_outcomes.clear()
+        return snapshot
+
+    def decision_model_rejection_reasons(
+        self, *, reset: bool = False
+    ) -> Mapping[str, Mapping[str, int]]:
+        """Zwraca liczniki powodów odrzuceń decyzji pogrupowane per model."""
+
+        snapshot: dict[str, Mapping[str, int]] = {}
+        for name, counters in self._decision_model_rejections.items():
+            snapshot[name] = {
+                str(reason): int(count)
+                for reason, count in counters.items()
+            }
+        if reset:
+            self._decision_model_rejections.clear()
+        return snapshot
+
+    def decision_model_metrics(
+        self, *, reset: bool = False
+    ) -> Mapping[str, Mapping[str, object]]:
+        """Zwraca zagregowane metryki ewaluacji modeli orchestratora."""
+
+        snapshot: dict[str, Mapping[str, object]] = {}
+        metric_keys = (
+            "cost_bps",
+            "net_edge_bps",
+            "model_expected_return_bps",
+            "model_success_probability",
+        )
+        for name, counters in self._decision_model_metrics.items():
+            entry: dict[str, object] = {
+                "evaluations": int(counters.get("evaluations", 0)),
+                "accepted": int(counters.get("accepted", 0)),
+                "rejected": int(counters.get("rejected", 0)),
+            }
+            for metric in metric_keys:
+                sum_key = f"{metric}_sum"
+                count_key = f"{metric}_count"
+                total = float(counters.get(sum_key, 0.0) or 0.0)
+                count = int(counters.get(count_key, 0))
+                entry[metric] = {
+                    "sum": total if count else 0.0,
+                    "average": (total / count) if count else None,
+                    "count": count,
+                }
+            snapshot[name] = entry
+        if reset:
+            self._decision_model_metrics.clear()
+        return snapshot
+
+    def decision_model_selection_stats(
+        self, *, reset: bool = False
+    ) -> Mapping[str, Mapping[str, object]]:
+        """Zwraca statystyki wyboru modeli przez orchestratora."""
+
+        snapshot: dict[str, Mapping[str, object]] = {}
+        metric_keys = ("score", "weight", "effective_score")
+        for name, counters in self._decision_model_selection.items():
+            reasons_raw = counters.get("reasons")
+            if isinstance(reasons_raw, Mapping):
+                reasons_snapshot = {
+                    str(reason): int(count)
+                    for reason, count in reasons_raw.items()
+                }
+            else:
+                reasons_snapshot = {}
+            entry: dict[str, object] = {
+                "considered": int(counters.get("considered", 0)),
+                "selected": int(counters.get("selected", 0)),
+                "available": int(counters.get("available", 0)),
+                "unavailable": int(counters.get("unavailable", 0)),
+                "reasons": reasons_snapshot,
+            }
+            for metric in metric_keys:
+                sum_key = f"{metric}_sum"
+                count_key = f"{metric}_count"
+                total = float(counters.get(sum_key, 0.0) or 0.0)
+                count = int(counters.get(count_key, 0))
+                entry[metric] = {
+                    "sum": total if count else 0.0,
+                    "average": (total / count) if count else None,
+                    "count": count,
+                }
+            snapshot[name] = entry
+        if reset:
+            self._decision_model_selection.clear()
+        return snapshot
+
     def _maybe_run_decision_orchestrator(
         self,
         *,
@@ -593,17 +817,44 @@ class ThresholdRiskEngine(RiskEngine):
         profile_name: str,
         account: AccountSnapshot,
         state: RiskState,
-    ) -> tuple[Any | None, Mapping[str, object] | None]:
-        if self._decision_orchestrator is None or DecisionCandidate is None:
-            return None, None
+    ) -> tuple[
+        Any | None,
+        Mapping[str, object] | None,
+        Mapping[str, object] | None,
+    ]:
+        if self._decision_orchestrator is None:
+            return None, None, None
+        if not _ensure_decision_models():
+            return None, None, {
+                "status": "skipped",
+                "attempted": False,
+                "duration_ms": 0.0,
+            }
+
+        start = perf_counter()
+
+        def build_stats(
+            status: str, *, attempted: bool, error: str | None = None
+        ) -> Mapping[str, object]:
+            stats: dict[str, object] = {
+                "status": status,
+                "attempted": attempted,
+                "duration_ms": (perf_counter() - start) * 1000.0,
+            }
+            if error is not None:
+                stats["error"] = error
+            return stats
 
         candidate_payload, error_payload = self._extract_candidate_payload(
             request.metadata
         )
         if error_payload:
-            return None, error_payload
+            error_code = str(error_payload.get("error", "unknown_error"))
+            return None, error_payload, build_stats(
+                "error", attempted=False, error=error_code
+            )
         if candidate_payload is None:
-            return None, None
+            return None, None, build_stats("skipped", attempted=False)
 
         payload = dict(candidate_payload)
         payload.setdefault("risk_profile", profile_name)
@@ -621,7 +872,11 @@ class ThresholdRiskEngine(RiskEngine):
             _LOGGER.warning(
                 "DecisionOrchestrator: nieprawidłowe dane kandydata", exc_info=True
             )
-            return None, {"status": "error", "error": "invalid_candidate"}
+            return (
+                None,
+                {"status": "error", "error": "invalid_candidate"},
+                build_stats("error", attempted=True, error="invalid_candidate"),
+            )
 
         snapshot = self._build_decision_snapshot(profile_name, state, account)
         try:
@@ -631,9 +886,17 @@ class ThresholdRiskEngine(RiskEngine):
             )
         except Exception:
             _LOGGER.exception("DecisionOrchestrator: błąd ewaluacji")
-            return None, {"status": "error", "error": "evaluation_failed"}
+            return (
+                None,
+                {"status": "error", "error": "evaluation_failed"},
+                build_stats("error", attempted=True, error="evaluation_failed"),
+            )
 
-        return evaluation, self._serialize_decision_evaluation(evaluation)
+        return (
+            evaluation,
+            self._serialize_decision_evaluation(evaluation),
+            build_stats("evaluated", attempted=True),
+        )
 
     def _extract_candidate_payload(
         self, metadata: Mapping[str, object] | None
@@ -705,6 +968,12 @@ class ThresholdRiskEngine(RiskEngine):
                 "candidate": evaluation.candidate.to_mapping(),
                 "model_expected_return_bps": evaluation.model_expected_return_bps,
                 "model_success_probability": evaluation.model_success_probability,
+                "model_name": evaluation.model_name,
+                "model_selection": (
+                    evaluation.model_selection.to_mapping()
+                    if evaluation.model_selection is not None
+                    else None
+                ),
             }
         if isinstance(evaluation, Mapping):
             return dict(evaluation)
@@ -801,6 +1070,364 @@ class ThresholdRiskEngine(RiskEngine):
         state = self._states[profile_name]
         self._repository.store(profile_name, state.to_mapping())
 
+    def _record_decision_model_outcome(
+        self,
+        evaluation: Any,
+        *,
+        model_name: str | None = None,
+        accepted: bool | None = None,
+    ) -> tuple[str, bool] | None:
+        if accepted is None or model_name is None:
+            extracted_name, extracted_accepted = self._extract_model_and_acceptance(
+                evaluation
+            )
+            if model_name is None:
+                model_name = extracted_name
+            if accepted is None:
+                accepted = extracted_accepted
+
+        if accepted is None:
+            return None
+
+        normalized_name = str(model_name or "__unknown__").lower()
+        counters = self._decision_model_outcomes.setdefault(
+            normalized_name,
+            {"accepted": 0, "rejected": 0},
+        )
+        bucket = "accepted" if accepted else "rejected"
+        counters[bucket] = counters.get(bucket, 0) + 1
+        return normalized_name, bool(accepted)
+
+    def _record_decision_model_rejection(
+        self, model_name: str, evaluation: Any
+    ) -> None:
+        reasons = self._extract_rejection_reasons(evaluation)
+        if not reasons:
+            return
+        counters = self._decision_model_rejections.setdefault(model_name, {})
+        for reason in reasons:
+            counters[reason] = counters.get(reason, 0) + 1
+
+    def _record_decision_model_metrics(
+        self, model_name: str, evaluation: Any, accepted: bool | None
+    ) -> None:
+        counters = self._decision_model_metrics.setdefault(
+            model_name,
+            {
+                "evaluations": 0,
+                "accepted": 0,
+                "rejected": 0,
+                "cost_bps_sum": 0.0,
+                "cost_bps_count": 0,
+                "net_edge_bps_sum": 0.0,
+                "net_edge_bps_count": 0,
+                "model_expected_return_bps_sum": 0.0,
+                "model_expected_return_bps_count": 0,
+                "model_success_probability_sum": 0.0,
+                "model_success_probability_count": 0,
+            },
+        )
+        counters["evaluations"] = int(counters.get("evaluations", 0)) + 1
+        if accepted is True:
+            counters["accepted"] = int(counters.get("accepted", 0)) + 1
+        elif accepted is False:
+            counters["rejected"] = int(counters.get("rejected", 0)) + 1
+
+        metrics = self._extract_evaluation_metrics(evaluation)
+        for metric, value in metrics.items():
+            if value is None:
+                continue
+            sum_key = f"{metric}_sum"
+            count_key = f"{metric}_count"
+            counters[sum_key] = float(counters.get(sum_key, 0.0) or 0.0) + float(value)
+            counters[count_key] = int(counters.get(count_key, 0)) + 1
+
+    def _record_decision_orchestrator_activity(
+        self,
+        stats: Mapping[str, object] | None,
+        *,
+        accepted: bool | None,
+    ) -> None:
+        if not stats:
+            return
+
+        counters = self._decision_orchestrator_activity
+        status = str(stats.get("status", "")).lower()
+        attempted = bool(stats.get("attempted"))
+
+        if attempted:
+            counters["attempts"] = int(counters.get("attempts", 0)) + 1
+
+        if status == "evaluated":
+            counters["evaluated"] = int(counters.get("evaluated", 0)) + 1
+        elif status == "error":
+            counters["errors"] = int(counters.get("errors", 0)) + 1
+        elif status == "skipped":
+            counters["skipped"] = int(counters.get("skipped", 0)) + 1
+
+        if accepted is True:
+            counters["accepted"] = int(counters.get("accepted", 0)) + 1
+        elif accepted is False:
+            counters["rejected"] = int(counters.get("rejected", 0)) + 1
+
+        duration_value = _coerce_float(stats.get("duration_ms"))
+        if attempted and duration_value is not None:
+            counters["duration_ms_sum"] = float(
+                counters.get("duration_ms_sum", 0.0) or 0.0
+            ) + float(duration_value)
+            count = int(counters.get("duration_ms_count", 0)) + 1
+            counters["duration_ms_count"] = count
+
+            previous_max = counters.get("duration_ms_max")
+            previous_min = counters.get("duration_ms_min")
+            counters["duration_ms_max"] = (
+                float(duration_value)
+                if previous_max is None
+                else max(float(previous_max), float(duration_value))
+            )
+            counters["duration_ms_min"] = (
+                float(duration_value)
+                if previous_min is None
+                else min(float(previous_min), float(duration_value))
+            )
+
+        if status == "error":
+            reason = stats.get("error")
+            if reason:
+                reason_key = str(reason)
+                current = self._decision_orchestrator_errors.get(reason_key, 0)
+                self._decision_orchestrator_errors[reason_key] = int(current) + 1
+
+    def _record_decision_model_selection(self, evaluation: Any) -> None:
+        selection = self._extract_model_selection(evaluation)
+        if selection is None:
+            return
+        selected_name, candidates = selection
+        normalized_selected = (
+            str(selected_name).lower() if selected_name is not None else None
+        )
+        for detail in candidates:
+            name_raw = detail.get("name")
+            if not name_raw:
+                continue
+            normalized_name = str(name_raw).lower()
+            counters = self._decision_model_selection.setdefault(
+                normalized_name,
+                {
+                    "considered": 0,
+                    "selected": 0,
+                    "available": 0,
+                    "unavailable": 0,
+                    "reasons": {},
+                },
+            )
+            counters["considered"] = int(counters.get("considered", 0)) + 1
+            if normalized_selected is not None and normalized_name == normalized_selected:
+                counters["selected"] = int(counters.get("selected", 0)) + 1
+
+            available_value = detail.get("available")
+            if available_value is True:
+                counters["available"] = int(counters.get("available", 0)) + 1
+            elif available_value is False:
+                counters["unavailable"] = int(counters.get("unavailable", 0)) + 1
+
+            reason_value = detail.get("reason")
+            if reason_value:
+                reasons = counters.setdefault("reasons", {})
+                reason_key = str(reason_value)
+                reasons[reason_key] = int(reasons.get(reason_key, 0)) + 1
+
+            for metric in ("score", "weight", "effective_score"):
+                metric_value = _coerce_float(detail.get(metric))
+                if metric_value is None:
+                    continue
+                sum_key = f"{metric}_sum"
+                count_key = f"{metric}_count"
+                counters[sum_key] = float(counters.get(sum_key, 0.0) or 0.0) + float(
+                    metric_value
+                )
+                counters[count_key] = int(counters.get(count_key, 0)) + 1
+
+    def _extract_model_and_acceptance(
+        self, evaluation: Any
+    ) -> tuple[str | None, bool | None]:
+        model_name: str | None = None
+        accepted: bool | None = None
+
+        if DecisionEvaluation is not None and isinstance(evaluation, DecisionEvaluation):
+            model_name = evaluation.model_name
+            accepted = evaluation.accepted
+        elif isinstance(evaluation, Mapping):
+            model_raw = evaluation.get("model_name")  # type: ignore[index]
+            if model_raw is not None:
+                model_name = str(model_raw)
+            accepted_value = evaluation.get("accepted")  # type: ignore[index]
+            if accepted_value is not None:
+                accepted = bool(accepted_value)
+        else:
+            model_attr = getattr(evaluation, "model_name", None)
+            if model_attr is not None:
+                model_name = str(model_attr)
+            accepted_attr = getattr(evaluation, "accepted", None)
+            if accepted_attr is not None:
+                accepted = bool(accepted_attr)
+
+        return model_name, accepted
+
+    def _extract_evaluation_metrics(self, evaluation: Any) -> Mapping[str, float | None]:
+        if (
+            DecisionEvaluation is not None
+            and isinstance(evaluation, DecisionEvaluation)
+        ):
+            return {
+                "cost_bps": _coerce_float(evaluation.cost_bps),
+                "net_edge_bps": _coerce_float(evaluation.net_edge_bps),
+                "model_expected_return_bps": _coerce_float(
+                    evaluation.model_expected_return_bps
+                ),
+                "model_success_probability": _coerce_float(
+                    evaluation.model_success_probability
+                ),
+            }
+        if isinstance(evaluation, Mapping):
+            return {
+                "cost_bps": _coerce_float(evaluation.get("cost_bps")),
+                "net_edge_bps": _coerce_float(evaluation.get("net_edge_bps")),
+                "model_expected_return_bps": _coerce_float(
+                    evaluation.get("model_expected_return_bps")
+                ),
+                "model_success_probability": _coerce_float(
+                    evaluation.get("model_success_probability")
+                ),
+            }
+
+        return {
+            "cost_bps": _coerce_float(getattr(evaluation, "cost_bps", None)),
+            "net_edge_bps": _coerce_float(getattr(evaluation, "net_edge_bps", None)),
+            "model_expected_return_bps": _coerce_float(
+                getattr(evaluation, "model_expected_return_bps", None)
+            ),
+            "model_success_probability": _coerce_float(
+                getattr(evaluation, "model_success_probability", None)
+            ),
+        }
+
+    def _extract_rejection_reasons(self, evaluation: Any) -> Sequence[str]:
+        if DecisionEvaluation is not None and isinstance(evaluation, DecisionEvaluation):
+            sources: Iterable[object] = (
+                evaluation.reasons,
+                evaluation.risk_flags,
+                evaluation.stress_failures,
+            )
+        elif isinstance(evaluation, Mapping):
+            sources = (
+                evaluation.get("reasons"),
+                evaluation.get("risk_flags"),
+                evaluation.get("stress_failures"),
+            )
+        else:
+            sources = (
+                getattr(evaluation, "reasons", ()),
+                getattr(evaluation, "risk_flags", ()),
+                getattr(evaluation, "stress_failures", ()),
+            )
+
+        collected: list[str] = []
+        for source in sources:
+            collected.extend(self._coerce_reason_entries(source))
+        return [reason for reason in collected if reason]
+
+    def _coerce_reason_entries(self, payload: object) -> Sequence[str]:
+        if payload is None:
+            return ()
+        if isinstance(payload, str):
+            return (payload,)
+        if isinstance(payload, Mapping):
+            return tuple(str(value) for value in payload.values())
+        try:
+            return tuple(str(item) for item in payload)  # type: ignore[arg-type]
+        except TypeError:
+            return (str(payload),)
+
+    def _extract_model_selection(
+        self, evaluation: Any
+    ) -> tuple[str | None, Sequence[Mapping[str, object]]] | None:
+        selection: object | None
+        if DecisionEvaluation is not None and isinstance(evaluation, DecisionEvaluation):
+            selection = evaluation.model_selection
+        elif isinstance(evaluation, Mapping):
+            selection = evaluation.get("model_selection")  # type: ignore[index]
+        else:
+            selection = getattr(evaluation, "model_selection", None)
+
+        if selection is None:
+            return None
+
+        if (
+            ModelSelectionMetadata is not None
+            and isinstance(selection, ModelSelectionMetadata)
+        ):
+            selected = selection.selected
+            candidates = self._coerce_selection_candidates(selection.candidates)
+        elif isinstance(selection, Mapping):
+            selected = selection.get("selected")  # type: ignore[index]
+            candidates = self._coerce_selection_candidates(selection.get("candidates"))  # type: ignore[index]
+        else:
+            selected = getattr(selection, "selected", None)
+            candidates = self._coerce_selection_candidates(
+                getattr(selection, "candidates", None)
+            )
+
+        normalized_selected = str(selected) if selected is not None else None
+        return normalized_selected, candidates
+
+    def _coerce_selection_candidates(
+        self, payload: object
+    ) -> Sequence[Mapping[str, object]]:
+        if payload is None:
+            return ()
+        if isinstance(payload, Mapping):
+            values = list(payload.values())
+        else:
+            try:
+                values = list(payload)  # type: ignore[arg-type]
+            except TypeError:
+                values = [payload]
+
+        candidates: list[Mapping[str, object]] = []
+        for item in values:
+            if item is None:
+                continue
+            if (
+                ModelSelectionDetail is not None
+                and isinstance(item, ModelSelectionDetail)
+            ):
+                candidates.append(
+                    {
+                        "name": item.name,
+                        "score": item.score,
+                        "weight": item.weight,
+                        "effective_score": item.effective_score,
+                        "available": item.available,
+                        "reason": item.reason,
+                    }
+                )
+                continue
+            if isinstance(item, Mapping):
+                candidates.append(dict(item))
+                continue
+            candidates.append(
+                {
+                    "name": getattr(item, "name", None),
+                    "score": getattr(item, "score", None),
+                    "weight": getattr(item, "weight", None),
+                    "effective_score": getattr(item, "effective_score", None),
+                    "available": getattr(item, "available", None),
+                    "reason": getattr(item, "reason", None),
+                }
+            )
+        return tuple(candidates)
+
     def profile_names(self) -> Sequence[str]:
         """Zwraca listę zarejestrowanych profili ryzyka."""
 
@@ -861,6 +1488,29 @@ class ThresholdRiskEngine(RiskEngine):
             "json_path": str(json_path),
             "pdf_path": str(pdf_path),
         }
+
+
+def _ensure_decision_models() -> bool:
+    """Gwarantuje, że zależności modułu decision są załadowane."""
+
+    global DecisionCandidate, DecisionEvaluation, RiskSnapshot
+
+    if all(dependency is not None for dependency in (DecisionCandidate, DecisionEvaluation, RiskSnapshot)):
+        return True
+
+    try:  # pragma: no cover - fallback ładowania w środowiskach z modułem decision
+        from bot_core.decision.models import (  # type: ignore import-not-found
+            DecisionCandidate as _DecisionCandidate,
+            DecisionEvaluation as _DecisionEvaluation,
+            RiskSnapshot as _RiskSnapshot,
+        )
+    except Exception:  # pragma: no cover - środowiska bez modułu decision
+        return False
+
+    DecisionCandidate = _DecisionCandidate  # type: ignore[assignment]
+    DecisionEvaluation = _DecisionEvaluation  # type: ignore[assignment]
+    RiskSnapshot = _RiskSnapshot  # type: ignore[assignment]
+    return True
 
 
 __all__ = ["InMemoryRiskRepository", "ThresholdRiskEngine", "RiskState", "PositionState"]
