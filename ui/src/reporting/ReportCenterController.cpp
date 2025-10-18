@@ -1,16 +1,18 @@
-#include "ReportCenterController.hpp"
+#include "reporting/ReportCenterController.hpp"
 
-#include <QByteArray>
 #include <QDir>
-#include <QJsonArray>
-#include <QJsonDocument>
-#include <QJsonObject>
-#include <QJsonParseError>
-#include <QLoggingCategory>
-#include <QProcess>
-#include <QVariantMap>
+#include <QFileInfo>
+#include <QSet>
+#include <algorithm>
 
-Q_LOGGING_CATEGORY(lcReportCenter, "bot.shell.reporting.center")
+namespace {
+
+QString normalizedPath(const QString& path)
+{
+    return QDir::cleanPath(QDir(path).absolutePath());
+}
+
+} // namespace
 
 ReportCenterController::ReportCenterController(QObject* parent)
     : QObject(parent)

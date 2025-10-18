@@ -13,27 +13,33 @@ class ReportCenterController : public QObject {
 public:
     explicit ReportCenterController(QObject* parent = nullptr);
 
-    QVariantList reports() const { return m_reports; }
-    bool isBusy() const { return m_busy; }
+    QString reportsRoot() const;
+    void setReportsRoot(const QString& path);
 
-    Q_INVOKABLE bool refresh();
-    Q_INVOKABLE bool deleteReport(const QString& path);
+    QStringList exports() const;
 
-    void setPythonExecutable(const QString& executable);
-    void setReportsRoot(const QString& root);
+    QStringList watchedDirectories() const;
 
-signals:
-    void reportsChanged();
-    void busyChanged();
-    void reportDeleted(const QString& path);
-    void reportOperationFailed(const QString& message);
+public Q_SLOTS:
+    void rebuildWatcher();
+    void scheduleWatcherRefresh();
+
+Q_SIGNALS:
+    void reportsRootChanged();
+    void exportsChanged();
+    void watcherRebuilt(const QStringList& directories);
+
+private Q_SLOTS:
+    void refreshExports();
 
 private:
-    bool runBridge(const QStringList& arguments, QByteArray* stdoutData, QByteArray* stderrData) const;
-    bool loadReportsFromJson(const QByteArray& data);
+    QStringList collectExportFiles() const;
+    QStringList collectDirectoriesToWatch() const;
 
-    QString m_pythonExecutable = QStringLiteral("python3");
+    QFileSystemWatcher m_watcher;
+    QTimer m_refreshTimer;
     QString m_reportsRoot;
-    QVariantList m_reports;
-    bool m_busy = false;
+    QStringList m_exports;
+    QStringList m_lastWatchedDirectories;
 };
+
