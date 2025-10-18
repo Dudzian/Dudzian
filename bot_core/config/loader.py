@@ -18,8 +18,12 @@ from bot_core.config.models import (
     CoverageMonitorTargetConfig,
     CoverageMonitoringConfig,
     EmailChannelSettings,
+    EnvironmentAIConfig,
+    EnvironmentAIModelConfig,
     EnvironmentConfig,
+    EnvironmentDataSourceConfig,
     EnvironmentDataQualityConfig,
+    EnvironmentReportStorageConfig,
     RiskDecisionLogConfig,
     SecurityBaselineConfig,
     SecurityBaselineSigningConfig,
@@ -563,6 +567,10 @@ def _load_portfolio_governors(raw: Mapping[str, Any]):
     entries = raw.get("portfolio_governors") or {}
     if not isinstance(entries, Mapping):
         return {}
+    governor_field_names = {field.name for field in fields(PortfolioGovernorConfig)}
+    required_fields = {"portfolio_id", "drift_tolerance", "rebalance_cooldown_seconds"}
+    if not required_fields.issubset(governor_field_names):
+        return {}
     governors: dict[str, PortfolioGovernorConfig] = {}
     for name, entry in entries.items():
         if not isinstance(entry, Mapping):
@@ -682,28 +690,31 @@ def _load_portfolio_governors(raw: Mapping[str, Any]):
         except (TypeError, ValueError):  # pragma: no cover - diagnostyka konfiguracji
             lookback_bars = 168
 
-        governors[name] = PortfolioGovernorConfig(
-            name=name,
-            portfolio_id=str(entry.get("portfolio_id", name)),
-            drift_tolerance=drift,
-            rebalance_cooldown_seconds=int(
+        governor_kwargs = {
+            "portfolio_id": str(entry.get("portfolio_id", name)),
+            "drift_tolerance": drift,
+            "rebalance_cooldown_seconds": int(
                 entry.get("rebalance_cooldown_seconds", entry.get("rebalance_cooldown", 900))
             ),
-            min_rebalance_value=float(
+            "min_rebalance_value": float(
                 entry.get("min_rebalance_value", entry.get("min_rebalance_notional", 0.0) or 0.0)
             ),
-            min_rebalance_weight=float(
+            "min_rebalance_weight": float(
                 entry.get("min_rebalance_weight", entry.get("min_weight_delta", 0.0) or 0.0)
             ),
-            assets=tuple(assets),
-            risk_budgets=risk_budgets,
-            risk_overrides=tuple(
+            "assets": tuple(assets),
+            "risk_budgets": risk_budgets,
+            "risk_overrides": tuple(
                 str(item) for item in (entry.get("risk_overrides", ()) or ())
             ),
-            slo_overrides=tuple(override for override in slo_overrides if override.slo_name),
-            market_intel_interval=interval,
-            market_intel_lookback_bars=lookback_bars,
-        )
+            "slo_overrides": tuple(override for override in slo_overrides if override.slo_name),
+            "market_intel_interval": interval,
+            "market_intel_lookback_bars": lookback_bars,
+        }
+        if "name" in governor_field_names:
+            governor_kwargs["name"] = name
+
+        governors[name] = PortfolioGovernorConfig(**governor_kwargs)
 
     return governors
 
@@ -795,6 +806,51 @@ def _load_data_quality(entry: Optional[Mapping[str, Any]]):
     )
 
 
+def _load_environment_data_source(entry: Optional[Mapping[str, Any]]):
+    """Buduje konfigurację źródła danych OHLCV dla środowiska."""
+
+    if EnvironmentDataSourceConfig is None or not entry:
+        return None
+
+    enable_snapshots = bool(entry.get("enable_snapshots", True))
+    namespace_raw = entry.get("cache_namespace")
+    namespace = None if namespace_raw in (None, "") else str(namespace_raw)
+
+    return EnvironmentDataSourceConfig(
+        enable_snapshots=enable_snapshots,
+        cache_namespace=namespace,
+    )
+
+
+def _load_report_storage(entry: Optional[Mapping[str, Any]]):
+    """Buduje konfigurację magazynu raportów środowiska."""
+
+    if EnvironmentReportStorageConfig is None or not entry:
+        return None
+
+    backend_raw = entry.get("backend", entry.get("type", "file"))
+    backend = str(backend_raw).strip().lower()
+    if backend in {"disabled", "none"}:
+        return None
+    if backend != "file":
+        raise ValueError("report_storage.backend musi być 'file' lub 'disabled'")
+
+    directory_raw = entry.get("directory")
+    directory = str(directory_raw) if directory_raw not in (None, "") else None
+    filename_pattern = str(entry.get("filename_pattern", "reports-%Y%m%d.json"))
+    retention_raw = entry.get("retention_days")
+    retention_days = None if retention_raw in (None, "") else int(retention_raw)
+    fsync = bool(entry.get("fsync", False))
+
+    return EnvironmentReportStorageConfig(
+        backend=backend,
+        directory=directory,
+        filename_pattern=filename_pattern,
+        retention_days=retention_days,
+        fsync=fsync,
+    )
+
+
 def _load_decision_journal(entry: Optional[Mapping[str, Any]]):
     if DecisionJournalConfig is None or not entry:
         return None
@@ -821,6 +877,96 @@ def _load_decision_journal(entry: Optional[Mapping[str, Any]]):
         filename_pattern=filename_pattern,
         retention_days=retention_days,
         fsync=fsync,
+    )
+
+
+def _resolve_optional_path(value: object, *, base_dir: Path) -> str | None:
+    if value in (None, ""):
+        return None
+    path = Path(str(value)).expanduser()
+    if not path.is_absolute():
+        path = (base_dir / path).resolve()
+    return str(path)
+
+
+def _load_environment_ai(
+    entry: Optional[Mapping[str, Any]], *, base_dir: Path
+) -> EnvironmentAIConfig | None:
+    if EnvironmentAIConfig is None or EnvironmentAIModelConfig is None or not entry:
+        return None
+
+    enabled = bool(entry.get("enabled", True))
+    threshold_raw = entry.get("threshold_bps", entry.get("threshold"))
+    threshold_bps = float(threshold_raw) if threshold_raw not in (None, "") else 5.0
+    model_dir = _resolve_optional_path(entry.get("model_dir"), base_dir=base_dir)
+    default_strategy_value = entry.get("default_strategy")
+    default_strategy = (
+        str(default_strategy_value).strip() if default_strategy_value else None
+    )
+    default_profile_value = entry.get("default_risk_profile")
+    default_risk_profile = (
+        str(default_profile_value).strip() if default_profile_value else None
+    )
+    default_notional_raw = entry.get("default_notional")
+    default_notional = (
+        float(default_notional_raw)
+        if default_notional_raw not in (None, "")
+        else None
+    )
+    default_action_value = entry.get("default_action", "enter")
+    default_action = str(default_action_value) or "enter"
+
+    preload = tuple(str(item) for item in (entry.get("preload", ()) or ()))
+
+    models_raw = entry.get("models", ()) or ()
+    models: list[EnvironmentAIModelConfig] = []
+    for model_entry in models_raw:
+        if not isinstance(model_entry, Mapping):
+            raise ValueError("environment.ai.models musi zawierać obiekty mapujące")
+        symbol_raw = model_entry.get("symbol")
+        model_type_raw = model_entry.get("model_type", model_entry.get("type"))
+        path_raw = model_entry.get("path")
+        if not symbol_raw or not model_type_raw or not path_raw:
+            raise ValueError(
+                "Każdy model AI musi mieć pola 'symbol', 'model_type' oraz 'path'"
+            )
+        symbol = str(symbol_raw)
+        model_type = str(model_type_raw)
+        path = _resolve_optional_path(path_raw, base_dir=base_dir)
+        if path is None:
+            raise ValueError("environment.ai.models[].path nie może być puste")
+        strategy_value = model_entry.get("strategy")
+        risk_profile_value = model_entry.get("risk_profile")
+        action_value = model_entry.get("action")
+        notional_raw = model_entry.get("notional")
+        models.append(
+            EnvironmentAIModelConfig(
+                symbol=symbol,
+                model_type=model_type,
+                path=path,
+                strategy=str(strategy_value).strip() if strategy_value else None,
+                risk_profile=(
+                    str(risk_profile_value).strip() if risk_profile_value else None
+                ),
+                notional=(
+                    float(notional_raw)
+                    if notional_raw not in (None, "")
+                    else None
+                ),
+                action=str(action_value) if action_value else None,
+            )
+        )
+
+    return EnvironmentAIConfig(
+        enabled=enabled,
+        model_dir=model_dir,
+        threshold_bps=threshold_bps,
+        default_strategy=default_strategy,
+        default_risk_profile=default_risk_profile,
+        default_notional=default_notional,
+        default_action=default_action,
+        preload=preload,
+        models=tuple(models),
     )
 
 
@@ -2072,6 +2218,50 @@ def _load_decision_engine_config(
             tco_kwargs["reports"] = normalized_reports
         if "require_at_startup" in tco_fields or require_at_startup:
             tco_kwargs["require_at_startup"] = require_at_startup
+        if "runtime_enabled" in tco_fields:
+            tco_kwargs["runtime_enabled"] = bool(tco_raw.get("runtime_enabled", False))
+        if "runtime_report_directory" in tco_fields:
+            directory_raw = tco_raw.get("runtime_report_directory")
+            if directory_raw:
+                tco_kwargs["runtime_report_directory"] = str(
+                    _normalize_runtime_path(directory_raw, base_dir=base_dir)
+                )
+        if "runtime_report_basename" in tco_fields and tco_raw.get("runtime_report_basename"):
+            tco_kwargs["runtime_report_basename"] = str(tco_raw["runtime_report_basename"])
+        if "runtime_export_formats" in tco_fields and tco_raw.get("runtime_export_formats") is not None:
+            formats_raw = tco_raw.get("runtime_export_formats")
+            if isinstance(formats_raw, (str, bytes)):
+                formats = [str(formats_raw)]
+            elif isinstance(formats_raw, Sequence):
+                formats = [str(entry) for entry in formats_raw]
+            else:
+                raise ValueError("decision_engine.tco.runtime_export_formats must be a string or sequence")
+            tco_kwargs["runtime_export_formats"] = tuple(formats)
+        if "runtime_flush_events" in tco_fields and tco_raw.get("runtime_flush_events") not in (None, ""):
+            tco_kwargs["runtime_flush_events"] = int(float(tco_raw.get("runtime_flush_events", 0)))
+        if "runtime_clear_after_export" in tco_fields and tco_raw.get("runtime_clear_after_export") is not None:
+            tco_kwargs["runtime_clear_after_export"] = bool(tco_raw.get("runtime_clear_after_export"))
+        if "runtime_signing_key_env" in tco_fields:
+            env_value = _normalize_env_var(tco_raw.get("runtime_signing_key_env"))
+            if env_value:
+                tco_kwargs["runtime_signing_key_env"] = env_value
+        if "runtime_signing_key_id" in tco_fields:
+            env_value = _normalize_env_var(tco_raw.get("runtime_signing_key_id"))
+            if env_value:
+                tco_kwargs["runtime_signing_key_id"] = env_value
+        if "runtime_metadata" in tco_fields and tco_raw.get("runtime_metadata") is not None:
+            metadata_raw = tco_raw.get("runtime_metadata")
+            if not isinstance(metadata_raw, Mapping):
+                raise ValueError("decision_engine.tco.runtime_metadata must be a mapping")
+            tco_kwargs["runtime_metadata"] = dict(metadata_raw)
+        if "runtime_cost_limit_bps" in tco_fields and tco_raw.get("runtime_cost_limit_bps") not in (None, ""):
+            tco_kwargs["runtime_cost_limit_bps"] = float(tco_raw.get("runtime_cost_limit_bps"))
+        warn_age_raw = tco_raw.get("warn_report_age_hours")
+        if "warn_report_age_hours" in tco_fields and warn_age_raw not in (None, ""):
+            tco_kwargs["warn_report_age_hours"] = float(warn_age_raw)
+        max_age_raw = tco_raw.get("max_report_age_hours")
+        if "max_report_age_hours" in tco_fields and max_age_raw not in (None, ""):
+            tco_kwargs["max_report_age_hours"] = float(max_age_raw)
         tco_config = DecisionEngineTCOConfig(**tco_kwargs)  # type: ignore[arg-type]
     return DecisionEngineConfig(
         orchestrator=base_threshold,
@@ -2766,6 +2956,12 @@ def load_core_config(path: str | Path) -> CoreConfig:
             "required_permissions": required_permissions,
             "forbidden_permissions": forbidden_permissions,
         }
+        if _env_has("offline_mode"):
+            env_kwargs["offline_mode"] = bool(entry.get("offline_mode", False))
+        if _env_has("data_source"):
+            env_kwargs["data_source"] = _load_environment_data_source(entry.get("data_source"))
+        if _env_has("report_storage"):
+            env_kwargs["report_storage"] = _load_report_storage(entry.get("report_storage"))
         if _env_has("permission_profile"):
             env_kwargs["permission_profile"] = permission_profile_name
         if _env_has("default_strategy"):
@@ -2786,6 +2982,8 @@ def load_core_config(path: str | Path) -> CoreConfig:
             env_kwargs["decision_journal"] = _load_decision_journal(entry.get("decision_journal"))
         if _env_has("data_quality"):
             env_kwargs["data_quality"] = _load_data_quality(entry.get("data_quality"))
+        if _env_has("ai"):
+            env_kwargs["ai"] = _load_environment_ai(entry.get("ai"), base_dir=config_base_dir)
         environments[name] = EnvironmentConfig(**env_kwargs)
 
     risk_profiles = {

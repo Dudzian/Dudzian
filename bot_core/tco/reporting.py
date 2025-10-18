@@ -110,6 +110,7 @@ class TCOReportWriter:
             "",  # odstęp
             "Statystyki:",
             f"  Liczba strategii: {metadata.get('strategy_count', len(self._report.strategies))}",
+            f"  Liczba schedulerów: {metadata.get('scheduler_count', len(self._report.schedulers))}",
             f"  Liczba transakcji: {metadata.get('events_count', 0)}",
         ]
         alerts = list(self._report.alerts)
@@ -145,6 +146,31 @@ class TCOReportWriter:
         if not self._report.strategies:
             lines.append("")
             lines.append("Brak danych transakcyjnych do zaprezentowania.")
+        if self._report.schedulers:
+            lines.append("")
+            lines.append("Zestawienie według schedulerów:")
+            for scheduler_name, summary in sorted(self._report.schedulers.items()):
+                lines.append(
+                    (
+                        "Scheduler {name}: transakcji {trades}, koszt {cost:.6f}, {bps:.2f} bps"
+                    ).format(
+                        name=scheduler_name,
+                        trades=summary.total.trade_count,
+                        cost=float(summary.total.total_cost),
+                        bps=float(summary.total.cost_bps),
+                    )
+                )
+                for strategy_name, strategy_summary in sorted(summary.strategies.items()):
+                    lines.append(
+                        (
+                            "  Strategia {strategy}: transakcji {trades}, koszt {cost:.6f}, {bps:.2f} bps"
+                        ).format(
+                            strategy=strategy_name,
+                            trades=strategy_summary.trade_count,
+                            cost=float(strategy_summary.total_cost),
+                            bps=float(strategy_summary.cost_bps),
+                        )
+                    )
         return build_simple_pdf(lines)
 
     def build_json(self) -> dict[str, object]:
@@ -191,6 +217,9 @@ class TCOReportWriter:
                 "events_count": self._report.metadata.get("events_count", 0),
                 "strategy_count": self._report.metadata.get(
                     "strategy_count", len(self._report.strategies)
+                ),
+                "scheduler_count": self._report.metadata.get(
+                    "scheduler_count", len(self._report.schedulers)
                 ),
             }
             signature = build_hmac_signature(

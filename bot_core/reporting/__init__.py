@@ -12,6 +12,7 @@ from bot_core.reporting.tco import (
     write_summary_json,
     write_summary_signature,
 )
+from . import ui_bridge
 
 __all__ = [
     "generate_daily_paper_report",
@@ -24,4 +25,5 @@ __all__ = [
     "write_summary_csv",
     "write_summary_json",
     "write_summary_signature",
+    "ui_bridge",
 ]

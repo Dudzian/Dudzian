@@ -39,6 +39,25 @@ class DecisionJournalConfig:
 
 
 @dataclass(slots=True)
+class EnvironmentDataSourceConfig:
+    """Parametry źródła danych środowiska (cache + snapshot REST)."""
+
+    enable_snapshots: bool = True
+    cache_namespace: str | None = None
+
+
+@dataclass(slots=True)
+class EnvironmentReportStorageConfig:
+    """Opisuje sposób przechowywania raportów operacyjnych środowiska."""
+
+    backend: str
+    directory: str | None = None
+    filename_pattern: str = "reports-%Y%m%d.json"
+    retention_days: int | None = 730
+    fsync: bool = False
+
+
+@dataclass(slots=True)
 class ServiceTokenConfig:
     """Definicja tokenu usługowego wykorzystywanego do RBAC."""
     token_id: str
@@ -421,8 +440,44 @@ class DecisionStressTestConfig:
 @dataclass(slots=True)
 class DecisionEngineTCOConfig:
     """Ścieżki raportów TCO wykorzystywanych przez DecisionOrchestrator."""
-    reports: Sequence[str] = field(default_factory=tuple)  # kompatybilne z YAML: tco.reports
+
+    report_paths: Sequence[str] = field(default_factory=tuple)
+    reports: Sequence[str] | None = field(default=None, repr=False)
     require_at_startup: bool = False
+    runtime_enabled: bool = False
+    runtime_report_directory: str | None = None
+    runtime_report_basename: str | None = None
+    runtime_export_formats: Sequence[str] = field(default_factory=lambda: ("json",))
+    runtime_flush_events: int | None = None
+    runtime_clear_after_export: bool = False
+    runtime_signing_key_env: str | None = None
+    runtime_signing_key_id: str | None = None
+    runtime_metadata: Mapping[str, object] = field(default_factory=dict)
+    runtime_cost_limit_bps: float | None = None
+    warn_report_age_hours: float | None = 24.0
+    max_report_age_hours: float | None = 72.0
+
+    def __post_init__(self) -> None:
+        if self.reports and self.report_paths:
+            raise ValueError(
+                "DecisionEngineTCOConfig nie może otrzymać jednocześnie 'reports' i 'report_paths'"
+            )
+
+        paths_source: Sequence[str]
+        if self.reports:
+            paths_source = self.reports
+        else:
+            paths_source = self.report_paths
+
+        normalized_paths = tuple(str(path) for path in paths_source if str(path).strip())
+        self.report_paths = normalized_paths
+        self.reports = normalized_paths
+
+        if self.warn_report_age_hours is not None:
+            self.warn_report_age_hours = float(self.warn_report_age_hours)
+        if self.max_report_age_hours is not None:
+            self.max_report_age_hours = float(self.max_report_age_hours)
+        self.runtime_clear_after_export = bool(self.runtime_clear_after_export)
 
 
 @dataclass(slots=True)
@@ -435,6 +490,37 @@ class DecisionEngineConfig:
     require_cost_data: bool = False
     penalty_cost_bps: float = 0.0
     tco: DecisionEngineTCOConfig | None = None
+
+
+# --- AI ---------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class EnvironmentAIModelConfig:
+    """Definicja modelu AI przypiętego do konkretnego symbolu."""
+
+    symbol: str
+    model_type: str
+    path: str
+    strategy: str | None = None
+    risk_profile: str | None = None
+    notional: float | None = None
+    action: str | None = None
+
+
+@dataclass(slots=True)
+class EnvironmentAIConfig:
+    """Konfiguracja integracji AIManagera w środowisku runtime."""
+
+    enabled: bool = True
+    model_dir: str | None = None
+    threshold_bps: float = 5.0
+    default_strategy: str | None = None
+    default_risk_profile: str | None = None
+    default_notional: float | None = None
+    default_action: str = "enter"
+    preload: Sequence[str] = field(default_factory=tuple)
+    models: Sequence[EnvironmentAIModelConfig] = field(default_factory=tuple)
 
 
 # --- Środowiska / rdzeń ------------------------------------------------------
@@ -478,6 +564,9 @@ class EnvironmentConfig:
     credential_purpose: str = "trading"
     instrument_universe: str | None = None
     adapter_settings: Mapping[str, Any] = field(default_factory=dict)
+    offline_mode: bool = False
+    data_source: EnvironmentDataSourceConfig | None = None
+    report_storage: EnvironmentReportStorageConfig | None = None
     permission_profile: str | None = None
     required_permissions: Sequence[str] = field(default_factory=tuple)
     forbidden_permissions: Sequence[str] = field(default_factory=tuple)
@@ -487,6 +576,7 @@ class EnvironmentConfig:
     decision_journal: DecisionJournalConfig | None = None
     default_strategy: str | None = None
     default_controller: str | None = None
+    ai: EnvironmentAIConfig | None = None
 
 
 @dataclass(slots=True)
@@ -917,6 +1007,8 @@ class CoreConfig:
 
 __all__ = [
     "EnvironmentConfig",
+    "EnvironmentDataSourceConfig",
+    "EnvironmentReportStorageConfig",
     "EnvironmentDataQualityConfig",
     "CoverageMonitorTargetConfig",
     "CoverageMonitoringConfig",
@@ -973,6 +1065,9 @@ __all__ = [
     "KeyRotationConfig",
     "ObservabilityConfig",
     "DecisionEngineConfig",
+    "EnvironmentAIConfig",
+    "EnvironmentAIModelConfig",
+    "DecisionEngineTCOConfig",
     "DecisionOrchestratorThresholds",
     "DecisionStressTestConfig",
     "PortfolioGovernorStrategyConfig",

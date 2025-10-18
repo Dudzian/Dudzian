@@ -9,6 +9,9 @@ from bot_core.config.models import (
     ControllerRuntimeConfig,
     CoreConfig,
     DailyTrendMomentumStrategyConfig,
+    DecisionEngineConfig,
+    DecisionEngineTCOConfig,
+    DecisionOrchestratorThresholds,
     EnvironmentConfig,
     InstrumentBackfillWindow,
     InstrumentConfig,
@@ -680,3 +683,52 @@ def test_validate_core_config_detects_multiple_risk_log_key_sources(base_config:
     result = validate_core_config(config)
     assert not result.is_valid()
     assert any("źródło klucza" in err for err in result.errors)
+
+
+def _decision_engine_base_config() -> DecisionEngineConfig:
+    orchestrator = DecisionOrchestratorThresholds(
+        max_cost_bps=10.0,
+        min_net_edge_bps=2.0,
+        max_daily_loss_pct=0.05,
+        max_drawdown_pct=0.12,
+        max_position_ratio=0.25,
+        max_open_positions=5,
+        max_latency_ms=250.0,
+    )
+    return DecisionEngineConfig(
+        orchestrator=orchestrator,
+        min_probability=0.5,
+        require_cost_data=True,
+        penalty_cost_bps=1.5,
+        tco=DecisionEngineTCOConfig(report_paths=("/var/tco/latest.json",)),
+    )
+
+
+def test_validate_core_config_detects_missing_tco_reports(base_config: CoreConfig) -> None:
+    decision_engine = replace(
+        _decision_engine_base_config(),
+        tco=DecisionEngineTCOConfig(report_paths=()),
+    )
+    config = replace(base_config, decision_engine=decision_engine)
+
+    result = validate_core_config(config)
+    assert not result.is_valid()
+    assert any("decision_engine.tco" in err for err in result.errors)
+
+
+def test_validate_core_config_detects_invalid_tco_age_thresholds(
+    base_config: CoreConfig,
+) -> None:
+    decision_engine = replace(
+        _decision_engine_base_config(),
+        tco=DecisionEngineTCOConfig(
+            report_paths=("/var/tco/latest.json",),
+            warn_report_age_hours=48.0,
+            max_report_age_hours=24.0,
+        ),
+    )
+    config = replace(base_config, decision_engine=decision_engine)
+
+    result = validate_core_config(config)
+    assert not result.is_valid()
+    assert any("warn_report_age_hours" in err for err in result.errors)

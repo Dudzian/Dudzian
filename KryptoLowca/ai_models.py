@@ -22,9 +22,12 @@ Notes:
 """
 
 from __future__ import annotations
-import os
+
+import inspect
 import logging
-from typing import List, Optional, Callable, Tuple, Dict, Union
+import pickle
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 from abc import ABC, abstractmethod
 
 import numpy as np
@@ -71,6 +74,26 @@ try:
 except ImportError:
     logger.warning("scikit-learn not installed; classic ML models unavailable")
     SK_AVAILABLE = False
+
+try:  # zapewnij dostęp do joblib lub pickla na potrzeby serializacji modeli
+    joblib  # type: ignore[name-defined]
+except NameError:
+    joblib = None  # type: ignore[assignment]
+
+if joblib is None:
+    def _dump_object(obj: Any, path: Path) -> None:
+        with path.open("wb") as handle:
+            pickle.dump(obj, handle)
+
+    def _load_object(path: Path) -> Any:
+        with path.open("rb") as handle:
+            return pickle.load(handle)
+else:
+    def _dump_object(obj: Any, path: Path) -> None:
+        joblib.dump(obj, path)
+
+    def _load_object(path: Path) -> Any:
+        return joblib.load(path)
 
 LGB_AVAILABLE = False
 try:
@@ -601,6 +624,220 @@ class ModelFactory:
         return SklearnModelTrainer(model, input_size, seq_len, scaler)
 
 
+class _LinearBaselineTrainer(ModelTrainer):
+    """Lekki fallback używany, gdy zależności ML są niedostępne."""
+
+    def __init__(self, input_size: int, seq_len: int) -> None:
+        if input_size <= 0 or seq_len <= 0:
+            raise ValueError("input_size and seq_len must be positive")
+        self.input_size = int(input_size)
+        self.seq_len = int(seq_len)
+        self.model_type = "linear_fallback"
+        self.is_trained = False
+        self._coef = np.zeros(self.input_size * self.seq_len, dtype=np.float32)
+
+    def train(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        epochs: int = 1,
+        batch_size: int = 0,
+        verbose: bool = False,
+        model_out: Optional[str] = None,
+        progress_callback: Optional[Callable[..., None]] = None,
+    ) -> None:
+        self.validate_input_data(X, y)
+        flattened = X.reshape((len(X), -1))
+        self._coef = np.nan_to_num(flattened.mean(axis=0))
+        self.is_trained = True
+        if progress_callback:
+            try:
+                progress_callback(epochs, epochs, 0.0, 0.0)
+            except Exception:
+                logger.debug("Linear fallback progress callback raised", exc_info=True)
+        if model_out:
+            self.save_model(model_out)
+
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        if not self.is_trained:
+            raise RuntimeError("Model not trained")
+        flattened = X.reshape((len(X), -1))
+        if flattened.shape[1] != self._coef.size:
+            coef = np.resize(self._coef, flattened.shape[1])
+        else:
+            coef = self._coef
+        return flattened @ coef
+
+    def predict_series(self, df: pd.DataFrame, feature_cols: List[str]) -> Optional[pd.Series]:
+        if not self.is_trained:
+            raise RuntimeError("Model not trained")
+        X, _ = windowize_df_robust(df, feature_cols, self.seq_len)
+        if len(X) == 0:
+            return None
+        preds = self.predict(X)
+        return pd.Series(preds, index=df.index[self.seq_len:])
+
+    def save_model(self, path: str) -> None:
+        target = Path(path)
+        if target.suffix not in {".joblib", ".pkl"}:
+            target = target.with_suffix(".joblib")
+        state = {
+            "input_size": self.input_size,
+            "seq_len": self.seq_len,
+            "coef": self._coef,
+        }
+        target.parent.mkdir(parents=True, exist_ok=True)
+        _dump_object(state, target)
+
+    def load_model(self, path: str) -> None:
+        state = _load_object(Path(path))
+        self.input_size = int(state.get("input_size", self.input_size))
+        self.seq_len = int(state.get("seq_len", self.seq_len))
+        coef = state.get("coef")
+        if coef is not None:
+            self._coef = np.asarray(coef, dtype=np.float32)
+        self.is_trained = True
+
+    def validate_input_data(self, X: np.ndarray, y: np.ndarray) -> None:
+        if X is None or y is None:
+            raise ValueError("X and y cannot be None")
+        if len(X) == 0 or len(y) == 0:
+            raise ValueError("Training data cannot be empty")
+        if len(X) != len(y):
+            raise ValueError(f"Length mismatch: X={len(X)}, y={len(y)}")
+        if X.shape[1] != self.seq_len or X.shape[2] != self.input_size:
+            raise ValueError(
+                f"Invalid X shape: {X.shape}, expected [N, {self.seq_len}, {self.input_size}]"
+            )
+        if np.isnan(X).any() or np.isnan(y).any():
+            raise ValueError("Data contains NaN values")
+
+
+class AIModels:
+    """Wysokopoziomowy wrapper wokół rozbudowanych modeli ML."""
+
+    _SKLEARN_TYPES: Sequence[str] = ("svr", "rf", "random_forest", "lightgbm", "xgboost")
+
+    def __init__(
+        self,
+        input_size: int,
+        seq_len: int,
+        model_type: str = "rf",
+        *,
+        model_dir: str | Path | None = None,
+        trainer: ModelTrainer | None = None,
+    ) -> None:
+        if input_size <= 0 or seq_len <= 0:
+            raise ValueError("input_size and seq_len must be positive")
+        self.input_size = int(input_size)
+        self.seq_len = int(seq_len)
+        self.model_type = str(model_type).lower()
+        self.model_dir = Path(model_dir) if model_dir is not None else None
+        self._requested_type = self.model_type
+        self._trainer = trainer or self._build_trainer(self.model_type)
+
+    def _build_trainer(self, model_type: str) -> ModelTrainer:
+        try:
+            use_sklearn_scaler = model_type in self._SKLEARN_TYPES
+            return ModelFactory.create_model(
+                model_type,
+                self.input_size,
+                self.seq_len,
+                use_sklearn_scaler=use_sklearn_scaler,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Falling back to linear baseline model for '%s' due to: %s",
+                model_type,
+                exc,
+            )
+            self.model_type = f"{model_type}_fallback"
+            return _LinearBaselineTrainer(self.input_size, self.seq_len)
+
+    @property
+    def trainer(self) -> ModelTrainer:
+        return self._trainer
+
+    @property
+    def is_trained(self) -> bool:
+        return bool(getattr(self._trainer, "is_trained", False))
+
+    def train(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        *,
+        epochs: int = CONFIG["DEFAULT_EPOCHS"],
+        batch_size: int = CONFIG["DEFAULT_BATCH_SIZE"],
+        progress_callback: Optional[Callable[..., None]] = None,
+        model_out: Optional[str] = None,
+        verbose: bool = False,
+    ) -> Any:
+        params = self._prepare_train_kwargs(
+            epochs=epochs,
+            batch_size=batch_size,
+            progress_callback=progress_callback,
+            verbose=verbose,
+        )
+        result = self._trainer.train(X, y, **params)
+        if model_out:
+            self.save_model(model_out)
+        return result
+
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        return self._trainer.predict(X)
+
+    def predict_series(self, df: pd.DataFrame, feature_cols: List[str]) -> pd.Series:
+        series = self._trainer.predict_series(df, feature_cols)
+        if series is None:
+            return pd.Series(dtype=float)
+        return series
+
+    def save_model(self, path: str | Path) -> None:
+        target = Path(path)
+        if target.suffix not in {".joblib", ".pkl"}:
+            target = target.with_suffix(".joblib")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        _dump_object(self, target)
+
+    @staticmethod
+    def load_model(path: str | Path) -> "AIModels":
+        obj = _load_object(Path(path))
+        if isinstance(obj, AIModels):
+            return obj
+        if isinstance(obj, ModelTrainer):
+            inferred_type = getattr(obj, "model_type", "unknown")
+            wrapper = AIModels(
+                input_size=getattr(obj, "input_size", 1),
+                seq_len=getattr(obj, "seq_len", 1),
+                model_type=inferred_type,
+                trainer=obj,
+            )
+            return wrapper
+        raise TypeError(f"Unsupported model object loaded from {path}: {type(obj)!r}")
+
+    def _prepare_train_kwargs(
+        self,
+        *,
+        epochs: int,
+        batch_size: int,
+        progress_callback: Optional[Callable[..., None]],
+        verbose: bool,
+    ) -> Dict[str, Any]:
+        signature = inspect.signature(self._trainer.train)
+        kwargs: Dict[str, Any] = {}
+        if "epochs" in signature.parameters:
+            kwargs["epochs"] = int(max(1, epochs))
+        if "batch_size" in signature.parameters:
+            kwargs["batch_size"] = int(max(1, batch_size))
+        if "verbose" in signature.parameters:
+            kwargs["verbose"] = bool(verbose)
+        if "progress_callback" in signature.parameters:
+            kwargs["progress_callback"] = progress_callback
+        if "model_out" in signature.parameters:
+            kwargs["model_out"] = None
+        return kwargs
+
 # ----------------------- Backtest Engine -----------------------
 class BacktestEngine:
     def __init__(self, model: ModelTrainer):
@@ -710,6 +947,14 @@ class TradingPipeline:
         if not predictions:
             return None
         return sum(predictions)
+
+
+__all__ = [
+    "AIModels",
+    "ModelFactory",
+    "TradingPipeline",
+    "BacktestEngine",
+]
 
 
 # ----------------------- Unit Tests -----------------------

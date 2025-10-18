@@ -7,6 +7,7 @@
 #include <QJsonObject>
 #include <QLoggingCategory>
 #include <QProcess>
+#include <QSaveFile>
 #include <QTextStream>
 
 Q_LOGGING_CATEGORY(lcActivation, "bot.shell.activation")
@@ -118,6 +119,38 @@ void ActivationController::refresh()
 void ActivationController::reloadRegistry()
 {
     updateLicenses();
+}
+
+bool ActivationController::exportFingerprint(const QUrl& destination) const
+{
+    if (!destination.isValid())
+        return false;
+
+    const QString path = destination.isLocalFile() ? destination.toLocalFile() : destination.toString();
+    if (path.trimmed().isEmpty())
+        return false;
+    if (m_fingerprint.isEmpty())
+        return false;
+
+    const QJsonDocument doc = QJsonDocument::fromVariant(m_fingerprint);
+    if (doc.isNull())
+        return false;
+
+    QFileInfo info(path);
+    QDir dir = info.dir();
+    if (!dir.exists() && !dir.mkpath(QStringLiteral(".")))
+        return false;
+
+    QSaveFile file(path);
+    file.setDirectWriteFallback(true);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text))
+        return false;
+    const QByteArray payload = doc.toJson(QJsonDocument::Indented);
+    if (file.write(payload) != payload.size())
+        return false;
+    if (!file.commit())
+        return false;
+    return true;
 }
 
 void ActivationController::updateFingerprint()

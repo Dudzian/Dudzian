@@ -21,6 +21,7 @@ from typing import Iterable, Mapping
 
 # --- konfiguracja / modele
 from bot_core.config import load_core_config
+from bot_core.data import resolve_cache_namespace
 
 # Opcjonalne importy – różne gałęzie mają różne interfejsy
 try:
@@ -144,7 +145,7 @@ def _run_ohlcv(args: argparse.Namespace) -> int:
     governor_cfg = core_config.portfolio_governors[args.governor]
 
     cache_base = args.cache_base or environment_cfg.data_cache_path
-    namespace = args.namespace or getattr(environment_cfg, "environment", None)
+    namespace = args.namespace or resolve_cache_namespace(environment_cfg)
     # environment może być Enum'em, więc wyciągamy value gdy ma atrybut
     if hasattr(namespace, "value"):
         namespace = namespace.value

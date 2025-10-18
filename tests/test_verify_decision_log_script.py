@@ -889,6 +889,8 @@ def test_verify_metadata_expectations(tmp_path):
             "metadata": {
                 "mode": "jsonl",
                 "input_file": str(log_path),
+                "input_files": [str(log_path)],
+                "input_sources": [str(log_path)],
                 "summary_enabled": True,
                 "filters": {
                     "event": "reduce_motion",

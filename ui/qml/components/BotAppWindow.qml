@@ -67,12 +67,21 @@ ApplicationWindow {
             }
 
             Button {
-                text: qsTr("Administracja")
+                text: qsTr("Panel administracyjny")
                 icon.name: "preferences-system"
-                onClicked: adminDialog.open()
+                onClicked: adminPanelDrawer.open()
                 ToolTip.visible: hovered
                 ToolTip.delay: 400
-                ToolTip.text: qsTr("Zarządzaj licencją i profilami użytkowników")
+                ToolTip.text: qsTr("Konfiguracja strategii, monitorowanie i licencja")
+            }
+
+            Button {
+                text: qsTr("Raporty")
+                icon.name: "view-list-details"
+                onClicked: reportDialog.open()
+                ToolTip.visible: hovered
+                ToolTip.delay: 400
+                ToolTip.text: qsTr("Przeglądaj i usuwaj raporty z magazynu UI")
             }
 
             Button {
@@ -90,11 +99,30 @@ ApplicationWindow {
         controller: activationController
     }
 
-    AdminDialog {
-        id: adminDialog
-        visible: false
-        x: Math.max(0, (window.width - width) / 2)
-        y: Math.max(0, (window.height - height) / 2)
+    AdminPanel {
+        id: adminPanelDrawer
+        parent: window.contentItem
+        height: window.height
+    }
+
+    Dialog {
+        id: reportDialog
+        objectName: "reportDialog"
+        title: qsTr("Przegląd raportów")
+        modal: true
+        standardButtons: Dialog.Close
+        width: 720
+        height: 480
+
+        onOpened: {
+            if (reportController)
+                reportController.refresh()
+        }
+
+        ReportBrowser {
+            anchors.fill: parent
+            controller: reportController
+        }
     }
 
     Connections {
@@ -160,11 +188,8 @@ ApplicationWindow {
         Layout.fillWidth: true
     }
 
-    LicenseActivationOverlay {
+    FirstRunWizard {
         anchors.fill: parent
-        visible: !licenseController.licenseActive
-        enabled: !licenseController.licenseActive
-        focus: visible
     }
 
     Settings {

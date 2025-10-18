@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from textwrap import dedent
 
 import pytest
 import tkinter as tk
@@ -30,36 +31,160 @@ def tk_root():
         pass
 
 
-@pytest.fixture(autouse=True)
-def stub_runtime_metadata(monkeypatch):
-    monkeypatch.setattr(
-        trading_app_module, "load_runtime_entrypoint_metadata", lambda *_, **__: None
-    )
-    monkeypatch.setattr(
-        trading_app_module,
-        "load_risk_manager_settings",
-        lambda *_, **__: (
-            None,
-            None,
-            RiskManagerSettings(
-                max_risk_per_trade=0.02,
-                max_daily_loss_pct=0.10,
-                max_portfolio_risk=0.10,
-                max_positions=10,
-                emergency_stop_drawdown=0.15,
-            ),
-        ),
+@pytest.mark.asyncio
+async def test_worker_one_iteration(app):
+    await app._load_markets()
+    k = list(app.symbol_vars.keys())[0]
+    app.symbol_vars[k].set(True)
+    app._apply_symbol_selection()
+    await app._process_symbol(k)
+    assert k in app.paper_positions
+    assert app.engine.last_live_tick[0] == k
+
+@pytest.mark.asyncio
+async def test_backtest_and_report_export(app, tmp_path):
+    await app._load_markets()
+    k = list(app.symbol_vars.keys())[0]
+    app.symbol_vars[k].set(True)
+    app._apply_symbol_selection()
+    await app._run_backtest()
+    out = tmp_path / "report.pdf"
+    app.reporter.export_pdf = lambda fn: out.write_bytes(b"%PDF-1.4 test")
+    await app._export_pdf_report()
+    assert out.exists()
+
+@pytest.mark.asyncio
+async def test_presets_roundtrip(app):
+    data = app._gather_settings()
+    await app.config_mgr.save_user_config(1, "unit", data)
+    got = await app.config_mgr.load_config(preset_name="unit", user_id=1)
+    assert got and got["ai"]["enable"] == data["ai"]["enable"]
+
+@pytest.mark.asyncio
+async def test_keys_roundtrip(app):
+    app.password_var.set("s3cret")
+    app.testnet_key.set("A" * 16)
+    app.testnet_secret.set("B" * 16)
+    app.live_key.set("C" * 16)
+    app.live_secret.set("D" * 16)
+    await app._save_keys()
+    app.testnet_key.set("")
+    app.testnet_secret.set("")
+    app.live_key.set("")
+    app.live_secret.set("")
+    await app._load_keys()
+    assert app.testnet_key.get().startswith("A") and app.live_secret.get().startswith("D")
+
+@pytest.mark.asyncio
+async def test_dashboard_update(app):
+    await app._update_dashboard()
+    assert "PnL: 100.0" in app.pnl_var.get()
+    assert "Positions: 0" in app.positions_var.get()
+
+@pytest.mark.asyncio
+async def test_risk_profile_section_updates(app):
+    app.set_risk_profile_context("balanced")
+    app.risk_manager_settings = {
+        "risk_per_trade": 0.015,
+        "portfolio_risk": 0.25,
+    }
+    await asyncio.sleep(0)
+
+    assert app.risk_profile_display_var.get() == "balanced"
+    limits = app.risk_limits_display_var.get()
+    assert "1.5% per trade" in limits
+    assert "25.0% exposure cap" in limits
+
+
+@pytest.mark.asyncio
+async def test_invalid_symbol_selection(app):
+    await app._load_markets()
+    app._apply_symbol_selection()
+    assert not app.selected_symbols
+    # Should not crash
+    await app._run_backtest()
+
+
+def _write_core_config(
+    path: Path,
+    *,
+    max_daily_loss: float,
+    max_position: float,
+    hard_drawdown: float,
+    stop_loss: float = 1.5,
+) -> None:
+    path.write_text(
+        dedent(
+            f"""
+            risk_profiles:
+              balanced:
+                max_daily_loss_pct: {max_daily_loss}
+                max_position_pct: {max_position}
+                target_volatility: 0.1
+                max_leverage: 3.0
+                stop_loss_atr_multiple: {stop_loss}
+                max_open_positions: 5
+                hard_drawdown_pct: {hard_drawdown}
+            environments:
+              paper_env:
+                name: paper_env
+                exchange: binance_spot
+                environment: paper
+                keychain_key: dummy
+                data_cache_path: ./cache
+                risk_profile: balanced
+                alert_channels: []
+                required_permissions: []
+                forbidden_permissions: []
+            """
+        ).strip()
     )
 
 
-class DummyController(TradingSessionController):
-    def __init__(self, state: AppState) -> None:
-        self.state = state
-        self.started = False
-        self.stopped = False
-        self.state.status.set("Kontroler testowy zainicjalizowany")
-        self._exchange = object()
-        self.updated_settings = None
+@pytest.mark.asyncio
+async def test_reload_risk_manager_settings_updates_gui(app, tmp_path):
+    core_path = tmp_path / "core.yaml"
+    _write_core_config(core_path, max_daily_loss=0.02, max_position=0.05, hard_drawdown=0.08, stop_loss=1.5)
+
+    app.core_config_path = core_path
+    app.core_environment = "paper_env"
+
+    old_mgr = app.risk_mgr
+    profile_name, settings, _ = app.reload_risk_manager_settings()
+
+    assert profile_name == "balanced"
+    assert settings["max_daily_loss_pct"] == pytest.approx(0.02)
+    assert app.max_daily_loss_pct == pytest.approx(0.02)
+    assert app.risk_per_trade.get() == pytest.approx(0.05)
+    assert app.portfolio_risk.get() == pytest.approx(0.08)
+    assert app.risk_profile_var.get() == "balanced"
+    assert app.trail_atr_mult_var.get() == pytest.approx(1.5)
+    assert app.risk_mgr is not old_mgr
+
+    _write_core_config(core_path, max_daily_loss=0.03, max_position=0.07, hard_drawdown=0.1, stop_loss=2.25)
+
+    profile_name2, settings2, _ = app.reload_risk_manager_settings()
+    assert profile_name2 == "balanced"
+    assert settings2["max_daily_loss_pct"] == pytest.approx(0.03)
+    assert app.max_daily_loss_pct == pytest.approx(0.03)
+    assert app.trail_atr_mult_var.get() == pytest.approx(2.25)
+
+
+def test_sync_positions_from_service_spot(tmp_path, monkeypatch):
+    db_path = tmp_path / "spot_positions.db"
+    db_url = f"sqlite+aiosqlite:///{db_path.as_posix()}"
+    ex_mgr = ExchangeManager(exchange_id="binance", db_url=db_url)
+    ex_mgr.set_mode(spot=True)
+    db = ex_mgr._ensure_db()
+    assert db is not None
+    db.sync.upsert_position({
+        "symbol": "BTC/USDT",
+        "side": "LONG",
+        "quantity": 0.5,
+        "avg_price": 25_000.0,
+        "unrealized_pnl": 123.45,
+        "mode": "live",
+    })
 
     def start(self) -> None:  # pragma: no cover - prosta logika
         self.started = True

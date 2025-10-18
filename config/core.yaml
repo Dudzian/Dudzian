@@ -194,6 +194,9 @@ decision_engine:
       - var/audit/tco/latest_report.json
       - var/audit/acceptance/latest/tco_summary.json
     require_at_startup: false
+    runtime_clear_after_export: true
+    warn_report_age_hours: 24.0
+    max_report_age_hours: 72.0
 
 portfolio_governor:
   enabled: true
@@ -1253,6 +1256,42 @@ environments:
       exclude_severities: [critical]
       exclude_categories: [health]
       max_entries: 1024
+
+  coinbase_offline:
+    exchange: coinbase_spot
+    environment: paper
+    keychain_key: coinbase_offline_research
+    data_cache_path: ./var/data/offline/coinbase
+    risk_profile: manual
+    default_strategy: manual_override
+    default_controller: manual_override
+    offline_mode: true
+    alert_channels: []
+    ip_allowlist: []
+    required_permissions: [read]
+    forbidden_permissions: [trade, withdraw]
+    instrument_universe: core_multi_exchange
+    data_source:
+      enable_snapshots: false
+      cache_namespace: coinbase_offline
+    alert_audit:
+      backend: file
+      directory: audit/offline/alerts
+      filename_pattern: alerts-%Y%m%d.jsonl
+      retention_days: 365
+      fsync: true
+    decision_journal:
+      backend: file
+      directory: audit/offline/decisions
+      filename_pattern: decisions-%Y%m%d.jsonl
+      retention_days: 365
+      fsync: true
+    report_storage:
+      backend: file
+      directory: audit/offline/reports
+      filename_pattern: reports-%Y%m%d.json
+      retention_days: 365
+      fsync: true
 
   zonda_paper:
     exchange: zonda_spot

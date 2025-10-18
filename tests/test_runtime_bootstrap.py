@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
+import time
 from pathlib import Path
 from typing import Mapping, Sequence
 from textwrap import dedent
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -13,6 +16,7 @@ from bot_core.config.loader import load_core_config
 
 import tests._pathbootstrap  # noqa: F401  # pylint: disable=unused-import
 
+from bot_core.config.models import DecisionEngineTCOConfig
 from bot_core.alerts import EmailChannel, SMSChannel, TelegramChannel
 from bot_core.decision.models import DecisionCandidate, RiskSnapshot
 from bot_core.exchanges.base import (
@@ -133,6 +137,18 @@ _BASE_CONFIG = dedent(
           exclude_severities: [critical]
           exclude_categories: [health]
           max_entries: 16
+      coinbase_offline:
+        exchange: coinbase_spot
+        environment: paper
+        keychain_key: coinbase_offline_key
+        credential_purpose: trading
+        data_cache_path: ./var/data/coinbase_offline
+        risk_profile: balanced
+        alert_channels: ["telegram:primary", "email:ops", "sms:orange_local"]
+        offline_mode: true
+        report_storage:
+          backend: file
+          directory: ./audit/offline/reports
     reporting: {}
     alerts:
       telegram_channels:
@@ -268,6 +284,7 @@ def _prepare_manager() -> tuple[_MemorySecretStorage, SecretManager]:
     storage.set_secret("tests:binance_paper_key:trading", json.dumps(credentials_payload))
     storage.set_secret("tests:zonda_paper_key:trading", json.dumps(credentials_payload))
     storage.set_secret("tests:nowa_gielda_paper_key:trading", json.dumps(credentials_payload))
+    storage.set_secret("tests:coinbase_offline_key:trading", json.dumps(credentials_payload))
     manager.store_secret_value("telegram_token", "telegram-secret", purpose="alerts:telegram")
     manager.store_secret_value(
         "smtp_credentials",
@@ -413,6 +430,41 @@ def test_bootstrap_environment_initialises_components(tmp_path: Path) -> None:
     assert audit_info["requested"] == "inherit"
     assert audit_info["backend"] == "memory"
     assert audit_info["note"] == "inherited_environment_router"
+
+
+def test_bootstrap_environment_offline_disables_network_channels(tmp_path: Path) -> None:
+    runtime_metrics = {
+        "enabled": True,
+        "host": "127.0.0.1",
+        "port": 0,
+        "log_sink": False,
+    }
+    runtime_risk_service = {
+        "enabled": True,
+        "host": "127.0.0.1",
+        "port": 0,
+    }
+    config_path = _write_config_custom(
+        tmp_path,
+        runtime_metrics=runtime_metrics,
+        runtime_risk_service=runtime_risk_service,
+    )
+    _, manager = _prepare_manager()
+
+    context = bootstrap_environment(
+        "coinbase_offline", config_path=config_path, secret_manager=manager
+    )
+
+    assert context.environment.offline_mode is True
+    assert context.alert_channels == {}
+    assert len(context.alert_router.channels) == 0
+    assert context.alert_router.throttle is None
+    assert context.alert_router.audit_log is context.audit_log
+    assert context.metrics_server is None
+    assert context.metrics_service_enabled is False
+    assert context.risk_server is None
+    assert context.risk_service_enabled is False
+    assert context.risk_snapshot_publisher is None
 
 
 def test_bootstrap_environment_creates_signed_risk_decision_log(
@@ -974,3 +1026,146 @@ def test_bootstrap_loads_tco_report_for_decision_engine(tmp_path: Path) -> None:
     evaluation = context.decision_orchestrator.evaluate_candidate(candidate, snapshot)
     assert evaluation.accepted is True
     assert evaluation.cost_bps == pytest.approx(11.0)
+
+
+def test_bootstrap_runtime_tco_reporter_clears_after_export(tmp_path: Path) -> None:
+    config_path = _write_config(tmp_path)
+    config_data = yaml.safe_load(Path(config_path).read_text(encoding="utf-8"))
+
+    reports_dir = tmp_path / "reports"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    tco_report_path = reports_dir / "stage5_tco.json"
+    tco_report_path.write_text(
+        json.dumps(
+            {
+                "generated_at": "2024-04-01T00:00:00Z",
+                "total": {"cost_bps": 5.0},
+                "strategies": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    runtime_dir = tmp_path / "runtime" / "tco"
+    config_data["decision_engine"] = {
+        "orchestrator": {
+            "max_cost_bps": 12.0,
+            "min_net_edge_bps": 3.0,
+            "max_daily_loss_pct": 0.02,
+            "max_drawdown_pct": 0.05,
+            "max_position_ratio": 0.25,
+            "max_open_positions": 5,
+            "max_latency_ms": 200.0,
+        },
+        "min_probability": 0.5,
+        "require_cost_data": True,
+        "tco": {
+            "reports": [f"reports/{tco_report_path.name}"],
+            "runtime_enabled": True,
+            "runtime_report_directory": str(runtime_dir),
+            "runtime_clear_after_export": True,
+        },
+    }
+    Path(config_path).write_text(
+        yaml.safe_dump(config_data, sort_keys=False), encoding="utf-8"
+    )
+
+    _, manager = _prepare_manager()
+    context = bootstrap_environment(
+        "binance_paper", config_path=config_path, secret_manager=manager
+    )
+
+    reporter = context.tco_reporter
+    assert reporter is not None
+
+    reporter.record_execution(
+        strategy="trend_follow",
+        risk_profile="balanced",
+        instrument="BTCUSDT",
+        exchange="binance",
+        side="buy",
+        quantity=1.0,
+        executed_price=20000.0,
+        reference_price=19995.0,
+        commission=2.0,
+    )
+    assert reporter.events()
+
+    artifacts = reporter.export()
+
+    assert artifacts is not None
+    assert reporter.events() == ()
+    assert runtime_dir.exists()
+    assert any(runtime_dir.glob("*.json"))
+
+
+class _StubOrchestrator:
+    def __init__(self) -> None:
+        self.reports: list[object] = []
+
+    def update_costs_from_report(self, payload: object) -> None:
+        self.reports.append(payload)
+
+
+def _tco_config_with_report(
+    report_path: Path,
+    *,
+    warn_hours: float | None,
+    max_hours: float | None,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        tco=DecisionEngineTCOConfig(
+            report_paths=(str(report_path),),
+            warn_report_age_hours=warn_hours,
+            max_report_age_hours=max_hours,
+        )
+    )
+
+
+def _write_tco_report(path: Path) -> None:
+    payload = {"generated_at": "2025-01-01T00:00:00Z", "total_cost_bps": 12.5}
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def test_load_initial_tco_costs_warns_about_stale_report(tmp_path: Path) -> None:
+    report_path = tmp_path / "tco.json"
+    _write_tco_report(report_path)
+    two_hours_ago = time.time() - 2 * 3600
+    os.utime(report_path, (two_hours_ago, two_hours_ago))
+
+    orchestrator = _StubOrchestrator()
+    config = _tco_config_with_report(
+        report_path,
+        warn_hours=1.0,
+        max_hours=5.0,
+    )
+
+    loaded_path, warnings = _load_initial_tco_costs(config, orchestrator, None)
+
+    assert loaded_path == str(report_path)
+    assert orchestrator.reports, "stale raport powinien zostać załadowany mimo ostrzeżenia"
+    assert any(
+        entry.startswith(f"stale_warning:{report_path}") for entry in warnings
+    )
+
+
+def test_load_initial_tco_costs_skips_report_past_max_age(tmp_path: Path) -> None:
+    report_path = tmp_path / "expired_tco.json"
+    _write_tco_report(report_path)
+    ten_hours_ago = time.time() - 10 * 3600
+    os.utime(report_path, (ten_hours_ago, ten_hours_ago))
+
+    orchestrator = _StubOrchestrator()
+    config = _tco_config_with_report(
+        report_path,
+        warn_hours=1.0,
+        max_hours=2.0,
+    )
+
+    loaded_path, warnings = _load_initial_tco_costs(config, orchestrator, None)
+
+    assert loaded_path is None
+    assert not orchestrator.reports
+    assert any(
+        entry.startswith(f"stale_critical:{report_path}") for entry in warnings
+    )

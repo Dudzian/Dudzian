@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
+from typing import Mapping
 
 from bot_core.tco import TCOAnalyzer, TradeCostEvent
 
@@ -16,6 +17,7 @@ def _event(
     slippage: str,
     funding: str,
     other: str = "0",
+    metadata: Mapping[str, object] | None = None,
 ) -> TradeCostEvent:
     return TradeCostEvent(
         timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
@@ -30,6 +32,7 @@ def _event(
         slippage=Decimal(slippage),
         funding=Decimal(funding),
         other=Decimal(other),
+        metadata=dict(metadata or {}),
     )
 
 
@@ -59,6 +62,8 @@ def test_analyzer_aggregates_costs_and_alerts() -> None:
 
     assert report.metadata["events_count"] == 2
     assert report.metadata["strategy_count"] == 1
+    assert report.metadata["scheduler_count"] == 1
+    assert "default" in report.schedulers
     total = report.total
     assert total.trade_count == 2
     assert float(total.notional) == float(Decimal("0.5") * Decimal("20000") + Decimal("0.4") * Decimal("21000"))
@@ -77,3 +82,54 @@ def test_analyzer_aggregates_costs_and_alerts() -> None:
     payload = report.to_dict()
     assert payload["metadata"]["environment"] == "paper"
     assert payload["total"]["trade_count"] == 2
+
+
+def test_analyzer_builds_scheduler_summaries() -> None:
+    events = [
+        _event(
+            strategy="mean_reversion",
+            risk_profile="balanced",
+            quantity="0.5",
+            price="20000",
+            commission="5",
+            slippage="2",
+            funding="0.5",
+            metadata={"scheduler": "cron.daily"},
+        ),
+        _event(
+            strategy="mean_reversion",
+            risk_profile="aggressive",
+            quantity="0.4",
+            price="21000",
+            commission="6",
+            slippage="3",
+            funding="1.0",
+            metadata={"schedule": "cron.nightly"},
+        ),
+        _event(
+            strategy="trend",
+            risk_profile="balanced",
+            quantity="0.25",
+            price="18000",
+            commission="3",
+            slippage="1",
+            funding="0.4",
+            metadata={"scheduler_id": "cron.nightly"},
+        ),
+    ]
+
+    analyzer = TCOAnalyzer()
+    report = analyzer.analyze(events)
+
+    assert report.metadata["scheduler_count"] == 2
+    schedulers = report.schedulers
+    assert set(schedulers) == {"cron.daily", "cron.nightly"}
+
+    daily = schedulers["cron.daily"]
+    assert daily.total.trade_count == 1
+    assert set(daily.strategies) == {"mean_reversion"}
+
+    nightly = schedulers["cron.nightly"]
+    assert nightly.total.trade_count == 2
+    assert nightly.strategies["mean_reversion"].trade_count == 1
+    assert nightly.strategies["trend"].trade_count == 1

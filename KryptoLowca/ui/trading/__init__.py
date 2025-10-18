@@ -29,3 +29,4 @@ __all__ = [
     "snapshot_from_app",
     "main",
 ]
+"""Trading UI components."""
