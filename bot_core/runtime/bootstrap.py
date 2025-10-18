@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import json
 import logging
 from dataclasses import dataclass
@@ -9,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import os
 import stat
-from typing import Any, Mapping, MutableMapping, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Mapping, MutableMapping, Sequence
 
 from bot_core.alerts import (
     AlertThrottle,
@@ -32,7 +33,9 @@ from bot_core.config.models import (
     DecisionJournalConfig,
     EmailChannelSettings,
     EnvironmentAIConfig,
+    EnvironmentAIEnsembleConfig,
     EnvironmentAIModelConfig,
+    EnvironmentAIPipelineScheduleConfig,
     EnvironmentConfig,
     MessengerChannelSettings,
     RiskProfileConfig,
@@ -199,6 +202,32 @@ _DEFAULT_ADAPTERS: Mapping[str, ExchangeAdapterFactory] = {
     "nowa_gielda_spot": NowaGieldaSpotAdapter,
     "zonda_spot": ZondaSpotAdapter,
 }
+
+
+def _load_callable_from_path(target: str) -> Callable[..., Any]:
+    """Resolve dotted/colon-separated path to a callable."""
+
+    if not isinstance(target, str) or not target.strip():
+        raise ValueError("Ścieżka do funkcji pipeline'u musi być niepustym łańcuchem.")
+
+    module_path: str
+    attr_path: str
+    if ":" in target:
+        module_path, attr_path = target.split(":", 1)
+    else:
+        module_path, sep, attr_path = target.rpartition(".")
+        if not sep:
+            raise ValueError(f"Nie można wyznaczyć modułu dla ścieżki '{target}'.")
+    module = importlib.import_module(module_path)
+    current: Any = module
+    for part in attr_path.split("."):
+        if not part:
+            raise ValueError(f"Nieprawidłowy fragment ścieżki w '{target}'.")
+        current = getattr(current, part)
+    if not callable(current):
+        raise TypeError(f"Obiekt wskazany przez '{target}' nie jest wywoływalny.")
+    return current
+
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -542,6 +571,9 @@ class BootstrapContext:
     ai_models_loaded: Sequence[str] | None = None
     ai_threshold_bps: float | None = None
     ai_model_bindings: Sequence[EnvironmentAIModelConfig] | None = None
+    ai_ensembles_registered: Sequence[str] | None = None
+    ai_pipeline_schedules: Sequence[str] | None = None
+    ai_pipeline_pending: Sequence[str] | None = None
 
 
 def bootstrap_environment(
@@ -592,6 +624,9 @@ def bootstrap_environment(
     ai_model_bindings: Sequence[EnvironmentAIModelConfig] | None = None
     ai_threshold_bps: float | None = None
     environment_ai: EnvironmentAIConfig | None = getattr(environment, "ai", None)
+    ai_ensembles_registered: list[str] = []
+    ai_pipeline_schedules: list[str] = []
+    ai_pipeline_pending: list[str] = []
     if portfolio_governor_config and PortfolioGovernor is not None:
         try:
             portfolio_governor = PortfolioGovernor(portfolio_governor_config)
@@ -662,6 +697,7 @@ def bootstrap_environment(
                 ai_manager_instance = None
                 _LOGGER.exception("Nie udało się zainicjalizować AIManagera")
             else:
+                ai_model_bindings = environment_ai.models
                 for binding in environment_ai.models:
                     model_name = f"{binding.symbol}:{binding.model_type}"
                     try:
@@ -687,6 +723,99 @@ def bootstrap_environment(
                 for preload_entry in environment_ai.preload:
                     if preload_entry not in ai_models_loaded:
                         ai_models_loaded.append(preload_entry)
+
+                if environment_ai.ensembles:
+                    for ensemble in environment_ai.ensembles:
+                        try:
+                            weights = (
+                                tuple(float(value) for value in ensemble.weights)
+                                if ensemble.weights is not None
+                                else None
+                            )
+                            ai_manager_instance.register_ensemble(
+                                ensemble.name,
+                                ensemble.components,
+                                aggregation=ensemble.aggregation,
+                                weights=weights,
+                                override=False,
+                            )
+                        except Exception:
+                            _LOGGER.exception(
+                                "Nie udało się zarejestrować zespołu modeli %s",
+                                ensemble.name,
+                            )
+                        else:
+                            ai_ensembles_registered.append(ensemble.name)
+
+                if environment_ai.pipeline_schedules:
+                    for schedule in environment_ai.pipeline_schedules:
+                        try:
+                            df_provider = _load_callable_from_path(schedule.data_source)
+                        except Exception:
+                            _LOGGER.exception(
+                                "Nie udało się załadować źródła danych pipeline'u %s (%s)",
+                                schedule.symbol,
+                                schedule.data_source,
+                            )
+                            continue
+                        baseline_provider: Callable[..., Any] | None = None
+                        if schedule.baseline_source:
+                            try:
+                                baseline_provider = _load_callable_from_path(
+                                    schedule.baseline_source
+                                )
+                            except Exception:
+                                _LOGGER.exception(
+                                    "Nie udało się załadować bazowego źródła danych %s (%s)",
+                                    schedule.symbol,
+                                    schedule.baseline_source,
+                                )
+                                continue
+                        on_result: Callable[..., Any] | None = None
+                        if schedule.result_callback:
+                            try:
+                                on_result = _load_callable_from_path(
+                                    schedule.result_callback
+                                )
+                            except Exception:
+                                _LOGGER.exception(
+                                    "Nie udało się załadować callbacku wynikowego %s (%s)",
+                                    schedule.symbol,
+                                    schedule.result_callback,
+                                )
+                                continue
+                        try:
+                            schedule_obj = ai_manager_instance.schedule_pipeline(
+                                schedule.symbol,
+                                df_provider,
+                                schedule.model_types,
+                                interval_seconds=schedule.interval_seconds,
+                                seq_len=schedule.seq_len,
+                                folds=schedule.folds,
+                                baseline_provider=baseline_provider,
+                                on_result=on_result,
+                            )
+                        except RuntimeError as exc:
+                            if "no running event loop" in str(exc).lower():
+                                _LOGGER.warning(
+                                    "Harmonogram pipeline'u %s nie został uruchomiony: brak aktywnej pętli zdarzeń",
+                                    schedule.symbol,
+                                )
+                                ai_pipeline_pending.append(schedule.symbol)
+                            else:
+                                _LOGGER.exception(
+                                    "Nie udało się zaplanować pipeline'u %s",
+                                    schedule.symbol,
+                                )
+                            continue
+                        except Exception:
+                            _LOGGER.exception(
+                                "Nie udało się zaplanować pipeline'u %s",
+                                schedule.symbol,
+                            )
+                            continue
+                        registered_symbol = getattr(schedule_obj, "symbol", schedule.symbol)
+                        ai_pipeline_schedules.append(str(registered_symbol))
 
     profile = build_risk_profile_from_config(risk_profile_config)
     risk_engine.register_profile(profile)
@@ -1611,6 +1740,13 @@ def bootstrap_environment(
         ai_models_loaded=tuple(ai_models_loaded) if ai_models_loaded else None,
         ai_threshold_bps=ai_threshold_bps,
         ai_model_bindings=ai_model_bindings,
+        ai_ensembles_registered=tuple(ai_ensembles_registered)
+        if ai_ensembles_registered
+        else None,
+        ai_pipeline_schedules=tuple(ai_pipeline_schedules)
+        if ai_pipeline_schedules
+        else None,
+        ai_pipeline_pending=tuple(ai_pipeline_pending) if ai_pipeline_pending else None,
     )
 
 

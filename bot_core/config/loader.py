@@ -1,7 +1,7 @@
 """Ładowanie konfiguracji z plików YAML."""
 from __future__ import annotations
 
-from dataclasses import fields
+from dataclasses import MISSING, fields
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
@@ -19,7 +19,9 @@ from bot_core.config.models import (
     CoverageMonitoringConfig,
     EmailChannelSettings,
     EnvironmentAIConfig,
+    EnvironmentAIEnsembleConfig,
     EnvironmentAIModelConfig,
+    EnvironmentAIPipelineScheduleConfig,
     EnvironmentConfig,
     EnvironmentDataSourceConfig,
     EnvironmentDataQualityConfig,
@@ -43,6 +45,9 @@ from bot_core.config.models import (
     PermissionProfileConfig,
 )
 from bot_core.exchanges.base import Environment
+
+
+_ALLOWED_ENSEMBLE_AGGREGATIONS = {"mean", "median", "max", "min", "weighted"}
 
 # --- opcjonalne typy (mogą nie istnieć w Twojej gałęzi) ---
 try:
@@ -956,6 +961,123 @@ def _load_environment_ai(
             )
         )
 
+    ensembles_raw = entry.get("ensembles", ()) or ()
+    ensembles: list[EnvironmentAIEnsembleConfig] = []
+    for ensemble_entry in ensembles_raw:
+        if not isinstance(ensemble_entry, Mapping):
+            raise ValueError("environment.ai.ensembles musi zawierać obiekty mapujące")
+        name_raw = ensemble_entry.get("name")
+        components_raw = ensemble_entry.get("components")
+        if not name_raw or not components_raw:
+            raise ValueError("Każdy zespół AI musi mieć pola 'name' oraz 'components'")
+        components = [
+            str(component).strip()
+            for component in (components_raw or ())
+            if str(component).strip()
+        ]
+        if not components:
+            raise ValueError("environment.ai.ensembles[].components nie może być puste")
+        if len(set(component.lower() for component in components)) != len(components):
+            raise ValueError("environment.ai.ensembles[].components nie może zawierać duplikatów")
+        aggregation_raw = ensemble_entry.get("aggregation", "mean")
+        aggregation = str(aggregation_raw).strip().lower() if aggregation_raw else "mean"
+        if aggregation not in _ALLOWED_ENSEMBLE_AGGREGATIONS:
+            raise ValueError(
+                "environment.ai.ensembles[].aggregation musi należeć do {mean,median,max,min,weighted}"
+            )
+        weights_raw = ensemble_entry.get("weights")
+        weights = (
+            tuple(float(value) for value in weights_raw)
+            if weights_raw not in (None, ())
+            else None
+        )
+        if weights is not None and len(weights) != len(components):
+            raise ValueError("environment.ai.ensembles[].weights musi odpowiadać liczbie komponentów")
+        if weights is not None and aggregation != "weighted":
+            raise ValueError("environment.ai.ensembles[].weights można podać tylko dla agregacji 'weighted'")
+        if weights is None and aggregation == "weighted":
+            raise ValueError("environment.ai.ensembles[].aggregation='weighted' wymaga listy wag")
+        ensembles.append(
+            EnvironmentAIEnsembleConfig(
+                name=str(name_raw),
+                components=tuple(components),
+                aggregation=aggregation,
+                weights=weights,
+            )
+        )
+
+    schedules_raw = entry.get("pipeline_schedules", ()) or ()
+    schedule_defaults = getattr(EnvironmentAIPipelineScheduleConfig, "__dataclass_fields__", {})
+    interval_default = 3600.0
+    seq_len_default = 64
+    folds_default = 3
+    if schedule_defaults:
+        interval_field = schedule_defaults.get("interval_seconds")
+        if interval_field and interval_field.default is not MISSING:
+            interval_default = float(interval_field.default)
+        seq_len_field = schedule_defaults.get("seq_len")
+        if seq_len_field and seq_len_field.default is not MISSING:
+            seq_len_default = int(seq_len_field.default)
+        folds_field = schedule_defaults.get("folds")
+        if folds_field and folds_field.default is not MISSING:
+            folds_default = int(folds_field.default)
+    schedules: list[EnvironmentAIPipelineScheduleConfig] = []
+    for schedule_entry in schedules_raw:
+        if not isinstance(schedule_entry, Mapping):
+            raise ValueError(
+                "environment.ai.pipeline_schedules musi zawierać obiekty mapujące"
+            )
+        symbol_raw = schedule_entry.get("symbol")
+        model_types_raw = schedule_entry.get("model_types") or schedule_entry.get("models")
+        data_source_raw = schedule_entry.get("data_source")
+        if not symbol_raw or not model_types_raw or not data_source_raw:
+            raise ValueError(
+                "Harmonogram pipeline'u wymaga pól 'symbol', 'model_types' oraz 'data_source'"
+            )
+        model_types = [str(item).strip() for item in model_types_raw if str(item).strip()]
+        if not model_types:
+            raise ValueError("environment.ai.pipeline_schedules[].model_types nie może być puste")
+        interval_raw = schedule_entry.get("interval_seconds", schedule_entry.get("interval"))
+        interval_seconds = (
+            float(interval_raw)
+            if interval_raw not in (None, "")
+            else interval_default
+        )
+        if interval_seconds <= 0:
+            raise ValueError("environment.ai.pipeline_schedules[].interval_seconds musi być dodatnie")
+        seq_len_raw = schedule_entry.get("seq_len")
+        seq_len = int(seq_len_raw) if seq_len_raw not in (None, "") else seq_len_default
+        if seq_len <= 0:
+            raise ValueError("environment.ai.pipeline_schedules[].seq_len musi być dodatnie")
+        folds_raw = schedule_entry.get("folds")
+        folds = int(folds_raw) if folds_raw not in (None, "") else folds_default
+        if folds <= 0:
+            raise ValueError("environment.ai.pipeline_schedules[].folds musi być dodatnie")
+        baseline_source_value = schedule_entry.get("baseline_source")
+        baseline_source = (
+            str(baseline_source_value).strip()
+            if baseline_source_value not in (None, "")
+            else None
+        )
+        result_callback_value = schedule_entry.get("result_callback")
+        result_callback = (
+            str(result_callback_value).strip()
+            if result_callback_value not in (None, "")
+            else None
+        )
+        schedules.append(
+            EnvironmentAIPipelineScheduleConfig(
+                symbol=str(symbol_raw),
+                model_types=tuple(model_types),
+                data_source=str(data_source_raw),
+                interval_seconds=interval_seconds,
+                seq_len=seq_len,
+                folds=folds,
+                baseline_source=baseline_source,
+                result_callback=result_callback,
+            )
+        )
+
     return EnvironmentAIConfig(
         enabled=enabled,
         model_dir=model_dir,
@@ -966,6 +1088,8 @@ def _load_environment_ai(
         default_action=default_action,
         preload=preload,
         models=tuple(models),
+        ensembles=tuple(ensembles),
+        pipeline_schedules=tuple(schedules),
     )
 
 
