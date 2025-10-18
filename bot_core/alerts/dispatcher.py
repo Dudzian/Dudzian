@@ -1,4 +1,4 @@
-"""Centralny dispatcher alertów i wspólne wyjątki dla całego bota."""
+"""Lightweight alert dispatcher for in-process listeners."""
 from __future__ import annotations
 
 import logging
@@ -8,16 +8,11 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Dict, Optional
 
-logger = logging.getLogger(__name__)
-if not logger.handlers:
-    handler = logging.StreamHandler()
-    handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
-    logger.addHandler(handler)
-logger.setLevel(logging.INFO)
+LOGGER = logging.getLogger(__name__)
 
 
 class AlertSeverity(str, Enum):
-    """Stopnie ważności alertów przekazywanych do dashboardu."""
+    """Severity levels understood by the legacy UI surfaces."""
 
     INFO = "info"
     WARNING = "warning"
@@ -27,7 +22,7 @@ class AlertSeverity(str, Enum):
 
 @dataclass(slots=True)
 class AlertEvent:
-    """Struktura pojedynczego alertu przekazywanego do słuchaczy."""
+    """Payload dispatched to registered listeners."""
 
     message: str
     severity: AlertSeverity
@@ -52,7 +47,7 @@ class AlertEvent:
 
 
 class BotError(Exception):
-    """Bazowy wyjątek domenowy – mapowany na alerty."""
+    """Domain exception automatically translated into an alert."""
 
     severity: AlertSeverity = AlertSeverity.ERROR
     source: str = "core"
@@ -72,7 +67,7 @@ class BotError(Exception):
 
 
 class AlertDispatcher:
-    """Prosty dispatcher przekazujący alerty do zarejestrowanych słuchaczy."""
+    """Simple dispatcher delivering alerts to registered listeners."""
 
     def __init__(self) -> None:
         self._listeners: Dict[str, Callable[[AlertEvent], None]] = {}
@@ -80,10 +75,10 @@ class AlertDispatcher:
         self._counter = 0
 
     def register(self, listener: Callable[[AlertEvent], None], *, name: Optional[str] = None) -> str:
-        """Zarejestruj słuchacza i zwróć jego identyfikator."""
+        """Register a listener and return its identifier."""
 
         with self._lock:
-            token = name or f"listener-{self._counter}"  # prosty identyfikator
+            token = name or f"listener-{self._counter}"
             while token in self._listeners:
                 self._counter += 1
                 token = f"listener-{self._counter}"
@@ -92,7 +87,7 @@ class AlertDispatcher:
             return token
 
     def unregister(self, token: str) -> None:
-        """Usuń słuchacza – brak błędu gdy nie istnieje."""
+        """Remove a listener; silently ignore missing entries."""
 
         with self._lock:
             self._listeners.pop(token, None)
@@ -104,11 +99,11 @@ class AlertDispatcher:
         for name, listener in listeners.items():
             try:
                 listener(event)
-            except Exception:  # pragma: no cover - logujemy, ale nie przerywamy
-                logger.exception("Alert listener '%s' zgłosił wyjątek", name)
+            except Exception:  # pragma: no cover - listeners are third-party callbacks
+                LOGGER.exception("Alert listener '%s' raised an exception", name)
 
     def clear(self) -> None:
-        """Usuń wszystkich słuchaczy (używane w testach)."""
+        """Remove every registered listener (mostly used in tests)."""
 
         with self._lock:
             self._listeners.clear()
@@ -118,7 +113,7 @@ _DISPATCHER = AlertDispatcher()
 
 
 def get_alert_dispatcher() -> AlertDispatcher:
-    """Zwróć globalny dispatcher alertów."""
+    """Return the process-global dispatcher instance."""
 
     return _DISPATCHER
 
@@ -131,7 +126,7 @@ def emit_alert(
     context: Optional[Dict[str, Any]] = None,
     exception: Optional[BaseException] = None,
 ) -> AlertEvent:
-    """Zbuduj i roześlij alert do wszystkich słuchaczy."""
+    """Create an alert event and dispatch it to listeners."""
 
     event = AlertEvent(
         message=message,

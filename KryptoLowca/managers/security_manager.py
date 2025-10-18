@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
-from KryptoLowca.alerts import AlertSeverity, emit_alert  # type: ignore
+from bot_core.alerts import AlertSeverity, emit_alert  # type: ignore
 
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives import hashes

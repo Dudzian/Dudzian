@@ -4,7 +4,7 @@ from typing import Any, List, Optional, Tuple
 
 import pytest
 
-from KryptoLowca.alerts import AlertSeverity
+from bot_core.alerts import AlertSeverity
 from KryptoLowca.auto_trader import AutoTrader
 
 

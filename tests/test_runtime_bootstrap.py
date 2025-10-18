@@ -12,6 +12,8 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
+from bot_core.config.loader import load_core_config
+
 import tests._pathbootstrap  # noqa: F401  # pylint: disable=unused-import
 
 from bot_core.config.models import DecisionEngineTCOConfig
@@ -25,8 +27,12 @@ from bot_core.exchanges.base import (
 )
 from bot_core.risk.engine import ThresholdRiskEngine
 from bot_core.risk.repository import FileRiskRepository
-from bot_core.runtime import BootstrapContext, bootstrap_environment
-from bot_core.runtime.bootstrap import _load_initial_tco_costs
+from bot_core.runtime import (
+    BootstrapContext,
+    bootstrap_environment,
+    catalog_runtime_entrypoints,
+    resolve_runtime_entrypoint,
+)
 from bot_core.runtime.metrics_alerts import DEFAULT_UI_ALERTS_JSONL_PATH
 from bot_core.security import SecretManager, SecretStorage, SecretStorageError
 
@@ -71,6 +77,18 @@ _BASE_CONFIG = dedent(
       read_only:
         required_permissions: [read]
         forbidden_permissions: []
+    runtime_entrypoints:
+      auto_trader:
+        environment: binance_paper
+        controller: autotrader_default
+        strategy: ai_autotrader
+        risk_profile: balanced
+        description: "AutoTrader"
+      trading_gui:
+        environment: binance_paper
+        controller: trading_gui
+        risk_profile: manual
+        bootstrap: false
     environments:
       binance_paper:
         exchange: binance_spot
@@ -279,6 +297,39 @@ def _prepare_manager() -> tuple[_MemorySecretStorage, SecretManager]:
         purpose="alerts:sms",
     )
     return storage, manager
+
+
+def test_catalog_runtime_entrypoints_in_config(tmp_path: Path) -> None:
+    config_path = _write_config(tmp_path)
+    core_config = load_core_config(config_path)
+    entrypoints = catalog_runtime_entrypoints(core_config)
+    assert set(entrypoints) >= {"auto_trader", "trading_gui"}
+    assert entrypoints["auto_trader"].risk_profile == "balanced"
+    assert entrypoints["trading_gui"].bootstrap_required is False
+
+
+def test_resolve_runtime_entrypoint_bootstrap(tmp_path: Path) -> None:
+    config_path = _write_config(tmp_path)
+    _storage, manager = _prepare_manager()
+    entrypoint, context = resolve_runtime_entrypoint(
+        "auto_trader",
+        config_path=config_path,
+        secret_manager=manager,
+    )
+    assert entrypoint.environment == "binance_paper"
+    assert context is not None
+    assert context.environment.exchange == "binance_spot"
+
+
+def test_resolve_runtime_entrypoint_without_bootstrap(tmp_path: Path) -> None:
+    config_path = _write_config(tmp_path)
+    entrypoint, context = resolve_runtime_entrypoint(
+        "trading_gui",
+        config_path=config_path,
+        bootstrap=False,
+    )
+    assert context is None
+    assert entrypoint.bootstrap_required is False
 
 
 def test_bootstrap_environment_initialises_components(tmp_path: Path) -> None:

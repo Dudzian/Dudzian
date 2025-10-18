@@ -725,7 +725,14 @@ def configure_optional_exports_logging_from_env(
 
 
 try:  # pragma: no cover - środowiska testowe mogą nie mieć pełnego runtime
-    from bot_core.runtime.bootstrap import BootstrapContext, bootstrap_environment
+    from bot_core.runtime.bootstrap import (
+        BootstrapContext,
+        RuntimeEntrypoint,
+        bootstrap_environment,
+        catalog_runtime_entrypoints,
+        resolve_runtime_entrypoint,
+    )
+    from bot_core.runtime.paper_trading import PaperTradingAdapter
     from bot_core.runtime.resource_monitor import (
         ResourceBudgetEvaluation,
         ResourceBudgets,
@@ -763,7 +770,33 @@ try:  # pragma: no cover - zależne od gałęzi
         Stage5TrainingConfig,
         verify_stage5_hypercare_summary,
     )
-except Exception:  # pragma: no cover - brak modułu stage5 w tej dystrybucji
+    from bot_core.runtime.full_hypercare import (
+        FullHypercareSummaryBuilder,
+        FullHypercareSummaryConfig,
+        FullHypercareSummaryResult,
+        FullHypercareVerificationResult,
+        verify_full_hypercare_summary,
+    )
+    from bot_core.runtime.stage6_hypercare import (
+        Stage6HypercareConfig,
+        Stage6HypercareCycle,
+        Stage6HypercareResult,
+        Stage6HypercareVerificationResult,
+        verify_stage6_hypercare_summary,
+    )
+except Exception:  # pragma: no cover - fallback gdy zależności runtime są niekompletne
+    BootstrapContext = None  # type: ignore
+    RuntimeEntrypoint = None  # type: ignore
+    bootstrap_environment = None  # type: ignore
+    catalog_runtime_entrypoints = None  # type: ignore
+    resolve_runtime_entrypoint = None  # type: ignore
+    ResourceBudgetEvaluation = None  # type: ignore
+    ResourceBudgets = None  # type: ignore
+    ResourceSample = None  # type: ignore
+    evaluate_resource_sample = None  # type: ignore
+    LoadTestResult = None  # type: ignore
+    LoadTestSettings = None  # type: ignore
+    execute_scheduler_load_test = None  # type: ignore
     Stage5ComplianceConfig = None  # type: ignore
     Stage5HypercareConfig = None  # type: ignore
     Stage5HypercareCycle = None  # type: ignore
@@ -805,6 +838,7 @@ except Exception:  # pragma: no cover - brak modułu stage6
     Stage6HypercareResult = None  # type: ignore
     Stage6HypercareVerificationResult = None  # type: ignore
     verify_stage6_hypercare_summary = None  # type: ignore
+    PaperTradingAdapter = None  # type: ignore
 
 # --- Metrics service (opcjonalny – zależy od dostępności gRPC i wygenerowanych stubów) ---
 try:
@@ -889,7 +923,16 @@ except Exception:  # pragma: no cover - starsze gałęzie mogą nie mieć moduł
 # --- Publiczny interfejs modułu ---
 __all__ = [
     "BootstrapContext",
+    "RuntimeEntrypoint",
     "bootstrap_environment",
+    "catalog_runtime_entrypoints",
+    "resolve_runtime_entrypoint",
+    "RuntimeEntrypointMetadata",
+    "RiskManagerSettings",
+    "derive_risk_manager_settings",
+    "load_risk_profile_config",
+    "load_runtime_entrypoint_metadata",
+    "PaperTradingAdapter",
     "ResourceBudgets",
     "ResourceSample",
     "ResourceBudgetEvaluation",

@@ -22,7 +22,7 @@ from KryptoLowca.exchanges import (
 
 # ---- Alerts (z fallbackiem, gdy moduł nie istnieje) -------------------------
 try:  # pragma: no cover
-    from KryptoLowca.alerts import (  # type: ignore
+    from bot_core.alerts import (
         AlertEvent,
         AlertSeverity,
         BotError,
@@ -80,11 +80,7 @@ except Exception:  # pragma: no cover - starsze wersje ccxt
         setattr(ccxt_module, "asyncio", ccxt_async)
         sys.modules["ccxt.asyncio"] = ccxt_async
 
-# ---- odporny import Mode ----------------------------------------------------
-try:  # pragma: no cover
-    from KryptoLowca.managers.exchange_core import Mode  # type: ignore
-except Exception:  # pragma: no cover
-    from legacy_bridge.managers.exchange_core import Mode  # type: ignore
+from KryptoLowca.managers.exchange_core import Mode  # type: ignore
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:

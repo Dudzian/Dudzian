@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+from bot_core.security.fingerprint import decode_secret
+
 from bot_core.security import ui_bridge
 
 
@@ -126,3 +128,61 @@ def test_remove_profile_entry_deletes_and_logs(tmp_path):
         actor="qa",
     )
     assert missing["status"] == "not_found"
+
+
+def test_main_fingerprint_uses_keys_file(monkeypatch, tmp_path, capsys):
+    keys_file = tmp_path / "keys.json"
+    keys_file.write_text(json.dumps({"keys": {"fp-key": "hex:0011"}}), encoding="utf-8")
+
+    captured: dict[str, object] = {}
+
+    class FakeRecord:
+        def __init__(self, dongle: str | None) -> None:
+            self._dongle = dongle
+
+        def as_dict(self) -> dict[str, object]:
+            return {"fingerprint": "demo", "dongle": self._dongle}
+
+    class FakeService:
+        def __init__(self, provider: object) -> None:
+            captured["provider"] = provider
+
+        def build(self, dongle_serial: str | None = None) -> FakeRecord:
+            captured["dongle"] = dongle_serial
+            return FakeRecord(dongle_serial)
+
+    def fake_provider(keys, rotation_log, purpose, interval_days):
+        captured["keys"] = dict(keys)
+        captured["rotation_log"] = rotation_log
+        captured["purpose"] = purpose
+        captured["interval"] = interval_days
+        return {"keys": keys}
+
+    monkeypatch.setattr(ui_bridge, "HardwareFingerprintService", FakeService)
+    monkeypatch.setattr(ui_bridge, "build_key_provider", fake_provider)
+
+    exit_code = ui_bridge.main(
+        [
+            "fingerprint",
+            "--keys-file",
+            str(keys_file),
+            "--rotation-log",
+            "var/licenses/custom_rotation.json",
+            "--purpose",
+            "demo",
+            "--interval-days",
+            "45",
+            "--dongle",
+            "USB-1",
+        ]
+    )
+
+    assert exit_code == 0
+    std = capsys.readouterr().out.strip()
+    payload = json.loads(std)
+    assert payload["fingerprint"] == "demo"
+    assert payload["dongle"] == "USB-1"
+    assert captured["keys"]["fp-key"] == decode_secret("hex:0011")
+    assert captured["rotation_log"] == "var/licenses/custom_rotation.json"
+    assert captured["purpose"] == "demo"
+    assert captured["interval"] == 45.0

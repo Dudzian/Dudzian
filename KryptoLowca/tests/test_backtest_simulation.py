@@ -23,14 +23,14 @@ reporting = pytest.importorskip(
     "KryptoLowca.backtest.reporting",
     reason="Reporting not available yet in unified engine",
 )
-core_paper = pytest.importorskip(
-    "KryptoLowca.core.services.paper_adapter",
+paper_runtime = pytest.importorskip(
+    "bot_core.runtime.paper_trading",
     reason="PaperTradingAdapter not available yet",
 )
 
 export_report = getattr(reporting, "export_report", None)
 render_html_report = getattr(reporting, "render_html_report", None)
-PaperTradingAdapter = getattr(core_paper, "PaperTradingAdapter", None)
+PaperTradingAdapter = getattr(paper_runtime, "PaperTradingAdapter", None)
 
 
 # ------------------ dummy exchange / provider ------------------

@@ -203,51 +203,79 @@ _DEFAULT_ADAPTERS: Mapping[str, ExchangeAdapterFactory] = {
 _LOGGER = logging.getLogger(__name__)
 
 
-_ALERT_COMPONENTS: dict[str, Any] | None = None
+@dataclass(slots=True, frozen=True)
+class RuntimeEntrypoint:
+    """Deklaracja punktu wejścia korzystającego z bootstrap_environment."""
+
+    name: str
+    environment: str
+    description: str | None
+    controller: str | None
+    strategy: str | None
+    risk_profile: str | None
+    tags: tuple[str, ...]
+    bootstrap_required: bool
 
 
-def _get_alert_components() -> dict[str, Any]:
-    """Leniwie importuje moduł alertów, aby uniknąć cyklicznych zależności."""
+def catalog_runtime_entrypoints(core_config: CoreConfig) -> dict[str, RuntimeEntrypoint]:
+    """Buduje indeks punktów wejścia zadeklarowanych w konfiguracji."""
 
-    global _ALERT_COMPONENTS
-    if _ALERT_COMPONENTS is None:
-        from bot_core.alerts import (  # noqa: WPS433 - import lokalny
-            AlertThrottle,
-            DefaultAlertRouter,
-            EmailChannel,
-            FileAlertAuditLog,
-            InMemoryAlertAuditLog,
-            MessengerChannel,
-            SMSChannel,
-            SignalChannel,
-            TelegramChannel,
-            WhatsAppChannel,
-            get_sms_provider,
+    result: dict[str, RuntimeEntrypoint] = {}
+    entrypoint_cfg = getattr(core_config, "runtime_entrypoints", {}) or {}
+    for name, cfg in entrypoint_cfg.items():
+        tags = tuple(getattr(cfg, "tags", ()) or ())
+        result[name] = RuntimeEntrypoint(
+            name=name,
+            environment=cfg.environment,
+            description=getattr(cfg, "description", None),
+            controller=getattr(cfg, "controller", None),
+            strategy=getattr(cfg, "strategy", None),
+            risk_profile=getattr(cfg, "risk_profile", None),
+            tags=tags,
+            bootstrap_required=bool(getattr(cfg, "bootstrap", True)),
         )
-        from bot_core.alerts.base import AlertAuditLog as _AlertAuditLog  # noqa: WPS433
-        from bot_core.alerts.base import AlertChannel as _AlertChannel  # noqa: WPS433
-        from bot_core.alerts.channels.providers import (  # noqa: WPS433
-            SmsProviderConfig,
+    return result
+
+
+def resolve_runtime_entrypoint(
+    entrypoint_name: str,
+    *,
+    config_path: str | Path,
+    secret_manager: SecretManager | None = None,
+    adapter_factories: Mapping[str, ExchangeAdapterFactory] | None = None,
+    risk_profile_name: str | None = None,
+    bootstrap: bool | None = None,
+) -> tuple[RuntimeEntrypoint, BootstrapContext | None]:
+    """Zwraca deklarację punktu wejścia i opcjonalnie inicjalizuje runtime."""
+
+    core_config = load_core_config(config_path)
+    entrypoints = catalog_runtime_entrypoints(core_config)
+    if entrypoint_name not in entrypoints:
+        available = ", ".join(sorted(entrypoints)) or "<none>"
+        raise KeyError(
+            f"Punkt wejścia '{entrypoint_name}' nie istnieje w konfiguracji. Dostępne: {available}."
         )
 
-        _ALERT_COMPONENTS = {
-            "AlertThrottle": AlertThrottle,
-            "DefaultAlertRouter": DefaultAlertRouter,
-            "EmailChannel": EmailChannel,
-            "FileAlertAuditLog": FileAlertAuditLog,
-            "InMemoryAlertAuditLog": InMemoryAlertAuditLog,
-            "MessengerChannel": MessengerChannel,
-            "SMSChannel": SMSChannel,
-            "SignalChannel": SignalChannel,
-            "TelegramChannel": TelegramChannel,
-            "WhatsAppChannel": WhatsAppChannel,
-            "get_sms_provider": get_sms_provider,
-            "AlertAuditLog": _AlertAuditLog,
-            "AlertChannel": _AlertChannel,
-            "SmsProviderConfig": SmsProviderConfig,
-        }
+    entrypoint = entrypoints[entrypoint_name]
+    should_bootstrap = entrypoint.bootstrap_required if bootstrap is None else bool(bootstrap)
+    context: BootstrapContext | None = None
+    effective_profile = risk_profile_name or entrypoint.risk_profile
 
-    return _ALERT_COMPONENTS
+    if should_bootstrap:
+        if secret_manager is None:
+            raise ValueError(
+                "resolve_runtime_entrypoint wymaga SecretManager, gdy bootstrap jest aktywny."
+            )
+        context = bootstrap_environment(
+            entrypoint.environment,
+            config_path=config_path,
+            secret_manager=secret_manager,
+            adapter_factories=adapter_factories,
+            risk_profile_name=effective_profile,
+            core_config=core_config,
+        )
+
+    return entrypoint, context
 
 
 def _build_ui_alert_audit_metadata(
@@ -553,6 +581,7 @@ def bootstrap_environment(
     secret_manager: SecretManager,
     adapter_factories: Mapping[str, ExchangeAdapterFactory] | None = None,
     risk_profile_name: str | None = None,
+    core_config: CoreConfig | None = None,
 ) -> BootstrapContext:
     """Tworzy kompletny kontekst uruchomieniowy dla wskazanego środowiska."""
     from bot_core.config.loader import load_core_config as _load_core_config
@@ -2132,4 +2161,11 @@ def _resolve_sms_provider(
     )
 
 
-__all__ = ["BootstrapContext", "bootstrap_environment", "build_alert_channels"]
+__all__ = [
+    "BootstrapContext",
+    "RuntimeEntrypoint",
+    "bootstrap_environment",
+    "catalog_runtime_entrypoints",
+    "resolve_runtime_entrypoint",
+    "build_alert_channels",
+]

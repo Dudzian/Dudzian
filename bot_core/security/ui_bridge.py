@@ -12,9 +12,11 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
+from bot_core.security.fingerprint import HardwareFingerprintService, build_key_provider, decode_secret
 from bot_core.security.profiles import (
     load_profiles,
     log_admin_event,
@@ -36,6 +38,27 @@ def _resolve_profiles_path(path: str | None) -> Path:
     if path:
         return Path(path).expanduser()
     return Path("config/user_profiles.json")
+
+
+def _load_keys_from_file(path: Path) -> dict[str, bytes]:
+    if not path.exists():
+        raise FileNotFoundError(f"Plik kluczy fingerprint nie istnieje: {path}")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Plik {path} zawiera niepoprawny JSON: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"Plik {path} ma nieoczekiwaną strukturę – oczekiwano obiektu JSON")
+    raw_keys = payload.get("keys")
+    if not isinstance(raw_keys, dict) or not raw_keys:
+        raise ValueError(f"Plik {path} nie zawiera sekcji 'keys' z kluczami HMAC")
+    decoded: dict[str, bytes] = {}
+    for key_id, raw_value in raw_keys.items():
+        if not isinstance(key_id, str):
+            raise ValueError("Identyfikatory kluczy muszą być napisami")
+        value = str(raw_value)
+        decoded[key_id] = decode_secret(value)
+    return decoded
 
 
 def _read_license_summary(path: Path) -> dict[str, Any]:
@@ -85,6 +108,27 @@ def dump_state(*, license_path: str | None, profiles_path: str | None) -> dict[s
         "license": _read_license_summary(license_file),
         "profiles": profiles,
     }
+
+
+def generate_fingerprint(
+    *,
+    keys: Mapping[str, bytes],
+    rotation_log: str | None,
+    purpose: str | None,
+    interval_days: float | None,
+    dongle_hint: str | None,
+) -> dict[str, Any]:
+    if not keys:
+        raise ValueError("Wymagany jest co najmniej jeden klucz podpisujący fingerprint")
+    provider = build_key_provider(
+        keys,
+        rotation_log or "var/licenses/fingerprint_rotation.json",
+        purpose=purpose or "hardware-fingerprint",
+        interval_days=interval_days or 90.0,
+    )
+    service = HardwareFingerprintService(provider)
+    record = service.build(dongle_serial=dongle_hint)
+    return record.as_dict()
 
 
 def assign_profile(
@@ -153,6 +197,20 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     dump_parser.add_argument("--license-path", dest="license_path", default=None)
     dump_parser.add_argument("--profiles-path", dest="profiles_path", default=None)
 
+    fingerprint_parser = subparsers.add_parser("fingerprint", help="Generuje podpisany fingerprint hosta")
+    fingerprint_parser.add_argument("--keys-file", dest="keys_file", default=None)
+    fingerprint_parser.add_argument(
+        "--key",
+        dest="keys",
+        action="append",
+        default=[],
+        help="Klucz w formacie key_id=wartość (np. hex:abcd).",
+    )
+    fingerprint_parser.add_argument("--rotation-log", dest="rotation_log", default=None)
+    fingerprint_parser.add_argument("--purpose", dest="purpose", default=None)
+    fingerprint_parser.add_argument("--interval-days", dest="interval_days", type=float, default=None)
+    fingerprint_parser.add_argument("--dongle", dest="dongle", default=None)
+
     assign_parser = subparsers.add_parser("assign-profile", help="Aktualizuje profil użytkownika")
     assign_parser.add_argument("--profiles-path", dest="profiles_path", default=None)
     assign_parser.add_argument("--user", dest="user_id", required=True)
@@ -175,6 +233,28 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "dump":
         state = dump_state(license_path=args.license_path, profiles_path=args.profiles_path)
         print(json.dumps(state, ensure_ascii=False))
+        return 0
+    if args.command == "fingerprint":
+        try:
+            keys: dict[str, bytes] = {}
+            if args.keys_file:
+                keys.update(_load_keys_from_file(Path(args.keys_file)))
+            for entry in args.keys:
+                if "=" not in entry:
+                    raise ValueError("Argument --key musi mieć format key_id=wartość")
+                key_id, raw_value = entry.split("=", 1)
+                keys[key_id.strip()] = decode_secret(raw_value.strip())
+            record = generate_fingerprint(
+                keys=keys,
+                rotation_log=args.rotation_log,
+                purpose=args.purpose,
+                interval_days=args.interval_days,
+                dongle_hint=args.dongle,
+            )
+        except Exception as exc:  # pragma: no cover - błędy raportujemy do stderr
+            print(str(exc), file=sys.stderr)
+            return 1
+        print(json.dumps(record, ensure_ascii=False))
         return 0
     if args.command == "assign-profile":
         result = assign_profile(

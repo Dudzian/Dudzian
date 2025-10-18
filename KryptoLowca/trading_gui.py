@@ -1,5 +1,5 @@
-# trading_gui.py
-# -*- coding: utf-8 -*-
+"""Warstwa zgodności eksportująca nowe komponenty GUI."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -71,13 +71,13 @@ from KryptoLowca.logging_utils import (
     setup_app_logging,
 )
 
-setup_app_logging()
-logger = get_logger(__name__)
-if not any(isinstance(h, logging.StreamHandler) for h in logger.handlers):
-    stream_handler = logging.StreamHandler(sys.stdout)
-    stream_handler.setFormatter(logging.Formatter('[%(asctime)s] %(levelname)s: %(message)s'))
-    logger.addHandler(stream_handler)
-logger.setLevel(logging.INFO)
+__all__ = [
+    "AppState",
+    "TradingGUI",
+    "TradingSessionController",
+    "TradingView",
+    "main",
+]
 
 # --- ŚCIEŻKI APLIKACJI ---
 APP_ROOT = Path(__file__).resolve().parent

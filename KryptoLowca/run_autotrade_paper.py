@@ -1,5 +1,5 @@
-# run_autotrade_paper.py
-# -*- coding: utf-8 -*-
+"""Zgodnościowy wrapper delegujący do modułowego launchera AutoTradera."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -12,7 +12,6 @@ from typing import Optional
 
 
 def _ensure_repo_root() -> None:
-    """Dopisuje katalog repo do sys.path tak, by import 'KryptoLowca' działał przy uruchamianiu skryptu bez instalacji."""
     current_dir = Path(__file__).resolve().parent
     for candidate in (current_dir, *current_dir.parents):
         package_init = candidate / "KryptoLowca" / "__init__.py"
@@ -26,38 +25,16 @@ def _ensure_repo_root() -> None:
 if __package__ in (None, ""):
     _ensure_repo_root()
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-log = logging.getLogger("runner")
 
-try:
-    from KryptoLowca.event_emitter_adapter import (
-        Event, EventType,
-        EventBus, EmitterAdapter, EventEmitterAdapter,
-        DummyMarketFeed, DummyMarketFeedConfig,
-        wire_gui_logs_to_adapter,
-    )
-except Exception as e:
-    log.error("Nie udało się zaimportować event_emitter_adapter: %s", e, exc_info=True)
-    raise
-
-from KryptoLowca.services.marketdata import MarketDataConfig, MarketDataService
-from KryptoLowca.services.order_router import PaperBroker, PaperBrokerConfig
-from KryptoLowca.services.performance_monitor import PerfMonitorConfig, PerformanceMonitor
-from KryptoLowca.services.persistence import PersistenceService
-from KryptoLowca.services.position_sizer import PositionSizer, PositionSizerConfig
-from KryptoLowca.services.risk_guard import RiskGuard, RiskGuardConfig
-from KryptoLowca.services.risk_manager import RiskConfig, RiskManager
-from KryptoLowca.services.stop_tp import StopTPConfig, StopTPService
-from KryptoLowca.services.strategy_engine import StrategyConfig, StrategyEngine
-from KryptoLowca.services.walkforward_service import (
-    ObjectiveWeights,
-    WFOServiceConfig,
-    WalkForwardService,
+from KryptoLowca.auto_trader.paper import (  # noqa: E402
+    HeadlessTradingStub,
+    PaperAutoTradeApp,
+    main,
 )
 from KryptoLowca.paper_auto_trade_app import PaperAutoTradeApp
 from KryptoLowca.risk_settings_loader import DEFAULT_CORE_CONFIG_PATH
 
-SYMBOL = "BTCUSDT"
+__all__ = ["HeadlessTradingStub", "PaperAutoTradeApp", "main"]
 
 
 def _start_gui_in_main_thread(

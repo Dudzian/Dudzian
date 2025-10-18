@@ -4,7 +4,7 @@ from typing import Any, Dict, List
 
 import pytest
 
-from KryptoLowca.alerts import AlertEvent, AlertSeverity, emit_alert, get_alert_dispatcher
+from bot_core.alerts import AlertEvent, AlertSeverity, emit_alert, get_alert_dispatcher
 from KryptoLowca.services.alerting import AlertManager, EmailAlertSink, SlackWebhookSink, WebhookAlertSink
 
 

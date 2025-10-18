@@ -12,7 +12,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Protocol, Sequ
 
 import requests
 
-from KryptoLowca.alerts import AlertEvent, AlertSeverity, get_alert_dispatcher
+from bot_core.alerts import AlertEvent, AlertSeverity, get_alert_dispatcher
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:

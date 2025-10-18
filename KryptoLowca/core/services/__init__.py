@@ -5,7 +5,10 @@ from .execution_service import ExecutionService
 from .data_provider import ExchangeDataProvider
 from .risk_service import RiskAssessment, RiskService
 from .signal_service import SignalService
-from .paper_adapter import PaperTradingAdapter
+try:
+    from bot_core.runtime import PaperTradingAdapter
+except Exception:  # pragma: no cover - kompatybilność gdy moduł runtime nie istnieje
+    PaperTradingAdapter = None  # type: ignore
 
 __all__ = [
     "exception_guard",

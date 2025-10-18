@@ -5,10 +5,9 @@ Krakenem i Zondą. W pierwszym etapie budujemy szkielet umożliwiający bezpiecz
 zewnętrznych, z jasnym podziałem na warstwy i środowiska.
 
 > **Zasada etapu 1:** wszystkie nowe moduły aplikacji korzystają wyłącznie z
-> przestrzeni nazw `bot_core`. Kod znajdujący się w `legacy_bridge/` jest
-> wyłącznie mostkiem zgodności do historycznego pakietu `KryptoLowca` i ma
-> charakter read-only – nie wolno go rozszerzać ani modyfikować przy pracach nad
-> fundamentem architektury.
+> przestrzeni nazw `bot_core`. Wcześniejszy mostek `legacy_bridge/` został
+> zarchiwizowany – zgodność wsteczna zapewniana jest bezpośrednio przez pakiet
+> `KryptoLowca` oraz adaptery publikowane w `bot_core`.
 
 ## Podział na moduły
 

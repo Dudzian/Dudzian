@@ -11,11 +11,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-# Odporny import ConfigManager: najpierw przestrzeń nazw KryptoLowca, potem lokalnie
-try:  # pragma: no cover
-    from KryptoLowca.managers.config_manager import ConfigManager  # type: ignore
-except Exception:  # pragma: no cover
-    from legacy_bridge.managers.config_manager import ConfigManager
+from KryptoLowca.managers.config_manager import ConfigManager  # type: ignore
+from KryptoLowca.config_manager import StrategyConfig
+from bot_core.runtime.metadata import RiskManagerSettings
 
 
 @pytest.fixture()
@@ -149,3 +147,45 @@ def test_preset_wizard_profiles(cfg: ConfigManager, sample_preset: dict) -> None
     assert audit["preset"]["fraction"] == pytest.approx(0.35)
     assert audit["is_demo"] is True
     assert audit["preset"]["version"] == ConfigManager.current_version()
+
+
+def test_strategy_config_derives_risk_manager_settings() -> None:
+    cfg = StrategyConfig(
+        max_position_notional_pct=0.03,
+        trade_risk_pct=0.02,
+        max_leverage=2.0,
+    )
+    profile = {
+        "max_position_pct": 0.07,
+        "max_daily_loss_pct": 0.08,
+        "max_open_positions": 7,
+        "target_volatility": 0.2,
+    }
+
+    settings = cfg.derive_risk_manager_settings(profile, profile_name="balanced")
+
+    assert isinstance(settings, RiskManagerSettings)
+    assert settings.max_risk_per_trade == pytest.approx(0.07)
+    assert settings.max_daily_loss_pct == pytest.approx(0.08)
+    assert settings.max_positions == 7
+    assert settings.profile_name == "balanced"
+    assert settings.confidence_level is not None
+
+
+def test_strategy_config_apply_risk_profile_uses_runtime_helper() -> None:
+    cfg = StrategyConfig(
+        max_position_notional_pct=0.03,
+        trade_risk_pct=0.02,
+        max_leverage=1.5,
+    )
+    profile = {
+        "max_position_pct": 0.05,
+        "max_daily_loss_pct": 0.06,
+        "max_leverage": 3.0,
+    }
+
+    updated = cfg.apply_risk_profile(profile, profile_name="swing")
+
+    assert updated.max_position_notional_pct == pytest.approx(0.05)
+    assert updated.trade_risk_pct == pytest.approx(0.05)
+    assert updated.max_leverage == pytest.approx(3.0)

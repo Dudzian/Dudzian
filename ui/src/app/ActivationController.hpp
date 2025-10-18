@@ -39,7 +39,6 @@ private:
     void updateLicenses();
     void setError(const QString& message);
     void clearError();
-    QStringList loadKeyArguments() const;
     QVariantMap enrichFingerprintPayload(const QVariantMap& payload) const;
 
     QString     m_pythonExecutable;

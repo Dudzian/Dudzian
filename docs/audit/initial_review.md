@@ -10,7 +10,7 @@ nowej architektury `bot_core` oraz przy planowaniu kolejnych iteracji rozwoju.
 - **Pakiet `KryptoLowca`** pozostaje monolityczny: klasy GUI (`trading_gui.py`), logika
   strategii (`trading_strategies/engine.py`), zarządzanie giełdą (`exchange_manager.py`) i
   polityka ryzyka (`risk_management.py`) są ze sobą silnie sprzężone.
-- **Aliasowe moduły w katalogu głównym** (`auto_trader.py`, `trading_gui.py`,
+- **Aliasowe moduły w katalogu głównym** (`auto_trader`, `trading_gui`,
   `trading_strategies.py`) duplikują importy i utrudniają zrozumienie punktu wejścia.
 - Brak formalnych interfejsów dla adapterów giełdowych, strategii i warstwy egzekucji,
   co blokuje rozszerzanie systemu o nowe rynki lub algorytmy bez zmian w kodzie głównym.

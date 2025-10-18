@@ -82,6 +82,22 @@ permission_profiles:
     required_permissions: [read]
     forbidden_permissions: []
 
+runtime_entrypoints:
+  auto_trader:
+    environment: binance_paper
+    description: "Zunifikowany runtime AutoTradera (demo/paper)."
+    controller: autotrader_default
+    strategy: ai_autotrader
+    risk_profile: balanced
+    tags: [desktop, autotrader]
+  trading_gui:
+    environment: binance_paper
+    description: "Punkt wejścia aplikacji Trading GUI."
+    controller: trading_gui
+    risk_profile: manual
+    bootstrap: false
+    tags: [desktop, gui]
+
 portfolio_governors:
   stage6_core:
     portfolio_id: stage6_core
