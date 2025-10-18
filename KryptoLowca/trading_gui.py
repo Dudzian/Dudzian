@@ -33,7 +33,7 @@ import webbrowser
 import asyncio
 import inspect
 from datetime import datetime, timezone
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Mapping
 
 # --- alias zgodności: core/trading_engine może importować managers.database_manager
 try:
@@ -100,6 +100,10 @@ from KryptoLowca.managers.ai_manager import AIManager
 from KryptoLowca.managers.report_manager import ReportManager
 from KryptoLowca.managers.risk_manager_adapter import RiskManager
 from KryptoLowca.core.trading_engine import TradingEngine
+from KryptoLowca.risk_settings_loader import (
+    DEFAULT_CORE_CONFIG_PATH,
+    load_risk_settings_from_core,
+)
 
 # istniejące moduły w repo
 from KryptoLowca.trading_strategies import TradingStrategies
@@ -176,8 +180,19 @@ class TradingGUI:
     Logika: TradingEngine + menedżery w managers/*
     """
 
-    def __init__(self, root: tk.Tk):
-        self.root = root
+    def __init__(
+        self,
+        root: Optional[tk.Tk] = None,
+        *,
+        enable_web_api: bool = True,
+        event_bus: Any | None = None,
+        core_config_path: str | Path | None = None,
+        core_environment: Optional[str] = None,
+    ):
+        self.enable_web_api = enable_web_api
+        self.event_bus = event_bus
+
+        self.root = root or tk.Tk()
         self.root.title("Trading Bot — AI integrated")
         self.root.geometry("1400x900")
         self.style = ttk.Style(self.root)
@@ -224,6 +239,10 @@ class TradingGUI:
         self.cooldown_var = tk.IntVar(value=30)
         self.minmove_var = tk.DoubleVar(value=0.15)
         self.max_daily_loss_pct = 0.05
+        self.max_daily_loss_var = tk.DoubleVar(value=self.max_daily_loss_pct * 100.0)
+        self._max_daily_loss_trace = self.max_daily_loss_var.trace_add(
+            "write", lambda *_: self._on_max_daily_loss_changed()
+        )
         self.soft_halt_losses = 3
         self.trade_cooldown_on_error = 30
         self.risk_per_trade = tk.DoubleVar(value=0.01)
@@ -276,16 +295,29 @@ class TradingGUI:
         self._open_positions: Dict[str, Dict[str, Any]] = {}
         self._market_data: Dict[str, pd.DataFrame] = {}
 
+        # Risk profile (core.yaml)
+        config_hint = core_config_path or os.environ.get(
+            "KRYPTLOWCA_CORE_CONFIG", DEFAULT_CORE_CONFIG_PATH
+        )
+        self.core_config_path: Path = Path(config_hint).expanduser()
+        self.core_environment: Optional[str] = core_environment
+        self.risk_profile_name: Optional[str] = None
+        self.risk_manager_settings: Dict[str, Any] = {}
+        self.risk_manager_config: Optional[Any] = None
+        self.risk_profile_var = tk.StringVar(value="—")
+
         # ====== MENEDŻERY ======
         self.db = DatabaseManager()  # bezargumentowy
         self.sec = SecurityManager(KEYS_FILE, SALT_FILE)
         self.cfg = ConfigManager(PRESETS_DIR)
         self.reporter = ReportManager(str(DB_FILE))
-        self.risk_mgr = RiskManager(config={
-            "risk_per_trade": self.risk_per_trade.get(),
-            "portfolio_risk": self.portfolio_risk.get(),
-            "max_daily_loss_pct": self.max_daily_loss_pct
-        })
+        self.risk_mgr = RiskManager(
+            config={
+                "max_risk_per_trade": float(self.risk_per_trade.get()),
+                "max_portfolio_risk": float(self.portfolio_risk.get()),
+                "max_daily_loss_pct": float(self.max_daily_loss_pct),
+            }
+        )
         # --- AIManager: zgodność z różnymi sygnaturami konstruktora
         try:
             self.ai_mgr = AIManager(models_dir=MODELS_DIR, logger_=logger)
@@ -322,6 +354,10 @@ class TradingGUI:
 
         # ====== UI ======
         self._build_ui()
+        try:
+            self.reload_risk_manager_settings()
+        except Exception:
+            self._log("Failed to load risk settings from core.yaml", "WARNING")
         self.network_var.trace_add("write", lambda *_: self._on_network_changed())
         self._on_network_changed()
         self.ai_threshold_var.trace_add("write", lambda *_: self._on_ai_threshold_changed())
@@ -655,10 +691,16 @@ class TradingGUI:
 
         lfR = ttk.Labelframe(parent, text="Risk & Safeguards"); lfR.pack(fill="x", padx=8, pady=6)
         ttk.Label(lfR, text="Max daily loss [%]").grid(row=0, column=0, sticky="e", padx=6)
-        e1 = ttk.Spinbox(lfR, from_=0.5, to=50.0, increment=0.5, width=8); e1.grid(row=0, column=1, sticky="w")
-        e1.delete(0,"end"); e1.insert(0, str(self.max_daily_loss_pct*100.0))
-        e1.bind("<FocusOut>", lambda *_: setattr(self, "max_daily_loss_pct", float(e1.get())/100.0))
-        Tooltip(e1, "Maksymalny dzienny spadek wartości portfela, po którym bot przestaje handlować (soft stop).")
+        sp_mdl = ttk.Spinbox(
+            lfR,
+            textvariable=self.max_daily_loss_var,
+            from_=0.1,
+            to=50.0,
+            increment=0.1,
+            width=8,
+        )
+        sp_mdl.grid(row=0, column=1, sticky="w")
+        Tooltip(sp_mdl, "Maksymalny dzienny spadek wartości portfela, po którym bot przestaje handlować (soft stop).")
         ttk.Label(lfR, text="Soft-halt after losses").grid(row=0, column=2, sticky="e", padx=6)
         sp_soft = ttk.Spinbox(lfR, from_=0, to=10, increment=1, width=8); sp_soft.grid(row=0, column=3, sticky="w")
         sp_soft.delete(0,"end"); sp_soft.insert(0, str(self.soft_halt_losses))
@@ -670,63 +712,138 @@ class TradingGUI:
         e2.bind("<FocusOut>", lambda *_: setattr(self, "trade_cooldown_on_error", int(e2.get())))
         Tooltip(e2, "Przerwa (sekundy) po błędzie sieci/egzekucji przed kolejną próbą.")
         ttk.Label(lfR, text="Risk per trade [%]").grid(row=1, column=2, sticky="e", padx=6)
-        sp_rpt = ttk.Spinbox(lfR, textvariable=self.risk_per_trade, from_=0.1, to=10.0, increment=0.1, width=8)
+        sp_rpt = ttk.Spinbox(
+            lfR,
+            textvariable=self.risk_per_trade,
+            from_=0.001,
+            to=1.0,
+            increment=0.001,
+            width=8,
+        )
         sp_rpt.grid(row=1, column=3, sticky="w"); Tooltip(sp_rpt, "Procent kapitału ryzykowany w pojedynczej transakcji (w paperze używany do wyliczenia wolumenu).")
         ttk.Label(lfR, text="Portfolio risk [%]").grid(row=2, column=0, sticky="e", padx=6)
-        sp_pr = ttk.Spinbox(lfR, textvariable=self.portfolio_risk, from_=1.0, to=100.0, increment=1.0, width=8)
+        sp_pr = ttk.Spinbox(
+            lfR,
+            textvariable=self.portfolio_risk,
+            from_=0.01,
+            to=2.0,
+            increment=0.01,
+            width=8,
+        )
         sp_pr.grid(row=2, column=1, sticky="w"); Tooltip(sp_pr, "Łączny dopuszczalny poziom ryzyka portfela (kontroluje łączną ekspozycję).")
+        ttk.Label(lfR, text="Risk profile").grid(row=3, column=0, sticky="e", padx=6)
+        ttk.Label(lfR, textvariable=self.risk_profile_var).grid(row=3, column=1, sticky="w")
+        reload_btn = ttk.Button(lfR, text="Reload core.yaml", command=self.reload_risk_manager_settings)
+        reload_btn.grid(row=3, column=3, sticky="w", padx=6)
+        Tooltip(reload_btn, "Ponownie wczytaj limity ryzyka z pliku config/core.yaml bez restartu GUI.")
         for i in range(4): lfR.columnconfigure(i, weight=1)
 
-        lfT = ttk.Labelframe(parent, text="DCA & Trailing (ATR)"); lfT.pack(fill="x", padx=8, pady=6)
-        cb_tr = ttk.Checkbutton(lfT, text="Use trailing stops", variable=self.use_trailing)
-        cb_tr.grid(row=0, column=0, sticky="w", padx=6, pady=4); Tooltip(cb_tr, "Włącz trailing stop-loss (na podstawie ATR).")
-        ttk.Label(lfT, text="ATR period").grid(row=0, column=1, sticky="e", padx=6)
-        sp_atrp = ttk.Spinbox(lfT, textvariable=self.atr_period_var, from_=5, to=100, increment=1, width=8)
-        sp_atrp.grid(row=0, column=2, sticky="w"); Tooltip(sp_atrp, "Okres ATR — wskaźnik zmienności do SL/TP.")
-        ttk.Label(lfT, text="Trail ATR ×").grid(row=1, column=0, sticky="e", padx=6)
-        sp_ta = ttk.Spinbox(lfT, textvariable=self.trail_atr_mult_var, from_=0.5, to=10.0, increment=0.1, width=8)
-        sp_ta.grid(row=1, column=1, sticky="w"); Tooltip(sp_ta, "Mnożnik ATR do trailingu SL (np. 2x ATR).")
-        ttk.Label(lfT, text="Take ATR ×").grid(row=1, column=2, sticky="e", padx=6)
-        sp_tk = ttk.Spinbox(lfT, textvariable=self.take_atr_mult_var, from_=0.5, to=10.0, increment=0.1, width=8)
-        sp_tk.grid(row=1, column=3, sticky="w"); Tooltip(sp_tk, "Mnożnik ATR do realizacji zysku (TP).")
-        cb_dca = ttk.Checkbutton(lfT, text="Enable DCA", variable=self.dca_enabled_var)
-        cb_dca.grid(row=2, column=0, sticky="w", padx=6); Tooltip(cb_dca, "Włącz uśrednianie (dokupowanie) przy spadkach co N×ATR.")
-        ttk.Label(lfT, text="DCA max adds").grid(row=2, column=1, sticky="e", padx=6)
-        sp_dm = ttk.Spinbox(lfT, textvariable=self.dca_max_adds_var, from_=0, to=10, increment=1, width=8)
-        sp_dm.grid(row=2, column=2, sticky="w"); Tooltip(sp_dm, "Maksymalna liczba dograń w dół (uśrednianie).")
-        ttk.Label(lfT, text="DCA step ATR ×").grid(row=2, column=3, sticky="e", padx=6)
-        sp_ds = ttk.Spinbox(lfT, textvariable=self.dca_step_atr_var, from_=0.5, to=10.0, increment=0.1, width=8)
-        sp_ds.grid(row=2, column=4, sticky="w"); Tooltip(sp_ds, "Próg aktywacji kolejnego dogrania (mnożnik ATR).")
-        for i in range(5): lfT.columnconfigure(i, weight=1)
+    def _on_max_daily_loss_changed(self, *_):
+        try:
+            value = float(self.max_daily_loss_var.get())
+        except (tk.TclError, ValueError):
+            return
+        self.max_daily_loss_pct = max(0.0, value / 100.0)
 
-        guard = ttk.Labelframe(parent, text="Guards"); guard.pack(fill="x", padx=8, pady=6)
-        ttk.Label(guard, text="Cooldown [s]").grid(row=0, column=0, sticky="e", padx=6)
-        ent_cd = ttk.Entry(guard, textvariable=self.cooldown_var, width=8); ent_cd.grid(row=0, column=1, sticky="w")
-        Tooltip(ent_cd, "Minimalny czas (sekundy) między transakcjami na tym samym symbolu.")
-        ttk.Label(guard, text="Min move [%]").grid(row=0, column=2, sticky="e", padx=6)
-        ent_mm = ttk.Entry(guard, textvariable=self.minmove_var, width=8); ent_mm.grid(row=0, column=3, sticky="w")
-        Tooltip(ent_mm, "Minimalna zmiana ceny (procent), by uznać ruch za istotny (redukcja szumu).")
-        cb_ob = ttk.Checkbutton(guard, text="One trade per bar", variable=self.onebar_var)
-        cb_ob.grid(row=0, column=4, sticky="w", padx=8); Tooltip(cb_ob, "Zmień tylko jedną pozycję na świecę (ogranicza nadmierne transakcje).")
-        for i in range(5): guard.columnconfigure(i, weight=1)
+    def _map_network_to_environment(self) -> Optional[str]:
+        try:
+            network = (self.network_var.get() or "").strip().lower()
+        except Exception:
+            network = ""
+        if network.startswith("testnet") or network.startswith("paper"):
+            return "binance_paper"
+        if network.startswith("live"):
+            return "binance_live"
+        return None
 
-        lf2 = ttk.Labelframe(parent, text="Paper"); lf2.pack(fill="x", padx=8, pady=6)
-        ttk.Label(lf2, text="Paper capital").grid(row=0, column=0, sticky="e", padx=6)
-        ent_pc = ttk.Entry(lf2, textvariable=self.paper_capital, width=12); ent_pc.grid(row=0, column=1, sticky="w")
-        Tooltip(ent_pc, "Wirtualny kapitał do testów (paper trading). Nie dotyczy realnych środków.")
-        ttk.Button(lf2, text="Apply paper capital", command=self._apply_paper_capital).grid(row=0, column=2, padx=6)
+    def load_risk_manager_settings(
+        self,
+        *,
+        config_path: Optional[Path | str] = None,
+        environment: Optional[str] = None,
+    ) -> tuple[str, Dict[str, Any], Optional[Any]]:
+        if config_path is not None:
+            target_path = Path(config_path).expanduser().resolve()
+            self.core_config_path = target_path
+        else:
+            target_path = self.core_config_path.expanduser().resolve()
+            self.core_config_path = target_path
 
-        lfP = ttk.Labelframe(parent, text="Presets"); lfP.pack(fill="x", padx=8, pady=8)
-        self.preset_name = tk.StringVar(value="default")
-        ttk.Label(lfP, text="Name").grid(row=0, column=0, sticky="e", padx=6)
-        e_pn = ttk.Entry(lfP, textvariable=self.preset_name, width=24); e_pn.grid(row=0, column=1, sticky="w")
-        Tooltip(e_pn, "Nazwa zestawu ustawień (zapisywana jako plik w folderze presets/).")
-        ttk.Button(lfP, text="Save preset", command=self._save_preset).grid(row=0, column=2, padx=6)
-        ttk.Button(lfP, text="Load preset", command=self._load_preset).grid(row=0, column=3, padx=6)
-        ttk.Button(lfP, text="Delete preset", command=self._delete_preset).grid(row=0, column=4, padx=6)
-        self.preset_list = tk.Listbox(lfP, height=5); self.preset_list.grid(row=1, column=0, columnspan=5, sticky="ew", padx=6, pady=6)
-        self._refresh_presets_list()
-        for i in range(5): lfP.columnconfigure(i, weight=1)
+        env_name = environment or self.core_environment
+        profile_name, settings, profile_cfg, _core = load_risk_settings_from_core(
+            target_path,
+            environment=env_name,
+        )
+        if environment:
+            self.core_environment = environment
+        elif env_name is None and _core.environments:
+            # Zapamiętaj środowisko wybrane domyślnie przez loader
+            self.core_environment = next(iter(_core.environments))
+
+        return profile_name, dict(settings), profile_cfg
+
+    def reload_risk_manager_settings(
+        self,
+        *,
+        config_path: Optional[Path | str] = None,
+        environment: Optional[str] = None,
+    ) -> tuple[str, Dict[str, Any], Optional[Any]]:
+        env_hint = environment or self.core_environment or self._map_network_to_environment()
+        profile_name, settings, profile_cfg = self.load_risk_manager_settings(
+            config_path=config_path or self.core_config_path,
+            environment=env_hint,
+        )
+
+        if not settings:
+            self._log("Risk profile settings unavailable in core.yaml", "WARNING")
+            return profile_name, settings, profile_cfg
+
+        try:
+            self.risk_mgr = RiskManager(config=dict(settings))
+        except Exception as exc:
+            self._log(f"Risk manager reload failed: {exc}", "ERROR")
+            raise
+
+        self.risk_profile_name = profile_name
+        self.risk_manager_settings = dict(settings)
+        self.risk_manager_config = profile_cfg
+        self._apply_risk_settings_to_ui(settings, profile_name)
+        self._log(f"Risk settings reloaded ({profile_name})", "INFO")
+        return profile_name, dict(settings), profile_cfg
+
+    def _apply_risk_settings_to_ui(
+        self,
+        settings: Mapping[str, Any],
+        profile_name: Optional[str],
+    ) -> None:
+        if profile_name:
+            self.risk_profile_var.set(str(profile_name))
+        if not settings:
+            return
+        try:
+            risk_per_trade = float(settings.get("max_risk_per_trade", self.risk_per_trade.get()))
+        except Exception:
+            risk_per_trade = self.risk_per_trade.get()
+        try:
+            portfolio_risk = float(settings.get("max_portfolio_risk", self.portfolio_risk.get()))
+        except Exception:
+            portfolio_risk = self.portfolio_risk.get()
+        self.risk_per_trade.set(risk_per_trade)
+        self.portfolio_risk.set(portfolio_risk)
+
+        if "max_daily_loss_pct" in settings:
+            try:
+                self.max_daily_loss_pct = float(settings["max_daily_loss_pct"])
+                self.max_daily_loss_var.set(self.max_daily_loss_pct * 100.0)
+            except Exception:
+                pass
+
+        if "stop_loss_atr_multiple" in settings:
+            try:
+                sl_mult = float(settings["stop_loss_atr_multiple"])
+                self.trail_atr_mult_var.set(sl_mult)
+            except Exception:
+                pass
 
     # ============= Advanced (TradingStrategies) =============
     def _build_advanced_tab(self, parent: ttk.Frame):
