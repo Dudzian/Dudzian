@@ -33,7 +33,8 @@ import webbrowser
 import asyncio
 import inspect
 from datetime import datetime, timezone
-from typing import Dict, List, Any, Optional
+from types import SimpleNamespace
+from typing import Any, Dict, List, Mapping, Optional
 
 # --- alias zgodności: core/trading_engine może importować managers.database_manager
 try:
@@ -105,6 +106,7 @@ from KryptoLowca.core.trading_engine import TradingEngine
 from KryptoLowca.trading_strategies import TradingStrategies
 from reporting import TradeInfo
 from KryptoLowca.database_manager import DatabaseManager  # klasyczny (bezargumentowy) konstruktor
+from KryptoLowca.ui.trading import view as trading_view
 
 # =====================================
 # Pomocnicze
@@ -258,6 +260,13 @@ class TradingGUI:
         self.live_secret = tk.StringVar(value="")
         self.password_var = tk.StringVar(value="")
 
+        # Risk profile presentation state
+        self.state = SimpleNamespace(risk_profile_name=None)
+        self._risk_section: Optional[trading_view.RiskProfileSection] = None
+        self.risk_profile_display_var = tk.StringVar(value="—")
+        self.risk_limits_display_var = tk.StringVar(value="—")
+        self._risk_manager_settings = self._current_risk_manager_settings()
+
         # wewn.
         self.selected_symbols: List[str] = []
         self.symbol_vars: Dict[str, tk.BooleanVar] = {}
@@ -322,11 +331,59 @@ class TradingGUI:
 
         # ====== UI ======
         self._build_ui()
+        self.risk_per_trade.trace_add("write", lambda *_: self._on_risk_limit_changed())
+        self.portfolio_risk.trace_add("write", lambda *_: self._on_risk_limit_changed())
         self.network_var.trace_add("write", lambda *_: self._on_network_changed())
         self._on_network_changed()
         self.ai_threshold_var.trace_add("write", lambda *_: self._on_ai_threshold_changed())
         self._log("GUI ready", "INFO")
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        self._on_risk_limit_changed()
+
+    def _current_risk_manager_settings(self) -> Dict[str, Any]:
+        return {
+            "risk_per_trade": float(self.risk_per_trade.get()),
+            "portfolio_risk": float(self.portfolio_risk.get()),
+            "max_daily_loss_pct": float(self.max_daily_loss_pct),
+        }
+
+    @property
+    def risk_manager_settings(self) -> Dict[str, Any]:
+        return dict(self._risk_manager_settings)
+
+    @risk_manager_settings.setter
+    def risk_manager_settings(self, value: Mapping[str, Any]):
+        self._risk_manager_settings = dict(value or {})
+        if self._risk_section is not None:
+            self._risk_section.update(
+                profile_name=self.state.risk_profile_name,
+                settings=self._risk_manager_settings,
+            )
+            self.risk_profile_display_var = self._risk_section.profile_var
+            self.risk_limits_display_var = self._risk_section.limits_var
+
+    def set_risk_profile_context(
+        self,
+        name: Optional[str] = None,
+        settings: Optional[Mapping[str, Any]] = None,
+    ) -> None:
+        if name is not None:
+            self.state.risk_profile_name = name
+        if settings is not None:
+            self.risk_manager_settings = settings
+        elif self._risk_section is not None:
+            self._risk_section.update(
+                profile_name=self.state.risk_profile_name,
+                settings=self._risk_manager_settings,
+            )
+
+    def _on_risk_limit_changed(self, *_: Any) -> None:
+        self._risk_manager_settings.update(self._current_risk_manager_settings())
+        if self._risk_section is not None:
+            self._risk_section.update(
+                profile_name=self.state.risk_profile_name,
+                settings=self._risk_manager_settings,
+            )
 
     # ===================== UI budowa =====================
     def _build_ui(self):
@@ -356,6 +413,14 @@ class TradingGUI:
         ttk.Label(top, textvariable=self.account_balance_var).pack(side="left")
         ttk.Label(top, text="Paper:").pack(side="left", padx=(12,4))
         ttk.Label(top, textvariable=self.paper_balance_var).pack(side="left")
+        self._risk_section = trading_view.build_risk_profile_section(
+            top,
+            self.state,
+            self._risk_manager_settings,
+        )
+        self._risk_section.container.pack(side="left", padx=(12, 0))
+        self.risk_profile_display_var = self._risk_section.profile_var
+        self.risk_limits_display_var = self._risk_section.limits_var
         exp_btn = ttk.Button(top, text="Export PDF", command=self._export_pdf_report)
         exp_btn.pack(side="left", padx=8); Tooltip(exp_btn, "Eksportuj raport do PDF: zestawienie transakcji i metryk.")
         self.btn_start = tk.Button(top, text="Start trading", command=self._on_start)
@@ -1107,6 +1172,7 @@ class TradingGUI:
                 "trade_cooldown_on_error": self.trade_cooldown_on_error,
                 "risk_per_trade": self.risk_per_trade.get(),
                 "portfolio_risk": self.portfolio_risk.get(),
+                "profile_name": self.state.risk_profile_name,
                 "one_trade_per_bar": self.onebar_var.get(),
                 "cooldown_s": self.cooldown_var.get(),
                 "min_move_pct": self.minmove_var.get(),
@@ -1175,6 +1241,9 @@ class TradingGUI:
             self.trade_cooldown_on_error = int(rk.get("trade_cooldown_on_error", self.trade_cooldown_on_error))
             self.risk_per_trade.set(float(rk.get("risk_per_trade", self.risk_per_trade.get())))
             self.portfolio_risk.set(float(rk.get("portfolio_risk", self.portfolio_risk.get())))
+            profile_name = rk.get("profile_name")
+            if profile_name is not None:
+                self.state.risk_profile_name = profile_name
             self.onebar_var.set(bool(rk.get("one_trade_per_bar", self.onebar_var.get())))
             self.cooldown_var.set(int(rk.get("cooldown_s", self.cooldown_var.get())))
             self.minmove_var.set(float(rk.get("min_move_pct", self.minmove_var.get())))
@@ -1212,6 +1281,8 @@ class TradingGUI:
                 self.selected_symbols = list(sel)
         except Exception as e:
             self._log(f"Apply settings error: {e}", "ERROR")
+        finally:
+            self._on_risk_limit_changed()
 
     def _apply_paper_capital(self):
         try:
