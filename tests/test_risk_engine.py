@@ -4,18 +4,21 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Mapping, Sequence
 import sys
 
 import pytest
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
+from bot_core.ai import ModelScore
 from bot_core.config.models import (
     DecisionEngineConfig,
     DecisionOrchestratorThresholds,
     DecisionStressTestConfig,
 )
-from bot_core.decision import DecisionOrchestrator
+from bot_core.decision import DecisionCandidate, DecisionEvaluation, DecisionOrchestrator
+from bot_core.decision.models import ModelSelectionDetail, ModelSelectionMetadata
 from bot_core.exchanges.base import AccountSnapshot, OrderRequest
 from bot_core.risk.engine import InMemoryRiskRepository, ThresholdRiskEngine
 from bot_core.risk.events import RiskDecisionLog
@@ -90,6 +93,35 @@ def _decision_engine_config() -> DecisionEngineConfig:
         require_cost_data=False,
         penalty_cost_bps=0.0,
     )
+
+
+class _StubInference:
+    def __init__(self, score: ModelScore) -> None:
+        self._score = score
+        self.is_ready = True
+
+    def score(self, features: Mapping[str, float]) -> ModelScore:
+        return self._score
+
+
+class _SequencedOrchestrator:
+    def __init__(self, evaluations: Sequence[DecisionEvaluation]) -> None:
+        self._evaluations = iter(evaluations)
+
+    def evaluate_candidate(
+        self, candidate: DecisionCandidate, snapshot: Mapping[str, object]
+    ) -> DecisionEvaluation:
+        try:
+            return next(self._evaluations)
+        except StopIteration as exc:  # pragma: no cover - test konfiguracji
+            raise AssertionError("Brak kolejnej zaplanowanej ewaluacji") from exc
+
+
+class _FailingOrchestrator:
+    def evaluate_candidate(
+        self, candidate: DecisionCandidate, snapshot: Mapping[str, object]
+    ) -> DecisionEvaluation:
+        raise RuntimeError("evaluation failed")
 
 
 def test_daily_loss_limit_blocks_on_first_day(manual_profile: ManualProfile) -> None:
@@ -881,7 +913,12 @@ def test_snapshot_state_returns_enriched_metrics(manual_profile: ManualProfile) 
 def test_decision_orchestrator_metadata_when_candidate_passes(
     manual_profile: ManualProfile,
 ) -> None:
-    orchestrator = DecisionOrchestrator(_decision_engine_config())
+    orchestrator = DecisionOrchestrator(
+        _decision_engine_config(),
+        inference=_StubInference(
+            ModelScore(expected_return_bps=14.0, success_probability=0.8)
+        ),
+    )
     clock_value = datetime(2024, 7, 1, 9, 0, 0)
     engine = ThresholdRiskEngine(
         clock=lambda: clock_value,
@@ -902,6 +939,7 @@ def test_decision_orchestrator_metadata_when_candidate_passes(
         "expected_probability": 0.9,
         "cost_bps_override": 3.0,
         "latency_ms": 150.0,
+        "metadata": {"model_features": {"momentum": 1.0, "volatility": 0.2}},
     }
 
     result = engine.apply_pre_trade_checks(
@@ -917,12 +955,31 @@ def test_decision_orchestrator_metadata_when_candidate_passes(
     assert decision_meta.get("status") == "evaluated"
     assert decision_meta.get("accepted") is True
     assert decision_meta.get("candidate", {}).get("strategy") == "mean_reversion"
+    assert decision_meta.get("model_name") == "__default__"
+    assert decision_meta.get("model_success_probability") == pytest.approx(0.8)
+    selection_meta = decision_meta.get("model_selection")
+    assert isinstance(selection_meta, dict)
+    assert selection_meta.get("selected") == "__default__"
+    candidates = selection_meta.get("candidates")
+    assert isinstance(candidates, list) and candidates
+    default_detail = next(
+        (detail for detail in candidates if detail.get("name") == "__default__"),
+        None,
+    )
+    assert default_detail is not None
+    assert default_detail.get("available") is True
+    assert default_detail.get("reason") is None
 
 
 def test_decision_orchestrator_blocks_when_thresholds_exceeded(
     manual_profile: ManualProfile,
 ) -> None:
-    orchestrator = DecisionOrchestrator(_decision_engine_config())
+    orchestrator = DecisionOrchestrator(
+        _decision_engine_config(),
+        inference=_StubInference(
+            ModelScore(expected_return_bps=6.0, success_probability=0.7)
+        ),
+    )
     engine = ThresholdRiskEngine(
         clock=lambda: datetime(2024, 7, 1, 9, 0, 0),
         decision_orchestrator=orchestrator,
@@ -942,6 +999,7 @@ def test_decision_orchestrator_blocks_when_thresholds_exceeded(
         "expected_probability": 0.7,
         "cost_bps_override": 20.0,
         "latency_ms": 150.0,
+        "metadata": {"model_features": {"momentum": 0.5}},
     }
 
     result = engine.apply_pre_trade_checks(
@@ -958,6 +1016,19 @@ def test_decision_orchestrator_blocks_when_thresholds_exceeded(
     assert decision_meta.get("accepted") is False
     reasons_text = " ".join(str(item) for item in decision_meta.get("reasons", []))
     assert "koszt" in reasons_text or "edge" in reasons_text
+    assert decision_meta.get("model_name") == "__default__"
+    selection_meta = decision_meta.get("model_selection")
+    assert isinstance(selection_meta, dict)
+    assert selection_meta.get("selected") == "__default__"
+    candidates = selection_meta.get("candidates")
+    assert isinstance(candidates, list) and candidates
+    default_detail = next(
+        (detail for detail in candidates if detail.get("name") == "__default__"),
+        None,
+    )
+    assert default_detail is not None
+    assert default_detail.get("available") is True
+    assert default_detail.get("reason") is None
 
 
 def test_decision_orchestrator_reports_invalid_payload(
@@ -988,3 +1059,659 @@ def test_decision_orchestrator_reports_invalid_payload(
     decision_meta = result.metadata.get("decision_orchestrator")  # type: ignore[index]
     assert isinstance(decision_meta, dict)
     assert decision_meta.get("status") == "error"
+
+
+def test_decision_model_outcomes_track_accepts_and_rejections(
+    manual_profile: ManualProfile,
+) -> None:
+    candidate_payload = {
+        "strategy": "mean_reversion",
+        "action": "enter",
+        "risk_profile": manual_profile.name,
+        "symbol": "BTCUSDT",
+        "notional": 250.0,
+        "expected_return_bps": 12.0,
+        "expected_probability": 0.65,
+    }
+    candidate = DecisionCandidate.from_mapping(candidate_payload)
+    selection = ModelSelectionMetadata(
+        selected="fast",
+        candidates=(
+            ModelSelectionDetail(
+                name="fast",
+                score=0.8,
+                weight=1.0,
+                effective_score=0.8,
+            ),
+        ),
+    )
+    accepted_eval = DecisionEvaluation(
+        candidate=candidate,
+        accepted=True,
+        cost_bps=5.0,
+        net_edge_bps=2.0,
+        reasons=(),
+        risk_flags=(),
+        stress_failures=(),
+        model_expected_return_bps=14.0,
+        model_success_probability=0.6,
+        model_name="fast",
+        model_selection=selection,
+    )
+    rejected_eval = DecisionEvaluation(
+        candidate=candidate,
+        accepted=False,
+        cost_bps=5.0,
+        net_edge_bps=2.0,
+        reasons=("edge_below_threshold",),
+        risk_flags=(),
+        stress_failures=(),
+        model_expected_return_bps=14.0,
+        model_success_probability=0.6,
+        model_name="fast",
+        model_selection=selection,
+    )
+
+    orchestrator = _SequencedOrchestrator((accepted_eval, rejected_eval))
+    engine = ThresholdRiskEngine(clock=lambda: datetime(2024, 7, 1, 9, 0, 0))
+    engine.register_profile(manual_profile)
+    engine.attach_decision_orchestrator(orchestrator)
+
+    order = OrderRequest(
+        symbol="BTCUSDT",
+        side="buy",
+        quantity=0.01,
+        order_type="limit",
+        price=25_000.0,
+        stop_price=25_000.0 - 2.0 * 100.0,
+        atr=100.0,
+        metadata={
+            "decision_candidate": candidate_payload,
+            "atr": 100.0,
+            "stop_price": 25_000.0 - 2.0 * 100.0,
+        },
+    )
+    account = _snapshot(1_000.0)
+
+    first_result = engine.apply_pre_trade_checks(
+        order,
+        account=account,
+        profile_name=manual_profile.name,
+    )
+    assert first_result.allowed is True
+
+    stats = engine.decision_model_outcomes()
+    assert stats == {"fast": {"accepted": 1, "rejected": 0}}
+
+    second_result = engine.apply_pre_trade_checks(
+        order,
+        account=account,
+        profile_name=manual_profile.name,
+    )
+    assert second_result.allowed is False
+
+    stats = engine.decision_model_outcomes()
+    assert stats == {"fast": {"accepted": 1, "rejected": 1}}
+
+    snapshot = engine.decision_model_outcomes(reset=True)
+    assert snapshot == {"fast": {"accepted": 1, "rejected": 1}}
+    assert engine.decision_model_outcomes() == {}
+
+
+def test_decision_model_rejection_reasons_aggregate_by_model(
+    manual_profile: ManualProfile,
+) -> None:
+    candidate_payload = {
+        "strategy": "momentum",
+        "action": "enter",
+        "risk_profile": manual_profile.name,
+        "symbol": "ETHUSDT",
+        "notional": 150.0,
+        "expected_return_bps": 8.0,
+        "expected_probability": 0.55,
+    }
+    candidate = DecisionCandidate.from_mapping(candidate_payload)
+    selection = ModelSelectionMetadata(
+        selected="fast",
+        candidates=(
+            ModelSelectionDetail(
+                name="fast",
+                score=0.75,
+                weight=1.0,
+                effective_score=0.75,
+            ),
+        ),
+    )
+    accepted_eval = DecisionEvaluation(
+        candidate=candidate,
+        accepted=True,
+        cost_bps=4.0,
+        net_edge_bps=3.0,
+        reasons=(),
+        risk_flags=(),
+        stress_failures=(),
+        model_expected_return_bps=9.0,
+        model_success_probability=0.58,
+        model_name="fast",
+        model_selection=selection,
+    )
+    rejected_eval = DecisionEvaluation(
+        candidate=candidate,
+        accepted=False,
+        cost_bps=6.0,
+        net_edge_bps=-1.0,
+        reasons=("edge_below_threshold",),
+        risk_flags=("risk_limit",),
+        stress_failures=("latency_spike",),
+        model_expected_return_bps=7.0,
+        model_success_probability=0.5,
+        model_name="fast",
+        model_selection=selection,
+    )
+
+    orchestrator = _SequencedOrchestrator((accepted_eval, rejected_eval))
+    engine = ThresholdRiskEngine(clock=lambda: datetime(2024, 7, 1, 9, 0, 0))
+    engine.register_profile(manual_profile)
+    engine.attach_decision_orchestrator(orchestrator)
+
+    order = OrderRequest(
+        symbol="ETHUSDT",
+        side="buy",
+        quantity=0.01,
+        order_type="limit",
+        price=1_800.0,
+        stop_price=1_800.0 - 2.0 * 15.0,
+        atr=15.0,
+        metadata={
+            "decision_candidate": candidate_payload,
+            "atr": 15.0,
+            "stop_price": 1_800.0 - 2.0 * 15.0,
+        },
+    )
+    account = _snapshot(1_000.0)
+
+    engine.apply_pre_trade_checks(
+        order,
+        account=account,
+        profile_name=manual_profile.name,
+    )
+
+    # Pierwsza ewaluacja jest przyjęta – powody odrzuceń powinny być puste.
+    assert engine.decision_model_rejection_reasons() == {}
+
+    result = engine.apply_pre_trade_checks(
+        order,
+        account=account,
+        profile_name=manual_profile.name,
+    )
+
+    assert result.allowed is False
+
+    stats = engine.decision_model_rejection_reasons()
+    assert stats == {
+        "fast": {
+            "edge_below_threshold": 1,
+            "risk_limit": 1,
+            "latency_spike": 1,
+        }
+    }
+
+    snapshot = engine.decision_model_rejection_reasons(reset=True)
+    assert snapshot == stats
+    assert engine.decision_model_rejection_reasons() == {}
+
+
+def test_decision_model_metrics_aggregate_and_reset(
+    manual_profile: ManualProfile,
+) -> None:
+    candidate_payload = {
+        "strategy": "momentum",
+        "action": "enter",
+        "risk_profile": manual_profile.name,
+        "symbol": "BTCUSDT",
+        "notional": 250.0,
+        "expected_return_bps": 12.0,
+        "expected_probability": 0.6,
+    }
+    candidate = DecisionCandidate.from_mapping(candidate_payload)
+    selection = ModelSelectionMetadata(
+        selected="fast",
+        candidates=(
+            ModelSelectionDetail(
+                name="fast",
+                score=0.8,
+                weight=1.0,
+                effective_score=0.8,
+            ),
+        ),
+    )
+    accepted_eval = DecisionEvaluation(
+        candidate=candidate,
+        accepted=True,
+        cost_bps=5.0,
+        net_edge_bps=2.0,
+        reasons=(),
+        risk_flags=(),
+        stress_failures=(),
+        model_expected_return_bps=14.0,
+        model_success_probability=0.6,
+        model_name="fast",
+        model_selection=selection,
+    )
+    rejected_eval = DecisionEvaluation(
+        candidate=candidate,
+        accepted=False,
+        cost_bps=6.0,
+        net_edge_bps=-1.0,
+        reasons=("edge_below_threshold",),
+        risk_flags=(),
+        stress_failures=(),
+        model_expected_return_bps=7.0,
+        model_success_probability=0.5,
+        model_name="fast",
+        model_selection=selection,
+    )
+
+    orchestrator = _SequencedOrchestrator((accepted_eval, rejected_eval))
+    engine = ThresholdRiskEngine(clock=lambda: datetime(2024, 7, 1, 9, 0, 0))
+    engine.register_profile(manual_profile)
+    engine.attach_decision_orchestrator(orchestrator)
+
+    order = OrderRequest(
+        symbol="BTCUSDT",
+        side="buy",
+        quantity=0.01,
+        order_type="limit",
+        price=25_000.0,
+        stop_price=25_000.0 - 2.0 * 100.0,
+        atr=100.0,
+        metadata={
+            "decision_candidate": candidate_payload,
+            "atr": 100.0,
+            "stop_price": 25_000.0 - 2.0 * 100.0,
+        },
+    )
+    account = _snapshot(1_000.0)
+
+    first_result = engine.apply_pre_trade_checks(
+        order,
+        account=account,
+        profile_name=manual_profile.name,
+    )
+    assert first_result.allowed is True
+
+    metrics = engine.decision_model_metrics()
+    assert set(metrics.keys()) == {"fast"}
+    fast_stats = metrics["fast"]
+    assert fast_stats["evaluations"] == 1
+    assert fast_stats["accepted"] == 1
+    assert fast_stats["rejected"] == 0
+    assert fast_stats["cost_bps"]["sum"] == pytest.approx(5.0)
+    assert fast_stats["cost_bps"]["average"] == pytest.approx(5.0)
+    assert fast_stats["cost_bps"]["count"] == 1
+    assert fast_stats["net_edge_bps"]["average"] == pytest.approx(2.0)
+    assert fast_stats["model_expected_return_bps"]["sum"] == pytest.approx(14.0)
+    assert fast_stats["model_success_probability"]["average"] == pytest.approx(0.6)
+
+    second_result = engine.apply_pre_trade_checks(
+        order,
+        account=account,
+        profile_name=manual_profile.name,
+    )
+    assert second_result.allowed is False
+
+    metrics = engine.decision_model_metrics()
+    fast_stats = metrics["fast"]
+    assert fast_stats["evaluations"] == 2
+    assert fast_stats["accepted"] == 1
+    assert fast_stats["rejected"] == 1
+    assert fast_stats["cost_bps"]["sum"] == pytest.approx(11.0)
+    assert fast_stats["cost_bps"]["average"] == pytest.approx(5.5)
+    assert fast_stats["cost_bps"]["count"] == 2
+    assert fast_stats["net_edge_bps"]["average"] == pytest.approx(0.5)
+    assert fast_stats["model_expected_return_bps"]["average"] == pytest.approx(10.5)
+    assert fast_stats["model_success_probability"]["average"] == pytest.approx(0.55)
+
+    snapshot = engine.decision_model_metrics(reset=True)
+    assert snapshot == metrics
+    assert engine.decision_model_metrics() == {}
+
+
+def test_decision_model_selection_stats_track_candidates_and_reset(
+    manual_profile: ManualProfile,
+) -> None:
+    candidate_payload = {
+        "strategy": "momentum",
+        "action": "enter",
+        "risk_profile": manual_profile.name,
+        "symbol": "BTCUSDT",
+        "notional": 250.0,
+    }
+    candidate = DecisionCandidate.from_mapping(candidate_payload)
+    first_selection = ModelSelectionMetadata(
+        selected="fast",
+        candidates=(
+            ModelSelectionDetail(
+                name="fast",
+                score=0.9,
+                weight=0.7,
+                effective_score=0.63,
+                available=True,
+            ),
+            ModelSelectionDetail(
+                name="slow",
+                score=0.6,
+                weight=0.2,
+                effective_score=0.12,
+                available=False,
+                reason="stale_model",
+            ),
+        ),
+    )
+    second_selection = ModelSelectionMetadata(
+        selected="slow",
+        candidates=(
+            ModelSelectionDetail(
+                name="fast",
+                score=0.4,
+                weight=0.3,
+                effective_score=0.12,
+                available=True,
+            ),
+            ModelSelectionDetail(
+                name="slow",
+                score=0.85,
+                weight=0.65,
+                effective_score=0.5525,
+                available=True,
+            ),
+        ),
+    )
+
+    first_eval = DecisionEvaluation(
+        candidate=candidate,
+        accepted=True,
+        cost_bps=5.0,
+        net_edge_bps=2.0,
+        reasons=(),
+        risk_flags=(),
+        stress_failures=(),
+        model_expected_return_bps=14.0,
+        model_success_probability=0.6,
+        model_name="fast",
+        model_selection=first_selection,
+    )
+    second_eval = DecisionEvaluation(
+        candidate=candidate,
+        accepted=False,
+        cost_bps=6.0,
+        net_edge_bps=-1.0,
+        reasons=("edge_below_threshold",),
+        risk_flags=(),
+        stress_failures=(),
+        model_expected_return_bps=7.0,
+        model_success_probability=0.5,
+        model_name="slow",
+        model_selection=second_selection,
+    )
+    third_eval = {
+        "candidate": candidate.to_mapping(),
+        "accepted": True,
+        "cost_bps": 4.0,
+        "net_edge_bps": 1.5,
+        "model_name": "backup",
+        "model_selection": {
+            "selected": "backup",
+            "candidates": [
+                {
+                    "name": "fast",
+                    "score": 0.55,
+                    "weight": 0.45,
+                    "effective_score": 0.2475,
+                    "available": True,
+                },
+                {
+                    "name": "backup",
+                    "score": 0.7,
+                    "weight": 0.55,
+                    "effective_score": 0.385,
+                    "available": True,
+                    "reason": "fresh_model",
+                },
+            ],
+        },
+    }
+
+    orchestrator = _SequencedOrchestrator((first_eval, second_eval, third_eval))
+    engine = ThresholdRiskEngine(clock=lambda: datetime(2024, 7, 1, 9, 0, 0))
+    engine.register_profile(manual_profile)
+    engine.attach_decision_orchestrator(orchestrator)
+
+    order = OrderRequest(
+        symbol="BTCUSDT",
+        side="buy",
+        quantity=0.01,
+        order_type="limit",
+        price=25_000.0,
+        stop_price=25_000.0 - 2.0 * 100.0,
+        atr=100.0,
+        metadata={
+            "decision_candidate": candidate_payload,
+            "atr": 100.0,
+            "stop_price": 25_000.0 - 2.0 * 100.0,
+        },
+    )
+    account = _snapshot(1_000.0)
+
+    engine.apply_pre_trade_checks(
+        order,
+        account=account,
+        profile_name=manual_profile.name,
+    )
+    engine.apply_pre_trade_checks(
+        order,
+        account=account,
+        profile_name=manual_profile.name,
+    )
+    engine.apply_pre_trade_checks(
+        order,
+        account=account,
+        profile_name=manual_profile.name,
+    )
+
+    stats = engine.decision_model_selection_stats()
+    assert set(stats.keys()) == {"fast", "slow", "backup"}
+
+    fast = stats["fast"]
+    assert fast["considered"] == 3
+    assert fast["selected"] == 1
+    assert fast["available"] == 3
+    assert fast["unavailable"] == 0
+    assert fast["reasons"] == {}
+    assert fast["score"]["sum"] == pytest.approx(1.85)
+    assert fast["score"]["average"] == pytest.approx(1.85 / 3)
+    assert fast["score"]["count"] == 3
+    assert fast["weight"]["average"] == pytest.approx(1.45 / 3)
+    assert fast["effective_score"]["sum"] == pytest.approx(0.9975)
+
+    slow = stats["slow"]
+    assert slow["considered"] == 2
+    assert slow["selected"] == 1
+    assert slow["available"] == 1
+    assert slow["unavailable"] == 1
+    assert slow["reasons"] == {"stale_model": 1}
+    assert slow["weight"]["sum"] == pytest.approx(0.85)
+    assert slow["score"]["average"] == pytest.approx(1.45 / 2)
+    assert slow["effective_score"]["average"] == pytest.approx(0.6725 / 2)
+
+    backup = stats["backup"]
+    assert backup["considered"] == 1
+    assert backup["selected"] == 1
+    assert backup["available"] == 1
+    assert backup["unavailable"] == 0
+    assert backup["reasons"] == {"fresh_model": 1}
+    assert backup["score"]["average"] == pytest.approx(0.7)
+    assert backup["weight"]["average"] == pytest.approx(0.55)
+    assert backup["effective_score"]["average"] == pytest.approx(0.385)
+
+    snapshot = engine.decision_model_selection_stats(reset=True)
+    assert snapshot == stats
+    assert engine.decision_model_selection_stats() == {}
+
+
+def test_decision_orchestrator_activity_tracks_counts_and_reset(
+    manual_profile: ManualProfile,
+) -> None:
+    candidate_payload = {
+        "strategy": "mean_reversion",
+        "action": "enter",
+        "risk_profile": manual_profile.name,
+        "symbol": "ETHUSDT",
+        "notional": 150.0,
+    }
+    candidate = DecisionCandidate.from_mapping(candidate_payload)
+    accepted_eval = DecisionEvaluation(
+        candidate=candidate,
+        accepted=True,
+        cost_bps=3.0,
+        net_edge_bps=1.5,
+        reasons=(),
+        risk_flags=(),
+        stress_failures=(),
+        model_expected_return_bps=12.0,
+        model_success_probability=0.55,
+        model_name="alpha",
+        model_selection=None,
+    )
+    rejected_eval = DecisionEvaluation(
+        candidate=candidate,
+        accepted=False,
+        cost_bps=4.5,
+        net_edge_bps=-0.5,
+        reasons=("edge_negative",),
+        risk_flags=(),
+        stress_failures=(),
+        model_expected_return_bps=6.0,
+        model_success_probability=0.42,
+        model_name="beta",
+        model_selection=None,
+    )
+
+    orchestrator = _SequencedOrchestrator((accepted_eval, rejected_eval))
+    engine = ThresholdRiskEngine(clock=lambda: datetime(2024, 7, 1, 9, 0, 0))
+    engine.register_profile(manual_profile)
+    engine.attach_decision_orchestrator(orchestrator)
+
+    order = _order(25_000.0)
+    order.metadata = dict(order.metadata)
+    order.metadata["decision_candidate"] = candidate_payload
+    account = _snapshot(2_000.0)
+
+    engine.apply_pre_trade_checks(
+        order,
+        account=account,
+        profile_name=manual_profile.name,
+    )
+    engine.apply_pre_trade_checks(
+        order,
+        account=account,
+        profile_name=manual_profile.name,
+    )
+
+    skip_order = _order(25_000.0)
+    engine.apply_pre_trade_checks(
+        skip_order,
+        account=account,
+        profile_name=manual_profile.name,
+    )
+
+    stats = engine.decision_orchestrator_activity()
+    assert stats["attempts"] == 2
+    assert stats["evaluated"] == 2
+    assert stats["accepted"] == 1
+    assert stats["rejected"] == 1
+    assert stats["errors"] == 0
+    assert stats["skipped"] == 1
+    duration = stats["duration_ms"]
+    assert duration["count"] == 2
+    assert duration["average"] is not None
+    assert stats["error_reasons"] == {}
+
+    snapshot = engine.decision_orchestrator_activity(reset=True)
+    assert snapshot == stats
+
+    reset_stats = engine.decision_orchestrator_activity()
+    assert reset_stats["attempts"] == 0
+    assert reset_stats["errors"] == 0
+    assert reset_stats["duration_ms"]["count"] == 0
+    assert reset_stats["duration_ms"]["average"] is None
+
+
+def test_decision_orchestrator_activity_records_errors(
+    manual_profile: ManualProfile,
+) -> None:
+    engine = ThresholdRiskEngine(clock=lambda: datetime(2024, 7, 1, 9, 0, 0))
+    engine.register_profile(manual_profile)
+    engine.attach_decision_orchestrator(_FailingOrchestrator())
+
+    invalid_order = _order(25_000.0)
+    invalid_order.metadata = dict(invalid_order.metadata)
+    invalid_order.metadata["decision_candidate"] = "invalid"
+    account = _snapshot(2_000.0)
+
+    result_invalid = engine.apply_pre_trade_checks(
+        invalid_order,
+        account=account,
+        profile_name=manual_profile.name,
+    )
+    assert result_invalid.allowed is False
+    assert "invalid_candidate" in (result_invalid.reason or "")
+
+    valid_candidate = {
+        "strategy": "carry",
+        "action": "enter",
+        "risk_profile": manual_profile.name,
+        "symbol": "BTCUSDT",
+        "notional": 300.0,
+    }
+    failing_order = _order(25_000.0)
+    failing_order.metadata = dict(failing_order.metadata)
+    failing_order.metadata["decision_candidate"] = valid_candidate
+
+    result_failed = engine.apply_pre_trade_checks(
+        failing_order,
+        account=account,
+        profile_name=manual_profile.name,
+    )
+    assert result_failed.allowed is False
+    assert "evaluation_failed" in (result_failed.reason or "")
+
+    stats = engine.decision_orchestrator_activity()
+    assert stats["attempts"] == 1
+    assert stats["evaluated"] == 0
+    assert stats["errors"] == 2
+    assert stats["skipped"] == 0
+    assert stats["accepted"] == 0
+    assert stats["rejected"] == 0
+    duration = stats["duration_ms"]
+    assert duration["count"] == 1
+    assert duration["average"] is not None
+    assert stats["error_reasons"] == {
+        "invalid_candidate_payload": 1,
+        "evaluation_failed": 1,
+    }
+
+    snapshot = engine.decision_orchestrator_activity(reset=True)
+    assert snapshot == stats
+    reset_stats = engine.decision_orchestrator_activity()
+    assert reset_stats["errors"] == 0
+    assert reset_stats["duration_ms"]["count"] == 0
+
+
+def test_decision_model_outcomes_empty_without_orchestrator(
+    manual_profile: ManualProfile,
+) -> None:
+    engine = ThresholdRiskEngine(clock=lambda: datetime(2024, 7, 1, 9, 0, 0))
+    engine.register_profile(manual_profile)
+
+    assert engine.decision_model_outcomes() == {}

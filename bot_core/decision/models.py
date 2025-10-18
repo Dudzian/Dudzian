@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Mapping, MutableMapping, Sequence
 
 
@@ -159,9 +160,11 @@ class DecisionEvaluation:
     stress_failures: Sequence[str] = field(default_factory=tuple)
     model_expected_return_bps: float | None = None
     model_success_probability: float | None = None
+    model_name: str | None = None
+    model_selection: "ModelSelectionMetadata | None" = None
 
     def to_mapping(self) -> Mapping[str, object]:
-        return {
+        payload: MutableMapping[str, object] = {
             "candidate": self.candidate.to_mapping(),
             "accepted": self.accepted,
             "cost_bps": self.cost_bps,
@@ -171,11 +174,63 @@ class DecisionEvaluation:
             "stress_failures": list(self.stress_failures),
             "model_expected_return_bps": self.model_expected_return_bps,
             "model_success_probability": self.model_success_probability,
+            "model_name": self.model_name,
         }
+        if self.model_selection is not None:
+            payload["model_selection"] = self.model_selection.to_mapping()
+        return payload
+
+
+@dataclass(slots=True)
+class ModelSelectionDetail:
+    """Szczegóły dotyczące kandydata modelu w procesie selekcji."""
+
+    name: str
+    score: float | None = None
+    weight: float | None = None
+    effective_score: float | None = None
+    updated_at: datetime | None = None
+    available: bool = True
+    reason: str | None = None
+
+    def to_mapping(self) -> Mapping[str, object]:
+        payload: MutableMapping[str, object] = {
+            "name": self.name,
+            "score": self.score,
+            "weight": self.weight,
+            "effective_score": self.effective_score,
+            "available": self.available,
+            "reason": self.reason,
+        }
+        if self.updated_at is not None:
+            payload["updated_at"] = self.updated_at.isoformat()
+        return payload
+
+
+@dataclass(slots=True)
+class ModelSelectionMetadata:
+    """Metadane wyboru modelu inference dla ewaluacji."""
+
+    selected: str | None
+    candidates: Sequence[ModelSelectionDetail] = field(default_factory=tuple)
+
+    def to_mapping(self) -> Mapping[str, object]:
+        return {
+            "selected": self.selected,
+            "candidates": [detail.to_mapping() for detail in self.candidates],
+        }
+
+    def find(self, name: str) -> ModelSelectionDetail | None:
+        for detail in self.candidates:
+            if detail.name == name:
+                return detail
+        return None
 
 
 __all__ = [
     "DecisionCandidate",
     "DecisionEvaluation",
+    "ModelSelectionDetail",
+    "ModelSelectionMetadata",
     "RiskSnapshot",
 ]
