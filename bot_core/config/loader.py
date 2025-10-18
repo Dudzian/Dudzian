@@ -44,6 +44,7 @@ from bot_core.config.models import (
     PortfolioRuntimeInputsConfig,
     PermissionProfileConfig,
     RuntimeEntrypointConfig,
+    LicenseValidationConfig,
 )
 from bot_core.exchanges.base import Environment
 
@@ -741,6 +742,87 @@ def _load_runtime_resource_limits(runtime_section: Mapping[str, Any]):
         io_read_mb_s=io_read,
         io_write_mb_s=io_write,
         headroom_warning_threshold=warning_threshold,
+    )
+
+
+def _load_license_config(section: Mapping[str, Any] | None):
+    if not _core_has("license") or LicenseValidationConfig is None:
+        return None
+    if not isinstance(section, Mapping):
+        return LicenseValidationConfig()
+
+    defaults = LicenseValidationConfig()
+
+    def _normalize_path(value: object | None) -> str | None:
+        if value in (None, "", False):
+            return None
+        text = str(value).strip()
+        return text or None
+
+    def _normalize_sequence(value: object | None) -> tuple[str, ...]:
+        if value in (None, "", False):
+            return ()
+        if isinstance(value, str):
+            candidates = [value]
+        else:
+            try:
+                candidates = list(value)  # type: ignore[arg-type]
+            except TypeError:
+                candidates = [value]
+        normalized: list[str] = []
+        for item in candidates:
+            text = str(item).strip()
+            if text:
+                normalized.append(text)
+        return tuple(normalized)
+
+    def _normalize_float(value: object | None) -> float | None:
+        if value in (None, "", False):
+            return None
+        return float(value)
+
+    def _normalize_string(value: object | None) -> str | None:
+        if value in (None, "", False):
+            return None
+        text = str(value).strip()
+        return text or None
+
+    def _normalize_bool(value: object | None) -> bool:
+        if value in (None, ""):
+            return False
+        if isinstance(value, str):
+            text = value.strip().lower()
+            if text in ("true", "1", "yes", "y", "on"):
+                return True
+            if text in ("false", "0", "no", "n", "off"):
+                return False
+        return bool(value)
+
+    license_path_raw = section.get("license_path")
+    license_path = (
+        str(license_path_raw).strip()
+        if license_path_raw not in (None, "", False)
+        else defaults.license_path
+    )
+
+    return LicenseValidationConfig(
+        license_path=license_path,
+        fingerprint_path=_normalize_path(section.get("fingerprint_path")) or defaults.fingerprint_path,
+        license_keys_path=_normalize_path(section.get("license_keys_path")),
+        fingerprint_keys_path=_normalize_path(section.get("fingerprint_keys_path")),
+        allowed_profiles=_normalize_sequence(section.get("allowed_profiles")),
+        allowed_issuers=_normalize_sequence(section.get("allowed_issuers")),
+        max_validity_days=_normalize_float(section.get("max_validity_days")),
+        required_schema=_normalize_string(section.get("required_schema")) or defaults.required_schema,
+        allowed_schema_versions=_normalize_sequence(section.get("allowed_schema_versions"))
+        or defaults.allowed_schema_versions,
+        revocation_list_path=_normalize_path(section.get("revocation_list_path")),
+        revocation_required=_normalize_bool(section.get("revocation_required")),
+        revocation_list_max_age_hours=_normalize_float(section.get("revocation_list_max_age_hours")),
+        revocation_keys_path=_normalize_path(section.get("revocation_keys_path")),
+        revocation_signature_required=_normalize_bool(
+            section.get("revocation_signature_required")
+        ),
     )
 
 
@@ -3273,6 +3355,10 @@ def load_core_config(path: str | Path) -> CoreConfig:
     )
     if market_intel_config is not None and _core_has("market_intel"):
         core_kwargs["market_intel"] = market_intel_config
+
+    license_config = _load_license_config(raw.get("license"))
+    if license_config is not None:
+        core_kwargs["license"] = license_config
 
     portfolio_governor_config = _load_portfolio_governor_config(
         raw,
