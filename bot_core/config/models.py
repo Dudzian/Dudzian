@@ -442,6 +442,15 @@ class DecisionEngineTCOConfig:
     """Ścieżki raportów TCO wykorzystywanych przez DecisionOrchestrator."""
     reports: Sequence[str] = field(default_factory=tuple)  # kompatybilne z YAML: tco.reports
     require_at_startup: bool = False
+    runtime_enabled: bool = False
+    runtime_report_directory: str | None = None
+    runtime_report_basename: str | None = None
+    runtime_export_formats: Sequence[str] = field(default_factory=lambda: ("json",))
+    runtime_flush_events: int | None = None
+    runtime_signing_key_env: str | None = None
+    runtime_signing_key_id: str | None = None
+    runtime_metadata: Mapping[str, object] = field(default_factory=dict)
+    runtime_cost_limit_bps: float | None = None
 
 
 @dataclass(slots=True)

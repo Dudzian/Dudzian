@@ -2125,6 +2125,42 @@ def _load_decision_engine_config(
             tco_kwargs["reports"] = normalized_reports
         if "require_at_startup" in tco_fields or require_at_startup:
             tco_kwargs["require_at_startup"] = require_at_startup
+        if "runtime_enabled" in tco_fields:
+            tco_kwargs["runtime_enabled"] = bool(tco_raw.get("runtime_enabled", False))
+        if "runtime_report_directory" in tco_fields:
+            directory_raw = tco_raw.get("runtime_report_directory")
+            if directory_raw:
+                tco_kwargs["runtime_report_directory"] = str(
+                    _normalize_runtime_path(directory_raw, base_dir=base_dir)
+                )
+        if "runtime_report_basename" in tco_fields and tco_raw.get("runtime_report_basename"):
+            tco_kwargs["runtime_report_basename"] = str(tco_raw["runtime_report_basename"])
+        if "runtime_export_formats" in tco_fields and tco_raw.get("runtime_export_formats") is not None:
+            formats_raw = tco_raw.get("runtime_export_formats")
+            if isinstance(formats_raw, (str, bytes)):
+                formats = [str(formats_raw)]
+            elif isinstance(formats_raw, Sequence):
+                formats = [str(entry) for entry in formats_raw]
+            else:
+                raise ValueError("decision_engine.tco.runtime_export_formats must be a string or sequence")
+            tco_kwargs["runtime_export_formats"] = tuple(formats)
+        if "runtime_flush_events" in tco_fields and tco_raw.get("runtime_flush_events") not in (None, ""):
+            tco_kwargs["runtime_flush_events"] = int(float(tco_raw.get("runtime_flush_events", 0)))
+        if "runtime_signing_key_env" in tco_fields:
+            env_value = _normalize_env_var(tco_raw.get("runtime_signing_key_env"))
+            if env_value:
+                tco_kwargs["runtime_signing_key_env"] = env_value
+        if "runtime_signing_key_id" in tco_fields:
+            env_value = _normalize_env_var(tco_raw.get("runtime_signing_key_id"))
+            if env_value:
+                tco_kwargs["runtime_signing_key_id"] = env_value
+        if "runtime_metadata" in tco_fields and tco_raw.get("runtime_metadata") is not None:
+            metadata_raw = tco_raw.get("runtime_metadata")
+            if not isinstance(metadata_raw, Mapping):
+                raise ValueError("decision_engine.tco.runtime_metadata must be a mapping")
+            tco_kwargs["runtime_metadata"] = dict(metadata_raw)
+        if "runtime_cost_limit_bps" in tco_fields and tco_raw.get("runtime_cost_limit_bps") not in (None, ""):
+            tco_kwargs["runtime_cost_limit_bps"] = float(tco_raw.get("runtime_cost_limit_bps"))
         tco_config = DecisionEngineTCOConfig(**tco_kwargs)  # type: ignore[arg-type]
     return DecisionEngineConfig(
         orchestrator=base_threshold,

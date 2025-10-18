@@ -30,6 +30,7 @@ from bot_core.risk.factory import build_risk_profile_from_config
 from bot_core.risk.repository import FileRiskRepository
 from bot_core.security import SecretManager, SecretStorageError, build_service_token_validator
 from bot_core.security.tokens import ServiceTokenValidator
+from bot_core.runtime.tco_reporting import RuntimeTCOReporter
 
 if TYPE_CHECKING:  # pragma: no cover - tylko do typów
     from bot_core.alerts import (
@@ -352,6 +353,67 @@ def _load_initial_tco_costs(
     return None, tuple(warnings)
 
 
+def _initialize_runtime_tco_reporter(
+    config: Any,
+    *,
+    environment: EnvironmentConfig,
+    risk_profile: str,
+) -> RuntimeTCOReporter | None:
+    """Buduje usługę raportowania TCO w runtime, jeśli konfiguracja ją aktywuje."""
+
+    enabled = bool(getattr(config, "runtime_enabled", False))
+    directory_value = getattr(config, "runtime_report_directory", None)
+    if not enabled and not directory_value:
+        return None
+
+    if directory_value:
+        directory = Path(str(directory_value)).expanduser()
+    else:
+        directory = Path(environment.data_cache_path).expanduser() / "tco_runtime"
+
+    basename = getattr(config, "runtime_report_basename", None)
+    formats = getattr(config, "runtime_export_formats", None)
+    flush_events = getattr(config, "runtime_flush_events", None)
+    flush_normalized = int(flush_events) if flush_events not in (None, "", 0) else None
+
+    signing_key_env = getattr(config, "runtime_signing_key_env", None)
+    signing_key: bytes | None = None
+    if signing_key_env:
+        env_value = os.environ.get(signing_key_env)
+        if env_value:
+            signing_key = env_value.encode("utf-8")
+        else:
+            _LOGGER.warning(
+                "Runtime TCO signing key env %s is not set – artifacts will not be signed.",
+                signing_key_env,
+            )
+
+    signing_key_id = getattr(config, "runtime_signing_key_id", None)
+    metadata = dict(getattr(config, "runtime_metadata", {}) or {})
+    metadata.setdefault("environment", environment.name)
+    metadata.setdefault("exchange", environment.exchange)
+    metadata.setdefault("risk_profile", risk_profile)
+    metadata.setdefault("controller", getattr(environment, "default_controller", None) or environment.name)
+    cost_limit = getattr(config, "runtime_cost_limit_bps", None)
+
+    try:
+        reporter = RuntimeTCOReporter(
+            output_dir=directory,
+            basename=basename,
+            export_formats=formats,
+            flush_events=flush_normalized,
+            signing_key=signing_key,
+            signing_key_id=signing_key_id,
+            metadata=metadata,
+            cost_limit_bps=cost_limit,
+        )
+    except Exception:  # pragma: no cover - reporter jest opcjonalny
+        _LOGGER.exception("Nie udało się zainicjalizować RuntimeTCOReporter")
+        return None
+
+    return reporter
+
+
 @dataclass(slots=True)
 class BootstrapContext:
     """Zawiera wszystkie komponenty zainicjalizowane dla danego środowiska."""
@@ -374,6 +436,7 @@ class BootstrapContext:
     decision_orchestrator: Any | None = None
     decision_tco_report_path: str | None = None
     decision_tco_warnings: Sequence[str] | None = None
+    tco_reporter: RuntimeTCOReporter | None = None
     portfolio_governor_config: Any | None = None
     portfolio_governor: Any | None = None
     metrics_server: Any | None = None
@@ -438,6 +501,7 @@ def bootstrap_environment(
     decision_orchestrator: Any | None = None
     decision_tco_report_path: str | None = None
     decision_tco_warnings: list[str] = []
+    tco_reporter: RuntimeTCOReporter | None = None
     portfolio_governor: Any | None = None
     if portfolio_governor_config and PortfolioGovernor is not None:
         try:
@@ -479,6 +543,15 @@ def bootstrap_environment(
         )
         if warnings:
             decision_tco_warnings.extend(str(entry) for entry in warnings)
+    tco_config = getattr(decision_engine_config, "tco", None)
+    if tco_config is not None:
+        reporter_candidate = _initialize_runtime_tco_reporter(
+            tco_config,
+            environment=environment,
+            risk_profile=selected_profile,
+        )
+        if reporter_candidate is not None:
+            tco_reporter = reporter_candidate
     profile = build_risk_profile_from_config(risk_profile_config)
     risk_engine.register_profile(profile)
     # Aktualizujemy konfigurację środowiska, aby dalsze komponenty znały aktywny profil.
@@ -1373,6 +1446,7 @@ def bootstrap_environment(
         decision_tco_warnings=tuple(decision_tco_warnings)
         if decision_tco_warnings
         else None,
+        tco_reporter=tco_reporter,
         portfolio_governor_config=portfolio_governor_config,
         portfolio_governor=portfolio_governor,
         metrics_server=metrics_server,
