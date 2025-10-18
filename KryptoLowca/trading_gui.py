@@ -182,8 +182,19 @@ class TradingGUI:
     Logika: TradingEngine + menedżery w managers/*
     """
 
-    def __init__(self, root: tk.Tk):
-        self.root = root
+    def __init__(
+        self,
+        root: Optional[tk.Tk] = None,
+        *,
+        enable_web_api: bool = True,
+        event_bus: Any | None = None,
+        core_config_path: str | Path | None = None,
+        core_environment: Optional[str] = None,
+    ):
+        self.enable_web_api = enable_web_api
+        self.event_bus = event_bus
+
+        self.root = root or tk.Tk()
         self.root.title("Trading Bot — AI integrated")
         self.root.geometry("1400x900")
         self.style = ttk.Style(self.root)
@@ -294,10 +305,11 @@ class TradingGUI:
         self._market_data: Dict[str, pd.DataFrame] = {}
 
         # Risk profile (core.yaml)
-        self.core_config_path: Path = Path(
-            os.environ.get("KRYPTLOWCA_CORE_CONFIG", DEFAULT_CORE_CONFIG_PATH)
+        config_hint = core_config_path or os.environ.get(
+            "KRYPTLOWCA_CORE_CONFIG", DEFAULT_CORE_CONFIG_PATH
         )
-        self.core_environment: Optional[str] = None
+        self.core_config_path: Path = Path(config_hint).expanduser()
+        self.core_environment: Optional[str] = core_environment
         self.risk_profile_name: Optional[str] = None
         self.risk_manager_settings: Dict[str, Any] = {}
         self.risk_manager_config: Optional[Any] = None
@@ -813,8 +825,11 @@ class TradingGUI:
         config_path: Optional[Path | str] = None,
         environment: Optional[str] = None,
     ) -> tuple[str, Dict[str, Any], Optional[Any]]:
-        target_path = Path(config_path) if config_path is not None else self.core_config_path
         if config_path is not None:
+            target_path = Path(config_path).expanduser().resolve()
+            self.core_config_path = target_path
+        else:
+            target_path = self.core_config_path.expanduser().resolve()
             self.core_config_path = target_path
 
         env_name = environment or self.core_environment
@@ -833,11 +848,12 @@ class TradingGUI:
     def reload_risk_manager_settings(
         self,
         *,
+        config_path: Optional[Path | str] = None,
         environment: Optional[str] = None,
     ) -> tuple[str, Dict[str, Any], Optional[Any]]:
         env_hint = environment or self.core_environment or self._map_network_to_environment()
         profile_name, settings, profile_cfg = self.load_risk_manager_settings(
-            config_path=self.core_config_path,
+            config_path=config_path or self.core_config_path,
             environment=env_hint,
         )
 

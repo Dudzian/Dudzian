@@ -255,7 +255,14 @@ async def test_invalid_symbol_selection(app):
     await app._run_backtest()
 
 
-def _write_core_config(path: Path, *, max_daily_loss: float, max_position: float, hard_drawdown: float) -> None:
+def _write_core_config(
+    path: Path,
+    *,
+    max_daily_loss: float,
+    max_position: float,
+    hard_drawdown: float,
+    stop_loss: float = 1.5,
+) -> None:
     path.write_text(
         dedent(
             f"""
@@ -265,7 +272,7 @@ def _write_core_config(path: Path, *, max_daily_loss: float, max_position: float
                 max_position_pct: {max_position}
                 target_volatility: 0.1
                 max_leverage: 3.0
-                stop_loss_atr_multiple: 1.5
+                stop_loss_atr_multiple: {stop_loss}
                 max_open_positions: 5
                 hard_drawdown_pct: {hard_drawdown}
             environments:
@@ -287,7 +294,7 @@ def _write_core_config(path: Path, *, max_daily_loss: float, max_position: float
 @pytest.mark.asyncio
 async def test_reload_risk_manager_settings_updates_gui(app, tmp_path):
     core_path = tmp_path / "core.yaml"
-    _write_core_config(core_path, max_daily_loss=0.02, max_position=0.05, hard_drawdown=0.08)
+    _write_core_config(core_path, max_daily_loss=0.02, max_position=0.05, hard_drawdown=0.08, stop_loss=1.5)
 
     app.core_config_path = core_path
     app.core_environment = "paper_env"
@@ -301,14 +308,16 @@ async def test_reload_risk_manager_settings_updates_gui(app, tmp_path):
     assert app.risk_per_trade.get() == pytest.approx(0.05)
     assert app.portfolio_risk.get() == pytest.approx(0.08)
     assert app.risk_profile_var.get() == "balanced"
+    assert app.trail_atr_mult_var.get() == pytest.approx(1.5)
     assert app.risk_mgr is not old_mgr
 
-    _write_core_config(core_path, max_daily_loss=0.03, max_position=0.07, hard_drawdown=0.1)
+    _write_core_config(core_path, max_daily_loss=0.03, max_position=0.07, hard_drawdown=0.1, stop_loss=2.25)
 
     profile_name2, settings2, _ = app.reload_risk_manager_settings()
     assert profile_name2 == "balanced"
     assert settings2["max_daily_loss_pct"] == pytest.approx(0.03)
     assert app.max_daily_loss_pct == pytest.approx(0.03)
+    assert app.trail_atr_mult_var.get() == pytest.approx(2.25)
 
 
 def test_sync_positions_from_service_spot(tmp_path, monkeypatch):
