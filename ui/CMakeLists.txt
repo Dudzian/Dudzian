@@ -69,6 +69,7 @@ set(UI_SOURCES
     src/telemetry/UiTelemetryReporter.cpp
     src/license/LicenseActivationController.cpp
     src/security/SecurityAdminController.cpp
+    src/reporting/ReportCenterController.cpp
 )
 
 set(UI_HEADERS
@@ -85,6 +86,7 @@ set(UI_HEADERS
     src/telemetry/UiTelemetryReporter.hpp
     src/license/LicenseActivationController.hpp
     src/security/SecurityAdminController.hpp
+    src/reporting/ReportCenterController.hpp
 )
 
 qt_add_executable(bot_trading_shell
