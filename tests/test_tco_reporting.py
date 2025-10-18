@@ -8,7 +8,13 @@ from pathlib import Path
 
 import pytest
 
-from bot_core.tco.models import CostBreakdown, ProfileCostSummary, StrategyCostSummary, TCOReport
+from bot_core.tco.models import (
+    CostBreakdown,
+    ProfileCostSummary,
+    SchedulerCostSummary,
+    StrategyCostSummary,
+    TCOReport,
+)
 from bot_core.tco.reporting import SignedArtifact, TCOReportWriter
 
 
@@ -43,12 +49,30 @@ def sample_report() -> TCOReport:
         profiles={"balanced": profile_summary},
         total=total_summary,
     )
+    scheduler_strategy_profile = ProfileCostSummary(
+        profile="mean_reversion",
+        trade_count=3,
+        notional=Decimal("25000"),
+        breakdown=breakdown_total,
+    )
+    scheduler_total_profile = ProfileCostSummary(
+        profile="all",
+        trade_count=3,
+        notional=Decimal("25000"),
+        breakdown=breakdown_total,
+    )
+    scheduler_summary = SchedulerCostSummary(
+        scheduler="cron.daily",
+        strategies={"mean_reversion": scheduler_strategy_profile},
+        total=scheduler_total_profile,
+    )
     return TCOReport(
         generated_at=datetime(2024, 3, 14, 9, 26, tzinfo=timezone.utc),
         metadata={"environment": "paper", "events_count": 3},
         strategies={"mean_reversion": strategy_summary},
         total=total_summary,
         alerts=["cost_limit_exceeded"],
+        schedulers={"cron.daily": scheduler_summary},
     )
 
 
@@ -65,6 +89,8 @@ def test_report_writer_builds_csv_pdf_and_json(sample_report: TCOReport) -> None
     assert pdf_bytes.startswith(b"%PDF-1.4")
     pdf_text = pdf_bytes.decode("latin-1", errors="ignore")
     assert "Raport koszt" in pdf_text
+    assert "Liczba scheduler" in pdf_text
+    assert "Scheduler cron.daily" in pdf_text
 
     json_payload = writer.build_json()
     assert json_payload == sample_report.to_dict()
@@ -82,6 +108,7 @@ def test_report_writer_writes_and_signs_artifacts(
 
     json_payload = json.loads(artifacts["json"].read_text(encoding="utf-8"))
     assert json_payload["metadata"]["environment"] == "paper"
+    assert "schedulers" in json_payload
 
     signing_key = b"k" * 32
     signed = writer.sign_artifacts(artifacts, signing_key=signing_key, key_id="key-1")
@@ -94,6 +121,7 @@ def test_report_writer_writes_and_signs_artifacts(
         signature_doc = json.loads(artifact.signature_path.read_text(encoding="utf-8"))
         assert signature_doc["payload"]["artifact_type"] == label
         assert signature_doc["signature"]["algorithm"] == "HMAC-SHA256"
+        assert signature_doc["payload"]["scheduler_count"] == 1
 
     with pytest.raises(ValueError):
         writer.sign_artifacts(artifacts, signing_key=b"short")

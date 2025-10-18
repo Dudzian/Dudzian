@@ -8,6 +8,7 @@ import pytest
 from bot_core.tco.models import (
     CostBreakdown,
     ProfileCostSummary,
+    SchedulerCostSummary,
     StrategyCostSummary,
     TCOReport,
     TradeCostEvent,
@@ -147,12 +148,30 @@ class TestCostSummaries:
             profiles={"balanced": balanced_profile},
             total=total_profile,
         )
+        scheduler_strategy_profile = ProfileCostSummary(
+            profile="mean_reversion",
+            trade_count=2,
+            notional=Decimal("15000"),
+            breakdown=total_breakdown,
+        )
+        scheduler_total_profile = ProfileCostSummary(
+            profile="all",
+            trade_count=2,
+            notional=Decimal("15000"),
+            breakdown=total_breakdown,
+        )
+        scheduler_summary = SchedulerCostSummary(
+            scheduler="cron.daily",
+            strategies={"mean_reversion": scheduler_strategy_profile},
+            total=scheduler_total_profile,
+        )
         report = TCOReport(
             generated_at=datetime(2024, 1, 2, 15, 0, tzinfo=timezone.utc),
             metadata={"environment": "paper"},
             strategies={"mean_reversion": strategy_summary},
             total=total_profile,
             alerts=["cost_limit_exceeded"],
+            schedulers={"cron.daily": scheduler_summary},
         )
 
         strategy_dict = strategy_summary.to_dict()
@@ -164,3 +183,4 @@ class TestCostSummaries:
         assert report_dict["generated_at"] == "2024-01-02T15:00:00+00:00"
         assert report_dict["alerts"] == ["cost_limit_exceeded"]
         assert report_dict["total"]["cost_bps"] == pytest.approx(float(total_profile.cost_bps))
+        assert report_dict["schedulers"]["cron.daily"]["total"]["trade_count"] == 2

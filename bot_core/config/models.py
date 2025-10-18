@@ -449,6 +449,7 @@ class DecisionEngineTCOConfig:
     runtime_report_basename: str | None = None
     runtime_export_formats: Sequence[str] = field(default_factory=lambda: ("json",))
     runtime_flush_events: int | None = None
+    runtime_clear_after_export: bool = False
     runtime_signing_key_env: str | None = None
     runtime_signing_key_id: str | None = None
     runtime_metadata: Mapping[str, object] = field(default_factory=dict)
@@ -476,6 +477,7 @@ class DecisionEngineTCOConfig:
             self.warn_report_age_hours = float(self.warn_report_age_hours)
         if self.max_report_age_hours is not None:
             self.max_report_age_hours = float(self.max_report_age_hours)
+        self.runtime_clear_after_export = bool(self.runtime_clear_after_export)
 
 
 @dataclass(slots=True)

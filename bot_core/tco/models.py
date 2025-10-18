@@ -213,12 +213,29 @@ class StrategyCostSummary:
 
 
 @dataclass(slots=True)
+class SchedulerCostSummary:
+    """Zestawienie kosztów przypisanych do scheduler-a."""
+
+    scheduler: str
+    strategies: dict[str, ProfileCostSummary]
+    total: ProfileCostSummary
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "scheduler": self.scheduler,
+            "strategies": {name: summary.to_dict() for name, summary in self.strategies.items()},
+            "total": self.total.to_dict(),
+        }
+
+
+@dataclass(slots=True)
 class TCOReport:
     generated_at: datetime
     metadata: Mapping[str, Any]
     strategies: dict[str, StrategyCostSummary]
     total: ProfileCostSummary
     alerts: list[str] = field(default_factory=list)
+    schedulers: dict[str, SchedulerCostSummary] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -227,4 +244,5 @@ class TCOReport:
             "strategies": {name: summary.to_dict() for name, summary in self.strategies.items()},
             "total": self.total.to_dict(),
             "alerts": list(self.alerts),
+            "schedulers": {name: summary.to_dict() for name, summary in self.schedulers.items()},
         }
