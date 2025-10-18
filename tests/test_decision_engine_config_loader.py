@@ -51,6 +51,8 @@ def test_load_core_config_parses_decision_engine_tco(tmp_path: Path) -> None:
             "tco": {
                 "reports": ["data/tco/baseline.json", "../shared/tco.json"],
                 "require_at_startup": True,
+                "warn_report_age_hours": 12,
+                "max_report_age_hours": 36,
             },
         },
     }

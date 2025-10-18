@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import os
 import stat
@@ -292,13 +292,56 @@ def _load_initial_tco_costs(
     if not tco_config:
         return None, ()
 
+    warn_age = _config_value(tco_config, "warn_report_age_hours")
+    max_age = _config_value(tco_config, "max_report_age_hours")
+    try:
+        warn_age = float(warn_age) if warn_age is not None else None
+    except (TypeError, ValueError):  # pragma: no cover - defensywnie
+        _LOGGER.debug("Nie można zinterpretować warn_report_age_hours=%r", warn_age)
+        warn_age = None
+    try:
+        max_age = float(max_age) if max_age is not None else None
+    except (TypeError, ValueError):  # pragma: no cover - defensywnie
+        _LOGGER.debug("Nie można zinterpretować max_report_age_hours=%r", max_age)
+        max_age = None
+
     report_paths_attr = getattr(tco_config, "report_paths", None)
     if not report_paths_attr:
         report_paths_attr = getattr(tco_config, "reports", ())
     report_paths = tuple(report_paths_attr or ())
     require_at_startup = bool(getattr(tco_config, "require_at_startup", False))
+    now = datetime.now(timezone.utc)
     for raw_path in report_paths:
         path = Path(str(raw_path)).expanduser()
+        try:
+            stat_result = path.stat()
+        except FileNotFoundError:
+            warning = f"missing:{path}"
+            warnings.append(warning)
+            _LOGGER.warning("Raport TCO %s nie istnieje", path)
+            continue
+
+        age_seconds = max(0.0, now.timestamp() - stat_result.st_mtime)
+        age_hours = age_seconds / 3600.0
+        if max_age is not None and age_hours >= max_age:
+            warning = f"stale_critical:{path}:{age_hours:.2f}h"
+            warnings.append(warning)
+            _LOGGER.error(
+                "Raport TCO %s jest starszy niż maksymalne %s godzin (wiek %.2f h)",
+                path,
+                max_age,
+                age_hours,
+            )
+            continue
+        if warn_age is not None and age_hours >= warn_age:
+            warning = f"stale_warning:{path}:{age_hours:.2f}h"
+            warnings.append(warning)
+            _LOGGER.warning(
+                "Raport TCO %s jest starszy niż zalecane %s godzin (wiek %.2f h)",
+                path,
+                warn_age,
+                age_hours,
+            )
         try:
             with path.open("r", encoding="utf-8") as handle:
                 payload = json.load(handle)
