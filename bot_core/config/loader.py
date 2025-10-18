@@ -2161,6 +2161,12 @@ def _load_decision_engine_config(
             tco_kwargs["runtime_metadata"] = dict(metadata_raw)
         if "runtime_cost_limit_bps" in tco_fields and tco_raw.get("runtime_cost_limit_bps") not in (None, ""):
             tco_kwargs["runtime_cost_limit_bps"] = float(tco_raw.get("runtime_cost_limit_bps"))
+        warn_age_raw = tco_raw.get("warn_report_age_hours")
+        if "warn_report_age_hours" in tco_fields and warn_age_raw not in (None, ""):
+            tco_kwargs["warn_report_age_hours"] = float(warn_age_raw)
+        max_age_raw = tco_raw.get("max_report_age_hours")
+        if "max_report_age_hours" in tco_fields and max_age_raw not in (None, ""):
+            tco_kwargs["max_report_age_hours"] = float(max_age_raw)
         tco_config = DecisionEngineTCOConfig(**tco_kwargs)  # type: ignore[arg-type]
     return DecisionEngineConfig(
         orchestrator=base_threshold,

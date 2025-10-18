@@ -178,6 +178,8 @@ decision_engine:
       - var/audit/tco/latest_report.json
       - var/audit/acceptance/latest/tco_summary.json
     require_at_startup: false
+    warn_report_age_hours: 24.0
+    max_report_age_hours: 72.0
 
 portfolio_governor:
   enabled: true
