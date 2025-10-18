@@ -9,6 +9,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QFileSystemWatcher>
+#include <QFutureWatcher>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -20,6 +21,8 @@
 #include <QTimer>
 #include <QUrl>
 #include <QtGlobal>
+#include <QtConcurrent>
+#include <memory>
 
 Q_LOGGING_CATEGORY(lcReportCenter, "bot.shell.reporting")
 
@@ -356,10 +359,8 @@ bool ReportCenterController::refresh()
 {
     if (m_busy)
         return false;
-    clearLastErrorMessage();
 
-    m_busy = true;
-    Q_EMIT busyChanged();
+    clearLastErrorMessage();
 
     QStringList args;
     args << QStringLiteral("-m")
@@ -370,36 +371,38 @@ bool ReportCenterController::refresh()
         args << QStringLiteral("--base-dir") << reportsDir;
     appendFilterArguments(args);
 
-    QByteArray stdoutData;
-    QByteArray stderrData;
-    QString bridgeError;
-    const bool ok = runBridge(args, &stdoutData, &stderrData, &bridgeError);
+    beginTask();
 
-    if (!stderrData.isEmpty())
-        qCWarning(lcReportCenter) << "report bridge stderr:" << QString::fromUtf8(stderrData);
+    runBridge(args, [this](const BridgeResult& bridgeResult) {
+        if (!bridgeResult.stderrData.isEmpty())
+            qCWarning(lcReportCenter) << "report bridge stderr:" << QString::fromUtf8(bridgeResult.stderrData);
 
-    bool result = false;
-    if (ok)
-        result = loadOverview(stdoutData);
+        bool result = false;
+        if (bridgeResult.success)
+            result = loadOverview(bridgeResult.stdoutData);
 
-    m_busy = false;
-    Q_EMIT busyChanged();
-
-    if (!result && !ok) {
-        if (!bridgeError.trimmed().isEmpty()) {
-            setLastErrorMessage(bridgeError.trimmed());
-        } else if (m_lastError.isEmpty()) {
-            const QString stderrMessage = QString::fromUtf8(stderrData).trimmed();
-            if (!stderrMessage.isEmpty())
-                setLastErrorMessage(stderrMessage);
-            else
+        if (!result) {
+            if (!bridgeResult.success) {
+                const QString message = bridgeResult.errorMessage.trimmed();
+                if (!message.isEmpty()) {
+                    setLastErrorMessage(message);
+                } else if (m_lastError.isEmpty()) {
+                    const QString stderrMessage = QString::fromUtf8(bridgeResult.stderrData).trimmed();
+                    if (!stderrMessage.isEmpty())
+                        setLastErrorMessage(stderrMessage);
+                    else
+                        setLastErrorMessage(tr("Nie udało się zbudować listy raportów"));
+                }
+            } else if (m_lastError.isEmpty()) {
                 setLastErrorMessage(tr("Nie udało się zbudować listy raportów"));
+            }
         }
-    } else if (!result && m_lastError.isEmpty()) {
-        setLastErrorMessage(tr("Nie udało się zbudować listy raportów"));
-    }
 
-    return result;
+        endTask();
+        Q_EMIT overviewReady(result);
+    });
+
+    return true;
 }
 
 QVariantMap ReportCenterController::findReport(const QString& relativePath) const
@@ -543,14 +546,15 @@ bool ReportCenterController::openExport(const QString& relativePath)
     return true;
 }
 
-QVariantMap ReportCenterController::previewDeleteReport(const QString& relativePath)
+bool ReportCenterController::previewDeleteReport(const QString& relativePath)
 {
-    QVariantMap result;
     const QString normalized = relativePath.trimmed();
     if (normalized.isEmpty()) {
+        QVariantMap result;
         result.insert(QStringLiteral("status"), QStringLiteral("error"));
         result.insert(QStringLiteral("error"), tr("Niepoprawna ścieżka raportu"));
-        return result;
+        Q_EMIT deletePreviewReady(normalized, result);
+        return false;
     }
 
     QStringList args;
@@ -565,40 +569,42 @@ QVariantMap ReportCenterController::previewDeleteReport(const QString& relativeP
     args << QStringLiteral("--dry-run");
     args << normalized;
 
-    QByteArray stdoutData;
-    QByteArray stderrData;
-    QString bridgeError;
-    const bool ok = runBridge(args, &stdoutData, &stderrData, &bridgeError);
+    beginTask();
 
-    if (!stderrData.isEmpty())
-        qCWarning(lcReportCenter) << "report delete preview stderr:" << QString::fromUtf8(stderrData).trimmed();
+    runBridge(args, [this, normalized](const BridgeResult& bridgeResult) {
+        QVariantMap result;
 
-    if (!ok) {
-        result.insert(QStringLiteral("status"), QStringLiteral("error"));
-        if (!bridgeError.trimmed().isEmpty())
-            result.insert(QStringLiteral("error"), bridgeError.trimmed());
-        else if (!stderrData.isEmpty())
-            result.insert(QStringLiteral("error"), QString::fromUtf8(stderrData).trimmed());
-        else
-            result.insert(QStringLiteral("error"), tr("Nie udało się przygotować podglądu usuwania"));
-        return result;
-    }
+        if (!bridgeResult.stderrData.isEmpty())
+            qCWarning(lcReportCenter) << "report delete preview stderr:" << QString::fromUtf8(bridgeResult.stderrData).trimmed();
 
-    QJsonParseError parseError{};
-    const QJsonDocument doc = QJsonDocument::fromJson(stdoutData, &parseError);
-    if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
-        result.insert(QStringLiteral("status"), QStringLiteral("error"));
-        result.insert(QStringLiteral("error"), tr("Niepoprawna odpowiedź modułu raportów: %1").arg(parseError.errorString()));
-        return result;
-    }
+        if (!bridgeResult.success) {
+            result.insert(QStringLiteral("status"), QStringLiteral("error"));
+            QString message = bridgeResult.errorMessage.trimmed();
+            if (message.isEmpty())
+                message = QString::fromUtf8(bridgeResult.stderrData).trimmed();
+            if (message.isEmpty())
+                message = tr("Nie udało się przygotować podglądu usuwania");
+            result.insert(QStringLiteral("error"), message);
+        } else {
+            QJsonParseError parseError{};
+            const QJsonDocument doc = QJsonDocument::fromJson(bridgeResult.stdoutData, &parseError);
+            if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+                result.insert(QStringLiteral("status"), QStringLiteral("error"));
+                result.insert(QStringLiteral("error"), tr("Niepoprawna odpowiedź modułu raportów: %1").arg(parseError.errorString()));
+            } else {
+                result = doc.object().toVariantMap();
+            }
+        }
 
-    return doc.object().toVariantMap();
+        Q_EMIT deletePreviewReady(normalized, result);
+        endTask();
+    });
+
+    return true;
 }
 
-QVariantMap ReportCenterController::previewPurgeReports()
+bool ReportCenterController::previewPurgeReports()
 {
-    QVariantMap result;
-
     QStringList args;
     args << QStringLiteral("-m")
          << QStringLiteral("bot_core.reporting.ui_bridge")
@@ -611,34 +617,38 @@ QVariantMap ReportCenterController::previewPurgeReports()
     appendFilterArguments(args);
     args << QStringLiteral("--dry-run");
 
-    QByteArray stdoutData;
-    QByteArray stderrData;
-    QString bridgeError;
-    const bool ok = runBridge(args, &stdoutData, &stderrData, &bridgeError);
+    beginTask();
 
-    if (!stderrData.isEmpty())
-        qCWarning(lcReportCenter) << "report purge preview stderr:" << QString::fromUtf8(stderrData).trimmed();
+    runBridge(args, [this](const BridgeResult& bridgeResult) {
+        QVariantMap result;
 
-    if (!ok) {
-        result.insert(QStringLiteral("status"), QStringLiteral("error"));
-        if (!bridgeError.trimmed().isEmpty())
-            result.insert(QStringLiteral("error"), bridgeError.trimmed());
-        else if (!stderrData.isEmpty())
-            result.insert(QStringLiteral("error"), QString::fromUtf8(stderrData).trimmed());
-        else
-            result.insert(QStringLiteral("error"), tr("Nie udało się przygotować podglądu usuwania"));
-        return result;
-    }
+        if (!bridgeResult.stderrData.isEmpty())
+            qCWarning(lcReportCenter) << "report purge preview stderr:" << QString::fromUtf8(bridgeResult.stderrData).trimmed();
 
-    QJsonParseError parseError{};
-    const QJsonDocument doc = QJsonDocument::fromJson(stdoutData, &parseError);
-    if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
-        result.insert(QStringLiteral("status"), QStringLiteral("error"));
-        result.insert(QStringLiteral("error"), tr("Niepoprawna odpowiedź modułu raportów: %1").arg(parseError.errorString()));
-        return result;
-    }
+        if (!bridgeResult.success) {
+            result.insert(QStringLiteral("status"), QStringLiteral("error"));
+            QString message = bridgeResult.errorMessage.trimmed();
+            if (message.isEmpty())
+                message = QString::fromUtf8(bridgeResult.stderrData).trimmed();
+            if (message.isEmpty())
+                message = tr("Nie udało się przygotować podglądu usuwania");
+            result.insert(QStringLiteral("error"), message);
+        } else {
+            QJsonParseError parseError{};
+            const QJsonDocument doc = QJsonDocument::fromJson(bridgeResult.stdoutData, &parseError);
+            if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+                result.insert(QStringLiteral("status"), QStringLiteral("error"));
+                result.insert(QStringLiteral("error"), tr("Niepoprawna odpowiedź modułu raportów: %1").arg(parseError.errorString()));
+            } else {
+                result = doc.object().toVariantMap();
+            }
+        }
 
-    return doc.object().toVariantMap();
+        Q_EMIT purgePreviewReady(result);
+        endTask();
+    });
+
+    return true;
 }
 
 bool ReportCenterController::deleteReport(const QString& relativePath)
@@ -658,66 +668,70 @@ bool ReportCenterController::deleteReport(const QString& relativePath)
 
     args << normalized;
 
-    QByteArray stdoutData;
-    QByteArray stderrData;
-    QString bridgeError;
-    const bool ok = runBridge(args, &stdoutData, &stderrData, &bridgeError);
+    beginTask();
 
-    if (!stderrData.isEmpty())
-        qCWarning(lcReportCenter) << "report delete stderr:" << QString::fromUtf8(stderrData).trimmed();
+    runBridge(args, [this, normalized](const BridgeResult& bridgeResult) {
+        if (!bridgeResult.stderrData.isEmpty())
+            qCWarning(lcReportCenter) << "report delete stderr:" << QString::fromUtf8(bridgeResult.stderrData).trimmed();
 
-    if (!ok) {
-        if (!bridgeError.trimmed().isEmpty()) {
-            setLastErrorMessage(bridgeError.trimmed());
-        } else if (!stderrData.isEmpty()) {
-            const QString stderrMessage = QString::fromUtf8(stderrData).trimmed();
-            if (!stderrMessage.isEmpty())
-                setLastErrorMessage(stderrMessage);
-            else
-                setLastErrorMessage(tr("Nie udało się usunąć raportu"));
-        } else {
-            setLastErrorMessage(tr("Nie udało się usunąć raportu"));
-        }
-        return false;
-    }
+        bool success = false;
+        bool shouldRefresh = false;
 
-    QJsonParseError parseError{};
-    const QJsonDocument doc = QJsonDocument::fromJson(stdoutData, &parseError);
-    if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
-        setLastErrorMessage(tr("Niepoprawna odpowiedź modułu raportów: %1").arg(parseError.errorString()));
-        return false;
-    }
-
-    const QJsonObject root = doc.object();
-    const QString status = root.value(QStringLiteral("status")).toString();
-    if (status != QStringLiteral("deleted")) {
-        QString message = root.value(QStringLiteral("error")).toString();
-        if (message.trimmed().isEmpty()) {
-            if (status == QStringLiteral("not_found"))
-                message = tr("Nie znaleziono raportu: %1").arg(normalized);
-            else if (status.trimmed().isEmpty())
-                message = tr("Niepoprawna odpowiedź modułu raportów");
-            else
+        if (!bridgeResult.success) {
+            QString message = bridgeResult.errorMessage.trimmed();
+            if (message.isEmpty())
+                message = QString::fromUtf8(bridgeResult.stderrData).trimmed();
+            if (message.isEmpty())
                 message = tr("Nie udało się usunąć raportu");
+            setLastErrorMessage(message);
+        } else {
+            QJsonParseError parseError{};
+            const QJsonDocument doc = QJsonDocument::fromJson(bridgeResult.stdoutData, &parseError);
+            if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+                setLastErrorMessage(tr("Niepoprawna odpowiedź modułu raportów: %1").arg(parseError.errorString()));
+            } else {
+                const QJsonObject root = doc.object();
+                const QString status = root.value(QStringLiteral("status")).toString();
+                if (status != QStringLiteral("deleted")) {
+                    QString message = root.value(QStringLiteral("error")).toString();
+                    if (message.trimmed().isEmpty()) {
+                        if (status == QStringLiteral("not_found"))
+                            message = tr("Nie znaleziono raportu: %1").arg(normalized);
+                        else if (status.trimmed().isEmpty())
+                            message = tr("Niepoprawna odpowiedź modułu raportów");
+                        else
+                            message = tr("Nie udało się usunąć raportu");
+                    }
+                    setLastErrorMessage(message);
+                } else {
+                    const qint64 removedSize = root.value(QStringLiteral("removed_size")).toVariant().toLongLong();
+                    const int removedFiles = root.value(QStringLiteral("removed_files")).toInt();
+                    const int removedDirectories = root.value(QStringLiteral("removed_directories")).toInt();
+
+                    QLocale locale;
+                    QString formattedSize = locale.formattedDataSize(removedSize, 2, QLocale::DataSizeIecFormat);
+                    if (formattedSize.trimmed().isEmpty())
+                        formattedSize = locale.toString(removedSize);
+
+                    clearLastErrorMessage();
+                    setLastNotificationMessage(tr("Usunięto raport „%1” (pliki: %2, katalogi: %3, zwolniono %4).").arg(normalized)
+                            .arg(removedFiles)
+                            .arg(removedDirectories)
+                            .arg(formattedSize));
+                    success = true;
+                    shouldRefresh = true;
+                }
+            }
         }
-        setLastErrorMessage(message);
-        return false;
-    }
 
-    const qint64 removedSize = root.value(QStringLiteral("removed_size")).toVariant().toLongLong();
-    const int removedFiles = root.value(QStringLiteral("removed_files")).toInt();
-    const int removedDirectories = root.value(QStringLiteral("removed_directories")).toInt();
+        endTask();
 
-    QLocale locale;
-    QString formattedSize = locale.formattedDataSize(removedSize, 2, QLocale::DataSizeIecFormat);
-    if (formattedSize.trimmed().isEmpty())
-        formattedSize = locale.toString(removedSize);
+        if (shouldRefresh)
+            refresh();
 
-    setLastNotificationMessage(tr("Usunięto raport „%1” (pliki: %2, katalogi: %3, zwolniono %4).").arg(normalized)
-            .arg(removedFiles)
-            .arg(removedDirectories)
-            .arg(formattedSize));
-    refresh();
+        Q_EMIT deleteFinished(normalized, success);
+    });
+
     return true;
 }
 
@@ -734,111 +748,106 @@ bool ReportCenterController::purgeReports()
 
     appendFilterArguments(args);
 
-    QByteArray stdoutData;
-    QByteArray stderrData;
-    QString bridgeError;
-    const bool ok = runBridge(args, &stdoutData, &stderrData, &bridgeError);
+    beginTask();
 
-    if (!stderrData.isEmpty())
-        qCWarning(lcReportCenter) << "report purge stderr:" << QString::fromUtf8(stderrData).trimmed();
+    runBridge(args, [this](const BridgeResult& bridgeResult) {
+        if (!bridgeResult.stderrData.isEmpty())
+            qCWarning(lcReportCenter) << "report purge stderr:" << QString::fromUtf8(bridgeResult.stderrData).trimmed();
 
-    if (!ok) {
-        if (!bridgeError.trimmed().isEmpty()) {
-            setLastErrorMessage(bridgeError.trimmed());
-        } else if (!stderrData.isEmpty()) {
-            const QString stderrMessage = QString::fromUtf8(stderrData).trimmed();
-            if (!stderrMessage.isEmpty())
-                setLastErrorMessage(stderrMessage);
-            else
-                setLastErrorMessage(tr("Nie udało się usunąć raportów"));
+        bool success = false;
+        bool shouldRefresh = false;
+
+        if (!bridgeResult.success) {
+            QString message = bridgeResult.errorMessage.trimmed();
+            if (message.isEmpty())
+                message = QString::fromUtf8(bridgeResult.stderrData).trimmed();
+            if (message.isEmpty())
+                message = tr("Nie udało się usunąć raportów");
+            setLastErrorMessage(message);
         } else {
-            setLastErrorMessage(tr("Nie udało się usunąć raportów"));
+            QJsonParseError parseError{};
+            const QJsonDocument doc = QJsonDocument::fromJson(bridgeResult.stdoutData, &parseError);
+            if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+                setLastErrorMessage(tr("Niepoprawna odpowiedź modułu raportów: %1").arg(parseError.errorString()));
+            } else {
+                const QJsonObject root = doc.object();
+                const QString status = root.value(QStringLiteral("status")).toString();
+
+                const qint64 removedSize = root.value(QStringLiteral("removed_size")).toVariant().toLongLong();
+                const int removedFiles = root.value(QStringLiteral("removed_files")).toInt();
+                const int removedDirectories = root.value(QStringLiteral("removed_directories")).toInt();
+                const int deletedCount = root.value(QStringLiteral("deleted_count")).toInt();
+                const int plannedCount = root.value(QStringLiteral("planned_count")).toInt();
+
+                if (status == QStringLiteral("empty")) {
+                    clearLastErrorMessage();
+                    setLastNotificationMessage(tr("Brak raportów do usunięcia dla aktywnych filtrów."));
+                    success = true;
+                } else {
+                    QLocale locale;
+                    QString formattedSize = locale.formattedDataSize(removedSize, 2, QLocale::DataSizeIecFormat);
+                    if (formattedSize.trimmed().isEmpty())
+                        formattedSize = locale.toString(removedSize);
+
+                    if (status == QStringLiteral("completed")) {
+                        clearLastErrorMessage();
+                        setLastNotificationMessage(tr("Usunięto %1 raportów (pliki: %2, katalogi: %3, zwolniono %4).").arg(deletedCount)
+                                .arg(removedFiles)
+                                .arg(removedDirectories)
+                                .arg(formattedSize));
+                        success = true;
+                        shouldRefresh = true;
+                    } else if (status == QStringLiteral("partial_failure")) {
+                        const QJsonArray errorsArray = root.value(QStringLiteral("errors")).toArray();
+                        QStringList errors;
+                        for (const QJsonValue& value : errorsArray) {
+                            if (value.isString())
+                                errors.append(value.toString());
+                        }
+                        QString message;
+                        if (!errors.isEmpty())
+                            message = errors.join(QLatin1String("; "));
+                        if (message.trimmed().isEmpty())
+                            message = tr("Niektóre raporty nie zostały usunięte.");
+                        message = tr("Usunięto %1 z %2 raportów, ale część operacji zakończyła się błędem: %3")
+                                      .arg(deletedCount)
+                                      .arg(plannedCount)
+                                      .arg(message);
+                        setLastErrorMessage(message);
+                        if (deletedCount > 0)
+                            shouldRefresh = true;
+                    } else if (status == QStringLiteral("error")) {
+                        const QJsonArray errorsArray = root.value(QStringLiteral("errors")).toArray();
+                        QStringList errors;
+                        for (const QJsonValue& value : errorsArray) {
+                            if (value.isString())
+                                errors.append(value.toString());
+                        }
+                        QString message = errors.join(QLatin1String("; "));
+                        if (message.trimmed().isEmpty())
+                            message = tr("Nie udało się usunąć raportów");
+                        setLastErrorMessage(message);
+                    } else {
+                        setLastErrorMessage(tr("Niepoprawna odpowiedź modułu raportów"));
+                    }
+                }
+            }
         }
-        return false;
-    }
 
-    QJsonParseError parseError{};
-    const QJsonDocument doc = QJsonDocument::fromJson(stdoutData, &parseError);
-    if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
-        setLastErrorMessage(tr("Niepoprawna odpowiedź modułu raportów: %1").arg(parseError.errorString()));
-        return false;
-    }
+        endTask();
 
-    const QJsonObject root = doc.object();
-    const QString status = root.value(QStringLiteral("status")).toString();
-
-    const qint64 removedSize = root.value(QStringLiteral("removed_size")).toVariant().toLongLong();
-    const int removedFiles = root.value(QStringLiteral("removed_files")).toInt();
-    const int removedDirectories = root.value(QStringLiteral("removed_directories")).toInt();
-    const int deletedCount = root.value(QStringLiteral("deleted_count")).toInt();
-    const int plannedCount = root.value(QStringLiteral("planned_count")).toInt();
-
-    if (status == QStringLiteral("empty")) {
-        clearLastErrorMessage();
-        setLastNotificationMessage(tr("Brak raportów do usunięcia dla aktywnych filtrów."));
-        return true;
-    }
-
-    QLocale locale;
-    QString formattedSize = locale.formattedDataSize(removedSize, 2, QLocale::DataSizeIecFormat);
-    if (formattedSize.trimmed().isEmpty())
-        formattedSize = locale.toString(removedSize);
-
-    if (status == QStringLiteral("completed")) {
-        clearLastErrorMessage();
-        setLastNotificationMessage(tr("Usunięto %1 raportów (pliki: %2, katalogi: %3, zwolniono %4).").arg(deletedCount)
-                .arg(removedFiles)
-                .arg(removedDirectories)
-                .arg(formattedSize));
-        refresh();
-        return true;
-    }
-
-    if (status == QStringLiteral("partial_failure")) {
-        const QJsonArray errorsArray = root.value(QStringLiteral("errors")).toArray();
-        QStringList errors;
-        for (const QJsonValue& value : errorsArray) {
-            if (value.isString())
-                errors.append(value.toString());
-        }
-        QString message;
-        if (!errors.isEmpty())
-            message = errors.join(QLatin1String("; "));
-        if (message.trimmed().isEmpty())
-            message = tr("Niektóre raporty nie zostały usunięte.");
-        message = tr("Usunięto %1 z %2 raportów, ale część operacji zakończyła się błędem: %3")
-                      .arg(deletedCount)
-                      .arg(plannedCount)
-                      .arg(message);
-        setLastErrorMessage(message);
-        if (deletedCount > 0)
+        if (shouldRefresh)
             refresh();
-        return false;
-    }
 
-    if (status == QStringLiteral("error")) {
-        const QJsonArray errorsArray = root.value(QStringLiteral("errors")).toArray();
-        QStringList errors;
-        for (const QJsonValue& value : errorsArray) {
-            if (value.isString())
-                errors.append(value.toString());
-        }
-        QString message = errors.join(QLatin1String("; "));
-        if (message.trimmed().isEmpty())
-            message = tr("Nie udało się usunąć raportów");
-        setLastErrorMessage(message);
-        return false;
-    }
+        Q_EMIT purgeFinished(success);
+    });
 
-    setLastErrorMessage(tr("Niepoprawna odpowiedź modułu raportów"));
-    return false;
+    return true;
 }
 
 
-QVariantMap ReportCenterController::previewArchiveReports(const QString& destination, bool overwrite, const QString& format)
+bool ReportCenterController::previewArchiveReports(const QString& destination, bool overwrite, const QString& format)
 {
-    QVariantMap result;
-
     QStringList args;
     args << QStringLiteral("-m")
          << QStringLiteral("bot_core.reporting.ui_bridge")
@@ -862,34 +871,38 @@ QVariantMap ReportCenterController::previewArchiveReports(const QString& destina
     appendFilterArguments(args);
     args << QStringLiteral("--dry-run");
 
-    QByteArray stdoutData;
-    QByteArray stderrData;
-    QString bridgeError;
-    const bool ok = runBridge(args, &stdoutData, &stderrData, &bridgeError);
+    beginTask();
 
-    if (!stderrData.isEmpty())
-        qCWarning(lcReportCenter) << "report archive preview stderr:" << QString::fromUtf8(stderrData).trimmed();
+    runBridge(args, [this, normalizedDestination, overwrite, effectiveFormat](const BridgeResult& bridgeResult) {
+        QVariantMap result;
 
-    if (!ok) {
-        result.insert(QStringLiteral("status"), QStringLiteral("error"));
-        if (!bridgeError.trimmed().isEmpty())
-            result.insert(QStringLiteral("error"), bridgeError.trimmed());
-        else if (!stderrData.isEmpty())
-            result.insert(QStringLiteral("error"), QString::fromUtf8(stderrData).trimmed());
-        else
-            result.insert(QStringLiteral("error"), tr("Nie udało się przygotować podglądu archiwizacji"));
-        return result;
-    }
+        if (!bridgeResult.stderrData.isEmpty())
+            qCWarning(lcReportCenter) << "report archive preview stderr:" << QString::fromUtf8(bridgeResult.stderrData).trimmed();
 
-    QJsonParseError parseError{};
-    const QJsonDocument doc = QJsonDocument::fromJson(stdoutData, &parseError);
-    if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
-        result.insert(QStringLiteral("status"), QStringLiteral("error"));
-        result.insert(QStringLiteral("error"), tr("Niepoprawna odpowiedź modułu raportów: %1").arg(parseError.errorString()));
-        return result;
-    }
+        if (!bridgeResult.success) {
+            result.insert(QStringLiteral("status"), QStringLiteral("error"));
+            QString message = bridgeResult.errorMessage.trimmed();
+            if (message.isEmpty())
+                message = QString::fromUtf8(bridgeResult.stderrData).trimmed();
+            if (message.isEmpty())
+                message = tr("Nie udało się przygotować podglądu archiwizacji");
+            result.insert(QStringLiteral("error"), message);
+        } else {
+            QJsonParseError parseError{};
+            const QJsonDocument doc = QJsonDocument::fromJson(bridgeResult.stdoutData, &parseError);
+            if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+                result.insert(QStringLiteral("status"), QStringLiteral("error"));
+                result.insert(QStringLiteral("error"), tr("Niepoprawna odpowiedź modułu raportów: %1").arg(parseError.errorString()));
+            } else {
+                result = doc.object().toVariantMap();
+            }
+        }
 
-    return doc.object().toVariantMap();
+        Q_EMIT archivePreviewReady(normalizedDestination, overwrite, effectiveFormat, result);
+        endTask();
+    });
+
+    return true;
 }
 
 
@@ -917,120 +930,112 @@ bool ReportCenterController::archiveReports(const QString& destination, bool ove
 
     appendFilterArguments(args);
 
-    QByteArray stdoutData;
-    QByteArray stderrData;
-    QString bridgeError;
-    const bool ok = runBridge(args, &stdoutData, &stderrData, &bridgeError);
+    beginTask();
 
-    if (!stderrData.isEmpty())
-        qCWarning(lcReportCenter) << "report archive stderr:" << QString::fromUtf8(stderrData).trimmed();
+    runBridge(args, [this, normalizedDestination](const BridgeResult& bridgeResult) {
+        if (!bridgeResult.stderrData.isEmpty())
+            qCWarning(lcReportCenter) << "report archive stderr:" << QString::fromUtf8(bridgeResult.stderrData).trimmed();
 
-    if (!ok) {
-        if (!bridgeError.trimmed().isEmpty()) {
-            setLastErrorMessage(bridgeError.trimmed());
-        } else if (!stderrData.isEmpty()) {
-            const QString stderrMessage = QString::fromUtf8(stderrData).trimmed();
-            if (!stderrMessage.isEmpty())
-                setLastErrorMessage(stderrMessage);
-            else
-                setLastErrorMessage(tr("Nie udało się zarchiwizować raportów"));
+        bool success = false;
+
+        if (!bridgeResult.success) {
+            QString message = bridgeResult.errorMessage.trimmed();
+            if (message.isEmpty())
+                message = QString::fromUtf8(bridgeResult.stderrData).trimmed();
+            if (message.isEmpty())
+                message = tr("Nie udało się zarchiwizować raportów");
+            setLastErrorMessage(message);
         } else {
-            setLastErrorMessage(tr("Nie udało się zarchiwizować raportów"));
+            QJsonParseError parseError{};
+            const QJsonDocument doc = QJsonDocument::fromJson(bridgeResult.stdoutData, &parseError);
+            if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+                setLastErrorMessage(tr("Niepoprawna odpowiedź modułu raportów: %1").arg(parseError.errorString()));
+            } else {
+                const QJsonObject root = doc.object();
+                const QString status = root.value(QStringLiteral("status")).toString();
+                const QString destinationDirectory = root.value(QStringLiteral("destination_directory")).toString();
+                const qint64 copiedSize = root.value(QStringLiteral("copied_size")).toVariant().toLongLong();
+                const int copiedFiles = root.value(QStringLiteral("copied_files")).toInt();
+                const int copiedDirectories = root.value(QStringLiteral("copied_directories")).toInt();
+                const int copiedCount = root.value(QStringLiteral("copied_count")).toInt();
+                const int plannedCount = root.value(QStringLiteral("planned_count")).toInt();
+                const QString responseFormat = root.value(QStringLiteral("format")).toString();
+                const QString normalizedResponseFormat = normalizeArchiveFormat(responseFormat.isEmpty() ? m_archiveFormat : responseFormat);
+                setArchiveFormat(normalizedResponseFormat);
+
+                QString destinationLabel = destinationDirectory;
+                if (destinationLabel.trimmed().isEmpty()) {
+                    if (!normalizedDestination.isEmpty())
+                        destinationLabel = normalizedDestination;
+                    else
+                        destinationLabel = defaultArchiveDestination();
+                }
+
+                QString formatLabel;
+                if (normalizedResponseFormat == QLatin1String("zip"))
+                    formatLabel = tr("ZIP");
+                else if (normalizedResponseFormat == QLatin1String("tar"))
+                    formatLabel = tr("TAR.GZ");
+                else
+                    formatLabel = tr("katalog docelowy");
+
+                if (status == QStringLiteral("empty")) {
+                    clearLastErrorMessage();
+                    setLastNotificationMessage(tr("Brak raportów do archiwizacji dla aktywnych filtrów."));
+                    success = true;
+                } else {
+                    QLocale locale;
+                    QString formattedSize = locale.formattedDataSize(copiedSize, 2, QLocale::DataSizeIecFormat);
+                    if (formattedSize.trimmed().isEmpty())
+                        formattedSize = locale.toString(copiedSize);
+
+                    if (status == QStringLiteral("completed")) {
+                        clearLastErrorMessage();
+                        setLastNotificationMessage(tr("Zarchiwizowano %1 raportów do „%2” (%3; pliki: %4, katalogi: %5, skopiowano %6).").arg(copiedCount)
+                                .arg(destinationLabel)
+                                .arg(formatLabel)
+                                .arg(copiedFiles)
+                                .arg(copiedDirectories)
+                                .arg(formattedSize));
+                        success = true;
+                    } else if (status == QStringLiteral("partial_failure")) {
+                        const QJsonArray errorsArray = root.value(QStringLiteral("errors")).toArray();
+                        QStringList errors;
+                        for (const QJsonValue& value : errorsArray) {
+                            if (value.isString())
+                                errors.append(value.toString());
+                        }
+                        QString message = errors.join(QLatin1String("; "));
+                        if (message.trimmed().isEmpty())
+                            message = tr("Niektóre raporty nie zostały zarchiwizowane.");
+                        message = tr("Zarchiwizowano %1 z %2 raportów, ale część operacji zakończyła się błędem: %3")
+                                      .arg(copiedCount)
+                                      .arg(plannedCount)
+                                      .arg(message);
+                        setLastErrorMessage(message);
+                    } else if (status == QStringLiteral("error")) {
+                        const QJsonArray errorsArray = root.value(QStringLiteral("errors")).toArray();
+                        QStringList errors;
+                        for (const QJsonValue& value : errorsArray) {
+                            if (value.isString())
+                                errors.append(value.toString());
+                        }
+                        QString message = errors.join(QLatin1String("; "));
+                        if (message.trimmed().isEmpty())
+                            message = tr("Nie udało się zarchiwizować raportów");
+                        setLastErrorMessage(message);
+                    } else {
+                        setLastErrorMessage(tr("Niepoprawna odpowiedź modułu raportów"));
+                    }
+                }
+            }
         }
-        return false;
-    }
 
-    QJsonParseError parseError{};
-    const QJsonDocument doc = QJsonDocument::fromJson(stdoutData, &parseError);
-    if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
-        setLastErrorMessage(tr("Niepoprawna odpowiedź modułu raportów: %1").arg(parseError.errorString()));
-        return false;
-    }
+        endTask();
+        Q_EMIT archiveFinished(success);
+    });
 
-    const QJsonObject root = doc.object();
-    const QString status = root.value(QStringLiteral("status")).toString();
-    const QString destinationDirectory = root.value(QStringLiteral("destination_directory")).toString();
-    const qint64 copiedSize = root.value(QStringLiteral("copied_size")).toVariant().toLongLong();
-    const int copiedFiles = root.value(QStringLiteral("copied_files")).toInt();
-    const int copiedDirectories = root.value(QStringLiteral("copied_directories")).toInt();
-    const int copiedCount = root.value(QStringLiteral("copied_count")).toInt();
-    const int plannedCount = root.value(QStringLiteral("planned_count")).toInt();
-    const QString responseFormat = root.value(QStringLiteral("format")).toString();
-    const QString normalizedResponseFormat = normalizeArchiveFormat(responseFormat.isEmpty() ? m_archiveFormat : responseFormat);
-    setArchiveFormat(normalizedResponseFormat);
-
-    QString destinationLabel = destinationDirectory;
-    if (destinationLabel.trimmed().isEmpty()) {
-        if (!normalizedDestination.isEmpty())
-            destinationLabel = normalizedDestination;
-        else
-            destinationLabel = defaultArchiveDestination();
-    }
-
-    QString formatLabel;
-    if (normalizedResponseFormat == QLatin1String("zip"))
-        formatLabel = tr("ZIP");
-    else if (normalizedResponseFormat == QLatin1String("tar"))
-        formatLabel = tr("TAR.GZ");
-    else
-        formatLabel = tr("katalog docelowy");
-
-    if (status == QStringLiteral("empty")) {
-        clearLastErrorMessage();
-        setLastNotificationMessage(tr("Brak raportów do archiwizacji dla aktywnych filtrów."));
-        return true;
-    }
-
-    QLocale locale;
-    QString formattedSize = locale.formattedDataSize(copiedSize, 2, QLocale::DataSizeIecFormat);
-    if (formattedSize.trimmed().isEmpty())
-        formattedSize = locale.toString(copiedSize);
-
-    if (status == QStringLiteral("completed")) {
-        clearLastErrorMessage();
-        setLastNotificationMessage(tr("Zarchiwizowano %1 raportów do „%2” (%3; pliki: %4, katalogi: %5, skopiowano %6).").arg(copiedCount)
-                .arg(destinationLabel)
-                .arg(formatLabel)
-                .arg(copiedFiles)
-                .arg(copiedDirectories)
-                .arg(formattedSize));
-        return true;
-    }
-
-    if (status == QStringLiteral("partial_failure")) {
-        const QJsonArray errorsArray = root.value(QStringLiteral("errors")).toArray();
-        QStringList errors;
-        for (const QJsonValue& value : errorsArray) {
-            if (value.isString())
-                errors.append(value.toString());
-        }
-        QString message = errors.join(QLatin1String("; "));
-        if (message.trimmed().isEmpty())
-            message = tr("Niektóre raporty nie zostały zarchiwizowane.");
-        message = tr("Zarchiwizowano %1 z %2 raportów, ale część operacji zakończyła się błędem: %3")
-                      .arg(copiedCount)
-                      .arg(plannedCount)
-                      .arg(message);
-        setLastErrorMessage(message);
-        return false;
-    }
-
-    if (status == QStringLiteral("error")) {
-        const QJsonArray errorsArray = root.value(QStringLiteral("errors")).toArray();
-        QStringList errors;
-        for (const QJsonValue& value : errorsArray) {
-            if (value.isString())
-                errors.append(value.toString());
-        }
-        QString message = errors.join(QLatin1String("; "));
-        if (message.trimmed().isEmpty())
-            message = tr("Nie udało się zarchiwizować raportów");
-        setLastErrorMessage(message);
-        return false;
-    }
-
-    setLastErrorMessage(tr("Niepoprawna odpowiedź modułu raportów"));
-    return false;
+    return true;
 }
 
 
@@ -1050,42 +1055,90 @@ QString ReportCenterController::defaultArchiveDestination() const
     return cleanPath(baseDirectory.filePath(baseName + QStringLiteral("_archives")));
 }
 
-bool ReportCenterController::runBridge(const QStringList& arguments,
-    QByteArray* stdoutData,
-    QByteArray* stderrData,
-    QString* errorMessage) const
+void ReportCenterController::runBridge(const QStringList& arguments, BridgeCallback&& callback)
 {
+    auto sharedCallback = std::make_shared<BridgeCallback>(std::move(callback));
+    auto* watcher = new QFutureWatcher<BridgeResult>(this);
+    connect(watcher, &QFutureWatcher<BridgeResult>::finished, this, [watcher, sharedCallback]() {
+        const BridgeResult result = watcher->result();
+        watcher->deleteLater();
+        (*sharedCallback)(result);
+    });
+
+    watcher->setFuture(QtConcurrent::run(&m_workerPool, [this, arguments]() {
+        return executeBridge(arguments);
+    }));
+}
+
+ReportCenterController::BridgeResult ReportCenterController::executeBridge(const QStringList& arguments) const
+{
+    BridgeResult result;
+
     if (m_pythonExecutable.trimmed().isEmpty()) {
-        if (errorMessage)
-            *errorMessage = tr("Nie ustawiono interpretera Pythona dla modułu raportów");
-        return false;
+        result.errorMessage = tr("Nie ustawiono interpretera Pythona dla modułu raportów");
+        return result;
     }
 
     QProcess process;
     process.setProgram(m_pythonExecutable);
     process.setArguments(arguments);
     process.start();
+
+    if (!process.waitForStarted()) {
+        qCWarning(lcReportCenter) << "Nie udało się uruchomić modułu raportującego" << m_pythonExecutable
+                                   << process.errorString();
+        result.errorMessage = tr("Nie udało się uruchomić modułu raportów: %1").arg(process.errorString());
+        return result;
+    }
+
     if (!process.waitForFinished()) {
         qCWarning(lcReportCenter) << "Nie udało się uruchomić modułu raportującego" << m_pythonExecutable
                                    << process.errorString();
-        if (errorMessage)
-            *errorMessage = tr("Nie udało się uruchomić modułu raportów: %1").arg(process.errorString());
-        return false;
+        result.stdoutData = process.readAllStandardOutput();
+        result.stderrData = process.readAllStandardError();
+        result.errorMessage = tr("Nie udało się uruchomić modułu raportów: %1").arg(process.errorString());
+        return result;
     }
 
-    if (stdoutData)
-        *stdoutData = process.readAllStandardOutput();
-    if (stderrData)
-        *stderrData = process.readAllStandardError();
+    result.stdoutData = process.readAllStandardOutput();
+    result.stderrData = process.readAllStandardError();
 
     if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
         qCWarning(lcReportCenter) << "Bridge zakończył się kodem" << process.exitCode();
-        if (errorMessage)
-            *errorMessage = tr("Moduł raportów zakończył się kodem %1").arg(process.exitCode());
-        return false;
+        result.errorMessage = tr("Moduł raportów zakończył się kodem %1").arg(process.exitCode());
+        return result;
     }
 
-    return true;
+    result.success = true;
+    return result;
+}
+
+void ReportCenterController::beginTask()
+{
+    const bool wasIdle = (m_pendingTasks == 0);
+    ++m_pendingTasks;
+    if (wasIdle) {
+        m_busy = true;
+        Q_EMIT busyChanged();
+    }
+}
+
+void ReportCenterController::endTask()
+{
+    if (m_pendingTasks <= 0) {
+        m_pendingTasks = 0;
+        if (m_busy) {
+            m_busy = false;
+            Q_EMIT busyChanged();
+        }
+        return;
+    }
+
+    --m_pendingTasks;
+    if (m_pendingTasks == 0) {
+        m_busy = false;
+        Q_EMIT busyChanged();
+    }
 }
 
 bool ReportCenterController::loadOverview(const QByteArray& data)

@@ -83,6 +83,7 @@ Item {
     ]
     property bool hasAnyReports: false
     property var currentCategoryStats: null
+    readonly property bool isBusy: reportController && reportController.busy === true
     readonly property bool filtersActive: categoryFilter.length > 0 || searchFilter.length > 0
         || recentDaysFilter > 0 || summaryStatusFilter !== "any" || exportsFilter !== "any" || limitFilter > 0
         || offsetFilter > 0 || sortKeyFilter !== "updated_at" || sortDirectionFilter !== "desc"
@@ -869,12 +870,14 @@ Item {
                     text: browser.hasSinceFilter()
                         ? qsTr("Od: %1").arg(browser.formatDateOnly(browser.sinceFilter))
                         : qsTr("Data od")
+                    enabled: !browser.isBusy
                     onClicked: sinceDialog.open()
                 }
 
                 ToolButton {
                     text: "✕"
                     visible: browser.hasSinceFilter()
+                    enabled: !browser.isBusy
                     onClicked: browser.clearSinceDate()
                 }
             }
@@ -890,12 +893,14 @@ Item {
                     text: browser.hasUntilFilter()
                         ? qsTr("Do: %1").arg(browser.formatDateOnly(browser.untilFilter))
                         : qsTr("Data do")
+                    enabled: !browser.isBusy
                     onClicked: untilDialog.open()
                 }
 
                 ToolButton {
                     text: "✕"
                     visible: browser.hasUntilFilter()
+                    enabled: !browser.isBusy
                     onClicked: browser.clearUntilDate()
                 }
             }
@@ -982,7 +987,7 @@ Item {
 
             Button {
                 text: qsTr("Wyczyść filtry")
-                enabled: browser.filtersActive
+                enabled: browser.filtersActive && !browser.isBusy
                 onClicked: {
                     searchDebounce.stop()
                     const hadSearch = browser.searchFilter.length > 0
@@ -1052,7 +1057,7 @@ Item {
                 text: qsTr("Usuń filtrowane")
                 enabled: reportController && reportController.purgeReports !== undefined
                     && reportController.previewPurgeReports !== undefined
-                    && (!reportController.busy)
+                    && !browser.isBusy
                 onClicked: {
                     if (!reportController)
                         return
@@ -1064,7 +1069,7 @@ Item {
                 text: qsTr("Archiwizuj filtrowane")
                 enabled: reportController && reportController.archiveReports !== undefined
                     && reportController.previewArchiveReports !== undefined
-                    && (!reportController.busy)
+                    && !browser.isBusy
                 onClicked: {
                     if (!reportController)
                         return
@@ -1074,15 +1079,15 @@ Item {
 
             Button {
                 text: qsTr("Odśwież")
-                enabled: reportController ? !reportController.busy : true
+                enabled: !browser.isBusy
                 onClicked: browser.refresh()
             }
 
             BusyIndicator {
                 Layout.preferredWidth: 24
                 Layout.preferredHeight: 24
-                running: reportController ? reportController.busy : false
-                visible: running
+                running: browser.isBusy
+                visible: browser.isBusy
             }
         }
 
@@ -1116,14 +1121,14 @@ Item {
 
             Button {
                 text: qsTr("Poprzednia strona")
-                enabled: browser.canGoPreviousPage()
+                enabled: browser.canGoPreviousPage() && !browser.isBusy
                 visible: browser.paginationLimitValue() > 0 || browser.paginationOffsetValue() > 0
                 onClicked: browser.goToPreviousPage()
             }
 
             Button {
                 text: qsTr("Następna strona")
-                enabled: browser.canGoNextPage()
+                enabled: browser.canGoNextPage() && !browser.isBusy
                 visible: browser.paginationLimitValue() > 0
                 onClicked: browser.goToNextPage()
             }
@@ -1176,7 +1181,7 @@ Item {
 
                 Label {
                     anchors.centerIn: parent
-                    visible: reportList.count === 0 && (!reportController || !reportController.busy)
+                    visible: reportList.count === 0 && !browser.isBusy
                     text: browser.hasAnyReports ? qsTr("Brak raportów spełniających filtr") : qsTr("Brak raportów")
                     color: palette.mid
                 }
@@ -1297,12 +1302,13 @@ Item {
 
                         Button {
                             text: qsTr("Kopiuj ścieżkę")
+                            enabled: !browser.isBusy
                             onClicked: browser.copyToClipboard(browser.currentReport.absolute_path)
                         }
 
                         Button {
                             text: qsTr("Pokaż w katalogu")
-                            enabled: reportController && reportController.revealReport !== undefined
+                            enabled: !browser.isBusy && reportController && reportController.revealReport !== undefined
                                 && ((browser.currentReport.relative_path && browser.currentReport.relative_path.length > 0)
                                     || (browser.currentReport.summary_path && browser.currentReport.summary_path.length > 0))
                             onClicked: {
@@ -1318,8 +1324,7 @@ Item {
 
                         Button {
                             text: qsTr("Usuń")
-                            enabled: reportController && reportController.deleteReport !== undefined
-                                && (!reportController.busy)
+                            enabled: !browser.isBusy && reportController && reportController.deleteReport !== undefined
                                 && browser.currentReport.relative_path && browser.currentReport.relative_path.length > 0
                             onClicked: {
                                 if (!reportController)
@@ -1335,8 +1340,7 @@ Item {
                     Label {
                         Layout.fillWidth: true
                         wrapMode: Text.WordWrap
-                        visible: browser.filteredReports.length === 0 && browser.hasAnyReports
-                            && (!reportController || !reportController.busy)
+                        visible: browser.filteredReports.length === 0 && browser.hasAnyReports && !browser.isBusy
                         text: browser.paginationOffsetValue() > 0
                             ? qsTr("Brak raportów na tej stronie. Użyj nawigacji lub zresetuj przesunięcie.")
                             : qsTr("Brak raportów spełniających aktywne filtry.")
@@ -1346,8 +1350,7 @@ Item {
                     Label {
                         Layout.fillWidth: true
                         wrapMode: Text.WordWrap
-                        visible: browser.filteredReports.length === 0 && !browser.hasAnyReports
-                            && (!reportController || !reportController.busy)
+                        visible: browser.filteredReports.length === 0 && !browser.hasAnyReports && !browser.isBusy
                         text: qsTr("Panel raportów jest pusty. Uruchom pipeline raportujący, aby zobaczyć wyniki.")
                         color: palette.mid
                     }
@@ -1412,6 +1415,7 @@ Item {
 
                                 Button {
                                     text: qsTr("Eksportuj")
+                                    enabled: !browser.isBusy
                                     onClicked: {
                                         exportDialog.reportPath = modelData.relative_path
                                         exportDialog.open()
@@ -1420,7 +1424,7 @@ Item {
 
                                 Button {
                                     text: qsTr("Otwórz")
-                                    enabled: reportController && reportController.openExport !== undefined
+                                    enabled: !browser.isBusy && reportController && reportController.openExport !== undefined
                                         && modelData.absolute_path && modelData.absolute_path.length > 0
                                     onClicked: {
                                         if (!reportController)
@@ -1441,6 +1445,7 @@ Item {
         modal: true
         title: qsTr("Wybierz datę początkową")
         standardButtons: DialogButtonBox.Ok | DialogButtonBox.Cancel
+        enabled: !browser.isBusy
         onOpened: {
             const current = browser.hasSinceFilter() ? browser.sinceFilter : new Date()
             sincePicker.date = current
@@ -1465,6 +1470,7 @@ Item {
         modal: true
         title: qsTr("Wybierz datę końcową")
         standardButtons: DialogButtonBox.Ok | DialogButtonBox.Cancel
+        enabled: !browser.isBusy
         onOpened: {
             const current = browser.hasUntilFilter() ? browser.untilFilter : new Date()
             untilPicker.date = current
@@ -1492,26 +1498,30 @@ Item {
         property string reportLabel: ""
         property var preview: null
         property string previewError: ""
+        property string activeRequestPath: ""
+        property string pendingPath: ""
+        property string pendingLabel: ""
         onOpened: {
             if (!reportLabel || reportLabel.length === 0)
                 reportLabel = reportPath
             previewError = ""
             preview = null
+            activeRequestPath = reportPath
+            pendingPath = ""
+            pendingLabel = ""
             if (reportController && reportController.previewDeleteReport !== undefined && reportPath
-                    && reportPath.length > 0) {
-                const result = reportController.previewDeleteReport(reportPath)
-                if (result)
-                    preview = result
-                if (preview && preview.status === "error" && preview.error)
-                    previewError = String(preview.error)
-            }
+                    && reportPath.length > 0)
+                reportController.previewDeleteReport(reportPath)
         }
         onAccepted: {
             if (!reportController || !reportPath || reportPath.length === 0)
                 return
-            const ok = reportController.deleteReport(reportPath)
-            if (ok)
-                browser.refresh()
+            pendingPath = reportPath
+            pendingLabel = reportLabel
+            activeRequestPath = reportPath
+            const started = reportController.deleteReport(reportPath)
+            if (!started)
+                Qt.callLater(function() { deleteDialog.open() })
             reportPath = ""
             reportLabel = ""
             preview = null
@@ -1522,6 +1532,9 @@ Item {
             reportLabel = ""
             preview = null
             previewError = ""
+            activeRequestPath = ""
+            pendingPath = ""
+            pendingLabel = ""
         }
         contentItem: ColumnLayout {
             width: 320
@@ -1572,6 +1585,7 @@ Item {
         }
         footer: DialogButtonBox {
             standardButtons: DialogButtonBox.Ok | DialogButtonBox.Cancel
+            enabled: !browser.isBusy
             onAccepted: deleteDialog.accept()
             onRejected: deleteDialog.reject()
             Component.onCompleted: {
@@ -1579,6 +1593,39 @@ Item {
                     button(StandardButton.Ok).text = qsTr("Usuń")
                 if (button(StandardButton.Cancel))
                     button(StandardButton.Cancel).text = qsTr("Anuluj")
+            }
+        }
+        Connections {
+            target: reportController
+            function onDeletePreviewReady(path, result) {
+                if (path !== deleteDialog.activeRequestPath)
+                    return
+                deleteDialog.preview = result
+                if (result && result.status === "error" && result.error)
+                    deleteDialog.previewError = String(result.error)
+                else
+                    deleteDialog.previewError = ""
+            }
+            function onDeleteFinished(path, success) {
+                if (path !== deleteDialog.pendingPath && path !== deleteDialog.activeRequestPath)
+                    return
+                deleteDialog.activeRequestPath = ""
+                if (!success) {
+                    const restorePath = deleteDialog.pendingPath
+                    const restoreLabel = deleteDialog.pendingLabel
+                    deleteDialog.pendingPath = ""
+                    deleteDialog.pendingLabel = ""
+                    if (restorePath && restorePath.length > 0) {
+                        deleteDialog.reportPath = restorePath
+                        deleteDialog.reportLabel = restoreLabel
+                    }
+                    deleteDialog.preview = null
+                    deleteDialog.previewError = ""
+                    Qt.callLater(function() { deleteDialog.open() })
+                } else {
+                    deleteDialog.pendingPath = ""
+                    deleteDialog.pendingLabel = ""
+                }
             }
         }
     }
@@ -1592,17 +1639,23 @@ Item {
         property string destinationPath: ""
         property bool overwriteExisting: false
         property string archiveFormat: "directory"
+        property string pendingDestination: ""
+        property bool pendingOverwrite: false
+        property string pendingFormat: "directory"
+        enabled: !browser.isBusy
 
         function updatePreview() {
             preview = null
             previewError = ""
             if (!reportController || reportController.previewArchiveReports === undefined)
                 return
-            const result = reportController.previewArchiveReports(destinationPath, overwriteExisting, archiveDialog.archiveFormat)
-            if (result)
-                preview = result
-            if (preview && preview.status === "error" && preview.error)
-                previewError = String(preview.error)
+            pendingDestination = String(destinationPath || "").trim()
+            pendingOverwrite = overwriteExisting
+            var normalizedFormat = String(archiveDialog.archiveFormat || "directory").trim().toLowerCase()
+            if (normalizedFormat.length === 0)
+                normalizedFormat = "directory"
+            pendingFormat = normalizedFormat
+            reportController.previewArchiveReports(destinationPath, overwriteExisting, archiveDialog.archiveFormat)
         }
 
         onOpened: {
@@ -1625,18 +1678,19 @@ Item {
         onAccepted: {
             if (!reportController)
                 return
-            const ok = reportController.archiveReports(destinationPath, overwriteExisting, archiveDialog.archiveFormat)
-            if (ok) {
-                preview = null
-                previewError = ""
-            } else {
+            const started = reportController.archiveReports(destinationPath, overwriteExisting, archiveDialog.archiveFormat)
+            if (!started)
                 Qt.callLater(function() { archiveDialog.open() })
-            }
+            preview = null
+            previewError = ""
         }
 
         onRejected: {
             preview = null
             previewError = ""
+            pendingDestination = ""
+            pendingOverwrite = false
+            pendingFormat = "directory"
         }
 
         contentItem: ColumnLayout {
@@ -1658,6 +1712,7 @@ Item {
                     Layout.fillWidth: true
                     text: archiveDialog.destinationPath
                     placeholderText: qsTr("Ścieżka katalogu archiwum")
+                    enabled: !browser.isBusy
                     onEditingFinished: {
                         const value = text.trim()
                         if (value !== archiveDialog.destinationPath) {
@@ -1669,6 +1724,7 @@ Item {
 
                 Button {
                     text: qsTr("Wybierz…")
+                    enabled: !browser.isBusy
                     onClicked: archiveFolderDialog.open()
                 }
             }
@@ -1686,6 +1742,7 @@ Item {
                 textRole: "label"
                 valueRole: "value"
                 currentIndex: browser.archiveFormatIndex(archiveDialog.archiveFormat)
+                enabled: !browser.isBusy
                 onActivated: {
                     const value = archiveFormatCombo.currentValue || "directory"
                     if (archiveDialog.archiveFormat === value)
@@ -1700,6 +1757,7 @@ Item {
             CheckBox {
                 text: qsTr("Nadpisz istniejące raporty")
                 checked: archiveDialog.overwriteExisting
+                enabled: !browser.isBusy
                 onToggled: {
                     archiveDialog.overwriteExisting = checked
                     archiveDialog.updatePreview()
@@ -1747,6 +1805,7 @@ Item {
 
         footer: DialogButtonBox {
             standardButtons: DialogButtonBox.Ok | DialogButtonBox.Cancel
+            enabled: !browser.isBusy
             onAccepted: archiveDialog.accept()
             onRejected: archiveDialog.reject()
             Component.onCompleted: {
@@ -1768,6 +1827,33 @@ Item {
                     archiveDialog.updatePreview()
             }
         }
+
+        Connections {
+            target: reportController
+            function onArchivePreviewReady(destination, overwrite, format, result) {
+                const normalizedDestination = String(destination || "").trim()
+                var normalizedFormat = String(format || "directory").trim().toLowerCase()
+                if (normalizedFormat.length === 0)
+                    normalizedFormat = "directory"
+                if (normalizedDestination !== archiveDialog.pendingDestination
+                        || Boolean(overwrite) !== Boolean(archiveDialog.pendingOverwrite)
+                        || normalizedFormat !== archiveDialog.pendingFormat)
+                    return
+                archiveDialog.preview = result
+                if (result && result.status === "error" && result.error)
+                    archiveDialog.previewError = String(result.error)
+                else
+                    archiveDialog.previewError = ""
+            }
+            function onArchiveFinished(success) {
+                if (!success)
+                    Qt.callLater(function() { archiveDialog.open() })
+                else {
+                    archiveDialog.preview = null
+                    archiveDialog.previewError = ""
+                }
+            }
+        }
     }
 
     Dialog {
@@ -1779,25 +1865,17 @@ Item {
         onOpened: {
             preview = null
             previewError = ""
-            if (reportController && reportController.previewPurgeReports !== undefined) {
-                const result = reportController.previewPurgeReports()
-                if (result)
-                    preview = result
-                if (preview && preview.status === "error" && preview.error)
-                    previewError = String(preview.error)
-            }
+            if (reportController && reportController.previewPurgeReports !== undefined)
+                reportController.previewPurgeReports()
         }
         onAccepted: {
             if (!reportController)
                 return
-            const ok = reportController.purgeReports()
-            if (ok) {
-                browser.refresh()
-                preview = null
-                previewError = ""
-            } else {
+            const started = reportController.purgeReports()
+            if (!started)
                 Qt.callLater(function() { purgeDialog.open() })
-            }
+            preview = null
+            previewError = ""
         }
         onRejected: {
             preview = null
@@ -1853,6 +1931,7 @@ Item {
         }
         footer: DialogButtonBox {
             standardButtons: DialogButtonBox.Ok | DialogButtonBox.Cancel
+            enabled: !browser.isBusy
             onAccepted: purgeDialog.accept()
             onRejected: purgeDialog.reject()
             Component.onCompleted: {
@@ -1860,6 +1939,26 @@ Item {
                     button(StandardButton.Ok).text = qsTr("Usuń")
                 if (button(StandardButton.Cancel))
                     button(StandardButton.Cancel).text = qsTr("Anuluj")
+            }
+        }
+        Connections {
+            target: reportController
+            function onPurgePreviewReady(result) {
+                if (!purgeDialog.visible)
+                    return
+                purgeDialog.preview = result
+                if (result && result.status === "error" && result.error)
+                    purgeDialog.previewError = String(result.error)
+                else
+                    purgeDialog.previewError = ""
+            }
+            function onPurgeFinished(success) {
+                if (!success)
+                    Qt.callLater(function() { purgeDialog.open() })
+                else {
+                    purgeDialog.preview = null
+                    purgeDialog.previewError = ""
+                }
             }
         }
     }
@@ -1879,9 +1978,30 @@ Item {
                 archiveDialog.destinationPath = folder
                 destinationField.text = folder
                 archiveDialog.updatePreview()
-            }
         }
     }
+
+    Rectangle {
+        anchors.fill: parent
+        visible: browser.isBusy
+        z: 9999
+        color: Qt.rgba(0, 0, 0, 0.35)
+
+        BusyIndicator {
+            anchors.centerIn: parent
+            running: browser.isBusy
+            visible: browser.isBusy
+            width: 56
+            height: 56
+        }
+
+        MouseArea {
+            anchors.fill: parent
+            enabled: browser.isBusy
+            cursorShape: Qt.WaitCursor
+        }
+    }
+}
 
     FileDialog {
         id: exportDialog
