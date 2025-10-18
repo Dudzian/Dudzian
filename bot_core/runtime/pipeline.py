@@ -45,6 +45,7 @@ from bot_core.runtime.portfolio_inputs import (
     build_slo_status_provider,
     build_stress_override_provider,
 )
+from bot_core.runtime.tco_reporting import RuntimeTCOReporter
 from bot_core.runtime.controller import DailyTrendController
 from bot_core.security import SecretManager
 from bot_core.strategies.daily_trend import DailyTrendMomentumSettings, DailyTrendMomentumStrategy
@@ -116,6 +117,7 @@ class DailyTrendPipeline:
     strategy_name: str
     controller_name: str
     risk_profile_name: str
+    tco_reporter: RuntimeTCOReporter | None = None
 
 
 def build_daily_trend_pipeline(
@@ -219,6 +221,13 @@ def build_daily_trend_pipeline(
         account_loader=account_loader,
         execution_context=execution_context,
         position_size=paper_settings["position_size"],
+        strategy_name=resolved_strategy_name,
+        exchange_name=environment.exchange,
+        tco_reporter=bootstrap_ctx.tco_reporter,
+        tco_metadata={
+            "pipeline": "daily_trend",
+            "environment": environment_name,
+        },
     )
 
     return DailyTrendPipeline(
@@ -231,6 +240,7 @@ def build_daily_trend_pipeline(
         strategy_name=resolved_strategy_name,
         controller_name=resolved_controller_name,
         risk_profile_name=effective_risk_profile,
+        tco_reporter=bootstrap_ctx.tco_reporter,
     )
 
 
@@ -264,6 +274,14 @@ def create_trading_controller(
         health_check_interval=health_check_interval,
         execution_metadata=execution_context.metadata,
         decision_journal=pipeline.bootstrap.decision_journal,
+        strategy_name=pipeline.strategy_name,
+        exchange_name=environment_cfg.exchange,
+        tco_reporter=pipeline.tco_reporter,
+        tco_metadata={
+            "pipeline": "daily_trend",
+            "environment": environment_cfg.name,
+            "controller": pipeline.controller_name,
+        },
     )
 
 
@@ -574,6 +592,7 @@ class MultiStrategyRuntime:
     schedules: tuple[StrategyScheduleConfig, ...]
     portfolio_coordinator: PortfolioRuntimeCoordinator | None = None
     portfolio_governor: PortfolioGovernor | None = None
+    tco_reporter: RuntimeTCOReporter | None = None
 
 
 class OHLCVStrategyFeed(StrategyDataFeed):
@@ -871,6 +890,7 @@ def build_multi_strategy_runtime(
         schedules=tuple(scheduler_cfg.schedules),
         portfolio_coordinator=portfolio_coordinator,
         portfolio_governor=portfolio_governor,
+        tco_reporter=bootstrap_ctx.tco_reporter,
     )
 
 

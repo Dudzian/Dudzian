@@ -444,6 +444,15 @@ class DecisionEngineTCOConfig:
     report_paths: Sequence[str] = field(default_factory=tuple)
     reports: Sequence[str] | None = field(default=None, repr=False)
     require_at_startup: bool = False
+    runtime_enabled: bool = False
+    runtime_report_directory: str | None = None
+    runtime_report_basename: str | None = None
+    runtime_export_formats: Sequence[str] = field(default_factory=lambda: ("json",))
+    runtime_flush_events: int | None = None
+    runtime_signing_key_env: str | None = None
+    runtime_signing_key_id: str | None = None
+    runtime_metadata: Mapping[str, object] = field(default_factory=dict)
+    runtime_cost_limit_bps: float | None = None
     warn_report_age_hours: float | None = 24.0
     max_report_age_hours: float | None = 72.0
 
