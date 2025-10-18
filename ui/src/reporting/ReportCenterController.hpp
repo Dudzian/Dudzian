@@ -5,10 +5,12 @@
 #include <QFileSystemWatcher>
 #include <QString>
 #include <QStringList>
+#include <QThreadPool>
 #include <QTimer>
+#include <QUrl>
 #include <QVariantList>
 #include <QVariantMap>
-#include <QUrl>
+#include <functional>
 
 class ReportCenterController : public QObject {
     Q_OBJECT
@@ -61,10 +63,10 @@ public:
     Q_INVOKABLE bool revealReport(const QString& relativePath);
     Q_INVOKABLE bool openExport(const QString& relativePath);
     Q_INVOKABLE bool deleteReport(const QString& relativePath);
-    Q_INVOKABLE QVariantMap previewDeleteReport(const QString& relativePath);
-    Q_INVOKABLE QVariantMap previewPurgeReports();
+    Q_INVOKABLE bool previewDeleteReport(const QString& relativePath);
+    Q_INVOKABLE bool previewPurgeReports();
     Q_INVOKABLE bool purgeReports();
-    Q_INVOKABLE QVariantMap previewArchiveReports(const QString& destination = QString(), bool overwrite = false, const QString& format = QString());
+    Q_INVOKABLE bool previewArchiveReports(const QString& destination = QString(), bool overwrite = false, const QString& format = QString());
     Q_INVOKABLE bool archiveReports(const QString& destination = QString(), bool overwrite = false, const QString& format = QString());
     Q_INVOKABLE QString defaultArchiveDestination() const;
 
@@ -105,12 +107,28 @@ signals:
     void sortKeyChanged();
     void sortDirectionChanged();
     void archiveFormatChanged();
+    void overviewReady(bool success);
+    void deletePreviewReady(const QString& relativePath, const QVariantMap& result);
+    void purgePreviewReady(const QVariantMap& result);
+    void archivePreviewReady(const QString& destination, bool overwrite, const QString& format, const QVariantMap& result);
+    void deleteFinished(const QString& relativePath, bool success);
+    void purgeFinished(bool success);
+    void archiveFinished(bool success);
 
 private:
-    bool runBridge(const QStringList& arguments,
-        QByteArray* stdoutData,
-        QByteArray* stderrData,
-        QString* errorMessage) const;
+    struct BridgeResult {
+        bool success = false;
+        QByteArray stdoutData;
+        QByteArray stderrData;
+        QString errorMessage;
+    };
+
+    using BridgeCallback = std::function<void(const BridgeResult&)>;
+
+    void runBridge(const QStringList& arguments, BridgeCallback&& callback);
+    BridgeResult executeBridge(const QStringList& arguments) const;
+    void beginTask();
+    void endTask();
     bool loadOverview(const QByteArray& data);
     QString resolveReportsDirectory() const;
     static QString expandPath(const QString& path);
@@ -135,6 +153,7 @@ private:
     QString m_archiveFormat = QStringLiteral("directory");
     QFileSystemWatcher m_watcher;
     QTimer m_watcherDebounce;
+    QThreadPool m_workerPool;
     int m_recentDaysFilter = 0;
     QDateTime m_sinceFilter;
     QDateTime m_untilFilter;
@@ -146,4 +165,5 @@ private:
     int m_offset = 0;
     QString m_sortKey = QStringLiteral("updated_at");
     QString m_sortDirection = QStringLiteral("desc");
+    int m_pendingTasks = 0;
 };
