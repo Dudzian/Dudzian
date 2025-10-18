@@ -1,146 +1,130 @@
 # KryptoŁowca Trading Bot
 
-KryptoŁowca is a production-grade cryptocurrency trading bot with a graphical user interface (GUI) built using Tkinter. It supports multi-exchange trading, AI-driven predictions, risk management, and comprehensive reporting. Inspired by Cryptohopper, it offers real-time trading, backtesting, and secure API key management.
+KryptoŁowca is a production-grade cryptocurrency trading stack built around a
+modular core (`bot_core`) and user-facing launchers that live in the
+`KryptoLowca` package. The system combines multi-exchange trading, automated
+risk governance, AI-driven signals and a desktop Trading GUI. Runtime metadata
+– including risk profiles and environment presets – is centralised in
+`bot_core.runtime.metadata` and consumed consistently by every launcher.
 
-> **Important:** Legacy source code that previously lived under `KryptoLowca/bot` has been archived in `archive/legacy_bot/`.
-> The archived snapshot is kept for reference only and must not be executed in new environments. Always use the modules from
-> the top-level `KryptoLowca` package when developing, deploying, or testing the bot.
->
-> **Warning:** Warstwa `bot_core/` utrzymuje czyste API niezależne od części desktopowej.
-> Wymiennik zgodności `legacy_bridge/` został wycofany – nowe moduły powinny
-> korzystać bezpośrednio z pakietu `KryptoLowca` albo z adapterów publikowanych
-> przez `bot_core`.
+> **Important:** Legacy source code that previously lived under
+> `KryptoLowca/bot` is archived in `archive/legacy_bot/` and kept for reference
+> only. Modern development must target the packages described below.
 
-## Project Structure
+## Architecture Overview
 
 ```
-KryptoŁowca/
-├── core/
-│   └── trading_engine.py
-├── managers/
-│   ├── config_manager.py
-│   ├── exchange_manager.py
-│   ├── database_manager.py
-│   ├── ai_manager.py
-│   ├── report_manager.py
-│   ├── risk_manager_adapter.py
-│   └── security_manager.py
-├── tests/
-│   ├── test_config_manager.py
-│   ├── test_exchange_manager.py
-│   ├── test_trading_engine.py
-│   └── test_security_manager.py
-├── trading_gui.py
-├── trading_strategies.py
-└── README.md
+bot_core/
+├── runtime/
+│   ├── metadata.py      # runtime entrypoint + risk profile loaders
+│   ├── paper.py         # adapters for paper trading
+│   └── ...
+├── risk/               # shared risk engines and settings models
+└── ...
+
+KryptoLowca/
+├── auto_trader/        # headless AutoTrader runtime
+│   ├── app.py          # production launcher (integrates risk + runtime metadata)
+│   └── paper.py        # paper/sandbox launcher with CLI controls
+├── ui/trading/         # modular Tkinter GUI (view/controller/state split)
+│   ├── app.py          # TradingGUI facade
+│   └── view.py, controller.py, state.py, ...
+├── paper_auto_trade_app.py  # compatibility wrapper used by legacy entrypoints
+├── run_autotrade_paper.py   # thin launcher delegating to auto_trader.paper
+├── run_trading_gui_paper.py # thin launcher delegating to ui.trading.app
+└── ...
 ```
 
-## Features
+Key characteristics:
 
-- **Multi-Exchange Support**: Integrates with exchanges like Binance via `ccxt.asyncio`.
-- **AI Predictions**: Supports Random Forest, LSTM, and Gradient Boosting models for trading signals.
-- **Risk Management**: Dynamic position sizing and stop-loss/take-profit controls.
-- **GUI Dashboard**: Real-time metrics (PnL, positions) and interactive charts with Plotly.
-- **Secure Key Storage**: API keys encrypted using Fernet (symmetric encryption).
-- **Backtesting**: Comprehensive backtesting with performance metrics (Sharpe, Sortino, etc.).
-- **Webhooks**: TradingView webhook integration for external signals.
-- **Database**: SQLite/PostgreSQL support for trade and log storage.
-- **Reporting**: PDF export of trading results.
-
-## Prerequisites
-
-- Python 3.8+
-- Virtual environment (recommended)
-- Required libraries (see Installation)
+- **Shared runtime metadata** – risk profiles, environment presets and
+  entrypoint configuration are defined in `config/core.yaml` and accessed
+  through `bot_core.runtime.metadata`.
+- **Modular Trading GUI** – `KryptoLowca.ui.trading` renders runtime driven
+  banners, fraction controls and default notionals while exposing an API for
+  AutoTrader integration.
+- **Launcher segregation** – AutoTrader, paper trading and GUI launchers each
+  wrap the shared runtime, making it possible to run headless services or the
+  desktop interface independently.
 
 ## Installation
 
-1. **Clone the repository** (if applicable):
+1. **Create and activate a virtual environment**
+
    ```bash
-   git clone <repository_url>
-   cd KryptoŁowca
+   python -m venv .venv
+   source .venv/bin/activate  # Linux/macOS
+   .venv\Scripts\activate     # Windows PowerShell
    ```
 
-2. **Create and activate a virtual environment**:
+2. **Install dependencies**
+
    ```bash
-   python -m venv venv
-   .\venv\Scripts\activate  # Windows
-   source venv/bin/activate  # Linux/Mac
+   pip install -e .[full]
    ```
 
-3. **Install dependencies**:
-   ```bash
-   pip install ccxt pyyaml cryptography boto3 pandas numpy plotly tkinterweb aiosqlite sqlalchemy asyncpg torch joblib
-   ```
+   The editable install exposes both `bot_core` and `KryptoLowca` packages.
 
-4. **Set up configuration**:
-   - Create a `config.yaml` file in the project root:
-     ```yaml
-     exchange:
-       name: binance
-       testnet: true
-       api_key: your_api_key
-       api_secret: your_api_secret
-     db:
-       db_url: sqlite+aiosqlite:///trading.db
-     ai:
-       threshold_bps: 5.0
-       seq_len: 40
-     trade:
-       lookback_bars: 100
-     risk:
-       max_position_risk: 0.02
-     ```
-   - Replace `your_api_key` and `your_api_secret` with your exchange API credentials.
+3. **Provide runtime configuration**
 
-5. **Secure API keys**:
-   - Run `trading_gui.py` and use the "API Keys" section to save encrypted keys with a password.
+   - Copy `config/core.example.yaml` to `config/core.yaml` (or point the
+     `BOT_CORE_CONFIG` environment variable to another location).
+   - Define environments, exchanges and risk profiles. Each launcher uses
+     `load_risk_manager_settings` to resolve the active profile.
 
-## Running the Bot
+## Running the Components
 
-1. **Launch the GUI**:
-   ```bash
-   python trading_gui.py
-   ```
+### Trading GUI
 
-2. **GUI Usage**:
-   - Select trading symbols from the "Select Symbols" frame.
-   - Configure presets in the "Configuration" frame.
-   - Save/load API keys in the "API Keys" frame.
-   - Start trading or run backtests using the "Controls" frame.
-   - Train AI models in the "AI Training" frame.
-   - Monitor real-time metrics in the "Status" frame.
+Launch the modular GUI with paper trading defaults:
 
-3. **Webhook Setup** (optional):
-   - Enable webhooks in the GUI (port 8080 by default).
-   - Configure TradingView alerts to send POST requests to `http://localhost:8080/webhook`.
+```bash
+python -m KryptoLowca.run_trading_gui_paper
+```
+
+The GUI reads runtime metadata on startup, displays the active risk profile in
+its banner and offers a "Reload core.yaml" button wired to
+`load_risk_manager_settings`.
+
+### AutoTrader
+
+Start the headless AutoTrader with the shared runtime services:
+
+```bash
+python -m KryptoLowca.run_autotrade_paper
+```
+
+`KryptoLowca.auto_trader.app.AutoTrader` consumes risk metadata, listens for
+reload notifications (GUI, `SIGHUP`, filesystem watcher) and orchestrates the
+walk-forward engine, auto-trading loop and Prometheus telemetry.
+
+## Risk Management Runtime
+
+- Risk profiles are expressed in `config/core.yaml` under `risk_profiles`.
+- Each profile is converted into `RiskManagerSettings` by
+  `bot_core.runtime.metadata.load_risk_manager_settings`.
+- Both the GUI and AutoTrader expose background watchers that reload the active
+  profile when `core.yaml` changes, keeping desktop and headless launchers in
+  sync.
 
 ## Testing
 
-Run unit tests to verify functionality:
+Run the automated test suite:
+
 ```bash
-python -m pytest tests/
+pytest
 ```
 
-## Troubleshooting
-
-- **ModuleNotFoundError**: Ensure all files are in the correct directories and `sys.path` includes `managers` and `core`.
-- **Dependency Issues**: Verify all required libraries are installed (`pip list`).
-- **Database Errors**: Check `db_url` in `config.yaml` and ensure the database file (`trading.db`) is accessible.
-- **API Key Errors**: Use the GUI to save/load encrypted keys correctly.
+Some integration tests expect access to mock CCXT exchanges; set the
+appropriate environment variables or skip them using `-m "not ccxt_live"`.
 
 ## Contributing
 
-1. Fork the repository.
-2. Create a feature branch (`git checkout -b feature-name`).
-3. Commit changes (`git commit -m "Add feature"`).
-4. Push to the branch (`git push origin feature-name`).
-5. Open a pull request.
+1. Fork the repository and create a feature branch: `git checkout -b feature/x`.
+2. Ensure all new modules integrate with the runtime metadata and risk loaders.
+3. Add or update tests and documentation where relevant.
+4. Submit a pull request with a summary of the change and manual testing notes.
 
 ## License
 
 MIT License
-
-## Acknowledgments
-
-Inspired by Cryptohopper's trading platform.
