@@ -21,18 +21,17 @@ from bot_core.config.models import (
     StrategyScheduleConfig,
     MultiStrategySchedulerConfig,
 )
+from bot_core.data import CachedOHLCVSource, create_cached_ohlcv_source, resolve_cache_namespace
 from bot_core.data.base import OHLCVRequest
-from bot_core.data.ohlcv import (
-    CachedOHLCVSource,
-    DualCacheStorage,
-    OHLCVBackfillService,
-    ParquetCacheStorage,
-    PublicAPIDataSource,
-    SQLiteCacheStorage,
-)
+from bot_core.data.ohlcv import OHLCVBackfillService
 from bot_core.execution.base import ExecutionContext, ExecutionService
 from bot_core.execution.paper import MarketMetadata, PaperTradingExecutionService
-from bot_core.exchanges.base import AccountSnapshot, Environment, ExchangeAdapterFactory
+from bot_core.exchanges.base import (
+    AccountSnapshot,
+    Environment,
+    ExchangeAdapter,
+    ExchangeAdapterFactory,
+)
 from bot_core.market_intel import MarketIntelAggregator, MarketIntelQuery, MarketIntelSnapshot
 from bot_core.portfolio import PortfolioDecisionLog, PortfolioGovernor
 from bot_core.runtime.bootstrap import BootstrapContext, bootstrap_environment
@@ -66,6 +65,31 @@ def _minutes_to_timedelta(value: float | int | None, default_minutes: float) -> 
     if minutes <= 0:
         return None
     return timedelta(minutes=minutes)
+
+
+def _create_cached_source(adapter: ExchangeAdapter, environment: EnvironmentConfig) -> CachedOHLCVSource:
+    """Buduje źródło OHLCV korzystające z lokalnego cache i snapshotów REST."""
+
+    cache_root = Path(environment.data_cache_path)
+    data_source_cfg = getattr(environment, "data_source", None)
+    enable_snapshots = True
+    namespace = resolve_cache_namespace(environment)
+    offline_mode = bool(getattr(environment, "offline_mode", False))
+    allow_network_upstream = not offline_mode
+    if data_source_cfg is not None:
+        enable_snapshots = bool(getattr(data_source_cfg, "enable_snapshots", True))
+    if offline_mode:
+        enable_snapshots = False
+
+    return create_cached_ohlcv_source(
+        adapter,
+        cache_directory=cache_root / "ohlcv_parquet",
+        manifest_path=cache_root / "ohlcv_manifest.sqlite",
+        enable_snapshots=enable_snapshots,
+        allow_network_upstream=allow_network_upstream,
+        namespace=namespace,
+    )
+
 
 # Opcjonalny kontroler handlu – może nie istnieć w starszych gałęziach.
 try:
@@ -143,19 +167,8 @@ def build_daily_trend_pipeline(
             "Brak instrumentów spełniających kryteria paper tradingu – skonfiguruj quote_assets/valuation_asset."
         )
 
-    cache_root = Path(environment.data_cache_path)
-    parquet_storage = ParquetCacheStorage(
-        cache_root / "ohlcv_parquet",
-        namespace=environment.exchange,
-    )
-    manifest_storage = SQLiteCacheStorage(
-        cache_root / "ohlcv_manifest.sqlite",
-        store_rows=False,
-    )
-    storage = DualCacheStorage(primary=parquet_storage, manifest=manifest_storage)
-
-    public_source = PublicAPIDataSource(exchange_adapter=bootstrap_ctx.adapter)
-    cached_source = CachedOHLCVSource(storage=storage, upstream=public_source)
+    cached_source = _create_cached_source(bootstrap_ctx.adapter, environment)
+    storage = cached_source.storage
     backfill_service = OHLCVBackfillService(cached_source)
 
     execution_service = _build_execution_service(markets, paper_settings)
@@ -639,7 +652,9 @@ def _response_to_snapshots(symbol: str, response: object) -> list[MarketSnapshot
     required = {"open", "high", "low", "close"}
     if not required.issubset(index):
         return []
-    time_idx = index.get("open_time") or index.get("timestamp")
+    time_idx = index.get("open_time")
+    if time_idx is None:
+        time_idx = index.get("timestamp")
     if time_idx is None:
         return []
     volume_idx = index.get("volume")
@@ -694,12 +709,8 @@ def build_multi_strategy_runtime(
     if not markets:
         raise ValueError("Brak instrumentów dla scheduler-a multi-strategy – sprawdź instrument_universe")
 
-    cache_root = Path(environment.data_cache_path)
-    parquet_storage = ParquetCacheStorage(cache_root / "ohlcv_parquet", namespace=environment.exchange)
-    manifest_storage = SQLiteCacheStorage(cache_root / "ohlcv_manifest.sqlite", store_rows=False)
-    storage = DualCacheStorage(primary=parquet_storage, manifest=manifest_storage)
-    public_source = PublicAPIDataSource(exchange_adapter=bootstrap_ctx.adapter)
-    cached_source = CachedOHLCVSource(storage=storage, upstream=public_source)
+    cached_source = _create_cached_source(bootstrap_ctx.adapter, environment)
+    storage = cached_source.storage
     market_intel = MarketIntelAggregator(storage)
 
     strategies = _instantiate_strategies(core_config)

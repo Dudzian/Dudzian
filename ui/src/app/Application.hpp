@@ -22,6 +22,7 @@ class QScreen;
 class ActivationController;            // forward decl (app/ActivationController.hpp)
 class LicenseActivationController;     // forward decl (license/LicenseActivationController.hpp)
 class SecurityAdminController;         // forward decl (security/SecurityAdminController.hpp)
+class ReportCenterController;          // forward decl (reporting/ReportCenterController.hpp)
 
 class Application : public QObject {
     Q_OBJECT
@@ -130,6 +131,7 @@ private:
     std::unique_ptr<ActivationController>     m_activationController;
     std::unique_ptr<LicenseActivationController> m_licenseController;
     std::unique_ptr<SecurityAdminController>   m_securityController;
+    std::unique_ptr<ReportCenterController>    m_reportController;
 
     // --- Telemetry state ---
     std::unique_ptr<TelemetryReporter> m_telemetry;
