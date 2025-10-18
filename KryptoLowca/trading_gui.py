@@ -33,7 +33,8 @@ import webbrowser
 import asyncio
 import inspect
 from datetime import datetime, timezone
-from typing import Dict, List, Any, Optional, Mapping
+from types import SimpleNamespace
+from typing import Any, Dict, List, Mapping, Optional
 
 # --- alias zgodności: core/trading_engine może importować managers.database_manager
 try:
@@ -109,6 +110,7 @@ from KryptoLowca.risk_settings_loader import (
 from KryptoLowca.trading_strategies import TradingStrategies
 from reporting import TradeInfo
 from KryptoLowca.database_manager import DatabaseManager  # klasyczny (bezargumentowy) konstruktor
+from KryptoLowca.ui.trading import view as trading_view
 
 # =====================================
 # Pomocnicze
@@ -277,6 +279,13 @@ class TradingGUI:
         self.live_secret = tk.StringVar(value="")
         self.password_var = tk.StringVar(value="")
 
+        # Risk profile presentation state
+        self.state = SimpleNamespace(risk_profile_name=None)
+        self._risk_section: Optional[trading_view.RiskProfileSection] = None
+        self.risk_profile_display_var = tk.StringVar(value="—")
+        self.risk_limits_display_var = tk.StringVar(value="—")
+        self._risk_manager_settings = self._current_risk_manager_settings()
+
         # wewn.
         self.selected_symbols: List[str] = []
         self.symbol_vars: Dict[str, tk.BooleanVar] = {}
@@ -363,6 +372,52 @@ class TradingGUI:
         self.ai_threshold_var.trace_add("write", lambda *_: self._on_ai_threshold_changed())
         self._log("GUI ready", "INFO")
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        self._on_risk_limit_changed()
+
+    def _current_risk_manager_settings(self) -> Dict[str, Any]:
+        return {
+            "risk_per_trade": float(self.risk_per_trade.get()),
+            "portfolio_risk": float(self.portfolio_risk.get()),
+            "max_daily_loss_pct": float(self.max_daily_loss_pct),
+        }
+
+    @property
+    def risk_manager_settings(self) -> Dict[str, Any]:
+        return dict(self._risk_manager_settings)
+
+    @risk_manager_settings.setter
+    def risk_manager_settings(self, value: Mapping[str, Any]):
+        self._risk_manager_settings = dict(value or {})
+        if self._risk_section is not None:
+            self._risk_section.update(
+                profile_name=self.state.risk_profile_name,
+                settings=self._risk_manager_settings,
+            )
+            self.risk_profile_display_var = self._risk_section.profile_var
+            self.risk_limits_display_var = self._risk_section.limits_var
+
+    def set_risk_profile_context(
+        self,
+        name: Optional[str] = None,
+        settings: Optional[Mapping[str, Any]] = None,
+    ) -> None:
+        if name is not None:
+            self.state.risk_profile_name = name
+        if settings is not None:
+            self.risk_manager_settings = settings
+        elif self._risk_section is not None:
+            self._risk_section.update(
+                profile_name=self.state.risk_profile_name,
+                settings=self._risk_manager_settings,
+            )
+
+    def _on_risk_limit_changed(self, *_: Any) -> None:
+        self._risk_manager_settings.update(self._current_risk_manager_settings())
+        if self._risk_section is not None:
+            self._risk_section.update(
+                profile_name=self.state.risk_profile_name,
+                settings=self._risk_manager_settings,
+            )
 
     # ===================== UI budowa =====================
     def _build_ui(self):
@@ -392,6 +447,14 @@ class TradingGUI:
         ttk.Label(top, textvariable=self.account_balance_var).pack(side="left")
         ttk.Label(top, text="Paper:").pack(side="left", padx=(12,4))
         ttk.Label(top, textvariable=self.paper_balance_var).pack(side="left")
+        self._risk_section = trading_view.build_risk_profile_section(
+            top,
+            self.state,
+            self._risk_manager_settings,
+        )
+        self._risk_section.container.pack(side="left", padx=(12, 0))
+        self.risk_profile_display_var = self._risk_section.profile_var
+        self.risk_limits_display_var = self._risk_section.limits_var
         exp_btn = ttk.Button(top, text="Export PDF", command=self._export_pdf_report)
         exp_btn.pack(side="left", padx=8); Tooltip(exp_btn, "Eksportuj raport do PDF: zestawienie transakcji i metryk.")
         self.btn_start = tk.Button(top, text="Start trading", command=self._on_start)
@@ -838,12 +901,56 @@ class TradingGUI:
             except Exception:
                 pass
 
-        if "stop_loss_atr_multiple" in settings:
-            try:
-                sl_mult = float(settings["stop_loss_atr_multiple"])
-                self.trail_atr_mult_var.set(sl_mult)
-            except Exception:
-                pass
+        lfT = ttk.Labelframe(parent, text="DCA & Trailing (ATR)"); lfT.pack(fill="x", padx=8, pady=6)
+        cb_tr = ttk.Checkbutton(lfT, text="Use trailing stops", variable=self.use_trailing)
+        cb_tr.grid(row=0, column=0, sticky="w", padx=6, pady=4); Tooltip(cb_tr, "Włącz trailing stop-loss (na podstawie ATR).")
+        ttk.Label(lfT, text="ATR period").grid(row=0, column=1, sticky="e", padx=6)
+        sp_atrp = ttk.Spinbox(lfT, textvariable=self.atr_period_var, from_=5, to=100, increment=1, width=8)
+        sp_atrp.grid(row=0, column=2, sticky="w"); Tooltip(sp_atrp, "Okres ATR — wskaźnik zmienności do SL/TP.")
+        ttk.Label(lfT, text="Trail ATR ×").grid(row=1, column=0, sticky="e", padx=6)
+        sp_ta = ttk.Spinbox(lfT, textvariable=self.trail_atr_mult_var, from_=0.5, to=10.0, increment=0.1, width=8)
+        sp_ta.grid(row=1, column=1, sticky="w"); Tooltip(sp_ta, "Mnożnik ATR do trailingu SL (np. 2x ATR).")
+        ttk.Label(lfT, text="Take ATR ×").grid(row=1, column=2, sticky="e", padx=6)
+        sp_tk = ttk.Spinbox(lfT, textvariable=self.take_atr_mult_var, from_=0.5, to=10.0, increment=0.1, width=8)
+        sp_tk.grid(row=1, column=3, sticky="w"); Tooltip(sp_tk, "Mnożnik ATR do realizacji zysku (TP).")
+        cb_dca = ttk.Checkbutton(lfT, text="Enable DCA", variable=self.dca_enabled_var)
+        cb_dca.grid(row=2, column=0, sticky="w", padx=6); Tooltip(cb_dca, "Włącz uśrednianie (dokupowanie) przy spadkach co N×ATR.")
+        ttk.Label(lfT, text="DCA max adds").grid(row=2, column=1, sticky="e", padx=6)
+        sp_dm = ttk.Spinbox(lfT, textvariable=self.dca_max_adds_var, from_=0, to=10, increment=1, width=8)
+        sp_dm.grid(row=2, column=2, sticky="w"); Tooltip(sp_dm, "Maksymalna liczba dograń w dół (uśrednianie).")
+        ttk.Label(lfT, text="DCA step ATR ×").grid(row=2, column=3, sticky="e", padx=6)
+        sp_ds = ttk.Spinbox(lfT, textvariable=self.dca_step_atr_var, from_=0.5, to=10.0, increment=0.1, width=8)
+        sp_ds.grid(row=2, column=4, sticky="w"); Tooltip(sp_ds, "Próg aktywacji kolejnego dogrania (mnożnik ATR).")
+        for i in range(5): lfT.columnconfigure(i, weight=1)
+
+        guard = ttk.Labelframe(parent, text="Guards"); guard.pack(fill="x", padx=8, pady=6)
+        ttk.Label(guard, text="Cooldown [s]").grid(row=0, column=0, sticky="e", padx=6)
+        ent_cd = ttk.Entry(guard, textvariable=self.cooldown_var, width=8); ent_cd.grid(row=0, column=1, sticky="w")
+        Tooltip(ent_cd, "Minimalny czas (sekundy) między transakcjami na tym samym symbolu.")
+        ttk.Label(guard, text="Min move [%]").grid(row=0, column=2, sticky="e", padx=6)
+        ent_mm = ttk.Entry(guard, textvariable=self.minmove_var, width=8); ent_mm.grid(row=0, column=3, sticky="w")
+        Tooltip(ent_mm, "Minimalna zmiana ceny (procent), by uznać ruch za istotny (redukcja szumu).")
+        cb_ob = ttk.Checkbutton(guard, text="One trade per bar", variable=self.onebar_var)
+        cb_ob.grid(row=0, column=4, sticky="w", padx=8); Tooltip(cb_ob, "Zmień tylko jedną pozycję na świecę (ogranicza nadmierne transakcje).")
+        for i in range(5): guard.columnconfigure(i, weight=1)
+
+        lf2 = ttk.Labelframe(parent, text="Paper"); lf2.pack(fill="x", padx=8, pady=6)
+        ttk.Label(lf2, text="Paper capital").grid(row=0, column=0, sticky="e", padx=6)
+        ent_pc = ttk.Entry(lf2, textvariable=self.paper_capital, width=12); ent_pc.grid(row=0, column=1, sticky="w")
+        Tooltip(ent_pc, "Wirtualny kapitał do testów (paper trading). Nie dotyczy realnych środków.")
+        ttk.Button(lf2, text="Apply paper capital", command=self._apply_paper_capital).grid(row=0, column=2, padx=6)
+
+        lfP = ttk.Labelframe(parent, text="Presets"); lfP.pack(fill="x", padx=8, pady=8)
+        self.preset_name = tk.StringVar(value="default")
+        ttk.Label(lfP, text="Name").grid(row=0, column=0, sticky="e", padx=6)
+        e_pn = ttk.Entry(lfP, textvariable=self.preset_name, width=24); e_pn.grid(row=0, column=1, sticky="w")
+        Tooltip(e_pn, "Nazwa zestawu ustawień (zapisywana jako plik w folderze presets/).")
+        ttk.Button(lfP, text="Save preset", command=self._save_preset).grid(row=0, column=2, padx=6)
+        ttk.Button(lfP, text="Load preset", command=self._load_preset).grid(row=0, column=3, padx=6)
+        ttk.Button(lfP, text="Delete preset", command=self._delete_preset).grid(row=0, column=4, padx=6)
+        self.preset_list = tk.Listbox(lfP, height=5); self.preset_list.grid(row=1, column=0, columnspan=5, sticky="ew", padx=6, pady=6)
+        self._refresh_presets_list()
+        for i in range(5): lfP.columnconfigure(i, weight=1)
 
     # ============= Advanced (TradingStrategies) =============
     def _build_advanced_tab(self, parent: ttk.Frame):
@@ -1224,6 +1331,7 @@ class TradingGUI:
                 "trade_cooldown_on_error": self.trade_cooldown_on_error,
                 "risk_per_trade": self.risk_per_trade.get(),
                 "portfolio_risk": self.portfolio_risk.get(),
+                "profile_name": self.state.risk_profile_name,
                 "one_trade_per_bar": self.onebar_var.get(),
                 "cooldown_s": self.cooldown_var.get(),
                 "min_move_pct": self.minmove_var.get(),
@@ -1292,6 +1400,9 @@ class TradingGUI:
             self.trade_cooldown_on_error = int(rk.get("trade_cooldown_on_error", self.trade_cooldown_on_error))
             self.risk_per_trade.set(float(rk.get("risk_per_trade", self.risk_per_trade.get())))
             self.portfolio_risk.set(float(rk.get("portfolio_risk", self.portfolio_risk.get())))
+            profile_name = rk.get("profile_name")
+            if profile_name is not None:
+                self.state.risk_profile_name = profile_name
             self.onebar_var.set(bool(rk.get("one_trade_per_bar", self.onebar_var.get())))
             self.cooldown_var.set(int(rk.get("cooldown_s", self.cooldown_var.get())))
             self.minmove_var.set(float(rk.get("min_move_pct", self.minmove_var.get())))
@@ -1329,6 +1440,8 @@ class TradingGUI:
                 self.selected_symbols = list(sel)
         except Exception as e:
             self._log(f"Apply settings error: {e}", "ERROR")
+        finally:
+            self._on_risk_limit_changed()
 
     def _apply_paper_capital(self):
         try:

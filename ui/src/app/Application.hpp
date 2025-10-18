@@ -22,6 +22,7 @@ class QScreen;
 class ActivationController;            // forward decl (app/ActivationController.hpp)
 class LicenseActivationController;     // forward decl (license/LicenseActivationController.hpp)
 class SecurityAdminController;         // forward decl (security/SecurityAdminController.hpp)
+class ReportCenterController;          // forward decl (reporting/ReportCenterController.hpp)
 
 class Application : public QObject {
     Q_OBJECT
@@ -31,6 +32,7 @@ class Application : public QObject {
     Q_PROPERTY(QString          instrumentLabel      READ instrumentLabel     NOTIFY instrumentChanged)
     Q_PROPERTY(QObject*         riskModel            READ riskModel           CONSTANT)
     Q_PROPERTY(QObject*         activationController READ activationController CONSTANT)
+    Q_PROPERTY(QObject*         reportController READ reportController CONSTANT)
     Q_PROPERTY(int              telemetryPendingRetryCount READ telemetryPendingRetryCount NOTIFY telemetryPendingRetryCountChanged)
 
 public:
@@ -52,6 +54,7 @@ public:
     bool             reduceMotionActive() const { return m_reduceMotionActive; }
     QObject*         riskModel() const { return const_cast<RiskStateModel*>(&m_riskModel); }
     QObject*         activationController() const;
+    QObject*         reportController() const;
     int              telemetryPendingRetryCount() const { return m_pendingRetryCount; }
 
 public slots:
@@ -61,6 +64,19 @@ public slots:
     // Z QML (np. ChartView/StatusFooter/MainWindow)
     Q_INVOKABLE void notifyOverlayUsage(int activeCount, int allowedCount, bool reduceMotionActive);
     Q_INVOKABLE void notifyWindowCount(int totalWindowCount);
+    Q_INVOKABLE QVariantMap instrumentConfigSnapshot() const;
+    Q_INVOKABLE QVariantMap performanceGuardSnapshot() const;
+    Q_INVOKABLE bool updateInstrument(const QString& exchange,
+                                      const QString& symbol,
+                                      const QString& venueSymbol,
+                                      const QString& quoteCurrency,
+                                      const QString& baseCurrency,
+                                      const QString& granularityIso8601);
+    Q_INVOKABLE bool updatePerformanceGuard(int fpsTarget,
+                                            double reduceMotionAfter,
+                                            double jankThresholdMs,
+                                            int maxOverlayCount,
+                                            int disableSecondaryWhenBelow);
 
     // Test helpers
     void ingestFpsSampleForTesting(double fps);
@@ -130,6 +146,7 @@ private:
     std::unique_ptr<ActivationController>     m_activationController;
     std::unique_ptr<LicenseActivationController> m_licenseController;
     std::unique_ptr<SecurityAdminController>   m_securityController;
+    std::unique_ptr<ReportCenterController>    m_reportController;
 
     // --- Telemetry state ---
     std::unique_ptr<TelemetryReporter> m_telemetry;

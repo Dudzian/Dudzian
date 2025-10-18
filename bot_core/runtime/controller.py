@@ -7,6 +7,7 @@ import math
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import (
+    TYPE_CHECKING,
     Any,
     Callable,
     Mapping,
@@ -36,6 +37,7 @@ except Exception:  # pragma: no cover
 # Exchanges commons
 from bot_core.exchanges.base import AccountSnapshot, OrderRequest, OrderResult
 from bot_core.runtime.journal import TradingDecisionEvent, TradingDecisionJournal
+from bot_core.runtime.tco_reporting import RuntimeTCOReporter
 
 # Risk
 try:
@@ -71,9 +73,9 @@ except Exception:  # pragma: no cover
     )
 
 # Konfiguracja runtime kontrolerów – tylko jeśli istnieje w danej gałęzi
-try:
-    from bot_core.config.models import CoreConfig, ControllerRuntimeConfig  # type: ignore
-except Exception:  # pragma: no cover
+if TYPE_CHECKING:
+    from bot_core.config.models import CoreConfig, ControllerRuntimeConfig
+else:  # pragma: no cover - w czasie runtime korzystamy z typu ogólnego
     CoreConfig = Any  # type: ignore
     ControllerRuntimeConfig = Any  # type: ignore
 
@@ -178,6 +180,10 @@ class TradingController:
     execution_metadata: Mapping[str, str] | None = None
     metrics_registry: MetricsRegistry | None = None
     decision_journal: TradingDecisionJournal | None = None
+    strategy_name: str | None = None
+    exchange_name: str | None = None
+    tco_reporter: RuntimeTCOReporter | None = None
+    tco_metadata: Mapping[str, object] | None = None
 
     _clock: Callable[[], datetime] = field(init=False, repr=False)
     _health_interval: timedelta = field(init=False, repr=False)
@@ -192,6 +198,10 @@ class TradingController:
     _metric_health_reports: Any = field(init=False, repr=False)
     _metric_liquidation_state: Any = field(init=False, repr=False)
     _decision_journal: TradingDecisionJournal | None = field(init=False, repr=False)
+    _strategy_name: str | None = field(init=False, repr=False, default=None)
+    _exchange_name: str | None = field(init=False, repr=False, default=None)
+    _tco_reporter: RuntimeTCOReporter | None = field(init=False, repr=False, default=None)
+    _tco_metadata: Mapping[str, object] = field(init=False, repr=False, default_factory=dict)
 
     def __post_init__(self) -> None:
         self._clock = self.clock
@@ -215,6 +225,12 @@ class TradingController:
             "portfolio": self.portfolio_id,
             "risk_profile": self.risk_profile,
         }
+        self._strategy_name = self.strategy_name
+        if self._strategy_name:
+            self._metric_labels["strategy"] = self._strategy_name
+        self._exchange_name = self.exchange_name
+        self._tco_reporter = self.tco_reporter
+        self._tco_metadata = dict(self.tco_metadata or {})
         self._metric_signals_total = self._metrics.counter(
             "trading_signals_total",
             "Liczba sygnałów przetworzonych w TradingController (status=received/accepted/rejected).",
@@ -285,6 +301,61 @@ class TradingController:
             self._decision_journal.record(event)
         except Exception:  # pragma: no cover - błąd w dzienniku nie powinien zatrzymać handlu
             _LOGGER.exception("Nie udało się zapisać zdarzenia audytu decyzji: %s", event_type)
+
+    def _record_tco_execution(
+        self,
+        *,
+        signal: StrategySignal,
+        request: OrderRequest,
+        result: OrderResult,
+        order_id: str,
+        avg_price: float,
+        filled_qty: float,
+    ) -> None:
+        reporter = self._tco_reporter
+        if reporter is None:
+            return
+
+        strategy_name = self._strategy_name or str(
+            signal.metadata.get("strategy", request.metadata.get("strategy") if request.metadata else request.symbol)
+        )
+        reference_price = request.price
+        raw_response = result.raw_response if isinstance(result.raw_response, Mapping) else {}
+        commission = 0.0
+        fee_asset = None
+        if isinstance(raw_response, Mapping):
+            try:
+                commission = float(raw_response.get("fee", 0.0))
+            except (TypeError, ValueError):
+                commission = 0.0
+            fee_asset = raw_response.get("fee_asset")
+
+        metadata: dict[str, object] = {}
+        metadata.update(self._tco_metadata)
+        metadata.setdefault("order_id", order_id)
+        metadata.setdefault("controller", self.__class__.__name__)
+        metadata.setdefault("status", result.status or "filled")
+        metadata.setdefault("signal_confidence", f"{signal.confidence:.6f}")
+        if fee_asset:
+            metadata.setdefault("fee_asset", fee_asset)
+        for key, value in signal.metadata.items():
+            metadata.setdefault(f"signal_{key}", value)
+        if request.metadata:
+            for key, value in request.metadata.items():
+                metadata.setdefault(f"order_{key}", value)
+
+        reporter.record_execution(
+            strategy=strategy_name,
+            risk_profile=self.risk_profile,
+            instrument=request.symbol,
+            exchange=self._exchange_name or self.environment,
+            side=request.side,
+            quantity=filled_qty,
+            executed_price=avg_price,
+            reference_price=reference_price,
+            commission=commission,
+            metadata=metadata,
+        )
 
     # ----------------------------------------------- API -----------------------------------------------
     def process_signals(self, signals: Sequence[StrategySignal]) -> list[OrderResult]:
@@ -468,6 +539,14 @@ class TradingController:
             request=adjusted_request,
             status=result.status or "filled",
             metadata=metadata,
+        )
+        self._record_tco_execution(
+            signal=signal,
+            request=adjusted_request,
+            result=result,
+            order_id=order_id,
+            avg_price=avg_price,
+            filled_qty=filled_qty,
         )
         self._handle_liquidation_state(risk_result)
         return result
@@ -738,11 +817,16 @@ class DailyTrendController:
     account_loader: Callable[[], AccountSnapshot]
     execution_context: ExecutionContext
     position_size: float = 1.0
+    strategy_name: str | None = None
+    exchange_name: str | None = None
+    tco_reporter: RuntimeTCOReporter | None = None
+    tco_metadata: Mapping[str, object] | None = None
 
     _environment: Any = field(init=False, repr=False)
     _runtime: ControllerRuntimeConfig = field(init=False, repr=False)
     _risk_profile: str = field(init=False, repr=False)
     _positions: dict[str, float] = field(init=False, repr=False, default_factory=dict)
+    _tco_metadata: Mapping[str, object] = field(init=False, repr=False, default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.symbols:
@@ -756,6 +840,9 @@ class DailyTrendController:
         except Exception as exc:
             raise KeyError(f"Brak sekcji runtime dla kontrolera '{self.controller_name}' w CoreConfig") from exc
         self._risk_profile = self._environment.risk_profile
+        if not self.exchange_name:
+            self.exchange_name = getattr(self._environment, "exchange", None)
+        self._tco_metadata = dict(self.tco_metadata or {})
 
     @property
     def tick_seconds(self) -> float:
@@ -1012,6 +1099,44 @@ class DailyTrendController:
             avg_price,
             pnl,
         )
+
+        reporter = self.tco_reporter
+        if reporter is not None:
+            raw_response = result.raw_response if isinstance(result.raw_response, Mapping) else {}
+            commission = 0.0
+            fee_asset = None
+            if isinstance(raw_response, Mapping):
+                try:
+                    commission = float(raw_response.get("fee", 0.0))
+                except (TypeError, ValueError):
+                    commission = 0.0
+                fee_asset = raw_response.get("fee_asset")
+            metadata = dict(self._tco_metadata)
+            metadata.setdefault("controller", self.controller_name)
+            metadata.setdefault("environment", self.environment_name)
+            if fee_asset:
+                metadata.setdefault("fee_asset", fee_asset)
+            if request.metadata:
+                for key, value in request.metadata.items():
+                    metadata.setdefault(f"order_{key}", value)
+            if isinstance(raw_response, Mapping):
+                for key, value in raw_response.items():
+                    if key in {"fee", "fee_asset"}:
+                        continue
+                    metadata.setdefault(f"fill_{key}", value)
+            filled_qty = result.filled_quantity or request.quantity
+            reporter.record_execution(
+                strategy=self.strategy_name or self.controller_name,
+                risk_profile=self._risk_profile,
+                instrument=symbol,
+                exchange=self.exchange_name or getattr(self._environment, "exchange", self.environment_name),
+                side=side_lower,
+                quantity=filled_qty,
+                executed_price=avg_price,
+                reference_price=request.price,
+                commission=commission,
+                metadata=metadata,
+            )
 
 
 @dataclass(slots=True)

@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -39,6 +40,26 @@ from bot_core.security.rotation import RotationRegistry
 DEFAULT_HOSTNAMES = ("127.0.0.1", "localhost")
 
 
+def _parse_subject(subject: str) -> dict[str, str]:
+    parts: dict[str, str] = {}
+    for chunk in subject.split("/"):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        key, _, value = chunk.partition("=")
+        key = key.strip().upper()
+        value = value.strip()
+        if key and value:
+            parts[key] = value
+    return parts
+
+
+def _slugify(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", value.lower())
+    slug = slug.strip("-")
+    return slug or "mtls-bundle"
+
+
 @dataclass(slots=True)
 class BundleConfig:
     output_dir: Path
@@ -55,7 +76,7 @@ class BundleConfig:
 
 
 # -----------------------------------------------------------------------------
-// CLI
+# CLI
 # -----------------------------------------------------------------------------
 def _parse_args(argv: Iterable[str] | None = None) -> BundleConfig:
     parser = argparse.ArgumentParser(description="Generuje pakiet certyfikatów mTLS (CA/server/client).")
@@ -119,7 +140,7 @@ def _env_passphrase(env_name: str | None) -> bytes | None:
 
 
 # -----------------------------------------------------------------------------
-// Backend 1: cryptography (preferowany)
+# Backend 1: cryptography (preferowany)
 # -----------------------------------------------------------------------------
 def _generate_with_cryptography(config: BundleConfig) -> Mapping[str, Path]:
     def _generate_private_key(key_size: int) -> rsa.RSAPrivateKey:
@@ -265,14 +286,16 @@ def _generate_with_cryptography(config: BundleConfig) -> Mapping[str, Path]:
         usages=(ExtendedKeyUsageOID.CLIENT_AUTH,),
     )
 
+    file_prefix = _slugify(config.bundle_name)
+
     files = {
-        "ca_certificate": config.output_dir / f"{config.bundle_name}-ca.pem",
-        "ca_key": config.output_dir / f"{config.bundle_name}-ca-key.pem",
-        "server_certificate": config.output_dir / f"{config.bundle_name}-server.pem",
-        "server_key": config.output_dir / f"{config.bundle_name}-server-key.pem",
-        "client_certificate": config.output_dir / f"{config.bundle_name}-client.pem",
-        "client_key": config.output_dir / f"{config.bundle_name}-client-key.pem",
-        "metadata": config.output_dir / f"{config.bundle_name}-metadata.json",
+        "ca_certificate": config.output_dir / f"{file_prefix}-ca.pem",
+        "ca_key": config.output_dir / f"{file_prefix}-ca-key.pem",
+        "server_certificate": config.output_dir / f"{file_prefix}-server.pem",
+        "server_key": config.output_dir / f"{file_prefix}-server-key.pem",
+        "client_certificate": config.output_dir / f"{file_prefix}-client.pem",
+        "client_key": config.output_dir / f"{file_prefix}-client-key.pem",
+        "metadata": config.output_dir / f"{file_prefix}-metadata.json",
     }
 
     _write_file(files["ca_certificate"], ca_cert.public_bytes(serialization.Encoding.PEM))
@@ -286,7 +309,7 @@ def _generate_with_cryptography(config: BundleConfig) -> Mapping[str, Path]:
 
 
 # -----------------------------------------------------------------------------
-// Backend 2: OpenSSL (fallback – prostszy, bez passphrase’ów)
+# Backend 2: OpenSSL (fallback - prostszy, bez passphrase'ów)
 # -----------------------------------------------------------------------------
 def _run_openssl(args: list[str], *, input_data: bytes | None = None) -> None:
     try:
@@ -303,14 +326,16 @@ def _generate_with_openssl(config: BundleConfig) -> Mapping[str, Path]:
     base = cfg.output_dir
     base.mkdir(parents=True, exist_ok=True)
 
+    file_prefix = _slugify(cfg.bundle_name)
+
     files = {
-        "ca_certificate": base / f"{cfg.bundle_name}-ca.pem",
-        "ca_key": base / f"{cfg.bundle_name}-ca-key.pem",
-        "server_certificate": base / f"{cfg.bundle_name}-server.pem",
-        "server_key": base / f"{cfg.bundle_name}-server-key.pem",
-        "client_certificate": base / f"{cfg.bundle_name}-client.pem",
-        "client_key": base / f"{cfg.bundle_name}-client-key.pem",
-        "metadata": base / f"{cfg.bundle_name}-metadata.json",
+        "ca_certificate": base / f"{file_prefix}-ca.pem",
+        "ca_key": base / f"{file_prefix}-ca-key.pem",
+        "server_certificate": base / f"{file_prefix}-server.pem",
+        "server_key": base / f"{file_prefix}-server-key.pem",
+        "client_certificate": base / f"{file_prefix}-client.pem",
+        "client_key": base / f"{file_prefix}-client-key.pem",
+        "metadata": base / f"{file_prefix}-metadata.json",
     }
 
     # CA
@@ -335,7 +360,7 @@ def _generate_with_openssl(config: BundleConfig) -> Mapping[str, Path]:
 
     # Server
     _run_openssl(["openssl", "genrsa", "-out", str(files["server_key"]), str(cfg.key_size)])
-    server_csr = base / f"{cfg.bundle_name}-server.csr"
+    server_csr = base / f"{file_prefix}-server.csr"
     _run_openssl(
         [
             "openssl",
@@ -390,7 +415,7 @@ def _generate_with_openssl(config: BundleConfig) -> Mapping[str, Path]:
 
     # Client
     _run_openssl(["openssl", "genrsa", "-out", str(files["client_key"]), str(cfg.key_size)])
-    client_csr = base / f"{cfg.bundle_name}-client.csr"
+    client_csr = base / f"{file_prefix}-client.csr"
     _run_openssl(
         [
             "openssl",
@@ -435,7 +460,7 @@ def _generate_with_openssl(config: BundleConfig) -> Mapping[str, Path]:
 
 
 # -----------------------------------------------------------------------------
-// Wspólne: zapis metadanych + audyt + rotacja
+# Wspólne: zapis metadanych + audyt + rotacja
 # -----------------------------------------------------------------------------
 def _write_metadata(
     files: Mapping[str, Path],
@@ -479,6 +504,136 @@ def _write_metadata(
     return payload
 
 
+def generate_mtls_bundle(
+    bundle_path: Path,
+    *,
+    ca_subject: str,
+    server_subject: str,
+    client_subject: str,
+    validity_days: int = 365,
+    overwrite: bool = False,
+    rotation_registry: Path | None = None,
+    key_size: int = 4096,
+    server_hostnames: Iterable[str] | None = None,
+    ca_passphrase: bytes | None = None,
+    server_passphrase: bytes | None = None,
+    client_passphrase: bytes | None = None,
+    bundle_name: str | None = None,
+) -> Mapping[str, object]:
+    base = Path(bundle_path)
+    base.mkdir(parents=True, exist_ok=True)
+
+    ca_parts = _parse_subject(ca_subject)
+    server_parts = _parse_subject(server_subject)
+    client_parts = _parse_subject(client_subject)
+
+    common_name = ca_parts.get("CN") or server_parts.get("CN") or "Core OEM"
+    organization = ca_parts.get("O") or server_parts.get("O") or "Dudzian"
+
+    requested_name = (bundle_name or "").strip() or base.name or common_name
+    bundle_slug = _slugify(requested_name)
+
+    host_candidates: list[str] = []
+    if server_hostnames:
+        host_candidates.extend(server_hostnames)
+    server_cn = server_parts.get("CN")
+    if server_cn:
+        host_candidates.append(server_cn)
+    host_candidates.extend(DEFAULT_HOSTNAMES)
+    normalized_hostnames = tuple(dict.fromkeys(name.strip() for name in host_candidates if name.strip()))
+
+    destination_files = {
+        "ca_certificate": base / "ca" / "ca.pem",
+        "ca_key": base / "ca" / "ca.key",
+        "server_certificate": base / "server" / "server.crt",
+        "server_key": base / "server" / "server.key",
+        "client_certificate": base / "client" / "client.crt",
+        "client_key": base / "client" / "client.key",
+    }
+
+    metadata_destination = base / "bundle.json"
+
+    if not overwrite:
+        for path in (*destination_files.values(), metadata_destination):
+            if path.exists():
+                raise FileExistsError(f"Ścieżka {path} już istnieje – użyj overwrite=True, aby nadpisać")
+
+    config = BundleConfig(
+        output_dir=base,
+        bundle_name=requested_name,
+        common_name=common_name,
+        organization=organization,
+        valid_days=validity_days,
+        key_size=key_size,
+        server_hostnames=normalized_hostnames or DEFAULT_HOSTNAMES,
+        rotation_registry=rotation_registry,
+        ca_key_passphrase=ca_passphrase,
+        server_key_passphrase=server_passphrase,
+        client_key_passphrase=client_passphrase,
+    )
+
+    metadata = generate_bundle(config)
+
+    source_files = {
+        "ca_certificate": base / f"{bundle_slug}-ca.pem",
+        "ca_key": base / f"{bundle_slug}-ca-key.pem",
+        "server_certificate": base / f"{bundle_slug}-server.pem",
+        "server_key": base / f"{bundle_slug}-server-key.pem",
+        "client_certificate": base / f"{bundle_slug}-client.pem",
+        "client_key": base / f"{bundle_slug}-client-key.pem",
+    }
+
+    for key, source in source_files.items():
+        target = destination_files[key]
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists():
+            if not overwrite:
+                raise FileExistsError(f"Ścieżka {target} już istnieje – użyj overwrite=True, aby nadpisać")
+            target.unlink()
+        source.replace(target)
+
+    metadata_path = base / f"{bundle_slug}-metadata.json"
+    if metadata_path.exists():
+        metadata_path.unlink()
+
+    artifacts = {
+        "ca": certificate_reference_metadata(destination_files["ca_certificate"], role="tls_ca"),
+        "server": certificate_reference_metadata(destination_files["server_certificate"], role="tls_server_cert"),
+        "client": certificate_reference_metadata(destination_files["client_certificate"], role="tls_client_cert"),
+    }
+
+    metadata = dict(metadata)
+    metadata["bundle_path"] = str(base)
+    metadata["subjects"] = {
+        "ca": ca_subject,
+        "server": server_subject,
+        "client": client_subject,
+    }
+    metadata["files"] = {key: str(path) for key, path in destination_files.items()}
+    metadata["files"]["metadata"] = str(metadata_destination)
+    metadata["artifacts"] = artifacts
+
+    if _audit_mtls_bundle is not None:  # pragma: no cover - zależność opcjonalna
+        try:
+            metadata["tls_audit"] = _audit_mtls_bundle(base)
+        except Exception as exc:
+            metadata["tls_audit_error"] = repr(exc)
+
+    if rotation_registry is not None:
+        registry = RotationRegistry(rotation_registry)
+        now = datetime.now(timezone.utc)
+        normalized_key = requested_name.strip() or "mtls"
+        rotation_keys = {normalized_key, "mtls"}
+        for key in rotation_keys:
+            registry.mark_rotated(key, "ca", timestamp=now)
+            registry.mark_rotated(key, "server", timestamp=now)
+            registry.mark_rotated(key, "client", timestamp=now)
+
+    metadata_destination.write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    return metadata
+
+
 def generate_bundle(config: BundleConfig) -> Mapping[str, object]:
     config.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -501,7 +656,21 @@ def generate_bundle(config: BundleConfig) -> Mapping[str, object]:
 
 def main(argv: Iterable[str] | None = None) -> int:
     cfg = _parse_args(argv)
-    metadata = generate_bundle(cfg)
+    metadata = generate_mtls_bundle(
+        cfg.output_dir,
+        ca_subject=f"/CN={cfg.common_name} Root CA/O={cfg.organization}",
+        server_subject=f"/CN={cfg.common_name} Trading Daemon/O={cfg.organization}",
+        client_subject=f"/CN={cfg.common_name} Desktop Shell/O={cfg.organization}",
+        validity_days=cfg.valid_days,
+        overwrite=True,
+        rotation_registry=cfg.rotation_registry,
+        key_size=cfg.key_size,
+        server_hostnames=cfg.server_hostnames,
+        ca_passphrase=cfg.ca_key_passphrase,
+        server_passphrase=cfg.server_key_passphrase,
+        client_passphrase=cfg.client_key_passphrase,
+        bundle_name=cfg.bundle_name,
+    )
     print(json.dumps(metadata, ensure_ascii=False, indent=2))
     return 0
 

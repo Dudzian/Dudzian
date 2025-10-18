@@ -232,6 +232,21 @@ async def test_dashboard_update(app):
     assert "Positions: 0" in app.positions_var.get()
 
 @pytest.mark.asyncio
+async def test_risk_profile_section_updates(app):
+    app.set_risk_profile_context("balanced")
+    app.risk_manager_settings = {
+        "risk_per_trade": 0.015,
+        "portfolio_risk": 0.25,
+    }
+    await asyncio.sleep(0)
+
+    assert app.risk_profile_display_var.get() == "balanced"
+    limits = app.risk_limits_display_var.get()
+    assert "1.5% per trade" in limits
+    assert "25.0% exposure cap" in limits
+
+
+@pytest.mark.asyncio
 async def test_invalid_symbol_selection(app):
     await app._load_markets()
     app._apply_symbol_selection()

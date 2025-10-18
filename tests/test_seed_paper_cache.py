@@ -11,7 +11,14 @@ from bot_core.data.ohlcv import ParquetCacheStorage, SQLiteCacheStorage
 from scripts.seed_paper_cache import GeneratedSeries, generate_smoke_cache
 
 
-def _write_config(path: Path, data_path: Path) -> None:
+def _write_config(path: Path, data_path: Path, *, cache_namespace: str | None = None) -> None:
+    data_source_block = ""
+    if cache_namespace:
+        data_source_block = (
+            "    data_source:\n"
+            f"      cache_namespace: {cache_namespace}\n"
+        )
+
     path.write_text(
         f"""
 risk_profiles:
@@ -54,7 +61,7 @@ environments:
     keychain_key: test
     credential_purpose: trading
     data_cache_path: {data_path!s}
-    risk_profile: balanced
+{data_source_block}    risk_profile: balanced
     alert_channels: []
     ip_allowlist: []
     required_permissions: [trade]
@@ -105,3 +112,30 @@ def test_generate_smoke_cache_writes_parquet_and_manifest(tmp_path):
         assert metadata[key] == str(entry.candles)
         last_key = f"last_timestamp::{entry.symbol}::{entry.interval}"
         assert metadata[last_key] == str(entry.end_timestamp)
+
+
+def test_generate_smoke_cache_respects_cache_namespace(tmp_path):
+    data_path = tmp_path / "cache"
+    config_path = tmp_path / "core_namespace.yaml"
+    _write_config(config_path, data_path, cache_namespace="offline_namespace")
+
+    start_date = datetime(2024, 3, 1, tzinfo=timezone.utc)
+    results = generate_smoke_cache(
+        config_path=config_path,
+        environment_name="test_env",
+        interval="1d",
+        days=3,
+        start_date=start_date,
+        seed=1,
+    )
+
+    assert results
+
+    parquet_storage = ParquetCacheStorage(
+        data_path / "ohlcv_parquet",
+        namespace="offline_namespace",
+    )
+
+    for entry in results:
+        payload = parquet_storage.read(f"{entry.symbol}::{entry.interval}")
+        assert payload["rows"]
