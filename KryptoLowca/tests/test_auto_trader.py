@@ -197,6 +197,28 @@ def test_autotrader_applies_runtime_risk_profile() -> None:
     assert trader._risk_service.emergency_stop_drawdown_pct == pytest.approx(0.10)
 
 
+def test_paper_trading_adapter_uses_gui_balance() -> None:
+    emitter = DummyEmitter()
+    gui = DummyGUI(paper_balance=2_500.0)
+    adapter = RecordingExecutionAdapter()
+    trader = AutoTrader(
+        emitter,
+        gui,
+        lambda: "BTC/USDT",
+        auto_trade_interval_s=0.5,
+        walkforward_interval_s=None,
+        signal_service=SignalService(),
+        risk_service=RiskService(),
+        execution_service=ExecutionService(adapter),
+        data_provider=StubDataProvider(),
+    )
+
+    trader._enable_paper_trading()
+    assert trader._paper_adapter is not None
+    snapshot = trader._paper_adapter.portfolio_snapshot("BTC/USDT")
+    assert snapshot["value"] == pytest.approx(2_500.0)
+
+
 def test_autotrader_update_risk_manager_settings_applies_changes() -> None:
     emitter = DummyEmitter()
     gui = DummyGUI()
