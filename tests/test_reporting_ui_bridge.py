@@ -1,6 +1,6 @@
-"""Testy warstwy mostkującej raporty do UI."""
-
 from __future__ import annotations
+
+"""Testy warstwy mostkującej raporty do UI."""
 
 import json
 import os
@@ -1384,8 +1384,6 @@ def test_cmd_overview_rejects_invalid_sort_options(tmp_path, capsys):
     assert return_code == 2
     assert captured.out == ""
     assert "Unsupported sort direction" in captured.err
-from __future__ import annotations
-
 import json
 from pathlib import Path
 

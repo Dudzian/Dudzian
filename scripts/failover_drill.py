@@ -157,7 +157,9 @@ def _handle_run(args: argparse.Namespace) -> int:
         _LOGGER.error("Drill resilience wykazał naruszenia progów")
         return 3
 
-    print(f"Zakończono drill '{report.name}' – status: {'failed' if report.has_failures() else 'passed'}.")
+    overall_status = "failed" if report.has_failures() else "passed"
+    drill_names = ", ".join(result.name for result in report.drills) or "unknown"
+    print(f"Zakończono drill(e) {drill_names} – status: {overall_status}.")
     return 0
 
 
@@ -287,8 +289,22 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    if argv is None:
+        args_list = list(sys.argv[1:])
+    else:
+        args_list = list(argv)
+
+    if args_list:
+        first = args_list[0]
+        if first not in {"run", "evaluate"}:
+            evaluate_flags = {"--bundle", "--plan", "--output-json"}
+            if any(flag in args_list for flag in evaluate_flags):
+                args_list.insert(0, "evaluate")
+            else:
+                args_list.insert(0, "run")
+
     parser = _build_parser()
-    args = parser.parse_args(argv)
+    args = parser.parse_args(args_list)
     return args._handler(args)
 
 
