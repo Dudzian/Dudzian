@@ -41,4 +41,4 @@ def test_volatility_target_waits_for_full_history() -> None:
     next_snapshot = fixtures.history[2]
     signals = strategy.on_data(next_snapshot)
 
-    assert not signals
+    assert signals == []
