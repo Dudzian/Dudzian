@@ -151,9 +151,12 @@ class RiskService:
             value = payload.get(key)
             if value is None:
                 continue
-            try:
-                return float(value)
-            except Exception:
+            if isinstance(value, (str, int, float)):
+                try:
+                    return float(value)
+                except (TypeError, ValueError):
+                    continue
+            else:
                 continue
         return float(default)
 
@@ -161,9 +164,11 @@ class RiskService:
     def _coerce_int(value: object, *, default: int) -> int:
         if value is None:
             return default
+        if not isinstance(value, (str, int, float)):
+            return default
         try:
             return int(value)
-        except Exception:
+        except (TypeError, ValueError):
             return default
 
 
