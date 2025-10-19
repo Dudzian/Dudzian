@@ -1,186 +1,80 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Walidacja paczki odporności Stage6 (HMAC + integralność plików).
-
-Zintegrowana wersja łączy funkcjonalności:
-1) Tryb TAR.GZ (wariant 'main'): paczka zawiera `manifest.json` oraz `manifest.json.sig`.
-   - Weryfikacja podpisu HMAC manifestu (algorytm z dokumentu podpisu, np. HMAC-SHA384).
-   - Weryfikacja integralności plików wskazanych w manifeście (SHA-256).
-2) Tryb zewnętrznych artefaktów (wariant 'HEAD'):
-   - Ścieżka do paczki (np. archiwum), osobny manifest `<bundle>.manifest.json` i podpis `<bundle>.manifest.sig`.
-   - Walidacja zawartości przez `ResilienceBundleVerifier` oraz (opcjonalnie) weryfikacja podpisu `verify_signature`.
-
-Wybór trybu:
-- Jeśli `--bundle` ma rozszerzenie `.tar.gz`/`.tgz` → tryb TAR.
-- W przeciwnym razie używany jest tryb zewnętrzny (HEAD). Można jawnie podać --manifest/--signature.
-
-Klucz HMAC:
-- Priorytet: `--hmac-key` → `--hmac-key-file`/`--signing-key-path` → `--hmac-key-env`/`--signing-key-env`.
-- Minimalna długość: 16 bajtów (dla kompatybilności z HEAD). Zalecane ≥32 bajty.
-"""
 from __future__ import annotations
 
 import argparse
 import base64
 import binascii
-import hashlib
 import hmac
 import json
 import logging
 import os
-import sys
+import stat
 import tarfile
 from pathlib import Path
-from typing import Dict, Iterable, Mapping, Optional, Sequence
+from typing import Iterable, Mapping, Sequence
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+import sys
+
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-# ── Wariant HEAD (zewnętrzny manifest/podpis) ──────────────────────────────────
-from bot_core.resilience.bundle import (  # type: ignore
+from bot_core.resilience.bundle import (
     ResilienceBundleVerifier,
     load_manifest,
     load_signature,
     verify_signature,
 )
+from bot_core.security.signing import canonical_json_bytes
 
-# ── Wariant MAIN (paczka tar.gz z osadzonym manifestem/podpisem) ───────────────
-from bot_core.security.signing import canonical_json_bytes  # type: ignore
-from deploy.packaging.build_core_bundle import (  # type: ignore
-    _ensure_no_symlinks,
-    _ensure_windows_safe_component,
-    _ensure_windows_safe_tree,
-)
-
-LOGGER = logging.getLogger("verify_resilience_bundle")
-
-
-# ==============================================================================
-# Wspólne: odczyt klucza HMAC (połączone opcje HEAD + MAIN)
-# ==============================================================================
-def _load_signing_key_merged(
-    *,
-    inline_value: Optional[str],
-    file_path: Optional[str],
-    env_name_primary: Optional[str],
-    env_name_alt: Optional[str],
-) -> Optional[bytes]:
-    """
-    Ładuje klucz HMAC wg priorytetu:
-      1) inline_value (--hmac-key)
-      2) file_path (--hmac-key-file | --signing-key-path)
-      3) env_name_primary (--hmac-key-env)
-      4) env_name_alt (--signing-key-env)
-    """
-    # 1) Wartość inline
-    if inline_value:
-        key = inline_value.encode("utf-8")
-        if len(key) < 16:
-            raise ValueError("Klucz HMAC (inline) musi mieć co najmniej 16 bajtów")
-        return key
-
-    # 2) Plik z kluczem
-    if file_path:
-        candidate = Path(file_path).expanduser()
-        _ensure_no_symlinks(candidate, label="Ścieżka klucza HMAC")
-        resolved = candidate.resolve()
-        _ensure_windows_safe_tree(resolved, label="Ścieżka klucza HMAC")
-        if not resolved.is_file():
-            raise ValueError(f"Plik klucza HMAC nie istnieje: {resolved}")
-        if os.name != "nt":
-            mode = resolved.stat().st_mode
-            if mode & 0o077:
-                raise ValueError("Plik klucza HMAC powinien mieć uprawnienia maks. 600")
-        data = resolved.read_bytes()
-        if len(data) < 16:
-            raise ValueError("Klucz HMAC w pliku musi mieć co najmniej 16 bajtów")
-        return data
-
-    # 3) Zmienna środowiskowa (priorytet: --hmac-key-env)
-    for env_name in (env_name_primary, env_name_alt):
-        if env_name:
-            value = os.environ.get(env_name)
-            if not value:
-                raise ValueError(f"Zmienna środowiskowa {env_name} jest pusta")
-            data = value.encode("utf-8")
-            if len(data) < 16:
-                raise ValueError("Klucz HMAC z ENV musi mieć co najmniej 16 bajtów")
-            return data
-
-    return None
-
-
-# ==============================================================================
-# Tryb MAIN (tar.gz): pomocnicze funkcje weryfikacji osadzonych artefaktów
-# ==============================================================================
-def _is_tar_bundle(path: Path) -> bool:
-    name = path.name.lower()
-    return name.endswith(".tar.gz") or name.endswith(".tgz")
+_LOGGER = logging.getLogger("verify_resilience_bundle")
 
 
 def _normalise_name(name: str) -> str:
-    if name.startswith("./"):
-        name = name[2:]
+    name = name.lstrip("./")
     return name
 
 
-def _load_archive_members(archive: tarfile.TarFile) -> Dict[str, tarfile.TarInfo]:
-    members: Dict[str, tarfile.TarInfo] = {}
-    for member in archive.getmembers():
-        normalised = _normalise_name(member.name)
-        members[normalised] = member
-    return members
-
-
 def _assert_safe_member(member: tarfile.TarInfo) -> None:
-    if member.isdir():
-        return
     if member.issym() or member.islnk():
-        raise ValueError(f"Bundle zawiera nieobsługiwane linki: {member.name}")
-    parts = Path(_normalise_name(member.name)).parts
-    if any(part in ("..", "") for part in parts):
-        raise ValueError(f"Bundle zawiera niebezpieczną ścieżkę: {member.name}")
-    _ensure_windows_safe_component(
-        component=parts[-1], label="Pozycja w bundle", context=member.name
-    )
+        raise ValueError("Archiwum zawiera niedozwolone linki")
+    name = member.name
+    if name.startswith("/"):
+        raise ValueError(f"Archiwum zawiera niebezpieczną ścieżkę: {name}")
+    parts = Path(name).parts
+    if any(part == ".." for part in parts):
+        raise ValueError(f"Archiwum zawiera niebezpieczną ścieżkę: {name}")
 
 
 def _read_json(archive: tarfile.TarFile, member: tarfile.TarInfo) -> Mapping[str, object]:
-    extracted = archive.extractfile(member)
-    if extracted is None:
-        raise ValueError(f"Nie udało się odczytać {member.name} z archiwum")
-    with extracted:
-        data = json.load(extracted)
-    if not isinstance(data, Mapping):
-        raise ValueError(f"Oczekiwano obiektu JSON w {member.name}")
-    return data
-
-
-def _compute_sha256(archive: tarfile.TarFile, member: tarfile.TarInfo) -> str:
-    extracted = archive.extractfile(member)
-    if extracted is None:
-        raise ValueError(f"Nie udało się odczytać {member.name} z archiwum")
-    hasher = hashlib.sha256()
-    with extracted:
-        for chunk in iter(lambda: extracted.read(1024 * 1024), b""):
-            hasher.update(chunk)
-    return hasher.hexdigest()
+    if member.isdir():
+        raise ValueError("Oczekiwano pliku JSON, otrzymano katalog")
+    data = archive.extractfile(member)
+    if data is None:
+        raise ValueError(f"Nie można odczytać danych: {member.name}")
+    payload = data.read()
+    try:
+        parsed = json.loads(payload.decode("utf-8"))
+    except json.JSONDecodeError as exc:  # noqa: BLE001
+        raise ValueError(f"Nieprawidłowy JSON w {member.name}: {exc}") from exc
+    if not isinstance(parsed, Mapping):
+        raise ValueError("Oczekiwano obiektu JSON (mapy)")
+    return parsed
 
 
 def _compute_digest(archive: tarfile.TarFile, member: tarfile.TarInfo, algorithm: str) -> str:
-    extracted = archive.extractfile(member)
-    if extracted is None:
-        raise ValueError(f"Nie udało się odczytać {member.name} z archiwum")
-    try:
-        hasher = hashlib.new(algorithm)
-    except ValueError as exc:
-        raise ValueError(f"Nieobsługiwany algorytm digest w podpisie: {algorithm}") from exc
-    with extracted:
-        for chunk in iter(lambda: extracted.read(1024 * 1024), b""):
-            hasher.update(chunk)
-    return hasher.hexdigest()
+    if algorithm.lower() != "sha256":
+        raise ValueError(f"Nieobsługiwany algorytm digest: {algorithm}")
+    handle = archive.extractfile(member)
+    if handle is None:
+        raise ValueError(f"Nie można odczytać {member.name}")
+    import hashlib
+
+    digest = hashlib.sha256()
+    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+        if not chunk:
+            break
+        digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _verify_manifest_signature_embedded(
@@ -190,204 +84,251 @@ def _verify_manifest_signature_embedded(
     signature_doc: Mapping[str, object],
     signing_key: bytes,
 ) -> None:
-    signature_section = signature_doc.get("signature")
-    payload_section = signature_doc.get("payload")
-    if not isinstance(signature_section, Mapping) or not isinstance(payload_section, Mapping):
-        raise ValueError("Dokument podpisu musi zawierać obiekty 'signature' i 'payload'")
+    payload = signature_doc.get("payload")
+    if not isinstance(payload, Mapping):
+        raise ValueError("Dokument podpisu nie zawiera pola 'payload'")
+    path = str(payload.get("path", ""))
+    if _normalise_name(path) != _normalise_name(manifest_member.name):
+        raise ValueError("Podpis odnosi się do nieoczekiwanej ścieżki manifestu")
 
-    payload_path = payload_section.get("path")
-    if payload_path != "manifest.json":
-        raise ValueError("Podpis odnosi się do nieoczekiwanej ścieżki")
+    digests = {k: v for k, v in payload.items() if k.startswith("sha") and k != "path"}
+    if len(digests) != 1:
+        raise ValueError("Sekcja payload powinna zawierać dokładnie jeden wpis digest")
+    digest_name, digest_value = next(iter(digests.items()))
+    if not isinstance(digest_value, str) or not digest_value:
+        raise ValueError("Digest manifestu powinien być łańcuchem heksadecymalnym")
 
-    digest_items = [key for key in payload_section if key != "path"]
-    if len(digest_items) != 1:
-        raise ValueError("Sekcja payload musi zawierać dokładnie jeden wpis digest")
-    digest_key = digest_items[0]
-    expected_digest = payload_section[digest_key]
-    if not isinstance(expected_digest, str):
-        raise ValueError("Wartość digest musi być łańcuchem heksadecymalnym")
+    computed_digest = _compute_digest(archive, manifest_member, digest_name)
+    if computed_digest != digest_value:
+        raise ValueError("Digest manifestu nie zgadza się z podpisem")
 
-    actual_digest = _compute_digest(archive, manifest_member, digest_key)
-    if actual_digest != expected_digest:
-        raise ValueError("Digest manifestu nie zgadza się z payload w podpisie")
+    signature = signature_doc.get("signature")
+    if not isinstance(signature, Mapping):
+        raise ValueError("Dokument podpisu nie zawiera sekcji 'signature'")
+    algorithm = signature.get("algorithm")
+    if algorithm != "HMAC-SHA256":
+        raise ValueError(f"Nieobsługiwany algorytm podpisu: {algorithm}")
 
-    algorithm = signature_section.get("algorithm")
-    if not isinstance(algorithm, str) or not algorithm.upper().startswith("HMAC-"):
-        raise ValueError("Nieobsługiwany algorytm podpisu")
-    digest_name = algorithm.split("-", 1)[1].lower()
-    if not hasattr(hashlib, digest_name):
-        raise ValueError(f"Nieobsługiwany digest HMAC: {digest_name}")
-
-    signature_value = signature_section.get("value")
-    if not isinstance(signature_value, str):
-        raise ValueError("Wartość podpisu musi być ciągiem base64")
+    value = signature.get("value")
+    if not isinstance(value, str):
+        raise ValueError("Wartość podpisu musi być łańcuchem base64")
     try:
-        decoded_signature = base64.b64decode(signature_value, validate=True)
-    except binascii.Error as exc:
-        raise ValueError(f"Nieprawidłowe base64 podpisu: {exc}") from exc
+        mac = base64.b64decode(value, validate=True)
+    except binascii.Error as exc:  # type: ignore[name-defined]
+        raise ValueError("Nieprawidłowe base64 podpisu") from exc
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError("Nieprawidłowe base64 podpisu") from exc
 
-    expected_mac = hmac.new(
-        signing_key,
-        canonical_json_bytes(payload_section),
-        getattr(hashlib, digest_name),
-    ).digest()
-    if not hmac.compare_digest(decoded_signature, expected_mac):
+    expected = hmac.new(signing_key, canonical_json_bytes(payload), digestmod="sha256").digest()
+    if not hmac.compare_digest(expected, mac):
         raise ValueError("Weryfikacja podpisu manifestu nie powiodła się")
 
 
-def _verify_tar_bundle(*, bundle_path: Path, signing_key: bytes) -> dict:
-    _ensure_no_symlinks(bundle_path, label="Ścieżka bundle")
-    resolved_bundle = bundle_path.resolve()
-    _ensure_windows_safe_tree(resolved_bundle, label="Ścieżka bundle")
-    if not resolved_bundle.is_file():
-        raise FileNotFoundError(f"Bundle nie istnieje: {resolved_bundle}")
-
-    with tarfile.open(resolved_bundle, "r:gz") as archive:
-        members = _load_archive_members(archive)
-        manifest_member = members.get("manifest.json") or members.get("manifest")
-        signature_member = members.get("manifest.json.sig") or members.get("manifest.sig")
-        if manifest_member is None or signature_member is None:
-            raise ValueError("Brak manifestu lub podpisu w paczce")
-
-        for member in members.values():
-            _assert_safe_member(member)
-
+def _verify_tar_bundle(*, bundle_path: Path, signing_key: bytes | None) -> Mapping[str, object]:
+    with tarfile.open(bundle_path, "r:gz") as archive:
+        members = {member.name: member for member in archive.getmembers() if member.isfile()}
+        manifest_member = members.get("manifest.json") or members.get("./manifest.json")
+        if manifest_member is None:
+            raise ValueError("Archiwum nie zawiera manifest.json")
         manifest = _read_json(archive, manifest_member)
-        signature_doc = _read_json(archive, signature_member)
-        _verify_manifest_signature_embedded(
-            archive=archive,
-            manifest_member=manifest_member,
-            signature_doc=signature_doc,
-            signing_key=signing_key,
-        )
 
         files = manifest.get("files")
         if not isinstance(files, Iterable):
-            raise ValueError("Manifest nie zawiera listy plików 'files'")
+            raise ValueError("Manifest nie zawiera listy plików")
 
         verified = 0
         for entry in files:
             if not isinstance(entry, Mapping):
                 raise ValueError("Pozycja manifestu musi być mapą")
-            path = entry.get("path")
-            digest = entry.get("sha256")
-            if not isinstance(path, str) or not isinstance(digest, str):
+            path_value = entry.get("path")
+            sha_value = entry.get("sha256")
+            if not isinstance(path_value, str) or not isinstance(sha_value, str):
+                raise ValueError("Pozycja wymaga pól 'path' i 'sha256'")
+            path = path_value.strip()
+            sha = sha_value.strip()
+            if not path or not sha:
                 raise ValueError("Pozycja wymaga pól 'path' i 'sha256'")
             member = members.get(path) or members.get(f"./{path}")
             if member is None:
                 raise ValueError(f"Brak artefaktu w paczce: {path}")
-            computed = _compute_sha256(archive, member)
-            if computed != digest:
-                raise ValueError(f"Niezgodny SHA-256 dla {path}: oczekiwano {digest}, obliczono {computed}")
+            _assert_safe_member(member)
+            digest = _compute_digest(archive, member, "sha256")
+            if digest != sha:
+                raise ValueError("Niezgodny SHA-256 pliku z manifestem (Digest mismatch)")
             verified += 1
 
+        signature_member = (
+            members.get("manifest.json.sig")
+            or members.get("./manifest.json.sig")
+            or members.get("manifest.sig")
+            or members.get("./manifest.sig")
+        )
+        if signing_key is not None:
+            if signature_member is None:
+                raise ValueError("Tryb TAR wymaga podpisu manifestu")
+            signature_doc = _read_json(archive, signature_member)
+            _verify_manifest_signature_embedded(
+                archive=archive,
+                manifest_member=manifest_member,
+                signature_doc=signature_doc,
+                signing_key=signing_key,
+            )
+        elif signature_member is not None:
+            _LOGGER.warning("Archiwum zawiera podpis manifestu, ale nie podano klucza HMAC")
+
     return {
-        "bundle": resolved_bundle.as_posix(),
+        "bundle": str(bundle_path),
         "manifest": "manifest.json (embedded)",
         "verified_files": verified,
     }
 
 
-# ==============================================================================
-# Tryb HEAD (zewnętrzny manifest/podpis): wrapper łączący oryginalną logikę
-# ==============================================================================
 def _verify_external_manifest(
     *,
     bundle_path: Path,
-    manifest_path: Optional[Path],
-    signature_path: Optional[Path],
-    signing_key: Optional[bytes],
-) -> dict:
-    bundle_path = bundle_path.expanduser()
-    manifest_path = (manifest_path.expanduser() if manifest_path else bundle_path.with_suffix(".manifest.json"))
-    signature_path = (signature_path.expanduser() if signature_path else bundle_path.with_suffix(".manifest.sig"))
-
+    manifest_path: Path,
+    signature_path: Path | None,
+    signing_key: bytes | None,
+) -> Mapping[str, object]:
     manifest = load_manifest(manifest_path)
     verifier = ResilienceBundleVerifier(bundle_path, manifest)
     errors = verifier.verify_files()
-
-    signature_doc = load_signature(signature_path if signature_path.exists() else None)
-    if signature_doc is not None and signing_key is not None:
-        errors.extend(verify_signature(manifest, signature_doc, key=signing_key))
-    elif signature_doc is not None and signing_key is None:
-        print("Ostrzeżenie: dostarczono podpis bez klucza HMAC – pomijam weryfikację", file=sys.stderr)
-    if not signature_doc and signing_key is not None:
-        print("Ostrzeżenie: dostarczono klucz HMAC, lecz nie znaleziono podpisu", file=sys.stderr)
-
     if errors:
-        for message in errors:
-            print(f"Błąd: {message}", file=sys.stderr)
-        raise ValueError("Walidacja zewnętrznego manifestu nie powiodła się")
+        raise ValueError("Walidacja zewnętrznego manifestu nie powiodła się: " + "; ".join(errors))
+
+    signature_doc = load_signature(signature_path)
+    if signature_doc and signing_key:
+        signature_errors = verify_signature(manifest, signature_doc, key=signing_key)
+        if signature_errors:
+            raise ValueError("Weryfikacja podpisu manifestu nie powiodła się: " + "; ".join(signature_errors))
+    elif signature_doc and not signing_key:
+        message = "Podpis manifestu wykryty, ale nie przekazano klucza HMAC (podpis bez klucza)"
+        _LOGGER.warning(message)
+        print(message, file=sys.stderr)
+    elif signing_key and not signature_doc:
+        message = "Przekazano klucz HMAC, ale brak pliku podpisu manifestu"
+        _LOGGER.warning(message)
+        print(message, file=sys.stderr)
 
     return {
-        "bundle": bundle_path.as_posix(),
-        "manifest": manifest_path.as_posix(),
-        "verified_files": manifest.get("file_count") or (len(manifest.get("files", [])) if isinstance(manifest.get("files"), list) else None),
+        "bundle": str(bundle_path),
+        "manifest": str(manifest_path),
+        "verified_files": len(manifest.get("files", [])),
     }
 
 
-# ==============================================================================
-# CLI
-# ==============================================================================
+def _load_signing_key_merged(
+    *,
+    inline_value: str | None,
+    file_path: str | None,
+    env_name_primary: str | None,
+    env_name_alt: str | None,
+) -> bytes | None:
+    if inline_value:
+        data = inline_value.encode("utf-8")
+        if len(data) < 16:
+            raise ValueError("Klucz HMAC musi mieć co najmniej 16 bajtów")
+        return data
+
+    if file_path:
+        path = Path(file_path).expanduser()
+        if not path.exists():
+            raise ValueError(f"Plik klucza {path} nie istnieje")
+        if path.is_dir():
+            raise ValueError("Plik klucza nie może być katalogiem")
+        if path.is_symlink():
+            raise ValueError("Plik klucza nie może być symlinkiem")
+        if os.name != "nt":
+            mode = stat.S_IMODE(path.stat().st_mode)
+            if mode & 0o077:
+                raise ValueError("Plik klucza powinien mieć uprawnienia maks. 600")
+        data = path.read_bytes().strip()
+        if len(data) < 16:
+            raise ValueError("Klucz HMAC musi mieć co najmniej 16 bajtów")
+        return data
+
+    for env_name in (env_name_primary, env_name_alt):
+        if not env_name:
+            continue
+        value = os.environ.get(env_name)
+        if value is None:
+            continue
+        if not value:
+            raise ValueError(f"Zmienna środowiskowa {env_name} jest pusta")
+        data = value.encode("utf-8")
+        if len(data) < 16:
+            raise ValueError("Klucz HMAC musi mieć co najmniej 16 bajtów")
+        return data
+
+    return None
+
+
 def _build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--bundle", required=True, type=Path, help="Ścieżka do paczki (tar.gz/tgz lub inna)")
-
-    # Opcje HEAD (zewnętrzne ścieżki)
-    p.add_argument("--manifest", help="Ścieżka do manifestu (domyślnie <bundle>.manifest.json)")
-    p.add_argument("--signature", help="Ścieżka do podpisu (domyślnie <bundle>.manifest.sig)")
-
-    # Zbiorczy zestaw opcji klucza HMAC (HEAD + MAIN)
-    p.add_argument("--hmac-key", help="Wartość klucza HMAC (inline, UTF-8)")
-    p.add_argument("--hmac-key-file", help="Plik z kluczem HMAC (UTF-8)")
-    p.add_argument("--hmac-key-env", help="ENV z kluczem HMAC (UTF-8)")
-    p.add_argument("--signing-key-path", help="Alias: plik z kluczem HMAC (UTF-8)")
-    p.add_argument("--signing-key-env", help="Alias: ENV z kluczem HMAC (UTF-8)")
-
-    p.add_argument(
-        "--log-level",
-        default="INFO",
-        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
-        help="Poziom logowania (domyślnie INFO)",
+    parser = argparse.ArgumentParser(description="Weryfikacja paczki odporności Stage6")
+    parser.add_argument("bundle", nargs="?", help="Ścieżka do archiwum (tar.gz lub zip)")
+    parser.add_argument("--bundle", dest="bundle_option", help="Ścieżka do archiwum (tar.gz lub zip)")
+    parser.add_argument("--manifest", help="Zewnętrzny manifest JSON (dla plików ZIP)")
+    parser.add_argument("--signature", help="Plik podpisu manifestu")
+    parser.add_argument("--hmac-key", dest="hmac_key", help="Klucz HMAC podany inline")
+    parser.add_argument("--hmac-key-file", dest="hmac_key_file", help="Plik z kluczem HMAC")
+    parser.add_argument("--hmac-key-env", dest="hmac_key_env", help="Zmienna środowiskowa z kluczem HMAC")
+    parser.add_argument(
+        "--signing-key-env",
+        dest="hmac_key_env",
+        help="Alias zmiennej środowiskowej z kluczem HMAC",
     )
-    return p
+    parser.add_argument(
+        "--hmac-key-env-alt",
+        dest="hmac_key_env_alt",
+        help="Alternatywna zmienna środowiskowa z kluczem HMAC",
+    )
+    parser.add_argument("--log-level", default="INFO", help="Poziom logowania (domyślnie INFO)")
+    return parser
 
 
-def main(argv: Optional[Sequence[str]] = None) -> int:
+def run(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
-    logging.basicConfig(level=args.log_level, format="%(asctime)s %(levelname)s %(message)s")
+    bundle_arg = args.bundle_option or args.bundle
+    if not bundle_arg:
+        parser.error("Musisz wskazać ścieżkę do archiwum (--bundle lub argument pozycyjny)")
+    return _execute(parser, args, Path(bundle_arg))
 
-    # Zbiorcze rozstrzygnięcie klucza (priorytet opisany w docstringu)
+
+def _execute(parser: argparse.ArgumentParser, args: argparse.Namespace, bundle_path: Path) -> int:
+    logging.basicConfig(level=args.log_level.upper(), format="%(levelname)s %(message)s")
     try:
         signing_key = _load_signing_key_merged(
             inline_value=args.hmac_key,
-            file_path=args.hmac_key_file or args.signing_key_path,
+            file_path=args.hmac_key_file,
             env_name_primary=args.hmac_key_env,
-            env_name_alt=args.signing_key_env,
+            env_name_alt=args.hmac_key_env_alt,
         )
-    except Exception as exc:
-        LOGGER.error("Błąd odczytu klucza HMAC: %s", exc)
+    except ValueError as exc:
+        _LOGGER.error("Błąd odczytu klucza HMAC: %s", exc)
         return 1
 
-    # Tryb automatyczny wg rozszerzenia bundle
     try:
-        if _is_tar_bundle(args.bundle):
+        if bundle_path.suffixes[-2:] == [".tar", ".gz"] or bundle_path.suffix == ".tgz":
             if signing_key is None:
-                raise ValueError("Tryb TAR wymaga klucza HMAC (podaj --hmac-key/--hmac-key-file/--signing-key-path/--hmac-key-env/--signing-key-env)")
-            summary = _verify_tar_bundle(bundle_path=args.bundle, signing_key=signing_key)
+                _LOGGER.error("Tryb TAR wymaga podania klucza HMAC")
+                return 2
+            summary = _verify_tar_bundle(bundle_path=bundle_path, signing_key=signing_key)
         else:
             summary = _verify_external_manifest(
-                bundle_path=args.bundle,
-                manifest_path=Path(args.manifest) if args.manifest else None,
-                signature_path=Path(args.signature) if args.signature else None,
+                bundle_path=bundle_path,
+                manifest_path=Path(args.manifest) if args.manifest else bundle_path.with_suffix(".manifest.json"),
+                signature_path=Path(args.signature) if args.signature else bundle_path.with_suffix(".manifest.sig"),
                 signing_key=signing_key,
             )
-    except Exception as exc:  # noqa: BLE001
-        LOGGER.error("Weryfikacja nie powiodła się: %s", exc)
+    except ValueError as exc:
+        _LOGGER.error("Weryfikacja nie powiodła się: %s", exc)
+        return 2
+    except Exception:  # noqa: BLE001
+        _LOGGER.exception("Weryfikacja nie powiodła się")
         return 2
 
-    print(json.dumps(summary, ensure_ascii=False, sort_keys=True, indent=2))
+    print(json.dumps(summary, ensure_ascii=False))
     return 0
 
 

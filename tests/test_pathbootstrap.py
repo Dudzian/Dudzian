@@ -136,6 +136,8 @@ def test_ensure_repo_root_on_sys_path_merges_env_and_argument_paths(
     ensure_repo_root_on_sys_path(repo_root, additional_paths=("docs",))
 
     assert sys.path[:3] == [repo_str, tests_extra, docs_extra]
+
+
 def test_ensure_repo_root_on_sys_path_expands_env_and_user_paths(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -155,9 +157,12 @@ def test_ensure_repo_root_on_sys_path_expands_env_and_user_paths(
         os.pathsep.join(["~/lib", "${CUSTOM_LIB_DIR}/pkg"]),
     )
     monkeypatch.setattr(sys, "path", ["/tmp/base"], raising=False)
+
     ensure_repo_root_on_sys_path(repo_root)
+
     expected_home = str(home_lib.resolve())
     expected_env = str(env_pkg.resolve())
+
     assert sys.path[:3] == [repo_str, expected_home, expected_env]
 
 
@@ -212,6 +217,7 @@ def test_get_repo_root_respects_max_depth(tmp_path: Path) -> None:
     nested = repo_root / "pkg" / "module"
     nested.mkdir(parents=True)
     (repo_root / "pyproject.toml").write_text("{}", encoding="utf-8")
+
     with pytest.raises(FileNotFoundError):
         get_repo_root(
             nested,
@@ -219,12 +225,14 @@ def test_get_repo_root_respects_max_depth(tmp_path: Path) -> None:
             allow_git=False,
             max_depth=1,
         )
+
     discovered = get_repo_root(
         nested,
         sentinels=("pyproject.toml",),
         allow_git=False,
         max_depth=2,
     )
+
     assert discovered == repo_root
 
 
@@ -253,14 +261,17 @@ def test_get_repo_root_allows_git_fallback_when_enabled(
     _init_git_repository(repo_root)
     nested = repo_root / "pkg"
     nested.mkdir()
+
     clear_cache()
     try:
         with pytest.raises(FileNotFoundError):
             get_repo_root(nested, sentinels=("missing.marker",), allow_git=False)
+
         clear_cache()
         discovered = get_repo_root(nested, sentinels=("missing.marker",), allow_git=True)
     finally:
         clear_cache()
+
     assert discovered == repo_root.resolve()
 
 
@@ -273,11 +284,13 @@ def test_get_repo_root_git_fallback_respects_env(
     _init_git_repository(repo_root)
     nested = repo_root / "pkg"
     nested.mkdir()
+
     clear_cache()
     try:
         monkeypatch.setenv("PATHBOOTSTRAP_ALLOW_GIT", "1")
         discovered = get_repo_root(nested, sentinels=("missing.marker",))
         assert discovered == repo_root.resolve()
+
         clear_cache()
         monkeypatch.setenv("PATHBOOTSTRAP_ALLOW_GIT", "0")
         with pytest.raises(FileNotFoundError):
@@ -289,7 +302,9 @@ def test_get_repo_root_git_fallback_respects_env(
 
 def test_get_repo_info_reports_sentinel_details() -> None:
     repo_root = Path(__file__).resolve().parents[1]
+
     info = get_repo_info(repo_root, sentinels=("pyproject.toml",))
+
     assert info.root == repo_root
     assert info.method == "sentinel"
     assert info.sentinel == "pyproject.toml"
@@ -304,6 +319,7 @@ def test_get_repo_info_uses_git_when_requested(tmp_path: Path) -> None:
     _init_git_repository(repo_root)
     nested = repo_root / "pkg"
     nested.mkdir()
+
     clear_cache()
     try:
         info = get_repo_info(
@@ -313,11 +329,14 @@ def test_get_repo_info_uses_git_when_requested(tmp_path: Path) -> None:
         )
     finally:
         clear_cache()
+
     assert info.root == repo_root.resolve()
     assert info.method == "git"
     assert info.sentinel is None
     assert info.depth is None
     assert info.start == nested.resolve()
+
+
 def test_ensure_repo_root_on_sys_path_requires_sentinel(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
         ensure_repo_root_on_sys_path(tmp_path, sentinels=("pyproject.toml",))
@@ -710,6 +729,40 @@ def test_main_print_pythonpath_windows_style_json(
     }
 
 
+def test_main_prints_json_with_additional_paths_from_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.delenv("PATHBOOTSTRAP_ADD_PATHS", raising=False)
+    path_file = tmp_path / "paths.txt"
+    path_file.write_text("# komentarz\n tests \n docs\n", encoding="utf-8")
+
+    clear_cache()
+    try:
+        exit_code = main(["--format", "json", "--add-path-file", str(path_file)])
+        captured = capsys.readouterr()
+    finally:
+        clear_cache()
+
+    repo_root = Path(__file__).resolve().parents[1]
+    payload = json.loads(captured.out)
+    expected_tests = str((repo_root / "tests").resolve())
+    expected_docs = str((repo_root / "docs").resolve())
+
+    assert exit_code == 0
+    assert captured.err == ""
+    assert payload["additional_paths"] == [expected_tests, expected_docs]
+
+
+def test_main_combines_additional_paths_file_env_and_cli(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("PATHBOOTSTRAP_ADD_PATHS", "data")
+    path_file = tmp_path / "paths.txt"
+    path_file.write_text("docs\n", encoding="utf-8")
 def test_main_with_set_env_prints_assignment(capsys: pytest.CaptureFixture[str]) -> None:
     repo_root = Path(__file__).resolve().parents[1]
 
@@ -720,6 +773,25 @@ def test_main_with_set_env_prints_assignment(capsys: pytest.CaptureFixture[str])
     finally:
         clear_cache()
 
+    repo_root = Path(__file__).resolve().parents[1]
+    payload = json.loads(captured.out)
+    expected_data = str((repo_root / "data").resolve())
+    expected_docs = str((repo_root / "docs").resolve())
+    expected_tests = str((repo_root / "tests").resolve())
+
+    assert exit_code == 0
+    assert captured.err == ""
+    assert payload["additional_paths"] == [expected_data, expected_docs, expected_tests]
+
+
+def test_main_prints_pythonpath_value(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("PATHBOOTSTRAP_ADD_PATHS", raising=False)
+
+    clear_cache()
+    try:
+        exit_code = main(["--print-pythonpath", "--add-path", "tests"])
     assert exit_code == 0
     assert captured.err == ""
     assert captured.out.strip() == f"REPO_ROOT={repo_root}"
@@ -740,6 +812,19 @@ def test_main_with_set_env_and_export_prints_export_command(
     expected_repo = str(repo_root)
     assert exit_code == 0
     assert captured.err == ""
+    assert captured.out.strip() == expected_pythonpath
+
+
+def test_main_prints_pythonpath_json(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("PATHBOOTSTRAP_ADD_PATHS", raising=False)
+
+    clear_cache()
+    try:
+        exit_code = main(
+            ["--print-pythonpath", "--format", "json", "--add-path", "tests"]
+        )
     assert captured.out.strip() == f"REPO_ROOT={expected_repo}"
 
 

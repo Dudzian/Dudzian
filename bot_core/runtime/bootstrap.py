@@ -5,12 +5,13 @@ import asyncio
 import importlib
 import json
 import logging
+import os
+import stat
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from pathlib import Path
-import os
-import stat
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -213,6 +214,29 @@ try:  # pragma: no cover - integracja z AIManagerem jest opcjonalna
     from bot_core.ai.manager import AIManager
 except Exception:  # pragma: no cover - środowiska bez modułu bot_core.ai.manager
     AIManager = None  # type: ignore[assignment]
+
+# --- Alert component registry ---------------------------------------------------------
+
+
+@lru_cache(maxsize=1)
+def _get_alert_components() -> Mapping[str, Any]:
+    """Zwraca mapę klas komponentów alertowych używanych w bootstrapie."""
+
+    return {
+        "FileAlertAuditLog": FileAlertAuditLog,
+        "InMemoryAlertAuditLog": InMemoryAlertAuditLog,
+        "AlertThrottle": AlertThrottle,
+        "DefaultAlertRouter": DefaultAlertRouter,
+        "EmailChannel": EmailChannel,
+        "TelegramChannel": TelegramChannel,
+        "SMSChannel": SMSChannel,
+        "SignalChannel": SignalChannel,
+        "WhatsAppChannel": WhatsAppChannel,
+        "MessengerChannel": MessengerChannel,
+        "SmsProviderConfig": SmsProviderConfig,
+        "get_sms_provider": get_sms_provider,
+    }
+
 
 # --- Metrics service (opcjonalny – w niektórych gałęziach może nie istnieć) ---
 try:  # pragma: no cover - środowiska bez grpcio lub wygenerowanych stubów
@@ -1270,6 +1294,81 @@ def bootstrap_environment(
     validation = assert_core_config_valid(core_config)
     for warning in validation.warnings:
         _LOGGER.warning("Walidacja konfiguracji: %s", warning)
+
+    license_config = getattr(core_config, "license", None)
+    if not isinstance(license_config, LicenseValidationConfig):
+        license_config = LicenseValidationConfig()
+    skip_license_validation = not (
+        getattr(license_config, "license_keys_path", None)
+        and getattr(license_config, "fingerprint_keys_path", None)
+    )
+
+    if skip_license_validation:
+        license_path_value = getattr(license_config, "license_path", None) or ""
+        license_result = LicenseValidationResult(
+            status="skipped",
+            fingerprint=None,
+            license_path=Path(license_path_value).expanduser(),
+            issued_at=None,
+            expires_at=None,
+            fingerprint_source=None,
+            profile=None,
+            issuer=None,
+            schema=None,
+            schema_version=None,
+            license_id=None,
+            revocation_list_path=None,
+            revocation_status="skipped",
+            revocation_reason=None,
+            revocation_revoked_at=None,
+            revocation_generated_at=None,
+            revocation_checked=False,
+            revocation_signature_key=None,
+            errors=[],
+            warnings=[
+                "Pominięto weryfikację licencji OEM – brak konfiguracji kluczy HMAC."
+            ],
+            payload=None,
+            license_signature_key=None,
+            fingerprint_signature_key=None,
+        )
+        _LOGGER.warning(
+            "Pominięto weryfikację licencji OEM – brak konfiguracji license_keys_path/fingerprint_keys_path."
+        )
+    else:
+        try:
+            license_result = validate_license_from_config(license_config)
+        except LicenseValidationError as exc:
+            context = exc.result.to_context() if exc.result else {
+                "status": "invalid",
+                "license_path": str(Path(license_config.license_path).expanduser()),
+            }
+            emit_alert(
+                "Weryfikacja licencji OEM zakończona błędem – zatrzymuję kontroler.",
+                severity=AlertSeverity.CRITICAL,
+                source="security.license",
+                context=context,
+                exception=exc,
+            )
+            _LOGGER.critical("Weryfikacja licencji OEM nie powiodła się: %s", exc)
+            raise RuntimeError(str(exc)) from exc
+
+    if license_result.warnings:
+        for message in license_result.warnings:
+            _LOGGER.warning("Weryfikacja licencji: %s", message)
+    _LOGGER.info(
+        "Licencja OEM zweryfikowana (id=%s, fingerprint=%s, wygasa=%s, revocation=%s)",
+        license_result.license_id or "brak",
+        license_result.fingerprint,
+        license_result.expires_at or "brak informacji",
+        license_result.revocation_status or "n/a",
+    )
+    emit_alert(
+        "Licencja OEM zweryfikowana pomyślnie." if not license_result.warnings else "Licencja OEM zweryfikowana z ostrzeżeniami.",
+        severity=AlertSeverity.WARNING if license_result.warnings else AlertSeverity.INFO,
+        source="security.license",
+        context=license_result.to_context(),
+    )
 
     if environment_name not in core_config.environments:
         raise KeyError(f"Środowisko '{environment_name}' nie istnieje w konfiguracji")

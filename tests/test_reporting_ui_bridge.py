@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from pathlib import Path
 
+import pytest
+
 from bot_core.reporting import ui_bridge
 
 

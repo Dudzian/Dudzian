@@ -6,6 +6,9 @@ klasy drillów failover (main), jeśli są dostępne.
 
 from __future__ import annotations
 
+import importlib
+from typing import Any, Dict
+
 # --- Część z HEAD: podpakiety narzędziowe -----------------------------------
 # Zachowujemy oryginalną strukturę, aby 'from bot_core.resilience import audit' itd. działało.
 try:
@@ -15,9 +18,14 @@ except Exception:  # pragma: no cover – w razie użycia poza pakietem
     _HAS_HEAD_SUBMODULES = False
 
 # --- Część z main: klasy failover drill --------------------------------------
-# Te importy są opcjonalne – jeśli moduł istnieje, eksportujemy jego symbole.
-_HAS_FAILOVER = False
-_FAILOVER_IMPORT_ERROR: Exception | None = None
+_FAILOVER_SYMBOLS = (
+    "FailoverDrillMetrics",
+    "FailoverDrillReport",
+    "FailoverDrillResult",
+    "ResilienceFailoverDrill",
+)
+_FAILOVER_CACHE: Dict[str, Any] = {}
+
 try:
     from bot_core.resilience.failover import (  # type: ignore
         FailoverDrillMetrics,
@@ -25,9 +33,17 @@ try:
         FailoverDrillResult,
         ResilienceFailoverDrill,
     )
+
+    for name, value in (
+        ("FailoverDrillMetrics", FailoverDrillMetrics),
+        ("FailoverDrillReport", FailoverDrillReport),
+        ("FailoverDrillResult", FailoverDrillResult),
+        ("ResilienceFailoverDrill", ResilienceFailoverDrill),
+    ):
+        _FAILOVER_CACHE[name] = value
     _HAS_FAILOVER = True
-except Exception as exc:  # pragma: no cover – brak modułu failover nie blokuje pakietu
-    _FAILOVER_IMPORT_ERROR = exc
+except Exception:  # pragma: no cover – brak modułu failover nie blokuje pakietu
+    _HAS_FAILOVER = False
 
 # --- Publiczny interfejs -----------------------------------------------------
 __all__ = []
