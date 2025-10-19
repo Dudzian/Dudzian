@@ -1,8 +1,6 @@
 import asyncio
-import importlib
 import json
 import logging
-import sys
 import threading
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -11,12 +9,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-try:
-    ai_manager_module = importlib.import_module("bot_core.ai_manager")
-except ModuleNotFoundError:  # pragma: no cover - legacy fallback for local runs
-    legacy_ai_manager = importlib.import_module("KryptoLowca.ai_manager")
-    sys.modules.setdefault("bot_core.ai_manager", legacy_ai_manager)
-    ai_manager_module = legacy_ai_manager
+from bot_core import ai_manager as ai_manager_module
 
 
 def _make_df(rows: int = 20) -> pd.DataFrame:
