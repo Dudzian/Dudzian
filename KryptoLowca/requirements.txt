@@ -8,3 +8,4 @@ pydantic>=2
 SQLAlchemy>=2
 aiosqlite
 tzdata; platform_system == "Windows"
+pyarrow>=21.0.0
