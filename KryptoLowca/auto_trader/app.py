@@ -1324,10 +1324,94 @@ class AutoTrader:
         else:
             self._disable_paper_trading()
 
+    def _resolve_paper_initial_balance(self) -> float:
+        def _coerce_positive(value: Any) -> float | None:
+            if value is None:
+                return None
+            try:
+                numeric = float(value)
+            except Exception:
+                return None
+            if numeric > 0:
+                return numeric
+            return None
+
+        gui_balance = _coerce_positive(getattr(self.gui, "paper_balance", None))
+        if gui_balance is not None:
+            return gui_balance
+
+        strategy_balance: float | None = None
+        strategy_cfg: StrategyConfig | None
+        try:
+            strategy_cfg = self._get_strategy_config()
+        except Exception:
+            strategy_cfg = getattr(self, "_strategy_config", None)
+        if strategy_cfg is not None:
+            for attr in ("paper_balance", "paper_capital", "initial_balance", "starting_balance"):
+                candidate = _coerce_positive(getattr(strategy_cfg, attr, None))
+                if candidate is not None:
+                    strategy_balance = candidate
+                    break
+            if strategy_balance is None:
+                max_usd = _coerce_positive(getattr(strategy_cfg, "max_position_usd", None))
+                notional_pct = _coerce_positive(getattr(strategy_cfg, "max_position_notional_pct", None))
+                if max_usd is not None and notional_pct:
+                    try:
+                        derived = max_usd / notional_pct
+                    except ZeroDivisionError:
+                        derived = 0.0
+                    if derived > 0:
+                        strategy_balance = derived
+        if strategy_balance is not None:
+            return strategy_balance
+
+        profile_balance: float | None = None
+        profile_cfg = self._risk_profile_config
+        if profile_cfg is not None:
+            profile_mapping: Mapping[str, Any] | None = profile_cfg if isinstance(profile_cfg, Mapping) else None
+            for attr in ("paper_balance", "paper_capital", "initial_balance", "starting_balance", "notional_capital"):
+                value = getattr(profile_cfg, attr, None)
+                if value is None and profile_mapping is not None:
+                    value = profile_mapping.get(attr)
+                candidate = _coerce_positive(value)
+                if candidate is not None:
+                    profile_balance = candidate
+                    break
+            if profile_balance is None:
+                pct_value = _coerce_positive(
+                    profile_mapping.get("max_position_pct") if profile_mapping is not None else getattr(profile_cfg, "max_position_pct", None)
+                )
+                if pct_value:
+                    base_usd = _coerce_positive(getattr(strategy_cfg, "max_position_usd", None) if strategy_cfg is not None else None)
+                    if base_usd is not None:
+                        try:
+                            derived = base_usd / pct_value
+                        except ZeroDivisionError:
+                            derived = 0.0
+                        if derived > 0:
+                            profile_balance = derived
+        if profile_balance is not None:
+            return profile_balance
+
+        risk_settings = getattr(self, "_risk_manager_settings", None)
+        if risk_settings is not None:
+            per_trade_pct = _coerce_positive(getattr(risk_settings, "max_risk_per_trade", None))
+            strategy_usd = _coerce_positive(getattr(strategy_cfg, "max_position_usd", None) if strategy_cfg is not None else None)
+            if per_trade_pct and strategy_usd is not None:
+                try:
+                    derived = strategy_usd / per_trade_pct
+                except ZeroDivisionError:
+                    derived = 0.0
+                if derived > 0:
+                    return derived
+
+        return 10_000.0
+
     def _enable_paper_trading(self) -> None:
         if self._paper_enabled:
             return
-        self._paper_adapter = PaperTradingAdapter(initial_balance=10_000.0)
+        initial_balance = self._resolve_paper_initial_balance()
+        self._paper_adapter = PaperTradingAdapter(initial_balance=initial_balance)
         self._execution_service.set_adapter(self._paper_adapter)
         self._paper_enabled = True
         self.emitter.log("Paper trading engine enabled", component="AutoTrader")
