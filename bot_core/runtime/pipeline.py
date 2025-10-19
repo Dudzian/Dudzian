@@ -1348,7 +1348,16 @@ class DecisionAwareSignalSink(StrategySignalSink):
     ) -> DecisionCandidate | None:
         if DecisionCandidate is None:
             return None
-        metadata = dict(signal.metadata)
+        raw_metadata = getattr(signal, "metadata", None)
+        if isinstance(raw_metadata, Mapping):
+            metadata = dict(raw_metadata)
+        elif raw_metadata is None:
+            metadata = {}
+        else:
+            try:
+                metadata = dict(raw_metadata)  # type: ignore[arg-type]
+            except Exception:  # pragma: no cover - defensywnie obsługujemy nietypowe typy
+                metadata = {}
         probability = self._extract_probability(signal)
         if probability < self._min_probability:
             return None

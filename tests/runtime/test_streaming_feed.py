@@ -124,3 +124,44 @@ def test_decision_aware_sink_filters_signals() -> None:
     assert [event.status for event in journal.events] == ["accepted", "rejected"]
     assert all(event.portfolio == "paper-01" for event in journal.events)
     assert all(event.metadata.get("decision_status") in {"accepted", "rejected"} for event in journal.events)
+
+
+def test_decision_aware_sink_handles_missing_metadata() -> None:
+    base_sink = InMemoryStrategySignalSink()
+
+    class _StubOrchestrator:
+        def evaluate_candidate(self, candidate, _snapshot):
+            return SimpleNamespace(
+                candidate=candidate,
+                accepted=True,
+                cost_bps=None,
+                net_edge_bps=5.0,
+                reasons=(),
+                risk_flags=(),
+                stress_failures=(),
+            )
+
+    sink = DecisionAwareSignalSink(
+        base_sink=base_sink,
+        orchestrator=_StubOrchestrator(),
+        risk_engine=SimpleNamespace(snapshot_state=lambda _: {}),
+        default_notional=1_000.0,
+        environment="paper",
+        exchange="binance_spot",
+        min_probability=0.55,
+        portfolio=None,
+        journal=_DummyJournal(),
+    )
+
+    signal = StrategySignal(symbol="ETH/USDT", side="BUY", confidence=0.7, metadata=None)
+
+    sink.submit(
+        strategy_name="daily",
+        schedule_name="schedule",
+        risk_profile="balanced",
+        timestamp=datetime.now(timezone.utc),
+        signals=(signal,),
+    )
+
+    records = sink.export()
+    assert records and records[0][1] == (signal,)
