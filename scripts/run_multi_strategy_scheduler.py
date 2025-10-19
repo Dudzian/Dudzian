@@ -4,8 +4,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 from pathlib import Path
-from typing import Mapping
+from typing import Mapping, Sequence, cast
 
+from bot_core.exchanges.base import ExchangeAdapterFactory
+from bot_core.runtime.bootstrap import parse_adapter_factory_cli_specs
 from bot_core.runtime.pipeline import build_multi_strategy_runtime
 from bot_core.runtime.multi_strategy_scheduler import MultiStrategyScheduler
 from bot_core.security import SecretManager
@@ -16,13 +18,14 @@ def _build_scheduler(
     config_path: Path,
     environment: str,
     scheduler_name: str | None,
+    adapter_factories: Mapping[str, object] | None,
 ) -> MultiStrategyScheduler:
     runtime = build_multi_strategy_runtime(
         environment_name=environment,
         scheduler_name=scheduler_name,
         config_path=config_path,
         secret_manager=SecretManager(),
-        adapter_factories=None,
+        adapter_factories=cast(Mapping[str, ExchangeAdapterFactory] | None, adapter_factories),
         telemetry_emitter=lambda name, payload: print(
             f"[telemetry] schedule={name} signals={payload.get('signals', 0)} latency_ms={payload.get('latency_ms', 0.0):.2f}"
         ),
@@ -36,6 +39,16 @@ def main() -> None:
     parser.add_argument("--environment", required=True, help="Nazwa środowiska (np. binance_paper)")
     parser.add_argument("--scheduler", default=None, help="Nazwa schedulera z sekcji multi_strategy_schedulers")
     parser.add_argument(
+        "--adapter-factory",
+        action="append",
+        dest="adapter_factories",
+        metavar="NAME=SPEC",
+        help=(
+            "Override fabryk adapterów przekazywane do bootstrapu runtime. "
+            "Użyj '!remove', aby usunąć wpis – opcję można podawać wielokrotnie."
+        ),
+    )
+    parser.add_argument(
         "--run-once",
         action="store_true",
         help="Wykonaj pojedynczy cykl harmonogramu i zakończ (tryb smoke/audit)",
@@ -43,10 +56,16 @@ def main() -> None:
     args = parser.parse_args()
 
     config_path = Path(args.config).expanduser().resolve()
+    cli_adapter_specs = parse_adapter_factory_cli_specs(
+        cast(Sequence[str] | None, getattr(args, "adapter_factories", None))
+    )
+    adapter_factories: Mapping[str, object] | None = cli_adapter_specs if cli_adapter_specs else None
+
     scheduler = _build_scheduler(
         config_path=config_path,
         environment=args.environment,
         scheduler_name=args.scheduler,
+        adapter_factories=adapter_factories,
     )
 
     try:

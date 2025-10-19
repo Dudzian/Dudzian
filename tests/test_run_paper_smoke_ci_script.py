@@ -55,6 +55,7 @@ def _fake_subprocess_run_factory(
     baseline_report: dict | None = None,
     baseline_calls: list[dict] | None = None,
     verify_calls: list[dict] | None = None,
+    run_daily_calls: list[dict] | None = None,
 ):
     """Tworzy atrapę subprocess.run obsługującą run_daily_trend i walidator."""
 
@@ -204,6 +205,8 @@ def _fake_subprocess_run_factory(
             summary_arg = cmd.index("--paper-smoke-summary-json")
             summary_path = Path(cmd[summary_arg + 1])
             summary_path.write_text(json.dumps(summary_payload), encoding="utf-8")
+            if run_daily_calls is not None:
+                run_daily_calls.append({"cmd": list(cmd)})
             return _FakeCompleted(returncode=0)
         if script == "validate_paper_smoke_summary.py":
             assert "--require-publish-success" in cmd
@@ -448,6 +451,7 @@ def test_build_command_creates_directories(tmp_path: Path) -> None:
         operator="Tester",
         auto_publish_required=True,
         extra_run_daily_trend_args=[],
+        adapter_factory_specs=[],
     )
 
     assert "--paper-smoke-auto-publish-required" in command
@@ -470,11 +474,34 @@ def test_build_command_accepts_extra_args(tmp_path: Path) -> None:
         operator="Tester",
         auto_publish_required=False,
         extra_run_daily_trend_args=["--date-window 2024-01-01:2024-02-01", "--run-once"],
+        adapter_factory_specs=[],
     )
 
     assert command.count("--date-window") == 1
     assert "2024-01-01:2024-02-01" in command
     assert "--run-once" in command
+
+
+def test_build_command_accepts_adapter_factories(tmp_path: Path) -> None:
+    config_path = tmp_path / "core.yaml"
+    config_path.write_text("core: {}", encoding="utf-8")
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    (scripts_dir / "run_daily_trend.py").write_text("print('stub')", encoding="utf-8")
+
+    command, _ = run_paper_smoke_ci._build_command(
+        config_path=config_path,
+        environment="binance_paper",
+        output_dir=tmp_path / "output",
+        operator="Tester",
+        auto_publish_required=False,
+        extra_run_daily_trend_args=[],
+        adapter_factory_specs=["kucoin_spot=bot_core.exchanges.kucoin:KuCoinSpotAdapter", "bybit_spot=!remove"],
+    )
+
+    assert command.count("--adapter-factory") == 2
+    assert "kucoin_spot=bot_core.exchanges.kucoin:KuCoinSpotAdapter" in command
+    assert "bybit_spot=!remove" in command
 
 
 def test_main_runs_smoke_and_prints_summary(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -602,6 +629,37 @@ def test_main_runs_smoke_and_prints_summary(monkeypatch: pytest.MonkeyPatch, tmp
     assert "--require-risk-service-tls" in decision_command
     assert "--require-risk-service-auth-token" in decision_command
     assert "--require-risk-service-token-id" in decision_command
+
+
+def test_main_dry_run_includes_adapter_factories(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config_path = tmp_path / "core.yaml"
+    config_path.write_text("core: {}", encoding="utf-8")
+
+    result = run_paper_smoke_ci.main(
+        [
+            "--config",
+            str(config_path),
+            "--environment",
+            "binance_paper",
+            "--output-dir",
+            str(tmp_path / "output"),
+            "--adapter-factory",
+            "kucoin_spot=bot_core.exchanges.kucoin:KuCoinSpotAdapter",
+            "--adapter-factory",
+            "bybit_spot=!remove",
+            "--dry-run",
+        ]
+    )
+
+    assert result == 0
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    command = payload.get("command", [])
+    assert command.count("--adapter-factory") == 2
+    assert "kucoin_spot=bot_core.exchanges.kucoin:KuCoinSpotAdapter" in command
+    assert "bybit_spot=!remove" in command
 
 
 def test_main_propagates_decision_log_failure(

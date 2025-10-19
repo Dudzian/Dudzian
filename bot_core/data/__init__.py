@@ -14,11 +14,8 @@ from bot_core.data.backtest_library import (
 )
 from bot_core.data.base import CacheStorage, DataSource, OHLCVRequest, OHLCVResponse
 from bot_core.data.intervals import interval_to_milliseconds
-from bot_core.data.ohlcv.cache import (
-    CachedOHLCVSource,
-    OfflineOnlyDataSource,
-    PublicAPIDataSource,
-)
+from bot_core.data.migrations import ExchangeDataToolkit, prepare_exchange_data_toolkit
+from bot_core.data.ohlcv.cache import CachedOHLCVSource, OfflineOnlyDataSource, PublicAPIDataSource
 from bot_core.data.ohlcv.parquet_storage import ParquetCacheStorage
 from bot_core.data.ohlcv.sqlite_storage import SQLiteCacheStorage
 from bot_core.data.ohlcv.storage import DualCacheStorage
@@ -89,6 +86,8 @@ __all__ = [
     "OHLCVResponse",
     "OfflineOnlyDataSource",
     "PublicAPIDataSource",
+    "ExchangeDataToolkit",
+    "prepare_exchange_data_toolkit",
     "resolve_cache_namespace",
     "BacktestDatasetLibrary",
     "DatasetDescriptor",

@@ -8,8 +8,10 @@ import pytest
 from bot_core.exchanges.base import Environment, ExchangeCredentials, OrderRequest
 from bot_core.exchanges.bitfinex.spot import BitfinexSpotAdapter
 from bot_core.exchanges.coinbase.spot import CoinbaseSpotAdapter
+from bot_core.exchanges.bybit.spot import BybitSpotAdapter
 from bot_core.exchanges.errors import ExchangeNetworkError
 from bot_core.exchanges.okx.spot import OKXSpotAdapter
+from bot_core.exchanges.kucoin.spot import KuCoinSpotAdapter
 
 
 @dataclass
@@ -144,4 +146,39 @@ def test_okx_adapter_respects_offline_cancellation():
 
     with pytest.raises(NotImplementedError):
         adapter.stream_public_data(channels=["ticker"])
+
+
+def test_kucoin_adapter_merges_nested_settings():
+    credentials = ExchangeCredentials(key_id="k", secret="s")
+    client = _FakeClient()
+    adapter = KuCoinSpotAdapter(
+        credentials,
+        environment=Environment.PAPER,
+        client=client,
+        settings={
+            "ccxt_config": {"timeout": 5000, "options": {"adjust": True}},
+            "sandbox_mode": False,
+        },
+    )
+
+    assert adapter._settings["ccxt_config"]["timeout"] == 5000
+    assert adapter._settings["ccxt_config"]["options"]["defaultType"] == "spot"
+    assert adapter._settings["ccxt_config"]["options"]["adjust"] is True
+    assert adapter._settings.get("sandbox_mode") is False
+
+
+def test_bybit_adapter_provides_spot_defaults():
+    credentials = ExchangeCredentials(key_id="k")
+    client = _FakeClient()
+    adapter = BybitSpotAdapter(
+        credentials,
+        environment=Environment.TESTNET,
+        client=client,
+        settings={"fetch_ohlcv_params": {"price": "mark"}},
+    )
+
+    assert adapter._settings["fetch_ohlcv_params"]["category"] == "spot"
+    assert adapter._settings["fetch_ohlcv_params"]["price"] == "mark"
+    assert adapter._settings["cancel_order_params"]["category"] == "spot"
+    assert adapter._settings["ccxt_config"]["options"]["defaultType"] == "spot"
 

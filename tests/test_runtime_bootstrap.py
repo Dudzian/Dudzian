@@ -22,9 +22,16 @@ from bot_core.decision.models import DecisionCandidate, RiskSnapshot
 from bot_core.exchanges.base import (
     AccountSnapshot,
     Environment,
+    ExchangeAdapter,
     ExchangeCredentials,
     OrderRequest,
 )
+from bot_core.exchanges.binance import BinanceSpotAdapter
+from bot_core.exchanges.bybit import BybitSpotAdapter
+from bot_core.exchanges.coinbase import CoinbaseSpotAdapter
+from bot_core.exchanges.kucoin import KuCoinSpotAdapter
+from bot_core.exchanges.nowa_gielda import NowaGieldaSpotAdapter
+from bot_core.exchanges.okx import OKXSpotAdapter
 from bot_core.risk.engine import ThresholdRiskEngine
 from bot_core.risk.repository import FileRiskRepository
 from bot_core.runtime import (
@@ -32,6 +39,17 @@ from bot_core.runtime import (
     bootstrap_environment,
     catalog_runtime_entrypoints,
     resolve_runtime_entrypoint,
+)
+from bot_core.runtime.bootstrap import (
+    _DEFAULT_ADAPTERS,
+    _instantiate_adapter,
+    _apply_adapter_factory_specs,
+    get_registered_adapter_factories,
+    register_adapter_factory,
+    register_adapter_factory_from_path,
+    parse_adapter_factory_cli_specs,
+    unregister_adapter_factory,
+    temporary_adapter_factories,
 )
 from bot_core.runtime.metrics_alerts import DEFAULT_UI_ALERTS_JSONL_PATH
 from bot_core.security import SecretManager, SecretStorage, SecretStorageError
@@ -615,6 +633,287 @@ def test_bootstrap_environment_supports_zonda(tmp_path: Path) -> None:
     assert context.credentials.key_id == "zonda-key"
     assert context.environment.exchange == "zonda_spot"
     assert context.adapter_settings == {}
+
+
+@pytest.mark.parametrize(
+    ("exchange_name", "expected_class"),
+    (
+        ("coinbase_spot", CoinbaseSpotAdapter),
+        ("okx_spot", OKXSpotAdapter),
+        ("kucoin_spot", KuCoinSpotAdapter),
+        ("bybit_spot", BybitSpotAdapter),
+    ),
+)
+def test_instantiate_adapter_supports_new_ccxt_spot_exchanges(
+    exchange_name: str, expected_class: type[ExchangeAdapter]
+) -> None:
+    credentials = ExchangeCredentials(
+        key_id="demo",
+        secret="demo-secret",
+        environment=Environment.PAPER,
+    )
+
+    adapter = _instantiate_adapter(
+        exchange_name,
+        credentials,
+        dict(_DEFAULT_ADAPTERS),
+        Environment.PAPER,
+        offline_mode=True,
+    )
+
+    assert isinstance(adapter, expected_class)
+    assert adapter.name == exchange_name
+
+
+def test_get_registered_adapter_factories_includes_new_ccxt_entries() -> None:
+    factories = get_registered_adapter_factories()
+
+    assert {
+        "coinbase_spot",
+        "okx_spot",
+        "kucoin_spot",
+        "bybit_spot",
+    }.issubset(factories)
+
+
+def test_register_adapter_factory_requires_override_flag() -> None:
+    with pytest.raises(ValueError):
+        register_adapter_factory("bybit_spot", KuCoinSpotAdapter)
+
+
+def test_register_adapter_factory_override_and_cleanup() -> None:
+    original = get_registered_adapter_factories()["bybit_spot"]
+
+    try:
+        register_adapter_factory("bybit_spot", KuCoinSpotAdapter, override=True)
+        factories = get_registered_adapter_factories()
+        assert factories["bybit_spot"] is KuCoinSpotAdapter
+    finally:
+        register_adapter_factory("bybit_spot", original, override=True)
+
+
+def test_unregister_adapter_factory_removes_entry() -> None:
+    register_adapter_factory("custom_exchange", KuCoinSpotAdapter, override=True)
+
+    removed = unregister_adapter_factory("custom_exchange")
+
+    assert removed is True
+    assert "custom_exchange" not in get_registered_adapter_factories()
+
+
+def test_register_adapter_factory_from_path_adds_callable() -> None:
+    assert "custom_exchange" not in get_registered_adapter_factories()
+
+    try:
+        factory = register_adapter_factory_from_path(
+            "custom_exchange",
+            "bot_core.exchanges.bybit:BybitSpotAdapter",
+        )
+        assert factory is BybitSpotAdapter
+        assert get_registered_adapter_factories()["custom_exchange"] is BybitSpotAdapter
+    finally:
+        unregister_adapter_factory("custom_exchange")
+
+
+def test_register_adapter_factory_from_path_requires_override_for_existing() -> None:
+    with pytest.raises(ValueError):
+        register_adapter_factory_from_path(
+            "bybit_spot",
+            "bot_core.exchanges.kucoin:KuCoinSpotAdapter",
+        )
+
+
+def test_register_adapter_factory_from_path_override_existing_and_restore() -> None:
+    original = get_registered_adapter_factories()["bybit_spot"]
+
+    try:
+        replacement = register_adapter_factory_from_path(
+            "bybit_spot",
+            "bot_core.exchanges.kucoin:KuCoinSpotAdapter",
+            override=True,
+        )
+        assert replacement is KuCoinSpotAdapter
+        assert get_registered_adapter_factories()["bybit_spot"] is KuCoinSpotAdapter
+    finally:
+        register_adapter_factory("bybit_spot", original, override=True)
+
+
+def test_register_adapter_factory_from_path_rejects_non_callable() -> None:
+    with pytest.raises(TypeError):
+        register_adapter_factory_from_path(
+            "custom_exchange",
+            "bot_core.runtime.bootstrap:_DEFAULT_ADAPTERS",
+        )
+
+
+def test_temporary_adapter_factories_adds_and_restores() -> None:
+    assert "custom_exchange" not in get_registered_adapter_factories()
+
+    with temporary_adapter_factories(add={"custom_exchange": KuCoinSpotAdapter}) as factories:
+        assert factories["custom_exchange"] is KuCoinSpotAdapter
+        assert get_registered_adapter_factories()["custom_exchange"] is KuCoinSpotAdapter
+
+    assert "custom_exchange" not in get_registered_adapter_factories()
+
+
+def test_temporary_adapter_factories_requires_override_for_existing() -> None:
+    with pytest.raises(ValueError):
+        with temporary_adapter_factories(add={"bybit_spot": KuCoinSpotAdapter}):
+            pass
+
+
+def test_temporary_adapter_factories_override_existing_and_restore() -> None:
+    original = get_registered_adapter_factories()["bybit_spot"]
+
+    with temporary_adapter_factories(
+        add={"bybit_spot": KuCoinSpotAdapter}, override=True
+    ) as factories:
+        assert factories["bybit_spot"] is KuCoinSpotAdapter
+        assert get_registered_adapter_factories()["bybit_spot"] is KuCoinSpotAdapter
+
+    assert get_registered_adapter_factories()["bybit_spot"] is original
+
+
+def test_temporary_adapter_factories_can_remove_entries_temporarily() -> None:
+    assert "bybit_spot" in get_registered_adapter_factories()
+
+    with temporary_adapter_factories(remove=["bybit_spot"]):
+        assert "bybit_spot" not in get_registered_adapter_factories()
+
+    assert "bybit_spot" in get_registered_adapter_factories()
+
+
+def test_environment_adapter_factories_specs_applied_to_factories(tmp_path: Path) -> None:
+    config_path = _write_config_custom(
+        tmp_path,
+        environment_overrides={
+            "exchange": "custom_exchange",
+            "adapter_factories": {
+                "custom_exchange": "bot_core.exchanges.nowa_gielda:NowaGieldaSpotAdapter",
+                "binance_spot": {
+                    "path": "bot_core.exchanges.nowa_gielda:NowaGieldaSpotAdapter",
+                    "override": True,
+                },
+                "bybit_spot": None,
+            },
+        },
+    )
+    core_config = load_core_config(config_path)
+    environment = core_config.environments["binance_paper"]
+
+    factories = dict(_DEFAULT_ADAPTERS)
+    _apply_adapter_factory_specs(
+        factories,
+        environment.adapter_factories,
+        source="konfiguracji testowego środowiska",
+        require_override=True,
+    )
+
+    credentials = ExchangeCredentials(
+        key_id="demo",
+        secret="demo",
+        environment=Environment.PAPER,
+    )
+    adapter = _instantiate_adapter(
+        "custom_exchange",
+        credentials,
+        factories,
+        Environment.PAPER,
+        offline_mode=True,
+    )
+
+    assert isinstance(adapter, NowaGieldaSpotAdapter)
+    assert "bybit_spot" not in factories
+    assert _DEFAULT_ADAPTERS["binance_spot"] is BinanceSpotAdapter
+
+
+def test_environment_adapter_factories_require_override(tmp_path: Path) -> None:
+    config_path = _write_config_custom(
+        tmp_path,
+        environment_overrides={
+            "adapter_factories": {
+                "binance_spot": "bot_core.exchanges.nowa_gielda:NowaGieldaSpotAdapter",
+            }
+        },
+    )
+    core_config = load_core_config(config_path)
+    environment = core_config.environments["binance_paper"]
+
+    with pytest.raises(ValueError):
+        _apply_adapter_factory_specs(
+            dict(_DEFAULT_ADAPTERS),
+            environment.adapter_factories,
+            source="konfiguracji testowego środowiska",
+            require_override=True,
+        )
+
+
+def test_adapter_factories_argument_accepts_string_paths() -> None:
+    factories = dict(_DEFAULT_ADAPTERS)
+
+    _apply_adapter_factory_specs(
+        factories,
+        {"binance_spot": "bot_core.exchanges.nowa_gielda:NowaGieldaSpotAdapter"},
+        source="parametrze 'adapter_factories'",
+        require_override=False,
+    )
+
+    credentials = ExchangeCredentials(
+        key_id="demo",
+        secret="demo",
+        environment=Environment.PAPER,
+    )
+    adapter = _instantiate_adapter(
+        "binance_spot",
+        credentials,
+        factories,
+        Environment.PAPER,
+        offline_mode=True,
+    )
+
+    assert isinstance(adapter, NowaGieldaSpotAdapter)
+
+
+def test_parse_adapter_factory_cli_specs_accepts_simple_paths() -> None:
+    specs = parse_adapter_factory_cli_specs(
+        ["binance_spot=bot_core.exchanges.nowa_gielda:NowaGieldaSpotAdapter"]
+    )
+
+    assert specs == {
+        "binance_spot": "bot_core.exchanges.nowa_gielda:NowaGieldaSpotAdapter"
+    }
+
+
+def test_parse_adapter_factory_cli_specs_supports_remove_flag() -> None:
+    specs = parse_adapter_factory_cli_specs(["kucoin_spot=!remove"])
+
+    assert specs == {"kucoin_spot": {"remove": True}}
+
+
+def test_parse_adapter_factory_cli_specs_supports_inline_json() -> None:
+    specs = parse_adapter_factory_cli_specs(
+        ['custom={"path": "bot_core.exchanges.nowa_gielda:NowaGieldaSpotAdapter", "override": true}']
+    )
+
+    assert specs == {
+        "custom": {
+            "path": "bot_core.exchanges.nowa_gielda:NowaGieldaSpotAdapter",
+            "override": True,
+        }
+    }
+
+
+def test_parse_adapter_factory_cli_specs_rejects_invalid_format() -> None:
+    with pytest.raises(ValueError):
+        parse_adapter_factory_cli_specs(["binance_spot"])
+
+
+def test_parse_adapter_factory_cli_specs_rejects_duplicate_entries() -> None:
+    with pytest.raises(ValueError):
+        parse_adapter_factory_cli_specs([
+            "binance_spot=bot_core.exchanges.nowa_gielda:NowaGieldaSpotAdapter",
+            "binance_spot=bot_core.exchanges.bybit:BybitSpotAdapter",
+        ])
 
 
 def test_bootstrap_environment_applies_permission_profile_defaults(tmp_path: Path) -> None:

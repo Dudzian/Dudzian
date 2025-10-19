@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Callable, Mapping, Sequence
+from collections.abc import Mapping
+from copy import deepcopy
+from typing import Any, Callable, Sequence
 
 from bot_core.exchanges.base import (
     AccountSnapshot,
@@ -66,6 +68,21 @@ _DEFAULT_LATENCY_BUCKETS: tuple[float, ...] = (
     1.0,
     2.5,
 )
+
+
+def merge_adapter_settings(
+    defaults: Mapping[str, Any], overrides: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Łączy słowniki konfiguracji adaptera zachowując zagnieżdżone wartości."""
+
+    merged = deepcopy(defaults)
+    for key, value in overrides.items():
+        existing = merged.get(key)
+        if isinstance(existing, Mapping) and isinstance(value, Mapping):
+            merged[key] = merge_adapter_settings(existing, value)
+        else:
+            merged[key] = value
+    return merged
 
 
 class CCXTSpotAdapter(ExchangeAdapter):
@@ -322,5 +339,5 @@ class CCXTSpotAdapter(ExchangeAdapter):
         )
 
 
-__all__ = ["CCXTSpotAdapter"]
+__all__ = ["CCXTSpotAdapter", "merge_adapter_settings"]
 

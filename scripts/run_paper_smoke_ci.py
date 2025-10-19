@@ -91,6 +91,18 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--adapter-factory",
+        action="append",
+        default=[],
+        metavar="NAME=SPEC",
+        help=(
+            "Specyfikacja fabryki adaptera przekazywana do run_daily_trend.py. "
+            "Można podawać ścieżki importu (np. exchange_spot=package:factory) lub "
+            "prefiksy specjalne (!remove) zgodnie z parserem CLI runtime. Opcję "
+            "można powtarzać."
+        ),
+    )
+    parser.add_argument(
         "--env-file",
         default=None,
         help=(
@@ -174,6 +186,7 @@ def _build_command(
     operator: str,
     auto_publish_required: bool,
     extra_run_daily_trend_args: Sequence[str],
+    adapter_factory_specs: Sequence[str],
 ) -> tuple[list[str], dict[str, Path]]:
     script_path = Path(__file__).with_name("run_daily_trend.py")
     if not script_path.exists():  # pragma: no cover - brak pliku to błąd środowiska
@@ -215,6 +228,11 @@ def _build_command(
     cmd.append("--paper-smoke-auto-publish")
     if auto_publish_required:
         cmd.append("--paper-smoke-auto-publish-required")
+
+    for spec in adapter_factory_specs:
+        if not spec:
+            continue
+        cmd.extend(["--adapter-factory", spec])
 
     for raw in extra_run_daily_trend_args:
         if not raw:
@@ -1664,6 +1682,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         operator=operator,
         auto_publish_required=not args.allow_auto_publish_failure,
         extra_run_daily_trend_args=args.run_daily_trend_arg,
+        adapter_factory_specs=args.adapter_factory,
     )
 
     if args.dry_run:

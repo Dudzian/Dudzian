@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 from bot_core.exchanges.base import Environment, ExchangeCredentials
-from bot_core.exchanges.ccxt_adapter import CCXTSpotAdapter
+from bot_core.exchanges.ccxt_adapter import CCXTSpotAdapter, merge_adapter_settings
 
 
 class CoinbaseSpotAdapter(CCXTSpotAdapter):
@@ -21,13 +21,9 @@ class CoinbaseSpotAdapter(CCXTSpotAdapter):
         client=None,
         metrics_registry=None,
     ) -> None:
-        combined_settings: dict[str, Any] = {"ccxt_config": {"timeout": 10_000}}
-        if settings:
-            combined_settings.update(settings)
-            if "ccxt_config" in settings:
-                merged = dict({"timeout": 10_000})
-                merged.update(settings["ccxt_config"])
-                combined_settings["ccxt_config"] = merged
+        combined_settings = merge_adapter_settings(
+            {"ccxt_config": {"timeout": 10_000}}, settings or {}
+        )
         super().__init__(
             credentials,
             exchange_id=combined_settings.pop("exchange_id", "coinbase"),
