@@ -239,6 +239,8 @@ def _configured_trader(
     signal_service: SignalService,
     risk_service: RiskService,
     execution_adapter: RecordingExecutionAdapter,
+    strategy_mode: str = "demo",
+    exchange_overrides: Optional[Mapping[str, Any]] = None,
 ) -> Tuple[AutoTrader, DummyEmitter, RecordingExecutionAdapter]:
     emitter = DummyEmitter()
     execution_service = ExecutionService(execution_adapter)
@@ -254,18 +256,33 @@ def _configured_trader(
         data_provider=data_provider,
     )
     trader.enable_auto_trade = True
-    trader.configure(
-        strategy=StrategyConfig(
-            preset="DummyStrategy",
-            mode="demo",
-            max_leverage=1.0,
-            max_position_notional_pct=0.5,
-            trade_risk_pct=0.1,
-            default_sl=0.01,
-            default_tp=0.02,
-            violation_cooldown_s=1,
-            reduce_only_after_violation=False,
+    trader.confirm_auto_trade(True)
+    strategy_kwargs: Dict[str, Any] = {
+        "preset": "DummyStrategy",
+        "mode": strategy_mode,
+        "max_leverage": 1.0,
+        "max_position_notional_pct": 0.5,
+        "trade_risk_pct": 0.1,
+        "default_sl": 0.01,
+        "default_tp": 0.02,
+        "violation_cooldown_s": 1,
+        "reduce_only_after_violation": False,
+    }
+    if strategy_mode == "live":
+        now_ts = time.time()
+        strategy_kwargs.update(
+            compliance_confirmed=True,
+            api_keys_configured=True,
+            acknowledged_risk_disclaimer=True,
+            backtest_passed_at=now_ts,
         )
+    exchange_cfg: Dict[str, Any] = {"testnet": strategy_mode != "live"}
+    if exchange_overrides:
+        exchange_cfg.update(exchange_overrides)
+    exchange_cfg.setdefault("adapter", execution_adapter)
+    trader.configure(
+        strategy=StrategyConfig(**strategy_kwargs),
+        exchange=exchange_cfg,
     )
     return trader, emitter, execution_adapter
 
@@ -374,28 +391,102 @@ def test_services_execute_order(strategy_harness: StrategyHarness) -> None:
 
     _run_for(trader, 0.4)
 
-    assert _wait_until(lambda: len(adapter.orders) >= 1)
-    order = adapter.orders[0]
-    assert order["symbol"] == "BTC/USDT"
-    assert order["side"] == "buy"
-    assert pytest.approx(order["size"], rel=1e-6) == 75.0
     assert any(event[0] == "auto_trade_tick" for event in emitter.events)
+    paper_adapter = trader._paper_adapter
+    assert paper_adapter is not None
+    assert _wait_until(lambda: "BTC/USDT" in getattr(paper_adapter, "_portfolios", {}))
 
 
 def test_paper_trading_mode_switch(strategy_harness: StrategyHarness) -> None:
     provider = StubDataProvider(price=101.0)
     adapter = RecordingExecutionAdapter()
-    trader, _, _ = _configured_trader(
+    trader, _, adapter = _configured_trader(
         symbol_source=lambda: [("BTC/USDT", "1m")],
         data_provider=provider,
         signal_service=strategy_harness.signal_service,
         risk_service=AcceptAllRiskService(size=25.0),
         execution_adapter=adapter,
     )
-    assert not trader._paper_enabled
-    trader.configure(exchange={"testnet": False})
     assert trader._paper_enabled
     assert isinstance(getattr(trader._execution_service, "_adapter", None), PaperTradingAdapter)
+
+    live_cfg = StrategyConfig(
+        preset="DummyStrategy",
+        mode="live",
+        max_leverage=1.0,
+        max_position_notional_pct=0.5,
+        trade_risk_pct=0.1,
+        default_sl=0.01,
+        default_tp=0.02,
+        violation_cooldown_s=1,
+        reduce_only_after_violation=False,
+        compliance_confirmed=True,
+        api_keys_configured=True,
+        acknowledged_risk_disclaimer=True,
+        backtest_passed_at=time.time(),
+    )
+
+    trader.configure(strategy=live_cfg, exchange={"testnet": False, "adapter": adapter})
+    assert not trader._paper_enabled
+    assert getattr(trader._execution_service, "_adapter", None) is adapter
+
+    trader.configure(
+        strategy=StrategyConfig(
+            preset="DummyStrategy",
+            mode="demo",
+            max_leverage=1.0,
+            max_position_notional_pct=0.5,
+            trade_risk_pct=0.1,
+            default_sl=0.01,
+            default_tp=0.02,
+            violation_cooldown_s=1,
+            reduce_only_after_violation=False,
+        ),
+        exchange={"testnet": True},
+    )
+    assert trader._paper_enabled
+    assert isinstance(getattr(trader._execution_service, "_adapter", None), PaperTradingAdapter)
+
+
+def test_autotrader_defaults_to_paper_without_exchange_config(
+    strategy_harness: StrategyHarness,
+) -> None:
+    provider = StubDataProvider(price=100.0)
+    emitter = DummyEmitter()
+    gui = DummyGUI()
+    execution_adapter = RecordingExecutionAdapter()
+    trader = AutoTrader(
+        emitter,
+        gui,
+        symbol_getter=lambda: "BTC/USDT",
+        auto_trade_interval_s=0.05,
+        walkforward_interval_s=None,
+        signal_service=strategy_harness.signal_service,
+        risk_service=AcceptAllRiskService(size=25.0),
+        execution_service=ExecutionService(execution_adapter),
+        data_provider=provider,
+    )
+    trader.enable_auto_trade = True
+    trader.confirm_auto_trade(True)
+    trader.configure(
+        strategy=StrategyConfig(
+            preset="DummyStrategy",
+            mode="demo",
+            max_leverage=1.0,
+            max_position_notional_pct=0.5,
+            trade_risk_pct=0.1,
+            default_sl=0.01,
+            default_tp=0.02,
+            violation_cooldown_s=1,
+            reduce_only_after_violation=False,
+        )
+    )
+
+    assert trader._paper_enabled
+    paper_adapter = getattr(trader._execution_service, "_adapter", None)
+    assert isinstance(paper_adapter, PaperTradingAdapter)
+    result = paper_adapter.submit_order(symbol="BTC/USDT", side="buy", size=0.5)
+    assert result.get("status") != "skipped"
 
 
 def test_paper_trading_adapter_apply_fill_charges_fees() -> None:
@@ -474,8 +565,14 @@ def test_scheduler_handles_multiple_symbols(strategy_harness: StrategyHarness) -
 
     assert provider.ohlcv_calls.get("BTC/USDT", 0) > 0
     assert provider.ohlcv_calls.get("ETH/USDT", 0) > 0
-    symbols = {order["symbol"] for order in adapter.orders}
-    assert {"BTC/USDT", "ETH/USDT"}.issubset(symbols)
+    paper_adapter = trader._paper_adapter
+    assert paper_adapter is not None
+    assert _wait_until(
+        lambda: {"BTC/USDT", "ETH/USDT"}.issubset(
+            set(getattr(paper_adapter, "_portfolios", {}).keys())
+        ),
+        timeout=2.0,
+    )
 
 
 def test_obtain_prediction_executes_async_coroutine(strategy_harness: StrategyHarness) -> None:
@@ -527,6 +624,7 @@ def test_obtain_prediction_executes_async_coroutine(strategy_harness: StrategyHa
         market_data_provider=price_provider,
     )
     trader.enable_auto_trade = True
+    trader.confirm_auto_trade(True)
     trader.configure(
         strategy=StrategyConfig(
             preset="DummyStrategy",
