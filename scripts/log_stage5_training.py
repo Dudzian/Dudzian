@@ -325,11 +325,7 @@ def _append_decision_log(
     allow_unsigned: bool,
 ) -> None:
     if not path:
-        if key and not allow_unsigned:
-            return
-        if allow_unsigned:
-            return
-        raise ValueError("Wpis decision logu jest wymagany – podaj --decision-log-path")
+        return
 
     entry = dict(payload)
     if key is not None:
@@ -458,10 +454,24 @@ def _build_parser() -> argparse.ArgumentParser:
     _parse_args_register(sub)
     return parser
 
-def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover
+def _prepare_argv(argv: Sequence[str] | None) -> list[str]:
+    args = list(argv or [])
+    if args and args[0] not in {"report", "register"}:
+        if args[0].startswith("-"):
+            return ["register", *args]
+    return args
+
+def run(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
-    args = parser.parse_args(argv)
-    return args._handler(args)
+    args = _prepare_argv(argv)
+    try:
+        parsed = parser.parse_args(args)
+    except SystemExit as exc:  # pragma: no cover - argument errors map to exit codes
+        return int(exc.code)
+    return parsed._handler(parsed)
+
+def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover
+    return run(argv)
 
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main())

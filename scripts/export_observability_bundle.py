@@ -74,7 +74,7 @@ _LOGGER = logging.getLogger("stage6.observability.bundle")
 
 DEFAULT_SOURCES = (
     ("dashboards", REPO_ROOT / "deploy" / "grafana" / "provisioning" / "dashboards"),
-    ("alerts", REPO_ROOT / "deploy" / "prometheus"),
+    ("alert_rules", REPO_ROOT / "deploy" / "prometheus"),
 )
 
 # ------------------------- Utils wspólne -------------------------
@@ -138,8 +138,13 @@ def _load_hmac_key(args: argparse.Namespace) -> tuple[bytes | None, str | None]:
         raise ValueError("Podaj klucz HMAC jako wartość lub plik, nie oba jednocześnie")
 
     if inline:
-        key = inline.encode("utf-8")
-    elif file_path:
+        potential_file = Path(inline)
+        if potential_file.exists():
+            file_path = potential_file
+            inline = None
+        else:
+            key = inline.encode("utf-8")
+    if file_path:
         path = Path(file_path).expanduser()
         if not path.is_file():
             raise ValueError(f"Plik klucza HMAC nie istnieje: {path}")
@@ -148,6 +153,8 @@ def _load_hmac_key(args: argparse.Namespace) -> tuple[bytes | None, str | None]:
             if mode & 0o077:
                 raise ValueError("Plik klucza HMAC powinien mieć uprawnienia maks. 600")
         key = path.read_bytes()
+    elif inline:
+        key = inline.encode("utf-8")
     elif env_name:
         value = os.getenv(env_name)
         if not value:
@@ -391,6 +398,13 @@ def _run_fallback(args: argparse.Namespace) -> dict[str, Any]:
                     "size_bytes": size,
                 }
             )
+        dashboards = sorted(
+            asset.virtual_path.as_posix() for asset in assets if asset.kind == "dashboard"
+        )
+        alert_rules = sorted(
+            asset.virtual_path.as_posix() for asset in assets if asset.kind == "alert"
+        )
+
         manifest: Dict[str, object] = {
             "schema": "stage6.observability.manifest",
             "version": version,
@@ -401,6 +415,10 @@ def _run_fallback(args: argparse.Namespace) -> dict[str, Any]:
             "total_size_bytes": int(total_size),
             "files": sorted(files, key=lambda x: x["path"]),
         }
+        if dashboards:
+            manifest["dashboards"] = dashboards
+        if alert_rules:
+            manifest["alert_rules"] = alert_rules
 
         # Metadane & overrides (opcjonalnie)
         meta = _parse_metadata(args.metadata)
@@ -483,8 +501,11 @@ def build_parser() -> argparse.ArgumentParser:
     # wspólne
     p.add_argument("--output-dir", default=str(REPO_ROOT / "var" / "observability"),
                    help="Katalog docelowy dla paczki")
-    p.add_argument("--bundle-name", default="stage6-observability",
-                   help="Prefiks nazwy paczki (domyślnie stage6-observability)")
+    p.add_argument(
+        "--bundle-name",
+        default="observability-bundle",
+        help="Prefiks nazwy paczki (domyślnie observability-bundle)",
+    )
     p.add_argument("--version", help="Identyfikator wersji paczki (np. 2025.10.16)")
     p.add_argument("--metadata", action="append", help="Metadane w formacie klucz=wartość (wielokrotnie)")
     p.add_argument("--source", action="append",
@@ -494,11 +515,37 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--exclude", action="append",
                    help="Wzorce plików do pominięcia (glob, wielokrotnie)")
     p.add_argument("--overrides", help="Ścieżka do pliku override alertów (JSON Stage6)")
+    p.add_argument(
+        "--mode",
+        choices=["fallback", "builder"],
+        default="fallback",
+        help="Tryb eksportu: fallback (tar.gz + manifest) lub builder (jeśli dostępny).",
+    )
     # podpis
-    p.add_argument("--hmac-key", help="Wartość klucza HMAC")
-    p.add_argument("--hmac-key-file", help="Plik z kluczem HMAC (UTF-8)")
-    p.add_argument("--hmac-key-env", help="Nazwa zmiennej środowiskowej z kluczem HMAC")
-    p.add_argument("--hmac-key-id", help="Identyfikator klucza HMAC umieszczony w podpisie")
+    p.add_argument(
+        "--hmac-key",
+        "--signing-key",
+        dest="hmac_key",
+        help="Wartość klucza HMAC",
+    )
+    p.add_argument(
+        "--hmac-key-file",
+        "--signing-key-file",
+        dest="hmac_key_file",
+        help="Plik z kluczem HMAC (UTF-8)",
+    )
+    p.add_argument(
+        "--hmac-key-env",
+        "--signing-key-env",
+        dest="hmac_key_env",
+        help="Nazwa zmiennej środowiskowej z kluczem HMAC",
+    )
+    p.add_argument(
+        "--hmac-key-id",
+        "--key-id",
+        dest="hmac_key_id",
+        help="Identyfikator klucza HMAC umieszczony w podpisie",
+    )
     p.add_argument("--digest", default="sha384",
                    help="Algorytm skrótu dla HMAC (sha256/sha384/sha512; domyślnie sha384)")
     # logowanie
@@ -513,7 +560,9 @@ def run(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=getattr(logging, args.log_level))
 
     try:
-        if _HAS_BUILDER:
+        if args.mode == "builder":
+            if not _HAS_BUILDER:
+                raise RuntimeError("Tryb builder jest niedostępny – brak ObservabilityBundleBuilder")
             summary = _run_with_builder(args)
         else:
             summary = _run_fallback(args)

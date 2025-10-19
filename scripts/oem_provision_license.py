@@ -413,6 +413,8 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument("--license-key", action="append", dest="license_keys", help="Klucz w formacie key_id=sekret")
     parser.add_argument(
         "--rotation-log",
+        "--license-rotation-log",
+        dest="rotation_log",
         default=str(DEFAULT_ROTATION_LOG),
         help="Rejestr rotacji kluczy HMAC (dla wariantu zestawu).",
     )
@@ -428,13 +430,108 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         help="Klucz HMAC fingerprintu (key_id=sekret) do weryfikacji JSON fingerprintu.",
     )
     # rejestr / artefakty
-    parser.add_argument("--output", default=str(DEFAULT_REGISTRY), help="Rejestr JSONL")
+    parser.add_argument(
+        "--output",
+        "--registry",
+        dest="output",
+        default=str(DEFAULT_REGISTRY),
+        help="Rejestr JSONL",
+    )
     parser.add_argument("--emit-qr", action="store_true", help="Wypisz ASCII QR do stdout")
     parser.add_argument("--qr-output", help="Plik z payloadem BASE64 (do QR)")
-    parser.add_argument("--usb-target", help="Plik lub katalog docelowy na artefakt licencji (USB)")
+    parser.add_argument(
+        "--usb-target",
+        "--usb-output",
+        dest="usb_target",
+        help="Plik lub katalog docelowy na artefakt licencji (USB)",
+    )
     # tryb walidacji rejestru
     parser.add_argument("--validate-registry", action="store_true", help="Waliduj rejestr i zakończ.")
     return parser.parse_args(argv)
+
+
+def _run_validation(args: argparse.Namespace) -> int:
+    license_keys = _parse_key_entries(args.license_keys)
+    if not license_keys:
+        raise ProvisioningError("Do walidacji rejestru wymagane są klucze licencyjne (--license-key).")
+    fingerprint_keys = _parse_key_entries(args.fingerprint_keys)
+    errors = validate_registry(Path(args.output), license_keys, fingerprint_keys)
+    if errors:
+        for msg in errors:
+            print(msg, file=sys.stderr)
+        return 1
+    print(f"Rejestr {args.output} – wszystkie podpisy prawidłowe.")
+    return 0
+
+
+def _run_provision(args: argparse.Namespace) -> int:
+    if args.valid_days <= 0:
+        raise ProvisioningError("Ważność licencji musi być dodatnia.")
+
+    if args.fingerprint:
+        fp_source = load_fingerprint_maybe_json(args.fingerprint)
+    else:
+        generator = DeviceFingerprintGenerator()
+        fp_source = generator.generate_fingerprint()
+
+    if isinstance(fp_source, dict):
+        if args.fingerprint_keys:
+            verify_fingerprint_signature(fp_source, _parse_key_entries(args.fingerprint_keys))
+        payload = build_license_payload_rich(
+            fingerprint_doc=fp_source,
+            mode=args.mode,
+            issuer=args.issuer,
+            profile=args.profile,
+            bundle_version=args.bundle_version,
+            features=args.features,
+            notes=args.notes,
+            valid_days=args.valid_days,
+            policy=OemPolicy(),
+        )
+    else:
+        fingerprint_text = _validate_simple_fingerprint(fp_source)
+        payload = build_license_payload_simple(
+            fingerprint_text=fingerprint_text,
+            issuer=args.issuer,
+            profile=args.profile,
+            bundle_version=args.bundle_version,
+            features=args.features,
+            notes=args.notes,
+            valid_days=args.valid_days,
+        )
+
+    license_keys = _parse_key_entries(args.license_keys)
+    if license_keys:
+        record = sign_with_rotating_keys(
+            payload,
+            keys=license_keys,
+            rotation_log=Path(args.rotation_log),
+            purpose=DEFAULT_PURPOSE,
+            interval_days=float(args.rotation_interval_days),
+            mark_rotation=not args.no_mark_rotation,
+        )
+    else:
+        if not args.signing_key_path:
+            raise ProvisioningError(
+                "Podaj albo --license-key (można wiele), albo --signing-key-path (pojedynczy klucz)."
+            )
+        key_path = Path(args.signing_key_path)
+        key_bytes = key_path.read_bytes()
+        if len(key_bytes) < 32:
+            raise ProvisioningError("Klucz podpisu musi mieć co najmniej 32 bajty.")
+        record = sign_with_single_key(payload, key_bytes=key_bytes, key_id=args.key_id)
+
+    registry_path = Path(args.output)
+    append_jsonl(registry_path, record)
+    print(f"[OK] Dodano licencję do rejestru {registry_path}")
+
+    if args.emit_qr or args.qr_output:
+        emit_qr_ascii_or_base64(record, ascii_qr=bool(args.emit_qr), output_base64_path=args.qr_output)
+    if args.usb_target:
+        target = write_usb_artifact(args.usb_target, record)
+        print(f"[INFO] Licencja zapisana: {target}")
+
+    return 0
 
 
 # --- main --------------------------------------------------------------------
@@ -444,94 +541,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         # Walidacja rejestru – krótsza ścieżka
         if args.validate_registry:
-            license_keys = _parse_key_entries(args.license_keys)
-            if not license_keys:
-                raise ProvisioningError("Do walidacji rejestru wymagane są klucze licencyjne (--license-key).")
-            fingerprint_keys = _parse_key_entries(args.fingerprint_keys)
-            errors = validate_registry(Path(args.output), license_keys, fingerprint_keys)
-            if errors:
-                for msg in errors:
-                    print(msg, file=sys.stderr)
-                return 1
-            print(f"Rejestr {args.output} – wszystkie podpisy prawidłowe.")
-            return 0
+            return _run_validation(args)
 
-        if args.valid_days <= 0:
-            raise ProvisioningError("Ważność licencji musi być dodatnia.")
-
-        # Wczytanie fingerprintu
-        if args.fingerprint:
-            fp_source = load_fingerprint_maybe_json(args.fingerprint)
-        else:
-            # Brak wejścia – spróbuj wygenerować prosty fingerprint lokalnie
-            generator = DeviceFingerprintGenerator()
-            fp_source = generator.generate_fingerprint()
-
-        # Budowa payloadu
-        if isinstance(fp_source, dict):
-            # tryb „bogaty” (JSON)
-            if args.fingerprint_keys:
-                verify_fingerprint_signature(fp_source, _parse_key_entries(args.fingerprint_keys))
-            payload = build_license_payload_rich(
-                fingerprint_doc=fp_source,
-                mode=args.mode,
-                issuer=args.issuer,
-                profile=args.profile,
-                bundle_version=args.bundle_version,
-                features=args.features,
-                notes=args.notes,
-                valid_days=args.valid_days,
-                policy=OemPolicy(),
-            )
-        else:
-            # tryb „prosty” (string)
-            fingerprint_text = _validate_simple_fingerprint(fp_source)
-            payload = build_license_payload_simple(
-                fingerprint_text=fingerprint_text,
-                issuer=args.issuer,
-                profile=args.profile,
-                bundle_version=args.bundle_version,
-                features=args.features,
-                notes=args.notes,
-                valid_days=args.valid_days,
-            )
-
-        # Podpis licencji
-        record: dict[str, Any]
-        license_keys = _parse_key_entries(args.license_keys)
-        if license_keys:
-            record = sign_with_rotating_keys(
-                payload,
-                keys=license_keys,
-                rotation_log=Path(args.rotation_log),
-                purpose=DEFAULT_PURPOSE,
-                interval_days=float(args.rotation_interval_days),
-                mark_rotation=not args.no_mark_rotation,
-            )
-        else:
-            if not args.signing_key_path:
-                raise ProvisioningError(
-                    "Podaj albo --license-key (można wiele), albo --signing-key-path (pojedynczy klucz)."
-                )
-            key_path = Path(args.signing_key_path)
-            key_bytes = key_path.read_bytes()
-            if len(key_bytes) < 32:
-                raise ProvisioningError("Klucz podpisu musi mieć co najmniej 32 bajty.")
-            record = sign_with_single_key(payload, key_bytes=key_bytes, key_id=args.key_id)
-
-        # Zapis do rejestru
-        registry_path = Path(args.output)
-        append_jsonl(registry_path, record)
-        print(f"[OK] Dodano licencję do rejestru {registry_path}")
-
-        # Artefakty dodatkowe
-        if args.emit_qr or args.qr_output:
-            emit_qr_ascii_or_base64(record, ascii_qr=bool(args.emit_qr), output_base64_path=args.qr_output)
-        if args.usb_target:
-            target = write_usb_artifact(args.usb_target, record)
-            print(f"[INFO] Licencja zapisana: {target}")
-
-        return 0
+        return _run_provision(args)
 
     except ProvisioningError as exc:
         print(f"[ERROR] {exc}", file=sys.stderr)

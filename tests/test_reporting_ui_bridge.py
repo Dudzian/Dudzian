@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from pathlib import Path
 
+import pytest
+
 from bot_core.reporting import ui_bridge
 
 
@@ -1384,14 +1386,6 @@ def test_cmd_overview_rejects_invalid_sort_options(tmp_path, capsys):
     assert return_code == 2
     assert captured.out == ""
     assert "Unsupported sort direction" in captured.err
-from __future__ import annotations
-
-import json
-from pathlib import Path
-
-import pytest
-
-from bot_core.reporting import ui_bridge
 
 
 def _write_report(tmp_path: Path, name: str) -> Path:

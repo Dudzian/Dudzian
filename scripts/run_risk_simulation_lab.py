@@ -5,11 +5,15 @@ import argparse
 import json
 import logging
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 from bot_core.config import load_core_config
 from bot_core.risk.simulation import (
+    ProfileSimulationResult,
+    RiskSimulationReport,
     SimulationSettings,
+    StressTestResult,
     run_simulations_from_config,
 )
 
@@ -116,6 +120,7 @@ def main(argv: list[str] | None = None) -> int:
         args.interval,
     )
 
+    report: RiskSimulationReport | None = None
     try:
         report = run_simulations_from_config(
             config_path=args.config,
@@ -128,6 +133,40 @@ def main(argv: list[str] | None = None) -> int:
         )
     except Exception as exc:  # noqa: BLE001 - CLI ma wypisać informację i zakończyć
         _LOGGER.error("Symulacja zakończyła się błędem: %s", exc)
+        message = str(exc)
+        if "Config-based profiles are not available" in message and args.synthetic_fallback:
+            _LOGGER.warning("Generuję zastępczy raport symulacji na danych syntetycznych")
+            now = datetime.now(timezone.utc).isoformat()
+            profile_name = args.environment or "default"
+            profile = ProfileSimulationResult(
+                profile=profile_name,
+                base_equity=settings.base_equity,
+                final_equity=settings.base_equity,
+                total_return_pct=0.0,
+                max_drawdown_pct=0.0,
+                worst_daily_loss_pct=0.0,
+                realized_volatility=0.0,
+                breaches=(),
+                stress_tests=(
+                    StressTestResult(
+                        name="synthetic",
+                        status="ok",
+                        metrics={"severity": "info"},
+                        notes="synthetic fallback",
+                    ),
+                ),
+                sample_size=0,
+            )
+            report = RiskSimulationReport(
+                generated_at=now,
+                base_equity=settings.base_equity,
+                profiles=(profile,),
+                synthetic_data=True,
+            )
+        else:
+            return 2
+
+    if report is None:
         return 2
 
     output_dir = Path(args.output_dir)

@@ -353,10 +353,28 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def _inject_default_command(argv: Sequence[str] | None) -> list[str]:
+    args = list(argv or ())
+    if args and args[0] in {"evaluate", "scan"}:
+        return args
+    if any(item.startswith("--definitions") or item == "--definitions" for item in args):
+        return ["evaluate", *args]
+    return ["scan", *args]
+
+
+def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = _build_parser()
-    args = parser.parse_args(argv)
+    effective_argv = _inject_default_command(argv)
+    return parser.parse_args(effective_argv)
+
+
+def run(argv: Sequence[str] | None = None) -> int:
+    args = _parse_args(argv)
     return args._handler(args)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    return run(argv)
 
 
 if __name__ == "__main__":  # pragma: no cover
