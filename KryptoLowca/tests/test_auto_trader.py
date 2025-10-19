@@ -122,6 +122,18 @@ class DummyGUI:
             "symbol": symbol,
         }
 
+    def _bridge_execute_trade(self, symbol: str, side: str, price: float) -> None:
+        side_norm = (side or "").lower()
+        symbol_key = str(symbol)
+        if side_norm == "buy":
+            self._open_positions[symbol_key] = {
+                "side": "buy",
+                "qty": 1.0,
+                "entry": float(price),
+            }
+        elif side_norm == "sell":
+            self._open_positions.pop(symbol_key, None)
+
 
 @dataclass
 class StrategyHarness:
@@ -439,6 +451,50 @@ def test_services_execute_order(strategy_harness: StrategyHarness) -> None:
     paper_adapter = trader._paper_adapter
     assert paper_adapter is not None
     assert _wait_until(lambda: "BTC/USDT" in getattr(paper_adapter, "_portfolios", {}))
+
+
+@pytest.mark.asyncio
+async def test_trade_once_updates_dummy_gui_positions(strategy_harness: StrategyHarness) -> None:
+    provider = StubDataProvider(price=102.5)
+    execution_adapter = RecordingExecutionAdapter()
+    gui = DummyGUI()
+    trader = AutoTrader(
+        DummyEmitter(),
+        gui,
+        symbol_getter=lambda: "BTC/USDT",
+        auto_trade_interval_s=0.05,
+        walkforward_interval_s=None,
+        signal_service=strategy_harness.signal_service,
+        risk_service=AcceptAllRiskService(size=25.0),
+        execution_service=ExecutionService(execution_adapter),
+        data_provider=provider,
+    )
+
+    trader.enable_auto_trade = True
+    trader.confirm_auto_trade(True)
+    trader.configure(
+        strategy=StrategyConfig(
+            preset="DummyStrategy",
+            mode="demo",
+            max_leverage=1.0,
+            max_position_notional_pct=0.5,
+            trade_risk_pct=0.1,
+            default_sl=0.01,
+            default_tp=0.02,
+            violation_cooldown_s=1,
+            reduce_only_after_violation=False,
+        ),
+    )
+
+    assert trader._paper_enabled
+    assert gui._open_positions == {}
+
+    await trader._trade_once("BTC/USDT", "1m")
+
+    assert "BTC/USDT" in gui._open_positions
+    position = gui._open_positions["BTC/USDT"]
+    assert position["side"] == "buy"
+    assert position["qty"] > 0.0
 
 
 def test_paper_trading_mode_switch(strategy_harness: StrategyHarness) -> None:
