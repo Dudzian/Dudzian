@@ -1115,6 +1115,12 @@ class AutoTrader:
             context.require_demo_mode()
             result = await self._execution_service.execute(signal, context)
             if result is not None:
+                self._sync_paper_gui_state(
+                    symbol,
+                    signal.action or "",
+                    float(market_state.get("price") or price or 0.0),
+                    signal.size,
+                )
                 try:
                     prometheus_metrics.record_order(symbol, signal.action, float(signal.size or 0.0))
                 except Exception:
@@ -1126,6 +1132,98 @@ class AutoTrader:
                 )
             with self._lock:
                 self._cooldowns.pop(symbol, None)
+
+    def _sync_paper_gui_state(
+        self,
+        symbol: str,
+        action: str,
+        price: float,
+        size: float | None,
+    ) -> None:
+        if not self._paper_enabled:
+            return
+        gui = getattr(self, "gui", None)
+        if gui is None:
+            return
+
+        action_norm = str(action or "").upper()
+        if action_norm not in {"BUY", "SELL"}:
+            return
+
+        side = "buy" if action_norm == "BUY" else "sell"
+        try:
+            price_value = float(price)
+        except Exception:
+            price_value = 0.0
+
+        bridge = getattr(gui, "_bridge_execute_trade", None)
+        if callable(bridge):
+            try:
+                bridge(symbol, side, price_value)
+            except Exception:  # pragma: no cover - defensywne logowanie
+                logger.debug("Paper GUI bridge sync failed", exc_info=True)
+
+        snapshot: Mapping[str, Any] = {}
+        adapter = self._paper_adapter
+        if adapter is not None:
+            try:
+                raw_snapshot = adapter.portfolio_snapshot(symbol)
+            except Exception:  # pragma: no cover - defensywne logowanie
+                logger.debug("Paper portfolio snapshot failed", exc_info=True)
+                raw_snapshot = None
+            if isinstance(raw_snapshot, Mapping):
+                snapshot = dict(raw_snapshot)
+
+        balance = snapshot.get("value") if snapshot else None
+        if balance is not None:
+            try:
+                balance_value = float(balance)
+            except Exception:
+                balance_value = None
+            if balance_value is not None:
+                try:
+                    gui.paper_balance = balance_value
+                except Exception:
+                    pass
+                balance_var = getattr(gui, "paper_balance_var", None)
+                if balance_var is not None and hasattr(balance_var, "set"):
+                    try:
+                        balance_var.set(f"{balance_value:,.2f}")
+                    except Exception:
+                        logger.debug("Failed to update paper_balance_var", exc_info=True)
+
+        positions_attr = getattr(gui, "_open_positions", None)
+        if isinstance(positions_attr, dict):
+            symbol_str = "" if symbol is None else str(symbol)
+            symbol_key = symbol_str.upper() or symbol_str
+            if action_norm == "SELL":
+                positions_attr.pop(symbol_key, None)
+            else:
+                qty_candidate: Any = snapshot.get("position") if snapshot else None
+                if qty_candidate is None:
+                    qty_candidate = size
+                try:
+                    qty_value = float(qty_candidate) if qty_candidate is not None else 0.0
+                except Exception:
+                    qty_value = 0.0
+                if qty_value <= 0 and size is not None:
+                    try:
+                        qty_value = float(size)
+                    except Exception:
+                        qty_value = 0.0
+                entry_candidate = snapshot.get("price") if snapshot else None
+                if entry_candidate is None:
+                    entry_candidate = price_value
+                try:
+                    entry_value = float(entry_candidate)
+                except Exception:
+                    entry_value = price_value
+                if qty_value > 0:
+                    positions_attr[symbol_key] = {
+                        "side": side,
+                        "qty": qty_value,
+                        "entry": entry_value,
+                    }
 
     async def _build_market_payload(self, symbol: str, timeframe: str) -> Optional[Dict[str, Any]]:
         if self._data_provider is None:
