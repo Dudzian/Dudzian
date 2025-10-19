@@ -972,6 +972,10 @@ environments:
         ledger_directory: audit/ledger
         ledger_retention_days: 730
         ledger_fsync: true
+      stream:
+        public_params:
+          symbol: BTC/USDT
+          depth: 50
     stream:
       host: 127.0.0.1
       port: 8765
@@ -1026,6 +1030,11 @@ environments:
       filename_pattern: decisions-%Y%m%d.jsonl
       retention_days: 730
       fsync: true
+    adapter_settings:
+      stream:
+        public_params:
+          symbol: BTC/USDT
+          depth: 50
     stream:
       host: 127.0.0.1
       port: 8765
@@ -1065,6 +1074,11 @@ environments:
       filename_pattern: decisions-%Y%m%d.jsonl
       retention_days: 730
       fsync: true
+    adapter_settings:
+      stream:
+        public_params:
+          symbol: BTCUSDT
+          depth: 50
     stream:
       host: 127.0.0.1
       port: 8765
@@ -1102,6 +1116,11 @@ environments:
       filename_pattern: decisions-%Y%m%d.jsonl
       retention_days: 730
       fsync: true
+    adapter_settings:
+      stream:
+        public_params:
+          symbol: BTCUSDT
+          depth: 50
     stream:
       host: 127.0.0.1
       port: 8765

@@ -1,6 +1,7 @@
 """Adapter REST dla rynku spot Binance do obsługi danych publicznych i prywatnych."""
 from __future__ import annotations
 
+from dataclasses import dataclass
 import hmac
 import json
 import logging
@@ -20,8 +21,15 @@ from bot_core.exchanges.base import (
     OrderRequest,
     OrderResult,
 )
+from bot_core.exchanges.binance._utils import (
+    _normalize_depth,
+    _stringify_params,
+    _timestamp_ms_to_seconds,
+    _to_float,
+)
 from bot_core.exchanges.binance.symbols import (
     filter_supported_exchange_symbols,
+    normalize_symbol,
     to_exchange_symbol,
 )
 from bot_core.exchanges.errors import (
@@ -43,13 +51,6 @@ _BACKOFF_CAP = 4.0
 _JITTER_RANGE = (0.05, 0.35)
 
 
-def _to_float(value: object, default: float = 0.0) -> float:
-    try:
-        return float(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return default
-
-
 def _determine_public_base(environment: Environment) -> str:
     """Zwraca właściwy punkt końcowy REST dla danych publicznych."""
     # Binance nie udostępnia pełnych danych historycznych na testnecie,
@@ -63,19 +64,6 @@ def _determine_trading_base(environment: Environment) -> str:
         # Oficjalny testnet Binance udostępnia podpisane endpointy pod domeną testnet.binance.vision.
         return "https://testnet.binance.vision"
     return "https://api.binance.com"
-
-
-def _stringify_params(params: Mapping[str, object]) -> list[tuple[str, str]]:
-    """Konwertuje wartości parametrów na tekst wymagany przez API Binance."""
-    normalized: list[tuple[str, str]] = []
-    for key, value in params.items():
-        if isinstance(value, bool):
-            normalized.append((key, "true" if value else "false"))
-        elif value is None:
-            continue
-        else:
-            normalized.append((key, str(value)))
-    return normalized
 
 
 def _direct_conversion_rate(
@@ -129,6 +117,63 @@ def _convert_to_target(
             continue
         return first_leg * second_leg
     return None
+
+
+@dataclass(slots=True)
+class BinanceTicker:
+    """Znormalizowany ticker 24h z rynku spot Binance."""
+
+    symbol: str
+    best_bid: float
+    best_ask: float
+    last_price: float
+    price_change_percent: float
+    open_price: float
+    high_24h: float
+    low_24h: float
+    volume_24h_base: float
+    volume_24h_quote: float
+    timestamp: float
+
+
+@dataclass(slots=True)
+class BinanceOrderBookLevel:
+    """Pojedynczy poziom orderbooka Binance Spot."""
+
+    price: float
+    quantity: float
+
+
+@dataclass(slots=True)
+class BinanceOrderBook:
+    """Orderbook Binance Spot w formacie kompatybilnym ze StreamGateway."""
+
+    symbol: str
+    bids: tuple[BinanceOrderBookLevel, ...]
+    asks: tuple[BinanceOrderBookLevel, ...]
+    depth: int
+    last_update_id: int
+    timestamp: float
+
+
+@dataclass(slots=True)
+class BinanceOpenOrder:
+    """Znormalizowana reprezentacja otwartego zlecenia Binance Spot."""
+
+    order_id: str
+    symbol: str
+    status: str
+    side: str
+    order_type: str
+    price: float | None
+    orig_quantity: float
+    executed_quantity: float
+    time_in_force: str | None
+    client_order_id: str | None
+    stop_price: float | None
+    iceberg_quantity: float | None
+    is_working: bool
+    update_time: float
 
 
 class BinanceSpotAdapter(ExchangeAdapter):
@@ -738,6 +783,162 @@ class BinanceSpotAdapter(ExchangeAdapter):
             candles.append([open_time, open_price, high, low, close, volume])
         return candles
 
+    def _resolve_symbol(self, symbol: str) -> tuple[str, str]:
+        """Zwraca parę (symbol_binance, symbol_kanoniczny)."""
+
+        exchange_symbol = to_exchange_symbol(symbol)
+        if exchange_symbol is None:
+            raise ValueError(f"Symbol {symbol!r} nie jest wspierany przez Binance Spot.")
+
+        canonical_symbol = (
+            normalize_symbol(symbol)
+            or normalize_symbol(exchange_symbol)
+            or exchange_symbol
+        )
+        return exchange_symbol, canonical_symbol
+
+    def fetch_ticker(self, symbol: str) -> BinanceTicker:
+        """Pobiera statystyki 24h dla symbolu w formacie zgodnym z StreamGateway."""
+
+        exchange_symbol, canonical_symbol = self._resolve_symbol(symbol)
+
+        payload = self._public_request("/api/v3/ticker/24hr", params={"symbol": exchange_symbol})
+        if not isinstance(payload, Mapping):
+            raise ExchangeAPIError(
+                "Binance Spot zwrócił niepoprawną strukturę tickera.",
+                400,
+                payload=payload,
+            )
+        best_bid = _to_float(payload.get("bidPrice"))
+        best_ask = _to_float(payload.get("askPrice"))
+        last_price = _to_float(payload.get("lastPrice"))
+        price_change_percent = _to_float(payload.get("priceChangePercent"))
+        open_price = _to_float(payload.get("openPrice"))
+        high_24h = _to_float(payload.get("highPrice"))
+        low_24h = _to_float(payload.get("lowPrice"))
+        volume_base = _to_float(payload.get("volume"))
+        volume_quote = _to_float(payload.get("quoteVolume"))
+        timestamp = _timestamp_ms_to_seconds(payload.get("closeTime"), fallback=time.time())
+
+        return BinanceTicker(
+            symbol=canonical_symbol,
+            best_bid=best_bid,
+            best_ask=best_ask,
+            last_price=last_price,
+            price_change_percent=price_change_percent,
+            open_price=open_price,
+            high_24h=high_24h,
+            low_24h=low_24h,
+            volume_24h_base=volume_base,
+            volume_24h_quote=volume_quote,
+            timestamp=timestamp,
+        )
+
+    def fetch_order_book(self, symbol: str, *, depth: int = 50) -> BinanceOrderBook:
+        """Pobiera orderbook (bids/asks) ograniczony do wskazanej głębokości."""
+
+        exchange_symbol, canonical_symbol = self._resolve_symbol(symbol)
+
+        normalized_depth = _normalize_depth(depth)
+        params = {"symbol": exchange_symbol, "limit": normalized_depth}
+        payload = self._public_request("/api/v3/depth", params=params)
+        if not isinstance(payload, Mapping):
+            raise ExchangeAPIError(
+                "Binance Spot zwrócił niepoprawną strukturę orderbooka.",
+                400,
+                payload=payload,
+            )
+
+        bids_raw = payload.get("bids")
+        asks_raw = payload.get("asks")
+        bids: list[BinanceOrderBookLevel] = []
+        if isinstance(bids_raw, Sequence):
+            for entry in bids_raw:
+                if not isinstance(entry, Sequence) or len(entry) < 2:
+                    continue
+                price = _to_float(entry[0])
+                quantity = _to_float(entry[1])
+                if price <= 0 or quantity <= 0:
+                    continue
+                bids.append(BinanceOrderBookLevel(price=price, quantity=quantity))
+
+        asks: list[BinanceOrderBookLevel] = []
+        if isinstance(asks_raw, Sequence):
+            for entry in asks_raw:
+                if not isinstance(entry, Sequence) or len(entry) < 2:
+                    continue
+                price = _to_float(entry[0])
+                quantity = _to_float(entry[1])
+                if price <= 0 or quantity <= 0:
+                    continue
+                asks.append(BinanceOrderBookLevel(price=price, quantity=quantity))
+
+        try:
+            last_update_id = int(payload.get("lastUpdateId", 0))
+        except (TypeError, ValueError):
+            last_update_id = 0
+        timestamp = _timestamp_ms_to_seconds(payload.get("E"), fallback=time.time())
+
+        return BinanceOrderBook(
+            symbol=canonical_symbol,
+            bids=tuple(bids),
+            asks=tuple(asks),
+            depth=normalized_depth,
+            last_update_id=last_update_id,
+            timestamp=timestamp,
+        )
+
+    def fetch_open_orders(self) -> Sequence[BinanceOpenOrder]:
+        """Zwraca listę otwartych zleceń wykorzystując podpisane API Binance."""
+
+        if not ({"read", "trade"} & self._permission_set):
+            raise PermissionError("Poświadczenia nie pozwalają na odczyt zleceń Binance Spot.")
+
+        payload = self._signed_request("/api/v3/openOrders")
+        if not isinstance(payload, list):
+            raise ExchangeAPIError(
+                "Binance Spot zwrócił niepoprawną strukturę listy zleceń.",
+                400,
+                payload=payload,
+            )
+
+        orders: list[BinanceOpenOrder] = []
+        for entry in payload:
+            if not isinstance(entry, Mapping):
+                continue
+            raw_symbol = entry.get("symbol")
+            exchange_symbol = str(raw_symbol) if isinstance(raw_symbol, str) else ""
+            canonical_symbol = normalize_symbol(exchange_symbol) or exchange_symbol
+            price_value = _to_float(entry.get("price"))
+            price = price_value if price_value > 0 else None
+            stop_price_value = _to_float(entry.get("stopPrice"))
+            stop_price = stop_price_value if stop_price_value > 0 else None
+            iceberg_value = _to_float(entry.get("icebergQty"))
+            iceberg = iceberg_value if iceberg_value > 0 else None
+            timestamp = _timestamp_ms_to_seconds(entry.get("updateTime") or entry.get("time"))
+            order = BinanceOpenOrder(
+                order_id=str(entry.get("orderId", "")),
+                symbol=canonical_symbol,
+                status=str(entry.get("status", "")),
+                side=str(entry.get("side", "")),
+                order_type=str(entry.get("type", "")),
+                price=price,
+                orig_quantity=_to_float(entry.get("origQty")),
+                executed_quantity=_to_float(entry.get("executedQty")),
+                time_in_force=(str(entry.get("timeInForce")) if entry.get("timeInForce") else None),
+                client_order_id=(
+                    str(entry.get("clientOrderId")) if entry.get("clientOrderId") not in (None, "") else None
+                ),
+                stop_price=stop_price,
+                iceberg_quantity=iceberg,
+                is_working=bool(entry.get("isWorking", True)),
+                update_time=timestamp,
+            )
+            orders.append(order)
+
+        orders.sort(key=lambda item: item.update_time)
+        return orders
+
     def place_order(self, request: OrderRequest) -> OrderResult:
         """Składa podpisane zlecenie typu limit/market na rynku spot."""
         if "trade" not in self._permission_set:
@@ -808,4 +1009,10 @@ class BinanceSpotAdapter(ExchangeAdapter):
         return self._build_stream("private", channels)
 
 
-__all__ = ["BinanceSpotAdapter"]
+__all__ = [
+    "BinanceSpotAdapter",
+    "BinanceTicker",
+    "BinanceOrderBookLevel",
+    "BinanceOrderBook",
+    "BinanceOpenOrder",
+]

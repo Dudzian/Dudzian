@@ -21,6 +21,12 @@ from bot_core.exchanges.base import (
     OrderRequest,
     OrderResult,
 )
+from bot_core.exchanges.binance._utils import (
+    _normalize_depth,
+    _stringify_params,
+    _timestamp_ms_to_seconds,
+    _to_float,
+)
 from bot_core.exchanges.errors import (
     ExchangeAPIError,
     ExchangeAuthError,
@@ -103,25 +109,6 @@ def _determine_trading_base(environment: Environment) -> str:
     if environment is Environment.TESTNET or environment is Environment.PAPER:
         return "https://testnet.binancefuture.com"
     return "https://fapi.binance.com"
-
-
-def _stringify_params(params: Mapping[str, object]) -> list[tuple[str, str]]:
-    normalized: list[tuple[str, str]] = []
-    for key, value in params.items():
-        if isinstance(value, bool):
-            normalized.append((key, "true" if value else "false"))
-        elif value is None:
-            continue
-        else:
-            normalized.append((key, str(value)))
-    return normalized
-
-
-def _to_float(value: object, default: float = 0.0) -> float:
-    try:
-        return float(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return default
 
 
 def _to_int(value: object, default: int | None = 0) -> int | None:
@@ -620,6 +607,166 @@ class BinanceFuturesAdapter(ExchangeAdapter):
             candles.append([open_time, open_price, high, low, close, volume])
         return candles
 
+    @staticmethod
+    def _normalize_contract_symbol(symbol: str) -> str:
+        """Zwraca symbol kontraktu w notacji wymaganej przez API (np. BTCUSDT)."""
+
+        cleaned = str(symbol or "").strip().upper().replace("/", "")
+        if not cleaned:
+            raise ValueError("Symbol kontraktu Binance Futures nie może być pusty.")
+        return cleaned
+
+    def fetch_ticker(self, symbol: str) -> BinanceFuturesTicker:
+        """Pobiera statystyki 24h dla kontraktu USD-M."""
+
+        exchange_symbol = self._normalize_contract_symbol(symbol)
+
+        payload = self._public_request("/fapi/v1/ticker/24hr", params={"symbol": exchange_symbol})
+        if not isinstance(payload, Mapping):
+            raise ExchangeAPIError(
+                "Binance Futures zwrócił niepoprawną strukturę tickera.",
+                400,
+                payload=payload,
+            )
+
+        best_bid = _to_float(payload.get("bidPrice"))
+        best_ask = _to_float(payload.get("askPrice"))
+        last_price = _to_float(payload.get("lastPrice"))
+        price_change_percent = _to_float(payload.get("priceChangePercent"))
+        open_price = _to_float(payload.get("openPrice"))
+        high_24h = _to_float(payload.get("highPrice"))
+        low_24h = _to_float(payload.get("lowPrice"))
+        volume_base = _to_float(payload.get("volume"))
+        volume_quote = _to_float(payload.get("quoteVolume"))
+        open_interest = _to_float(payload.get("openInterest"))
+        timestamp = _timestamp_ms_to_seconds(payload.get("closeTime"), fallback=time.time())
+
+        return BinanceFuturesTicker(
+            symbol=exchange_symbol,
+            best_bid=best_bid,
+            best_ask=best_ask,
+            last_price=last_price,
+            price_change_percent=price_change_percent,
+            open_price=open_price,
+            high_24h=high_24h,
+            low_24h=low_24h,
+            volume_24h_base=volume_base,
+            volume_24h_quote=volume_quote,
+            open_interest=open_interest,
+            timestamp=timestamp,
+        )
+
+    def fetch_order_book(self, symbol: str, *, depth: int = 50) -> BinanceFuturesOrderBook:
+        """Pobiera orderbook futures ograniczony do wskazanej głębokości."""
+
+        exchange_symbol = self._normalize_contract_symbol(symbol)
+
+        normalized_depth = _normalize_depth(depth)
+        params = {"symbol": exchange_symbol, "limit": normalized_depth}
+        payload = self._public_request("/fapi/v1/depth", params=params)
+        if not isinstance(payload, Mapping):
+            raise ExchangeAPIError(
+                "Binance Futures zwrócił niepoprawną strukturę orderbooka.",
+                400,
+                payload=payload,
+            )
+
+        bids_raw = payload.get("bids")
+        asks_raw = payload.get("asks")
+        bids: list[BinanceFuturesOrderBookLevel] = []
+        if isinstance(bids_raw, Sequence):
+            for entry in bids_raw:
+                if not isinstance(entry, Sequence) or len(entry) < 2:
+                    continue
+                price = _to_float(entry[0])
+                quantity = _to_float(entry[1])
+                if price <= 0 or quantity <= 0:
+                    continue
+                bids.append(BinanceFuturesOrderBookLevel(price=price, quantity=quantity))
+
+        asks: list[BinanceFuturesOrderBookLevel] = []
+        if isinstance(asks_raw, Sequence):
+            for entry in asks_raw:
+                if not isinstance(entry, Sequence) or len(entry) < 2:
+                    continue
+                price = _to_float(entry[0])
+                quantity = _to_float(entry[1])
+                if price <= 0 or quantity <= 0:
+                    continue
+                asks.append(BinanceFuturesOrderBookLevel(price=price, quantity=quantity))
+
+        try:
+            last_update_id = int(payload.get("lastUpdateId", 0))
+        except (TypeError, ValueError):
+            last_update_id = 0
+        timestamp = _timestamp_ms_to_seconds(payload.get("T") or payload.get("E"), fallback=time.time())
+
+        return BinanceFuturesOrderBook(
+            symbol=exchange_symbol,
+            bids=tuple(bids),
+            asks=tuple(asks),
+            depth=normalized_depth,
+            last_update_id=last_update_id,
+            timestamp=timestamp,
+        )
+
+    def fetch_open_orders(self) -> Sequence[BinanceFuturesOpenOrder]:
+        """Zwraca otwarte zlecenia futures poprzez podpisane API."""
+
+        if not ({"read", "trade"} & self._permission_set):
+            raise PermissionError("Poświadczenia nie pozwalają na odczyt zleceń Binance Futures.")
+
+        payload = self._signed_request("/fapi/v1/openOrders")
+        if not isinstance(payload, list):
+            raise ExchangeAPIError(
+                "Binance Futures zwrócił niepoprawną strukturę listy zleceń.",
+                400,
+                payload=payload,
+            )
+
+        orders: list[BinanceFuturesOpenOrder] = []
+        for entry in payload:
+            if not isinstance(entry, Mapping):
+                continue
+            raw_symbol = entry.get("symbol")
+            if isinstance(raw_symbol, str):
+                try:
+                    exchange_symbol = self._normalize_contract_symbol(raw_symbol)
+                except ValueError:
+                    exchange_symbol = raw_symbol.strip()
+            else:
+                exchange_symbol = ""
+            price_value = _to_float(entry.get("price"))
+            price = price_value if price_value > 0 else None
+            stop_value = _to_float(entry.get("stopPrice"))
+            stop_price = stop_value if stop_value > 0 else None
+            timestamp = _timestamp_ms_to_seconds(entry.get("updateTime") or entry.get("time"), fallback=time.time())
+            order = BinanceFuturesOpenOrder(
+                order_id=str(entry.get("orderId", "")),
+                symbol=exchange_symbol,
+                status=str(entry.get("status", "")),
+                side=str(entry.get("side", "")),
+                order_type=str(entry.get("type", "")),
+                price=price,
+                orig_quantity=_to_float(entry.get("origQty")),
+                executed_quantity=_to_float(entry.get("executedQty")),
+                time_in_force=(str(entry.get("timeInForce")) if entry.get("timeInForce") else None),
+                client_order_id=(
+                    str(entry.get("clientOrderId")) if entry.get("clientOrderId") not in (None, "") else None
+                ),
+                stop_price=stop_price,
+                reduce_only=_to_bool(entry.get("reduceOnly")),
+                close_position=_to_bool(entry.get("closePosition")),
+                working_type=(str(entry.get("workingType")) if entry.get("workingType") else None),
+                price_protect=_to_bool(entry.get("priceProtect")),
+                position_side=(str(entry.get("positionSide")) if entry.get("positionSide") else None),
+                update_time=timestamp,
+            )
+            orders.append(order)
+
+        orders.sort(key=lambda item: item.update_time)
+        return orders
+
     def fetch_funding_rates(
         self,
         *,
@@ -891,4 +1038,78 @@ class BinanceFuturesAdapter(ExchangeAdapter):
         return self._build_stream("private", channels)
 
 
-__all__ = ["BinanceFuturesAdapter", "FuturesPosition", "FundingRateEvent"]
+__all__ = [
+    "BinanceFuturesAdapter",
+    "BinanceFuturesTicker",
+    "BinanceFuturesOrderBookLevel",
+    "BinanceFuturesOrderBook",
+    "BinanceFuturesOpenOrder",
+    "FuturesPosition",
+    "FundingRateEvent",
+]
+
+
+def _to_bool(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        return lowered in {"true", "1", "yes", "y"}
+    return False
+
+
+@dataclass(slots=True)
+class BinanceFuturesTicker:
+    """Znormalizowany ticker 24h z rynku futures Binance USD-M."""
+
+    symbol: str
+    best_bid: float
+    best_ask: float
+    last_price: float
+    price_change_percent: float
+    open_price: float
+    high_24h: float
+    low_24h: float
+    volume_24h_base: float
+    volume_24h_quote: float
+    open_interest: float
+    timestamp: float
+
+
+@dataclass(slots=True)
+class BinanceFuturesOrderBookLevel:
+    price: float
+    quantity: float
+
+
+@dataclass(slots=True)
+class BinanceFuturesOrderBook:
+    symbol: str
+    bids: tuple[BinanceFuturesOrderBookLevel, ...]
+    asks: tuple[BinanceFuturesOrderBookLevel, ...]
+    depth: int
+    last_update_id: int
+    timestamp: float
+
+
+@dataclass(slots=True)
+class BinanceFuturesOpenOrder:
+    order_id: str
+    symbol: str
+    status: str
+    side: str
+    order_type: str
+    price: float | None
+    orig_quantity: float
+    executed_quantity: float
+    time_in_force: str | None
+    client_order_id: str | None
+    stop_price: float | None
+    reduce_only: bool
+    close_position: bool
+    working_type: str | None
+    price_protect: bool
+    position_side: str | None
+    update_time: float
