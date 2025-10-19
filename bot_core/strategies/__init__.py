@@ -10,7 +10,14 @@ from bot_core.strategies.daily_trend import (
     DailyTrendMomentumSettings,
     DailyTrendMomentumStrategy,
 )
+from bot_core.strategies.grid import GridTradingSettings, GridTradingStrategy
 from bot_core.strategies.mean_reversion import MeanReversionSettings, MeanReversionStrategy
+from bot_core.strategies.options import OptionsIncomeSettings, OptionsIncomeStrategy
+from bot_core.strategies.scalping import ScalpingSettings, ScalpingStrategy
+from bot_core.strategies.statistical_arbitrage import (
+    StatisticalArbitrageSettings,
+    StatisticalArbitrageStrategy,
+)
 from bot_core.strategies.volatility_target import (
     VolatilityTargetSettings,
     VolatilityTargetStrategy,
@@ -27,8 +34,16 @@ __all__ = [
     "WalkForwardOptimizer",
     "DailyTrendMomentumSettings",
     "DailyTrendMomentumStrategy",
+    "GridTradingSettings",
+    "GridTradingStrategy",
     "MeanReversionSettings",
     "MeanReversionStrategy",
+    "OptionsIncomeSettings",
+    "OptionsIncomeStrategy",
+    "ScalpingSettings",
+    "ScalpingStrategy",
+    "StatisticalArbitrageSettings",
+    "StatisticalArbitrageStrategy",
     "VolatilityTargetSettings",
     "VolatilityTargetStrategy",
     "CrossExchangeArbitrageSettings",
