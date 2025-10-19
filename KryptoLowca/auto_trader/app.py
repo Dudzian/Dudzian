@@ -1438,7 +1438,6 @@ class AutoTrader:
         if gui_balance is not None:
             return gui_balance
 
-        strategy_balance: float | None = None
         strategy_cfg: StrategyConfig | None
         try:
             strategy_cfg = self._get_strategy_config()
