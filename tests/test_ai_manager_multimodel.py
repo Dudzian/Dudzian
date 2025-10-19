@@ -1,6 +1,8 @@
 import asyncio
+import importlib
 import json
 import logging
+import sys
 import threading
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -9,7 +11,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from KryptoLowca import ai_manager as ai_manager_module
+try:
+    ai_manager_module = importlib.import_module("bot_core.ai_manager")
+except ModuleNotFoundError:  # pragma: no cover - legacy fallback for local runs
+    legacy_ai_manager = importlib.import_module("KryptoLowca.ai_manager")
+    sys.modules.setdefault("bot_core.ai_manager", legacy_ai_manager)
+    ai_manager_module = legacy_ai_manager
 
 
 def _make_df(rows: int = 20) -> pd.DataFrame:
@@ -599,12 +606,31 @@ def test_pipeline_history_formatting_and_logging(tmp_path, monkeypatch, caplog):
     assert "beta" in diff_text
 
     history_logger_name = f"{ai_manager_module.logger.name}.history"
-    with caplog.at_level(logging.INFO, logger=history_logger_name):
-        ai_manager_module.log_pipeline_execution_record(record, include_evaluations=True)
-        ai_manager_module.log_pipeline_history_snapshot(snapshot)
-        ai_manager_module.log_pipeline_history_diff(diff, include_evaluations=True)
+    history_logger = logging.getLogger(history_logger_name)
+    previous_handlers = list(ai_manager_module.logger.handlers)
+    for handler in previous_handlers:
+        ai_manager_module.logger.removeHandler(handler)
+    caplog.clear()
+    captured_messages: list[str] = []
 
-    logged = "\n".join(entry.message for entry in caplog.records)
+    class _CaptureHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:  # pragma: no cover - prosty kolektor
+            captured_messages.append(record.getMessage())
+
+    capture_handler = _CaptureHandler()
+    history_logger.addHandler(capture_handler)
+    try:
+        with caplog.at_level(logging.INFO, logger=history_logger_name):
+            ai_manager_module.log_pipeline_execution_record(record, include_evaluations=True)
+            ai_manager_module.log_pipeline_history_snapshot(snapshot)
+            ai_manager_module.log_pipeline_history_diff(diff, include_evaluations=True)
+    finally:
+        history_logger.removeHandler(capture_handler)
+        for handler in previous_handlers:
+            ai_manager_module.logger.addHandler(handler)
+
+    logged_messages = captured_messages or [entry.message for entry in caplog.records]
+    logged = "\n".join(logged_messages)
     assert record.symbol in logged
     assert "Liczba symboli" in logged
     assert "Zmiany w historii pipeline'u" in logged
@@ -726,12 +752,31 @@ def test_format_and_log_ensemble_registry(caplog):
     assert "Zmienione zespoły" in diff_text
 
     history_logger_name = f"{ai_manager_module.logger.name}.history"
-    with caplog.at_level(logging.INFO, logger=history_logger_name):
-        ai_manager_module.log_ensemble_definition(definition)
-        ai_manager_module.log_ensemble_registry_snapshot(before_snapshot)
-        ai_manager_module.log_ensemble_registry_diff(diff)
+    history_logger = logging.getLogger(history_logger_name)
+    previous_handlers = list(ai_manager_module.logger.handlers)
+    for handler in previous_handlers:
+        ai_manager_module.logger.removeHandler(handler)
+    caplog.clear()
+    captured_messages = []
 
-    logged = "\n".join(entry.message for entry in caplog.records)
+    class _EnsembleCapture(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:  # pragma: no cover - prosty kolektor
+            captured_messages.append(record.getMessage())
+
+    capture_handler = _EnsembleCapture()
+    history_logger.addHandler(capture_handler)
+    try:
+        with caplog.at_level(logging.INFO, logger=history_logger_name):
+            ai_manager_module.log_ensemble_definition(definition)
+            ai_manager_module.log_ensemble_registry_snapshot(before_snapshot)
+            ai_manager_module.log_ensemble_registry_diff(diff)
+    finally:
+        history_logger.removeHandler(capture_handler)
+        for handler in previous_handlers:
+            ai_manager_module.logger.addHandler(handler)
+
+    logged_messages = captured_messages or [entry.message for entry in caplog.records]
+    logged = "\n".join(logged_messages)
     assert "Zespół: hybrid" in logged
     assert "Liczba zespołów" in logged
     assert "Zmiany w rejestrze zespołów" in logged
