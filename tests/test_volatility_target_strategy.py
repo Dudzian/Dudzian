@@ -1,8 +1,39 @@
+from collections import deque
+from math import log, sqrt
+
+import pytest
+
+from bot_core.strategies.base import MarketSnapshot
 from bot_core.strategies.volatility_target import (
     VolatilityTargetSettings,
     VolatilityTargetStrategy,
+    _SymbolState,
 )
 from tests.fixtures import build_volatility_series_fixture
+
+
+def make_snapshot(
+    *,
+    symbol: str = "BTC/USDT",
+    timestamp: int = 0,
+    open_price: float | None = None,
+    high: float | None = None,
+    low: float | None = None,
+    close: float = 1.0,
+) -> MarketSnapshot:
+    """Build a minimal ``MarketSnapshot`` for helper tests."""
+
+    open_value = close if open_price is None else open_price
+    high_value = close if high is None else high
+    low_value = close if low is None else low
+    return MarketSnapshot(
+        symbol=symbol,
+        timestamp=timestamp,
+        open=open_value,
+        high=high_value,
+        low=low_value,
+        close=close,
+    )
 
 
 def test_volatility_target_rebalances_when_threshold_exceeded() -> None:
@@ -42,3 +73,73 @@ def test_volatility_target_waits_for_full_history() -> None:
     signals = strategy.on_data(next_snapshot)
 
     assert signals == []
+
+
+def test_realized_volatility_handles_empty_and_populated_returns() -> None:
+    settings = VolatilityTargetSettings(lookback=5)
+    strategy = VolatilityTargetStrategy(settings)
+    state = _SymbolState(returns=deque(maxlen=settings.history_size()))
+
+    assert strategy._realized_volatility(state) == 0.0
+
+    sample_returns = [0.1, -0.05, 0.2]
+    state.returns.extend(sample_returns)
+    realized = strategy._realized_volatility(state)
+
+    mean_ret = sum(sample_returns) / len(sample_returns)
+    variance = sum((value - mean_ret) ** 2 for value in sample_returns) / (len(sample_returns) - 1)
+    assert realized == pytest.approx(sqrt(variance))
+
+
+def test_update_state_appends_returns_and_updates_last_price() -> None:
+    settings = VolatilityTargetSettings(lookback=3)
+    strategy = VolatilityTargetStrategy(settings)
+    state = _SymbolState(returns=deque(maxlen=settings.history_size()))
+
+    first = make_snapshot(close=100.0)
+    strategy._update_state(state, first)
+
+    assert list(state.returns) == []
+    assert state.last_price == 100.0
+
+    second = make_snapshot(close=110.0)
+    strategy._update_state(state, second)
+
+    assert list(state.returns) == [pytest.approx(log(110.0 / 100.0))]
+    assert state.last_price == 110.0
+
+    negative_close = make_snapshot(close=-50.0)
+    strategy._update_state(state, negative_close)
+
+    assert len(state.returns) == 1
+    assert state.last_price == -50.0
+
+
+@pytest.mark.parametrize(
+    "realized, expected",
+    [
+        (0.0, 1.0),  # floor volatility triggers max clamp
+        (10.0, 0.1),  # high vol clamps to min allocation
+        (0.2, 0.5),  # mid vol stays within bounds
+    ],
+)
+def test_target_allocation_applies_floor_and_clamps(realized: float, expected: float) -> None:
+    settings = VolatilityTargetSettings(
+        target_volatility=0.1,
+        lookback=5,
+        min_allocation=0.1,
+        max_allocation=1.0,
+        floor_volatility=0.05,
+    )
+    strategy = VolatilityTargetStrategy(settings)
+
+    assert strategy._target_allocation(realized) == pytest.approx(expected)
+
+
+def test_should_rebalance_threshold_and_positive_target() -> None:
+    settings = VolatilityTargetSettings(rebalance_threshold=0.1)
+    strategy = VolatilityTargetStrategy(settings)
+
+    assert strategy._should_rebalance(0.0, 1.0) is False
+    assert strategy._should_rebalance(1.0, 0.05) is False
+    assert strategy._should_rebalance(1.0, 0.1) is True
