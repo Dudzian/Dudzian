@@ -4,7 +4,7 @@ Ten runbook opisuje, jak uruchomić, monitorować i bezpiecznie zatrzymać tryb 
 
 > **AutoTrader – tryb demo/paper**: moduł AutoTradera automatycznie przełącza ExecutionService na `PaperTradingAdapter` zawsze, gdy strategia pracuje w trybie `demo`/`paper`. Paper trading zostaje również wymuszony, gdy brak jest skonfigurowanego adaptera live i aktywny pozostaje profil testnet. Dzięki temu każde środowisko bez produkcyjnych kluczy wykonuje zlecenia w silniku paper, a operatorzy mogą bezpiecznie weryfikować strategię bez manualnego przełączania.
 >
-> **Początkowy balance**: przy włączaniu silnika paper AutoTrader pobiera saldo w kolejności: (1) z bieżącego GUI (`paper_balance`), (2) z konfiguracji strategii (np. pola `paper_balance`/`paper_capital`), (3) z aktywnego profilu ryzyka (jeśli udostępnia `paper_balance` lub analogiczne pole), a dopiero na końcu używa wartości domyślnej `10_000 USDT`. Aby zmienić startowy balans, ustaw `paper_balance` w GUI (zakładka „Portfolio”) lub skoryguj odpowiednią wartość w konfiguracji strategii bądź profilu ryzyka przed uruchomieniem sesji.
+> **Początkowy balance**: przy włączaniu silnika paper AutoTrader pobiera saldo w kolejności: (1) z bieżącego GUI (`paper_balance`), (2) z konfiguracji strategii lub aktywnego profilu ryzyka (np. limitów `max_position_usd`/`max_position_pct`), a dopiero na końcu używa wartości domyślnej `10_000 USDT`. Aby zmienić startowy balans, ustaw `paper_balance` w GUI (zakładka „Portfolio”) lub skoryguj odpowiednie limity w strategii/profilu ryzyka przed uruchomieniem sesji.
 
 ## 1. Prerekwizyty operacyjne
 
