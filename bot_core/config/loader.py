@@ -25,6 +25,7 @@ from bot_core.config.models import (
     EnvironmentConfig,
     EnvironmentDataSourceConfig,
     EnvironmentDataQualityConfig,
+    EnvironmentStreamConfig,
     EnvironmentReportStorageConfig,
     RiskDecisionLogConfig,
     SecurityBaselineConfig,
@@ -906,6 +907,58 @@ def _load_environment_data_source(entry: Optional[Mapping[str, Any]]):
     return EnvironmentDataSourceConfig(
         enable_snapshots=enable_snapshots,
         cache_namespace=namespace,
+    )
+
+
+def _load_environment_stream(entry: Optional[Mapping[str, Any]]):
+    """Mapuje sekcję stream środowiska na konfigurację gateway'a."""
+
+    if EnvironmentStreamConfig is None or not entry:
+        return None
+
+    if not isinstance(entry, Mapping):
+        raise TypeError("Sekcja environment.stream musi być obiektem mapującym")
+
+    enabled = bool(entry.get("enabled", True))
+    host_raw = entry.get("host", "127.0.0.1")
+    host = str(host_raw) if host_raw not in (None, "") else "127.0.0.1"
+    port_raw = entry.get("port", 8765)
+    try:
+        port = int(port_raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("environment.stream.port musi być liczbą całkowitą") from exc
+    scheme_raw = entry.get("scheme", "http")
+    scheme = str(scheme_raw) if scheme_raw not in (None, "") else "http"
+    retry_after_raw = entry.get("retry_after")
+    retry_after = None
+    if retry_after_raw not in (None, ""):
+        try:
+            retry_after = float(retry_after_raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("environment.stream.retry_after musi być liczbą") from exc
+    poll_interval_raw = entry.get("poll_interval")
+    poll_interval = None
+    if poll_interval_raw not in (None, ""):
+        try:
+            poll_interval = float(poll_interval_raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("environment.stream.poll_interval musi być liczbą") from exc
+    state_ttl_raw = entry.get("state_ttl")
+    state_ttl = None
+    if state_ttl_raw not in (None, ""):
+        try:
+            state_ttl = float(state_ttl_raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("environment.stream.state_ttl musi być liczbą") from exc
+
+    return EnvironmentStreamConfig(
+        enabled=enabled,
+        host=host,
+        port=port,
+        scheme=scheme,
+        retry_after=retry_after,
+        poll_interval=poll_interval,
+        state_ttl=state_ttl,
     )
 
 
@@ -3144,6 +3197,11 @@ def load_core_config(path: str | Path) -> CoreConfig:
             )
             if not forbidden_permissions and profile_forbidden:
                 forbidden_permissions = tuple(profile_forbidden)
+        adapter_settings_raw = (entry.get("adapter_settings", {}) or {})
+        adapter_settings: dict[str, Any] = {
+            str(key): value for key, value in adapter_settings_raw.items()
+        }
+
         env_kwargs: dict[str, Any] = {
             "name": name,
             "exchange": entry["exchange"],
@@ -3155,10 +3213,7 @@ def load_core_config(path: str | Path) -> CoreConfig:
             "ip_allowlist": tuple(entry.get("ip_allowlist", ()) or ()),
             "credential_purpose": str(entry.get("credential_purpose", "trading")),
             "instrument_universe": entry.get("instrument_universe"),
-            "adapter_settings": {
-                str(key): value
-                for key, value in (entry.get("adapter_settings", {}) or {}).items()
-            },
+            "adapter_settings": adapter_settings,
             "adapter_factories": {
                 str(key): value
                 for key, value in (entry.get("adapter_factories", {}) or {}).items()
@@ -3194,6 +3249,19 @@ def load_core_config(path: str | Path) -> CoreConfig:
             env_kwargs["data_quality"] = _load_data_quality(entry.get("data_quality"))
         if _env_has("ai"):
             env_kwargs["ai"] = _load_environment_ai(entry.get("ai"), base_dir=config_base_dir)
+        if _env_has("stream"):
+            stream_config = _load_environment_stream(entry.get("stream"))
+            env_kwargs["stream"] = stream_config
+            if stream_config and stream_config.enabled:
+                stream_section_raw = adapter_settings.get("stream")
+                if isinstance(stream_section_raw, Mapping):
+                    stream_section = dict(stream_section_raw)
+                else:
+                    stream_section = {}
+                stream_section.setdefault("base_url", stream_config.base_url)
+                if stream_config.poll_interval is not None:
+                    stream_section.setdefault("poll_interval", float(stream_config.poll_interval))
+                adapter_settings["stream"] = stream_section
         environments[name] = EnvironmentConfig(**env_kwargs)
 
     risk_profiles = {
