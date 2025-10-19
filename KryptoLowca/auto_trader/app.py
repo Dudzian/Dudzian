@@ -33,7 +33,22 @@ from KryptoLowca.config_manager import StrategyConfig
 from KryptoLowca.telemetry.prometheus_exporter import metrics as prometheus_metrics
 from KryptoLowca.core.services import ExecutionService, RiskService, SignalService, exception_guard
 from KryptoLowca.core.services.data_provider import ExchangeDataProvider
-from bot_core.runtime import PaperTradingAdapter, resolve_core_config_path
+try:  # pragma: no cover - zależności runtime mogą być niekompletne
+    from bot_core.runtime import PaperTradingAdapter  # type: ignore[attr-defined]
+except Exception:  # pragma: no cover - fallback gdy adapter nie jest eksportowany
+    try:
+        from bot_core.runtime.paper_trading import PaperTradingAdapter  # type: ignore
+    except Exception:
+        PaperTradingAdapter = None  # type: ignore
+
+try:  # pragma: no cover - resolve_core_config_path nie zawsze dostępny w __all__
+    from bot_core.runtime import resolve_core_config_path  # type: ignore[attr-defined]
+except Exception:  # pragma: no cover - fallback do modułu paths
+    try:
+        from bot_core.runtime.paths import resolve_core_config_path  # type: ignore
+    except Exception:  # pragma: no cover - ostateczny fallback
+        def resolve_core_config_path(*_: Any, **__: Any) -> Path | None:
+            return None
 from bot_core.runtime.metadata import (
     RiskManagerSettings,
     load_risk_manager_settings,
@@ -610,9 +625,15 @@ class AutoTrader:
                     continue
                 if key == "exchange":
                     if isinstance(val, Mapping):
-                        self._exchange_config = dict(val)
+                        exchange_payload = dict(val)
+                        if "adapter" in exchange_payload:
+                            self._live_execution_adapter = exchange_payload["adapter"]
+                        self._exchange_config = exchange_payload
                     else:
                         self._exchange_config = None
+                    if not self._paper_enabled:
+                        adapter = self._live_execution_adapter or _NullExchangeAdapter(self.emitter)
+                        self._execution_service.set_adapter(adapter)
                     continue
                 if key == "enable_auto_trade":
                     self.set_enable_auto_trade(bool(val))
@@ -1286,8 +1307,10 @@ class AutoTrader:
     def _refresh_execution_mode(self) -> None:
         cfg = self._get_strategy_config()
         exchange_cfg = self._exchange_config or {}
-        testnet = bool(exchange_cfg.get("testnet", True))
-        if cfg.mode == "demo" and not testnet:
+        testnet_active = bool(exchange_cfg.get("testnet", True))
+        mode = str(getattr(cfg, "mode", "")).lower()
+        has_live_adapter = self._live_execution_adapter is not None
+        if mode in {"demo", "paper"} or (not has_live_adapter and testnet_active):
             self._enable_paper_trading()
         else:
             self._disable_paper_trading()
@@ -1303,8 +1326,8 @@ class AutoTrader:
     def _disable_paper_trading(self) -> None:
         if not self._paper_enabled:
             return
-        if self._live_execution_adapter is not None:
-            self._execution_service.set_adapter(self._live_execution_adapter)
+        target_adapter = self._live_execution_adapter or _NullExchangeAdapter(self.emitter)
+        self._execution_service.set_adapter(target_adapter)
         self._paper_adapter = None
         self._paper_enabled = False
         self.emitter.log("Paper trading engine disabled", component="AutoTrader")
