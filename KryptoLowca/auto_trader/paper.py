@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import shlex
 import signal
 import threading
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
+from datetime import datetime
 from types import SimpleNamespace
 from pathlib import Path
-from typing import Callable, Iterable, Optional
+from typing import Any, Callable, Iterable, Mapping, Optional
 
 from KryptoLowca.event_emitter_adapter import (
     DummyMarketFeed,
@@ -19,6 +22,7 @@ from KryptoLowca.event_emitter_adapter import (
 from KryptoLowca.logging_utils import get_logger
 
 from .app import AutoTrader
+from bot_core.execution import ExecutionService
 from bot_core.runtime.metadata import (
     RiskManagerSettings,
     load_risk_manager_settings,
@@ -166,7 +170,12 @@ class PaperAutoTradeApp:
         use_dummy_feed: bool = True,
         paper_balance: float = DEFAULT_PAPER_BALANCE,
         core_config_path: str | Path | None = None,
+        core_environment: str | None = None,
         risk_profile: str | None = None,
+        bootstrap_context: Any | None = None,
+        execution_service: ExecutionService | None = None,
+        gui: object | None = None,
+        headless_stub: HeadlessTradingStub | None = None,
     ) -> None:
         self.symbol = symbol or DEFAULT_SYMBOL
         self.enable_gui = enable_gui
@@ -174,11 +183,17 @@ class PaperAutoTradeApp:
         self.paper_balance = paper_balance
 
         self.core_config_path = self._resolve_core_config_path(core_config_path)
+        self.core_environment = self._infer_environment_hint(
+            core_environment,
+            bootstrap_context,
+        )
+        self.bootstrap_context = bootstrap_context
         (
             self.risk_profile_name,
             self.risk_profile_config,
             loaded_settings,
         ) = self._load_risk_settings(risk_profile)
+        initial_settings_loaded = loaded_settings is not None
         self.risk_manager_settings = loaded_settings or _default_risk_settings()
         if self.risk_profile_name:
             logger.info(
@@ -191,20 +206,105 @@ class PaperAutoTradeApp:
         wire_gui_logs_to_adapter(self.adapter)
 
         self._gui_risk_listener_active = False
+        self._listeners: list[
+            Callable[[RiskManagerSettings, str | None, object | None], None]
+        ] = []
+        self._provided_gui = gui
+        self.headless_stub = headless_stub
         self.gui, self.symbol_getter = self._build_gui()
+        self._sync_headless_stub_settings()
+
+        resolved_execution_service = self._resolve_execution_service(
+            bootstrap_context,
+            execution_service,
+        )
+
+        autotrader_kwargs: dict[str, Any] = {"walkforward_interval_s": None}
+        if resolved_execution_service is not None:
+            autotrader_kwargs["execution_service"] = resolved_execution_service
+        if bootstrap_context is not None:
+            autotrader_kwargs["bootstrap_context"] = bootstrap_context
+
         self.trader = AutoTrader(
             self.adapter.emitter,
             self.gui,
             self.symbol_getter,
-            walkforward_interval_s=None,
+            **autotrader_kwargs,
         )
         self.feed = self._build_feed()
         self._stop_event = threading.Event()
         self._stopped = True
         self._risk_watch_stop = threading.Event()
         self._risk_watch_thread: Optional[threading.Thread] = None
-        self._risk_watch_interval = 5.0
-        self._risk_config_mtime = self._get_risk_config_mtime()
+        self._risk_watch_interval = 2.0
+        initial_mtime = self._get_risk_config_mtime()
+        self._risk_config_mtime: int | None = (
+            int(initial_mtime) if initial_settings_loaded and initial_mtime is not None else None
+        )
+        self._watch_thread: Optional[threading.Thread] = None
+        self._watch_stop_event: threading.Event | None = self._risk_watch_stop
+        self._watch_interval: float = self._risk_watch_interval
+        self._watch_last_mtime: int | None = self._risk_config_mtime
+        self._last_signature: str | None = None
+        self.last_reload_at: datetime | None = None
+        self.reload_count: int = 0
+        self._update_watch_aliases()
+        self._update_bootstrap_context(
+            self.risk_manager_settings,
+            self.risk_profile_config,
+        )
+
+    @staticmethod
+    def _infer_environment_hint(
+        explicit: str | None,
+        bootstrap_context: Any | None,
+    ) -> str | None:
+        if explicit:
+            return explicit
+        if bootstrap_context is None:
+            return None
+
+        candidate = getattr(bootstrap_context, "environment", None)
+        if isinstance(candidate, str) and candidate:
+            return candidate
+        if isinstance(candidate, Mapping):
+            for key in ("name", "environment", "id", "slug"):
+                value = candidate.get(key)  # type: ignore[index]
+                if isinstance(value, str) and value:
+                    return value
+        elif candidate is not None:
+            for attr in ("name", "environment", "id", "slug"):
+                value = getattr(candidate, attr, None)
+                if isinstance(value, str) and value:
+                    return value
+
+        fallback = getattr(bootstrap_context, "environment_name", None)
+        if isinstance(fallback, str) and fallback:
+            return fallback
+        return None
+
+    @staticmethod
+    def _resolve_execution_service(
+        bootstrap_context: Any | None,
+        explicit_service: ExecutionService | None,
+    ) -> ExecutionService | None:
+        if explicit_service is not None:
+            return explicit_service
+
+        if bootstrap_context is None:
+            return None
+
+        candidate = getattr(bootstrap_context, "execution_service", None)
+        if isinstance(candidate, ExecutionService):
+            return candidate
+
+        required = ("execute", "cancel", "flush")
+        if candidate is not None and all(
+            callable(getattr(candidate, attr, None)) for attr in required
+        ):
+            return candidate  # type: ignore[return-value]
+
+        return None
 
     def _resolve_core_config_path(self, explicit: str | Path | None) -> Optional[Path]:
         if explicit is None:
@@ -218,6 +318,10 @@ class PaperAutoTradeApp:
     def _load_risk_settings(
         self, profile: str | None
     ) -> tuple[str | None, object | None, Optional[RiskManagerSettings]]:
+        bootstrap_payload = self._load_risk_settings_from_bootstrap(profile)
+        if bootstrap_payload is not None:
+            return bootstrap_payload
+
         try:
             return load_risk_manager_settings(
                 "auto_trader",
@@ -228,6 +332,135 @@ class PaperAutoTradeApp:
         except Exception:  # pragma: no cover - diagnostyka runtime
             logger.exception("Nie udało się wczytać ustawień risk managera")
             return profile, None, None
+
+    def _load_risk_settings_from_bootstrap(
+        self, profile: str | None
+    ) -> tuple[str | None, object | None, RiskManagerSettings] | None:
+        context = getattr(self, "bootstrap_context", None)
+        if context is None:
+            return None
+
+        candidate = getattr(context, "risk_manager_settings", None)
+        if candidate is None:
+            return None
+
+        settings = self._coerce_risk_settings(candidate)
+        if settings is None:
+            return None
+
+        context_profile = getattr(context, "risk_profile_name", None)
+        requested = (profile or "").strip().lower() or None
+        context_normalized = (
+            str(context_profile).strip().lower() if isinstance(context_profile, str) else None
+        )
+        if requested and context_normalized and requested != context_normalized:
+            return None
+
+        effective_profile = context_profile or profile
+        profile_payload = getattr(context, "risk_profile_config", None)
+        return effective_profile, profile_payload, settings
+
+    def _coerce_risk_settings(
+        self, candidate: object
+    ) -> RiskManagerSettings | None:
+        if isinstance(candidate, RiskManagerSettings):
+            return candidate
+
+        defaults = _default_risk_settings()
+
+        def _read_value(*keys: str) -> object | None:
+            for key in keys:
+                if isinstance(candidate, Mapping) and key in candidate:
+                    return candidate[key]
+                attr = key.replace("-", "_")
+                if hasattr(candidate, attr):
+                    return getattr(candidate, attr)
+            return None
+
+        def _coerce_float(value: object | None, fallback: float) -> float:
+            if value is None:
+                return fallback
+            try:
+                return float(value)
+            except Exception:
+                return fallback
+
+        def _coerce_int(value: object | None, fallback: int) -> int:
+            if value is None:
+                return fallback
+            try:
+                return int(value)
+            except Exception:
+                return fallback
+
+        max_risk = _coerce_float(
+            _read_value("max_risk_per_trade", "max_position_pct", "max_position_notional_pct"),
+            defaults.max_risk_per_trade,
+        )
+        daily_loss = _coerce_float(
+            _read_value("max_daily_loss_pct", "max_daily_loss"),
+            defaults.max_daily_loss_pct,
+        )
+        portfolio_risk = _coerce_float(
+            _read_value("max_portfolio_risk", "max_portfolio_risk_pct"),
+            defaults.max_portfolio_risk,
+        )
+        max_positions = _coerce_int(_read_value("max_positions"), defaults.max_positions)
+        drawdown = _coerce_float(
+            _read_value("emergency_stop_drawdown", "max_drawdown_pct"),
+            defaults.emergency_stop_drawdown,
+        )
+
+        def _coerce_optional_float(value: object | None) -> float | None:
+            if value is None:
+                return None
+            try:
+                return float(value)
+            except Exception:
+                return None
+
+        confidence = _coerce_optional_float(_read_value("confidence_level"))
+        target_vol = _coerce_optional_float(_read_value("target_volatility"))
+        profile_name = _read_value("profile_name")
+        normalized_profile = str(profile_name) if isinstance(profile_name, str) else None
+
+        try:
+            return RiskManagerSettings(
+                max_risk_per_trade=max_risk,
+                max_daily_loss_pct=daily_loss,
+                max_portfolio_risk=portfolio_risk,
+                max_positions=max_positions,
+                emergency_stop_drawdown=drawdown,
+                confidence_level=confidence,
+                target_volatility=target_vol,
+                profile_name=normalized_profile,
+            )
+        except Exception:
+            logger.debug(
+                "Nie udało się znormalizować ustawień ryzyka z kontekstu bootstrap", exc_info=True
+            )
+            return None
+
+    def add_listener(
+        self,
+        listener: Callable[[RiskManagerSettings, str | None, object | None], None],
+    ) -> None:
+        """Rejestruje callback informowany o aktualizacji limitów ryzyka."""
+
+        self._listeners.append(listener)
+
+        # Zapewniamy natychmiastową synchronizację nowego słuchacza z aktualnym
+        # stanem profilu, aby komponenty dziedziczące z legacy API nie musiały
+        # inicjować dodatkowego przeładowania tylko po to, by uzyskać bieżące
+        # ustawienia limitów.
+        try:
+            listener(
+                self.risk_manager_settings,
+                self.risk_profile_name,
+                self.risk_profile_config,
+            )
+        except Exception:  # pragma: no cover - defensywne logowanie
+            logger.exception("Słuchacz aktualizacji ryzyka zgłosił wyjątek przy rejestracji")
 
     def reload_risk_profile(self, profile: str | None = None) -> RiskManagerSettings:
         """Przeładowuje profil ryzyka i propaguje go do GUI lub stuba."""
@@ -245,6 +478,7 @@ class PaperAutoTradeApp:
             settings = _default_risk_settings()
 
         self.risk_manager_settings = settings
+        self._sync_headless_stub_settings()
 
         gui_reload = getattr(self.gui, "reload_risk_profile", None)
         notified_via_gui = False
@@ -269,14 +503,89 @@ class PaperAutoTradeApp:
             except Exception:
                 logger.debug("Nie udało się zaktualizować risk_manager_settings na GUI")
 
+        signature = self._make_signature(
+            settings,
+            self.risk_profile_name,
+            profile_payload,
+            environment=self.core_environment,
+        )
+        changed = signature != self._last_signature
+        self._last_signature = signature
+        self.reload_count += 1
+        self.last_reload_at = datetime.utcnow()
+
         self.risk_profile_config = profile_payload
-        if not notified_via_gui:
+        if changed and not notified_via_gui:
             self._notify_trader_of_risk_update(settings, profile_payload)
+            self._notify_listeners(settings, profile_payload)
         self._risk_config_mtime = self._get_risk_config_mtime()
+        self._update_watch_aliases()
         logger.info("Zaktualizowano profil ryzyka na: %s", self.risk_profile_name)
+        self._update_bootstrap_context(settings, profile_payload)
         return settings
 
+    def reload_risk_settings(
+        self,
+        *,
+        config_path: str | Path | None = None,
+        environment: str | None = None,
+    ) -> tuple[str | None, RiskManagerSettings, object | None]:
+        """Zachowuje kompatybilność z historycznym API launchera."""
+
+        if config_path is not None:
+            self.core_config_path = self._resolve_core_config_path(config_path)
+        if environment is not None:
+            self.core_environment = environment
+
+        settings = self.reload_risk_profile(self.risk_profile_name)
+        return self.risk_profile_name, settings, self.risk_profile_config
+
     def _build_gui(self) -> tuple[object, Callable[[], str]]:
+        provided_gui = getattr(self, "_provided_gui", None)
+        provided_stub = self.headless_stub
+
+        if provided_gui is not None:
+            self.enable_gui = True
+            gui = provided_gui
+            self._gui_risk_listener_active = False
+            register_listener = getattr(gui, "add_risk_reload_listener", None)
+            if callable(register_listener):
+                try:
+                    register_listener(self._handle_gui_risk_reload)
+                except Exception:  # pragma: no cover - defensywne
+                    logger.debug("Nie udało się zarejestrować listenera GUI", exc_info=True)
+                else:
+                    self._gui_risk_listener_active = True
+            if hasattr(gui, "paper_balance"):
+                try:
+                    setattr(gui, "paper_balance", self.paper_balance)
+                except Exception:  # pragma: no cover - defensywne
+                    logger.debug("Nie udało się ustawić paper_balance na przekazanym GUI", exc_info=True)
+
+            def getter() -> str:
+                symbol_var = getattr(gui, "symbol_var", None)
+                if symbol_var is not None and hasattr(symbol_var, "get"):
+                    try:
+                        value = symbol_var.get()
+                        if value:
+                            return value
+                    except Exception:  # pragma: no cover - defensywne
+                        logger.debug("Nie udało się pobrać symbolu z przekazanego GUI", exc_info=True)
+                getter_method = getattr(gui, "get_symbol", None)
+                if callable(getter_method):
+                    try:
+                        value = getter_method()
+                        if isinstance(value, str) and value:
+                            return value
+                    except Exception:  # pragma: no cover - defensywne
+                        logger.debug("Przekazane GUI zgłosiło wyjątek get_symbol", exc_info=True)
+                value = getattr(gui, "symbol", None)
+                if isinstance(value, str) and value:
+                    return value
+                return self.symbol
+
+            return gui, getter
+
         if self.enable_gui:
             try:
                 import tkinter as tk
@@ -313,12 +622,47 @@ class PaperAutoTradeApp:
                 logger.exception("Nie udało się uruchomić Trading GUI – przełączam na tryb headless")
                 self.enable_gui = False
 
-        stub = HeadlessTradingStub(symbol=self.symbol, paper_balance=self.paper_balance)
-        stub.apply_risk_profile(self.risk_profile_name, self.risk_manager_settings)
+        stub = provided_stub or HeadlessTradingStub(symbol=self.symbol, paper_balance=self.paper_balance)
+        if hasattr(stub, "symbol"):
+            try:
+                setattr(stub, "symbol", self.symbol)
+            except Exception:  # pragma: no cover - defensywne
+                logger.debug("Nie udało się ustawić symbolu na przekazanym stubie", exc_info=True)
+        if hasattr(stub, "paper_balance"):
+            try:
+                setattr(stub, "paper_balance", self.paper_balance)
+            except Exception:  # pragma: no cover - defensywne
+                logger.debug("Nie udało się ustawić salda na przekazanym stubie", exc_info=True)
         self._gui_risk_listener_active = False
+        self.headless_stub = stub
+        initial_settings = self.risk_manager_settings
+        try:
+            apply_profile = getattr(stub, "apply_risk_profile", None)
+            if callable(apply_profile):
+                apply_profile(self.risk_profile_name, initial_settings)
+            else:
+                limits_updater = getattr(stub, "update_risk_limits", None)
+                if callable(limits_updater):
+                    limits_updater(
+                        asdict(initial_settings),
+                        profile_name=self.risk_profile_name,
+                    )
+        except Exception:  # pragma: no cover - defensywne
+            logger.debug("Stub headless nie przyjął ustawień startowych", exc_info=True)
 
         def getter() -> str:
-            return stub.get_symbol()
+            getter_method = getattr(stub, "get_symbol", None)
+            if callable(getter_method):
+                try:
+                    value = getter_method()
+                    if isinstance(value, str) and value:
+                        return value
+                except Exception:  # pragma: no cover - defensywne
+                    logger.debug("Stub headless zgłosił wyjątek get_symbol", exc_info=True)
+            value = getattr(stub, "symbol", None)
+            if isinstance(value, str) and value:
+                return value
+            return self.symbol
 
         return stub, getter
 
@@ -360,6 +704,74 @@ class PaperAutoTradeApp:
             logger.debug("Problem z zamknięciem EventBus", exc_info=True)
         logger.info("AutoTrader paper app stopped")
 
+    def start_auto_reload(self, interval: float | None = None) -> None:
+        """Rozpoczyna monitorowanie pliku konfiguracji ryzyka w tle."""
+
+        if interval is not None:
+            try:
+                value = float(interval)
+            except Exception as exc:  # pragma: no cover - defensywne walidowanie
+                raise ValueError("interval must be positive") from exc
+            if value <= 0:
+                raise ValueError("interval must be positive")
+            self._risk_watch_interval = value
+        self._start_risk_watcher()
+        self._update_watch_aliases()
+
+    def stop_auto_reload(self, timeout: float | None = 1.0) -> None:
+        """Zatrzymuje monitorowanie konfiguracji ryzyka."""
+
+        try:
+            self._stop_risk_watcher(timeout=timeout)
+        except TypeError:
+            self._stop_risk_watcher()  # type: ignore[misc]
+        self._update_watch_aliases()
+
+    def handle_cli_command(self, command: str) -> bool:
+        """Obsługuje uproszczone polecenia CLI kompatybilne z legacy."""
+
+        raw = command.strip()
+        if not raw:
+            return False
+        try:
+            parts = shlex.split(raw)
+        except ValueError:
+            return False
+        if not parts:
+            return False
+        key = parts[0].lower().replace("_", "-")
+        if key not in {"reload-risk", "risk-reload", "reload-risk-config"}:
+            return False
+
+        env_override: str | None = None
+        config_override: str | None = None
+        tokens = iter(parts[1:])
+        for token in tokens:
+            lowered = token.lower()
+            if lowered in {"--env", "-e"}:
+                env_override = next(tokens, None)
+                continue
+            if lowered in {"--config", "-c", "--core"}:
+                config_override = next(tokens, None)
+                continue
+            if lowered.startswith("env="):
+                env_override = token.split("=", 1)[1] or env_override
+                continue
+            if lowered.startswith("config=") or lowered.startswith("core="):
+                config_override = token.split("=", 1)[1] or config_override
+                continue
+            if env_override is None and token:
+                env_override = token
+                continue
+            if config_override is None and token:
+                config_override = token
+
+        self.reload_risk_settings(
+            config_path=config_override,
+            environment=env_override,
+        )
+        return True
+
     def run(self) -> None:
         self.start()
 
@@ -398,19 +810,24 @@ class PaperAutoTradeApp:
         except Exception:  # pragma: no cover - diagnostyka runtime
             logger.exception("Nie udało się przeładować profilu ryzyka po sygnale")
 
-    def _get_risk_config_mtime(self) -> Optional[float]:
+    def _get_risk_config_mtime(self) -> Optional[int]:
         if not self.core_config_path:
             return None
         try:
-            return Path(self.core_config_path).stat().st_mtime
+            stat_result = Path(self.core_config_path).stat()
         except FileNotFoundError:
             return None
         except Exception:  # pragma: no cover - defensywne logowanie
             logger.debug("Nie udało się pobrać mtime konfiguracji core", exc_info=True)
             return None
 
+        try:
+            return int(stat_result.st_mtime_ns)
+        except AttributeError:  # pragma: no cover - fallback dla systemów bez ns
+            return int(stat_result.st_mtime * 1_000_000_000)
+
     def _start_risk_watcher(self) -> None:
-        if self.enable_gui or self.core_config_path is None:
+        if self.core_config_path is None:
             return
         if self._risk_watch_thread and self._risk_watch_thread.is_alive():
             return
@@ -429,31 +846,37 @@ class PaperAutoTradeApp:
             daemon=True,
         )
         self._risk_watch_thread.start()
+        self._update_watch_aliases()
 
-    def _stop_risk_watcher(self) -> None:
+    def _stop_risk_watcher(self, *, timeout: float | None = 1.0) -> None:
         self._risk_watch_stop.set()
         thread = self._risk_watch_thread
         if thread and thread.is_alive():
-            thread.join(timeout=1.5)
+            thread.join(timeout=timeout)
         self._risk_watch_thread = None
         self._risk_watch_stop = threading.Event()
+        self._update_watch_aliases()
 
     def _check_risk_config_change(self) -> bool:
         new_mtime = self._get_risk_config_mtime()
         if new_mtime is None:
             self._risk_config_mtime = None
+            self._update_watch_aliases()
             return False
-        if self._risk_config_mtime is None:
-            self._risk_config_mtime = new_mtime
+        last_known = self._risk_config_mtime
+        if last_known is not None and new_mtime <= last_known:
             return False
-        if new_mtime <= self._risk_config_mtime:
-            return False
-        self._risk_config_mtime = new_mtime
+
         try:
             self.reload_risk_profile()
         except Exception:  # pragma: no cover - diagnostyka runtime
             logger.exception("Automatyczne przeładowanie profilu ryzyka nie powiodło się")
             return False
+
+        if self._risk_config_mtime is None:
+            # reload_risk_profile może nie zaktualizować znacznika w przypadku fallbacków
+            self._risk_config_mtime = new_mtime
+        self._update_watch_aliases()
         return True
 
     def _notify_trader_of_risk_update(
@@ -483,7 +906,105 @@ class PaperAutoTradeApp:
         self.risk_manager_settings = settings
         self.risk_profile_config = profile_payload
         self._notify_trader_of_risk_update(settings, profile_payload)
+        self._notify_listeners(settings, profile_payload)
         self._risk_config_mtime = self._get_risk_config_mtime()
+        self._sync_headless_stub_settings()
+        self._update_bootstrap_context(settings, profile_payload)
+
+    def _notify_listeners(
+        self,
+        settings: RiskManagerSettings,
+        profile_payload: object | None,
+    ) -> None:
+        if not self._listeners:
+            return
+        for listener in list(self._listeners):
+            try:
+                listener(settings, self.risk_profile_name, profile_payload)
+            except Exception:  # pragma: no cover - defensywne logowanie
+                logger.exception("Słuchacz aktualizacji ryzyka zgłosił wyjątek")
+
+    @staticmethod
+    def _make_signature(
+        settings: RiskManagerSettings,
+        profile_name: str | None,
+        profile_payload: object | None,
+        *,
+        environment: str | None,
+    ) -> str:
+        try:
+            settings_payload = json.dumps(asdict(settings), sort_keys=True, default=str)
+        except Exception:  # pragma: no cover - defensywne serializowanie
+            settings_payload = repr(settings)
+
+        try:
+            if isinstance(profile_payload, Mapping):
+                payload_repr = json.dumps(profile_payload, sort_keys=True, default=str)
+            else:
+                payload_repr = json.dumps(profile_payload, sort_keys=True, default=str)
+        except Exception:  # pragma: no cover - defensywne serializowanie
+            payload_repr = repr(profile_payload)
+
+        return "|".join(
+            (
+                profile_name or "",
+                environment or "",
+                settings_payload,
+                payload_repr,
+            )
+        )
+
+    def _update_watch_aliases(self) -> None:
+        """Synchronizuje aliasy kompatybilne z legacy API."""
+
+        self._watch_thread = self._risk_watch_thread
+        self._watch_stop_event = self._risk_watch_stop
+        self._watch_interval = self._risk_watch_interval
+        self._watch_last_mtime = self._risk_config_mtime
+
+    def _sync_headless_stub_settings(self) -> None:
+        stub = self.headless_stub
+        if stub is None or stub is self.gui:
+            return
+        settings = self.risk_manager_settings
+        try:
+            apply_profile = getattr(stub, "apply_risk_profile", None)
+            if callable(apply_profile):
+                apply_profile(self.risk_profile_name, settings)
+                return
+        except Exception:  # pragma: no cover - defensywne
+            logger.exception("Przekazany stub nie przyjął ustawień ryzyka via apply_risk_profile")
+            return
+
+        limits_updater = getattr(stub, "update_risk_limits", None)
+        if callable(limits_updater):
+            try:
+                limits_updater(
+                    asdict(settings),
+                    profile_name=self.risk_profile_name,
+                )
+            except Exception:  # pragma: no cover - defensywne
+                logger.exception("Przekazany stub nie przyjął ustawień ryzyka via update_risk_limits")
+
+    def _update_bootstrap_context(
+        self,
+        settings: RiskManagerSettings,
+        profile_payload: object | None,
+    ) -> None:
+        if self.bootstrap_context is None:
+            return
+        try:
+            setattr(self.bootstrap_context, "risk_profile_name", self.risk_profile_name)
+        except Exception:  # pragma: no cover - kontekst może być tylko-do-odczytu
+            logger.debug("Nie udało się ustawić risk_profile_name na BootstrapContext", exc_info=True)
+        try:
+            setattr(self.bootstrap_context, "risk_profile_config", profile_payload)
+        except Exception:  # pragma: no cover - kontekst może być tylko-do-odczytu
+            logger.debug("Nie udało się ustawić risk_profile_config na BootstrapContext", exc_info=True)
+        try:
+            setattr(self.bootstrap_context, "risk_manager_settings", settings)
+        except Exception:  # pragma: no cover - kontekst może być tylko-do-odczytu
+            logger.debug("Nie udało się ustawić risk_manager_settings na BootstrapContext", exc_info=True)
 
 
 def parse_cli_args(argv: Iterable[str]) -> PaperAutoTradeOptions:

@@ -326,10 +326,8 @@ def _append_decision_log(
 ) -> None:
     if not path:
         if key and not allow_unsigned:
-            return
-        if allow_unsigned:
-            return
-        raise ValueError("Wpis decision logu jest wymagany – podaj --decision-log-path")
+            raise ValueError("Wpis decision logu wymaga --decision-log-path gdy podano klucz HMAC")
+        return
 
     entry = dict(payload)
     if key is not None:
@@ -462,6 +460,23 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover
     parser = _build_parser()
     args = parser.parse_args(argv)
     return args._handler(args)
+
+
+def run(argv: Sequence[str] | None = None) -> int:
+    """Convenient entry point for invoking the CLI programmatically."""
+
+    if argv is None:
+        return main(None)
+
+    args = list(argv)
+    if not args:
+        return main([])
+
+    if args[0] not in {"report", "register"}:
+        args.insert(0, "register")
+
+    return main(args)
+
 
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main())

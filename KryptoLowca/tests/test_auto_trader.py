@@ -236,6 +236,8 @@ def test_autotrader_update_risk_manager_settings_applies_changes() -> None:
         data_provider=StubDataProvider(),
     )
 
+    trader._core_risk_profile = "baseline"
+
     new_settings = RiskManagerSettings(
         max_risk_per_trade=0.08,
         max_daily_loss_pct=0.18,
@@ -260,6 +262,7 @@ def test_autotrader_update_risk_manager_settings_applies_changes() -> None:
 
     assert trader._risk_manager_settings is new_settings
     assert trader._risk_profile_name == "growth"
+    assert trader._core_risk_profile == "growth"
     assert trader._risk_service.max_portfolio_risk_pct == pytest.approx(0.3)
     assert trader._risk_service.max_positions == 9
     cfg = trader._get_strategy_config()
