@@ -1,4 +1,4 @@
-"""Integracja Decision Engine z asynchronicznym `AIManagerem` z KryptoLowca."""
+"""Integracja Decision Engine z natywnym menedżerem modeli ``bot_core.ai.manager``."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field

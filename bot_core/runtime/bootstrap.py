@@ -38,6 +38,29 @@ from bot_core.alerts import (
     get_sms_provider,
 )
 from bot_core.alerts.base import AlertAuditLog, AlertChannel
+
+_ALERT_COMPONENT_CACHE: dict[str, Any] | None = None
+
+
+def _get_alert_components() -> Mapping[str, Any]:
+    """Return alert-related classes without repeated imports."""
+
+    global _ALERT_COMPONENT_CACHE
+    if _ALERT_COMPONENT_CACHE is None:
+        _ALERT_COMPONENT_CACHE = {
+            "AlertThrottle": AlertThrottle,
+            "DefaultAlertRouter": DefaultAlertRouter,
+            "FileAlertAuditLog": FileAlertAuditLog,
+            "InMemoryAlertAuditLog": InMemoryAlertAuditLog,
+            "TelegramChannel": TelegramChannel,
+            "EmailChannel": EmailChannel,
+            "SMSChannel": SMSChannel,
+            "SignalChannel": SignalChannel,
+            "MessengerChannel": MessengerChannel,
+            "WhatsAppChannel": WhatsAppChannel,
+            "get_sms_provider": get_sms_provider,
+        }
+    return _ALERT_COMPONENT_CACHE
 from bot_core.alerts.channels.providers import SmsProviderConfig
 from bot_core.config.loader import load_core_config
 from bot_core.config.models import (
@@ -127,27 +150,46 @@ if TYPE_CHECKING:  # pragma: no cover - tylko do typów
         InstrumentUniverseConfig,
     )
 else:  # pragma: no cover - w runtime typy nie są wymagane
-    DefaultAlertRouter = Any  # type: ignore[misc,assignment]
-    AlertAuditLog = Any  # type: ignore[misc,assignment]
-    AlertChannel = Any  # type: ignore[misc,assignment]
-    EmailChannel = Any  # type: ignore[misc,assignment]
-    SMSChannel = Any  # type: ignore[misc,assignment]
-    TelegramChannel = Any  # type: ignore[misc,assignment]
-    SignalChannel = Any  # type: ignore[misc,assignment]
-    WhatsAppChannel = Any  # type: ignore[misc,assignment]
-    MessengerChannel = Any  # type: ignore[misc,assignment]
-    SmsProviderConfig = Any  # type: ignore[misc,assignment]
-    CoreConfig = Any  # type: ignore[misc,assignment]
-    DecisionJournalConfig = Any  # type: ignore[misc,assignment]
-    EmailChannelSettings = Any  # type: ignore[misc,assignment]
-    EnvironmentConfig = Any  # type: ignore[misc,assignment]
-    MessengerChannelSettings = Any  # type: ignore[misc,assignment]
-    RiskProfileConfig = Any  # type: ignore[misc,assignment]
-    SMSProviderSettings = Any  # type: ignore[misc,assignment]
-    SignalChannelSettings = Any  # type: ignore[misc,assignment]
-    TelegramChannelSettings = Any  # type: ignore[misc,assignment]
-    WhatsAppChannelSettings = Any  # type: ignore[misc,assignment]
-    InstrumentUniverseConfig = Any  # type: ignore[misc,assignment]
+    if "DefaultAlertRouter" not in globals():
+        DefaultAlertRouter = Any  # type: ignore[misc,assignment]
+    if "AlertAuditLog" not in globals():
+        AlertAuditLog = Any  # type: ignore[misc,assignment]
+    if "AlertChannel" not in globals():
+        AlertChannel = Any  # type: ignore[misc,assignment]
+    if "EmailChannel" not in globals():
+        EmailChannel = Any  # type: ignore[misc,assignment]
+    if "SMSChannel" not in globals():
+        SMSChannel = Any  # type: ignore[misc,assignment]
+    if "TelegramChannel" not in globals():
+        TelegramChannel = Any  # type: ignore[misc,assignment]
+    if "SignalChannel" not in globals():
+        SignalChannel = Any  # type: ignore[misc,assignment]
+    if "WhatsAppChannel" not in globals():
+        WhatsAppChannel = Any  # type: ignore[misc,assignment]
+    if "MessengerChannel" not in globals():
+        MessengerChannel = Any  # type: ignore[misc,assignment]
+    if "SmsProviderConfig" not in globals():
+        SmsProviderConfig = Any  # type: ignore[misc,assignment]
+    if "CoreConfig" not in globals():
+        CoreConfig = Any  # type: ignore[misc,assignment]
+    if "DecisionJournalConfig" not in globals():
+        DecisionJournalConfig = Any  # type: ignore[misc,assignment]
+    if "EmailChannelSettings" not in globals():
+        EmailChannelSettings = Any  # type: ignore[misc,assignment]
+    if "EnvironmentConfig" not in globals():
+        EnvironmentConfig = Any  # type: ignore[misc,assignment]
+    if "MessengerChannelSettings" not in globals():
+        MessengerChannelSettings = Any  # type: ignore[misc,assignment]
+    if "RiskProfileConfig" not in globals():
+        RiskProfileConfig = Any  # type: ignore[misc,assignment]
+    if "SMSProviderSettings" not in globals():
+        SMSProviderSettings = Any  # type: ignore[misc,assignment]
+    if "SignalChannelSettings" not in globals():
+        SignalChannelSettings = Any  # type: ignore[misc,assignment]
+    if "TelegramChannelSettings" not in globals():
+        TelegramChannelSettings = Any  # type: ignore[misc,assignment]
+    if "WhatsAppChannelSettings" not in globals():
+        WhatsAppChannelSettings = Any  # type: ignore[misc,assignment]
 
 from bot_core.runtime.journal import (
     InMemoryTradingDecisionJournal,
@@ -168,9 +210,9 @@ except Exception:  # pragma: no cover
     DecisionOrchestrator = None  # type: ignore
 
 try:  # pragma: no cover - integracja z AIManagerem jest opcjonalna
-    from bot_core.ai_manager import AIManager  # type: ignore[attr-defined]
-except Exception:  # pragma: no cover - środowiska bez modułu bot_core.ai_manager
-    AIManager = None  # type: ignore
+    from bot_core.ai.manager import AIManager
+except Exception:  # pragma: no cover - środowiska bez modułu bot_core.ai.manager
+    AIManager = None  # type: ignore[assignment]
 
 # --- Metrics service (opcjonalny – w niektórych gałęziach może nie istnieć) ---
 try:  # pragma: no cover - środowiska bez grpcio lub wygenerowanych stubów
@@ -1283,22 +1325,39 @@ def bootstrap_environment(
             _LOGGER.critical("Weryfikacja licencji OEM nie powiodła się: %s", exc)
             raise RuntimeError(str(exc)) from exc
     else:
-        if license_result.warnings:
-            for message in license_result.warnings:
-                _LOGGER.warning("Weryfikacja licencji: %s", message)
-        _LOGGER.info(
-            "Licencja OEM zweryfikowana (id=%s, fingerprint=%s, wygasa=%s, revocation=%s)",
-            license_result.license_id or "brak",
-            license_result.fingerprint,
-            license_result.expires_at or "brak informacji",
-            license_result.revocation_status or "n/a",
-        )
-        emit_alert(
-            "Licencja OEM zweryfikowana pomyślnie." if not license_result.warnings else "Licencja OEM zweryfikowana z ostrzeżeniami.",
-            severity=AlertSeverity.WARNING if license_result.warnings else AlertSeverity.INFO,
-            source="security.license",
-            context=license_result.to_context(),
-        )
+        try:
+            license_result = validate_license_from_config(license_config)
+        except LicenseValidationError as exc:
+            context = exc.result.to_context() if exc.result else {
+                "status": "invalid",
+                "license_path": str(Path(license_config.license_path).expanduser()),
+            }
+            emit_alert(
+                "Weryfikacja licencji OEM zakończona błędem – zatrzymuję kontroler.",
+                severity=AlertSeverity.CRITICAL,
+                source="security.license",
+                context=context,
+                exception=exc,
+            )
+            _LOGGER.critical("Weryfikacja licencji OEM nie powiodła się: %s", exc)
+            raise RuntimeError(str(exc)) from exc
+        else:
+            if license_result.warnings:
+                for message in license_result.warnings:
+                    _LOGGER.warning("Weryfikacja licencji: %s", message)
+            _LOGGER.info(
+                "Licencja OEM zweryfikowana (id=%s, fingerprint=%s, wygasa=%s, revocation=%s)",
+                license_result.license_id or "brak",
+                license_result.fingerprint,
+                license_result.expires_at or "brak informacji",
+                license_result.revocation_status or "n/a",
+            )
+            emit_alert(
+                "Licencja OEM zweryfikowana pomyślnie." if not license_result.warnings else "Licencja OEM zweryfikowana z ostrzeżeniami.",
+                severity=AlertSeverity.WARNING if license_result.warnings else AlertSeverity.INFO,
+                source="security.license",
+                context=license_result.to_context(),
+            )
 
     from bot_core.runtime.metadata import derive_risk_manager_settings
 
@@ -1395,7 +1454,7 @@ def bootstrap_environment(
         ai_threshold_bps = float(environment_ai.threshold_bps)
         if AIManager is None:
             _LOGGER.warning(
-                "Sekcja environment.ai została zignorowana: moduł KryptoLowca.ai_manager nie jest dostępny"
+                "Sekcja environment.ai została zignorowana: moduł bot_core.ai.manager nie jest dostępny"
             )
         else:
             model_dir_value = environment_ai.model_dir
