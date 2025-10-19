@@ -449,16 +449,27 @@ class ConfigManager:
     ) -> Dict[str, Any]:
         preset = self.get_marketplace_preset(preset_id)
         merged = dict(self._current_config)
-        for section, payload in preset.items():
+
+        config_mapping: Mapping[str, Any]
+        if isinstance(getattr(preset, "config", None), Mapping):
+            config_mapping = preset.config  # type: ignore[assignment]
+        elif isinstance(preset, Mapping):
+            config_mapping = preset
+        else:
+            raise ConfigError("Preset does not expose a valid config mapping")
+
+        for section, payload in dict(config_mapping).items():
             merged[section] = payload
+
         # metadane
-        merged.setdefault("meta", {})
-        merged["meta"]["last_preset"] = preset_id
-        merged["meta"]["actor"] = actor or "system"
+        meta = dict(merged.get("meta", {}))
+        meta["last_preset"] = preset_id
+        meta["actor"] = actor or "system"
         if user_confirmed:
-            merged["meta"]["user_confirmed"] = True
+            meta["user_confirmed"] = True
         if note:
-            merged["meta"]["note"] = note
+            meta["note"] = note
+        merged["meta"] = meta
         self._current_config = merged
         return merged
 
