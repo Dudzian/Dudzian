@@ -399,7 +399,20 @@ def decrypt_config(token: bytes, key: bytes) -> Dict[str, Any]:
         payload = f.decrypt(token)
     except InvalidToken as exc:
         raise ConfigError("Zły klucz lub uszkodzony plik konfiguracyjny") from exc
-    return json.loads(payload.decode("utf-8"))
+    try:
+        text_payload = payload.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ConfigError("Nieprawidłowe kodowanie konfiguracji") from exc
+
+    try:
+        data = json.loads(text_payload)
+    except json.JSONDecodeError as exc:
+        raise ConfigError("Nie można odczytać konfiguracji") from exc
+
+    if not isinstance(data, dict):
+        raise ConfigError("Nieprawidłowy format konfiguracji: oczekiwano obiektu JSON")
+
+    return data
 
 
 def save_encrypted_config(path: str | Path, data: Dict[str, Any], key: bytes) -> None:
