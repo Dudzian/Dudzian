@@ -101,7 +101,11 @@ class AIConfig:
                 "window_seconds": self.window_seconds if i == 0 else self.window_seconds / 2,
             }
             # jawne rzutowania
-            window = float(bucket.get("window_seconds", 0.0))
+            window_val = bucket.get("window_seconds", 0.0)
+            if isinstance(window_val, (str, int, float)):
+                window = float(window_val)
+            else:
+                window = 0.0
             bucket["window_seconds"] = window
             buckets.append(bucket)
         return buckets
@@ -399,7 +403,20 @@ def decrypt_config(token: bytes, key: bytes) -> Dict[str, Any]:
         payload = f.decrypt(token)
     except InvalidToken as exc:
         raise ConfigError("Zły klucz lub uszkodzony plik konfiguracyjny") from exc
-    return json.loads(payload.decode("utf-8"))
+    try:
+        text_payload = payload.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ConfigError("Nieprawidłowe kodowanie konfiguracji") from exc
+
+    try:
+        data = json.loads(text_payload)
+    except json.JSONDecodeError as exc:
+        raise ConfigError("Nie można odczytać konfiguracji") from exc
+
+    if not isinstance(data, dict):
+        raise ConfigError("Nieprawidłowy format konfiguracji: oczekiwano obiektu JSON")
+
+    return data
 
 
 def save_encrypted_config(path: str | Path, data: Dict[str, Any], key: bytes) -> None:
@@ -449,16 +466,27 @@ class ConfigManager:
     ) -> Dict[str, Any]:
         preset = self.get_marketplace_preset(preset_id)
         merged = dict(self._current_config)
-        for section, payload in preset.items():
+
+        config_mapping: Mapping[str, Any]
+        if isinstance(getattr(preset, "config", None), Mapping):
+            config_mapping = preset.config  # type: ignore[assignment]
+        elif isinstance(preset, Mapping):
+            config_mapping = preset
+        else:
+            raise ConfigError("Preset does not expose a valid config mapping")
+
+        for section, payload in dict(config_mapping).items():
             merged[section] = payload
+
         # metadane
-        merged.setdefault("meta", {})
-        merged["meta"]["last_preset"] = preset_id
-        merged["meta"]["actor"] = actor or "system"
+        meta = dict(merged.get("meta", {}))
+        meta["last_preset"] = preset_id
+        meta["actor"] = actor or "system"
         if user_confirmed:
-            merged["meta"]["user_confirmed"] = True
+            meta["user_confirmed"] = True
         if note:
-            merged["meta"]["note"] = note
+            meta["note"] = note
+        merged["meta"] = meta
         self._current_config = merged
         return merged
 
