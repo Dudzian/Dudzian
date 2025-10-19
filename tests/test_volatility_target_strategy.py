@@ -27,3 +27,18 @@ def test_volatility_target_rebalances_when_threshold_exceeded() -> None:
 
     # kolejny pomiar bez istotnej zmiany nie powinien generować sygnału
     assert not strategy.on_data(fixtures.follow_up)
+
+
+def test_volatility_target_waits_for_full_history() -> None:
+    settings = VolatilityTargetSettings(lookback=4)
+    strategy = VolatilityTargetStrategy(settings)
+
+    fixtures = build_volatility_series_fixture()
+    partial_history = fixtures.history[:2]
+
+    strategy.warm_up(partial_history)
+
+    next_snapshot = fixtures.history[2]
+    signals = strategy.on_data(next_snapshot)
+
+    assert not signals
