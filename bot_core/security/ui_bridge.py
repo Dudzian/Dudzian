@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from bot_core.security.fingerprint import HardwareFingerprintService, build_key_provider, decode_secret
+from bot_core.security.license import validate_license
 from bot_core.security.profiles import (
     load_profiles,
     log_admin_event,
@@ -61,51 +62,133 @@ def _load_keys_from_file(path: Path) -> dict[str, bytes]:
     return decoded
 
 
-def _read_license_summary(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        return {
-            "status": "inactive",
-            "fingerprint": None,
-            "valid_from": None,
-            "valid_to": None,
-            "path": str(path),
-        }
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"Plik licencji {path} zawiera niepoprawny JSON: {exc}") from exc
-    except OSError as exc:  # pragma: no cover - propagujemy do UI/logów
-        raise RuntimeError(f"Nie udało się odczytać pliku licencji {path}: {exc}") from exc
+def _read_license_summary(
+    path: Path,
+    *,
+    fingerprint_path: Path | None = None,
+    license_keys_path: Path | None = None,
+    fingerprint_keys_path: Path | None = None,
+    revocation_path: Path | None = None,
+    revocation_keys_path: Path | None = None,
+    revocation_signature_required: bool = False,
+) -> dict[str, Any]:
+    license_keys: Mapping[str, bytes] | None = None
+    fingerprint_keys: Mapping[str, bytes] | None = None
+    revocation_keys: Mapping[str, bytes] | None = None
+    errors: list[str] = []
+    warnings: list[str] = []
 
-    fingerprint = None
-    validity_from = None
-    validity_to = None
-    if isinstance(payload, dict):
-        fingerprint = payload.get("fingerprint") or payload.get("license_fingerprint")
-        validity = payload.get("valid") or payload.get("validity")
-        if isinstance(validity, dict):
-            validity_from = validity.get("from") or validity.get("start")
-            validity_to = validity.get("to") or validity.get("end")
-        metadata = payload.get("metadata")
-        if isinstance(metadata, dict):
-            fingerprint = fingerprint or metadata.get("fingerprint")
+    if license_keys_path:
+        try:
+            license_keys = _load_keys_from_file(license_keys_path)
+        except FileNotFoundError:
+            errors.append(f"Brak pliku kluczy licencji: {license_keys_path}")
+        except ValueError as exc:
+            errors.append(
+                f"Nie udało się wczytać kluczy licencji ({license_keys_path}): {exc}"
+            )
 
-    status = "active" if fingerprint else "unknown"
-    return {
+    if fingerprint_keys_path:
+        try:
+            fingerprint_keys = _load_keys_from_file(fingerprint_keys_path)
+        except FileNotFoundError:
+            errors.append(f"Brak pliku kluczy fingerprintu: {fingerprint_keys_path}")
+        except ValueError as exc:
+            errors.append(
+                f"Nie udało się wczytać kluczy fingerprintu ({fingerprint_keys_path}): {exc}"
+            )
+
+    if revocation_keys_path:
+        try:
+            revocation_keys = _load_keys_from_file(revocation_keys_path)
+        except FileNotFoundError:
+            errors.append(f"Brak pliku kluczy listy odwołań: {revocation_keys_path}")
+        except ValueError as exc:
+            errors.append(
+                f"Nie udało się wczytać kluczy listy odwołań ({revocation_keys_path}): {exc}"
+            )
+    elif revocation_signature_required:
+        errors.append(
+            "Wymagano podpisanej listy odwołań, ale nie dostarczono pliku kluczy HMAC."
+        )
+
+    result = validate_license(
+        license_path=path,
+        license_keys=license_keys,
+        fingerprint_path=fingerprint_path,
+        fingerprint_keys=fingerprint_keys,
+        revocation_list_path=revocation_path,
+        revocation_keys=revocation_keys,
+        revocation_signature_required=revocation_signature_required,
+    )
+    status_map = {"ok": "active", "missing": "inactive"}
+    status = status_map.get(result.status, "invalid" if result.errors else "unknown")
+    summary = {
         "status": status,
-        "fingerprint": fingerprint,
-        "valid_from": validity_from,
-        "valid_to": validity_to,
+        "fingerprint": result.fingerprint,
+        "fingerprint_source": result.fingerprint_source,
+        "valid_from": result.issued_at,
+        "valid_to": result.expires_at,
+        "profile": result.profile,
+        "issuer": result.issuer,
+        "schema": result.schema,
+        "schema_version": result.schema_version,
+        "license_id": result.license_id,
+        "revocation_status": result.revocation_status,
+        "revocation_checked": result.revocation_checked,
+        "revocation_list_path": str(result.revocation_list_path) if result.revocation_list_path else None,
+        "revocation_generated_at": result.revocation_generated_at,
+        "revocation_reason": result.revocation_reason,
+        "revocation_revoked_at": result.revocation_revoked_at,
+        "revocation_actor": result.revocation_actor,
         "path": str(path),
+        "warnings": list(result.warnings),
+        "errors": list(result.errors),
     }
+    if result.license_signature_key:
+        summary["license_key_id"] = result.license_signature_key
+    if result.fingerprint_signature_key:
+        summary["fingerprint_key_id"] = result.fingerprint_signature_key
+    if result.revocation_signature_key:
+        summary["revocation_key_id"] = result.revocation_signature_key
+    if warnings:
+        summary["warnings"].extend(warnings)
+    if errors:
+        summary["errors"].extend(errors)
+    return summary
 
 
-def dump_state(*, license_path: str | None, profiles_path: str | None) -> dict[str, Any]:
+def dump_state(
+    *,
+    license_path: str | None,
+    profiles_path: str | None,
+    fingerprint_path: str | None = None,
+    license_keys_path: str | None = None,
+    fingerprint_keys_path: str | None = None,
+    revocation_path: str | None = None,
+    revocation_keys_path: str | None = None,
+    revocation_signature_required: bool = False,
+) -> dict[str, Any]:
     license_file = _resolve_license_path(license_path)
     profiles_file = _resolve_profiles_path(profiles_path)
+    fingerprint_file = Path(fingerprint_path).expanduser() if fingerprint_path else None
+    license_keys_file = Path(license_keys_path).expanduser() if license_keys_path else None
+    fingerprint_keys_file = (
+        Path(fingerprint_keys_path).expanduser() if fingerprint_keys_path else None
+    )
+    revocation_file = Path(revocation_path).expanduser() if revocation_path else None
+    revocation_keys_file = Path(revocation_keys_path).expanduser() if revocation_keys_path else None
     profiles = [profile.to_dict() for profile in load_profiles(profiles_file)]
     return {
-        "license": _read_license_summary(license_file),
+        "license": _read_license_summary(
+            license_file,
+            fingerprint_path=fingerprint_file,
+            license_keys_path=license_keys_file,
+            fingerprint_keys_path=fingerprint_keys_file,
+            revocation_path=revocation_file,
+            revocation_keys_path=revocation_keys_file,
+            revocation_signature_required=revocation_signature_required,
+        ),
         "profiles": profiles,
     }
 
@@ -193,9 +276,22 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="UI security bridge")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    dump_parser = subparsers.add_parser("dump", help="Zwraca stan licencji i profili użytkowników")
+    dump_parser = subparsers.add_parser(
+        "dump", help="Zwraca stan licencji i profili użytkowników"
+    )
     dump_parser.add_argument("--license-path", dest="license_path", default=None)
     dump_parser.add_argument("--profiles-path", dest="profiles_path", default=None)
+    dump_parser.add_argument("--fingerprint-path", dest="fingerprint_path", default=None)
+    dump_parser.add_argument("--license-keys", dest="license_keys", default=None)
+    dump_parser.add_argument("--fingerprint-keys", dest="fingerprint_keys", default=None)
+    dump_parser.add_argument("--revocation-path", dest="revocation_path", default=None)
+    dump_parser.add_argument("--revocation-keys", dest="revocation_keys", default=None)
+    dump_parser.add_argument(
+        "--require-signed-revocations",
+        dest="revocation_signed",
+        action="store_true",
+        help="Wymaga podpisanej listy odwołań oraz dostarczonych kluczy HMAC.",
+    )
 
     fingerprint_parser = subparsers.add_parser("fingerprint", help="Generuje podpisany fingerprint hosta")
     fingerprint_parser.add_argument("--keys-file", dest="keys_file", default=None)
@@ -231,7 +327,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     if args.command == "dump":
-        state = dump_state(license_path=args.license_path, profiles_path=args.profiles_path)
+        state = dump_state(
+            license_path=args.license_path,
+            profiles_path=args.profiles_path,
+            fingerprint_path=args.fingerprint_path,
+            license_keys_path=args.license_keys,
+            fingerprint_keys_path=args.fingerprint_keys,
+            revocation_path=args.revocation_path,
+            revocation_keys_path=args.revocation_keys,
+            revocation_signature_required=args.revocation_signed,
+        )
         print(json.dumps(state, ensure_ascii=False))
         return 0
     if args.command == "fingerprint":

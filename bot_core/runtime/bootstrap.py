@@ -13,6 +13,7 @@ import stat
 from typing import TYPE_CHECKING, Any, Callable, Mapping, MutableMapping, Sequence
 
 from bot_core.alerts import (
+    AlertSeverity,
     AlertThrottle,
     DefaultAlertRouter,
     EmailChannel,
@@ -23,6 +24,7 @@ from bot_core.alerts import (
     SignalChannel,
     TelegramChannel,
     WhatsAppChannel,
+    emit_alert,
     get_sms_provider,
 )
 from bot_core.alerts.base import AlertAuditLog, AlertChannel
@@ -37,6 +39,7 @@ from bot_core.config.models import (
     EnvironmentAIModelConfig,
     EnvironmentAIPipelineScheduleConfig,
     EnvironmentConfig,
+    LicenseValidationConfig,
     MessengerChannelSettings,
     RiskProfileConfig,
     SMSProviderSettings,
@@ -64,6 +67,11 @@ from bot_core.risk.events import RiskDecisionLog
 from bot_core.risk.factory import build_risk_profile_from_config
 from bot_core.risk.repository import FileRiskRepository
 from bot_core.security import SecretManager, SecretStorageError, build_service_token_validator
+from bot_core.security.license import (
+    LicenseValidationError,
+    LicenseValidationResult,
+    validate_license_from_config,
+)
 from bot_core.security.tokens import ServiceTokenValidator
 from bot_core.runtime.tco_reporting import RuntimeTCOReporter
 
@@ -570,6 +578,7 @@ class BootstrapContext:
     decision_journal: TradingDecisionJournal | None
     risk_decision_log: RiskDecisionLog | None
     risk_profile_name: str
+    license_validation: LicenseValidationResult
     portfolio_decision_log: PortfolioDecisionLog | None = None
     decision_engine_config: Any | None = None
     decision_orchestrator: Any | None = None
@@ -623,6 +632,44 @@ def bootstrap_environment(
     validation = assert_core_config_valid(core_config)
     for warning in validation.warnings:
         _LOGGER.warning("Walidacja konfiguracji: %s", warning)
+
+    license_config = getattr(core_config, "license", None)
+    if not isinstance(license_config, LicenseValidationConfig):
+        license_config = LicenseValidationConfig()
+    try:
+        license_result = validate_license_from_config(license_config)
+    except LicenseValidationError as exc:
+        context = exc.result.to_context() if exc.result else {
+            "status": "invalid",
+            "license_path": str(Path(license_config.license_path).expanduser()),
+        }
+        emit_alert(
+            "Weryfikacja licencji OEM zakończona błędem – zatrzymuję kontroler.",
+            severity=AlertSeverity.CRITICAL,
+            source="security.license",
+            context=context,
+            exception=exc,
+        )
+        _LOGGER.critical("Weryfikacja licencji OEM nie powiodła się: %s", exc)
+        raise RuntimeError(str(exc)) from exc
+    else:
+        if license_result.warnings:
+            for message in license_result.warnings:
+                _LOGGER.warning("Weryfikacja licencji: %s", message)
+        _LOGGER.info(
+            "Licencja OEM zweryfikowana (id=%s, fingerprint=%s, wygasa=%s, revocation=%s)",
+            license_result.license_id or "brak",
+            license_result.fingerprint,
+            license_result.expires_at or "brak informacji",
+            license_result.revocation_status or "n/a",
+        )
+        emit_alert(
+            "Licencja OEM zweryfikowana pomyślnie." if not license_result.warnings else "Licencja OEM zweryfikowana z ostrzeżeniami.",
+            severity=AlertSeverity.WARNING if license_result.warnings else AlertSeverity.INFO,
+            source="security.license",
+            context=license_result.to_context(),
+        )
+
     if environment_name not in core_config.environments:
         raise KeyError(f"Środowisko '{environment_name}' nie istnieje w konfiguracji")
 
@@ -1736,6 +1783,7 @@ def bootstrap_environment(
         decision_journal=decision_journal,
         risk_decision_log=risk_decision_log,
         risk_profile_name=selected_profile,
+        license_validation=license_result,
         decision_engine_config=decision_engine_config,
         decision_orchestrator=decision_orchestrator,
         decision_tco_report_path=decision_tco_report_path,
