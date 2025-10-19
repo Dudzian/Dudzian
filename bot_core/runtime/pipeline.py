@@ -1217,8 +1217,20 @@ class DecisionAwareSignalSink(StrategySignalSink):
         accepted: list[StrategySignal] = []
         risk_snapshot = self._build_risk_snapshot(risk_profile)
         for signal in signals:
-            candidate = self._build_candidate(strategy_name, risk_profile, signal)
+            candidate, rejection_info = self._build_candidate(
+                strategy_name,
+                risk_profile,
+                signal,
+            )
             if candidate is None:
+                self._record_filtered_signal(
+                    signal=signal,
+                    strategy_name=strategy_name,
+                    schedule_name=schedule_name,
+                    risk_profile=risk_profile,
+                    timestamp=timestamp,
+                    rejection_info=rejection_info,
+                )
                 continue
             try:
                 evaluation = self._orchestrator.evaluate_candidate(candidate, risk_snapshot)
@@ -1318,6 +1330,12 @@ class DecisionAwareSignalSink(StrategySignalSink):
             portfolio = self._environment
         latency_ms = getattr(evaluation, "latency_ms", None)
 
+        confidence_value: float | None
+        try:
+            confidence_value = float(signal.confidence)
+        except (TypeError, ValueError):
+            confidence_value = None
+
         event = TradingDecisionEvent(
             event_type="decision_evaluation",
             timestamp=timestamp,
@@ -1329,7 +1347,7 @@ class DecisionAwareSignalSink(StrategySignalSink):
             schedule=schedule_name,
             strategy=strategy_name,
             status="accepted" if evaluation.accepted else "rejected",
-            confidence=float(signal.confidence),
+            confidence=confidence_value,
             latency_ms=latency_ms if isinstance(latency_ms, (int, float)) else None,
             telemetry_namespace=f"{self._environment}.decision.{schedule_name}",
             metadata=metadata,
@@ -1345,9 +1363,9 @@ class DecisionAwareSignalSink(StrategySignalSink):
         strategy_name: str,
         risk_profile: str,
         signal: StrategySignal,
-    ) -> DecisionCandidate | None:
+    ) -> tuple[DecisionCandidate | None, Mapping[str, Any] | None]:
         if DecisionCandidate is None:
-            return None
+            return None, None
         raw_metadata = getattr(signal, "metadata", None)
         if isinstance(raw_metadata, Mapping):
             metadata = dict(raw_metadata)
@@ -1360,7 +1378,11 @@ class DecisionAwareSignalSink(StrategySignalSink):
                 metadata = {}
         probability = self._extract_probability(signal)
         if probability < self._min_probability:
-            return None
+            return None, {
+                "reason": "probability_below_threshold",
+                "probability": probability,
+                "min_probability": self._min_probability,
+            }
         expected_return = self._extract_expected_return(signal, metadata)
         cost_override = self._extract_cost_override(metadata)
         latency_ms = self._extract_latency(metadata)
@@ -1380,7 +1402,87 @@ class DecisionAwareSignalSink(StrategySignalSink):
             cost_bps_override=cost_override,
             latency_ms=latency_ms,
             metadata=metadata,
+        ), None
+
+    def _record_filtered_signal(
+        self,
+        *,
+        signal: StrategySignal,
+        strategy_name: str,
+        schedule_name: str,
+        risk_profile: str,
+        timestamp: datetime,
+        rejection_info: Mapping[str, Any] | None,
+    ) -> None:
+        journal = self._journal
+        if journal is None or TradingDecisionEvent is None:
+            return
+
+        metadata: dict[str, str] = {
+            "decision_status": "filtered",
+            "source": "decision_orchestrator",
+        }
+        reason: str | None = None
+        probability: float | None = None
+        min_probability: float | None = None
+        if rejection_info:
+            reason = str(rejection_info.get("reason") or "") or None
+            raw_probability = rejection_info.get("probability")
+            raw_min_probability = rejection_info.get("min_probability")
+            try:
+                probability = float(raw_probability) if raw_probability is not None else None
+            except (TypeError, ValueError):  # pragma: no cover - defensywnie
+                probability = None
+            try:
+                min_probability = (
+                    float(raw_min_probability)
+                    if raw_min_probability is not None
+                    else None
+                )
+            except (TypeError, ValueError):  # pragma: no cover - defensywnie
+                min_probability = None
+
+        if reason:
+            metadata.setdefault("decision_reason", reason)
+        if min_probability is not None:
+            metadata.setdefault("min_probability", f"{min_probability:.6f}")
+        if probability is not None:
+            metadata.setdefault("expected_probability", f"{probability:.6f}")
+
+        metadata.setdefault("environment", self._environment)
+        metadata.setdefault("exchange", self._exchange)
+        metadata.setdefault("schedule", strategy_name)
+
+        confidence_value = probability
+        if confidence_value is None:
+            try:
+                confidence_value = float(signal.confidence)  # type: ignore[arg-type]
+            except (TypeError, ValueError):  # pragma: no cover - defensywnie
+                confidence_value = None
+
+        event = TradingDecisionEvent(
+            event_type="decision_evaluation",
+            timestamp=timestamp,
+            environment=self._environment,
+            portfolio=self._portfolio or self._environment,
+            risk_profile=risk_profile,
+            symbol=signal.symbol,
+            side=str(signal.side),
+            schedule=schedule_name,
+            strategy=strategy_name,
+            status="filtered",
+            confidence=confidence_value,
+            telemetry_namespace=f"{self._environment}.decision.{schedule_name}",
+            metadata=metadata,
         )
+
+        try:
+            journal.record(event)
+        except Exception:  # pragma: no cover - dziennik nie powinien blokować handlu
+            self._logger.debug(
+                "Nie udało się zapisać decision_evaluation (filtered)",
+                exc_info=True,
+            )
 
     def _build_risk_snapshot(self, risk_profile: str) -> Mapping[str, object]:
         loader = getattr(self._risk_engine, "snapshot_state", None)
@@ -1425,7 +1527,14 @@ class DecisionAwareSignalSink(StrategySignalSink):
         if candidate is None and isinstance(metadata.get("ai_manager"), Mapping):
             candidate = metadata["ai_manager"].get("expected_return_bps")
         if candidate is None:
-            base = max(0.0, float(signal.confidence) - 0.5)
+            confidence: float | None
+            try:
+                confidence = float(signal.confidence)
+            except (TypeError, ValueError):
+                confidence = None
+            if confidence is None:
+                return 5.0
+            base = max(0.0, confidence - 0.5)
             candidate = 5.0 + base * 20.0
         try:
             return float(candidate)

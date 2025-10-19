@@ -122,9 +122,10 @@ def test_decision_aware_sink_filters_signals() -> None:
     assert exported_signals == (accepted_signal,)
     assert len(orchestrator.invocations) == 1
     assert orchestrator.invocations[0].symbol == "BTC/USDT"
-    assert [event.status for event in journal.events] == ["accepted"]
+    assert [event.status for event in journal.events] == ["accepted", "filtered"]
     assert all(event.portfolio == "paper-01" for event in journal.events)
-    assert all(event.metadata.get("decision_status") in {"accepted", "rejected"} for event in journal.events)
+    assert journal.events[1].metadata.get("decision_reason") == "probability_below_threshold"
+    assert journal.events[1].metadata.get("decision_status") == "filtered"
 
 
 def test_decision_aware_sink_handles_missing_metadata() -> None:
@@ -210,4 +211,62 @@ def test_decision_aware_sink_respects_min_probability_threshold() -> None:
 
     assert orchestrator.invocations == []
     assert sink.export() == ()
-    assert journal.events == []
+    assert [event.status for event in journal.events] == ["filtered"]
+    filtered_event = journal.events[0]
+    assert filtered_event.metadata.get("decision_reason") == "probability_below_threshold"
+    assert filtered_event.metadata.get("expected_probability") == "0.200000"
+    assert filtered_event.metadata.get("min_probability") == "0.550000"
+
+
+def test_decision_aware_sink_handles_missing_confidence_for_expected_return() -> None:
+    base_sink = InMemoryStrategySignalSink()
+
+    class _StubOrchestrator:
+        def __init__(self) -> None:
+            self.invocations: list = []
+
+        def evaluate_candidate(self, candidate, _snapshot):
+            self.invocations.append(candidate)
+            return SimpleNamespace(
+                candidate=candidate,
+                accepted=True,
+                cost_bps=None,
+                net_edge_bps=5.0,
+                reasons=(),
+                risk_flags=(),
+                stress_failures=(),
+            )
+
+    orchestrator = _StubOrchestrator()
+    sink = DecisionAwareSignalSink(
+        base_sink=base_sink,
+        orchestrator=orchestrator,
+        risk_engine=SimpleNamespace(snapshot_state=lambda _: {}),
+        default_notional=1_000.0,
+        environment="paper",
+        exchange="binance_spot",
+        min_probability=0.55,
+        portfolio=None,
+        journal=_DummyJournal(),
+    )
+
+    signal = StrategySignal(
+        symbol="BTC/USDT",
+        side="BUY",
+        confidence=None,
+        metadata={"expected_probability": 0.7},
+    )
+
+    sink.submit(
+        strategy_name="daily",
+        schedule_name="schedule",
+        risk_profile="balanced",
+        timestamp=datetime.now(timezone.utc),
+        signals=(signal,),
+    )
+
+    assert orchestrator.invocations, "Orchestrator powinien otrzymać kandydata"
+    candidate = orchestrator.invocations[0]
+    assert candidate.expected_return_bps == pytest.approx(5.0)
+    records = sink.export()
+    assert records and records[0][1] == (signal,)
