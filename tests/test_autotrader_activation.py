@@ -1,5 +1,6 @@
 import time
-from bot_core.auto_trader import AutoTrader
+
+from bot_core.auto_trader.app import AutoTrader
 
 
 class _DummyEmitter:

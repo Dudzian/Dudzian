@@ -1,9 +1,10 @@
-"""Compatibility wrapper exposing the legacy AIManager under the bot_core namespace."""
+"""Compatibility module kept for legacy imports.
+
+The new implementation lives in :mod:`bot_core.ai.manager`.  This module simply
+re-exports the public API for callers still importing ``bot_core.ai_manager``.
+"""
 from __future__ import annotations
 
-from importlib import import_module
-import sys
+from bot_core.ai.manager import *  # noqa: F401,F403
 
-_LEGACY_MODULE = import_module("KryptoLowca.ai_manager")
-
-sys.modules[__name__] = _LEGACY_MODULE
+__all__ = [name for name in globals().keys() if not name.startswith("_")]

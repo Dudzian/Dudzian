@@ -51,6 +51,7 @@ except Exception:  # pragma: no cover - fallback dla testów bez marketplace
 
 __all__ = [
     "AIConfig",
+    "ExchangeConfig",
     "StrategyConfig",
     "ConfigManager",
     "encrypt_config",
@@ -142,6 +143,93 @@ class TelemetryConfig:
             self.storage_path = str(self.storage_path)
         if self.grpc_target is not None:
             self.grpc_target = str(self.grpc_target)
+        return self
+
+
+@dataclass(slots=True)
+class ExchangeConfig:
+    """Konfiguracja połączenia z giełdą kompatybilna ze starszym API testów."""
+
+    exchange_name: str = "binance"
+    api_key: str = ""
+    api_secret: str = ""
+    testnet: bool = True
+    rate_limit_per_minute: int = 1200
+    rate_limit_window_seconds: float = 60.0
+    rate_limit_alert_threshold: float = 0.85
+    error_alert_threshold: int = 3
+    rate_limit_buckets: List[Dict[str, Any]] = field(default_factory=list)
+    retry_attempts: int = 1
+    retry_delay: float | str = 0.05
+    require_demo_mode: bool = True
+    telemetry_log_interval_s: float = 30.0
+    telemetry_schema_version: int = 1
+    telemetry_storage_path: Optional[str] = None
+    telemetry_grpc_target: Optional[str] = None
+
+    def validate(self) -> "ExchangeConfig":
+        if not (self.exchange_name or "").strip():
+            raise ValidationError("exchange_name nie może być puste")
+        if self.rate_limit_per_minute < 0:
+            raise ValidationError("rate_limit_per_minute musi być nieujemne")
+        if float(self.rate_limit_window_seconds) <= 0:
+            raise ValidationError("rate_limit_window_seconds musi być dodatnie")
+        if not (0.0 < float(self.rate_limit_alert_threshold) <= 1.0):
+            raise ValidationError("rate_limit_alert_threshold musi być w zakresie (0, 1]")
+        if self.error_alert_threshold <= 0:
+            raise ValidationError("error_alert_threshold musi być dodatnie")
+        if int(self.retry_attempts) < 0:
+            raise ValidationError("retry_attempts musi być >= 0")
+        if self.telemetry_log_interval_s <= 0:
+            raise ValidationError("telemetry_log_interval_s musi być dodatnie")
+        if self.telemetry_schema_version <= 0:
+            raise ValidationError("telemetry_schema_version musi być dodatnie")
+
+        # Normalizacja kubełków limitów
+        normalized_buckets: List[Dict[str, Any]] = []
+        for bucket in self.rate_limit_buckets:
+            if not isinstance(bucket, dict):
+                continue
+            capacity = int(bucket.get("capacity", 0))
+            window_seconds = float(bucket.get("window_seconds", 0.0))
+            if capacity <= 0 or window_seconds <= 0:
+                continue
+            name = str(bucket.get("name") or f"bucket_{len(normalized_buckets) + 1}")
+            normalized_buckets.append(
+                {
+                    "name": name,
+                    "capacity": capacity,
+                    "window_seconds": window_seconds,
+                }
+            )
+        self.rate_limit_buckets = normalized_buckets
+
+        # Rzutowania i sanityzacje pól liczbowych / boolowskich
+        self.retry_attempts = int(self.retry_attempts)
+        retry_delay_raw = self.retry_delay
+        if isinstance(retry_delay_raw, (int, float)):
+            retry_delay_value = float(retry_delay_raw)
+        elif isinstance(retry_delay_raw, str):
+            try:
+                retry_delay_value = float(retry_delay_raw.strip())
+            except ValueError as exc:  # pragma: no cover - wewnętrzna walidacja
+                raise ValidationError("retry_delay musi być liczbą") from exc
+        elif retry_delay_raw is None:
+            retry_delay_value = 0.0
+        else:
+            raise ValidationError("retry_delay musi być liczbą lub None")
+        if retry_delay_value < 0:
+            raise ValidationError("retry_delay musi być >= 0")
+        self.retry_delay = retry_delay_value
+
+        self.testnet = bool(self.testnet)
+        self.require_demo_mode = bool(self.require_demo_mode)
+        self.telemetry_log_interval_s = float(self.telemetry_log_interval_s)
+        self.telemetry_schema_version = int(self.telemetry_schema_version)
+        if self.telemetry_storage_path is not None:
+            self.telemetry_storage_path = str(self.telemetry_storage_path)
+        if self.telemetry_grpc_target is not None:
+            self.telemetry_grpc_target = str(self.telemetry_grpc_target)
         return self
 
 

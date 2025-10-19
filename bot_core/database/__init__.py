@@ -1,0 +1,41 @@
+"""Pakiet zarządzania persystencją dla bot_core."""
+
+from .manager import (
+    ApiRateLimitSnapshot,
+    Base,
+    CURRENT_SCHEMA_VERSION,
+    DatabaseManager,
+    EquityCurve,
+    EngineUser,
+    LogEntry,
+    Order,
+    OrderIn,
+    PerformanceMetric,
+    Position,
+    RiskAuditLog,
+    RiskLimitSnapshot,
+    SchemaVersion,
+    SecurityAuditLog,
+    Trade,
+    TradeIn,
+)
+
+__all__ = [
+    "ApiRateLimitSnapshot",
+    "Base",
+    "CURRENT_SCHEMA_VERSION",
+    "DatabaseManager",
+    "EquityCurve",
+    "EngineUser",
+    "LogEntry",
+    "Order",
+    "OrderIn",
+    "PerformanceMetric",
+    "Position",
+    "RiskAuditLog",
+    "RiskLimitSnapshot",
+    "SchemaVersion",
+    "SecurityAuditLog",
+    "Trade",
+    "TradeIn",
+]

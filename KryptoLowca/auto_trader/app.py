@@ -1,5 +1,5 @@
 # auto_trader.py
-# Walk-forward + auto-reoptimization + optional auto-trade loop, integrated via EventEmitter.
+# Walk-forward + auto-reoptimization + optional auto-trade loop, integrowany z emiterami zdarzeń.
 from __future__ import annotations
 
 import threading
@@ -8,7 +8,6 @@ import statistics
 import asyncio
 from typing import Iterable, Mapping, Optional, List, Dict, Any, Callable, Tuple, TYPE_CHECKING
 import inspect
-from dataclasses import dataclass, field
 from pathlib import Path
 
 import pandas as pd
@@ -27,7 +26,7 @@ except Exception:
 from importlib import import_module
 
 from bot_core.alerts import AlertSeverity, emit_alert as _core_emit_alert
-from KryptoLowca.event_emitter_adapter import EventEmitter
+from bot_core.auto_trader.app import EmitterLike, RiskDecision as _CoreRiskDecision
 from KryptoLowca.logging_utils import get_logger
 from KryptoLowca.config_manager import StrategyConfig
 from KryptoLowca.telemetry.prometheus_exporter import metrics as prometheus_metrics
@@ -84,37 +83,13 @@ def _emit_alert(*args: Any, **kwargs: Any) -> None:
     handler: Callable[..., None] = getattr(module, "emit_alert", _core_emit_alert)
     handler(*args, **kwargs)
 
-@dataclass(slots=True)
-class RiskDecision:
-    should_trade: bool
-    fraction: float
-    state: str
-    reason: Optional[str] = None
-    details: Dict[str, Any] = field(default_factory=dict)
-    stop_loss_pct: Optional[float] = None
-    take_profit_pct: Optional[float] = None
-    mode: str = "demo"
-
-    def to_dict(self) -> Dict[str, Any]:
-        payload = {
-            "should_trade": self.should_trade,
-            "fraction": float(self.fraction),
-            "state": self.state,
-            "reason": self.reason,
-            "details": dict(self.details),
-            "mode": self.mode,
-        }
-        if self.stop_loss_pct is not None:
-            payload["stop_loss_pct"] = float(self.stop_loss_pct)
-        if self.take_profit_pct is not None:
-            payload["take_profit_pct"] = float(self.take_profit_pct)
-        return payload
+RiskDecision = _CoreRiskDecision
 
 
 class _NullExchangeAdapter:
     """Minimalny adapter wykorzystywany, gdy nie podano właściwego wykonawcy."""
 
-    def __init__(self, emitter: EventEmitter | None) -> None:
+    def __init__(self, emitter: EmitterLike | None) -> None:
         self._emitter = emitter
 
     async def submit_order(self, *, symbol: str, side: str, size: float, **kwargs: Any) -> Mapping[str, Any]:
@@ -145,7 +120,7 @@ class AutoTrader:
     BACKTEST_GUARD_MAX_AGE_S = 30 * 24 * 3600
     def __init__(
         self,
-        emitter: EventEmitter,
+        emitter: EmitterLike,
         gui,
         symbol_getter: Callable[[], str],
         pf_min: float = 1.3,
@@ -1439,6 +1414,7 @@ class AutoTrader:
             return gui_balance
 
         strategy_cfg: StrategyConfig | None
+        strategy_balance: float | None = None
         try:
             strategy_cfg = self._get_strategy_config()
         except Exception:
