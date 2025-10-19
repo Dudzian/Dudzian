@@ -152,9 +152,12 @@ except Exception:  # pragma: no cover
     DecisionOrchestrator = None  # type: ignore
 
 try:  # pragma: no cover - integracja z AIManagerem jest opcjonalna
-    from KryptoLowca.ai_manager import AIManager  # type: ignore
-except Exception:  # pragma: no cover - środowiska bez modułu KryptoLowca
-    AIManager = None  # type: ignore
+    from bot_core.ai_manager import AIManager  # type: ignore
+except Exception:  # pragma: no cover - środowiska bez modułu bot_core.ai_manager
+    try:
+        AIManager = importlib.import_module("KryptoLowca.ai_manager").AIManager  # type: ignore[attr-defined]
+    except Exception:  # pragma: no cover - środowiska bez modułu KryptoLowca
+        AIManager = None  # type: ignore
 
 # --- Metrics service (opcjonalny – w niektórych gałęziach może nie istnieć) ---
 try:  # pragma: no cover - środowiska bez grpcio lub wygenerowanych stubów

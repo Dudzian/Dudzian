@@ -1,6 +1,7 @@
 """Paper trading adapter backed by the unified matching engine."""
 from __future__ import annotations
 
+import importlib
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -9,9 +10,17 @@ from typing import Dict, Mapping, MutableMapping
 import pandas as pd
 
 try:  # pragma: no cover - optional dependency outside desktop builds
-    from KryptoLowca.backtest.simulation import BacktestFill, MatchingConfig, MatchingEngine  # type: ignore
+    from bot_core.backtest.simulation import BacktestFill, MatchingConfig, MatchingEngine  # type: ignore
 except Exception:  # pragma: no cover - backtest module not packaged
     BacktestFill = MatchingConfig = MatchingEngine = None  # type: ignore
+    try:
+        _simulation = importlib.import_module("KryptoLowca.backtest.simulation")
+    except Exception:  # pragma: no cover - brak legacy modułu
+        pass
+    else:
+        BacktestFill = getattr(_simulation, "BacktestFill", None)
+        MatchingConfig = getattr(_simulation, "MatchingConfig", None)
+        MatchingEngine = getattr(_simulation, "MatchingEngine", None)
 
 LOGGER = logging.getLogger(__name__)
 
