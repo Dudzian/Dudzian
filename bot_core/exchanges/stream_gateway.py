@@ -84,6 +84,7 @@ class StreamGateway:
         channels: Sequence[str],
         params: Mapping[str, Sequence[str]],
         cursor: str | None,
+        reset: bool = False,
     ) -> Mapping[str, Any]:
         """Buduje odpowiedź JSON dla żądania long-pollowego."""
 
@@ -105,6 +106,7 @@ class StreamGateway:
         response_cursor = cursor
         now = self._clock()
 
+        reset_performed = False
         for channel in channels:
             normalized_channel = channel.strip()
             if not normalized_channel:
@@ -116,6 +118,17 @@ class StreamGateway:
                 normalized_channel,
                 normalized_params,
             )
+            if reset:
+                reset_performed = (
+                    self._reset_channel(
+                        adapter_name,
+                        environment,
+                        normalized_scope,
+                        normalized_channel,
+                        normalized_params,
+                    )
+                    or reset_performed
+                )
             canonical = tuple(
                 json.dumps(event, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
                 for event in events
@@ -164,11 +177,80 @@ class StreamGateway:
         if response_cursor is None and batches:
             response_cursor = batches[-1]["cursor"]
 
-        return {
+        payload: dict[str, Any] = {
             "cursor": response_cursor,
             "batches": batches,
             "retry_after": self._retry_after,
         }
+        if reset_performed:
+            payload["reset"] = True
+        return payload
+
+    def status_snapshot(self) -> Mapping[str, Any]:
+        """Zwraca stan zarejestrowanych kanałów i adapterów."""
+
+        with self._lock:
+            now = self._clock()
+            adapters = [
+                {
+                    "adapter": adapter_name,
+                    "environment": environment,
+                }
+                for adapter_name, environment in self._adapters.keys()
+            ]
+            channels: list[Mapping[str, Any]] = []
+            for key, state in self._channels.items():
+                adapter_name, environment, scope, channel, params = key
+                param_map = {
+                    str(param_key): [*values]
+                    for param_key, values in params
+                }
+                channels.append(
+                    {
+                        "adapter": adapter_name,
+                        "environment": environment,
+                        "scope": scope,
+                        "channel": channel,
+                        "params": param_map,
+                        "cursor": state.cursor,
+                        "version": state.version,
+                        "age_seconds": max(0.0, now - state.updated_at),
+                    }
+                )
+
+        return {"adapters": adapters, "channels": channels}
+
+    def reset_channels(
+        self,
+        *,
+        adapter_name: str,
+        environment: str | None,
+        scope: str,
+        channels: Sequence[str],
+        params: Mapping[str, Sequence[str]],
+    ) -> bool:
+        """Czyści bufory dla wybranych kanałów (wymusza restart kursora)."""
+
+        normalized_params = {
+            str(key): tuple(str(value) for value in values)
+            for key, values in params.items()
+        }
+        removed = False
+        for channel in channels:
+            normalized_channel = channel.strip()
+            if not normalized_channel:
+                continue
+            removed = (
+                self._reset_channel(
+                    adapter_name,
+                    environment,
+                    scope.strip().lower(),
+                    normalized_channel,
+                    normalized_params,
+                )
+                or removed
+            )
+        return removed
 
     # ------------------------------------------------------------------
     # Zamykanie zasobów
@@ -235,6 +317,18 @@ class StreamGateway:
         if scope == "public":
             return self._collect_public_events(adapter, channel, params)
         return self._collect_private_events(adapter, channel, params)
+
+    def _reset_channel(
+        self,
+        adapter_name: str,
+        environment: str | None,
+        scope: str,
+        channel: str,
+        params: Mapping[str, Sequence[str]],
+    ) -> bool:
+        key = self._build_state_key(adapter_name, environment, scope, channel, params)
+        with self._lock:
+            return self._channels.pop(key, None) is not None
 
     def _collect_public_events(
         self,
@@ -355,6 +449,11 @@ class _StreamRequestHandler(BaseHTTPRequestHandler):
         assert isinstance(server, StreamGatewayHTTPServer)
         parsed = urlsplit(self.path)
         path_parts = [part for part in parsed.path.split("/") if part]
+        if path_parts == ["stream", "status"]:
+            snapshot = server.gateway.status_snapshot()
+            self._send_json(snapshot, HTTPStatus.OK)
+            return
+
         if len(path_parts) != 3 or path_parts[0] != "stream":
             self._send_json({"error": {"message": "nieprawidłowa ścieżka"}}, HTTPStatus.NOT_FOUND)
             return
@@ -374,6 +473,15 @@ class _StreamRequestHandler(BaseHTTPRequestHandler):
         query.pop("exchange", None)
         query.pop("scope", None)
 
+        reset_flag = False
+        reset_param = self._first_param(query, ("reset", "action"))
+        if reset_param is not None:
+            if reset_param.lower() in {"1", "true", "yes", "reset"}:
+                reset_flag = True
+            query.pop("reset", None)
+            if reset_param.lower() == "reset":
+                query.pop("action", None)
+
         try:
             response = server.gateway.handle_request(
                 adapter_name=adapter_name,
@@ -382,6 +490,7 @@ class _StreamRequestHandler(BaseHTTPRequestHandler):
                 channels=channels,
                 params=query,
                 cursor=cursor,
+                reset=reset_flag,
             )
         except StreamGatewayError as exc:
             self._send_json({"error": {"message": str(exc)}}, exc.status)
