@@ -43,6 +43,7 @@ from bot_core.runtime.multi_strategy_scheduler import (
     StrategyDataFeed,
     StrategySignalSink,
 )
+from bot_core.runtime.journal import TradingDecisionEvent, TradingDecisionJournal
 from bot_core.runtime.portfolio_coordinator import PortfolioRuntimeCoordinator
 from bot_core.runtime.portfolio_inputs import (
     build_slo_status_provider,
@@ -1138,6 +1139,7 @@ def _build_decision_sink(
     base_sink: InMemoryStrategySignalSink,
     default_notional: float,
     environment_name: str,
+    portfolio_id: str | None,
 ) -> DecisionAwareSignalSink | None:
     orchestrator = getattr(bootstrap, "decision_orchestrator", None)
     if orchestrator is None or DecisionCandidate is None:
@@ -1153,6 +1155,7 @@ def _build_decision_sink(
         except (TypeError, ValueError):  # pragma: no cover - konfiguracja może zawierać tekst
             min_probability = 0.55
     exchange_name = getattr(bootstrap.environment, "exchange", "")
+    journal = getattr(bootstrap, "decision_journal", None)
     return DecisionAwareSignalSink(
         base_sink=base_sink,
         orchestrator=orchestrator,
@@ -1161,6 +1164,8 @@ def _build_decision_sink(
         environment=environment_name,
         exchange=str(exchange_name or ""),
         min_probability=min_probability,
+        portfolio=portfolio_id,
+        journal=journal,
     )
 class DecisionAwareSignalSink(StrategySignalSink):
     """Filtruje sygnały strategii przez DecisionOrchestratora."""
@@ -1175,6 +1180,8 @@ class DecisionAwareSignalSink(StrategySignalSink):
         environment: str,
         exchange: str,
         min_probability: float = 0.55,
+        portfolio: str | None = None,
+        journal: TradingDecisionJournal | None = None,
     ) -> None:
         self._base_sink = base_sink
         self._orchestrator = orchestrator
@@ -1185,6 +1192,8 @@ class DecisionAwareSignalSink(StrategySignalSink):
         self._min_probability = max(0.0, min(1.0, float(min_probability)))
         self._logger = logging.getLogger(__name__)
         self._evaluations: list[DecisionEvaluation] = []
+        self._portfolio = str(portfolio) if portfolio is not None else ""
+        self._journal = journal
 
     def submit(
         self,
@@ -1217,6 +1226,15 @@ class DecisionAwareSignalSink(StrategySignalSink):
                 self._logger.exception("DecisionOrchestrator odrzucił kandydata przez wyjątek")
                 continue
             self._evaluations.append(evaluation)
+            self._record_evaluation(
+                evaluation=evaluation,
+                candidate=candidate,
+                signal=signal,
+                strategy_name=strategy_name,
+                schedule_name=schedule_name,
+                risk_profile=risk_profile,
+                timestamp=timestamp,
+            )
             if evaluation.accepted:
                 accepted.append(signal)
             else:
@@ -1243,6 +1261,84 @@ class DecisionAwareSignalSink(StrategySignalSink):
 
     def evaluations(self) -> Sequence[DecisionEvaluation]:
         return tuple(self._evaluations)
+
+    def _record_evaluation(
+        self,
+        *,
+        evaluation: DecisionEvaluation,
+        candidate: DecisionCandidate,
+        signal: StrategySignal,
+        strategy_name: str,
+        schedule_name: str,
+        risk_profile: str,
+        timestamp: datetime,
+    ) -> None:
+        journal = self._journal
+        if journal is None or TradingDecisionEvent is None:
+            return
+
+        metadata: dict[str, str] = {}
+        candidate_metadata = getattr(candidate, "metadata", {})
+        if isinstance(candidate_metadata, Mapping):
+            for key, value in candidate_metadata.items():
+                metadata.setdefault(str(key), str(value))
+
+        def _store_float(name: str, value: float | None) -> None:
+            if value is None:
+                return
+            try:
+                metadata.setdefault(name, f"{float(value):.6f}")
+            except (TypeError, ValueError):  # pragma: no cover - defensywnie
+                return
+
+        _store_float("expected_probability", getattr(candidate, "expected_probability", None))
+        _store_float("expected_return_bps", getattr(candidate, "expected_return_bps", None))
+        _store_float("notional", getattr(candidate, "notional", None))
+        _store_float("cost_bps", getattr(evaluation, "cost_bps", None))
+        _store_float("net_edge_bps", getattr(evaluation, "net_edge_bps", None))
+
+        reasons = getattr(evaluation, "reasons", ())
+        if reasons:
+            metadata.setdefault("decision_reasons", ";".join(str(reason) for reason in reasons))
+        risk_flags = getattr(evaluation, "risk_flags", ())
+        if risk_flags:
+            metadata.setdefault("risk_flags", ";".join(str(flag) for flag in risk_flags))
+        stress_failures = getattr(evaluation, "stress_failures", ())
+        if stress_failures:
+            metadata.setdefault(
+                "stress_failures",
+                ";".join(str(failure) for failure in stress_failures),
+            )
+
+        metadata.setdefault("decision_status", "accepted" if evaluation.accepted else "rejected")
+        metadata.setdefault("source", "decision_orchestrator")
+
+        portfolio = self._portfolio or metadata.get("portfolio_id") or metadata.get("portfolio")
+        if portfolio is None:
+            portfolio = self._environment
+        latency_ms = getattr(evaluation, "latency_ms", None)
+
+        event = TradingDecisionEvent(
+            event_type="decision_evaluation",
+            timestamp=timestamp,
+            environment=self._environment,
+            portfolio=str(portfolio),
+            risk_profile=risk_profile,
+            symbol=getattr(candidate, "symbol", signal.symbol),
+            side=str(signal.side),
+            schedule=schedule_name,
+            strategy=strategy_name,
+            status="accepted" if evaluation.accepted else "rejected",
+            confidence=float(signal.confidence),
+            latency_ms=latency_ms if isinstance(latency_ms, (int, float)) else None,
+            telemetry_namespace=f"{self._environment}.decision.{schedule_name}",
+            metadata=metadata,
+        )
+
+        try:
+            journal.record(event)
+        except Exception:  # pragma: no cover - dziennik nie powinien blokować handlu
+            self._logger.debug("Nie udało się zapisać decision_evaluation", exc_info=True)
 
     def _build_candidate(
         self,
@@ -1447,6 +1543,7 @@ def build_multi_strategy_runtime(
         base_sink=base_sink,
         default_notional=_estimate_default_notional(paper_settings),
         environment_name=environment_name,
+        portfolio_id=str(paper_settings.get("portfolio_id", "")),
     )
     signal_sink: StrategySignalSink = decision_sink or base_sink
     portfolio_governor = getattr(bootstrap_ctx, "portfolio_governor", None)

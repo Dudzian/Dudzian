@@ -1,6 +1,6 @@
+from datetime import datetime, timezone
 import time
 from types import SimpleNamespace
-from datetime import datetime, timezone
 
 import pytest
 
@@ -23,6 +23,17 @@ class _DummyHistoryFeed:
 
     def fetch_latest(self, strategy_name: str):  # pragma: no cover - kompatybilność protokołu
         return ()
+
+
+class _DummyJournal:
+    def __init__(self) -> None:
+        self.events = []
+
+    def record(self, event) -> None:  # pragma: no cover - prosty bufor
+        self.events.append(event)
+
+    def export(self):  # pragma: no cover - zgodność interfejsu
+        return tuple(event.as_dict() for event in self.events)
 
 
 def test_streaming_strategy_feed_converts_events() -> None:
@@ -82,6 +93,7 @@ def test_decision_aware_sink_filters_signals() -> None:
             )
 
     orchestrator = _StubOrchestrator()
+    journal = _DummyJournal()
     sink = DecisionAwareSignalSink(
         base_sink=base_sink,
         orchestrator=orchestrator,
@@ -90,6 +102,8 @@ def test_decision_aware_sink_filters_signals() -> None:
         environment="paper",
         exchange="binance_spot",
         min_probability=0.55,
+        portfolio="paper-01",
+        journal=journal,
     )
 
     accepted_signal = StrategySignal(symbol="BTC/USDT", side="BUY", confidence=0.8, metadata={})
@@ -107,3 +121,6 @@ def test_decision_aware_sink_filters_signals() -> None:
     _, exported_signals = records[0]
     assert exported_signals == (accepted_signal,)
     assert orchestrator.invocations, "orchestrator powinien być wywołany"
+    assert [event.status for event in journal.events] == ["accepted", "rejected"]
+    assert all(event.portfolio == "paper-01" for event in journal.events)
+    assert all(event.metadata.get("decision_status") in {"accepted", "rejected"} for event in journal.events)

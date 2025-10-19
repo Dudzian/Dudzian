@@ -8,18 +8,17 @@ from typing import Mapping, Sequence, cast
 
 from bot_core.exchanges.base import ExchangeAdapterFactory
 from bot_core.runtime.bootstrap import parse_adapter_factory_cli_specs
-from bot_core.runtime.pipeline import build_multi_strategy_runtime
-from bot_core.runtime.multi_strategy_scheduler import MultiStrategyScheduler
+from bot_core.runtime.pipeline import MultiStrategyRuntime, build_multi_strategy_runtime
 from bot_core.security import SecretManager
 
 
-def _build_scheduler(
+def _build_runtime(
     *,
     config_path: Path,
     environment: str,
     scheduler_name: str | None,
     adapter_factories: Mapping[str, object] | None,
-) -> MultiStrategyScheduler:
+) -> MultiStrategyRuntime:
     runtime = build_multi_strategy_runtime(
         environment_name=environment,
         scheduler_name=scheduler_name,
@@ -30,7 +29,7 @@ def _build_scheduler(
             f"[telemetry] schedule={name} signals={payload.get('signals', 0)} latency_ms={payload.get('latency_ms', 0.0):.2f}"
         ),
     )
-    return runtime.scheduler
+    return runtime
 
 
 def main() -> None:
@@ -61,12 +60,14 @@ def main() -> None:
     )
     adapter_factories: Mapping[str, object] | None = cli_adapter_specs if cli_adapter_specs else None
 
-    scheduler = _build_scheduler(
+    runtime = _build_runtime(
         config_path=config_path,
         environment=args.environment,
         scheduler_name=args.scheduler,
         adapter_factories=adapter_factories,
     )
+
+    scheduler = runtime.scheduler
 
     try:
         if args.run_once:
@@ -75,6 +76,8 @@ def main() -> None:
             asyncio.run(scheduler.run_forever())
     except KeyboardInterrupt:
         scheduler.stop()
+    finally:
+        runtime.shutdown()
 
 
 if __name__ == "__main__":

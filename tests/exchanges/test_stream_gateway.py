@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import time
 import types
 from typing import Iterable
+from urllib.request import urlopen
 
 import json
 from urllib.request import urlopen
