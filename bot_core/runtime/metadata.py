@@ -22,6 +22,10 @@ except Exception:  # pragma: no cover - brak modułu loadera
     _load_core_config = None  # type: ignore
 
 
+_RUNTIME_RESOLVER_ATTEMPTED = _resolve_runtime_entrypoint is not None
+_TYPED_LOADER_ATTEMPTED = _load_core_config is not None
+
+
 @dataclass(frozen=True, slots=True)
 class RuntimeEntrypointMetadata:
     """Wybrane, lekkie metadane udostępniane aplikacjom desktopowym."""
@@ -31,6 +35,7 @@ class RuntimeEntrypointMetadata:
     controller: str | None
     strategy: str | None
     tags: tuple[str, ...]
+    compliance_live_allowed: bool = False
 
     def to_dict(self) -> dict[str, object]:
         """Zwraca metadane w postaci słownika przyjaznego serializacji."""
@@ -41,7 +46,84 @@ class RuntimeEntrypointMetadata:
             "controller": self.controller,
             "strategy": self.strategy,
             "tags": list(self.tags),
+            "compliance_live_allowed": self.compliance_live_allowed,
         }
+
+
+def _normalize_sequence(value: Any) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        items = [value]
+    elif isinstance(value, Mapping):
+        # traktujemy mapowania jako niepoprawne listy – lepiej zwrócić pustą krotkę
+        return ()
+    elif isinstance(value, Iterable):
+        items = list(value)
+    else:
+        return ()
+    normalized: list[str] = []
+    for item in items:
+        if item is None:
+            continue
+        text = str(item).strip()
+        if text:
+            normalized.append(text)
+    return tuple(normalized)
+
+
+def _extract_compliance_mapping(payload: Any) -> Mapping[str, Any] | None:
+    if payload is None:
+        return None
+    if isinstance(payload, Mapping):
+        return payload
+    attrs = {}
+    for key in ("live_allowed", "risk_profiles", "signoffs", "signatures", "signed", "require_signoff"):
+        if hasattr(payload, key):
+            attrs[key] = getattr(payload, key)
+    return attrs or None
+
+
+def _resolve_compliance_live_allowed(entrypoint_decl: Any, *, logger: logging.Logger | None = None) -> bool:
+    if isinstance(entrypoint_decl, Mapping):
+        compliance_source = entrypoint_decl.get("compliance")
+        risk_profile = entrypoint_decl.get("risk_profile")
+    else:
+        compliance_source = getattr(entrypoint_decl, "compliance", None)
+        risk_profile = getattr(entrypoint_decl, "risk_profile", None)
+
+    compliance = _extract_compliance_mapping(compliance_source)
+    if not compliance:
+        return False
+    if not bool(compliance.get("live_allowed")):
+        return False
+
+    reasons: list[str] = []
+
+    signed_flag = bool(compliance.get("signed"))
+    if not signed_flag:
+        reasons.append("signed flag is not confirmed")
+
+    allowed_profiles = _normalize_sequence(compliance.get("risk_profiles"))
+    if allowed_profiles and risk_profile not in allowed_profiles:
+        reasons.append("risk profile not permitted for live mode")
+
+    signoff_entries = _normalize_sequence(
+        compliance.get("signoffs") or compliance.get("signatures")
+    )
+    require_signoff = compliance.get("require_signoff")
+    if require_signoff is None:
+        require_signoff = True
+    if bool(require_signoff) and not signoff_entries:
+        reasons.append("missing compliance sign-off entries")
+
+    if reasons:
+        if logger is not None:
+            logger.debug(
+                "Runtime compliance guard disabled live trading: %s", ", ".join(reasons)
+            )
+        return False
+    return True
 
 
 def load_runtime_entrypoint_metadata(
@@ -58,14 +140,8 @@ def load_runtime_entrypoint_metadata(
     działać w trybie degrade-friendly bez podwójnej logiki fallback.
     """
 
+    _ensure_runtime_resolver()
     resolver = _resolve_runtime_entrypoint
-    if resolver is None:  # pragma: no cover - środowiska bez runtime
-        if logger is not None:
-            logger.debug(
-                "Runtime entrypoint %s pominięty – brak funkcji resolve_runtime_entrypoint",
-                entrypoint,
-            )
-        return None
 
     effective_config_path: Path | None
     if config_path is None:
@@ -81,6 +157,37 @@ def load_runtime_entrypoint_metadata(
             return None
     else:
         effective_config_path = Path(config_path)
+
+    if resolver is None:  # pragma: no cover - środowiska bez runtime
+        raw_entry = _load_entrypoint_from_raw_config(
+            effective_config_path, entrypoint, logger=logger
+        )
+        if raw_entry is None:
+            if logger is not None:
+                logger.debug(
+                    "Runtime entrypoint %s pominięty – brak deklaracji w konfiguracji",
+                    entrypoint,
+                )
+            return None
+        environment = raw_entry.get("environment")
+        risk_profile = raw_entry.get("risk_profile")
+        if not isinstance(environment, str) or not environment:
+            return None
+        if not isinstance(risk_profile, str) or not risk_profile:
+            return None
+        controller = raw_entry.get("controller")
+        strategy = raw_entry.get("strategy")
+        tags = _normalize_sequence(raw_entry.get("tags"))
+        return RuntimeEntrypointMetadata(
+            environment=environment,
+            risk_profile=risk_profile,
+            controller=str(controller) if isinstance(controller, str) and controller.strip() else None,
+            strategy=str(strategy) if isinstance(strategy, str) and strategy.strip() else None,
+            tags=tuple(tags),
+            compliance_live_allowed=_resolve_compliance_live_allowed(
+                raw_entry, logger=logger
+            ),
+        )
 
     try:
         entrypoint_decl, _ = resolver(
@@ -98,12 +205,24 @@ def load_runtime_entrypoint_metadata(
         return None
 
     tags: Sequence[str] | Iterable[str] = getattr(entrypoint_decl, "tags", ())
+    compliance_allowed = _resolve_compliance_live_allowed(
+        entrypoint_decl, logger=logger
+    )
+    if not compliance_allowed:
+        raw_entry = _load_entrypoint_from_raw_config(
+            effective_config_path, entrypoint, logger=logger
+        )
+        if raw_entry is not None:
+            compliance_allowed = _resolve_compliance_live_allowed(
+                raw_entry, logger=logger
+            )
     return RuntimeEntrypointMetadata(
         environment=getattr(entrypoint_decl, "environment"),
         risk_profile=getattr(entrypoint_decl, "risk_profile"),
         controller=getattr(entrypoint_decl, "controller", None),
         strategy=getattr(entrypoint_decl, "strategy", None),
         tags=tuple(tags),
+        compliance_live_allowed=compliance_allowed,
     )
 
 
@@ -138,6 +257,7 @@ def load_risk_profile_config(
 
     resolved_name = profile_name
 
+    _ensure_typed_loader()
     if _load_core_config is not None:
         try:
             core_config = _load_core_config(effective_path)
@@ -205,6 +325,24 @@ def _read_raw_core_config(
             logger.debug("Nie udało się wczytać surowego YAML %s: %r", path, exc)
         return None
     return payload if isinstance(payload, Mapping) else None
+
+
+def _load_entrypoint_from_raw_config(
+    path: Path,
+    entrypoint: str,
+    *,
+    logger: logging.Logger | None = None,
+) -> Mapping[str, Any] | None:
+    raw_config = _read_raw_core_config(path, logger=logger)
+    if raw_config is None:
+        return None
+    runtime_entrypoints = raw_config.get("runtime_entrypoints")
+    if not isinstance(runtime_entrypoints, Mapping):
+        return None
+    entry_payload = runtime_entrypoints.get(entrypoint)
+    if not isinstance(entry_payload, Mapping):
+        return None
+    return entry_payload
 
 
 @dataclass(frozen=True, slots=True)
@@ -397,3 +535,29 @@ __all__ = [
     "load_risk_profile_config",
 ]
 
+def _ensure_runtime_resolver() -> None:
+    global _resolve_runtime_entrypoint  # noqa: PLW0603
+    global _RUNTIME_RESOLVER_ATTEMPTED  # noqa: PLW0603
+    if _resolve_runtime_entrypoint is not None or _RUNTIME_RESOLVER_ATTEMPTED:
+        return
+    _RUNTIME_RESOLVER_ATTEMPTED = True
+    try:
+        from bot_core.runtime.bootstrap import (  # type: ignore
+            resolve_runtime_entrypoint as _runtime_resolver,
+        )
+    except Exception:  # pragma: no cover - brak zależności
+        return
+    _resolve_runtime_entrypoint = _runtime_resolver
+
+
+def _ensure_typed_loader() -> None:
+    global _load_core_config  # noqa: PLW0603
+    global _TYPED_LOADER_ATTEMPTED  # noqa: PLW0603
+    if _load_core_config is not None or _TYPED_LOADER_ATTEMPTED:
+        return
+    _TYPED_LOADER_ATTEMPTED = True
+    try:
+        from bot_core.config.loader import load_core_config as _loader  # type: ignore
+    except Exception:  # pragma: no cover - brak zależności
+        return
+    _load_core_config = _loader

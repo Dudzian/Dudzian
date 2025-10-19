@@ -12,6 +12,8 @@ from os import PathLike
 from pathlib import Path
 from typing import Any, Literal, Mapping, Protocol, Sequence, cast, runtime_checkable
 
+from bot_core.runtime.paths import resolve_core_config_path
+
 
 PathInput = str | bytes | PathLike[str] | PathLike[bytes]
 
@@ -956,6 +958,7 @@ __all__ = [
     "derive_risk_manager_settings",
     "load_risk_profile_config",
     "load_runtime_entrypoint_metadata",
+    "resolve_core_config_path",
     "PaperTradingAdapter",
     "ResourceBudgets",
     "ResourceSample",

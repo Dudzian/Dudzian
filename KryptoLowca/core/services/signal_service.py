@@ -50,6 +50,7 @@ class SignalService:
         position: float,
         metadata: StrategyMetadata,
         mode: str = "demo",
+        compliance_live_allowed: bool = False,
     ) -> StrategyContext:
         return StrategyContext(
             symbol=symbol,
@@ -58,7 +59,10 @@ class SignalService:
             position=position,
             timestamp=datetime.utcnow(),
             metadata=metadata,
-            extra={"mode": mode},
+            extra={
+                "mode": mode,
+                "compliance_live_allowed": bool(compliance_live_allowed),
+            },
         )
 
 
