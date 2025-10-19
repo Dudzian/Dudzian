@@ -101,7 +101,11 @@ class AIConfig:
                 "window_seconds": self.window_seconds if i == 0 else self.window_seconds / 2,
             }
             # jawne rzutowania
-            window = float(bucket.get("window_seconds", 0.0))
+            window_val = bucket.get("window_seconds", 0.0)
+            if isinstance(window_val, (str, int, float)):
+                window = float(window_val)
+            else:
+                window = 0.0
             bucket["window_seconds"] = window
             buckets.append(bucket)
         return buckets
