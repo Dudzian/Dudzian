@@ -391,5 +391,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     return 0
 
 
+def run(argv: Optional[Sequence[str]] = None) -> int:
+    """Wrapper used by tests to execute the CLI without exiting the interpreter."""
+
+    if argv is None:
+        return main(None)
+
+    args = list(argv)
+    if not args:
+        return main([])
+
+    if "--bundle" not in args and args[0] and not str(args[0]).startswith("-"):
+        args = ["--bundle", *args]
+
+    return main(args)
+
+
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main())

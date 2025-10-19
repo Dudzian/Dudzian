@@ -17,6 +17,7 @@ except Exception:  # pragma: no cover – w razie użycia poza pakietem
 # --- Część z main: klasy failover drill --------------------------------------
 # Te importy są opcjonalne – jeśli moduł istnieje, eksportujemy jego symbole.
 _HAS_FAILOVER = False
+_FAILOVER_IMPORT_ERROR: Exception | None = None
 try:
     from bot_core.resilience.failover import (  # type: ignore
         FailoverDrillMetrics,
@@ -25,8 +26,8 @@ try:
         ResilienceFailoverDrill,
     )
     _HAS_FAILOVER = True
-except Exception:  # pragma: no cover – brak modułu failover nie blokuje pakietu
-    pass
+except Exception as exc:  # pragma: no cover – brak modułu failover nie blokuje pakietu
+    _FAILOVER_IMPORT_ERROR = exc
 
 # --- Publiczny interfejs -----------------------------------------------------
 __all__ = []
@@ -43,3 +44,48 @@ if _HAS_FAILOVER:
             "ResilienceFailoverDrill",
         ]
     )
+
+
+def __getattr__(name: str):  # pragma: no cover - mechanizm awaryjny
+    """Lazy import failover symbols when optional dependency becomes available."""
+
+    global _HAS_FAILOVER
+
+    if name in {
+        "FailoverDrillMetrics",
+        "FailoverDrillResult",
+        "FailoverDrillReport",
+        "ResilienceFailoverDrill",
+    }:
+        try:
+            from bot_core.resilience.failover import (  # type: ignore
+                FailoverDrillMetrics as _FailoverDrillMetrics,
+                FailoverDrillReport as _FailoverDrillReport,
+                FailoverDrillResult as _FailoverDrillResult,
+                ResilienceFailoverDrill as _ResilienceFailoverDrill,
+            )
+        except Exception as exc:  # pragma: no cover - propagate the root cause
+            raise ImportError(
+                "Nie można zaimportować komponentów failover resilience"
+            ) from (_FAILOVER_IMPORT_ERROR or exc)
+
+        globals().update(
+            {
+                "FailoverDrillMetrics": _FailoverDrillMetrics,
+                "FailoverDrillReport": _FailoverDrillReport,
+                "FailoverDrillResult": _FailoverDrillResult,
+                "ResilienceFailoverDrill": _ResilienceFailoverDrill,
+            }
+        )
+        if not _HAS_FAILOVER:
+            __all__.extend(
+                [
+                    "FailoverDrillMetrics",
+                    "FailoverDrillResult",
+                    "FailoverDrillReport",
+                    "ResilienceFailoverDrill",
+                ]
+            )
+            _HAS_FAILOVER = True
+        return globals()[name]
+    raise AttributeError(name)

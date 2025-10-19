@@ -298,7 +298,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--hmac-key-env", help="Zmienna środowiskowa z kluczem HMAC")
     p.add_argument("--signing-key-path", type=Path, help="(alias Main) Plik z kluczem HMAC")
     p.add_argument("--signing-key-env", help="(alias Main) Zmienna środowiskowa z kluczem HMAC")
-    p.add_argument("--key-id", help="Identyfikator klucza HMAC w podpisie")
+    p.add_argument(
+        "--key-id",
+        "--hmac-key-id",
+        help="Identyfikator klucza HMAC w podpisie",
+    )
     p.add_argument("--digest", default="sha384", help="Algorytm skrótu HMAC: sha256/sha384/sha512 (domyślnie sha384)")
 
     p.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"])
