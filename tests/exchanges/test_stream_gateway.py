@@ -4,6 +4,9 @@ import time
 import types
 from typing import Iterable
 
+import json
+from urllib.request import urlopen
+
 import pytest
 
 from bot_core.exchanges.base import Environment, ExchangeAdapter, ExchangeCredentials
@@ -160,6 +163,63 @@ def test_stream_gateway_public_stream_returns_batches(kraken_credentials: Exchan
         next_ticker = next(batch for batch in next_batches if batch.channel == "ticker")
         assert next_ticker.cursor != ticker_batch.cursor
         assert next_ticker.events[0]["last_price"] == pytest.approx(101.0)
+    finally:
+        stream.close()
+        _stop_gateway(gateway, server, thread)
+
+
+def test_stream_gateway_status_and_reset_endpoint(
+    kraken_credentials: ExchangeCredentials, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    adapter = KrakenSpotAdapter(
+        kraken_credentials,
+        environment=Environment.PAPER,
+        settings={
+            "stream": {
+                "poll_interval": 0.0,
+                "timeout": 0.5,
+                "max_retries": 1,
+                "backoff_base": 0.0,
+                "backoff_cap": 0.0,
+                "jitter": (0.0, 0.0),
+            }
+        },
+    )
+
+    ticker = KrakenTicker(
+        symbol="XBT/USD",
+        best_ask=100.5,
+        best_bid=99.5,
+        last_price=100.0,
+        volume_24h=10.0,
+        vwap_24h=100.1,
+        high_24h=105.0,
+        low_24h=95.0,
+        open_price=98.0,
+        timestamp=time.time(),
+    )
+
+    monkeypatch.setattr(adapter, "fetch_ticker", lambda symbol: ticker)
+
+    gateway, server, thread, port = _start_gateway(adapter)
+    stream_settings = adapter._settings.setdefault("stream", {})
+    stream_settings["base_url"] = f"http://127.0.0.1:{port}"
+    stream_settings.setdefault("public_params", {"symbol": "XBT/USD"})
+
+    try:
+        stream = adapter.stream_public_data(channels=["ticker"])
+        next(stream)
+
+        snapshot = gateway.status_snapshot()
+        assert snapshot["channels"], "gateway powinien raportować aktywne kanały"
+
+        reset_url = (
+            f"http://127.0.0.1:{port}/stream/{adapter.name}/public"
+            "?channels=ticker&symbol=XBT/USD&reset=1&environment=paper"
+        )
+        with urlopen(reset_url) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        assert payload.get("reset") is True
     finally:
         stream.close()
         _stop_gateway(gateway, server, thread)

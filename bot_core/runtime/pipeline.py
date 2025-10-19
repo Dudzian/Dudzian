@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import logging
+import threading
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 import time
 from pathlib import Path
-from typing import Callable, Iterable, Mapping, MutableMapping, Sequence
+from typing import Any, Callable, Iterable, Mapping, MutableMapping, Sequence
 
 from bot_core.alerts import DefaultAlertRouter
 from bot_core.config.models import (
@@ -33,7 +34,7 @@ from bot_core.exchanges.base import (
     ExchangeAdapter,
     ExchangeAdapterFactory,
 )
-from bot_core.exchanges.streaming import StreamBatch
+from bot_core.exchanges.streaming import LocalLongPollStream, StreamBatch
 from bot_core.market_intel import MarketIntelAggregator, MarketIntelQuery, MarketIntelSnapshot
 from bot_core.portfolio import PortfolioDecisionLog, PortfolioGovernor
 from bot_core.runtime.bootstrap import BootstrapContext, bootstrap_environment
@@ -58,6 +59,12 @@ from bot_core.strategies.cross_exchange_arbitrage import (
     CrossExchangeArbitrageStrategy,
 )
 from bot_core.strategies.base import StrategyEngine, StrategySignal, MarketSnapshot
+
+try:  # pragma: no cover - moduł decision może być opcjonalny
+    from bot_core.decision import DecisionCandidate, DecisionEvaluation
+except Exception:  # pragma: no cover
+    DecisionCandidate = None  # type: ignore
+    DecisionEvaluation = Any  # type: ignore
 
 _DEFAULT_LEDGER_SUBDIR = Path("audit/ledger")
 _LOGGER = logging.getLogger(__name__)
@@ -671,6 +678,14 @@ class MultiStrategyRuntime:
     portfolio_coordinator: PortfolioRuntimeCoordinator | None = None
     portfolio_governor: PortfolioGovernor | None = None
     tco_reporter: RuntimeTCOReporter | None = None
+    stream_feed: "StreamingStrategyFeed | None" = None
+    decision_sink: "DecisionAwareSignalSink | None" = None
+
+    def shutdown(self) -> None:
+        """Zatrzymuje komponenty dodatkowe (np. stream feed)."""
+
+        if self.stream_feed is not None:
+            self.stream_feed.stop()
 
 
 class OHLCVStrategyFeed(StrategyDataFeed):
@@ -739,6 +754,601 @@ class InMemoryStrategySignalSink(StrategySignalSink):
 
     def export(self) -> Sequence[tuple[str, Sequence[StrategySignal]]]:
         return tuple(self._records)
+
+
+class StreamingStrategyFeed(StrategyDataFeed):
+    """Łączy `LocalLongPollStream` z interfejsem StrategyDataFeed."""
+
+    def __init__(
+        self,
+        *,
+        history_feed: StrategyDataFeed,
+        stream_factory: Callable[[], Iterable[StreamBatch]],
+        symbols_map: Mapping[str, Sequence[str]],
+        buffer_size: int = 256,
+        heartbeat_interval: float = 15.0,
+        idle_timeout: float | None = 60.0,
+        restart_delay: float = 5.0,
+        logger: logging.Logger | None = None,
+    ) -> None:
+        self._history_feed = history_feed
+        self._stream_factory = stream_factory
+        self._symbols_map = {key: tuple(values) for key, values in symbols_map.items()}
+        self._buffer_size = max(1, int(buffer_size))
+        self._heartbeat_interval = max(0.0, float(heartbeat_interval))
+        self._idle_timeout = idle_timeout if idle_timeout is None else max(0.0, float(idle_timeout))
+        self._restart_delay = max(0.5, float(restart_delay))
+        self._logger = logger or logging.getLogger(__name__)
+        self._lock = threading.RLock()
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._buffers: dict[str, deque[MarketSnapshot]] = {}
+        self._known_symbols = {
+            symbol
+            for values in self._symbols_map.values()
+            for symbol in values
+        }
+        for symbol in self._known_symbols:
+            self._buffers[symbol] = deque(maxlen=self._buffer_size)
+        self._last_event_at: float | None = None
+
+    def start(self) -> None:
+        if self._thread and self._thread.is_alive():
+            return
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._run_loop, name="strategy-stream", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=5.0)
+        self._thread = None
+
+    def ingest_batch(self, batch: StreamBatch) -> None:
+        """Przetwarza paczkę danych dostarczoną ze streamu."""
+
+        if not batch.events:
+            return
+        snapshots: list[MarketSnapshot] = []
+        for event in batch.events:
+            try:
+                snapshot = self._event_to_snapshot(event)
+            except Exception:
+                self._logger.debug("Nie udało się sparsować zdarzenia streamu: %s", event, exc_info=True)
+                continue
+            if snapshot is None:
+                continue
+            if self._known_symbols and snapshot.symbol not in self._known_symbols:
+                continue
+            snapshots.append(snapshot)
+        if not snapshots:
+            return
+        with self._lock:
+            for snapshot in snapshots:
+                buffer = self._buffers.setdefault(snapshot.symbol, deque(maxlen=self._buffer_size))
+                buffer.append(snapshot)
+            self._last_event_at = time.monotonic()
+
+    def load_history(self, strategy_name: str, bars: int) -> Sequence[MarketSnapshot]:
+        return self._history_feed.load_history(strategy_name, bars)
+
+    def fetch_latest(self, strategy_name: str) -> Sequence[MarketSnapshot]:
+        symbols = self._symbols_map.get(strategy_name, ())
+        if not symbols:
+            return ()
+        collected: list[MarketSnapshot] = []
+        with self._lock:
+            for symbol in symbols:
+                queue = self._buffers.get(symbol)
+                if not queue:
+                    continue
+                while queue:
+                    collected.append(queue.popleft())
+        collected.sort(key=lambda item: (item.symbol, item.timestamp))
+        return tuple(collected)
+
+    def _run_loop(self) -> None:
+        while not self._stop_event.is_set():
+            try:
+                stream = self._stream_factory()
+                consume_stream(
+                    stream,
+                    handle_batch=self.ingest_batch,
+                    heartbeat_interval=self._heartbeat_interval,
+                    idle_timeout=self._idle_timeout,
+                    on_heartbeat=self._handle_heartbeat,
+                    stop_condition=self._stop_event.is_set,
+                )
+            except TimeoutError:
+                self._logger.warning("Brak nowych danych w streamie strategii przez dłuższy czas")
+            except Exception:  # pragma: no cover - logowanie dla diagnostyki
+                self._logger.exception("Błąd podczas przetwarzania streamu strategii")
+            if self._stop_event.is_set():
+                break
+            time.sleep(self._restart_delay)
+
+    def _handle_heartbeat(self, timestamp: float) -> None:
+        if self._last_event_at is None:
+            return
+        drift = timestamp - self._last_event_at
+        if drift > max(self._heartbeat_interval, 1.0):
+            self._logger.debug("Opóźnienie streamu strategii %.2f s", drift)
+
+    @staticmethod
+    def _event_to_snapshot(event: Mapping[str, Any]) -> MarketSnapshot | None:
+        symbol_raw = event.get("symbol") or event.get("pair") or event.get("instrument")
+        if not symbol_raw:
+            return None
+        symbol = str(symbol_raw)
+        timestamp_raw = (
+            event.get("timestamp")
+            or event.get("time")
+            or event.get("ts")
+            or time.time()
+        )
+        try:
+            timestamp_value = float(timestamp_raw)
+        except (TypeError, ValueError):
+            timestamp_value = time.time()
+        if timestamp_value > 1e15:
+            timestamp_ms = int(timestamp_value)
+        elif timestamp_value > 1e12:
+            timestamp_ms = int(timestamp_value)
+        else:
+            timestamp_ms = int(timestamp_value * 1000.0)
+
+        last_price = StreamingStrategyFeed._float(event.get("last_price") or event.get("price") or event.get("close"))
+        if last_price is None:
+            return None
+        open_price = StreamingStrategyFeed._float(event.get("open_price") or event.get("open")) or last_price
+        high_price = StreamingStrategyFeed._float(event.get("high_24h") or event.get("high")) or max(open_price, last_price)
+        low_price = StreamingStrategyFeed._float(event.get("low_24h") or event.get("low")) or min(open_price, last_price)
+        volume = StreamingStrategyFeed._float(
+            event.get("volume_24h_base")
+            or event.get("volume")
+            or event.get("base_volume")
+        ) or 0.0
+
+        indicators: dict[str, float] = {}
+        for key in (
+            "best_bid",
+            "best_ask",
+            "price_change_percent",
+            "volume_24h_quote",
+        ):
+            value = StreamingStrategyFeed._float(event.get(key))
+            if value is not None:
+                indicators[key] = value
+
+        return MarketSnapshot(
+            symbol=symbol,
+            timestamp=timestamp_ms,
+            open=open_price,
+            high=high_price,
+            low=low_price,
+            close=last_price,
+            volume=volume,
+            indicators=indicators,
+        )
+
+    @staticmethod
+    def _float(value: object | None) -> float | None:
+        if value in (None, ""):
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+
+def _build_streaming_feed(
+    *,
+    bootstrap: BootstrapContext,
+    environment: EnvironmentConfig,
+    base_feed: StrategyDataFeed,
+    symbols_map: Mapping[str, Sequence[str]],
+) -> StreamingStrategyFeed | None:
+    stream_cfg = getattr(environment, "stream", None)
+    adapter_settings = getattr(environment, "adapter_settings", None)
+    if stream_cfg is None or not isinstance(adapter_settings, Mapping):
+        return None
+    stream_settings_raw = adapter_settings.get("stream")
+    if not isinstance(stream_settings_raw, Mapping):
+        return None
+    stream_settings = dict(stream_settings_raw)
+    host = getattr(stream_cfg, "host", "127.0.0.1")
+    port = getattr(stream_cfg, "port", 8765)
+    base_url = str(stream_settings.get("base_url") or f"http://{host}:{port}")
+    default_path = f"/stream/{environment.exchange}/public"
+    path = str(
+        stream_settings.get("public_path")
+        or stream_settings.get("path")
+        or default_path
+    )
+    raw_channels = stream_settings.get("public_channels") or stream_settings.get("channels")
+    channels: list[str]
+    if raw_channels is None:
+        channels = ["ticker"]
+    elif isinstance(raw_channels, str):
+        channels = [token.strip() for token in raw_channels.split(",") if token.strip()]
+    else:
+        channels = [str(token).strip() for token in raw_channels if str(token).strip()]
+    if not channels:
+        channels = ["ticker"]
+    all_symbols = tuple(
+        dict.fromkeys(symbol for values in symbols_map.values() for symbol in values)
+    )
+
+    def _build_params() -> dict[str, object]:
+        params: dict[str, object] = {}
+        base_params = stream_settings.get("params")
+        if isinstance(base_params, Mapping):
+            params.update(base_params)
+        public_params = stream_settings.get("public_params")
+        if isinstance(public_params, Mapping):
+            params.update(public_params)
+        if "symbols" not in params and "symbol" not in params and all_symbols:
+            params["symbols"] = ",".join(all_symbols)
+        return params
+
+    def _build_headers() -> Mapping[str, str] | None:
+        headers = stream_settings.get("headers")
+        if not isinstance(headers, Mapping):
+            return None
+        return {str(key): str(value) for key, value in headers.items()}
+
+    channel_param = stream_settings.get("public_channel_param")
+    if channel_param is None:
+        channel_param = stream_settings.get("channel_param")
+    channel_param = str(channel_param).strip() if channel_param not in (None, "") else None
+    cursor_param = stream_settings.get("public_cursor_param")
+    if cursor_param is None:
+        cursor_param = stream_settings.get("cursor_param")
+    cursor_param = str(cursor_param).strip() if cursor_param not in (None, "") else None
+    initial_cursor = stream_settings.get("public_initial_cursor")
+    if initial_cursor is None:
+        initial_cursor = stream_settings.get("initial_cursor")
+
+    serializer = stream_settings.get("public_channel_serializer")
+    if serializer is None:
+        serializer = stream_settings.get("channel_serializer")
+    channel_serializer = None
+    if callable(serializer):
+        channel_serializer = serializer
+    else:
+        separator = stream_settings.get("public_channel_separator")
+        if separator is None:
+            separator = stream_settings.get("channel_separator")
+        if isinstance(separator, str) and separator:
+            channel_serializer = lambda values, sep=separator: sep.join(values)  # noqa: E731
+
+    def _build_body_params() -> Mapping[str, object] | None:
+        body: dict[str, object] = {}
+        base_body = stream_settings.get("body_params")
+        if isinstance(base_body, Mapping):
+            body.update(base_body)
+        scope_body = stream_settings.get("public_body_params")
+        if isinstance(scope_body, Mapping):
+            body.update(scope_body)
+        return body or None
+
+    body_encoder = stream_settings.get("public_body_encoder")
+    if body_encoder is None:
+        body_encoder = stream_settings.get("body_encoder")
+
+    jitter_raw = stream_settings.get("jitter")
+    if isinstance(jitter_raw, Sequence):
+        try:
+            jitter = tuple(float(item) for item in jitter_raw)
+        except (TypeError, ValueError):
+            jitter = (0.05, 0.30)
+        if len(jitter) != 2:
+            jitter = (0.05, 0.30)
+    else:
+        jitter = (0.05, 0.30)
+
+    poll_interval = float(stream_settings.get("poll_interval", 0.5))
+    timeout = float(stream_settings.get("timeout", 10.0))
+    max_retries = int(stream_settings.get("max_retries", 3))
+    backoff_base = float(stream_settings.get("backoff_base", 0.25))
+    backoff_cap = float(stream_settings.get("backoff_cap", 2.0))
+    http_method = stream_settings.get("public_method") or stream_settings.get("method", "GET")
+    params_in_body = bool(stream_settings.get("public_params_in_body", stream_settings.get("params_in_body", False)))
+    channels_in_body = bool(stream_settings.get("public_channels_in_body", stream_settings.get("channels_in_body", False)))
+    cursor_in_body = bool(stream_settings.get("public_cursor_in_body", stream_settings.get("cursor_in_body", False)))
+
+    def _factory() -> LocalLongPollStream:
+        return LocalLongPollStream(
+            base_url=base_url,
+            path=path,
+            channels=channels,
+            adapter=environment.exchange,
+            scope="public",
+            environment=environment.environment.value,
+            params=_build_params(),
+            headers=_build_headers(),
+            poll_interval=poll_interval,
+            timeout=timeout,
+            max_retries=max_retries,
+            backoff_base=backoff_base,
+            backoff_cap=backoff_cap,
+            jitter=jitter,
+            channel_param=channel_param,
+            cursor_param=cursor_param,
+            initial_cursor=initial_cursor,
+            channel_serializer=channel_serializer,
+            http_method=str(http_method or "GET"),
+            params_in_body=params_in_body,
+            channels_in_body=channels_in_body,
+            cursor_in_body=cursor_in_body,
+            body_params=_build_body_params(),
+            body_encoder=body_encoder,
+        )
+
+    heartbeat_interval = float(stream_settings.get("heartbeat_interval", 15.0))
+    idle_timeout_raw = stream_settings.get("idle_timeout")
+    idle_timeout = None if idle_timeout_raw in (None, "") else float(idle_timeout_raw)
+    restart_delay = float(stream_settings.get("restart_delay", 5.0))
+    buffer_size = int(stream_settings.get("buffer_size", 256))
+
+    return StreamingStrategyFeed(
+        history_feed=base_feed,
+        stream_factory=_factory,
+        symbols_map=symbols_map,
+        buffer_size=buffer_size,
+        heartbeat_interval=heartbeat_interval,
+        idle_timeout=idle_timeout,
+        restart_delay=restart_delay,
+        logger=_LOGGER,
+    )
+
+
+def _estimate_default_notional(paper_settings: Mapping[str, object]) -> float:
+    balances = paper_settings.get("initial_balances") or {}
+    valuation_asset = str(paper_settings.get("valuation_asset", "USDT"))
+    balance = 0.0
+    if isinstance(balances, Mapping):
+        try:
+            balance = float(balances.get(valuation_asset, 0.0))
+        except (TypeError, ValueError):
+            balance = 0.0
+        if balance <= 0:
+            for value in balances.values():
+                try:
+                    balance = float(value)
+                except (TypeError, ValueError):
+                    continue
+                if balance > 0:
+                    break
+    position_size = 0.0
+    try:
+        position_size = float(paper_settings.get("position_size", 0.1))
+    except (TypeError, ValueError):
+        position_size = 0.1
+    default_notional = balance * max(position_size, 0.0)
+    if default_notional <= 0:
+        default_notional = 1_000.0
+    return default_notional
+
+
+def _build_decision_sink(
+    *,
+    bootstrap: BootstrapContext,
+    base_sink: InMemoryStrategySignalSink,
+    default_notional: float,
+    environment_name: str,
+) -> DecisionAwareSignalSink | None:
+    orchestrator = getattr(bootstrap, "decision_orchestrator", None)
+    if orchestrator is None or DecisionCandidate is None:
+        return None
+    risk_engine = getattr(bootstrap, "risk_engine", None)
+    if risk_engine is None:
+        return None
+    decision_config = getattr(bootstrap, "decision_engine_config", None)
+    min_probability = 0.55
+    if decision_config is not None:
+        try:
+            min_probability = float(getattr(decision_config, "min_probability", min_probability))
+        except (TypeError, ValueError):  # pragma: no cover - konfiguracja może zawierać tekst
+            min_probability = 0.55
+    exchange_name = getattr(bootstrap.environment, "exchange", "")
+    return DecisionAwareSignalSink(
+        base_sink=base_sink,
+        orchestrator=orchestrator,
+        risk_engine=risk_engine,
+        default_notional=default_notional,
+        environment=environment_name,
+        exchange=str(exchange_name or ""),
+        min_probability=min_probability,
+    )
+class DecisionAwareSignalSink(StrategySignalSink):
+    """Filtruje sygnały strategii przez DecisionOrchestratora."""
+
+    def __init__(
+        self,
+        *,
+        base_sink: InMemoryStrategySignalSink,
+        orchestrator: Any,
+        risk_engine: Any,
+        default_notional: float,
+        environment: str,
+        exchange: str,
+        min_probability: float = 0.55,
+    ) -> None:
+        self._base_sink = base_sink
+        self._orchestrator = orchestrator
+        self._risk_engine = risk_engine
+        self._default_notional = max(0.0, float(default_notional)) or 1_000.0
+        self._environment = environment
+        self._exchange = exchange
+        self._min_probability = max(0.0, min(1.0, float(min_probability)))
+        self._logger = logging.getLogger(__name__)
+        self._evaluations: list[DecisionEvaluation] = []
+
+    def submit(
+        self,
+        *,
+        strategy_name: str,
+        schedule_name: str,
+        risk_profile: str,
+        timestamp: datetime,
+        signals: Sequence[StrategySignal],
+    ) -> None:
+        if DecisionCandidate is None or self._orchestrator is None:
+            self._base_sink.submit(
+                strategy_name=strategy_name,
+                schedule_name=schedule_name,
+                risk_profile=risk_profile,
+                timestamp=timestamp,
+                signals=signals,
+            )
+            return
+
+        accepted: list[StrategySignal] = []
+        risk_snapshot = self._build_risk_snapshot(risk_profile)
+        for signal in signals:
+            candidate = self._build_candidate(strategy_name, risk_profile, signal)
+            if candidate is None:
+                continue
+            try:
+                evaluation = self._orchestrator.evaluate_candidate(candidate, risk_snapshot)
+            except Exception:  # pragma: no cover - diagnostyka orchestratora
+                self._logger.exception("DecisionOrchestrator odrzucił kandydata przez wyjątek")
+                continue
+            self._evaluations.append(evaluation)
+            if evaluation.accepted:
+                accepted.append(signal)
+            else:
+                self._logger.debug(
+                    "DecisionOrchestrator odrzucił sygnał %s/%s: %s",
+                    strategy_name,
+                    signal.symbol,
+                    ", ".join(evaluation.reasons) or "brak powodów",
+                )
+
+        if not accepted:
+            return
+
+        self._base_sink.submit(
+            strategy_name=strategy_name,
+            schedule_name=schedule_name,
+            risk_profile=risk_profile,
+            timestamp=timestamp,
+            signals=tuple(accepted),
+        )
+
+    def export(self) -> Sequence[tuple[str, Sequence[StrategySignal]]]:
+        return self._base_sink.export()
+
+    def evaluations(self) -> Sequence[DecisionEvaluation]:
+        return tuple(self._evaluations)
+
+    def _build_candidate(
+        self,
+        strategy_name: str,
+        risk_profile: str,
+        signal: StrategySignal,
+    ) -> DecisionCandidate | None:
+        if DecisionCandidate is None:
+            return None
+        metadata = dict(signal.metadata)
+        probability = self._extract_probability(signal)
+        if probability < self._min_probability:
+            return None
+        expected_return = self._extract_expected_return(signal, metadata)
+        cost_override = self._extract_cost_override(metadata)
+        latency_ms = self._extract_latency(metadata)
+        notional = self._extract_notional(metadata)
+        action = "exit" if str(signal.side).upper() in {"SELL", "EXIT", "FLAT"} else "enter"
+        metadata.setdefault("environment", self._environment)
+        metadata.setdefault("exchange", self._exchange)
+        metadata.setdefault("schedule", strategy_name)
+        return DecisionCandidate(
+            strategy=strategy_name,
+            action=action,
+            risk_profile=risk_profile,
+            symbol=signal.symbol,
+            notional=notional,
+            expected_return_bps=expected_return,
+            expected_probability=probability,
+            cost_bps_override=cost_override,
+            latency_ms=latency_ms,
+            metadata=metadata,
+        )
+
+    def _build_risk_snapshot(self, risk_profile: str) -> Mapping[str, object]:
+        loader = getattr(self._risk_engine, "snapshot_state", None)
+        if callable(loader):
+            try:
+                snapshot = loader(risk_profile)
+                if snapshot is not None:
+                    return snapshot
+            except Exception:  # pragma: no cover - diagnostyka risk engine
+                self._logger.debug("Nie udało się pobrać snapshotu ryzyka", exc_info=True)
+        return {}
+
+    def _extract_probability(self, signal: StrategySignal) -> float:
+        metadata_prob = None
+        metadata = signal.metadata or {}
+        if isinstance(metadata, Mapping):
+            candidate = metadata.get("expected_probability") or metadata.get("probability")
+            if candidate is None and isinstance(metadata.get("ai_manager"), Mapping):
+                candidate = metadata["ai_manager"].get("success_probability")
+            metadata_prob = candidate
+        prob = None
+        if metadata_prob is not None:
+            try:
+                prob = float(metadata_prob)
+            except (TypeError, ValueError):
+                prob = None
+        if prob is None:
+            prob = float(signal.confidence)
+        return max(self._min_probability, min(0.995, prob))
+
+    def _extract_expected_return(self, signal: StrategySignal, metadata: Mapping[str, Any]) -> float:
+        candidate = metadata.get("expected_return_bps")
+        if candidate is None and isinstance(metadata.get("ai_manager"), Mapping):
+            candidate = metadata["ai_manager"].get("expected_return_bps")
+        if candidate is None:
+            base = max(0.0, float(signal.confidence) - 0.5)
+            candidate = 5.0 + base * 20.0
+        try:
+            return float(candidate)
+        except (TypeError, ValueError):
+            return 5.0
+
+    def _extract_cost_override(self, metadata: Mapping[str, Any]) -> float | None:
+        candidate = metadata.get("cost_bps") or metadata.get("slippage_bps")
+        if candidate is None:
+            return None
+        try:
+            return float(candidate)
+        except (TypeError, ValueError):
+            return None
+
+    def _extract_latency(self, metadata: Mapping[str, Any]) -> float | None:
+        latency = metadata.get("latency_ms") or metadata.get("latency")
+        if latency is None and isinstance(metadata.get("decision_engine"), Mapping):
+            latency = metadata["decision_engine"].get("latency_ms")
+        if latency is None:
+            return None
+        try:
+            return float(latency)
+        except (TypeError, ValueError):
+            return None
+
+    def _extract_notional(self, metadata: Mapping[str, Any]) -> float:
+        candidate = metadata.get("notional") or metadata.get("target_notional")
+        if candidate is None:
+            return self._default_notional
+        try:
+            value = float(candidate)
+        except (TypeError, ValueError):
+            return self._default_notional
+        if value <= 0:
+            return self._default_notional
+        return value
 
 
 def _response_to_snapshots(symbol: str, response: object) -> list[MarketSnapshot]:
@@ -819,8 +1429,26 @@ def build_multi_strategy_runtime(
         interval_map[schedule.strategy] = interval
         symbols_map.setdefault(schedule.strategy, all_symbols)
 
-    data_feed = OHLCVStrategyFeed(cached_source, symbols_map=symbols_map, interval_map=interval_map)
-    signal_sink = InMemoryStrategySignalSink()
+    base_feed = OHLCVStrategyFeed(cached_source, symbols_map=symbols_map, interval_map=interval_map)
+    stream_feed = _build_streaming_feed(
+        bootstrap=bootstrap_ctx,
+        environment=environment,
+        base_feed=base_feed,
+        symbols_map=symbols_map,
+    )
+    if stream_feed is not None:
+        stream_feed.start()
+        data_feed: StrategyDataFeed = stream_feed
+    else:
+        data_feed = base_feed
+    base_sink = InMemoryStrategySignalSink()
+    decision_sink = _build_decision_sink(
+        bootstrap=bootstrap_ctx,
+        base_sink=base_sink,
+        default_notional=_estimate_default_notional(paper_settings),
+        environment_name=environment_name,
+    )
+    signal_sink: StrategySignalSink = decision_sink or base_sink
     portfolio_governor = getattr(bootstrap_ctx, "portfolio_governor", None)
     scheduler = MultiStrategyScheduler(
         environment=environment_name,
@@ -969,6 +1597,8 @@ def build_multi_strategy_runtime(
         portfolio_coordinator=portfolio_coordinator,
         portfolio_governor=portfolio_governor,
         tco_reporter=bootstrap_ctx.tco_reporter,
+        stream_feed=stream_feed,
+        decision_sink=decision_sink,
     )
 
 
@@ -1029,4 +1659,9 @@ __all__ = [
     "create_trading_controller",
     "MultiStrategyRuntime",
     "build_multi_strategy_runtime",
+    "consume_stream",
+    "OHLCVStrategyFeed",
+    "InMemoryStrategySignalSink",
+    "StreamingStrategyFeed",
+    "DecisionAwareSignalSink",
 ]
