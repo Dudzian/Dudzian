@@ -1146,7 +1146,11 @@ class AutoTrader:
         if gui is None:
             return
 
-        side = "buy" if str(action).upper() == "BUY" else "sell"
+        action_norm = str(action or "").upper()
+        if action_norm not in {"BUY", "SELL"}:
+            return
+
+        side = "buy" if action_norm == "BUY" else "sell"
         try:
             price_value = float(price)
         except Exception:
@@ -1168,7 +1172,7 @@ class AutoTrader:
                 logger.debug("Paper portfolio snapshot failed", exc_info=True)
                 raw_snapshot = None
             if isinstance(raw_snapshot, Mapping):
-                snapshot = raw_snapshot
+                snapshot = dict(raw_snapshot)
 
         balance = snapshot.get("value") if snapshot else None
         if balance is not None:
@@ -1190,8 +1194,9 @@ class AutoTrader:
 
         positions_attr = getattr(gui, "_open_positions", None)
         if isinstance(positions_attr, dict):
-            symbol_key = str(symbol)
-            if side == "sell":
+            symbol_str = "" if symbol is None else str(symbol)
+            symbol_key = symbol_str.upper() or symbol_str
+            if action_norm == "SELL":
                 positions_attr.pop(symbol_key, None)
             else:
                 qty_candidate: Any = snapshot.get("position") if snapshot else None
@@ -1215,7 +1220,7 @@ class AutoTrader:
                     entry_value = price_value
                 if qty_value > 0:
                     positions_attr[symbol_key] = {
-                        "side": "buy",
+                        "side": side,
                         "qty": qty_value,
                         "entry": entry_value,
                     }

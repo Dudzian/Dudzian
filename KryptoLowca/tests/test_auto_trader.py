@@ -124,7 +124,8 @@ class DummyGUI:
 
     def _bridge_execute_trade(self, symbol: str, side: str, price: float) -> None:
         side_norm = (side or "").lower()
-        symbol_key = str(symbol)
+        symbol_str = "" if symbol is None else str(symbol)
+        symbol_key = symbol_str.upper() or symbol_str
         if side_norm == "buy":
             self._open_positions[symbol_key] = {
                 "side": "buy",
@@ -517,6 +518,70 @@ async def test_trade_once_updates_dummy_gui_positions(strategy_harness: Strategy
     position = gui._open_positions["BTC/USDT"]
     assert position["side"] == "buy"
     assert position["qty"] > 0.0
+
+
+@pytest.mark.asyncio
+async def test_trade_once_sell_clears_dummy_gui_positions() -> None:
+    provider = StubDataProvider(price=103.7)
+    execution_adapter = RecordingExecutionAdapter()
+    gui = DummyGUI()
+    gui._open_positions["BTC/USDT"] = {"side": "buy", "qty": 1.0, "entry": 100.0}
+
+    registry = StrategyRegistry()
+
+    @registry.register
+    class DummySellStrategy(BaseStrategy):
+        metadata = StrategyMetadata(
+            name="DummySellStrategy",
+            description="Test strategy sell",
+            timeframes=("1m",),
+        )
+
+        async def generate_signal(
+            self,
+            context: StrategyContext,
+            market_payload: Mapping[str, Any],
+        ) -> StrategySignal:
+            return StrategySignal(
+                symbol=context.symbol,
+                action="SELL",
+                confidence=0.9,
+                size=25.0,
+            )
+
+    trader = AutoTrader(
+        DummyEmitter(),
+        gui,
+        symbol_getter=lambda: "BTC/USDT",
+        auto_trade_interval_s=0.05,
+        walkforward_interval_s=None,
+        signal_service=SignalService(strategy_registry=registry),
+        risk_service=AcceptAllRiskService(size=25.0),
+        execution_service=ExecutionService(execution_adapter),
+        data_provider=provider,
+    )
+
+    trader.enable_auto_trade = True
+    trader.confirm_auto_trade(True)
+    trader.configure(
+        strategy=StrategyConfig(
+            preset="DummySellStrategy",
+            mode="demo",
+            max_leverage=1.0,
+            max_position_notional_pct=0.5,
+            trade_risk_pct=0.1,
+            default_sl=0.01,
+            default_tp=0.02,
+            violation_cooldown_s=1,
+            reduce_only_after_violation=False,
+        ),
+    )
+
+    assert trader._paper_enabled
+
+    await trader._trade_once("BTC/USDT", "1m")
+
+    assert gui._open_positions == {}
 
 
 def test_paper_trading_mode_switch(strategy_harness: StrategyHarness) -> None:
