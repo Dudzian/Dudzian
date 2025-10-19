@@ -207,8 +207,18 @@ class AutoTrader:
         self._market_data_provider = market_data_provider
         self._signal_service = signal_service or SignalService()
         self._provided_risk_service = risk_service
-        self._execution_service = execution_service or ExecutionService(_NullExchangeAdapter(self.emitter))
-        self._live_execution_adapter = getattr(self._execution_service, "_adapter", None)
+        self._emergency_execution_mode = False
+        self._emergency_execution_adapter: _NullExchangeAdapter | None = None
+        self._compliance_live_allowed = False
+
+        if execution_service is None:
+            self._execution_service = self._activate_emergency_execution_mode()
+        else:
+            self._execution_service = execution_service
+        if self._emergency_execution_mode:
+            self._live_execution_adapter = None
+        else:
+            self._live_execution_adapter = getattr(self._execution_service, "_adapter", None)
         self._core_config_path: Path | None = None
         self._risk_profile_name: Optional[str] = None
         self._risk_profile_config: Optional["RiskProfileConfig"] = None
@@ -230,9 +240,8 @@ class AutoTrader:
             logger=logger,
         )
         self._runtime_metadata = runtime_metadata.to_dict() if runtime_metadata else {}
-        self._compliance_live_allowed = bool(
-            self._runtime_metadata.get("compliance_live_allowed")
-        )
+        compliance_flag = bool(self._runtime_metadata.get("compliance_live_allowed"))
+        self._compliance_live_allowed = compliance_flag and not self._emergency_execution_mode
         if runtime_metadata:
             self._risk_profile_name = getattr(runtime_metadata, "risk_profile", None)
             logger.info("Runtime entrypoint auto_trader: %s", self._runtime_metadata)
@@ -374,6 +383,28 @@ class AutoTrader:
         emitter.on("bar", self._on_bar, tag="autotrader")
 
     # -- Public API --
+    def _activate_emergency_execution_mode(self) -> ExecutionService:
+        self._emergency_execution_mode = True
+        adapter = _NullExchangeAdapter(self.emitter)
+        self._emergency_execution_adapter = adapter
+        self._compliance_live_allowed = False
+        warning = (
+            "ExecutionService not provided – AutoTrader switched to emergency paper-only mode. "
+            "Live trading flag disabled."
+        )
+        try:
+            self.emitter.log(warning, level="WARNING", component="AutoTrader")
+        except Exception:
+            logger.warning(warning)
+        else:
+            logger.warning(warning)
+        return ExecutionService(adapter)
+
+    def _get_emergency_adapter(self) -> _NullExchangeAdapter:
+        if self._emergency_execution_adapter is None:
+            self._emergency_execution_adapter = _NullExchangeAdapter(self.emitter)
+        return self._emergency_execution_adapter
+
     def _build_data_provider(self) -> Optional[DataProvider]:
         ex_mgr = getattr(self.gui, "ex_mgr", None)
         if ex_mgr is None:
@@ -417,7 +448,9 @@ class AutoTrader:
         with self._lock:
             self._risk_manager_settings = settings
             if profile_name:
-                self._risk_profile_name = profile_name
+                normalized_profile = str(profile_name)
+                self._risk_profile_name = normalized_profile
+                self._core_risk_profile = normalized_profile
             if profile_config is not None:
                 self._risk_profile_config = profile_config
 
@@ -635,7 +668,7 @@ class AutoTrader:
                     else:
                         self._exchange_config = None
                     if not self._paper_enabled:
-                        adapter = self._live_execution_adapter or _NullExchangeAdapter(self.emitter)
+                        adapter = self._live_execution_adapter or self._get_emergency_adapter()
                         self._execution_service.set_adapter(adapter)
                     continue
                 if key == "enable_auto_trade":
@@ -1516,7 +1549,7 @@ class AutoTrader:
     def _disable_paper_trading(self) -> None:
         if not self._paper_enabled:
             return
-        target_adapter = self._live_execution_adapter or _NullExchangeAdapter(self.emitter)
+        target_adapter = self._live_execution_adapter or self._get_emergency_adapter()
         self._execution_service.set_adapter(target_adapter)
         self._paper_adapter = None
         self._paper_enabled = False

@@ -8,7 +8,7 @@ import logging
 import signal
 import threading
 import time
-from typing import Optional
+from typing import Mapping, Optional
 
 
 def _ensure_repo_root() -> None:
@@ -28,13 +28,21 @@ if __package__ in (None, ""):
 
 from KryptoLowca.auto_trader.paper import (  # noqa: E402
     HeadlessTradingStub,
-    PaperAutoTradeApp,
+    PaperAutoTradeApp as _ModernPaperAutoTradeApp,
     main,
 )
-from KryptoLowca.paper_auto_trade_app import PaperAutoTradeApp
+from bot_core.runtime.metadata import RiskManagerSettings  # noqa: E402
+try:
+    from KryptoLowca.paper_auto_trade_app import PaperAutoTradeApp as LegacyPaperAutoTradeApp
+except ImportError:  # pragma: no cover - środowiska bez legacy modułu
+    LegacyPaperAutoTradeApp = None  # type: ignore[assignment]
+
+PaperAutoTradeApp = _ModernPaperAutoTradeApp
 from KryptoLowca.risk_settings_loader import DEFAULT_CORE_CONFIG_PATH
 
 __all__ = ["HeadlessTradingStub", "PaperAutoTradeApp", "main"]
+if LegacyPaperAutoTradeApp is not None:
+    __all__.append("LegacyPaperAutoTradeApp")
 
 
 def _start_gui_in_main_thread(
@@ -148,31 +156,38 @@ def main(
             log.warning("Brak ustawień ryzyka do zastosowania (profil=%s)", profile_name)
             return
 
+        def _lookup(key: str) -> float | int | None:
+            if isinstance(settings, RiskManagerSettings):
+                return getattr(settings, key, None)
+            if isinstance(settings, Mapping):
+                return settings.get(key)
+            return getattr(settings, key, None)
+
         def _as_pct(value: float | int | None) -> Optional[float]:
             if value is None:
                 return None
             pct = float(value)
             return pct * 100.0 if pct <= 1.0 else pct
 
-        daily_loss = _as_pct(settings.get("max_daily_loss_pct"))
-        drawdown = _as_pct(settings.get("max_drawdown_pct"))
+        daily_loss = _as_pct(_lookup("max_daily_loss_pct"))
+        drawdown = _as_pct(_lookup("max_drawdown_pct"))
         if daily_loss is not None:
             risk_guard.cfg.max_daily_loss_pct = daily_loss
         if drawdown is not None:
             risk_guard.cfg.max_drawdown_pct = drawdown
 
-        risk_per_trade = _as_pct(settings.get("max_risk_per_trade"))
+        risk_per_trade = _as_pct(_lookup("max_risk_per_trade"))
         if risk_per_trade is not None:
             position_sizer.cfg.risk_per_trade_pct = risk_per_trade
 
-        sl_mult = settings.get("stop_loss_atr_multiple")
+        sl_mult = _lookup("stop_loss_atr_multiple")
         if sl_mult is not None:
             value = float(sl_mult)
             position_sizer.cfg.sl_atr_mult = value
             stop_tp.cfg.default_sl_atr_mult = value
             stop_tp._sl_mult = value
 
-        portfolio_risk = settings.get("max_portfolio_risk")
+        portfolio_risk = _lookup("max_portfolio_risk")
         if portfolio_risk is not None:
             strat.cfg.max_abs_position = float(portfolio_risk)
 

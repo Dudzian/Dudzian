@@ -19,6 +19,7 @@ Zapewnienie bezpiecznego startu trybu live (daemon + UI) po spełnieniu wymogów
 - Podpisany decision log (`audit/decision_logs/live_execution.jsonl`) z wpisami: przygotowanie mTLS, wyniki Paper Labs, start demona, start UI.
 - Raport Paper Labs oraz stres testów zarchiwizowany w `reports/paper_labs/` i dołączony do ticketu compliance.
 - Zrzut konfiguracji `config/core.yaml` (sekcja `execution`) z hashami SHA-384.
+- Log bootstrapu potwierdzający, że `bootstrap_environment` dostarczył realny `ExecutionService` (np. `LiveExecutionRouter` dla live) oraz brak ostrzeżeń „paper-only mode” z AutoTradera.
 - Snapshot dashboardu Prometheus/Grafana z metrykami `live_orders_total`, `live_orders_fallback_total`, `live_execution_latency_seconds`.
 - Potwierdzenie kanałowe (chatops) z identyfikatorami operatorów oraz timestampem startu.
 
