@@ -230,6 +230,9 @@ class AutoTrader:
             logger=logger,
         )
         self._runtime_metadata = runtime_metadata.to_dict() if runtime_metadata else {}
+        self._compliance_live_allowed = bool(
+            self._runtime_metadata.get("compliance_live_allowed")
+        )
         if runtime_metadata:
             self._risk_profile_name = getattr(runtime_metadata, "risk_profile", None)
             logger.info("Runtime entrypoint auto_trader: %s", self._runtime_metadata)
@@ -1054,6 +1057,11 @@ class AutoTrader:
                 or 0.0
             )
             position = float(portfolio_snapshot.get("position") or portfolio_snapshot.get("qty") or 0.0)
+            compliance_allowed = self._compliance_live_allowed and bool(
+                cfg.compliance_confirmed
+                and cfg.api_keys_configured
+                and cfg.acknowledged_risk_disclaimer
+            )
             context = self._signal_service.build_context(
                 symbol=symbol,
                 timeframe=timeframe,
@@ -1061,6 +1069,7 @@ class AutoTrader:
                 position=position,
                 metadata=metadata,
                 mode=cfg.mode,
+                compliance_live_allowed=compliance_allowed,
             )
             signal = await self._signal_service.run_strategy(
                 strategy_name,

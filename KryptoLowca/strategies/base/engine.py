@@ -61,11 +61,16 @@ class StrategyContext:
     def require_demo_mode(self) -> None:
         """Prosta walidacja – blokada live tradingu przed audytem."""
 
-        if self.extra.get("mode", "demo") != "demo":
-            raise StrategyError(
-                "Strategia nie została jeszcze certyfikowana do trybu LIVE. "
-                "Uruchom ją w środowisku paper trading przed przełączeniem."
-            )
+        mode = str(self.extra.get("mode", "demo")).lower()
+        if mode == "demo":
+            return
+        if bool(self.extra.get("compliance_live_allowed")):
+            return
+        raise StrategyError(
+            "Strategia nie została jeszcze certyfikowana do trybu LIVE. "
+            "Uruchom ją w środowisku paper trading przed przełączeniem i upewnij się, "
+            "że wymagane flagi zgodności są zatwierdzone."
+        )
 
 
 @dataclass(slots=True)

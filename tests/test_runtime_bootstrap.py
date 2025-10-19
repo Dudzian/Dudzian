@@ -102,6 +102,12 @@ _BASE_CONFIG = dedent(
         strategy: ai_autotrader
         risk_profile: balanced
         description: "AutoTrader"
+        compliance:
+          live_allowed: true
+          risk_profiles: [balanced, aggressive]
+          signoffs: [stage5_audit]
+          signed: true
+          require_signoff: true
       trading_gui:
         environment: binance_paper
         controller: trading_gui

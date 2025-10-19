@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+import yaml
+
 import pytest
 
 import tests._pathbootstrap  # noqa: F401  # pylint: disable=unused-import
@@ -30,6 +32,7 @@ def test_load_runtime_entrypoint_metadata_returns_payload(core_config_path: Path
     assert metadata.environment == "binance_paper"
     assert metadata.risk_profile == "balanced"
     assert metadata.to_dict()["tags"] == []
+    assert metadata.compliance_live_allowed is True
 
 
 def test_load_runtime_entrypoint_metadata_handles_missing_entrypoint(
@@ -53,6 +56,28 @@ def test_load_runtime_entrypoint_metadata_uses_default_path(
     assert metadata.environment == "binance_paper"
 
 
+def test_load_runtime_entrypoint_metadata_guard_checks_compliance(
+    tmp_path: Path,
+) -> None:
+    data = yaml.safe_load(_BASE_CONFIG)
+    entry = data["runtime_entrypoints"]["auto_trader"]
+    entry["compliance"]["signed"] = False
+    guard_path = tmp_path / "core_guard.yaml"
+    guard_path.write_text(yaml.safe_dump(data), encoding="utf-8")
+
+    metadata = load_runtime_entrypoint_metadata("auto_trader", config_path=guard_path)
+    assert metadata is not None
+    assert metadata.compliance_live_allowed is False
+
+    entry["compliance"]["signed"] = True
+    entry["compliance"]["signoffs"] = []
+    guard_path.write_text(yaml.safe_dump(data), encoding="utf-8")
+
+    metadata = load_runtime_entrypoint_metadata("auto_trader", config_path=guard_path)
+    assert metadata is not None
+    assert metadata.compliance_live_allowed is False
+
+
 def test_load_risk_profile_config_returns_dataclass(core_config_path: Path) -> None:
     name, profile = load_risk_profile_config("auto_trader", config_path=core_config_path)
     assert name == "balanced"
@@ -66,6 +91,7 @@ def test_load_risk_profile_config_falls_back_to_yaml(
 ) -> None:
     caplog.set_level(logging.DEBUG)
     monkeypatch.setattr("bot_core.runtime.metadata._load_core_config", None)
+    monkeypatch.setattr("bot_core.runtime.metadata._TYPED_LOADER_ATTEMPTED", True)
     name, profile = load_risk_profile_config("auto_trader", config_path=core_config_path, logger=logging.getLogger(__name__))
     assert name == "balanced"
     assert isinstance(profile, dict)
@@ -87,6 +113,7 @@ def test_load_risk_manager_settings_handles_yaml_fallback(
     core_config_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr("bot_core.runtime.metadata._load_core_config", None)
+    monkeypatch.setattr("bot_core.runtime.metadata._TYPED_LOADER_ATTEMPTED", True)
     name, profile, settings = load_risk_manager_settings(
         "auto_trader",
         config_path=core_config_path,

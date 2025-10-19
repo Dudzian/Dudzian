@@ -284,10 +284,12 @@ def _configured_trader(
         strategy=StrategyConfig(**strategy_kwargs),
         exchange=exchange_cfg,
     )
+    trader.confirm_auto_trade(True)
     return trader, emitter, execution_adapter
 
 
 def _run_for(trader: AutoTrader, duration: float) -> None:
+    trader.confirm_auto_trade(True)
     trader.start()
     time.sleep(duration)
     trader.stop()
@@ -376,6 +378,48 @@ def test_live_mode_rejects_stale_backtest(strategy_harness: StrategyHarness) -> 
         level == "WARNING" and "przeterminowany" in message.lower()
         for level, _, message in emitter.logs
     )
+
+
+def test_live_mode_requires_compliance_flag(strategy_harness: StrategyHarness) -> None:
+    provider = StubDataProvider(price=103.0)
+    adapter = RecordingExecutionAdapter()
+    trader, _, adapter = _configured_trader(
+        symbol_source=lambda: [("BTC/USDT", "1m")],
+        data_provider=provider,
+        signal_service=strategy_harness.signal_service,
+        risk_service=AcceptAllRiskService(size=50.0),
+        execution_adapter=adapter,
+    )
+
+    live_cfg = StrategyConfig(
+        preset="DummyStrategy",
+        mode="live",
+        max_leverage=1.0,
+        max_position_notional_pct=0.5,
+        trade_risk_pct=0.1,
+        default_sl=0.01,
+        default_tp=0.02,
+        violation_cooldown_s=1,
+        reduce_only_after_violation=False,
+        compliance_confirmed=True,
+        api_keys_configured=True,
+        acknowledged_risk_disclaimer=True,
+        backtest_passed_at=time.time(),
+    )
+
+    trader._compliance_live_allowed = False
+    trader.configure(strategy=live_cfg)
+
+    assert trader._strategy_config.mode == "live"
+
+    adapter.orders.clear()
+    _run_for(trader, 0.4)
+    assert adapter.orders == []
+
+    trader._compliance_live_allowed = True
+    adapter.orders.clear()
+    _run_for(trader, 0.4)
+    assert _wait_until(lambda: len(adapter.orders) >= 1)
 
 
 def test_services_execute_order(strategy_harness: StrategyHarness) -> None:
