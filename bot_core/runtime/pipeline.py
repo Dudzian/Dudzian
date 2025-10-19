@@ -1401,15 +1401,24 @@ class DecisionAwareSignalSink(StrategySignalSink):
             if candidate is None and isinstance(metadata.get("ai_manager"), Mapping):
                 candidate = metadata["ai_manager"].get("success_probability")
             metadata_prob = candidate
-        prob = None
+
+        probability: float | None = None
         if metadata_prob is not None:
             try:
-                prob = float(metadata_prob)
+                probability = float(metadata_prob)
             except (TypeError, ValueError):
-                prob = None
-        if prob is None:
-            prob = float(signal.confidence)
-        return max(self._min_probability, min(0.995, prob))
+                probability = None
+
+        if probability is None:
+            try:
+                probability = float(signal.confidence)
+            except (TypeError, ValueError):
+                probability = None
+
+        if probability is None:
+            return 0.0
+
+        return max(0.0, min(0.995, probability))
 
     def _extract_expected_return(self, signal: StrategySignal, metadata: Mapping[str, Any]) -> float:
         candidate = metadata.get("expected_return_bps")

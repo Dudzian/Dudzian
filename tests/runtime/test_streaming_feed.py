@@ -120,8 +120,9 @@ def test_decision_aware_sink_filters_signals() -> None:
     assert len(records) == 1
     _, exported_signals = records[0]
     assert exported_signals == (accepted_signal,)
-    assert orchestrator.invocations, "orchestrator powinien być wywołany"
-    assert [event.status for event in journal.events] == ["accepted", "rejected"]
+    assert len(orchestrator.invocations) == 1
+    assert orchestrator.invocations[0].symbol == "BTC/USDT"
+    assert [event.status for event in journal.events] == ["accepted"]
     assert all(event.portfolio == "paper-01" for event in journal.events)
     assert all(event.metadata.get("decision_status") in {"accepted", "rejected"} for event in journal.events)
 
@@ -165,3 +166,48 @@ def test_decision_aware_sink_handles_missing_metadata() -> None:
 
     records = sink.export()
     assert records and records[0][1] == (signal,)
+
+
+def test_decision_aware_sink_respects_min_probability_threshold() -> None:
+    base_sink = InMemoryStrategySignalSink()
+
+    class _StubOrchestrator:
+        def __init__(self) -> None:
+            self.invocations: list = []
+
+        def evaluate_candidate(self, candidate, _snapshot):  # pragma: no cover - nie powinien zostać wywołany
+            self.invocations.append(candidate)
+            return SimpleNamespace(accepted=False, reasons=(), risk_flags=(), stress_failures=(), cost_bps=None, net_edge_bps=None)
+
+    orchestrator = _StubOrchestrator()
+    journal = _DummyJournal()
+    sink = DecisionAwareSignalSink(
+        base_sink=base_sink,
+        orchestrator=orchestrator,
+        risk_engine=SimpleNamespace(snapshot_state=lambda _: {}),
+        default_notional=1_000.0,
+        environment="paper",
+        exchange="binance_spot",
+        min_probability=0.55,
+        portfolio=None,
+        journal=journal,
+    )
+
+    low_probability_signal = StrategySignal(
+        symbol="BTC/USDT",
+        side="BUY",
+        confidence=0.9,
+        metadata={"expected_probability": 0.2},
+    )
+
+    sink.submit(
+        strategy_name="daily",
+        schedule_name="schedule",
+        risk_profile="balanced",
+        timestamp=datetime.now(timezone.utc),
+        signals=(low_probability_signal,),
+    )
+
+    assert orchestrator.invocations == []
+    assert sink.export() == ()
+    assert journal.events == []
