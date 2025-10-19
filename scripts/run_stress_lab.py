@@ -175,8 +175,9 @@ def _handle_evaluate(args: argparse.Namespace) -> int:
 
     if args.output_csv:
         write_report_csv(report, Path(args.output_csv).expanduser())
-    if args.overrides_cvv := args.overrides_csv:
-        write_overrides_csv(report, Path(args.overrides_csv).expanduser())
+    overrides_csv = getattr(args, "overrides_csv", None)
+    if overrides_csv:
+        write_overrides_csv(report, Path(overrides_csv).expanduser())
 
     if args.signing_key:
         key_path = Path(args.signing_key).expanduser().resolve()
