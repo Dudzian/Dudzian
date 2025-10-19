@@ -1,25 +1,5 @@
-import importlib
-import sys
 import time
-
-try:
-    _auto_trader_module = importlib.import_module("bot_core.auto_trader")
-except ModuleNotFoundError:  # pragma: no cover - legacy fallback for local runs
-    runtime_module = importlib.import_module("bot_core.runtime")
-    if not hasattr(runtime_module, "resolve_core_config_path"):
-        runtime_module.resolve_core_config_path = importlib.import_module(  # type: ignore[attr-defined]
-            "bot_core.runtime.paths"
-        ).resolve_core_config_path
-    if not hasattr(runtime_module, "PaperTradingAdapter"):
-        runtime_module.PaperTradingAdapter = importlib.import_module(  # type: ignore[attr-defined]
-            "bot_core.runtime.paper_trading"
-        ).PaperTradingAdapter
-
-    legacy_auto_trader = importlib.import_module("KryptoLowca.auto_trader")
-    sys.modules.setdefault("bot_core.auto_trader", legacy_auto_trader)
-    _auto_trader_module = legacy_auto_trader
-
-AutoTrader = _auto_trader_module.AutoTrader
+from bot_core.auto_trader import AutoTrader
 
 
 class _DummyEmitter:
