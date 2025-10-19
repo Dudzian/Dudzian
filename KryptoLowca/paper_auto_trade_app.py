@@ -53,7 +53,7 @@ class PaperAutoTradeApp:
     _watch_thread: threading.Thread | None = field(init=False, default=None)
     _watch_stop_event: threading.Event | None = field(init=False, default=None)
     _watch_interval: float = field(init=False, default=2.0)
-    _watch_last_mtime: float | None = field(init=False, default=None)
+    _watch_last_mtime: int | None = field(init=False, default=None)
     _last_signature: str | None = field(init=False, default=None)
     last_reload_at: datetime | None = field(init=False, default=None)
     reload_count: int = field(init=False, default=0)
@@ -68,6 +68,18 @@ class PaperAutoTradeApp:
         """Register a callback notified whenever risk limits are refreshed."""
 
         self._listeners.append(listener)
+        if self.risk_manager_settings:
+            try:
+                listener(
+                    dict(self.risk_manager_settings),
+                    self.risk_profile_name,
+                    self.risk_manager_config,
+                )
+            except Exception as exc:  # pragma: no cover - kompatybilność legacy
+                print(
+                    f"[PaperAutoTradeApp] listener failed during registration: {exc!r}",
+                    flush=True,
+                )
 
     def _load_risk_settings(
         self,
@@ -212,9 +224,13 @@ class PaperAutoTradeApp:
         self.reload_risk_settings(config_path=config_override, environment=env_override)
         return True
 
-    def _stat_core_config_mtime(self) -> float | None:
+    def _stat_core_config_mtime(self) -> int | None:
         try:
-            return self.core_config_path.stat().st_mtime
+            stat_result = self.core_config_path.stat()
+            try:
+                return stat_result.st_mtime_ns
+            except AttributeError:  # pragma: no cover - platform fallback
+                return int(stat_result.st_mtime * 1_000_000_000)
         except FileNotFoundError:
             return None
 
@@ -231,7 +247,7 @@ class PaperAutoTradeApp:
 
         stop_event = threading.Event()
         self._watch_stop_event = stop_event
-        self._watch_last_mtime = self._stat_core_config_mtime()
+        self._watch_last_mtime = None
 
         def _worker() -> None:
             while not stop_event.wait(self._watch_interval):
@@ -245,7 +261,6 @@ class PaperAutoTradeApp:
                 last = self._watch_last_mtime
                 if last is not None and mtime <= last:
                     continue
-                self._watch_last_mtime = mtime
                 try:
                     self.reload_risk_settings()
                 except Exception as exc:
@@ -253,6 +268,8 @@ class PaperAutoTradeApp:
                         f"[PaperAutoTradeApp] auto-reload failed: {exc!r}",
                         flush=True,
                     )
+                else:
+                    self._watch_last_mtime = mtime
 
         thread = threading.Thread(target=_worker, name="core-config-watcher", daemon=True)
         self._watch_thread = thread

@@ -53,6 +53,13 @@ from bot_core.security.tokens import (
     resolve_service_token,
     resolve_service_token_secret,
 )
+from bot_core.security.update import (
+    UpdateArtifact,
+    UpdateManifest,
+    UpdateVerificationError,
+    UpdateVerificationResult,
+    verify_update_bundle,
+)
 
 # --- Opcjonalne eksporty fingerprint z dwóch gałęzi --------------------------
 _fingerprint_v1_exports: list[str] = []
@@ -153,6 +160,11 @@ __all__ = [
     "TokenAuditServiceReport",
     "audit_service_token_configs",
     "audit_service_tokens",
+    "UpdateArtifact",
+    "UpdateManifest",
+    "UpdateVerificationError",
+    "UpdateVerificationResult",
+    "verify_update_bundle",
 ]
 
 # dołącz opcjonalne symbole fingerprint w zależności od dostępności

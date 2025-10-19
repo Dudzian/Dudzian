@@ -257,21 +257,71 @@ def _run_stage5(argv: Sequence[str]) -> int:
         default=None,
         help="Wzorzec glob plików do dołączenia",
     )
-    parser.add_argument(
-        "--exclude",
-        action="append",
-        default=None,
-        help="Wzorzec glob plików do pominięcia",
+    # Wejścia (można użyć obu naraz – zostaną zmergowane):
+    p.add_argument("--source", help="Katalog z artefaktami (HEAD)", type=str)
+    p.add_argument("--include", action="append", help="Wzorce do uwzględnienia w --source (glob, wielokrotnie)")
+    p.add_argument("--exclude", action="append", help="Wzorce do pominięcia w --source (glob, wielokrotnie)")
+
+    p.add_argument("--report", type=Path, default=DEFAULT_REPORT, help="Ścieżka do JSON raportu failover (Main)")
+    p.add_argument("--signature", type=Path, help="Ścieżka do podpisu raportu (domyślnie <report>.sig jeśli istnieje)")
+    p.add_argument("--extra", action="append", default=[], type=Path, help="Dodatkowy plik do paczki (wielokrotnie)")
+
+    # Wyjścia / meta
+    p.add_argument("--output-dir", default=str(REPO_ROOT / "var" / "resilience"), help="Katalog docelowy")
+    p.add_argument("--bundle-name", default="stage6-resilience", help="Prefiks nazwy paczki")
+    p.add_argument("--version", help="Wersja paczki (np. 2025.10.16); w builder-mode doklejane do nazwy")
+    p.add_argument("--metadata", action="append", help="Metadane klucz=wartość (wielokrotnie)")
+
+    # Podpis (obsługujemy oba style)
+    p.add_argument("--hmac-key", help="Wartość klucza HMAC")
+    p.add_argument("--hmac-key-file", help="Plik z kluczem HMAC (UTF-8)")
+    p.add_argument("--hmac-key-env", help="Zmienna środowiskowa z kluczem HMAC")
+    p.add_argument("--signing-key-path", type=Path, help="(alias Main) Plik z kluczem HMAC")
+    p.add_argument("--signing-key-env", help="(alias Main) Zmienna środowiskowa z kluczem HMAC")
+    p.add_argument(
+        "--key-id",
+        "--hmac-key-id",
+        help="Identyfikator klucza HMAC w podpisie",
     )
-    parser.add_argument(
-        "--metadata",
-        action="append",
-        default=None,
-        help="Metadane manifestu w formacie klucz=wartość",
-    )
-    parser.add_argument("--hmac-key-file", type=Path, help="Plik z kluczem HMAC")
-    parser.add_argument("--hmac-key-id", help="Identyfikator klucza HMAC")
-    args = parser.parse_args(argv)
+    p.add_argument("--digest", default="sha384", help="Algorytm skrótu HMAC: sha256/sha384/sha512 (domyślnie sha384)")
+
+    p.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"])
+    return p
+
+
+def _resolve_hmac_key(args: argparse.Namespace) -> Tuple[Optional[bytes], Optional[str]]:
+    # Priorytet: hmac-key / hmac-key-file / hmac-key-env, potem aliasy Main
+    if args.hmac_key:
+        key = args.hmac_key.encode("utf-8")
+    elif args.hmac_key_file:
+        path = Path(args.hmac_key_file).expanduser()
+        if not path.is_file():
+            raise ValueError(f"Plik klucza HMAC nie istnieje: {path}")
+        if os.name != "nt":
+            mode = path.stat().st_mode
+            if mode & 0o077:
+                raise ValueError("Plik klucza HMAC powinien mieć uprawnienia maks. 600")
+        key = path.read_bytes()
+    elif args.hmac_key_env and os.getenv(args.hmac_key_env):
+        key = os.environ[args.hmac_key_env].encode("utf-8")
+    elif args.signing_key_path:
+        path = Path(args.signing_key_path).expanduser()
+        if _HAS_SIG_MANAGER:
+            _ensure_no_symlinks(path, label="Signing key path")
+            _ensure_windows_safe_tree(path, label="Signing key path")
+            if not path.is_file():
+                raise ValueError(f"Signing key path must reference a file: {path}")
+            if os.name != "nt":
+                mode = path.stat().st_mode
+                if mode & (stat.S_IRWXG | stat.S_IRWXO):
+                    raise ValueError("Signing key permissions too permissive; expected 600")
+        elif path.is_symlink():
+            raise ValueError(f"Signing key path must not be a symlink: {path}")
+        key = path.read_bytes()
+    elif args.signing_key_env and os.getenv(args.signing_key_env):
+        key = os.environ[args.signing_key_env].encode("utf-8")
+    else:
+        return None, None
 
     metadata = _parse_metadata(args.metadata)
     signing_key = args.hmac_key_file.read_bytes() if args.hmac_key_file else None

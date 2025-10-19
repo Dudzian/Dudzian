@@ -2,6 +2,16 @@
 
 from .feature_engineering import FeatureEngineer, FeatureDataset
 from .inference import DecisionModelInference, ModelRepository
+from .manager import (
+    AIManager,
+    EnsembleDefinition,
+    EnsembleRegistryDiff,
+    EnsembleRegistrySnapshot,
+    ModelEvaluation,
+    PipelineExecutionRecord,
+    PipelineHistoryDiff,
+    PipelineHistorySnapshot,
+)
 from .models import ModelArtifact, ModelScore
 from .scheduler import (
     RetrainingScheduler,
@@ -20,10 +30,15 @@ from .training import (
 )
 
 __all__ = [
+    "AIManager",
     "DecisionModelInference",
     "FeatureDataset",
     "FeatureEngineer",
+    "EnsembleDefinition",
+    "EnsembleRegistryDiff",
+    "EnsembleRegistrySnapshot",
     "ModelArtifact",
+    "ModelEvaluation",
     "ModelRepository",
     "ModelScore",
     "ExternalModelAdapter",
@@ -36,5 +51,8 @@ __all__ = [
     "WalkForwardResult",
     "WalkForwardValidator",
     "get_external_model_adapter",
+    "PipelineExecutionRecord",
+    "PipelineHistoryDiff",
+    "PipelineHistorySnapshot",
     "register_external_model_adapter",
 ]

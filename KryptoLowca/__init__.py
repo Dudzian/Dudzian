@@ -33,7 +33,7 @@ except Exception:  # pragma: no cover
     DBOptions = None  # type: ignore
 
 try:
-    from .managers.ai_manager import AIManager  # type: ignore
+    from .ai_manager import AIManager  # type: ignore
 except Exception:  # pragma: no cover
     AIManager = None  # type: ignore
 

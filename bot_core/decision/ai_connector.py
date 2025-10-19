@@ -1,8 +1,8 @@
-"""Integracja Decision Engine z asynchronicznym `AIManagerem` z KryptoLowca."""
+"""Integracja Decision Engine z natywnym menedżerem modeli ``bot_core.ai.manager``."""
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Mapping, MutableMapping, Sequence
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, Mapping, MutableMapping, Sequence
 
 import pandas as pd
 
@@ -22,6 +22,11 @@ class AIManagerDecisionConnector:
     min_probability: float = 0.0
     cost_bps_override: float | None = None
     threshold_bps: float | None = None
+    strategy_profiles: Mapping[str, str] | None = None
+    risk_profile_map: Mapping[str, str] | None = None
+    risk_profile_resolver: Callable[[float, Mapping[str, object] | None], str | None] | None = None
+    _strategy_profiles: Dict[str, str] = field(init=False, repr=False, default_factory=dict)
+    _risk_profile_map: Dict[str, str] = field(init=False, repr=False, default_factory=dict)
 
     def __post_init__(self) -> None:
         self.strategy = str(self.strategy)
@@ -33,6 +38,14 @@ class AIManagerDecisionConnector:
         self.min_probability = max(0.0, min(1.0, float(self.min_probability)))
         if self.threshold_bps is None:
             self.threshold_bps = float(getattr(self.ai_manager, "ai_threshold_bps", 0.0) or 0.0)
+        self._strategy_profiles = {
+            str(key): str(value)
+            for key, value in (self.strategy_profiles or {}).items()
+        }
+        self._risk_profile_map = {
+            str(key).lower(): str(value)
+            for key, value in (self.risk_profile_map or {}).items()
+        }
 
     async def generate_candidates(
         self,
@@ -57,17 +70,26 @@ class AIManagerDecisionConnector:
         if not isinstance(prediction_series, pd.Series):
             prediction_series = pd.Series(prediction_series, index=market_data.index[-len(prediction_series) :])
         candidates: list[DecisionCandidate] = []
-        base_metadata = dict(metadata or {})
+        base_metadata: Dict[str, object] = dict(metadata or {})
         for ts, signal in prediction_series.items():
             score = self._score_from_signal(float(signal))
             if score.success_probability < self.min_probability:
                 continue
-            enriched_metadata = self._build_metadata(base_metadata, timestamp=ts, signal=float(signal), score=score)
+            resolved_profile = self._resolve_risk_profile(
+                signal=float(signal), metadata=base_metadata
+            )
+            enriched_metadata = self._build_metadata(
+                base_metadata,
+                timestamp=ts,
+                signal=float(signal),
+                score=score,
+                risk_profile=resolved_profile,
+            )
             candidate_notional = float(notional or self.default_notional)
             candidate = DecisionCandidate(
                 strategy=self.strategy,
                 action=self.action,
-                risk_profile=self.risk_profile,
+                risk_profile=resolved_profile,
                 symbol=symbol_key,
                 notional=candidate_notional,
                 expected_return_bps=score.expected_return_bps,
@@ -92,17 +114,20 @@ class AIManagerDecisionConnector:
         score = self._score_from_signal(float(signal))
         if score.success_probability < self.min_probability:
             return None
+        base_metadata: Dict[str, object] = dict(metadata or {})
+        resolved_profile = self._resolve_risk_profile(signal=float(signal), metadata=base_metadata)
         enriched_metadata = self._build_metadata(
-            metadata or {},
+            base_metadata,
             timestamp=timestamp,
             signal=float(signal),
             score=score,
+            risk_profile=resolved_profile,
         )
         candidate_notional = float(notional or self.default_notional)
         return DecisionCandidate(
             strategy=self.strategy,
             action=self.action,
-            risk_profile=self.risk_profile,
+            risk_profile=resolved_profile,
             symbol=str(symbol),
             notional=candidate_notional,
             expected_return_bps=score.expected_return_bps,
@@ -133,6 +158,7 @@ class AIManagerDecisionConnector:
         timestamp: object,
         signal: float,
         score: ModelScore,
+        risk_profile: str | None = None,
     ) -> Mapping[str, object]:
         metadata: MutableMapping[str, object] = dict(base_metadata)
         ai_section: MutableMapping[str, object] = {
@@ -146,7 +172,48 @@ class AIManagerDecisionConnector:
         if isinstance(decision_section, MutableMapping):
             decision_section.setdefault("source", "ai_manager")
             decision_section.setdefault("generated_at", timestamp)
+            if risk_profile is not None:
+                decision_section["risk_profile"] = risk_profile
+        if risk_profile is not None:
+            metadata.setdefault("selected_risk_profile", risk_profile)
         return metadata
+
+    def _resolve_risk_profile(
+        self,
+        *,
+        signal: float,
+        metadata: Mapping[str, object] | None,
+    ) -> str:
+        profile = self.risk_profile
+        metadata = metadata or {}
+        resolver = self.risk_profile_resolver
+        if callable(resolver):
+            resolved = resolver(signal, metadata)
+            if resolved:
+                return str(resolved)
+
+        strategy_hint = metadata.get("strategy_profile")
+        risk_label = metadata.get("risk_label")
+        strategy_section = metadata.get("strategy")
+        if isinstance(strategy_section, Mapping):
+            strategy_hint = strategy_hint or strategy_section.get("profile")
+            risk_label = risk_label or strategy_section.get("risk_label")
+
+        if strategy_hint and self._strategy_profiles:
+            mapped = self._strategy_profiles.get(str(strategy_hint))
+            if mapped:
+                profile = mapped
+        elif self._strategy_profiles:
+            mapped = self._strategy_profiles.get(self.strategy)
+            if mapped:
+                profile = mapped
+
+        if risk_label:
+            mapped_label = self._risk_profile_map.get(str(risk_label).lower())
+            if mapped_label:
+                profile = mapped_label
+
+        return profile
 
 
 __all__ = ["AIManagerDecisionConnector"]

@@ -8,6 +8,20 @@ from bot_core.exchanges.base import (
     OrderRequest,
     OrderResult,
 )
+from bot_core.exchanges.core import (
+    BaseBackend,
+    Event,
+    EventBus,
+    MarketRules,
+    Mode,
+    OrderDTO,
+    OrderSide,
+    OrderStatus,
+    OrderType,
+    PaperBackend,
+    PositionDTO,
+)
+from bot_core.exchanges.manager import ExchangeManager
 from bot_core.exchanges.binance.futures import BinanceFuturesAdapter
 from bot_core.exchanges.binance.spot import BinanceSpotAdapter
 from bot_core.exchanges.bitfinex.spot import BitfinexSpotAdapter
@@ -29,9 +43,13 @@ from bot_core.exchanges.zonda.spot import ZondaSpotAdapter
 
 __all__ = [
     "AccountSnapshot",
+    "BaseBackend",
     "BinanceFuturesAdapter",
     "BinanceSpotAdapter",
+    "Event",
+    "EventBus",
     "Environment",
+    "ExchangeManager",
     "ExchangeAdapter",
     "ExchangeCredentials",
     "ExchangeError",
@@ -47,7 +65,15 @@ __all__ = [
     "KuCoinSpotAdapter",
     "OKXSpotAdapter",
     "NowaGieldaSpotAdapter",
+    "MarketRules",
+    "Mode",
+    "OrderDTO",
     "OrderRequest",
     "OrderResult",
+    "OrderSide",
+    "OrderStatus",
+    "OrderType",
     "ZondaSpotAdapter",
+    "PaperBackend",
+    "PositionDTO",
 ]

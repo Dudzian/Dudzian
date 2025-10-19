@@ -11,6 +11,17 @@ from __future__ import annotations
 # --- Bazowe interfejsy / repo / silniki --------------------------------------
 from bot_core.risk.base import RiskCheckResult, RiskEngine, RiskProfile, RiskRepository
 from bot_core.risk.engine import InMemoryRiskRepository, ThresholdRiskEngine
+from bot_core.risk.portfolio import (
+    CorrelationAnalyzer,
+    PositionSizing,
+    RiskLevel,
+    RiskManagement,
+    RiskMetrics,
+    VolatilityEstimator,
+    backtest_risk_strategy,
+    calculate_optimal_leverage,
+    create_risk_manager,
+)
 from bot_core.risk.events import RiskDecisionEvent, RiskDecisionLog
 from bot_core.risk.factory import build_risk_profile_from_config
 from bot_core.risk.repository import FileRiskRepository
@@ -122,6 +133,16 @@ __all__ = [
     "StressTestResult",
     "load_profiles_from_config",
     "run_simulations_from_config",
+    # zarządzanie ryzykiem portfela
+    "RiskLevel",
+    "RiskMetrics",
+    "PositionSizing",
+    "VolatilityEstimator",
+    "CorrelationAnalyzer",
+    "RiskManagement",
+    "create_risk_manager",
+    "backtest_risk_strategy",
+    "calculate_optimal_leverage",
 ]
 
 # Eksporty Stress Lab (HEAD) – tylko jeśli moduły istnieją

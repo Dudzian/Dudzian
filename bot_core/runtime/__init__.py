@@ -756,7 +756,7 @@ except Exception:  # pragma: no cover - bootstrap może być niedostępny w tej 
     pass
 
 PaperTradingAdapter = None  # type: ignore
-try:  # pragma: no cover - PaperTradingAdapter zależy od modułów KryptoLowca
+try:  # pragma: no cover - PaperTradingAdapter wymaga modułu backtestowego
     from bot_core.runtime.paper_trading import PaperTradingAdapter
 except Exception:  # pragma: no cover - brak modułów backtestowych
     PaperTradingAdapter = None  # type: ignore

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Warstwa zgodności dla menedżera bazy danych.
 
-Nowa implementacja znajduje się w ``managers.database_manager``. Ten moduł
+Nowa implementacja znajduje się w ``bot_core.database.manager``. Ten moduł
 zapewnia przyjazne aliasy (``DBOptions``) oraz ujednolicone wyjątki, tak aby
 starsze testy oraz skrypty mogły działać bez zmian.
 """
@@ -15,10 +15,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
-from KryptoLowca.managers import database_manager as _core  # type: ignore
-from KryptoLowca.managers.database_manager import (  # type: ignore
-    DatabaseManager as _CoreDatabaseManager,
-)
+from bot_core.database import manager as _core
+from bot_core.database.manager import DatabaseManager as _CoreDatabaseManager
 
 from sqlalchemy import DateTime, Integer, String, Text, UniqueConstraint, select
 from sqlalchemy.engine import make_url

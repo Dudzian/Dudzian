@@ -156,3 +156,28 @@ def test_connector_creates_candidate_and_executes_order() -> None:
     result = execution.execute(request, context)
     assert result.status == "filled"
     assert result.filled_quantity > 0
+
+
+def test_connector_selects_dynamic_risk_profile() -> None:
+    connector = AIManagerDecisionConnector(
+        ai_manager=StubAIManager(signal=0.015),
+        strategy="ai_core",
+        risk_profile="balanced",
+        default_notional=1_000.0,
+        strategy_profiles={"scalping_aggressive": "aggressive"},
+        risk_profile_map={"high": "aggressive", "income": "income"},
+    )
+
+    metadata = {
+        "strategy": {"profile": "scalping_aggressive", "risk_label": "high"}
+    }
+
+    candidate = connector.candidate_from_signal(
+        symbol="BTCUSDT",
+        signal=0.02,
+        metadata=metadata,
+    )
+
+    assert candidate is not None
+    assert candidate.risk_profile == "aggressive"
+    assert candidate.metadata.get("selected_risk_profile") == "aggressive"

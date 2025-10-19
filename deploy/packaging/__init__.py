@@ -10,6 +10,7 @@ from .build_strategy_bundle import (  # noqa: F401
     StrategyBundleBuilder,
     build_from_cli as build_strategy_bundle_from_cli,
 )
+from .build_pyinstaller_bundle import build_bundle as build_pyinstaller_bundle  # noqa: F401
 
 # Backwards compatibility: expose ``build_from_cli`` used by legacy tests.
 build_from_cli = build_core_bundle_from_cli
@@ -19,6 +20,7 @@ __all__ = [
     "CoreBundleBuilder",
     "SignatureManager",
     "StrategyBundleBuilder",
+    "build_pyinstaller_bundle",
     "build_core_bundle_from_cli",
     "build_strategy_bundle_from_cli",
     "build_from_cli",

@@ -14,13 +14,17 @@ def test_marketplace_catalog_contains_presets():
 
 
 def test_apply_marketplace_preset_updates_strategy(tmp_path: Path):
-    config_path = tmp_path / "config.yaml"
-    manager = ConfigManager(config_path)
+    manager = ConfigManager()
     preset = load_preset("trend_following_balanced")
 
     merged = manager.apply_marketplace_preset(preset.preset_id)
     assert merged["strategy"]["max_leverage"] == 2.0
     assert merged["strategy"]["default_tp"] == 0.06
-    strategy = manager.load_strategy_config()
-    assert strategy.max_leverage == 2.0
-    assert strategy.preset == "BALANCED"
+    ranking = manager.get_marketplace_ranking()
+    assert any(entry["preset_id"] == preset.preset_id for entry in ranking)
+    risk_labels = manager.get_marketplace_risk_labels()
+    assert preset.preset_id in risk_labels
+    summary = manager.get_marketplace_risk_summary()
+    risk_label = preset.effective_risk_label() or preset.risk_level or "unknown"
+    assert risk_label in summary
+    assert summary[risk_label]["count"] >= 1
