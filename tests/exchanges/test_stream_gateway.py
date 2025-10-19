@@ -6,6 +6,9 @@ import types
 from typing import Iterable
 from urllib.request import urlopen
 
+import json
+from urllib.request import urlopen
+
 import pytest
 
 from bot_core.exchanges.base import Environment, ExchangeAdapter, ExchangeCredentials
