@@ -91,7 +91,7 @@ def test_realized_volatility_handles_empty_and_populated_returns() -> None:
     assert realized == pytest.approx(sqrt(variance))
 
 
-def test_update_state_appends_returns_and_updates_last_price() -> None:
+def test_update_state_appends_returns_and_handles_non_positive_closes() -> None:
     settings = VolatilityTargetSettings(lookback=3)
     strategy = VolatilityTargetStrategy(settings)
     state = _SymbolState(returns=deque(maxlen=settings.history_size()))
@@ -105,14 +105,37 @@ def test_update_state_appends_returns_and_updates_last_price() -> None:
     second = make_snapshot(close=110.0)
     strategy._update_state(state, second)
 
-    assert list(state.returns) == [pytest.approx(log(110.0 / 100.0))]
+    expected_return = log(110.0 / 100.0)
+    assert list(state.returns) == [pytest.approx(expected_return)]
     assert state.last_price == 110.0
+
+    zero_close = make_snapshot(close=0.0)
+    strategy._update_state(state, zero_close)
+
+    assert list(state.returns) == [pytest.approx(expected_return)]
+    assert state.last_price == 0.0
 
     negative_close = make_snapshot(close=-50.0)
     strategy._update_state(state, negative_close)
 
-    assert len(state.returns) == 1
+    assert list(state.returns) == [pytest.approx(expected_return)]
     assert state.last_price == -50.0
+
+    positive_after_negative = make_snapshot(close=120.0)
+    strategy._update_state(state, positive_after_negative)
+
+    assert list(state.returns) == [pytest.approx(expected_return)]
+    assert state.last_price == 120.0
+
+    resumed_positive = make_snapshot(close=132.0)
+    strategy._update_state(state, resumed_positive)
+
+    resumed_return = log(132.0 / 120.0)
+    assert list(state.returns) == [
+        pytest.approx(expected_return),
+        pytest.approx(resumed_return),
+    ]
+    assert state.last_price == 132.0
 
 
 @pytest.mark.parametrize(
@@ -143,3 +166,4 @@ def test_should_rebalance_threshold_and_positive_target() -> None:
     assert strategy._should_rebalance(0.0, 1.0) is False
     assert strategy._should_rebalance(1.0, 0.05) is False
     assert strategy._should_rebalance(1.0, 0.1) is True
+    assert strategy._should_rebalance(1.0, -0.1) is True
