@@ -36,5 +36,23 @@
       "model_types": ["rf", "lstm"],
       "threshold_bps": 4.5
     }
+  },
+  "evaluation": {
+    "rank": 2,
+    "risk_label": "growth",
+    "risk_score": 0.55,
+    "highlights": [
+      "Wysoka skuteczność na rynkach trendowych",
+      "Automatyczna kontrola ekspozycji"
+    ],
+    "backtest": {
+      "period": "2023-01-01/2023-12-31",
+      "cagr": 0.235,
+      "sharpe": 1.68,
+      "max_drawdown": -0.14,
+      "win_rate": 0.57,
+      "trades": 312,
+      "profit_factor": 2.05
+    }
   }
 }
