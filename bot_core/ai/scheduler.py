@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Iterable, Mapping, Sequence
 
 from .feature_engineering import FeatureDataset
+from .models import ModelArtifact
 from .training import ModelTrainer
 
 
@@ -126,8 +127,90 @@ class WalkForwardValidator:
         )
 
 
+@dataclass(slots=True)
+class TrainingRunRecord:
+    """Informacje o pojedynczym uruchomieniu treningu."""
+
+    trained_at: datetime
+    metrics: Mapping[str, float]
+    backend: str
+    dataset_rows: int
+    validation: WalkForwardResult | None = None
+
+
+@dataclass(slots=True)
+class ScheduledTrainingJob:
+    """Definicja zadania treningowego zarządzanego przez harmonogram."""
+
+    name: str
+    scheduler: RetrainingScheduler
+    trainer_factory: Callable[[], ModelTrainer]
+    dataset_provider: Callable[[], FeatureDataset]
+    validator_factory: Callable[[FeatureDataset], WalkForwardValidator] | None = None
+    on_completed: Callable[[ModelArtifact, WalkForwardResult | None], None] | None = None
+    history: list[TrainingRunRecord] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if not callable(self.trainer_factory):
+            raise TypeError("trainer_factory musi być wywoływalny")
+        if not callable(self.dataset_provider):
+            raise TypeError("dataset_provider musi być wywoływalny")
+
+    def is_due(self, now: datetime | None = None) -> bool:
+        return self.scheduler.should_retrain(now)
+
+    def run(self, now: datetime | None = None) -> ModelArtifact:
+        dataset = self.dataset_provider()
+        trainer = self.trainer_factory()
+        artifact = trainer.train(dataset)
+        validation_result: WalkForwardResult | None = None
+        if self.validator_factory is not None:
+            validator = self.validator_factory(dataset)
+            validation_result = validator.validate(self.trainer_factory)
+        self.scheduler.mark_executed(now)
+        record = TrainingRunRecord(
+            trained_at=artifact.trained_at,
+            metrics=dict(artifact.metrics),
+            backend=getattr(trainer, "backend", "builtin"),
+            dataset_rows=len(dataset.vectors),
+            validation=validation_result,
+        )
+        self.history.append(record)
+        if self.on_completed is not None:
+            self.on_completed(artifact, validation_result)
+        return artifact
+
+
+class TrainingScheduler:
+    """Prosty harmonogram zarządzający wieloma zadaniami treningowymi."""
+
+    def __init__(self) -> None:
+        self._jobs: dict[str, ScheduledTrainingJob] = {}
+
+    def register(self, job: ScheduledTrainingJob) -> None:
+        self._jobs[job.name] = job
+
+    def unregister(self, name: str) -> None:
+        self._jobs.pop(name, None)
+
+    def due_jobs(self, now: datetime | None = None) -> Sequence[ScheduledTrainingJob]:
+        return [job for job in self._jobs.values() if job.is_due(now)]
+
+    def run_due_jobs(
+        self, now: datetime | None = None
+    ) -> Sequence[tuple[ScheduledTrainingJob, ModelArtifact]]:
+        results: list[tuple[ScheduledTrainingJob, ModelArtifact]] = []
+        for job in self.due_jobs(now):
+            artifact = job.run(now)
+            results.append((job, artifact))
+        return results
+
+
 __all__ = [
     "RetrainingScheduler",
+    "ScheduledTrainingJob",
+    "TrainingRunRecord",
+    "TrainingScheduler",
     "WalkForwardResult",
     "WalkForwardValidator",
 ]

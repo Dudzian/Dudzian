@@ -3,8 +3,21 @@
 from .feature_engineering import FeatureEngineer, FeatureDataset
 from .inference import DecisionModelInference, ModelRepository
 from .models import ModelArtifact, ModelScore
-from .scheduler import RetrainingScheduler, WalkForwardValidator, WalkForwardResult
-from .training import ModelTrainer, SimpleGradientBoostingModel
+from .scheduler import (
+    RetrainingScheduler,
+    ScheduledTrainingJob,
+    TrainingRunRecord,
+    TrainingScheduler,
+    WalkForwardResult,
+    WalkForwardValidator,
+)
+from .training import (
+    ExternalModelAdapter,
+    ModelTrainer,
+    SimpleGradientBoostingModel,
+    get_external_model_adapter,
+    register_external_model_adapter,
+)
 
 __all__ = [
     "DecisionModelInference",
@@ -13,9 +26,15 @@ __all__ = [
     "ModelArtifact",
     "ModelRepository",
     "ModelScore",
+    "ExternalModelAdapter",
     "ModelTrainer",
     "RetrainingScheduler",
+    "ScheduledTrainingJob",
     "SimpleGradientBoostingModel",
+    "TrainingRunRecord",
+    "TrainingScheduler",
     "WalkForwardResult",
     "WalkForwardValidator",
+    "get_external_model_adapter",
+    "register_external_model_adapter",
 ]
