@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import copy
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Any
 
@@ -7,14 +9,16 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from bot_core.ai import config_loader
 from bot_core.ai.regime import (
     MarketRegime,
     MarketRegimeAssessment,
+    MarketRegimeClassifier,
     RegimeSnapshot,
     RegimeSummary,
     RiskLevel,
 )
-from bot_core.auto_trader.app import AutoTrader, RiskDecision
+from bot_core.auto_trader.app import AutoTrader, GuardrailTrigger, RiskDecision
 
 
 class _Emitter:
@@ -56,6 +60,370 @@ class _Provider:
         self.calls.append((symbol, timeframe, limit))
         return self.df
 
+
+def test_map_regime_to_signal_respects_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    config_loader.reset_threshold_cache()
+    baseline = copy.deepcopy(config_loader.load_risk_thresholds())
+    baseline["auto_trader"]["map_regime_to_signal"]["assessment_confidence"] = 0.9
+
+    def _patched_loader(*_: object, **__: object) -> dict[str, object]:
+        return baseline
+
+    monkeypatch.setattr(config_loader, "load_risk_thresholds", _patched_loader)
+    monkeypatch.setattr("bot_core.auto_trader.app.load_risk_thresholds", _patched_loader)
+
+    try:
+        emitter = _Emitter()
+        gui = _GUI()
+        trader = AutoTrader(emitter, gui, lambda: "BTCUSDT")
+        assessment = MarketRegimeAssessment(
+            regime=MarketRegime.TREND,
+            confidence=0.5,
+            risk_score=0.2,
+            metrics={
+                "trend_strength": 0.02,
+                "volatility": 0.01,
+                "momentum": 0.002,
+                "autocorr": -0.05,
+                "intraday_vol": 0.01,
+                "drawdown": 0.05,
+            },
+        )
+
+        assert (
+            trader._thresholds["auto_trader"]["map_regime_to_signal"]["assessment_confidence"]
+            == 0.9
+        )
+        assert trader._map_regime_to_signal(assessment, 0.01) == "hold"
+    finally:
+        config_loader.reset_threshold_cache()
+
+
+def test_reload_thresholds_refreshes_classifier() -> None:
+    config_loader.reset_threshold_cache()
+    store = copy.deepcopy(config_loader.load_risk_thresholds())
+
+    def _loader() -> dict[str, Any]:
+        return copy.deepcopy(store)
+
+    classifier = MarketRegimeClassifier(thresholds_loader=_loader)
+    metrics_cfg = classifier._thresholds["market_regime"]["metrics"]
+    assert metrics_cfg["short_span_min"] == store["market_regime"]["metrics"]["short_span_min"]
+
+    store["market_regime"]["metrics"]["short_span_min"] = 9
+    classifier.reload_thresholds()
+
+    metrics_cfg = classifier._thresholds["market_regime"]["metrics"]
+    assert metrics_cfg["short_span_min"] == 9
+    config_loader.reset_threshold_cache()
+
+
+def test_reload_thresholds_refreshes_auto_trader() -> None:
+    store: dict[str, Any] = {
+        "auto_trader": {"map_regime_to_signal": {"assessment_confidence": 0.3}}
+    }
+
+    def _loader() -> dict[str, Any]:
+        return copy.deepcopy(store)
+
+    emitter = _Emitter()
+    gui = _GUI()
+    trader = AutoTrader(emitter, gui, lambda: "ETHUSDT", thresholds_loader=_loader)
+
+    assert (
+        trader._thresholds["auto_trader"]["map_regime_to_signal"]["assessment_confidence"]
+        == 0.3
+    )
+
+    store["auto_trader"]["map_regime_to_signal"]["assessment_confidence"] = 0.6
+    trader.reload_thresholds()
+
+    assert (
+        trader._thresholds["auto_trader"]["map_regime_to_signal"]["assessment_confidence"]
+        == 0.6
+    )
+
+
+def test_adjust_strategy_parameters_respects_summary_risk_cap() -> None:
+    config_loader.reset_threshold_cache()
+    try:
+        base_thresholds = copy.deepcopy(config_loader.load_risk_thresholds())
+
+        emitter_default = _Emitter()
+        gui_default = _GUI()
+        default_trader = AutoTrader(emitter_default, gui_default, lambda: "BTCUSDT")
+
+        assessment = MarketRegimeAssessment(
+            regime=MarketRegime.TREND,
+            confidence=0.8,
+            risk_score=0.32,
+            metrics={
+                "trend_strength": 0.02,
+                "volatility": 0.01,
+                "momentum": 0.002,
+                "autocorr": -0.05,
+                "intraday_vol": 0.01,
+                "drawdown": 0.05,
+            },
+        )
+
+        summary = _build_summary(
+            MarketRegime.TREND,
+            confidence=0.8,
+            risk=0.35,
+            stability=0.35,
+            risk_trend=0.2,
+            risk_level=RiskLevel.CALM,
+            risk_volatility=0.1,
+            regime_persistence=0.62,
+            confidence_trend=0.1,
+            confidence_volatility=0.05,
+            regime_streak=3,
+            transition_rate=0.2,
+            instability_score=0.2,
+            confidence_decay=0.1,
+            drawdown_pressure=0.4,
+            liquidity_pressure=0.4,
+            volatility_ratio=1.1,
+            tail_risk_index=0.3,
+            shock_frequency=0.3,
+            volatility_of_volatility=0.02,
+            stress_index=0.3,
+            severe_event_rate=0.1,
+            cooldown_score=0.2,
+            recovery_potential=0.6,
+            volatility_trend=0.01,
+            drawdown_trend=0.01,
+            volume_trend_volatility=0.12,
+            stability_projection=0.55,
+            degradation_score=0.35,
+            skewness_bias=0.4,
+            kurtosis_excess=0.6,
+            volume_imbalance=0.12,
+            distribution_pressure=0.4,
+            regime_entropy=0.4,
+            resilience_score=0.7,
+            stress_balance=0.7,
+            liquidity_gap=0.45,
+            confidence_resilience=0.6,
+            stress_projection=0.4,
+            stress_momentum=0.4,
+            liquidity_trend=0.4,
+            confidence_fragility=0.4,
+        )
+
+        default_trader._adjust_strategy_parameters(assessment, aggregated_risk=0.35, summary=summary)
+        default_leverage = default_trader.current_leverage
+
+        custom_thresholds = copy.deepcopy(base_thresholds)
+        custom_thresholds["auto_trader"]["adjust_strategy_parameters"]["summary_risk_cap"] = 0.3
+
+        def _loader() -> dict[str, Any]:
+            return copy.deepcopy(custom_thresholds)
+
+        emitter_custom = _Emitter()
+        gui_custom = _GUI()
+        custom_trader = AutoTrader(
+            emitter_custom,
+            gui_custom,
+            lambda: "BTCUSDT",
+            thresholds_loader=_loader,
+        )
+
+        custom_trader._adjust_strategy_parameters(assessment, aggregated_risk=0.35, summary=summary)
+
+        assert default_leverage == pytest.approx(0.5)
+        assert custom_trader.current_leverage > default_leverage
+        assert custom_trader.current_leverage >= 2.0
+    finally:
+        config_loader.reset_threshold_cache()
+
+
+def test_signal_guardrails_follow_configuration() -> None:
+    config_loader.reset_threshold_cache()
+    try:
+        base_thresholds = copy.deepcopy(config_loader.load_risk_thresholds())
+
+        emitter = _Emitter()
+        gui = _GUI()
+        trader = AutoTrader(emitter, gui, lambda: "BTCUSDT")
+
+        summary = _build_summary(
+            MarketRegime.TREND,
+            confidence=0.75,
+            risk=0.5,
+            risk_level=RiskLevel.ELEVATED,
+            stability=0.5,
+            risk_trend=0.1,
+            risk_volatility=0.2,
+            regime_persistence=0.6,
+            confidence_trend=0.05,
+            confidence_volatility=0.05,
+            regime_streak=5,
+            transition_rate=0.2,
+            instability_score=0.4,
+            confidence_decay=0.05,
+            drawdown_pressure=0.4,
+            liquidity_pressure=0.4,
+            volatility_ratio=1.1,
+            tail_risk_index=0.3,
+            shock_frequency=0.3,
+            volatility_of_volatility=0.02,
+            stress_index=0.7,
+            severe_event_rate=0.2,
+            cooldown_score=0.2,
+            recovery_potential=0.6,
+            volatility_trend=0.01,
+            drawdown_trend=0.05,
+            volume_trend_volatility=0.1,
+            stability_projection=0.5,
+            degradation_score=0.35,
+            skewness_bias=0.4,
+            kurtosis_excess=0.6,
+            volume_imbalance=0.1,
+            distribution_pressure=0.4,
+            regime_entropy=0.5,
+            resilience_score=0.55,
+            stress_balance=0.55,
+            liquidity_gap=0.4,
+            confidence_resilience=0.55,
+            stress_projection=0.4,
+            stress_momentum=0.4,
+            liquidity_trend=0.4,
+            confidence_fragility=0.35,
+        )
+
+        assert trader._apply_signal_guardrails("buy", 0.8, summary) == "hold"
+        assert trader._last_guardrail_reasons
+        assert trader._last_guardrail_triggers
+        assert all(isinstance(trigger, GuardrailTrigger) for trigger in trader._last_guardrail_triggers)
+        assert any("effective risk" in reason for reason in trader._last_guardrail_reasons)
+        assert trader._last_guardrail_triggers[0].name == "effective_risk"
+
+        custom_thresholds = copy.deepcopy(base_thresholds)
+        custom_thresholds["auto_trader"]["signal_guardrails"]["effective_risk_cap"] = 0.9
+        custom_thresholds["auto_trader"]["signal_guardrails"]["stress_index"] = 0.75
+
+        def _loader() -> dict[str, Any]:
+            return copy.deepcopy(custom_thresholds)
+
+        tuned_trader = AutoTrader(_Emitter(), _GUI(), lambda: "BTCUSDT", thresholds_loader=_loader)
+
+        assert tuned_trader._apply_signal_guardrails("buy", 0.8, summary) == "buy"
+        assert tuned_trader._last_guardrail_reasons == []
+        assert tuned_trader._last_guardrail_triggers == []
+    finally:
+        config_loader.reset_threshold_cache()
+
+
+def test_guardrail_reasons_propagate_to_decision() -> None:
+    config_loader.reset_threshold_cache()
+    try:
+        emitter = _Emitter()
+        gui = _GUI()
+        trader = AutoTrader(emitter, gui, lambda: "BTCUSDT")
+        assessment = MarketRegimeAssessment(
+            regime=MarketRegime.TREND,
+            confidence=0.7,
+            risk_score=0.4,
+            metrics={
+                "trend_strength": 0.02,
+                "volatility": 0.01,
+                "momentum": 0.002,
+                "autocorr": -0.05,
+            },
+        )
+        summary = _build_summary(
+            MarketRegime.TREND,
+            confidence=0.7,
+            risk=0.4,
+            risk_level=RiskLevel.BALANCED,
+            stability=0.55,
+            risk_trend=0.02,
+            risk_volatility=0.18,
+            regime_persistence=0.6,
+            confidence_trend=0.01,
+            confidence_volatility=0.03,
+            regime_streak=4,
+            transition_rate=0.1,
+            instability_score=0.2,
+            confidence_decay=0.05,
+            drawdown_pressure=0.3,
+            liquidity_pressure=0.3,
+            volatility_ratio=1.05,
+            tail_risk_index=0.55,
+            shock_frequency=0.5,
+            volatility_of_volatility=0.02,
+            stress_index=0.7,
+            severe_event_rate=0.1,
+            cooldown_score=0.2,
+            recovery_potential=0.6,
+            volatility_trend=0.02,
+            drawdown_trend=0.08,
+            volume_trend_volatility=0.18,
+            stability_projection=0.4,
+            degradation_score=0.4,
+            skewness_bias=0.3,
+            kurtosis_excess=0.6,
+            volume_imbalance=0.1,
+            distribution_pressure=0.3,
+            regime_entropy=0.7,
+            resilience_score=0.28,
+            stress_balance=0.3,
+            liquidity_gap=0.65,
+            confidence_resilience=0.35,
+            stress_projection=0.65,
+            stress_momentum=0.7,
+            liquidity_trend=0.65,
+            confidence_fragility=0.6,
+        )
+
+        signal = trader._apply_signal_guardrails("buy", 0.7, summary)
+        reasons = list(trader._last_guardrail_reasons)
+        triggers = [trigger.to_dict() for trigger in trader._last_guardrail_triggers]
+
+        assert signal == "hold"
+        assert reasons
+        assert any("stress index" in reason for reason in reasons)
+
+        decision = trader._build_risk_decision(
+            "BTCUSDT",
+            signal,
+            assessment,
+            effective_risk=0.7,
+            summary=summary,
+            guardrail_reasons=reasons,
+            guardrail_triggers=trader._last_guardrail_triggers,
+        )
+
+        assert decision.details["guardrail_reasons"] == reasons
+        assert decision.details["guardrail_triggers"] == triggers
+    finally:
+        config_loader.reset_threshold_cache()
+
+
+def test_load_risk_thresholds_env_override(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    config_loader.reset_threshold_cache()
+    override = tmp_path / "risk_thresholds.yaml"
+    override.write_text(
+        """
+auto_trader:
+  map_regime_to_signal:
+    assessment_confidence: 0.77
+""".strip()
+    )
+
+    monkeypatch.setenv("BOT_CORE_RISK_THRESHOLDS_PATH", str(override))
+
+    try:
+        thresholds = config_loader.load_risk_thresholds()
+        assert (
+            thresholds["auto_trader"]["map_regime_to_signal"]["assessment_confidence"]
+            == 0.77
+        )
+    finally:
+        monkeypatch.delenv("BOT_CORE_RISK_THRESHOLDS_PATH", raising=False)
+        config_loader.reset_threshold_cache()
 
 @dataclass
 class _DummyAssessment:
