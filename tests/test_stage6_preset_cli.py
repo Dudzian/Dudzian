@@ -1,6 +1,11 @@
 from __future__ import annotations
+import hashlib
 import json
 from pathlib import Path
+
+import platform
+import subprocess
+import sys
 
 import pytest
 import yaml
@@ -86,6 +91,7 @@ def test_stage6_cli_accepts_passphrase_file(tmp_path: Path) -> None:
     secrets_output = tmp_path / "vault.json"
     pass_file = tmp_path / "pass.txt"
     pass_file.write_text("stage6-file-pass\n", encoding="utf-8")
+    summary_path = tmp_path / "summary.json"
 
     exit_code = preset_editor_cli.main(
         [
@@ -101,12 +107,49 @@ def test_stage6_cli_accepts_passphrase_file(tmp_path: Path) -> None:
             str(secrets_output),
             "--secret-passphrase-file",
             str(pass_file),
+            "--summary-json",
+            str(summary_path),
         ]
     )
 
     assert exit_code == 0
     storage = EncryptedFileSecretStorage(secrets_output, "stage6-file-pass")
     assert storage.get_secret("exchange") == '{"api_key":"k"}'
+
+    assert summary_path.exists()
+    payload = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert payload["secrets"]["output_passphrase"] == {
+        "provided": True,
+        "source": "file",
+        "identifier": str(pass_file),
+        "used": True,
+    }
+    assert payload["secrets"]["legacy_security_passphrase"] == {
+        "provided": False,
+        "source": None,
+        "identifier": None,
+        "used": False,
+    }
+    tool = payload["tool"]
+    expected_python = platform.python_version()
+    assert tool["module"] == "KryptoLowca.scripts.preset_editor_cli"
+    assert tool["python"] == expected_python
+    assert tool["platform"] == platform.platform()
+    assert tool["package"] == "dudzian-bot"
+    assert tool["package_available"] in {True, False}
+    if tool["package_available"]:
+        assert isinstance(tool["version"], str) and tool["version"]
+    else:
+        assert tool["version"] is None
+    assert tool["executable"] == sys.executable
+    if tool["git_available"]:
+        commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+        assert tool["git_commit"] == commit
+        assert tool["git_commit_error"] is None
+    else:
+        assert tool["git_commit"] is None
+        assert tool["git_commit_error"] is None or isinstance(tool["git_commit_error"], str)
+    assert payload["warnings"] == []
 
 
 def test_stage6_cli_requires_matching_secret_flags(tmp_path: Path, capsys) -> None:
@@ -720,3 +763,337 @@ def test_stage6_cli_core_diff_for_new_output(tmp_path: Path, capsys) -> None:
     assert f"{destination} (nowy plik)" in output
     assert f"{destination} (po migracji)" in output
     assert destination.exists()
+
+
+def test_stage6_cli_writes_summary_file(tmp_path: Path) -> None:
+    core_copy = _copy_core_config(tmp_path)
+    preset_path = tmp_path / "legacy.json"
+    preset_path.write_text(json.dumps({"fraction": 0.3}), encoding="utf-8")
+
+    secrets_input = tmp_path / "legacy_secrets.yaml"
+    secrets_input.write_text("exchange:\n  api_key: k\n", encoding="utf-8")
+
+    destination = tmp_path / "stage6.yaml"
+    backup_path = tmp_path / "stage6.backup.yaml"
+    vault_path = tmp_path / "stage6.vault"
+    summary_path = tmp_path / "artifacts" / "summary.json"
+
+    exit_code = preset_editor_cli.main(
+        [
+            "--core-config",
+            str(core_copy),
+            "--legacy-preset",
+            str(preset_path),
+            "--profile-name",
+            "summary-profile",
+            "--output",
+            str(destination),
+            "--core-backup",
+            str(backup_path),
+            "--core-diff",
+            "--secrets-input",
+            str(secrets_input),
+            "--secrets-output",
+            str(vault_path),
+            "--secret-passphrase",
+            "summary-pass",
+            "--summary-json",
+            str(summary_path),
+        ]
+    )
+
+    assert exit_code == 0
+    assert summary_path.exists()
+
+    payload = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert payload["profile_name"] == "summary-profile"
+    assert payload["core_config_destination"] == str(destination)
+    assert payload["core_backup_requested"] is True
+    assert payload["core_backup_path"] == str(backup_path)
+    assert payload["core_backup_checksum"] == hashlib.sha256(
+        backup_path.read_bytes()
+    ).hexdigest()
+    assert payload["core_diff_requested"] is True
+    assert payload["dry_run"] is False
+    assert payload["core_original_checksum"] is None
+    assert payload["core_rendered_checksum"] == hashlib.sha256(
+        destination.read_text(encoding="utf-8").encode("utf-8")
+    ).hexdigest()
+    assert payload["warnings"] == []
+    assert payload["secrets"]["planned"] == 1
+    assert payload["secrets"]["written"] == 1
+    assert payload["secrets"]["output_path"] == str(vault_path)
+    assert payload["secrets"]["source_path"] == str(secrets_input)
+    assert payload["secrets"]["source_checksum"] == hashlib.sha256(
+        secrets_input.read_bytes()
+    ).hexdigest()
+    assert payload["secrets"]["filters"] == {"include": [], "exclude": []}
+    assert payload["secrets"]["dry_run_skipped"] is False
+    assert payload["secrets"]["output_checksum"] == hashlib.sha256(
+        vault_path.read_bytes()
+    ).hexdigest()
+    assert payload["secrets"]["legacy_security_salt_path"] is None
+    assert payload["secrets"]["legacy_security_salt_checksum"] is None
+    assert payload["secrets"]["output_passphrase"] == {
+        "provided": True,
+        "source": "inline",
+        "identifier": None,
+        "used": True,
+    }
+    assert payload["secrets"]["legacy_security_passphrase"] == {
+        "provided": False,
+        "source": None,
+        "identifier": None,
+        "used": False,
+    }
+    invocation = payload["cli_invocation"]
+    assert isinstance(invocation["argv"], list)
+    assert "***REDACTED***" in invocation["argv"]
+    assert all("summary-pass" not in item for item in invocation["argv"])
+    assert "summary-pass" not in invocation["command"]
+
+
+def test_stage6_cli_summary_tracks_secret_passphrase_env(
+    tmp_path: Path, monkeypatch
+) -> None:
+    core_copy = _copy_core_config(tmp_path)
+    preset_path = tmp_path / "legacy.json"
+    preset_path.write_text(json.dumps({"fraction": 0.33}), encoding="utf-8")
+
+    secrets_input = tmp_path / "legacy_secrets.yaml"
+    secrets_input.write_text("exchange:\n  api_key: token\n", encoding="utf-8")
+    vault_path = tmp_path / "stage6.vault"
+    summary_path = tmp_path / "summary.json"
+
+    monkeypatch.setenv("STAGE6_SECRET_PASS", "env-secret")
+
+    exit_code = preset_editor_cli.main(
+        [
+            "--core-config",
+            str(core_copy),
+            "--legacy-preset",
+            str(preset_path),
+            "--profile-name",
+            "env-secret-profile",
+            "--output",
+            str(tmp_path / "stage6.yaml"),
+            "--secrets-input",
+            str(secrets_input),
+            "--secrets-output",
+            str(vault_path),
+            "--secret-passphrase-env",
+            "STAGE6_SECRET_PASS",
+            "--summary-json",
+            str(summary_path),
+        ]
+    )
+
+    assert exit_code == 0
+    assert summary_path.exists()
+
+    payload = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert payload["secrets"]["output_passphrase"] == {
+        "provided": True,
+        "source": "env",
+        "identifier": "STAGE6_SECRET_PASS",
+        "used": True,
+    }
+    assert payload["secrets"]["legacy_security_passphrase"] == {
+        "provided": False,
+        "source": None,
+        "identifier": None,
+        "used": False,
+    }
+
+
+def test_stage6_cli_summary_records_original_checksum(tmp_path: Path) -> None:
+    core_copy = _copy_core_config(tmp_path)
+    preset_path = tmp_path / "legacy.json"
+    preset_path.write_text(json.dumps({"fraction": 0.35}), encoding="utf-8")
+
+    original_bytes = core_copy.read_bytes()
+
+    exit_code = preset_editor_cli.main(
+        [
+            "--core-config",
+            str(core_copy),
+            "--legacy-preset",
+            str(preset_path),
+            "--profile-name",
+            "checksum-profile",
+            "--summary-json",
+            str(tmp_path / "summary.json"),
+        ]
+    )
+
+    assert exit_code == 0
+
+    summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
+    assert summary["core_original_checksum"] == hashlib.sha256(original_bytes).hexdigest()
+    assert summary["core_rendered_checksum"] == hashlib.sha256(
+        core_copy.read_text(encoding="utf-8").encode("utf-8")
+    ).hexdigest()
+
+
+def test_stage6_cli_summary_records_security_source_checksums(
+    tmp_path: Path, monkeypatch
+) -> None:
+    core_copy = _copy_core_config(tmp_path)
+    preset_path = tmp_path / "legacy.json"
+    preset_path.write_text(json.dumps({"fraction": 0.41}), encoding="utf-8")
+
+    legacy_file = tmp_path / "api_keys.enc"
+    salt_file = tmp_path / "salt.bin"
+    manager = SecurityManager(key_file=str(legacy_file), salt_file=str(salt_file))
+    manager.save_encrypted_keys(
+        {"binance": {"api_key": "AAA", "secret_key": "BBB"}},
+        password="legacy-pass",
+    )
+
+    summary_path = tmp_path / "summary.json"
+
+    monkeypatch.setenv("LEGACY_SUMMARY_PASS", "legacy-pass")
+
+    exit_code = preset_editor_cli.main(
+        [
+            "--core-config",
+            str(core_copy),
+            "--legacy-preset",
+            str(preset_path),
+            "--profile-name",
+            "checksum-security",
+            "--legacy-security-file",
+            str(legacy_file),
+            "--legacy-security-salt",
+            str(salt_file),
+            "--legacy-security-passphrase-env",
+            "LEGACY_SUMMARY_PASS",
+            "--secrets-output",
+            str(tmp_path / "stage6.vault"),
+            "--secret-passphrase",
+            "stage6-pass",
+            "--summary-json",
+            str(summary_path),
+        ]
+    )
+
+    assert exit_code == 0
+
+    payload = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert payload["secrets"]["source_path"] == str(legacy_file)
+    assert payload["secrets"]["source_checksum"] == hashlib.sha256(
+        legacy_file.read_bytes()
+    ).hexdigest()
+    assert payload["secrets"]["legacy_security_salt_path"] == str(salt_file)
+    assert payload["secrets"]["legacy_security_salt_checksum"] == hashlib.sha256(
+        salt_file.read_bytes()
+    ).hexdigest()
+    assert payload["secrets"]["output_passphrase"] == {
+        "provided": True,
+        "source": "inline",
+        "identifier": None,
+        "used": True,
+    }
+    assert payload["secrets"]["legacy_security_passphrase"] == {
+        "provided": True,
+        "source": "env",
+        "identifier": "LEGACY_SUMMARY_PASS",
+        "used": True,
+    }
+    assert payload["warnings"] == []
+
+
+def test_stage6_cli_summary_redacts_inline_passphrases(tmp_path: Path) -> None:
+    core_copy = _copy_core_config(tmp_path)
+    preset_path = tmp_path / "legacy.json"
+    preset_path.write_text(json.dumps({"fraction": 0.27}), encoding="utf-8")
+
+    legacy_file = tmp_path / "legacy_keys.enc"
+    legacy_salt = tmp_path / "legacy_keys.salt"
+    manager = SecurityManager(key_file=str(legacy_file), salt_file=str(legacy_salt))
+    manager.save_encrypted_keys(
+        {"binance": {"api_key": "AAA", "secret_key": "BBB"}},
+        password="legacy-inline-pass",
+    )
+
+    summary_path = tmp_path / "summary.json"
+    vault_path = tmp_path / "preview.vault"
+
+    exit_code = preset_editor_cli.main(
+        [
+            "--core-config",
+            str(core_copy),
+            "--legacy-preset",
+            str(preset_path),
+            "--profile-name",
+            "redacted-profile",
+            "--legacy-security-file",
+            str(legacy_file),
+            "--legacy-security-salt",
+            str(legacy_salt),
+            "--legacy-security-passphrase",
+            "legacy-inline-pass",
+            "--secrets-output",
+            str(vault_path),
+            "--secret-passphrase",
+            "stage6-inline-pass",
+            "--dry-run",
+            "--summary-json",
+            str(summary_path),
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(summary_path.read_text(encoding="utf-8"))
+    invocation = payload["cli_invocation"]
+    assert invocation["argv"].count("***REDACTED***") == 2
+    assert "stage6-inline-pass" not in invocation["command"]
+    assert "legacy-inline-pass" not in invocation["command"]
+    summary_text = summary_path.read_text(encoding="utf-8")
+    assert "stage6-inline-pass" not in summary_text
+    assert "legacy-inline-pass" not in summary_text
+
+
+def test_stage6_cli_summary_includes_checksum_warnings(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    core_copy = _copy_core_config(tmp_path)
+    preset_path = tmp_path / "legacy.json"
+    preset_path.write_text(json.dumps({"fraction": 0.4}), encoding="utf-8")
+    summary_path = tmp_path / "summary.json"
+    backup_path = tmp_path / "core.backup.yaml"
+
+    def failing_checksum(path: Path) -> str:
+        raise OSError("checksum blocked")
+
+    monkeypatch.setattr(preset_editor_cli, "_compute_file_checksum", failing_checksum)
+
+    exit_code = preset_editor_cli.main(
+        [
+            "--core-config",
+            str(core_copy),
+            "--legacy-preset",
+            str(preset_path),
+            "--profile-name",
+            "warnings-profile",
+            "--core-backup",
+            str(backup_path),
+            "--summary-json",
+            str(summary_path),
+        ]
+    )
+
+    assert exit_code == 0
+    assert summary_path.exists()
+
+    payload = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert payload["warnings"]
+    assert payload["warnings"][0].startswith(
+        f"Ostrzeżenie: nie udało się obliczyć sumy SHA-256 dla {backup_path}"
+    )
+    assert payload["core_backup_checksum"] is None
+
+    output = capsys.readouterr().out
+    assert "Ostrzeżenie: nie udało się obliczyć sumy SHA-256" in output

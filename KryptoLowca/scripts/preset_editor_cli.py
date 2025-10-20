@@ -9,6 +9,11 @@ from __future__ import annotations
 import argparse
 import asyncio
 import difflib
+import hashlib
+import platform
+import shlex
+import subprocess
+import sys
 from datetime import datetime, timezone
 from fnmatch import fnmatchcase
 from pathlib import Path
@@ -18,6 +23,7 @@ from typing import Any, Dict, Iterable, Mapping, Sequence, Tuple
 import json
 import os
 import yaml
+from importlib import metadata
 from bot_core.runtime.paths import build_desktop_app_paths_from_root
 from bot_core.runtime.preset_service import (
     PresetConfigService,
@@ -71,6 +77,85 @@ def _summarise_overrides(overrides: Dict[str, Dict[str, object]]) -> str:
     return ", ".join(f"{section}.{key}={value}" for section, key, value in flattened)
 
 
+_STAGE6_SENSITIVE_FLAGS = {
+    "--secret-passphrase",
+    "--legacy-security-passphrase",
+}
+
+
+def _sanitise_stage6_invocation(argv: Sequence[str]) -> Dict[str, object]:
+    """Zwraca zanonimizowaną reprezentację wywołania CLI migratora Stage6."""
+
+    sanitised: list[str] = []
+    skip_next = False
+    for token in argv:
+        if skip_next:
+            skip_next = False
+            continue
+
+        matched = False
+        for flag in _STAGE6_SENSITIVE_FLAGS:
+            prefix = f"{flag}="
+            if token.startswith(prefix):
+                sanitised.append(f"{prefix}***REDACTED***")
+                matched = True
+                break
+
+        if matched:
+            continue
+
+        if token in _STAGE6_SENSITIVE_FLAGS:
+            sanitised.append(token)
+            sanitised.append("***REDACTED***")
+            skip_next = True
+            continue
+
+        sanitised.append(token)
+
+    command = " ".join(shlex.quote(item) for item in sanitised)
+    return {"argv": sanitised, "command": command}
+
+
+def _collect_stage6_tool_metadata() -> tuple[Dict[str, object], list[str]]:
+    """Zbiera dane audytowe o środowisku uruchomieniowym migratora Stage6."""
+
+    warnings: list[str] = []
+    payload: Dict[str, object] = {
+        "package": "dudzian-bot",
+        "version": None,
+        "package_available": False,
+        "python": platform.python_version(),
+        "executable": sys.executable,
+        "platform": platform.platform(),
+        "module": __name__,
+        "git_commit": None,
+        "git_available": False,
+        "git_commit_error": None,
+    }
+
+    try:
+        payload["version"] = metadata.version("dudzian-bot")
+        payload["package_available"] = True
+    except metadata.PackageNotFoundError:
+        pass
+
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        commit = result.stdout.strip()
+        if commit:
+            payload["git_commit"] = commit
+            payload["git_available"] = True
+    except (subprocess.SubprocessError, FileNotFoundError) as exc:
+        payload["git_commit_error"] = str(exc)
+
+    return payload, warnings
+
+
 def _print_core_diff(destination: Path, original: str | None, updated: str) -> None:
     original_exists = original is not None
     before_label = (
@@ -94,6 +179,53 @@ def _print_core_diff(destination: Path, original: str | None, updated: str) -> N
         print("".join(diff_lines), end="")
     else:
         print(f"Podgląd zmian {destination}: brak różnic.")
+
+
+def _compute_text_checksum(payload: str) -> str:
+    digest = hashlib.sha256()
+    digest.update(payload.encode("utf-8"))
+    return digest.hexdigest()
+
+
+def _compute_file_checksum(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(8192), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _safe_file_checksum(path: Path) -> tuple[str | None, str | None]:
+    try:
+        return _compute_file_checksum(path), None
+    except OSError as exc:
+        return None, f"Ostrzeżenie: nie udało się obliczyć sumy SHA-256 dla {path}: {exc}"
+
+
+def _describe_passphrase_args(
+    *,
+    inline: str | None,
+    file: str | None,
+    env: str | None,
+) -> dict[str, object | None]:
+    """Zwraca metadane o pochodzeniu hasła bez ujawniania jego wartości."""
+
+    info: dict[str, object | None] = {
+        "provided": bool(inline or file or env),
+        "source": None,
+        "identifier": None,
+    }
+
+    if inline:
+        info["source"] = "inline"
+    elif file:
+        info["source"] = "file"
+        info["identifier"] = str(Path(file).expanduser())
+    elif env:
+        info["source"] = "env"
+        info["identifier"] = env
+
+    return info
 
 
 def _resolve_backup_path(target: Path, candidate: str | None) -> Path:
@@ -719,17 +851,25 @@ def _configure_migration_parser() -> argparse.ArgumentParser:
             "Katalog aplikacji desktopowej. Jeśli podany, domyślnie zapisze sekrety w api_keys.vault"
         ),
     )
+    parser.add_argument(
+        "--summary-json",
+        help="Zapisz podsumowanie migracji do pliku JSON (UTF-8)",
+    )
     return parser
 
 
 def _run_stage6_migration(argv: Sequence[str]) -> int:
     parser = _configure_migration_parser()
-    args = parser.parse_args(list(argv))
+    provided_args = list(argv)
+    args = parser.parse_args(provided_args)
 
     core_path = Path(args.core_config)
     if not core_path.exists():
         raise SystemExit(f"Plik core.yaml nie istnieje: {core_path}")
 
+    sanitised_invocation = _sanitise_stage6_invocation(provided_args)
+
+    summary_path = Path(args.summary_json).expanduser() if args.summary_json else None
     desktop_paths = None
     if args.desktop_root:
         desktop_paths = build_desktop_app_paths_from_root(args.desktop_root)
@@ -753,6 +893,7 @@ def _run_stage6_migration(argv: Sequence[str]) -> int:
         original_text = None
 
     backup_request = args.core_backup
+    created_backup_path: Path | None = None
     if backup_request is not None:
         if args.dry_run:
             print("Tryb dry-run: pominięto utworzenie kopii zapasowej (--core-backup).")
@@ -773,6 +914,7 @@ def _run_stage6_migration(argv: Sequence[str]) -> int:
                     f"Nie udało się utworzyć kopii zapasowej {backup_source}: {exc}"
                 ) from exc
             else:
+                created_backup_path = backup_path
                 print(
                     "Utworzono kopię zapasową {source} → {dest}".format(
                         source=backup_source,
@@ -781,6 +923,8 @@ def _run_stage6_migration(argv: Sequence[str]) -> int:
                 )
 
     rendered = service.save(destination=destination, dry_run=args.dry_run)
+
+    rendered_checksum = _compute_text_checksum(rendered)
 
     if args.dry_run:
         print(rendered)
@@ -795,10 +939,15 @@ def _run_stage6_migration(argv: Sequence[str]) -> int:
     if args.core_diff:
         _print_core_diff(destination, original_text, rendered)
 
+    original_checksum: str | None = None
+    if original_text is not None:
+        original_checksum = _compute_text_checksum(original_text)
+
     secrets_input_path = Path(args.secrets_input).expanduser() if args.secrets_input else None
     legacy_security_path = (
         Path(args.legacy_security_file).expanduser() if args.legacy_security_file else None
     )
+    legacy_security_salt_path: Path | None = None
     if secrets_input_path and legacy_security_path:
         parser.error(
             "Wybierz jedno źródło sekretów: --secrets-input lub --legacy-security-file"
@@ -819,21 +968,28 @@ def _run_stage6_migration(argv: Sequence[str]) -> int:
             )
 
     secrets_payload: Mapping[str, Any] | None = None
-    secrets_source: str | None = None
+    secrets_source_label: str | None = None
+    secrets_source_path: Path | None = None
+    include_filters: list[str] = []
+    exclude_filters: list[str] = []
     if secrets_input_path:
         secrets_payload = _load_secret_payload(secrets_input_path)
-        secrets_source = f"plik {secrets_input_path}"
+        secrets_source_label = f"plik {secrets_input_path}"
+        secrets_source_path = secrets_input_path
     elif legacy_security_path:
-        salt_path = (
-            Path(args.legacy_security_salt).expanduser() if args.legacy_security_salt else None
+        legacy_security_salt_path = (
+            Path(args.legacy_security_salt).expanduser()
+            if args.legacy_security_salt
+            else None
         )
         legacy_passphrase = _resolve_legacy_passphrase(args)
         secrets_payload = _load_legacy_security_payload(
             file_path=legacy_security_path,
-            salt_path=salt_path,
+            salt_path=legacy_security_salt_path,
             password=legacy_passphrase,
         )
-        secrets_source = f"legacy SecurityManager ({legacy_security_path})"
+        secrets_source_label = f"legacy SecurityManager ({legacy_security_path})"
+        secrets_source_path = legacy_security_path
 
     secret_entries: dict[str, str] | None = None
     skipped_by_include: list[str] = []
@@ -882,13 +1038,13 @@ def _run_stage6_migration(argv: Sequence[str]) -> int:
                 count=len(secret_entries),
                 keys=preview_keys,
             )
-            if secrets_source:
-                message += f" (źródło: {secrets_source})"
+            if secrets_source_label:
+                message += f" (źródło: {secrets_source_label})"
             print(message)
         else:
             message = "Podgląd sekretów: brak wpisów do migracji po filtrach."
-            if secrets_source:
-                message += f" (źródło: {secrets_source})"
+            if secrets_source_label:
+                message += f" (źródło: {secrets_source_label})"
             print(message)
 
     entries_count = len(secret_entries) if secret_entries is not None else 0
@@ -903,14 +1059,14 @@ def _run_stage6_migration(argv: Sequence[str]) -> int:
                     message += " do magazynu {path}".format(path=secrets_output_path)
                 else:
                     message += " (nie wskazano --secrets-output)"
-                if secrets_source:
-                    message += f" (źródło: {secrets_source})"
+                if secrets_source_label:
+                    message += f" (źródło: {secrets_source_label})"
             else:
                 message = "Tryb dry-run: brak sekretów do zapisania po zastosowaniu filtrów"
                 if secrets_output_path is not None:
                     message += " (docelowy magazyn: {path})".format(path=secrets_output_path)
-                if secrets_source:
-                    message += f" (źródło: {secrets_source})"
+                if secrets_source_label:
+                    message += f" (źródło: {secrets_source_label})"
             print(message)
         elif secrets_output_path is not None:
             print(
@@ -936,23 +1092,23 @@ def _run_stage6_migration(argv: Sequence[str]) -> int:
                     path=secrets_output_path,
                 )
             )
-            if secrets_source:
-                print(f"Źródło sekretów: {secrets_source}")
+            if secrets_source_label:
+                print(f"Źródło sekretów: {secrets_source_label}")
         else:
             print("Pominięto zapis sekretów: brak dopasowanych wpisów (po filtrach).")
-            if secrets_source:
-                print(f"Źródło sekretów: {secrets_source}")
+            if secrets_source_label:
+                print(f"Źródło sekretów: {secrets_source_label}")
     elif secret_entries is not None and secrets_output_path is None:
         if entries_count == 0:
             print("Pominięto zapis sekretów: brak dopasowanych wpisów (po filtrach).")
-            if secrets_source:
-                print(f"Źródło sekretów: {secrets_source}")
+            if secrets_source_label:
+                print(f"Źródło sekretów: {secrets_source_label}")
         elif args.secrets_preview:
             message = (
                 "Pominięto zapis {count} sekretów: nie wskazano --secrets-output (tryb podglądu)."
             ).format(count=entries_count)
-            if secrets_source:
-                message += f" Źródło: {secrets_source}."
+            if secrets_source_label:
+                message += f" Źródło: {secrets_source_label}."
             print(message)
         else:
             parser.error(
@@ -968,6 +1124,131 @@ def _run_stage6_migration(argv: Sequence[str]) -> int:
                 "źródło (--secrets-input lub --legacy-security-file) oraz --secrets-output"
             )
         )
+
+    secrets_written = 0
+    if (
+        secret_entries is not None
+        and secrets_output_path is not None
+        and not args.dry_run
+        and entries_count
+    ):
+        secrets_written = entries_count
+
+    backup_checksum: str | None = None
+    warnings: list[str] = []
+    if created_backup_path is not None and created_backup_path.exists():
+        backup_checksum, warning = _safe_file_checksum(created_backup_path)
+        if warning:
+            warnings.append(warning)
+
+    secrets_output_checksum: str | None = None
+    if (
+        secrets_output_path is not None
+        and not args.dry_run
+        and secret_entries is not None
+        and entries_count
+        and secrets_output_path.exists()
+    ):
+        secrets_output_checksum, warning = _safe_file_checksum(secrets_output_path)
+        if warning:
+            warnings.append(warning)
+
+    secrets_source_checksum: str | None = None
+    if secrets_source_path is not None and secrets_source_path.exists():
+        secrets_source_checksum, warning = _safe_file_checksum(secrets_source_path)
+        if warning:
+            warnings.append(warning)
+
+    legacy_security_salt_checksum: str | None = None
+    if (
+        legacy_security_salt_path is not None
+        and legacy_security_salt_path.exists()
+    ):
+        legacy_security_salt_checksum, warning = _safe_file_checksum(
+            legacy_security_salt_path
+        )
+        if warning:
+            warnings.append(warning)
+
+    output_passphrase_info = _describe_passphrase_args(
+        inline=getattr(args, "secret_passphrase", None),
+        file=getattr(args, "secret_passphrase_file", None),
+        env=getattr(args, "secret_passphrase_env", None),
+    )
+    output_passphrase_info["used"] = bool(secrets_written)
+
+    legacy_passphrase_info = _describe_passphrase_args(
+        inline=getattr(args, "legacy_security_passphrase", None),
+        file=getattr(args, "legacy_security_passphrase_file", None),
+        env=getattr(args, "legacy_security_passphrase_env", None),
+    )
+    legacy_passphrase_info["used"] = bool(legacy_security_path)
+
+    tool_metadata, metadata_warnings = _collect_stage6_tool_metadata()
+    warnings.extend(metadata_warnings)
+
+    if summary_path is not None:
+        summary_payload = {
+            "profile_name": profile.name,
+            "runtime_entrypoint": args.runtime_entrypoint,
+            "core_config_destination": str(destination),
+            "core_backup_requested": backup_request is not None,
+            "core_backup_path": str(created_backup_path) if created_backup_path else None,
+            "core_backup_checksum": backup_checksum,
+            "core_diff_requested": bool(args.core_diff),
+            "dry_run": bool(args.dry_run),
+            "desktop_root": args.desktop_root or None,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "core_original_checksum": original_checksum,
+            "core_rendered_checksum": rendered_checksum,
+            "cli_invocation": sanitised_invocation,
+            "warnings": warnings,
+            "tool": tool_metadata,
+            "secrets": {
+                "source_label": secrets_source_label,
+                "source_path": str(secrets_source_path) if secrets_source_path else None,
+                "source_checksum": secrets_source_checksum,
+                "output_path": str(secrets_output_path) if secrets_output_path else None,
+                "planned": entries_count if secret_entries is not None else 0,
+                "written": secrets_written,
+                "used_default_vault": bool(used_default_vault and secrets_output_path is not None),
+                "filters": {
+                    "include": include_filters,
+                    "exclude": exclude_filters,
+                },
+                "skipped_by_include": skipped_by_include,
+                "skipped_by_exclude": skipped_by_exclude,
+                "missing_includes": missing_includes,
+                "preview": bool(args.secrets_preview),
+                "dry_run_skipped": bool(
+                    args.dry_run and secret_entries is not None and entries_count > 0
+                ),
+                "output_checksum": secrets_output_checksum,
+                "legacy_security_salt_path": (
+                    str(legacy_security_salt_path)
+                    if legacy_security_salt_path is not None
+                    else None
+                ),
+                "legacy_security_salt_checksum": legacy_security_salt_checksum,
+                "output_passphrase": output_passphrase_info,
+                "legacy_security_passphrase": legacy_passphrase_info,
+            },
+        }
+        try:
+            summary_path.parent.mkdir(parents=True, exist_ok=True)
+            summary_path.write_text(
+                json.dumps(summary_payload, ensure_ascii=False, indent=2, sort_keys=True),
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            raise SystemExit(
+                f"Nie udało się zapisać podsumowania migracji: {exc}"
+            ) from exc
+        else:
+            print(f"Zapisano podsumowanie migracji do {summary_path}")
+
+    for warning in warnings:
+        print(warning)
 
     return 0
 

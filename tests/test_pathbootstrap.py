@@ -721,7 +721,7 @@ def test_main_print_pythonpath_windows_style_json(
                 "windows",
             ]
         )
-        captured = capsys.readouterr()
+        out, err = _read_output(capsys)
     finally:
         clear_cache()
 
@@ -798,19 +798,6 @@ def test_main_combines_additional_paths_file_env_and_cli(
     payload = json.loads(out)
 
     assert exit_code == 0
-    assert captured.err == ""
-    assert payload["additional_paths"] == [expected_data, expected_docs, expected_tests]
-
-
-def test_main_prints_pythonpath_value(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    monkeypatch.delenv("PATHBOOTSTRAP_ADD_PATHS", raising=False)
-
-    clear_cache()
-    try:
-        exit_code = main(["--print-pythonpath", "--add-path", "tests"])
-        captured = capsys.readouterr()
     assert err == ""
     assert payload["additional_paths"] == [
         expected_data,
@@ -834,6 +821,51 @@ def test_main_with_set_env_prints_assignment(
     assert exit_code == 0
     assert err == ""
     assert out.strip() == f"REPO_ROOT={repo_root}"
+
+
+def test_main_prints_pythonpath_value(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("PATHBOOTSTRAP_ADD_PATHS", raising=False)
+
+    clear_cache()
+    try:
+        exit_code = main(["--print-pythonpath", "--add-path", "tests"])
+        out, err = _read_output(capsys)
+    finally:
+        clear_cache()
+
+    repo_root = _repo_root()
+    expected_tests = str((repo_root / "tests").resolve())
+
+    assert exit_code == 0
+    assert err == ""
+    assert out.strip() == ":".join([str(repo_root), expected_tests])
+
+
+def test_main_with_set_env_prints_assignment(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo_root = _repo_root()
+
+    clear_cache()
+    try:
+        exit_code = main(
+            [
+                "--export",
+                "--set-env",
+                "REPO_ROOT",
+                "--set-env-format",
+                "posix",
+            ]
+        )
+        out, err = _read_output(capsys)
+    finally:
+        clear_cache()
+
+    assert exit_code == 0
+    assert err == ""
+    assert out.strip() == f"export REPO_ROOT={repo_root}"
 
 
 def test_main_prints_pythonpath_value(
