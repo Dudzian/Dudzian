@@ -6,11 +6,14 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 from bot_core.config.models import LicenseValidationConfig
 from bot_core.security.fingerprint import decode_secret
 from bot_core.security.signing import build_hmac_signature
+
+if TYPE_CHECKING:
+    from bot_core.security.guards import CapabilityGuard
 
 LOGGER = logging.getLogger(__name__)
 
@@ -42,6 +45,8 @@ class LicenseValidationResult:
     payload: Mapping[str, Any] | None
     license_signature_key: str | None
     fingerprint_signature_key: str | None
+    capabilities: "LicenseCapabilities | None" = None
+    capability_guard: "CapabilityGuard | None" = None
 
     @property
     def is_valid(self) -> bool:

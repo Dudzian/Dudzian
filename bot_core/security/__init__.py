@@ -11,10 +11,12 @@ from bot_core.security.base import (
     SecretStorage,
     SecretStorageError,
 )
+from bot_core.security.clock import ClockService
 from bot_core.security.factory import (
     create_default_fingerprint_service,
     create_default_secret_storage,
 )
+from bot_core.security.hwid import HwIdProvider, HwIdProviderError
 from bot_core.security.file_storage import EncryptedFileSecretStorage
 from bot_core.security.fingerprint import (
     DeviceFingerprintGenerator,
@@ -129,7 +131,10 @@ __all__ = [
     "KeyringSecretStorage",
     "EncryptedFileSecretStorage",
     "create_default_secret_storage",
+    "ClockService",
     "create_default_fingerprint_service",
+    "HwIdProvider",
+    "HwIdProviderError",
     "RotationRegistry",
     "RotationStatus",
     "RotationRecord",

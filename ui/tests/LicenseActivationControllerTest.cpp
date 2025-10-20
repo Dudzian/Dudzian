@@ -13,25 +13,24 @@ namespace {
 QJsonDocument buildLicenseDocument(const QString& fingerprint)
 {
     QJsonObject payload{
-        {QStringLiteral("schema"), QStringLiteral("core.oem.license")},
-        {QStringLiteral("schema_version"), QStringLiteral("1.0")},
-        {QStringLiteral("fingerprint"), fingerprint},
-        {QStringLiteral("issued_at"), QStringLiteral("2024-01-01T00:00:00Z")},
-        {QStringLiteral("expires_at"), QStringLiteral("2099-12-31T00:00:00Z")},
-        {QStringLiteral("profile"), QStringLiteral("paper")},
-        {QStringLiteral("issuer"), QStringLiteral("OEM-Control")},
-        {QStringLiteral("bundle_version"), QStringLiteral("2.3.1")},
-        {QStringLiteral("features"), QJsonArray{QStringLiteral("daemon"), QStringLiteral("ui")}},
+        {QStringLiteral("license_id"), QStringLiteral("demo-pro")},
+        {QStringLiteral("edition"), QStringLiteral("pro")},
+        {QStringLiteral("issued_at"), QStringLiteral("2024-01-01")},
+        {QStringLiteral("maintenance_until"), QStringLiteral("2099-12-31")},
+        {QStringLiteral("environments"), QJsonArray{QStringLiteral("demo"), QStringLiteral("paper")}},
+        {QStringLiteral("modules"), QJsonObject{{QStringLiteral("futures"), true}, {QStringLiteral("walk_forward"), false}}},
+        {QStringLiteral("runtime"), QJsonObject{{QStringLiteral("auto_trader"), true}}},
+        {QStringLiteral("holder"), QJsonObject{{QStringLiteral("name"), QStringLiteral("OEM-Control")},
+                                                {QStringLiteral("email"), QStringLiteral("ops@example.com")}}},
+        {QStringLiteral("seats"), 2},
+        {QStringLiteral("hwid"), fingerprint},
     };
-    QJsonObject signature{
-        {QStringLiteral("algorithm"), QStringLiteral("HMAC-SHA384")},
-        {QStringLiteral("value"), QStringLiteral("dummy-signature")},
-        {QStringLiteral("key_id"), QStringLiteral("signing-key-1")},
+    const QByteArray payloadBytes = QJsonDocument(payload).toJson(QJsonDocument::Compact);
+    QJsonObject bundle{
+        {QStringLiteral("payload_b64"), QString::fromUtf8(payloadBytes.toBase64())},
+        {QStringLiteral("signature_b64"), QStringLiteral("ZHVtbXk=")},
     };
-    return QJsonDocument(QJsonObject{
-        {QStringLiteral("payload"), payload},
-        {QStringLiteral("signature"), signature},
-    });
+    return QJsonDocument(bundle);
 }
 
 QString writeFingerprintDocument(const QString& dir, const QString& fingerprint)
@@ -95,8 +94,13 @@ void LicenseActivationControllerTest::activatesWithValidLicense()
     QVERIFY(controller.loadLicenseFile(licenseFile));
     QVERIFY(controller.licenseActive());
     QCOMPARE(controller.licenseFingerprint(), expectedFingerprint);
-    QCOMPARE(controller.licenseProfile(), QStringLiteral("paper"));
-    QCOMPARE(controller.licenseFeatures(), QStringList({QStringLiteral("daemon"), QStringLiteral("ui")}));
+    QCOMPARE(controller.licenseEdition(), QStringLiteral("pro"));
+    QCOMPARE(controller.licenseLicenseId(), QStringLiteral("demo-pro"));
+    QCOMPARE(controller.licenseMaintenanceUntil(), QStringLiteral("2099-12-31"));
+    QVERIFY(controller.licenseMaintenanceActive());
+    QCOMPARE(controller.licenseModules(), QStringList({QStringLiteral("futures")}));
+    QCOMPARE(controller.licenseRuntime(), QStringList({QStringLiteral("auto_trader")}));
+    QCOMPARE(controller.licenseHolderName(), QStringLiteral("OEM-Control"));
 
     QFile persisted(controller.licenseStoragePath());
     QVERIFY(persisted.exists());
@@ -150,6 +154,7 @@ void LicenseActivationControllerTest::acceptsBase64Payload()
     QVERIFY(controller.applyLicenseText(QString::fromUtf8(encoded)));
     QVERIFY(controller.licenseActive());
     QCOMPARE(controller.licenseFingerprint(), fingerprint);
+    QCOMPARE(controller.licenseEdition(), QStringLiteral("pro"));
     QVERIFY(controller.statusMessage().contains(QStringLiteral("Licencja aktywna")));
 }
 

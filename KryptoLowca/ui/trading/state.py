@@ -9,6 +9,8 @@ import tkinter as tk
 
 from bot_core.runtime.paths import DesktopAppPaths
 from bot_core.runtime.metadata import RuntimeEntrypointMetadata, RiskManagerSettings
+from bot_core.security.capabilities import LicenseCapabilities
+from bot_core.security.guards import CapabilityGuard
 
 
 @dataclass
@@ -33,6 +35,11 @@ class AppState:
     risk_profile_label: tk.StringVar | None = None
     risk_limits_label: tk.StringVar | None = None
     risk_notional_label: tk.StringVar | None = None
+    license_capabilities: LicenseCapabilities | None = None
+    capability_guard: CapabilityGuard | None = None
+    license_summary: tk.StringVar | None = None
+    license_notice: tk.StringVar | None = None
+    license_path: str | None = None
     market_intel_label: tk.StringVar | None = None
     market_intel_summary: str = "Market intel: —"
     market_intel_history_label: tk.StringVar | None = None

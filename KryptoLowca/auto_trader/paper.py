@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shlex
 import signal
 import threading
+from contextlib import suppress
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from types import SimpleNamespace
@@ -25,8 +27,17 @@ from KryptoLowca.ui.trading.risk_helpers import (
     refresh_runtime_risk_context,
 )
 
-from .app import AutoTrader
+from .app import AutoTrader, _emit_alert
 from bot_core.execution import ExecutionService
+from bot_core.alerts import AlertSeverity
+from bot_core.security.capabilities import LicenseCapabilities
+from bot_core.security.guards import (
+    CapabilityGuard,
+    LicenseCapabilityError,
+    get_capability_guard,
+    install_capability_guard,
+)
+from bot_core.security.license_service import LicenseService, LicenseServiceError
 from bot_core.runtime.metadata import (
     RiskManagerSettings,
     load_risk_manager_settings,
@@ -220,12 +231,31 @@ class PaperAutoTradeApp:
         self.use_dummy_feed = use_dummy_feed
         self.paper_balance = paper_balance
 
-        self.core_config_path = self._resolve_core_config_path(core_config_path)
+        self.bootstrap_context = bootstrap_context
         self.core_environment = self._infer_environment_hint(
             core_environment,
             bootstrap_context,
         )
-        self.bootstrap_context = bootstrap_context
+        (
+            self.license_path,
+            self.license_capabilities,
+            self.capability_guard,
+            self._license_notice,
+        ) = self._load_license_context()
+        self._reserved_slot_kind: str | None = None
+        self._bot_slot_reserved = False
+        self._license_slot_kind: str | None = None
+        try:
+            self._license_slot_kind = self._evaluate_license_requirements()
+        except LicenseCapabilityError as exc:
+            if self._license_notice:
+                logger.warning(self._license_notice)
+            self._emit_license_alert(str(exc), capability=exc.capability)
+            raise
+        if self._license_notice:
+            logger.warning(self._license_notice)
+
+        self.core_config_path = self._resolve_core_config_path(core_config_path)
         (
             self.risk_profile_name,
             self.risk_profile_config,
@@ -298,6 +328,221 @@ class PaperAutoTradeApp:
             self.risk_manager_settings,
             self.risk_profile_config,
         )
+
+    def _load_license_context(
+        self,
+    ) -> tuple[Path | None, LicenseCapabilities | None, CapabilityGuard | None, str]:
+        guard: CapabilityGuard | None = None
+        capabilities: LicenseCapabilities | None = None
+        notice = ""
+        license_path: Path | None = None
+
+        context = self.bootstrap_context
+        if context is not None:
+            ctx_guard = getattr(context, "capability_guard", None)
+            if isinstance(ctx_guard, CapabilityGuard):
+                guard = ctx_guard
+                capabilities = ctx_guard.capabilities
+            else:
+                ctx_capabilities = getattr(context, "license_capabilities", None)
+                if isinstance(ctx_capabilities, LicenseCapabilities):
+                    capabilities = ctx_capabilities
+
+        if guard is None:
+            existing = get_capability_guard()
+            if existing is not None:
+                guard = existing
+                capabilities = existing.capabilities
+
+        if guard is None and capabilities is not None:
+            guard = install_capability_guard(capabilities)
+        elif guard is not None and capabilities is None:
+            capabilities = guard.capabilities
+
+        if guard is None:
+            public_key = os.environ.get("BOT_CORE_LICENSE_PUBLIC_KEY")
+            license_path_value = os.environ.get("BOT_CORE_LICENSE_PATH")
+            if public_key and license_path_value:
+                candidate_path = Path(license_path_value).expanduser()
+                try:
+                    service = LicenseService(verify_key_hex=public_key)
+                    snapshot = service.load_from_file(candidate_path)
+                except FileNotFoundError:
+                    notice = (
+                        f"Nie znaleziono pliku licencji: {candidate_path}. Skontaktuj się z opiekunem licencji."
+                    )
+                except LicenseServiceError as exc:
+                    notice = f"Nie udało się zweryfikować licencji offline: {exc}"
+                except Exception:
+                    logger.exception(
+                        "Nieoczekiwany błąd podczas ładowania licencji offline"
+                    )
+                    notice = (
+                        "Wystąpił nieoczekiwany błąd podczas ładowania licencji offline."
+                    )
+                else:
+                    capabilities = snapshot.capabilities
+                    guard = install_capability_guard(capabilities)
+                    license_path = snapshot.bundle_path
+            else:
+                notice = (
+                    "Brak skonfigurowanej licencji offline. Skontaktuj się z opiekunem licencji."
+                )
+
+        if guard is not None and license_path is None:
+            path_value = getattr(context, "license_path", None) if context is not None else None
+            if isinstance(path_value, (str, Path)):
+                license_path = Path(path_value)
+
+        return license_path, capabilities, guard, notice
+
+    def _evaluate_license_requirements(self) -> str:
+        guard = self.capability_guard
+        capabilities = self.license_capabilities
+        if guard is None or capabilities is None:
+            raise LicenseCapabilityError(
+                "Licencja nie obejmuje modułu AutoTrader. Skontaktuj się z opiekunem licencji.",
+                capability="auto_trader",
+            )
+
+        guard.require_runtime(
+            "auto_trader",
+            message="Licencja nie obejmuje modułu AutoTrader. Skontaktuj się z opiekunem licencji.",
+        )
+        environment_kind = self._determine_environment_kind()
+        if environment_kind == "live":
+            guard.require_environment(
+                "live",
+                message="Tryb live wymaga edycji Pro. Skontaktuj się z opiekunem licencji.",
+            )
+            guard.require_edition(
+                "pro",
+                message="Tryb live wymaga edycji Pro. Skontaktuj się z opiekunem licencji.",
+            )
+            slot_kind = "live_controller"
+        else:
+            aliases = ("paper", "demo", "testnet")
+            if not any(capabilities.is_environment_allowed(alias) for alias in aliases):
+                raise LicenseCapabilityError(
+                    "Licencja nie obejmuje środowiska demo/testnet. Skontaktuj się z opiekunem licencji.",
+                    capability="environment",
+                )
+            slot_kind = "paper_controller"
+
+        if self._requires_futures_module():
+            guard.require_module(
+                "futures",
+                message="Dodaj moduł Futures, aby aktywować handel kontraktami.",
+            )
+
+        return slot_kind
+
+    def _determine_environment_kind(self) -> str:
+        context = self.bootstrap_context
+        if context is not None:
+            environment = getattr(context, "environment", None)
+            candidate = self._normalize_environment_value(environment)
+            if candidate:
+                return candidate
+
+        hint = str(self.core_environment or "").lower()
+        if "live" in hint:
+            return "live"
+        if any(alias in hint for alias in ("paper", "demo", "testnet", "sim")):
+            return "paper"
+        return "paper"
+
+    @staticmethod
+    def _normalize_environment_value(environment: object) -> str | None:
+        if environment is None:
+            return None
+        values: list[str] = []
+        candidate = getattr(environment, "environment", None)
+        if isinstance(candidate, str):
+            values.append(candidate)
+        elif candidate is not None:
+            values.append(str(getattr(candidate, "value", candidate)))
+        if isinstance(environment, Mapping):
+            raw = environment.get("environment") or environment.get("mode")  # type: ignore[index]
+            if isinstance(raw, str):
+                values.append(raw)
+        for value in values:
+            normalized = value.strip().lower()
+            if normalized == "live":
+                return "live"
+            if normalized in {"paper", "demo", "testnet"}:
+                return "paper"
+        return None
+
+    def _requires_futures_module(self) -> bool:
+        context = self.bootstrap_context
+        exchange_hint = ""
+        if context is not None:
+            environment = getattr(context, "environment", None)
+            exchange_hint = str(getattr(environment, "exchange", "")) if environment is not None else ""
+            if not exchange_hint and isinstance(environment, Mapping):
+                raw = environment.get("exchange") or environment.get("adapter")  # type: ignore[index]
+                if isinstance(raw, str):
+                    exchange_hint = raw
+        if not exchange_hint and isinstance(self.core_environment, str):
+            exchange_hint = self.core_environment
+        normalized = exchange_hint.lower()
+        return any(token in normalized for token in ("futures", "perp"))
+
+    def _reserve_license_slots(self) -> None:
+        guard = self.capability_guard
+        if guard is None or not self._license_slot_kind:
+            return
+        reserved: list[str] = []
+        try:
+            guard.reserve_slot(self._license_slot_kind)
+            reserved.append(self._license_slot_kind)
+            guard.reserve_slot("bot")
+            reserved.append("bot")
+        except LicenseCapabilityError as exc:
+            for kind in reserved:
+                with suppress(Exception):
+                    guard.release_slot(kind)
+            self._emit_license_alert(str(exc), capability=exc.capability)
+            raise
+        self._reserved_slot_kind = self._license_slot_kind
+        self._bot_slot_reserved = True
+
+    def _release_license_slots(self) -> None:
+        guard = self.capability_guard
+        if guard is None:
+            return
+        if self._reserved_slot_kind:
+            with suppress(Exception):
+                guard.release_slot(self._reserved_slot_kind)
+            self._reserved_slot_kind = None
+        if self._bot_slot_reserved:
+            with suppress(Exception):
+                guard.release_slot("bot")
+            self._bot_slot_reserved = False
+
+    def _emit_license_alert(
+        self,
+        message: str,
+        *,
+        capability: str | None = None,
+        severity: AlertSeverity = AlertSeverity.ERROR,
+    ) -> None:
+        logger.warning("Blokada licencyjna AutoTradera: %s", message)
+        context = {
+            "component": "auto_trader.paper",
+            "environment": str(self.core_environment or "unknown"),
+            "capability": capability or "unknown",
+        }
+        try:
+            _emit_alert(
+                message,
+                severity=severity,
+                source="license_restriction",
+                context=context,
+            )
+        except Exception:
+            logger.debug("Nie udało się wysłać alertu licencyjnego", exc_info=True)
 
     @staticmethod
     def _infer_environment_hint(
@@ -925,11 +1170,17 @@ class PaperAutoTradeApp:
     def start(self) -> None:
         if not self._stopped:
             return
+        self._reserve_license_slots()
         self._stopped = False
-        self.trader.start()
-        if self.feed is not None:
-            self.feed.start()
-        self._start_risk_watcher()
+        try:
+            self.trader.start()
+            if self.feed is not None:
+                self.feed.start()
+            self._start_risk_watcher()
+        except Exception:
+            self._stopped = True
+            self._release_license_slots()
+            raise
         logger.info("AutoTrader paper app started (symbol=%s, gui=%s)", self.symbol, self.enable_gui)
 
     def stop(self, *_: object) -> None:
@@ -952,6 +1203,7 @@ class PaperAutoTradeApp:
             self.adapter.bus.close()
         except Exception:  # pragma: no cover - defensywne
             logger.debug("Problem z zamknięciem EventBus", exc_info=True)
+        self._release_license_slots()
         logger.info("AutoTrader paper app stopped")
 
     def start_auto_reload(self, interval: float | None = None) -> None:
@@ -1362,15 +1614,23 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     )
     effective_argv = list(argv if argv is not None else [])
     options = parse_cli_args(effective_argv)
-    app = PaperAutoTradeApp(
-        symbol=options.symbol,
-        enable_gui=options.enable_gui,
-        use_dummy_feed=options.use_dummy_feed,
-        paper_balance=options.paper_balance,
-        core_config_path=options.core_config_path,
-        risk_profile=options.risk_profile,
-    )
-    app.run()
+    try:
+        app = PaperAutoTradeApp(
+            symbol=options.symbol,
+            enable_gui=options.enable_gui,
+            use_dummy_feed=options.use_dummy_feed,
+            paper_balance=options.paper_balance,
+            core_config_path=options.core_config_path,
+            risk_profile=options.risk_profile,
+        )
+    except LicenseCapabilityError as exc:
+        logger.error("Uruchomienie AutoTradera zablokowane przez licencję: %s", exc)
+        raise SystemExit(1) from exc
+    try:
+        app.run()
+    except LicenseCapabilityError as exc:
+        logger.error("AutoTrader zatrzymany z powodu ograniczeń licencyjnych: %s", exc)
+        raise SystemExit(2) from exc
 
 
 __all__ = [

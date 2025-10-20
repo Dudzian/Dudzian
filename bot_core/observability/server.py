@@ -10,6 +10,7 @@ from socketserver import ThreadingMixIn
 from typing import Callable, Tuple, cast
 
 from bot_core.observability.metrics import MetricsRegistry, get_global_metrics_registry
+from bot_core.security.guards import get_capability_guard
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -93,6 +94,13 @@ def _build_path_matcher(metrics_path: str) -> Callable[[str], bool]:
     return matcher
 
 
+def _require_observability_module(message: str) -> None:
+    guard = get_capability_guard()
+    if guard is None:
+        return
+    guard.require_module("observability_ui", message=message)
+
+
 def start_http_server(
     port: int,
     host: str = "127.0.0.1",
@@ -101,6 +109,10 @@ def start_http_server(
     metrics_path: str = _DEFAULT_METRICS_PATH,
 ) -> Tuple[MetricsHTTPServer, threading.Thread]:
     """Uruchamia serwer metryk w tle i zwraca parę (server, thread)."""
+
+    _require_observability_module(
+        "Moduł Observability UI jest wymagany do uruchomienia serwera metryk.",
+    )
 
     server = MetricsHTTPServer((host, port), registry=registry, metrics_path=metrics_path)
     thread = threading.Thread(target=server.serve_forever, name="metrics-http-server", daemon=True)

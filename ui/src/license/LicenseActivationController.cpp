@@ -1,6 +1,8 @@
 #include "LicenseActivationController.hpp"
 
 #include <QByteArray>
+#include <algorithm>
+#include <QDate>
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
@@ -45,6 +47,19 @@ QString extractFingerprintFromDocument(const QJsonDocument& doc)
     if (!doc.isObject())
         return {};
     const QJsonObject root = doc.object();
+    const QString payloadB64 = root.value(QStringLiteral("payload_b64")).toString();
+    if (!payloadB64.isEmpty()) {
+        const QByteArray decoded = QByteArray::fromBase64(payloadB64.toUtf8(), QByteArray::Base64Option::IgnoreBase64Whitespace);
+        if (!decoded.isEmpty()) {
+            QString parseError;
+            const QJsonDocument payloadDoc = parseJson(decoded, &parseError);
+            if (!payloadDoc.isNull() && payloadDoc.isObject()) {
+                const QString hwid = payloadDoc.object().value(QStringLiteral("hwid")).toString();
+                if (!hwid.isEmpty())
+                    return normalizeFingerprint(hwid);
+            }
+        }
+    }
     if (root.contains(QStringLiteral("payload"))) {
         const QJsonValue payloadValue = root.value(QStringLiteral("payload"));
         if (payloadValue.isObject()) {
@@ -421,20 +436,35 @@ bool LicenseActivationController::activateFromDocument(const QJsonDocument& docu
     const bool wasActive = m_licenseActive;
     m_licenseActive = true;
     m_licenseFingerprint = info.fingerprint;
-    m_licenseProfile = info.profile;
-    m_licenseIssuer = info.issuer;
-    m_licenseBundleVersion = info.bundleVersion;
+    m_licenseEdition = info.edition;
+    m_licenseLicenseId = info.licenseId;
     m_licenseIssuedAt = info.issuedAtIso;
-    m_licenseExpiresAt = info.expiresAtIso;
-    m_licenseFeatures = info.features;
+    m_licenseMaintenanceUntil = info.maintenanceUntilIso;
+    m_licenseMaintenanceActive = info.maintenanceActive;
+    m_licenseHolderName = info.holderName;
+    m_licenseHolderEmail = info.holderEmail;
+    m_licenseSeats = info.seats;
+    m_licenseTrialActive = info.trialActive;
+    m_licenseTrialExpiresAt = info.trialExpiresIso;
+    m_licenseModules = info.modules;
+    m_licenseEnvironments = info.environments;
+    m_licenseRuntime = info.runtime;
     m_lastDocument = info.document;
 
     if (!wasActive)
         Q_EMIT licenseActiveChanged();
     Q_EMIT licenseDataChanged();
 
-    QString summary = tr("Licencja aktywna: profil %1, ważna do %2 (%3)")
-                        .arg(info.profile, info.expiresAtIso, info.fingerprint);
+    QStringList summaryParts;
+    summaryParts.append(tr("edycja %1").arg(info.edition.isEmpty() ? tr("nieznana") : info.edition));
+    if (!info.licenseId.isEmpty())
+        summaryParts.append(tr("ID %1").arg(info.licenseId));
+    if (!info.maintenanceUntilIso.isEmpty())
+        summaryParts.append(tr("utrzymanie do %1").arg(info.maintenanceUntilIso));
+    if (!info.fingerprint.isEmpty())
+        summaryParts.append(tr("HWID %1").arg(info.fingerprint));
+
+    QString summary = tr("Licencja aktywna (%1)").arg(summaryParts.join(QStringLiteral(", ")));
     if (!sourceDescription.isEmpty())
         summary += tr(" • źródło: %1").arg(sourceDescription);
     setStatusMessage(summary, false);
@@ -450,6 +480,102 @@ bool LicenseActivationController::parseLicenseDocument(const QJsonDocument& docu
         return false;
     }
     const QJsonObject root = document.object();
+    const QString payloadB64 = root.value(QStringLiteral("payload_b64")).toString();
+    if (!payloadB64.isEmpty()) {
+        const QString signatureB64 = root.value(QStringLiteral("signature_b64")).toString();
+        if (signatureB64.trimmed().isEmpty()) {
+            error = tr("Licencja musi zawierać pole 'signature_b64'");
+            return false;
+        }
+        const QByteArray payloadBytes = QByteArray::fromBase64(payloadB64.toUtf8(), QByteArray::Base64Option::IgnoreBase64Whitespace);
+        if (payloadBytes.isEmpty()) {
+            error = tr("Nie można zdekodować sekcji payload_b64 (base64)");
+            return false;
+        }
+        QString parseErrorMessage;
+        const QJsonDocument payloadDoc = parseJson(payloadBytes, &parseErrorMessage);
+        if (payloadDoc.isNull() || !payloadDoc.isObject()) {
+            error = tr("Payload licencji nie zawiera obiektu JSON: %1").arg(parseErrorMessage);
+            return false;
+        }
+        const QJsonObject payload = payloadDoc.object();
+        const QString edition = payload.value(QStringLiteral("edition")).toString().trimmed();
+        if (edition.isEmpty()) {
+            error = tr("Licencja nie zawiera pola 'edition'");
+            return false;
+        }
+        const QString hwid = normalizeFingerprint(payload.value(QStringLiteral("hwid")).toString());
+        if (expectedFingerprintAvailable()) {
+            if (hwid.isEmpty()) {
+                error = tr("Licencja nie zawiera fingerprintu HWID, oczekiwano %1").arg(m_expectedFingerprint);
+                return false;
+            }
+            if (hwid != m_expectedFingerprint) {
+                error = tr("Fingerprint licencji (%1) nie zgadza się z oczekiwanym (%2)")
+                            .arg(hwid, m_expectedFingerprint);
+                return false;
+            }
+        }
+
+        info.fingerprint = hwid;
+        info.licenseId = payload.value(QStringLiteral("license_id")).toString();
+        info.edition = edition;
+        info.issuedAtIso = payload.value(QStringLiteral("issued_at")).toString();
+        info.maintenanceUntilIso = payload.value(QStringLiteral("maintenance_until")).toString();
+        const QDate maintenanceDate = QDate::fromString(info.maintenanceUntilIso, Qt::ISODate);
+        if (maintenanceDate.isValid())
+            info.maintenanceActive = maintenanceDate >= QDate::currentDate();
+        else
+            info.maintenanceActive = true;
+
+        const QJsonObject holderObj = payload.value(QStringLiteral("holder")).toObject();
+        info.holderName = holderObj.value(QStringLiteral("name")).toString();
+        info.holderEmail = holderObj.value(QStringLiteral("email")).toString();
+        bool okSeats = false;
+        info.seats = payload.value(QStringLiteral("seats")).toInt(&okSeats);
+        if (!okSeats)
+            info.seats = 0;
+
+        const QJsonObject trialObj = payload.value(QStringLiteral("trial")).toObject();
+        info.trialActive = trialObj.value(QStringLiteral("enabled")).toBool();
+        info.trialExpiresIso = trialObj.value(QStringLiteral("expires_at")).toString();
+
+        const auto collectEnabled = [](const QJsonValue& value) {
+            QStringList enabled;
+            if (value.isObject()) {
+                const QJsonObject obj = value.toObject();
+                for (auto it = obj.constBegin(); it != obj.constEnd(); ++it) {
+                    if (it.value().toBool())
+                        enabled.append(it.key());
+                }
+            }
+            std::sort(enabled.begin(), enabled.end());
+            return enabled;
+        };
+
+        info.modules = collectEnabled(payload.value(QStringLiteral("modules")));
+        info.runtime = collectEnabled(payload.value(QStringLiteral("runtime")));
+
+        const QJsonValue envValue = payload.value(QStringLiteral("environments"));
+        if (envValue.isArray()) {
+            const QJsonArray array = envValue.toArray();
+            QStringList environments;
+            environments.reserve(array.size());
+            for (const QJsonValue& env : array) {
+                if (env.isString()) {
+                    const QString trimmed = env.toString().trimmed();
+                    if (!trimmed.isEmpty())
+                        environments.append(trimmed);
+                }
+            }
+            std::sort(environments.begin(), environments.end());
+            info.environments = environments;
+        }
+
+        info.document = document;
+        return true;
+    }
+
     const QJsonValue payloadValue = root.value(QStringLiteral("payload"));
     const QJsonValue signatureValue = root.value(QStringLiteral("signature"));
     if (!payloadValue.isObject() || !signatureValue.isObject()) {
@@ -482,13 +608,6 @@ bool LicenseActivationController::parseLicenseDocument(const QJsonDocument& docu
         return false;
     }
 
-    const QString issuer = payload.value(QStringLiteral("issuer")).toString();
-    if (issuer.isEmpty()) {
-        error = tr("Brak identyfikatora wystawcy w licencji");
-        return false;
-    }
-
-    const QString bundleVersion = payload.value(QStringLiteral("bundle_version")).toString();
     const QString issuedAtRaw = payload.value(QStringLiteral("issued_at")).toString();
     const QString expiresAtRaw = payload.value(QStringLiteral("expires_at")).toString();
     if (expiresAtRaw.isEmpty()) {
@@ -529,6 +648,7 @@ bool LicenseActivationController::parseLicenseDocument(const QJsonDocument& docu
             if (!feature.isEmpty())
                 features.append(feature);
         }
+        std::sort(features.begin(), features.end());
     } else if (!featuresValue.isUndefined() && !featuresValue.isNull()) {
         error = tr("Pole 'features' w licencji musi być tablicą");
         return false;
@@ -550,12 +670,14 @@ bool LicenseActivationController::parseLicenseDocument(const QJsonDocument& docu
     }
 
     info.fingerprint = fingerprint;
-    info.issuer = issuer;
-    info.profile = profile;
-    info.bundleVersion = bundleVersion;
+    info.edition = profile;
+    info.licenseId = payload.value(QStringLiteral("license_id")).toString();
     info.issuedAtIso = issuedAt.isValid() ? normalizeIso(issuedAt) : issuedAtRaw;
-    info.expiresAtIso = normalizeIso(expiresAt);
-    info.features = features;
+    info.maintenanceUntilIso = normalizeIso(expiresAt);
+    info.maintenanceActive = true;
+    info.modules = features;
+    info.environments = {};
+    info.runtime = {};
     info.document = document;
 
     return true;

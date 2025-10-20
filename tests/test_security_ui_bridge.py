@@ -1,10 +1,24 @@
+from __future__ import annotations
+
+import base64
 import json
 from pathlib import Path
-
-from bot_core.security.fingerprint import decode_secret
+from typing import Any
 
 from bot_core.security import ui_bridge
+from bot_core.security.fingerprint import decode_secret
+from bot_core.security.license_service import LicenseSignatureError
 from bot_core.security.signing import build_hmac_signature
+
+
+def _write_offline_license(base: Path, payload: dict[str, Any]) -> Path:
+    bundle = {
+        "payload_b64": base64.b64encode(json.dumps(payload, ensure_ascii=False).encode("utf-8")).decode("ascii"),
+        "signature_b64": base64.b64encode(b"dummy-signature").decode("ascii"),
+    }
+    path = base / "license.json"
+    path.write_text(json.dumps(bundle, ensure_ascii=False), encoding="utf-8")
+    return path
 
 
 LICENSE_KEY = bytes.fromhex("11" * 32)
@@ -95,23 +109,29 @@ def _write_signed_license(base: Path) -> dict[str, Path]:
     }
 
 
-def test_dump_state_reads_profiles_and_license(tmp_path):
-    license_path = tmp_path / "license.json"
+def test_dump_state_reads_profiles_and_license(monkeypatch, tmp_path):
+    monkeypatch.setenv("BOT_CORE_LICENSE_PUBLIC_KEY", "11" * 32)
+    monkeypatch.setattr(
+        "bot_core.security.license_service.HwIdProvider",
+        lambda: type("DummyProvider", (), {"read": lambda self: "ABC-123"})(),
+    )
     license_payload = {
-        "schema": "core.oem.license",
-        "schema_version": "1.0",
-        "issued_at": "2024-01-01T00:00:00Z",
-        "expires_at": "2040-12-31T23:59:59Z",
-        "issuer": "qa",
-        "profile": "paper",
         "license_id": "ui-demo",
-        "fingerprint": {"algorithm": "sha256", "value": "ABC-123"},
+        "edition": "pro",
+        "issuer": "qa",
+        "issued_at": "2024-01-01",
+        "maintenance_until": "2024-12-31",
+        "environments": ["demo", "paper"],
+        "modules": {"futures": True, "walk_forward": False},
+        "runtime": {"auto_trader": True},
+        "strategies": {"trend_d1": True},
+        "exchanges": {"binance_spot": True, "kraken_spot": False},
+        "limits": {"max_paper_controllers": 2},
+        "holder": {"name": "QA Team", "email": "qa@example.com"},
+        "seats": 3,
+        "hwid": "ABC-123",
     }
-    license_document = {
-        "payload": license_payload,
-        "signature": {"algorithm": "HMAC-SHA384", "value": "dummy", "key_id": "lic"},
-    }
-    license_path.write_text(json.dumps(license_document, ensure_ascii=False), encoding="utf-8")
+    license_path = _write_offline_license(tmp_path, license_payload)
 
     profiles_path = tmp_path / "profiles.json"
     profiles_path.write_text(
@@ -124,80 +144,71 @@ def test_dump_state_reads_profiles_and_license(tmp_path):
         encoding="utf-8",
     )
 
-    state = ui_bridge.dump_state(
-        license_path=str(license_path),
-        profiles_path=str(profiles_path),
-    )
+    state = ui_bridge.dump_state(license_path=str(license_path), profiles_path=str(profiles_path))
 
     assert state["license"]["fingerprint"] == "ABC-123"
+    assert state["license"]["local_fingerprint"] == "ABC-123"
     assert state["license"]["status"] == "active"
-    assert state["license"]["profile"] == "paper"
-    assert state["license"]["issuer"] == "qa"
-    assert state["license"]["schema"] == "core.oem.license"
-    assert state["license"]["schema_version"] == "1.0"
-    assert state["license"]["license_id"] == "ui-demo"
-    assert state["license"]["revocation_status"] == "skipped"
-    assert state["license"]["revocation_checked"] is False
-    assert state["license"]["revocation_reason"] is None
-    assert state["license"]["revocation_revoked_at"] is None
+    assert state["license"]["edition"] == "pro"
+    assert state["license"]["modules"] == ["futures"]
+    assert state["license"]["runtime"] == ["auto_trader"]
+    assert state["license"]["limits"]["max_paper_controllers"] == 2
+    assert state["license"]["maintenance_until"] == "2024-12-31"
+    assert state["license"]["seats"] == 3
     assert len(state["profiles"]) == 2
     assert {p["user_id"] for p in state["profiles"]} == {"ops", "qa"}
 
 
-def test_dump_state_with_keys_validates_signatures(tmp_path):
-    artifacts = _write_signed_license(tmp_path)
+def test_dump_state_falls_back_to_legacy_when_bundle_invalid(tmp_path):
+    license_path = tmp_path / "license.json"
+    license_payload = {
+        "schema": "core.oem.license",
+        "schema_version": "1.0",
+        "issued_at": "2024-01-01T00:00:00Z",
+        "expires_at": "2040-12-31T23:59:59Z",
+        "issuer": "qa",
+        "profile": "paper",
+        "license_id": "legacy",
+        "fingerprint": {"algorithm": "sha256", "value": "LEGACY"},
+    }
+    bundle = {
+        "payload": license_payload,
+        "signature": {"algorithm": "HMAC-SHA384", "value": "dummy", "key_id": "lic"},
+    }
+    license_path.write_text(json.dumps(bundle, ensure_ascii=False), encoding="utf-8")
     profiles_path = tmp_path / "profiles.json"
     profiles_path.write_text("[]", encoding="utf-8")
 
-    state = ui_bridge.dump_state(
-        license_path=str(artifacts["license"]),
-        profiles_path=str(profiles_path),
-        fingerprint_path=str(artifacts["fingerprint"]),
-        license_keys_path=str(artifacts["license_keys"]),
-        fingerprint_keys_path=str(artifacts["fingerprint_keys"]),
-        revocation_path=str(artifacts["revocation"]),
-        revocation_keys_path=str(artifacts["revocation_keys"]),
-        revocation_signature_required=True,
-    )
+    state = ui_bridge.dump_state(license_path=str(license_path), profiles_path=str(profiles_path))
 
     assert state["license"]["status"] == "active"
-    assert state["license"]["fingerprint"] == "SIGNED-ABC"
-    assert state["license"].get("license_key_id") == "lic-test"
-    assert state["license"].get("fingerprint_key_id") == "fp-test"
-    assert state["license"].get("revocation_key_id") == "rev-test"
-    assert state["license"]["profile"] == "paper"
-    assert state["license"]["issuer"] == "qa"
+    assert state["license"]["fingerprint"] == "LEGACY"
+    assert state["license"]["local_fingerprint"] is None
+    assert state["license"]["edition"] == "paper"
     assert state["license"]["schema"] == "core.oem.license"
-    assert state["license"]["schema_version"] == "1.0"
-    assert state["license"]["license_id"] == "signed-lic"
-    assert state["license"]["revocation_status"] == "clear"
-    assert state["license"]["revocation_checked"] is True
-    assert state["license"]["revocation_reason"] is None
-    assert state["license"]["revocation_revoked_at"] is None
-    assert state["license"]["errors"] == []
+    assert state["license"]["license_id"] == "legacy"
 
 
-def test_dump_state_reports_invalid_on_corrupted_signature(tmp_path):
-    artifacts = _write_signed_license(tmp_path)
-    document = json.loads(artifacts["license"].read_text(encoding="utf-8"))
-    document["signature"]["value"] = "tampered"
-    artifacts["license"].write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+def test_dump_state_reports_invalid_on_corrupted_signature(monkeypatch, tmp_path):
+    class FailingVerifyKey:
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            pass
+
+        def verify(self, *_args: Any, **_kwargs: Any) -> None:
+            raise LicenseSignatureError("Niepoprawny podpis")
+
+    monkeypatch.setenv("BOT_CORE_LICENSE_PUBLIC_KEY", "22" * 32)
+    monkeypatch.setattr("bot_core.security.license_service.VerifyKey", FailingVerifyKey)
+
+    payload = {"license_id": "broken", "edition": "community"}
+    license_path = _write_offline_license(tmp_path, payload)
     profiles_path = tmp_path / "profiles.json"
     profiles_path.write_text("[]", encoding="utf-8")
 
-    state = ui_bridge.dump_state(
-        license_path=str(artifacts["license"]),
-        profiles_path=str(profiles_path),
-        fingerprint_path=str(artifacts["fingerprint"]),
-        license_keys_path=str(artifacts["license_keys"]),
-        fingerprint_keys_path=str(artifacts["fingerprint_keys"]),
-        revocation_path=str(artifacts["revocation"]),
-        revocation_keys_path=str(artifacts["revocation_keys"]),
-        revocation_signature_required=True,
-    )
+    state = ui_bridge.dump_state(license_path=str(license_path), profiles_path=str(profiles_path))
 
     assert state["license"]["status"] == "invalid"
-    assert any("HMAC" in msg for msg in state["license"]["errors"])
+    assert any("Niepoprawny" in msg for msg in state["license"]["errors"])
     assert state["license"]["revocation_reason"] is None
     assert state["license"]["revocation_revoked_at"] is None
 

@@ -5,16 +5,71 @@ from pathlib import Path
 import asyncio
 import inspect
 from contextlib import suppress
+from datetime import date
+from types import ModuleType
 from typing import Any, Callable, Dict, Tuple
 
 import pytest
 
+if "nacl" not in sys.modules:
+    nacl_module = ModuleType("nacl")
+    nacl_exceptions = ModuleType("nacl.exceptions")
+    nacl_exceptions.BadSignatureError = Exception
+
+    class _VerifyKey:
+        def verify(self, *_args: object, **_kwargs: object) -> None:
+            return None
+
+    nacl_signing = ModuleType("nacl.signing")
+    nacl_signing.VerifyKey = lambda *_args, **_kwargs: _VerifyKey()
+    nacl_module.exceptions = nacl_exceptions
+    nacl_module.signing = nacl_signing
+    sys.modules["nacl"] = nacl_module
+    sys.modules["nacl.exceptions"] = nacl_exceptions
+    sys.modules["nacl.signing"] = nacl_signing
+
 # Dostosuj sys.path, aby testy mogły importować pakiet i root projektu
+
+
 ROOT = Path(__file__).resolve().parents[2]
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 for path in (str(ROOT), str(PACKAGE_ROOT)):
     if path not in sys.path:
         sys.path.insert(0, path)
+
+
+from bot_core.security.capabilities import build_capabilities_from_payload
+from bot_core.security.guards import install_capability_guard, reset_capability_guard
+
+@pytest.fixture(autouse=True)
+def _install_kryptolowca_license_guard():
+    payload = {
+        "edition": "pro",
+        "environments": ["demo", "paper", "live"],
+        "runtime": {"auto_trader": True, "multi_strategy_scheduler": True},
+        "modules": {
+            "futures": True,
+            "walk_forward": True,
+            "reporting_pro": True,
+            "observability_ui": True,
+            "alerts_advanced": True,
+            "oem_updater": True,
+        },
+        "limits": {
+            "max_paper_controllers": 5,
+            "max_live_controllers": 3,
+            "max_concurrent_bots": 6,
+            "max_alert_channels": 6,
+        },
+        "exchanges": {"binance_spot": True, "binance_futures": True, "kraken_spot": True},
+        "strategies": {"trend_d1": True, "mean_reversion": True},
+    }
+    capabilities = build_capabilities_from_payload(payload, effective_date=date.today())
+    guard = install_capability_guard(capabilities)
+    try:
+        yield guard
+    finally:
+        reset_capability_guard()
 
 
 def _run_coroutine(coro: Any) -> Any:

@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Iterable, Mapping, Sequence
 
+from ._license import ensure_ai_signals_enabled
 from .feature_engineering import FeatureDataset
 from .models import ModelArtifact
 from .training import ModelTrainer
@@ -17,6 +18,9 @@ class RetrainingScheduler:
 
     interval: timedelta
     last_run: datetime | None = None
+
+    def __post_init__(self) -> None:
+        ensure_ai_signals_enabled("harmonogramu retreningu modeli AI")
 
     def should_retrain(self, now: datetime | None = None) -> bool:
         now = now or datetime.now(timezone.utc)
@@ -151,6 +155,7 @@ class ScheduledTrainingJob:
     history: list[TrainingRunRecord] = field(default_factory=list)
 
     def __post_init__(self) -> None:
+        ensure_ai_signals_enabled("zadań treningowych AI")
         if not callable(self.trainer_factory):
             raise TypeError("trainer_factory musi być wywoływalny")
         if not callable(self.dataset_provider):
@@ -185,6 +190,7 @@ class TrainingScheduler:
     """Prosty harmonogram zarządzający wieloma zadaniami treningowymi."""
 
     def __init__(self) -> None:
+        ensure_ai_signals_enabled("harmonogramu treningowego AI")
         self._jobs: dict[str, ScheduledTrainingJob] = {}
 
     def register(self, job: ScheduledTrainingJob) -> None:

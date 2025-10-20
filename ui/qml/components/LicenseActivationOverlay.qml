@@ -127,9 +127,9 @@ FocusScope {
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
                 visible: licenseController.licenseActive
-                text: qsTr("Aktywowano profil %1. Licencja ważna do %2.")
-                          .arg(licenseController.licenseProfile)
-                          .arg(licenseController.licenseExpiresAt)
+                text: qsTr("Aktywowano edycję %1. Utrzymanie do %2.")
+                          .arg(licenseController.licenseEdition)
+                          .arg(licenseController.licenseMaintenanceUntil || qsTr("bez terminu"))
             }
         }
     }
