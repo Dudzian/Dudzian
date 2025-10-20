@@ -20,7 +20,7 @@ import threading
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Optional, Protocol, cast
+from typing import Any, Callable, Dict, Mapping, Optional, Protocol, cast
 
 import pandas as pd
 
@@ -31,6 +31,7 @@ from bot_core.ai.regime import (
     RegimeSummary,
     RiskLevel,
 )
+from bot_core.ai.config_loader import load_risk_thresholds
 
 
 LOGGER = logging.getLogger(__name__)
@@ -93,6 +94,28 @@ class RiskDecision:
         return payload
 
 
+@dataclass(slots=True)
+class GuardrailTrigger:
+    """Structured details about a guardrail that forced a HOLD signal."""
+
+    name: str
+    label: str
+    comparator: str
+    threshold: float
+    value: Optional[float] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "name": self.name,
+            "label": self.label,
+            "comparator": self.comparator,
+            "threshold": float(self.threshold),
+        }
+        if self.value is not None:
+            payload["value"] = float(self.value)
+        return payload
+
+
 class AutoTrader:
     """Small cooperative wrapper around an auto-trading loop.
 
@@ -128,6 +151,7 @@ class AutoTrader:
         core_risk_engine: Any | None = None,
         core_execution_service: Any | None = None,
         ai_connector: Any | None = None,
+        thresholds_loader: Callable[[], Mapping[str, Any]] | None = None,
         risk_evaluations_limit: int | None = 256,
     ) -> None:
         self.emitter = emitter
@@ -147,6 +171,11 @@ class AutoTrader:
         self.core_execution_service = core_execution_service
         self.ai_connector = ai_connector
         self.ai_manager: Any | None = getattr(gui, "ai_mgr", None)
+        self._thresholds_loader: Callable[[], Mapping[str, Any]] = (
+            thresholds_loader or load_risk_thresholds
+        )
+        self._thresholds: Mapping[str, Any] = {}
+        self.reload_thresholds()
 
         self.current_strategy: str = "neutral"
         self.current_leverage: float = 1.0
@@ -157,6 +186,8 @@ class AutoTrader:
         self._last_risk_decision: RiskDecision | None = None
         self._cooldown_until: float = 0.0
         self._cooldown_reason: str | None = None
+        self._last_guardrail_reasons: list[str] = []
+        self._last_guardrail_triggers: list[GuardrailTrigger] = []
 
         self._stop = threading.Event()
         self._auto_trade_stop = threading.Event()
@@ -168,6 +199,11 @@ class AutoTrader:
         self._risk_evaluations: list[dict[str, Any]] = []
         self._risk_evaluations_limit: int | None = None
         self.configure_risk_evaluation_history(risk_evaluations_limit)
+
+    def reload_thresholds(self) -> None:
+        """Reload cached risk thresholds from the configured loader."""
+
+        self._thresholds = self._thresholds_loader()
 
     # ------------------------------------------------------------------
     # Lifecycle helpers
@@ -301,86 +337,99 @@ class AutoTrader:
                             return None
         return None
 
-    @staticmethod
     def _map_regime_to_signal(
+        self,
         assessment: MarketRegimeAssessment,
         last_return: float,
         *,
         summary: RegimeSummary | None = None,
     ) -> str:
-        if assessment.confidence < 0.2:
+        cfg = self._thresholds["auto_trader"]["map_regime_to_signal"]
+        if assessment.confidence < float(cfg.get("assessment_confidence", 0.2)):
             return "hold"
-        if summary is not None and summary.confidence < 0.45:
+        if summary is not None and summary.confidence < float(cfg.get("summary_confidence", 0.45)):
             return "hold"
-        if summary is not None and summary.stability < 0.4:
+        if summary is not None and summary.stability < float(cfg.get("summary_stability", 0.4)):
             return "hold"
         if summary is not None and summary.risk_level in {RiskLevel.ELEVATED, RiskLevel.CRITICAL}:
             return "hold"
-        if summary is not None and summary.risk_trend > 0.15:
+        if summary is not None and summary.risk_trend > float(cfg.get("risk_trend", 0.15)):
             return "hold"
-        if summary is not None and summary.risk_volatility > 0.18:
+        if summary is not None and summary.risk_volatility > float(cfg.get("risk_volatility", 0.18)):
             return "hold"
-        if summary is not None and summary.regime_persistence < 0.25:
+        if summary is not None and summary.regime_persistence < float(cfg.get("regime_persistence", 0.25)):
             return "hold"
-        if summary is not None and summary.transition_rate > 0.55:
+        if summary is not None and summary.transition_rate > float(cfg.get("transition_rate", 0.55)):
             return "hold"
-        if summary is not None and summary.confidence_trend < -0.15:
+        if summary is not None and summary.confidence_trend < float(cfg.get("confidence_trend", -0.15)):
             return "hold"
-        if summary is not None and summary.confidence_volatility >= 0.15:
-            return "hold"
-        if summary is not None and summary.regime_streak <= 1 and summary.stability < 0.7:
-            return "hold"
-        if summary is not None and summary.resilience_score <= 0.3:
-            return "hold"
-        if summary is not None and summary.stress_balance <= 0.35:
-            return "hold"
-        if summary is not None and summary.regime_entropy >= 0.75:
-            return "hold"
-        if summary is not None and summary.instability_score > 0.65:
-            return "hold"
-        if summary is not None and summary.confidence_decay > 0.2:
-            return "hold"
-        if summary is not None and summary.drawdown_pressure >= 0.6:
-            return "hold"
-        if summary is not None and summary.liquidity_pressure >= 0.65:
-            return "hold"
-        if summary is not None and summary.volatility_ratio >= 1.55:
-            return "hold"
-        if summary is not None and summary.degradation_score >= 0.55:
-            return "hold"
-        if summary is not None and summary.stability_projection <= 0.4:
-            return "hold"
-        if summary is not None and summary.volume_trend_volatility >= 0.18:
-            return "hold"
-        if summary is not None and summary.liquidity_gap >= 0.6:
-            return "hold"
-        if summary is not None and summary.stress_projection >= 0.6:
-            return "hold"
-        if summary is not None and summary.confidence_resilience <= 0.4:
-            return "hold"
-        if summary is not None and summary.distribution_pressure >= 0.55:
-            return "hold"
-        if summary is not None and abs(summary.skewness_bias) >= 1.2 and summary.risk_score >= 0.45:
-            return "hold"
-        if summary is not None and summary.kurtosis_excess >= 1.5 and summary.risk_score >= 0.45:
+        if summary is not None and summary.confidence_volatility >= float(cfg.get("confidence_volatility", 0.15)):
             return "hold"
         if (
             summary is not None
-            and abs(summary.volume_imbalance) >= 0.5
-            and summary.liquidity_pressure >= 0.45
+            and summary.regime_streak <= int(cfg.get("regime_streak", 1))
+            and summary.stability < float(cfg.get("stability_for_short_streak", 0.7))
         ):
             return "hold"
-        if summary is not None and summary.volatility_trend > 0.02:
+        if summary is not None and summary.resilience_score <= float(cfg.get("resilience_score", 0.3)):
             return "hold"
-        if summary is not None and summary.drawdown_trend > 0.08:
+        if summary is not None and summary.stress_balance <= float(cfg.get("stress_balance", 0.35)):
             return "hold"
-        if assessment.risk_score >= 0.75:
+        if summary is not None and summary.regime_entropy >= float(cfg.get("regime_entropy", 0.75)):
+            return "hold"
+        if summary is not None and summary.instability_score > float(cfg.get("instability_score", 0.65)):
+            return "hold"
+        if summary is not None and summary.confidence_decay > float(cfg.get("confidence_decay", 0.2)):
+            return "hold"
+        if summary is not None and summary.drawdown_pressure >= float(cfg.get("drawdown_pressure", 0.6)):
+            return "hold"
+        if summary is not None and summary.liquidity_pressure >= float(cfg.get("liquidity_pressure", 0.65)):
+            return "hold"
+        if summary is not None and summary.volatility_ratio >= float(cfg.get("volatility_ratio", 1.55)):
+            return "hold"
+        if summary is not None and summary.degradation_score >= float(cfg.get("degradation_score", 0.55)):
+            return "hold"
+        if summary is not None and summary.stability_projection <= float(cfg.get("stability_projection", 0.4)):
+            return "hold"
+        if summary is not None and summary.volume_trend_volatility >= float(cfg.get("volume_trend_volatility", 0.18)):
+            return "hold"
+        if summary is not None and summary.liquidity_gap >= float(cfg.get("liquidity_gap", 0.6)):
+            return "hold"
+        if summary is not None and summary.stress_projection >= float(cfg.get("stress_projection", 0.6)):
+            return "hold"
+        if summary is not None and summary.confidence_resilience <= float(cfg.get("confidence_resilience", 0.4)):
+            return "hold"
+        if summary is not None and summary.distribution_pressure >= float(cfg.get("distribution_pressure", 0.55)):
+            return "hold"
+        if (
+            summary is not None
+            and abs(summary.skewness_bias) >= float(cfg.get("skewness_bias", 1.2))
+            and summary.risk_score >= float(cfg.get("risk_score", 0.45))
+        ):
+            return "hold"
+        if (
+            summary is not None
+            and summary.kurtosis_excess >= float(cfg.get("kurtosis_excess", 1.5))
+            and summary.risk_score >= float(cfg.get("risk_score", 0.45))
+        ):
+            return "hold"
+        if (
+            summary is not None
+            and abs(summary.volume_imbalance) >= float(cfg.get("volume_imbalance", 0.5))
+            and summary.liquidity_pressure >= float(cfg.get("liquidity_pressure_support", 0.45))
+        ):
+            return "hold"
+        if summary is not None and summary.volatility_trend > float(cfg.get("volatility_trend", 0.02)):
+            return "hold"
+        if summary is not None and summary.drawdown_trend > float(cfg.get("drawdown_trend", 0.08)):
+            return "hold"
+        if assessment.risk_score >= float(cfg.get("risk_score", 0.75)):
             return "hold"
         if assessment.regime is MarketRegime.TREND:
             return "buy" if last_return >= 0 else "sell"
         if assessment.regime is MarketRegime.MEAN_REVERSION:
             return "sell" if last_return > 0 else "buy"
-        threshold = 0.001
+        threshold = float(cfg.get("return_threshold", 0.001))
         if last_return > threshold:
             return "buy"
         if last_return < -threshold:
@@ -395,26 +444,30 @@ class AutoTrader:
         summary: RegimeSummary | None = None,
     ) -> None:
         risk = float(aggregated_risk) if aggregated_risk is not None else assessment.risk_score
-        if risk >= 0.75:
+        cfg = self._thresholds["auto_trader"]["adjust_strategy_parameters"]
+        def _t(name: str, default: float) -> float:
+            value = cfg.get(name, default)
+            return float(value if isinstance(value, (int, float)) else default)
+        if risk >= float(cfg.get("high_risk", 0.75)):
             self.current_strategy = "capital_preservation"
             self.current_leverage = 0.0
             self.current_stop_loss_pct = 0.01
             self.current_take_profit_pct = 0.02
         elif assessment.regime is MarketRegime.TREND:
             self.current_strategy = "trend_following"
-            self.current_leverage = 2.0 if risk < 0.4 else 1.5
-            self.current_stop_loss_pct = 0.03 if risk < 0.4 else 0.04
-            self.current_take_profit_pct = 0.06 if risk < 0.4 else 0.04
+            self.current_leverage = 2.0 if risk < float(cfg.get("trend_low_risk", 0.4)) else 1.5
+            self.current_stop_loss_pct = 0.03 if risk < float(cfg.get("trend_low_risk", 0.4)) else 0.04
+            self.current_take_profit_pct = 0.06 if risk < float(cfg.get("trend_low_risk", 0.4)) else 0.04
         elif assessment.regime is MarketRegime.MEAN_REVERSION:
             self.current_strategy = "mean_reversion"
-            self.current_leverage = 1.0 if risk < 0.4 else 0.7
-            self.current_stop_loss_pct = 0.015 if risk < 0.4 else 0.02
-            self.current_take_profit_pct = 0.03 if risk < 0.4 else 0.025
+            self.current_leverage = 1.0 if risk < float(cfg.get("mean_reversion_low_risk", 0.4)) else 0.7
+            self.current_stop_loss_pct = 0.015 if risk < float(cfg.get("mean_reversion_low_risk", 0.4)) else 0.02
+            self.current_take_profit_pct = 0.03 if risk < float(cfg.get("mean_reversion_low_risk", 0.4)) else 0.025
         else:
             self.current_strategy = "intraday_breakout"
-            self.current_leverage = 0.8 if risk < 0.5 else 0.5
-            self.current_stop_loss_pct = 0.02 if risk < 0.5 else 0.03
-            self.current_take_profit_pct = 0.025 if risk < 0.5 else 0.02
+            self.current_leverage = 0.8 if risk < float(cfg.get("intraday_low_risk", 0.5)) else 0.5
+            self.current_stop_loss_pct = 0.02 if risk < float(cfg.get("intraday_low_risk", 0.5)) else 0.03
+            self.current_take_profit_pct = 0.025 if risk < float(cfg.get("intraday_low_risk", 0.5)) else 0.02
 
         if summary is not None:
             if summary.risk_level is RiskLevel.CRITICAL:
@@ -423,14 +476,29 @@ class AutoTrader:
                 self.current_stop_loss_pct = 0.01
                 self.current_take_profit_pct = 0.02
             elif summary.risk_level is RiskLevel.ELEVATED:
-                self.current_leverage = min(self.current_leverage, 0.8 if assessment.regime is MarketRegime.TREND else 0.5)
-                self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.85, 0.01)
-                self.current_take_profit_pct = max(self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.4)
-            elif summary.risk_level is RiskLevel.CALM and risk < 0.5:
-                self.current_leverage = min(self.current_leverage * 1.2, 2.5)
-                self.current_take_profit_pct = min(self.current_take_profit_pct * 1.1, 0.08)
+                self.current_leverage = min(
+                    self.current_leverage,
+                    0.8 if assessment.regime is MarketRegime.TREND else 0.5,
+                )
+                self.current_stop_loss_pct = max(
+                    self.current_stop_loss_pct * float(cfg.get("risk_level_elevated_stop_loss", 0.85)),
+                    0.01,
+                )
+                self.current_take_profit_pct = max(
+                    self.current_take_profit_pct * float(cfg.get("risk_level_elevated_take_profit", 0.9)),
+                    self.current_stop_loss_pct * 1.4,
+                )
+            elif summary.risk_level is RiskLevel.CALM and risk < float(cfg.get("risk_level_calm", 0.5)):
+                self.current_leverage = min(
+                    self.current_leverage * float(cfg.get("risk_level_calm_leverage", 1.2)),
+                    2.5,
+                )
+                self.current_take_profit_pct = min(
+                    self.current_take_profit_pct * float(cfg.get("risk_level_calm_take_profit", 1.1)),
+                    0.08,
+                )
 
-            if summary.resilience_score <= 0.35:
+            if summary.resilience_score <= float(cfg.get("resilience_low", 0.35)):
                 self.current_leverage = min(self.current_leverage, 0.45)
                 if self.current_leverage == 0:
                     self.current_strategy = "capital_preservation"
@@ -439,15 +507,15 @@ class AutoTrader:
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.88, 0.01)
                 self.current_take_profit_pct = max(self.current_take_profit_pct * 0.92, self.current_stop_loss_pct * 1.35)
             elif (
-                summary.resilience_score >= 0.65
-                and summary.stress_balance >= 0.6
+                summary.resilience_score >= float(cfg.get("resilience_high", 0.65))
+                and summary.stress_balance >= float(cfg.get("stress_balance_high", 0.6))
                 and summary.risk_level in {RiskLevel.CALM, RiskLevel.BALANCED}
-                and risk < 0.6
+                and risk < float(cfg.get("risk_level_calm_upper", 0.6))
             ):
                 self.current_leverage = min(self.current_leverage * 1.05, 3.2)
                 self.current_take_profit_pct = min(self.current_take_profit_pct * 1.05, 0.09)
 
-            if summary.regime_entropy >= 0.75:
+            if summary.regime_entropy >= float(cfg.get("entropy_high", 0.75)):
                 self.current_leverage = min(self.current_leverage, 0.45)
                 if self.current_leverage == 0:
                     self.current_strategy = "capital_preservation"
@@ -456,20 +524,20 @@ class AutoTrader:
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.9, 0.01)
                 self.current_take_profit_pct = max(self.current_take_profit_pct * 0.92, self.current_stop_loss_pct * 1.35)
             elif (
-                summary.regime_entropy <= 0.45
-                and summary.resilience_score >= 0.6
+                summary.regime_entropy <= float(cfg.get("entropy_low", 0.45))
+                and summary.resilience_score >= float(cfg.get("resilience_high", 0.65))
                 and summary.risk_level in {RiskLevel.CALM, RiskLevel.BALANCED}
-                and risk < 0.6
+                and risk < float(cfg.get("risk_level_calm_upper", 0.6))
             ):
                 self.current_leverage = min(self.current_leverage * 1.03, 3.25)
                 self.current_take_profit_pct = min(self.current_take_profit_pct * 1.03, 0.09)
 
-            if summary.risk_volatility >= 0.2:
+            if summary.risk_volatility >= float(cfg.get("risk_volatility_high", 0.2)):
                 self.current_leverage = min(self.current_leverage, 0.6)
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.9, 0.01)
                 self.current_take_profit_pct = max(self.current_take_profit_pct * 0.95, self.current_stop_loss_pct * 1.3)
 
-            if summary.regime_persistence <= 0.3:
+            if summary.regime_persistence <= float(cfg.get("regime_persistence_low", 0.3)):
                 self.current_leverage = min(self.current_leverage, 0.4)
                 if self.current_leverage == 0:
                     self.current_strategy = "capital_preservation"
@@ -479,20 +547,20 @@ class AutoTrader:
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.85, 0.01)
                 self.current_take_profit_pct = max(self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.4)
             elif (
-                summary.regime_persistence >= 0.65
+                summary.regime_persistence >= float(cfg.get("regime_persistence_high", 0.65))
                 and summary.risk_level in {RiskLevel.CALM, RiskLevel.BALANCED}
-                and summary.risk_volatility < 0.15
-                and summary.instability_score <= 0.4
+                and summary.risk_volatility < float(cfg.get("risk_volatility_high", 0.2))
+                and summary.instability_score <= float(cfg.get("instability_ceiling", 0.4))
             ):
                 self.current_leverage = min(self.current_leverage * 1.05, 2.75)
                 self.current_take_profit_pct = min(self.current_take_profit_pct * 1.05, 0.085)
 
-            if summary.confidence_volatility >= 0.15:
+            if summary.confidence_volatility >= float(cfg.get("confidence_volatility_high", 0.15)):
                 self.current_leverage = min(self.current_leverage, 0.5)
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.9, 0.01)
                 self.current_take_profit_pct = max(self.current_take_profit_pct * 0.92, self.current_stop_loss_pct * 1.35)
 
-            if summary.confidence_trend < -0.1:
+            if summary.confidence_trend < float(cfg.get("confidence_trend_low", -0.1)):
                 self.current_leverage = min(self.current_leverage, 0.6)
                 if self.current_leverage == 0:
                     self.current_strategy = "capital_preservation"
@@ -501,7 +569,7 @@ class AutoTrader:
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.85, 0.01)
                 self.current_take_profit_pct = max(self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.4)
 
-            if summary.regime_streak <= 1:
+            if summary.regime_streak <= int(cfg.get("regime_streak_low", 1)):
                 self.current_leverage = min(self.current_leverage, 0.4)
                 if self.current_leverage == 0:
                     self.current_strategy = "capital_preservation"
@@ -511,16 +579,16 @@ class AutoTrader:
                 self.current_take_profit_pct = max(self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.4)
 
             if (
-                summary.confidence_trend > 0.12
-                and summary.confidence_volatility <= 0.08
+                summary.confidence_trend > float(cfg.get("confidence_trend_high", 0.12))
+                and summary.confidence_volatility <= float(cfg.get("confidence_volatility_low", 0.08))
                 and summary.risk_level in {RiskLevel.CALM, RiskLevel.BALANCED}
-                and summary.regime_persistence >= 0.6
-                and summary.instability_score <= 0.35
+                and summary.regime_persistence >= float(cfg.get("regime_persistence_high", 0.65))
+                and summary.instability_score <= float(cfg.get("instability_ceiling", 0.4))
             ):
                 self.current_leverage = min(self.current_leverage * 1.1, 3.0)
                 self.current_take_profit_pct = min(self.current_take_profit_pct * 1.08, 0.09)
 
-            if summary.transition_rate >= 0.5:
+            if summary.transition_rate >= float(cfg.get("transition_rate_high", 0.5)):
                 self.current_leverage = min(self.current_leverage, 0.45)
                 if self.current_leverage == 0:
                     self.current_strategy = "capital_preservation"
@@ -529,12 +597,12 @@ class AutoTrader:
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.85, 0.01)
                 self.current_take_profit_pct = max(self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.4)
 
-            if summary.instability_score >= 0.75:
+            if summary.instability_score >= _t("instability_critical", 0.75):
                 self.current_strategy = "capital_preservation"
                 self.current_leverage = 0.0
                 self.current_stop_loss_pct = 0.01
                 self.current_take_profit_pct = 0.02
-            elif summary.instability_score >= 0.6:
+            elif summary.instability_score >= _t("instability_elevated", 0.6):
                 self.current_leverage = min(self.current_leverage, 0.5)
                 if self.current_leverage == 0:
                     self.current_strategy = "capital_preservation"
@@ -542,16 +610,16 @@ class AutoTrader:
                     self.current_strategy = f"{self.current_strategy}_probing"
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.85, 0.01)
                 self.current_take_profit_pct = max(self.current_take_profit_pct * 0.92, self.current_stop_loss_pct * 1.4)
-            elif summary.instability_score <= 0.25 and summary.risk_level in {RiskLevel.CALM, RiskLevel.BALANCED}:
+            elif summary.instability_score <= _t("instability_low", 0.25) and summary.risk_level in {RiskLevel.CALM, RiskLevel.BALANCED}:
                 self.current_leverage = min(self.current_leverage * 1.08, 3.2)
                 self.current_take_profit_pct = min(self.current_take_profit_pct * 1.07, 0.095)
 
-            if summary.drawdown_pressure >= 0.75:
+            if summary.drawdown_pressure >= _t("drawdown_critical", 0.75):
                 self.current_strategy = "capital_preservation"
                 self.current_leverage = 0.0
                 self.current_stop_loss_pct = 0.01
                 self.current_take_profit_pct = 0.02
-            elif summary.drawdown_pressure >= 0.55:
+            elif summary.drawdown_pressure >= _t("drawdown_elevated", 0.55):
                 self.current_leverage = min(self.current_leverage, 0.45)
                 if self.current_leverage == 0:
                     self.current_strategy = "capital_preservation"
@@ -559,11 +627,14 @@ class AutoTrader:
                     self.current_strategy = f"{self.current_strategy}_probing"
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.85, 0.01)
                 self.current_take_profit_pct = max(self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.4)
-            elif summary.drawdown_pressure <= 0.3 and summary.risk_level in {RiskLevel.CALM, RiskLevel.BALANCED}:
+            elif (
+                summary.drawdown_pressure <= _t("drawdown_low", 0.3)
+                and summary.risk_level in {RiskLevel.CALM, RiskLevel.BALANCED}
+            ):
                 self.current_leverage = min(self.current_leverage * 1.06, 3.1)
                 self.current_take_profit_pct = min(self.current_take_profit_pct * 1.05, 0.09)
 
-            if summary.liquidity_pressure >= 0.7:
+            if summary.liquidity_pressure >= _t("liquidity_pressure_high", 0.7):
                 self.current_leverage = min(self.current_leverage, 0.35)
                 if self.current_leverage == 0:
                     self.current_strategy = "capital_preservation"
@@ -572,14 +643,14 @@ class AutoTrader:
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.88, 0.01)
                 self.current_take_profit_pct = max(self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.35)
             elif (
-                summary.liquidity_pressure <= 0.35
+                summary.liquidity_pressure <= _t("liquidity_pressure_low", 0.35)
                 and summary.risk_level in {RiskLevel.CALM, RiskLevel.BALANCED}
-                and risk < 0.5
+                and risk < _t("low_risk_enhancement_cap", 0.5)
             ):
                 self.current_leverage = min(self.current_leverage * 1.04, 3.0)
                 self.current_take_profit_pct = min(self.current_take_profit_pct * 1.04, 0.085)
 
-            if summary.confidence_decay >= 0.25:
+            if summary.confidence_decay >= _t("confidence_decay_high", 0.25):
                 self.current_leverage = min(self.current_leverage, 0.45)
                 if self.current_leverage == 0:
                     self.current_strategy = "capital_preservation"
@@ -588,12 +659,12 @@ class AutoTrader:
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.85, 0.01)
                 self.current_take_profit_pct = max(self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.4)
 
-            if summary.degradation_score >= 0.6:
+            if summary.degradation_score >= _t("degradation_critical", 0.6):
                 self.current_strategy = "capital_preservation"
                 self.current_leverage = 0.0
                 self.current_stop_loss_pct = 0.01
                 self.current_take_profit_pct = 0.02
-            elif summary.degradation_score >= 0.45:
+            elif summary.degradation_score >= _t("degradation_elevated", 0.45):
                 self.current_leverage = min(self.current_leverage, 0.35)
                 if self.current_leverage == 0:
                     self.current_strategy = "capital_preservation"
@@ -602,15 +673,15 @@ class AutoTrader:
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.84, 0.01)
                 self.current_take_profit_pct = max(self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.35)
             elif (
-                summary.degradation_score <= 0.25
-                and summary.stability_projection >= 0.6
+                summary.degradation_score <= _t("degradation_low", 0.25)
+                and summary.stability_projection >= _t("stability_projection_high", 0.65)
                 and summary.risk_level in {RiskLevel.CALM, RiskLevel.BALANCED}
-                and risk < 0.5
+                and risk < _t("low_risk_enhancement_cap", 0.5)
             ):
                 self.current_leverage = min(self.current_leverage * 1.03, 3.1)
                 self.current_take_profit_pct = min(self.current_take_profit_pct * 1.04, 0.09)
 
-            if summary.stability_projection <= 0.4:
+            if summary.stability_projection <= _t("stability_projection_low", 0.4):
                 self.current_leverage = min(self.current_leverage, 0.4)
                 if self.current_leverage == 0:
                     self.current_strategy = "capital_preservation"
@@ -619,15 +690,15 @@ class AutoTrader:
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.84, 0.01)
                 self.current_take_profit_pct = max(self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.35)
             elif (
-                summary.stability_projection >= 0.65
-                and summary.degradation_score <= 0.3
+                summary.stability_projection >= _t("stability_projection_high", 0.65)
+                and summary.degradation_score <= _t("degradation_positive_cap", 0.3)
                 and summary.risk_level in {RiskLevel.CALM, RiskLevel.BALANCED}
-                and risk < 0.5
+                and risk < _t("low_risk_enhancement_cap", 0.5)
             ):
                 self.current_leverage = min(self.current_leverage * 1.02, 3.05)
                 self.current_take_profit_pct = min(self.current_take_profit_pct * 1.02, 0.09)
 
-            if summary.volume_trend_volatility >= 0.2:
+            if summary.volume_trend_volatility >= _t("volume_trend_volatility_high", 0.2):
                 self.current_leverage = min(self.current_leverage, 0.35)
                 if self.current_leverage == 0:
                     self.current_strategy = "capital_preservation"
@@ -636,14 +707,14 @@ class AutoTrader:
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.83, 0.01)
                 self.current_take_profit_pct = max(self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.35)
             elif (
-                summary.volume_trend_volatility <= 0.1
-                and summary.degradation_score <= 0.3
+                summary.volume_trend_volatility <= _t("volume_trend_volatility_low", 0.1)
+                and summary.degradation_score <= _t("degradation_positive_cap", 0.3)
                 and summary.risk_level in {RiskLevel.CALM, RiskLevel.BALANCED}
             ):
                 self.current_leverage = min(self.current_leverage * 1.01, 3.0)
                 self.current_take_profit_pct = min(self.current_take_profit_pct * 1.01, 0.085)
 
-            if summary.volatility_trend > 0.02:
+            if summary.volatility_trend > _t("volatility_trend_high", 0.02):
                 self.current_leverage = min(self.current_leverage, 0.4)
                 if self.current_leverage == 0:
                     self.current_strategy = "capital_preservation"
@@ -652,14 +723,14 @@ class AutoTrader:
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.85, 0.01)
                 self.current_take_profit_pct = max(self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.35)
             elif (
-                summary.volatility_trend <= 0.0
-                and summary.degradation_score <= 0.3
+                summary.volatility_trend <= _t("volatility_trend_relief", 0.0)
+                and summary.degradation_score <= _t("degradation_positive_cap", 0.3)
                 and summary.risk_level in {RiskLevel.CALM, RiskLevel.BALANCED}
             ):
                 self.current_leverage = min(self.current_leverage * 1.01, 3.1)
                 self.current_take_profit_pct = min(self.current_take_profit_pct * 1.01, 0.088)
 
-            if summary.drawdown_trend > 0.08:
+            if summary.drawdown_trend > _t("drawdown_trend_high", 0.08):
                 self.current_leverage = min(self.current_leverage, 0.35)
                 if self.current_leverage == 0:
                     self.current_strategy = "capital_preservation"
@@ -668,19 +739,19 @@ class AutoTrader:
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.82, 0.01)
                 self.current_take_profit_pct = max(self.current_take_profit_pct * 0.88, self.current_stop_loss_pct * 1.35)
             elif (
-                summary.drawdown_trend <= 0.0
-                and summary.degradation_score <= 0.3
+                summary.drawdown_trend <= _t("drawdown_trend_relief", 0.0)
+                and summary.degradation_score <= _t("degradation_positive_cap", 0.3)
                 and summary.risk_level in {RiskLevel.CALM, RiskLevel.BALANCED}
             ):
                 self.current_leverage = min(self.current_leverage * 1.02, 3.05)
                 self.current_take_profit_pct = min(self.current_take_profit_pct * 1.02, 0.09)
 
-            if summary.stress_index >= 0.8:
+            if summary.stress_index >= _t("stress_index_critical", 0.8):
                 self.current_strategy = "capital_preservation"
                 self.current_leverage = 0.0
                 self.current_stop_loss_pct = 0.01
                 self.current_take_profit_pct = 0.02
-            elif summary.stress_index >= 0.6:
+            elif summary.stress_index >= _t("stress_index_elevated", 0.6):
                 self.current_leverage = min(self.current_leverage, 0.35)
                 if self.current_leverage == 0:
                     self.current_strategy = "capital_preservation"
@@ -689,14 +760,14 @@ class AutoTrader:
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.82, 0.01)
                 self.current_take_profit_pct = max(self.current_take_profit_pct * 0.88, self.current_stop_loss_pct * 1.35)
             elif (
-                summary.stress_index <= 0.28
+                summary.stress_index <= _t("stress_index_low", 0.28)
                 and summary.risk_level in {RiskLevel.CALM, RiskLevel.BALANCED}
-                and risk < 0.55
+                and risk < _t("stress_relief_risk_cap", 0.55)
             ):
                 self.current_leverage = min(self.current_leverage * 1.04, 3.2)
                 self.current_take_profit_pct = min(self.current_take_profit_pct * 1.04, 0.09)
 
-            if summary.stress_momentum >= 0.65:
+            if summary.stress_momentum >= _t("stress_momentum_high", 0.65):
                 self.current_leverage = min(self.current_leverage, 0.3)
                 if self.current_leverage == 0:
                     self.current_strategy = "capital_preservation"
@@ -705,15 +776,15 @@ class AutoTrader:
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.82, 0.01)
                 self.current_take_profit_pct = max(self.current_take_profit_pct * 0.88, self.current_stop_loss_pct * 1.35)
             elif (
-                summary.stress_momentum <= 0.35
-                and summary.stress_index <= 0.35
+                summary.stress_momentum <= _t("stress_momentum_low", 0.35)
+                and summary.stress_index <= _t("stress_index_relief", 0.35)
                 and summary.risk_level in {RiskLevel.CALM, RiskLevel.BALANCED}
-                and risk < 0.5
+                and risk < _t("low_risk_enhancement_cap", 0.5)
             ):
                 self.current_leverage = min(self.current_leverage * 1.02, 3.05)
                 self.current_take_profit_pct = min(self.current_take_profit_pct * 1.02, 0.088)
 
-            if summary.tail_risk_index >= 0.55:
+            if summary.tail_risk_index >= _t("tail_risk_high", 0.55):
                 self.current_leverage = min(self.current_leverage, 0.35)
                 if self.current_leverage == 0:
                     self.current_strategy = "capital_preservation"
@@ -722,15 +793,15 @@ class AutoTrader:
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.84, 0.01)
                 self.current_take_profit_pct = max(self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.35)
             elif (
-                summary.tail_risk_index <= 0.2
-                and summary.stress_index <= 0.3
+                summary.tail_risk_index <= _t("tail_risk_low", 0.2)
+                and summary.stress_index <= _t("stress_index_tail_relief", 0.3)
                 and summary.risk_level in {RiskLevel.CALM, RiskLevel.BALANCED}
-                and risk < 0.5
+                and risk < _t("low_risk_enhancement_cap", 0.5)
             ):
                 self.current_leverage = min(self.current_leverage * 1.03, 3.1)
                 self.current_take_profit_pct = min(self.current_take_profit_pct * 1.03, 0.085)
 
-            if summary.shock_frequency >= 0.55:
+            if summary.shock_frequency >= _t("shock_frequency_high", 0.55):
                 self.current_leverage = min(self.current_leverage, 0.3)
                 if self.current_leverage == 0:
                     self.current_strategy = "capital_preservation"
@@ -739,21 +810,23 @@ class AutoTrader:
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.82, 0.01)
                 self.current_take_profit_pct = max(self.current_take_profit_pct * 0.88, self.current_stop_loss_pct * 1.35)
             elif (
-                summary.shock_frequency <= 0.25
-                and summary.regime_persistence >= 0.6
-                and summary.stress_index <= 0.35
+                summary.shock_frequency <= _t("shock_frequency_low", 0.25)
+                and summary.regime_persistence >= _t("regime_persistence_positive", 0.6)
+                and summary.stress_index <= _t("stress_index_relief", 0.35)
                 and summary.risk_level in {RiskLevel.CALM, RiskLevel.BALANCED}
             ):
                 self.current_leverage = min(self.current_leverage * 1.02, 3.0)
                 self.current_take_profit_pct = min(self.current_take_profit_pct * 1.02, 0.085)
 
             if (
-                summary.distribution_pressure >= 0.65
-                or abs(summary.skewness_bias) >= 1.3
-                or summary.kurtosis_excess >= 1.8
+                summary.distribution_pressure >= _t("distribution_pressure_adjust_high", 0.65)
+                or abs(summary.skewness_bias) >= _t("skewness_bias_adjust_high", 1.3)
+                or summary.kurtosis_excess >= _t("kurtosis_adjust_high", 1.8)
                 or (
-                    abs(summary.volume_imbalance) >= 0.55
-                    and summary.liquidity_pressure >= 0.45
+                    abs(summary.volume_imbalance)
+                    >= _t("volume_imbalance_adjust_high", 0.55)
+                    and summary.liquidity_pressure
+                    >= float(cfg.get("liquidity_pressure_support", 0.45))
                 )
             ):
                 self.current_leverage = min(self.current_leverage, 0.3)
@@ -764,17 +837,17 @@ class AutoTrader:
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.82, 0.01)
                 self.current_take_profit_pct = max(self.current_take_profit_pct * 0.88, self.current_stop_loss_pct * 1.35)
             elif (
-                summary.distribution_pressure <= 0.3
-                and abs(summary.skewness_bias) <= 0.8
-                and summary.kurtosis_excess <= 1.0
-                and abs(summary.volume_imbalance) <= 0.35
+                summary.distribution_pressure <= _t("distribution_pressure_adjust_low", 0.3)
+                and abs(summary.skewness_bias) <= _t("skewness_bias_adjust_low", 0.8)
+                and summary.kurtosis_excess <= _t("kurtosis_adjust_low", 1.0)
+                and abs(summary.volume_imbalance) <= _t("volume_imbalance_adjust_low", 0.35)
                 and summary.risk_level in {RiskLevel.CALM, RiskLevel.BALANCED}
-                and risk < 0.5
+                and risk < _t("low_risk_enhancement_cap", 0.5)
             ):
                 self.current_leverage = min(self.current_leverage * 1.02, 3.05)
                 self.current_take_profit_pct = min(self.current_take_profit_pct * 1.02, 0.09)
 
-            if summary.liquidity_gap >= 0.65:
+            if summary.liquidity_gap >= _t("liquidity_gap_high", 0.65):
                 self.current_leverage = min(self.current_leverage, 0.35)
                 if self.current_leverage == 0:
                     self.current_strategy = "capital_preservation"
@@ -783,15 +856,15 @@ class AutoTrader:
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.84, 0.01)
                 self.current_take_profit_pct = max(self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.35)
             elif (
-                summary.liquidity_gap <= 0.35
+                summary.liquidity_gap <= _t("liquidity_gap_low", 0.35)
                 and summary.risk_level in {RiskLevel.CALM, RiskLevel.BALANCED}
-                and summary.resilience_score >= 0.55
-                and risk < 0.5
+                and summary.resilience_score >= _t("resilience_mid", 0.55)
+                and risk < _t("low_risk_enhancement_cap", 0.5)
             ):
                 self.current_leverage = min(self.current_leverage * 1.02, 3.05)
                 self.current_take_profit_pct = min(self.current_take_profit_pct * 1.02, 0.09)
 
-            if summary.liquidity_trend >= 0.6:
+            if summary.liquidity_trend >= _t("liquidity_trend_high", 0.6):
                 self.current_leverage = min(self.current_leverage, 0.35)
                 if self.current_leverage == 0:
                     self.current_strategy = "capital_preservation"
@@ -800,20 +873,20 @@ class AutoTrader:
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.84, 0.01)
                 self.current_take_profit_pct = max(self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.35)
             elif (
-                summary.liquidity_trend <= 0.35
-                and summary.liquidity_gap <= 0.4
+                summary.liquidity_trend <= _t("liquidity_trend_low", 0.35)
+                and summary.liquidity_gap <= _t("liquidity_gap_relief", 0.4)
                 and summary.risk_level in {RiskLevel.CALM, RiskLevel.BALANCED}
-                and risk < 0.5
+                and risk < _t("low_risk_enhancement_cap", 0.5)
             ):
                 self.current_leverage = min(self.current_leverage * 1.02, 3.05)
                 self.current_take_profit_pct = min(self.current_take_profit_pct * 1.02, 0.09)
 
-            if summary.stress_projection >= 0.65:
+            if summary.stress_projection >= _t("stress_projection_critical", 0.65):
                 self.current_strategy = "capital_preservation"
                 self.current_leverage = 0.0
                 self.current_stop_loss_pct = 0.01
                 self.current_take_profit_pct = 0.02
-            elif summary.stress_projection >= 0.55:
+            elif summary.stress_projection >= _t("stress_projection_elevated", 0.55):
                 self.current_leverage = min(self.current_leverage, 0.35)
                 if self.current_leverage == 0:
                     self.current_strategy = "capital_preservation"
@@ -822,15 +895,15 @@ class AutoTrader:
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.84, 0.01)
                 self.current_take_profit_pct = max(self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.35)
             elif (
-                summary.stress_projection <= 0.35
-                and summary.stress_index <= 0.35
+                summary.stress_projection <= _t("stress_projection_low", 0.35)
+                and summary.stress_index <= _t("stress_index_relief", 0.35)
                 and summary.risk_level in {RiskLevel.CALM, RiskLevel.BALANCED}
-                and risk < 0.45
+                and risk < _t("moderate_risk_enhancement_cap", 0.45)
             ):
                 self.current_leverage = min(self.current_leverage * 1.02, 3.0)
                 self.current_take_profit_pct = min(self.current_take_profit_pct * 1.02, 0.085)
 
-            if summary.confidence_resilience <= 0.4:
+            if summary.confidence_resilience <= float(cfg.get("confidence_resilience", 0.4)):
                 self.current_leverage = min(self.current_leverage, 0.45)
                 if self.current_leverage == 0:
                     self.current_strategy = "capital_preservation"
@@ -839,15 +912,15 @@ class AutoTrader:
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.85, 0.01)
                 self.current_take_profit_pct = max(self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.35)
             elif (
-                summary.confidence_resilience >= 0.65
+                summary.confidence_resilience >= _t("confidence_resilience_high", 0.65)
                 and summary.risk_level in {RiskLevel.CALM, RiskLevel.BALANCED}
-                and risk < 0.45
-                and summary.resilience_score >= 0.6
+                and risk < _t("moderate_risk_enhancement_cap", 0.45)
+                and summary.resilience_score >= _t("resilience_mid", 0.55)
             ):
                 self.current_leverage = min(self.current_leverage * 1.03, 3.1)
                 self.current_take_profit_pct = min(self.current_take_profit_pct * 1.03, 0.09)
 
-            if summary.confidence_fragility >= 0.55:
+            if summary.confidence_fragility >= _t("confidence_fragility_high", 0.55):
                 self.current_leverage = min(self.current_leverage, 0.35)
                 if self.current_leverage == 0:
                     self.current_strategy = "capital_preservation"
@@ -856,15 +929,15 @@ class AutoTrader:
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.84, 0.01)
                 self.current_take_profit_pct = max(self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.35)
             elif (
-                summary.confidence_fragility <= 0.35
-                and summary.confidence_resilience >= 0.6
+                summary.confidence_fragility <= _t("confidence_fragility_low", 0.35)
+                and summary.confidence_resilience >= _t("confidence_resilience_mid", 0.6)
                 and summary.risk_level in {RiskLevel.CALM, RiskLevel.BALANCED}
-                and risk < 0.45
+                and risk < _t("moderate_risk_enhancement_cap", 0.45)
             ):
                 self.current_leverage = min(self.current_leverage * 1.02, 3.0)
                 self.current_take_profit_pct = min(self.current_take_profit_pct * 1.02, 0.085)
 
-            if summary.volatility_of_volatility >= 0.03:
+            if summary.volatility_of_volatility >= _t("volatility_of_volatility_high", 0.03):
                 self.current_leverage = min(self.current_leverage, 0.4)
                 if self.current_leverage == 0:
                     self.current_strategy = "capital_preservation"
@@ -873,19 +946,19 @@ class AutoTrader:
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.85, 0.01)
                 self.current_take_profit_pct = max(self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.35)
             elif (
-                summary.volatility_of_volatility <= 0.015
-                and summary.stress_index <= 0.35
+                summary.volatility_of_volatility <= _t("volatility_of_volatility_low", 0.015)
+                and summary.stress_index <= _t("stress_index_relief", 0.35)
                 and summary.risk_level in {RiskLevel.CALM, RiskLevel.BALANCED}
             ):
                 self.current_leverage = min(self.current_leverage * 1.02, 3.05)
                 self.current_take_profit_pct = min(self.current_take_profit_pct * 1.02, 0.085)
 
-        if summary is not None and risk < 0.75:
-            if summary.risk_trend > 0.05:
+        if summary is not None and risk < _t("summary_risk_cap", 0.75):
+            if summary.risk_trend > _t("summary_risk_trend_high", 0.05):
                 self.current_leverage = max(0.0, self.current_leverage - 0.3)
                 self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.8, 0.01)
                 self.current_take_profit_pct = max(self.current_take_profit_pct * 0.9, self.current_stop_loss_pct * 1.5)
-            if summary.stability < 0.4:
+            if summary.stability < _t("summary_stability_floor", 0.4):
                 self.current_leverage = min(self.current_leverage, 0.5)
                 if self.current_leverage == 0:
                     self.current_strategy = "capital_preservation"
@@ -896,6 +969,119 @@ class AutoTrader:
         self.current_stop_loss_pct = float(max(self.current_stop_loss_pct, 0.005))
         self.current_take_profit_pct = float(max(self.current_take_profit_pct, self.current_stop_loss_pct * 1.2))
 
+    def _apply_signal_guardrails(
+        self,
+        signal: str,
+        effective_risk: float,
+        summary: RegimeSummary | None,
+    ) -> str:
+        reasons: list[str] = []
+        triggers: list[GuardrailTrigger] = []
+
+        def _finalise(result: str) -> str:
+            self._last_guardrail_reasons = reasons
+            self._last_guardrail_triggers = triggers
+            return result
+
+        if signal == "hold":
+            return _finalise(signal)
+
+        guardrails = self._thresholds["auto_trader"].get("signal_guardrails", {})
+
+        def _label(name: str) -> str:
+            return name.replace("_", " ")
+
+        def _add_reason(name: str, comparator: str, threshold: float, value: float | None = None) -> None:
+            label = _label(name)
+            message = f"{label} {comparator} {threshold:.3f}"
+            if value is not None:
+                message = f"{message} (value={value:.3f})"
+            reasons.append(message)
+            triggers.append(
+                GuardrailTrigger(
+                    name=name,
+                    label=label,
+                    comparator=comparator,
+                    threshold=float(threshold),
+                    value=float(value) if value is not None else None,
+                )
+            )
+
+        def _coerce_threshold(name: str, default: float) -> float | None:
+            raw = guardrails.get(name, default)
+            if raw is None:
+                return None
+            try:
+                return float(raw)
+            except (TypeError, ValueError):
+                self._log(
+                    f"Ignoring invalid guardrail threshold {name!r}: {raw!r}",
+                    level=logging.DEBUG,
+                )
+                return float(default)
+
+        risk_cap = _coerce_threshold("effective_risk_cap", 0.75)
+        if risk_cap is not None and effective_risk >= risk_cap:
+            _add_reason("effective_risk", ">=", risk_cap, effective_risk)
+            return _finalise("hold")
+        if summary is None:
+            return _finalise(signal)
+
+        def _metric(name: str) -> float | None:
+            value = getattr(summary, name, None)
+            if value is None:
+                return None
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return None
+
+        for name, default in (
+            ("stress_index", 0.65),
+            ("tail_risk_index", 0.6),
+            ("shock_frequency", 0.6),
+            ("stress_momentum", 0.65),
+            ("regime_entropy", 0.8),
+            ("confidence_fragility", 0.65),
+            ("degradation_score", 0.6),
+            ("volume_trend_volatility", 0.2),
+            ("liquidity_gap", 0.6),
+            ("stress_projection", 0.6),
+            ("liquidity_trend", 0.6),
+        ):
+            threshold = _coerce_threshold(name, default)
+            if threshold is None:
+                continue
+            value = _metric(name)
+            if value is not None and value >= threshold:
+                _add_reason(name, ">=", threshold, value)
+                return _finalise("hold")
+
+        for name, default in (("volatility_trend", 0.025), ("drawdown_trend", 0.1)):
+            threshold = _coerce_threshold(name, default)
+            if threshold is None:
+                continue
+            value = _metric(name)
+            if value is not None and value > threshold:
+                _add_reason(name, ">", threshold, value)
+                return _finalise("hold")
+
+        for name, default in (
+            ("resilience_score", 0.3),
+            ("stress_balance", 0.35),
+            ("stability_projection", 0.35),
+            ("confidence_resilience", 0.4),
+        ):
+            threshold = _coerce_threshold(name, default)
+            if threshold is None:
+                continue
+            value = _metric(name)
+            if value is not None and value <= threshold:
+                _add_reason(name, "<=", threshold, value)
+                return _finalise("hold")
+
+        return _finalise(signal)
+
     def _update_cooldown(
         self,
         *,
@@ -903,148 +1089,198 @@ class AutoTrader:
         effective_risk: float,
     ) -> tuple[bool, float]:
         now = time.monotonic()
+        cooldown_cfg = self._thresholds["auto_trader"]["cooldown"]
         if summary is not None:
+            severity_weights = cooldown_cfg.get("severity_weights", {})
+            stability_gap = float(cooldown_cfg.get("stability_projection_gap", 0.45))
+            confidence_gap = float(cooldown_cfg.get("confidence_resilience_gap", 0.6))
             severity = max(
-                summary.cooldown_score,
-                summary.severe_event_rate * 0.8,
-                summary.stress_index * 0.7,
-                summary.stress_projection * 0.75,
-                summary.stress_momentum * 0.7,
-                summary.degradation_score * 0.75,
-                max(0.0, 0.45 - summary.stability_projection) * 0.6,
-                summary.liquidity_gap * 0.65,
-                summary.liquidity_trend * 0.6,
-                max(0.0, 0.45 - summary.confidence_resilience) * 0.6,
-                summary.confidence_fragility * 0.65,
+                summary.cooldown_score
+                * float(severity_weights.get("cooldown_score", 1.0)),
+                summary.severe_event_rate
+                * float(severity_weights.get("severe_event_rate", 0.8)),
+                summary.stress_index * float(severity_weights.get("stress_index", 0.7)),
+                summary.stress_projection
+                * float(severity_weights.get("stress_projection", 0.75)),
+                summary.stress_momentum
+                * float(severity_weights.get("stress_momentum", 0.7)),
+                summary.degradation_score
+                * float(severity_weights.get("degradation_score", 0.75)),
+                max(0.0, stability_gap - summary.stability_projection)
+                * float(severity_weights.get("stability_projection_gap", 0.6)),
+                summary.liquidity_gap
+                * float(severity_weights.get("liquidity_gap", 0.65)),
+                summary.liquidity_trend
+                * float(severity_weights.get("liquidity_trend", 0.6)),
+                max(0.0, confidence_gap - summary.confidence_resilience)
+                * float(severity_weights.get("confidence_resilience_gap", 0.6)),
+                summary.confidence_fragility
+                * float(severity_weights.get("confidence_fragility", 0.65)),
             )
+            distribution_weights = cooldown_cfg.get("distribution_weights", {})
+            normalisers = cooldown_cfg.get("distribution_normalisers", {})
             distribution_flags = max(
-                summary.distribution_pressure,
-                min(1.0, abs(summary.skewness_bias) / 1.6),
-                min(1.0, max(0.0, summary.kurtosis_excess) / 3.0),
-                min(1.0, abs(summary.volume_imbalance) / 0.55),
+                summary.distribution_pressure
+                * float(distribution_weights.get("distribution_pressure", 1.0)),
+                min(
+                    1.0,
+                    abs(summary.skewness_bias)
+                    / float(normalisers.get("skewness_bias", 1.6)),
+                ),
+                min(
+                    1.0,
+                    max(0.0, summary.kurtosis_excess)
+                    / float(normalisers.get("kurtosis_excess", 3.0)),
+                ),
+                min(
+                    1.0,
+                    abs(summary.volume_imbalance)
+                    / float(normalisers.get("volume_imbalance", 0.55)),
+                ),
             )
             severity = max(
                 severity,
-                distribution_flags * 0.75,
-                max(0.0, 0.55 - summary.resilience_score) * 0.65,
-                max(0.0, 0.5 - summary.stress_balance) * 0.6,
-                summary.stress_projection * 0.7,
-                summary.liquidity_gap * 0.6,
-                summary.stress_momentum * 0.65,
-                summary.liquidity_trend * 0.6,
-                summary.confidence_fragility * 0.65,
-                max(0.0, summary.regime_entropy - 0.65) * 0.6,
+                distribution_flags
+                * float(severity_weights.get("distribution_flags_weight", 0.75)),
+                max(0.0, float(cooldown_cfg.get("resilience_gap", 0.55)) - summary.resilience_score)
+                * float(severity_weights.get("resilience_gap_weight", 0.65)),
+                max(0.0, float(cooldown_cfg.get("stress_balance_gap", 0.5)) - summary.stress_balance)
+                * float(severity_weights.get("stress_balance_gap_weight", 0.6)),
+                summary.stress_projection * float(severity_weights.get("stress_projection", 0.7)),
+                summary.liquidity_gap * float(severity_weights.get("liquidity_gap", 0.65)),
+                summary.stress_momentum * float(severity_weights.get("stress_momentum", 0.7)),
+                summary.liquidity_trend * float(severity_weights.get("liquidity_trend", 0.6)),
+                summary.confidence_fragility * float(severity_weights.get("confidence_fragility", 0.65)),
+                max(0.0, summary.regime_entropy - float(cooldown_cfg.get("entropy_gap", 0.65)))
+                * float(severity_weights.get("entropy_excess_weight", 0.6)),
             )
+            critical_cfg = cooldown_cfg.get("critical", {})
             if (
-                effective_risk >= 0.85
+                effective_risk >= float(critical_cfg.get("risk", 0.85))
                 or summary.risk_level is RiskLevel.CRITICAL
-                or severity >= 0.75
-                or summary.degradation_score >= 0.7
-                or summary.stability_projection <= 0.25
-                or summary.distribution_pressure >= 0.8
-                or distribution_flags >= 0.85
-                or summary.resilience_score <= 0.25
-                or summary.stress_balance <= 0.25
-                or summary.regime_entropy >= 0.85
-                or summary.stress_projection >= 0.75
-                or summary.liquidity_gap >= 0.75
-                or summary.stress_momentum >= 0.75
-                or summary.liquidity_trend >= 0.7
-                or summary.confidence_resilience <= 0.25
-                or summary.confidence_fragility >= 0.7
+                or severity >= float(critical_cfg.get("severity", 0.75))
+                or summary.degradation_score >= float(critical_cfg.get("degradation", 0.7))
+                or summary.stability_projection <= float(critical_cfg.get("stability_projection", 0.25))
+                or summary.distribution_pressure >= float(critical_cfg.get("distribution_pressure", 0.8))
+                or distribution_flags >= float(critical_cfg.get("distribution_flags", 0.85))
+                or summary.resilience_score <= float(critical_cfg.get("resilience_score", 0.25))
+                or summary.stress_balance <= float(critical_cfg.get("stress_balance", 0.25))
+                or summary.regime_entropy >= float(critical_cfg.get("regime_entropy", 0.85))
+                or summary.stress_projection >= float(critical_cfg.get("stress_projection", 0.75))
+                or summary.liquidity_gap >= float(critical_cfg.get("liquidity_gap", 0.75))
+                or summary.stress_momentum >= float(critical_cfg.get("stress_momentum", 0.75))
+                or summary.liquidity_trend >= float(critical_cfg.get("liquidity_trend", 0.7))
+                or summary.confidence_resilience <= float(critical_cfg.get("confidence_resilience", 0.25))
+                or summary.confidence_fragility >= float(critical_cfg.get("confidence_fragility", 0.7))
             ):
-                duration = max(self.auto_trade_interval_s * 5.0, 300.0)
+                duration = max(
+                    self.auto_trade_interval_s * float(critical_cfg.get("duration_multiplier", 5.0)),
+                    float(critical_cfg.get("duration_min", 300.0)),
+                )
                 self._cooldown_until = max(self._cooldown_until, now + duration)
                 self._cooldown_reason = "critical_risk"
             elif (
-                severity >= 0.55
+                severity >= float(cooldown_cfg.get("elevated", {}).get("severity", 0.55))
                 or (
                     summary.risk_level is RiskLevel.ELEVATED
-                    and summary.stress_index >= 0.6
+                    and summary.stress_index >= float(cooldown_cfg.get("elevated", {}).get("stress_index", 0.6))
                 )
-                or summary.degradation_score >= 0.55
-                or summary.stability_projection <= 0.35
-                or summary.distribution_pressure >= 0.6
-                or distribution_flags >= 0.65
-                or summary.resilience_score <= 0.4
-                or summary.stress_balance <= 0.4
-                or summary.regime_entropy >= 0.75
-                or summary.stress_projection >= 0.6
-                or summary.liquidity_gap >= 0.6
-                or summary.stress_momentum >= 0.6
-                or summary.liquidity_trend >= 0.6
-                or summary.confidence_resilience <= 0.35
-                or summary.confidence_fragility >= 0.6
+                or summary.degradation_score >= float(cooldown_cfg.get("elevated", {}).get("degradation", 0.55))
+                or summary.stability_projection <= float(cooldown_cfg.get("elevated", {}).get("stability_projection", 0.35))
+                or summary.distribution_pressure >= float(cooldown_cfg.get("elevated", {}).get("distribution_pressure", 0.6))
+                or distribution_flags >= float(cooldown_cfg.get("elevated", {}).get("distribution_flags", 0.65))
+                or summary.resilience_score <= float(cooldown_cfg.get("elevated", {}).get("resilience_score", 0.4))
+                or summary.stress_balance <= float(cooldown_cfg.get("elevated", {}).get("stress_balance", 0.4))
+                or summary.regime_entropy >= float(cooldown_cfg.get("elevated", {}).get("regime_entropy", 0.75))
+                or summary.stress_projection >= float(cooldown_cfg.get("elevated", {}).get("stress_projection", 0.6))
+                or summary.liquidity_gap >= float(cooldown_cfg.get("elevated", {}).get("liquidity_gap", 0.6))
+                or summary.stress_momentum >= float(cooldown_cfg.get("elevated", {}).get("stress_momentum", 0.6))
+                or summary.liquidity_trend >= float(cooldown_cfg.get("elevated", {}).get("liquidity_trend", 0.6))
+                or summary.confidence_resilience <= float(cooldown_cfg.get("elevated", {}).get("confidence_resilience", 0.35))
+                or summary.confidence_fragility >= float(cooldown_cfg.get("elevated", {}).get("confidence_fragility", 0.6))
             ):
-                duration = max(self.auto_trade_interval_s * 3.0, 180.0)
+                elevated_cfg = cooldown_cfg.get("elevated", {})
+                duration = max(
+                    self.auto_trade_interval_s * float(elevated_cfg.get("duration_multiplier", 3.0)),
+                    float(elevated_cfg.get("duration_min", 180.0)),
+                )
                 self._cooldown_until = max(self._cooldown_until, now + duration)
                 self._cooldown_reason = "elevated_risk"
             elif (
-                severity >= 0.45
+                severity >= float(cooldown_cfg.get("instability", {}).get("severity", 0.45))
                 and summary.risk_level in {RiskLevel.ELEVATED, RiskLevel.WATCH}
-                or summary.degradation_score >= 0.45
-                or summary.distribution_pressure >= 0.5
-                or distribution_flags >= 0.55
-                or summary.resilience_score <= 0.45
-                or summary.stress_balance <= 0.4
-                or summary.regime_entropy >= 0.65
-                or summary.stress_projection >= 0.5
-                or summary.liquidity_gap >= 0.5
-                or summary.stress_momentum >= 0.5
-                or summary.liquidity_trend >= 0.5
-                or summary.confidence_resilience <= 0.4
-                or summary.confidence_fragility >= 0.5
+                or summary.degradation_score >= float(cooldown_cfg.get("instability", {}).get("degradation", 0.45))
+                or summary.distribution_pressure >= float(cooldown_cfg.get("instability", {}).get("distribution_pressure", 0.5))
+                or distribution_flags >= float(cooldown_cfg.get("instability", {}).get("distribution_flags", 0.55))
+                or summary.resilience_score <= float(cooldown_cfg.get("instability", {}).get("resilience_score", 0.45))
+                or summary.stress_balance <= float(cooldown_cfg.get("instability", {}).get("stress_balance", 0.4))
+                or summary.regime_entropy >= float(cooldown_cfg.get("instability", {}).get("regime_entropy", 0.65))
+                or summary.stress_projection >= float(cooldown_cfg.get("instability", {}).get("stress_projection", 0.5))
+                or summary.liquidity_gap >= float(cooldown_cfg.get("instability", {}).get("liquidity_gap", 0.5))
+                or summary.stress_momentum >= float(cooldown_cfg.get("instability", {}).get("stress_momentum", 0.5))
+                or summary.liquidity_trend >= float(cooldown_cfg.get("instability", {}).get("liquidity_trend", 0.5))
+                or summary.confidence_resilience <= float(cooldown_cfg.get("instability", {}).get("confidence_resilience", 0.4))
+                or summary.confidence_fragility >= float(cooldown_cfg.get("instability", {}).get("confidence_fragility", 0.5))
             ):
-                duration = max(self.auto_trade_interval_s * 2.0, 120.0)
+                instability_cfg = cooldown_cfg.get("instability", {})
+                duration = max(
+                    self.auto_trade_interval_s * float(instability_cfg.get("duration_multiplier", 2.0)),
+                    float(instability_cfg.get("duration_min", 120.0)),
+                )
                 self._cooldown_until = max(self._cooldown_until, now + duration)
                 self._cooldown_reason = "instability_spike"
             elif (
-                summary.cooldown_score <= 0.35
-                and summary.recovery_potential >= 0.6
-                and effective_risk <= 0.55
-                and summary.degradation_score <= 0.35
-                and summary.stability_projection >= 0.45
-                and summary.distribution_pressure <= 0.4
-                and abs(summary.skewness_bias) <= 0.9
-                and summary.kurtosis_excess <= 1.2
-                and abs(summary.volume_imbalance) <= 0.4
-                and summary.resilience_score >= 0.55
-                and summary.stress_balance >= 0.5
-                and summary.regime_entropy <= 0.55
-                and summary.liquidity_gap <= 0.4
-                and summary.stress_projection <= 0.4
-                and summary.stress_momentum <= 0.4
-                and summary.liquidity_trend <= 0.4
-                and summary.confidence_resilience >= 0.55
-                and summary.confidence_fragility <= 0.4
+                summary.cooldown_score <= float(cooldown_cfg.get("release", {}).get("cooldown_score", 0.35))
+                and summary.recovery_potential >= float(cooldown_cfg.get("release", {}).get("recovery_potential", 0.6))
+                and effective_risk <= float(cooldown_cfg.get("release", {}).get("risk", 0.55))
+                and summary.degradation_score <= float(cooldown_cfg.get("release", {}).get("degradation_score", 0.35))
+                and summary.stability_projection >= float(cooldown_cfg.get("release", {}).get("stability_projection", 0.45))
+                and summary.distribution_pressure <= float(cooldown_cfg.get("release", {}).get("distribution_pressure", 0.4))
+                and abs(summary.skewness_bias) <= float(cooldown_cfg.get("release", {}).get("skewness_bias", 0.9))
+                and summary.kurtosis_excess <= float(cooldown_cfg.get("release", {}).get("kurtosis_excess", 1.2))
+                and abs(summary.volume_imbalance) <= float(cooldown_cfg.get("release", {}).get("volume_imbalance", 0.4))
+                and summary.resilience_score >= float(cooldown_cfg.get("release", {}).get("resilience_score", 0.55))
+                and summary.stress_balance >= float(cooldown_cfg.get("release", {}).get("stress_balance", 0.5))
+                and summary.regime_entropy <= float(cooldown_cfg.get("release", {}).get("regime_entropy", 0.55))
+                and summary.liquidity_gap <= float(cooldown_cfg.get("release", {}).get("liquidity_gap", 0.4))
+                and summary.stress_projection <= float(cooldown_cfg.get("release", {}).get("stress_projection", 0.4))
+                and summary.stress_momentum <= float(cooldown_cfg.get("release", {}).get("stress_momentum", 0.4))
+                and summary.liquidity_trend <= float(cooldown_cfg.get("release", {}).get("liquidity_trend", 0.4))
+                and summary.confidence_resilience >= float(cooldown_cfg.get("release", {}).get("confidence_resilience", 0.55))
+                and summary.confidence_fragility <= float(cooldown_cfg.get("release", {}).get("confidence_fragility", 0.4))
             ):
                 self._cooldown_until = 0.0
                 self._cooldown_reason = None
-        elif effective_risk >= 0.9:
-            duration = max(self.auto_trade_interval_s * 2.0, 150.0)
+        elif effective_risk >= float(cooldown_cfg.get("high_risk_fallback", {}).get("risk", 0.9)):
+            fallback_cfg = cooldown_cfg.get("high_risk_fallback", {})
+            duration = max(
+                self.auto_trade_interval_s * float(fallback_cfg.get("duration_multiplier", 2.0)),
+                float(fallback_cfg.get("duration_min", 150.0)),
+            )
             self._cooldown_until = max(self._cooldown_until, now + duration)
             self._cooldown_reason = "high_risk"
 
         remaining = max(0.0, self._cooldown_until - now)
         active = remaining > 0.0
         if active and summary is not None:
+            release_active_cfg = cooldown_cfg.get("release_active", {})
             if (
-                summary.recovery_potential >= 0.7
-                and summary.cooldown_score <= 0.4
-                and summary.severe_event_rate <= 0.4
-                and effective_risk <= 0.55
-                and summary.degradation_score <= 0.35
-                and summary.stability_projection >= 0.5
-                and summary.distribution_pressure <= 0.4
-                and abs(summary.skewness_bias) <= 0.9
-                and summary.kurtosis_excess <= 1.2
-                and abs(summary.volume_imbalance) <= 0.4
-                and summary.resilience_score >= 0.6
-                and summary.stress_balance >= 0.55
-                and summary.regime_entropy <= 0.5
-                and summary.liquidity_gap <= 0.4
-                and summary.stress_projection <= 0.35
-                and summary.confidence_resilience >= 0.6
+                summary.recovery_potential >= float(release_active_cfg.get("recovery_potential", 0.7))
+                and summary.cooldown_score <= float(release_active_cfg.get("cooldown_score", 0.4))
+                and summary.severe_event_rate <= float(release_active_cfg.get("severe_event_rate", 0.4))
+                and effective_risk <= float(release_active_cfg.get("risk", 0.55))
+                and summary.degradation_score <= float(release_active_cfg.get("degradation_score", 0.35))
+                and summary.stability_projection >= float(release_active_cfg.get("stability_projection", 0.5))
+                and summary.distribution_pressure <= float(release_active_cfg.get("distribution_pressure", 0.4))
+                and abs(summary.skewness_bias) <= float(release_active_cfg.get("skewness_bias", 0.9))
+                and summary.kurtosis_excess <= float(release_active_cfg.get("kurtosis_excess", 1.2))
+                and abs(summary.volume_imbalance) <= float(release_active_cfg.get("volume_imbalance", 0.4))
+                and summary.resilience_score >= float(release_active_cfg.get("resilience_score", 0.6))
+                and summary.stress_balance >= float(release_active_cfg.get("stress_balance", 0.55))
+                and summary.regime_entropy <= float(release_active_cfg.get("regime_entropy", 0.5))
+                and summary.liquidity_gap <= float(release_active_cfg.get("liquidity_gap", 0.4))
+                and summary.stress_projection <= float(release_active_cfg.get("stress_projection", 0.35))
+                and summary.confidence_resilience >= float(release_active_cfg.get("confidence_resilience", 0.6))
             ):
                 self._cooldown_until = 0.0
                 self._cooldown_reason = None
@@ -1066,6 +1302,8 @@ class AutoTrader:
         cooldown_active: bool = False,
         cooldown_remaining: float = 0.0,
         cooldown_reason: str | None = None,
+        guardrail_reasons: list[str] | None = None,
+        guardrail_triggers: list[GuardrailTrigger] | None = None,
     ) -> RiskDecision:
         should_trade = signal in {"buy", "sell"} and self.current_leverage > 0 and not cooldown_active
         fraction = self.current_leverage if should_trade else 0.0
@@ -1085,6 +1323,8 @@ class AutoTrader:
         details["cooldown_active"] = cooldown_active
         details["cooldown_remaining_s"] = cooldown_remaining
         details["cooldown_reason"] = cooldown_reason
+        details["guardrail_reasons"] = list(guardrail_reasons or [])
+        details["guardrail_triggers"] = [trigger.to_dict() for trigger in guardrail_triggers or []]
         if summary is not None:
             details["summary"] = summary.to_dict()
         mode = "demo"
@@ -1513,34 +1753,16 @@ class AutoTrader:
         )
         self._adjust_strategy_parameters(assessment, aggregated_risk=effective_risk, summary=summary)
         signal = self._map_regime_to_signal(assessment, last_return, summary=summary)
-        if effective_risk >= 0.75:
-            signal = "hold"
-        elif summary is not None and (
-            summary.stress_index >= 0.65
-            or summary.tail_risk_index >= 0.6
-            or summary.shock_frequency >= 0.6
-            or summary.stress_momentum >= 0.65
-        ):
-            signal = "hold"
-        elif summary is not None and (
-            summary.resilience_score <= 0.3
-            or summary.stress_balance <= 0.35
-            or summary.regime_entropy >= 0.8
-            or summary.confidence_fragility >= 0.65
-        ):
-            signal = "hold"
-        elif summary is not None and (
-            summary.degradation_score >= 0.6
-            or summary.stability_projection <= 0.35
-            or summary.volume_trend_volatility >= 0.2
-            or summary.volatility_trend > 0.025
-            or summary.drawdown_trend > 0.1
-            or summary.liquidity_gap >= 0.6
-            or summary.stress_projection >= 0.6
-            or summary.confidence_resilience <= 0.4
-            or summary.liquidity_trend >= 0.6
-        ):
-            signal = "hold"
+        signal = self._apply_signal_guardrails(signal, effective_risk, summary)
+        guardrail_reasons = list(self._last_guardrail_reasons)
+        guardrail_triggers = [trigger.to_dict() for trigger in self._last_guardrail_triggers]
+        if guardrail_reasons and signal == "hold":
+            self._log(
+                "Signal overridden by guardrails",
+                level=logging.INFO,
+                reasons=guardrail_reasons,
+                triggers=guardrail_triggers,
+            )
         if cooldown_active:
             signal = "hold"
         decision = self._build_risk_decision(
@@ -1552,6 +1774,8 @@ class AutoTrader:
             cooldown_active=cooldown_active,
             cooldown_remaining=cooldown_remaining,
             cooldown_reason=self._cooldown_reason,
+            guardrail_reasons=guardrail_reasons,
+            guardrail_triggers=self._last_guardrail_triggers,
         )
 
         self._last_signal = signal
@@ -1575,6 +1799,8 @@ class AutoTrader:
                 "cooldown_remaining_s": cooldown_remaining,
                 "cooldown_reason": self._cooldown_reason,
                 "decision": decision.to_dict(),
+                "guardrail_reasons": guardrail_reasons,
+                "guardrail_triggers": guardrail_triggers,
             }
             if summary is not None:
                 payload["summary"] = summary.to_dict()
@@ -2210,4 +2436,4 @@ class AutoTrader:
                         del self._risk_evaluations[:overflow]
 
 
-__all__ = ["AutoTrader", "RiskDecision", "EmitterLike"]
+__all__ = ["AutoTrader", "RiskDecision", "EmitterLike", "GuardrailTrigger"]

@@ -1,0 +1,24 @@
+# Konfiguracja progów ryzyka wykorzystywana przez moduły AI oraz auto-tradera.
+#
+# Domyślne wartości znajdują się w pakiecie ``bot_core.ai._defaults`` i są
+# ładowane automatycznie.  Ten plik pozwala selektywnie nadpisać wybrane progi
+# bez modyfikowania kodu źródłowego.  Alternatywny plik można wskazać zmienną
+# środowiskową ``BOT_CORE_RISK_THRESHOLDS_PATH``.
+
+market_regime:
+  metrics:
+    # Minimalna długość okna dla szybkiej średniej wykorzystywanej przy
+    # obliczaniu siły trendu.  Domyślnie 5.
+    short_span_min: 5
+
+auto_trader:
+  map_regime_to_signal:
+    # Minimalna akceptowalna pewność klasyfikacji wymagająca sygnału handlowego.
+    assessment_confidence: 0.2
+  # Sekcja ``signal_guardrails`` pozwala dostroić progi wymuszające sygnał HOLD,
+  # np. w sytuacjach nadmiernego ryzyka lub niestabilności.  Wartości są
+  # opcjonalne – poniżej znajduje się przykład nadpisania limitu efektywnego
+  # ryzyka.
+  # signal_guardrails:
+  #   effective_risk_cap: 0.8
+
