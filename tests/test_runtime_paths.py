@@ -6,7 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from bot_core.runtime.paths import build_desktop_app_paths, resolve_core_config_path
+from bot_core.runtime.paths import (
+    build_desktop_app_paths,
+    build_desktop_app_paths_from_root,
+    resolve_core_config_path,
+)
 
 
 def test_resolve_core_config_path_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -42,7 +46,18 @@ def test_build_desktop_app_paths_creates_structure(tmp_path: Path) -> None:
     assert paths.models_dir.exists()
     assert paths.keys_file == module_file.parent / "api_keys.enc"
     assert paths.salt_file == module_file.parent / "salt.bin"
+    assert paths.secret_vault_file == module_file.parent / "api_keys.vault"
 
     # upewnij się, że katalog logów został utworzony
     assert logs_dir.exists()
     assert text_log.parent == logs_dir
+
+
+def test_build_desktop_app_paths_from_root(tmp_path: Path) -> None:
+    app_root = tmp_path / "desktop"
+    paths = build_desktop_app_paths_from_root(app_root)
+
+    assert paths.app_root == app_root
+    assert paths.secret_vault_file == app_root / "api_keys.vault"
+    assert paths.logs_dir == app_root / "logs"
+    assert paths.presets_dir.exists()

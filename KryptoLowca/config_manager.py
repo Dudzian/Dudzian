@@ -9,6 +9,7 @@ import math
 import statistics
 import time
 import uuid
+import warnings
 from copy import deepcopy
 from dataclasses import dataclass, field, asdict, fields, replace
 from datetime import datetime, timezone
@@ -23,6 +24,12 @@ from bot_core.runtime.metadata import (
 import yaml
 from cryptography.fernet import Fernet, InvalidToken
 import pandas as pd
+
+warnings.warn(
+    "ConfigManager jest przestarzały – użyj bot_core.runtime.preset_service.PresetConfigService",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 try:
     # Unikamy importów cyklicznych i ciężkich w czasie testów

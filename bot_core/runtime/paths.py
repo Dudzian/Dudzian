@@ -9,6 +9,7 @@ from pathlib import Path
 __all__ = [
     "DesktopAppPaths",
     "build_desktop_app_paths",
+    "build_desktop_app_paths_from_root",
     "resolve_core_config_path",
 ]
 
@@ -38,17 +39,16 @@ class DesktopAppPaths:
     models_dir: Path
     keys_file: Path
     salt_file: Path
+    secret_vault_file: Path
 
 
-def build_desktop_app_paths(
-    app_file: str | Path,
+def _build_paths_for_root(
+    app_root: Path,
     *,
     logs_dir: Path | None = None,
     text_log_file: Path | None = None,
 ) -> DesktopAppPaths:
-    """Buduje strukturę ścieżek dla aplikacji desktopowej."""
-
-    app_root = Path(app_file).resolve().parent
+    app_root = app_root.resolve()
     resolved_logs_dir = logs_dir or app_root / "logs"
     resolved_logs_dir.mkdir(parents=True, exist_ok=True)
     resolved_text_log = text_log_file or resolved_logs_dir / "trading.log"
@@ -71,5 +71,29 @@ def build_desktop_app_paths(
         models_dir=models_dir,
         keys_file=app_root / "api_keys.enc",
         salt_file=app_root / "salt.bin",
+        secret_vault_file=(app_root / "api_keys.vault"),
     )
+
+
+def build_desktop_app_paths(
+    app_file: str | Path,
+    *,
+    logs_dir: Path | None = None,
+    text_log_file: Path | None = None,
+) -> DesktopAppPaths:
+    """Buduje strukturę ścieżek dla aplikacji desktopowej."""
+
+    app_root = Path(app_file).resolve().parent
+    return _build_paths_for_root(app_root, logs_dir=logs_dir, text_log_file=text_log_file)
+
+
+def build_desktop_app_paths_from_root(
+    app_root: str | Path,
+    *,
+    logs_dir: Path | None = None,
+    text_log_file: Path | None = None,
+) -> DesktopAppPaths:
+    """Buduje strukturę ścieżek na podstawie katalogu aplikacji desktopowej."""
+
+    return _build_paths_for_root(Path(app_root), logs_dir=logs_dir, text_log_file=text_log_file)
 
