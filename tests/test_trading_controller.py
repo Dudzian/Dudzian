@@ -192,6 +192,52 @@ def test_controller_emits_alert_on_buy_signal() -> None:
     assert any(event["event"] == "order_executed" for event in journal.export())
 
 
+def test_controller_reverses_position_before_opening_new_one() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    router, channel, audit = _router_with_channel()
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        health_check_interval=timedelta(hours=1),
+        decision_journal=journal,
+    )
+
+    signal = StrategySignal(
+        symbol="BTC/USDT",
+        side="SELL",
+        confidence=0.9,
+        metadata={
+            "quantity": "2",
+            "price": "101",
+            "order_type": "market",
+            "current_position_qty": "1.5",
+            "current_position_side": "LONG",
+            "reverse_position": "true",
+        },
+    )
+
+    results = controller.process_signals([signal])
+
+    assert len(results) == 1
+    assert len(execution.requests) == 2
+    close_request, open_request = execution.requests
+    assert close_request.side == "SELL"
+    assert close_request.quantity == pytest.approx(1.5)
+    assert close_request.metadata["action"] == "close"
+    assert open_request.side == "SELL"
+    assert open_request.quantity == pytest.approx(2.0)
+
+    journal_events = journal.export()
+    assert any(event["event"] == "order_close_for_reversal" for event in journal_events)
+
+
 def test_controller_alerts_on_risk_rejection_and_limit() -> None:
     risk_engine = DummyRiskEngine()
     risk_engine.set_result(
