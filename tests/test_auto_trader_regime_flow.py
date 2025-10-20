@@ -4,6 +4,9 @@ import enum
 import copy
 import time
 from pathlib import Path
+import enum
+from dataclasses import MISSING as _MISSING, dataclass
+from typing import Any
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
@@ -67,6 +70,11 @@ class _Provider:
 
 
 class _RiskServiceStub:
+    def __init__(self, approval: bool) -> None:
+        self._approval = approval
+        self.calls: list[RiskDecision] = []
+
+    def __call__(self, decision: RiskDecision) -> bool:
     def __init__(self, approval: Any) -> None:
         self._approval = approval
         self.calls: list[RiskDecision] = []
@@ -81,6 +89,11 @@ class _RiskServiceResponseStub:
         self._response = response
         self.calls: list[RiskDecision] = []
 
+    def __call__(self, decision: RiskDecision) -> Any:
+        self.calls.append(decision)
+        if callable(self._response):
+            return self._response()
+        return self._response
     def evaluate_decision(self, decision: RiskDecision) -> Any:
         self.calls.append(decision)
         result = self._response
@@ -95,6 +108,12 @@ class _ExecutionServiceStub:
         self.methods: list[str] = []
 
     def execute_decision(self, decision: RiskDecision) -> None:
+        self.calls.append(decision)
+        self.methods.append("execute_decision")
+
+    def execute(self, decision: RiskDecision) -> None:
+        self.calls.append(decision)
+        self.methods.append("execute")
         self.methods.append("execute_decision")
         self.calls.append(decision)
 
@@ -109,6 +128,8 @@ class _ExecutionServiceExecuteOnly:
         self.methods: list[str] = []
 
     def execute(self, decision: RiskDecision) -> None:
+        self.calls.append(decision)
+        self.methods.append("execute")
         self.methods.append("execute")
         self.calls.append(decision)
 
@@ -2041,3 +2062,92 @@ def test_auto_trader_risk_history_filters_by_service_and_time(monkeypatch: pytes
 
     df.loc[pd.isna(df["service"]), "normalized"] = False
     assert trader.get_risk_evaluations()[2]["normalized"] is None
+
+
+def test_auto_trader_prunes_risk_history_by_ttl(monkeypatch: pytest.MonkeyPatch) -> None:
+    emitter = _Emitter()
+    gui = _GUI()
+    trader = AutoTrader(
+        emitter,
+        gui,
+        symbol_getter=lambda: "ADAUSDT",
+        auto_trade_interval_s=0.0,
+        enable_auto_trade=True,
+        risk_evaluations_limit=None,
+        risk_evaluations_ttl_s=10.0,
+    )
+
+    decision = RiskDecision(should_trade=True, fraction=0.25, state="ok")
+
+    class _TimeStub:
+        def __init__(self, values: list[float]) -> None:
+            self._values = values
+            self._index = 0
+            self.last_value: float | None = None
+
+        def __call__(self) -> float:
+            if self._index < len(self._values):
+                value = self._values[self._index]
+                self._index += 1
+            else:
+                value = self._values[-1]
+            self.last_value = value
+            return value
+
+    time_stub = _TimeStub([1000.0, 1002.0, 1010.0, 1012.0, 1014.0, 1016.0, 1018.0, 1020.0, 1022.0])
+    monkeypatch.setattr("bot_core.auto_trader.app.time.time", time_stub)
+
+    trader._record_risk_evaluation(
+        decision,
+        approved=True,
+        normalized=True,
+        response=True,
+        service=None,
+        error=None,
+    )
+    trader._record_risk_evaluation(
+        decision,
+        approved=False,
+        normalized=False,
+        response=False,
+        service=None,
+        error=None,
+    )
+    trader._record_risk_evaluation(
+        decision,
+        approved=True,
+        normalized=True,
+        response=True,
+        service=None,
+        error=None,
+    )
+
+    evaluations = trader.get_risk_evaluations()
+    assert len(evaluations) == 2
+    assert [entry["normalized"] for entry in evaluations] == [False, True]
+    assert evaluations[0]["timestamp"] == pytest.approx(1002.0)
+    assert evaluations[1]["timestamp"] == pytest.approx(1010.0)
+    assert trader.get_risk_evaluations_ttl() == pytest.approx(10.0)
+
+    new_ttl = trader.set_risk_evaluations_ttl(1.0)
+    assert new_ttl == pytest.approx(1.0)
+    assert trader.get_risk_evaluations_ttl() == pytest.approx(1.0)
+
+    assert trader.get_risk_evaluations() == []
+
+    disabled_ttl = trader.set_risk_evaluations_ttl(None)
+    assert disabled_ttl is None
+    assert trader.get_risk_evaluations_ttl() is None
+
+    trader._record_risk_evaluation(
+        decision,
+        approved=True,
+        normalized=True,
+        response=True,
+        service=None,
+        error=None,
+    )
+
+    refreshed = trader.get_risk_evaluations()
+    assert len(refreshed) == 1
+    assert refreshed[0]["timestamp"] == pytest.approx(time_stub.last_value or 0.0)

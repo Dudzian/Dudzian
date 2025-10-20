@@ -581,6 +581,12 @@ class ExchangeManager:
     ) -> None:
         self._api_key = (api_key or "").strip() or None
         self._secret = (secret or "").strip() or None
+        api_key_length = len(self._api_key) if self._api_key else 0
+        secret_length = len(self._secret) if self._secret else 0
+        log.info(
+            "Credentials set (lengths): api_key=%s, secret=%s",
+            api_key_length,
+            secret_length,
         self._passphrase = (passphrase or "").strip() or None
         log.info(
             "Credentials set (lengths): api_key=%s, secret=%s, passphrase=%s",
