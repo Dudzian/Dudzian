@@ -2539,17 +2539,20 @@ class AutoTrader:
         except Exception:  # pragma: no cover - brak klas bot_core
             return False
 
-        profile_name = (
-            self._core_risk_profile_name
-            or (getattr(self._core_risk_profile, "name", None) if self._core_risk_profile is not None else None)
-            or candidate.risk_profile
-        )
+        profile_candidate: Any = self._core_risk_profile_name
+        if not profile_candidate and self._core_risk_profile is not None:
+            profile_candidate = getattr(self._core_risk_profile, "name", None) or self._core_risk_profile
+        if not profile_candidate:
+            profile_candidate = getattr(candidate, "risk_profile_name", None)
+        if not profile_candidate:
+            profile_candidate = getattr(candidate, "risk_profile", None)
+        profile_name = self._coerce_risk_profile_name(profile_candidate)
 
         try:
             risk_result = risk_engine.apply_pre_trade_checks(
                 order_request,
                 account=account_snapshot,
-                profile_name=profile_name,
+                profile_name=profile_name or "default",
             )
         except Exception as exc:  # pragma: no cover - diagnostyka silnika ryzyka
             self.emitter.log(
@@ -2704,6 +2707,30 @@ class AutoTrader:
             environment=str(self._core_execution_environment),
             metadata=meta,
         )
+
+    def _coerce_risk_profile_name(self, profile: Any) -> Optional[str]:
+        if profile is None:
+            return None
+        if isinstance(profile, str):
+            value = profile.strip()
+            return value or None
+        candidate = getattr(profile, "name", None)
+        if isinstance(candidate, str):
+            stripped = candidate.strip()
+            if stripped:
+                return stripped
+        elif candidate not in (None, ""):
+            try:
+                text = str(candidate)
+            except Exception:
+                text = None
+            if text:
+                return text
+        try:
+            result = str(profile)
+        except Exception:
+            return None
+        return result or None
 
     def _build_core_risk_decision(
         self,
