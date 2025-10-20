@@ -2547,6 +2547,13 @@ def _load_decision_engine_config(
     min_probability = float(raw.get("min_probability", 0.0))
     require_cost_data = bool(raw.get("require_cost_data", False))
     penalty_cost_bps = float(raw.get("penalty_cost_bps", 0.0))
+    history_limit_raw = raw.get("evaluation_history_limit")
+    evaluation_history_limit = 256
+    if history_limit_raw not in (None, ""):
+        try:
+            evaluation_history_limit = max(1, int(float(history_limit_raw)))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("decision_engine.evaluation_history_limit musi być liczbą całkowitą") from exc
     tco_config: DecisionEngineTCOConfig | None = None
     tco_raw = raw.get("tco")
     if DecisionEngineTCOConfig is not None and tco_raw:
@@ -2633,6 +2640,7 @@ def _load_decision_engine_config(
         min_probability=min_probability,
         require_cost_data=require_cost_data,
         penalty_cost_bps=penalty_cost_bps,
+        evaluation_history_limit=evaluation_history_limit,
         tco=tco_config,
     )
 

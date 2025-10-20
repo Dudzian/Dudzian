@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Mapping, Sequence
 
 import sys
@@ -68,6 +69,13 @@ class DummyRiskEngine(RiskEngine):
             self._result = self._result_queue.pop(0)
         return self._result
 
+    def snapshot_state(self, profile_name: str) -> Mapping[str, object]:
+        return {
+            "profile": profile_name,
+            "total_equity": 100_000.0,
+            "available_margin": 50_000.0,
+        }
+
     def on_fill(
         self,
         *,
@@ -133,11 +141,17 @@ def _router_with_channel() -> tuple[DefaultAlertRouter, CollectingChannel, InMem
     return router, channel, audit
 
 
-def _signal(side: str = "BUY", *, quantity: float = 1.0, price: float = 100.0) -> StrategySignal:
+def _signal(
+    side: str = "BUY",
+    *,
+    quantity: float = 1.0,
+    price: float = 100.0,
+    confidence: float | None = None,
+) -> StrategySignal:
     return StrategySignal(
         symbol="BTC/USDT",
         side=side,
-        confidence=0.75,
+        confidence=0.75 if confidence is None else confidence,
         metadata={"quantity": str(quantity), "price": str(price), "order_type": "market"},
     )
 
@@ -454,3 +468,164 @@ def test_controller_emits_alert_on_execution_error() -> None:
     exported = tuple(audit.export())
     assert len(exported) == 2
     assert exported[1]["severity"] == "critical"
+
+
+def test_controller_filters_signal_when_probability_below_threshold() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    router, channel, audit = _router_with_channel()
+    journal = CollectingDecisionJournal()
+
+    class _StubOrchestrator:
+        def __init__(self) -> None:
+            self.invocations: list = []
+
+    orchestrator = _StubOrchestrator()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_orchestrator=orchestrator,
+        decision_min_probability=0.7,
+        decision_default_notional=2_500.0,
+        decision_journal=journal,
+    )
+
+    signal = _signal("BUY", confidence=0.3)
+    signal.metadata = {
+        "quantity": "1.0",
+        "price": "100.0",
+        "order_type": "market",
+        "expected_probability": 0.4,
+        "expected_return_bps": 6.0,
+    }
+
+    results = controller.process_signals([signal])
+
+    assert results == []
+    assert orchestrator.invocations == []
+    assert len(channel.messages) == 1
+    decision_events = [event for event in journal.events if event.event_type == "decision_evaluation"]
+    assert any(event.status == "filtered" for event in decision_events)
+    exported = tuple(audit.export())
+    assert len(exported) == 1
+    assert exported[0]["category"] == "strategy"
+
+
+def test_controller_skips_risk_when_orchestrator_rejects_signal() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    router, channel, audit = _router_with_channel()
+    journal = CollectingDecisionJournal()
+
+    class _RejectingOrchestrator:
+        def __init__(self) -> None:
+            self.invocations: list = []
+
+        def evaluate_candidate(self, candidate, _snapshot):
+            self.invocations.append(candidate)
+            return SimpleNamespace(
+                candidate=candidate,
+                accepted=False,
+                reasons=("net_edge_below",),
+                cost_bps=25.0,
+                net_edge_bps=-2.0,
+                model_name="gbm_v1",
+            )
+
+    orchestrator = _RejectingOrchestrator()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_orchestrator=orchestrator,
+        decision_min_probability=0.4,
+        decision_journal=journal,
+    )
+
+    signal = _signal("BUY", confidence=0.9)
+    signal.metadata = {
+        "quantity": "1.0",
+        "price": "100.0",
+        "order_type": "market",
+        "expected_probability": 0.9,
+        "expected_return_bps": 12.0,
+    }
+
+    results = controller.process_signals([signal])
+
+    assert results == []
+    assert len(orchestrator.invocations) == 1
+    assert risk_engine.last_checks == []
+    decision_events = [event for event in journal.events if event.event_type == "decision_evaluation"]
+    assert any(event.status == "rejected" for event in decision_events)
+    assert len(channel.messages) == 1
+    exported = tuple(audit.export())
+    assert all(entry.get("category") != "execution" for entry in exported)
+
+
+def test_controller_attaches_decision_metadata_for_execution() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    router, _, _ = _router_with_channel()
+    journal = CollectingDecisionJournal()
+
+    class _AcceptingOrchestrator:
+        def __init__(self) -> None:
+            self.invocations: list = []
+
+        def evaluate_candidate(self, candidate, _snapshot):
+            self.invocations.append(candidate)
+            return SimpleNamespace(
+                candidate=candidate,
+                accepted=True,
+                reasons=(),
+                cost_bps=12.0,
+                net_edge_bps=8.0,
+                model_name="gbm_v2",
+                model_expected_return_bps=14.0,
+                model_success_probability=0.72,
+            )
+
+    orchestrator = _AcceptingOrchestrator()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        decision_orchestrator=orchestrator,
+        decision_min_probability=0.4,
+        decision_journal=journal,
+    )
+
+    signal = _signal("BUY", confidence=0.8)
+    signal.metadata = {
+        "quantity": "1.0",
+        "price": "100.0",
+        "order_type": "market",
+        "expected_probability": 0.8,
+        "expected_return_bps": 15.0,
+    }
+
+    results = controller.process_signals([signal])
+
+    assert len(results) == 1
+    assert execution.requests, "Zlecenie powinno zostać złożone"
+    metadata = execution.requests[0].metadata
+    assert metadata is not None and "decision_engine" in metadata
+    decision_meta = metadata["decision_engine"]
+    assert decision_meta["accepted"] is True
+    assert decision_meta["model"] == "gbm_v2"
+    decision_events = [event for event in journal.events if event.event_type == "decision_evaluation"]
+    assert any(event.status == "accepted" for event in decision_events)

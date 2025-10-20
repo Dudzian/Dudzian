@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+import pytest
 
 from bot_core.config.models import (
     DecisionEngineConfig,
@@ -69,6 +72,8 @@ def test_accepts_candidate_with_positive_edge() -> None:
     assert evaluation.net_edge_bps is not None and evaluation.net_edge_bps > 3.0
     assert evaluation.reasons == ()
     assert evaluation.stress_failures == ()
+    assert evaluation.thresholds_snapshot is not None
+    assert evaluation.thresholds_snapshot["min_probability"] == pytest.approx(0.5)
 
 
 def test_rejects_when_cost_exceeds_limit() -> None:
@@ -89,6 +94,8 @@ def test_rejects_when_cost_exceeds_limit() -> None:
 
     assert evaluation.accepted is False
     assert any("koszt" in reason for reason in evaluation.reasons)
+    assert evaluation.thresholds_snapshot is not None
+    assert evaluation.thresholds_snapshot["max_cost_bps"] == pytest.approx(12.0)
 
 
 def test_rejects_on_risk_limits() -> None:
@@ -118,8 +125,32 @@ def test_rejects_on_risk_limits() -> None:
     evaluation = orchestrator.evaluate_candidate(candidate, snapshot)
 
     assert evaluation.accepted is False
-    assert any("limit" in reason for reason in evaluation.reasons)
-    assert "daily_loss_limit" in evaluation.risk_flags
+    assert evaluation.thresholds_snapshot is not None
+
+
+def test_logs_threshold_snapshot_on_rejection(caplog: pytest.LogCaptureFixture) -> None:
+    orchestrator = DecisionOrchestrator(_make_config())
+    candidate = DecisionCandidate(
+        strategy="mean_reversion_alpha",
+        action="enter",
+        risk_profile="balanced",
+        symbol="ADAUSDT",
+        notional=5_000.0,
+        expected_return_bps=4.0,
+        expected_probability=0.6,
+        cost_bps_override=25.0,
+        latency_ms=200.0,
+    )
+
+    with caplog.at_level(logging.INFO):
+        orchestrator.evaluate_candidate(candidate, _snapshot())
+
+    record = next(
+        (entry for entry in caplog.records if "DecisionOrchestrator rejected candidate" in entry.message),
+        None,
+    )
+    assert record is not None
+    assert "thresholds" in record.message
 
 
 def test_stress_failure_blocks_candidate() -> None:

@@ -27,6 +27,14 @@ Zapewnić zespołom dyżurnym powtarzalny proces obsługi środowiska Stage5 –
 | 6. Po incydencie zaktualizuj dokumentację (`docs/runbooks/STAGE5_SUPPORT_PLAYBOOK.md`, `docs/runbooks/STAGE5_COMPLIANCE_CHECKLIST.md`) i przekaż lessons learned zespołowi compliance. | L2 | Commit, wpis w change-logu | Review zatwierdzone przez właściciela produktu |
 | 7. Jeżeli incydent wymagał warsztatu ad-hoc (lessons learned), zarejestruj go przy pomocy `python scripts/log_stage5_training.py` i załącz artefakty (nagranie, slajdy) do `var/audit/training/<data>/`. | L2 | `var/audit/training/stage5_training_log.jsonl`, wpis decision log `stage5_training` | Wpis podpisany HMAC, artefakty dostępne offline |
 
+## Walidacja modeli Decision Engine
+- Uruchom pipeline treningowy: `python -m bot_core.ai.pipeline training.csv models/decision autotrader target --features close volume --register --config config/decision_engine.yaml`. Upewnij się, że artefakt zawiera metadane (`trained_at`, `metrics.mae`, `metadata.feature_scalers`).
+- Zarejestruj wygenerowany model w DecisionOrchestratorze (w logach pojawi się wpis „Registered model autotrader”). Sprawdź w `var/runtime/decision_orchestrator.json`, że `model_selection` odnotowuje nową wersję.
+- W `config/core.yaml` ustaw `decision_engine.evaluation_history_limit` adekwatnie do potrzeb audytu (domyślnie 512 wpisów). Limit chroni pamięć runtime i determinuje, ile ostatnich ewaluacji będzie widocznych w DecisionAwareSignalSink i UI.
+- Wyeksportuj bieżące podsumowanie jakości: `python scripts/export_decision_engine_summary.py --ledger <ledger_dir> --output var/audit/decision_engine/<TS>/summary.json --environment <env> --portfolio <portfolio> --include-history`. Artefakt dołącz do raportu hypercare Stage5 i zweryfikuj, że `total`, `acceptance_rate` oraz `latest_model` spełniają polityki.
+- W UI/CLI Stage5 sprawdź sekcję `decision_engine_summary` (całkowita liczba ewaluacji, acceptance rate, ostatni model i snapshot progów). Dane pochodzą z `DecisionAwareSignalSink.evaluation_summary()` i pozwalają szybko ocenić jakość decyzji AI oraz najczęstsze powody odrzuceń.
+- Przed startem AutoTradera potwierdź, że GUI widzi `decision_engine.accepted == True` w ostatnim `RiskDecision`. W trybie live każda decyzja z flagą `ai_degraded` musi zostać ręcznie zatwierdzona (menedżer modeli powinien zgłosić ostrzeżenie „AI backend degraded”).
+
 ## Procedura eskalacji
 1. **Warunki eskalacji do Incident Managera:** `avg_cost_per_trade` > 2× progu, `decision_latency_ms` > 500 ms p95 przez >10 min, brak raportu rotacji kluczy > 30 dni, status `fail` w `audit_stage4_compliance --profile stage5`.
 2. **Kanały:** Slack `#ops-stage5`, telefon dyżurny (`ops/oncall_rotation.yaml`), rezerwowy most konferencyjny.

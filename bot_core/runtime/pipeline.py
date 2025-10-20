@@ -1,9 +1,10 @@
 """Budowanie gotowych pipeline'ów strategii trend-following na podstawie konfiguracji."""
 from __future__ import annotations
 
+import json
 import logging
 import threading
-from collections import defaultdict, deque
+from collections import Counter, defaultdict, deque
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 import time
@@ -74,10 +75,15 @@ from bot_core.strategies.catalog import (
 )
 
 try:  # pragma: no cover - moduł decision może być opcjonalny
-    from bot_core.decision import DecisionCandidate, DecisionEvaluation
+    from bot_core.decision import (
+        DecisionCandidate,
+        DecisionEvaluation,
+        summarize_evaluation_payloads,
+    )
 except Exception:  # pragma: no cover
     DecisionCandidate = None  # type: ignore
     DecisionEvaluation = Any  # type: ignore
+    summarize_evaluation_payloads = None  # type: ignore
 
 _DEFAULT_LEDGER_SUBDIR = Path("audit/ledger")
 _LOGGER = logging.getLogger(__name__)
@@ -1546,6 +1552,13 @@ def _build_decision_sink(
             min_probability = 0.55
     exchange_name = getattr(bootstrap.environment, "exchange", "")
     journal = getattr(bootstrap, "decision_journal", None)
+    history_limit = 256
+    if decision_config is not None:
+        try:
+            history_limit = int(getattr(decision_config, "evaluation_history_limit", history_limit))
+        except (TypeError, ValueError):  # pragma: no cover - konfiguracja może być uszkodzona
+            history_limit = 256
+
     return DecisionAwareSignalSink(
         base_sink=base_sink,
         orchestrator=orchestrator,
@@ -1556,6 +1569,7 @@ def _build_decision_sink(
         min_probability=min_probability,
         portfolio=portfolio_id,
         journal=journal,
+        evaluation_history_limit=history_limit,
     )
 
 
@@ -1574,6 +1588,7 @@ class DecisionAwareSignalSink(StrategySignalSink):
         min_probability: float = 0.55,
         portfolio: str | None = None,
         journal: TradingDecisionJournal | None = None,
+        evaluation_history_limit: int = 256,
     ) -> None:
         self._base_sink = base_sink
         self._orchestrator = orchestrator
@@ -1583,9 +1598,142 @@ class DecisionAwareSignalSink(StrategySignalSink):
         self._exchange = exchange
         self._min_probability = max(0.0, min(1.0, float(min_probability)))
         self._logger = logging.getLogger(__name__)
-        self._evaluations: list[DecisionEvaluation] = []
+        self._evaluations: deque[DecisionEvaluation] = deque(
+            maxlen=max(1, int(evaluation_history_limit))
+        )
         self._portfolio = str(portfolio) if portfolio is not None else ""
         self._journal = journal
+
+    @staticmethod
+    def _coerce_float(value: object) -> float | None:
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _normalize_thresholds(
+        snapshot: Mapping[str, object] | None,
+    ) -> Mapping[str, float | None] | None:
+        if not snapshot or not isinstance(snapshot, Mapping):
+            return None
+        normalized: dict[str, float | None] = {}
+        for key, value in snapshot.items():
+            key_str = str(key)
+            coerced = DecisionAwareSignalSink._coerce_float(value)
+            normalized[key_str] = coerced
+        return normalized
+
+    @staticmethod
+    def _candidate_to_mapping(candidate: object) -> Mapping[str, object]:
+        if candidate is None:
+            return {}
+        if hasattr(candidate, "to_mapping"):
+            try:
+                payload = candidate.to_mapping()  # type: ignore[assignment]
+                if isinstance(payload, Mapping):
+                    return dict(payload)
+            except Exception:  # pragma: no cover - defensywne
+                pass
+        payload_dict: dict[str, object] = {}
+        for attribute in (
+            "strategy",
+            "action",
+            "risk_profile",
+            "symbol",
+            "notional",
+            "expected_return_bps",
+            "expected_probability",
+            "cost_bps_override",
+            "latency_ms",
+        ):
+            if hasattr(candidate, attribute):
+                value = getattr(candidate, attribute)
+                if value is not None:
+                    payload_dict[attribute] = value
+        metadata = getattr(candidate, "metadata", None)
+        if isinstance(metadata, Mapping):
+            payload_dict["metadata"] = dict(metadata)
+        return payload_dict
+
+    def _serialize_evaluation_payload(
+        self,
+        evaluation: object,
+        *,
+        include_candidate: bool,
+    ) -> Mapping[str, object]:
+        payload: dict[str, object]
+        if hasattr(evaluation, "to_mapping"):
+            try:
+                mapping = evaluation.to_mapping()  # type: ignore[assignment]
+            except Exception:  # pragma: no cover - defensywne
+                mapping = None
+            if isinstance(mapping, Mapping):
+                payload = dict(mapping)
+            else:
+                payload = {}
+        else:
+            payload = {
+                "accepted": bool(getattr(evaluation, "accepted", False)),
+                "reasons": list(getattr(evaluation, "reasons", ())),
+                "risk_flags": list(getattr(evaluation, "risk_flags", ())),
+                "stress_failures": list(getattr(evaluation, "stress_failures", ())),
+                "cost_bps": getattr(evaluation, "cost_bps", None),
+                "net_edge_bps": getattr(evaluation, "net_edge_bps", None),
+                "model_expected_return_bps": getattr(
+                    evaluation, "model_expected_return_bps", None
+                ),
+                "model_success_probability": getattr(
+                    evaluation, "model_success_probability", None
+                ),
+                "model_name": getattr(evaluation, "model_name", None),
+            }
+
+        if not include_candidate:
+            payload.pop("candidate", None)
+        else:
+            candidate_payload: Mapping[str, object] | None = None
+            candidate_obj = getattr(evaluation, "candidate", None)
+            if isinstance(payload.get("candidate"), Mapping):
+                candidate_payload = dict(payload["candidate"])
+            elif candidate_obj is not None:
+                candidate_payload = self._candidate_to_mapping(candidate_obj)
+            if candidate_payload:
+                payload["candidate"] = candidate_payload
+
+        thresholds = getattr(evaluation, "thresholds_snapshot", None)
+        normalized_thresholds = self._normalize_thresholds(thresholds)
+        if normalized_thresholds:
+            payload.setdefault("thresholds", dict(normalized_thresholds))
+
+        latency = getattr(evaluation, "latency_ms", None)
+        if latency is not None:
+            try:
+                payload["latency_ms"] = float(latency)
+            except (TypeError, ValueError):  # pragma: no cover - defensywne
+                pass
+
+        evaluated_at = getattr(evaluation, "evaluated_at", None)
+        if evaluated_at is not None:
+            payload["evaluated_at"] = evaluated_at
+
+        selection = getattr(evaluation, "model_selection", None)
+        if selection is not None and "model_selection" not in payload:
+            if hasattr(selection, "to_mapping"):
+                try:
+                    selection_payload = selection.to_mapping()  # type: ignore[assignment]
+                except Exception:  # pragma: no cover - defensywne
+                    selection_payload = None
+            elif isinstance(selection, Mapping):
+                selection_payload = dict(selection)
+            else:
+                selection_payload = None
+            if selection_payload:
+                payload["model_selection"] = selection_payload
+
+        return payload
 
     def submit(
         self,
@@ -1664,7 +1812,190 @@ class DecisionAwareSignalSink(StrategySignalSink):
         return self._base_sink.export()
 
     def evaluations(self) -> Sequence[DecisionEvaluation]:
-        return tuple(self._evaluations)
+            return tuple(self._evaluations)
+
+    def evaluation_history(
+        self,
+        *,
+        limit: int | None = None,
+        include_candidates: bool = False,
+    ) -> Sequence[Mapping[str, object]]:
+        if not self._evaluations:
+            return ()
+        records = list(self._evaluations)
+        if limit is not None:
+            try:
+                limit_int = int(limit)
+            except (TypeError, ValueError):  # pragma: no cover - defensywne
+                limit_int = 0
+            if limit_int <= 0:
+                return ()
+            records = records[-limit_int:]
+        history: list[Mapping[str, object]] = []
+        for evaluation in records:
+            history.append(
+                self._serialize_evaluation_payload(
+                    evaluation, include_candidate=include_candidates
+                )
+            )
+        return tuple(history)
+
+    def evaluation_summary(self) -> Mapping[str, object]:
+        evaluations = tuple(self._evaluations)
+        history_limit = self._evaluations.maxlen or len(evaluations)
+        if summarize_evaluation_payloads is None:
+            return self._legacy_evaluation_summary(
+                evaluations, history_limit=history_limit
+            )
+
+        payloads = [
+            self._serialize_evaluation_payload(evaluation, include_candidate=True)
+            for evaluation in evaluations
+        ]
+        return summarize_evaluation_payloads(
+            payloads,
+            history_limit=history_limit,
+        )
+
+    def _legacy_evaluation_summary(
+        self,
+        evaluations: Sequence[DecisionEvaluation],
+        *,
+        history_limit: int,
+    ) -> Mapping[str, object]:
+        total = len(evaluations)
+        summary: dict[str, object] = {
+            "total": total,
+            "accepted": 0,
+            "rejected": 0,
+            "acceptance_rate": 0.0,
+            "history_limit": history_limit,
+            "rejection_reasons": {},
+            "history_window": total,
+        }
+        if not evaluations:
+            return summary
+
+        accepted = sum(
+            1 for evaluation in evaluations if getattr(evaluation, "accepted", False)
+        )
+        summary["accepted"] = accepted
+        summary["rejected"] = total - accepted
+        summary["acceptance_rate"] = accepted / total if total else 0.0
+
+        rejection_reasons: Counter[str] = Counter()
+        net_edges: list[float] = []
+        costs: list[float] = []
+        probabilities: list[float] = []
+        expected_returns: list[float] = []
+        notionals: list[float] = []
+        model_probabilities: list[float] = []
+        model_returns: list[float] = []
+        latencies: list[float] = []
+
+        for evaluation in evaluations:
+            if not getattr(evaluation, "accepted", False):
+                for reason in getattr(evaluation, "reasons", ()):
+                    rejection_reasons[str(reason)] += 1
+
+            net_edge = self._coerce_float(getattr(evaluation, "net_edge_bps", None))
+            if net_edge is not None:
+                net_edges.append(net_edge)
+
+            cost = self._coerce_float(getattr(evaluation, "cost_bps", None))
+            if cost is not None:
+                costs.append(cost)
+
+            model_prob = self._coerce_float(
+                getattr(evaluation, "model_success_probability", None)
+            )
+            if model_prob is not None:
+                model_probabilities.append(model_prob)
+
+            model_return = self._coerce_float(
+                getattr(evaluation, "model_expected_return_bps", None)
+            )
+            if model_return is not None:
+                model_returns.append(model_return)
+
+            latency = self._coerce_float(getattr(evaluation, "latency_ms", None))
+            if latency is not None:
+                latencies.append(latency)
+
+            candidate = getattr(evaluation, "candidate", None)
+            if candidate is not None:
+                probability = self._coerce_float(
+                    getattr(candidate, "expected_probability", None)
+                )
+                if probability is not None:
+                    probabilities.append(probability)
+                expected_return = self._coerce_float(
+                    getattr(candidate, "expected_return_bps", None)
+                )
+                if expected_return is not None:
+                    expected_returns.append(expected_return)
+                notional = self._coerce_float(getattr(candidate, "notional", None))
+                if notional is not None:
+                    notionals.append(notional)
+
+        summary["rejection_reasons"] = dict(
+            sorted(rejection_reasons.items(), key=lambda item: item[1], reverse=True)
+        )
+
+        if net_edges:
+            summary["avg_net_edge_bps"] = sum(net_edges) / len(net_edges)
+        if costs:
+            summary["avg_cost_bps"] = sum(costs) / len(costs)
+        if probabilities:
+            summary["avg_expected_probability"] = sum(probabilities) / len(probabilities)
+        if expected_returns:
+            summary["avg_expected_return_bps"] = sum(expected_returns) / len(
+                expected_returns
+            )
+        if notionals:
+            summary["avg_notional"] = sum(notionals) / len(notionals)
+        if model_probabilities:
+            summary["avg_model_success_probability"] = sum(model_probabilities) / len(
+                model_probabilities
+            )
+        if model_returns:
+            summary["avg_model_expected_return_bps"] = sum(model_returns) / len(
+                model_returns
+            )
+        if latencies:
+            summary["avg_latency_ms"] = sum(latencies) / len(latencies)
+
+        latest = evaluations[-1]
+        latest_model = getattr(latest, "model_name", None)
+        if latest_model:
+            summary["latest_model"] = str(latest_model)
+        latest_thresholds = self._normalize_thresholds(
+            getattr(latest, "thresholds_snapshot", None)
+        )
+        if latest_thresholds:
+            summary["latest_thresholds"] = dict(latest_thresholds)
+
+        latest_candidate = getattr(latest, "candidate", None)
+        if latest_candidate is not None:
+            summary["latest_candidate"] = {
+                "symbol": getattr(latest_candidate, "symbol", None),
+                "action": getattr(latest_candidate, "action", None),
+                "strategy": getattr(latest_candidate, "strategy", None),
+                "expected_probability": getattr(
+                    latest_candidate, "expected_probability", None
+                ),
+                "expected_return_bps": getattr(
+                    latest_candidate, "expected_return_bps", None
+                ),
+            }
+
+        metadata = getattr(latest_candidate, "metadata", None)
+        if isinstance(metadata, Mapping):
+            generated_at = metadata.get("generated_at") or metadata.get("timestamp")
+            if generated_at is not None:
+                summary["latest_generated_at"] = generated_at
+
+        return summary
 
     def _record_evaluation(
         self,
@@ -1716,6 +2047,49 @@ class DecisionAwareSignalSink(StrategySignalSink):
 
         metadata.setdefault("decision_status", "accepted" if evaluation.accepted else "rejected")
         metadata.setdefault("source", "decision_orchestrator")
+
+        _store_float(
+            "model_success_probability",
+            getattr(evaluation, "model_success_probability", None),
+        )
+        _store_float(
+            "model_expected_return_bps",
+            getattr(evaluation, "model_expected_return_bps", None),
+        )
+
+        model_name = getattr(evaluation, "model_name", None)
+        if model_name:
+            metadata.setdefault("model_name", str(model_name))
+
+        thresholds_snapshot = getattr(evaluation, "thresholds_snapshot", None)
+        normalized_thresholds = self._normalize_thresholds(thresholds_snapshot)
+        if normalized_thresholds:
+            try:
+                metadata.setdefault(
+                    "decision_thresholds",
+                    json.dumps(normalized_thresholds, sort_keys=True, ensure_ascii=False),
+                )
+            except (TypeError, ValueError):  # pragma: no cover - defensywne
+                pass
+
+        model_selection = getattr(evaluation, "model_selection", None)
+        selection_mapping: Mapping[str, object] | None = None
+        if model_selection is not None:
+            if hasattr(model_selection, "to_mapping"):
+                try:
+                    selection_mapping = model_selection.to_mapping()  # type: ignore[assignment]
+                except Exception:  # pragma: no cover - defensywne
+                    selection_mapping = None
+            elif isinstance(model_selection, Mapping):
+                selection_mapping = model_selection
+        if selection_mapping:
+            try:
+                metadata.setdefault(
+                    "model_selection",
+                    json.dumps(selection_mapping, sort_keys=True, ensure_ascii=False),
+                )
+            except (TypeError, ValueError):  # pragma: no cover - defensywne
+                pass
 
         portfolio = self._portfolio or metadata.get("portfolio_id") or metadata.get("portfolio")
         if portfolio is None:
