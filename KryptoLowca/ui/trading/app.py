@@ -9,6 +9,13 @@ from typing import Any, Callable, Dict, Iterable, Optional, Protocol
 
 import tkinter as tk
 
+from collections import defaultdict
+
+try:  # pragma: no cover - zależność opcjonalna
+    from bot_core.market_intel import MarketIntelAggregator
+except Exception:  # pragma: no cover - fallback gdy moduł nie istnieje
+    MarketIntelAggregator = None  # type: ignore[assignment]
+
 from bot_core.runtime.paths import (
     DesktopAppPaths,
     build_desktop_app_paths,
@@ -90,6 +97,7 @@ class TradingGUI:
             Callable[[AppState], TradingSessionController]
         ] = None,
         trade_executor: Optional[TradeExecutor] = None,
+        market_intel: Optional["MarketIntelAggregator"] = None,
     ) -> None:
         self.root = root or tk.Tk()
         self.paths = paths or build_desktop_app_paths(
@@ -97,6 +105,7 @@ class TradingGUI:
             logs_dir=GLOBAL_LOGS_DIR,
             text_log_file=DEFAULT_LOG_FILE,
         )
+        self.market_intel = market_intel or self._build_default_market_intel()
         self._core_config_path = self._resolve_core_config_path()
         self.runtime_metadata = self._load_metadata(self._core_config_path)
         (
@@ -114,6 +123,11 @@ class TradingGUI:
         self.state = self._create_state()
         controller_factory = session_controller_factory or self._default_controller_factory
         self.controller: TradingSessionController = controller_factory(self.state)
+        if getattr(self.controller, "market_intel", None) is None and self.market_intel is not None:
+            try:
+                self.controller.market_intel = self.market_intel  # type: ignore[attr-defined]
+            except Exception:  # pragma: no cover - defensywnie
+                logger.debug("Nie udało się wstrzyknąć MarketIntelAggregator do kontrolera", exc_info=True)
         self.view = TradingView(
             self.root,
             self.state,
@@ -158,7 +172,46 @@ class TradingGUI:
             ReportManager(str(self.paths.db_file)),
             RiskManager(config=self.risk_manager_config),
             self._build_ai_manager(),
+            exchange_manager=None,
+            market_intel=self.market_intel,
         )
+
+    def _build_default_market_intel(self) -> Optional["MarketIntelAggregator"]:
+        if MarketIntelAggregator is None:  # pragma: no cover - zależność opcjonalna
+            return None
+
+        class _InMemoryCacheStorage:
+            def __init__(self) -> None:
+                self._data: Dict[str, Dict[str, Iterable[Iterable[float]]]] = defaultdict(dict)
+
+            def read(self, key: str) -> Dict[str, Iterable[Iterable[float]]]:
+                return self._data.get(
+                    key,
+                    {
+                        "columns": ("open_time", "close", "volume"),
+                        "rows": (
+                            (0.0, 26_500.0, 120.0),
+                            (60.0, 26_750.0, 118.0),
+                            (120.0, 26_900.0, 130.0),
+                        ),
+                    },
+                )
+
+            def write(self, key: str, payload: Dict[str, Iterable[Iterable[float]]]) -> None:
+                self._data[key] = payload
+
+            def metadata(self) -> Dict[str, str]:
+                return {}
+
+            def latest_timestamp(self, key: str) -> float | None:  # noqa: ARG002
+                return 120.0
+
+        try:
+            storage = _InMemoryCacheStorage()
+            return MarketIntelAggregator(storage)  # type: ignore[call-arg]
+        except Exception:  # pragma: no cover - defensywnie
+            logger.debug("Nie udało się utworzyć domyślnego MarketIntelAggregator", exc_info=True)
+            return None
 
     # ------------------------------------------------------------------
     def _load_metadata(
@@ -201,6 +254,9 @@ class TradingGUI:
             paper_balance=tk.StringVar(value="10 000.00"),
             account_balance=tk.StringVar(value="—"),
             status=tk.StringVar(value="Oczekiwanie na start"),
+            market_intel_label=tk.StringVar(value="Market intel: —"),
+            market_intel_summary="Market intel: —",
+            market_intel_auto_save=tk.BooleanVar(value=False),
         )
 
     # ------------------------------------------------------------------

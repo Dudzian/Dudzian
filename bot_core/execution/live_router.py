@@ -323,6 +323,11 @@ class LiveExecutionRouter(ExecutionService):
 
     # --- Publiczne pomocnicze API -------------------------------------------
 
+    def list_adapters(self) -> tuple[str, ...]:
+        """Zwraca nazwy zarejestrowanych adapterów giełdowych."""
+
+        return tuple(self._adapters.keys())
+
     def set_bindings_capacity(self, capacity: int) -> None:
         self._bindings_capacity = max(100, int(capacity))
 

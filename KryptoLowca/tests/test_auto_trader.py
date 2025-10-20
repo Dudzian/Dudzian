@@ -136,6 +136,93 @@ class DummyGUI:
             self._open_positions.pop(symbol_key, None)
 
 
+class _CacheSnapshotStub:
+    def __init__(self, **payload: Any) -> None:
+        self._payload = dict(payload)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return dict(self._payload)
+
+
+class CacheAggregatorStub:
+    _mode = "cache"
+
+    def __init__(self, snapshot: _CacheSnapshotStub) -> None:
+        self.snapshot = snapshot
+        self.calls = 0
+        self.last_query: Any | None = None
+
+    def build_snapshot(self, query: Any) -> _CacheSnapshotStub:
+        self.calls += 1
+        self.last_query = query
+        return self.snapshot
+
+
+class SqliteBaselineStub:
+    def __init__(self, **payload: Any) -> None:
+        self._payload = dict(payload)
+        for key, value in self._payload.items():
+            setattr(self, key, value)
+
+    def to_mapping(self) -> Dict[str, Any]:
+        return dict(self._payload)
+
+
+class SqliteAggregatorStub:
+    _mode = "sqlite"
+
+    def __init__(self, *baselines: SqliteBaselineStub) -> None:
+        self._baselines = baselines or (SqliteBaselineStub(symbol="BTCUSDT"),)
+        self.calls = 0
+
+    def build(self) -> Tuple[SqliteBaselineStub, ...]:
+        self.calls += 1
+        return tuple(self._baselines)
+
+
+@pytest.mark.asyncio
+async def test_exchange_data_provider_handles_sync_manager() -> None:
+    class SyncManager:
+        def __init__(self) -> None:
+            self.calls: Dict[str, int] = {}
+
+        def fetch_ohlcv(self, symbol: str, timeframe: str, *, limit: int = 500):
+            self.calls.setdefault(symbol, 0)
+            self.calls[symbol] += 1
+            return [[0, 100.0, 101.0, 99.0, 100.5, 10.0]]
+
+        def fetch_ticker(self, symbol: str):
+            return {"symbol": symbol, "last": 100.5}
+
+    provider = ExchangeDataProvider(SyncManager())
+    payload = await provider.get_ohlcv("BTC/USDT", "1m", limit=1)
+    assert payload["candles"][0][4] == 100.5
+
+    ticker = await provider.get_ticker("BTC/USDT")
+    assert ticker["last"] == 100.5
+
+
+@pytest.mark.asyncio
+async def test_exchange_data_provider_falls_back_to_exchange_attr() -> None:
+    class AsyncExchange:
+        async def fetch_ticker(self, symbol: str):
+            return {"symbol": symbol, "bid": 99.9}
+
+    class AsyncManager:
+        def __init__(self) -> None:
+            self.exchange = AsyncExchange()
+
+        async def fetch_ohlcv(self, symbol: str, timeframe: str, *, limit: int = 500):
+            return [[0, 200.0, 201.0, 199.0, 200.5, 20.0]]
+
+    provider = ExchangeDataProvider(AsyncManager())
+    candles = await provider.get_ohlcv("ETH/USDT", "5m", limit=1)
+    assert candles["symbol"] == "ETH/USDT"
+
+    ticker = await provider.get_ticker("ETH/USDT")
+    assert ticker["bid"] == pytest.approx(99.9)
+
+
 @dataclass
 class StrategyHarness:
     registry: StrategyRegistry
@@ -864,3 +951,68 @@ async def test_resolve_prediction_result_handles_running_event_loop(
 
     assert isinstance(result, pd.Series)
     assert result.iloc[-1] == pytest.approx(1.25)
+
+
+@pytest.mark.asyncio
+async def test_build_market_payload_includes_cache_market_intel(
+    strategy_harness: StrategyHarness,
+) -> None:
+    provider = StubDataProvider(price=111.0)
+    snapshot = _CacheSnapshotStub(liquidity_usd=125_000.0, volatility_pct=2.5)
+    aggregator = CacheAggregatorStub(snapshot)
+    adapter = RecordingExecutionAdapter()
+    trader = AutoTrader(
+        DummyEmitter(),
+        DummyGUI(),
+        symbol_getter=lambda: "BTC/USDT",
+        auto_trade_interval_s=0.05,
+        walkforward_interval_s=None,
+        signal_service=strategy_harness.signal_service,
+        risk_service=AcceptAllRiskService(size=50.0),
+        execution_service=ExecutionService(adapter),
+        data_provider=provider,
+        market_intel=aggregator,
+    )
+
+    payload = await trader._build_market_payload("BTC/USDT", "1h")
+
+    assert "market_intel" in payload
+    assert payload["market_intel"]["liquidity_usd"] == pytest.approx(125_000.0)
+    assert aggregator.calls == 1
+    last_query = aggregator.last_query
+    if last_query is not None:
+        assert getattr(last_query, "symbol", "") == "BTC_USDT"
+        assert getattr(last_query, "interval", "") == "1h"
+
+
+@pytest.mark.asyncio
+async def test_build_market_payload_enriches_price_from_sqlite_market_intel(
+    strategy_harness: StrategyHarness,
+) -> None:
+    provider = StubDataProvider(price=0.0)
+    baseline = SqliteBaselineStub(
+        symbol="BTCUSDT",
+        mid_price=202.5,
+        avg_depth_usd=310_000.0,
+        avg_spread_bps=4.2,
+    )
+    aggregator = SqliteAggregatorStub(baseline)
+    adapter = RecordingExecutionAdapter()
+    trader = AutoTrader(
+        DummyEmitter(),
+        DummyGUI(),
+        symbol_getter=lambda: "BTC/USDT",
+        auto_trade_interval_s=0.05,
+        walkforward_interval_s=None,
+        signal_service=strategy_harness.signal_service,
+        risk_service=AcceptAllRiskService(size=50.0),
+        execution_service=ExecutionService(adapter),
+        data_provider=provider,
+        market_intel=aggregator,
+    )
+
+    payload = await trader._build_market_payload("BTC/USDT", "1m")
+
+    assert payload["market_intel"]["avg_depth_usd"] == pytest.approx(310_000.0)
+    assert payload["price"] == pytest.approx(202.5)
+    assert aggregator.calls == 1

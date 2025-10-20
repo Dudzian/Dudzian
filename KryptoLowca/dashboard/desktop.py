@@ -7,7 +7,13 @@ import threading
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
+
+try:  # pragma: no cover - zależność opcjonalna w środowisku CI
+    from bot_core.market_intel import MarketIntelAggregator, MarketIntelQuery  # type: ignore[attr-defined]
+except Exception:  # pragma: no cover - fallback gdy moduł nie występuje
+    MarketIntelAggregator = None  # type: ignore[assignment]
+    MarketIntelQuery = None  # type: ignore[assignment]
 
 try:  # pragma: no cover - środowisko testowe może nie udostępniać Tk
     import tkinter as tk
@@ -54,11 +60,13 @@ class DashboardApp:
         master: Optional[tk.Misc] = None,
         headless: bool = False,
         log_path: Optional[Path] = None,
+        market_intel: Optional["MarketIntelAggregator"] = None,
     ) -> None:
         self.config_manager = config_manager
         self.ai_manager = ai_manager
         self.exchange_manager = exchange_manager
         self.risk_manager = risk_manager
+        self.market_intel = market_intel
         self.headless = headless or not _can_use_tk()
         self.log_path = log_path
         self.state = DashboardState()
@@ -188,6 +196,7 @@ class DashboardController:
         refresh_interval: float = 5.0,
         headless: bool = False,
         log_path: Optional[Path] = None,
+        market_intel: Optional["MarketIntelAggregator"] = None,
     ) -> None:
         self.refresh_interval = max(1.0, float(refresh_interval))
         self.app = DashboardApp(
@@ -197,11 +206,13 @@ class DashboardController:
             risk_manager=risk_manager,
             headless=headless,
             log_path=log_path,
+            market_intel=market_intel,
         )
         self.config_manager = config_manager
         self.ai_manager = ai_manager
         self.exchange_manager = exchange_manager
         self.risk_manager = risk_manager
+        self.market_intel = market_intel
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
 
@@ -239,7 +250,58 @@ class DashboardController:
         except Exception:
             pass
 
+        intel_metrics = self._collect_market_intel_metrics()
+        if intel_metrics:
+            metrics["market_intel"] = intel_metrics
+
         return metrics
+
+    def _collect_market_intel_metrics(self) -> Dict[str, Any]:
+        aggregator = getattr(self, "market_intel", None)
+        if aggregator is None:
+            return {}
+
+        summary: Dict[str, Any] = {}
+        mode = getattr(aggregator, "_mode", None)
+        if mode is not None:
+            summary["mode"] = mode
+
+        try:
+            if mode == "sqlite" and hasattr(aggregator, "build"):
+                baselines = aggregator.build()  # type: ignore[attr-defined]
+                summary["count"] = len(baselines)
+                top = max(
+                    baselines,
+                    key=lambda baseline: getattr(baseline, "avg_depth_usd", 0.0),
+                    default=None,
+                )
+                if top is not None:
+                    summary["deepest_symbol"] = getattr(top, "symbol", "?")
+                    summary["deepest_depth"] = getattr(top, "avg_depth_usd", 0.0)
+            elif mode == "cache" and hasattr(aggregator, "build_many") and MarketIntelQuery is not None:
+                summary.setdefault("count", 0)
+                summary.setdefault("symbols", [])
+                queries: Iterable[MarketIntelQuery] = (
+                    MarketIntelQuery(symbol="BTC_USDT", interval="1h", lookback_bars=96),
+                    MarketIntelQuery(symbol="ETH_USDT", interval="1h", lookback_bars=96),
+                )
+                snapshots = aggregator.build_many(queries)  # type: ignore[attr-defined]
+                summary["count"] = len(snapshots)
+                for symbol, snapshot in snapshots.items():
+                    liquidity = getattr(snapshot, "liquidity_usd", None)
+                    volatility = getattr(snapshot, "volatility_pct", None)
+                    summary.setdefault("symbols", []).append(
+                        {
+                            "symbol": symbol,
+                            "liquidity_usd": liquidity,
+                            "volatility_pct": volatility,
+                        }
+                    )
+        except Exception as exc:  # pragma: no cover - zależne od konfiguracji
+            logger.debug("MarketIntelAggregator metrics collection failed: %s", exc)
+            summary.setdefault("error", str(exc))
+
+        return {k: v for k, v in summary.items() if v is not None}
 
     # ----------------------------------------------------------- Refresh loop
     def _refresh_once(self) -> None:
