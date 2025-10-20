@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+import os
+from collections.abc import Iterable
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from pydantic import BaseModel, Field
 
@@ -21,6 +23,25 @@ from bot_core.exchanges.core import (
     PositionDTO,
     PaperBackend,
 )
+from bot_core.exchanges.base import (
+    AccountSnapshot,
+    Environment,
+    ExchangeCredentials,
+    OrderRequest,
+    OrderResult,
+)
+from bot_core.exchanges.binance.futures import BinanceFuturesAdapter
+from bot_core.exchanges.binance.margin import BinanceMarginAdapter
+from bot_core.exchanges.kraken.futures import KrakenFuturesAdapter
+from bot_core.exchanges.kraken.margin import KrakenMarginAdapter
+from bot_core.exchanges.health import (
+    CircuitBreaker,
+    HealthCheck,
+    HealthMonitor,
+    RetryPolicy,
+    Watchdog,
+)
+from bot_core.exchanges.zonda.margin import ZondaMarginAdapter
 
 try:  # pragma: no cover
     import ccxt  # type: ignore
@@ -29,6 +50,57 @@ except Exception:  # pragma: no cover
 
 
 log = logging.getLogger(__name__)
+
+
+_NATIVE_MARGIN_ADAPTERS = {
+    "binance": BinanceMarginAdapter,
+    "kraken": KrakenMarginAdapter,
+    "zonda": ZondaMarginAdapter,
+}
+
+_NATIVE_FUTURES_ADAPTERS = {
+    "binance": BinanceFuturesAdapter,
+    "kraken": KrakenFuturesAdapter,
+}
+
+_STATUS_MAPPING = {
+    "NEW": OrderStatus.OPEN,
+    "OPEN": OrderStatus.OPEN,
+    "PENDING_NEW": OrderStatus.OPEN,
+    "PENDING": OrderStatus.OPEN,
+    "PARTIALLY_FILLED": OrderStatus.PARTIALLY_FILLED,
+    "PARTIALLY": OrderStatus.PARTIALLY_FILLED,
+    "FILLED": OrderStatus.FILLED,
+    "CANCELED": OrderStatus.CANCELED,
+    "CANCELLED": OrderStatus.CANCELED,
+    "PENDING_CANCEL": OrderStatus.CANCELED,
+    "EXPIRED": OrderStatus.CANCELED,
+    "REJECTED": OrderStatus.REJECTED,
+}
+
+
+def _map_order_status(raw: object) -> OrderStatus:
+    if isinstance(raw, OrderStatus):
+        return raw
+    value = str(raw or "").upper()
+    return _STATUS_MAPPING.get(value, OrderStatus.OPEN)
+
+
+def _map_order_side(raw: object) -> OrderSide:
+    if isinstance(raw, OrderSide):
+        return raw
+    return OrderSide.BUY if str(raw or "").upper() == "BUY" else OrderSide.SELL
+
+
+def _map_order_type(raw: object) -> OrderType:
+    if isinstance(raw, OrderType):
+        return raw
+    value = str(raw or "").upper()
+    if value == "LIMIT":
+        return OrderType.LIMIT
+    if value == "MARKET":
+        return OrderType.MARKET
+    return OrderType.MARKET if "MARKET" in value else OrderType.LIMIT
 
 
 class _CCXTPublicFeed(BaseBackend):
@@ -326,6 +398,14 @@ class ExchangeManager:
         self._db_url = db_url or "sqlite+aiosqlite:///trading.db"
         self._db: Optional[DatabaseManager] = None
         self._db_failed: bool = False
+        self._native_adapter = None
+        self._native_adapter_settings: Dict[tuple[Mode, str], Dict[str, object]] = {}
+        self._watchdog: Watchdog | None = None
+        default_margin_type = os.getenv("BINANCE_MARGIN_TYPE")
+        if self.exchange_id == "binance" and default_margin_type:
+            self._native_adapter_settings[(Mode.MARGIN, self.exchange_id)] = {
+                "margin_type": default_margin_type,
+            }
 
         log.info("ExchangeManager initialized (bot_core)")
 
@@ -334,9 +414,14 @@ class ExchangeManager:
         *,
         paper: bool = False,
         spot: bool = False,
+        margin: bool = False,
         futures: bool = False,
         testnet: bool = False,
     ) -> None:
+        selected = [paper, spot, margin, futures]
+        if sum(1 for flag in selected if flag) > 1:
+            raise ValueError("Można wybrać tylko jeden tryb: paper, spot, margin lub futures.")
+
         if paper:
             self.mode = Mode.PAPER
             self._futures = False
@@ -344,6 +429,10 @@ class ExchangeManager:
         elif futures:
             self.mode = Mode.FUTURES
             self._futures = True
+            self._testnet = bool(testnet)
+        elif margin:
+            self.mode = Mode.MARGIN
+            self._futures = False
             self._testnet = bool(testnet)
         else:
             self.mode = Mode.SPOT
@@ -353,6 +442,7 @@ class ExchangeManager:
         log.info("Mode set to %s (futures=%s, testnet=%s)", self.mode.value, self._futures, self._testnet)
         self._private = None
         self._paper = None
+        self._native_adapter = None
 
     def set_credentials(self, api_key: Optional[str], secret: Optional[str]) -> None:
         self._api_key = (api_key or "").strip() or None
@@ -362,11 +452,145 @@ class ExchangeManager:
             len(self._api_key or 0),
             len(self._secret or 0),
         )
+        self._native_adapter = None
+
+    def configure_native_adapter(
+        self,
+        *,
+        settings: Mapping[str, object],
+        mode: Mode | None = None,
+    ) -> None:
+        if not isinstance(settings, Mapping):
+            raise TypeError("Konfiguracja adaptera musi być mapowaniem.")
+        target_mode = mode or self.mode
+        if target_mode not in {Mode.MARGIN, Mode.FUTURES}:
+            raise ValueError("Konfiguracja natywnego adaptera jest dostępna tylko dla trybów margin/futures.")
+        self._native_adapter_settings[(target_mode, self.exchange_id)] = dict(settings)
+        self._native_adapter = None
+
+    def set_watchdog(self, watchdog: Watchdog | None) -> None:
+        """Ustawia współdzielony watchdog dla natywnych adapterów margin/futures."""
+
+        if watchdog is not None and not isinstance(watchdog, Watchdog):
+            raise TypeError("Watchdog musi być instancją klasy bot_core.exchanges.health.Watchdog")
+        self._watchdog = watchdog
+        self._native_adapter = None
+
+    def configure_watchdog(
+        self,
+        *,
+        retry_policy: Mapping[str, object] | None = None,
+        circuit_breaker: Mapping[str, object] | None = None,
+        retry_exceptions: Sequence[type[Exception]] | None = None,
+    ) -> None:
+        """Buduje i ustawia watchdog na podstawie przekazanych parametrów."""
+
+        kwargs: Dict[str, object] = {}
+        if retry_policy is not None:
+            if not isinstance(retry_policy, Mapping):
+                raise TypeError("retry_policy musi być mapowaniem z parametrami RetryPolicy")
+            kwargs["retry_policy"] = RetryPolicy(**dict(retry_policy))
+        if circuit_breaker is not None:
+            if not isinstance(circuit_breaker, Mapping):
+                raise TypeError("circuit_breaker musi być mapowaniem z parametrami CircuitBreaker")
+            kwargs["circuit_breaker"] = CircuitBreaker(**dict(circuit_breaker))
+        if retry_exceptions is not None:
+            if not isinstance(retry_exceptions, Sequence):
+                raise TypeError("retry_exceptions musi być sekwencją klas wyjątków")
+            normalized: list[type[Exception]] = []
+            for exc in retry_exceptions:
+                if not isinstance(exc, type) or not issubclass(exc, Exception):
+                    raise TypeError("retry_exceptions musi zawierać klasy wyjątków")
+                normalized.append(exc)
+            kwargs["retry_exceptions"] = tuple(normalized)
+        self._watchdog = Watchdog(**kwargs)
+        self._native_adapter = None
+
+    def create_health_monitor(self, checks: Iterable[HealthCheck]) -> HealthMonitor:
+        """Buduje `HealthMonitor` współdzielący strażnika z adapterami."""
+
+        if not isinstance(checks, Iterable):
+            raise TypeError("checks musi być iterowalną sekwencją HealthCheck")
+
+        normalized: list[HealthCheck] = []
+        for check in checks:
+            if not isinstance(check, HealthCheck):
+                raise TypeError("checks musi zawierać instancje HealthCheck")
+            normalized.append(check)
+
+        return HealthMonitor(normalized, watchdog=self._ensure_watchdog())
 
     def _ensure_public(self) -> _CCXTPublicFeed:
         if self._public is None:
             self._public = _CCXTPublicFeed(exchange_id=self.exchange_id, testnet=self._testnet)
         return self._public
+
+    def _resolve_environment(self) -> Environment:
+        if self.mode is Mode.PAPER:
+            return Environment.PAPER
+
+        candidates = []
+        if self.exchange_id.startswith("binance"):
+            candidates.append(os.getenv("BINANCE_ENVIRONMENT"))
+        if self.exchange_id.startswith("kraken"):
+            candidates.append(os.getenv("KRAKEN_ENVIRONMENT"))
+        if self.exchange_id.startswith("zonda"):
+            candidates.append(os.getenv("ZONDA_ENVIRONMENT"))
+        candidates.append(os.getenv("EXCHANGE_ENVIRONMENT"))
+
+        for candidate in candidates:
+            if not candidate:
+                continue
+            try:
+                environment = Environment(candidate.strip().lower())
+            except (ValueError, AttributeError):
+                continue
+            if environment is Environment.PAPER:
+                return Environment.PAPER
+            return environment
+
+        return Environment.TESTNET if self._testnet else Environment.LIVE
+
+    def _get_adapter_settings(self) -> Dict[str, object]:
+        return dict(self._native_adapter_settings.get((self.mode, self.exchange_id), {}))
+
+    def _ensure_watchdog(self) -> Watchdog:
+        if self._watchdog is None:
+            self._watchdog = Watchdog()
+        return self._watchdog
+
+    def _ensure_native_adapter(self):
+        if self.mode not in {Mode.MARGIN, Mode.FUTURES}:
+            raise RuntimeError("Natywny adapter dostępny jest wyłącznie w trybach margin/futures.")
+        if not self._api_key or not self._secret:
+            raise RuntimeError("Brak API Key/Secret – ustaw je przed użyciem trybu live/testnet.")
+
+        if self.mode == Mode.MARGIN:
+            factory = _NATIVE_MARGIN_ADAPTERS.get(self.exchange_id)
+        else:
+            factory = _NATIVE_FUTURES_ADAPTERS.get(self.exchange_id)
+
+        if factory is None:
+            raise RuntimeError(
+                f"Brak natywnego adaptera dla giełdy {self.exchange_id} w trybie {self.mode.value}."
+            )
+
+        if self._native_adapter is None:
+            environment = self._resolve_environment()
+            credentials = ExchangeCredentials(
+                key_id=self._api_key,
+                secret=self._secret,
+                environment=environment,
+                permissions=("read", "trade"),
+            )
+            settings = self._get_adapter_settings()
+            kwargs: Dict[str, object] = {"environment": environment}
+            if settings:
+                kwargs["settings"] = settings
+            kwargs["watchdog"] = self._ensure_watchdog()
+            self._native_adapter = factory(credentials, **kwargs)
+
+        return self._native_adapter
 
     def _ensure_private(self) -> _CCXTPrivateBackend:
         if not self._api_key or not self._secret:
@@ -561,6 +785,17 @@ class ExchangeManager:
     def fetch_balance(self) -> Dict[str, Any]:
         if self.mode == Mode.PAPER:
             return self._ensure_paper().fetch_balance()
+
+        if self.mode in {Mode.MARGIN, Mode.FUTURES}:
+            adapter = self._ensure_native_adapter()
+            snapshot = adapter.fetch_account_snapshot()
+            return {
+                "balances": dict(snapshot.balances),
+                "total_equity": snapshot.total_equity,
+                "available_margin": snapshot.available_margin,
+                "maintenance_margin": snapshot.maintenance_margin,
+            }
+
         backend = self._ensure_private()
         raw = backend.fetch_balance()
         return self._normalize_balance(raw)
@@ -598,17 +833,148 @@ class ExchangeManager:
 
         if self.mode == Mode.PAPER:
             return self._ensure_paper().create_order(symbol, side_enum, type_enum, quantity, price, client_order_id)
+
+        if self.mode in {Mode.MARGIN, Mode.FUTURES}:
+            rules = self.get_market_rules(symbol)
+            if not rules:
+                self.load_markets()
+                rules = self.get_market_rules(symbol)
+            if not rules:
+                raise RuntimeError(f"Brak reguł rynku dla {symbol}. Najpierw załaduj rynek.")
+
+            qty = rules.quantize_amount(float(quantity))
+            if qty <= 0:
+                raise ValueError("Ilość po kwantyzacji = 0.")
+
+            price_value: Optional[float] = None
+            if type_enum is OrderType.LIMIT:
+                if price is None:
+                    raise ValueError("Cena wymagana dla LIMIT.")
+                price_value = rules.quantize_price(float(price))
+
+            if type_enum is OrderType.MARKET:
+                ticker = self.fetch_ticker(symbol) or {}
+                last = ticker.get("last") or ticker.get("close") or ticker.get("bid") or ticker.get("ask")
+                if not last:
+                    raise RuntimeError(f"Brak ceny MARKET dla {symbol}.")
+                notional = qty * float(last)
+            else:
+                notional = qty * float(price_value or 0.0)
+
+            min_notional = rules.min_notional or 0.0
+            if min_notional and notional < min_notional:
+                raise ValueError(
+                    f"Notional {notional:.8f} < minNotional {min_notional:.8f} dla {symbol}"
+                )
+
+            adapter = self._ensure_native_adapter()
+            request = OrderRequest(
+                symbol=symbol,
+                side=side_enum.value,
+                quantity=qty,
+                order_type=type_enum.value,
+                price=price_value,
+                client_order_id=client_order_id,
+            )
+            result = adapter.place_order(request)
+            raw_payload = result.raw_response if isinstance(result.raw_response, Mapping) else {}
+            resolved_client_id = client_order_id
+            if not resolved_client_id and isinstance(raw_payload, Mapping):
+                candidate = (
+                    raw_payload.get("clientOrderId")
+                    or raw_payload.get("client_order_id")
+                    or raw_payload.get("userref")
+                )
+                if isinstance(candidate, str) and candidate:
+                    resolved_client_id = candidate
+            order_identifier = result.order_id
+            try:
+                parsed_id = int(order_identifier) if order_identifier is not None else None
+            except (TypeError, ValueError):
+                parsed_id = None
+
+            return OrderDTO(
+                id=parsed_id,
+                client_order_id=resolved_client_id,
+                symbol=symbol,
+                side=side_enum,
+                type=type_enum,
+                quantity=qty,
+                price=price_value,
+                status=_map_order_status(result.status),
+                mode=self.mode,
+                extra={
+                    "order_id": order_identifier,
+                    "filled_quantity": result.filled_quantity,
+                    "avg_price": result.avg_price,
+                    "raw_response": raw_payload,
+                },
+            )
+
         backend = self._ensure_private()
         return backend.create_order(symbol, side_enum, type_enum, quantity, price, client_order_id)
 
     def cancel_order(self, order_id: Any, symbol: str) -> bool:
         if self.mode == Mode.PAPER:
-            return self._ensure_paper().cancel_order(order_id, symbol)
+            return False
+        if self.mode in {Mode.MARGIN, Mode.FUTURES}:
+            try:
+                adapter = self._ensure_native_adapter()
+                adapter.cancel_order(str(order_id), symbol=symbol)
+                return True
+            except Exception as exc:
+                log.error("cancel_order failed (native): %s", exc)
+                return False
         return self._ensure_private().cancel_order(order_id, symbol)
 
     def fetch_open_orders(self, symbol: Optional[str] = None) -> List[OrderDTO]:
         if self.mode == Mode.PAPER:
-            return self._ensure_paper().fetch_open_orders(symbol)
+            return []
+        if self.mode in {Mode.MARGIN, Mode.FUTURES}:
+            try:
+                adapter = self._ensure_native_adapter()
+                native_orders = adapter.fetch_open_orders()
+            except Exception as exc:
+                log.error("fetch_open_orders failed (native): %s", exc)
+                return []
+
+            result: List[OrderDTO] = []
+            for entry in native_orders or []:
+                raw_symbol = getattr(entry, "symbol", symbol or "")
+                order_symbol = raw_symbol if isinstance(raw_symbol, str) else symbol or ""
+                price_value = getattr(entry, "price", None)
+                if price_value in (None, ""):
+                    resolved_price = None
+                else:
+                    try:
+                        resolved_price = float(price_value)
+                    except Exception:
+                        resolved_price = None
+                quantity_value = getattr(entry, "orig_quantity", getattr(entry, "quantity", 0.0))
+                try:
+                    resolved_quantity = float(quantity_value)
+                except Exception:
+                    resolved_quantity = 0.0
+                order_identifier = getattr(entry, "order_id", None)
+                try:
+                    parsed_id = int(order_identifier) if order_identifier is not None else None
+                except (TypeError, ValueError):
+                    parsed_id = None
+                result.append(
+                    OrderDTO(
+                        id=parsed_id,
+                        client_order_id=getattr(entry, "client_order_id", None),
+                        symbol=order_symbol,
+                        side=_map_order_side(getattr(entry, "side", "BUY")),
+                        type=_map_order_type(getattr(entry, "order_type", "LIMIT")),
+                        quantity=resolved_quantity,
+                        price=resolved_price,
+                        status=_map_order_status(getattr(entry, "status", "OPEN")),
+                        mode=self.mode,
+                        extra={"order_id": order_identifier},
+                    )
+                )
+            return result
         return self._ensure_private().fetch_open_orders(symbol)
 
     def fetch_positions(self, symbol: Optional[str] = None) -> List[PositionDTO]:
@@ -660,6 +1026,45 @@ class ExchangeManager:
                 return []
             normalized = self._normalize_balance(balance)
             return self._positions_from_balance(normalized, symbol)
+
+        if self.mode == Mode.FUTURES:
+            try:
+                adapter = self._ensure_native_adapter()
+                native_positions = adapter.fetch_positions()
+            except RuntimeError as exc:
+                log.warning("Fallback to CCXT futures backend: %s", exc)
+            except Exception as exc:
+                log.error("fetch_positions failed (native): %s", exc)
+                return []
+            else:
+                result: List[PositionDTO] = []
+                for entry in native_positions or []:
+                    try:
+                        quantity = float(getattr(entry, "quantity", 0.0) or 0.0)
+                    except Exception:
+                        quantity = 0.0
+                    if abs(quantity) < 1e-12:
+                        continue
+                    avg_price = getattr(entry, "entry_price", getattr(entry, "avg_price", 0.0))
+                    try:
+                        resolved_avg = float(avg_price)
+                    except Exception:
+                        resolved_avg = 0.0
+                    try:
+                        pnl = float(getattr(entry, "unrealized_pnl", 0.0) or 0.0)
+                    except Exception:
+                        pnl = 0.0
+                    result.append(
+                        PositionDTO(
+                            symbol=str(getattr(entry, "symbol", "")),
+                            side=str(getattr(entry, "side", "LONG")),
+                            quantity=abs(quantity),
+                            avg_price=resolved_avg,
+                            unrealized_pnl=pnl,
+                            mode=Mode.FUTURES,
+                        )
+                    )
+                return result
 
         return self._ensure_private().fetch_positions(symbol)
 

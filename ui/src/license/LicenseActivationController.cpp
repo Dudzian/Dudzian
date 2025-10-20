@@ -7,8 +7,12 @@
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QLoggingCategory>
 #include <QSaveFile>
+#include <QTimer>
 #include <QtGlobal>
+
+Q_LOGGING_CATEGORY(lcActivation, "bot.shell.license")
 
 namespace {
 QString normalizeFingerprint(const QString& value)
@@ -84,6 +88,16 @@ QByteArray tryDecodeBase64(const QString& text)
 LicenseActivationController::LicenseActivationController(QObject* parent)
     : QObject(parent)
 {
+    m_provisioningScanTimer.setSingleShot(true);
+    m_provisioningScanTimer.setInterval(150);
+    connect(&m_provisioningScanTimer, &QTimer::timeout, this, [this]() {
+        attemptAutomaticProvisioning(m_pendingProvisioningError);
+        m_pendingProvisioningError = false;
+    });
+    connect(&m_provisioningWatcher, &QFileSystemWatcher::directoryChanged, this,
+            &LicenseActivationController::handleProvisioningDirectoryEvent);
+    connect(&m_provisioningWatcher, &QFileSystemWatcher::fileChanged, this,
+            &LicenseActivationController::handleProvisioningDirectoryEvent);
 }
 
 void LicenseActivationController::setConfigDirectory(const QString& path)
@@ -105,6 +119,17 @@ void LicenseActivationController::setFingerprintDocumentPath(const QString& path
     m_fingerprintDocumentPath = expandPath(path);
     if (m_initialized)
         refreshExpectedFingerprint();
+}
+
+void LicenseActivationController::setProvisioningDirectory(const QString& path)
+{
+    const QString expanded = expandPath(path);
+    if (m_provisioningDirectory == expanded)
+        return;
+    m_provisioningDirectory = expanded;
+    Q_EMIT provisioningDirectoryChanged();
+    if (m_initialized)
+        setupProvisioningWatcher();
 }
 
 void LicenseActivationController::initialize()
@@ -132,10 +157,26 @@ void LicenseActivationController::initialize()
             m_fingerprintDocumentPath = expandPath(QStringLiteral("config/fingerprint.expected.json"));
     }
 
+    if (m_provisioningDirectory.isEmpty()) {
+        const QByteArray env = qgetenv("BOT_CORE_UI_LICENSE_INBOX");
+        if (!env.isEmpty())
+            m_provisioningDirectory = expandPath(QString::fromUtf8(env));
+    }
+    if (m_provisioningDirectory.isEmpty()) {
+        if (!m_configDirectory.isEmpty())
+            m_provisioningDirectory = QDir(m_configDirectory).filePath(QStringLiteral("licenses/inbox"));
+        else
+            m_provisioningDirectory = expandPath(QStringLiteral("var/licenses/inbox"));
+    }
+
     refreshExpectedFingerprint();
     loadPersistedLicense();
 
     m_initialized = true;
+    Q_EMIT provisioningDirectoryChanged();
+
+    setupProvisioningWatcher();
+    attemptAutomaticProvisioning(false);
 }
 
 bool LicenseActivationController::ensureInitialized()
@@ -200,6 +241,15 @@ QString LicenseActivationController::resolveFingerprintDocumentPath() const
     if (!m_configDirectory.isEmpty())
         return QDir(m_configDirectory).filePath(QStringLiteral("fingerprint.expected.json"));
     return expandPath(QStringLiteral("config/fingerprint.expected.json"));
+}
+
+QString LicenseActivationController::resolveProvisioningDirectory() const
+{
+    if (!m_provisioningDirectory.isEmpty())
+        return m_provisioningDirectory;
+    if (!m_configDirectory.isEmpty())
+        return QDir(m_configDirectory).filePath(QStringLiteral("licenses/inbox"));
+    return expandPath(QStringLiteral("var/licenses/inbox"));
 }
 
 bool LicenseActivationController::loadLicenseUrl(const QUrl& url)
@@ -318,6 +368,42 @@ void LicenseActivationController::loadPersistedLicense()
         return;
     }
     activateFromDocument(doc, false, path);
+}
+
+bool LicenseActivationController::autoProvision(const QVariantMap& fingerprintDocument)
+{
+    if (!ensureInitialized())
+        return false;
+
+    const QString docFingerprint = fingerprintFromVariant(fingerprintDocument);
+    if (!docFingerprint.isEmpty()) {
+        const QString normalized = normalizeFingerprint(docFingerprint);
+        if (normalized.isEmpty()) {
+            setStatusMessage(tr("Fingerprint z dokumentu provisioning jest pusty"), true);
+            return false;
+        }
+        if (!expectedFingerprintAvailable() || m_expectedFingerprint != normalized) {
+            if (!saveExpectedFingerprint(normalized))
+                return false;
+        }
+    }
+
+    if (m_licenseActive) {
+        setStatusMessage(tr("Licencja jest już aktywna"), false);
+        return true;
+    }
+
+    const QString provisioningDir = expandPath(resolveProvisioningDirectory());
+    QString expected = m_expectedFingerprint;
+    if (expected.isEmpty())
+        expected = docFingerprint;
+    expected = normalizeFingerprint(expected);
+    if (expected.isEmpty()) {
+        setStatusMessage(tr("Automatyczna aktywacja wymaga fingerprintu urządzenia"), true);
+        return false;
+    }
+
+    return runProvisioningScan(expected, true);
 }
 
 bool LicenseActivationController::activateFromDocument(const QJsonDocument& document, bool persist, const QString& sourceDescription)
@@ -573,4 +659,196 @@ bool LicenseActivationController::persistExpectedFingerprint(const QString& fing
         return false;
     }
     return true;
+}
+
+QString LicenseActivationController::fingerprintFromVariant(const QVariantMap& fingerprintDocument)
+{
+    if (fingerprintDocument.isEmpty())
+        return {};
+    const QVariantMap payload = fingerprintDocument.value(QStringLiteral("payload")).toMap();
+    QString fingerprint = payload.value(QStringLiteral("fingerprint")).toString();
+    if (fingerprint.isEmpty())
+        fingerprint = fingerprintDocument.value(QStringLiteral("fingerprint")).toString();
+    return normalizeFingerprint(fingerprint);
+}
+
+void LicenseActivationController::setupProvisioningWatcher()
+{
+    const QStringList watchedDirs = m_provisioningWatcher.directories();
+    for (const QString& dir : watchedDirs)
+        m_provisioningWatcher.removePath(dir);
+    const QStringList watchedFiles = m_provisioningWatcher.files();
+    for (const QString& file : watchedFiles)
+        m_provisioningWatcher.removePath(file);
+
+    const QString directory = expandPath(resolveProvisioningDirectory());
+    if (directory.isEmpty())
+        return;
+
+    QDir dir(directory);
+    if (!dir.exists())
+        dir.mkpath(QStringLiteral("."));
+
+    m_provisioningWatcher.addPath(directory);
+    scheduleProvisioningScan(0, false);
+}
+
+void LicenseActivationController::handleProvisioningDirectoryEvent(const QString& path)
+{
+    Q_UNUSED(path);
+    scheduleProvisioningScan(200, false);
+}
+
+void LicenseActivationController::scheduleProvisioningScan(int delayMs, bool reportNotFound)
+{
+    if (delayMs < 0)
+        delayMs = 0;
+    m_pendingProvisioningError = reportNotFound;
+    if (m_provisioningScanTimer.isActive())
+        m_provisioningScanTimer.stop();
+    m_provisioningScanTimer.start(delayMs);
+}
+
+void LicenseActivationController::attemptAutomaticProvisioning(bool reportNotFound)
+{
+    if (!m_initialized)
+        return;
+    if (m_licenseActive)
+        return;
+
+    QString expected = m_expectedFingerprint;
+    if (expected.isEmpty()) {
+        refreshExpectedFingerprint();
+        expected = m_expectedFingerprint;
+    }
+
+    if (expected.isEmpty())
+        return;
+
+    runProvisioningScan(expected, reportNotFound);
+}
+
+bool LicenseActivationController::runProvisioningScan(const QString& expectedFingerprint, bool reportNotFound)
+{
+    const QString provisioningDir = expandPath(resolveProvisioningDirectory());
+    if (provisioningDir.isEmpty())
+        return false;
+
+    const QString normalized = normalizeFingerprint(expectedFingerprint);
+    if (normalized.isEmpty())
+        return false;
+
+    QDir dir(provisioningDir);
+    if (!dir.exists())
+        dir.mkpath(QStringLiteral("."));
+
+    const bool previousState = m_provisioningInProgress;
+    if (!previousState) {
+        m_provisioningInProgress = true;
+        Q_EMIT provisioningInProgressChanged();
+    }
+
+    const bool activated = provisionFromDirectory(provisioningDir, normalized);
+
+    if (!previousState) {
+        m_provisioningInProgress = false;
+        Q_EMIT provisioningInProgressChanged();
+    }
+
+    if (activated)
+        return true;
+
+    if (reportNotFound) {
+        setStatusMessage(tr("Nie znaleziono licencji dopasowanej do fingerprintu %1 w katalogu %2")
+                             .arg(normalized, provisioningDir),
+                         true);
+    } else {
+        qCDebug(lcActivation) << "Provisioning scan completed without match" << provisioningDir;
+    }
+
+    return false;
+}
+
+bool LicenseActivationController::provisionFromDirectory(const QString& directory, const QString& expectedFingerprint)
+{
+    QDir dir(directory);
+    if (!dir.exists())
+        return false;
+
+    const QStringList filters = {QStringLiteral("*.json"), QStringLiteral("*.jsonl"),
+                                 QStringLiteral("*.lic"), QStringLiteral("*.txt"), QStringLiteral("*.payload")};
+    const QFileInfoList files = dir.entryInfoList(filters, QDir::Files | QDir::Readable);
+    for (const QFileInfo& info : files) {
+        if (tryProvisionFile(info.absoluteFilePath(), expectedFingerprint))
+            return true;
+    }
+    return false;
+}
+
+bool LicenseActivationController::tryProvisionFile(const QString& path, const QString& expectedFingerprint)
+{
+    QFile file(path);
+    if (!file.exists())
+        return false;
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
+        return false;
+    const QByteArray data = file.readAll();
+    file.close();
+
+    auto finalizeFile = [path]() {
+        const QString archived = path + QStringLiteral(".applied");
+        if (QFile::exists(archived))
+            QFile::remove(archived);
+        if (!QFile::rename(path, archived))
+            qCWarning(lcActivation) << "Nie udało się oznaczyć przetworzonej licencji" << path;
+    };
+
+    QString parseError;
+    QJsonDocument doc = parseJson(data, &parseError);
+    if (!doc.isNull() && activateIfMatching(doc, true, path, expectedFingerprint)) {
+        finalizeFile();
+        return true;
+    }
+
+    const QList<QByteArray> lines = data.split('\n');
+    int lineNumber = 0;
+    for (const QByteArray& rawLine : lines) {
+        ++lineNumber;
+        const QByteArray trimmed = rawLine.trimmed();
+        if (trimmed.isEmpty())
+            continue;
+        QString error;
+        QJsonDocument lineDoc = parseJson(trimmed, &error);
+        if (!lineDoc.isNull() && activateIfMatching(lineDoc, true,
+                                                    QStringLiteral("%1:%2").arg(path).arg(lineNumber), expectedFingerprint)) {
+            finalizeFile();
+            return true;
+        }
+    }
+
+    const QByteArray decoded = tryDecodeBase64(QString::fromUtf8(data));
+    if (!decoded.isEmpty()) {
+        QString error;
+        const QJsonDocument decodedDoc = parseJson(decoded, &error);
+        if (!decodedDoc.isNull() && activateIfMatching(decodedDoc, true, path, expectedFingerprint)) {
+            finalizeFile();
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool LicenseActivationController::activateIfMatching(const QJsonDocument& document, bool persist,
+                                                     const QString& sourceDescription,
+                                                     const QString& expectedFingerprint)
+{
+    LicenseInfo info;
+    QString error;
+    if (!parseLicenseDocument(document, info, error))
+        return false;
+    const QString normalizedExpected = normalizeFingerprint(expectedFingerprint);
+    if (!normalizedExpected.isEmpty() && normalizeFingerprint(info.fingerprint) != normalizedExpected)
+        return false;
+    return activateFromDocument(document, persist, sourceDescription);
 }

@@ -21,6 +21,7 @@ import json
 import base64
 import logging
 import threading
+import warnings
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
@@ -38,6 +39,12 @@ if not logger.handlers:
     _h.setFormatter(logging.Formatter('[%(asctime)s] %(name)s - %(levelname)s - %(message)s'))
     logger.addHandler(_h)
 logger.setLevel(logging.INFO)
+
+warnings.warn(
+    "SecurityManager jest przestarzały – użyj bot_core.security.file_storage.EncryptedFileSecretStorage",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 audit_logger = logging.getLogger(f"{__name__}.audit")
 if not audit_logger.handlers:

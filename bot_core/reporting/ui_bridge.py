@@ -110,6 +110,104 @@ def _calculate_deletion_stats(target: Path) -> tuple[int, int, int]:
     return 0, 0, 0
 
 
+def list_reports(*, root: str | Path | None = None) -> Mapping[str, object]:
+    """Zwraca uproszczoną listę raportów wraz z metadanymi dla UI."""
+
+    base = Path(root).expanduser() if root is not None else Path("var/reports")
+    base = base.resolve(strict=False)
+    entries = _gather_reports(base)
+
+    serialized: list[dict[str, object]] = []
+    for entry in entries:
+        identifier_path = _entry_identifier_path(entry)
+        absolute = (base / identifier_path).resolve(strict=False)
+        try:
+            stat = absolute.stat()
+            size = stat.st_size if absolute.is_file() else entry.total_size
+        except OSError:
+            size = entry.total_size
+        entry_type = "directory" if absolute.is_dir() or entry.exports else "file"
+        serialized.append(
+            {
+                "relative_path": identifier_path.as_posix(),
+                "path": str(absolute),
+                "type": entry_type,
+                "size_bytes": int(size),
+                "updated_at": entry.updated_at.isoformat(),
+                "created_at": (entry.created_at or entry.updated_at).isoformat(),
+            }
+        )
+
+    return {
+        "status": "ok",
+        "base_directory": str(base),
+        "reports": serialized,
+    }
+
+
+def delete_report(
+    path: str | Path,
+    *,
+    root: str | Path | None = None,
+    dry_run: bool = False,
+) -> Mapping[str, object]:
+    """Usuwa wskazany raport lub zwraca diagnostykę."""
+
+    base = Path(root).expanduser() if root is not None else Path("var/reports")
+    base = base.resolve(strict=False)
+    target = Path(path)
+    candidate = target if target.is_absolute() else (base / target)
+    candidate = candidate.resolve(strict=False)
+
+    try:
+        relative = candidate.relative_to(base)
+    except ValueError:
+        return {
+            "status": "forbidden",
+            "path": str(candidate),
+            "base_directory": str(base),
+        }
+
+    if relative == Path("."):
+        return {
+            "status": "forbidden",
+            "path": str(candidate),
+            "base_directory": str(base),
+        }
+
+    files, directories, size_bytes = _calculate_deletion_stats(candidate)
+    removed_entries = files + directories
+
+    payload: dict[str, object] = {
+        "status": "preview" if dry_run else "ok",
+        "path": str(candidate),
+        "relative_path": relative.as_posix(),
+        "base_directory": str(base),
+        "removed_files": files,
+        "removed_directories": directories,
+        "removed_entries": removed_entries,
+        "size_bytes": size_bytes,
+    }
+
+    if not candidate.exists():
+        payload.update({"status": "not_found"})
+        return payload
+
+    if dry_run:
+        return payload
+
+    try:
+        if candidate.is_dir():
+            shutil.rmtree(candidate)
+        else:
+            candidate.unlink()
+    except OSError as exc:
+        payload.update({"status": "error", "error": str(exc)})
+        return payload
+
+    return payload
+
+
 def _archive_destination_path(destination: Path, identifier_path: Path, archive_format: str) -> Path:
     if archive_format == "directory":
         return (destination / identifier_path).resolve(strict=False)
@@ -828,6 +926,7 @@ def cmd_delete(args: argparse.Namespace) -> int:
         return 1
 
     payload["status"] = "deleted"
+    payload["result"] = "deleted"
     print(json.dumps(payload, ensure_ascii=False))
     return 0
 
@@ -1347,7 +1446,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     delete_parser = subparsers.add_parser("delete", help="Usuń raport lub katalog eksportów")
     delete_parser.add_argument("path", help="Ścieżka (względna) raportu do usunięcia")
-    delete_parser.add_argument("--base-dir", dest="base_dir", default=None)
+    delete_parser.add_argument("--base-dir", "--root", dest="base_dir", default=None)
     delete_parser.add_argument(
         "--dry-run",
         action="store_true",

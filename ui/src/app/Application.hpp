@@ -4,14 +4,22 @@
 #include <QQmlApplicationEngine>
 #include <QPointer>
 #include <QCommandLineParser>
+#include <QDateTime>
 #include <QElapsedTimer>
+#include <QTimer>
+#include <QUrl>
+#include <QJsonObject>
+#include <QDir>
 
 #include <memory>
 #include <optional>
 
 #include "grpc/TradingClient.hpp"
+#include "models/AlertsModel.hpp"
+#include "models/AlertsFilterProxyModel.hpp"
 #include "models/OhlcvListModel.hpp"
 #include "models/RiskStateModel.hpp"
+#include "models/RiskHistoryModel.hpp"
 #include "utils/PerformanceGuard.hpp"
 #include "utils/FrameRateMonitor.hpp"
 #include "telemetry/TelemetryReporter.hpp"
@@ -23,6 +31,7 @@ class ActivationController;            // forward decl (app/ActivationController
 class LicenseActivationController;     // forward decl (license/LicenseActivationController.hpp)
 class SecurityAdminController;         // forward decl (security/SecurityAdminController.hpp)
 class ReportCenterController;          // forward decl (reporting/ReportCenterController.hpp)
+class BotCoreLocalService;             // forward decl (grpc/BotCoreLocalService.hpp)
 
 class Application : public QObject {
     Q_OBJECT
@@ -31,12 +40,26 @@ class Application : public QObject {
     Q_PROPERTY(bool             reduceMotionActive   READ reduceMotionActive  NOTIFY reduceMotionActiveChanged)
     Q_PROPERTY(QString          instrumentLabel      READ instrumentLabel     NOTIFY instrumentChanged)
     Q_PROPERTY(QObject*         riskModel            READ riskModel           CONSTANT)
+    Q_PROPERTY(QObject*         riskHistoryModel     READ riskHistoryModel    CONSTANT)
+    Q_PROPERTY(QObject*         alertsModel         READ alertsModel         CONSTANT)
+    Q_PROPERTY(QObject*         alertsFilterModel   READ alertsFilterModel   CONSTANT)
     Q_PROPERTY(QObject*         activationController READ activationController CONSTANT)
     Q_PROPERTY(QObject*         reportController READ reportController CONSTANT)
     Q_PROPERTY(int              telemetryPendingRetryCount READ telemetryPendingRetryCount NOTIFY telemetryPendingRetryCountChanged)
+    Q_PROPERTY(QVariantMap      riskRefreshSchedule READ riskRefreshSchedule NOTIFY riskRefreshScheduleChanged)
+    Q_PROPERTY(bool             riskHistoryExportLimitEnabled READ riskHistoryExportLimitEnabled WRITE setRiskHistoryExportLimitEnabled NOTIFY riskHistoryExportLimitEnabledChanged)
+    Q_PROPERTY(int              riskHistoryExportLimitValue READ riskHistoryExportLimitValue WRITE setRiskHistoryExportLimitValue NOTIFY riskHistoryExportLimitValueChanged)
+    Q_PROPERTY(QUrl             riskHistoryExportLastDirectory READ riskHistoryExportLastDirectory WRITE setRiskHistoryExportLastDirectory NOTIFY riskHistoryExportLastDirectoryChanged)
+    Q_PROPERTY(bool             riskHistoryAutoExportEnabled READ riskHistoryAutoExportEnabled WRITE setRiskHistoryAutoExportEnabled NOTIFY riskHistoryAutoExportEnabledChanged)
+    Q_PROPERTY(int              riskHistoryAutoExportIntervalMinutes READ riskHistoryAutoExportIntervalMinutes WRITE setRiskHistoryAutoExportIntervalMinutes NOTIFY riskHistoryAutoExportIntervalMinutesChanged)
+    Q_PROPERTY(QString          riskHistoryAutoExportBasename READ riskHistoryAutoExportBasename WRITE setRiskHistoryAutoExportBasename NOTIFY riskHistoryAutoExportBasenameChanged)
+    Q_PROPERTY(bool             riskHistoryAutoExportUseLocalTime READ riskHistoryAutoExportUseLocalTime WRITE setRiskHistoryAutoExportUseLocalTime NOTIFY riskHistoryAutoExportUseLocalTimeChanged)
+    Q_PROPERTY(QDateTime        riskHistoryLastAutoExportAt READ riskHistoryLastAutoExportAt NOTIFY riskHistoryLastAutoExportAtChanged)
+    Q_PROPERTY(QUrl             riskHistoryLastAutoExportPath READ riskHistoryLastAutoExportPath NOTIFY riskHistoryLastAutoExportPathChanged)
 
 public:
     explicit Application(QQmlApplicationEngine& engine, QObject* parent = nullptr);
+    ~Application() override;
 
     // CLI
     void configureParser(QCommandLineParser& parser) const;
@@ -55,7 +78,19 @@ public:
     QObject*         riskModel() const { return const_cast<RiskStateModel*>(&m_riskModel); }
     QObject*         activationController() const;
     QObject*         reportController() const;
+    QObject*         alertsModel() const { return const_cast<AlertsModel*>(&m_alertsModel); }
+    QObject*         alertsFilterModel() const { return const_cast<AlertsFilterProxyModel*>(&m_filteredAlertsModel); }
+    QObject*         riskHistoryModel() const { return const_cast<RiskHistoryModel*>(&m_riskHistoryModel); }
     int              telemetryPendingRetryCount() const { return m_pendingRetryCount; }
+    bool             riskHistoryExportLimitEnabled() const { return m_riskHistoryExportLimitEnabled; }
+    int              riskHistoryExportLimitValue() const { return m_riskHistoryExportLimitValue; }
+    QUrl             riskHistoryExportLastDirectory() const { return m_riskHistoryExportLastDirectory; }
+    bool             riskHistoryAutoExportEnabled() const { return m_riskHistoryAutoExportEnabled; }
+    int              riskHistoryAutoExportIntervalMinutes() const { return m_riskHistoryAutoExportIntervalMinutes; }
+    QString          riskHistoryAutoExportBasename() const { return m_riskHistoryAutoExportBasename; }
+    bool             riskHistoryAutoExportUseLocalTime() const { return m_riskHistoryAutoExportUseLocalTime; }
+    QDateTime        riskHistoryLastAutoExportAt() const { return m_lastRiskHistoryAutoExportUtc; }
+    QUrl             riskHistoryLastAutoExportPath() const { return m_lastRiskHistoryAutoExportPath; }
 
 public slots:
     void start();
@@ -66,6 +101,8 @@ public slots:
     Q_INVOKABLE void notifyWindowCount(int totalWindowCount);
     Q_INVOKABLE QVariantMap instrumentConfigSnapshot() const;
     Q_INVOKABLE QVariantMap performanceGuardSnapshot() const;
+    Q_INVOKABLE QVariantMap riskRefreshSnapshot() const;
+    QVariantMap riskRefreshSchedule() const { return riskRefreshSnapshot(); }
     Q_INVOKABLE bool updateInstrument(const QString& exchange,
                                       const QString& symbol,
                                       const QString& venueSymbol,
@@ -77,6 +114,25 @@ public slots:
                                             double jankThresholdMs,
                                             int maxOverlayCount,
                                             int disableSecondaryWhenBelow);
+    Q_INVOKABLE bool updateRiskRefresh(bool enabled, double intervalSeconds);
+    Q_INVOKABLE bool triggerRiskRefreshNow();
+    Q_INVOKABLE bool updateRiskHistoryLimit(int maximumEntries);
+    Q_INVOKABLE void clearRiskHistory();
+    Q_INVOKABLE bool exportRiskHistoryToCsv(const QUrl& destination, int limit = -1);
+    Q_INVOKABLE bool setRiskHistoryExportLimitEnabled(bool enabled);
+    Q_INVOKABLE bool setRiskHistoryExportLimitValue(int limit);
+    Q_INVOKABLE bool setRiskHistoryExportLastDirectory(const QUrl& directory);
+    Q_INVOKABLE bool setRiskHistoryAutoExportEnabled(bool enabled);
+    Q_INVOKABLE bool setRiskHistoryAutoExportIntervalMinutes(int minutes);
+    Q_INVOKABLE bool setRiskHistoryAutoExportBasename(const QString& basename);
+    Q_INVOKABLE bool setRiskHistoryAutoExportUseLocalTime(bool useLocalTime);
+
+    // Test helpers (persistent UI state)
+    void saveUiSettingsImmediatelyForTesting();
+    QString uiSettingsPathForTesting() const { return m_uiSettingsPath; }
+    bool uiSettingsPersistenceEnabledForTesting() const { return m_uiSettingsPersistenceEnabled; }
+    void setLastRiskHistoryAutoExportForTesting(const QDateTime& timestamp);
+    void setRiskHistoryAutoExportLastPathForTesting(const QUrl& url);
 
     // Test helpers
     void ingestFpsSampleForTesting(double fps);
@@ -89,12 +145,23 @@ signals:
     void instrumentChanged();
     void reduceMotionActiveChanged();
     void telemetryPendingRetryCountChanged(int pending);
+    void riskRefreshScheduleChanged();
+    void riskHistoryExportLimitEnabledChanged();
+    void riskHistoryExportLimitValueChanged();
+    void riskHistoryExportLastDirectoryChanged();
+    void riskHistoryAutoExportEnabledChanged();
+    void riskHistoryAutoExportIntervalMinutesChanged();
+    void riskHistoryAutoExportBasenameChanged();
+    void riskHistoryAutoExportUseLocalTimeChanged();
+    void riskHistoryLastAutoExportAtChanged();
+    void riskHistoryLastAutoExportPathChanged();
 
 private slots:
     void handleHistory(const QList<OhlcvPoint>& candles);
     void handleCandle(const OhlcvPoint& candle);
     void handleRiskState(const RiskSnapshotData& snapshot);
     void handleTelemetryPendingRetryCountChanged(int pending);
+    void handleRiskHistorySnapshotRecorded(const QDateTime& timestamp);
 
 private:
     // Rejestracja obiektów w kontekście QML
@@ -118,12 +185,32 @@ private:
     QScreen* resolvePreferredScreen() const;
     void updateScreenInfo(QScreen* screen);
     void updateTelemetryPendingRetryCount(int pending);
+    void configureLocalBotCoreService(const QCommandLineParser& parser, QString& endpoint);
+    QString locateRepoRoot() const;
+    void configureRiskRefresh(bool enabled, double intervalSeconds);
+    void applyRiskRefreshTimerState();
+    void initializeUiSettingsStorage();
+    void ensureUiSettingsTimerConfigured();
+    void applyUiSettingsCliOverrides(const QCommandLineParser& parser);
+    void applyRiskHistoryCliOverrides(const QCommandLineParser& parser);
+    void setUiSettingsPersistenceEnabled(bool enabled);
+    void setUiSettingsPath(const QString& path, bool reload = true);
+    void loadUiSettings();
+    void scheduleUiSettingsPersist();
+    void persistUiSettings();
+    QJsonObject buildUiSettingsPayload() const;
+    void maybeAutoExportRiskHistory(const QDateTime& snapshotTimestamp);
+    QString resolveAutoExportFilePath(const QDir& directory, const QString& basename, const QDateTime& timestamp) const;
 
     // --- Stan i komponenty ---
     QQmlApplicationEngine& m_engine;
     OhlcvListModel         m_ohlcvModel;
     RiskStateModel         m_riskModel;
+    RiskHistoryModel       m_riskHistoryModel;
     TradingClient          m_client;
+    AlertsModel            m_alertsModel;
+    AlertsFilterProxyModel m_filteredAlertsModel;
+    std::unique_ptr<BotCoreLocalService> m_localService;
 
     QString                m_connectionStatus = QStringLiteral("idle");
     PerformanceGuard       m_guard{};
@@ -163,6 +250,30 @@ private:
     bool                               m_forcePrimaryScreen = false;
     bool                               m_preferredScreenConfigured = false;
     mutable bool                       m_screenWarningLogged = false;
+    bool                               m_localServiceEnabled = false;
+    QString                            m_repoRoot;
+    QTimer                             m_riskRefreshTimer;
+    int                                m_riskRefreshIntervalMs = 5000;
+    bool                               m_riskRefreshEnabled = true;
+    bool                               m_started = false;
+    QDateTime                          m_lastRiskRefreshRequestUtc;
+    QDateTime                          m_lastRiskUpdateUtc;
+    QDateTime                          m_nextRiskRefreshUtc;
+    QString                            m_uiSettingsPath;
+    QTimer                             m_uiSettingsSaveTimer;
+    bool                               m_loadingUiSettings = false;
+    bool                               m_uiSettingsPersistenceEnabled = true;
+    bool                               m_uiSettingsTimerConfigured = false;
+    bool                               m_riskHistoryExportLimitEnabled = false;
+    int                                m_riskHistoryExportLimitValue = 50;
+    QUrl                               m_riskHistoryExportLastDirectory;
+    bool                               m_riskHistoryAutoExportEnabled = false;
+    int                                m_riskHistoryAutoExportIntervalMinutes = 15;
+    QString                            m_riskHistoryAutoExportBasename = QStringLiteral("risk-history");
+    bool                               m_riskHistoryAutoExportUseLocalTime = false;
+    QDateTime                          m_lastRiskHistoryAutoExportUtc;
+    QUrl                               m_lastRiskHistoryAutoExportPath;
+    bool                               m_riskHistoryAutoExportDirectoryWarned = false;
 
     struct OverlayState {
         int  active = 0;
@@ -182,4 +293,13 @@ private:
     bool                                               m_jankTelemetryTimerValid = false;
     int                                                m_jankTelemetryCooldownMs = 400;
     int                                                m_pendingRetryCount = 0;
+
+public: // test helpers
+    int  riskRefreshIntervalMsForTesting() const { return m_riskRefreshIntervalMs; }
+    bool riskRefreshEnabledForTesting() const { return m_riskRefreshEnabled; }
+    bool isRiskRefreshTimerActiveForTesting() const { return m_riskRefreshTimer.isActive(); }
+    QDateTime lastRiskRefreshRequestUtcForTesting() const { return m_lastRiskRefreshRequestUtc; }
+    QDateTime nextRiskRefreshDueUtcForTesting() const { return m_nextRiskRefreshUtc; }
+    QDateTime lastRiskUpdateUtcForTesting() const { return m_lastRiskUpdateUtc; }
+    void startRiskRefreshTimerForTesting();
 };

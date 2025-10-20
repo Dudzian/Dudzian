@@ -67,6 +67,8 @@ private slots:
     void activatesWithValidLicense();
     void rejectsMismatchedFingerprint();
     void acceptsBase64Payload();
+    void autoProvisionImportsMatchingLicense();
+    void autoProvisionRunsDuringInitialize();
 };
 
 void LicenseActivationControllerTest::activatesWithValidLicense()
@@ -149,6 +151,62 @@ void LicenseActivationControllerTest::acceptsBase64Payload()
     QVERIFY(controller.licenseActive());
     QCOMPARE(controller.licenseFingerprint(), fingerprint);
     QVERIFY(controller.statusMessage().contains(QStringLiteral("Licencja aktywna")));
+}
+
+void LicenseActivationControllerTest::autoProvisionImportsMatchingLicense()
+{
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+
+    const QString configDir = tempDir.filePath(QStringLiteral("config"));
+    QDir().mkpath(configDir);
+    const QString inboxDir = tempDir.filePath(QStringLiteral("inbox"));
+    QDir().mkpath(inboxDir);
+
+    const QString fingerprint = QStringLiteral("AUTO-12345");
+    const QString licenseFile = QDir(inboxDir).filePath(QStringLiteral("license.json"));
+    writeLicenseFile(licenseFile, buildLicenseDocument(fingerprint));
+
+    LicenseActivationController controller;
+    controller.setConfigDirectory(configDir);
+    controller.setProvisioningDirectory(inboxDir);
+    controller.setLicenseStoragePath(tempDir.filePath(QStringLiteral("var/licenses/active/license.json")));
+    controller.initialize();
+
+    QVariantMap fingerprintDoc{{QStringLiteral("fingerprint"), fingerprint}};
+    QVERIFY(controller.autoProvision(fingerprintDoc));
+    QVERIFY(controller.licenseActive());
+    QCOMPARE(controller.licenseFingerprint(), fingerprint);
+
+    QFile archivedLicense(licenseFile + QStringLiteral(".applied"));
+    QVERIFY(archivedLicense.exists());
+}
+
+void LicenseActivationControllerTest::autoProvisionRunsDuringInitialize()
+{
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+
+    const QString configDir = tempDir.filePath(QStringLiteral("config"));
+    QDir().mkpath(configDir);
+    const QString inboxDir = tempDir.filePath(QStringLiteral("inbox"));
+    QDir().mkpath(inboxDir);
+
+    const QString fingerprint = QStringLiteral("BOOT-INIT-001");
+    writeFingerprintDocument(configDir, fingerprint);
+    const QString licenseFile = QDir(inboxDir).filePath(QStringLiteral("license.json"));
+    writeLicenseFile(licenseFile, buildLicenseDocument(fingerprint));
+
+    LicenseActivationController controller;
+    controller.setConfigDirectory(configDir);
+    controller.setProvisioningDirectory(inboxDir);
+    controller.setLicenseStoragePath(tempDir.filePath(QStringLiteral("var/licenses/active/license.json")));
+    controller.initialize();
+
+    QVERIFY(controller.licenseActive());
+    QCOMPARE(controller.licenseFingerprint(), fingerprint);
+    QFile archivedLicense(licenseFile + QStringLiteral(".applied"));
+    QVERIFY(archivedLicense.exists());
 }
 
 QTEST_MAIN(LicenseActivationControllerTest)

@@ -39,6 +39,15 @@ class _FakeResponse:
         return json.dumps(self._payload).encode("utf-8")
 
 
+class _RecordingWatchdog:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def execute(self, operation: str, func):
+        self.calls.append(operation)
+        return func()
+
+
 def _build_credentials() -> ExchangeCredentials:
     secret = base64.b64encode(b"super-secret").decode("utf-8")
     return ExchangeCredentials(
@@ -602,6 +611,29 @@ def test_fetch_order_book_normalizes_levels_and_metrics(monkeypatch: pytest.Monk
         "symbol": "XBTUSD",
     }
     assert levels_gauge.value(labels=labels) == pytest.approx(4.0)
+
+
+def test_fetch_account_snapshot_uses_watchdog(monkeypatch: pytest.MonkeyPatch) -> None:
+    credentials = ExchangeCredentials(
+        key_id="key",
+        secret="secret",
+        permissions=("read",),
+        environment=Environment.LIVE,
+    )
+    watchdog = _RecordingWatchdog()
+    adapter = KrakenSpotAdapter(credentials, environment=Environment.LIVE, watchdog=watchdog)
+
+    def fake_private(context):
+        if "TradeBalance" in context.path:
+            return {"result": {"eb": "10", "mf": "3", "m": "1"}}
+        return {"result": {"ZUSD": "5"}}
+
+    monkeypatch.setattr(adapter, "_private_request", fake_private)
+
+    snapshot = adapter.fetch_account_snapshot()
+
+    assert snapshot.total_equity == pytest.approx(10.0)
+    assert "kraken_spot_fetch_account" in watchdog.calls
 
 def _expected_signature(*, path: str, params: dict[str, Any], secret: str) -> str:
     params = dict(params)

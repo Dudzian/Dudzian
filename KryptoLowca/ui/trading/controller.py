@@ -11,18 +11,13 @@ from typing import Any, Callable, Dict, Optional, Tuple
 
 from tkinter import messagebox
 
-try:  # pragma: no cover - zależność opcjonalna
-    from bot_core.market_intel import MarketIntelAggregator
-except Exception:  # pragma: no cover - fallback gdy moduł niedostępny
-    MarketIntelAggregator = None  # type: ignore[assignment]
-
+from bot_core.runtime.metadata import RiskManagerSettings
+from bot_core.runtime.preset_service import PresetConfigService
+from bot_core.security.file_storage import EncryptedFileSecretStorage
 from KryptoLowca.database_manager import DatabaseManager
-from KryptoLowca.managers.security_manager import SecurityManager
-from KryptoLowca.managers.config_manager import ConfigManager
 from KryptoLowca.managers.exchange_manager import ExchangeManager
 from KryptoLowca.managers.report_manager import ReportManager
 from KryptoLowca.managers.risk_manager_adapter import RiskManager
-from bot_core.runtime.metadata import RiskManagerSettings
 from KryptoLowca.managers.ai_manager import AIManager
 from KryptoLowca.core.trading_engine import TradingEngine
 from KryptoLowca.runtime.bootstrap import bootstrap_exchange_manager
@@ -40,8 +35,8 @@ class TradingSessionController:
         self,
         state: AppState,
         db: DatabaseManager,
-        security: SecurityManager,
-        config: ConfigManager,
+        secret_storage: EncryptedFileSecretStorage,
+        config_service: PresetConfigService,
         reporter: ReportManager,
         risk: RiskManager,
         ai_manager: AIManager,
@@ -51,8 +46,8 @@ class TradingSessionController:
     ) -> None:
         self.state = state
         self.db = db
-        self.security = security
-        self.config = config
+        self.secret_storage = secret_storage
+        self.config_service = config_service
         self.reporter = reporter
         self.risk = risk
         self.ai_manager = ai_manager
