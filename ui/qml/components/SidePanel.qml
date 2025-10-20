@@ -189,6 +189,54 @@ Pane {
             }
         }
 
+        Rectangle { height: 1; color: Qt.darker(root.palette.window, 1.4); Layout.fillWidth: true }
+
+        Label {
+            text: qsTr("Alerty operacyjne")
+            font.pixelSize: 18
+            font.bold: true
+        }
+
+        Label {
+            text: alertsModel
+                    ? qsTr("Krytyczne: %1, Ostrzeżenia: %2")
+                          .arg(alertsModel.criticalCount)
+                          .arg(alertsModel.warningCount)
+                    : qsTr("Krytyczne: —, Ostrzeżenia: —")
+        }
+
+        ListView {
+            Layout.fillWidth: true
+            visible: alertsModel && alertsModel.count > 0
+            model: alertsModel
+            implicitHeight: Math.min(contentHeight, 96)
+            delegate: Rectangle {
+                width: parent ? parent.width : 0
+                height: 28
+                radius: 4
+                color: model.severity === 2
+                           ? Qt.rgba(0.58, 0.1, 0.12, 0.6)
+                           : model.severity === 1
+                                 ? Qt.rgba(0.8, 0.54, 0.12, 0.5)
+                                 : Qt.rgba(0.25, 0.35, 0.45, 0.3)
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.margins: 6
+                    Label {
+                        text: model.title
+                        Layout.fillWidth: true
+                        elide: Text.ElideRight
+                    }
+                    Label {
+                        text: model.severity === 2
+                                  ? qsTr("Krytyczny")
+                                  : model.severity === 1 ? qsTr("Alert") : qsTr("Info")
+                        color: Qt.rgba(1, 1, 1, 0.85)
+                    }
+                }
+            }
+        }
+
         // --- Actions ----------------------------------------------------------
         Button {
             text: qsTr("Otwórz nowe okno")
