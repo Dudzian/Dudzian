@@ -23,10 +23,10 @@ import pandas as pd
 from bot_core.alerts import AlertEvent, AlertSeverity, get_alert_dispatcher
 
 from KryptoLowca.core.order_executor import ExecutionResult, OrderExecutor  # type: ignore
-from KryptoLowca.managers.ai_manager import AIManager  # type: ignore
-from KryptoLowca.managers.database_manager import DatabaseManager  # type: ignore
-from KryptoLowca.managers.exchange_manager import ExchangeManager  # type: ignore
-from KryptoLowca.managers.risk_manager_adapter import RiskManager  # type: ignore
+from KryptoLowca.ai_manager import AIManager  # type: ignore
+from KryptoLowca.database_manager import DatabaseManager  # type: ignore
+from KryptoLowca.exchange_manager import ExchangeManager  # type: ignore
+from KryptoLowca.risk_manager import RiskManager  # type: ignore
 from KryptoLowca.trading_strategies import (  # type: ignore
     EngineConfig,
     TradingParameters,

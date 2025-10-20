@@ -76,7 +76,7 @@ def load_risk_settings_from_core(
     -------
     tuple
         A tuple ``(profile_name, settings_dict, profile_config, core_config)``. ``settings_dict``
-        is a mapping ready to be passed to :class:`~KryptoLowca.managers.risk_manager_adapter.RiskManager`.
+        is a mapping ready to be passed to :class:`~KryptoLowca.risk_manager.RiskManager`.
     """
 
     target_path = Path(config_path or DEFAULT_CORE_CONFIG_PATH).expanduser().resolve()

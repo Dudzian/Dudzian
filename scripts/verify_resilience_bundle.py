@@ -286,15 +286,6 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def run(argv: Sequence[str] | None = None) -> int:
-    parser = _build_parser()
-    args = parser.parse_args(argv)
-    bundle_arg = args.bundle_option or args.bundle
-    if not bundle_arg:
-        parser.error("Musisz wskazać ścieżkę do archiwum (--bundle lub argument pozycyjny)")
-    return _execute(parser, args, Path(bundle_arg))
-
-
 def _execute(parser: argparse.ArgumentParser, args: argparse.Namespace, bundle_path: Path) -> int:
     logging.basicConfig(level=args.log_level.upper(), format="%(levelname)s %(message)s")
     try:
@@ -332,20 +323,21 @@ def _execute(parser: argparse.ArgumentParser, args: argparse.Namespace, bundle_p
     return 0
 
 
-def run(argv: Optional[Sequence[str]] = None) -> int:
-    """Wrapper used by tests to execute the CLI without exiting the interpreter."""
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    bundle_arg = args.bundle_option or args.bundle
+    if not bundle_arg:
+        parser.error("Musisz wskazać ścieżkę do archiwum (--bundle lub argument pozycyjny)")
+    return _execute(parser, args, Path(bundle_arg))
 
-    if argv is None:
-        return main(None)
 
-    args = list(argv)
-    if not args:
-        return main([])
+def run(argv: Sequence[str] | None = None) -> int:
+    """Compatibility wrapper matching the previous public API."""
 
-    if "--bundle" not in args and args[0] and not str(args[0]).startswith("-"):
-        args = ["--bundle", *args]
-
-    return main(args)
+    if argv is not None:
+        return main(list(argv))
+    return main(None)
 
 
 if __name__ == "__main__":  # pragma: no cover

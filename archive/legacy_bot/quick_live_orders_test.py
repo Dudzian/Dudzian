@@ -21,8 +21,8 @@ if __package__ in (None, ""):
 
 
 import ccxt
-from KryptoLowca.managers.database_manager import DatabaseManager
-from KryptoLowca.managers.exchange_adapter import ExchangeAdapter
+from KryptoLowca.database_manager import DatabaseManager
+from KryptoLowca.exchange_adapter import ExchangeAdapter
 
 # >>> WPROWADZONE KLUCZE TESTNET (na Twoją prośbę, zapisane w kodzie) <<<
 API_KEY = "AmmYwBf8i1blZ8shREGu6rf56VdOL73lIitsnQ3EYdNOWYKs0hSgD3WagJDsU0U1"

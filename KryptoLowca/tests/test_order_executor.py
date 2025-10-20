@@ -8,14 +8,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from bot_core.exchanges import Mode, OrderDTO, OrderSide, OrderStatus, OrderType
+
 from KryptoLowca.core.order_executor import OrderExecutor  # type: ignore
-from KryptoLowca.managers.exchange_core import (  # type: ignore
-    Mode,
-    OrderDTO,
-    OrderSide,
-    OrderStatus,
-    OrderType,
-)
 
 
 class DummyExchange:

@@ -17,6 +17,7 @@ class AppState:
 
     paths: DesktopAppPaths
     runtime_metadata: Optional[RuntimeEntrypointMetadata]
+    symbol: tk.StringVar
     network: tk.StringVar
     mode: tk.StringVar
     timeframe: tk.StringVar
@@ -33,3 +34,5 @@ class AppState:
     risk_profile_label: tk.StringVar | None = None
     risk_limits_label: tk.StringVar | None = None
     risk_notional_label: tk.StringVar | None = None
+    market_symbol: tk.StringVar | None = None
+    market_price: tk.StringVar | None = None

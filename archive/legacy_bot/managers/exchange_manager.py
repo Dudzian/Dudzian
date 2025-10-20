@@ -7,10 +7,19 @@ from typing import Any, Dict, Optional, List
 
 from pydantic import BaseModel, Field
 
-from KryptoLowca.managers.exchange_core import (
-    Mode, OrderSide, OrderType, OrderStatus,
-    MarketRules, OrderDTO, TradeDTO, PositionDTO,
-    Event, EventBus, BaseBackend, PaperBackend
+from .exchange_core import (
+    Mode,
+    OrderSide,
+    OrderType,
+    OrderStatus,
+    MarketRules,
+    OrderDTO,
+    TradeDTO,
+    PositionDTO,
+    Event,
+    EventBus,
+    BaseBackend,
+    PaperBackend,
 )
 
 # CCXT jest używane jako publiczny feed danych i backend live/testnet

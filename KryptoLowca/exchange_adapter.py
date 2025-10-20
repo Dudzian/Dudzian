@@ -12,6 +12,8 @@ try:
 except Exception as e:
     raise SystemExit("Brak biblioteki 'ccxt'. Zainstaluj: python -m pip install ccxt") from e
 
+__all__ = ["ExchangeManager", "ExchangeAdapter"]
+
 logger = logging.getLogger(__name__)
 if not logger.handlers:
     h = logging.StreamHandler()
@@ -302,3 +304,6 @@ class ExchangeManager:
                 self._client.close()
         except Exception:
             pass
+
+
+ExchangeAdapter = ExchangeManager

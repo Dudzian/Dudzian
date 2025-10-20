@@ -17,7 +17,7 @@ PROJECT_ROOT = os.path.abspath(os.path.join(PKG_DIR, ".."))        # ...\Krypto≈
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from KryptoLowca.managers.exchange_manager import ExchangeManager
+from KryptoLowca.exchange_manager import ExchangeManager
 from backtest.engine import BacktestEngine, BacktestConfig, StrategyParams, EntryParams, ExitParams, TradeRecord
 from backtest.metrics import compute_metrics, to_dict
 

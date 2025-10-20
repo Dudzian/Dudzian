@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
+import os
+import queue
+import threading
 import sys
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, Optional, Protocol
+from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Protocol
 
 import tkinter as tk
 
@@ -29,12 +34,14 @@ from KryptoLowca.logging_utils import (
     setup_app_logging,
 )
 from KryptoLowca.database_manager import DatabaseManager
-from KryptoLowca.managers.security_manager import SecurityManager
-from KryptoLowca.managers.config_manager import ConfigManager
-from KryptoLowca.managers.report_manager import ReportManager
-from KryptoLowca.managers.risk_manager_adapter import RiskManager
-from KryptoLowca.managers.ai_manager import AIManager
-from KryptoLowca.managers.exchange_manager import ExchangeManager
+from KryptoLowca.security_manager import SecurityManager
+from KryptoLowca.config_manager import ConfigManager
+from KryptoLowca.report_manager import ReportManager
+from KryptoLowca.risk_manager import RiskManager
+from KryptoLowca.ai_manager import AIManager
+from KryptoLowca.exchange_manager import ExchangeManager
+from KryptoLowca.exchanges import MarketDataPoller
+from KryptoLowca.exchanges.zonda import ZondaAdapter
 
 from .state import AppState
 from .controller import TradingSessionController
@@ -50,6 +57,95 @@ from .risk_helpers import (
 
 
 _DEFAULT_FRACTION = 0.05
+_DEFAULT_MARKET_SYMBOL = "BTC-PLN"
+_DEFAULT_MARKET_INTERVAL = 2.0
+
+
+def get_default_market_symbol() -> str:
+    """Odczytuje domyślny symbol rynku z ENV lub korzysta z wartości wbudowanej."""
+
+    env_symbol = os.getenv("TRADING_GUI_DEFAULT_SYMBOL")
+    if env_symbol:
+        cleaned = env_symbol.strip().replace("/", "-").upper()
+        if cleaned:
+            return cleaned
+    return _DEFAULT_MARKET_SYMBOL
+
+
+def get_default_market_interval() -> float:
+    """Zwraca odstęp odpytywania REST z ENV (`TRADING_GUI_MARKET_INTERVAL`)."""
+
+    env_interval = os.getenv("TRADING_GUI_MARKET_INTERVAL")
+    if not env_interval:
+        return _DEFAULT_MARKET_INTERVAL
+    try:
+        value = float(env_interval)
+    except ValueError:
+        logging.getLogger(__name__).warning(
+            "Nieprawidłowa wartość TRADING_GUI_MARKET_INTERVAL=%s – używam %.2f s",
+            env_interval,
+            _DEFAULT_MARKET_INTERVAL,
+        )
+        return _DEFAULT_MARKET_INTERVAL
+    if value <= 0:
+        logging.getLogger(__name__).warning(
+            "TRADING_GUI_MARKET_INTERVAL musi być dodatnie (otrzymano %s) – używam %.2f s",
+            env_interval,
+            _DEFAULT_MARKET_INTERVAL,
+        )
+        return _DEFAULT_MARKET_INTERVAL
+    return value
+
+
+def normalize_market_symbol(
+    symbol: str, *, default: Optional[str] = None
+) -> str:
+    """Zamienia zapis symbolu na format wymagany przez REST (np. ``BTC/PLN`` → ``BTC-PLN``)."""
+
+    cleaned = (symbol or "").strip().replace("/", "-").upper()
+    fallback = default if default is not None else get_default_market_symbol()
+    return cleaned or fallback
+
+
+def _to_float(value: Any) -> Optional[float]:
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.replace(",", "").strip())
+        except ValueError:
+            return None
+    return None
+
+
+def extract_market_price(payload: Mapping[str, Any] | None) -> Optional[float]:
+    """Wydobywa cenę z odpowiedzi tickera niezależnie od wariantu struktury."""
+
+    if payload is None:
+        return None
+    if isinstance(payload, Mapping):
+        for key in ("last", "rate", "closing_rate", "closingRate", "price", "close", "sell", "buy"):
+            if key in payload:
+                value = _to_float(payload[key])
+                if value is not None:
+                    return value
+        for nested_key in ("ticker", "data", "stats", "statistics"):
+            nested = payload.get(nested_key)
+            price = extract_market_price(nested)
+            if price is not None:
+                return price
+        items = payload.get("items")
+        if isinstance(items, Iterable):
+            for item in items:
+                price = extract_market_price(item)
+                if price is not None:
+                    return price
+    elif isinstance(payload, (list, tuple)):
+        for entry in payload:
+            price = extract_market_price(entry)
+            if price is not None:
+                return price
+    return None
 
 
 def _ensure_repo_root() -> None:
@@ -67,8 +163,7 @@ if __package__ in (None, ""):
     _ensure_repo_root()
 
 
-setup_app_logging()
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class TradeExecutor(Protocol):
@@ -90,7 +185,13 @@ class TradingGUI:
             Callable[[AppState], TradingSessionController]
         ] = None,
         trade_executor: Optional[TradeExecutor] = None,
+        market_data_adapter_factory: Optional[Callable[..., Any]] = None,
+        market_data_interval: Optional[float] = None,
     ) -> None:
+        setup_app_logging()
+        global logger
+        logger = get_logger(__name__)
+
         self.root = root or tk.Tk()
         self.paths = paths or build_desktop_app_paths(
             __file__,
@@ -119,19 +220,39 @@ class TradingGUI:
             self.state,
             self.controller,
             on_refresh_risk=self.reload_risk_profile,
+            on_start=self._handle_view_start,
+            on_stop=self._handle_view_stop,
         )
         self._configure_fraction_widget(self.risk_manager_settings)
         self._configure_logging_handler()
         self.ex_mgr = None
         self.network_var = self.state.network
         self.timeframe_var = self.state.timeframe
-        self.symbol_var = tk.StringVar(value="BTC/USDT")
+        self.symbol_var = self.state.symbol
         self.paper_balance = self._parse_float(self.state.paper_balance.get())
         self.account_balance = 0.0
         self._open_positions = self.state.open_positions
         self._view_logs: Dict[str, str] = {}
         self.default_trade_executor = self._default_trade_executor
         self._trade_executor_callable = self._wrap_trade_executor(trade_executor)
+        self._market_data_queue: "queue.Queue[tuple[str, Dict[str, Any]]]" = queue.Queue()
+        self._market_status_queue: "queue.Queue[str]" = queue.Queue()
+        self._market_data_thread: Optional[threading.Thread] = None
+        self._market_data_loop: Optional[asyncio.AbstractEventLoop] = None
+        self._market_data_stop = threading.Event()
+        self._market_data_adapter_factory = (
+            market_data_adapter_factory or self._default_market_adapter_factory
+        )
+        interval = (
+            market_data_interval
+            if market_data_interval is not None
+            else get_default_market_interval()
+        )
+        self._market_data_interval = max(0.1, float(interval))
+        self._market_data_poller: Optional[MarketDataPoller] = None
+        self._market_data_adapter: Any = None
+        self._symbol_trace = self.symbol_var.trace_add("write", self._on_symbol_changed)
+        self._schedule_market_data_drain()
         self.view.sync_positions()
         self.risk_profile_name = self.state.risk_profile_name
         self.risk_profile_config = self.state.risk_profile_config
@@ -161,6 +282,10 @@ class TradingGUI:
         )
 
     # ------------------------------------------------------------------
+    def _default_market_adapter_factory(self, *, demo_mode: bool) -> ZondaAdapter:
+        return ZondaAdapter(demo_mode=demo_mode)
+
+    # ------------------------------------------------------------------
     def _load_metadata(
         self, config_path: Optional[Path]
     ) -> Optional[RuntimeEntrypointMetadata]:
@@ -184,9 +309,17 @@ class TradingGUI:
         profile_label, limits_label = self._initial_risk_labels()
         fraction_value = self._compute_fraction_value(self.risk_manager_settings)
         notional_label = self._initial_default_notional_label(fraction_value)
+        default_symbol = get_default_market_symbol()
+        symbol_var = tk.StringVar(value=default_symbol)
+        market_symbol_var = tk.StringVar(
+            value=normalize_market_symbol(symbol_var.get(), default=default_symbol)
+        )
+        market_price_var = tk.StringVar(value="—")
+
         return AppState(
             paths=self.paths,
             runtime_metadata=self.runtime_metadata,
+            symbol=symbol_var,
             risk_profile_name=self._risk_profile_name,
             risk_profile_config=self._risk_profile_config,
             risk_manager_config=self.risk_manager_config,
@@ -201,6 +334,8 @@ class TradingGUI:
             paper_balance=tk.StringVar(value="10 000.00"),
             account_balance=tk.StringVar(value="—"),
             status=tk.StringVar(value="Oczekiwanie na start"),
+            market_symbol=market_symbol_var,
+            market_price=market_price_var,
         )
 
     # ------------------------------------------------------------------
@@ -217,6 +352,223 @@ class TradingGUI:
     def _configure_logging_handler(self) -> None:
         handler = _TkLogHandler(self.view)
         logging.getLogger().addHandler(handler)
+
+    # ------------------------------------------------------------------
+    def _schedule_market_data_drain(self) -> None:
+        if not hasattr(self.root, "after"):
+            return
+        try:
+            self.root.after(300, self._drain_market_data_queue)
+        except Exception:  # pragma: no cover - środowiska bez after()
+            logger.debug("Nie udało się zaplanować odczytu kolejki rynku", exc_info=True)
+
+    # ------------------------------------------------------------------
+    def _drain_market_data_queue(self) -> None:
+        self._flush_market_status_queue()
+        while True:
+            try:
+                symbol, payload = self._market_data_queue.get_nowait()
+            except queue.Empty:
+                break
+            self._process_market_payload(symbol, payload)
+        if hasattr(self.root, "after"):
+            try:
+                self.root.after(500, self._drain_market_data_queue)
+            except Exception:  # pragma: no cover - środowiska bez after()
+                logger.debug("Nie udało się ponownie zaplanować odczytu rynku", exc_info=True)
+
+    # ------------------------------------------------------------------
+    def _process_market_payload(self, symbol: str, payload: Mapping[str, Any]) -> None:
+        normalized = normalize_market_symbol(symbol)
+        if self.state.market_symbol is not None:
+            self.state.market_symbol.set(normalized)
+        price = extract_market_price(payload)
+        if price is not None and self.state.market_price is not None:
+            self.state.market_price.set(f"{price:,.2f}")
+            self._set_status_immediate(f"Ticker {normalized}: {price:,.2f}")
+        else:
+            self._set_status_immediate(f"Odświeżono dane {normalized}")
+
+    # ------------------------------------------------------------------
+    def _on_symbol_changed(self, *_: Any) -> None:
+        normalized = normalize_market_symbol(self.symbol_var.get())
+        if self.state.market_symbol is not None:
+            self.state.market_symbol.set(normalized)
+        if self._market_data_thread and self._market_data_thread.is_alive():
+            self._restart_market_data()
+
+    # ------------------------------------------------------------------
+    def _handle_view_start(self) -> None:
+        self._start_market_data()
+
+    # ------------------------------------------------------------------
+    def _handle_view_stop(self) -> None:
+        self._stop_market_data()
+
+    # ------------------------------------------------------------------
+    def _determine_market_symbols(self) -> list[str]:
+        symbol = self.state.market_symbol.get() if self.state.market_symbol else ""
+        return [normalize_market_symbol(symbol)]
+
+    # ------------------------------------------------------------------
+    def _should_use_demo_mode(self) -> bool:
+        try:
+            network = self.state.network.get()
+        except Exception:
+            return True
+        return str(network or "").strip().lower() != "live"
+
+    # ------------------------------------------------------------------
+    def _start_market_data(self) -> None:
+        if self._market_data_thread and self._market_data_thread.is_alive():
+            return
+        symbols = self._determine_market_symbols()
+        if not symbols:
+            return
+        self._market_data_stop.clear()
+        demo_mode = self._should_use_demo_mode()
+        self._set_status("Łączenie z rynkiem (REST)...")
+
+        def runner() -> None:
+            loop = asyncio.new_event_loop()
+            self._market_data_loop = loop
+            asyncio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(self._market_data_worker(symbols, demo_mode))
+            finally:
+                with contextlib.suppress(Exception):
+                    loop.run_until_complete(loop.shutdown_asyncgens())
+                asyncio.set_event_loop(None)
+                loop.close()
+                self._market_data_loop = None
+
+        self._market_data_thread = threading.Thread(
+            target=runner, name="market-data-poller", daemon=True
+        )
+        self._market_data_thread.start()
+
+    # ------------------------------------------------------------------
+    def _restart_market_data(self) -> None:
+        self._stop_market_data()
+        if hasattr(self.root, "after"):
+            try:
+                self.root.after(200, self._start_market_data)
+                return
+            except Exception:  # pragma: no cover - środowiska bez after()
+                logger.debug("Nie udało się przeplanować restartu pollera", exc_info=True)
+        self._start_market_data()
+
+    # ------------------------------------------------------------------
+    def _stop_market_data(self) -> None:
+        self._market_data_stop.set()
+        loop = self._market_data_loop
+        if loop is not None:
+            if self._market_data_poller is not None:
+                future = asyncio.run_coroutine_threadsafe(
+                    self._market_data_poller.stop(), loop
+                )
+                with contextlib.suppress(Exception):
+                    future.result(timeout=1.0)
+            if self._market_data_adapter is not None:
+                future = asyncio.run_coroutine_threadsafe(
+                    self._market_data_adapter.close(), loop
+                )
+                with contextlib.suppress(Exception):
+                    future.result(timeout=1.0)
+            with contextlib.suppress(Exception):
+                loop.call_soon_threadsafe(lambda: None)
+        thread = self._market_data_thread
+        if thread and thread.is_alive():
+            thread.join(timeout=2.0)
+        self._market_data_thread = None
+        self._market_data_loop = None
+        self._market_data_poller = None
+        self._market_data_adapter = None
+        self._market_data_stop.clear()
+        if self.state.market_price is not None:
+            self.state.market_price.set("—")
+        self._set_status("Ticker zatrzymany")
+
+    # ------------------------------------------------------------------
+    async def _market_data_worker(self, symbols: list[str], demo_mode: bool) -> None:
+        try:
+            adapter = self._market_data_adapter_factory(demo_mode=demo_mode)
+        except Exception as exc:
+            logger.warning("Nie udało się utworzyć adaptera rynku: %s", exc)
+            self._set_status("Błąd uruchamiania adaptera rynku")
+            return
+        self._market_data_adapter = adapter
+        try:
+            await adapter.connect()
+        except Exception as exc:
+            logger.warning("Połączenie adaptera rynku nie powiodło się: %s", exc)
+            self._set_status("Nie udało się połączyć z rynkiem (REST)")
+            try:
+                await adapter.close()
+            except Exception:  # pragma: no cover - najlepszy wysiłek podczas sprzątania
+                logger.debug(
+                    "Nie udało się zamknąć adaptera rynku po błędzie połączenia",
+                    exc_info=True,
+                )
+            finally:
+                self._market_data_adapter = None
+            return
+        poller = MarketDataPoller(
+            adapter,
+            symbols=symbols,
+            interval=self._market_data_interval,
+            callback=self._market_data_callback,
+            error_callback=self._market_data_error,
+        )
+        self._market_data_poller = poller
+        try:
+            await poller.start()
+            self._set_status("Ticker REST aktywny")
+            while not self._market_data_stop.is_set():
+                await asyncio.sleep(0.2)
+        finally:
+            with contextlib.suppress(Exception):
+                await poller.stop()
+            with contextlib.suppress(Exception):
+                await adapter.close()
+            self._market_data_poller = None
+            self._market_data_adapter = None
+
+    # ------------------------------------------------------------------
+    async def _market_data_callback(self, symbol: str, payload: Dict[str, Any]) -> None:
+        self._market_data_queue.put((symbol, payload))
+
+    # ------------------------------------------------------------------
+    async def _market_data_error(self, symbol: str, exc: Exception) -> None:
+        normalized = normalize_market_symbol(symbol)
+        logger.warning("Błąd REST tickera %s: %s", normalized, exc)
+        self._set_status(f"Błąd REST tickera {normalized}: {exc}")
+
+    # ------------------------------------------------------------------
+    def _flush_market_status_queue(self) -> None:
+        while True:
+            try:
+                message = self._market_status_queue.get_nowait()
+            except queue.Empty:
+                break
+            self._set_status_immediate(message)
+
+    # ------------------------------------------------------------------
+    def _set_status(self, message: str) -> None:
+        if threading.current_thread() is threading.main_thread():
+            self._set_status_immediate(message)
+        else:
+            self._market_status_queue.put(message)
+
+    # ------------------------------------------------------------------
+    def _set_status_immediate(self, message: str) -> None:
+        status_var = getattr(self.state, "status", None)
+        if status_var is None:
+            return
+        try:
+            status_var.set(message)
+        except Exception:  # pragma: no cover - defensywne logowanie
+            logger.debug("Nie udało się ustawić statusu GUI", exc_info=True)
 
     # ------------------------------------------------------------------
     def _resolve_core_config_path(self) -> Optional[Path]:
@@ -638,6 +990,7 @@ class TradingGUI:
     # ------------------------------------------------------------------
     def _handle_window_close(self) -> None:
         self._stop_risk_watchdog()
+        self._stop_market_data()
         try:
             self.root.quit()
         except Exception:  # pragma: no cover - defensywne
@@ -652,6 +1005,7 @@ class TradingGUI:
         widget = getattr(event, "widget", None)
         if widget is self.root:
             self._stop_risk_watchdog()
+            self._stop_market_data()
 
     # ------------------------------------------------------------------
     def _get_risk_config_timestamp(self) -> Optional[float]:
@@ -759,4 +1113,12 @@ def main() -> None:
     TradingGUI().run()
 
 
-__all__ = ["TradingGUI", "TradeExecutor", "main"]
+__all__ = [
+    "TradingGUI",
+    "TradeExecutor",
+    "normalize_market_symbol",
+    "get_default_market_symbol",
+    "get_default_market_interval",
+    "extract_market_price",
+    "main",
+]

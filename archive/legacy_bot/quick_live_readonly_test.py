@@ -20,8 +20,8 @@ if __package__ in (None, ""):
     _ensure_repo_root()
 
 
-from KryptoLowca.managers.database_manager import DatabaseManager
-from KryptoLowca.managers.exchange_adapter import ExchangeAdapter
+from KryptoLowca.database_manager import DatabaseManager
+from KryptoLowca.exchange_adapter import ExchangeAdapter
 
 def main():
     db = DatabaseManager("sqlite+aiosqlite:///trading.db")
