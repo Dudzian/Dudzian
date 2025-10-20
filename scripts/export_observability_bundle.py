@@ -5,7 +5,7 @@ Buduje podpisane paczki obserwowalności (Grafana + Prometheus) dla Stage6.
 
 Tryby:
 - builder: używa bot_core.observability.bundle.ObservabilityBundleBuilder (jeśli dostępny).
-- fallback: samodzielnie pakuje pliki do tar.gz, generuje manifest i podpis HMAC.
+- fallback: samodzielnie pakuje pliki do archiwum ZIP, generuje manifest i podpis HMAC.
 
 Argumenty z obu światów są zachowane:
 - --source kategoria=ścieżka (domyślnie dashboards/alerts z repo)
@@ -17,6 +17,7 @@ Argumenty z obu światów są zachowane:
 from __future__ import annotations
 
 import argparse
+import base64
 import datetime as _dt
 import hashlib
 import hmac
@@ -26,15 +27,17 @@ import os
 import shutil
 import stat
 import sys
-import tarfile
 import tempfile
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
+if str(REPO_ROOT) not in sys.path:  # pragma: no branch - deterministyczne dodanie ścieżki
     sys.path.insert(0, str(REPO_ROOT))
+
+from bot_core.security.signing import build_hmac_signature, canonical_json_bytes
 
 # --- Próbujemy API „HEAD”
 try:  # pragma: no cover
@@ -336,29 +339,57 @@ def _collect_assets_fallback(
     return assets
 
 
-def _sign_manifest_fallback(
-    manifest_path: Path, *, key: bytes, algorithm: str = "sha256", key_id: str | None = None
+_FALLBACK_SIGNATURE_SCHEMA = "stage6.observability.bundle.signature"
+_FALLBACK_SIGNATURE_VERSION = "1.0"
+
+
+def _write_signature_document(
+    manifest_path: Path,
+    *,
+    manifest: Mapping[str, object],
+    key: bytes,
+    digest: str = "sha256",
+    key_id: str | None = None,
 ) -> Path:
-    alg = algorithm.lower().replace("hmac-", "")
-    if alg not in {"sha256", "sha384", "sha512"}:
-        alg = "sha256"
-    digest = hmac.new(key, manifest_path.read_bytes(), getattr(hashlib, alg)).hexdigest()
-    doc = {
-        "schema": "stage6.observability.signature",
-        "signed_at": _now_utc_iso(),
-        "algorithm": f"HMAC-{alg.upper()}",
-        "key_id": key_id,
-        "target": "manifest.json",
-        "digest": digest,
+    digest_name = digest.strip().upper()
+    if digest_name.startswith("HMAC-"):
+        digest_name = digest_name[5:]
+    if digest_name != "SHA256":
+        raise ValueError(
+            "Fallback exporter obsługuje wyłącznie HMAC-SHA256 – użyj buildera dla innych algorytmów"
+        )
+
+    signature = build_hmac_signature(
+        manifest,
+        key=key,
+        algorithm="HMAC-SHA256",
+        key_id=key_id,
+    )
+    document = {
+        "schema": _FALLBACK_SIGNATURE_SCHEMA,
+        "schema_version": _FALLBACK_SIGNATURE_VERSION,
+        "generated_at": _now_utc_iso(),
+        "manifest": manifest_path.name,
+        "bundle_name": manifest.get("bundle_name"),
+        "version": manifest.get("version"),
+        "signature": signature,
     }
     sig_path = manifest_path.with_suffix(".sig")
-    sig_path.write_text(json.dumps(doc, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    sig_path.write_text(
+        json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     return sig_path
 
 
-def _write_tar_gz(source_dir: Path, dest: Path) -> None:
-    with tarfile.open(dest, "w:gz") as tar:
-        tar.add(source_dir, arcname=".")
+def _write_zip_archive(source_dir: Path, dest: Path) -> None:
+    with zipfile.ZipFile(dest, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for path in sorted(source_dir.rglob("*")):
+            if path.is_dir():
+                continue
+            relative = path.relative_to(source_dir)
+            arcname = relative.as_posix()
+            archive.write(path, arcname)
 
 
 def _run_fallback(args: argparse.Namespace) -> dict[str, Any]:
@@ -453,24 +484,13 @@ def _run_fallback(args: argparse.Namespace) -> dict[str, Any]:
         signing_key, key_id = _load_hmac_key(args)
         sig_path: Optional[Path] = None
         if signing_key:
-            if _HAS_SIG_MANAGER:
-                # Użyjemy menedżera podpisu z „main”
-                mgr = SignatureManager(signing_key, digest_algorithm=args.digest.lower(), key_id=key_id)
-                digest_val = mgr.digest_file(manifest_path)
-                sig_path = manifest_path.with_suffix(".sig")
-                mgr.write_signature_document(
-                    {"path": "manifest.json", args.digest.lower(): digest_val}, sig_path
-                )
-            else:
-                sig_path = _sign_manifest_fallback(
-                    manifest_path, key=signing_key, algorithm=args.digest, key_id=key_id
-                )
-
-        # Archiwum
-        archive_path = out_dir / f"{bundle_base}.tar.gz"
-        if archive_path.exists():
-            raise FileExistsError(f"Paczka już istnieje: {archive_path}")
-        _write_tar_gz(staging_root, archive_path)
+            sig_path = _write_signature_document(
+                manifest_path,
+                manifest=manifest,
+                key=signing_key,
+                digest=args.digest,
+                key_id=key_id,
+            )
 
         # Skopiuj manifest i podpis obok archiwum (wygodniej do weryfikacji offline)
         final_manifest = out_dir / f"{bundle_base}.manifest.json"
@@ -479,6 +499,23 @@ def _run_fallback(args: argparse.Namespace) -> dict[str, Any]:
         if sig_path:
             final_sig = out_dir / f"{bundle_base}.manifest.sig"
             shutil.copy2(sig_path, final_sig)
+
+        # Usuń metadane ze stagingu, aby archiwum zawierało wyłącznie aktywa
+        try:
+            manifest_path.unlink()
+        except FileNotFoundError:
+            pass
+        if sig_path:
+            try:
+                sig_path.unlink()
+            except FileNotFoundError:
+                pass
+
+        # Archiwum
+        archive_path = out_dir / f"{bundle_base}.zip"
+        if archive_path.exists():
+            raise FileExistsError(f"Paczka już istnieje: {archive_path}")
+        _write_zip_archive(staging_root, archive_path)
 
         summary = {
             "bundle": archive_path.as_posix(),
@@ -519,6 +556,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--mode",
         choices=["fallback", "builder"],
         default="fallback",
+        help="Tryb eksportu: fallback (zip + manifest) lub builder (jeśli dostępny).",
         help="Tryb eksportu: fallback (tar.gz + manifest) lub builder (jeśli dostępny).",
     )
     # podpis
@@ -546,8 +584,11 @@ def build_parser() -> argparse.ArgumentParser:
         dest="hmac_key_id",
         help="Identyfikator klucza HMAC umieszczony w podpisie",
     )
-    p.add_argument("--digest", default="sha384",
-                   help="Algorytm skrótu dla HMAC (sha256/sha384/sha512; domyślnie sha384)")
+    p.add_argument(
+        "--digest",
+        default="sha256",
+        help="Algorytm skrótu dla HMAC (sha256/sha384/sha512; domyślnie sha256)",
+    )
     # logowanie
     p.add_argument("--log-level", default="INFO",
                    choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"])

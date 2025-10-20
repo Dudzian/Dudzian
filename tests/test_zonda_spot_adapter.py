@@ -29,6 +29,15 @@ from bot_core.exchanges.zonda.spot import (
 from bot_core.observability.metrics import MetricsRegistry
 
 
+class _RecordingWatchdog:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def execute(self, operation: str, func):
+        self.calls.append(operation)
+        return func()
+
+
 class _FakeResponse:
     def __init__(
         self,
@@ -105,6 +114,26 @@ def test_fetch_account_snapshot_builds_signature(monkeypatch: pytest.MonkeyPatch
         adapter._metric_rate_limit_remaining.value(labels=adapter._metric_base_labels)  # type: ignore[attr-defined]
         == pytest.approx(97.0)
     )
+
+
+def test_fetch_account_snapshot_uses_watchdog(monkeypatch: pytest.MonkeyPatch) -> None:
+    watchdog = _RecordingWatchdog()
+
+    credentials = ExchangeCredentials(
+        key_id="watchdog",
+        secret="secret",
+        permissions=("read",),
+        environment=Environment.LIVE,
+    )
+    adapter = ZondaSpotAdapter(credentials, watchdog=watchdog)
+
+    monkeypatch.setattr(adapter, "_signed_request", lambda *args, **kwargs: {"balances": []})
+    monkeypatch.setattr(adapter, "_fetch_price_map", lambda: {})
+
+    snapshot = adapter.fetch_account_snapshot()
+
+    assert isinstance(snapshot, AccountSnapshot)
+    assert "zonda_spot_fetch_account" in watchdog.calls
 
 
 def test_fetch_ohlcv_maps_items(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -242,6 +271,22 @@ def test_fetch_ticker_updates_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+def test_fetch_ticker_maps_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    credentials = ExchangeCredentials(key_id="public", environment=Environment.LIVE)
+    adapter = ZondaSpotAdapter(credentials)
+
+    def fake_public_request(self, path: str, *, params=None, method="GET"):
+        assert path == "/trading/ticker"
+        payload = {"status": "Fail", "errors": [{"code": 429, "message": "limit"}]}
+        adapter._ensure_success(payload, status=429, endpoint=path, signed=False)
+        return payload
+
+    monkeypatch.setattr(ZondaSpotAdapter, "_public_request", fake_public_request)
+
+    with pytest.raises(ExchangeThrottlingError):
+        adapter.fetch_ticker("BTC-PLN")
+
+
 def test_fetch_order_book_parses_levels(monkeypatch: pytest.MonkeyPatch) -> None:
     metrics = MetricsRegistry()
     credentials = ExchangeCredentials(key_id="public", environment=Environment.LIVE)
@@ -343,6 +388,29 @@ def test_public_request_retries_throttling(monkeypatch: pytest.MonkeyPatch) -> N
     )
 
 
+def test_fetch_account_snapshot_maps_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    credentials = ExchangeCredentials(
+        key_id="key",
+        secret="secret",
+        permissions=("read", "trade"),
+        environment=Environment.LIVE,
+    )
+    adapter = ZondaSpotAdapter(credentials)
+
+    def fake_signed_request(self, method: str, path: str, *, params=None, data=None):
+        assert method == "POST"
+        assert path == "/trading/balance"
+        payload = {"status": "Fail", "errors": [{"code": 4002, "message": "Invalid signature"}]}
+        adapter._ensure_success(payload, status=403, endpoint=path, signed=True)
+        return payload
+
+    monkeypatch.setattr(ZondaSpotAdapter, "_signed_request", fake_signed_request)
+    monkeypatch.setattr(ZondaSpotAdapter, "_fetch_price_map", lambda self: {})
+
+    with pytest.raises(ExchangeAuthError):
+        adapter.fetch_account_snapshot()
+
+
 def test_fetch_account_snapshot_converts_balances(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_signed_request(self, method: str, path: str, *, params=None, data=None):
         assert method == "POST"
@@ -440,11 +508,13 @@ def test_public_request_raises_network_error(monkeypatch: pytest.MonkeyPatch) ->
     retries = adapter._metric_retries.value(  # type: ignore[attr-defined]
         labels={**adapter._metric_base_labels, "reason": "network"},
     )
-    assert retries == pytest.approx(3.0)
+    expected_retries = adapter._watchdog.retry_policy.max_attempts * 3.0  # type: ignore[attr-defined]
+    assert retries == pytest.approx(expected_retries)
     api_errors = adapter._metric_api_errors.value(  # type: ignore[attr-defined]
         labels={**adapter._metric_base_labels, "reason": "network"},
     )
-    assert api_errors == pytest.approx(1.0)
+    expected_api_errors = float(adapter._watchdog.retry_policy.max_attempts)  # type: ignore[attr-defined]
+    assert api_errors == pytest.approx(expected_api_errors)
 
 
 def test_public_request_raises_api_error(monkeypatch: pytest.MonkeyPatch) -> None:

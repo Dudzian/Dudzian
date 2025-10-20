@@ -1,9 +1,9 @@
-"""Warstwa zgodności eksportująca nowe komponenty GUI."""
+"""Kompatybilna nakładka na nowy moduł GUI w ``KryptoLowca.ui.trading``."""
 
 from __future__ import annotations
 
-from pathlib import Path
-import sys
+# Zachowujemy minimalne zależności – nowe moduły samodzielnie dbają o konfigurację
+# środowiska (ścieżki repo, logging itp.).
 
 
 def _ensure_repo_root() -> None:
@@ -80,44 +80,6 @@ __all__ = [
     "TradingView",
     "main",
 ]
-
-# --- ŚCIEŻKI APLIKACJI ---
-APP_ROOT = Path(__file__).resolve().parent
-LOGS_DIR = GLOBAL_LOGS_DIR
-LOGS_DIR.mkdir(parents=True, exist_ok=True)
-TEXT_LOG_FILE = DEFAULT_LOG_FILE
-DB_FILE = APP_ROOT / "trading_bot.db"
-OPEN_POS_FILE = APP_ROOT / "open_positions.json"
-FAV_FILE = APP_ROOT / "favorites.json"
-PRESETS_DIR = APP_ROOT / "presets"; PRESETS_DIR.mkdir(exist_ok=True)
-MODELS_DIR = APP_ROOT / "models"; MODELS_DIR.mkdir(exist_ok=True)
-KEYS_FILE = APP_ROOT / "api_keys.enc"
-SALT_FILE = APP_ROOT / "salt.bin"
-VAR_DIR = APP_ROOT / "var"; VAR_DIR.mkdir(exist_ok=True)
-RISK_STATE_DIR = VAR_DIR / "risk_state"; RISK_STATE_DIR.mkdir(parents=True, exist_ok=True)
-RISK_DECISIONS_LOG = LOGS_DIR / "risk_decisions.jsonl"
-
-# --- MENEDŻERY / CORE ---
-from KryptoLowca.managers.security_manager import SecurityManager
-from KryptoLowca.managers.config_manager import ConfigManager
-from KryptoLowca.managers.exchange_manager import ExchangeManager
-from KryptoLowca.managers.exchange_core import PositionDTO
-from KryptoLowca.managers.ai_manager import AIManager
-from KryptoLowca.managers.report_manager import ReportManager
-from KryptoLowca.managers.risk_manager_adapter import RiskManager
-from KryptoLowca.core.trading_engine import TradingEngine
-from KryptoLowca.risk_settings_loader import (
-    DEFAULT_CORE_CONFIG_PATH,
-    load_risk_settings_from_core,
-)
-
-# istniejące moduły w repo
-from KryptoLowca.trading_strategies import TradingStrategies
-from reporting import TradeInfo
-from KryptoLowca.database_manager import DatabaseManager  # klasyczny (bezargumentowy) konstruktor
-from KryptoLowca.ui.trading import view as trading_view
-
-# =====================================
 # Pomocnicze
 # =====================================
 def now_iso() -> str:
@@ -1997,3 +1959,4 @@ if __name__ == "__main__":
     root = tk.Tk()
     app = TradingGUI(root)
     root.mainloop()
+=======

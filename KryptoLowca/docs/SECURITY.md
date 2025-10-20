@@ -4,7 +4,7 @@ Ten dokument opisuje, jak chronić klucze API, rotować je automatycznie i zapew
 
 ## Rotacja kluczy API
 
-- Klucze przechowywane lokalnie szyfrowane są przez `SecurityManager` (AES-256-GCM).
+- Klucze przechowywane lokalnie szyfrowane są przez `bot_core.security.file_storage.EncryptedFileSecretStorage` (AES-256-GCM, PBKDF2 390k iteracji).
 - `KeyRotationManager` zapisuje metadane rotacji w pliku `api_keys.enc.rotation.json`.
 - Aby wymusić rotację raz na 30 dni, uruchom:
 

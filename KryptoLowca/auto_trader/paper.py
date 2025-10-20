@@ -249,6 +249,8 @@ class PaperAutoTradeApp:
         ] = []
         self._provided_gui = gui
         self.headless_stub = headless_stub
+        services = bootstrap_frontend_services(config_path=self.core_config_path)
+        self.frontend_services = services
         self.gui, self.symbol_getter = self._build_gui()
         self._sync_headless_stub_settings()
 
@@ -256,12 +258,16 @@ class PaperAutoTradeApp:
             bootstrap_context,
             execution_service,
         )
+        if resolved_execution_service is None and services.execution_service is not None:
+            resolved_execution_service = services.execution_service
 
         autotrader_kwargs: dict[str, Any] = {"walkforward_interval_s": None}
         if resolved_execution_service is not None:
             autotrader_kwargs["execution_service"] = resolved_execution_service
         if bootstrap_context is not None:
             autotrader_kwargs["bootstrap_context"] = bootstrap_context
+        if services.market_intel is not None and "market_intel" not in autotrader_kwargs:
+            autotrader_kwargs["market_intel"] = services.market_intel
 
         self.trader = AutoTrader(
             self.adapter.emitter,
@@ -756,6 +762,21 @@ class PaperAutoTradeApp:
         if provided_gui is not None:
             self.enable_gui = True
             gui = provided_gui
+            if self.frontend_services is not None:
+                if hasattr(gui, "frontend_services"):
+                    try:
+                        gui.frontend_services = self.frontend_services  # type: ignore[attr-defined]
+                    except Exception:  # pragma: no cover - defensywne
+                        logger.debug("Nie udało się ustawić frontend_services na przekazanym GUI", exc_info=True)
+                market_intel = getattr(self.frontend_services, "market_intel", None)
+                if (
+                    market_intel is not None
+                    and getattr(gui, "market_intel", None) is None
+                ):
+                    try:
+                        gui.market_intel = market_intel  # type: ignore[attr-defined]
+                    except Exception:  # pragma: no cover - defensywne
+                        logger.debug("Nie udało się wstrzyknąć market_intel do przekazanego GUI", exc_info=True)
             self._gui_risk_listener_active = False
             register_listener = getattr(gui, "add_risk_reload_listener", None)
             if callable(register_listener):
@@ -804,7 +825,7 @@ class PaperAutoTradeApp:
                 from KryptoLowca.ui.trading import TradingGUI
 
                 root = tk.Tk()
-                gui = TradingGUI(root)
+                gui = TradingGUI(root, frontend_services=self.frontend_services)
                 gui.paper_balance = self.paper_balance
                 register_listener = getattr(gui, "add_risk_reload_listener", None)
                 if callable(register_listener):

@@ -3,9 +3,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, TYPE_CHECKING
 
-from bot_core.config.models import EnvironmentConfig
+if TYPE_CHECKING:  # pragma: no cover - import tylko dla typów
+    from bot_core.config.models import EnvironmentConfig
+else:  # pragma: no cover - fallback gdy modele nie są jeszcze zainicjalizowane
+    EnvironmentConfig = object  # type: ignore[assignment]
 from bot_core.data.ohlcv import CachedOHLCVSource, OHLCVBackfillService
 from bot_core.exchanges.base import ExchangeAdapter
 

@@ -20,26 +20,18 @@ if __package__ in (None, ""):
     _ensure_repo_root()
 
 
-from KryptoLowca.managers.database_manager import DatabaseManager
-from KryptoLowca.managers.exchange_adapter import ExchangeAdapter
+from KryptoLowca.managers.exchange_manager import ExchangeManager
 
-def main():
-    db = DatabaseManager("sqlite+aiosqlite:///trading.db")
-    db.sync.init_db()
 
-    # Tryb live bez kluczy – tylko odczyt ceny
-    ex = ExchangeAdapter(
-        db,
-        mode="live",
-        symbol="BTC/USDT",
-        exchange_id="binance",  # możesz podmienić na 'kraken', 'coinbase', itd.
-    )
+def main() -> None:
+    manager = ExchangeManager(exchange_id="binance")
+    manager.set_mode(spot=True)
+    manager.load_markets()
 
-    # pobierz aktualną cenę i zapisz do adaptera (process_tick sam pobierze z giełdy)
-    ex.process_tick(price=None)
+    ticker = manager.fetch_ticker("BTC/USDT") or {}
+    last_price = ticker.get("last") or ticker.get("close") or ticker.get("bid")
+    print("LIVE (readonly) OK – ostatnia cena BTC/USDT:", last_price)
 
-    # nic nie składamy – brak kluczy
-    print("LIVE (readonly) OK: pobrano cenę i zaktualizowano stan (jeśli dostępne).")
 
 if __name__ == "__main__":
     main()

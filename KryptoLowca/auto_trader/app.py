@@ -50,7 +50,11 @@ from KryptoLowca.config_manager import StrategyConfig
 from KryptoLowca.telemetry.prometheus_exporter import metrics as prometheus_metrics
 from KryptoLowca.core.services import ExecutionService, RiskService, SignalService, exception_guard
 from KryptoLowca.core.services.data_provider import ExchangeDataProvider
-from KryptoLowca.managers.risk_manager_adapter import RiskManager as ThresholdRiskManager
+try:  # pragma: no cover - zależność opcjonalna w środowisku CI
+    from bot_core.market_intel import MarketIntelAggregator, MarketIntelQuery  # type: ignore[attr-defined]
+except Exception:  # pragma: no cover - fallback gdy moduł nie występuje
+    MarketIntelAggregator = None  # type: ignore[assignment]
+    MarketIntelQuery = None  # type: ignore[assignment]
 try:  # pragma: no cover - zależności runtime mogą być niekompletne
     from bot_core.runtime import PaperTradingAdapter  # type: ignore[attr-defined]
 except Exception:  # pragma: no cover - fallback gdy adapter nie jest eksportowany
@@ -165,6 +169,7 @@ class AutoTrader:
         core_risk_engine: Any | None = None,
         core_execution_service: Any | None = None,
         ai_connector: Any | None = None,
+        market_intel: Any | None = None,
     ) -> None:
         self.emitter = emitter
         self.gui = gui
@@ -321,6 +326,10 @@ class AutoTrader:
         self._core_ai_notional_by_symbol: Dict[str, float] = {}
         self._core_ai_default_notional: float | None = None
         self._core_account_equity: float = 1_000_000.0
+        self._market_intel: Any | None = market_intel or getattr(gui, "market_intel", None)
+        self._market_intel_cache: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        self._market_intel_cache_ts: Dict[Tuple[str, str], float] = {}
+        self._market_intel_cache_ttl = 60.0
 
         if bootstrap_context is not None:
             self._core_risk_engine = core_risk_engine or getattr(
@@ -1772,7 +1781,147 @@ class AutoTrader:
             "ticker": ticker or {},
         }
         payload["price"] = self._extract_price_from_payload(payload)
+        intel_snapshot = self._collect_market_intel(symbol, timeframe)
+        if intel_snapshot:
+            payload["market_intel"] = intel_snapshot
+            fallback_price = self._resolve_price_from_intel(intel_snapshot)
+            current_price = payload.get("price")
+            try:
+                current_price_value = float(current_price)
+            except Exception:
+                current_price_value = 0.0
+            if fallback_price is not None and (current_price_value <= 0 or current_price is None):
+                payload["price"] = fallback_price
         return payload
+
+    def _collect_market_intel(self, symbol: str, timeframe: str) -> Optional[Dict[str, Any]]:
+        aggregator = self._market_intel or getattr(self.gui, "market_intel", None)
+        if aggregator is None:
+            return None
+
+        if self._market_intel is None:
+            self._market_intel = aggregator
+
+        cache_key = (symbol, timeframe)
+        now = time.monotonic()
+        cached = self._market_intel_cache.get(cache_key)
+        if cached is not None:
+            ts = self._market_intel_cache_ts.get(cache_key, 0.0)
+            if now - ts <= self._market_intel_cache_ttl:
+                return dict(cached)
+
+        payload: Optional[Dict[str, Any]] = None
+        mode = getattr(aggregator, "_mode", None)
+
+        if mode == "cache" and MarketIntelQuery is not None and hasattr(aggregator, "build_snapshot"):
+            try:
+                query_symbol = self._normalise_market_intel_symbol(symbol, mode="cache")
+                interval = self._normalise_market_intel_interval(timeframe)
+                query = MarketIntelQuery(  # type: ignore[call-arg]
+                    symbol=query_symbol,
+                    interval=interval,
+                    lookback_bars=96,
+                )
+                snapshot = aggregator.build_snapshot(query)  # type: ignore[attr-defined]
+            except Exception:  # pragma: no cover - zależne od implementacji agregatora
+                logger.debug("Market intel snapshot failed for %s/%s", symbol, timeframe, exc_info=True)
+            else:
+                payload = self._snapshot_to_mapping(snapshot)
+        else:
+            payload = self._collect_sqlite_market_intel(aggregator, symbol)
+
+        if payload:
+            self._market_intel_cache[cache_key] = payload
+            self._market_intel_cache_ts[cache_key] = now
+            return dict(payload)
+        return None
+
+    def _collect_sqlite_market_intel(self, aggregator: Any, symbol: str) -> Optional[Dict[str, Any]]:
+        if not hasattr(aggregator, "build"):
+            return None
+        try:
+            baselines = aggregator.build()  # type: ignore[attr-defined]
+        except Exception:  # pragma: no cover - zależne od implementacji agregatora
+            logger.debug("Market intel baseline build failed for %s", symbol, exc_info=True)
+            return None
+        symbol_aliases = self._market_intel_symbol_aliases(symbol)
+        for baseline in baselines or ():
+            candidate = str(getattr(baseline, "symbol", "")).upper()
+            if candidate not in symbol_aliases:
+                continue
+            if hasattr(baseline, "to_mapping"):
+                mapping = baseline.to_mapping()  # type: ignore[attr-defined]
+                return {k: v for k, v in mapping.items() if v is not None}
+            attrs: Dict[str, Any] = {}
+            for key in dir(baseline):
+                if key.startswith("_"):
+                    continue
+                value = getattr(baseline, key)
+                if callable(value):
+                    continue
+                attrs[key] = value
+            if attrs:
+                return {k: v for k, v in attrs.items() if v is not None}
+        return None
+
+    @staticmethod
+    def _snapshot_to_mapping(snapshot: Any) -> Dict[str, Any]:
+        if snapshot is None:
+            return {}
+        if hasattr(snapshot, "to_dict"):
+            mapping = snapshot.to_dict()  # type: ignore[attr-defined]
+            return {k: v for k, v in mapping.items() if v is not None}
+        attrs: Dict[str, Any] = {}
+        for key in dir(snapshot):
+            if key.startswith("_"):
+                continue
+            value = getattr(snapshot, key)
+            if callable(value):
+                continue
+            attrs[key] = value
+        return {k: v for k, v in attrs.items() if v is not None}
+
+    @staticmethod
+    def _normalise_market_intel_interval(timeframe: str) -> str:
+        if not timeframe:
+            return "1h"
+        return str(timeframe).strip()
+
+    @staticmethod
+    def _normalise_market_intel_symbol(symbol: str, *, mode: str) -> str:
+        base = str(symbol or "").upper().strip()
+        if mode == "cache":
+            return base.replace("/", "_").replace("-", "_")
+        return base.replace("/", "").replace("-", "")
+
+    def _market_intel_symbol_aliases(self, symbol: str) -> set[str]:
+        base = str(symbol or "").upper().strip()
+        aliases = {
+            base,
+            base.replace("/", "_").replace("-", "_"),
+            base.replace("/", "").replace("-", ""),
+        }
+        return {alias for alias in aliases if alias}
+
+    @staticmethod
+    def _resolve_price_from_intel(payload: Mapping[str, Any]) -> Optional[float]:
+        for key in ("price", "mid_price", "close", "last"):
+            value = payload.get(key)
+            try:
+                if value is not None and float(value) > 0:
+                    return float(value)
+            except Exception:
+                continue
+        metadata = payload.get("metadata") if isinstance(payload, Mapping) else None
+        if isinstance(metadata, Mapping):
+            for key in ("mid_price", "price"):
+                value = metadata.get(key)
+                try:
+                    if value is not None and float(value) > 0:
+                        return float(value)
+                except Exception:
+                    continue
+        return None
 
     def _build_market_state(
         self,

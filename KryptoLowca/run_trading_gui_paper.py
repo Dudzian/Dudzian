@@ -19,6 +19,7 @@ Uwaga:
 
 from __future__ import annotations
 
+from importlib import import_module
 from pathlib import Path
 import sys
 import traceback
@@ -28,6 +29,11 @@ from typing import Optional, List, Dict, Any, Set, Tuple
 
 import tkinter as tk
 from tkinter import ttk, messagebox
+
+
+from bot_core.runtime.paths import DesktopAppPaths, build_desktop_app_paths
+from KryptoLowca.logging_utils import DEFAULT_LOG_FILE, LOGS_DIR
+from KryptoLowca.runtime.bootstrap import FrontendBootstrap, bootstrap_frontend_services
 
 
 def _ensure_repo_root() -> None:
@@ -89,6 +95,45 @@ TP_PORTION_PRESETS: Dict[str, Tuple[float,float,float]] = {
 logger = logging.getLogger(__name__)
 
 
+_FRONTEND_PATHS: DesktopAppPaths | None = None
+
+
+def _build_frontend_bootstrap(
+    *,
+    core_config_path: str | Path | None = None,
+    core_environment: str | None = None,
+) -> Tuple[DesktopAppPaths | None, FrontendBootstrap | None]:
+    """Przygotowuje wspólne usługi frontowe dla launchera GUI."""
+
+    global _FRONTEND_PATHS
+
+    if _FRONTEND_PATHS is None:
+        module_file: Path | None = None
+        try:
+            trading_app = import_module("KryptoLowca.ui.trading.app")
+            candidate = getattr(trading_app, "__file__", None)
+            if candidate is not None:
+                module_file = Path(candidate)
+        except Exception:
+            module_file = None
+        if module_file is not None:
+            try:
+                _FRONTEND_PATHS = build_desktop_app_paths(
+                    module_file,
+                    logs_dir=LOGS_DIR,
+                    text_log_file=DEFAULT_LOG_FILE,
+                )
+            except Exception:
+                _FRONTEND_PATHS = None
+
+    services = bootstrap_frontend_services(
+        paths=_FRONTEND_PATHS,
+        config_path=core_config_path,
+        environment=core_environment,
+    )
+    return _FRONTEND_PATHS, services
+
+
 def _derive_risk_defaults(snapshot: RiskSnapshot) -> tuple[float, float, float, float]:
     """Zwraca (kapitał, ryzyko %, ekspozycja %, notional) zgodne z profilem runtime."""
 
@@ -113,9 +158,15 @@ def _derive_risk_defaults(snapshot: RiskSnapshot) -> tuple[float, float, float, 
         portfolio_pct = DEFAULT_PORTFOLIO_PCT
 
     notional = _compute_notional(snapshot, default_notional=DEFAULT_NOTIONAL_USDT)
-    limit_notional = _compute_notional(snapshot, default_notional=float("inf"))
-    if math.isfinite(limit_notional) and limit_notional > notional:
-        notional = limit_notional
+    if snapshot.settings is not None and snapshot.paper_balance > 0:
+        try:
+            risk_per_trade = float(snapshot.settings.max_risk_per_trade)
+        except Exception:
+            risk_per_trade = 0.0
+        if risk_per_trade > 0:
+            risk_notional = float(snapshot.paper_balance) * risk_per_trade
+            if risk_notional > notional:
+                notional = risk_notional
 
     return capital, risk_pct, portfolio_pct, notional
 

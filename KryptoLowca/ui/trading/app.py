@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Optional, Protocol
 
 import tkinter as tk
+
+try:  # pragma: no cover - zależność opcjonalna
+    from bot_core.market_intel import MarketIntelAggregator
+except Exception:  # pragma: no cover - fallback gdy moduł nie istnieje
+    MarketIntelAggregator = None  # type: ignore[assignment]
 
 from bot_core.runtime.paths import (
     DesktopAppPaths,
@@ -21,8 +27,8 @@ from bot_core.runtime.metadata import (
     load_risk_manager_settings,
     load_runtime_entrypoint_metadata,
 )
-from bot_core.risk.events import RiskDecisionLog
-from bot_core.risk.repository import FileRiskRepository
+from bot_core.runtime.preset_service import PresetConfigService
+from bot_core.security.file_storage import EncryptedFileSecretStorage
 
 from KryptoLowca.logging_utils import (
     DEFAULT_LOG_FILE,
@@ -30,9 +36,8 @@ from KryptoLowca.logging_utils import (
     get_logger,
     setup_app_logging,
 )
+from KryptoLowca.runtime.bootstrap import FrontendBootstrap, bootstrap_frontend_services
 from KryptoLowca.database_manager import DatabaseManager
-from KryptoLowca.managers.security_manager import SecurityManager
-from KryptoLowca.managers.config_manager import ConfigManager
 from KryptoLowca.managers.report_manager import ReportManager
 from KryptoLowca.managers.risk_manager_adapter import RiskManager
 from KryptoLowca.managers.ai_manager import AIManager
@@ -92,6 +97,8 @@ class TradingGUI:
             Callable[[AppState], TradingSessionController]
         ] = None,
         trade_executor: Optional[TradeExecutor] = None,
+        market_intel: Optional["MarketIntelAggregator"] = None,
+        frontend_services: FrontendBootstrap | None = None,
     ) -> None:
         self.root = root or tk.Tk()
         self.paths = paths or build_desktop_app_paths(
@@ -99,7 +106,17 @@ class TradingGUI:
             logs_dir=GLOBAL_LOGS_DIR,
             text_log_file=DEFAULT_LOG_FILE,
         )
-        self._core_config_path = self._resolve_core_config_path()
+        core_config_path = self._resolve_core_config_path()
+        if frontend_services is None:
+            services = bootstrap_frontend_services(
+                paths=self.paths,
+                config_path=core_config_path,
+            )
+        else:
+            services = frontend_services
+        self.frontend_services = services
+        self.market_intel = market_intel or self.frontend_services.market_intel
+        self._core_config_path = core_config_path
         self.runtime_metadata = self._load_metadata(self._core_config_path)
         (
             self._risk_profile_name,
@@ -123,6 +140,11 @@ class TradingGUI:
         self.state = self._create_state()
         controller_factory = session_controller_factory or self._default_controller_factory
         self.controller: TradingSessionController = controller_factory(self.state)
+        if getattr(self.controller, "market_intel", None) is None and self.market_intel is not None:
+            try:
+                self.controller.market_intel = self.market_intel  # type: ignore[attr-defined]
+            except Exception:  # pragma: no cover - defensywnie
+                logger.debug("Nie udało się wstrzyknąć MarketIntelAggregator do kontrolera", exc_info=True)
         self.view = TradingView(
             self.root,
             self.state,
@@ -131,7 +153,7 @@ class TradingGUI:
         )
         self._configure_fraction_widget(self.risk_manager_settings)
         self._configure_logging_handler()
-        self.ex_mgr = None
+        self.ex_mgr = self.frontend_services.exchange_manager
         self.network_var = self.state.network
         self.timeframe_var = self.state.timeframe
         self.symbol_var = tk.StringVar(value="BTC/USDT")
@@ -210,6 +232,8 @@ class TradingGUI:
             ReportManager(str(self.paths.db_file)),
             risk_manager,
             self._build_ai_manager(),
+            exchange_manager=self.frontend_services.exchange_manager,
+            market_intel=self.market_intel,
         )
 
     # ------------------------------------------------------------------
@@ -253,6 +277,9 @@ class TradingGUI:
             paper_balance=tk.StringVar(value="10 000.00"),
             account_balance=tk.StringVar(value="—"),
             status=tk.StringVar(value="Oczekiwanie na start"),
+            market_intel_label=tk.StringVar(value="Market intel: —"),
+            market_intel_summary="Market intel: —",
+            market_intel_auto_save=tk.BooleanVar(value=False),
         )
 
     # ------------------------------------------------------------------
@@ -264,6 +291,28 @@ class TradingGUI:
                 return AIManager(self.paths.models_dir, logger)
             except TypeError:
                 return AIManager(self.paths.models_dir)
+
+    # ------------------------------------------------------------------
+    def _build_secret_storage(self) -> EncryptedFileSecretStorage:
+        vault_path = getattr(self.paths, "secret_vault_file", None)
+        if vault_path is None:
+            vault_path = self.paths.keys_file.with_suffix(".vault")
+        passphrase = os.environ.get("DUDZIAN_GUI_SECRET_PASSPHRASE")
+        if not passphrase:
+            logger.warning(
+                "Brak zmiennej DUDZIAN_GUI_SECRET_PASSPHRASE – użyto domyślnego hasła magazynu."
+            )
+            passphrase = "trading-gui"
+        return EncryptedFileSecretStorage(vault_path, passphrase)
+
+    # ------------------------------------------------------------------
+    def _build_preset_service(self) -> PresetConfigService:
+        core_path = self._core_config_path or resolve_core_config_path()
+        try:
+            return PresetConfigService(core_path)
+        except Exception:  # pragma: no cover - konfiguracja może być niepełna podczas developmentu
+            logger.exception("Nie udało się utworzyć serwisu konfiguracji presetów")
+            return PresetConfigService(core_path)
 
     # ------------------------------------------------------------------
     def _configure_logging_handler(self) -> None:

@@ -1,141 +1,194 @@
-"""Manager rozdzielający zlecenia pomiędzy wiele giełd."""
+"""Zarządzanie wieloma kontami przy użyciu LiveExecutionRouter z bot_core."""
+
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections import deque
-from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, ClassVar, Deque, Dict, FrozenSet, Iterable, List, Optional, Tuple
+from dataclasses import dataclass, field, replace
+from typing import Callable, Deque, Dict, Mapping, MutableMapping, Optional, Sequence
 
-from KryptoLowca.exchanges.interfaces import (
-    ExchangeAdapter,
-    ExchangeCredentials,
-    MarketPayload,
-    MarketSubscription,
-    OrderRequest,
-    OrderStatus,
-    WebSocketSubscription,
-)
+try:  # pragma: no cover - zależność opcjonalna w CI
+    from bot_core.execution import ExecutionContext, LiveExecutionRouter
+    from bot_core.exchanges.base import OrderRequest, OrderResult
+except Exception:  # pragma: no cover - fallback gdy moduły nie są dostępne
+    ExecutionContext = None  # type: ignore[assignment]
+    LiveExecutionRouter = None  # type: ignore[assignment]
+    OrderRequest = None  # type: ignore[assignment]
+    OrderResult = None  # type: ignore[assignment]
+
+try:  # pragma: no cover - zależność opcjonalna
+    from bot_core.market_intel import MarketIntelAggregator, MarketIntelQuery
+except Exception:  # pragma: no cover - fallback
+    MarketIntelAggregator = None  # type: ignore[assignment]
+    MarketIntelQuery = None  # type: ignore[assignment]
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
 class ManagedAccount:
+    """Definicja konta wraz z kontekstem egzekucji i telemetrią."""
+
     exchange: str
     account: str
-    adapter: ExchangeAdapter
-    weight: int = 1
-    tags: set[str] = field(default_factory=set)
+    execution_route: str
+    context: ExecutionContext
+    telemetry_tags: Mapping[str, str] = field(default_factory=dict)
 
 
 class MultiExchangeAccountManager:
-    """Zarządza wieloma kontami, balansując obciążenie i monitorując zlecenia.
+    """Kieruje zlecenia przez :class:`LiveExecutionRouter` w układzie round-robin."""
 
-    Domyślnie obsługujemy identyfikatory ``binance``, ``kraken`` oraz ``zonda``
-    wykorzystywane w adapterach REST/WebSocket.
-    """
+    def __init__(
+        self,
+        router: "LiveExecutionRouter",
+        *,
+        base_context: "ExecutionContext",
+        market_intel: Optional["MarketIntelAggregator"] = None,
+        telemetry_emitter: Optional[Callable[[str, Mapping[str, object]], None]] = None,
+    ) -> None:
+        if LiveExecutionRouter is None or ExecutionContext is None or OrderRequest is None:
+            raise RuntimeError("bot_core nie jest dostępny – MultiExchangeAccountManager wymaga nowych modułów")
 
-    SUPPORTED_EXCHANGES: ClassVar[FrozenSet[str]] = frozenset({"binance", "kraken", "zonda"})
+        self._router: LiveExecutionRouter = router
+        self._base_context: ExecutionContext = base_context
+        self._market_intel = market_intel
+        self._telemetry_emitter = telemetry_emitter
 
-    def __init__(self) -> None:
-        self._accounts: Dict[Tuple[str, str], ManagedAccount] = {}
-        self._round_robin: Deque[Tuple[str, str]] = deque()
-        self._order_index: Dict[str, Tuple[str, str]] = {}
+        self._accounts: Dict[str, ManagedAccount] = {}
+        self._round_robin: Deque[str] = deque()
+        self._order_bindings: Dict[str, str] = {}
         self._lock = asyncio.Lock()
 
+    # ------------------------------------------------------------------ utils
+    @property
+    def supported_exchanges(self) -> Sequence[str]:
+        """Zwraca listę giełd obsługiwanych przez podpięty router."""
+
+        try:
+            return tuple(self._router.list_adapters())  # type: ignore[attr-defined]
+        except AttributeError:
+            # starsze wersje routera nie mają metody list_adapters – sięgamy do prywatnych pól
+            adapters = getattr(self._router, "_adapters", {})
+            return tuple(sorted(adapters.keys()))
+
+    # ----------------------------------------------------------------- account
     def register_account(
         self,
         *,
         exchange: str,
         account: str,
-        adapter: ExchangeAdapter,
-        weight: int = 1,
-        tags: Optional[Iterable[str]] = None,
+        execution_route: Optional[str] = None,
+        portfolio_id: Optional[str] = None,
+        risk_profile: Optional[str] = None,
+        environment: Optional[str] = None,
+        metadata: Optional[Mapping[str, str]] = None,
+        telemetry_tags: Optional[Mapping[str, str]] = None,
     ) -> None:
-        key = (exchange, account)
-        self._accounts[key] = ManagedAccount(
+        """Dodaje konto wraz z kontekstem egzekucji."""
+
+        route = (execution_route or exchange).strip()
+        if not route:
+            raise ValueError("execution_route nie może być pusty")
+
+        base_meta: MutableMapping[str, str] = dict(self._base_context.metadata or {})
+        base_meta.update({"exchange": exchange, "account": account, "execution_route": route})
+        if metadata:
+            base_meta.update({str(k): str(v) for k, v in metadata.items()})
+
+        context = replace(
+            self._base_context,
+            portfolio_id=portfolio_id or self._base_context.portfolio_id,
+            risk_profile=risk_profile or self._base_context.risk_profile,
+            environment=environment or self._base_context.environment,
+            metadata=dict(base_meta),
+        )
+
+        key = f"{exchange}:{account}"
+        managed = ManagedAccount(
             exchange=exchange,
             account=account,
-            adapter=adapter,
-            weight=max(1, weight),
-            tags=set(tags or []),
+            execution_route=route,
+            context=context,
+            telemetry_tags=dict(telemetry_tags or {}),
         )
-        for _ in range(max(1, weight)):
+
+        self._accounts[key] = managed
+        if key not in self._round_robin:
             self._round_robin.append(key)
 
-    @classmethod
-    def is_supported_exchange(cls, exchange: str) -> bool:
-        """Sprawdza, czy identyfikator giełdy znajduje się na liście wspieranych."""
-        return exchange in cls.SUPPORTED_EXCHANGES
+    # ---------------------------------------------------------------- dispatch
+    async def dispatch_order(self, order: "OrderRequest") -> "OrderResult":
+        """Wysyła zlecenie korzystając z kolejnego konta w kolejce."""
 
-    async def connect_all(self, credentials: Dict[Tuple[str, str], ExchangeCredentials]) -> None:
-        for key, account in self._accounts.items():
-            await account.adapter.connect()
-            creds = credentials.get(key)
-            if creds:
-                await account.adapter.authenticate(creds)
+        key = await self._choose_account()
+        managed = self._accounts[key]
+        context = self._context_with_route(managed)
+        result = await asyncio.to_thread(self._router.execute, order, context)
+        self._order_bindings[result.order_id] = key
+        self._emit_telemetry(managed, result)
+        return result
 
-    async def stream_market_data(
+    async def cancel_order(self, order_id: str) -> None:
+        """Anuluje zlecenie przy użyciu zapamiętanego kontekstu."""
+
+        key = self._order_bindings.get(order_id)
+        context = self._context_with_route(self._accounts[key]) if key else self._base_context
+        await asyncio.to_thread(self._router.cancel, order_id, context)
+        if key:
+            self._order_bindings.pop(order_id, None)
+
+    # ------------------------------------------------------------ market intel
+    def collect_market_intel(
         self,
-        subscriptions: Iterable[MarketSubscription],
-        callback: Callable[[str, str, MarketPayload], Awaitable[None]],
-    ) -> List[WebSocketSubscription]:
-        tasks: List[WebSocketSubscription] = []
-        for (exchange, account), managed in self._accounts.items():
-            async def _wrap(event: MarketPayload, ex=exchange, acc=account) -> None:
-                await callback(ex, acc, event)
-            tasks.append(managed.adapter.stream_market_data(subscriptions, _wrap))
-        return tasks
+        symbol: str,
+        *,
+        interval: str = "1h",
+        lookback_bars: int = 24,
+    ) -> Optional[object]:
+        """Buduje snapshot market intel dla podanego instrumentu."""
 
-    async def dispatch_order(self, order: OrderRequest) -> OrderStatus:
+        if self._market_intel is None or MarketIntelQuery is None:
+            return None
+        try:
+            query = MarketIntelQuery(symbol=symbol, interval=interval, lookback_bars=lookback_bars)
+            return self._market_intel.build_snapshot(query)
+        except Exception:
+            logger.debug("Nie udało się zbudować market intel dla %s", symbol, exc_info=True)
+            return None
+
+    # ----------------------------------------------------------------- helpers
+    async def _choose_account(self) -> str:
         async with self._lock:
             if not self._round_robin:
-                raise RuntimeError("Brak zarejestrowanych kont giełdowych")
+                raise RuntimeError("Brak zarejestrowanych kont w MultiExchangeAccountManager")
             key = self._round_robin[0]
             self._round_robin.rotate(-1)
-            managed = self._accounts[key]
-        status = await managed.adapter.submit_order(order)
-        self._order_index[status.order_id] = key
-        return status
+            return key
 
-    async def fetch_order_status(self, order_id: str) -> OrderStatus:
-        key = self._order_index.get(order_id)
-        if not key:
-            raise KeyError(f"Nieznane zlecenie {order_id}")
-        managed = self._accounts[key]
-        return await managed.adapter.fetch_order_status(order_id)
+    @staticmethod
+    def _context_with_route(managed: ManagedAccount) -> ExecutionContext:
+        meta = dict(managed.context.metadata or {})
+        meta.setdefault("execution_route", managed.execution_route)
+        return replace(managed.context, metadata=meta)
 
-    async def cancel_order(self, order_id: str) -> OrderStatus:
-        key = self._order_index.get(order_id)
-        if not key:
-            raise KeyError(f"Nieznane zlecenie {order_id}")
-        managed = self._accounts[key]
-        status = await managed.adapter.cancel_order(order_id)
-        self._order_index.pop(order_id, None)
-        return status
-
-    async def monitor_open_orders(
-        self,
-        *,
-        poll_interval: float = 1.0,
-        timeout: float = 60.0,
-    ) -> Dict[str, OrderStatus]:
-        results: Dict[str, OrderStatus] = {}
-        tasks = []
-        for order_id, key in list(self._order_index.items()):
-            adapter = self._accounts[key].adapter
-            tasks.append(
-                asyncio.create_task(
-                    adapter.monitor_order(order_id, poll_interval=poll_interval, timeout=timeout)
-                )
-            )
-        for task in asyncio.as_completed(tasks):
-            status = await task
-            results[status.order_id] = status
-            if status.status.upper() in {"FILLED", "CANCELED", "REJECTED"}:
-                self._order_index.pop(status.order_id, None)
-        return results
-
-    def list_accounts(self) -> List[ManagedAccount]:
-        return list(self._accounts.values())
+    def _emit_telemetry(self, managed: ManagedAccount, result: "OrderResult") -> None:
+        if not callable(self._telemetry_emitter):
+            return
+        payload = {
+            "exchange": managed.exchange,
+            "account": managed.account,
+            "order_status": result.status,
+            "filled_qty": float(result.filled_quantity),
+        }
+        payload.update({str(k): str(v) for k, v in managed.telemetry_tags.items()})
+        try:
+            self._telemetry_emitter("multi_account.execution", payload)
+        except Exception:
+            logger.debug("Telemetry emitter zgłosił wyjątek", exc_info=True)
 
 
 __all__ = ["MultiExchangeAccountManager", "ManagedAccount"]
+

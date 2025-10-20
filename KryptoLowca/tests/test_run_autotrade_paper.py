@@ -950,6 +950,65 @@ def test_paper_app_explicit_execution_service_overrides_bootstrap(monkeypatch: p
     assert captured["execution_service"] is explicit
 
 
+def test_paper_app_injects_frontend_services_into_provided_gui(monkeypatch: pytest.MonkeyPatch) -> None:
+    services = types.SimpleNamespace(
+        exchange_manager=object(),
+        market_intel=object(),
+        execution_service=object(),
+        account_manager=object(),
+        router=object(),
+    )
+
+    monkeypatch.setattr(
+        paper_launcher,
+        "bootstrap_frontend_services",
+        lambda *_, **__: services,
+    )
+    monkeypatch.setattr(paper_launcher, "wire_gui_logs_to_adapter", lambda *_: None)
+
+    captured: dict[str, object] = {}
+
+    class RecordingTrader:
+        def __init__(self, *_: object, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+        def start(self) -> None:  # pragma: no cover - prosty stub
+            return None
+
+        def stop(self) -> None:  # pragma: no cover - prosty stub
+            return None
+
+    monkeypatch.setattr(paper_launcher, "AutoTrader", RecordingTrader)
+
+    class ProvidedGUI:
+        def __init__(self) -> None:
+            self.frontend_services = None
+            self.market_intel = None
+            self.paper_balance = 10_000.0
+            self.symbol_var = types.SimpleNamespace(get=lambda: "BTC/USDT")
+            self.network_var = types.SimpleNamespace(get=lambda: "demo")
+            self.timeframe_var = types.SimpleNamespace(get=lambda: "1m")
+
+        def add_risk_reload_listener(self, listener):  # pragma: no cover - prosty stub
+            self._listener = listener
+
+    gui = ProvidedGUI()
+
+    app = paper_launcher.PaperAutoTradeApp(
+        symbol="BTC/USDT",
+        enable_gui=False,
+        gui=gui,
+    )
+
+    assert app.frontend_services is services
+    assert gui.frontend_services is services
+    assert gui.market_intel is services.market_intel
+    assert captured.get("bootstrap_context") is None or captured.get("bootstrap_context") is app.bootstrap_context
+    assert captured.get("market_intel") is services.market_intel
+    assert captured.get("walkforward_interval_s") is None
+    assert captured.get("execution_service") is services.execution_service
+
+
 def test_paper_app_records_reload_stats_and_deduplicates(monkeypatch: pytest.MonkeyPatch) -> None:
     initial_settings = RiskManagerSettings(
         max_risk_per_trade=0.05,

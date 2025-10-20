@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -82,3 +83,33 @@ def test_configure_runtime_risk_handles_loader_failure(monkeypatch: pytest.Monke
 
     assert gui.default_paper_notional == pytest.approx(emitter.DEFAULT_PAPER_ORDER_NOTIONAL)
     assert "Domyślny notional (paper):" in caplog.text
+
+
+def test_build_frontend_bootstrap_uses_runtime_services(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(emitter, "_FRONTEND_PATHS", None)
+
+    captured: dict[str, object] = {}
+    dummy_paths = SimpleNamespace(app_root=Path("/tmp/emitter"), db_file=Path("/tmp/emitter.db"))
+
+    def fake_build(app_file: Path, *, logs_dir, text_log_file):  # type: ignore[override]
+        captured["build_args"] = (app_file, logs_dir, text_log_file)
+        return dummy_paths
+
+    dummy_services = emitter.FrontendBootstrap(exchange_manager="mgr", market_intel="intel")
+
+    def fake_bootstrap(**kwargs: object) -> emitter.FrontendBootstrap:
+        captured["bootstrap_kwargs"] = kwargs
+        return dummy_services
+
+    monkeypatch.setattr(emitter, "build_desktop_app_paths", fake_build)
+    monkeypatch.setattr(emitter, "bootstrap_frontend_services", fake_bootstrap)
+
+    paths, services = emitter._build_frontend_bootstrap()
+
+    assert paths is dummy_paths
+    assert services is dummy_services
+    assert captured["bootstrap_kwargs"] == {
+        "paths": dummy_paths,
+        "config_path": None,
+        "environment": None,
+    }

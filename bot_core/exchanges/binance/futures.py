@@ -33,6 +33,8 @@ from bot_core.exchanges.errors import (
     ExchangeNetworkError,
     ExchangeThrottlingError,
 )
+from bot_core.exchanges.error_mapping import raise_for_binance_error
+from bot_core.exchanges.health import Watchdog
 from bot_core.exchanges.streaming import LocalLongPollStream
 from bot_core.observability.metrics import MetricsRegistry, get_global_metrics_registry
 
@@ -152,6 +154,7 @@ class BinanceFuturesAdapter(ExchangeAdapter):
         "_metric_position_net",
         "_metric_funding_rate",
         "_tracked_position_labels",
+        "_watchdog",
     )
 
     name: str = "binance_futures"
@@ -163,6 +166,7 @@ class BinanceFuturesAdapter(ExchangeAdapter):
         environment: Environment | None = None,
         settings: Mapping[str, object] | None = None,
         metrics_registry: MetricsRegistry | None = None,
+        watchdog: Watchdog | None = None,
     ) -> None:
         super().__init__(credentials)
         self._environment = environment or credentials.environment
@@ -222,6 +226,7 @@ class BinanceFuturesAdapter(ExchangeAdapter):
             "Ostatnio zarejestrowane stopy finansowania na Binance Futures.",
         )
         self._tracked_position_labels: set[tuple[str, str]] = set()
+        self._watchdog = watchdog or Watchdog()
 
     # ------------------------------------------------------------------
     # Konfiguracja streamingu long-pollowego
@@ -373,7 +378,7 @@ class BinanceFuturesAdapter(ExchangeAdapter):
             data = urlencode(_stringify_params(params)).encode("utf-8")
             headers["Content-Type"] = "application/x-www-form-urlencoded"
         request = Request(url, headers=headers, data=data, method=method)
-        return self._execute_request(request, signed=False)
+        return self._execute_request(request, signed=False, endpoint=path)
 
     def _signed_request(
         self,
@@ -408,19 +413,21 @@ class BinanceFuturesAdapter(ExchangeAdapter):
         else:
             separator = "?" if "?" not in url else "&"
             request = Request(f"{url}{separator}{signed_query}", headers=headers, method=method)
-        return self._execute_request(request, signed=True)
+        return self._execute_request(request, signed=True, endpoint=path)
 
     def _execute_request(
         self,
         request: Request,
         *,
         signed: bool,
+        endpoint: str,
     ) -> dict[str, object] | list[object]:
         attempt = 0
         while True:
             start = time.perf_counter()
             try:
                 with urlopen(request, timeout=15) as response:  # nosec: B310 - zaufany endpoint
+                    status_code = getattr(response, "status", getattr(response, "code", 200))
                     payload = response.read()
                     headers = {k.lower(): v for k, v in response.headers.items()}
             except HTTPError as exc:  # pragma: no cover - zachowanie walidowane w testach jednostkowych
@@ -448,9 +455,19 @@ class BinanceFuturesAdapter(ExchangeAdapter):
                     self._metric_weight.set(weight, labels=self._metric_base_labels)
                 if signed:
                     self._metric_signed_requests.inc(labels=self._metric_base_labels)
-                return self._parse_payload(payload)
+                return self._parse_payload(
+                    payload,
+                    status_code=int(status_code or 200),
+                    endpoint=endpoint,
+                )
 
-    def _parse_payload(self, payload: bytes) -> dict[str, object] | list[object]:
+    def _parse_payload(
+        self,
+        payload: bytes,
+        *,
+        status_code: int,
+        endpoint: str,
+    ) -> dict[str, object] | list[object]:
         try:
             data = json.loads(payload)
         except json.JSONDecodeError as exc:  # pragma: no cover - błąd po stronie API
@@ -460,6 +477,11 @@ class BinanceFuturesAdapter(ExchangeAdapter):
                 status_code=500,
                 payload=payload.decode("utf-8", "replace"),
             ) from exc
+        self._raise_for_api_error(
+            data,
+            status_code=status_code,
+            default_message=f"Binance Futures API zwróciło błąd ({endpoint})",
+        )
         return data
 
     def _translate_http_error(self, exc: HTTPError) -> ExchangeAPIError:
@@ -519,40 +541,74 @@ class BinanceFuturesAdapter(ExchangeAdapter):
     def _sleep(self, seconds: float) -> None:
         time.sleep(seconds)
 
+    def _raise_for_api_error(
+        self,
+        payload: object,
+        *,
+        status_code: int,
+        default_message: str,
+    ) -> None:
+        if not isinstance(payload, Mapping):
+            return
+
+        code_value = payload.get("code")
+        try:
+            numeric_code = int(code_value) if code_value is not None else None
+        except (TypeError, ValueError):
+            numeric_code = None
+
+        if numeric_code not in (None, 0):
+            raise_for_binance_error(
+                status_code=status_code,
+                payload=payload,
+                default_message=default_message,
+            )
+
+        success = payload.get("success")
+        if success in {False, "false", "False"}:
+            raise_for_binance_error(
+                status_code=status_code,
+                payload=payload,
+                default_message=default_message,
+            )
+
     def fetch_account_snapshot(self) -> AccountSnapshot:
         if not ({"read", "trade"} & self._permission_set):
             raise PermissionError("Poświadczenia nie pozwalają na odczyt danych konta Binance Futures.")
 
-        payload = self._signed_request("/fapi/v2/account")
-        if not isinstance(payload, Mapping):
-            raise RuntimeError("Niepoprawna odpowiedź konta z Binance Futures")
+        def _call() -> AccountSnapshot:
+            payload = self._signed_request("/fapi/v2/account")
+            if not isinstance(payload, Mapping):
+                raise RuntimeError("Niepoprawna odpowiedź konta z Binance Futures")
 
-        assets = payload.get("assets", [])
-        balances: dict[str, float] = {}
-        available_margin = _to_float(payload.get("totalAvailableBalance"), 0.0)
-        maintenance_margin = _to_float(payload.get("totalMaintMargin"), 0.0)
+            assets = payload.get("assets", [])
+            balances: dict[str, float] = {}
+            available_margin = _to_float(payload.get("totalAvailableBalance"), 0.0)
+            maintenance_margin = _to_float(payload.get("totalMaintMargin"), 0.0)
 
-        if isinstance(assets, list):
-            for entry in assets:
-                if not isinstance(entry, Mapping):
-                    continue
-                asset = entry.get("asset")
-                wallet_balance = _to_float(entry.get("walletBalance"), 0.0)
-                if isinstance(asset, str):
-                    balances[asset] = wallet_balance
+            if isinstance(assets, list):
+                for entry in assets:
+                    if not isinstance(entry, Mapping):
+                        continue
+                    asset = entry.get("asset")
+                    wallet_balance = _to_float(entry.get("walletBalance"), 0.0)
+                    if isinstance(asset, str):
+                        balances[asset] = wallet_balance
 
-        total_equity = _to_float(payload.get("totalMarginBalance"), 0.0)
-        if total_equity == 0.0:
-            wallet = _to_float(payload.get("totalWalletBalance"), 0.0)
-            unrealized = _to_float(payload.get("totalUnrealizedProfit"), 0.0)
-            total_equity = wallet + unrealized
+            total_equity = _to_float(payload.get("totalMarginBalance"), 0.0)
+            if total_equity == 0.0:
+                wallet = _to_float(payload.get("totalWalletBalance"), 0.0)
+                unrealized = _to_float(payload.get("totalUnrealizedProfit"), 0.0)
+                total_equity = wallet + unrealized
 
-        return AccountSnapshot(
-            balances=balances,
-            total_equity=total_equity,
-            available_margin=available_margin,
-            maintenance_margin=maintenance_margin,
-        )
+            return AccountSnapshot(
+                balances=balances,
+                total_equity=total_equity,
+                available_margin=available_margin,
+                maintenance_margin=maintenance_margin,
+            )
+
+        return self._watchdog.execute("binance_futures_fetch_account", _call)
 
     def fetch_symbols(self) -> Iterable[str]:
         payload = self._public_request("/fapi/v1/exchangeInfo")
@@ -716,56 +772,61 @@ class BinanceFuturesAdapter(ExchangeAdapter):
         if not ({"read", "trade"} & self._permission_set):
             raise PermissionError("Poświadczenia nie pozwalają na odczyt zleceń Binance Futures.")
 
-        payload = self._signed_request("/fapi/v1/openOrders")
-        if not isinstance(payload, list):
-            raise ExchangeAPIError(
-                "Binance Futures zwrócił niepoprawną strukturę listy zleceń.",
-                400,
-                payload=payload,
-            )
+        def _call() -> Sequence[BinanceFuturesOpenOrder]:
+            payload = self._signed_request("/fapi/v1/openOrders")
+            if not isinstance(payload, list):
+                raise ExchangeAPIError(
+                    "Binance Futures zwrócił niepoprawną strukturę listy zleceń.",
+                    400,
+                    payload=payload,
+                )
 
-        orders: list[BinanceFuturesOpenOrder] = []
-        for entry in payload:
-            if not isinstance(entry, Mapping):
-                continue
-            raw_symbol = entry.get("symbol")
-            if isinstance(raw_symbol, str):
-                try:
-                    exchange_symbol = self._normalize_contract_symbol(raw_symbol)
-                except ValueError:
-                    exchange_symbol = raw_symbol.strip()
-            else:
-                exchange_symbol = ""
-            price_value = _to_float(entry.get("price"))
-            price = price_value if price_value > 0 else None
-            stop_value = _to_float(entry.get("stopPrice"))
-            stop_price = stop_value if stop_value > 0 else None
-            timestamp = _timestamp_ms_to_seconds(entry.get("updateTime") or entry.get("time"), fallback=time.time())
-            order = BinanceFuturesOpenOrder(
-                order_id=str(entry.get("orderId", "")),
-                symbol=exchange_symbol,
-                status=str(entry.get("status", "")),
-                side=str(entry.get("side", "")),
-                order_type=str(entry.get("type", "")),
-                price=price,
-                orig_quantity=_to_float(entry.get("origQty")),
-                executed_quantity=_to_float(entry.get("executedQty")),
-                time_in_force=(str(entry.get("timeInForce")) if entry.get("timeInForce") else None),
-                client_order_id=(
-                    str(entry.get("clientOrderId")) if entry.get("clientOrderId") not in (None, "") else None
-                ),
-                stop_price=stop_price,
-                reduce_only=_to_bool(entry.get("reduceOnly")),
-                close_position=_to_bool(entry.get("closePosition")),
-                working_type=(str(entry.get("workingType")) if entry.get("workingType") else None),
-                price_protect=_to_bool(entry.get("priceProtect")),
-                position_side=(str(entry.get("positionSide")) if entry.get("positionSide") else None),
-                update_time=timestamp,
-            )
-            orders.append(order)
+            orders: list[BinanceFuturesOpenOrder] = []
+            for entry in payload:
+                if not isinstance(entry, Mapping):
+                    continue
+                raw_symbol = entry.get("symbol")
+                if isinstance(raw_symbol, str):
+                    try:
+                        exchange_symbol = self._normalize_contract_symbol(raw_symbol)
+                    except ValueError:
+                        exchange_symbol = raw_symbol.strip()
+                else:
+                    exchange_symbol = ""
+                price_value = _to_float(entry.get("price"))
+                price = price_value if price_value > 0 else None
+                stop_value = _to_float(entry.get("stopPrice"))
+                stop_price = stop_value if stop_value > 0 else None
+                timestamp = _timestamp_ms_to_seconds(
+                    entry.get("updateTime") or entry.get("time"), fallback=time.time()
+                )
+                order = BinanceFuturesOpenOrder(
+                    order_id=str(entry.get("orderId", "")),
+                    symbol=exchange_symbol,
+                    status=str(entry.get("status", "")),
+                    side=str(entry.get("side", "")),
+                    order_type=str(entry.get("type", "")),
+                    price=price,
+                    orig_quantity=_to_float(entry.get("origQty")),
+                    executed_quantity=_to_float(entry.get("executedQty")),
+                    time_in_force=(str(entry.get("timeInForce")) if entry.get("timeInForce") else None),
+                    client_order_id=(
+                        str(entry.get("clientOrderId")) if entry.get("clientOrderId") not in (None, "") else None
+                    ),
+                    stop_price=stop_price,
+                    reduce_only=_to_bool(entry.get("reduceOnly")),
+                    close_position=_to_bool(entry.get("closePosition")),
+                    working_type=(str(entry.get("workingType")) if entry.get("workingType") else None),
+                    price_protect=_to_bool(entry.get("priceProtect")),
+                    position_side=(str(entry.get("positionSide")) if entry.get("positionSide") else None),
+                    update_time=timestamp,
+                )
+                orders.append(order)
 
-        orders.sort(key=lambda item: item.update_time)
-        return orders
+            orders.sort(key=lambda item: item.update_time)
+            return orders
+
+        return self._watchdog.execute("binance_futures_fetch_open_orders", _call)
 
     def fetch_funding_rates(
         self,
@@ -842,24 +903,27 @@ class BinanceFuturesAdapter(ExchangeAdapter):
         if request.client_order_id is not None:
             params["newClientOrderId"] = request.client_order_id
 
-        payload = self._signed_request("/fapi/v1/order", method="POST", params=params)
-        if not isinstance(payload, Mapping):
-            raise RuntimeError("Odpowiedź z endpointu futures order ma niepoprawny format")
+        def _call() -> OrderResult:
+            payload = self._signed_request("/fapi/v1/order", method="POST", params=params)
+            if not isinstance(payload, Mapping):
+                raise RuntimeError("Odpowiedź z endpointu futures order ma niepoprawny format")
 
-        payload_dict = dict(payload)
-        order_id = str(payload_dict.get("orderId"))
-        status = str(payload_dict.get("status", "UNKNOWN"))
-        filled_qty = _to_float(payload_dict.get("executedQty", 0.0))
-        avg_price_field = payload_dict.get("avgPrice", payload_dict.get("price"))
-        avg_price = _to_float(avg_price_field) if avg_price_field not in (None, "0", 0, 0.0) else None
+            payload_dict = dict(payload)
+            order_id = str(payload_dict.get("orderId"))
+            status = str(payload_dict.get("status", "UNKNOWN"))
+            filled_qty = _to_float(payload_dict.get("executedQty", 0.0))
+            avg_price_field = payload_dict.get("avgPrice", payload_dict.get("price"))
+            avg_price = _to_float(avg_price_field) if avg_price_field not in (None, "0", 0, 0.0) else None
 
-        return OrderResult(
-            order_id=order_id,
-            status=status,
-            filled_quantity=filled_qty,
-            avg_price=avg_price,
-            raw_response=payload_dict,
-        )
+            return OrderResult(
+                order_id=order_id,
+                status=status,
+                filled_quantity=filled_qty,
+                avg_price=avg_price,
+                raw_response=payload_dict,
+            )
+
+        return self._watchdog.execute("binance_futures_place_order", _call)
 
     def cancel_order(self, order_id: str, *, symbol: Optional[str] = None) -> None:
         if "trade" not in self._permission_set:
@@ -868,96 +932,104 @@ class BinanceFuturesAdapter(ExchangeAdapter):
             raise ValueError("Anulowanie na Binance Futures wymaga podania symbolu.")
 
         params: dict[str, object] = {"orderId": order_id, "symbol": symbol}
-        response = self._signed_request("/fapi/v1/order", method="DELETE", params=params)
-        if isinstance(response, Mapping):
-            response_map = dict(response)
-            status = response_map.get("status")
-            if status in {"CANCELED", "PENDING_CANCEL", "NEW"}:
-                return
-            raise RuntimeError(f"Nieoczekiwana odpowiedź anulowania z Binance Futures: {response_map}")
-        raise RuntimeError("Niepoprawna odpowiedź anulowania z Binance Futures")
+        def _call() -> None:
+            response = self._signed_request("/fapi/v1/order", method="DELETE", params=params)
+            if isinstance(response, Mapping):
+                response_map = dict(response)
+                status = response_map.get("status")
+                if status in {"CANCELED", "PENDING_CANCEL", "NEW"}:
+                    return
+                raise RuntimeError(
+                    f"Nieoczekiwana odpowiedź anulowania z Binance Futures: {response_map}"
+                )
+            raise RuntimeError("Niepoprawna odpowiedź anulowania z Binance Futures")
+
+        self._watchdog.execute("binance_futures_cancel_order", _call)
 
     def fetch_positions(self) -> list[FuturesPosition]:
         """Pobiera aktywne pozycje i aktualizuje metryki hedgingowe."""
 
-        payload = self._signed_request("/fapi/v2/positionRisk")
-        if not isinstance(payload, list):
-            raise RuntimeError("Odpowiedź positionRisk z Binance Futures ma niepoprawny format")
+        def _call() -> list[FuturesPosition]:
+            payload = self._signed_request("/fapi/v2/positionRisk")
+            if not isinstance(payload, list):
+                raise RuntimeError("Odpowiedź positionRisk z Binance Futures ma niepoprawny format")
 
-        positions: list[FuturesPosition] = []
-        current_labels: set[tuple[str, str]] = set()
-        long_notional = 0.0
-        short_notional = 0.0
+            positions: list[FuturesPosition] = []
+            current_labels: set[tuple[str, str]] = set()
+            long_notional = 0.0
+            short_notional = 0.0
 
-        for entry in payload:
-            if not isinstance(entry, Mapping):
-                continue
-            symbol = str(entry.get("symbol", "")).strip()
-            if not symbol:
-                continue
-            quantity = _to_float(entry.get("positionAmt"), 0.0)
-            if quantity == 0.0:
-                continue
-            entry_price = _to_float(entry.get("entryPrice"), 0.0)
-            mark_price = _to_float(entry.get("markPrice"), 0.0) or entry_price
-            notional = abs(quantity * mark_price)
-            side = "long" if quantity > 0 else "short"
-            unrealized = _to_float(entry.get("unRealizedProfit"), 0.0)
-            leverage = _to_float(entry.get("leverage"), 0.0)
-            isolated_field = str(entry.get("isolated", entry.get("marginType", ""))).lower()
-            isolated = isolated_field in {"true", "1", "isolated"}
-            liquidation_price = _to_float(entry.get("liquidationPrice"), 0.0)
-            if liquidation_price <= 0.0:
-                liquidation_price = None
+            for entry in payload:
+                if not isinstance(entry, Mapping):
+                    continue
+                symbol = str(entry.get("symbol", "")).strip()
+                if not symbol:
+                    continue
+                quantity = _to_float(entry.get("positionAmt"), 0.0)
+                if quantity == 0.0:
+                    continue
+                entry_price = _to_float(entry.get("entryPrice"), 0.0)
+                mark_price = _to_float(entry.get("markPrice"), 0.0) or entry_price
+                notional = abs(quantity * mark_price)
+                side = "long" if quantity > 0 else "short"
+                unrealized = _to_float(entry.get("unRealizedProfit"), 0.0)
+                leverage = _to_float(entry.get("leverage"), 0.0)
+                isolated_field = str(entry.get("isolated", entry.get("marginType", ""))).lower()
+                isolated = isolated_field in {"true", "1", "isolated"}
+                liquidation_price = _to_float(entry.get("liquidationPrice"), 0.0)
+                if liquidation_price <= 0.0:
+                    liquidation_price = None
 
-            position = FuturesPosition(
-                symbol=symbol,
-                side=side,
-                quantity=quantity,
-                entry_price=entry_price,
-                mark_price=mark_price,
-                notional=notional,
-                unrealized_pnl=unrealized,
-                leverage=leverage,
-                isolated=isolated,
-                liquidation_price=liquidation_price,
-            )
-            positions.append(position)
+                position = FuturesPosition(
+                    symbol=symbol,
+                    side=side,
+                    quantity=quantity,
+                    entry_price=entry_price,
+                    mark_price=mark_price,
+                    notional=notional,
+                    unrealized_pnl=unrealized,
+                    leverage=leverage,
+                    isolated=isolated,
+                    liquidation_price=liquidation_price,
+                )
+                positions.append(position)
 
-            metric_labels = {
-                "exchange": self.name,
-                "environment": self._environment.value,
-                "symbol": symbol,
-                "side": side,
-            }
-            self._metric_position_notional.set(notional, labels=metric_labels)
-            current_labels.add((symbol, side))
-            if side == "long":
-                long_notional += notional
-            else:
-                short_notional += notional
+                metric_labels = {
+                    "exchange": self.name,
+                    "environment": self._environment.value,
+                    "symbol": symbol,
+                    "side": side,
+                }
+                self._metric_position_notional.set(notional, labels=metric_labels)
+                current_labels.add((symbol, side))
+                if side == "long":
+                    long_notional += notional
+                else:
+                    short_notional += notional
 
-        # Zerujemy metryki pozycji, które zostały zamknięte od ostatniego odczytu.
-        for symbol, side in self._tracked_position_labels - current_labels:
-            metric_labels = {
-                "exchange": self.name,
-                "environment": self._environment.value,
-                "symbol": symbol,
-                "side": side,
-            }
-            self._metric_position_notional.set(0.0, labels=metric_labels)
-        self._tracked_position_labels = current_labels
+            # Zerujemy metryki pozycji, które zostały zamknięte od ostatniego odczytu.
+            for symbol, side in self._tracked_position_labels - current_labels:
+                metric_labels = {
+                    "exchange": self.name,
+                    "environment": self._environment.value,
+                    "symbol": symbol,
+                    "side": side,
+                }
+                self._metric_position_notional.set(0.0, labels=metric_labels)
+            self._tracked_position_labels = current_labels
 
-        base_labels = dict(self._metric_base_labels)
-        self._metric_position_active.set(float(len(positions)), labels=base_labels)
-        self._metric_position_long.set(long_notional, labels=base_labels)
-        self._metric_position_short.set(short_notional, labels=base_labels)
-        gross_notional = long_notional + short_notional
-        net_notional = long_notional - short_notional
-        self._metric_position_gross.set(gross_notional, labels=base_labels)
-        self._metric_position_net.set(net_notional, labels=base_labels)
+            base_labels = dict(self._metric_base_labels)
+            self._metric_position_active.set(float(len(positions)), labels=base_labels)
+            self._metric_position_long.set(long_notional, labels=base_labels)
+            self._metric_position_short.set(short_notional, labels=base_labels)
+            gross_notional = long_notional + short_notional
+            net_notional = long_notional - short_notional
+            self._metric_position_gross.set(gross_notional, labels=base_labels)
+            self._metric_position_net.set(net_notional, labels=base_labels)
 
-        return positions
+            return positions
+
+        return self._watchdog.execute("binance_futures_fetch_positions", _call)
 
     def build_hedging_report(self) -> Mapping[str, object]:
         """Generuje raport ekspozycji dla modułu hedgingowego i audytu ryzyka."""
