@@ -8,13 +8,25 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import difflib
 from datetime import datetime, timezone
+from fnmatch import fnmatchcase
 from pathlib import Path
-from typing import Dict, Iterable, Tuple
+from shutil import SameFileError, copy2
+from typing import Any, Dict, Iterable, Mapping, Sequence, Tuple
 
 import json
+import os
 import yaml
+from bot_core.runtime.paths import build_desktop_app_paths_from_root
+from bot_core.runtime.preset_service import (
+    PresetConfigService,
+    flatten_secret_payload,
+    load_legacy_preset,
+)
+from bot_core.security.file_storage import EncryptedFileSecretStorage
 from KryptoLowca.config_manager import ConfigManager, ConfigError, ValidationError
+from KryptoLowca.managers.security_manager import SecurityError, SecurityManager
 
 
 def _load_key(args: argparse.Namespace) -> bytes:
@@ -57,6 +69,44 @@ def _summarise_overrides(overrides: Dict[str, Dict[str, object]]) -> str:
         for key, value in values.items()
     )
     return ", ".join(f"{section}.{key}={value}" for section, key, value in flattened)
+
+
+def _print_core_diff(destination: Path, original: str | None, updated: str) -> None:
+    original_exists = original is not None
+    before_label = (
+        f"{destination} (przed migracją)"
+        if original_exists
+        else f"{destination} (nowy plik)"
+    )
+    after_label = f"{destination} (po migracji)"
+    before_lines = (original or "").splitlines(keepends=True)
+    after_lines = updated.splitlines(keepends=True)
+    diff_lines = list(
+        difflib.unified_diff(
+            before_lines,
+            after_lines,
+            fromfile=before_label,
+            tofile=after_label,
+        )
+    )
+    if diff_lines:
+        print(f"Podgląd zmian {destination}:")
+        print("".join(diff_lines), end="")
+    else:
+        print(f"Podgląd zmian {destination}: brak różnic.")
+
+
+def _resolve_backup_path(target: Path, candidate: str | None) -> Path:
+    if candidate:
+        return Path(candidate).expanduser()
+    return target.with_name(f"{target.name}.bak")
+
+
+def _create_backup(source: Path, destination: Path) -> None:
+    if not source.exists():
+        raise OSError(f"plik źródłowy {source} nie istnieje")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    copy2(source, destination)
 
 
 def _format_risk_summary(summary: Dict[str, Dict[str, object]]) -> str:
@@ -414,7 +464,7 @@ async def _run_async(args: argparse.Namespace) -> int:
     return 0
 
 
-def main(argv: Iterable[str] | None = None) -> int:
+def _configure_marketplace_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Edytor presetów marketplace (CLI)")
     parser.add_argument("--config-path", required=True, help="Ścieżka do pliku konfiguracji YAML")
     parser.add_argument("--preset-id", required=True, help="Identyfikator presetu z marketplace")
@@ -438,12 +488,510 @@ def main(argv: Iterable[str] | None = None) -> int:
         "--export-risk-summary",
         help="Zapisuje agregację ryzyka presetów marketplace do wskazanego pliku JSON",
     )
+    return parser
 
-    args = parser.parse_args(list(argv) if argv is not None else None)
+
+def _load_secret_payload(path: Path) -> Mapping[str, Any]:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:  # pragma: no cover - błąd IO
+        raise SystemExit(f"Nie można odczytać pliku sekretów: {exc}")
+    try:
+        payload = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise SystemExit("Plik sekretów ma niepoprawny format JSON/YAML") from exc
+    if not isinstance(payload, Mapping):
+        raise SystemExit("Plik sekretów musi zawierać mapowanie klucz→wartość")
+    return payload
+
+
+def _resolve_passphrase(args: argparse.Namespace) -> str:
+    provided = [
+        bool(args.secret_passphrase),
+        bool(args.secret_passphrase_env),
+        bool(args.secret_passphrase_file),
+    ]
+    if sum(provided) > 1:
+        raise SystemExit(
+            "Hasło magazynu sekretów może pochodzić tylko z jednego źródła (parametr, plik lub zmienna środowiskowa)."
+        )
+
+    if args.secret_passphrase:
+        return args.secret_passphrase
+    if args.secret_passphrase_file:
+        path = Path(args.secret_passphrase_file).expanduser()
+        try:
+            return path.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise SystemExit(f"Nie można odczytać pliku z hasłem: {exc}")
+    if args.secret_passphrase_env:
+        value = os.environ.get(args.secret_passphrase_env)
+        if value:
+            return value
+        raise SystemExit(
+            f"Zmienna środowiskowa {args.secret_passphrase_env} nie została ustawiona lub jest pusta."
+        )
+    raise SystemExit(
+        "Brak hasła do magazynu sekretów. Użyj --secret-passphrase, --secret-passphrase-file lub --secret-passphrase-env."
+    )
+
+
+def _resolve_legacy_passphrase(args: argparse.Namespace) -> str:
+    provided = [
+        bool(args.legacy_security_passphrase),
+        bool(args.legacy_security_passphrase_file),
+        bool(args.legacy_security_passphrase_env),
+    ]
+    if sum(provided) > 1:
+        raise SystemExit(
+            "Hasło pliku SecurityManager może pochodzić tylko z jednego źródła (parametr, plik lub zmienna środowiskowa)."
+        )
+
+    if args.legacy_security_passphrase:
+        return args.legacy_security_passphrase
+    if args.legacy_security_passphrase_file:
+        path = Path(args.legacy_security_passphrase_file).expanduser()
+        try:
+            return path.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise SystemExit(f"Nie można odczytać pliku z hasłem SecurityManager: {exc}") from exc
+    if args.legacy_security_passphrase_env:
+        value = os.environ.get(args.legacy_security_passphrase_env)
+        if value:
+            return value
+        raise SystemExit(
+            f"Zmienna środowiskowa {args.legacy_security_passphrase_env} nie została ustawiona lub jest pusta."
+        )
+
+    raise SystemExit(
+        (
+            "Brak hasła do pliku SecurityManager. Podaj --legacy-security-passphrase, "
+            "--legacy-security-passphrase-file lub --legacy-security-passphrase-env."
+        )
+    )
+
+
+def _load_legacy_security_payload(
+    *, file_path: Path, salt_path: Path | None, password: str
+) -> Mapping[str, Any]:
+    manager = SecurityManager(key_file=str(file_path), salt_file=str(salt_path) if salt_path else None)
+    try:
+        payload = manager.load_encrypted_keys(password)
+    except SecurityError as exc:
+        raise SystemExit(f"Nie udało się odczytać pliku SecurityManager: {exc}") from exc
+
+    if not isinstance(payload, Mapping):
+        raise SystemExit("SecurityManager zwrócił niepoprawną strukturę sekretów (oczekiwano mapowania klucz→wartość).")
+
+    return payload
+
+
+def _apply_secret_filters(
+    entries: Mapping[str, str],
+    *,
+    include: Sequence[str],
+    exclude: Sequence[str],
+) -> tuple[dict[str, str], list[str], list[str], list[str]]:
+    """Zwraca wpisy po filtrach oraz listę pominiętych i brakujących kluczy/wzorów."""
+
+    include_patterns = [item for item in include if item]
+    exclude_patterns = [item for item in exclude if item]
+
+    include_hits: dict[str, bool] = {pattern: False for pattern in include_patterns}
+
+    filtered: dict[str, str] = {}
+    skipped_by_include: list[str] = []
+    skipped_by_exclude: list[str] = []
+
+    for key, value in entries.items():
+        if exclude_patterns and any(fnmatchcase(key, pattern) for pattern in exclude_patterns):
+            skipped_by_exclude.append(key)
+            continue
+
+        if include_patterns:
+            matched = False
+            for pattern in include_patterns:
+                if fnmatchcase(key, pattern):
+                    include_hits[pattern] = True
+                    matched = True
+            if not matched:
+                skipped_by_include.append(key)
+                continue
+
+        filtered[key] = value
+
+    missing_includes = sorted(pattern for pattern, matched in include_hits.items() if not matched)
+    skipped_by_include.sort()
+    skipped_by_exclude.sort()
+
+    return filtered, skipped_by_include, skipped_by_exclude, missing_includes
+
+
+def _configure_migration_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Migracja presetów GUI do Stage6 core.yaml"
+    )
+    parser.add_argument("--core-config", required=True, help="Ścieżka do docelowego pliku core.yaml")
+    parser.add_argument("--legacy-preset", required=True, help="Preset GUI (JSON/YAML) do zaimportowania")
+    parser.add_argument("--profile-name", help="Nazwa profilu ryzyka utworzonego na bazie presetu")
+    parser.add_argument("--template-profile", help="Profil bazowy użyty do uzupełnienia brakujących pól")
+    parser.add_argument(
+        "--runtime-entrypoint",
+        default="trading_gui",
+        help="Entrypoint runtime, który ma korzystać z nowego profilu",
+    )
+    parser.add_argument("--output", help="Alternatywna ścieżka zapisu YAML (domyślnie nadpisuje core.yaml)")
+    parser.add_argument(
+        "--core-backup",
+        nargs="?",
+        const="",
+        help=(
+            "Utwórz kopię zapasową pliku konfiguracji przed zapisem. "
+            "Można opcjonalnie podać ścieżkę docelową; domyślnie tworzy <plik>.bak"
+        ),
+    )
+    parser.add_argument(
+        "--core-diff",
+        action="store_true",
+        help="Po migracji wypisz diff zmian w core.yaml względem poprzedniej zawartości.",
+    )
+    parser.add_argument("--dry-run", action="store_true", help="Wyświetl wynik YAML bez zapisywania")
+    parser.add_argument("--secrets-input", help="Plik z legacy sekretami (JSON/YAML)")
+    parser.add_argument(
+        "--secrets-output",
+        help="Docelowy zaszyfrowany magazyn sekretów (plik EncryptedFileSecretStorage)",
+    )
+    parser.add_argument(
+        "--secrets-include",
+        action="append",
+        default=[],
+        help=(
+            "Ogranicz migrację tylko do wskazanych kluczy lub wzorców glob sekretów "
+            "(np. api_*). Opcję można podać wielokrotnie"
+        ),
+    )
+    parser.add_argument(
+        "--secrets-exclude",
+        action="append",
+        default=[],
+        help=(
+            "Pomiń wybrane klucze lub wzorce glob podczas migracji sekretów (np. *_token). "
+            "Opcję można podać wielokrotnie"
+        ),
+    )
+    parser.add_argument(
+        "--secrets-preview",
+        action="store_true",
+        help="Wypisz listę kluczy sekretów zakwalifikowanych do migracji (po filtrach).",
+    )
+    parser.add_argument("--secret-passphrase", help="Hasło do zaszyfrowanego magazynu sekretów")
+    parser.add_argument(
+        "--secret-passphrase-env",
+        help="Nazwa zmiennej środowiskowej zawierającej hasło magazynu sekretów",
+    )
+    parser.add_argument(
+        "--secret-passphrase-file",
+        help="Plik zawierający hasło magazynu sekretów (tekst w UTF-8)",
+    )
+    parser.add_argument(
+        "--legacy-security-file",
+        help="Zaszyfrowany plik SecurityManager (np. api_keys.enc) do migracji do Stage6",
+    )
+    parser.add_argument(
+        "--legacy-security-salt",
+        help="Opcjonalny plik z solą SecurityManager (jeśli inny niż domyślny obok kluczy)",
+    )
+    parser.add_argument(
+        "--legacy-security-passphrase",
+        help="Hasło do odszyfrowania pliku SecurityManager",
+    )
+    parser.add_argument(
+        "--legacy-security-passphrase-file",
+        help="Plik z hasłem do odszyfrowania pliku SecurityManager",
+    )
+    parser.add_argument(
+        "--legacy-security-passphrase-env",
+        help="Nazwa zmiennej środowiskowej z hasłem do pliku SecurityManager",
+    )
+    parser.add_argument(
+        "--desktop-root",
+        help=(
+            "Katalog aplikacji desktopowej. Jeśli podany, domyślnie zapisze sekrety w api_keys.vault"
+        ),
+    )
+    return parser
+
+
+def _run_stage6_migration(argv: Sequence[str]) -> int:
+    parser = _configure_migration_parser()
+    args = parser.parse_args(list(argv))
+
+    core_path = Path(args.core_config)
+    if not core_path.exists():
+        raise SystemExit(f"Plik core.yaml nie istnieje: {core_path}")
+
+    desktop_paths = None
+    if args.desktop_root:
+        desktop_paths = build_desktop_app_paths_from_root(args.desktop_root)
+
+    preset = load_legacy_preset(args.legacy_preset)
+    service = PresetConfigService(core_path)
+    profile = service.import_gui_preset(
+        preset,
+        profile_name=args.profile_name,
+        template_profile=args.template_profile,
+        runtime_entrypoint=args.runtime_entrypoint,
+    )
+
+    destination = Path(args.output).expanduser() if args.output else core_path
+
+    original_text: str | None = None
+    try:
+        if destination.exists():
+            original_text = destination.read_text(encoding="utf-8")
+    except OSError:
+        original_text = None
+
+    backup_request = args.core_backup
+    if backup_request is not None:
+        if args.dry_run:
+            print("Tryb dry-run: pominięto utworzenie kopii zapasowej (--core-backup).")
+        else:
+            backup_source = destination if destination.exists() else core_path
+            backup_path = _resolve_backup_path(
+                backup_source,
+                None if backup_request == "" else backup_request,
+            )
+            try:
+                _create_backup(backup_source, backup_path)
+            except SameFileError as exc:
+                raise SystemExit(
+                    "Ścieżka kopii zapasowej nie może wskazywać na ten sam plik co konfiguracja."
+                ) from exc
+            except OSError as exc:
+                raise SystemExit(
+                    f"Nie udało się utworzyć kopii zapasowej {backup_source}: {exc}"
+                ) from exc
+            else:
+                print(
+                    "Utworzono kopię zapasową {source} → {dest}".format(
+                        source=backup_source,
+                        dest=backup_path,
+                    )
+                )
+
+    rendered = service.save(destination=destination, dry_run=args.dry_run)
+
+    if args.dry_run:
+        print(rendered)
+    else:
+        print(
+            "Zapisano profil '{name}' w {path}".format(
+                name=profile.name,
+                path=destination,
+            )
+        )
+
+    if args.core_diff:
+        _print_core_diff(destination, original_text, rendered)
+
+    secrets_input_path = Path(args.secrets_input).expanduser() if args.secrets_input else None
+    legacy_security_path = (
+        Path(args.legacy_security_file).expanduser() if args.legacy_security_file else None
+    )
+    if secrets_input_path and legacy_security_path:
+        parser.error(
+            "Wybierz jedno źródło sekretów: --secrets-input lub --legacy-security-file"
+        )
+
+    secrets_output_path: Path | None = None
+    used_default_vault = False
+    if args.secrets_output:
+        secrets_output_path = Path(args.secrets_output).expanduser()
+    elif (secrets_input_path or legacy_security_path) and desktop_paths is not None:
+        secrets_output_path = desktop_paths.secret_vault_file
+        used_default_vault = True
+        if not args.dry_run:
+            print(
+                "Użyto domyślnego magazynu sekretów: {path}".format(
+                    path=secrets_output_path
+                )
+            )
+
+    secrets_payload: Mapping[str, Any] | None = None
+    secrets_source: str | None = None
+    if secrets_input_path:
+        secrets_payload = _load_secret_payload(secrets_input_path)
+        secrets_source = f"plik {secrets_input_path}"
+    elif legacy_security_path:
+        salt_path = (
+            Path(args.legacy_security_salt).expanduser() if args.legacy_security_salt else None
+        )
+        legacy_passphrase = _resolve_legacy_passphrase(args)
+        secrets_payload = _load_legacy_security_payload(
+            file_path=legacy_security_path,
+            salt_path=salt_path,
+            password=legacy_passphrase,
+        )
+        secrets_source = f"legacy SecurityManager ({legacy_security_path})"
+
+    secret_entries: dict[str, str] | None = None
+    skipped_by_include: list[str] = []
+    skipped_by_exclude: list[str] = []
+    missing_includes: list[str] = []
+    if secrets_payload is not None:
+        secret_entries = flatten_secret_payload(secrets_payload)
+        include_filters = [item.strip() for item in args.secrets_include if item and item.strip()]
+        exclude_filters = [item.strip() for item in args.secrets_exclude if item and item.strip()]
+        if include_filters or exclude_filters:
+            (
+                secret_entries,
+                skipped_by_include,
+                skipped_by_exclude,
+                missing_includes,
+            ) = _apply_secret_filters(
+                secret_entries,
+                include=include_filters,
+                exclude=exclude_filters,
+            )
+        if missing_includes:
+            print(
+                "Nie znaleziono sekretów wymaganych przez --secrets-include: {keys}".format(
+                    keys=", ".join(sorted(missing_includes))
+                )
+            )
+        if skipped_by_include:
+            print(
+                "Pominięto sekrety spoza listy --secrets-include: {keys}".format(
+                    keys=", ".join(skipped_by_include)
+                )
+            )
+        if skipped_by_exclude:
+            print(
+                "Pominięto sekrety oznaczone --secrets-exclude: {keys}".format(
+                    keys=", ".join(skipped_by_exclude)
+                )
+            )
+
+    if args.secrets_preview:
+        if secret_entries is None:
+            print("Podgląd sekretów: brak źródła sekretów do migracji.")
+        elif secret_entries:
+            preview_keys = ", ".join(sorted(secret_entries))
+            message = "Podgląd sekretów ({count}): {keys}".format(
+                count=len(secret_entries),
+                keys=preview_keys,
+            )
+            if secrets_source:
+                message += f" (źródło: {secrets_source})"
+            print(message)
+        else:
+            message = "Podgląd sekretów: brak wpisów do migracji po filtrach."
+            if secrets_source:
+                message += f" (źródło: {secrets_source})"
+            print(message)
+
+    entries_count = len(secret_entries) if secret_entries is not None else 0
+
+    if args.dry_run:
+        if secret_entries is not None:
+            if entries_count:
+                message = "Tryb dry-run: pominięto zapis {count} sekretów".format(
+                    count=entries_count
+                )
+                if secrets_output_path is not None:
+                    message += " do magazynu {path}".format(path=secrets_output_path)
+                else:
+                    message += " (nie wskazano --secrets-output)"
+                if secrets_source:
+                    message += f" (źródło: {secrets_source})"
+            else:
+                message = "Tryb dry-run: brak sekretów do zapisania po zastosowaniu filtrów"
+                if secrets_output_path is not None:
+                    message += " (docelowy magazyn: {path})".format(path=secrets_output_path)
+                if secrets_source:
+                    message += f" (źródło: {secrets_source})"
+            print(message)
+        elif secrets_output_path is not None:
+            print(
+                "Tryb dry-run: pominięto utworzenie magazynu sekretów {path}".format(
+                    path=secrets_output_path
+                )
+            )
+        elif used_default_vault and desktop_paths is not None:
+            print(
+                "Tryb dry-run: pominięto utworzenie domyślnego magazynu sekretów {path}".format(
+                    path=desktop_paths.secret_vault_file
+                )
+            )
+    elif secret_entries is not None and secrets_output_path is not None:
+        if entries_count:
+            passphrase = _resolve_passphrase(args)
+            storage = EncryptedFileSecretStorage(secrets_output_path, passphrase)
+            for key, value in secret_entries.items():
+                storage.set_secret(key, value)
+            print(
+                "Zapisano {count} sekretów do magazynu {path}".format(
+                    count=entries_count,
+                    path=secrets_output_path,
+                )
+            )
+            if secrets_source:
+                print(f"Źródło sekretów: {secrets_source}")
+        else:
+            print("Pominięto zapis sekretów: brak dopasowanych wpisów (po filtrach).")
+            if secrets_source:
+                print(f"Źródło sekretów: {secrets_source}")
+    elif secret_entries is not None and secrets_output_path is None:
+        if entries_count == 0:
+            print("Pominięto zapis sekretów: brak dopasowanych wpisów (po filtrach).")
+            if secrets_source:
+                print(f"Źródło sekretów: {secrets_source}")
+        elif args.secrets_preview:
+            message = (
+                "Pominięto zapis {count} sekretów: nie wskazano --secrets-output (tryb podglądu)."
+            ).format(count=entries_count)
+            if secrets_source:
+                message += f" Źródło: {secrets_source}."
+            print(message)
+        else:
+            parser.error(
+                (
+                    "Do migracji sekretów wymagane są oba parametry: "
+                    "źródło (--secrets-input lub --legacy-security-file) oraz --secrets-output"
+                )
+            )
+    elif secret_entries is not None or secrets_output_path is not None:
+        parser.error(
+            (
+                "Do migracji sekretów wymagane są oba parametry: "
+                "źródło (--secrets-input lub --legacy-security-file) oraz --secrets-output"
+            )
+        )
+
+    return 0
+
+
+def _run_marketplace_cli(argv: Sequence[str]) -> int:
+    parser = _configure_marketplace_parser()
+    args = parser.parse_args(list(argv))
     try:
         return asyncio.run(_run_async(args))
     except KeyboardInterrupt:  # pragma: no cover - obsługa przerwania
         return 130
+
+
+def main(argv: Iterable[str] | None = None) -> int:
+    provided = list(argv) if argv is not None else None
+    if provided is None:
+        import sys
+
+        provided = sys.argv[1:]
+
+    trigger_flags = {"--core-config", "--legacy-preset", "--secrets-input", "--secrets-output"}
+    if any(flag in provided for flag in trigger_flags):
+        return _run_stage6_migration(provided)
+    return _run_marketplace_cli(provided)
 
 
 if __name__ == "__main__":  # pragma: no cover - wejście CLI
