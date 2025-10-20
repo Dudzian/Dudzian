@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Optional, Protocol
 
@@ -21,6 +23,8 @@ from bot_core.runtime.metadata import (
     load_risk_manager_settings,
     load_runtime_entrypoint_metadata,
 )
+from bot_core.security.capabilities import LicenseCapabilities
+from bot_core.security.guards import CapabilityGuard
 
 from KryptoLowca.logging_utils import (
     DEFAULT_LOG_FILE,
@@ -39,6 +43,7 @@ from KryptoLowca.managers.exchange_manager import ExchangeManager
 from .state import AppState
 from .controller import TradingSessionController
 from .view import TradingView
+from .license_context import LicenseUiContext, build_license_ui_context
 from .risk_helpers import (
     RiskSnapshot,
     build_risk_limits_summary,
@@ -97,6 +102,12 @@ class TradingGUI:
             logs_dir=GLOBAL_LOGS_DIR,
             text_log_file=DEFAULT_LOG_FILE,
         )
+        (
+            self._license_path,
+            self.license_capabilities,
+            self.license_guard,
+            self._license_ui_context,
+        ) = self._load_license_context()
         self._core_config_path = self._resolve_core_config_path()
         self.runtime_metadata = self._load_metadata(self._core_config_path)
         (
@@ -120,6 +131,7 @@ class TradingGUI:
             self.controller,
             on_refresh_risk=self.reload_risk_profile,
         )
+        self._apply_license_restrictions()
         self._configure_fraction_widget(self.risk_manager_settings)
         self._configure_logging_handler()
         self.ex_mgr = None
@@ -180,10 +192,100 @@ class TradingGUI:
             return None
 
     # ------------------------------------------------------------------
+    def _load_license_context(
+        self,
+    ) -> tuple[Path | None, LicenseCapabilities | None, CapabilityGuard | None, LicenseUiContext]:
+        license_path: Path | None = None
+        capabilities: LicenseCapabilities | None = None
+        guard: CapabilityGuard | None = None
+        extra_notice = ""
+
+        public_key = os.environ.get("BOT_CORE_LICENSE_PUBLIC_KEY")
+        license_path_value = os.environ.get("BOT_CORE_LICENSE_PATH")
+
+        if not public_key or not license_path_value:
+            extra_notice = (
+                "Brak skonfigurowanej licencji offline. Skontaktuj się z opiekunem licencji."
+            )
+            logger.warning(extra_notice)
+        else:
+            try:
+                from bot_core.security.guards import install_capability_guard
+                from bot_core.security.license_service import (
+                    LicenseService,
+                    LicenseServiceError,
+                )
+            except Exception:
+                logger.exception("Nie udało się zaimportować modułów obsługi licencji")
+                extra_notice = "Nie udało się zainicjalizować obsługi licencji offline."
+            else:
+                license_path = Path(license_path_value).expanduser()
+                try:
+                    service = LicenseService(verify_key_hex=public_key)
+                    snapshot = service.load_from_file(license_path)
+                except FileNotFoundError:
+                    extra_notice = (
+                        f"Nie znaleziono pliku licencji: {license_path}. Skontaktuj się z opiekunem licencji."
+                    )
+                    logger.error(extra_notice)
+                except LicenseServiceError as exc:
+                    extra_notice = f"Nie udało się zweryfikować licencji offline: {exc}"
+                    logger.error(extra_notice)
+                except Exception:
+                    logger.exception("Nieoczekiwany błąd podczas ładowania licencji offline")
+                    extra_notice = (
+                        "Wystąpił nieoczekiwany błąd podczas ładowania licencji offline."
+                    )
+                else:
+                    capabilities = snapshot.capabilities
+                    guard = install_capability_guard(capabilities)
+
+        context = build_license_ui_context(capabilities)
+        if extra_notice:
+            context = replace(
+                context,
+                notice=self._combine_notices(extra_notice, context.notice),
+            )
+        return license_path, capabilities, guard, context
+
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _combine_notices(*messages: str) -> str:
+        merged: list[str] = []
+        for message in messages:
+            text = (message or "").strip()
+            if not text:
+                continue
+            if text not in merged:
+                merged.append(text)
+        return " ".join(merged)
+
+    # ------------------------------------------------------------------
+    def _apply_license_restrictions(self) -> None:
+        context = getattr(self, "_license_ui_context", None)
+        if context is None:
+            return
+
+        self.state.capability_guard = self.license_guard
+        self.state.license_capabilities = self.license_capabilities
+        if self.state.license_summary is not None:
+            self.state.license_summary.set(context.summary)
+        if self.state.license_notice is not None:
+            self.state.license_notice.set(context.notice)
+        if hasattr(self.view, "configure_network_options"):
+            self.view.configure_network_options(live_enabled=context.live_enabled)
+        if hasattr(self.view, "configure_mode_options"):
+            self.view.configure_mode_options(futures_enabled=context.futures_enabled)
+        if hasattr(self.view, "set_start_enabled"):
+            self.view.set_start_enabled(context.auto_trader_enabled)
+
+    # ------------------------------------------------------------------
     def _create_state(self) -> AppState:
         profile_label, limits_label = self._initial_risk_labels()
         fraction_value = self._compute_fraction_value(self.risk_manager_settings)
         notional_label = self._initial_default_notional_label(fraction_value)
+        license_summary = tk.StringVar(value=self._license_ui_context.summary)
+        license_notice = tk.StringVar(value=self._license_ui_context.notice)
         return AppState(
             paths=self.paths,
             runtime_metadata=self.runtime_metadata,
@@ -201,6 +303,11 @@ class TradingGUI:
             paper_balance=tk.StringVar(value="10 000.00"),
             account_balance=tk.StringVar(value="—"),
             status=tk.StringVar(value="Oczekiwanie na start"),
+            license_capabilities=self.license_capabilities,
+            capability_guard=self.license_guard,
+            license_summary=license_summary,
+            license_notice=license_notice,
+            license_path=str(self._license_path) if self._license_path else None,
         )
 
     # ------------------------------------------------------------------

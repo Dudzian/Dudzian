@@ -37,12 +37,11 @@ Pane {
 
         Label {
             text: licenseController.licenseActive
-                    ? qsTr("Licencja: %1 • ważna do %2 • FP %3")
-                          .arg(licenseController.licenseProfile)
-                          .arg(licenseController.licenseExpiresAt.length > 0
-                                   ? Qt.formatDateTime(new Date(licenseController.licenseExpiresAt), "yyyy-MM-dd")
-                                   : qsTr("-")
-                          )
+                    ? qsTr("Licencja: %1 • utrzymanie do %2 • HWID %3")
+                          .arg(licenseController.licenseEdition)
+                          .arg(licenseController.licenseMaintenanceUntil.length > 0
+                                   ? licenseController.licenseMaintenanceUntil
+                                   : qsTr("bez terminu"))
                           .arg(licenseController.licenseFingerprint)
                     : qsTr("Licencja: nieaktywna")
             color: licenseController.licenseActive

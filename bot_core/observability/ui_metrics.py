@@ -14,6 +14,7 @@ from bot_core.observability.metrics import (
     MetricsRegistry,
     get_global_metrics_registry,
 )
+from bot_core.security.guards import get_capability_guard
 
 try:  # pragma: no cover - optional dependency during unit tests
     from bot_core.runtime.metrics_alerts import UiTelemetryAlertSink
@@ -21,6 +22,13 @@ except Exception:  # pragma: no cover
     UiTelemetryAlertSink = None  # type: ignore
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _require_observability_module(message: str) -> None:
+    guard = get_capability_guard()
+    if guard is None:
+        return
+    guard.require_module("observability_ui", message=message)
 
 
 def _safe_json_loads(payload: str) -> Mapping[str, Any]:
@@ -116,6 +124,9 @@ class UiTelemetryPrometheusExporter:
         ram_usage_warning_megabytes: float | int | None = None,
         ram_usage_critical_megabytes: float | int | None = None,
     ) -> None:
+        _require_observability_module(
+            "Moduł Observability UI jest wymagany do eksportu telemetrii UI.",
+        )
         self._registry = registry or get_global_metrics_registry()
         self._snapshot_total: CounterMetric = self._registry.counter(
             "bot_ui_snapshots_total", "Łączna liczba przetworzonych snapshotów UI"

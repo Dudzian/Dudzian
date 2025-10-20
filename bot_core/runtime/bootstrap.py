@@ -108,6 +108,13 @@ from bot_core.security.license import (
     LicenseValidationResult,
     validate_license_from_config,
 )
+from bot_core.security.license_service import LicenseService, LicenseServiceError
+from bot_core.security.guards import (
+    LicenseCapabilityError,
+    get_capability_guard,
+    install_capability_guard,
+    reset_capability_guard,
+)
 from bot_core.security.tokens import ServiceTokenValidator
 from bot_core.runtime.tco_reporting import RuntimeTCOReporter
 
@@ -150,6 +157,8 @@ if TYPE_CHECKING:  # pragma: no cover - tylko do typów
         WhatsAppChannelSettings,
         InstrumentUniverseConfig,
     )
+    from bot_core.security.capabilities import LicenseCapabilities
+    from bot_core.security.guards import CapabilityGuard
 else:  # pragma: no cover - w runtime typy nie są wymagane
     if "DefaultAlertRouter" not in globals():
         DefaultAlertRouter = Any  # type: ignore[misc,assignment]
@@ -191,6 +200,10 @@ else:  # pragma: no cover - w runtime typy nie są wymagane
         TelegramChannelSettings = Any  # type: ignore[misc,assignment]
     if "WhatsAppChannelSettings" not in globals():
         WhatsAppChannelSettings = Any  # type: ignore[misc,assignment]
+    if "LicenseCapabilities" not in globals():
+        LicenseCapabilities = Any  # type: ignore[misc,assignment]
+    if "CapabilityGuard" not in globals():
+        CapabilityGuard = Any  # type: ignore[misc,assignment]
 
 from bot_core.runtime.journal import (
     InMemoryTradingDecisionJournal,
@@ -1238,6 +1251,8 @@ class BootstrapContext:
     risk_decision_log: RiskDecisionLog | None
     risk_profile_name: str
     license_validation: LicenseValidationResult
+    license_capabilities: "LicenseCapabilities | None" = None
+    capability_guard: "CapabilityGuard | None" = None
     risk_profile_config: RiskProfileConfig | Mapping[str, Any] | None = None
     risk_manager_settings: RiskManagerSettings | Mapping[str, Any] | None = None
     portfolio_decision_log: PortfolioDecisionLog | None = None
@@ -1298,6 +1313,7 @@ def bootstrap_environment(
     license_config = getattr(core_config, "license", None)
     if not isinstance(license_config, LicenseValidationConfig):
         license_config = LicenseValidationConfig()
+    reset_capability_guard()
     skip_license_validation = not (
         getattr(license_config, "license_keys_path", None)
         and getattr(license_config, "fingerprint_keys_path", None)
@@ -1457,6 +1473,39 @@ def bootstrap_environment(
                 source="security.license",
                 context=license_result.to_context(),
             )
+
+    if license_result is not None:
+        offline_license_path = os.environ.get("BOT_CORE_LICENSE_PATH")
+        offline_public_key = os.environ.get("BOT_CORE_LICENSE_PUBLIC_KEY")
+        if offline_license_path and offline_public_key:
+            try:
+                offline_service = LicenseService(
+                    verify_key_hex=offline_public_key,
+                )
+                snapshot = offline_service.load_from_file(
+                    offline_license_path,
+                    expected_hwid=license_result.fingerprint,
+                )
+            except FileNotFoundError:
+                _LOGGER.warning(
+                    "Nie znaleziono pliku licencji offline: %s", offline_license_path
+                )
+            except LicenseServiceError as exc:
+                _LOGGER.error("Błąd podczas ładowania licencji offline: %s", exc)
+            else:
+                guard = install_capability_guard(snapshot.capabilities)
+                license_result.capabilities = snapshot.capabilities
+                license_result.capability_guard = guard
+                enabled_modules = [
+                    name
+                    for name, enabled in snapshot.capabilities.modules.items()
+                    if enabled
+                ]
+                _LOGGER.info(
+                    "Załadowano licencję offline (edition=%s, modules=%s)",
+                    snapshot.capabilities.edition,
+                    ",".join(sorted(enabled_modules)) or "brak",
+                )
 
     from bot_core.runtime.metadata import derive_risk_manager_settings
 
@@ -1801,9 +1850,17 @@ def bootstrap_environment(
         except Exception:  # pragma: no cover - eksporter jest opcjonalny
             risk_metrics_exporter = None
             _LOGGER.debug("Nie udało się zainicjalizować eksportera metryk ryzyka", exc_info=True)
+    metrics_guard = get_capability_guard()
     metrics_config = getattr(core_config, "metrics_service", None)
     if metrics_config is not None:
         metrics_service_enabled = bool(getattr(metrics_config, "enabled", True))
+        if metrics_guard and metrics_service_enabled:
+            metrics_guard.require_module(
+                "observability_ui",
+                message=(
+                    "Moduł Observability UI jest wymagany do uruchomienia serwisu telemetrii UI."
+                ),
+            )
         if offline_mode and metrics_service_enabled:
             _LOGGER.info(
                 "Tryb offline: pomijam uruchomienie MetricsService w środowisku %s.",
@@ -2609,6 +2666,8 @@ def bootstrap_environment(
         risk_profile_config=risk_profile_config,
         risk_manager_settings=risk_manager_settings,
         license_validation=license_result,
+        license_capabilities=getattr(license_result, "capabilities", None),
+        capability_guard=getattr(license_result, "capability_guard", None),
         decision_engine_config=decision_engine_config,
         decision_orchestrator=decision_orchestrator,
         decision_tco_report_path=decision_tco_report_path,
@@ -2655,6 +2714,61 @@ def bootstrap_environment(
     )
 
 
+_EXCHANGE_REQUIRED_MODULES: Mapping[str, tuple[str, ...]] = {
+    "binance_futures": ("futures",),
+    "kraken_futures": ("futures",),
+    "zonda_futures": ("futures", "rare_exchanges"),
+    "zonda_spot": ("rare_exchanges",),
+}
+
+_ADVANCED_ALERT_TYPES = frozenset({"sms", "signal", "whatsapp", "messenger"})
+
+
+def _ensure_environment_allowed(guard: "CapabilityGuard", environment: Environment) -> None:
+    if environment is Environment.TESTNET:
+        aliases = ("testnet", "demo", "paper")
+        message = "Licencja nie obejmuje środowiska demo/testnet."
+    elif environment is Environment.PAPER:
+        aliases = ("paper", "demo")
+        message = "Licencja nie obejmuje środowiska paper."
+    else:
+        aliases = ("live",)
+        message = "Licencja nie obejmuje trybu live. Skontaktuj się z opiekunem licencji."
+
+    for alias in aliases:
+        if guard.capabilities.is_environment_allowed(alias):
+            return
+    raise LicenseCapabilityError(message, capability="environment")
+
+
+def _enforce_exchange_capabilities(exchange_name: str, environment: Environment) -> None:
+    guard = get_capability_guard()
+    if guard is None:
+        return
+
+    guard.require_exchange(
+        exchange_name,
+        message=(
+            f"Licencja nie obejmuje giełdy '{exchange_name}'. Skontaktuj się z opiekunem licencji."
+        ),
+    )
+
+    required_modules = _EXCHANGE_REQUIRED_MODULES.get(exchange_name, ())
+    for module in required_modules:
+        if module == "futures":
+            message = "Dodaj moduł Futures, aby aktywować handel kontraktami."
+        elif module == "rare_exchanges":
+            message = "Licencja nie obejmuje modułu Rare Exchanges wymaganego dla tej giełdy."
+        else:
+            message = None
+        guard.require_module(module, message=message)
+
+    _ensure_environment_allowed(guard, environment)
+
+    if environment is Environment.LIVE:
+        guard.require_edition("pro", message="Tryb live wymaga co najmniej edycji Pro.")
+
+
 def _instantiate_adapter(
     exchange_name: str,
     credentials: ExchangeCredentials,
@@ -2664,6 +2778,8 @@ def _instantiate_adapter(
     settings: Mapping[str, Any] | None = None,
     offline_mode: bool = False,
 ) -> ExchangeAdapter:
+    _enforce_exchange_capabilities(exchange_name, environment)
+
     try:
         factory = factories[exchange_name]
     except KeyError as exc:
@@ -2814,6 +2930,7 @@ def build_alert_channels(
     channels: MutableMapping[str, AlertChannel] = {}
     offline_mode = bool(getattr(environment, "offline_mode", False))
     skipped_offline: list[str] = []
+    guard = get_capability_guard()
 
     for entry in environment.alert_channels:
         channel_type, _, channel_key = entry.partition(":")
@@ -2832,6 +2949,14 @@ def build_alert_channels(
             skipped_offline.append(entry)
             continue
 
+        if guard and channel_type in _ADVANCED_ALERT_TYPES:
+            guard.require_module(
+                "alerts_advanced",
+                message=(
+                    "Kanały SMS/Signal/WhatsApp/Messenger wymagają modułu Alerts Advanced."
+                ),
+            )
+
         if channel_type == "telegram":
             channel = _build_telegram_channel(core_config.telegram_channels, channel_key, secret_manager)
         elif channel_type == "email":
@@ -2847,6 +2972,8 @@ def build_alert_channels(
         else:
             raise KeyError(f"Nieobsługiwany typ kanału alertów: {channel_type}")
 
+        if guard:
+            guard.reserve_slot("alert_channel")
         router.register(channel)
         channels[channel.name] = channel
 

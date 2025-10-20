@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, MutableMapping
 
+from ._license import ensure_ai_signals_enabled
 from .models import ModelArtifact, ModelScore
 
 
@@ -37,6 +38,7 @@ class DecisionModelInference:
     """Wykonuje scoring kandydatów Decision Engine."""
 
     def __init__(self, repository: ModelRepository) -> None:
+        ensure_ai_signals_enabled("inference modeli AI")
         self._repository = repository
         self._artifact: ModelArtifact | None = None
         self._model: Any | None = None

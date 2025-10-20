@@ -295,17 +295,78 @@ Drawer {
                             Label { text: qsTr("Status") }
                             Label { text: securityController && securityController.licenseInfo.status || qsTr("n/d") }
 
+                            Label { text: qsTr("Edycja") }
+                            Label { text: securityController && securityController.licenseInfo.edition || qsTr("n/d") }
+
+                            Label { text: qsTr("Utrzymanie do") }
+                            Label { text: securityController && securityController.licenseInfo.maintenance_until || qsTr("n/d") }
+
+                            Label { text: qsTr("Trial") }
+                            Label {
+                                text: securityController && securityController.licenseInfo.trial_active
+                                      ? (securityController.licenseInfo.trial_expires_at || qsTr("aktywny"))
+                                      : qsTr("nieaktywny")
+                            }
+
+                            Label { text: qsTr("Odbiorca") }
+                            Label {
+                                wrapMode: Text.WrapAnywhere
+                                text: {
+                                    if (!securityController || !securityController.licenseInfo.holder)
+                                        return qsTr("n/d");
+                                    const holder = securityController.licenseInfo.holder;
+                                    let base = holder.name || qsTr("n/d");
+                                    if (holder.email)
+                                        base += " (" + holder.email + ")";
+                                    return base;
+                                }
+                            }
+
+                            Label { text: qsTr("Seats") }
+                            Label {
+                                text: securityController && securityController.licenseInfo.seats !== undefined
+                                      ? securityController.licenseInfo.seats
+                                      : qsTr("n/d")
+                            }
+
                             Label { text: qsTr("Fingerprint") }
                             Label {
                                 text: securityController && securityController.licenseInfo.fingerprint || qsTr("n/d")
                                 wrapMode: Text.WrapAnywhere
                             }
 
-                            Label { text: qsTr("Ważna od") }
-                            Label { text: securityController && securityController.licenseInfo.valid_from || qsTr("n/d") }
+                            Label { text: qsTr("Moduły") }
+                            Label {
+                                wrapMode: Text.WordWrap
+                                text: {
+                                    if (!securityController || !securityController.licenseInfo.modules)
+                                        return qsTr("brak");
+                                    const modules = securityController.licenseInfo.modules;
+                                    return modules.length > 0 ? modules.join(", ") : qsTr("brak");
+                                }
+                            }
 
-                            Label { text: qsTr("Ważna do") }
-                            Label { text: securityController && securityController.licenseInfo.valid_to || qsTr("n/d") }
+                            Label { text: qsTr("Środowiska") }
+                            Label {
+                                wrapMode: Text.WordWrap
+                                text: {
+                                    if (!securityController || !securityController.licenseInfo.environments)
+                                        return qsTr("brak");
+                                    const envs = securityController.licenseInfo.environments;
+                                    return envs.length > 0 ? envs.join(", ") : qsTr("brak");
+                                }
+                            }
+
+                            Label { text: qsTr("Runtime") }
+                            Label {
+                                wrapMode: Text.WordWrap
+                                text: {
+                                    if (!securityController || !securityController.licenseInfo.runtime)
+                                        return qsTr("brak");
+                                    const runtime = securityController.licenseInfo.runtime;
+                                    return runtime.length > 0 ? runtime.join(", ") : qsTr("brak");
+                                }
+                            }
                         }
                     }
 

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
 from bot_core.security.license import LicenseValidationResult
+from bot_core.security.guards import CapabilityGuard, LicenseCapabilityError
 from bot_core.security.signing import verify_hmac_signature
 
 LOGGER = logging.getLogger(__name__)
@@ -188,23 +189,83 @@ def verify_update_bundle(
 
     license_ok = True
     warnings: list[str] = []
-    if license_result is not None and manifest.allowed_profiles:
-        allowed = {profile.lower() for profile in manifest.allowed_profiles}
-        profile = (license_result.profile or "").lower()
-        if profile not in allowed:
+    if license_result is not None:
+        if manifest.allowed_profiles:
+            allowed = {profile.lower() for profile in manifest.allowed_profiles}
+            profile = (license_result.profile or "").lower()
+            if profile not in allowed:
+                license_ok = False
+                errors.append(
+                    "Licencja OEM nie jest uprawniona do aktualizacji (profil %s, dozwolone: %s)"
+                    % (license_result.profile or "<unknown>", ", ".join(sorted(manifest.allowed_profiles)))
+                )
+            elif not license_result.is_valid:
+                license_ok = False
+                errors.append("Licencja OEM nie przeszła walidacji i nie może otrzymać aktualizacji")
+            else:
+                warnings.append(
+                    f"Licencja {license_result.license_path} potwierdzona dla profilu {license_result.profile}"
+                )
+
+        capabilities = getattr(license_result, "capabilities", None)
+        guard: CapabilityGuard | None = getattr(license_result, "capability_guard", None)
+        if capabilities is None:
             license_ok = False
-            errors.append(
-                "Licencja OEM nie jest uprawniona do aktualizacji (profil %s, dozwolone: %s)"
-                % (license_result.profile or "<unknown>", ", ".join(sorted(manifest.allowed_profiles)))
-            )
-        elif not license_result.is_valid:
-            license_ok = False
-            errors.append("Licencja OEM nie przeszła walidacji i nie może otrzymać aktualizacji")
+            errors.append("Licencja offline nie dostarczyła capabilities – aktualizacja jest zablokowana.")
         else:
-            warnings.append(
-                f"Licencja {license_result.license_path} potwierdzona dla profilu {license_result.profile}"
-            )
-    elif license_result is None:
+            if guard is None:
+                guard = CapabilityGuard(capabilities)
+
+            try:
+                guard.require_module(
+                    "oem_updater",
+                    message="Moduł OEM Updater jest wymagany do zastosowania aktualizacji.",
+                )
+            except LicenseCapabilityError as exc:
+                license_ok = False
+                errors.append(str(exc))
+
+            if not capabilities.is_maintenance_active():
+                license_ok = False
+                errors.append("Licencja utrzymaniowa wygasła – aktualizacja została przerwana.")
+
+            metadata = manifest.metadata or {}
+            required_modules = metadata.get("required_modules")
+            if required_modules:
+                if isinstance(required_modules, Sequence) and not isinstance(required_modules, (str, bytes, bytearray)):
+                    missing = [
+                        str(module)
+                        for module in required_modules
+                        if not capabilities.is_module_enabled(str(module))
+                    ]
+                    if missing:
+                        license_ok = False
+                        errors.append(
+                            "Licencja nie zawiera modułów wymaganych przez aktualizację: %s"
+                            % ", ".join(sorted(missing))
+                        )
+                else:
+                    license_ok = False
+                    errors.append("Pole metadata.required_modules musi być listą nazw modułów.")
+
+            min_edition = metadata.get("min_edition")
+            if min_edition:
+                if isinstance(min_edition, str):
+                    try:
+                        guard.require_edition(
+                            min_edition,
+                            message=(
+                                "Edycja licencji jest zbyt niska dla tej aktualizacji (wymagana: %s)."
+                                % min_edition
+                            ),
+                        )
+                    except LicenseCapabilityError as exc:
+                        license_ok = False
+                        errors.append(str(exc))
+                else:
+                    license_ok = False
+                    errors.append("Pole metadata.min_edition musi być ciągiem znaków.")
+    else:
         warnings.append("Nie dostarczono wyniku walidacji licencji – pomijam kontrolę profilu")
 
     return UpdateVerificationResult(

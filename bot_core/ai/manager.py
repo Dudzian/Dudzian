@@ -43,6 +43,8 @@ else:
 import numpy as np
 import pandas as pd
 
+from ._license import ensure_ai_signals_enabled
+
 logger = logging.getLogger(__name__)
 if not logger.handlers:
     handler = logging.StreamHandler()
@@ -370,6 +372,7 @@ class AIManager:
     """
 
     def __init__(self, *, ai_threshold_bps: float = 5.0, model_dir: str | Path = "models") -> None:
+        ensure_ai_signals_enabled("zarządzania modelami AI")
         self.ai_threshold_bps = float(ai_threshold_bps)
         self.model_dir = Path(model_dir)
         self.model_dir.mkdir(parents=True, exist_ok=True)

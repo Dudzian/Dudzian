@@ -38,15 +38,8 @@ void SecurityAdminControllerTest::refreshLoadsState()
     QTemporaryDir tempDir;
     QVERIFY(tempDir.isValid());
 
-    const QString licensePath = tempDir.filePath(QStringLiteral("license.json"));
+    const QString statePath = tempDir.filePath(QStringLiteral("state.json"));
     const QString profilesPath = tempDir.filePath(QStringLiteral("profiles.json"));
-
-    QJsonObject license{
-        {QStringLiteral("fingerprint"), QStringLiteral("ABC-123")},
-        {QStringLiteral("valid"), QJsonObject{{QStringLiteral("from"), QStringLiteral("2024-01-01T00:00:00Z")},
-                                               {QStringLiteral("to"), QStringLiteral("2025-01-01T00:00:00Z")}}}
-    };
-    writeJsonFile(licensePath, license);
 
     QJsonObject profilesRoot;
     QJsonArray profilesArray;
@@ -61,8 +54,17 @@ void SecurityAdminControllerTest::refreshLoadsState()
     profilesFile.write(QJsonDocument(profilesArray).toJson(QJsonDocument::Compact));
     profilesFile.close();
 
+    QJsonObject licenseObject{{QStringLiteral("status"), QStringLiteral("active")},
+                              {QStringLiteral("fingerprint"), QStringLiteral("ABC-123")},
+                              {QStringLiteral("edition"), QStringLiteral("pro")},
+                              {QStringLiteral("modules"), QJsonArray{QStringLiteral("futures")}},
+                              {QStringLiteral("maintenance_until"), QStringLiteral("2025-01-01")}};
+    QJsonObject state{{QStringLiteral("license"), licenseObject},
+                      {QStringLiteral("profiles"), profilesArray}};
+    writeJsonFile(statePath, state);
+    qputenv("BOT_CORE_UI_SECURITY_STATE_PATH", statePath.toUtf8());
+
     SecurityAdminController controller;
-    controller.setLicensePath(licensePath);
     controller.setProfilesPath(profilesPath);
     controller.setLogPath(tempDir.filePath(QStringLiteral("admin.log")));
 
@@ -71,11 +73,17 @@ void SecurityAdminControllerTest::refreshLoadsState()
     const QVariantMap licenseInfo = controller.licenseInfo();
     QCOMPARE(licenseInfo.value(QStringLiteral("fingerprint")).toString(), QStringLiteral("ABC-123"));
     QCOMPARE(licenseInfo.value(QStringLiteral("status")).toString(), QStringLiteral("active"));
+    QCOMPARE(licenseInfo.value(QStringLiteral("edition")).toString(), QStringLiteral("pro"));
+    const QVariantList modules = licenseInfo.value(QStringLiteral("modules")).toList();
+    QCOMPARE(modules.size(), 1);
+    QCOMPARE(modules.first().toString(), QStringLiteral("futures"));
 
     const QVariantList userProfiles = controller.userProfiles();
     QCOMPARE(userProfiles.size(), 2);
     const QVariantMap firstProfile = userProfiles.first().toMap();
     QVERIFY(firstProfile.value(QStringLiteral("user_id")).toString().contains(QStringLiteral("ops")));
+
+    qunsetenv("BOT_CORE_UI_SECURITY_STATE_PATH");
 }
 
 void SecurityAdminControllerTest::assignProfileUpdatesJson()
@@ -88,15 +96,12 @@ void SecurityAdminControllerTest::assignProfileUpdatesJson()
     QVERIFY(profilesFile.open(QIODevice::WriteOnly | QIODevice::Text));
     profilesFile.write("[]");
     profilesFile.close();
-
-    const QString licensePath = tempDir.filePath(QStringLiteral("license.json"));
-    QFile licenseFile(licensePath);
-    QVERIFY(licenseFile.open(QIODevice::WriteOnly | QIODevice::Text));
-    licenseFile.write("{\"fingerprint\": \"XYZ\"}");
-    licenseFile.close();
+    const QString statePath = tempDir.filePath(QStringLiteral("state.json"));
+    writeJsonFile(statePath, QJsonObject{{QStringLiteral("license"), QJsonObject{{QStringLiteral("status"), QStringLiteral("inactive")}}},
+                                         {QStringLiteral("profiles"), QJsonArray{}}});
+    qputenv("BOT_CORE_UI_SECURITY_STATE_PATH", statePath.toUtf8());
 
     SecurityAdminController controller;
-    controller.setLicensePath(licensePath);
     controller.setProfilesPath(profilesPath);
     controller.setLogPath(tempDir.filePath(QStringLiteral("admin.log")));
     controller.refresh();
@@ -125,6 +130,8 @@ void SecurityAdminControllerTest::assignProfileUpdatesJson()
     QCOMPARE(profiles.size(), 1);
     const QVariantMap profileMap = profiles.first().toMap();
     QCOMPARE(profileMap.value(QStringLiteral("user_id")).toString(), QStringLiteral("new-user"));
+
+    qunsetenv("BOT_CORE_UI_SECURITY_STATE_PATH");
 }
 
 void SecurityAdminControllerTest::removeProfileDeletesJsonEntry()
@@ -145,6 +152,11 @@ void SecurityAdminControllerTest::removeProfileDeletesJsonEntry()
     profilesFile.write(QJsonDocument(profilesArray).toJson(QJsonDocument::Compact));
     profilesFile.close();
 
+    const QString statePath = tempDir.filePath(QStringLiteral("state.json"));
+    writeJsonFile(statePath, QJsonObject{{QStringLiteral("license"), QJsonObject{{QStringLiteral("status"), QStringLiteral("inactive")}}},
+                                         {QStringLiteral("profiles"), QJsonArray{}}});
+    qputenv("BOT_CORE_UI_SECURITY_STATE_PATH", statePath.toUtf8());
+
     SecurityAdminController controller;
     controller.setProfilesPath(profilesPath);
     controller.setLogPath(tempDir.filePath(QStringLiteral("admin.log")));
@@ -160,6 +172,8 @@ void SecurityAdminControllerTest::removeProfileDeletesJsonEntry()
     const QJsonArray updatedArray = doc.array();
     QCOMPARE(updatedArray.size(), 1);
     QCOMPARE(updatedArray.first().toObject().value(QStringLiteral("user_id")).toString(), QStringLiteral("alice"));
+
+    qunsetenv("BOT_CORE_UI_SECURITY_STATE_PATH");
 }
 
 QTEST_MAIN(SecurityAdminControllerTest)

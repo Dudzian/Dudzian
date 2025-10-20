@@ -43,28 +43,52 @@ class TradingView:
             style.theme_use("clam")
         except tk.TclError:
             logger.debug("Motyw clam niedostępny")
+        style.configure("LicenseSummary.TLabel", font=("TkDefaultFont", 10, "bold"))
+        style.configure("LicenseNotice.TLabel", foreground="#c0392b")
 
         main = ttk.Frame(self.root, padding=12)
         main.pack(fill="both", expand=True)
 
+        license_bar = ttk.Frame(main)
+        license_bar.pack(fill="x", pady=(0, 8))
+        summary_var = self.state.license_summary or tk.StringVar(value="Licencja: —")
+        notice_var = self.state.license_notice or tk.StringVar(value="")
+        self.state.license_summary = summary_var
+        self.state.license_notice = notice_var
+        ttk.Label(
+            license_bar,
+            textvariable=summary_var,
+            style="LicenseSummary.TLabel",
+        ).pack(side="left")
+        self._license_notice_label = ttk.Label(
+            license_bar,
+            textvariable=notice_var,
+            style="LicenseNotice.TLabel",
+            wraplength=520,
+            justify="right",
+        )
+        self._license_notice_label.pack(side="right")
+
         header = ttk.Frame(main)
         header.pack(fill="x")
         ttk.Label(header, text="Network").pack(side="left")
-        ttk.Combobox(
+        self.network_combobox = ttk.Combobox(
             header,
             textvariable=self.state.network,
             values=("Testnet", "Live"),
             width=10,
             state="readonly",
-        ).pack(side="left", padx=(4, 12))
+        )
+        self.network_combobox.pack(side="left", padx=(4, 12))
         ttk.Label(header, text="Mode").pack(side="left")
-        ttk.Combobox(
+        self.mode_combobox = ttk.Combobox(
             header,
             textvariable=self.state.mode,
             values=("Spot", "Futures"),
             width=10,
             state="readonly",
-        ).pack(side="left", padx=(4, 12))
+        )
+        self.mode_combobox.pack(side="left", padx=(4, 12))
         ttk.Label(header, text="Timeframe").pack(side="left")
         ttk.Combobox(
             header,
@@ -86,7 +110,8 @@ class TradingView:
 
         buttons = ttk.Frame(header)
         buttons.pack(side="right")
-        ttk.Button(buttons, text="Start", command=self._start_clicked).pack(side="left", padx=(0, 8))
+        self.start_button = ttk.Button(buttons, text="Start", command=self._start_clicked)
+        self.start_button.pack(side="left", padx=(0, 8))
         ttk.Button(buttons, text="Stop", command=self._stop_clicked).pack(side="left", padx=(0, 8))
         ttk.Button(
             buttons,
@@ -215,6 +240,56 @@ class TradingView:
         maximum = _extract("to", 1.0)
         increment = _extract("increment", 0.01)
         return (minimum, maximum, increment)
+
+    # ------------------------------------------------------------------
+    def configure_network_options(self, *, live_enabled: bool) -> None:
+        combo = getattr(self, "network_combobox", None)
+        if combo is None:
+            return
+        values = ["Testnet"]
+        if live_enabled:
+            values.append("Live")
+        try:
+            combo.configure(values=tuple(values))
+        except Exception:  # pragma: no cover - defensywne logowanie
+            logger.debug("Nie udało się zaktualizować listy sieci", exc_info=True)
+        if not live_enabled:
+            try:
+                self.state.network.set("Testnet")
+            except Exception:  # pragma: no cover - defensywne
+                logger.debug("Nie udało się wymusić trybu Testnet", exc_info=True)
+
+    # ------------------------------------------------------------------
+    def configure_mode_options(self, *, futures_enabled: bool) -> None:
+        combo = getattr(self, "mode_combobox", None)
+        if combo is None:
+            return
+        values = ["Spot"]
+        if futures_enabled:
+            values.append("Futures")
+        try:
+            combo.configure(values=tuple(values))
+        except Exception:  # pragma: no cover - defensywne logowanie
+            logger.debug("Nie udało się zaktualizować listy trybów", exc_info=True)
+        if not futures_enabled:
+            try:
+                self.state.mode.set("Spot")
+            except Exception:  # pragma: no cover - defensywne
+                logger.debug("Nie udało się wymusić trybu Spot", exc_info=True)
+
+    # ------------------------------------------------------------------
+    def set_start_enabled(self, enabled: bool) -> None:
+        button = getattr(self, "start_button", None)
+        if button is None:
+            return
+        try:
+            if enabled:
+                button.state(["!disabled"])
+            else:
+                button.state(["disabled"])
+        except Exception:  # pragma: no cover - defensywne logowanie
+            logger.debug("Fallback zmiany stanu przycisku Start", exc_info=True)
+            button.configure(state="normal" if enabled else "disabled")
 
 
 __all__ = ["TradingView"]

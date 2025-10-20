@@ -14,10 +14,18 @@ from threading import Lock
 from typing import Any
 
 from bot_core.alerts import AlertMessage, DefaultAlertRouter
+from bot_core.security.guards import get_capability_guard
 
 DEFAULT_UI_ALERTS_JSONL_PATH = Path("logs/ui_telemetry_alerts.jsonl")
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _require_observability_module(message: str) -> None:
+    guard = get_capability_guard()
+    if guard is None:
+        return
+    guard.require_module("observability_ui", message=message)
 
 
 @dataclass(slots=True)
@@ -217,6 +225,9 @@ class UiTelemetryAlertSink:
         ram_usage_critical_megabytes: float | int | None = None,
         risk_profile: Mapping[str, Any] | None = None,
     ) -> None:
+        _require_observability_module(
+            "Moduł Observability UI jest wymagany do aktywacji alertów telemetrii UI.",
+        )
         self._router = router
         self._jsonl_path = Path(jsonl_path) if jsonl_path else DEFAULT_UI_ALERTS_JSONL_PATH
         self._enable_reduce_motion_alerts = enable_reduce_motion_alerts

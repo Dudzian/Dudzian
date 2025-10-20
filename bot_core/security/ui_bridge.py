@@ -18,6 +18,13 @@ from typing import Any, Mapping
 
 from bot_core.security.fingerprint import HardwareFingerprintService, build_key_provider, decode_secret
 from bot_core.security.license import validate_license
+from bot_core.security.license_service import (
+    LicenseBundleError,
+    LicenseService,
+    LicenseServiceError,
+    LicenseSignatureError,
+    LicenseSnapshot,
+)
 from bot_core.security.profiles import (
     load_profiles,
     log_admin_event,
@@ -62,6 +69,102 @@ def _load_keys_from_file(path: Path) -> dict[str, bytes]:
     return decoded
 
 
+def _empty_license_summary(path: Path) -> dict[str, Any]:
+    return {
+        "status": "inactive",
+        "fingerprint": None,
+        "local_fingerprint": None,
+        "fingerprint_source": None,
+        "valid_from": None,
+        "valid_to": None,
+        "profile": None,
+        "issuer": None,
+        "schema": None,
+        "schema_version": None,
+        "license_id": None,
+        "revocation_status": None,
+        "revocation_checked": False,
+        "revocation_list_path": None,
+        "revocation_generated_at": None,
+        "revocation_reason": None,
+        "revocation_revoked_at": None,
+        "path": str(path),
+        "warnings": [],
+        "errors": [],
+        "edition": None,
+        "environments": [],
+        "modules": [],
+        "runtime": [],
+        "exchanges": {},
+        "strategies": {},
+        "limits": {},
+        "maintenance_until": None,
+        "maintenance_active": False,
+        "trial_active": False,
+        "trial_expires_at": None,
+        "holder": {},
+        "metadata": {},
+        "seats": None,
+        "effective_date": None,
+    }
+
+
+def _build_capability_summary(snapshot: LicenseSnapshot) -> dict[str, Any]:
+    capabilities = snapshot.capabilities
+    modules = sorted(name for name, enabled in capabilities.modules.items() if enabled)
+    runtime = sorted(name for name, enabled in capabilities.runtime.items() if enabled)
+    strategies = {name: bool(enabled) for name, enabled in capabilities.strategies.items()}
+    exchanges = {name: bool(enabled) for name, enabled in capabilities.exchanges.items()}
+    environments = sorted(capabilities.environments)
+    summary = _empty_license_summary(snapshot.bundle_path)
+    fingerprint_value = capabilities.hwid or snapshot.local_hwid
+    fingerprint_source = "payload" if capabilities.hwid else ("local" if snapshot.local_hwid else None)
+    summary.update(
+        {
+            "status": "active",
+            "fingerprint": fingerprint_value,
+            "local_fingerprint": snapshot.local_hwid,
+            "fingerprint_source": fingerprint_source,
+            "valid_from": capabilities.issued_at.isoformat() if capabilities.issued_at else None,
+            "valid_to": capabilities.maintenance_until.isoformat()
+            if capabilities.maintenance_until
+            else None,
+            "profile": capabilities.edition,
+            "issuer": capabilities.raw_payload.get("issuer"),
+            "schema": capabilities.raw_payload.get("schema"),
+            "schema_version": capabilities.raw_payload.get("schema_version"),
+            "license_id": capabilities.license_id,
+            "revocation_status": "skipped",
+            "revocation_checked": False,
+            "edition": capabilities.edition,
+            "environments": environments,
+            "modules": modules,
+            "runtime": runtime,
+            "strategies": strategies,
+            "exchanges": exchanges,
+            "limits": {
+                "max_paper_controllers": capabilities.limits.max_paper_controllers,
+                "max_live_controllers": capabilities.limits.max_live_controllers,
+                "max_concurrent_bots": capabilities.limits.max_concurrent_bots,
+                "max_alert_channels": capabilities.limits.max_alert_channels,
+            },
+            "maintenance_until": capabilities.maintenance_until.isoformat()
+            if capabilities.maintenance_until
+            else None,
+            "maintenance_active": capabilities.is_maintenance_active(),
+            "trial_active": capabilities.is_trial_active(),
+            "trial_expires_at": capabilities.trial.expires_at.isoformat()
+            if capabilities.trial.expires_at
+            else None,
+            "holder": dict(capabilities.holder),
+            "metadata": dict(capabilities.metadata),
+            "seats": capabilities.seats,
+            "effective_date": capabilities.effective_date.isoformat(),
+        }
+    )
+    return summary
+
+
 def _read_license_summary(
     path: Path,
     *,
@@ -72,11 +175,33 @@ def _read_license_summary(
     revocation_keys_path: Path | None = None,
     revocation_signature_required: bool = False,
 ) -> dict[str, Any]:
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    try:
+        service = LicenseService()
+        snapshot = service.load_from_file(path)
+    except FileNotFoundError:
+        summary = _empty_license_summary(path)
+        summary["status"] = "inactive"
+        summary["errors"].append(f"Brak pliku licencji: {path}")
+        return summary
+    except LicenseSignatureError as exc:
+        summary = _empty_license_summary(path)
+        summary["status"] = "invalid"
+        summary["errors"].append(str(exc))
+        return summary
+    except (LicenseBundleError, LicenseServiceError) as exc:
+        warnings.append(str(exc))
+    else:
+        summary = _build_capability_summary(snapshot)
+        if warnings:
+            summary["warnings"].extend(warnings)
+        return summary
+
     license_keys: Mapping[str, bytes] | None = None
     fingerprint_keys: Mapping[str, bytes] | None = None
     revocation_keys: Mapping[str, bytes] | None = None
-    errors: list[str] = []
-    warnings: list[str] = []
 
     if license_keys_path:
         try:
@@ -127,6 +252,7 @@ def _read_license_summary(
         "status": status,
         "fingerprint": result.fingerprint,
         "fingerprint_source": result.fingerprint_source,
+        "local_fingerprint": None,
         "valid_from": result.issued_at,
         "valid_to": result.expires_at,
         "profile": result.profile,
@@ -143,6 +269,21 @@ def _read_license_summary(
         "path": str(path),
         "warnings": list(result.warnings),
         "errors": list(result.errors),
+        "edition": result.profile,
+        "environments": [],
+        "modules": [],
+        "runtime": [],
+        "exchanges": {},
+        "strategies": {},
+        "limits": {},
+        "maintenance_until": None,
+        "maintenance_active": False,
+        "trial_active": False,
+        "trial_expires_at": None,
+        "holder": {},
+        "metadata": {},
+        "seats": None,
+        "effective_date": None,
     }
     if result.license_signature_key:
         summary["license_key_id"] = result.license_signature_key

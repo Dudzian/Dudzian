@@ -32,6 +32,7 @@ from bot_core.observability.slo import (
     SLOReport,
     evaluate_slo,
 )
+from bot_core.security.guards import get_capability_guard
 from bot_core.security.signing import build_hmac_signature
 
 
@@ -144,6 +145,16 @@ class ObservabilityHypercareCycle:
         self._config = config
 
     def run(self) -> ObservabilityCycleResult:
+        guard = get_capability_guard()
+        if guard is not None:
+            guard.require_module(
+                "observability_ui",
+                message="Moduł Observability UI jest wymagany do cyklu Stage6.",
+            )
+            guard.require_runtime(
+                "hypercare",
+                message="Runtime Hypercare jest wymagany do cyklu Stage6.",
+            )
         definitions, composites = load_slo_definitions(self._config.definitions_path)
         if not definitions:
             raise ValueError("Brak definicji SLO do ewaluacji")
