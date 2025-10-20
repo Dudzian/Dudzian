@@ -823,6 +823,23 @@ def test_main_with_set_env_prints_assignment(
     assert out.strip() == f"REPO_ROOT={repo_root}"
 
 
+def test_main_with_set_env_prints_assignment(capsys: pytest.CaptureFixture[str]) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+
+    clear_cache()
+    try:
+        exit_code = main(["--set-env", "REPO_ROOT"])
+        captured = capsys.readouterr()
+    finally:
+        clear_cache()
+
+    expected_repo = str(repo_root)
+
+    assert exit_code == 0
+    assert captured.err == ""
+    assert captured.out.strip() == f"REPO_ROOT={expected_repo}"
+
+
 def test_main_prints_pythonpath_value(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -910,9 +927,11 @@ def test_main_with_set_env_and_export_prints_export_command(
     finally:
         clear_cache()
 
+    expected_repo = str(repo_root)
+
     assert exit_code == 0
-    assert err == ""
-    assert out.strip() == f"export REPO_ROOT={repo_root}"
+    assert captured.err == ""
+    assert captured.out.strip() == f"export REPO_ROOT={expected_repo}"
 
 
 def test_main_prints_pythonpath_json(
@@ -925,19 +944,20 @@ def test_main_prints_pythonpath_json(
         exit_code = main(
             ["--print-pythonpath", "--format", "json", "--add-path", "tests"]
         )
-        out, err = _read_output(capsys)
+        captured = capsys.readouterr()
     finally:
         clear_cache()
 
-    repo_root = _repo_root()
+    repo_root = Path(__file__).resolve().parents[1]
+    expected_repo = str(repo_root)
     expected_tests = str((repo_root / "tests").resolve())
-    payload = json.loads(out)
+    payload = json.loads(captured.out)
 
     assert exit_code == 0
     assert err == ""
     assert payload == {
-        "repo_root": str(repo_root),
+        "repo_root": expected_repo,
         "additional_paths": [expected_tests],
-        "pythonpath": ":".join([str(repo_root), expected_tests]),
-        "pythonpath_entries": [str(repo_root), expected_tests],
+        "pythonpath": os.pathsep.join([expected_repo, expected_tests]),
+        "pythonpath_entries": [expected_repo, expected_tests],
     }

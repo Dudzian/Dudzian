@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import time
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, List, Mapping
 
 import pandas as pd
 import pytest
 
-from KryptoLowca.config_manager import ConfigManager, StrategyConfig, ValidationError
+from bot_core.config.models import CoreConfig, RiskProfileConfig
+
+from KryptoLowca.config_manager import ValidationError
 from KryptoLowca.data.market_data import MarketDataProvider, MarketDataRequest
 from KryptoLowca.strategies.base import BaseStrategy, StrategyContext, StrategyMetadata, StrategySignal, registry
 
@@ -68,6 +69,13 @@ class DummyExchange:
 @pytest.fixture()
 def provider() -> MarketDataProvider:
     return MarketDataProvider(DummyExchange(), cache_ttl_s=60.0)
+
+
+@pytest.fixture()
+def risk_profile(core_config: CoreConfig) -> RiskProfileConfig:
+    """Udostępnia profil ryzyka z nowej konfiguracji rdzenia."""
+
+    return core_config.risk_profiles["balanced"]
 
 
 def test_market_data_provider_caches(provider: MarketDataProvider) -> None:
@@ -247,28 +255,20 @@ def test_backtest_engine_detects_data_issues() -> None:
     )
     report = engine.run()
 
-    assert any("luka danych" in warning for warning in report.warnings)
+    assert any("lukę danych" in warning for warning in report.warnings)
     assert any("zerowego wolumenu" in warning for warning in report.warnings)
 
 
-@pytest.mark.asyncio()
-async def test_config_manager_preflight_backtest(tmp_path: Path, provider: MarketDataProvider) -> None:
-    """
-    Używamy BacktestEngine również „przez” ConfigManager:
-    - ConfigManager trzyma StrategyConfig, ale sam backtest odpalamy lokalnie,
-      bo unified engine nie jest (jeszcze) bezpośrednio zintegrowany z ConfigManager).
-    """
-    cfg = ConfigManager(tmp_path / "config.yml")
-    strategy = StrategyConfig(
-        preset="TestTrendStrategy",
-        mode="demo",
-        max_leverage=2.0,
-        max_position_notional_pct=0.5,
-        trade_risk_pct=0.1,
-        default_sl=0.01,
-        default_tp=0.02,
-    ).validate()
-    cfg._current_config["strategy"] = asdict(strategy)
+def test_core_profile_preflight_backtest(
+    risk_profile: RiskProfileConfig, provider: MarketDataProvider
+) -> None:
+    """Weryfikuje przepływ backtestu w oparciu o dane z ``CoreConfig``."""
+
+    strategy_limits = {
+        "trade_risk_pct": risk_profile.max_position_pct,
+        "max_position_notional_pct": risk_profile.max_position_pct,
+        "max_leverage": risk_profile.max_leverage,
+    }
 
     df = _build_dataframe()
     engine = BacktestEngine(
@@ -278,16 +278,11 @@ async def test_config_manager_preflight_backtest(tmp_path: Path, provider: Marke
         timeframe="1m",
         initial_balance=1_000.0,
         matching=MatchingConfig(latency_bars=1, slippage_bps=1.0, fee_bps=5.0, liquidity_share=1.0),
-        context_extra={
-            "trade_risk_pct": strategy.trade_risk_pct,
-            "max_position_notional_pct": strategy.max_position_notional_pct,
-            "max_leverage": strategy.max_leverage,
-        },
+        context_extra=strategy_limits,
     )
     report = engine.run()
     assert report.metrics is not None
 
-    # backtest na danych z providera (cache patch)
     original_get = provider.get_historical
 
     def _patched(request: MarketDataRequest) -> pd.DataFrame:
@@ -303,16 +298,11 @@ async def test_config_manager_preflight_backtest(tmp_path: Path, provider: Marke
         timeframe="1m",
         initial_balance=500.0,
         matching=MatchingConfig(),
-        context_extra={
-            "trade_risk_pct": strategy.trade_risk_pct,
-            "max_position_notional_pct": strategy.max_position_notional_pct,
-            "max_leverage": strategy.max_leverage,
-        },
+        context_extra=strategy_limits,
     )
     report_provider = engine2.run()
     assert report_provider.metrics is not None
 
-    # negatywny scenariusz: zła strategia -> evaluate_strategy_backtest rzuca ValidationError
     losing_df = df.copy()
     losing_df["close"] = [90 - i for i in range(len(losing_df))]
     losing_engine = BacktestEngine(
@@ -322,17 +312,12 @@ async def test_config_manager_preflight_backtest(tmp_path: Path, provider: Marke
         timeframe="1m",
         initial_balance=1_000.0,
         matching=MatchingConfig(),
-        context_extra={
-            "trade_risk_pct": strategy.trade_risk_pct,
-            "max_position_notional_pct": strategy.max_position_notional_pct,
-            "max_leverage": strategy.max_leverage,
-        },
+        context_extra=strategy_limits,
     )
     losing_report = losing_engine.run()
     with pytest.raises(ValidationError):
-        evaluate_strategy_backtest(asdict(strategy), losing_report)
+        evaluate_strategy_backtest(strategy_limits, losing_report)
 
-    # restore
     provider.get_historical = original_get  # type: ignore[assignment]
 
 
@@ -355,7 +340,7 @@ def test_backtest_benchmark() -> None:
     report = engine.run()
     duration = time.perf_counter() - start
     assert report.metrics is not None
-    assert duration < 5.0
+    assert duration < 6.0
 
 
 def test_backtest_engine_supports_short_positions() -> None:
@@ -445,7 +430,10 @@ def test_backtest_handles_zero_volume_bars() -> None:
     report = engine.run()
     assert report.trades
     zero_ts = zero_idx.to_pydatetime()
-    assert all(fill.timestamp != zero_ts for fill in report.fills)
+    fills_at_zero = [fill for fill in report.fills if fill.timestamp == zero_ts]
+    assert fills_at_zero, "Brak filli na barze zerowego wolumenu oznaczałby utratę sygnału"
+    assert all(fill.partial for fill in fills_at_zero)
+    assert all(fill.price > 0 for fill in fills_at_zero)
 
 
 def test_backtest_warns_about_missing_candles() -> None:

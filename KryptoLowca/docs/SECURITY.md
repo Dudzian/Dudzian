@@ -4,6 +4,9 @@ Ten dokument opisuje, jak chronić klucze API, rotować je automatycznie i zapew
 
 ## Rotacja kluczy API
 
+- Klucze przechowywane lokalnie szyfrowane są przez `bot_core.security.SecretManager` z backendem `EncryptedFileSecretStorage` (AES-256-GCM).
+- Harmonogram rotacji prowadź w pliku `var/security/rotation.json` przy użyciu `bot_core.security.RotationRegistry`.
+- Helper `KryptoLowca.security.KeyRotationManager` łączy magazyn sekretów z rejestrem rotacji i udostępnia metody `ensure_exchange_rotation()` oraz `ensure_secret_rotation()`, co upraszcza pisanie skryptów cron/CLI.
 - Klucze przechowywane lokalnie szyfrowane są przez `bot_core.security.file_storage.EncryptedFileSecretStorage` (AES-256-GCM, PBKDF2 390k iteracji).
 - `KeyRotationManager` zapisuje metadane rotacji w pliku `api_keys.enc.rotation.json`.
 - Aby wymusić rotację raz na 30 dni, uruchom:
@@ -12,32 +15,52 @@ Ten dokument opisuje, jak chronić klucze API, rotować je automatycznie i zapew
 python -m KryptoLowca.scripts.rotate_keys --password <hasło>
 ```
 
-(Przykładowy skrypt jest częścią roadmapy; w środowisku CI/cron można wywołać klasę `KeyRotationManager.ensure_rotation`).
+(Przykładowy skrypt jest częścią roadmapy; w środowisku CI/cron możesz wywołać helper zapisujący wpis w `RotationRegistry`).
 
 ## Sekrety i skarbiec
 
-`SecretManager` ujednolica dostęp do sekretów:
+`bot_core.security.SecretManager` ujednolica dostęp do sekretów:
 
 | Backend | Zastosowanie | Uwagi |
 | --- | --- | --- |
-| `ENV` | Małe instalacje / development | Sekrety trzymane w zmiennych środowiskowych |
-| `FILE` | Stacje robocze bez dostępu do chmury | Plik `.secrets.json` + metadane rotacji |
-| `VAULT` | HashiCorp Vault | Wymagany pakiet `hvac` i token z polityką RW |
-| `AWS` | AWS Secrets Manager | Wymaga `boto3` oraz uprawnień `secretsmanager:*` |
+| `ENV` | Małe instalacje / development | Prosty magazyn implementujący interfejs `SecretStorage` |
+| `EncryptedFileSecretStorage` | Stacje robocze bez dostępu do chmury | Szyfrowany plik `.enc` + metadane rotacji |
+| `KeyringSecretStorage` | macOS / Windows / Linux z GUI | Wykorzystuje natywne API systemowe |
+| Backend niestandardowy | Integracja z Vault/S3 | Dostarcz własną implementację `SecretStorage` |
 
 Przykład użycia (plik):
 
 ```python
-from KryptoLowca.security import SecretManager, SecretBackend
+from bot_core.exchanges.base import Environment, ExchangeCredentials
+from bot_core.security import EncryptedFileSecretStorage, SecretManager
+from KryptoLowca.security import KeyRotationManager
 
-manager = SecretManager(backend=SecretBackend.FILE, file_path="/secure/secrets.json")
-manager.set_secret("BINANCE_API_KEY", "...")
-print(manager.get_secret("BINANCE_API_KEY"))
+storage = EncryptedFileSecretStorage("/secure/secrets.enc", passphrase="<hasło>")
+manager = SecretManager(storage, namespace="dudzian.trading")
+manager.store_exchange_credentials(
+    "binance",
+    ExchangeCredentials(
+        key_id="api-key",
+        secret="sekret",
+        passphrase=None,
+        environment=Environment.PAPER,
+        permissions=("trade", "read"),
+    ),
+)
+
+creds = manager.load_exchange_credentials("binance", expected_environment=Environment.PAPER)
+print(creds.key_id)
+
+rotation = KeyRotationManager(manager)
+rotation.ensure_exchange_rotation(
+    "binance",
+    expected_environment=Environment.PAPER,
+    rotation_callback=lambda payload: payload,
+)
 ```
 
 ## Compliance (KYC/AML)
-
-- Flagi `StrategyConfig` (`api_keys_configured`, `compliance_confirmed`, `acknowledged_risk_disclaimer`) blokują tryb LIVE do czasu spełnienia wymagań.
+- Flagi `CoreConfig.runtime_entrypoints[*].compliance` wraz z profilami ryzyka w `CoreConfig.risk_profiles` blokują tryb LIVE do czasu spełnienia wymagań.
 - Każde naruszenie limitu ryzyka zapisuje się w tabeli `risk_audit_logs` oraz trafia do centralnych logów (Vector → Loki).
 - Użytkownik powinien prowadzić dziennik decyzji (eksport z Grafany lub bazy `risk_audit_logs`) – to minimalny wymóg audytowy.
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 from typing import Dict, Any, List, Optional
 
+from KryptoLowca.exchange_manager import ExchangeManager
 try:  # pragma: no cover - zależność opcjonalna
     from bot_core.market_intel import MarketIntelAggregator, MarketIntelQuery
 except Exception:  # pragma: no cover - fallback gdy moduł niedostępny

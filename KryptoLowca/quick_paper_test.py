@@ -21,6 +21,9 @@ if __package__ in (None, ""):
     _ensure_repo_root()
 
 
+from KryptoLowca.database_manager import DatabaseManager
+from KryptoLowca.paper_exchange import PaperExchange
+import datetime as dt
 def main() -> None:
     # 1) ExchangeManager w trybie papierowym
     manager = ExchangeManager()

@@ -12,14 +12,9 @@ from pathlib import Path
 
 from sqlalchemy import select
 
-from KryptoLowca.database_manager import (
-    DatabaseManager,
-    DBOptions,
-    DatabaseConnectionError,
-    MigrationError,
-)
+from KryptoLowca.database_manager import DatabaseManager, DBOptions
 from KryptoLowca.auto_trader import AutoTrader, RiskDecision
-from KryptoLowca.managers.database_manager import CURRENT_SCHEMA_VERSION, RiskAuditLog
+from bot_core.database import CURRENT_SCHEMA_VERSION, RiskAuditLog
 
 
 @pytest.fixture

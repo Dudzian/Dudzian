@@ -11,22 +11,15 @@ from typing import Any, Callable, Dict, Tuple
 
 import pytest
 
-if "nacl" not in sys.modules:
-    nacl_module = ModuleType("nacl")
-    nacl_exceptions = ModuleType("nacl.exceptions")
-    nacl_exceptions.BadSignatureError = Exception
-
-    class _VerifyKey:
-        def verify(self, *_args: object, **_kwargs: object) -> None:
-            return None
-
-    nacl_signing = ModuleType("nacl.signing")
-    nacl_signing.VerifyKey = lambda *_args, **_kwargs: _VerifyKey()
-    nacl_module.exceptions = nacl_exceptions
-    nacl_module.signing = nacl_signing
-    sys.modules["nacl"] = nacl_module
-    sys.modules["nacl.exceptions"] = nacl_exceptions
-    sys.modules["nacl.signing"] = nacl_signing
+from bot_core.config.models import (
+    CoreConfig,
+    ControllerRuntimeConfig,
+    DailyTrendMomentumStrategyConfig,
+    EnvironmentConfig,
+    RiskProfileConfig,
+    RuntimeEntrypointConfig,
+)
+from bot_core.exchanges.base import Environment
 
 # Dostosuj sys.path, aby testy mogły importować pakiet i root projektu
 
@@ -38,38 +31,64 @@ for path in (str(ROOT), str(PACKAGE_ROOT)):
         sys.path.insert(0, path)
 
 
-from bot_core.security.capabilities import build_capabilities_from_payload
-from bot_core.security.guards import install_capability_guard, reset_capability_guard
+@pytest.fixture()
+def core_config() -> CoreConfig:
+    """Minimalna konfiguracja CoreConfig dostępna w testach GUI/CLI."""
 
-@pytest.fixture(autouse=True)
-def _install_kryptolowca_license_guard():
-    payload = {
-        "edition": "pro",
-        "environments": ["demo", "paper", "live"],
-        "runtime": {"auto_trader": True, "multi_strategy_scheduler": True},
-        "modules": {
-            "futures": True,
-            "walk_forward": True,
-            "reporting_pro": True,
-            "observability_ui": True,
-            "alerts_advanced": True,
-            "oem_updater": True,
-        },
-        "limits": {
-            "max_paper_controllers": 5,
-            "max_live_controllers": 3,
-            "max_concurrent_bots": 6,
-            "max_alert_channels": 6,
-        },
-        "exchanges": {"binance_spot": True, "binance_futures": True, "kraken_spot": True},
-        "strategies": {"trend_d1": True, "mean_reversion": True},
-    }
-    capabilities = build_capabilities_from_payload(payload, effective_date=date.today())
-    guard = install_capability_guard(capabilities)
-    try:
-        yield guard
-    finally:
-        reset_capability_guard()
+    environment = EnvironmentConfig(
+        name="paper",
+        exchange="binance_spot",
+        environment=Environment.PAPER,
+        keychain_key="paper_key",
+        data_cache_path="./var/data/paper",
+        risk_profile="balanced",
+        alert_channels=("telegram:primary",),
+        required_permissions=("read",),
+        forbidden_permissions=("withdraw",),
+    )
+
+    risk_profile = RiskProfileConfig(
+        name="balanced",
+        max_daily_loss_pct=0.02,
+        max_position_pct=0.05,
+        target_volatility=0.1,
+        max_leverage=3.0,
+        stop_loss_atr_multiple=1.5,
+        max_open_positions=5,
+        hard_drawdown_pct=0.12,
+    )
+
+    controller = ControllerRuntimeConfig(tick_seconds=60.0, interval="1m")
+
+    strategy = DailyTrendMomentumStrategyConfig(
+        name="trend",
+        fast_ma=9,
+        slow_ma=21,
+        breakout_lookback=20,
+        momentum_window=14,
+        atr_window=14,
+        atr_multiplier=1.5,
+        min_trend_strength=0.2,
+        min_momentum=0.1,
+    )
+
+    entrypoint = RuntimeEntrypointConfig(
+        environment="paper",
+        controller="default_controller",
+        strategy="trend",
+        risk_profile="balanced",
+        tags=("gui", "cli"),
+        bootstrap=True,
+        description="Minimal runtime for tests",
+    )
+
+    return CoreConfig(
+        environments={"paper": environment},
+        risk_profiles={"balanced": risk_profile},
+        strategies={"trend": strategy},
+        runtime_controllers={"default_controller": controller},
+        runtime_entrypoints={"paper_runtime": entrypoint},
+    )
 
 
 def _run_coroutine(coro: Any) -> Any:
@@ -108,6 +127,10 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers",
         "asyncio: test or fixture using asyncio without the pytest-asyncio plugin",
+    )
+    config.addinivalue_line(
+        "markers",
+        "integration: testy wymagające środowisk zewnętrznych lub sandbox",
     )
 
 

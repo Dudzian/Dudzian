@@ -83,12 +83,12 @@ KEYS_FILE = APP_ROOT / "api_keys.enc"
 SALT_FILE = APP_ROOT / "salt.bin"
 
 # --- MENEDŻERY / CORE ---
-from KryptoLowca.managers.security_manager import SecurityManager
-from KryptoLowca.managers.config_manager import ConfigManager
-from KryptoLowca.managers.exchange_manager import ExchangeManager
-from KryptoLowca.managers.ai_manager import AIManager
-from KryptoLowca.managers.report_manager import ReportManager
-from KryptoLowca.managers.risk_manager_adapter import RiskManager
+from KryptoLowca.security_manager import SecurityManager
+from KryptoLowca.config_manager import ConfigManager
+from KryptoLowca.exchange_manager import ExchangeManager
+from KryptoLowca.ai_manager import AIManager
+from KryptoLowca.report_manager import ReportManager
+from KryptoLowca.risk_manager import RiskManager
 from KryptoLowca.core.trading_engine import TradingEngine
 
 # istniejące moduły w repo

@@ -5,16 +5,21 @@ import base64
 import hashlib
 import hmac
 import json
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Sequence
 
 import pytest
-from cryptography.fernet import Fernet
 
-from KryptoLowca.config_manager import ConfigManager
+from bot_core.execution.base import ExecutionContext
+from bot_core.execution import live_router as live_router_module
+from bot_core.execution.live_router import LiveExecutionRouter, RouteDefinition
+from bot_core.exchanges.base import OrderResult
+
 from KryptoLowca.exchanges import (
     BinanceTestnetAdapter,
     ExchangeCredentials,
+    MarketDataPoller,
     MarketSubscription,
     KrakenDemoAdapter,
     OrderRequest,
@@ -23,8 +28,8 @@ from KryptoLowca.exchanges import (
 )
 import KryptoLowca.exchanges.binance as binance_module
 import KryptoLowca.exchanges.kraken as kraken_module
+import KryptoLowca.exchanges.polling as polling_module
 import KryptoLowca.exchanges.zonda as zonda_module
-from KryptoLowca.managers.multi_account_manager import MultiExchangeAccountManager
 
 from bot_core.execution import ExecutionContext, LiveExecutionRouter
 from bot_core.execution.live_router import RouteDefinition
@@ -330,7 +335,7 @@ async def test_zonda_websocket_subscription(monkeypatch):
     fake_module = FakeWebSocketsModule(fake_ws)
     monkeypatch.setattr(zonda_module, "websockets", fake_module)
 
-    adapter = ZondaAdapter(http_client=RecordingHTTPClient([]))
+    adapter = ZondaAdapter(http_client=RecordingHTTPClient([]), enable_streaming=True)
 
     async def callback(payload: dict) -> None:
         events.append(payload)
@@ -349,6 +354,206 @@ async def test_zonda_websocket_subscription(monkeypatch):
     assert "subscribe-public" in actions
     assert "unsubscribe" in actions
     assert events and events[0]["payload"]["symbol"] == "BTC-PLN"
+
+
+@pytest.mark.asyncio
+async def test_zonda_streaming_disabled_by_default():
+    adapter = ZondaAdapter(http_client=RecordingHTTPClient([]))
+
+    with pytest.raises(RuntimeError, match="Streaming danych rynkowych przez WebSocket Zonda jest wyłączony"):
+        await adapter.stream_market_data(
+            [MarketSubscription(channel="trading/ticker", symbols=["BTC-PLN"])],
+            lambda payload: asyncio.sleep(0),
+        )
+
+
+@pytest.mark.asyncio
+async def test_market_data_poller_polls_symbols():
+    class StubAdapter:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        async def fetch_market_data(self, symbol: str) -> dict:
+            self.calls.append(symbol)
+            return {"symbol": symbol, "price": 100.0}
+
+    adapter = StubAdapter()
+    events: list[tuple[str, dict]] = []
+    done = asyncio.Event()
+
+    async def callback(symbol: str, payload: dict) -> None:
+        events.append((symbol, payload))
+        if len(events) >= 3:
+            done.set()
+
+    poller = MarketDataPoller(adapter, symbols=["BTC-PLN", "ETH-PLN"], interval=0.05, callback=callback)
+
+    async with poller:
+        await asyncio.wait_for(done.wait(), timeout=0.5)
+
+    assert any(symbol == "BTC-PLN" for symbol, _ in events)
+    assert any(symbol == "ETH-PLN" for symbol, _ in events)
+    assert len(adapter.calls) >= len(events)
+
+
+@pytest.mark.asyncio
+async def test_market_data_poller_reports_errors(caplog):
+    class FlakyAdapter:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def fetch_market_data(self, symbol: str) -> dict:
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("boom")
+            return {"symbol": symbol, "price": 99.0}
+
+    adapter = FlakyAdapter()
+    events: list[dict] = []
+    done = asyncio.Event()
+    errors: list[tuple[str, Exception]] = []
+
+    async def callback(symbol: str, payload: dict) -> None:
+        events.append(payload)
+        done.set()
+
+    async def error_callback(symbol: str, exc: Exception) -> None:
+        errors.append((symbol, exc))
+
+    poller = MarketDataPoller(
+        adapter,
+        symbols=["BTC-PLN"],
+        interval=0.05,
+        callback=callback,
+        error_callback=error_callback,
+    )
+
+    caplog.set_level("WARNING")
+    async with poller:
+        await asyncio.wait_for(done.wait(), timeout=0.5)
+
+    assert events and events[0]["price"] == 99.0
+    assert any("Nie udało się pobrać" in message for message in caplog.messages)
+    assert errors and isinstance(errors[0][1], RuntimeError)
+
+
+@pytest.mark.asyncio
+async def test_market_data_poller_applies_backoff():
+    loop = asyncio.get_running_loop()
+    call_times: list[float] = []
+
+    class ErrorProneAdapter:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def fetch_market_data(self, symbol: str) -> dict:
+            self.calls += 1
+            call_times.append(loop.time())
+            if self.calls < 3:
+                raise RuntimeError("temporary failure")
+            return {"symbol": symbol, "price": 101.0}
+
+    adapter = ErrorProneAdapter()
+    done = asyncio.Event()
+
+    async def callback(symbol: str, payload: dict) -> None:
+        done.set()
+
+    poller = polling_module.MarketDataPoller(
+        adapter,
+        symbols=["BTC-PLN"],
+        interval=0.05,
+        callback=callback,
+        backoff_initial=0.1,
+        backoff_multiplier=2.0,
+        backoff_max=0.3,
+    )
+
+    async with poller:
+        await asyncio.wait_for(done.wait(), timeout=1.5)
+
+    assert adapter.calls == 3
+    assert len(call_times) >= 3
+    diff1 = call_times[1] - call_times[0]
+    diff2 = call_times[2] - call_times[1]
+    assert diff1 >= 0.09
+    assert diff2 >= 0.18
+    assert diff2 > diff1
+
+
+def test_market_data_poller_requires_symbols_and_positive_interval():
+    class StubAdapter:
+        async def fetch_market_data(self, symbol: str) -> dict:
+            return {"symbol": symbol}
+
+    adapter = StubAdapter()
+
+    with pytest.raises(ValueError, match="co najmniej jednego symbolu"):
+        MarketDataPoller(adapter, symbols=[], callback=lambda *_: None)
+
+    with pytest.raises(ValueError, match="Odstęp odpytywania musi być dodatni"):
+        MarketDataPoller(adapter, symbols=["BTC-PLN"], interval=0.0, callback=lambda *_: None)
+
+
+def test_zonda_build_ws_messages_infers_defaults():
+    subscription = MarketSubscription(channel="trading/ticker", symbols=["BTC-PLN"])
+
+    subscribe, unsubscribe = zonda_module._build_ws_messages([subscription])
+
+    assert subscribe == [
+        {
+            "action": "subscribe-public",
+            "module": "trading",
+            "path": "ticker",
+            "params": {"symbol": "BTC-PLN"},
+        }
+    ]
+    assert unsubscribe == [
+        {
+            "action": "unsubscribe",
+            "module": "trading",
+            "path": "ticker",
+            "params": {"symbol": "BTC-PLN"},
+        }
+    ]
+
+
+def test_zonda_build_ws_messages_respects_custom_actions_and_params():
+    subscription = MarketSubscription(
+        channel="public/trades",
+        symbols=["BTC-PLN", "ETH-PLN"],
+        params={
+            "module": "spot",
+            "path": "marketTrades",
+            "action": "subscribe-private",
+            "unsubscribe_action": "unsubscribe-private",
+            "params": {"depth": 50, "foo": "bar"},
+        },
+    )
+
+    subscribe, unsubscribe = zonda_module._build_ws_messages([subscription])
+
+    expected_params = [
+        {
+            "action": "subscribe-private",
+            "module": "spot",
+            "path": "marketTrades",
+            "params": {"depth": 50, "foo": "bar", "symbol": symbol},
+        }
+        for symbol in ("BTC-PLN", "ETH-PLN")
+    ]
+    expected_unsub = [
+        {
+            "action": "unsubscribe-private",
+            "module": "spot",
+            "path": "marketTrades",
+            "params": {"depth": 50, "foo": "bar", "symbol": symbol},
+        }
+        for symbol in ("BTC-PLN", "ETH-PLN")
+    ]
+
+    assert subscribe == expected_params
+    assert unsubscribe == expected_unsub
 
 
 @pytest.mark.asyncio
@@ -486,6 +691,161 @@ async def test_kraken_websocket_subscription(monkeypatch):
     assert events and isinstance(events[0], list) and events[0][1]["c"][0] == "123.45"
 
 
+class RouterStubAdapter:
+    def __init__(self, name: str, outcomes: list[OrderResult | Exception]) -> None:
+        self.name = name
+        self._outcomes = list(outcomes)
+        self.cancelled: list[str] = []
+
+    def place_order(self, request: OrderRequest) -> OrderResult:
+        if not self._outcomes:
+            raise RuntimeError("Brak zdefiniowanego wyniku dla adaptera")
+        outcome = self._outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    def cancel_order(self, order_id: str, *, symbol: str | None = None) -> None:
+        self.cancelled.append(order_id)
+
+
+def _make_execution_context(metadata: dict[str, str] | None = None) -> ExecutionContext:
+    return ExecutionContext(
+        portfolio_id="test-portfolio",
+        risk_profile="balanced",
+        environment="paper",
+        metadata=metadata or {},
+    )
+
+
+def test_live_execution_router_fallback_and_binding(tmp_path):
+    primary = RouterStubAdapter(
+        "binance",
+        [live_router_module.ExchangeNetworkError("temporary outage")],
+    )
+    success_result = OrderResult(
+        order_id="kraken-1",
+        status="FILLED",
+        filled_quantity=1.0,
+        avg_price=101.0,
+        raw_response={"exchange": "kraken"},
+    )
+    secondary = RouterStubAdapter("kraken", [success_result])
+
+    router = LiveExecutionRouter(
+        adapters={"binance": primary, "kraken": secondary},
+        default_route=("binance", "kraken"),
+        decision_log_path=tmp_path / "router.log",
+        decision_log_hmac_key=os.urandom(64),
+        decision_log_key_id="tests",
+    )
+
+    request = OrderRequest(symbol="BTCUSDT", side="BUY", quantity=1.0, order_type="MARKET")
+    context = _make_execution_context()
+
+    result = router.execute(request, context)
+
+    assert result.order_id == "kraken-1"
+    assert router.binding_for_order(result.order_id) == "kraken"
+
+    router.cancel(result.order_id, context)
+    assert result.order_id in secondary.cancelled
+
+    router.flush()
+
+
+def test_live_execution_router_route_overrides():
+    kraken_result = OrderResult(
+        order_id="kraken-override",
+        status="FILLED",
+        filled_quantity=2.0,
+        avg_price=200.0,
+        raw_response={"exchange": "kraken"},
+    )
+    binance_default = OrderResult(
+        order_id="binance-default",
+        status="FILLED",
+        filled_quantity=0.5,
+        avg_price=50.0,
+        raw_response={"exchange": "binance"},
+    )
+    binance_followup = OrderResult(
+        order_id="binance-followup",
+        status="FILLED",
+        filled_quantity=0.75,
+        avg_price=55.0,
+        raw_response={"exchange": "binance"},
+    )
+
+    router = LiveExecutionRouter(
+        adapters={
+            "kraken": RouterStubAdapter("kraken", [kraken_result]),
+            "binance": RouterStubAdapter("binance", [binance_default, binance_followup]),
+        },
+        default_route=("binance",),
+        route_overrides={"BTCUSDT": ("kraken",), "ETHUSDT": ("binance",)},
+    )
+
+    btc_request = OrderRequest(symbol="BTCUSDT", side="BUY", quantity=2.0, order_type="MARKET")
+    context = _make_execution_context()
+    btc_result = router.execute(btc_request, context)
+    assert btc_result.order_id == "kraken-override"
+    assert router.binding_for_order("kraken-override") == "kraken"
+
+    eth_request = OrderRequest(symbol="ETHUSDT", side="BUY", quantity=1.0, order_type="MARKET")
+    eth_result = router.execute(eth_request, context)
+    assert eth_result.order_id == "binance-default"
+    assert router.binding_for_order("binance-default") == "binance"
+
+    second_eth = router.execute(
+        OrderRequest(symbol="ETHUSDT", side="BUY", quantity=0.5, order_type="MARKET"),
+        context,
+    )
+    assert second_eth.order_id == "binance-followup"
+
+
+def test_live_execution_router_named_route_selection():
+    vip_result = OrderResult(
+        order_id="vip-route",
+        status="FILLED",
+        filled_quantity=1.5,
+        avg_price=150.0,
+        raw_response={"exchange": "kraken"},
+    )
+    standard_result = OrderResult(
+        order_id="standard-route",
+        status="FILLED",
+        filled_quantity=1.0,
+        avg_price=100.0,
+        raw_response={"exchange": "binance"},
+    )
+
+    router = LiveExecutionRouter(
+        adapters={
+            "kraken": RouterStubAdapter("kraken", [vip_result]),
+            "binance": RouterStubAdapter("binance", [standard_result]),
+        },
+        routes=[
+            RouteDefinition(
+                name="vip",
+                exchanges=("kraken",),
+                risk_profiles=("vip",),
+                metadata={"owner": "vip-desk"},
+            ),
+            RouteDefinition(
+                name="standard",
+                exchanges=("binance",),
+                metadata={"owner": "default"},
+            ),
+        ],
+        default_route="standard",
+    )
+
+    request = OrderRequest(symbol="ADAUSDT", side="BUY", quantity=1.5, order_type="MARKET")
+    context = _make_execution_context({"execution_route": "vip"})
+    result = router.execute(request, context)
+    assert result.order_id == "vip-route"
+    assert router.binding_for_order("vip-route") == "kraken"
 @pytest.mark.asyncio
 async def test_api_key_manager_rotation(tmp_path):
     encryption_key = Fernet.generate_key()

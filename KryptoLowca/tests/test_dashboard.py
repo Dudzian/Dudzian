@@ -8,14 +8,24 @@ try:  # pragma: no cover - zależność opcjonalna
 except Exception:  # pragma: no cover - fallback gdy brak modułu
     MarketIntelAggregator = None  # type: ignore[assignment]
 
-from KryptoLowca.config_manager import StrategyConfig
+from bot_core.config.models import DailyTrendMomentumStrategyConfig
 from KryptoLowca.dashboard import DashboardApp, DashboardController
 from KryptoLowca.runtime.bootstrap import FrontendBootstrap
 
 
 class DummyConfigManager:
     def load_strategy_config(self):
-        return StrategyConfig.presets()["SAFE"].validate()
+        return DailyTrendMomentumStrategyConfig(
+            name="trend",
+            fast_ma=9,
+            slow_ma=21,
+            breakout_lookback=20,
+            momentum_window=14,
+            atr_window=14,
+            atr_multiplier=1.5,
+            min_trend_strength=0.2,
+            min_momentum=0.1,
+        )
 
 
 class DummyAIManager:
@@ -86,7 +96,8 @@ def test_dashboard_app_headless_updates_state(tmp_path, dummy_market_intel):
         market_intel=dummy_market_intel,
     )
     app.refresh_strategy()
-    assert app.state.strategy["mode"] == "demo"
+    assert app.state.strategy["name"] == "trend"
+    assert app.state.strategy["fast_ma"] == 9
     app.update_metrics({"test": 123})
     assert app.state.metrics["test"] == 123
     app.tail_logs()

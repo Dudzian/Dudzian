@@ -1,52 +1,24 @@
-# -*- coding: utf-8 -*-
-"""Subpakiet z menedżerami (DB, giełda, AI, raporty, bezpieczeństwo)."""
+"""Pakiet ``KryptoLowca.managers`` został wycofany."""
+
 from __future__ import annotations
 
-__all__ = [
-    "DatabaseManager", "DBOptions",
-    "AIManager", "ConfigManager", "ExchangeManager",
-    "ReportManager", "RiskManagerAdapter", "SecurityManager",
-    "MultiExchangeAccountManager",
-]
+import textwrap
 
-# Importy opcjonalne z ochroną na brak zależności środowiskowych
-try:
-    from .database_manager import DatabaseManager, DBOptions  # type: ignore
-except Exception:  # pragma: no cover
-    DatabaseManager = None  # type: ignore
-    DBOptions = None  # type: ignore
+raise RuntimeError(
+    textwrap.dedent(
+        """
+        Pakiet `KryptoLowca.managers` został usunięty w ramach migracji do architektury
+        opartej na `bot_core`.  Zamiast niego użyj nowych modułów top-level, np.:
 
-try:
-    from .ai_manager import AIManager  # type: ignore
-except Exception:  # pragma: no cover
-    AIManager = None  # type: ignore
+          • KryptoLowca.database_manager
+          • KryptoLowca.exchange_manager
+          • KryptoLowca.security_manager
+          • KryptoLowca.report_manager
+          • KryptoLowca.risk_manager
 
-try:
-    from .config_manager import ConfigManager  # type: ignore
-except Exception:  # pragma: no cover
-    ConfigManager = None  # type: ignore
-
-try:
-    from .exchange_manager import ExchangeManager  # type: ignore
-except Exception:  # pragma: no cover
-    ExchangeManager = None  # type: ignore
-
-try:
-    from .report_manager import ReportManager  # type: ignore
-except Exception:  # pragma: no cover
-    ReportManager = None  # type: ignore
-
-try:
-    from .risk_manager_adapter import RiskManagerAdapter  # type: ignore
-except Exception:  # pragma: no cover
-    RiskManagerAdapter = None  # type: ignore
-
-try:
-    from .security_manager import SecurityManager  # type: ignore
-except Exception:  # pragma: no cover
-    SecurityManager = None  # type: ignore
-
-try:
-    from .multi_account_manager import MultiExchangeAccountManager  # type: ignore
-except Exception:  # pragma: no cover
-    MultiExchangeAccountManager = None  # type: ignore
+        Jeśli potrzebujesz dawnych struktur DTO, importuj je z `bot_core.exchanges.core`.
+        Usuń referencje do `KryptoLowca.managers.*`, aby utrzymać spójność z aktualnym
+        runtime.
+        """
+    ).strip()
+)

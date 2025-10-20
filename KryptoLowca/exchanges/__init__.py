@@ -19,6 +19,7 @@ from .interfaces import (
     RESTWebSocketAdapter,
     WebSocketSubscription,
 )
+from .polling import MarketDataPoller
 from .kraken import KrakenDemoAdapter
 from .zonda import ZondaAdapter
 
@@ -31,6 +32,7 @@ __all__ = [
     "BinanceTestnetAdapter",
     "KrakenDemoAdapter",
     "ZondaAdapter",
+    "MarketDataPoller",
     "ExchangeAdapter",
     "ExchangeCredentials",
     "MarketSubscription",

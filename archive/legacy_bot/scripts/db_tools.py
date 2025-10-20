@@ -1,6 +1,6 @@
 # scripts/db_tools.py
 # -*- coding: utf-8 -*-
-from KryptoLowca.managers.database_manager import DatabaseManager
+from KryptoLowca.database_manager import DatabaseManager
 import os
 
 def purge_zero_quantity_trades(db_path: str = "sqlite+aiosqlite:///trading.db") -> None:

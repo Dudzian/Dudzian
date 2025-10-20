@@ -187,6 +187,7 @@ class ZondaAdapter(RESTWebSocketAdapter):
             Callable[[Iterable[MarketSubscription], Callable[[MarketPayload], Awaitable[None]]], WebSocketSubscription]
         ] = None,
         compliance_ack: bool = False,
+        enable_streaming: bool = False,
     ) -> None:
         super().__init__(
             name="zonda",
@@ -196,6 +197,7 @@ class ZondaAdapter(RESTWebSocketAdapter):
             compliance_ack=compliance_ack,
         )
         self._ws_factory = ws_factory or self._default_ws_factory
+        self._enable_streaming = enable_streaming
 
     async def authenticate(self, credentials: ExchangeCredentials) -> None:
         if not credentials.api_key or not credentials.api_secret:
@@ -209,6 +211,10 @@ class ZondaAdapter(RESTWebSocketAdapter):
     async def stream_market_data(
         self, subscriptions: Iterable[MarketSubscription], callback: Callable[[MarketPayload], Awaitable[None]]
     ) -> WebSocketSubscription:
+        if not self._enable_streaming:
+            raise RuntimeError(
+                "Streaming danych rynkowych przez WebSocket Zonda jest wyłączony – docelowe GUI korzysta z odpytywania REST."
+            )
         return self._ws_factory(subscriptions, callback)
 
     async def submit_order(self, order: OrderRequest) -> OrderStatus:

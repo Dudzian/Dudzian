@@ -56,6 +56,14 @@ def test_load_runtime_entrypoint_metadata_uses_default_path(
     assert metadata.environment == "binance_paper"
 
 
+def test_load_runtime_entrypoint_metadata_cli_entrypoint(core_config_path: Path) -> None:
+    metadata = load_runtime_entrypoint_metadata("paper_cli", config_path=core_config_path)
+    assert metadata is not None
+    assert metadata.environment == "binance_paper"
+    assert metadata.controller == "trading_cli"
+    assert metadata.tags == ("cli", "paper")
+
+
 def test_load_runtime_entrypoint_metadata_guard_checks_compliance(
     tmp_path: Path,
 ) -> None:

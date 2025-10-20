@@ -22,6 +22,8 @@ if __package__ in (None, ""):
 
 
 import ccxt
+from KryptoLowca.database_manager import DatabaseManager
+from KryptoLowca.exchange_adapter import ExchangeAdapter
 from KryptoLowca.managers.database_manager import DatabaseManager
 from KryptoLowca.managers.exchange_manager import ExchangeManager
 

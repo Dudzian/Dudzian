@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 from textwrap import dedent
@@ -231,6 +232,13 @@ def test_trading_gui_initializes_with_injected_controller(tk_root):
     assert "200" in notional_label
 
 
+def test_trading_gui_uses_env_default_symbol(monkeypatch, tk_root):
+    monkeypatch.setenv("TRADING_GUI_DEFAULT_SYMBOL", "ltc/usd")
+
+    gui = TradingGUI(tk_root, session_controller_factory=DummyController)
+
+    assert gui.state.symbol.get() == "LTC-USD"
+    assert gui.state.market_symbol.get() == "LTC-USD"
 def test_trading_gui_reuses_injected_frontend_services(monkeypatch, tk_root):
     class _StubServices:
         def __init__(self) -> None:
@@ -582,3 +590,124 @@ def test_trading_gui_watchdog_triggers_reload(monkeypatch, tk_root, tmp_path: Pa
 
     assert changed is True
     assert calls == [None]
+
+
+@pytest.mark.asyncio
+async def test_market_data_worker_reports_factory_error(tk_root):
+    def failing_factory(*, demo_mode: bool):
+        raise RuntimeError("boom")
+
+    gui = TradingGUI(
+        tk_root,
+        session_controller_factory=DummyController,
+        market_data_adapter_factory=failing_factory,
+    )
+
+    await gui._market_data_worker(["BTC-PLN"], True)
+
+    assert gui.state.status.get() == "Błąd uruchamiania adaptera rynku"
+
+
+@pytest.mark.asyncio
+async def test_market_data_worker_reports_connection_error(tk_root):
+    class FailingAdapter:
+        async def connect(self) -> None:
+            raise RuntimeError("connect failed")
+
+        async def close(self) -> None:
+            pass
+
+    gui = TradingGUI(
+        tk_root,
+        session_controller_factory=DummyController,
+        market_data_adapter_factory=lambda *, demo_mode: FailingAdapter(),
+    )
+
+    await gui._market_data_worker(["BTC-PLN"], True)
+
+    assert gui.state.status.get() == "Nie udało się połączyć z rynkiem (REST)"
+
+
+@pytest.mark.asyncio
+async def test_market_data_worker_sets_success_status(monkeypatch, tk_root):
+    class SuccessfulAdapter:
+        async def connect(self) -> None:
+            return None
+
+        async def close(self) -> None:
+            return None
+
+    captured: list[tuple[str, dict[str, float]]] = []
+
+    class StubPoller:
+        def __init__(self, adapter, *, symbols, interval, callback, error_callback=None):
+            self._callback = callback
+            self._error_callback = error_callback
+
+        async def start(self) -> None:
+            await self._callback("BTC-PLN", {"last": 101.0})
+
+        async def stop(self) -> None:
+            return None
+
+    monkeypatch.setattr(trading_app_module, "MarketDataPoller", StubPoller)
+
+    gui = TradingGUI(
+        tk_root,
+        session_controller_factory=DummyController,
+        market_data_adapter_factory=lambda *, demo_mode: SuccessfulAdapter(),
+        market_data_interval=0.01,
+    )
+    gui._market_data_stop.clear()
+    original_callback = gui._market_data_callback
+
+    async def record_callback(symbol: str, payload: dict[str, float]) -> None:
+        captured.append((symbol, payload))
+        await original_callback(symbol, payload)
+        gui._market_data_stop.set()
+
+    monkeypatch.setattr(gui, "_market_data_callback", record_callback)
+
+    await gui._market_data_worker(["BTC-PLN"], True)
+    gui._drain_market_data_queue()
+
+    assert gui.state.status.get() == "Ticker REST aktywny"
+    assert captured and captured[0][0] == "BTC-PLN"
+    assert gui.state.market_price.get() == "101.00"
+
+
+def test_stop_market_data_sets_status(tk_root):
+    gui = TradingGUI(tk_root, session_controller_factory=DummyController)
+
+    gui._stop_market_data()
+
+    assert gui.state.status.get() == "Ticker zatrzymany"
+
+
+@pytest.mark.asyncio
+async def test_market_data_error_sets_status(tk_root):
+    gui = TradingGUI(tk_root, session_controller_factory=DummyController)
+
+    await gui._market_data_error("btc-pln", RuntimeError("timeout"))
+
+    assert "Błąd REST tickera BTC-PLN" in gui.state.status.get()
+
+
+def test_market_data_interval_from_env(monkeypatch, tk_root):
+    monkeypatch.setenv("TRADING_GUI_MARKET_INTERVAL", "4.25")
+
+    gui = TradingGUI(tk_root, session_controller_factory=DummyController)
+
+    assert gui._market_data_interval == pytest.approx(4.25)
+
+
+def test_market_data_interval_invalid_env_falls_back(monkeypatch, tk_root, caplog):
+    caplog.set_level("WARNING")
+    monkeypatch.setenv("TRADING_GUI_MARKET_INTERVAL", "0")
+
+    gui = TradingGUI(tk_root, session_controller_factory=DummyController)
+
+    assert gui._market_data_interval == pytest.approx(2.0)
+    assert any(
+        "TRADING_GUI_MARKET_INTERVAL" in record.message for record in caplog.records
+    )

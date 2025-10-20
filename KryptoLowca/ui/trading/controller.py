@@ -15,10 +15,13 @@ from bot_core.runtime.metadata import RiskManagerSettings
 from bot_core.runtime.preset_service import PresetConfigService
 from bot_core.security.file_storage import EncryptedFileSecretStorage
 from KryptoLowca.database_manager import DatabaseManager
-from KryptoLowca.managers.exchange_manager import ExchangeManager
-from KryptoLowca.managers.report_manager import ReportManager
-from KryptoLowca.managers.risk_manager_adapter import RiskManager
-from KryptoLowca.managers.ai_manager import AIManager
+from KryptoLowca.security_manager import SecurityManager
+from KryptoLowca.config_manager import ConfigManager
+from KryptoLowca.exchange_manager import ExchangeManager
+from KryptoLowca.report_manager import ReportManager
+from KryptoLowca.risk_manager import RiskManager
+from bot_core.runtime.metadata import RiskManagerSettings
+from KryptoLowca.ai_manager import AIManager
 from KryptoLowca.core.trading_engine import TradingEngine
 from bot_core.security.guards import (
     CapabilityGuard,

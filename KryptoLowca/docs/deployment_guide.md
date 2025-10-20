@@ -50,8 +50,8 @@ Wolumeny:
 ## Rotacja kluczy i sekrety
 
 - W kontenerze skrypt `python -m KryptoLowca.scripts.healthcheck` sprawdza podstawową gotowość.
-- Do rotacji kluczy użyj `KeyRotationManager` (np. zadanie cron raz na 30 dni).
-- Sekrety możesz trzymać w pliku wolumenu (`.secrets.json`) lub w HashiCorp Vault/AWS Secrets Manager.
+- Do rotacji kluczy użyj `bot_core.security.RotationRegistry` wraz z `SecretManager`em (np. zadanie cron raz na 30 dni aktualizuje wpis poprzez `mark_rotated`).
+- Sekrety przechowuj w wspieranym magazynie (`bot_core.security.SecretStorage`): plik wolumenu (`.secrets.json`), HashiCorp Vault, AWS Secrets Manager itp.
 
 ## Testy bezpieczeństwa
 

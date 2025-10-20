@@ -28,6 +28,7 @@ from bot_core.risk.engine import (
 from bot_core.risk.events import RiskDecisionLog
 from bot_core.risk.factory import build_risk_profile_from_config
 
+__all__ = ["RiskManager"]
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -285,53 +286,73 @@ class RiskManager:
         portfolio: Optional[Mapping[str, Any]] = None,
         *,
         return_details: bool = False,
-    ) -> float | Tuple[float, Mapping[str, Any]]:
-        normalized_symbol = str(symbol or "").upper()
-        signal_payload = _normalize_signal(normalized_symbol, signal)
-        price = max(0.0, _latest_price(market_data))
-        atr_value = _extract_atr(market_data)
-        total_equity, available_margin, maintenance_margin = _portfolio_equity(portfolio)
-        direction = str(signal_payload.get("direction", "LONG")).upper()
-        entering_long = direction != "SHORT"
+    ) -> float | Tuple[float, Dict[str, Any]]:
+        """Zwraca rekomendowaną frakcję kapitału (0..1)."""
 
-        if total_equity <= 0 or price <= 0:
-            reason = "Brak danych o kapitale lub cenie."
-            _LOGGER.warning(
-                "RiskManager.calculate_position_size: %s (kapitał=%s, cena=%s).",
-                reason,
-                total_equity,
-                price,
-            )
-            if self._decision_log is not None:
-                self._decision_log.record(
-                    profile=self._profile.name,
-                    symbol=normalized_symbol,
-                    side="buy" if entering_long else "sell",
-                    quantity=0.0,
-                    price=price if price > 0 else None,
-                    notional=None,
-                    allowed=False,
-                    reason=reason,
-                    metadata={"mode": self._mode},
-                )
-            emit_alert(
-                reason,
-                severity=AlertSeverity.WARNING,
-                source="risk",
-                context={
-                    "profile": self._profile.name,
-                    "symbol": normalized_symbol,
-                    "mode": self._mode,
-                },
-            )
-            details = {
-                "allowed": False,
-                "reason": reason,
-                "recommended_size": 0.0,
+        portfolio_ctx = portfolio or {}
+
+        if isinstance(signal, dict):
+            signal_payload = dict(signal)
+        else:
+            try:
+                strength = float(signal)
+            except Exception:
+                strength = 0.0
+            signal_payload = {
+                "symbol": symbol,
+                "strength": abs(strength),
+                "confidence": min(1.0, abs(strength) / 100.0 if strength else 0.5),
+                "direction": "LONG" if strength >= 0 else "SHORT",
+                "prediction": strength,
             }
-            self._log_risk_snapshot(normalized_symbol, 0.0, details)
-            self._last_details = details
-            return (0.0, details) if return_details else 0.0
+
+        if isinstance(market_data, pd.DataFrame):
+            market_df = market_data
+        elif isinstance(market_data, dict):
+            if "df" in market_data and isinstance(market_data["df"], pd.DataFrame):
+                market_df = market_data["df"]
+            else:
+                price = market_data.get("price")
+                market_df = pd.DataFrame({"close": [float(price or 0.0)]})
+        else:
+            market_df = pd.DataFrame({"close": [0.0]})
+
+        sizing = self.risk_mgr.calculate_position_size(
+            symbol,
+            signal_payload,
+            market_df,
+            portfolio_ctx,
+        )
+
+        details: Dict[str, Any] = {}
+        recommended = 0.0
+
+        if hasattr(sizing, "recommended_size"):
+            recommended = float(getattr(sizing, "recommended_size", 0.0))
+            details = {
+                "recommended_size": recommended,
+                "max_allowed_size": float(getattr(sizing, "max_allowed_size", recommended)),
+                "kelly_size": float(getattr(sizing, "kelly_size", recommended)),
+                "risk_adjusted_size": float(
+                    getattr(sizing, "risk_adjusted_size", recommended)
+                ),
+                "confidence_level": float(getattr(sizing, "confidence_level", 0.0)),
+                "reasoning": getattr(sizing, "reasoning", ""),
+            }
+        elif isinstance(sizing, dict):
+            try:
+                recommended = float(
+                    sizing.get("recommended_size", sizing.get("size", 0.0))
+                )
+            except Exception:
+                recommended = 0.0
+            details = dict(sizing)
+            details.setdefault("recommended_size", recommended)
+        else:
+            try:
+                recommended = float(sizing)
+            except Exception:
+                recommended = 0.0
 
         # direction już znormalizowany powyżej
         base_fraction = _as_float(
@@ -563,38 +584,44 @@ class RiskManager:
             },
         }
 
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            sync = getattr(getattr(self._db_manager, "sync", None), "log_risk_limit", None)
+            if callable(sync):
+                try:
+                    sync(snapshot)
+                except Exception:  # pragma: no cover
+                    logger.exception("Nie udało się zapisać limitu ryzyka (sync)")
+            return
+
         log_method = getattr(self._db_manager, "log_risk_limit", None)
         if callable(log_method):
             try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                try:
-                    if asyncio.iscoroutinefunction(log_method):
-                        asyncio.run(log_method(snapshot))
-                    else:
-                        log_method(snapshot)
-                except Exception:  # pragma: no cover - defensywne logowanie
-                    _LOGGER.exception("Nie udało się zapisać limitu ryzyka (direct)")
-            else:
-                try:
-                    if asyncio.iscoroutinefunction(log_method):
-                        loop.create_task(log_method(snapshot))
-                    else:
-                        loop.call_soon_threadsafe(log_method, snapshot)
-                except Exception:  # pragma: no cover - defensywne logowanie
-                    _LOGGER.exception("Nie udało się zapisać limitu ryzyka (async)")
+                if asyncio.iscoroutinefunction(log_method):
+                    loop.create_task(log_method(snapshot))
+                else:
+                    log_method(snapshot)
+            except Exception:  # pragma: no cover
+                logger.exception("Nie udało się zapisać limitu ryzyka (async)")
+
+    def _maybe_emit_alert(
+        self, symbol: str, recommended: float, details: Dict[str, Any]
+    ) -> None:
+        if recommended <= 0.0:
             return
-
-        sync_adapter = getattr(getattr(self._db_manager, "sync", None), "log_risk_limit", None)
-        if callable(sync_adapter):
-            try:
-                sync_adapter(snapshot)
-            except Exception:  # pragma: no cover - defensywne logowanie
-                _LOGGER.exception("Nie udało się zapisać limitu ryzyka (sync)")
-
-
-# Zgodność wsteczna – historyczne GUI importowało klasę ``RiskManagerAdapter``.
-RiskManagerAdapter = RiskManager
-
-__all__ = ["RiskManager", "RiskManagerAdapter"]
-
+        severity = AlertSeverity.WARNING if recommended > 0.5 else AlertSeverity.INFO
+        try:
+            emit_alert(
+                "risk_limit_recommendation",
+                severity=severity,
+                source="risk_manager",
+                context={
+                    "symbol": symbol,
+                    "recommended": recommended,
+                    "max_fraction": float(details.get("max_allowed_size", 0.0)),
+                    "mode": self._mode,
+                },
+            )
+        except Exception:  # pragma: no cover
+            logger.exception("Nie udało się wysłać alertu ryzyka")

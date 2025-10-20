@@ -10,7 +10,7 @@ from typing import Optional
 import pytest
 from cryptography.fernet import Fernet, InvalidToken
 
-from KryptoLowca.exchanges import BinanceTestnetAdapter, KrakenDemoAdapter
+from KryptoLowca.exchanges import BinanceTestnetAdapter, KrakenDemoAdapter, ZondaAdapter
 from KryptoLowca.exchanges.interfaces import ExchangeCredentials, OrderRequest
 from KryptoLowca.security.api_key_manager import APIKeyManager
 
@@ -42,6 +42,11 @@ EXCHANGES = {
         env_prefix="KRAKEN_DEMO",
         manager_exchange=os.getenv("KRAKEN_DEMO_MANAGER_EXCHANGE", "kraken-demo"),
         manager_account=os.getenv("KRAKEN_DEMO_MANAGER_ACCOUNT", "default"),
+    ),
+    "zonda": ExchangeAuthConfig(
+        env_prefix="ZONDA",
+        manager_exchange=os.getenv("ZONDA_MANAGER_EXCHANGE", "zonda"),
+        manager_account=os.getenv("ZONDA_MANAGER_ACCOUNT", "default"),
     ),
 }
 
@@ -245,5 +250,77 @@ async def test_kraken_demo_order_lifecycle():
 
         canceled = await adapter.cancel_order(submitted.order_id, symbol=order_request.symbol)
         assert canceled.order_id == submitted.order_id
+    finally:
+        await adapter.close()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_zonda_demo_market_ticker():
+    if not os.getenv("ZONDA_ENABLE_SANDBOX_TESTS"):
+        pytest.skip("Testy Zonda sandbox są wyłączone (brak flagi ZONDA_ENABLE_SANDBOX_TESTS)")
+
+    demo_decision = resolve_demo_mode("zonda")
+    adapter = ZondaAdapter(
+        demo_mode=demo_decision.demo_mode,
+        compliance_ack=demo_decision.compliance_ack,
+    )
+
+    try:
+        await adapter.connect()
+        market = os.getenv("ZONDA_MARKET", "BTC-PLN")
+        ticker = await adapter.fetch_market_data(market)
+
+        assert ticker, "Zonda nie zwróciła danych tickera"
+        status = ticker.get("status") or ticker.get("code")
+        assert status is not None, "Ticker Zonda powinien zawierać status lub kod"
+        assert any(key in ticker for key in ("ticker", "items", "data")), "Ticker Zonda powinien zawierać dane rynkowe"
+    finally:
+        await adapter.close()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_zonda_demo_order_lifecycle():
+    if not os.getenv("ZONDA_ENABLE_ORDER_TESTS"):
+        pytest.skip("Testy zleceń Zonda są wyłączone (brak flagi ZONDA_ENABLE_ORDER_TESTS)")
+
+    try:
+        credentials = load_credentials("zonda")
+    except MissingCredentials:
+        pytest.skip("Brak poświadczeń Zonda")
+
+    demo_decision = resolve_demo_mode("zonda")
+    adapter = ZondaAdapter(
+        demo_mode=demo_decision.demo_mode,
+        compliance_ack=demo_decision.compliance_ack,
+    )
+
+    try:
+        await adapter.connect()
+        await adapter.authenticate(credentials)
+
+        order_request = OrderRequest(
+            symbol=os.getenv("ZONDA_ORDER_SYMBOL", os.getenv("ZONDA_MARKET", "BTC-PLN")),
+            side=os.getenv("ZONDA_ORDER_SIDE", "buy"),
+            quantity=float(os.getenv("ZONDA_ORDER_QUANTITY", "0.001")),
+            order_type=os.getenv("ZONDA_ORDER_TYPE", "limit"),
+            price=float(os.getenv("ZONDA_ORDER_PRICE", "20000")),
+            client_order_id=f"test-{uuid.uuid4().hex[:10]}",
+            time_in_force=os.getenv("ZONDA_ORDER_TIME_IN_FORCE", "GTC"),
+        )
+
+        try:
+            submitted = await adapter.submit_order(order_request)
+        except RuntimeError as exc:
+            pytest.skip(f"Zonda odrzuciła zlecenie: {exc}")
+
+        assert submitted.order_id, "Zonda powinna zwrócić identyfikator zlecenia"
+
+        fetched = await adapter.fetch_order_status(submitted.order_id)
+        assert fetched.order_id == submitted.order_id
+
+        cancelled = await adapter.cancel_order(submitted.order_id)
+        assert cancelled.order_id == submitted.order_id
     finally:
         await adapter.close()

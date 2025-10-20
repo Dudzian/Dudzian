@@ -1,191 +1,136 @@
-# tests/test_config_manager.py
-# -*- coding: utf-8 -*-
-"""Testy walidacji presetów w :mod:`managers.config_manager`."""
-
+"""Testy menedżera konfiguracji opartego na nowym module ``KryptoLowca.config_manager``."""
 from __future__ import annotations
 
-import sys
+import asyncio
+from dataclasses import asdict
+import time
 from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from bot_core.runtime.metadata import RiskManagerSettings, derive_risk_manager_settings
 
-from KryptoLowca.managers.config_manager import ConfigManager  # type: ignore
-from KryptoLowca.config_manager import StrategyConfig
-from bot_core.runtime.metadata import RiskManagerSettings
+from KryptoLowca.config_manager import ConfigManager, StrategyConfig, ValidationError
 
 
 @pytest.fixture()
-def sample_preset() -> dict:
-    return {
-        "network": "Testnet",
-        "mode": "Spot",
-        "timeframe": "5m",
-        "fraction": 0.25,
-        "ai": {
-            "enable": True,
-            "seq_len": 256,
-            "epochs": 20,
-            "batch": 64,
-            "retrain_min": 30,
-            "train_window": 720,
-            "valid_window": 120,
-            "ai_threshold_bps": 4.5,
-            "train_all": False,
-        },
-        "risk": {
-            "max_daily_loss_pct": 0.02,
-            "soft_halt_losses": 2,
-            "trade_cooldown_on_error": 60,
-            "risk_per_trade": 0.005,
-            "portfolio_risk": 0.3,
-            "one_trade_per_bar": True,
-            "cooldown_s": 15,
-            "min_move_pct": 0.01,
-        },
-        "dca_trailing": {
-            "use_trailing": True,
-            "atr_period": 14,
-            "trail_atr_mult": 2.5,
-            "take_atr_mult": 3.5,
-            "dca_enabled": True,
-            "dca_max_adds": 2,
-            "dca_step_atr": 1.5,
-        },
-        "slippage": {"use_orderbook_vwap": True, "fallback_bps": 6.0},
-        "advanced": {
-            "rsi_period": 14,
-            "ema_fast": 12,
-            "ema_slow": 26,
-            "atr_period": 14,
-            "rsi_buy": 30.0,
-            "rsi_sell": 70.0,
-        },
-        "paper": {"capital": 15_000.0},
-        "selected_symbols": ["btc/usdt", "eth/usdt", "btc/usdt"],
-    }
+def config_path(tmp_path: Path) -> Path:
+    return tmp_path / "kl_config.yaml"
 
 
 @pytest.fixture()
-def cfg(tmp_path: Path) -> ConfigManager:
-    return ConfigManager(tmp_path)
+def cfg(config_path: Path) -> ConfigManager:
+    return ConfigManager(config_path)
 
 
-def test_save_and_load_roundtrip(cfg: ConfigManager, sample_preset: dict) -> None:
-    path = cfg.save_preset("demo", sample_preset)
-    assert path.exists()
+def test_save_and_load_roundtrip(cfg: ConfigManager, config_path: Path) -> None:
+    strategy = StrategyConfig(preset="SAFE").validate()
+    trade = {"symbols": ["BTC/USDT", "ETH/USDT"], "max_open_positions": 2}
+    payload = {"strategy": asdict(strategy), "trade": trade, "meta": {}}
 
-    loaded = cfg.load_preset("demo")
-    assert loaded["network"] == "Testnet"
-    assert loaded["mode"] == "Spot"
-    assert loaded["timeframe"] == "5m"
-    assert loaded["fraction"] == pytest.approx(0.25)
-    # symbole oczyszczone i bez duplikatów
-    assert loaded["selected_symbols"] == ["BTC/USDT", "ETH/USDT"]
-    # sekcje dodatkowe obecne
-    assert loaded["ai"]["epochs"] == 20
-    assert loaded["risk"]["risk_per_trade"] == pytest.approx(0.005)
-    assert loaded["version"] == ConfigManager.current_version()
-
-
-def test_invalid_fraction_rejected(cfg: ConfigManager, sample_preset: dict) -> None:
-    sample_preset["fraction"] = 1.5
-    with pytest.raises(ValueError):
-        cfg.save_preset("bad_fraction", sample_preset)
-
-
-def test_defaults_and_normalisation(cfg: ConfigManager) -> None:
-    minimal = {"selected_symbols": [" sol/usdt ", "ada/usdt"], "fraction": 0.0}
-    preset = cfg.validate_preset(minimal)
-
-    assert preset.network == "Testnet"
-    assert preset.mode == "Spot"
-    assert preset.timeframe == "1m"
-    assert preset.selected_symbols == ["SOL/USDT", "ADA/USDT"]
-    assert preset.fraction == pytest.approx(0.0)
-    data = preset.to_dict()
-    assert "ai" in data and "risk" in data
-    assert preset.version == ConfigManager.current_version()
-
-
-def test_demo_requirement_blocks_live(cfg: ConfigManager, sample_preset: dict) -> None:
-    sample_preset["network"] = "Live"
-    with pytest.raises(ValueError):
-        cfg.save_preset("live", sample_preset)
-
-    cfg.require_demo_mode(False)
-    path = cfg.save_preset("live_allowed", sample_preset)
-    assert path.exists()
-
-
-def test_create_preset_with_audit(cfg: ConfigManager, sample_preset: dict) -> None:
-    cfg.save_preset("base", sample_preset)
-    audit = cfg.create_preset(
-        "custom",
-        base="base",
-        overrides={"fraction": 0.3, "risk": {"max_daily_loss_pct": 0.25}},
+    saved = asyncio.run(
+        cfg.save_config(payload, actor="tester", preset_id="SAFE", note="baseline")
     )
-    assert audit["preset"]["network"] == "Testnet"
-    assert audit["warnings"], "Zbyt wysoka dzienna strata powinna zostać oznaczona"
-    assert "path" in audit and Path(audit["path"]).exists()
-    assert audit["version"] == ConfigManager.current_version()
-    assert audit["preset"]["version"] == ConfigManager.current_version()
+    assert config_path.exists()
+    history = cfg.get_preset_history("SAFE")
+    assert history and history[0]["note"] == "baseline"
+
+    loaded = asyncio.run(cfg.load_config())
+    assert loaded["strategy"]["preset"] == "SAFE"
+    assert loaded["trade"]["max_open_positions"] == trade["max_open_positions"]
+    assert loaded["trade"]["symbols"] == trade["symbols"]
 
 
-def test_preset_wizard_profiles(cfg: ConfigManager, sample_preset: dict) -> None:
-    cfg.save_preset("base", sample_preset)
-    wizard = (
-        cfg.preset_wizard()
-        .from_template("base")
-        .with_risk_profile("aggressive")
-        .with_symbols(["btc/usdt", "ada/usdt"])
+def test_strategy_validation_rejects_invalid_notional(cfg: ConfigManager) -> None:
+    strategy = StrategyConfig(max_position_notional_pct=1.5)
+    with pytest.raises(ValidationError):
+        strategy.validate()
+
+
+def test_load_config_initialises_defaults(cfg: ConfigManager) -> None:
+    loaded = asyncio.run(cfg.load_config())
+    assert loaded["strategy"]["mode"] == "demo"
+    assert loaded["trade"]["max_open_positions"] == 3
+    assert loaded["meta"] == {}
+
+
+def test_live_mode_requires_backtest_confirmation(cfg: ConfigManager) -> None:
+    strategy = StrategyConfig(preset="SAFE", mode="live")
+    config = {"strategy": asdict(strategy), "trade": {}, "meta": {}}
+    with pytest.raises(ValidationError):
+        asyncio.run(cfg.save_config(config, actor="tester", preset_id="SAFE"))
+
+
+def test_record_history_creates_versions(cfg: ConfigManager) -> None:
+    strategy = StrategyConfig(preset="SAFE").validate()
+    base_payload = {"strategy": asdict(strategy), "trade": {}, "meta": {}}
+
+    asyncio.run(cfg.save_config(base_payload, actor="tester", preset_id="SAFE", note="v1"))
+    # świeży backtest dla trybu live
+    updated = asdict(strategy.mark_backtest_passed())
+    updated["mode"] = "live"
+    updated["backtest_passed_at"] = time.time()
+    asyncio.run(
+        cfg.save_config(
+            {"strategy": updated, "trade": {}, "meta": {}},
+            actor="tester",
+            preset_id="SAFE",
+            note="v2",
+        )
     )
-    audit = wizard.build("aggressive_profile")
 
-    assert audit["preset"]["selected_symbols"] == ["BTC/USDT", "ADA/USDT"]
-    assert audit["preset"]["fraction"] == pytest.approx(0.35)
-    assert audit["is_demo"] is True
-    assert audit["preset"]["version"] == ConfigManager.current_version()
+    history = cfg.get_preset_history("SAFE")
+    assert len(history) >= 2
+    assert history[0]["note"] == "v2"
+    assert history[1]["note"] == "v1"
 
 
-def test_strategy_config_derives_risk_manager_settings() -> None:
-    cfg = StrategyConfig(
-        max_position_notional_pct=0.03,
-        trade_risk_pct=0.02,
-        max_leverage=2.0,
-    )
-    profile = {
-        "max_position_pct": 0.07,
-        "max_daily_loss_pct": 0.08,
-        "max_open_positions": 7,
-        "target_volatility": 0.2,
-    }
+def test_core_config_derives_risk_manager_settings(core_config) -> None:  # type: ignore[annotation-unchecked]
+    profile = core_config.risk_profiles["balanced"]
 
-    settings = cfg.derive_risk_manager_settings(profile, profile_name="balanced")
+    settings = derive_risk_manager_settings(profile, profile_name=profile.name)
 
     assert isinstance(settings, RiskManagerSettings)
-    assert settings.max_risk_per_trade == pytest.approx(0.07)
-    assert settings.max_daily_loss_pct == pytest.approx(0.08)
-    assert settings.max_positions == 7
-    assert settings.profile_name == "balanced"
+    assert settings.max_risk_per_trade == pytest.approx(profile.max_position_pct)
+    assert settings.max_daily_loss_pct == pytest.approx(profile.max_daily_loss_pct)
+    assert settings.max_positions == profile.max_open_positions
+    assert settings.emergency_stop_drawdown == pytest.approx(profile.hard_drawdown_pct)
+    assert settings.target_volatility == pytest.approx(profile.target_volatility)
+    assert settings.profile_name == profile.name
     assert settings.confidence_level is not None
+    assert settings.max_portfolio_risk >= settings.max_risk_per_trade
 
 
-def test_strategy_config_apply_risk_profile_uses_runtime_helper() -> None:
-    cfg = StrategyConfig(
-        max_position_notional_pct=0.03,
-        trade_risk_pct=0.02,
-        max_leverage=1.5,
+def test_derive_risk_manager_settings_honours_defaults(core_config) -> None:  # type: ignore[annotation-unchecked]
+    defaults = RiskManagerSettings(
+        max_risk_per_trade=0.01,
+        max_daily_loss_pct=0.03,
+        max_portfolio_risk=0.2,
+        max_positions=4,
+        emergency_stop_drawdown=0.09,
+        confidence_level=0.8,
+        target_volatility=0.15,
+        profile_name="defaults",
     )
-    profile = {
-        "max_position_pct": 0.05,
-        "max_daily_loss_pct": 0.06,
-        "max_leverage": 3.0,
-    }
 
-    updated = cfg.apply_risk_profile(profile, profile_name="swing")
+    overrides = {"max_position_pct": 0.0, "max_daily_loss_pct": 0.0}
 
-    assert updated.max_position_notional_pct == pytest.approx(0.05)
-    assert updated.trade_risk_pct == pytest.approx(0.05)
-    assert updated.max_leverage == pytest.approx(3.0)
+    settings = derive_risk_manager_settings(overrides, defaults=defaults, profile_name="custom")
+
+    assert settings.max_risk_per_trade == pytest.approx(defaults.max_risk_per_trade)
+    assert settings.max_daily_loss_pct == pytest.approx(defaults.max_daily_loss_pct)
+    assert settings.max_positions == defaults.max_positions
+    assert settings.emergency_stop_drawdown == pytest.approx(defaults.emergency_stop_drawdown)
+    assert settings.target_volatility == pytest.approx(defaults.target_volatility)
+    assert settings.confidence_level is not None
+    assert settings.confidence_level >= defaults.confidence_level
+    assert settings.confidence_level <= 0.99
+    assert settings.profile_name == "custom"
+
+
+def test_core_config_runtime_entrypoint_maps_environment(core_config) -> None:  # type: ignore[annotation-unchecked]
+    entry = core_config.runtime_entrypoints["paper_runtime"]
+
+    assert entry.environment == "paper"
+    assert entry.risk_profile == "balanced"
+    assert entry.controller == "default_controller"

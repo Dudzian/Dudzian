@@ -36,13 +36,6 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any, Dict, List, Mapping, Optional
 
-# --- alias zgodności: core/trading_engine może importować managers.database_manager
-try:
-    import KryptoLowca.database_manager as _dbm_alias
-    sys.modules.setdefault("managers.database_manager", _dbm_alias)
-except Exception:
-    pass
-
 # Tkinter
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -80,7 +73,44 @@ __all__ = [
     "TradingView",
     "main",
 ]
-# Pomocnicze
+
+# --- ŚCIEŻKI APLIKACJI ---
+APP_ROOT = Path(__file__).resolve().parent
+LOGS_DIR = GLOBAL_LOGS_DIR
+LOGS_DIR.mkdir(parents=True, exist_ok=True)
+TEXT_LOG_FILE = DEFAULT_LOG_FILE
+DB_FILE = APP_ROOT / "trading_bot.db"
+OPEN_POS_FILE = APP_ROOT / "open_positions.json"
+FAV_FILE = APP_ROOT / "favorites.json"
+PRESETS_DIR = APP_ROOT / "presets"; PRESETS_DIR.mkdir(exist_ok=True)
+MODELS_DIR = APP_ROOT / "models"; MODELS_DIR.mkdir(exist_ok=True)
+KEYS_FILE = APP_ROOT / "api_keys.enc"
+SALT_FILE = APP_ROOT / "salt.bin"
+
+# --- MENEDŻERY / CORE ---
+from bot_core.exchanges.core import PositionDTO
+
+from KryptoLowca.config_manager import ConfigManager
+from KryptoLowca.exchange_manager import ExchangeManager
+from KryptoLowca.security_manager import SecurityManager
+from KryptoLowca.ai_manager import AIManager
+from KryptoLowca.report_manager import ReportManager
+from KryptoLowca.risk_manager import RiskManager
+from KryptoLowca.core.trading_engine import TradingEngine
+from KryptoLowca.risk_settings_loader import (
+    DEFAULT_CORE_CONFIG_PATH,
+    load_risk_settings_from_core,
+)
+
+# istniejące moduły w repo
+from KryptoLowca.trading_strategies import TradingStrategies
+from reporting import TradeInfo
+from KryptoLowca.database_manager import DatabaseManager  # klasyczny (bezargumentowy) konstruktor
+from KryptoLowca.ui.trading import view as trading_view
+from KryptoLowca.ui.trading.state import AppState
+from KryptoLowca.ui.trading.controller import TradingSessionController
+
+# ==============================# Pomocnicze
 # =====================================
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -146,7 +176,7 @@ class Tooltip:
 class TradingGUI:
     """
     TYLKO UI + event handling.
-    Logika: TradingEngine + menedżery w managers/*
+    Logika: TradingEngine + nowe moduły wysokiego poziomu z pakietu ``KryptoLowca``.
     """
 
     def __init__(
@@ -1959,4 +1989,3 @@ if __name__ == "__main__":
     root = tk.Tk()
     app = TradingGUI(root)
     root.mainloop()
-=======

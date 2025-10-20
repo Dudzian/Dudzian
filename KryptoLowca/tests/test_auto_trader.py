@@ -239,6 +239,51 @@ class StrategyHarness:
     signal_service: SignalService
 
 
+@pytest.fixture(autouse=True)
+def _autotrader_runtime(monkeypatch, core_config):
+    """Zapewnia spójne stuby runtime bazujące na ``CoreConfig``."""
+
+    profile = core_config.risk_profiles["balanced"]
+    settings = derive_risk_manager_settings(profile, profile_name=profile.name)
+
+    metadata = SimpleNamespace(
+        environment="paper",
+        risk_profile=profile.name,
+        controller="default_controller",
+        strategy="trend",
+        tags=("gui", "cli"),
+        compliance_live_allowed=False,
+        to_dict=lambda: {
+            "environment": "paper",
+            "risk_profile": profile.name,
+            "controller": "default_controller",
+            "strategy": "trend",
+            "tags": ["gui", "cli"],
+            "compliance_live_allowed": False,
+        },
+    )
+
+    def _load_metadata(entrypoint: str, **_: Any) -> SimpleNamespace | None:
+        if entrypoint != "auto_trader":
+            return None
+        return metadata
+
+    monkeypatch.setattr(
+        "KryptoLowca.auto_trader.app.load_runtime_entrypoint_metadata",
+        _load_metadata,
+    )
+
+    def _load_risk(entrypoint: str, *, profile_name: str | None = None, **_: Any):
+        if entrypoint != "auto_trader":
+            return profile_name, None, settings
+        return profile.name, profile, settings
+
+    monkeypatch.setattr(
+        "KryptoLowca.auto_trader.app.load_risk_manager_settings",
+        _load_risk,
+    )
+
+
 @pytest.fixture
 def strategy_harness() -> StrategyHarness:
     registry = StrategyRegistry()
@@ -266,7 +311,7 @@ def strategy_harness() -> StrategyHarness:
     return StrategyHarness(registry=registry, signal_service=SignalService(strategy_registry=registry))
 
 
-def test_autotrader_applies_runtime_risk_profile() -> None:
+def test_autotrader_applies_runtime_risk_profile(core_config) -> None:
     emitter = DummyEmitter()
     gui = DummyGUI()
     adapter = RecordingExecutionAdapter()
@@ -280,6 +325,9 @@ def test_autotrader_applies_runtime_risk_profile() -> None:
         execution_service=ExecutionService(adapter),
         data_provider=StubDataProvider(),
     )
+
+    profile = core_config.risk_profiles["balanced"]
+    expected_settings = derive_risk_manager_settings(profile, profile_name=profile.name)
 
     cfg = trader._get_strategy_config()
     assert cfg.max_position_notional_pct == pytest.approx(0.05)
