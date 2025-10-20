@@ -309,7 +309,7 @@ stress_lab:
       symbol: BTCUSDT
       metrics_path: ../data/stage6/metrics/btcusdt.json
       weight: 1.0
-      allow_synthetic: false
+      allow_synthetic: true
     ETHUSDT:
       symbol: ETHUSDT
       metrics_path: ../data/stage6/metrics/ethusdt.json

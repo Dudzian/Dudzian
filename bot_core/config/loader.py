@@ -50,6 +50,12 @@ from bot_core.config.models import (
 from bot_core.exchanges.base import Environment
 
 
+try:  # Stage6 asset-level konfiguracja governora
+    from bot_core.config.models import PortfolioGovernorV6Config  # type: ignore
+except Exception:  # pragma: no cover - opcjonalne w starszych gałęziach
+    PortfolioGovernorV6Config = None  # type: ignore
+
+
 _ALLOWED_ENSEMBLE_AGGREGATIONS = {"mean", "median", "max", "min", "weighted"}
 
 # --- opcjonalne typy (mogą nie istnieć w Twojej gałęzi) ---
@@ -569,16 +575,30 @@ def _load_multi_strategy_schedulers(raw: Mapping[str, Any]):
 
 
 def _load_portfolio_governors(raw: Mapping[str, Any]):
-    if PortfolioGovernorConfig is None:
-        return {}
     entries = raw.get("portfolio_governors") or {}
-    if not isinstance(entries, Mapping):
+    if not isinstance(entries, Mapping) or not entries:
         return {}
-    governor_field_names = {field.name for field in fields(PortfolioGovernorConfig)}
-    required_fields = {"portfolio_id", "drift_tolerance", "rebalance_cooldown_seconds"}
-    if not required_fields.issubset(governor_field_names):
+
+    stage6_required = {"portfolio_id", "drift_tolerance", "rebalance_cooldown_seconds"}
+    target_cls = None
+    target_fields: set[str] = set()
+
+    if PortfolioGovernorV6Config is not None:
+        candidate_fields = {field.name for field in fields(PortfolioGovernorV6Config)}
+        if stage6_required.issubset(candidate_fields):
+            target_cls = PortfolioGovernorV6Config
+            target_fields = candidate_fields
+
+    if target_cls is None and PortfolioGovernorConfig is not None:
+        candidate_fields = {field.name for field in fields(PortfolioGovernorConfig)}
+        if stage6_required.issubset(candidate_fields):
+            target_cls = PortfolioGovernorConfig
+            target_fields = candidate_fields
+
+    if target_cls is None:
         return {}
-    governors: dict[str, PortfolioGovernorConfig] = {}
+
+    governors: dict[str, object] = {}
     for name, entry in entries.items():
         if not isinstance(entry, Mapping):
             continue
@@ -718,10 +738,10 @@ def _load_portfolio_governors(raw: Mapping[str, Any]):
             "market_intel_interval": interval,
             "market_intel_lookback_bars": lookback_bars,
         }
-        if "name" in governor_field_names:
+        if "name" in target_fields:
             governor_kwargs["name"] = name
 
-        governors[name] = PortfolioGovernorConfig(**governor_kwargs)
+        governors[name] = target_cls(**governor_kwargs)
 
     return governors
 
