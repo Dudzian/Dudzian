@@ -29,6 +29,8 @@ from bot_core.exchanges.errors import (
     ExchangeNetworkError,
     ExchangeThrottlingError,
 )
+from bot_core.exchanges.error_mapping import raise_for_kraken_error
+from bot_core.exchanges.health import Watchdog
 from bot_core.exchanges.streaming import LocalLongPollStream
 from bot_core.observability.metrics import MetricsRegistry, get_global_metrics_registry
 
@@ -155,6 +157,7 @@ class KrakenSpotAdapter(ExchangeAdapter):
         environment: Environment,
         settings: Mapping[str, object] | None = None,
         metrics_registry: MetricsRegistry | None = None,
+        watchdog: Watchdog | None = None,
     ) -> None:
         super().__init__(credentials)
         self._environment = environment
@@ -213,6 +216,7 @@ class KrakenSpotAdapter(ExchangeAdapter):
             "kraken_spot_orderbook_levels",
             "Łączna liczba poziomów orderbooka (bids+asks) zwracanych przez Kraken Spot.",
         )
+        self._watchdog = watchdog or Watchdog()
 
     # ------------------------------------------------------------------
     # Konfiguracja streamingu long-pollowego
@@ -354,30 +358,33 @@ class KrakenSpotAdapter(ExchangeAdapter):
     def fetch_account_snapshot(self) -> AccountSnapshot:  # type: ignore[override]
         if "read" not in self._permission_set:
             raise PermissionError("Poświadczenia Kraken nie mają uprawnień do odczytu.")
-        balances_payload = self._private_request(_RequestContext(path="/0/private/Balance", params={}))
-        trade_balance_payload = self._private_request(
-            _RequestContext(path="/0/private/TradeBalance", params={"asset": self._valuation_asset})
-        )
+        def _call() -> AccountSnapshot:
+            balances_payload = self._private_request(_RequestContext(path="/0/private/Balance", params={}))
+            trade_balance_payload = self._private_request(
+                _RequestContext(path="/0/private/TradeBalance", params={"asset": self._valuation_asset})
+            )
 
-        balances_data = balances_payload.get("result", {}) if isinstance(balances_payload, Mapping) else {}
-        balances: MutableMapping[str, float] = {}
-        for asset, amount in balances_data.items():
-            try:
-                balances[asset] = float(amount)
-            except (TypeError, ValueError):
-                continue
+            balances_data = balances_payload.get("result", {}) if isinstance(balances_payload, Mapping) else {}
+            balances: MutableMapping[str, float] = {}
+            for asset, amount in balances_data.items():
+                try:
+                    balances[asset] = float(amount)
+                except (TypeError, ValueError):
+                    continue
 
-        trade_data = trade_balance_payload.get("result", {}) if isinstance(trade_balance_payload, Mapping) else {}
-        total_equity = float(trade_data.get("eb", trade_data.get("e", 0.0)) or 0.0)
-        available_margin = float(trade_data.get("mf", 0.0) or 0.0)
-        maintenance_margin = float(trade_data.get("m", 0.0) or 0.0)
+            trade_data = trade_balance_payload.get("result", {}) if isinstance(trade_balance_payload, Mapping) else {}
+            total_equity = float(trade_data.get("eb", trade_data.get("e", 0.0)) or 0.0)
+            available_margin = float(trade_data.get("mf", 0.0) or 0.0)
+            maintenance_margin = float(trade_data.get("m", 0.0) or 0.0)
 
-        return AccountSnapshot(
-            balances=dict(balances),
-            total_equity=total_equity,
-            available_margin=available_margin,
-            maintenance_margin=maintenance_margin,
-        )
+            return AccountSnapshot(
+                balances=dict(balances),
+                total_equity=total_equity,
+                available_margin=available_margin,
+                maintenance_margin=maintenance_margin,
+            )
+
+        return self._watchdog.execute("kraken_spot_fetch_account", _call)
 
     def fetch_symbols(self) -> Sequence[str]:  # type: ignore[override]
         payload = self._public_request("/0/public/AssetPairs", params={})
@@ -593,34 +600,40 @@ class KrakenSpotAdapter(ExchangeAdapter):
         if request.client_order_id:
             params["userref"] = request.client_order_id
 
-        payload = self._private_request(_RequestContext(path="/0/private/AddOrder", params=params))
-        result = payload.get("result", {}) if isinstance(payload, Mapping) else {}
-        txid_seq = result.get("txid") if isinstance(result, Mapping) else None
-        txid: str | None = None
-        if isinstance(txid_seq, Sequence) and txid_seq:
-            first = txid_seq[0]
-            if isinstance(first, str):
-                txid = first
-        return OrderResult(
-            order_id=txid or "",
-            status="NEW",
-            filled_quantity=0.0,
-            avg_price=None,
-            raw_response=result if isinstance(result, Mapping) else {},
-        )
+        def _call() -> OrderResult:
+            payload = self._private_request(_RequestContext(path="/0/private/AddOrder", params=params))
+            result = payload.get("result", {}) if isinstance(payload, Mapping) else {}
+            txid_seq = result.get("txid") if isinstance(result, Mapping) else None
+            txid: str | None = None
+            if isinstance(txid_seq, Sequence) and txid_seq:
+                first = txid_seq[0]
+                if isinstance(first, str):
+                    txid = first
+            return OrderResult(
+                order_id=txid or "",
+                status="NEW",
+                filled_quantity=0.0,
+                avg_price=None,
+                raw_response=result if isinstance(result, Mapping) else {},
+            )
+
+        return self._watchdog.execute("kraken_spot_place_order", _call)
 
     def cancel_order(self, order_id: str, *, symbol: str | None = None) -> None:  # type: ignore[override]
         if "trade" not in self._permission_set:
             raise PermissionError("Poświadczenia Kraken nie mają uprawnień tradingowych.")
-        params: Mapping[str, Any] = {"txid": order_id}
-        payload = self._private_request(_RequestContext(path="/0/private/CancelOrder", params=params))
-        result = payload.get("result", {}) if isinstance(payload, Mapping) else {}
-        if not isinstance(result, Mapping) or int(result.get("count", 0)) < 1:
-            raise ExchangeAPIError(
-                "Kraken nie potwierdził anulowania zlecenia.",
-                400,
-                payload=payload,
-            )
+        def _call() -> None:
+            params: Mapping[str, Any] = {"txid": order_id}
+            payload = self._private_request(_RequestContext(path="/0/private/CancelOrder", params=params))
+            result = payload.get("result", {}) if isinstance(payload, Mapping) else {}
+            if not isinstance(result, Mapping) or int(result.get("count", 0)) < 1:
+                raise ExchangeAPIError(
+                    "Kraken nie potwierdził anulowania zlecenia.",
+                    400,
+                    payload=payload,
+                )
+
+        self._watchdog.execute("kraken_spot_cancel_order", _call)
 
     # ------------------------------------------------------------------
     # Raportowanie stanu konta
@@ -631,53 +644,56 @@ class KrakenSpotAdapter(ExchangeAdapter):
         if "read" not in self._permission_set:
             raise PermissionError("Poświadczenia Kraken nie mają uprawnień do odczytu zleceń.")
 
-        context = _RequestContext(path="/0/private/OpenOrders", params={"trades": True})
-        payload = self._private_request(context)
-        result = payload.get("result", {}) if isinstance(payload, Mapping) else {}
-        open_orders_payload = result.get("open", {}) if isinstance(result, Mapping) else {}
+        def _call() -> Sequence[KrakenOpenOrder]:
+            context = _RequestContext(path="/0/private/OpenOrders", params={"trades": True})
+            payload = self._private_request(context)
+            result = payload.get("result", {}) if isinstance(payload, Mapping) else {}
+            open_orders_payload = result.get("open", {}) if isinstance(result, Mapping) else {}
 
-        orders: list[KrakenOpenOrder] = []
-        if isinstance(open_orders_payload, Mapping):
-            for order_id, entry in open_orders_payload.items():
-                if not isinstance(order_id, str) or not isinstance(entry, Mapping):
-                    continue
-                descr = entry.get("descr") if isinstance(entry.get("descr"), Mapping) else {}
-                pair = descr.get("pair") if isinstance(descr, Mapping) else None
-                order_type = descr.get("ordertype") if isinstance(descr, Mapping) else None
-                side = descr.get("type") if isinstance(descr, Mapping) else None
-                price_value: float | None = None
-                if isinstance(descr, Mapping):
-                    raw_price = descr.get("price") or descr.get("price2")
-                    price_value = _to_float(raw_price, default=float("nan"))
-                    if price_value != price_value:  # NaN -> brak ceny
-                        price_value = None
+            orders: list[KrakenOpenOrder] = []
+            if isinstance(open_orders_payload, Mapping):
+                for order_id, entry in open_orders_payload.items():
+                    if not isinstance(order_id, str) or not isinstance(entry, Mapping):
+                        continue
+                    descr = entry.get("descr") if isinstance(entry.get("descr"), Mapping) else {}
+                    pair = descr.get("pair") if isinstance(descr, Mapping) else None
+                    order_type = descr.get("ordertype") if isinstance(descr, Mapping) else None
+                    side = descr.get("type") if isinstance(descr, Mapping) else None
+                    price_value: float | None = None
+                    if isinstance(descr, Mapping):
+                        raw_price = descr.get("price") or descr.get("price2")
+                        price_value = _to_float(raw_price, default=float("nan"))
+                        if price_value != price_value:  # NaN -> brak ceny
+                            price_value = None
 
-                flags_field = entry.get("oflags")
-                flags: tuple[str, ...]
-                if isinstance(flags_field, str):
-                    flags = tuple(flag for flag in flags_field.split(",") if flag)
-                elif isinstance(flags_field, Sequence):
-                    flags = tuple(str(flag) for flag in flags_field if isinstance(flag, str))
-                else:
-                    flags = ()
+                    flags_field = entry.get("oflags")
+                    flags: tuple[str, ...]
+                    if isinstance(flags_field, str):
+                        flags = tuple(flag for flag in flags_field.split(",") if flag)
+                    elif isinstance(flags_field, Sequence):
+                        flags = tuple(str(flag) for flag in flags_field if isinstance(flag, str))
+                    else:
+                        flags = ()
 
-                order = KrakenOpenOrder(
-                    order_id=order_id,
-                    symbol=str(pair) if isinstance(pair, str) else "",
-                    side=str(side) if isinstance(side, str) else "",
-                    order_type=str(order_type) if isinstance(order_type, str) else "",
-                    price=price_value,
-                    volume=_to_float(entry.get("vol")),
-                    volume_executed=_to_float(entry.get("vol_exec")),
-                    timestamp=_to_float(entry.get("opentm")),
-                    flags=flags,
-                )
-                orders.append(order)
+                    order = KrakenOpenOrder(
+                        order_id=order_id,
+                        symbol=str(pair) if isinstance(pair, str) else "",
+                        side=str(side) if isinstance(side, str) else "",
+                        order_type=str(order_type) if isinstance(order_type, str) else "",
+                        price=price_value,
+                        volume=_to_float(entry.get("vol")),
+                        volume_executed=_to_float(entry.get("vol_exec")),
+                        timestamp=_to_float(entry.get("opentm")),
+                        flags=flags,
+                    )
+                    orders.append(order)
 
-        orders.sort(key=lambda item: item.timestamp)
-        labels = self._labels(endpoint=context.path, signed="true")
-        self._metric_open_orders.set(float(len(orders)), labels=labels)
-        return orders
+            orders.sort(key=lambda item: item.timestamp)
+            labels = self._labels(endpoint=context.path, signed="true")
+            self._metric_open_orders.set(float(len(orders)), labels=labels)
+            return orders
+
+        return self._watchdog.execute("kraken_spot_fetch_open_orders", _call)
 
     def fetch_trades_history(
         self,
@@ -912,35 +928,21 @@ class KrakenSpotAdapter(ExchangeAdapter):
         errors = payload.get("error") if isinstance(payload, Mapping) else None
         if not errors:
             return
-        normalized: list[str] = []
-        for item in errors:
-            if isinstance(item, str) and item:
-                normalized.append(item)
-        if not normalized:
-            return
-        message = "; ".join(normalized)
-        lowered = message.lower()
         labels = self._labels(endpoint=endpoint, signed="true" if signed else "false")
-        if "invalid key" in lowered or "permission denied" in lowered:
+        try:
+            raise_for_kraken_error(
+                payload=payload,
+                default_message=f"Kraken API zwróciło błąd ({endpoint})",
+            )
+        except ExchangeAuthError:
             self._metric_api_errors.inc(labels={**labels, "reason": "auth"})
-            raise ExchangeAuthError(
-                f"Kraken API odrzuciło uwierzytelnienie: {message}",
-                401,
-                payload=payload,
-            )
-        if "rate limit" in lowered or "throttle" in lowered:
+            raise
+        except ExchangeThrottlingError:
             self._metric_api_errors.inc(labels={**labels, "reason": "throttled"})
-            raise ExchangeThrottlingError(
-                f"Kraken API zgłosiło limit: {message}",
-                429,
-                payload=payload,
-            )
-        self._metric_api_errors.inc(labels={**labels, "reason": "api_error"})
-        raise ExchangeAPIError(
-            f"Kraken API zwróciło błąd: {message}",
-            400,
-            payload=payload,
-        )
+            raise
+        except ExchangeAPIError:
+            self._metric_api_errors.inc(labels={**labels, "reason": "api_error"})
+            raise
 
     def _generate_nonce(self) -> str:
         candidate = int(time.time() * 1000)

@@ -23,6 +23,7 @@ log = logging.getLogger(__name__)
 class Mode(str, Enum):
     PAPER = "paper"
     SPOT = "spot"
+    MARGIN = "margin"
     FUTURES = "futures"
 
 
