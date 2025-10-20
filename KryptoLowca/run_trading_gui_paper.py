@@ -23,6 +23,8 @@ from importlib import import_module
 from pathlib import Path
 import sys
 import traceback
+import logging
+import math
 from typing import Optional, List, Dict, Any, Set, Tuple
 
 import tkinter as tk
@@ -58,6 +60,7 @@ from KryptoLowca.ui.trading import (
     format_notional as _format_notional,
     snapshot_from_app,
 )
+from KryptoLowca.ui.trading.risk_helpers import apply_runtime_risk_context
 from KryptoLowca.managers.database_manager import DatabaseManager
 
 
@@ -88,6 +91,8 @@ TP_PORTION_PRESETS: Dict[str, Tuple[float,float,float]] = {
     "Jedno-TP (100/0/0)": (1.00, 0.00, 0.00),
     "Dwa-TP (50/50/0)": (0.50, 0.50, 0.00),
 }
+
+logger = logging.getLogger(__name__)
 
 
 _FRONTEND_PATHS: DesktopAppPaths | None = None
@@ -1505,15 +1510,13 @@ def _open_paper_panel_on_start(app: TradingGUI):
 
 if __name__ == "__main__":
     root = tk.Tk()
-    paths, services = _build_frontend_bootstrap()
-    gui_kwargs: Dict[str, Any] = {}
-    if paths is not None:
-        gui_kwargs["paths"] = paths
-    if services is not None:
-        gui_kwargs["frontend_services"] = services
-    try:
-        app = TradingGUI(root, trade_executor=_paper_trade_executor, **gui_kwargs)
-    except TypeError:
-        app = TradingGUI(root, trade_executor=_paper_trade_executor)
+    app = TradingGUI(root, trade_executor=_paper_trade_executor)
+    apply_runtime_risk_context(
+        app,
+        entrypoint="trading_gui",
+        config_path=getattr(app, "_core_config_path", None),
+        default_notional=DEFAULT_NOTIONAL_USDT,
+        logger=logger,
+    )
     _open_paper_panel_on_start(app)
     root.mainloop()

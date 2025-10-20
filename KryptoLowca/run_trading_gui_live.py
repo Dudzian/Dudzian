@@ -16,6 +16,7 @@ from importlib import import_module
 from pathlib import Path
 import sys
 import math
+import logging
 import traceback
 from typing import Optional, List, Dict, Any, Tuple
 
@@ -50,6 +51,7 @@ from KryptoLowca.ui.trading import (
     format_notional as _fmt_notional,
     snapshot_from_app,
 )
+from KryptoLowca.ui.trading.risk_helpers import apply_runtime_risk_context
 
 
 DEFAULT_NOTIONAL_USDT = 12.0
@@ -385,15 +387,13 @@ def _open_paper_panel_on_start(app: TradingGUI):
 
 if __name__ == "__main__":
     root = tk.Tk()
-    paths, services = _build_frontend_bootstrap()
-    gui_kwargs: Dict[str, Any] = {}
-    if paths is not None:
-        gui_kwargs["paths"] = paths
-    if services is not None:
-        gui_kwargs["frontend_services"] = services
-    try:
-        app = TradingGUI(root, trade_executor=_paper_trade_executor, **gui_kwargs)
-    except TypeError:
-        app = TradingGUI(root, trade_executor=_paper_trade_executor)
+    app = TradingGUI(root, trade_executor=_paper_trade_executor)
+    apply_runtime_risk_context(
+        app,
+        entrypoint="trading_gui",
+        config_path=getattr(app, "_core_config_path", None),
+        default_notional=DEFAULT_NOTIONAL_USDT,
+        logger=logger,
+    )
     _open_paper_panel_on_start(app)
     root.mainloop()

@@ -60,6 +60,9 @@ def test_paper_app_uses_headless_mode_when_gui_disabled(monkeypatch: pytest.Monk
             self.stopped = True
             created["stopped"] = True
 
+        def update_account_equity(self, value: float) -> None:  # pragma: no cover - stub
+            created["equity"] = value
+
     monkeypatch.setattr(paper_launcher, "AutoTrader", FakeTrader)
     monkeypatch.setattr(
         paper_launcher,
@@ -88,6 +91,292 @@ def test_paper_app_uses_headless_mode_when_gui_disabled(monkeypatch: pytest.Monk
     app.stop()  # idempotencja
 
 
+def test_paper_app_applies_runtime_risk_context_to_gui(monkeypatch: pytest.MonkeyPatch) -> None:
+    recorded: dict[str, object] = {}
+
+    def _fake_apply_runtime(
+        gui: object,
+        *,
+        entrypoint: str,
+        config_path: str | None,
+        default_notional: float,
+        logger: object | None,
+    ) -> object:
+        recorded["entrypoint"] = entrypoint
+        recorded["config_path"] = config_path
+        recorded["default_notional"] = default_notional
+        recorded["logger"] = getattr(logger, "name", None)
+        setattr(gui, "default_paper_notional", default_notional)
+        return types.SimpleNamespace()
+
+    monkeypatch.setattr(paper_launcher, "apply_runtime_risk_context", _fake_apply_runtime)
+    class FakeTrader:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            recorded.setdefault("equity_updates", [])
+
+        def start(self) -> None:  # pragma: no cover - prosty stub
+            return None
+
+        def stop(self) -> None:  # pragma: no cover - prosty stub
+            return None
+
+        def update_risk_manager_settings(self, *args: object, **kwargs: object) -> None:
+            return None
+
+        def update_account_equity(self, value: float) -> None:
+            recorded.setdefault("equity_updates", []).append(value)
+
+    monkeypatch.setattr(paper_launcher, "AutoTrader", FakeTrader)
+    monkeypatch.setattr(
+        paper_launcher,
+        "DummyMarketFeed",
+        lambda *a, **kw: types.SimpleNamespace(start=lambda: None, stop=lambda: None, join=lambda timeout=None: None),
+    )
+    monkeypatch.setattr(paper_launcher, "DummyMarketFeedConfig", lambda *a, **kw: object())
+    monkeypatch.setattr(paper_launcher, "wire_gui_logs_to_adapter", lambda *a, **kw: None)
+
+    settings = RiskManagerSettings(
+        max_risk_per_trade=0.05,
+        max_daily_loss_pct=0.2,
+        max_portfolio_risk=0.25,
+        max_positions=5,
+        emergency_stop_drawdown=0.3,
+    )
+
+    monkeypatch.setattr(
+        paper_launcher,
+        "load_risk_manager_settings",
+        lambda *_, **__: ("balanced", {"source": "file"}, settings),
+    )
+
+    gui = types.SimpleNamespace(
+        paper_balance=0.0,
+        symbol_var=types.SimpleNamespace(get=lambda: "BTC/USDT"),
+    )
+
+    app = launcher.PaperAutoTradeApp(
+        symbol="BTC/USDT",
+        enable_gui=False,
+        gui=gui,
+        paper_balance=5_000.0,
+        core_config_path="/tmp/core.yaml",
+    )
+
+    expected_notional = 5_000.0 * settings.max_risk_per_trade
+    assert recorded["entrypoint"] == "auto_trader"
+    assert recorded["config_path"] == str(Path("/tmp/core.yaml"))
+    assert recorded["default_notional"] == pytest.approx(expected_notional)
+    assert recorded["logger"] == "paper-autotrade"
+    assert getattr(gui, "default_paper_notional", None) == pytest.approx(expected_notional)
+    assert app.gui is gui
+    assert recorded["equity_updates"][-1] == pytest.approx(5_000.0)
+
+
+def test_gui_risk_reload_updates_default_notional(monkeypatch: pytest.MonkeyPatch) -> None:
+    initial_settings = RiskManagerSettings(
+        max_risk_per_trade=0.05,
+        max_daily_loss_pct=0.2,
+        max_portfolio_risk=0.25,
+        max_positions=5,
+        emergency_stop_drawdown=0.3,
+    )
+    updated_settings = RiskManagerSettings(
+        max_risk_per_trade=0.1,
+        max_daily_loss_pct=0.2,
+        max_portfolio_risk=0.4,
+        max_positions=5,
+        emergency_stop_drawdown=0.3,
+    )
+
+    def fake_apply_runtime(
+        gui: object,
+        *,
+        entrypoint: str,
+        config_path: str | None,
+        default_notional: float,
+        logger: object | None,
+    ) -> object:
+        if hasattr(gui, "risk_manager_settings"):
+            setattr(gui, "risk_manager_settings", initial_settings)
+        if hasattr(gui, "risk_profile_name"):
+            setattr(gui, "risk_profile_name", "balanced")
+        setattr(gui, "default_paper_notional", default_notional)
+        return types.SimpleNamespace(
+            paper_balance=getattr(gui, "paper_balance", 0.0),
+            profile_name="balanced",
+            settings=initial_settings,
+        )
+
+    monkeypatch.setattr(paper_launcher, "apply_runtime_risk_context", fake_apply_runtime)
+    class RecordingTrader:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            self._core_account_equity = 0.0
+
+        def start(self) -> None:  # pragma: no cover - prosty stub
+            return None
+
+        def stop(self) -> None:  # pragma: no cover - prosty stub
+            return None
+
+        def update_risk_manager_settings(self, *args: object, **kwargs: object) -> None:
+            return None
+
+        def update_account_equity(self, value: float) -> None:
+            try:
+                self._core_account_equity = float(value)
+            except Exception:  # pragma: no cover - defensywne
+                self._core_account_equity = 0.0
+
+    monkeypatch.setattr(paper_launcher, "AutoTrader", RecordingTrader)
+    monkeypatch.setattr(
+        paper_launcher,
+        "DummyMarketFeed",
+        lambda *a, **kw: types.SimpleNamespace(start=lambda: None, stop=lambda: None, join=lambda timeout=None: None),
+    )
+    monkeypatch.setattr(paper_launcher, "DummyMarketFeedConfig", lambda *a, **kw: object())
+    monkeypatch.setattr(paper_launcher, "wire_gui_logs_to_adapter", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        paper_launcher,
+        "load_risk_manager_settings",
+        lambda *_, **__: ("balanced", {"source": "bootstrap"}, initial_settings),
+    )
+    monkeypatch.setattr(paper_launcher, "resolve_core_config_path", lambda: Path("/fake/core.yaml"))
+
+    class DummyRoot:
+        def __init__(self) -> None:
+            self._title = "GUI"
+
+        def title(self, new_value: str | None = None) -> str:
+            if new_value is None:
+                return self._title
+            self._title = new_value
+            return self._title
+
+    gui = types.SimpleNamespace(
+        root=DummyRoot(),
+        paper_balance=10_000.0,
+        risk_profile_name=None,
+        risk_profile_config=None,
+        risk_manager_settings=initial_settings,
+        _update_risk_banner=lambda: None,
+    )
+
+    app = launcher.PaperAutoTradeApp(
+        symbol="BTC/USDT",
+        enable_gui=False,
+        gui=gui,
+        paper_balance=10_000.0,
+        use_dummy_feed=False,
+    )
+
+    assert getattr(gui, "default_paper_notional", 0.0) == pytest.approx(500.0)
+
+    app._handle_gui_risk_reload("balanced", updated_settings, {"source": "file"})
+
+    assert getattr(gui, "default_paper_notional", 0.0) == pytest.approx(1_000.0)
+
+
+def test_headless_stub_trade_updates_notional(monkeypatch: pytest.MonkeyPatch) -> None:
+    recorded: list[float] = []
+
+    def fake_apply_runtime(
+        gui: object,
+        *,
+        entrypoint: str,
+        config_path: str | None,
+        default_notional: float,
+        logger: object | None,
+    ) -> object:
+        recorded.append(default_notional)
+        setattr(gui, "default_paper_notional", default_notional)
+        return types.SimpleNamespace(
+            settings=getattr(gui, "risk_manager_settings", None),
+            paper_balance=getattr(gui, "paper_balance", 0.0),
+        )
+
+    def fake_refresh_runtime(
+        gui: object,
+        *,
+        default_notional: float,
+        logger: object | None,
+    ) -> object:
+        recorded.append(default_notional)
+        setattr(gui, "default_paper_notional", default_notional)
+        return types.SimpleNamespace(
+            settings=getattr(gui, "risk_manager_settings", None),
+            paper_balance=getattr(gui, "paper_balance", 0.0),
+        )
+
+    monkeypatch.setattr(paper_launcher, "apply_runtime_risk_context", fake_apply_runtime)
+    monkeypatch.setattr(paper_launcher, "refresh_runtime_risk_context", fake_refresh_runtime)
+
+    class RecordingTrader:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            self._core_account_equity = 0.0
+
+        def start(self) -> None:  # pragma: no cover - prosty stub
+            return None
+
+        def stop(self) -> None:  # pragma: no cover - prosty stub
+            return None
+
+        def update_risk_manager_settings(self, *args: object, **kwargs: object) -> None:
+            return None
+
+        def update_account_equity(self, value: float) -> None:
+            try:
+                self._core_account_equity = float(value)
+            except Exception:  # pragma: no cover - defensywne
+                self._core_account_equity = 0.0
+
+    monkeypatch.setattr(paper_launcher, "AutoTrader", RecordingTrader)
+    monkeypatch.setattr(paper_launcher, "DummyMarketFeed", lambda *a, **kw: None)
+    monkeypatch.setattr(paper_launcher, "DummyMarketFeedConfig", lambda *a, **kw: object())
+    monkeypatch.setattr(paper_launcher, "wire_gui_logs_to_adapter", lambda *a, **kw: None)
+    monkeypatch.setattr(paper_launcher, "resolve_core_config_path", lambda: None)
+
+    settings = RiskManagerSettings(
+        max_risk_per_trade=0.1,
+        max_daily_loss_pct=0.2,
+        max_portfolio_risk=0.3,
+        max_positions=5,
+        emergency_stop_drawdown=0.25,
+    )
+
+    monkeypatch.setattr(
+        paper_launcher,
+        "load_risk_manager_settings",
+        lambda *_, **__: ("balanced", {"source": "memory"}, settings),
+    )
+
+    stub = launcher.HeadlessTradingStub(
+        symbol="BTC/USDT",
+        paper_balance=1_000.0,
+        risk_manager_settings=settings,
+    )
+
+    app = launcher.PaperAutoTradeApp(
+        symbol="BTC/USDT",
+        enable_gui=False,
+        use_dummy_feed=False,
+        headless_stub=stub,
+        paper_balance=1_000.0,
+    )
+
+    assert recorded[0] == pytest.approx(100.0)
+    assert getattr(app.gui, "default_paper_notional", 0.0) == pytest.approx(100.0)
+    assert getattr(app.trader, "_core_account_equity", 0.0) == pytest.approx(1_000.0)
+
+    stub._bridge_execute_trade("BTC/USDT", "buy", 20_000.0)
+    stub._bridge_execute_trade("BTC/USDT", "sell", 22_000.0)
+
+    assert app.paper_balance == pytest.approx(1_010.0)
+    assert getattr(app.gui, "paper_balance", 0.0) == pytest.approx(1_010.0)
+    assert recorded[-1] == pytest.approx(101.0)
+    assert getattr(app.gui, "default_paper_notional", 0.0) == pytest.approx(101.0)
+    assert getattr(app.trader, "_core_account_equity", 0.0) == pytest.approx(1_010.0)
+
+
 def test_parse_cli_args_supports_flags() -> None:
     options = parse_cli_args(["--nogui", "--no-feed", "--symbol=ETH/BTC", "--paper-balance", "2500"])
     assert options == PaperAutoTradeOptions(
@@ -98,6 +387,39 @@ def test_parse_cli_args_supports_flags() -> None:
         core_config_path=None,
         risk_profile=None,
     )
+
+
+def test_main_delegates_to_modern_app(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    class DummyApp:
+        def __init__(self, **kwargs: object) -> None:
+            captured["kwargs"] = kwargs
+
+        def run(self) -> None:
+            captured["ran"] = True
+
+    monkeypatch.setattr(launcher, "PaperAutoTradeApp", DummyApp)
+
+    launcher.main(
+        use_dummy_feed=False,
+        enable_gui=False,
+        core_config_path="/tmp/core.yaml",
+        core_environment="paper",
+        symbol="SOL/USDT",
+        paper_balance=1234.5,
+        risk_profile="balanced",
+    )
+
+    assert captured["ran"] is True
+    kwargs = captured["kwargs"]
+    assert kwargs["symbol"] == "SOL/USDT"
+    assert kwargs["enable_gui"] is False
+    assert kwargs["use_dummy_feed"] is False
+    assert kwargs["paper_balance"] == pytest.approx(1234.5)
+    assert kwargs["core_config_path"] == "/tmp/core.yaml"
+    assert kwargs["core_environment"] == "paper"
+    assert kwargs["risk_profile"] == "balanced"
 
 
 def test_parse_cli_args_handles_help(capsys: pytest.CaptureFixture[str]) -> None:
@@ -335,6 +657,7 @@ def test_paper_app_propagates_risk_updates_to_trader(monkeypatch: pytest.MonkeyP
     class RecordingTrader:
         def __init__(self, *_: object, **__: object) -> None:
             self.updated: list[tuple[str | None, RiskManagerSettings, object | None]] = []
+            self.equity_updates: list[float] = []
 
         def start(self) -> None:  # pragma: no cover - prosty stub
             return None
@@ -350,6 +673,12 @@ def test_paper_app_propagates_risk_updates_to_trader(monkeypatch: pytest.MonkeyP
             profile_config: object | None = None,
         ) -> None:
             self.updated.append((profile_name, settings, profile_config))
+
+        def update_account_equity(self, value: float) -> None:
+            try:
+                self.equity_updates.append(float(value))
+            except Exception:  # pragma: no cover - defensywne
+                self.equity_updates.append(0.0)
 
     monkeypatch.setattr(paper_launcher, "AutoTrader", RecordingTrader)
     monkeypatch.setattr(paper_launcher, "resolve_core_config_path", lambda: Path("/fake/core.yaml"))
@@ -525,12 +854,19 @@ def test_paper_app_prefers_bootstrap_execution_service(monkeypatch: pytest.Monke
     class RecordingTrader:
         def __init__(self, *_: object, **kwargs: object) -> None:
             bootstrap_calls.update(kwargs)
+            self.equity_updates: list[float] = []
 
         def start(self) -> None:  # pragma: no cover - prosty stub
             return None
 
         def stop(self) -> None:  # pragma: no cover - prosty stub
             return None
+
+        def update_account_equity(self, value: float) -> None:
+            try:
+                self.equity_updates.append(float(value))
+            except Exception:  # pragma: no cover - defensywne
+                self.equity_updates.append(0.0)
 
     service = _DummyService()
     bootstrap = types.SimpleNamespace(execution_service=service, environment=types.SimpleNamespace(name="paper"))
@@ -578,12 +914,19 @@ def test_paper_app_explicit_execution_service_overrides_bootstrap(monkeypatch: p
     class RecordingTrader:
         def __init__(self, *_: object, **kwargs: object) -> None:
             captured.update(kwargs)
+            self.equity_updates: list[float] = []
 
         def start(self) -> None:  # pragma: no cover - prosty stub
             return None
 
         def stop(self) -> None:  # pragma: no cover - prosty stub
             return None
+
+        def update_account_equity(self, value: float) -> None:
+            try:
+                self.equity_updates.append(float(value))
+            except Exception:  # pragma: no cover - defensywne
+                self.equity_updates.append(0.0)
 
     bootstrap = types.SimpleNamespace(execution_service=_DummyService())
     explicit = _DummyService()
@@ -801,6 +1144,9 @@ def test_paper_app_accepts_custom_headless_stub(monkeypatch: pytest.MonkeyPatch)
         def stop(self) -> None:  # pragma: no cover - prosty stub
             return
 
+        def update_account_equity(self, value: float) -> None:  # pragma: no cover - prosty stub
+            return
+
     class CustomStub:
         def __init__(self) -> None:
             self.symbol = "ADA/USDT"
@@ -866,6 +1212,9 @@ def test_paper_app_uses_external_gui_and_stub(monkeypatch: pytest.MonkeyPatch) -
             return
 
         def stop(self) -> None:  # pragma: no cover - prosty stub
+            return
+
+        def update_account_equity(self, value: float) -> None:  # pragma: no cover - prosty stub
             return
 
     class CustomGUI:
