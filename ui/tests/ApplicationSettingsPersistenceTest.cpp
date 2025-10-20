@@ -10,6 +10,8 @@
 #include <QStringList>
 #include <QQmlApplicationEngine>
 #include <QTemporaryDir>
+#include <QUrl>
+#include <QDir>
 
 #include "app/Application.hpp"
 #include "models/AlertsModel.hpp"
@@ -49,6 +51,8 @@ private slots:
     void testPersistsAndReloadsConfiguration();
     void testDisableUiSettingsSkipsWrites();
     void testCliOverridesUiSettingsPath();
+    void testRiskHistoryCliOverrides();
+    void testRiskHistoryEnvOverrides();
 };
 
 void ApplicationSettingsPersistenceTest::testPersistsAndReloadsConfiguration()
@@ -56,6 +60,9 @@ void ApplicationSettingsPersistenceTest::testPersistsAndReloadsConfiguration()
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     const QString settingsPath = dir.filePath(QStringLiteral("ui_settings.json"));
+    const QDateTime persistedAutoExportAt = QDateTime::fromString(QStringLiteral("2024-04-02T01:23:45Z"), Qt::ISODate);
+    QVERIFY(persistedAutoExportAt.isValid());
+    const QString autoExportPath = dir.filePath(QStringLiteral("exports/latest.csv"));
 
     constexpr auto kEnvName = QByteArrayLiteral("BOT_CORE_UI_SETTINGS_PATH");
     EnvRestore guard(kEnvName);
@@ -113,6 +120,16 @@ void ApplicationSettingsPersistenceTest::testPersistsAndReloadsConfiguration()
         historySample.exposures = {exposureA, exposureB};
         historyModel->recordSnapshot(historySample);
 
+        QVERIFY(app.setRiskHistoryExportLimitEnabled(true));
+        QVERIFY(app.setRiskHistoryExportLimitValue(12));
+        QVERIFY(app.setRiskHistoryExportLastDirectory(QUrl::fromLocalFile(dir.path())));
+        QVERIFY(app.setRiskHistoryAutoExportEnabled(true));
+        QVERIFY(app.setRiskHistoryAutoExportIntervalMinutes(25));
+        QVERIFY(app.setRiskHistoryAutoExportBasename(QStringLiteral("nightly-dump")));
+        QVERIFY(app.setRiskHistoryAutoExportUseLocalTime(true));
+        app.setLastRiskHistoryAutoExportForTesting(persistedAutoExportAt);
+        app.setRiskHistoryAutoExportLastPathForTesting(QUrl::fromLocalFile(autoExportPath));
+
         app.saveUiSettingsImmediatelyForTesting();
         QVERIFY(QFile::exists(settingsPath));
 
@@ -158,6 +175,23 @@ void ApplicationSettingsPersistenceTest::testPersistsAndReloadsConfiguration()
         const QJsonArray persistedExposures = historyObject.value(QStringLiteral("exposures")).toArray();
         QCOMPARE(persistedExposures.size(), 2);
         QVERIFY(persistedExposures.at(1).toObject().value(QStringLiteral("breached")).toBool());
+
+        const QJsonObject exportSection = historySection.value(QStringLiteral("export")).toObject();
+        QVERIFY(!exportSection.isEmpty());
+        QVERIFY(exportSection.value(QStringLiteral("limitEnabled")).toBool());
+        QCOMPARE(exportSection.value(QStringLiteral("limitValue")).toInt(), 12);
+        QCOMPARE(exportSection.value(QStringLiteral("lastDirectory")).toString(),
+                 QFileInfo(dir.path()).absoluteFilePath());
+        const QJsonObject autoSection = exportSection.value(QStringLiteral("auto")).toObject();
+        QVERIFY(!autoSection.isEmpty());
+        QVERIFY(autoSection.value(QStringLiteral("enabled")).toBool());
+        QCOMPARE(autoSection.value(QStringLiteral("intervalMinutes")).toInt(), 25);
+        QCOMPARE(autoSection.value(QStringLiteral("basename")).toString(), QStringLiteral("nightly-dump"));
+        QVERIFY(autoSection.value(QStringLiteral("useLocalTime")).toBool());
+        QCOMPARE(autoSection.value(QStringLiteral("lastExportAt")).toString(),
+                 persistedAutoExportAt.toUTC().toString(Qt::ISODateWithMs));
+        QCOMPARE(autoSection.value(QStringLiteral("lastPath")).toString(),
+                 QFileInfo(autoExportPath).absoluteFilePath());
     }
 
     {
@@ -221,6 +255,16 @@ void ApplicationSettingsPersistenceTest::testPersistsAndReloadsConfiguration()
         QCOMPARE(historyModel->totalBreachCount(), 1);
         QVERIFY(historyModel->anyExposureBreached());
         QVERIFY(historyModel->maxExposureUtilization() > 1.0);
+
+        QVERIFY(app.riskHistoryExportLimitEnabled());
+        QCOMPARE(app.riskHistoryExportLimitValue(), 12);
+        QCOMPARE(app.riskHistoryExportLastDirectory().toLocalFile(), QFileInfo(dir.path()).absoluteFilePath());
+        QVERIFY(app.riskHistoryAutoExportEnabled());
+        QCOMPARE(app.riskHistoryAutoExportIntervalMinutes(), 25);
+        QCOMPARE(app.riskHistoryAutoExportBasename(), QStringLiteral("nightly-dump"));
+        QVERIFY(app.riskHistoryAutoExportUseLocalTime());
+        QCOMPARE(app.riskHistoryLastAutoExportAt(), persistedAutoExportAt.toUTC());
+        QCOMPARE(app.riskHistoryLastAutoExportPath().toLocalFile(), QFileInfo(autoExportPath).absoluteFilePath());
     }
 }
 
@@ -323,6 +367,100 @@ void ApplicationSettingsPersistenceTest::testCliOverridesUiSettingsPath()
     const QJsonObject updatedRisk = updated.object().value(QStringLiteral("riskRefresh")).toObject();
     QVERIFY(updatedRisk.value(QStringLiteral("enabled")).toBool());
     QCOMPARE(updatedRisk.value(QStringLiteral("intervalSeconds")).toDouble(), 9.0);
+}
+
+void ApplicationSettingsPersistenceTest::testRiskHistoryCliOverrides()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString exportDir = dir.filePath(QStringLiteral("exports"));
+    const QString autoDir = dir.filePath(QStringLiteral("auto"));
+
+    QQmlApplicationEngine engine;
+    Application app(engine);
+
+    QCommandLineParser parser;
+    app.configureParser(parser);
+    const QStringList args = {QStringLiteral("app"),
+                              QStringLiteral("--risk-history-export-dir"),
+                              exportDir,
+                              QStringLiteral("--risk-history-export-limit"),
+                              QStringLiteral("37"),
+                              QStringLiteral("--risk-history-auto-export"),
+                              QStringLiteral("--risk-history-auto-export-interval"),
+                              QStringLiteral("12"),
+                              QStringLiteral("--risk-history-auto-export-basename"),
+                              QStringLiteral(" custom base "),
+                              QStringLiteral("--risk-history-auto-export-local-time"),
+                              QStringLiteral("--risk-history-auto-export-dir"),
+                              autoDir};
+    parser.process(args);
+
+    QVERIFY(app.applyParser(parser));
+
+    const QString absoluteAutoDir = QDir(autoDir).absolutePath();
+    QCOMPARE(app.riskHistoryExportLastDirectory(), QUrl::fromLocalFile(absoluteAutoDir));
+    QVERIFY(app.riskHistoryExportLimitEnabled());
+    QCOMPARE(app.riskHistoryExportLimitValue(), 37);
+    QVERIFY(app.riskHistoryAutoExportEnabled());
+    QCOMPARE(app.riskHistoryAutoExportIntervalMinutes(), 12);
+    QCOMPARE(app.riskHistoryAutoExportBasename(), QStringLiteral("custom_base"));
+    QVERIFY(app.riskHistoryAutoExportUseLocalTime());
+}
+
+void ApplicationSettingsPersistenceTest::testRiskHistoryEnvOverrides()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString exportDir = dir.filePath(QStringLiteral("env_exports"));
+    const QString autoDir = dir.filePath(QStringLiteral("env_auto"));
+
+    constexpr auto kDirEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_EXPORT_DIR");
+    constexpr auto kAutoDirEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_AUTO_EXPORT_DIR");
+    constexpr auto kLimitEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_EXPORT_LIMIT");
+    constexpr auto kLimitEnabledEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_EXPORT_LIMIT_ENABLED");
+    constexpr auto kAutoEnabledEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_AUTO_EXPORT");
+    constexpr auto kIntervalEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_AUTO_EXPORT_INTERVAL_MINUTES");
+    constexpr auto kBasenameEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_AUTO_EXPORT_BASENAME");
+    constexpr auto kLocalTimeEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_AUTO_EXPORT_USE_LOCAL_TIME");
+
+    EnvRestore dirGuard(kDirEnv);
+    EnvRestore autoDirGuard(kAutoDirEnv);
+    EnvRestore limitGuard(kLimitEnv);
+    EnvRestore limitEnabledGuard(kLimitEnabledEnv);
+    EnvRestore autoEnabledGuard(kAutoEnabledEnv);
+    EnvRestore intervalGuard(kIntervalEnv);
+    EnvRestore basenameGuard(kBasenameEnv);
+    EnvRestore localTimeGuard(kLocalTimeEnv);
+
+    qputenv(kDirEnv.constData(), exportDir.toUtf8());
+    qputenv(kAutoDirEnv.constData(), autoDir.toUtf8());
+    qputenv(kLimitEnv.constData(), QByteArrayLiteral("15"));
+    qputenv(kLimitEnabledEnv.constData(), QByteArrayLiteral("true"));
+    qputenv(kAutoEnabledEnv.constData(), QByteArrayLiteral("1"));
+    qputenv(kIntervalEnv.constData(), QByteArrayLiteral("25"));
+    qputenv(kBasenameEnv.constData(), QByteArrayLiteral("Env Export"));
+    qputenv(kLocalTimeEnv.constData(), QByteArrayLiteral("on"));
+
+    QQmlApplicationEngine engine;
+    Application app(engine);
+
+    QCommandLineParser parser;
+    app.configureParser(parser);
+    parser.process(QStringList{QStringLiteral("app")});
+
+    QVERIFY(app.applyParser(parser));
+
+    const QString absoluteAutoDir = QDir(autoDir).absolutePath();
+    QCOMPARE(app.riskHistoryExportLastDirectory(), QUrl::fromLocalFile(absoluteAutoDir));
+    QVERIFY(app.riskHistoryExportLimitEnabled());
+    QCOMPARE(app.riskHistoryExportLimitValue(), 15);
+    QVERIFY(app.riskHistoryAutoExportEnabled());
+    QCOMPARE(app.riskHistoryAutoExportIntervalMinutes(), 25);
+    QCOMPARE(app.riskHistoryAutoExportBasename(), QStringLiteral("Env_Export"));
+    QVERIFY(app.riskHistoryAutoExportUseLocalTime());
 }
 
 QTEST_MAIN(ApplicationSettingsPersistenceTest)

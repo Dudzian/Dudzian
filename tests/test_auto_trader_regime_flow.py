@@ -1,6 +1,10 @@
 from __future__ import annotations
+
+import time
+import enum
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -57,7 +61,53 @@ class _Provider:
         return self.df
 
 
-_MISSING = object()
+class _RiskServiceStub:
+    def __init__(self, approval: bool) -> None:
+        self.approval = approval
+        self.calls: list[RiskDecision] = []
+
+    def evaluate_decision(self, decision: RiskDecision) -> bool:
+        self.calls.append(decision)
+        return self.approval
+
+
+class _RiskServiceResponseStub:
+    def __init__(self, response: Any) -> None:
+        self._response = response
+        self.calls: list[RiskDecision] = []
+
+    def evaluate_decision(self, decision: RiskDecision) -> Any:
+        self.calls.append(decision)
+        if callable(self._response):
+            return self._response()
+        return self._response
+
+
+class _ExecutionServiceStub:
+    def __init__(self) -> None:
+        self.calls: list[RiskDecision] = []
+        self.methods: list[str] = []
+
+    def execute_decision(self, decision: RiskDecision) -> None:
+        self.methods.append("execute_decision")
+        self.calls.append(decision)
+
+    def execute(self, decision: RiskDecision) -> None:
+        self.methods.append("execute")
+        self.calls.append(decision)
+
+
+class _ExecutionServiceExecuteOnly:
+    def __init__(self) -> None:
+        self.calls: list[RiskDecision] = []
+
+    def execute(self, decision: RiskDecision) -> None:
+        self.calls.append(decision)
+
+
+class _Approval(enum.Enum):
+    APPROVED = "approved"
+    DENIED = "denied"
 
 
 @dataclass
@@ -1034,3 +1084,508 @@ def test_auto_trader_increases_risk_when_summary_calm() -> None:
     assert trader._last_signal == "buy"
     assert trader.current_strategy == "trend_following"
     assert trader.current_leverage > 2.0
+    assert trader._last_risk_decision is not None
+    assert trader._last_risk_decision.should_trade is True
+    assert (
+        trader._last_risk_decision.details["summary"]["risk_level"]
+        == summary.risk_level.value
+    )
+    assert trader._last_risk_decision.details["summary"]["risk_volatility"] == pytest.approx(summary.risk_volatility)
+    assert trader._last_risk_decision.details["summary"]["regime_persistence"] == pytest.approx(summary.regime_persistence)
+
+
+@pytest.mark.parametrize(
+    ("approval", "cooldown_active", "expected_execute"),
+    [
+        (True, False, True),
+        (False, False, False),
+        (True, True, False),
+    ],
+    ids=["approved", "rejected", "cooldown"],
+)
+def test_auto_trader_invokes_services_based_on_risk_approval(
+    approval: bool,
+    cooldown_active: bool,
+    expected_execute: bool,
+) -> None:
+    emitter = _Emitter()
+    gui = _GUI()
+    provider = _Provider(_build_market_data())
+    ai_manager = _AIManagerStub(
+        [_DummyAssessment(regime=MarketRegime.TREND, risk_score=0.24, confidence=0.76)]
+    )
+
+    risk_service = _RiskServiceStub(approval)
+    execution_service = _ExecutionServiceStub()
+
+    trader = AutoTrader(
+        emitter,
+        gui,
+        symbol_getter=lambda: "ETHUSDT",
+        auto_trade_interval_s=0.0,
+        enable_auto_trade=True,
+        market_data_provider=provider,
+        risk_service=risk_service,
+        execution_service=execution_service,
+    )
+    trader.ai_manager = ai_manager
+
+    if cooldown_active:
+        trader._cooldown_until = time.monotonic() + 60.0
+        trader._cooldown_reason = "test"
+
+    trader._auto_trade_loop()
+
+    assert len(risk_service.calls) == 1
+    decision = risk_service.calls[0]
+    assert decision is trader._last_risk_decision
+    assert decision.details["symbol"] == "ETHUSDT"
+    assert decision.details["signal"] == trader._last_signal
+    assert decision.cooldown_active is cooldown_active
+    assert decision.should_trade is (not cooldown_active)
+
+    if expected_execute:
+        assert execution_service.calls == [decision]
+        assert execution_service.methods[0] in {"execute_decision", "execute"}
+    else:
+        assert execution_service.calls == []
+        assert execution_service.methods == []
+
+
+@pytest.mark.parametrize(
+    "response, expected_execute",
+    [
+        (True, True),
+        (False, False),
+        ((True, {"reason": "ok"}), True),
+        ((False, {"reason": "blocked"}), False),
+        ({"approved": True}, True),
+        ({"allow": 0}, False),
+        (SimpleNamespace(approved=True), True),
+        (SimpleNamespace(allow=0), False),
+        (SimpleNamespace(should_trade=True), True),
+        (SimpleNamespace(), False),
+        ("approved", True),
+        ("deny", False),
+        (_Approval.APPROVED, True),
+        (_Approval.DENIED, False),
+    ],
+    ids=[
+        "bool_true",
+        "bool_false",
+        "tuple_true",
+        "tuple_false",
+        "dict_approved",
+        "dict_allow_false",
+        "ns_approved",
+        "ns_allow_false",
+        "ns_should_trade",
+        "ns_unknown",
+        "str_approved",
+        "str_deny",
+        "enum_approved",
+        "enum_denied",
+    ],
+)
+def test_auto_trader_handles_varied_risk_service_responses(
+    response: Any,
+    expected_execute: bool,
+) -> None:
+    emitter = _Emitter()
+    gui = _GUI()
+    provider = _Provider(_build_market_data())
+    ai_manager = _AIManagerStub(
+        [_DummyAssessment(regime=MarketRegime.TREND, risk_score=0.24, confidence=0.76)]
+    )
+
+    risk_service = _RiskServiceResponseStub(response)
+    execution_service = _ExecutionServiceExecuteOnly()
+
+    trader = AutoTrader(
+        emitter,
+        gui,
+        symbol_getter=lambda: "BTCUSDT",
+        auto_trade_interval_s=0.0,
+        enable_auto_trade=True,
+        market_data_provider=provider,
+        risk_service=risk_service,
+        execution_service=execution_service,
+    )
+    trader.ai_manager = ai_manager
+
+    trader._auto_trade_loop()
+
+    assert len(risk_service.calls) == 1
+    decision = risk_service.calls[0]
+    assert decision.should_trade is True
+    metadata = decision.details.get("risk_service", {}).get("response")
+    assert metadata is not None
+    assert metadata["type"]
+    if isinstance(response, str):
+        expected_value = response.strip()
+        if len(expected_value) > 120:
+            expected_value = expected_value[:117] + "..."
+        assert metadata.get("value") == expected_value
+    elif isinstance(response, (bool, int, float)):
+        assert metadata.get("value") == response
+    elif isinstance(response, dict):
+        assert "keys" in metadata
+    elif isinstance(response, (list, tuple, set)):
+        assert metadata.get("size") == len(response)
+    else:
+        assert "repr" in metadata or "value" in metadata
+
+    if expected_execute:
+        assert execution_service.calls == [decision]
+    else:
+        assert execution_service.calls == []
+
+
+def test_auto_trader_records_risk_evaluation_history() -> None:
+    emitter = _Emitter()
+    gui = _GUI()
+    provider = _Provider(_build_market_data())
+    ai_manager = _AIManagerStub(
+        [
+            _DummyAssessment(regime=MarketRegime.TREND, risk_score=0.25, confidence=0.78),
+            _DummyAssessment(regime=MarketRegime.TREND, risk_score=0.26, confidence=0.79),
+        ]
+    )
+
+    responses = iter([True, False])
+    risk_service = _RiskServiceResponseStub(lambda: next(responses))
+    execution_service = _ExecutionServiceStub()
+
+    trader = AutoTrader(
+        emitter,
+        gui,
+        symbol_getter=lambda: "SOLUSDT",
+        auto_trade_interval_s=0.0,
+        enable_auto_trade=True,
+        market_data_provider=provider,
+        risk_service=risk_service,
+        execution_service=execution_service,
+    )
+    trader.ai_manager = ai_manager
+
+    trader._auto_trade_loop()
+    trader._auto_trade_loop()
+
+    evaluations = trader.get_risk_evaluations()
+    assert len(evaluations) == 2
+
+    first, second = evaluations
+    assert first["approved"] is True
+    assert first["normalized"] is True
+    assert first["service"] == "_RiskServiceResponseStub"
+    assert first["response"]["type"] == "bool"
+    assert first["response"]["value"] is True
+    assert first["decision"]["should_trade"] is True
+
+    assert second["approved"] is False
+    assert second["normalized"] is False
+    assert second["response"]["type"] == "bool"
+    assert second["response"]["value"] is False
+    assert second["decision"]["should_trade"] is True
+
+    evaluations[0]["approved"] = None
+    fresh = trader.get_risk_evaluations()
+    assert fresh[0]["approved"] is True
+
+
+def test_auto_trader_limits_and_clears_risk_history() -> None:
+    emitter = _Emitter()
+    gui = _GUI()
+    provider = _Provider(_build_market_data())
+    ai_manager = _AIManagerStub(
+        [
+            _DummyAssessment(regime=MarketRegime.TREND, risk_score=0.21, confidence=0.76),
+            _DummyAssessment(regime=MarketRegime.TREND, risk_score=0.22, confidence=0.77),
+            _DummyAssessment(regime=MarketRegime.TREND, risk_score=0.23, confidence=0.78),
+            _DummyAssessment(regime=MarketRegime.TREND, risk_score=0.24, confidence=0.79),
+            _DummyAssessment(regime=MarketRegime.TREND, risk_score=0.25, confidence=0.8),
+        ]
+    )
+
+    responses = iter([True, False, True, True, False])
+    risk_service = _RiskServiceResponseStub(lambda: next(responses))
+    execution_service = _ExecutionServiceStub()
+
+    trader = AutoTrader(
+        emitter,
+        gui,
+        symbol_getter=lambda: "ETHUSDT",
+        auto_trade_interval_s=0.0,
+        enable_auto_trade=True,
+        market_data_provider=provider,
+        risk_service=risk_service,
+        execution_service=execution_service,
+        risk_evaluations_limit=3,
+    )
+    trader.ai_manager = ai_manager
+
+    for _ in range(5):
+        trader._auto_trade_loop()
+
+    evaluations = trader.get_risk_evaluations()
+    assert len(evaluations) == 3
+    assert [entry["response"]["value"] for entry in evaluations] == [True, True, False]
+    assert [entry["normalized"] for entry in evaluations] == [True, True, False]
+
+    trader.clear_risk_evaluations()
+    assert trader.get_risk_evaluations() == []
+
+
+def test_auto_trader_filters_and_summarizes_risk_history() -> None:
+    emitter = _Emitter()
+    gui = _GUI()
+    provider = _Provider(_build_market_data())
+    ai_manager = _AIManagerStub(
+        [
+            _DummyAssessment(regime=MarketRegime.TREND, risk_score=0.22, confidence=0.76),
+            _DummyAssessment(regime=MarketRegime.TREND, risk_score=0.23, confidence=0.77),
+            _DummyAssessment(regime=MarketRegime.TREND, risk_score=0.24, confidence=0.78),
+            _DummyAssessment(regime=MarketRegime.TREND, risk_score=0.25, confidence=0.79),
+        ]
+    )
+
+    responses = iter([True, False, RuntimeError("boom"), "approved"])
+
+    def _next_response() -> Any:
+        value = next(responses)
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    risk_service = _RiskServiceResponseStub(_next_response)
+    execution_service = _ExecutionServiceStub()
+
+    trader = AutoTrader(
+        emitter,
+        gui,
+        symbol_getter=lambda: "ADAUSDT",
+        auto_trade_interval_s=0.0,
+        enable_auto_trade=True,
+        market_data_provider=provider,
+        risk_service=risk_service,
+        execution_service=execution_service,
+        risk_evaluations_limit=None,
+    )
+    trader.ai_manager = ai_manager
+
+    for _ in range(4):
+        trader._auto_trade_loop()
+
+    evaluations = trader.get_risk_evaluations()
+    assert len(evaluations) == 4
+    assert [entry["normalized"] for entry in evaluations] == [True, False, False, True]
+    assert any("error" in entry for entry in evaluations)
+
+    approved = trader.get_risk_evaluations(approved=True)
+    assert [entry["approved"] for entry in approved] == [True, True]
+
+    normalized_true = trader.get_risk_evaluations(normalized=True)
+    assert len(normalized_true) == 2
+    assert all(entry["normalized"] is True for entry in normalized_true)
+
+    normalized_false_no_errors = trader.get_risk_evaluations(normalized=False, include_errors=False)
+    assert len(normalized_false_no_errors) == 1
+    assert "error" not in normalized_false_no_errors[0]
+
+    latest = trader.get_risk_evaluations(limit=1, reverse=True)
+    assert len(latest) == 1
+    assert latest[0]["approved"] is True
+    assert latest[0]["normalized"] is True
+
+    normalized_true[0]["normalized"] = False
+    assert trader.get_risk_evaluations(normalized=True)[0]["normalized"] is True
+
+    summary = trader.summarize_risk_evaluations()
+    assert summary["total"] == 4
+    assert summary["approved"] == 2
+    assert summary["rejected"] == 2
+    assert summary["unknown"] == 0
+    assert summary["errors"] == 1
+    assert summary["raw_true"] == 2
+    assert summary["raw_false"] == 2
+    assert summary["raw_none"] == 0
+    assert summary["approval_rate"] == pytest.approx(0.5)
+    assert summary["error_rate"] == pytest.approx(0.25)
+    assert summary["first_timestamp"] <= summary["last_timestamp"]
+
+
+def test_auto_trader_risk_history_filters_by_service_and_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    emitter = _Emitter()
+    gui = _GUI()
+    provider = _Provider(_build_market_data())
+
+    trader = AutoTrader(
+        emitter,
+        gui,
+        symbol_getter=lambda: "SOLUSDT",
+        auto_trade_interval_s=0.0,
+        enable_auto_trade=False,
+        market_data_provider=provider,
+    )
+
+    decision = RiskDecision(
+        should_trade=True,
+        fraction=0.42,
+        state="active",
+        details={"origin": "unit-test"},
+    )
+
+    class _ServiceAlpha:
+        ...
+
+    class _ServiceBeta:
+        ...
+
+    alpha = _ServiceAlpha()
+    beta = _ServiceBeta()
+
+    timestamps = iter([1000.0, 1010.0, 1020.0, 1030.0])
+    monkeypatch.setattr("bot_core.auto_trader.app.time.time", lambda: next(timestamps))
+
+    trader._record_risk_evaluation(
+        decision,
+        approved=True,
+        normalized=True,
+        response=True,
+        service=alpha,
+        error=None,
+    )
+    rejected_decision = RiskDecision(
+        should_trade=False,
+        fraction=0.13,
+        state="blocked",
+        details={"origin": "unit-test"},
+    )
+    trader._record_risk_evaluation(
+        rejected_decision,
+        approved=False,
+        normalized=False,
+        response=False,
+        service=beta,
+        error=None,
+    )
+    trader._record_risk_evaluation(
+        decision,
+        approved=None,
+        normalized=None,
+        response=None,
+        service=None,
+        error=RuntimeError("risk failure"),
+    )
+    trader._record_risk_evaluation(
+        decision,
+        approved=True,
+        normalized=True,
+        response=True,
+        service=alpha,
+        error=None,
+    )
+
+    alpha_entries = trader.get_risk_evaluations(service="_ServiceAlpha")
+    assert len(alpha_entries) == 2
+    assert all(entry["service"] == "_ServiceAlpha" for entry in alpha_entries)
+
+    unknown_entries = trader.get_risk_evaluations(service="<unknown>")
+    assert len(unknown_entries) == 1
+    assert "service" not in unknown_entries[0]
+
+    window = trader.get_risk_evaluations(
+        since=pd.Timestamp(1010.0, unit="s"),
+        until=pd.Timestamp(1020.0, unit="s"),
+    )
+    assert len(window) == 2
+    assert {entry.get("service", "<unknown>") for entry in window} == {"_ServiceBeta", "<unknown>"}
+
+    summary = trader.summarize_risk_evaluations()
+    assert summary["total"] == 4
+    assert summary["services"]["_ServiceAlpha"]["total"] == 2
+    assert summary["services"]["_ServiceAlpha"]["approval_rate"] == pytest.approx(1.0)
+    assert summary["services"]["_ServiceBeta"]["rejected"] == 1
+    assert summary["services"]["<unknown>"]["errors"] == 1
+
+    filtered_summary = trader.summarize_risk_evaluations(service="_ServiceAlpha")
+    assert filtered_summary["total"] == 2
+    assert set(filtered_summary["services"].keys()) == {"_ServiceAlpha"}
+
+    no_error_summary = trader.summarize_risk_evaluations(include_errors=False)
+    assert no_error_summary["total"] == 3
+    assert "<unknown>" not in no_error_summary["services"]
+
+    df = trader.risk_evaluations_to_dataframe()
+    assert len(df) == 4
+    assert {"timestamp", "approved", "normalized", "decision"}.issubset(df.columns)
+    assert df.loc[pd.isna(df["service"]), "error"].iloc[0].startswith("RuntimeError")
+
+    alpha_df = trader.risk_evaluations_to_dataframe(service="_ServiceAlpha")
+    assert len(alpha_df) == 2
+    assert set(alpha_df["service"].unique()) == {"_ServiceAlpha"}
+
+    window_df = trader.risk_evaluations_to_dataframe(
+        since=pd.Timestamp(1010.0, unit="s"),
+        until=pd.Timestamp(1020.0, unit="s"),
+    )
+    assert len(window_df) == 2
+    assert set(window_df.get("service", pd.Series(index=window_df.index)).fillna("<unknown>").unique()) == {
+        "_ServiceBeta",
+        "<unknown>",
+    }
+
+    no_error_df = trader.risk_evaluations_to_dataframe(include_errors=False)
+    assert len(no_error_df) == 3
+    assert no_error_df.get("error").isna().all()
+
+    flattened_df = trader.risk_evaluations_to_dataframe(flatten_decision=True)
+    assert {
+        "decision_should_trade",
+        "decision_fraction",
+        "decision_state",
+    }.issubset(flattened_df.columns)
+    assert bool(flattened_df.loc[0, "decision_should_trade"]) is True
+    assert bool(flattened_df.loc[1, "decision_should_trade"]) is False
+    assert flattened_df.loc[0, "decision_fraction"] == pytest.approx(0.42)
+    assert flattened_df.loc[1, "decision_fraction"] == pytest.approx(0.13)
+    assert flattened_df.loc[0, "decision_details"]["origin"] == "unit-test"
+
+    prefixed_df = trader.risk_evaluations_to_dataframe(
+        flatten_decision=True,
+        decision_prefix="risk__",
+    )
+    assert {"risk__should_trade", "risk__fraction"}.issubset(prefixed_df.columns)
+    assert "decision_should_trade" not in prefixed_df.columns
+
+    subset_df = trader.risk_evaluations_to_dataframe(
+        flatten_decision=True,
+        decision_fields=["fraction", "details"],
+    )
+    subset_flattened_columns = [
+        column for column in subset_df.columns if column.startswith("decision_")
+    ]
+    assert subset_flattened_columns == ["decision_fraction", "decision_details"]
+    assert subset_df.loc[0, "decision_fraction"] == pytest.approx(0.42)
+    assert subset_df.loc[1, "decision_fraction"] == pytest.approx(0.13)
+    assert subset_df.loc[0, "decision_details"]["origin"] == "unit-test"
+
+    drop_df = trader.risk_evaluations_to_dataframe(
+        flatten_decision=True,
+        drop_decision_column=True,
+    )
+    assert "decision" not in drop_df.columns
+    assert {"decision_should_trade", "decision_fraction"}.issubset(drop_df.columns)
+
+    fill_df = trader.risk_evaluations_to_dataframe(
+        flatten_decision=True,
+        decision_fields=["missing_field"],
+        fill_value="missing",
+    )
+    assert (fill_df["decision_missing_field"] == "missing").all()
+
+    flattened_df.loc[0, "decision_should_trade"] = False
+    assert trader.get_risk_evaluations()[0]["decision"]["should_trade"] is True
+
+    df.loc[pd.isna(df["service"]), "normalized"] = False
+    assert trader.get_risk_evaluations()[2]["normalized"] is None

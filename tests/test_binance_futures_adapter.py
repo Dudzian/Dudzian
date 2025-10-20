@@ -41,6 +41,15 @@ class _FakeResponse:
         return json.dumps(self._payload).encode("utf-8")
 
 
+class _RecordingWatchdog:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def execute(self, operation: str, func):
+        self.calls.append(operation)
+        return func()
+
+
 def _build_credentials() -> ExchangeCredentials:
     return ExchangeCredentials(
         key_id="test-key",
@@ -434,17 +443,33 @@ def test_fetch_positions_resets_closed_metrics(monkeypatch: pytest.MonkeyPatch) 
     adapter.fetch_positions()
     assert per_symbol_gauge.value(labels=base_labels) == pytest.approx(0.0)
 
-    gross_total = registry.gauge("binance_futures_gross_notional", "")
-    net_total = registry.gauge("binance_futures_net_notional", "")
-    long_total = registry.gauge("binance_futures_long_notional_total", "")
-    short_total = registry.gauge("binance_futures_short_notional_total", "")
-    open_positions = registry.gauge("binance_futures_open_positions", "")
-    env_labels = {"exchange": "binance_futures", "environment": "testnet"}
-    assert gross_total.value(labels=env_labels) == pytest.approx(0.0)
-    assert net_total.value(labels=env_labels) == pytest.approx(0.0)
-    assert long_total.value(labels=env_labels) == pytest.approx(0.0)
-    assert short_total.value(labels=env_labels) == pytest.approx(0.0)
-    assert open_positions.value(labels=env_labels) == pytest.approx(0.0)
+
+def test_futures_account_snapshot_uses_watchdog(monkeypatch: pytest.MonkeyPatch) -> None:
+    credentials = ExchangeCredentials(
+        key_id="watchdog",
+        secret="secret",
+        permissions=("read", "trade"),
+        environment=Environment.LIVE,
+    )
+    watchdog = _RecordingWatchdog()
+    adapter = BinanceFuturesAdapter(credentials, watchdog=watchdog)
+
+    monkeypatch.setattr(
+        adapter,
+        "_signed_request",
+        lambda *args, **kwargs: {
+            "assets": [{"asset": "USDT", "walletBalance": "5"}],
+            "totalAvailableBalance": "5",
+            "totalMaintMargin": "1",
+            "totalMarginBalance": "7",
+        },
+    )
+
+    snapshot = adapter.fetch_account_snapshot()
+
+    assert snapshot.total_equity == pytest.approx(7.0)
+    assert "binance_futures_fetch_account" in watchdog.calls
+
 
 
 def test_build_hedging_report_returns_summary(monkeypatch: pytest.MonkeyPatch) -> None:

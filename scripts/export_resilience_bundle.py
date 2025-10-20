@@ -5,7 +5,6 @@ import base64
 import hashlib
 import hmac
 import json
-import logging
 import os
 import tarfile
 from dataclasses import dataclass
@@ -222,6 +221,85 @@ def _run_stage6(argv: Sequence[str]) -> int:
         metadata=metadata,
     )
 
+def _write_tar(
+    *,
+    destination: Path,
+    manifest_bytes: bytes,
+    signature_bytes: bytes | None,
+    payloads: Sequence[tuple[str, bytes]],
+) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(destination, "w:gz") as archive:
+        def _add(name: str, data: bytes) -> None:
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            archive.addfile(info, BytesIO(data))
+
+        _add("./manifest.json", manifest_bytes)
+        if signature_bytes is not None:
+            _add("./manifest.sig", signature_bytes)
+        for name, payload in payloads:
+            _add(name, payload)
+
+
+def _run_stage6(argv: Sequence[str]) -> int:
+    parser = argparse.ArgumentParser(description="Eksport paczki odporności Stage6 (tar.gz)")
+    parser.add_argument("--version", required=True, help="Wersja paczki umieszczona w manifeście")
+    parser.add_argument("--report", action="append", default=[], help="Plik raportu do umieszczenia w katalogu reports/")
+    parser.add_argument(
+        "--signature",
+        action="append",
+        default=[],
+        help="Podpis raportu do umieszczenia w katalogu reports/",
+    )
+    parser.add_argument(
+        "--include",
+        action="append",
+        default=[],
+        help="Dodatkowe pliki do katalogu extras/",
+    )
+    parser.add_argument(
+        "--metadata",
+        action="append",
+        default=[],
+        help="Metadane manifestu w formacie klucz=wartość (można powtórzyć)",
+    )
+    parser.add_argument("--output-dir", required=True, type=Path, help="Katalog wynikowy")
+    parser.add_argument("--signing-key", help="Klucz HMAC przekazany inline")
+    parser.add_argument("--signing-key-env", help="Zmienna środowiskowa z kluczem HMAC")
+    parser.add_argument("--signing-key-file", type=Path, help="Plik z kluczem HMAC")
+    parser.add_argument("--key-id", help="Identyfikator klucza HMAC")
+    parser.add_argument(
+        "--bundle-name",
+        default="resilience-bundle",
+        help="Prefiks nazwy generowanego archiwum (domyślnie resilience-bundle)",
+    )
+    args = parser.parse_args(argv)
+
+    report_paths = [Path(item).expanduser().resolve() for item in args.report]
+    signature_paths = [Path(item).expanduser().resolve() for item in args.signature]
+    include_paths = [Path(item).expanduser().resolve() for item in args.include]
+    for path in (*report_paths, *signature_paths, *include_paths):
+        if not path.exists():
+            raise SystemExit(f"Plik {path} nie istnieje")
+        if path.is_dir():
+            raise SystemExit(f"Nie można dołączyć katalogu: {path}")
+
+    payloads: list[tuple[str, bytes]] = []
+    for item in _stage6_inputs(
+        reports=report_paths,
+        signatures=signature_paths,
+        includes=include_paths,
+    ):
+        payloads.append((item.target, item.source.read_bytes()))
+
+    metadata = _parse_metadata(args.metadata)
+    manifest_bytes, manifest = _stage6_manifest(
+        version=args.version,
+        files=payloads,
+        metadata=metadata,
+    )
+
     key_bytes, _ = _load_signing_key(
         inline=args.signing_key,
         env=args.signing_key_env,
@@ -302,6 +380,18 @@ def _build_stage5_parser() -> argparse.ArgumentParser:
     )
     return parser
 
+    builder = ResilienceBundleBuilder(
+        args.source,
+        include=args.include,
+        exclude=args.exclude,
+    )
+    artifacts = builder.build(
+        bundle_name=args.bundle_name,
+        output_dir=args.output_dir,
+        metadata=metadata,
+        signing_key=signing_key,
+        signing_key_id=args.hmac_key_id,
+    )
 
 def _load_stage5_signing_key(args: argparse.Namespace) -> tuple[bytes | None, str | None]:
     inline = args.hmac_key or getattr(args, "signing_key", None)
@@ -315,11 +405,15 @@ def _run_stage5(argv: Sequence[str]) -> int:
     args = parser.parse_args(argv)
     logging.basicConfig(level=args.log_level.upper(), format="%(levelname)s %(message)s")
 
+def main(argv: Sequence[str] | None = None) -> int:
     try:
-        signing_key, key_source = _load_stage5_signing_key(args)
-    except ValueError as exc:
-        logging.error("Błąd odczytu klucza HMAC: %s", exc)
-        return 1
+        effective = sys.argv[1:] if argv is None else argv
+        return run(effective)
+    except SystemExit as exc:  # pragma: no cover - przekazujemy kod wyjścia
+        raise
+    except Exception as exc:  # noqa: BLE001 - komunikat przyjazny CLI
+        print(str(exc))
+        return 2
 
     include = tuple(args.include) if args.include else None
     exclude = tuple(args.exclude) if args.exclude else None

@@ -219,6 +219,36 @@ if(BUILD_TESTING)
     )
     add_test(NAME application_settings_persistence_tests COMMAND application_settings_persistence_tests)
 
+    add_executable(application_risk_history_auto_export_tests
+        tests/ApplicationRiskHistoryAutoExportTest.cpp
+        src/app/Application.cpp
+        src/grpc/TradingClient.cpp
+        src/grpc/BotCoreLocalService.cpp
+        src/models/OhlcvListModel.cpp
+        src/models/AlertsModel.cpp
+        src/models/AlertsFilterProxyModel.cpp
+        src/models/RiskHistoryModel.cpp
+        src/models/RiskStateModel.cpp
+        src/utils/PerformanceGuard.cpp
+        src/utils/FrameRateMonitor.cpp
+        src/telemetry/UiTelemetryReporter.cpp
+        src/license/LicenseActivationController.cpp
+        src/security/SecurityAdminController.cpp
+        src/reporting/ReportCenterController.cpp
+    )
+    target_include_directories(application_risk_history_auto_export_tests PRIVATE src ${GENERATED_DIR})
+    target_link_libraries(application_risk_history_auto_export_tests
+        PRIVATE
+            Qt6::Core
+            Qt6::Gui
+            Qt6::Quick
+            Qt6::Test
+            trading_proto
+            protobuf::libprotobuf
+            gRPC::grpc++
+    )
+    add_test(NAME application_risk_history_auto_export_tests COMMAND application_risk_history_auto_export_tests)
+
     # FrameRateMonitor tests
     add_executable(frame_rate_monitor_tests
         tests/FrameRateMonitorTest.cpp

@@ -13,11 +13,14 @@ structure for compatibility with code that serialises decisions.
 """
 from __future__ import annotations
 
+import copy
+import enum
 import logging
 import threading
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Optional, Protocol
+from typing import Any, Callable, Dict, Optional, Protocol, cast
 
 import pandas as pd
 
@@ -31,6 +34,10 @@ from bot_core.ai.regime import (
 
 
 LOGGER = logging.getLogger(__name__)
+
+
+_NO_FILTER = object()
+_UNKNOWN_SERVICE = "<unknown>"
 
 
 class EmitterLike(Protocol):
@@ -121,6 +128,7 @@ class AutoTrader:
         core_risk_engine: Any | None = None,
         core_execution_service: Any | None = None,
         ai_connector: Any | None = None,
+        risk_evaluations_limit: int | None = 256,
     ) -> None:
         self.emitter = emitter
         self.gui = gui
@@ -157,6 +165,9 @@ class AutoTrader:
         self._auto_trade_user_confirmed = False
         self._started = False
         self._lock = threading.RLock()
+        self._risk_evaluations: list[dict[str, Any]] = []
+        self._risk_evaluations_limit: int | None = None
+        self.configure_risk_evaluation_history(risk_evaluations_limit)
 
     # ------------------------------------------------------------------
     # Lifecycle helpers
@@ -1100,6 +1111,14 @@ class AutoTrader:
     # Extension hook ----------------------------------------------------
     # ------------------------------------------------------------------
     def _auto_trade_loop(self) -> None:
+        risk_service = getattr(self, "risk_service", None)
+        if risk_service is None:
+            risk_service = getattr(self, "core_risk_engine", None)
+
+        execution_service = getattr(self, "execution_service", None)
+        if execution_service is None:
+            execution_service = getattr(self, "core_execution_service", None)
+
         try:
             symbol = self.symbol_getter()
         except Exception as exc:  # pragma: no cover - defensive guard
@@ -1564,7 +1583,233 @@ class AutoTrader:
             except Exception:
                 self._log("Emitter failed to broadcast auto_trade_signal", level=logging.DEBUG)
 
+        normalized_approval: bool | None = None
+        recorded_approval: bool | None = None
+        risk_response: Any = None
+        risk_error: Exception | None = None
+        risk_invoked = False
+        if risk_service is not None:
+            evaluate_fn = getattr(risk_service, "evaluate_decision", None)
+            if not callable(evaluate_fn):
+                evaluate_fn = getattr(risk_service, "evaluate", None)
+            if not callable(evaluate_fn) and callable(risk_service):
+                evaluate_fn = cast(Callable[[RiskDecision], Any], risk_service)
+            if callable(evaluate_fn):
+                risk_invoked = True
+                try:
+                    risk_response = evaluate_fn(decision)
+                    self._store_risk_response_metadata(decision, risk_response)
+                except Exception as exc:  # pragma: no cover - defensive guard
+                    self._log(
+                        f"Risk service evaluation failed: {exc!r}",
+                        level=logging.ERROR,
+                    )
+                    normalized_approval = False
+                    recorded_approval = False
+                    risk_error = exc
+                else:
+                    recorded_approval = self._coerce_risk_approval(risk_response)
+                    if recorded_approval is None:
+                        self._log(
+                            "Risk service returned an unsupported approval response; treating as rejected",
+                            level=logging.DEBUG,
+                        )
+                        normalized_approval = False
+                    else:
+                        normalized_approval = recorded_approval
+        if risk_invoked:
+            self._record_risk_evaluation(
+                decision,
+                approved=recorded_approval,
+                normalized=normalized_approval,
+                response=risk_response,
+                service=risk_service,
+                error=risk_error,
+            )
+
+        if normalized_approval:
+            with self._lock:
+                cooldown_active = decision.cooldown_active
+                should_trade = decision.should_trade
+                service = execution_service
+
+            if cooldown_active:
+                self._log(
+                    "Risk evaluation approved trade but cooldown is active; skipping execution",
+                    level=logging.DEBUG,
+                )
+            elif not should_trade:
+                self._log(
+                    "Risk evaluation approved trade but decision is not actionable; skipping execution",
+                    level=logging.DEBUG,
+                )
+            elif service is not None:
+                execute_fn = getattr(service, "execute_decision", None)
+                if not callable(execute_fn):
+                    execute_fn = getattr(service, "execute", None)
+                if not callable(execute_fn) and callable(service):
+                    execute_fn = cast(Callable[[RiskDecision], Any], service)
+                if callable(execute_fn):
+                    try:
+                        execute_fn(decision)
+                    except Exception as exc:  # pragma: no cover - defensive guard
+                        self._log(
+                            f"Execution service failed to execute trade: {exc!r}",
+                            level=logging.ERROR,
+                        )
+            else:
+                self._log(
+                    "Risk evaluation approved trade but execution service is not configured",
+                    level=logging.DEBUG,
+                )
+
         self._auto_trade_stop.wait(self.auto_trade_interval_s)
+
+    @staticmethod
+    def _coerce_risk_approval(response: Any) -> bool | None:
+        if response is None:
+            return False
+        if isinstance(response, bool):
+            return response
+        if isinstance(response, (int, float)):
+            return response > 0
+        if isinstance(response, enum.Enum):
+            enum_result = AutoTrader._coerce_risk_approval(response.value)
+            if enum_result is not None:
+                return enum_result
+            return AutoTrader._coerce_risk_approval(response.name)
+        if isinstance(response, str):
+            lowered = response.strip().lower()
+            if lowered in {
+                "true",
+                "t",
+                "yes",
+                "y",
+                "approved",
+                "approve",
+                "allow",
+                "allowed",
+                "ok",
+                "go",
+                "proceed",
+            }:
+                return True
+            if lowered in {
+                "false",
+                "f",
+                "no",
+                "n",
+                "deny",
+                "denied",
+                "block",
+                "blocked",
+                "stop",
+            }:
+                return False
+            try:
+                numeric = float(lowered)
+            except ValueError:
+                return None
+            return numeric > 0
+        if isinstance(response, (list, tuple)):
+            for item in response:
+                coerced = AutoTrader._coerce_risk_approval(item)
+                if coerced is not None:
+                    return coerced
+            return None
+        if isinstance(response, dict):
+            for key in (
+                "approved",
+                "approve",
+                "allow",
+                "allowed",
+                "ok",
+                "permitted",
+                "should_trade",
+                "should_execute",
+            ):
+                if key in response:
+                    return AutoTrader._coerce_risk_approval(response[key])
+            return None
+        for key in (
+            "approved",
+            "approve",
+            "allow",
+            "allowed",
+            "ok",
+            "permitted",
+            "should_trade",
+            "should_execute",
+        ):
+            if hasattr(response, key):
+                return AutoTrader._coerce_risk_approval(getattr(response, key))
+        return None
+
+    @staticmethod
+    def _truncate_repr(value: Any, *, limit: int = 160) -> str:
+        text = repr(value)
+        if len(text) <= limit:
+            return text
+        return text[: limit - 3] + "..."
+
+    @staticmethod
+    def _summarize_risk_response(response: Any) -> dict[str, Any]:
+        summary: dict[str, Any] = {"type": type(response).__name__}
+        if isinstance(response, (bool, int, float)):
+            summary["value"] = response
+        elif isinstance(response, str):
+            trimmed = response.strip()
+            summary["value"] = trimmed if len(trimmed) <= 120 else trimmed[:117] + "..."
+        elif isinstance(response, dict):
+            summary["keys"] = sorted(map(str, response.keys()))[:8]
+        elif isinstance(response, (list, tuple, set)):
+            preview = list(response)[:3]
+            summary["size"] = len(response)
+            if preview:
+                summary["preview"] = [AutoTrader._truncate_repr(item, limit=60) for item in preview]
+        else:
+            summary["repr"] = AutoTrader._truncate_repr(response)
+        return summary
+
+    @staticmethod
+    def _store_risk_response_metadata(decision: RiskDecision, response: Any) -> None:
+        summary = AutoTrader._summarize_risk_response(response)
+        bucket = decision.details.setdefault("risk_service", {})
+        bucket["response"] = summary
+
+    def _record_risk_evaluation(
+        self,
+        decision: RiskDecision,
+        *,
+        approved: bool | None,
+        normalized: bool | None,
+        response: Any,
+        service: Any,
+        error: Exception | None,
+    ) -> None:
+        normalized_value = normalized if normalized is not None else approved
+        entry: dict[str, Any] = {
+            "timestamp": time.time(),
+            "approved": approved,
+            "normalized": normalized_value,
+            "decision": decision.to_dict(),
+        }
+        if service is not None:
+            entry["service"] = type(service).__name__
+        if error is not None:
+            entry["error"] = repr(error)
+        else:
+            entry["response"] = self._summarize_risk_response(response)
+        with self._lock:
+            self._risk_evaluations.append(entry)
+            limit = self._risk_evaluations_limit
+            if limit is not None and limit >= 0:
+                if limit == 0:
+                    self._risk_evaluations.clear()
+                else:
+                    overflow = len(self._risk_evaluations) - limit
+                    if overflow > 0:
+                        del self._risk_evaluations[:overflow]
 
     # Compatibility helpers -------------------------------------------
     def set_enable_auto_trade(self, flag: bool) -> None:
@@ -1574,6 +1819,395 @@ class AutoTrader:
 
     def is_running(self) -> bool:
         return self._started and not self._stop.is_set()
+
+    @staticmethod
+    def _prepare_bool_filter(value: object) -> set[bool | None] | None:
+        if value is _NO_FILTER:
+            return None
+        if isinstance(value, Iterable) and not isinstance(value, (str, bytes, bytearray)):
+            return {cast(bool | None, item) for item in value}
+        return {cast(bool | None, value)}
+
+    @staticmethod
+    def _prepare_service_filter(value: object) -> set[str] | None:
+        if value is _NO_FILTER:
+            return None
+        if isinstance(value, Iterable) and not isinstance(value, (str, bytes, bytearray)):
+            return {
+                _UNKNOWN_SERVICE if item is None else str(item)
+                for item in value
+            }
+        if value is None:
+            return {_UNKNOWN_SERVICE}
+        return {str(value)}
+
+    @staticmethod
+    def _normalize_time_bound(value: object) -> float | None:
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            return float(value)
+        try:
+            timestamp = pd.Timestamp(value)
+        except (TypeError, ValueError):  # pragma: no cover - defensive guard
+            return None
+        return float(timestamp.value) / 1_000_000_000
+
+    def _apply_risk_evaluation_filters(
+        self,
+        records: Iterable[dict[str, Any]],
+        *,
+        include_errors: bool,
+        approved_filter: set[bool | None] | None,
+        normalized_filter: set[bool | None] | None,
+        service_filter: set[str] | None,
+        since_ts: float | None,
+        until_ts: float | None,
+    ) -> list[dict[str, Any]]:
+        filtered: list[dict[str, Any]] = []
+        for entry in records:
+            if not include_errors and "error" in entry:
+                continue
+            if approved_filter is not None and entry.get("approved") not in approved_filter:
+                continue
+            if normalized_filter is not None and entry.get("normalized") not in normalized_filter:
+                continue
+            service_key = entry.get("service") or _UNKNOWN_SERVICE
+            if service_filter is not None and service_key not in service_filter:
+                continue
+            timestamp = entry.get("timestamp")
+            if since_ts is not None and (timestamp is None or timestamp < since_ts):
+                continue
+            if until_ts is not None and (timestamp is None or timestamp > until_ts):
+                continue
+            filtered.append(entry)
+        return filtered
+
+    def get_risk_evaluations(
+        self,
+        *,
+        approved: bool | None | Iterable[bool | None] | object = _NO_FILTER,
+        normalized: bool | None | Iterable[bool | None] | object = _NO_FILTER,
+        include_errors: bool = True,
+        limit: int | None = None,
+        reverse: bool = False,
+        service: str | None | Iterable[str | None] | object = _NO_FILTER,
+        since: Any = None,
+        until: Any = None,
+    ) -> list[dict[str, Any]]:
+        approved_filter = self._prepare_bool_filter(approved)
+        normalized_filter = self._prepare_bool_filter(normalized)
+        service_filter = self._prepare_service_filter(service)
+        since_ts = self._normalize_time_bound(since)
+        until_ts = self._normalize_time_bound(until)
+
+        normalized_limit: int | None
+        if limit is None:
+            normalized_limit = None
+        else:
+            try:
+                normalized_limit = int(limit)
+            except (TypeError, ValueError):  # pragma: no cover - defensive guard
+                normalized_limit = None
+            else:
+                if normalized_limit < 0:
+                    normalized_limit = 0
+
+        with self._lock:
+            records = list(self._risk_evaluations)
+
+        filtered_records = self._apply_risk_evaluation_filters(
+            records,
+            include_errors=include_errors,
+            approved_filter=approved_filter,
+            normalized_filter=normalized_filter,
+            service_filter=service_filter,
+            since_ts=since_ts,
+            until_ts=until_ts,
+        )
+
+        if reverse:
+            iterator = reversed(filtered_records)
+        else:
+            iterator = iter(filtered_records)
+
+        results: list[dict[str, Any]] = []
+        for entry in iterator:
+            results.append(copy.deepcopy(entry))
+            if normalized_limit is not None and len(results) >= normalized_limit:
+                break
+        return results
+
+    def clear_risk_evaluations(self) -> None:
+        with self._lock:
+            self._risk_evaluations.clear()
+
+    def summarize_risk_evaluations(
+        self,
+        *,
+        approved: bool | None | Iterable[bool | None] | object = _NO_FILTER,
+        normalized: bool | None | Iterable[bool | None] | object = _NO_FILTER,
+        include_errors: bool = True,
+        service: str | None | Iterable[str | None] | object = _NO_FILTER,
+        since: Any = None,
+        until: Any = None,
+    ) -> dict[str, Any]:
+        approved_filter = self._prepare_bool_filter(approved)
+        normalized_filter = self._prepare_bool_filter(normalized)
+        service_filter = self._prepare_service_filter(service)
+        since_ts = self._normalize_time_bound(since)
+        until_ts = self._normalize_time_bound(until)
+        with self._lock:
+            records = list(self._risk_evaluations)
+
+        filtered_records = self._apply_risk_evaluation_filters(
+            records,
+            include_errors=include_errors,
+            approved_filter=approved_filter,
+            normalized_filter=normalized_filter,
+            service_filter=service_filter,
+            since_ts=since_ts,
+            until_ts=until_ts,
+        )
+
+        total = len(filtered_records)
+        summary: dict[str, Any] = {
+            "total": total,
+            "approved": 0,
+            "rejected": 0,
+            "unknown": 0,
+            "errors": 0,
+            "raw_true": 0,
+            "raw_false": 0,
+            "raw_none": 0,
+            "services": {},
+        }
+        if total == 0:
+            summary["approval_rate"] = 0.0
+            summary["error_rate"] = 0.0
+            return summary
+
+        summary["first_timestamp"] = filtered_records[0]["timestamp"]
+        summary["last_timestamp"] = filtered_records[-1]["timestamp"]
+
+        services_summary: dict[str, dict[str, Any]] = {}
+
+        for entry in filtered_records:
+            normalized_value = entry.get("normalized")
+            if normalized_value is True:
+                summary["approved"] += 1
+            elif normalized_value is False:
+                summary["rejected"] += 1
+            else:
+                summary["unknown"] += 1
+
+            raw_value = entry.get("approved")
+            if raw_value is True:
+                summary["raw_true"] += 1
+            elif raw_value is False:
+                summary["raw_false"] += 1
+            else:
+                summary["raw_none"] += 1
+
+            has_error = "error" in entry
+            if has_error:
+                summary["errors"] += 1
+
+            service_key = entry.get("service") or _UNKNOWN_SERVICE
+            bucket = services_summary.setdefault(
+                service_key,
+                {
+                    "total": 0,
+                    "approved": 0,
+                    "rejected": 0,
+                    "unknown": 0,
+                    "errors": 0,
+                    "raw_true": 0,
+                    "raw_false": 0,
+                    "raw_none": 0,
+                },
+            )
+            bucket["total"] += 1
+
+            if normalized_value is True:
+                bucket["approved"] += 1
+            elif normalized_value is False:
+                bucket["rejected"] += 1
+            else:
+                bucket["unknown"] += 1
+
+            if raw_value is True:
+                bucket["raw_true"] += 1
+            elif raw_value is False:
+                bucket["raw_false"] += 1
+            else:
+                bucket["raw_none"] += 1
+
+            if has_error:
+                bucket["errors"] += 1
+
+        summary["services"] = services_summary
+        summary["approval_rate"] = summary["approved"] / total
+        summary["error_rate"] = summary["errors"] / total
+
+        for bucket in services_summary.values():
+            total_bucket = bucket["total"]
+            if total_bucket:
+                bucket["approval_rate"] = bucket["approved"] / total_bucket
+                bucket["error_rate"] = bucket["errors"] / total_bucket
+            else:  # pragma: no cover - defensive guard
+                bucket["approval_rate"] = 0.0
+                bucket["error_rate"] = 0.0
+
+        return summary
+
+    def risk_evaluations_to_dataframe(
+        self,
+        *,
+        approved: bool | None | Iterable[bool | None] | object = _NO_FILTER,
+        normalized: bool | None | Iterable[bool | None] | object = _NO_FILTER,
+        include_errors: bool = True,
+        service: str | None | Iterable[str | None] | object = _NO_FILTER,
+        since: Any = None,
+        until: Any = None,
+        flatten_decision: bool = False,
+        decision_prefix: str = "decision_",
+        decision_fields: Iterable[Any] | Any | None = None,
+        drop_decision_column: bool = False,
+        fill_value: Any = pd.NA,
+    ) -> pd.DataFrame:
+        """Return risk evaluations as a pandas DataFrame with optional filters."""
+
+        approved_filter = self._prepare_bool_filter(approved)
+        normalized_filter = self._prepare_bool_filter(normalized)
+        service_filter = self._prepare_service_filter(service)
+        since_ts = self._normalize_time_bound(since)
+        until_ts = self._normalize_time_bound(until)
+
+        normalized_decision_fields: list[Any] | None
+        if decision_fields is None:
+            normalized_decision_fields = None
+        else:
+            if isinstance(decision_fields, Iterable) and not isinstance(
+                decision_fields,
+                (str, bytes, bytearray),
+            ):
+                candidates = decision_fields
+            else:
+                candidates = [decision_fields]
+
+            normalized_decision_fields = []
+            for candidate in candidates:
+                if candidate is None:
+                    continue
+                if any(existing == candidate for existing in normalized_decision_fields):
+                    continue
+                normalized_decision_fields.append(candidate)
+            if not normalized_decision_fields:
+                normalized_decision_fields = []
+
+        with self._lock:
+            records = list(self._risk_evaluations)
+
+        filtered_records = self._apply_risk_evaluation_filters(
+            records,
+            include_errors=include_errors,
+            approved_filter=approved_filter,
+            normalized_filter=normalized_filter,
+            service_filter=service_filter,
+            since_ts=since_ts,
+            until_ts=until_ts,
+        )
+
+        base_columns = [
+            "timestamp",
+            "approved",
+            "normalized",
+            "decision",
+            "service",
+            "response",
+            "error",
+        ]
+
+        if not filtered_records:
+            empty_columns = list(base_columns)
+            if drop_decision_column:
+                empty_columns = [
+                    column for column in empty_columns if column != "decision"
+                ]
+            if flatten_decision and normalized_decision_fields:
+                prefix = str(decision_prefix)
+                empty_columns.extend(
+                    f"{prefix}{field}" for field in normalized_decision_fields
+                )
+            return pd.DataFrame(columns=empty_columns)
+
+        rows = [copy.deepcopy(entry) for entry in filtered_records]
+        df = pd.DataFrame.from_records(rows)
+        for column in base_columns:
+            if column not in df.columns:
+                df[column] = pd.NA
+
+        flattened_columns: list[str] = []
+        if flatten_decision and "decision" in df.columns:
+            prefix = str(decision_prefix)
+            decision_series = df["decision"]
+            if normalized_decision_fields is not None:
+                ordered_keys = list(normalized_decision_fields)
+            else:
+                ordered_keys: list[Any] = []
+                for payload in decision_series:
+                    if isinstance(payload, dict):
+                        for key in payload.keys():
+                            if not any(existing == key for existing in ordered_keys):
+                                ordered_keys.append(key)
+            for key in ordered_keys:
+                column_name = f"{prefix}{key}"
+                df[column_name] = [
+                    copy.deepcopy(payload[key])
+                    if isinstance(payload, dict) and key in payload
+                    else copy.deepcopy(fill_value)
+                    for payload in decision_series
+                ]
+                flattened_columns.append(column_name)
+
+        if drop_decision_column and "decision" in df.columns:
+            df = df.drop(columns=["decision"])
+
+        remaining_columns = [
+            column
+            for column in df.columns
+            if column not in base_columns and column not in flattened_columns
+        ]
+        ordered_base_columns = [
+            column
+            for column in base_columns
+            if column in df.columns and (column != "decision" or not drop_decision_column)
+        ]
+        ordered_columns = ordered_base_columns + flattened_columns + remaining_columns
+        return df[ordered_columns]
+
+    def configure_risk_evaluation_history(self, limit: int | None) -> None:
+        normalised: int | None
+        if limit is None:
+            normalised = None
+        else:
+            try:
+                normalised = int(limit)
+            except (TypeError, ValueError):  # pragma: no cover - defensive
+                normalised = None
+            else:
+                if normalised < 0:
+                    normalised = 0
+        with self._lock:
+            self._risk_evaluations_limit = normalised
+            if normalised is not None:
+                if normalised == 0:
+                    self._risk_evaluations.clear()
+                else:
+                    overflow = len(self._risk_evaluations) - normalised
+                    if overflow > 0:
+                        del self._risk_evaluations[:overflow]
 
 
 __all__ = ["AutoTrader", "RiskDecision", "EmitterLike"]
