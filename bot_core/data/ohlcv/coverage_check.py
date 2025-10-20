@@ -7,13 +7,18 @@ from datetime import datetime, timezone
 from math import ceil, floor, isnan
 from pathlib import Path
 from statistics import median
-from typing import Iterable, Mapping, MutableMapping, Sequence
+from typing import Iterable, Mapping, MutableMapping, Sequence, TYPE_CHECKING
 
-from bot_core.config.models import (
-    EnvironmentDataQualityConfig,
-    InstrumentBackfillWindow,
-    InstrumentUniverseConfig,
-)
+if TYPE_CHECKING:  # pragma: no cover - tylko na potrzeby statycznych typów
+    from bot_core.config.models import (
+        EnvironmentDataQualityConfig,
+        InstrumentBackfillWindow,
+        InstrumentUniverseConfig,
+    )
+else:  # pragma: no cover - minimalny fallback przy bootstrapie
+    EnvironmentDataQualityConfig = object  # type: ignore[assignment]
+    InstrumentBackfillWindow = object  # type: ignore[assignment]
+    InstrumentUniverseConfig = object  # type: ignore[assignment]
 from bot_core.data.ohlcv.manifest_report import ManifestEntry, generate_manifest_report
 
 

@@ -23,6 +23,7 @@ from bot_core.exchanges.core import (
 )
 from bot_core.exchanges.manager import ExchangeManager
 from bot_core.exchanges.binance.futures import BinanceFuturesAdapter
+from bot_core.exchanges.binance.margin import BinanceMarginAdapter
 from bot_core.exchanges.binance.spot import BinanceSpotAdapter
 from bot_core.exchanges.bitfinex.spot import BitfinexSpotAdapter
 from bot_core.exchanges.bybit.spot import BybitSpotAdapter
@@ -36,16 +37,29 @@ from bot_core.exchanges.errors import (
 )
 from bot_core.exchanges.kucoin.spot import KuCoinSpotAdapter
 from bot_core.exchanges.kraken.futures import KrakenFuturesAdapter
+from bot_core.exchanges.kraken.margin import KrakenMarginAdapter
 from bot_core.exchanges.kraken.spot import KrakenSpotAdapter
 from bot_core.exchanges.nowa_gielda.spot import NowaGieldaSpotAdapter
 from bot_core.exchanges.okx.spot import OKXSpotAdapter
+from bot_core.exchanges.zonda.margin import ZondaMarginAdapter
 from bot_core.exchanges.zonda.spot import ZondaSpotAdapter
+from bot_core.exchanges.health import (
+    CircuitBreaker,
+    CircuitOpenError,
+    HealthCheck,
+    HealthCheckResult,
+    HealthMonitor,
+    HealthStatus,
+    RetryPolicy,
+    Watchdog,
+)
 
 __all__ = [
     "AccountSnapshot",
     "BaseBackend",
     "BinanceFuturesAdapter",
     "BinanceSpotAdapter",
+    "BinanceMarginAdapter",
     "Event",
     "EventBus",
     "Environment",
@@ -59,6 +73,7 @@ __all__ = [
     "ExchangeNetworkError",
     "KrakenFuturesAdapter",
     "KrakenSpotAdapter",
+    "KrakenMarginAdapter",
     "BybitSpotAdapter",
     "CoinbaseSpotAdapter",
     "BitfinexSpotAdapter",
@@ -74,6 +89,15 @@ __all__ = [
     "OrderStatus",
     "OrderType",
     "ZondaSpotAdapter",
+    "ZondaMarginAdapter",
+    "CircuitBreaker",
+    "CircuitOpenError",
+    "HealthCheck",
+    "HealthCheckResult",
+    "HealthMonitor",
+    "HealthStatus",
+    "RetryPolicy",
+    "Watchdog",
     "PaperBackend",
     "PositionDTO",
 ]

@@ -6,7 +6,7 @@ import json
 import os
 import subprocess
 import sys
-import tarfile
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -36,11 +36,8 @@ def _run_verify(args: list[str]) -> subprocess.CompletedProcess[str]:
     )
 
 
-def _read_manifest(archive_path: Path) -> dict:
-    with tarfile.open(archive_path, "r:gz") as archive:
-        with archive.extractfile("./manifest.json") as handle:
-            assert handle is not None
-            return json.load(handle)
+def _read_manifest(manifest_path: Path) -> dict:
+    return json.loads(manifest_path.read_text(encoding="utf-8"))
 
 
 def test_export_observability_bundle_creates_signed_archive(tmp_path: Path) -> None:
@@ -64,40 +61,36 @@ def test_export_observability_bundle_creates_signed_archive(tmp_path: Path) -> N
 
     assert result.returncode == 0
 
-    archive_path = output_dir / "observability-bundle-1.2.3.tar.gz"
+    archive_path = output_dir / "observability-bundle-1.2.3.zip"
+    manifest_path = output_dir / "observability-bundle-1.2.3.manifest.json"
+    signature_path = output_dir / "observability-bundle-1.2.3.manifest.sig"
+
     assert archive_path.exists()
+    assert manifest_path.exists()
+    assert signature_path.exists()
 
-    with tarfile.open(archive_path, "r:gz") as archive:
-        members = {member.name for member in archive.getmembers()}
-        normalized = {name.lstrip("./") for name in members}
-        assert "manifest.json" in normalized
-        assert "manifest.sig" in normalized
-        assert any(entry.startswith("dashboards/") for entry in normalized)
-        assert any(entry.startswith("alert_rules/") for entry in normalized)
-
-        manifest_bytes = archive.extractfile("./manifest.json")
-        assert manifest_bytes is not None
-        (tmp_path / "manifest.json").write_bytes(manifest_bytes.read())
-
-        signature_bytes = archive.extractfile("./manifest.sig")
-        assert signature_bytes is not None
-        (tmp_path / "manifest.sig").write_bytes(signature_bytes.read())
+    with zipfile.ZipFile(archive_path, "r") as archive:
+        members = set(archive.namelist())
+        assert "manifest.json" not in members
+        assert "manifest.sig" not in members
+        assert any(entry.startswith("dashboards/") for entry in members)
+        assert any(entry.startswith("alert_rules/") for entry in members)
 
     verify_result = _run_verify(
         [
             "--manifest",
-            str(tmp_path / "manifest.json"),
+            str(manifest_path),
             "--signature",
-            str(tmp_path / "manifest.sig"),
+            str(signature_path),
             "--signing-key",
             str(signing_key),
             "--digest",
-            "sha384",
+            "sha256",
         ]
     )
     assert verify_result.returncode == 0
 
-    manifest = _read_manifest(archive_path)
+    manifest = _read_manifest(manifest_path)
     assert manifest["version"] == "1.2.3"
     assert manifest["dashboards"]
     assert manifest["alert_rules"]
