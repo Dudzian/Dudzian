@@ -11,14 +11,17 @@ import os
 import stat
 import sys
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Mapping, Optional, Sequence
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from bot_core.security.signing import canonical_json_bytes  # noqa: E402
+from bot_core.security.signing import (  # noqa: E402
+    build_hmac_signature,
+    canonical_json_bytes,
+)
 
 
 def _load_key(path: Path) -> bytes:
@@ -40,8 +43,6 @@ def _load_signature(path: Path) -> dict:
     document = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(document, dict):
         raise ValueError("Signature document must be a JSON object")
-    if "payload" not in document or "signature" not in document:
-        raise ValueError("Signature document missing 'payload' or 'signature'")
     return document
 
 
@@ -89,6 +90,35 @@ def _verify_signature(
         raise ValueError("Signature verification failed")
 
 
+def _verify_stage6_signature(
+    *,
+    manifest_path: Path,
+    signature: dict,
+    key: bytes,
+    digest_algorithm: str,
+) -> None:
+    normalized = digest_algorithm.strip().upper()
+    if normalized.startswith("HMAC-"):
+        normalized = normalized[5:]
+    if normalized != "SHA256":
+        raise ValueError(
+            "Stage6 signatures use HMAC-SHA256; adjust --digest accordingly"
+        )
+
+    manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(manifest_data, Mapping):
+        raise ValueError("Manifest must be a JSON object for Stage6 verification")
+
+    expected = build_hmac_signature(
+        manifest_data,
+        key=key,
+        algorithm="HMAC-SHA256",
+        key_id=signature.get("key_id"),
+    )
+    if dict(expected) != dict(signature):
+        raise ValueError("Signature verification failed")
+
+
 def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", required=True, type=Path, help="Path to manifest.json")
@@ -106,8 +136,8 @@ def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--digest",
-        default="sha384",
-        help="Digest algorithm declared in the signature payload (default: sha384)",
+        default="sha256",
+        help="Digest algorithm declared in the signature payload (default: sha256)",
     )
     return parser.parse_args(argv)
 
@@ -118,21 +148,31 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     manifest_path = args.manifest.expanduser().resolve()
     signature_path = args.signature.expanduser().resolve()
 
-    payload_document = _load_signature(signature_path)
-    payload = payload_document["payload"]
-    signature = payload_document["signature"]
+    signature_document = _load_signature(signature_path)
+    signature = signature_document.get("signature")
+    if not isinstance(signature, Mapping):
+        raise ValueError("Signature document missing 'signature'")
 
-    _validate_digest(
-        manifest_path=manifest_path,
-        payload=payload,
-        digest_field=args.digest,
-    )
-    _verify_signature(
-        key=key,
-        payload=payload,
-        signature=signature,
-        digest_algorithm=args.digest,
-    )
+    payload = signature_document.get("payload")
+    if isinstance(payload, Mapping):
+        _validate_digest(
+            manifest_path=manifest_path,
+            payload=payload,
+            digest_field=args.digest,
+        )
+        _verify_signature(
+            key=key,
+            payload=payload,
+            signature=dict(signature),
+            digest_algorithm=args.digest,
+        )
+    else:
+        _verify_stage6_signature(
+            manifest_path=manifest_path,
+            signature=dict(signature),
+            key=key,
+            digest_algorithm=args.digest,
+        )
     key_id = signature.get("key_id", "n/a")
     print(
         f"Signature verification succeeded for {manifest_path.name} (key_id={key_id})"

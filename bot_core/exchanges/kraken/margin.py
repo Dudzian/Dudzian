@@ -37,6 +37,7 @@ class KrakenMarginAdapter(KrakenSpotAdapter):
         config = dict(settings or {})
         leverage = str(config.get("leverage", "2") or "2")
         self._leverage = leverage
+        self._watchdog = watchdog or Watchdog()
 
     def fetch_account_snapshot(self) -> AccountSnapshot:
         def _call() -> AccountSnapshot:

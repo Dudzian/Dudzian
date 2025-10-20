@@ -46,6 +46,8 @@ class BinanceMarginAdapter(BinanceSpotAdapter):
         if margin_type not in {"cross", "isolated"}:
             margin_type = "cross"
         self._margin_type = margin_type
+        self._watchdog = watchdog or Watchdog()
+
 
     # ------------------------------------------------------------------
     # ExchangeAdapter API

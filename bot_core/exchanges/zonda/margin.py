@@ -39,6 +39,7 @@ class ZondaMarginAdapter(ZondaSpotAdapter):
         config = dict(settings or {})
         currency = str(config.get("valuation_currency", "PLN") or "PLN").upper()
         self._valuation_currency = currency
+        self._watchdog = watchdog or Watchdog()
 
     def fetch_account_snapshot(self) -> AccountSnapshot:
         def _call() -> AccountSnapshot:
