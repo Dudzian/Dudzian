@@ -287,6 +287,56 @@ def test_autotrader_applies_runtime_risk_profile() -> None:
     assert trader._risk_manager_settings.max_daily_loss_pct == pytest.approx(0.015)
     assert trader._risk_service.max_position_notional_pct == pytest.approx(0.05)
     assert trader._risk_service.max_daily_loss_pct == pytest.approx(0.015)
+
+
+def test_bootstrap_registers_provided_risk_profile(monkeypatch: pytest.MonkeyPatch) -> None:
+    emitter = DummyEmitter()
+    gui = DummyGUI()
+    adapter = RecordingExecutionAdapter()
+    engine = ThresholdRiskEngine()
+    profile = ManualProfile(
+        name="provided",
+        max_positions=3,
+        max_leverage=2.0,
+        drawdown_limit=0.1,
+        daily_loss_limit=0.05,
+        max_position_pct=0.2,
+        target_volatility=0.12,
+        stop_loss_atr_multiple=2.5,
+    )
+
+    calls: list[RiskProfile] = []
+    original_register = engine.register_profile
+
+    def _spy(profile_obj: RiskProfile) -> None:
+        calls.append(profile_obj)
+        original_register(profile_obj)
+
+    monkeypatch.setattr(engine, "register_profile", _spy)
+
+    bootstrap_context = SimpleNamespace(
+        risk_engine=engine,
+        risk_profile=profile,
+        risk_profile_name=profile.name,
+    )
+
+    trader = AutoTrader(
+        emitter,
+        gui,
+        lambda: "BTC/USDT",
+        auto_trade_interval_s=0.5,
+        walkforward_interval_s=None,
+        signal_service=SignalService(),
+        risk_service=RiskService(),
+        execution_service=ExecutionService(adapter),
+        data_provider=StubDataProvider(),
+        bootstrap_context=bootstrap_context,
+    )
+
+    assert calls and calls[0] is profile
+    assert trader._core_risk_profile is profile
+    assert trader._core_risk_profile_name == profile.name
+    assert trader._risk_profile_name == profile.name
     assert trader._risk_service.max_portfolio_risk_pct == pytest.approx(0.10)
     assert trader._risk_service.max_positions == 5
     assert trader._risk_service.emergency_stop_drawdown_pct == pytest.approx(0.10)
@@ -924,7 +974,8 @@ def test_autotrader_update_risk_manager_settings_applies_changes() -> None:
         data_provider=StubDataProvider(),
     )
 
-    trader._core_risk_profile = "baseline"
+    trader._core_risk_profile = None
+    trader._core_risk_profile_name = "baseline"
 
     new_settings = RiskManagerSettings(
         max_risk_per_trade=0.08,
@@ -934,6 +985,7 @@ def test_autotrader_update_risk_manager_settings_applies_changes() -> None:
         emergency_stop_drawdown=0.28,
     )
     profile_payload = {
+        "name": "growth",
         "max_position_pct": 0.08,
         "max_daily_loss_pct": 0.18,
         "trade_risk_pct": 0.03,
@@ -950,7 +1002,9 @@ def test_autotrader_update_risk_manager_settings_applies_changes() -> None:
 
     assert trader._risk_manager_settings is new_settings
     assert trader._risk_profile_name == "growth"
-    assert trader._core_risk_profile == "growth"
+    assert trader._core_risk_profile_name == "growth"
+    if isinstance(trader._core_risk_profile, RiskProfile):
+        assert getattr(trader._core_risk_profile, "name", None) == "growth"
     assert trader._risk_service.max_portfolio_risk_pct == pytest.approx(0.3)
     assert trader._risk_service.max_positions == 9
     cfg = trader._get_strategy_config()
