@@ -32,7 +32,7 @@ from bot_core.runtime.preset_service import (
 )
 from bot_core.security.file_storage import EncryptedFileSecretStorage
 from KryptoLowca.config_manager import ConfigManager, ConfigError, ValidationError
-from KryptoLowca.managers.security_manager import SecurityError, SecurityManager
+from KryptoLowca.security_manager import SecurityError, SecurityManager
 
 
 def _load_key(args: argparse.Namespace) -> bytes:
