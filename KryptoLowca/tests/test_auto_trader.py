@@ -5,6 +5,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple
+from types import SimpleNamespace
 
 import pytest
 import pandas as pd
@@ -16,6 +17,7 @@ from bot_core.exchanges.base import AccountSnapshot, OrderRequest
 from bot_core.risk.engine import ThresholdRiskEngine
 from bot_core.risk.base import RiskCheckResult
 from bot_core.runtime.metadata import RiskManagerSettings
+from bot_core.risk.events import RiskDecisionLog
 
 from KryptoLowca.auto_trader import AutoTrader
 from KryptoLowca.backtest.simulation import BacktestFill
@@ -957,6 +959,742 @@ def test_paper_trading_adapter_uses_gui_balance() -> None:
     assert trader._paper_adapter is not None
     snapshot = trader._paper_adapter.portfolio_snapshot("BTC/USDT")
     assert snapshot["value"] == pytest.approx(2_500.0)
+
+
+
+def test_post_core_fill_merges_metadata_from_result() -> None:
+    emitter = DummyEmitter()
+    gui = DummyGUI()
+    adapter = RecordingExecutionAdapter()
+    trader = AutoTrader(
+        emitter,
+        gui,
+        lambda: "BTC/USDT",
+        auto_trade_interval_s=0.5,
+        walkforward_interval_s=None,
+        signal_service=SignalService(),
+        risk_service=RiskService(),
+        execution_service=ExecutionService(adapter),
+        data_provider=StubDataProvider(),
+    )
+
+    decision_log = RiskDecisionLog(clock=lambda: datetime(2024, 1, 1, tzinfo=timezone.utc))
+    risk_engine = RecordingRiskEngine(decision_log=decision_log)
+    trader._core_risk_engine = risk_engine
+    trader._core_risk_profile = "core-profile"
+
+    order_request = SimpleNamespace(
+        symbol="BTCUSDT",
+        side="buy",
+        quantity=0.25,
+        price=24_950.0,
+        metadata={
+            "decision_candidate": {
+                "risk_profile": "core-profile",
+                "metadata": {"decision_time": "2024-04-01T12:30:00Z"},
+            },
+            "note": "from-strategy",
+        },
+    )
+    fill_timestamp = datetime.fromtimestamp(1_700_000_000_000 / 1000.0, tz=timezone.utc)
+    order_result = SimpleNamespace(
+        avg_price=24_930.0,
+        filled_quantity=0.25,
+        raw_response={
+            "timestamp": 1_700_000_000_000,
+            "pnl": "12.5",
+            "fill_id": "abc123",
+        },
+    )
+
+    trader._post_core_fill("BTCUSDT", "BUY", order_request, order_result)
+
+    assert len(risk_engine.fills) == 1
+    fill_payload = risk_engine.fills[0]
+    assert fill_payload["profile_name"] == "core-profile"
+    assert fill_payload["symbol"] == "BTCUSDT"
+    assert fill_payload["side"] == "buy"
+    assert fill_payload["pnl"] == pytest.approx(12.5)
+    assert fill_payload["position_value"] == pytest.approx(24_930.0 * 0.25)
+    assert fill_payload["timestamp"] == fill_timestamp
+
+    entries = decision_log.tail(limit=1)
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry["profile"] == "core-profile"
+    assert entry["symbol"] == "BTCUSDT"
+    assert entry["side"] == "buy"
+    assert entry["quantity"] == pytest.approx(0.25)
+    assert entry["price"] == pytest.approx(24_930.0)
+    metadata = entry["metadata"]
+    assert metadata["source"] == "auto_trader_core_fill"
+    expected_notional = 24_930.0 * 0.25
+    assert metadata["metrics"]["pnl"] == pytest.approx(12.5)
+    assert metadata["metrics"]["notional"] == pytest.approx(expected_notional)
+    assert metadata["metrics"]["position_value"] == pytest.approx(expected_notional)
+    assert metadata["metrics"]["position_delta"] == pytest.approx(expected_notional)
+    assert metadata["request"]["note"] == "from-strategy"
+    assert metadata["fill"]["fill_id"] == "abc123"
+    assert metadata["fill_timestamp"] == fill_timestamp.isoformat()
+
+
+def test_post_core_fill_prefers_request_metadata_when_missing() -> None:
+    emitter = DummyEmitter()
+    gui = DummyGUI()
+    adapter = RecordingExecutionAdapter()
+    trader = AutoTrader(
+        emitter,
+        gui,
+        lambda: "ETH/USDT",
+        auto_trade_interval_s=0.5,
+        walkforward_interval_s=None,
+        signal_service=SignalService(),
+        risk_service=RiskService(),
+        execution_service=ExecutionService(adapter),
+        data_provider=StubDataProvider(),
+    )
+
+    decision_log = RiskDecisionLog(clock=lambda: datetime(2024, 1, 2, tzinfo=timezone.utc))
+    risk_engine = RecordingRiskEngine(decision_log=decision_log)
+    trader._core_risk_engine = risk_engine
+    trader._core_risk_profile = None
+
+    class _Connector:
+        risk_profile = "connector-default"
+
+    trader._core_ai_connector = _Connector()
+
+    request_timestamp = datetime(2024, 4, 2, 15, 30, 45, tzinfo=timezone.utc)
+    order_request = SimpleNamespace(
+        symbol="ETHUSDT",
+        side="sell",
+        quantity=0.4,
+        price=1_850.0,
+        metadata={
+            "pnl": -7.5,
+            "decision_candidate": {
+                "risk_profile": "risk-beta",
+                "metadata": {"timestamp": request_timestamp.isoformat()},
+            },
+        },
+    )
+    order_result = SimpleNamespace(
+        avg_price=None,
+        filled_quantity=0.4,
+        raw_response={"fill_id": "xyz"},
+    )
+
+    trader._post_core_fill("ETHUSDT", "SELL", order_request, order_result)
+
+    assert len(risk_engine.fills) == 1
+    fill_payload = risk_engine.fills[0]
+    assert fill_payload["profile_name"] == "risk-beta"
+    assert fill_payload["side"] == "sell"
+    assert fill_payload["symbol"] == "ETHUSDT"
+    assert fill_payload["pnl"] == pytest.approx(-7.5)
+    assert fill_payload["position_value"] == pytest.approx(0.0)
+    assert fill_payload["timestamp"] == request_timestamp
+
+    entry = decision_log.tail(limit=1)[0]
+    metadata = entry["metadata"]
+    assert entry["profile"] == "risk-beta"
+    assert entry["side"] == "sell"
+    expected_notional = 1_850.0 * 0.4
+    assert metadata["metrics"]["pnl"] == pytest.approx(-7.5)
+    assert metadata["metrics"]["notional"] == pytest.approx(expected_notional)
+    assert metadata["request"]["decision_candidate"]["risk_profile"] == "risk-beta"
+    assert metadata["fill"]["fill_id"] == "xyz"
+    assert metadata["fill_timestamp"] == request_timestamp.isoformat()
+    assert metadata["metrics"]["position_value"] == pytest.approx(0.0)
+    assert metadata["metrics"]["position_delta"] == pytest.approx(-expected_notional)
+
+
+def test_post_core_fill_reads_nested_sequence_sources() -> None:
+    emitter = DummyEmitter()
+    gui = DummyGUI()
+    adapter = RecordingExecutionAdapter()
+    trader = AutoTrader(
+        emitter,
+        gui,
+        lambda: "SOL/USDT",
+        auto_trade_interval_s=0.5,
+        walkforward_interval_s=None,
+        signal_service=SignalService(),
+        risk_service=RiskService(),
+        execution_service=ExecutionService(adapter),
+        data_provider=StubDataProvider(),
+    )
+
+    log_clock = lambda: datetime(2024, 1, 3, tzinfo=timezone.utc)
+    decision_log = RiskDecisionLog(clock=log_clock)
+    risk_engine = RecordingRiskEngine(decision_log=decision_log)
+    trader._core_risk_engine = risk_engine
+    trader._core_risk_profile = "seq-profile"
+
+    request_metadata = {
+        "decision_candidate": {
+            "risk_profile": "seq-profile",
+            "metadata": {"note": "nested"},
+        }
+    }
+    order_request = SimpleNamespace(
+        symbol="SOLUSDT",
+        side="buy",
+        quantity=3.0,
+        price=None,
+        metadata=request_metadata,
+    )
+
+    nested_timestamp_ns = 1_700_200_300_400_000_000
+    nested_raw = {
+        "fills": [
+            {
+                "info": {
+                    "realizedPnl": "3.25",
+                    "executedAt": nested_timestamp_ns,
+                }
+            }
+        ],
+        "extra": [{"events": [{"time": nested_timestamp_ns // 1_000_000}]}],
+    }
+    order_result = SimpleNamespace(
+        avg_price=24.5,
+        filled_quantity=3.0,
+        raw_response=nested_raw,
+    )
+
+    trader._post_core_fill("SOLUSDT", "BUY", order_request, order_result)
+
+    assert len(risk_engine.fills) == 1
+    payload = risk_engine.fills[0]
+    assert payload["profile_name"] == "seq-profile"
+    assert payload["pnl"] == pytest.approx(3.25)
+    expected_ts = datetime.fromtimestamp(nested_timestamp_ns / 1_000_000_000, tz=timezone.utc)
+    assert payload["timestamp"] == expected_ts
+
+    entry = decision_log.tail(limit=1)[0]
+    metadata = entry["metadata"]
+    assert metadata["fill_timestamp"] == expected_ts.isoformat()
+    assert metadata["fill"]["fills"][0]["info"]["realizedPnl"] == "3.25"
+    assert metadata["metrics"]["pnl"] == pytest.approx(3.25)
+    assert metadata["metrics"]["notional"] == pytest.approx(24.5 * 3.0)
+
+
+def test_post_core_fill_handles_namespace_and_pair_sequences() -> None:
+    emitter = DummyEmitter()
+    gui = DummyGUI()
+    adapter = RecordingExecutionAdapter()
+    trader = AutoTrader(
+        emitter,
+        gui,
+        lambda: "ADA/USDT",
+        auto_trade_interval_s=0.5,
+        walkforward_interval_s=None,
+        signal_service=SignalService(),
+        risk_service=RiskService(),
+        execution_service=ExecutionService(adapter),
+        data_provider=StubDataProvider(),
+    )
+
+    decision_log = RiskDecisionLog(clock=lambda: datetime(2024, 1, 4, tzinfo=timezone.utc))
+    risk_engine = RecordingRiskEngine(decision_log=decision_log)
+    trader._core_risk_engine = risk_engine
+    trader._core_risk_profile = None
+
+    raw_timestamp_ms = 1_701_111_222_333
+    raw_response = SimpleNamespace(
+        values=[("profit_loss", "8.75"), ("ignored", None)],
+        details=SimpleNamespace(events=[SimpleNamespace(ts=raw_timestamp_ms)]),
+    )
+    request_timestamp_ms = raw_timestamp_ms + 5_000
+    request_metadata = SimpleNamespace(
+        decision_candidate=SimpleNamespace(risk_profile="ns-profile"),
+        tags=("alpha", "beta"),
+        extra=[["timestamp", request_timestamp_ms]],
+    )
+    order_request = SimpleNamespace(
+        symbol="ADAUSDT",
+        side="sell",
+        quantity=1.5,
+        price=1.25,
+        metadata=request_metadata,
+    )
+    order_result = SimpleNamespace(
+        avg_price=1.3,
+        filled_quantity=None,
+        raw_response=raw_response,
+    )
+
+    trader._post_core_fill("ADAUSDT", "SELL", order_request, order_result)
+
+    assert len(risk_engine.fills) == 1
+    payload = risk_engine.fills[0]
+    assert payload["profile_name"] == "ns-profile"
+    assert payload["symbol"] == "ADAUSDT"
+    assert payload["side"] == "sell"
+    assert payload["pnl"] == pytest.approx(8.75)
+    assert payload["position_value"] == pytest.approx(0.0)
+    expected_timestamp = datetime.fromtimestamp(raw_timestamp_ms / 1000.0, tz=timezone.utc)
+    assert payload["timestamp"] == expected_timestamp
+
+    entry = decision_log.tail(limit=1)[0]
+    metadata = entry["metadata"]
+    assert metadata["metrics"]["pnl"] == pytest.approx(8.75)
+    assert metadata["metrics"]["notional"] == pytest.approx(1.3 * 1.5)
+    assert metadata["fill_timestamp"] == expected_timestamp.isoformat()
+    assert metadata["fill"]["values"][0] == ["profit_loss", "8.75"]
+    assert metadata["request"]["tags"] == ["alpha", "beta"]
+    assert metadata["request"]["extra"][0] == ["timestamp", request_timestamp_ms]
+
+
+def test_post_core_fill_sanitizes_invalid_numeric_sources() -> None:
+    from decimal import Decimal
+
+    emitter = DummyEmitter()
+    gui = DummyGUI()
+    adapter = RecordingExecutionAdapter()
+    trader = AutoTrader(
+        emitter,
+        gui,
+        lambda: "XRP/USDT",
+        auto_trade_interval_s=0.5,
+        walkforward_interval_s=None,
+        signal_service=SignalService(),
+        risk_service=RiskService(),
+        execution_service=ExecutionService(adapter),
+        data_provider=StubDataProvider(),
+    )
+
+    decision_log = RiskDecisionLog(clock=lambda: datetime(2024, 1, 5, tzinfo=timezone.utc))
+    risk_engine = RecordingRiskEngine(decision_log=decision_log)
+    trader._core_risk_engine = risk_engine
+    trader._core_risk_profile = "nan-profile"
+
+    order_request = SimpleNamespace(
+        symbol="XRPUSDT",
+        side="buy",
+        quantity="0.8",
+        price=Decimal("0.52"),
+        metadata={"decision_candidate": {"risk_profile": "nan-profile"}},
+    )
+    raw_timestamp = "2024-04-03T12:30:00Z"
+    order_result = SimpleNamespace(
+        avg_price=Decimal("NaN"),
+        filled_quantity=float("nan"),
+        pnl=float("nan"),
+        timestamp=pd.NaT,
+        raw_response={
+            "fills": [
+                {"profit": "15.75", "time": 1_700_000_999_000},
+                {"details": {"ts": raw_timestamp}},
+            ]
+        },
+    )
+
+    trader._post_core_fill("XRPUSDT", "BUY", order_request, order_result)
+
+    assert len(risk_engine.fills) == 1
+    fill_payload = risk_engine.fills[0]
+    assert fill_payload["profile_name"] == "nan-profile"
+    assert fill_payload["symbol"] == "XRPUSDT"
+    assert fill_payload["side"] == "buy"
+    assert fill_payload["pnl"] == pytest.approx(15.75)
+    assert fill_payload["timestamp"] == datetime(2024, 4, 3, 12, 30, tzinfo=timezone.utc)
+    assert fill_payload["position_value"] == pytest.approx(0.52 * 0.8)
+
+    entries = decision_log.tail(limit=1)
+    assert len(entries) == 1
+    entry = entries[0]
+    metrics = entry["metadata"]["metrics"]
+    assert metrics["avg_price"] == pytest.approx(0.52)
+    assert metrics["filled_quantity"] == pytest.approx(0.8)
+    assert metrics["notional"] == pytest.approx(0.52 * 0.8)
+    assert metrics["pnl"] == pytest.approx(15.75)
+    assert metrics["position_value"] == pytest.approx(0.52 * 0.8)
+    assert metrics["position_delta"] == pytest.approx(0.52 * 0.8)
+    assert entry["metadata"]["fill_timestamp"] == datetime(
+        2024, 4, 3, 12, 30, tzinfo=timezone.utc
+    ).isoformat()
+
+
+def test_post_core_fill_merges_notional_from_nested_sources() -> None:
+    emitter = DummyEmitter()
+    gui = DummyGUI()
+    adapter = RecordingExecutionAdapter()
+    trader = AutoTrader(
+        emitter,
+        gui,
+        lambda: "SOL/USDT",
+        auto_trade_interval_s=0.5,
+        walkforward_interval_s=None,
+        signal_service=SignalService(),
+        risk_service=RiskService(),
+        execution_service=ExecutionService(adapter),
+        data_provider=StubDataProvider(),
+    )
+
+    decision_log = RiskDecisionLog(clock=lambda: datetime(2024, 1, 6, tzinfo=timezone.utc))
+    risk_engine = RecordingRiskEngine(decision_log=decision_log)
+    trader._core_risk_engine = risk_engine
+    trader._core_risk_profile = "nested"
+
+    nested_raw = {
+        "order": {
+            "fills": [
+                {
+                    "price": "25123.45",
+                    "executedQty": "0.32",
+                    "quoteQty": "8039.504",
+                }
+            ],
+            "cost": "8039.504",
+            "transactTime": 1_700_000_000_500,
+        }
+    }
+    request_metadata = {
+        "decision_candidate": {"risk_profile": "nested"},
+        "details": [
+            {"averagePrice": "25123.45"},
+            {"baseQty": "0.32"},
+            {"quoteAmount": "8039.504"},
+        ],
+    }
+    order_request = SimpleNamespace(
+        symbol="SOLUSDT",
+        side="buy",
+        quantity=None,
+        price=None,
+        metadata=request_metadata,
+    )
+    order_result = SimpleNamespace(
+        avg_price=None,
+        filled_quantity=None,
+        pnl="18.0",
+        raw_response=nested_raw,
+    )
+
+    trader._post_core_fill("SOLUSDT", "BUY", order_request, order_result)
+
+    assert len(risk_engine.fills) == 1
+    fill_payload = risk_engine.fills[0]
+    assert fill_payload["profile_name"] == "nested"
+    assert fill_payload["side"] == "buy"
+    assert fill_payload["symbol"] == "SOLUSDT"
+    assert fill_payload["pnl"] == pytest.approx(18.0)
+    assert fill_payload["timestamp"] == datetime(
+        2023, 11, 14, 22, 13, 20, 500000, tzinfo=timezone.utc
+    )
+    assert fill_payload["position_value"] == pytest.approx(8039.504)
+
+    entry = decision_log.tail(limit=1)[0]
+    metrics = entry["metadata"]["metrics"]
+    assert metrics["avg_price"] == pytest.approx(25123.45)
+    assert metrics["filled_quantity"] == pytest.approx(0.32)
+    assert metrics["notional"] == pytest.approx(8039.504)
+    assert metrics["pnl"] == pytest.approx(18.0)
+    assert metrics["position_value"] == pytest.approx(8039.504)
+    assert metrics["position_delta"] == pytest.approx(8039.504)
+    assert entry["metadata"]["fill_timestamp"] == datetime(
+        2023, 11, 14, 22, 13, 20, 500000, tzinfo=timezone.utc
+    ).isoformat()
+
+
+def test_post_core_fill_records_fee_metrics_from_nested_sources() -> None:
+    emitter = DummyEmitter()
+    gui = DummyGUI()
+    adapter = RecordingExecutionAdapter()
+    trader = AutoTrader(
+        emitter,
+        gui,
+        lambda: "AVAX/USDT",
+        auto_trade_interval_s=0.5,
+        walkforward_interval_s=None,
+        signal_service=SignalService(),
+        risk_service=RiskService(),
+        execution_service=ExecutionService(adapter),
+        data_provider=StubDataProvider(),
+    )
+
+    decision_log = RiskDecisionLog(clock=lambda: datetime(2024, 1, 8, tzinfo=timezone.utc))
+    risk_engine = RecordingRiskEngine(decision_log=decision_log)
+    trader._core_risk_engine = risk_engine
+    trader._core_risk_profile = "fees"
+
+    raw_response = {
+        "fills": [
+            {
+                "feeAmount": "1.25",
+                "feeCurrency": "USDT",
+            }
+        ]
+    }
+    metadata = {
+        "decision_candidate": {"risk_profile": "fees"},
+        "settlement": {"commissionAsset": "USDT"},
+    }
+    order_request = SimpleNamespace(
+        symbol="AVAXUSDT",
+        side="buy",
+        quantity=0.75,
+        price=125.5,
+        metadata=metadata,
+    )
+    order_result = SimpleNamespace(
+        avg_price=125.5,
+        filled_quantity=0.75,
+        raw_response=raw_response,
+    )
+
+    trader._post_core_fill("AVAXUSDT", "BUY", order_request, order_result)
+
+    entry = decision_log.tail(limit=1)[0]
+    metrics = entry["metadata"]["metrics"]
+    assert metrics["avg_price"] == pytest.approx(125.5)
+    assert metrics["filled_quantity"] == pytest.approx(0.75)
+    assert metrics["notional"] == pytest.approx(125.5 * 0.75)
+    assert metrics["position_value"] == pytest.approx(125.5 * 0.75)
+    assert metrics["fee"] == pytest.approx(1.25)
+    assert metrics["fee_currency"] == "USDT"
+    assert metrics["position_delta"] == pytest.approx(125.5 * 0.75)
+
+
+def test_post_core_fill_handles_nested_fee_objects() -> None:
+    emitter = DummyEmitter()
+    gui = DummyGUI()
+    adapter = RecordingExecutionAdapter()
+    trader = AutoTrader(
+        emitter,
+        gui,
+        lambda: "XRP/USDT",
+        auto_trade_interval_s=0.5,
+        walkforward_interval_s=None,
+        signal_service=SignalService(),
+        risk_service=RiskService(),
+        execution_service=ExecutionService(adapter),
+        data_provider=StubDataProvider(),
+    )
+
+    decision_log = RiskDecisionLog(clock=lambda: datetime(2024, 3, 12, tzinfo=timezone.utc))
+    risk_engine = RecordingRiskEngine(decision_log=decision_log)
+    trader._core_risk_engine = risk_engine
+    trader._core_risk_profile = "fees-nested"
+
+    raw_response = {
+        "fills": [
+            {
+                "fee": {"cost": "0.75", "currency": "USDT"},
+                "commission": {"amount": "0.75", "asset": "USDT"},
+            }
+        ],
+        "settlement": {"fees": [{"value": "0.75", "currency": "USDT"}]},
+    }
+    metadata = {
+        "decision_candidate": {"risk_profile": "fees-nested"},
+        "audit": {"fees": [{"amount": "0.75", "currency": "USDT"}]},
+    }
+    order_request = SimpleNamespace(
+        symbol="XRPUSDT",
+        side="buy",
+        quantity=10.0,
+        price=0.5,
+        metadata=metadata,
+    )
+    order_result = SimpleNamespace(
+        avg_price=0.5,
+        filled_quantity=10.0,
+        raw_response=raw_response,
+    )
+
+    trader._post_core_fill("XRPUSDT", "BUY", order_request, order_result)
+
+    entry = decision_log.tail(limit=1)[0]
+    metrics = entry["metadata"]["metrics"]
+    assert metrics["fee"] == pytest.approx(0.75)
+    assert metrics["fee_currency"] == "USDT"
+    assert metrics["notional"] == pytest.approx(5.0)
+    assert metrics["position_delta"] == pytest.approx(5.0)
+
+
+def test_post_core_fill_logs_fee_rate_and_liquidity_role() -> None:
+    emitter = DummyEmitter()
+    gui = DummyGUI()
+    adapter = RecordingExecutionAdapter()
+    trader = AutoTrader(
+        emitter,
+        gui,
+        lambda: "LTC/USDT",
+        auto_trade_interval_s=0.5,
+        walkforward_interval_s=None,
+        signal_service=SignalService(),
+        risk_service=RiskService(),
+        execution_service=ExecutionService(adapter),
+        data_provider=StubDataProvider(),
+    )
+
+    decision_log = RiskDecisionLog(clock=lambda: datetime(2024, 4, 9, tzinfo=timezone.utc))
+    risk_engine = RecordingRiskEngine(decision_log=decision_log)
+    trader._core_risk_engine = risk_engine
+    trader._core_risk_profile = "fee-role"
+
+    raw_response = {
+        "fills": [
+            {"isMaker": True, "feeRate": "0.0004"},
+            {"details": {"makerFlag": "false"}},
+        ],
+        "execution": {"liquidityType": "maker"},
+    }
+    metadata = {"decision_candidate": {"risk_profile": "fee-role"}}
+
+    order_request = SimpleNamespace(
+        symbol="LTCUSDT",
+        side="buy",
+        quantity=1.5,
+        price=90.0,
+        metadata=metadata,
+    )
+    order_result = SimpleNamespace(
+        avg_price=90.0,
+        filled_quantity=1.5,
+        raw_response=raw_response,
+    )
+
+    trader._post_core_fill("LTCUSDT", "BUY", order_request, order_result)
+
+    entry = decision_log.tail(limit=1)[0]
+    metadata_payload = entry["metadata"]
+    metrics = metadata_payload["metrics"]
+    assert metrics["fee_rate"] == pytest.approx(0.0004)
+    assert metadata_payload["liquidity"] == "maker"
+
+
+def test_post_core_fill_collects_identifier_fields() -> None:
+    emitter = DummyEmitter()
+    gui = DummyGUI()
+    adapter = RecordingExecutionAdapter()
+    trader = AutoTrader(
+        emitter,
+        gui,
+        lambda: "BNB/USDT",
+        auto_trade_interval_s=0.5,
+        walkforward_interval_s=None,
+        signal_service=SignalService(),
+        risk_service=RiskService(),
+        execution_service=ExecutionService(adapter),
+        data_provider=StubDataProvider(),
+    )
+
+    decision_log = RiskDecisionLog(clock=lambda: datetime(2024, 2, 11, tzinfo=timezone.utc))
+    risk_engine = RecordingRiskEngine(decision_log=decision_log)
+    trader._core_risk_engine = risk_engine
+    trader._core_risk_profile = "identifiers"
+
+    raw_response = {
+        "order": {
+            "orderId": "ord-1001",
+            "fills": [
+                {
+                    "tradeId": 874563,
+                    "execId": "fill-009",
+                }
+            ],
+        }
+    }
+    metadata = {
+        "client": {
+            "clientOrderId": "cli-7788",
+        }
+    }
+
+    order_request = SimpleNamespace(
+        symbol="BNBUSDT",
+        side="buy",
+        quantity=2.0,
+        price=315.25,
+        metadata=metadata,
+    )
+    order_result = SimpleNamespace(
+        avg_price=315.25,
+        filled_quantity=2.0,
+        raw_response=raw_response,
+        order_id="ord-1001",
+    )
+
+    trader._post_core_fill("BNBUSDT", "BUY", order_request, order_result)
+
+    entry = decision_log.tail(limit=1)[0]
+    identifiers = entry["metadata"].get("identifiers")
+    assert identifiers is not None
+    assert identifiers["order_id"] == "ord-1001"
+    assert identifiers["client_order_id"] == "cli-7788"
+    assert identifiers["trade_id"] == "874563"
+    assert identifiers["fill_id"] == "fill-009"
+
+
+def test_post_core_fill_prefers_explicit_position_metrics() -> None:
+    emitter = DummyEmitter()
+    gui = DummyGUI()
+    adapter = RecordingExecutionAdapter()
+    trader = AutoTrader(
+        emitter,
+        gui,
+        lambda: "DOGE/USDT",
+        auto_trade_interval_s=0.5,
+        walkforward_interval_s=None,
+        signal_service=SignalService(),
+        risk_service=RiskService(),
+        execution_service=ExecutionService(adapter),
+        data_provider=StubDataProvider(),
+    )
+
+    decision_log = RiskDecisionLog(clock=lambda: datetime(2024, 3, 3, tzinfo=timezone.utc))
+    risk_engine = RecordingRiskEngine(decision_log=decision_log)
+    trader._core_risk_engine = risk_engine
+    trader._core_risk_profile = "position-explicit"
+
+    raw_response = {
+        "details": {
+            "metrics": {
+                "positionValue": "9876.5",
+            }
+        },
+        "changes": [
+            {"positionChange": "-9876.5"},
+            {"other": None},
+        ],
+    }
+    metadata = {
+        "decision_candidate": {"risk_profile": "position-explicit"},
+        "position": {"position_notional": "4321.0"},
+    }
+
+    order_request = SimpleNamespace(
+        symbol="DOGEUSDT",
+        side="sell",
+        quantity=2_000.0,
+        price=0.15,
+        metadata=metadata,
+    )
+    order_result = SimpleNamespace(
+        avg_price=0.15,
+        filled_quantity=2_000.0,
+        raw_response=raw_response,
+    )
+
+    trader._post_core_fill("DOGEUSDT", "SELL", order_request, order_result)
+
+    assert len(risk_engine.fills) == 1
+    payload = risk_engine.fills[0]
+    assert payload["profile_name"] == "position-explicit"
+    assert payload["symbol"] == "DOGEUSDT"
+    assert payload["side"] == "sell"
+    assert payload["position_value"] == pytest.approx(9876.5)
+
+    entry = decision_log.tail(limit=1)[0]
+    metrics = entry["metadata"]["metrics"]
+    assert metrics["position_value"] == pytest.approx(9876.5)
+    assert metrics["position_delta"] == pytest.approx(-9876.5)
+    # Notional calculation should remain unaffected by explicit overrides.
+    assert metrics["notional"] == pytest.approx(0.15 * 2_000.0)
 
 
 def test_autotrader_update_risk_manager_settings_applies_changes() -> None:
