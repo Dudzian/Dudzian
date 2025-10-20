@@ -9,9 +9,12 @@ from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple
 import pytest
 import pandas as pd
 from types import SimpleNamespace
-from bot_core.risk.base import RiskProfile
+
+from bot_core.config.models import RiskProfileConfig
+from bot_core.decision.models import DecisionCandidate
+from bot_core.exchanges.base import AccountSnapshot, OrderRequest
 from bot_core.risk.engine import ThresholdRiskEngine
-from bot_core.risk.profiles.manual import ManualProfile
+from bot_core.risk.base import RiskCheckResult
 from bot_core.runtime.metadata import RiskManagerSettings
 
 from KryptoLowca.auto_trader import AutoTrader
@@ -20,6 +23,7 @@ from KryptoLowca.config_manager import StrategyConfig
 from KryptoLowca.core.services import ExecutionService, PaperTradingAdapter, RiskAssessment, SignalService
 from KryptoLowca.core.services.data_provider import ExchangeDataProvider  # noqa: F401 - ensures module importable
 from KryptoLowca.core.services.risk_service import RiskService
+from KryptoLowca.managers.risk_manager_adapter import RiskManager
 from KryptoLowca.strategies.base import BaseStrategy, StrategyContext, StrategyMetadata, StrategySignal
 from KryptoLowca.strategies.base.registry import StrategyRegistry
 
@@ -140,6 +144,93 @@ class DummyGUI:
             self._open_positions.pop(symbol_key, None)
 
 
+class _CacheSnapshotStub:
+    def __init__(self, **payload: Any) -> None:
+        self._payload = dict(payload)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return dict(self._payload)
+
+
+class CacheAggregatorStub:
+    _mode = "cache"
+
+    def __init__(self, snapshot: _CacheSnapshotStub) -> None:
+        self.snapshot = snapshot
+        self.calls = 0
+        self.last_query: Any | None = None
+
+    def build_snapshot(self, query: Any) -> _CacheSnapshotStub:
+        self.calls += 1
+        self.last_query = query
+        return self.snapshot
+
+
+class SqliteBaselineStub:
+    def __init__(self, **payload: Any) -> None:
+        self._payload = dict(payload)
+        for key, value in self._payload.items():
+            setattr(self, key, value)
+
+    def to_mapping(self) -> Dict[str, Any]:
+        return dict(self._payload)
+
+
+class SqliteAggregatorStub:
+    _mode = "sqlite"
+
+    def __init__(self, *baselines: SqliteBaselineStub) -> None:
+        self._baselines = baselines or (SqliteBaselineStub(symbol="BTCUSDT"),)
+        self.calls = 0
+
+    def build(self) -> Tuple[SqliteBaselineStub, ...]:
+        self.calls += 1
+        return tuple(self._baselines)
+
+
+@pytest.mark.asyncio
+async def test_exchange_data_provider_handles_sync_manager() -> None:
+    class SyncManager:
+        def __init__(self) -> None:
+            self.calls: Dict[str, int] = {}
+
+        def fetch_ohlcv(self, symbol: str, timeframe: str, *, limit: int = 500):
+            self.calls.setdefault(symbol, 0)
+            self.calls[symbol] += 1
+            return [[0, 100.0, 101.0, 99.0, 100.5, 10.0]]
+
+        def fetch_ticker(self, symbol: str):
+            return {"symbol": symbol, "last": 100.5}
+
+    provider = ExchangeDataProvider(SyncManager())
+    payload = await provider.get_ohlcv("BTC/USDT", "1m", limit=1)
+    assert payload["candles"][0][4] == 100.5
+
+    ticker = await provider.get_ticker("BTC/USDT")
+    assert ticker["last"] == 100.5
+
+
+@pytest.mark.asyncio
+async def test_exchange_data_provider_falls_back_to_exchange_attr() -> None:
+    class AsyncExchange:
+        async def fetch_ticker(self, symbol: str):
+            return {"symbol": symbol, "bid": 99.9}
+
+    class AsyncManager:
+        def __init__(self) -> None:
+            self.exchange = AsyncExchange()
+
+        async def fetch_ohlcv(self, symbol: str, timeframe: str, *, limit: int = 500):
+            return [[0, 200.0, 201.0, 199.0, 200.5, 20.0]]
+
+    provider = ExchangeDataProvider(AsyncManager())
+    candles = await provider.get_ohlcv("ETH/USDT", "5m", limit=1)
+    assert candles["symbol"] == "ETH/USDT"
+
+    ticker = await provider.get_ticker("ETH/USDT")
+    assert ticker["bid"] == pytest.approx(99.9)
+
+
 @dataclass
 class StrategyHarness:
     registry: StrategyRegistry
@@ -184,7 +275,6 @@ def test_autotrader_applies_runtime_risk_profile() -> None:
         auto_trade_interval_s=0.5,
         walkforward_interval_s=None,
         signal_service=SignalService(),
-        risk_service=RiskService(),
         execution_service=ExecutionService(adapter),
         data_provider=StubDataProvider(),
     )
@@ -250,6 +340,602 @@ def test_bootstrap_registers_provided_risk_profile(monkeypatch: pytest.MonkeyPat
     assert trader._risk_service.max_portfolio_risk_pct == pytest.approx(0.10)
     assert trader._risk_service.max_positions == 5
     assert trader._risk_service.emergency_stop_drawdown_pct == pytest.approx(0.10)
+    assert trader._risk_manager_adapter is not None
+    assert isinstance(trader._risk_manager_adapter, RiskManager)
+
+
+class DenyingRiskManager:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def calculate_position_size(self, *args: Any, **kwargs: Any) -> Tuple[float, Mapping[str, Any]]:
+        self.calls += 1
+        return (
+            0.25,
+            {
+                "allowed": False,
+                "reason": "Limit pozycji przekroczony",
+                "recommended_size": 0.0,
+            },
+        )
+
+    def latest_guard_state(self) -> Mapping[str, Any]:
+        return {"gross_notional": 12_345.0, "active_positions": 1}
+
+
+def test_risk_denial_from_adapter_blocks_trade() -> None:
+    emitter = DummyEmitter()
+    gui = DummyGUI()
+    gui.risk_mgr = DenyingRiskManager()
+    adapter = RecordingExecutionAdapter()
+    trader = AutoTrader(
+        emitter,
+        gui,
+        lambda: "BTC/USDT",
+        auto_trade_interval_s=0.5,
+        walkforward_interval_s=None,
+        signal_service=SignalService(),
+        execution_service=ExecutionService(adapter),
+        data_provider=StubDataProvider(),
+    )
+
+    decision = trader._evaluate_risk(
+        "BTC/USDT",
+        "BUY",
+        100.0,
+        trader._build_signal_payload("BTC/USDT", "BUY", 1.0),
+        None,
+    )
+
+    assert not decision.should_trade
+    assert decision.state == "lock"
+    assert decision.reason == "risk_engine_denied"
+    assert decision.details["risk_engine_allowed"] is False
+    assert decision.details["risk_engine"]["allowed"] is False
+    assert decision.details["risk_engine"]["reason"] == "Limit pozycji przekroczony"
+    assert decision.details["risk_engine"]["state"]["gross_notional"] == pytest.approx(12_345.0)
+    assert any(event.get("type") == "risk_engine_denied" for event in decision.details["limit_events"])
+
+
+class AdjustingRiskManager:
+    def __init__(self, *, recommended: float = 0.004, max_qty: float = 12.5) -> None:
+        self.recommended = float(recommended)
+        self.max_qty = float(max_qty)
+        self.calls = 0
+
+    def calculate_position_size(self, *args: Any, **kwargs: Any) -> Tuple[float, Mapping[str, Any]]:
+        self.calls += 1
+        return (
+            self.recommended,
+            {
+                "allowed": True,
+                "reason": "clamped",
+                "recommended_size": self.recommended,
+                "adjustments": {"max_quantity": self.max_qty},
+            },
+        )
+
+    def latest_guard_state(self) -> Mapping[str, Any]:
+        return {"gross_notional": 2_222.0}
+
+
+def test_risk_adjustment_from_adapter_sets_warning() -> None:
+    emitter = DummyEmitter()
+    gui = DummyGUI()
+    gui.risk_mgr = AdjustingRiskManager()
+    adapter = RecordingExecutionAdapter()
+    trader = AutoTrader(
+        emitter,
+        gui,
+        lambda: "BTC/USDT",
+        auto_trade_interval_s=0.5,
+        walkforward_interval_s=None,
+        signal_service=SignalService(),
+        execution_service=ExecutionService(adapter),
+        data_provider=StubDataProvider(),
+    )
+
+    decision = trader._evaluate_risk(
+        "BTC/USDT",
+        "BUY",
+        100.0,
+        trader._build_signal_payload("BTC/USDT", "BUY", 1.0),
+        None,
+    )
+
+    assert decision.should_trade
+    assert decision.state == "warn"
+    assert decision.reason == "risk_clamped"
+    assert decision.fraction == pytest.approx(0.004)
+    assert decision.details["risk_engine_allowed"] is True
+    risk_info = decision.details["risk_engine"]
+    assert risk_info["allowed"] is True
+    assert risk_info["adjustments"]["max_quantity"] == pytest.approx(12.5)
+    assert any(event.get("type") == "risk_engine_adjustment" for event in decision.details["limit_events"])
+    assert any(event.get("type") == "risk_engine_clamp" for event in decision.details["limit_events"])
+
+
+def test_autotrader_appends_decision_to_log() -> None:
+    emitter = DummyEmitter()
+    gui = DummyGUI()
+    trader = AutoTrader(
+        emitter,
+        gui,
+        lambda: "BTC/USDT",
+        auto_trade_interval_s=0.5,
+        walkforward_interval_s=None,
+        signal_service=SignalService(),
+        execution_service=ExecutionService(RecordingExecutionAdapter()),
+        data_provider=StubDataProvider(),
+    )
+
+    gui.risk_mgr = RiskManager(
+        config={
+            "max_risk_per_trade": 0.05,
+            "max_daily_loss_pct": 0.2,
+            "max_positions": 5,
+        },
+        mode="paper",
+        decision_log=trader._risk_decision_log,
+    )
+
+    decision = trader._evaluate_risk(
+        "BTC/USDT",
+        "BUY",
+        100.0,
+        trader._build_signal_payload("BTC/USDT", "BUY", 1.0),
+        None,
+    )
+
+    tail = trader._risk_decision_log.tail(limit=5)
+    sources = {entry.get("metadata", {}).get("source") for entry in tail}
+    assert "risk_manager_adapter" in sources
+    assert "auto_trader" in sources
+
+    auto_entry = next(
+        entry for entry in reversed(tail) if entry.get("metadata", {}).get("source") == "auto_trader"
+    )
+    assert auto_entry["symbol"] == "BTCUSDT"
+    expected_allowed = bool(decision.should_trade and decision.state != "lock")
+    assert auto_entry["allowed"] is expected_allowed
+    assert auto_entry["metadata"]["mode"] == decision.mode
+
+
+def test_core_auto_trade_denial_records_decision(monkeypatch: pytest.MonkeyPatch) -> None:
+    emitter = DummyEmitter()
+    gui = DummyGUI()
+    adapter = RecordingExecutionAdapter()
+    trader = AutoTrader(
+        emitter,
+        gui,
+        lambda: "BTC/USDT",
+        auto_trade_interval_s=0.5,
+        walkforward_interval_s=None,
+        signal_service=SignalService(),
+        execution_service=ExecutionService(adapter),
+        data_provider=StubDataProvider(),
+    )
+
+    class FakeRiskEngine:
+        def __init__(self, result: RiskCheckResult) -> None:
+            self._result = result
+            self.snapshot_calls: list[str] = []
+            self.fill_calls: list[Dict[str, object]] = []
+
+        def apply_pre_trade_checks(
+            self,
+            request: OrderRequest,
+            *,
+            account: AccountSnapshot,
+            profile_name: str,
+        ) -> RiskCheckResult:
+            self.snapshot_calls.append(profile_name)
+            self.last_account = account
+            return self._result
+
+        def snapshot_state(self, profile_name: str) -> Mapping[str, object]:
+            return {"gross_notional": 123.0, "profile": profile_name}
+
+        def on_fill(
+            self,
+            *,
+            profile_name: str,
+            symbol: str,
+            side: str,
+            position_value: float,
+            pnl: float,
+            timestamp: datetime | None = None,
+        ) -> None:
+            self.fill_calls.append(
+                {
+                    "profile_name": profile_name,
+                    "symbol": symbol,
+                    "side": side,
+                    "position_value": position_value,
+                    "pnl": pnl,
+                    "timestamp": timestamp,
+                }
+            )
+
+    class FakeExecutionService:
+        def __init__(self) -> None:
+            self.calls: list[tuple[OrderRequest, Mapping[str, object]]] = []
+
+        def execute(self, request: OrderRequest, context: Mapping[str, object]) -> Any:
+            self.calls.append((request, context))
+            return SimpleNamespace(
+                filled_quantity=request.quantity,
+                avg_price=request.price,
+                realized_pnl=10.0,
+            )
+
+    class FakeConnector:
+        def __init__(self, default_notional: float) -> None:
+            self.default_notional = default_notional
+            self.risk_profile = "balanced"
+            self.ai_manager = object()
+            self.calls: list[tuple[str, float]] = []
+
+        def candidate_from_signal(
+            self,
+            *,
+            symbol: str,
+            signal: float,
+            timestamp: object | None,
+            notional: float,
+            metadata: Mapping[str, object] | None = None,
+        ) -> DecisionCandidate:
+            self.calls.append((symbol, signal))
+            return DecisionCandidate(
+                strategy="test",
+                action="enter",
+                risk_profile=self.risk_profile,
+                symbol=symbol,
+                notional=notional,
+                expected_return_bps=signal * 10_000.0,
+                expected_probability=0.6,
+                metadata={"source": "test"},
+            )
+
+    risk_result = RiskCheckResult(
+        allowed=False,
+        reason="Limit pozycji przekroczony",
+        adjustments={"max_quantity": 0.5},
+        metadata={"engine": "threshold"},
+    )
+    fake_engine = FakeRiskEngine(risk_result)
+    fake_execution = FakeExecutionService()
+    fake_connector = FakeConnector(default_notional=1_000.0)
+
+    trader._core_risk_engine = fake_engine
+    trader._core_execution_service = fake_execution
+    trader._core_ai_connector = fake_connector
+    trader._core_ai_default_notional = 1_000.0
+    trader._core_account_equity = 10_000.0
+    trader._core_risk_profile = "balanced"
+    trader._risk_profile_name = "balanced"
+
+    df = pd.DataFrame(
+        {"close": [100.0]}, index=pd.to_datetime(["2024-01-01T00:00:00Z"])
+    )
+    monkeypatch.setattr(
+        trader,
+        "_obtain_prediction",
+        lambda *_, **__: (0.02, df, 100.0),
+    )
+
+    audited: list[RiskDecision] = []
+
+    def capture_audit(symbol: str, side: str, decision: RiskDecision, price: float) -> None:
+        audited.append(decision)
+
+    monkeypatch.setattr(trader, "_emit_risk_audit", capture_audit)
+
+    handled = trader._handle_core_auto_trade("BTC/USDT", "1m")
+    assert handled is True
+    assert fake_execution.calls == []
+    assert audited, "Powinien zostać zarejestrowany wpis audytu ryzyka"
+    decision = audited[-1]
+    assert not decision.should_trade
+    assert decision.reason == "risk_engine_denied"
+    assert decision.details["risk_engine_allowed"] is False
+    assert decision.details["risk_engine"]["state"]["gross_notional"] == pytest.approx(123.0)
+    limit_events = decision.details.get("limit_events", [])
+    assert any(evt.get("type") == "risk_engine_denied" for evt in limit_events)
+    assert any(evt.get("type") == "risk_engine_adjustment" for evt in limit_events)
+    assert decision.details["recommended_size"] == pytest.approx(0.005)
+
+    tail = trader._risk_decision_log.tail(limit=1)
+    assert tail, "RiskDecisionLog powinien otrzymać wpis"
+    entry = tail[-1]
+    assert entry["symbol"] == "BTCUSDT"
+    assert entry["allowed"] is False
+    assert entry["reason"] == "risk_engine_denied"
+    assert entry["metadata"]["source"] == "auto_trader"
+
+
+def test_core_auto_trade_allowed_records_decision(monkeypatch: pytest.MonkeyPatch) -> None:
+    emitter = DummyEmitter()
+    gui = DummyGUI()
+    adapter = RecordingExecutionAdapter()
+    trader = AutoTrader(
+        emitter,
+        gui,
+        lambda: "BTC/USDT",
+        auto_trade_interval_s=0.5,
+        walkforward_interval_s=None,
+        signal_service=SignalService(),
+        execution_service=ExecutionService(adapter),
+        data_provider=StubDataProvider(),
+    )
+
+    class FakeRiskEngine:
+        def __init__(self, result: RiskCheckResult) -> None:
+            self._result = result
+            self.fill_calls: list[Dict[str, object]] = []
+
+        def apply_pre_trade_checks(
+            self,
+            request: OrderRequest,
+            *,
+            account: AccountSnapshot,
+            profile_name: str,
+        ) -> RiskCheckResult:
+            self.last_profile = profile_name
+            self.last_account = account
+            return self._result
+
+        def snapshot_state(self, profile_name: str) -> Mapping[str, object]:
+            return {"gross_notional": 123.0, "profile": profile_name}
+
+        def on_fill(
+            self,
+            *,
+            profile_name: str,
+            symbol: str,
+            side: str,
+            position_value: float,
+            pnl: float,
+            timestamp: datetime | None = None,
+        ) -> None:
+            self.fill_calls.append(
+                {
+                    "profile_name": profile_name,
+                    "symbol": symbol,
+                    "side": side,
+                    "position_value": position_value,
+                    "pnl": pnl,
+                    "timestamp": timestamp,
+                }
+            )
+
+    class FakeExecutionService:
+        def __init__(self) -> None:
+            self.calls: list[tuple[OrderRequest, Mapping[str, object]]] = []
+
+        def execute(self, request: OrderRequest, context: Mapping[str, object]) -> Any:
+            self.calls.append((request, context))
+            return SimpleNamespace(
+                filled_quantity=request.quantity,
+                avg_price=request.price,
+                realized_pnl=25.0,
+                timestamp=datetime(2024, 1, 1, 12, 0, tzinfo=timezone.utc),
+            )
+
+    class FakeConnector:
+        def __init__(self, default_notional: float) -> None:
+            self.default_notional = default_notional
+            self.risk_profile = "balanced"
+            self.ai_manager = object()
+
+        def candidate_from_signal(
+            self,
+            *,
+            symbol: str,
+            signal: float,
+            timestamp: object | None,
+            notional: float,
+            metadata: Mapping[str, object] | None = None,
+        ) -> DecisionCandidate:
+            return DecisionCandidate(
+                strategy="test",
+                action="enter",
+                risk_profile=self.risk_profile,
+                symbol=symbol,
+                notional=notional,
+                expected_return_bps=signal * 10_000.0,
+                expected_probability=0.6,
+                metadata={"source": "test"},
+            )
+
+    risk_result = RiskCheckResult(
+        allowed=True,
+        reason="ok",
+        adjustments=None,
+        metadata={"engine": "threshold"},
+    )
+    fake_engine = FakeRiskEngine(risk_result)
+    fake_execution = FakeExecutionService()
+    fake_connector = FakeConnector(default_notional=1_000.0)
+
+    trader._core_risk_engine = fake_engine
+    trader._core_execution_service = fake_execution
+    trader._core_ai_connector = fake_connector
+    trader._core_ai_default_notional = 1_000.0
+    trader._core_account_equity = 10_000.0
+    trader._core_risk_profile = "balanced"
+    trader._risk_profile_name = "balanced"
+
+    df = pd.DataFrame(
+        {"close": [100.0]}, index=pd.to_datetime(["2024-01-01T00:00:00Z"])
+    )
+    monkeypatch.setattr(
+        trader,
+        "_obtain_prediction",
+        lambda *_, **__: (0.03, df, 100.0),
+    )
+
+    audited: list[RiskDecision] = []
+
+    def capture_audit(symbol: str, side: str, decision: RiskDecision, price: float) -> None:
+        audited.append(decision)
+
+    monkeypatch.setattr(trader, "_emit_risk_audit", capture_audit)
+
+    handled = trader._handle_core_auto_trade("BTC/USDT", "1m")
+    assert handled is True
+    assert fake_execution.calls, "Powinno zostać złożone zlecenie core"
+    execution_request, _ = fake_execution.calls[-1]
+    assert execution_request.quantity == pytest.approx(10.0)
+    assert fake_engine.fill_calls, "Powinien zostać wywołany on_fill"
+    fill_entry = fake_engine.fill_calls[-1]
+    assert fill_entry["symbol"] == "BTCUSDT"
+    assert fill_entry["side"] == "buy"
+    assert fill_entry["position_value"] == pytest.approx(1000.0)
+    assert fill_entry["pnl"] == pytest.approx(25.0)
+    assert fill_entry["timestamp"] == datetime(2024, 1, 1, 12, 0, tzinfo=timezone.utc)
+
+    assert audited, "Powinien zostać zarejestrowany audyt"
+    decision = audited[-1]
+    assert decision.should_trade
+    assert decision.state == "ok"
+    assert decision.fraction == pytest.approx(0.1)
+    assert decision.details["risk_engine_allowed"] is True
+    assert decision.details["risk_engine"]["state"]["gross_notional"] == pytest.approx(123.0)
+    assert "limit_events" not in decision.details or not decision.details["limit_events"]
+
+    tail = trader._risk_decision_log.tail(limit=1)
+    assert tail and tail[-1]["allowed"] is True
+    assert tail[-1]["metadata"]["source"] == "auto_trader"
+
+
+def test_core_auto_trade_short_updates_position(monkeypatch: pytest.MonkeyPatch) -> None:
+    emitter = DummyEmitter()
+    gui = DummyGUI()
+    adapter = RecordingExecutionAdapter()
+    trader = AutoTrader(
+        emitter,
+        gui,
+        lambda: "ETH/USDT",
+        auto_trade_interval_s=0.5,
+        walkforward_interval_s=None,
+        signal_service=SignalService(),
+        execution_service=ExecutionService(adapter),
+        data_provider=StubDataProvider(),
+    )
+
+    class FakeRiskEngine:
+        def __init__(self, result: RiskCheckResult) -> None:
+            self._result = result
+            self.fill_calls: list[Dict[str, object]] = []
+
+        def apply_pre_trade_checks(
+            self,
+            request: OrderRequest,
+            *,
+            account: AccountSnapshot,
+            profile_name: str,
+        ) -> RiskCheckResult:
+            return self._result
+
+        def snapshot_state(self, profile_name: str) -> Mapping[str, object]:
+            return {"gross_notional": 42.0, "profile": profile_name}
+
+        def on_fill(
+            self,
+            *,
+            profile_name: str,
+            symbol: str,
+            side: str,
+            position_value: float,
+            pnl: float,
+            timestamp: datetime | None = None,
+        ) -> None:
+            self.fill_calls.append(
+                {
+                    "profile_name": profile_name,
+                    "symbol": symbol,
+                    "side": side,
+                    "position_value": position_value,
+                    "pnl": pnl,
+                    "timestamp": timestamp,
+                }
+            )
+
+    class FakeExecutionService:
+        def __init__(self) -> None:
+            self.calls: list[tuple[OrderRequest, Mapping[str, object]]] = []
+
+        def execute(self, request: OrderRequest, context: Mapping[str, object]) -> Any:
+            self.calls.append((request, context))
+            return SimpleNamespace(
+                filled_quantity=request.quantity,
+                avg_price=request.price,
+                realized_pnl=-12.5,
+            )
+
+    class FakeConnector:
+        def __init__(self) -> None:
+            self.default_notional = 2_000.0
+            self.risk_profile = "balanced"
+            self.ai_manager = object()
+
+        def candidate_from_signal(
+            self,
+            *,
+            symbol: str,
+            signal: float,
+            timestamp: object | None,
+            notional: float,
+            metadata: Mapping[str, object] | None = None,
+        ) -> DecisionCandidate:
+            return DecisionCandidate(
+                strategy="test",
+                action="enter",
+                risk_profile=self.risk_profile,
+                symbol=symbol,
+                notional=notional,
+                expected_return_bps=signal * 10_000.0,
+                expected_probability=0.55,
+                metadata={},
+            )
+
+    risk_result = RiskCheckResult(
+        allowed=True,
+        reason="ok",
+        adjustments=None,
+        metadata={},
+    )
+
+    fake_engine = FakeRiskEngine(risk_result)
+    fake_execution = FakeExecutionService()
+    fake_connector = FakeConnector()
+
+    trader._core_risk_engine = fake_engine
+    trader._core_execution_service = fake_execution
+    trader._core_ai_connector = fake_connector
+    trader._core_ai_default_notional = fake_connector.default_notional
+    trader._core_account_equity = 20_000.0
+    trader._core_risk_profile = "balanced"
+    trader._risk_profile_name = "balanced"
+
+    df = pd.DataFrame(
+        {"close": [200.0]}, index=pd.to_datetime(["2024-01-01T00:00:00Z"])
+    )
+    monkeypatch.setattr(
+        trader,
+        "_obtain_prediction",
+        lambda *_, **__: (-0.05, df, 200.0),
+    )
+
+    handled = trader._handle_core_auto_trade("ETH/USDT", "1m")
+    assert handled is True
+    assert fake_execution.calls, "Powinno zostać złożone zlecenie core"
+    fill_entry = fake_engine.fill_calls[-1]
+    assert fill_entry["symbol"] == "ETHUSDT"
+    assert fill_entry["side"] == "sell"
+    assert fill_entry["position_value"] == pytest.approx(2000.0)
+    assert fill_entry["pnl"] == pytest.approx(-12.5)
 
 
 def test_paper_trading_adapter_uses_gui_balance() -> None:
@@ -263,7 +949,6 @@ def test_paper_trading_adapter_uses_gui_balance() -> None:
         auto_trade_interval_s=0.5,
         walkforward_interval_s=None,
         signal_service=SignalService(),
-        risk_service=RiskService(),
         execution_service=ExecutionService(adapter),
         data_provider=StubDataProvider(),
     )
@@ -285,7 +970,6 @@ def test_autotrader_update_risk_manager_settings_applies_changes() -> None:
         auto_trade_interval_s=0.5,
         walkforward_interval_s=None,
         signal_service=SignalService(),
-        risk_service=RiskService(),
         execution_service=ExecutionService(adapter),
         data_provider=StubDataProvider(),
     )
@@ -326,6 +1010,147 @@ def test_autotrader_update_risk_manager_settings_applies_changes() -> None:
     cfg = trader._get_strategy_config()
     assert cfg.max_position_notional_pct == pytest.approx(0.08)
     assert cfg.trade_risk_pct == pytest.approx(0.08)
+    assert trader._risk_manager_adapter is not None
+
+
+def test_autotrader_registers_core_risk_profile_with_bootstrap() -> None:
+    engine = ThresholdRiskEngine()
+    bootstrap = SimpleNamespace(
+        risk_engine=engine,
+        environment=SimpleNamespace(name="paper", environment=SimpleNamespace(value="paper"), ai=None),
+        risk_profile_name="paper",
+        execution_service=None,
+        ai_manager=None,
+        ai_model_bindings=(),
+        ai_threshold_bps=None,
+    )
+
+    emitter = DummyEmitter()
+    gui = DummyGUI()
+    adapter = RecordingExecutionAdapter()
+    trader = AutoTrader(
+        emitter,
+        gui,
+        lambda: "BTC/USDT",
+        auto_trade_interval_s=0.5,
+        walkforward_interval_s=None,
+        signal_service=SignalService(),
+        execution_service=ExecutionService(adapter),
+        data_provider=StubDataProvider(),
+        bootstrap_context=bootstrap,
+        core_risk_engine=engine,
+    )
+
+    profile_name = trader._core_risk_profile or trader._risk_profile_name or "paper"
+    profiles = getattr(engine, "_profiles", {})
+    assert profile_name in profiles
+
+    snapshot = trader._core_account_snapshot()
+    request = OrderRequest(
+        symbol="BTCUSDT",
+        side="buy",
+        quantity=1.0,
+        order_type="market",
+        price=100.0,
+    )
+    result = engine.apply_pre_trade_checks(request, account=snapshot, profile_name=profile_name)
+    assert result.reason is not None
+    assert "ATR" in result.reason
+
+
+def test_autotrader_reloads_core_risk_profile_on_update() -> None:
+    engine = ThresholdRiskEngine()
+    bootstrap = SimpleNamespace(
+        risk_engine=engine,
+        environment=SimpleNamespace(name="paper", environment=SimpleNamespace(value="paper"), ai=None),
+        risk_profile_name="paper",
+        execution_service=None,
+        ai_manager=None,
+        ai_model_bindings=(),
+        ai_threshold_bps=None,
+    )
+
+    emitter = DummyEmitter()
+    gui = DummyGUI()
+    adapter = RecordingExecutionAdapter()
+    trader = AutoTrader(
+        emitter,
+        gui,
+        lambda: "BTC/USDT",
+        auto_trade_interval_s=0.5,
+        walkforward_interval_s=None,
+        signal_service=SignalService(),
+        execution_service=ExecutionService(adapter),
+        data_provider=StubDataProvider(),
+        bootstrap_context=bootstrap,
+        core_risk_engine=engine,
+    )
+
+    new_settings = RiskManagerSettings(
+        max_risk_per_trade=0.04,
+        max_daily_loss_pct=0.12,
+        max_portfolio_risk=0.2,
+        max_positions=6,
+        emergency_stop_drawdown=0.18,
+    )
+    profile_cfg = RiskProfileConfig(
+        name="growth",
+        max_daily_loss_pct=0.12,
+        max_position_pct=0.04,
+        target_volatility=0.18,
+        max_leverage=2.5,
+        stop_loss_atr_multiple=1.4,
+        max_open_positions=6,
+        hard_drawdown_pct=0.18,
+    )
+
+    trader.update_risk_manager_settings(
+        new_settings,
+        profile_name="growth",
+        profile_config=profile_cfg,
+    )
+
+    profiles = getattr(engine, "_profiles", {})
+    assert "growth" in profiles
+
+    request = OrderRequest(
+        symbol="BTCUSDT",
+        side="buy",
+        quantity=1.0,
+        order_type="market",
+        price=100.0,
+    )
+    snapshot = trader._core_account_snapshot()
+    result = engine.apply_pre_trade_checks(request, account=snapshot, profile_name="growth")
+    assert result.reason is not None
+    assert "ATR" in result.reason
+
+
+def test_autotrader_update_account_equity_adjusts_snapshot() -> None:
+    emitter = DummyEmitter()
+    gui = DummyGUI(paper_balance=5_000.0)
+    adapter = RecordingExecutionAdapter()
+    trader = AutoTrader(
+        emitter,
+        gui,
+        lambda: "BTC/USDT",
+        auto_trade_interval_s=0.5,
+        walkforward_interval_s=None,
+        signal_service=SignalService(),
+        execution_service=ExecutionService(adapter),
+        data_provider=StubDataProvider(),
+    )
+
+    trader.update_account_equity(4_321.5)
+    snapshot = trader._core_account_snapshot()
+    assert getattr(trader, "_core_account_equity", 0.0) == pytest.approx(4_321.5)
+    assert snapshot.total_equity == pytest.approx(4_321.5)
+    assert snapshot.available_margin == pytest.approx(4_321.5)
+
+    trader.update_account_equity(-50.0)
+    snapshot = trader._core_account_snapshot()
+    assert getattr(trader, "_core_account_equity", 0.0) == pytest.approx(0.0)
+    assert snapshot.total_equity == pytest.approx(0.0)
 
 
 def _configured_trader(
@@ -333,7 +1158,7 @@ def _configured_trader(
     symbol_source: Callable[[], Iterable[Tuple[str, str]] | Iterable[str] | str],
     data_provider: StubDataProvider,
     signal_service: SignalService,
-    risk_service: RiskService,
+    risk_service: RiskService | None,
     execution_adapter: RecordingExecutionAdapter,
     strategy_mode: str = "demo",
     exchange_overrides: Optional[Mapping[str, Any]] = None,
@@ -922,3 +1747,68 @@ async def test_resolve_prediction_result_handles_running_event_loop(
 
     assert isinstance(result, pd.Series)
     assert result.iloc[-1] == pytest.approx(1.25)
+
+
+@pytest.mark.asyncio
+async def test_build_market_payload_includes_cache_market_intel(
+    strategy_harness: StrategyHarness,
+) -> None:
+    provider = StubDataProvider(price=111.0)
+    snapshot = _CacheSnapshotStub(liquidity_usd=125_000.0, volatility_pct=2.5)
+    aggregator = CacheAggregatorStub(snapshot)
+    adapter = RecordingExecutionAdapter()
+    trader = AutoTrader(
+        DummyEmitter(),
+        DummyGUI(),
+        symbol_getter=lambda: "BTC/USDT",
+        auto_trade_interval_s=0.05,
+        walkforward_interval_s=None,
+        signal_service=strategy_harness.signal_service,
+        risk_service=AcceptAllRiskService(size=50.0),
+        execution_service=ExecutionService(adapter),
+        data_provider=provider,
+        market_intel=aggregator,
+    )
+
+    payload = await trader._build_market_payload("BTC/USDT", "1h")
+
+    assert "market_intel" in payload
+    assert payload["market_intel"]["liquidity_usd"] == pytest.approx(125_000.0)
+    assert aggregator.calls == 1
+    last_query = aggregator.last_query
+    if last_query is not None:
+        assert getattr(last_query, "symbol", "") == "BTC_USDT"
+        assert getattr(last_query, "interval", "") == "1h"
+
+
+@pytest.mark.asyncio
+async def test_build_market_payload_enriches_price_from_sqlite_market_intel(
+    strategy_harness: StrategyHarness,
+) -> None:
+    provider = StubDataProvider(price=0.0)
+    baseline = SqliteBaselineStub(
+        symbol="BTCUSDT",
+        mid_price=202.5,
+        avg_depth_usd=310_000.0,
+        avg_spread_bps=4.2,
+    )
+    aggregator = SqliteAggregatorStub(baseline)
+    adapter = RecordingExecutionAdapter()
+    trader = AutoTrader(
+        DummyEmitter(),
+        DummyGUI(),
+        symbol_getter=lambda: "BTC/USDT",
+        auto_trade_interval_s=0.05,
+        walkforward_interval_s=None,
+        signal_service=strategy_harness.signal_service,
+        risk_service=AcceptAllRiskService(size=50.0),
+        execution_service=ExecutionService(adapter),
+        data_provider=provider,
+        market_intel=aggregator,
+    )
+
+    payload = await trader._build_market_payload("BTC/USDT", "1m")
+
+    assert payload["market_intel"]["avg_depth_usd"] == pytest.approx(310_000.0)
+    assert payload["price"] == pytest.approx(202.5)
+    assert aggregator.calls == 1

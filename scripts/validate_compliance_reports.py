@@ -410,10 +410,82 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+_AUDIT_FLAG_NAMES = {
+    "--tco-json",
+    "--tco-signature",
+    "--tco-signing-key",
+    "--observability-manifest",
+    "--observability-signature",
+    "--observability-signing-key",
+    "--decision-smoke",
+    "--decision-log-summary",
+    "--slo-report",
+    "--alerts-report",
+    "--rotation-report",
+    "--compliance-report",
+    "--summary-output",
+}
+
+_VALIDATE_FLAG_NAMES = {
+    "--expected-control",
+    "--no-default-controls",
+    "--signing-key",
+    "--signing-key-file",
+    "--signing-key-env",
+    "--require-signature",
+    "--output-json",
+}
+
+
+def _detect_default_command(args: Sequence[str]) -> str:
+    if not args:
+        return "validate"
+
+    if args[0] in {"validate", "audit"}:
+        return args[0]
+
+    # Preserve top-level help/version flags without injecting a subcommand.
+    if any(arg in {"-h", "--help", "--version"} for arg in args):
+        return "root"
+
+    for token in args:
+        if not token.startswith("--"):
+            continue
+        name = token.split("=", 1)[0]
+        if name in _AUDIT_FLAG_NAMES:
+            return "audit"
+        if name in _VALIDATE_FLAG_NAMES:
+            return "validate"
+
+    # Positional arguments (np. ścieżki raportów) wskazują na validate.
+    if not args[0].startswith("--"):
+        return "validate"
+
+    return "validate"
+
+
+def _inject_default_command(argv: Sequence[str] | None) -> list[str]:
+    args = list(argv or ())
+    detected = _detect_default_command(args)
+    if detected in {"validate", "audit"}:
+        if args and args[0] == detected:
+            return args
+        return [detected, *args]
+    return args
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:  # pragma: no cover
     parser = _build_parser()
-    args = parser.parse_args(argv)
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+    effective_argv = _inject_default_command(raw_argv)
+    args = parser.parse_args(effective_argv)
     return args._handler(args)
+
+
+def run(argv: Optional[Sequence[str]] = None) -> int:
+    """Alias kompatybilności z testami dla funkcji main."""
+
+    return main(list(argv) if argv is not None else sys.argv[1:])
 
 
 if __name__ == "__main__":  # pragma: no cover

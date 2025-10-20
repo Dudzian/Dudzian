@@ -1118,7 +1118,143 @@ class StrategyPortfolioGovernor:
 # =============================================================================
 
 # Zgodność z HEAD: alias o tej samej nazwie
-PortfolioGovernor = AssetPortfolioGovernor
+def _coerce_strategy_config(
+    config: StrategyPortfolioGovernorConfig | Mapping[str, object] | object,
+) -> StrategyPortfolioGovernorConfig:
+    if isinstance(config, StrategyPortfolioGovernorConfig):
+        return config
+
+    base = StrategyPortfolioGovernorConfig()
+    scoring_cfg = getattr(config, "scoring", None)
+    if isinstance(scoring_cfg, PortfolioGovernorScoringWeights):
+        scoring = PortfolioGovernorScoringWeights(
+            alpha=float(scoring_cfg.alpha),
+            cost=float(scoring_cfg.cost),
+            slo=float(scoring_cfg.slo),
+            risk=float(scoring_cfg.risk),
+        )
+    else:
+        scoring = PortfolioGovernorScoringWeights(
+            alpha=float(getattr(scoring_cfg, "alpha", base.scoring.alpha)) if scoring_cfg is not None else base.scoring.alpha,
+            cost=float(getattr(scoring_cfg, "cost", base.scoring.cost)) if scoring_cfg is not None else base.scoring.cost,
+            slo=float(getattr(scoring_cfg, "slo", base.scoring.slo)) if scoring_cfg is not None else base.scoring.slo,
+            risk=float(getattr(scoring_cfg, "risk", base.scoring.risk)) if scoring_cfg is not None else base.scoring.risk,
+        )
+
+    default_baseline = float(getattr(config, "default_baseline_weight", base.default_baseline_weight))
+    default_min = float(getattr(config, "default_min_weight", base.default_min_weight))
+    default_max = float(getattr(config, "default_max_weight", base.default_max_weight))
+
+    strategies_raw = getattr(config, "strategies", {}) or {}
+    converted: dict[str, PortfolioGovernorStrategyConfig] = {}
+    for name, raw_cfg in dict(strategies_raw).items():
+        baseline = getattr(raw_cfg, "baseline_weight", default_baseline)
+        min_weight = getattr(raw_cfg, "min_weight", default_min)
+        max_weight = getattr(raw_cfg, "max_weight", default_max)
+        baseline_signals = getattr(raw_cfg, "baseline_max_signals", None)
+        max_factor = getattr(raw_cfg, "max_signal_factor", 1.0)
+        risk_profile = getattr(raw_cfg, "risk_profile", None)
+        tags_value = getattr(raw_cfg, "tags", ())
+        converted[name] = PortfolioGovernorStrategyConfig(
+            baseline_weight=float(baseline),
+            min_weight=float(min_weight),
+            max_weight=float(max_weight),
+            baseline_max_signals=None if baseline_signals is None else int(baseline_signals),
+            max_signal_factor=float(max_factor),
+            risk_profile=str(risk_profile) if isinstance(risk_profile, str) else None,
+            tags=tuple(tags_value) if isinstance(tags_value, Sequence) else tuple(),
+        )
+
+    return StrategyPortfolioGovernorConfig(
+        enabled=bool(getattr(config, "enabled", base.enabled)),
+        rebalance_interval_minutes=float(
+            getattr(config, "rebalance_interval_minutes", base.rebalance_interval_minutes)
+        ),
+        smoothing=float(getattr(config, "smoothing", base.smoothing)),
+        scoring=scoring,
+        strategies=converted,
+        default_baseline_weight=default_baseline,
+        default_min_weight=default_min,
+        default_max_weight=default_max,
+        require_complete_metrics=bool(
+            getattr(config, "require_complete_metrics", base.require_complete_metrics)
+        ),
+        min_score_threshold=float(
+            getattr(config, "min_score_threshold", base.min_score_threshold)
+        ),
+        default_cost_bps=float(getattr(config, "default_cost_bps", base.default_cost_bps)),
+        max_signal_floor=int(getattr(config, "max_signal_floor", base.max_signal_floor)),
+    )
+
+
+def PortfolioGovernor(
+    config: AssetPortfolioGovernorConfig | StrategyPortfolioGovernorConfig | object,
+    *,
+    clock: Callable[[], datetime] | None = None,
+    decision_log: PortfolioDecisionLog | None = None,
+):
+    if hasattr(config, "assets"):
+        if isinstance(config, AssetPortfolioGovernorConfig):
+            asset_cfg = config
+        else:
+            drift_value = getattr(config, "drift_tolerance", None)
+            if isinstance(drift_value, Mapping):
+                drift_value = PortfolioDriftTolerance(
+                    absolute=float(drift_value.get("absolute", 0.01)),
+                    relative=float(drift_value.get("relative", 0.25)),
+                )
+            if not isinstance(drift_value, PortfolioDriftTolerance):
+                drift_value = PortfolioDriftTolerance()
+
+            risk_budgets_value = getattr(config, "risk_budgets", {})
+            if isinstance(risk_budgets_value, Mapping):
+                risk_budgets = dict(risk_budgets_value)
+            else:
+                risk_budgets = {}
+
+            slo_overrides_value = getattr(config, "slo_overrides", ())
+            if isinstance(slo_overrides_value, Sequence) and not isinstance(
+                slo_overrides_value, (str, bytes)
+            ):
+                slo_overrides = tuple(slo_overrides_value)
+            else:
+                slo_overrides = tuple()
+
+            risk_overrides_value = getattr(config, "risk_overrides", ())
+            if isinstance(risk_overrides_value, Sequence) and not isinstance(
+                risk_overrides_value, (str, bytes)
+            ):
+                risk_overrides = tuple(str(item) for item in risk_overrides_value)
+            else:
+                risk_overrides = tuple()
+
+            asset_cfg = AssetPortfolioGovernorConfig(
+                name=str(getattr(config, "name", getattr(config, "portfolio_id", "portfolio"))),
+                portfolio_id=str(getattr(config, "portfolio_id", getattr(config, "name", "portfolio"))),
+                drift_tolerance=drift_value,
+                rebalance_cooldown_seconds=int(
+                    getattr(config, "rebalance_cooldown_seconds", 900)
+                ),
+                min_rebalance_value=float(
+                    getattr(config, "min_rebalance_value", 0.0)
+                ),
+                min_rebalance_weight=float(
+                    getattr(config, "min_rebalance_weight", 0.0)
+                ),
+                assets=tuple(getattr(config, "assets", ())),
+                risk_budgets=risk_budgets,
+                risk_overrides=risk_overrides,
+                slo_overrides=slo_overrides,
+                market_intel_interval=getattr(config, "market_intel_interval", None),
+                market_intel_lookback_bars=int(
+                    getattr(config, "market_intel_lookback_bars", 168)
+                ),
+            )
+
+        return AssetPortfolioGovernor(asset_cfg, clock=clock, decision_log=decision_log)
+
+    strategy_cfg = _coerce_strategy_config(config)
+    return StrategyPortfolioGovernor(strategy_cfg, clock=clock)
 
 __all__ = [
     # Asset-level (HEAD)

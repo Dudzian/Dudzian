@@ -32,6 +32,7 @@ class KrakenMarginAdapter(KrakenSpotAdapter):
             environment=environment,
             settings=settings,
             metrics_registry=metrics_registry,
+            watchdog=watchdog,
         )
         config = dict(settings or {})
         leverage = str(config.get("leverage", "2") or "2")

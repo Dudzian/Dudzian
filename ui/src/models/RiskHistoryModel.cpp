@@ -1,8 +1,13 @@
 #include "RiskHistoryModel.hpp"
 
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonObject>
+#include <QLocale>
 #include <QMetaType>
+#include <QSaveFile>
+#include <QStringConverter>
+#include <QTextStream>
 #include <QtGlobal>
 #include <QVariant>
 #include <QVariantMap>
@@ -40,6 +45,16 @@ RiskExposureData exposureFromJson(const QJsonObject& object)
     exposure.maxValue = object.value(QStringLiteral("maxValue")).toDouble();
     exposure.thresholdValue = object.value(QStringLiteral("thresholdValue")).toDouble();
     return exposure;
+}
+
+QString escapeCsv(const QString& value)
+{
+    QString escaped = value;
+    escaped.replace(QStringLiteral("\""), QStringLiteral("\"\""));
+    if (escaped.contains(QLatin1Char(',')) || escaped.contains(QLatin1Char('\n')) || escaped.contains(QLatin1Char('"'))) {
+        return QStringLiteral("\"%1\"").arg(escaped);
+    }
+    return escaped;
 }
 } // namespace
 
@@ -149,6 +164,7 @@ void RiskHistoryModel::recordSnapshot(const RiskSnapshotData& snapshot)
                            HasBreachRole, BreachCountRole, MaxExposureUtilizationRole, ExposuresRole});
         recalculateSummary();
         Q_EMIT historyChanged();
+        Q_EMIT snapshotRecorded(entry.timestamp);
         return;
     }
 
@@ -160,6 +176,7 @@ void RiskHistoryModel::recordSnapshot(const RiskSnapshotData& snapshot)
     trimExcess();
     recalculateSummary();
     Q_EMIT historyChanged();
+    Q_EMIT snapshotRecorded(entry.timestamp);
 }
 
 void RiskHistoryModel::clear()
@@ -314,6 +331,71 @@ void RiskHistoryModel::restoreFromJson(const QJsonArray& array)
 
     recalculateSummary();
     Q_EMIT historyChanged();
+}
+
+bool RiskHistoryModel::exportToCsv(const QString& filePath, int limit) const
+{
+    if (filePath.trimmed().isEmpty()) {
+        return false;
+    }
+
+    if (limit == 0 || limit < -1) {
+        return false;
+    }
+
+    QSaveFile file(filePath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        return false;
+    }
+
+    QTextStream stream(&file);
+    stream.setLocale(QLocale::c());
+    stream.setEncoding(QStringConverter::Utf8);
+    stream << QStringLiteral("timestamp,profile_label,drawdown,leverage,portfolio_value,breach_count,has_breach,max_exposure_utilization,exposures\n");
+
+    const QLocale locale = QLocale::c();
+
+    int startIndex = 0;
+    if (limit > 0 && limit < m_entries.size()) {
+        startIndex = m_entries.size() - limit;
+    }
+
+    for (int i = startIndex; i < m_entries.size(); ++i) {
+        const Entry& entry = m_entries.at(i);
+        const QString timestamp = entry.timestamp.isValid() ? entry.timestamp.toUTC().toString(Qt::ISODateWithMs)
+                                                            : QString();
+        stream << escapeCsv(timestamp) << QLatin1Char(',');
+        stream << escapeCsv(entry.profileLabel) << QLatin1Char(',');
+        stream << locale.toString(entry.drawdown, 'f', 6) << QLatin1Char(',');
+        stream << locale.toString(entry.leverage, 'f', 6) << QLatin1Char(',');
+        stream << locale.toString(entry.portfolioValue, 'f', 2) << QLatin1Char(',');
+        stream << entry.breachCount << QLatin1Char(',');
+        stream << (entry.hasBreach ? QStringLiteral("true") : QStringLiteral("false")) << QLatin1Char(',');
+        stream << locale.toString(entry.maxExposureUtilization, 'f', 6) << QLatin1Char(',');
+
+        QJsonArray exposuresArray;
+        exposuresArray.reserve(entry.exposures.size());
+        for (const RiskExposureData& exposure : entry.exposures) {
+            QJsonObject object;
+            object.insert(QStringLiteral("code"), exposure.code);
+            object.insert(QStringLiteral("currentValue"), exposure.currentValue);
+            object.insert(QStringLiteral("maxValue"), exposure.maxValue);
+            object.insert(QStringLiteral("thresholdValue"), exposure.thresholdValue);
+            object.insert(QStringLiteral("breached"), exposure.isBreached());
+            object.insert(QStringLiteral("utilization"), computeExposureUtilization(exposure));
+            exposuresArray.append(object);
+        }
+        const QString exposuresJson = QString::fromUtf8(QJsonDocument(exposuresArray).toJson(QJsonDocument::Compact));
+        stream << escapeCsv(exposuresJson);
+        stream << QLatin1Char('\n');
+    }
+
+    stream.flush();
+    if (stream.status() != QTextStream::Ok) {
+        return false;
+    }
+
+    return file.commit();
 }
 
 void RiskHistoryModel::updateDerivedFields(Entry& entry) const

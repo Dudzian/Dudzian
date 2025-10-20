@@ -5,9 +5,12 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Mapping, Sequence, TYPE_CHECKING
 
-from bot_core.config.models import InstrumentUniverseConfig
+if TYPE_CHECKING:  # pragma: no cover - import tylko dla typów
+    from bot_core.config.models import InstrumentUniverseConfig
+else:  # pragma: no cover - fallback podczas wczesnego bootstrapu
+    InstrumentUniverseConfig = object  # type: ignore[assignment]
 
 
 @dataclass(slots=True)

@@ -14,6 +14,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from bot_core.exchanges.base import AccountSnapshot, Environment, ExchangeCredentials, OrderRequest
 from bot_core.exchanges.kraken.futures import KrakenFuturesAdapter
+from bot_core.exchanges.health import CircuitBreaker, RetryPolicy, Watchdog
 
 
 class _FakeResponse:
@@ -152,6 +153,52 @@ def test_cancel_order_validates_response(monkeypatch: pytest.MonkeyPatch) -> Non
     adapter = KrakenFuturesAdapter(_credentials(), environment=Environment.LIVE)
 
     adapter.cancel_order("OID-1")
+
+
+class _RecordingWatchdog(Watchdog):
+    def __init__(self) -> None:
+        super().__init__(retry_policy=RetryPolicy(max_attempts=1), circuit_breaker=CircuitBreaker())
+        self.operations: list[str] = []
+
+    def execute(self, operation: str, func):  # type: ignore[override]
+        self.operations.append(operation)
+        return func()
+
+
+def test_watchdog_is_used_for_requests(monkeypatch: pytest.MonkeyPatch) -> None:
+    watchdog = _RecordingWatchdog()
+    adapter = KrakenFuturesAdapter(_credentials(), environment=Environment.LIVE, watchdog=watchdog)
+
+    def fake_private(context):
+        if context.path == "/accounts":
+            return {"accounts": {"futures": {}}}
+        if context.path == "/orders" and context.method == "POST":
+            return {"sendStatus": {"status": "accepted", "orderEvents": []}}
+        if context.path.startswith("/orders/") and context.method == "DELETE":
+            return {"cancelStatus": {"status": "cancelled"}}
+        return {}
+
+    def fake_public(path, params=None):
+        if path == "/instruments":
+            return {"result": "success", "instruments": []}
+        if path == "/ohlc":
+            return {"result": "success", "series": []}
+        return {}
+
+    monkeypatch.setattr(adapter, "_private_request", fake_private)
+    monkeypatch.setattr(adapter, "_public_request", fake_public)
+
+    adapter.fetch_account_snapshot()
+    adapter.fetch_symbols()
+    adapter.fetch_ohlcv("pi_xbtusd", "1m")
+    adapter.place_order(OrderRequest(symbol="pi_xbtusd", side="buy", quantity=0.1, order_type="market"))
+    adapter.cancel_order("OID-2")
+
+    assert "kraken_futures_private_request" in watchdog.operations
+    assert "kraken_futures_fetch_symbols" in watchdog.operations
+    assert "kraken_futures_fetch_ohlcv" in watchdog.operations
+    assert "kraken_futures_place_order" in watchdog.operations
+    assert "kraken_futures_cancel_order" in watchdog.operations
 
 
 def _expected_signature(*, path: str, body: bytes, secret: str, nonce: str) -> str:
