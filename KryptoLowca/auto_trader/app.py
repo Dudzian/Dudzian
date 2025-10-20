@@ -6,7 +6,20 @@ import threading
 import time
 import statistics
 import asyncio
-from typing import Iterable, Mapping, Optional, List, Dict, Any, Callable, Tuple, TYPE_CHECKING
+import math
+from typing import (
+    Iterable,
+    Mapping,
+    Optional,
+    Sequence,
+    List,
+    Dict,
+    Any,
+    Callable,
+    Tuple,
+    TYPE_CHECKING,
+)
+from datetime import datetime, timezone
 import inspect
 from pathlib import Path
 
@@ -68,6 +81,11 @@ except Exception:  # pragma: no cover - fallback gdy bot_core nie jest kompletny
     AccountSnapshot = None  # type: ignore
     OrderRequest = None  # type: ignore
     ThresholdRiskEngine = None  # type: ignore
+
+try:  # pragma: no cover - RiskDecisionLog może nie być dostępny w trybie offline
+    from bot_core.risk.events import RiskDecisionLog  # type: ignore
+except Exception:  # pragma: no cover - fallback defensywny
+    RiskDecisionLog = None  # type: ignore
 
 if TYPE_CHECKING:  # pragma: no cover
     from bot_core.config.models import RiskProfileConfig
@@ -1854,32 +1872,853 @@ class AutoTrader:
     ) -> None:
         if self._core_risk_engine is None:
             return
-        avg_price = getattr(result, "avg_price", None)
-        if avg_price is None:
-            avg_price = getattr(request, "price", 0.0)
-        filled_quantity = getattr(result, "filled_quantity", None)
-        if filled_quantity is None:
-            filled_quantity = getattr(request, "quantity", 0.0)
+        raw_response_source = getattr(result, "raw_response", None)
+        request_metadata_source = getattr(request, "metadata", None)
+
+        def _coerce_float(value: Any) -> float | None:
+            if value is None:
+                return None
+            try:
+                result = float(value)
+            except (TypeError, ValueError):
+                return None
+            if not math.isfinite(result):
+                return None
+            return result
+
+        def _locate_float(
+            *values: Any,
+            search_keys: Iterable[str] | None = None,
+            containers: Sequence[Any] = (),
+            nested_search_keys: Iterable[str] | None = None,
+        ) -> float | None:
+            key_sequences: tuple[tuple[str, ...], tuple[str, ...]] | None = None
+
+            def _maybe_extract(container: Any) -> float | None:
+                nonlocal key_sequences
+                if container is None:
+                    return None
+                if key_sequences is None:
+                    primary_keys = tuple(search_keys or ())
+                    secondary_keys = tuple(nested_search_keys or ())
+                    key_sequences = (primary_keys, secondary_keys)
+                else:
+                    primary_keys, secondary_keys = key_sequences
+
+                def _extract_from(container_obj: Any, keys: tuple[str, ...]) -> float | None:
+                    if not keys:
+                        return None
+                    for key in keys:
+                        extracted = _extract_nested(container_obj, {key})
+                        coerced = _coerce_float(extracted)
+                        if coerced is not None:
+                            return coerced
+                        if (
+                            extracted is not None
+                            and secondary_keys
+                            and _should_descend(extracted)
+                        ):
+                            nested = _extract_nested(extracted, secondary_keys)
+                            coerced_nested = _coerce_float(nested)
+                            if coerced_nested is not None:
+                                return coerced_nested
+                    return None
+
+                primary_result = _extract_from(container, primary_keys)
+                if primary_result is not None:
+                    return primary_result
+                if secondary_keys:
+                    secondary_result = _extract_from(container, secondary_keys)
+                    if secondary_result is not None:
+                        return secondary_result
+                return None
+
+            for candidate in values:
+                coerced = _coerce_float(candidate)
+                if coerced is not None:
+                    return coerced
+                if (search_keys or nested_search_keys) and _should_descend(candidate):
+                    nested_value = _maybe_extract(candidate)
+                    if nested_value is not None:
+                        return nested_value
+            if search_keys or nested_search_keys:
+                for container in containers:
+                    nested_value = _maybe_extract(container)
+                    if nested_value is not None:
+                        return nested_value
+            return None
+
+        def _first_valid_float(
+            *values: Any,
+            default: float = 0.0,
+            search_keys: Iterable[str] | None = None,
+            containers: Sequence[Any] = (),
+        ) -> float:
+            located = _locate_float(
+                *values, search_keys=search_keys, containers=containers
+            )
+            if located is not None:
+                return located
+            return float(default)
+
+        def _as_mapping(candidate: Any) -> Mapping[str, Any] | None:
+            if isinstance(candidate, Mapping):
+                return candidate
+            if hasattr(candidate, "_asdict"):
+                try:
+                    mapping = candidate._asdict()  # type: ignore[attr-defined]
+                except Exception:
+                    mapping = None
+                else:
+                    if isinstance(mapping, Mapping):
+                        return mapping
+            if hasattr(candidate, "__dict__"):
+                try:
+                    mapping = vars(candidate)
+                except TypeError:
+                    return None
+                if isinstance(mapping, Mapping):
+                    return mapping
+            return None
+
+        def _should_descend(value: Any) -> bool:
+            if value is None:
+                return False
+            if isinstance(value, (str, bytes, bytearray)):
+                return False
+            if isinstance(value, Mapping):
+                return True
+            if isinstance(value, Sequence):
+                return True
+            if isinstance(value, set):
+                return True
+            return _as_mapping(value) is not None
+
+        def _extract_nested(container: Any, keys: Iterable[str]) -> Any | None:
+            key_set = set(keys)
+            stack: list[Any] = [container]
+            seen: set[int] = set()
+
+            while stack:
+                current = stack.pop()
+                marker = id(current)
+                if marker in seen:
+                    continue
+                seen.add(marker)
+
+                mapping_view = _as_mapping(current)
+                if mapping_view is not None:
+                    for key, value in mapping_view.items():
+                        if key in key_set and value is not None:
+                            return value
+                        if _should_descend(value):
+                            stack.append(value)
+                    continue
+
+                if isinstance(current, (Sequence, set)) and not isinstance(
+                    current, (str, bytes, bytearray)
+                ):
+                    if (
+                        isinstance(current, Sequence)
+                        and len(current) == 2
+                        and isinstance(current[0], str)
+                        and current[0] in key_set
+                        and current[1] is not None
+                    ):
+                        return current[1]
+                    iterable = current if isinstance(current, Sequence) else list(current)
+                    for item in iterable:
+                        if isinstance(item, Sequence) and not isinstance(
+                            item, (str, bytes, bytearray)
+                        ):
+                            if (
+                                len(item) == 2
+                                and isinstance(item[0], str)
+                                and item[0] in key_set
+                                and item[1] is not None
+                            ):
+                                return item[1]
+                        if _should_descend(item):
+                            stack.append(item)
+
+            return None
+
+        def _normalize_non_empty(value: Any) -> Any | None:
+            if value is None:
+                return None
+            try:
+                if pd.isna(value):
+                    return None
+            except Exception:
+                pass
+            if isinstance(value, str):
+                candidate = value.strip()
+                return candidate or None
+            return value
+
+        def _normalize_liquidity(value: Any) -> str | None:
+            if value is None:
+                return None
+            if isinstance(value, bool):
+                return "maker" if value else "taker"
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                numeric = float(value)
+                if math.isfinite(numeric):
+                    if math.isclose(numeric, 1.0, rel_tol=1e-9, abs_tol=1e-9):
+                        return "maker"
+                    if math.isclose(numeric, 0.0, rel_tol=1e-9, abs_tol=1e-9):
+                        return "taker"
+            if isinstance(value, str):
+                candidate = value.strip().lower()
+                if not candidate:
+                    return None
+                mapping = {
+                    "maker": "maker",
+                    "m": "maker",
+                    "maker_flag": "maker",
+                    "makerrole": "maker",
+                    "add": "maker",
+                    "passive": "maker",
+                    "taker": "taker",
+                    "t": "taker",
+                    "taker_flag": "taker",
+                    "takerrole": "taker",
+                    "remove": "taker",
+                    "active": "taker",
+                }
+                normalized = mapping.get(candidate)
+                if normalized is not None:
+                    return normalized
+                if candidate in {"true", "yes"}:
+                    return "maker"
+                if candidate in {"false", "no"}:
+                    return "taker"
+            return None
+
+        def _first_non_empty(
+            *values: Any,
+            search_keys: Iterable[str] | None = None,
+            containers: Sequence[Any] = (),
+            transform: Callable[[Any], Any] | None = None,
+            nested_search_keys: Iterable[str] | None = None,
+        ) -> Any | None:
+            nested_keys = tuple(nested_search_keys or ())
+
+            def _resolve(candidate: Any) -> Any | None:
+                normalized = _normalize_non_empty(candidate)
+                if normalized is None:
+                    return None
+                resolved = normalized
+                if nested_keys and _should_descend(resolved):
+                    for key in nested_keys:
+                        extracted = _extract_nested(resolved, {key})
+                        nested_normalized = _normalize_non_empty(extracted)
+                        if nested_normalized is not None:
+                            resolved = nested_normalized
+                            break
+                if _should_descend(resolved):
+                    return None
+                if transform is not None:
+                    try:
+                        return transform(resolved)
+                    except Exception:
+                        return None
+                return resolved
+
+            for candidate in values:
+                resolved = _resolve(candidate)
+                if resolved is not None:
+                    return resolved
+            if search_keys or nested_keys:
+                combined_keys = tuple(search_keys or ())
+
+                def _probe(container: Any) -> Any | None:
+                    if container is None:
+                        return None
+                    if combined_keys:
+                        for key in combined_keys:
+                            extracted = _extract_nested(container, {key})
+                            resolved = _resolve(extracted)
+                            if resolved is not None:
+                                return resolved
+                    if nested_keys:
+                        for key in nested_keys:
+                            extracted = _extract_nested(container, {key})
+                            resolved = _resolve(extracted)
+                            if resolved is not None:
+                                return resolved
+                    return None
+
+                for container in containers:
+                    resolved = _probe(container)
+                    if resolved is not None:
+                        return resolved
+            return None
+
+        def _clone_for_log(
+            value: Any,
+            *,
+            max_depth: int = 6,
+            _seen: set[int] | None = None,
+        ) -> Any:
+            if max_depth <= 0:
+                return repr(value)
+            if value is None or isinstance(value, (str, bytes, bytearray, int, float, bool)):
+                return value
+
+            if _seen is None:
+                _seen = set()
+            marker = id(value)
+            if marker in _seen:
+                return "<cycle>"
+            _seen.add(marker)
+
+            mapping_view = _as_mapping(value)
+            if mapping_view is not None:
+                cloned: Dict[str, Any] = {}
+                for key, child in mapping_view.items():
+                    cloned[str(key)] = _clone_for_log(child, max_depth=max_depth - 1, _seen=_seen)
+                return cloned
+
+            if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+                return [
+                    _clone_for_log(item, max_depth=max_depth - 1, _seen=_seen)
+                    for item in value
+                ]
+
+            if isinstance(value, set):
+                try:
+                    ordered = sorted(value, key=repr)
+                except Exception:
+                    ordered = list(value)
+                return [
+                    _clone_for_log(item, max_depth=max_depth - 1, _seen=_seen)
+                    for item in ordered
+                ]
+
+            return value
+
+        raw_response = _clone_for_log(raw_response_source)
+        cloned_request_metadata = _clone_for_log(request_metadata_source)
+        request_metadata = cloned_request_metadata if cloned_request_metadata is not None else {}
+        raw_search_container = raw_response_source if raw_response_source is not None else raw_response
+        request_search_container = (
+            request_metadata_source if request_metadata_source is not None else request_metadata
+        )
+
+        def _normalize_timestamp(value: Any) -> datetime | None:
+            if value is None:
+                return None
+            try:
+                if pd.isna(value):
+                    return None
+            except Exception:
+                pass
+            if isinstance(value, datetime):
+                if value.tzinfo is None:
+                    return value.replace(tzinfo=timezone.utc)
+                return value.astimezone(timezone.utc)
+            if isinstance(value, pd.Timestamp):
+                if pd.isna(value):
+                    return None
+                ts = value.tz_convert("UTC") if value.tzinfo else value.tz_localize("UTC")
+                normalized = ts.to_pydatetime()
+                if normalized is None:
+                    return None
+                return normalized
+            if isinstance(value, (int, float)):
+                numeric = float(value)
+                if not math.isfinite(numeric):
+                    return None
+                abs_value = abs(numeric)
+                if abs_value >= 1e18:  # nanoseconds
+                    numeric /= 1_000_000_000.0
+                elif abs_value >= 1e15:  # microseconds
+                    numeric /= 1_000_000.0
+                elif abs_value >= 1e12:  # milliseconds
+                    numeric /= 1_000.0
+                return datetime.fromtimestamp(numeric, tz=timezone.utc)
+            if isinstance(value, str):
+                candidate = value.strip()
+                if not candidate:
+                    return None
+                lowered = candidate.lower()
+                if lowered in {"nan", "nat"}:
+                    return None
+                if candidate.isdigit():
+                    try:
+                        numeric = float(candidate)
+                    except ValueError:
+                        numeric = None
+                    else:
+                        return _normalize_timestamp(numeric)
+                try:
+                    parsed = pd.to_datetime(candidate, utc=True)
+                except Exception:
+                    return None
+                if isinstance(parsed, pd.Timestamp):
+                    if pd.isna(parsed):
+                        return None
+                    return parsed.to_pydatetime()
+                return None
+            return None
+
+        avg_price_val = _first_valid_float(
+            getattr(result, "avg_price", None),
+            getattr(result, "price", None),
+            getattr(request, "avg_price", None),
+            getattr(request, "price", None),
+            default=0.0,
+            search_keys=(
+                "avg_price",
+                "average_price",
+                "price",
+                "avgPrice",
+                "averagePrice",
+                "executionPrice",
+                "fill_price",
+                "executedPrice",
+            ),
+            containers=(raw_search_container, request_search_container),
+        )
+        filled_qty_val = _first_valid_float(
+            getattr(result, "filled_quantity", None),
+            getattr(result, "quantity", None),
+            getattr(request, "filled_quantity", None),
+            getattr(request, "quantity", None),
+            default=0.0,
+            search_keys=(
+                "filled_quantity",
+                "quantity",
+                "qty",
+                "filledQty",
+                "executedQty",
+                "size",
+                "amount",
+                "baseQty",
+                "base_quantity",
+            ),
+            containers=(raw_search_container, request_search_container),
+        )
+        default_notional = abs(avg_price_val) * abs(filled_qty_val)
+        notional_value = _first_valid_float(
+            getattr(result, "notional", None),
+            getattr(result, "filled_notional", None),
+            getattr(request, "notional", None),
+            getattr(request, "filled_notional", None),
+            default=default_notional,
+            search_keys=(
+                "notional",
+                "filled_notional",
+                "quoteQty",
+                "quote_quantity",
+                "cummulativeQuoteQty",
+                "quote_volume",
+                "quoteAmount",
+                "fillNotional",
+                "cost",
+            ),
+            containers=(raw_search_container, request_search_container),
+        )
+
+        pnl_value = _locate_float(
+            getattr(result, "pnl", None),
+            search_keys=(
+                "pnl",
+                "realized_pnl",
+                "realizedPnl",
+                "profit",
+                "profit_loss",
+                "realizedProfit",
+            ),
+            containers=(raw_search_container, request_search_container),
+        )
+        pnl_value = float(pnl_value or 0.0)
+
+        fee_value = _locate_float(
+            getattr(result, "fee", None),
+            getattr(result, "commission", None),
+            getattr(request, "fee", None),
+            getattr(request, "commission", None),
+            search_keys=(
+                "fee",
+                "fees",
+                "commission",
+                "fee_amount",
+                "feeAmount",
+                "feeValue",
+                "fee_cost",
+                "commissionAmount",
+                "commission_amount",
+                "tradingFee",
+                "fill_fee",
+            ),
+            containers=(raw_search_container, request_search_container),
+            nested_search_keys=(
+                "amount",
+                "value",
+                "cost",
+                "feeAmount",
+                "feeValue",
+                "fee_cost",
+                "commissionAmount",
+                "commission_amount",
+                "commissionValue",
+            ),
+        )
+
+        if (
+            fee_value is not None
+            and not math.isclose(default_notional, 0.0)
+            and math.isclose(abs(notional_value), abs(fee_value), rel_tol=1e-9, abs_tol=1e-9)
+        ):
+            notional_value = default_notional
+
+        notional = abs(notional_value)
+
+        fee_currency = _first_non_empty(
+            getattr(result, "fee_currency", None),
+            getattr(result, "commission_currency", None),
+            getattr(result, "fee_asset", None),
+            getattr(request, "fee_currency", None),
+            getattr(request, "commission_currency", None),
+            getattr(request, "fee_asset", None),
+            search_keys=(
+                "fee_currency",
+                "feeCurrency",
+                "fee_asset",
+                "feeAsset",
+                "commissionCurrency",
+                "commissionAsset",
+                "feeAssetCode",
+            ),
+            containers=(raw_search_container, request_search_container),
+            transform=str,
+            nested_search_keys=(
+                "currency",
+                "asset",
+                "code",
+                "symbol",
+                "commissionCurrency",
+                "commissionAsset",
+                "feeCurrency",
+                "feeAsset",
+            ),
+        )
+
+        fee_rate_value = _locate_float(
+            getattr(result, "fee_rate", None),
+            getattr(result, "commission_rate", None),
+            getattr(result, "maker_commission_rate", None),
+            getattr(result, "taker_commission_rate", None),
+            getattr(request, "fee_rate", None),
+            getattr(request, "commission_rate", None),
+            getattr(request, "maker_commission_rate", None),
+            getattr(request, "taker_commission_rate", None),
+            search_keys=(
+                "fee_rate",
+                "commission_rate",
+                "maker_commission_rate",
+                "taker_commission_rate",
+                "makerCommissionRate",
+                "takerCommissionRate",
+                "commissionRate",
+                "feeRate",
+                "fee_rate_pct",
+                "commissionRatePct",
+            ),
+            containers=(raw_search_container, request_search_container),
+            nested_search_keys=(
+                "rate",
+                "feeRate",
+                "commissionRate",
+                "makerCommissionRate",
+                "takerCommissionRate",
+                "commission_rate",
+                "fee_rate",
+            ),
+        )
+
+        liquidity_role = _first_non_empty(
+            getattr(result, "liquidity", None),
+            getattr(result, "liquidity_type", None),
+            getattr(result, "execution_role", None),
+            getattr(result, "executionRole", None),
+            getattr(result, "trade_liquidity", None),
+            getattr(result, "is_maker", None),
+            getattr(request, "liquidity", None),
+            getattr(request, "liquidity_type", None),
+            getattr(request, "execution_role", None),
+            getattr(request, "executionRole", None),
+            getattr(request, "trade_liquidity", None),
+            getattr(request, "is_maker", None),
+            search_keys=(
+                "liquidity",
+                "liquidity_type",
+                "liquidityType",
+                "execution_role",
+                "executionRole",
+                "execution_type",
+                "executionType",
+                "trade_liquidity",
+                "tradeLiquidity",
+                "liquidity_role",
+                "liquidityRole",
+                "makerFlag",
+                "makerRole",
+                "is_maker",
+                "isMaker",
+                "maker",
+            ),
+            containers=(raw_search_container, request_search_container),
+            nested_search_keys=(
+                "liquidity",
+                "liquidity_type",
+                "liquidityType",
+                "execution_role",
+                "executionRole",
+                "execution_type",
+                "executionType",
+                "trade_liquidity",
+                "tradeLiquidity",
+                "makerFlag",
+                "maker",
+                "is_maker",
+                "isMaker",
+                "role",
+                "type",
+            ),
+            transform=_normalize_liquidity,
+        )
+
+        order_id = _first_non_empty(
+            getattr(result, "order_id", None),
+            getattr(result, "orderId", None),
+            getattr(request, "order_id", None),
+            getattr(request, "orderId", None),
+            search_keys=(
+                "order_id",
+                "orderId",
+                "id",
+                "origClientOrderId",
+                "orig_order_id",
+            ),
+            containers=(raw_search_container, request_search_container),
+            transform=str,
+        )
+
+        client_order_id = _first_non_empty(
+            getattr(result, "client_order_id", None),
+            getattr(result, "clientOrderId", None),
+            getattr(request, "client_order_id", None),
+            getattr(request, "clientOrderId", None),
+            search_keys=(
+                "client_order_id",
+                "clientOrderId",
+                "client_id",
+                "clientId",
+                "origClientOrderId",
+            ),
+            containers=(raw_search_container, request_search_container),
+            transform=str,
+        )
+
+        trade_id = _first_non_empty(
+            getattr(result, "trade_id", None),
+            getattr(result, "tradeId", None),
+            search_keys=(
+                "trade_id",
+                "tradeId",
+                "deal_id",
+                "dealId",
+            ),
+            containers=(raw_search_container, request_search_container),
+            transform=str,
+        )
+
+        fill_id = _first_non_empty(
+            getattr(result, "fill_id", None),
+            getattr(result, "fillId", None),
+            search_keys=(
+                "fill_id",
+                "fillId",
+                "execution_id",
+                "execId",
+                "executionId",
+            ),
+            containers=(raw_search_container, request_search_container),
+            transform=str,
+        )
+
+        timestamp_candidate = _normalize_timestamp(getattr(result, "timestamp", None))
+        if timestamp_candidate is None:
+            timestamp_candidate = _normalize_timestamp(getattr(result, "ts", None))
+        if timestamp_candidate is None and raw_search_container is not None:
+            timestamp_candidate = _normalize_timestamp(
+                _extract_nested(
+                    raw_search_container,
+                    {
+                        "timestamp",
+                        "ts",
+                        "time",
+                        "transactTime",
+                        "updateTime",
+                        "filled_at",
+                        "created_at",
+                        "event_time",
+                    },
+                )
+            )
+        if timestamp_candidate is None and request_search_container is not None:
+            timestamp_candidate = _normalize_timestamp(
+                _extract_nested(
+                    request_search_container,
+                    {
+                        "timestamp",
+                        "ts",
+                        "time",
+                        "decision_time",
+                        "generated_at",
+                        "created_at",
+                    },
+                )
+            )
+
+        explicit_position_value = _locate_float(
+            getattr(result, "position_value", None),
+            getattr(result, "positionValue", None),
+            getattr(request, "position_value", None),
+            getattr(request, "positionValue", None),
+            search_keys={
+                "position_value",
+                "positionValue",
+                "position_notional",
+                "positionNotional",
+                "position_value_usd",
+                "positionValueUsd",
+                "exposure",
+                "positionExposure",
+            },
+            containers=(raw_search_container, request_search_container),
+        )
+
+        explicit_position_delta = _locate_float(
+            getattr(result, "position_delta", None),
+            getattr(result, "positionDelta", None),
+            getattr(request, "position_delta", None),
+            getattr(request, "positionDelta", None),
+            search_keys={
+                "position_delta",
+                "positionDelta",
+                "position_change",
+                "positionChange",
+                "delta_notional",
+                "deltaNotional",
+                "positionDeltaNotional",
+            },
+            containers=(raw_search_container, request_search_container),
+        )
+
+        side_lower = str(side or "").lower()
+        default_position_value = notional if side_lower == "buy" else 0.0
+        position_value = (
+            explicit_position_value
+            if explicit_position_value is not None
+            else default_position_value
+        )
+        position_delta = (
+            explicit_position_delta
+            if explicit_position_delta is not None
+            else (notional if side_lower == "buy" else -notional)
+        )
+
+        profile_name = self._core_risk_profile
+        candidate_metadata = None
+        if isinstance(request_metadata, Mapping):
+            candidate_metadata = request_metadata.get("decision_candidate")
+        if candidate_metadata is None and request_search_container is not None:
+            candidate_metadata = _extract_nested(
+                request_search_container,
+                {"decision_candidate"},
+            )
+        if not profile_name and isinstance(candidate_metadata, Mapping):
+            candidate_profile = candidate_metadata.get("risk_profile")
+            if candidate_profile:
+                profile_name = str(candidate_profile)
+        if not profile_name and self._core_ai_connector is not None:
+            profile_name = getattr(self._core_ai_connector, "risk_profile", None)
+        profile_name = profile_name or "default"
+
         try:
-            notional = float(avg_price or 0.0) * float(filled_quantity or 0.0)
-        except Exception:
-            notional = 0.0
-        side_lower = side.lower()
-        position_value = notional if side_lower == "buy" else 0.0
-        try:
-            profile_name = self._core_risk_profile
-            if not profile_name and self._core_ai_connector is not None:
-                profile_name = self._core_ai_connector.risk_profile
             self._core_risk_engine.on_fill(
-                profile_name=profile_name or "default",
+                profile_name=profile_name,
                 symbol=symbol,
                 side=side_lower,
                 position_value=position_value,
-                pnl=0.0,
+                pnl=pnl_value,
+                timestamp=timestamp_candidate,
             )
         except Exception:
-            # TODO(core-risk): validate metadata merging and risk logging clarity here.
             logger.debug("Failed to update risk engine post fill", exc_info=True)
+
+        decision_log = getattr(self._core_risk_engine, "_decision_log", None)
+        if decision_log is None:
+            decision_log = getattr(self._core_risk_engine, "decision_log", None)
+        record_log = None
+        if RiskDecisionLog is not None and isinstance(decision_log, RiskDecisionLog):
+            record_log = decision_log
+        elif decision_log is not None and hasattr(decision_log, "record"):
+            record_log = decision_log
+        if record_log is not None:
+            metadata_payload: Dict[str, object] = {"source": "auto_trader_core_fill"}
+            if request_metadata_source is not None or request_metadata:
+                metadata_payload["request"] = request_metadata
+            if raw_response_source is not None or raw_response:
+                metadata_payload["fill"] = raw_response
+            metrics: Dict[str, object] = {
+                "avg_price": avg_price_val,
+                "filled_quantity": filled_qty_val,
+                "notional": notional,
+                "position_value": position_value,
+                "pnl": pnl_value,
+            }
+            metrics["position_delta"] = position_delta
+            if fee_value is not None:
+                metrics["fee"] = fee_value
+            if fee_currency is not None:
+                metrics["fee_currency"] = fee_currency
+            if fee_rate_value is not None:
+                metrics["fee_rate"] = fee_rate_value
+            if timestamp_candidate is not None:
+                metadata_payload["fill_timestamp"] = timestamp_candidate.isoformat()
+            if liquidity_role is not None:
+                metadata_payload["liquidity"] = liquidity_role
+            identifiers: Dict[str, str] = {}
+            if order_id is not None:
+                identifiers["order_id"] = order_id
+            if client_order_id is not None:
+                identifiers["client_order_id"] = client_order_id
+            if trade_id is not None:
+                identifiers["trade_id"] = trade_id
+            if fill_id is not None:
+                identifiers["fill_id"] = fill_id
+            if identifiers:
+                metadata_payload["identifiers"] = identifiers
+            metadata_payload["metrics"] = metrics
+            try:
+                record_log.record(
+                    profile=profile_name,
+                    symbol=symbol,
+                    side=side_lower,
+                    quantity=filled_qty_val,
+                    price=avg_price_val,
+                    notional=notional,
+                    allowed=True,
+                    reason="fill",
+                    metadata=metadata_payload,
+                )
+            except Exception:
+                logger.debug("Failed to append fill to risk decision log", exc_info=True)
     # --- Prediction helpers ---
     def _resolve_prediction_result(self, result: Any, *, context: str) -> Any:
         if not inspect.isawaitable(result):
