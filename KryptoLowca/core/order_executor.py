@@ -10,7 +10,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
-from KryptoLowca.managers.exchange_core import Mode, OrderStatus  # type: ignore
+from bot_core.exchanges import Mode, OrderStatus
 
 try:  # pragma: no cover - opcjonalne
     import ccxt  # type: ignore

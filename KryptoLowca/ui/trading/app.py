@@ -29,12 +29,12 @@ from KryptoLowca.logging_utils import (
     setup_app_logging,
 )
 from KryptoLowca.database_manager import DatabaseManager
-from KryptoLowca.managers.security_manager import SecurityManager
-from KryptoLowca.managers.config_manager import ConfigManager
-from KryptoLowca.managers.report_manager import ReportManager
-from KryptoLowca.managers.risk_manager_adapter import RiskManager
-from KryptoLowca.managers.ai_manager import AIManager
-from KryptoLowca.managers.exchange_manager import ExchangeManager
+from KryptoLowca.security_manager import SecurityManager
+from KryptoLowca.config_manager import ConfigManager
+from KryptoLowca.report_manager import ReportManager
+from KryptoLowca.risk_manager import RiskManager
+from KryptoLowca.ai_manager import AIManager
+from KryptoLowca.exchange_manager import ExchangeManager
 
 from .state import AppState
 from .controller import TradingSessionController

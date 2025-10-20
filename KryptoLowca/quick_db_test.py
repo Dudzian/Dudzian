@@ -20,7 +20,7 @@ if __package__ in (None, ""):
     _ensure_repo_root()
 
 
-from KryptoLowca.managers.database_manager import DatabaseManager
+from KryptoLowca.database_manager import DatabaseManager
 
 def main():
     # 1) Łączymy się z lokalną bazą SQLite (plik trading.db utworzy się sam)

@@ -2,17 +2,43 @@ from __future__ import annotations
 
 import importlib
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from logging.handlers import QueueHandler, RotatingFileHandler
+from pathlib import Path
+from typing import Dict
 
 import pytest
 
-from KryptoLowca.managers.security_manager import SecurityManager
-from KryptoLowca.security import KeyRotationManager, SecretBackend, SecretManager
+from bot_core.exchanges.base import Environment, ExchangeCredentials
+from bot_core.security import (
+    EncryptedFileSecretStorage,
+    RotationRegistry,
+    RotationStatus,
+    SecretManager,
+    SecretStorage,
+    SecretStorageError,
+)
+from KryptoLowca.security import KeyRotationManager
+
+
+class _MemorySecretStorage(SecretStorage):
+    """Lekki magazyn sekretów wykorzystywany w testach."""
+
+    def __init__(self) -> None:
+        self._store: Dict[str, str] = {}
+
+    def get_secret(self, key: str) -> str | None:  # pragma: no cover - prosta logika
+        return self._store.get(key)
+
+    def set_secret(self, key: str, value: str) -> None:
+        self._store[key] = value
+
+    def delete_secret(self, key: str) -> None:
+        self._store.pop(key, None)
 
 
 @pytest.mark.parametrize("fmt", ["json", "text"])
-def test_logging_setup_supports_json(fmt: str, tmp_path, monkeypatch):
+def test_logging_setup_supports_json(fmt: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("KRYPT_LOWCA_LOG_FORMAT", fmt)
     monkeypatch.setenv("KRYPT_LOWCA_LOG_DIR", str(tmp_path))
     import KryptoLowca.logging_utils as logging_utils
@@ -46,38 +72,145 @@ def test_logging_setup_supports_json(fmt: str, tmp_path, monkeypatch):
     logging_utils._QUEUE = None
 
 
-def test_key_rotation_manager(tmp_path):
-    key_file = tmp_path / "api.enc"
-    salt_file = tmp_path / "salt.bin"
-    mgr = SecurityManager(key_file=key_file, salt_file=salt_file)
-    mgr.save_encrypted_keys({"binance": "A" * 64}, "passphrase")
-    rot = KeyRotationManager(mgr, rotation_days=1)
+def test_rotation_registry_marks_and_reports(tmp_path: Path) -> None:
+    registry = RotationRegistry(tmp_path / "rotation.json")
+    status = registry.status("binance", "trading", interval_days=1)
+    assert isinstance(status, RotationStatus)
+    assert status.last_rotated is None
+    assert status.is_due is True
+    assert status.is_overdue is True
 
-    status_before = rot.status()
-    assert status_before.rotation_required is True  # brak metadanych => wymusza rotację
-
-    status_after = rot.ensure_rotation("passphrase")
-    assert status_after.last_rotation is not None
-    assert status_after.rotation_required is False
-
-    loaded = mgr.load_encrypted_keys("passphrase")
-    assert loaded["binance"].startswith("A")
-
-
-def test_secret_manager_file_backend(tmp_path):
-    secrets_file = tmp_path / "secrets.json"
-    manager = SecretManager(backend=SecretBackend.FILE, file_path=secrets_file)
-    manager.set_secret("BINANCE_KEY", "demo-value")
-
-    assert manager.get_secret("BINANCE_KEY") == "demo-value"
-    last = manager.last_rotation("BINANCE_KEY")
-    assert isinstance(last, datetime)
-    assert last.tzinfo is not None
+    reference_time = datetime.now(timezone.utc)
+    registry.mark_rotated("binance", "trading", timestamp=reference_time)
+    updated = registry.status("binance", "trading", interval_days=1, now=reference_time + timedelta(hours=12))
+    assert updated.last_rotated is not None
+    assert updated.is_due is False
+    assert updated.is_overdue is False
+    assert 0.4 < updated.days_since_rotation < 0.6
 
 
-def test_secret_manager_env_backend(monkeypatch):
-    monkeypatch.setenv("TEST_TOKEN", "seed")
-    manager = SecretManager(backend=SecretBackend.ENV, prefix="TEST_")
-    manager.set_secret("TOKEN", "123")
-    assert manager.get_secret("TOKEN") == "123"
-    assert manager.last_rotation("TOKEN") is not None
+def test_secret_manager_encrypted_storage_roundtrip(tmp_path: Path) -> None:
+    storage_path = tmp_path / "secrets.enc"
+    try:
+        storage = EncryptedFileSecretStorage(storage_path, passphrase="unit-pass")
+    except SecretStorageError as exc:  # pragma: no cover - brak cryptography
+        pytest.skip(f"Encrypted storage unavailable: {exc}")
+
+    manager = SecretManager(storage, namespace="tests.demo")
+    credentials = ExchangeCredentials(
+        key_id="paper-key",
+        secret="A" * 64,
+        passphrase=None,
+        environment=Environment.PAPER,
+        permissions=("trade", "read"),
+    )
+    manager.store_exchange_credentials("binance", credentials)
+
+    loaded = manager.load_exchange_credentials(
+        "binance",
+        expected_environment=Environment.PAPER,
+        required_permissions=("read",),
+    )
+    assert loaded.key_id == "paper-key"
+    assert loaded.secret == "A" * 64
+
+
+def test_secret_manager_memory_storage_handles_missing() -> None:
+    storage = _MemorySecretStorage()
+    manager = SecretManager(storage, namespace="tests.memory")
+
+    manager.store_secret_value("alert", "token-123")
+    assert manager.load_secret_value("alert") == "token-123"
+
+    manager.delete_secret_value("alert")
+    with pytest.raises(SecretStorageError):
+        manager.load_secret_value("alert")
+
+
+def test_key_rotation_manager_rotates_exchange_credentials(tmp_path: Path) -> None:
+    storage = _MemorySecretStorage()
+    manager = SecretManager(storage, namespace="tests.rotation")
+    rotation = KeyRotationManager(manager, registry_path=tmp_path / "rotation.json", default_interval_days=30)
+
+    manager.store_exchange_credentials(
+        "binance_demo",
+        ExchangeCredentials(
+            key_id="demo-key",
+            secret="s" * 32,
+            passphrase="hunter2",
+            environment=Environment.PAPER,
+            permissions=("trade", "read"),
+        ),
+    )
+
+    status_before = rotation.status("binance_demo")
+    assert status_before.is_due is True
+
+    def rotate(payload: ExchangeCredentials) -> ExchangeCredentials:
+        return ExchangeCredentials(
+            key_id=payload.key_id,
+            secret="n" * 32,
+            passphrase=payload.passphrase,
+            environment=payload.environment,
+            permissions=payload.permissions,
+        )
+
+    updated = rotation.rotate_exchange_credentials(
+        "binance_demo",
+        expected_environment=Environment.PAPER,
+        rotation_callback=rotate,
+    )
+
+    assert updated.secret == "n" * 32
+    status_after = rotation.status("binance_demo")
+    assert status_after.is_due is False
+    assert status_after.last_rotated is not None
+
+
+def test_key_rotation_manager_ensure_rotation_uses_callback(tmp_path: Path) -> None:
+    storage = _MemorySecretStorage()
+    manager = SecretManager(storage, namespace="tests.rotation.ensure")
+    rotation = KeyRotationManager(manager, registry_path=tmp_path / "ensure.json", default_interval_days=1)
+
+    manager.store_exchange_credentials(
+        "binance_demo",
+        ExchangeCredentials(
+            key_id="demo-key",
+            secret="s" * 32,
+            passphrase=None,
+            environment=Environment.PAPER,
+            permissions=("trade",),
+        ),
+    )
+
+    invoked: list[str] = []
+
+    def rotate(payload: ExchangeCredentials) -> ExchangeCredentials:
+        invoked.append(payload.secret or "")
+        return ExchangeCredentials(
+            key_id=payload.key_id,
+            secret="updated" * 4,
+            passphrase=payload.passphrase,
+            environment=payload.environment,
+            permissions=payload.permissions,
+        )
+
+    state = rotation.ensure_exchange_rotation(
+        "binance_demo",
+        expected_environment=Environment.PAPER,
+        rotation_callback=rotate,
+    )
+
+    assert state.was_rotated is True
+    assert invoked == ["s" * 32]
+    status = rotation.status("binance_demo")
+    assert status.last_rotated is not None
+
+    state_again = rotation.ensure_exchange_rotation(
+        "binance_demo",
+        expected_environment=Environment.PAPER,
+        rotation_callback=rotate,
+    )
+
+    assert state_again.was_rotated is False
+    assert invoked == ["s" * 32]

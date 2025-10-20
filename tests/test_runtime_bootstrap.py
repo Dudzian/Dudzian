@@ -34,21 +34,19 @@ from bot_core.exchanges.nowa_gielda import NowaGieldaSpotAdapter
 from bot_core.exchanges.okx import OKXSpotAdapter
 from bot_core.risk.engine import ThresholdRiskEngine
 from bot_core.risk.repository import FileRiskRepository
-from bot_core.runtime import (
-    BootstrapContext,
-    bootstrap_environment,
-    catalog_runtime_entrypoints,
-    resolve_runtime_entrypoint,
-)
 from bot_core.runtime.metadata import RiskManagerSettings
 from bot_core.runtime.bootstrap import (
+    BootstrapContext,
     _DEFAULT_ADAPTERS,
     _instantiate_adapter,
     _apply_adapter_factory_specs,
     _load_initial_tco_costs,
+    bootstrap_environment,
+    catalog_runtime_entrypoints,
     get_registered_adapter_factories,
     register_adapter_factory,
     register_adapter_factory_from_path,
+    resolve_runtime_entrypoint,
     parse_adapter_factory_cli_specs,
     unregister_adapter_factory,
     temporary_adapter_factories,
@@ -115,6 +113,13 @@ _BASE_CONFIG = dedent(
         environment: binance_paper
         controller: trading_gui
         risk_profile: manual
+        bootstrap: false
+      paper_cli:
+        environment: binance_paper
+        controller: trading_cli
+        risk_profile: balanced
+        description: "Paper CLI"
+        tags: [cli, paper]
         bootstrap: false
     environments:
       binance_paper:
@@ -403,9 +408,11 @@ def test_catalog_runtime_entrypoints_in_config(tmp_path: Path) -> None:
     config_path = _write_config(tmp_path)
     core_config = load_core_config(config_path)
     entrypoints = catalog_runtime_entrypoints(core_config)
-    assert set(entrypoints) >= {"auto_trader", "trading_gui"}
+    assert set(entrypoints) >= {"auto_trader", "trading_gui", "paper_cli"}
     assert entrypoints["auto_trader"].risk_profile == "balanced"
     assert entrypoints["trading_gui"].bootstrap_required is False
+    assert entrypoints["paper_cli"].bootstrap_required is False
+    assert entrypoints["paper_cli"].description == "Paper CLI"
 
 
 def test_resolve_runtime_entrypoint_bootstrap(tmp_path: Path) -> None:
@@ -430,6 +437,19 @@ def test_resolve_runtime_entrypoint_without_bootstrap(tmp_path: Path) -> None:
     )
     assert context is None
     assert entrypoint.bootstrap_required is False
+
+
+def test_resolve_runtime_entrypoint_cli_metadata(tmp_path: Path) -> None:
+    config_path = _write_config(tmp_path)
+    entrypoint, context = resolve_runtime_entrypoint(
+        "paper_cli",
+        config_path=config_path,
+        bootstrap=False,
+    )
+    assert context is None
+    assert entrypoint.environment == "binance_paper"
+    assert entrypoint.description == "Paper CLI"
+    assert entrypoint.tags == ("cli", "paper")
 
 
 def test_bootstrap_environment_initialises_components(tmp_path: Path) -> None:

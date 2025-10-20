@@ -14,7 +14,7 @@ __all__ = [
 
 # --- Re-eksport menedżerów ---
 try:
-    from .managers.database_manager import DatabaseManager, DBOptions  # type: ignore
+    from KryptoLowca.database_manager import DatabaseManager, DBOptions  # type: ignore
 except Exception:  # pragma: no cover
     DatabaseManager = None  # type: ignore
     DBOptions = None  # type: ignore
@@ -25,7 +25,7 @@ except Exception:  # pragma: no cover
     AIManager = None  # type: ignore
 
 try:
-    from .managers.config_manager import ConfigManager  # type: ignore
+    from KryptoLowca.config_manager import ConfigManager  # type: ignore
 except Exception:  # pragma: no cover
     ConfigManager = None  # type: ignore
 

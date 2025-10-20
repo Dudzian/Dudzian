@@ -1326,6 +1326,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.max_depth is not None and args.max_depth < 0:
         parser.error("wartość --max-depth musi być nieujemna")
 
+    if args.export:
+        args.set_env_format = "posix"
+
     if args.json_indent is not None:
         json_kwargs: dict[str, object] = {"indent": args.json_indent}
     else:

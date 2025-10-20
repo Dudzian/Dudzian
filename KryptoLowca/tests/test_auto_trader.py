@@ -5,10 +5,11 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple
+from types import SimpleNamespace
 
 import pytest
 import pandas as pd
-from bot_core.runtime.metadata import RiskManagerSettings
+from bot_core.runtime.metadata import RiskManagerSettings, derive_risk_manager_settings
 
 from KryptoLowca.auto_trader import AutoTrader
 from KryptoLowca.backtest.simulation import BacktestFill
@@ -142,6 +143,51 @@ class StrategyHarness:
     signal_service: SignalService
 
 
+@pytest.fixture(autouse=True)
+def _autotrader_runtime(monkeypatch, core_config):
+    """Zapewnia spójne stuby runtime bazujące na ``CoreConfig``."""
+
+    profile = core_config.risk_profiles["balanced"]
+    settings = derive_risk_manager_settings(profile, profile_name=profile.name)
+
+    metadata = SimpleNamespace(
+        environment="paper",
+        risk_profile=profile.name,
+        controller="default_controller",
+        strategy="trend",
+        tags=("gui", "cli"),
+        compliance_live_allowed=False,
+        to_dict=lambda: {
+            "environment": "paper",
+            "risk_profile": profile.name,
+            "controller": "default_controller",
+            "strategy": "trend",
+            "tags": ["gui", "cli"],
+            "compliance_live_allowed": False,
+        },
+    )
+
+    def _load_metadata(entrypoint: str, **_: Any) -> SimpleNamespace | None:
+        if entrypoint != "auto_trader":
+            return None
+        return metadata
+
+    monkeypatch.setattr(
+        "KryptoLowca.auto_trader.app.load_runtime_entrypoint_metadata",
+        _load_metadata,
+    )
+
+    def _load_risk(entrypoint: str, *, profile_name: str | None = None, **_: Any):
+        if entrypoint != "auto_trader":
+            return profile_name, None, settings
+        return profile.name, profile, settings
+
+    monkeypatch.setattr(
+        "KryptoLowca.auto_trader.app.load_risk_manager_settings",
+        _load_risk,
+    )
+
+
 @pytest.fixture
 def strategy_harness() -> StrategyHarness:
     registry = StrategyRegistry()
@@ -169,7 +215,7 @@ def strategy_harness() -> StrategyHarness:
     return StrategyHarness(registry=registry, signal_service=SignalService(strategy_registry=registry))
 
 
-def test_autotrader_applies_runtime_risk_profile() -> None:
+def test_autotrader_applies_runtime_risk_profile(core_config) -> None:
     emitter = DummyEmitter()
     gui = DummyGUI()
     adapter = RecordingExecutionAdapter()
@@ -185,17 +231,36 @@ def test_autotrader_applies_runtime_risk_profile() -> None:
         data_provider=StubDataProvider(),
     )
 
+    profile = core_config.risk_profiles["balanced"]
+    expected_settings = derive_risk_manager_settings(profile, profile_name=profile.name)
+
     cfg = trader._get_strategy_config()
-    assert cfg.max_position_notional_pct == pytest.approx(0.05)
-    assert cfg.trade_risk_pct == pytest.approx(0.015)
-    assert cfg.max_leverage == pytest.approx(3.0)
-    assert trader._risk_manager_settings.max_risk_per_trade == pytest.approx(0.05)
-    assert trader._risk_manager_settings.max_daily_loss_pct == pytest.approx(0.015)
-    assert trader._risk_service.max_position_notional_pct == pytest.approx(0.05)
-    assert trader._risk_service.max_daily_loss_pct == pytest.approx(0.015)
-    assert trader._risk_service.max_portfolio_risk_pct == pytest.approx(0.10)
-    assert trader._risk_service.max_positions == 5
-    assert trader._risk_service.emergency_stop_drawdown_pct == pytest.approx(0.10)
+    assert cfg.max_position_notional_pct == pytest.approx(expected_settings.max_risk_per_trade)
+    trade_risk = min(
+        expected_settings.max_risk_per_trade,
+        expected_settings.max_daily_loss_pct,
+    )
+    assert cfg.trade_risk_pct == pytest.approx(trade_risk)
+    assert cfg.max_leverage == pytest.approx(profile.max_leverage)
+    assert trader._risk_manager_settings.max_risk_per_trade == pytest.approx(
+        expected_settings.max_risk_per_trade
+    )
+    assert trader._risk_manager_settings.max_daily_loss_pct == pytest.approx(
+        expected_settings.max_daily_loss_pct
+    )
+    assert trader._risk_service.max_position_notional_pct == pytest.approx(
+        expected_settings.max_risk_per_trade
+    )
+    assert trader._risk_service.max_daily_loss_pct == pytest.approx(
+        expected_settings.max_daily_loss_pct
+    )
+    assert trader._risk_service.max_portfolio_risk_pct == pytest.approx(
+        expected_settings.max_portfolio_risk
+    )
+    assert trader._risk_service.max_positions == expected_settings.max_positions
+    assert trader._risk_service.emergency_stop_drawdown_pct == pytest.approx(
+        expected_settings.emergency_stop_drawdown
+    )
 
 
 def test_paper_trading_adapter_uses_gui_balance() -> None:

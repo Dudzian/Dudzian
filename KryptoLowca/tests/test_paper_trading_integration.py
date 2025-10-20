@@ -1,144 +1,152 @@
-"""Testy integracyjne warstwy paper trading."""
-
 from __future__ import annotations
 
-import asyncio
-import datetime as dt
+import json
+from pathlib import Path
+from typing import Callable, Mapping
 
 import pytest
 
-from KryptoLowca.managers.database_manager import DatabaseManager
-from KryptoLowca.managers.paper_exchange import BUY, LIMIT, MARKET, PaperExchange
-
-
-class DummyDB:
-    """Minimalny stub DatabaseManager.sync wykorzystywany w testach."""
-
-    def __init__(self) -> None:
-        self.orders: list[dict] = []
-        self.order_updates: list[dict] = []
-        self.trades: list[dict] = []
-        self.positions: list[dict] = []
-        self.equity: list[dict] = []
-        self.closed: list[str] = []
-        self.sync = self
-
-    # --- API wykorzystywane przez PaperExchange ---
-    def record_order(self, payload: dict) -> int:
-        order_id = len(self.orders) + 1
-        entry = dict(payload)
-        entry["id"] = order_id
-        self.orders.append(entry)
-        return order_id
-
-    def update_order_status(self, **payload: object) -> None:
-        self.order_updates.append(dict(payload))
-
-    def record_trade(self, payload: dict) -> None:
-        self.trades.append(dict(payload))
-
-    def upsert_position(self, payload: dict) -> None:
-        self.positions.append(dict(payload))
-
-    def close_position(self, symbol: str) -> None:
-        self.closed.append(symbol)
-
-    def log_equity(self, payload: dict) -> None:
-        self.equity.append(dict(payload))
+from bot_core.execution.base import ExecutionContext
+from bot_core.execution.paper import (
+    InsufficientBalanceError,
+    MarketMetadata,
+    PaperTradingExecutionService,
+)
+from bot_core.exchanges.base import OrderRequest
 
 
 @pytest.fixture()
-def paper_exchange() -> PaperExchange:
-    db = DummyDB()
-    exchange = PaperExchange(
-        db,
-        symbol="BTC/USDT",
-        starting_balance=10_000.0,
-        fee_rate=0.0,
-        slippage_bps=0,
-    )
-    # ustawiamy ostatnią cenę, aby zlecenia MARKET wypełniały się natychmiast
-    exchange.process_tick(100.0, ts=dt.datetime.utcnow())
-    return exchange
+def paper_service(tmp_path: Path) -> Callable[..., tuple[PaperTradingExecutionService, Callable[..., ExecutionContext]]]:
+    """Buduje symulator paper tradingu w konfiguracji zgodnej z bot_core."""
 
-
-def test_market_order_flow(paper_exchange: PaperExchange) -> None:
-    order_id = paper_exchange.create_order(side=BUY, type=MARKET, quantity=0.5)
-
-    assert order_id == 1
-    assert paper_exchange.get_position()["quantity"] == pytest.approx(0.5)
-    assert paper_exchange.db.sync.orders[0]["status"] == "NEW"  # type: ignore[attr-defined]
-    # ostatnia aktualizacja statusu powinna oznaczać FILLED
-    assert paper_exchange.db.sync.order_updates[-1]["status"] == "FILLED"  # type: ignore[attr-defined]
-    assert paper_exchange.db.sync.trades  # type: ignore[attr-defined]
-
-
-def test_limit_order_requires_tick(paper_exchange: PaperExchange) -> None:
-    order_id = paper_exchange.create_order(side=BUY, type=LIMIT, quantity=0.25, price=99.5)
-    assert order_id == 1
-    # brak fill przed osiągnięciem ceny
-    assert paper_exchange.db.sync.order_updates[-1]["status"] == "OPEN"  # type: ignore[attr-defined]
-
-    # cena spada poniżej limitu -> zlecenie powinno się stopniowo wypełniać
-    for price in (99.0, 98.8, 98.5, 98.0):
-        paper_exchange.process_tick(price, ts=dt.datetime.utcnow())
-        if paper_exchange.db.sync.order_updates[-1]["status"] == "FILLED":  # type: ignore[attr-defined]
-            break
-
-    assert paper_exchange.db.sync.order_updates[-1]["status"] in {"PARTIALLY_FILLED", "FILLED"}  # type: ignore[attr-defined]
-
-    filled = any(
-        update["status"] == "FILLED"
-        for update in paper_exchange.db.sync.order_updates  # type: ignore[attr-defined]
-    )
-    if not filled:
-        for _ in range(10):
-            paper_exchange.process_tick(98.0, ts=dt.datetime.utcnow())
-            if paper_exchange.db.sync.order_updates[-1]["status"] == "FILLED":  # type: ignore[attr-defined]
-                filled = True
-                break
-
-    assert filled
-    assert paper_exchange.get_position()["quantity"] == pytest.approx(0.25)
-
-
-def test_equity_logging(paper_exchange: PaperExchange) -> None:
-    paper_exchange.process_tick(101.0, ts=dt.datetime.utcnow())
-    paper_exchange.process_tick(102.0, ts=dt.datetime.utcnow())
-
-    assert paper_exchange.db.sync.equity  # type: ignore[attr-defined]
-    last_entry = paper_exchange.db.sync.equity[-1]  # type: ignore[attr-defined]
-    assert set(last_entry.keys()) >= {"equity", "balance", "pnl", "mode"}
-
-
-def test_paper_exchange_with_real_database(tmp_path) -> None:
-    """Zapewnia, że PaperExchange współpracuje z prawdziwym DatabaseManagerem."""
-
-    db_path = tmp_path / "paper_smoke.db"
-    db_url = f"sqlite+aiosqlite:///{db_path}"
-    db = DatabaseManager(db_url=db_url)
-    asyncio.run(db.init_db(create=True))
-
-    try:
-        exchange = PaperExchange(
-            db,
-            symbol="BTC/USDT",
-            starting_balance=5_000.0,
-            fee_rate=0.0,
-            slippage_bps=0,
+    def factory(
+        *,
+        balances: Mapping[str, float] | None = None,
+        ledger_subdir: str = "ledger",
+        min_notional: float = 25.0,
+    ) -> tuple[PaperTradingExecutionService, Callable[..., ExecutionContext]]:
+        directory = tmp_path / ledger_subdir
+        service = PaperTradingExecutionService(
+            markets={
+                "BTC/USDT": MarketMetadata(
+                    base_asset="BTC",
+                    quote_asset="USDT",
+                    min_quantity=0.001,
+                    min_notional=min_notional,
+                    step_size=0.001,
+                    tick_size=0.1,
+                )
+            },
+            initial_balances=balances or {"USDT": 10_000.0},
+            maker_fee=0.0,
+            taker_fee=0.0,
+            slippage_bps=0.0,
+            ledger_directory=directory,
+            ledger_retention_days=30,
         )
-        exchange.process_tick(100.0, ts=dt.datetime.utcnow())
 
-        order_id = exchange.create_order(side=BUY, type=MARKET, quantity=0.25)
-        assert order_id == 1
+        def make_context(**metadata: object) -> ExecutionContext:
+            return ExecutionContext(
+                portfolio_id="portfolio-test",
+                risk_profile="balanced",
+                environment="paper",
+                metadata=metadata,
+            )
 
-        # W bazie powinien pojawić się wpis o transakcji
-        trades = asyncio.run(db.fetch_trades(symbol="BTC/USDT"))
-        assert trades, "Oczekiwano zarejestrowanych transakcji w bazie"
+        return service, make_context
 
-        position = exchange.get_position()
-        assert position["quantity"] == pytest.approx(0.25)
-        assert position["balance_quote"] < 5_000.0
-    finally:
-        if hasattr(db, "_state") and db._state.engine is not None:  # type: ignore[attr-defined]
-            asyncio.run(db._state.engine.dispose())
+    return factory
+
+
+def test_market_order_flow_records_balances_and_ledger(
+    paper_service: Callable[..., tuple[PaperTradingExecutionService, Callable[..., ExecutionContext]]]
+) -> None:
+    service, make_context = paper_service(ledger_subdir="flow")
+    context = make_context()
+
+    order = OrderRequest(
+        symbol="BTC/USDT",
+        side="buy",
+        quantity=0.5,
+        order_type="market",
+        price=100.0,
+    )
+
+    result = service.execute(order, context)
+
+    assert result.status == "filled"
+    balances = service.balances()
+    assert pytest.approx(balances["BTC"], rel=1e-9) == 0.5
+    assert pytest.approx(balances["USDT"], rel=1e-9) == 10_000.0 - 50.0
+
+    ledger_entries = list(service.ledger())
+    assert ledger_entries and ledger_entries[-1]["order_id"] == result.order_id
+    assert ledger_entries[-1]["status"] == "filled"
+
+    files = service.ledger_files()
+    assert files, "powinien zostać utworzony plik ledger"
+    payloads = [json.loads(line) for line in files[0].read_text(encoding="utf-8").splitlines() if line]
+    assert any(entry["order_id"] == result.order_id for entry in payloads)
+
+
+def test_short_sell_allocates_margin(
+    paper_service: Callable[..., tuple[PaperTradingExecutionService, Callable[..., ExecutionContext]]]
+) -> None:
+    service, make_context = paper_service(ledger_subdir="short")
+    context = make_context(leverage=3)
+
+    sell_order = OrderRequest(
+        symbol="BTC/USDT",
+        side="sell",
+        quantity=1.0,
+        order_type="limit",
+        price=120.0,
+    )
+
+    result = service.execute(sell_order, context)
+
+    assert result.status == "filled"
+    shorts = service.short_positions()
+    assert "BTC/USDT" in shorts
+    position = shorts["BTC/USDT"]
+    assert position["margin"] > 0.0
+    assert position["quantity"] == pytest.approx(1.0)
+
+    balances = service.balances()
+    assert balances["USDT"] > 10_000.0
+
+
+def test_min_notional_is_enforced(
+    paper_service: Callable[..., tuple[PaperTradingExecutionService, Callable[..., ExecutionContext]]]
+) -> None:
+    service, make_context = paper_service(ledger_subdir="min", balances={"USDT": 1_000.0}, min_notional=200.0)
+    context = make_context()
+
+    tiny_order = OrderRequest(
+        symbol="BTC/USDT",
+        side="buy",
+        quantity=0.01,
+        order_type="limit",
+        price=10.0,
+    )
+
+    with pytest.raises(ValueError):
+        service.execute(tiny_order, context)
+
+
+def test_buy_rejects_when_balance_insufficient(
+    paper_service: Callable[..., tuple[PaperTradingExecutionService, Callable[..., ExecutionContext]]]
+) -> None:
+    service, make_context = paper_service(ledger_subdir="insufficient", balances={"USDT": 50.0})
+    context = make_context()
+
+    large_order = OrderRequest(
+        symbol="BTC/USDT",
+        side="buy",
+        quantity=1.0,
+        order_type="market",
+        price=100.0,
+    )
+
+    with pytest.raises(InsufficientBalanceError):
+        service.execute(large_order, context)

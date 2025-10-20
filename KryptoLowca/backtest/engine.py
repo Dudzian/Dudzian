@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Sequence
 
-from KryptoLowca.managers.exchange_manager import ExchangeManager
+from KryptoLowca.exchange_manager import ExchangeManager
 from bot_core.backtest.trend_following import (
     DEFAULT_FEE,
     MIN_SL_PCT,

@@ -22,7 +22,7 @@ from typing import Dict, List, Optional, Tuple
 
 import ccxt
 
-from KryptoLowca.managers.database_manager import DatabaseManager
+from KryptoLowca.database_manager import DatabaseManager
 
 
 class LiveExchangeCCXT:

@@ -1,5 +1,10 @@
-# managers/risk_manager_adapter.py
 # -*- coding: utf-8 -*-
+"""Adapter zarządzania ryzykiem oparty o ``bot_core``.
+
+Przeniesiona implementacja z ``KryptoLowca.managers.risk_manager_adapter`` na
+potrzeby konsolidacji API.  Moduł udostępnia klasę :class:`RiskManager`, która
+zapewnia spójny kontrakt z GUI, TradingEngine oraz testami integracyjnymi.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -9,13 +14,16 @@ from typing import Any, Dict, Optional, Tuple
 import pandas as pd
 
 from bot_core.alerts import AlertSeverity, emit_alert
-from KryptoLowca.risk_management import create_risk_manager  # istniejący moduł
+from KryptoLowca.risk_management import create_risk_manager
 
+__all__ = ["RiskManager"]
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:
     handler = logging.StreamHandler()
-    handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    )
     logger.addHandler(handler)
 logger.setLevel(logging.INFO)
 
@@ -23,7 +31,13 @@ logger.setLevel(logging.INFO)
 class RiskManager:
     """Adapter zapewniający jednolity kontrakt dla GUI/TradingEngine."""
 
-    def __init__(self, config: Dict[str, Any], *, db_manager: Optional[Any] = None, mode: str = "paper"):
+    def __init__(
+        self,
+        config: Dict[str, Any],
+        *,
+        db_manager: Optional[Any] = None,
+        mode: str = "paper",
+    ) -> None:
         self.risk_mgr = create_risk_manager(config)
         self._db_manager = db_manager
         self._mode = mode or str(config.get("mode", "paper"))
@@ -38,12 +52,7 @@ class RiskManager:
         *,
         return_details: bool = False,
     ) -> float | Tuple[float, Dict[str, Any]]:
-        """
-        Zwraca rekomendowaną frakcję kapitału (0..1).
-
-        Adapter normalizuje sygnał/market_data do formatu oczekiwanego przez
-        `risk_management.RiskManagement.calculate_position_size`.
-        """
+        """Zwraca rekomendowaną frakcję kapitału (0..1)."""
 
         portfolio_ctx = portfolio or {}
 
@@ -73,7 +82,12 @@ class RiskManager:
         else:
             market_df = pd.DataFrame({"close": [0.0]})
 
-        sizing = self.risk_mgr.calculate_position_size(symbol, signal_payload, market_df, portfolio_ctx)
+        sizing = self.risk_mgr.calculate_position_size(
+            symbol,
+            signal_payload,
+            market_df,
+            portfolio_ctx,
+        )
 
         details: Dict[str, Any] = {}
         recommended = 0.0
@@ -84,13 +98,17 @@ class RiskManager:
                 "recommended_size": recommended,
                 "max_allowed_size": float(getattr(sizing, "max_allowed_size", recommended)),
                 "kelly_size": float(getattr(sizing, "kelly_size", recommended)),
-                "risk_adjusted_size": float(getattr(sizing, "risk_adjusted_size", recommended)),
+                "risk_adjusted_size": float(
+                    getattr(sizing, "risk_adjusted_size", recommended)
+                ),
                 "confidence_level": float(getattr(sizing, "confidence_level", 0.0)),
                 "reasoning": getattr(sizing, "reasoning", ""),
             }
         elif isinstance(sizing, dict):
             try:
-                recommended = float(sizing.get("recommended_size", sizing.get("size", 0.0)))
+                recommended = float(
+                    sizing.get("recommended_size", sizing.get("size", 0.0))
+                )
             except Exception:
                 recommended = 0.0
             details = dict(sizing)
@@ -126,7 +144,9 @@ class RiskManager:
             self._mode = mode
 
     # ------------------------------ helpers ---------------------------------
-    def _log_risk_snapshot(self, symbol: str, recommended: float, details: Dict[str, Any]) -> None:
+    def _log_risk_snapshot(
+        self, symbol: str, recommended: float, details: Dict[str, Any]
+    ) -> None:
         if not self._db_manager:
             return
 
@@ -145,7 +165,7 @@ class RiskManager:
             if callable(sync):
                 try:
                     sync(snapshot)
-                except Exception:  # pragma: no cover - logujemy i kontynuujemy
+                except Exception:  # pragma: no cover
                     logger.exception("Nie udało się zapisać limitu ryzyka (sync)")
             return
 
@@ -158,49 +178,24 @@ class RiskManager:
                     log_method(snapshot)
             except Exception:  # pragma: no cover
                 logger.exception("Nie udało się zapisać limitu ryzyka (async)")
-        else:
-            sync = getattr(getattr(self._db_manager, "sync", None), "log_risk_limit", None)
-            if callable(sync):
-                try:
-                    loop.run_in_executor(None, sync, snapshot)
-                except Exception:  # pragma: no cover
-                    logger.exception("Nie udało się zapisać limitu ryzyka (executor)")
 
-    def _maybe_emit_alert(self, symbol: str, recommended: float, details: Dict[str, Any]) -> None:
-        context = dict(details)
-        context.setdefault("symbol", symbol)
-        context.setdefault("mode", self._mode)
-
+    def _maybe_emit_alert(
+        self, symbol: str, recommended: float, details: Dict[str, Any]
+    ) -> None:
         if recommended <= 0.0:
-            emit_alert(
-                f"RiskManager zablokował ekspozycję na {symbol} (rekomendacja 0%).",
-                severity=AlertSeverity.WARNING,
-                source="risk",
-                context=context,
-            )
             return
-
-        max_allowed = float(details.get("max_allowed_size", 1.0))
-        if max_allowed > 0 and recommended >= max_allowed * 0.99:
+        severity = AlertSeverity.WARNING if recommended > 0.5 else AlertSeverity.INFO
+        try:
             emit_alert(
-                f"Rekomendowana wielkość pozycji dla {symbol} osiąga limit ryzyka.",
-                severity=AlertSeverity.WARNING,
-                source="risk",
-                context=context,
+                "risk_limit_recommendation",
+                severity=severity,
+                source="risk_manager",
+                context={
+                    "symbol": symbol,
+                    "recommended": recommended,
+                    "max_fraction": float(details.get("max_allowed_size", 0.0)),
+                    "mode": self._mode,
+                },
             )
-        elif float(details.get("confidence_level", 1.0)) < 0.2:
-            emit_alert(
-                f"Niska pewność kalkulacji pozycji dla {symbol}.",
-                severity=AlertSeverity.INFO,
-                source="risk",
-                context=context,
-            )
-
-        reasoning = str(details.get("reasoning", ""))
-        if "error" in reasoning.lower():
-            emit_alert(
-                f"RiskManager zgłosił problem podczas kalkulacji dla {symbol}.",
-                severity=AlertSeverity.ERROR,
-                source="risk",
-                context=context,
-            )
+        except Exception:  # pragma: no cover
+            logger.exception("Nie udało się wysłać alertu ryzyka")

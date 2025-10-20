@@ -1,113 +1,115 @@
-# tests/test_security_manager.py
-# -*- coding: utf-8 -*-
-"""
-Unit tests for security_manager.py.
-"""
+"""Testy magazynu sekretów `bot_core.security` wykorzystywanego przez aplikację."""
+
 from __future__ import annotations
 
-from pathlib import Path
-from typing import List, Tuple
+from typing import Dict, Optional
 
 import pytest
 
-from bot_core.alerts import AlertSeverity, get_alert_dispatcher
-from KryptoLowca.managers.security_manager import SecurityError, SecurityManager
+from bot_core.exchanges.base import Environment, ExchangeCredentials
+from bot_core.security import SecretManager, SecretStorage, SecretStorageError
 
 
-@pytest.fixture
-def security_manager(tmp_path: Path) -> SecurityManager:
-    key_file = tmp_path / "keys.enc"
-    return SecurityManager(key_file=str(key_file))
+class _MemorySecretStorage(SecretStorage):
+    """Niewielki magazyn w pamięci pomagający izolować testy."""
+
+    def __init__(self) -> None:
+        self.store: Dict[str, str] = {}
+
+    def get_secret(self, key: str) -> Optional[str]:
+        return self.store.get(key)
+
+    def set_secret(self, key: str, value: str) -> None:
+        self.store[key] = value
+
+    def delete_secret(self, key: str) -> None:
+        self.store.pop(key, None)
 
 
-def test_save_and_load_keys(security_manager: SecurityManager) -> None:
-    keys = {
-        "testnet": {"key": "test_key", "secret": "test_secret"},
-        "live": {"key": "live_key", "secret": "live_secret"},
-    }
-    password = "password123"
+@pytest.fixture()
+def secret_manager() -> SecretManager:
+    """Zwraca SecretManager z magazynem in-memory dla prostych testów."""
 
-    security_manager.save_encrypted_keys(keys, password)
-    assert security_manager.key_file.exists()
-
-    loaded_keys = security_manager.load_encrypted_keys(password)
-    assert loaded_keys == keys
+    storage = _MemorySecretStorage()
+    return SecretManager(storage, namespace="tests.security")
 
 
-def test_invalid_password(security_manager: SecurityManager) -> None:
-    keys = {"testnet": {"key": "test_key", "secret": "test_secret"}}
-    security_manager.save_encrypted_keys(keys, "password123")
-
-    with pytest.raises(SecurityError, match="Invalid password"):
-        security_manager.load_encrypted_keys("wrong_password")
-
-
-def test_missing_key_file(security_manager: SecurityManager) -> None:
-    with pytest.raises(SecurityError, match=r"Key file .* not found"):
-        security_manager.load_encrypted_keys("password123")
+def _sample_credentials(environment: Environment = Environment.PAPER) -> ExchangeCredentials:
+    return ExchangeCredentials(
+        key_id="paper-key",
+        secret="S" * 32,
+        passphrase="hunter2",
+        environment=environment,
+        permissions=("trade", "read"),
+    )
 
 
-def test_invalid_keys(security_manager: SecurityManager) -> None:
-    with pytest.raises(SecurityError, match="Keys must be a non-empty dictionary"):
-        security_manager.save_encrypted_keys({}, "password123")
+def test_store_and_load_exchange_credentials(secret_manager: SecretManager) -> None:
+    secret_manager.store_exchange_credentials("binance_demo", _sample_credentials())
+
+    loaded = secret_manager.load_exchange_credentials(
+        "binance_demo",
+        expected_environment=Environment.PAPER,
+        required_permissions=("trade",),
+    )
+
+    assert loaded.key_id == "paper-key"
+    assert loaded.secret == "S" * 32
+    assert loaded.environment is Environment.PAPER
 
 
-def test_invalid_password_type(security_manager: SecurityManager) -> None:
-    with pytest.raises(SecurityError, match="Password must be a non-empty string"):
-        security_manager.save_encrypted_keys({"testnet": {"key": "k", "secret": "s"}}, "")
+def test_environment_mismatch_raises(secret_manager: SecretManager) -> None:
+    secret_manager.store_exchange_credentials("binance_demo", _sample_credentials(Environment.LIVE))
+
+    with pytest.raises(SecretStorageError) as excinfo:
+        secret_manager.load_exchange_credentials(
+            "binance_demo",
+            expected_environment=Environment.PAPER,
+        )
+
+    assert "nie pasuje" in str(excinfo.value)
 
 
-def test_audit_callback_records_events(security_manager: SecurityManager) -> None:
-    events: List[Tuple[str, dict]] = []
+def test_permission_checks(secret_manager: SecretManager) -> None:
+    secret_manager.store_exchange_credentials("paper", _sample_credentials())
 
-    def _callback(action: str, payload: dict) -> None:
-        events.append((action, payload))
+    with pytest.raises(SecretStorageError):
+        secret_manager.load_exchange_credentials(
+            "paper",
+            expected_environment=Environment.PAPER,
+            required_permissions=("withdraw",),
+        )
 
-    security_manager.register_audit_callback(_callback)
+    secret_manager.store_exchange_credentials(
+        "paper",
+        _sample_credentials(),
+    )
 
-    keys = {
-        "testnet": {"key": "T" * 32, "secret": "S" * 32},
-        "live": {"key": "L" * 32, "secret": "Z" * 32},
-    }
-    password = "audit-pass"
-
-    security_manager.save_encrypted_keys(keys, password)
-    loaded = security_manager.load_encrypted_keys(password)
-
-    assert loaded == keys
-    actions = [action for action, _ in events]
-    assert "encrypt_keys" in actions
-    assert "decrypt_keys" in actions
-
-    # Verify masking in audit metadata (nothing sensitive in clear text)
-    encrypt_payload = next(payload for action, payload in events if action == "encrypt_keys")
-    assert encrypt_payload["status"] == "success"
-    masked_key = encrypt_payload["metadata"]["keys"]["testnet"]["key"]
-    assert masked_key != keys["testnet"]["key"]
-    assert "***" in masked_key
-
-    decrypt_payload = next(payload for action, payload in events if action == "decrypt_keys")
-    assert decrypt_payload["status"] == "success"
-    masked_secret = decrypt_payload["metadata"]["keys"]["live"]["secret"]
-    assert masked_secret != keys["live"]["secret"]
-    assert "***" in masked_secret
+    with pytest.raises(SecretStorageError):
+        secret_manager.load_exchange_credentials(
+            "paper",
+            expected_environment=Environment.PAPER,
+            forbidden_permissions=("trade",),
+        )
 
 
-def test_decrypt_failure_emits_alert(security_manager: SecurityManager) -> None:
-    dispatcher = get_alert_dispatcher()
-    received = []
+def test_generic_secret_roundtrip(secret_manager: SecretManager) -> None:
+    secret_manager.store_secret_value("smtp", "hunter2", purpose="email")
 
-    def _listener(event):
-        received.append(event)
+    loaded = secret_manager.load_secret_value("smtp", purpose="email")
+    assert loaded == "hunter2"
 
-    token = dispatcher.register(_listener, name="security-test")
-    keys = {"testnet": {"key": "T" * 32, "secret": "S" * 32}}
-    password = "demo-pass"
-    security_manager.save_encrypted_keys(keys, password)
-    try:
-        with pytest.raises(SecurityError):
-            security_manager.load_encrypted_keys("wrong-pass")
-    finally:
-        dispatcher.unregister(token)
+    secret_manager.delete_secret_value("smtp", purpose="email")
+    with pytest.raises(SecretStorageError):
+        secret_manager.load_secret_value("smtp", purpose="email")
 
-    assert any(getattr(event, "severity", None) == AlertSeverity.CRITICAL for event in received)
+
+def test_missing_exchange_secret_is_reported(secret_manager: SecretManager) -> None:
+    with pytest.raises(SecretStorageError) as excinfo:
+        secret_manager.load_exchange_credentials(
+            "unknown",
+            expected_environment=Environment.PAPER,
+        )
+
+    assert "Brak sekretu" in str(excinfo.value)
+

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import List, Dict, Any, Optional
 
-from KryptoLowca.managers.exchange_manager import ExchangeManager
-from KryptoLowca.managers.exchange_core import SignalDTO
+from KryptoLowca.exchange_manager import ExchangeManager
+from bot_core.exchanges.core import SignalDTO
 
 
 def _ema(values: List[float], period: int) -> List[float]:
@@ -62,7 +62,7 @@ class RulesV0Strategy:
         if not ohlcv or len(ohlcv) < atr_len + 1:
             return None
         # ATR
-        from KryptoLowca.managers.scanner import _compute_atr  # reuse
+        from archive.legacy_bot.managers.scanner import _compute_atr  # reuse
         atr = _compute_atr(ohlcv, atr_len)
         if not atr:
             return None

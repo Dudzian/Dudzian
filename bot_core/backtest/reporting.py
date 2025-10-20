@@ -30,17 +30,19 @@ def render_html_report(report: BacktestReport, *, title: str = "Backtest report"
         f"<tr><th>{name}</th><td>{value}</td></tr>" for name, value in _as_rows(metrics)
     )
     trades_rows = "".join(
-        (
-            "<tr>",
-            f"<td>{trade.direction}</td>",
-            f"<td>{trade.entry_time}</td>",
-            f"<td>{trade.exit_time}</td>",
-            f"<td>{trade.entry_price:.4f}</td>",
-            f"<td>{trade.exit_price:.4f}</td>",
-            f"<td>{trade.quantity:.4f}</td>",
-            f"<td>{trade.pnl:.4f}</td>",
-            f"<td>{trade.pnl_pct:.2f}%</td>",
-            "</tr>",
+        "".join(
+            (
+                "<tr>",
+                f"<td>{trade.direction}</td>",
+                f"<td>{trade.entry_time}</td>",
+                f"<td>{trade.exit_time}</td>",
+                f"<td>{trade.entry_price:.4f}</td>",
+                f"<td>{trade.exit_price:.4f}</td>",
+                f"<td>{trade.quantity:.4f}</td>",
+                f"<td>{trade.pnl:.4f}</td>",
+                f"<td>{trade.pnl_pct:.2f}%</td>",
+                "</tr>",
+            )
         )
         for trade in report.trades
     ) or "<tr><td colspan='8'>No completed trades</td></tr>"

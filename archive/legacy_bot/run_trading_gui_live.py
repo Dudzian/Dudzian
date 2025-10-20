@@ -4,7 +4,7 @@
 Launcher PAPER do istniejącego trading_gui.py:
 - Nie wymaga żadnych kluczy API.
 - Dodaje okno "Quick Paper Trade" do ręcznego wysyłania MARKET BUY/SELL w trybie paper.
-- Zapisuje do bazy: orders, trades, positions (korzysta z managers.database_manager.DatabaseManager).
+- Zapisuje do bazy: orders, trades, positions (korzysta z KryptoLowca.database_manager.DatabaseManager).
 - Pokazuje ostatnie pozycje i 10 ostatnich transakcji z trybu paper.
 
 NIC nie modyfikuje trading_gui.py – importujemy i „doklejamy” funkcjonalność.
@@ -40,7 +40,7 @@ if __package__ in (None, ""):
 import KryptoLowca.trading_gui  # Twój oryginalny plik GUI (NIE MODYFIKUJEMY GO)
 
 # DB manager (używamy tego samego co w testach earlier)
-from KryptoLowca.managers.database_manager import DatabaseManager
+from KryptoLowca.database_manager import DatabaseManager
 
 
 # ----------------- POMOCNICZE -----------------

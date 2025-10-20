@@ -44,7 +44,7 @@ if __package__ in (None, ""):
 
 
 import KryptoLowca.trading_gui  # oryginalne GUI
-from KryptoLowca.managers.database_manager import DatabaseManager
+from KryptoLowca.database_manager import DatabaseManager
 
 
 # ----------------- KONFIG / POMOCNICZE -----------------

@@ -9,12 +9,82 @@ from typing import Any, Callable, Dict, Tuple
 
 import pytest
 
+from bot_core.config.models import (
+    CoreConfig,
+    ControllerRuntimeConfig,
+    DailyTrendMomentumStrategyConfig,
+    EnvironmentConfig,
+    RiskProfileConfig,
+    RuntimeEntrypointConfig,
+)
+from bot_core.exchanges.base import Environment
+
 # Dostosuj sys.path, aby testy mogły importować pakiet i root projektu
 ROOT = Path(__file__).resolve().parents[2]
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 for path in (str(ROOT), str(PACKAGE_ROOT)):
     if path not in sys.path:
         sys.path.insert(0, path)
+
+
+@pytest.fixture()
+def core_config() -> CoreConfig:
+    """Minimalna konfiguracja CoreConfig dostępna w testach GUI/CLI."""
+
+    environment = EnvironmentConfig(
+        name="paper",
+        exchange="binance_spot",
+        environment=Environment.PAPER,
+        keychain_key="paper_key",
+        data_cache_path="./var/data/paper",
+        risk_profile="balanced",
+        alert_channels=("telegram:primary",),
+        required_permissions=("read",),
+        forbidden_permissions=("withdraw",),
+    )
+
+    risk_profile = RiskProfileConfig(
+        name="balanced",
+        max_daily_loss_pct=0.02,
+        max_position_pct=0.05,
+        target_volatility=0.1,
+        max_leverage=3.0,
+        stop_loss_atr_multiple=1.5,
+        max_open_positions=5,
+        hard_drawdown_pct=0.12,
+    )
+
+    controller = ControllerRuntimeConfig(tick_seconds=60.0, interval="1m")
+
+    strategy = DailyTrendMomentumStrategyConfig(
+        name="trend",
+        fast_ma=9,
+        slow_ma=21,
+        breakout_lookback=20,
+        momentum_window=14,
+        atr_window=14,
+        atr_multiplier=1.5,
+        min_trend_strength=0.2,
+        min_momentum=0.1,
+    )
+
+    entrypoint = RuntimeEntrypointConfig(
+        environment="paper",
+        controller="default_controller",
+        strategy="trend",
+        risk_profile="balanced",
+        tags=("gui", "cli"),
+        bootstrap=True,
+        description="Minimal runtime for tests",
+    )
+
+    return CoreConfig(
+        environments={"paper": environment},
+        risk_profiles={"balanced": risk_profile},
+        strategies={"trend": strategy},
+        runtime_controllers={"default_controller": controller},
+        runtime_entrypoints={"paper_runtime": entrypoint},
+    )
 
 
 def _run_coroutine(coro: Any) -> Any:

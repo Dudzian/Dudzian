@@ -11,7 +11,7 @@ import argparse
 from typing import List, Dict, Any
 
 # --- FIX ŚCIEŻKI ---
-# Dodaj katalog projektu do sys.path, aby działały importy 'managers' oraz 'backtest.*'
+# Dodaj katalog projektu do sys.path, aby działały importy pakietu ``KryptoLowca`` oraz ``backtest.*``
 PKG_DIR = os.path.abspath(os.path.dirname(__file__))               # ...\KryptoŁowca\backtest
 PROJECT_ROOT = os.path.abspath(os.path.join(PKG_DIR, ".."))        # ...\KryptoŁowca
 if PROJECT_ROOT not in sys.path:
@@ -19,9 +19,12 @@ if PROJECT_ROOT not in sys.path:
 
 # Importy – działają zarówno przy `python -m backtest.runner`, jak i `python backtest\runner.py`
 try:
-    from KryptoLowca.managers.exchange_manager import ExchangeManager
+    from KryptoLowca.exchange_manager import ExchangeManager
 except ImportError as e:
-    raise SystemExit(f"[ImportError] Nie znaleziono pakietu 'managers'. Upewnij się, że uruchamiasz z katalogu projektu. Szczegóły: {e}")
+    raise SystemExit(
+        "[ImportError] Nie znaleziono modułu 'KryptoLowca.exchange_manager'. "
+        "Upewnij się, że uruchamiasz z katalogu projektu. Szczegóły: {e}"
+    )
 
 try:
     from backtest.engine import BacktestEngine, BacktestConfig, StrategyParams, EntryParams, ExitParams, TradeRecord

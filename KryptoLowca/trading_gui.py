@@ -36,13 +36,6 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any, Dict, List, Mapping, Optional
 
-# --- alias zgodności: core/trading_engine może importować managers.database_manager
-try:
-    import KryptoLowca.database_manager as _dbm_alias
-    sys.modules.setdefault("managers.database_manager", _dbm_alias)
-except Exception:
-    pass
-
 # Tkinter
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -93,13 +86,14 @@ KEYS_FILE = APP_ROOT / "api_keys.enc"
 SALT_FILE = APP_ROOT / "salt.bin"
 
 # --- MENEDŻERY / CORE ---
-from KryptoLowca.managers.security_manager import SecurityManager
-from KryptoLowca.managers.config_manager import ConfigManager
-from KryptoLowca.managers.exchange_manager import ExchangeManager
-from KryptoLowca.managers.exchange_core import PositionDTO
-from KryptoLowca.managers.ai_manager import AIManager
-from KryptoLowca.managers.report_manager import ReportManager
-from KryptoLowca.managers.risk_manager_adapter import RiskManager
+from bot_core.exchanges.core import PositionDTO
+
+from KryptoLowca.config_manager import ConfigManager
+from KryptoLowca.exchange_manager import ExchangeManager
+from KryptoLowca.security_manager import SecurityManager
+from KryptoLowca.ai_manager import AIManager
+from KryptoLowca.report_manager import ReportManager
+from KryptoLowca.risk_manager import RiskManager
 from KryptoLowca.core.trading_engine import TradingEngine
 from KryptoLowca.risk_settings_loader import (
     DEFAULT_CORE_CONFIG_PATH,
@@ -179,7 +173,7 @@ class Tooltip:
 class TradingGUI:
     """
     TYLKO UI + event handling.
-    Logika: TradingEngine + menedżery w managers/*
+    Logika: TradingEngine + nowe moduły wysokiego poziomu z pakietu ``KryptoLowca``.
     """
 
     def __init__(
