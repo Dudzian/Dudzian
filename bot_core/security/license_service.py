@@ -249,8 +249,18 @@ class LicenseService:
             "bundle_path": str(snapshot.bundle_path),
         }
 
-        self._status_path.parent.mkdir(parents=True, exist_ok=True)
-        self._status_path.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        try:
+            self._status_path.parent.mkdir(parents=True, exist_ok=True)
+            self._status_path.write_text(
+                json.dumps(document, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+        except OSError as exc:  # pragma: no cover - zależne od środowiska plików
+            LOGGER.warning(
+                "Nie udało się zapisać migawki licencji do %s: %s",
+                self._status_path,
+                exc,
+            )
 
     def _append_audit_log(self, snapshot: LicenseSnapshot) -> None:
         entry = {
@@ -264,9 +274,16 @@ class LicenseService:
             "payload_sha256": hashlib.sha256(snapshot.payload_bytes).hexdigest(),
         }
 
-        self._audit_log_path.parent.mkdir(parents=True, exist_ok=True)
-        with self._audit_log_path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        try:
+            self._audit_log_path.parent.mkdir(parents=True, exist_ok=True)
+            with self._audit_log_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        except OSError as exc:  # pragma: no cover - zależne od środowiska plików
+            LOGGER.warning(
+                "Nie udało się dopisać wpisu audytu do %s: %s",
+                self._audit_log_path,
+                exc,
+            )
 
 
 __all__ = [
