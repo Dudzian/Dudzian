@@ -39,17 +39,18 @@ class ComplianceControl:
 @dataclass(slots=True)
 class ComplianceReport:
     report_id: str
-    generated_at: datetime
     controls: Sequence[ComplianceControl]
+    generated_at: datetime | None = None
     report_type: str = "stage5_compliance"
     version: str | None = None
     metadata: Mapping[str, object] | None = None
 
     def to_payload(self) -> dict[str, object]:
+        timestamp = self.generated_at or datetime.now(timezone.utc)
         payload: MutableMapping[str, object] = {
             "report_id": str(self.report_id),
             "report_type": str(self.report_type),
-            "generated_at": self.generated_at.astimezone(timezone.utc).isoformat(),
+            "generated_at": timestamp.astimezone(timezone.utc).isoformat(),
             "controls": [control.to_payload() for control in self.controls],
         }
         if self.version:

@@ -12,6 +12,7 @@ import asyncio
 import inspect
 import json
 import logging
+import math
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -51,7 +52,70 @@ if not logger.handlers:
 logger.setLevel(logging.INFO)
 _history_logger = logger.getChild("history")
 
+_DRIFT_FALLBACK_EXCEPTIONS: tuple[type[BaseException], ...] = (
+    TypeError,
+    ValueError,
+    AttributeError,
+    ArithmeticError,
+)
+
 LoggerLike = Union[logging.Logger, logging.LoggerAdapter]
+
+
+def _column_stack_features(df: pd.DataFrame, feature_cols: Iterable[str]) -> np.ndarray:
+    """Zwraca macierz cech bez ponownego importowania NumPy podczas zbiorczych odczytów."""
+
+    cols = list(feature_cols)
+    if not cols:
+        return np.empty((len(df), 0), dtype=float)
+    arrays = [df[col].to_numpy(dtype=float, copy=False) for col in cols]
+    if not arrays:
+        return np.empty((len(df), 0), dtype=float)
+    return np.column_stack(arrays)
+
+
+def _percent_change_columns(df: pd.DataFrame, feature_cols: Iterable[str]) -> list[list[float]]:
+    """Zwróć listy procentowych zmian dla każdej kolumny, oczyszczając wartości niefinityczne."""
+
+    cols: list[list[float]] = []
+    for col in feature_cols:
+        numeric = pd.to_numeric(df[col], errors="coerce")
+        series = numeric.astype(float).tolist()
+        pct: list[float] = []
+        for idx in range(1, len(series)):
+            prev = series[idx - 1]
+            curr = series[idx]
+            if not math.isfinite(prev) or not math.isfinite(curr) or prev == 0.0:
+                pct.append(float("nan"))
+            else:
+                pct.append((curr - prev) / prev)
+        cols.append(pct)
+    rows = list(zip(*cols)) if cols else []
+    filtered_rows = [row for row in rows if all(math.isfinite(value) for value in row)]
+    if not filtered_rows:
+        return []
+    return [list(col) for col in zip(*filtered_rows)]
+
+
+def _column_mean(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    total = 0.0
+    for value in values:
+        total += float(value)
+    return total / len(values)
+
+
+def _column_std(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    mean = _column_mean(values)
+    variance = 0.0
+    for value in values:
+        diff = value - mean
+        variance += diff * diff
+    variance /= len(values)
+    return math.sqrt(variance)
 
 
 def _ensure_logger(logger_like: Optional[LoggerLike]) -> LoggerLike:
@@ -123,7 +187,7 @@ except Exception as exc:  # pragma: no cover - brak zależności na CI
             return features @ coef
 
         async def predict_series(self, df: pd.DataFrame, feature_cols: List[str]) -> pd.Series:
-            arr = df[feature_cols].to_numpy(dtype=float)
+            arr = _column_stack_features(df, feature_cols)
             if arr.size == 0:
                 return pd.Series(np.zeros(len(df)), index=df.index)
             coef = np.resize(self._coef, arr.shape[1])
@@ -148,7 +212,7 @@ except Exception:
                 raise ValueError("Za mało danych do przygotowania sekwencji.")
             X: List[np.ndarray] = []
             y: List[float] = []
-            values = df[feature_cols].to_numpy(dtype=float)
+            values = _column_stack_features(df, feature_cols)
             target = df[target_col].to_numpy(dtype=float)
             for idx in range(seq_len, len(df)):
                 X.append(values[idx - seq_len : idx])
@@ -554,29 +618,37 @@ class AIManager:
         series_list: Iterable[pd.Series],
         definition: EnsembleDefinition,
     ) -> pd.Series:
-        frame = pd.concat(list(series_list), axis=1)
-        if frame.empty:
+        series_seq = [pd.Series(series) for series in series_list]
+        columns = [series.astype(float).reset_index(drop=True) for series in series_seq]
+        if not columns:
             raise ValueError("Brak predykcji komponentów do agregacji.")
+        length = len(columns[0])
+        for series in columns:
+            if len(series) != length:
+                raise ValueError("Serie komponentów muszą mieć tę samą długość.")
+        data_rows = list(zip(*(series.tolist() for series in columns)))
+        index = series_seq[0].index
         agg = definition.aggregation
         if agg == "mean":
-            combined = frame.mean(axis=1)
+            values = [sum(row) / len(row) if row else 0.0 for row in data_rows]
         elif agg == "median":
-            combined = frame.median(axis=1)
+            import statistics
+
+            values = [statistics.median(row) if row else 0.0 for row in data_rows]
         elif agg == "max":
-            combined = frame.max(axis=1)
+            values = [max(row) if row else 0.0 for row in data_rows]
         elif agg == "min":
-            combined = frame.min(axis=1)
+            values = [min(row) if row else 0.0 for row in data_rows]
         elif agg == "weighted":
-            weights = np.asarray(definition.require_weights(), dtype=float)
-            total = float(weights.sum())
+            weights = [float(w) for w in definition.require_weights()]
+            total = sum(weights)
             if total == 0.0:
                 raise ValueError("Suma wag zespołu nie może być zerowa.")
-            normalized = weights / total
-            combined = frame.to_numpy(dtype=float) @ normalized
-            combined = pd.Series(combined, index=frame.index)
+            normalized = [w / total for w in weights]
+            values = [sum(val * weight for val, weight in zip(row, normalized)) for row in data_rows]
         else:  # pragma: no cover - zabezpieczenie przed przyszłymi wartościami
             raise ValueError(f"Nieobsługiwana agregacja zespołu: {agg}")
-        return combined if isinstance(combined, pd.Series) else pd.Series(combined, index=frame.index)
+        return pd.Series(values, index=index)
 
     async def _predict_model_series(
         self,
@@ -757,29 +829,48 @@ class AIManager:
         self._validate_dataframe(baseline, feats)
         self._validate_dataframe(recent, feats)
 
-        baseline_pct = baseline[feats].pct_change().replace([np.inf, -np.inf], np.nan).dropna()
-        recent_pct = recent[feats].pct_change().replace([np.inf, -np.inf], np.nan).dropna()
+        try:
+            baseline_pct = baseline[feats].pct_change().replace([np.inf, -np.inf], np.nan).dropna()
+            recent_pct = recent[feats].pct_change().replace([np.inf, -np.inf], np.nan).dropna()
 
-        if baseline_pct.empty or recent_pct.empty:
-            return DriftReport(0.0, 0.0, False, threshold)
+            if baseline_pct.empty or recent_pct.empty:
+                return DriftReport(0.0, 0.0, False, threshold)
 
-        baseline_std = baseline_pct.std().replace(0.0, np.nan)
-        recent_std = recent_pct.std()
-        volatility_shift = float(
-            ((recent_std - baseline_std).abs() / (baseline_std.abs() + 1e-9))
-            .replace([np.inf, -np.inf], np.nan)
-            .fillna(0.0)
-            .max()
-        )
+            baseline_std = baseline_pct.std().replace(0.0, np.nan)
+            recent_std = recent_pct.std()
+            volatility_shift = float(
+                ((recent_std - baseline_std).abs() / (baseline_std.abs() + 1e-9))
+                .replace([np.inf, -np.inf], np.nan)
+                .fillna(0.0)
+                .max()
+            )
 
-        baseline_mean = baseline_pct.mean()
-        recent_mean = recent_pct.mean()
-        feature_drift = float(
-            ((recent_mean - baseline_mean).abs() / (baseline_std.abs() + 1e-9))
-            .replace([np.inf, -np.inf], np.nan)
-            .fillna(0.0)
-            .max()
-        )
+            baseline_mean = baseline_pct.mean()
+            recent_mean = recent_pct.mean()
+            feature_drift = float(
+                ((recent_mean - baseline_mean).abs() / (baseline_std.abs() + 1e-9))
+                .replace([np.inf, -np.inf], np.nan)
+                .fillna(0.0)
+                .max()
+            )
+        except Exception as exc:
+            if not isinstance(exc, _DRIFT_FALLBACK_EXCEPTIONS):
+                raise
+            logger.debug("Falling back to Python drift maths", exc_info=True)
+            baseline_cols = _percent_change_columns(baseline, feats)
+            recent_cols = _percent_change_columns(recent, feats)
+            if not baseline_cols or not recent_cols:
+                return DriftReport(0.0, 0.0, False, threshold)
+            eps = 1e-9
+            feature_drift = 0.0
+            volatility_shift = 0.0
+            for base_col, recent_col in zip(baseline_cols, recent_cols):
+                base_std = _column_std(base_col)
+                recent_std = _column_std(recent_col)
+                volatility_shift = max(volatility_shift, abs(recent_std - base_std) / (abs(base_std) + eps))
+                base_mean = _column_mean(base_col)
+                recent_mean = _column_mean(recent_col)
+                feature_drift = max(feature_drift, abs(recent_mean - base_mean) / (abs(base_std) + eps))
 
         triggered = volatility_shift > threshold or feature_drift > threshold
         return DriftReport(feature_drift=feature_drift, volatility_shift=volatility_shift, triggered=triggered, threshold=threshold)
@@ -1170,7 +1261,7 @@ class AIManager:
                 except asyncio.CancelledError:
                     break
                 except Exception as exc:  # pragma: no cover - błędy runtime
-                    logger.error("Błąd harmonogramu pipeline'u %s: %s", symbol, exc)
+                    logger.error("Błąd harmonogramu pipeline'u %s: %s", symbol, exc, exc_info=True)
                     await asyncio.sleep(min(60.0, interval_seconds))
 
         return _runner

@@ -15,7 +15,11 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Sequence, Tuple
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 # --- Common imports available in both branches ---
 from bot_core.config import load_core_config
@@ -66,45 +70,49 @@ def _default_self_heal_output(output_json: Path) -> Path:
 
 
 # ----------------------------- subcommand: run (main) -----------------------------
+def _configure_run_parser(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+    parser.add_argument(
+        "--config",
+        default="config/core.yaml",
+        help="Ścieżka do pliku konfiguracji core (domyślnie config/core.yaml)",
+    )
+    parser.add_argument(
+        "--output",
+        help="Ścieżka pliku raportu JSON (domyślnie wg resilience.report_directory)",
+    )
+    parser.add_argument(
+        "--signing-key-path",
+        help="Plik z kluczem HMAC do podpisania raportu",
+    )
+    parser.add_argument(
+        "--signing-key-env",
+        help="Nazwa zmiennej środowiskowej zawierającej klucz HMAC",
+    )
+    parser.add_argument(
+        "--signing-key-id",
+        help="Identyfikator klucza HMAC dołączany do podpisu",
+    )
+    parser.add_argument(
+        "--fail-on-breach",
+        action="store_true",
+        help="Zakończ z kodem != 0 jeśli drill zakończy się naruszeniami progów",
+    )
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        help="Poziom logowania (domyślnie INFO)",
+    )
+    parser.set_defaults(_handler=_handle_run)
+    return parser
+
+
 def _build_parser_run(sub: argparse._SubParsersAction) -> argparse.ArgumentParser:
     p = sub.add_parser(
         "run",
         help="Uruchamia drill wg core.yaml i zapisuje podpisany raport",
         description="Uruchamia Stage6 Resilience Failover Drill i generuje podpisany raport.",
     )
-    p.add_argument(
-        "--config",
-        default="config/core.yaml",
-        help="Ścieżka do pliku konfiguracji core (domyślnie config/core.yaml)",
-    )
-    p.add_argument(
-        "--output",
-        help="Ścieżka pliku raportu JSON (domyślnie wg resilience.report_directory)",
-    )
-    p.add_argument(
-        "--signing-key-path",
-        help="Plik z kluczem HMAC do podpisania raportu",
-    )
-    p.add_argument(
-        "--signing-key-env",
-        help="Nazwa zmiennej środowiskowej zawierającej klucz HMAC",
-    )
-    p.add_argument(
-        "--signing-key-id",
-        help="Identyfikator klucza HMAC dołączany do podpisu",
-    )
-    p.add_argument(
-        "--fail-on-breach",
-        action="store_true",
-        help="Zakończ z kodem != 0 jeśli drill zakończy się naruszeniami progów",
-    )
-    p.add_argument(
-        "--log-level",
-        default="INFO",
-        help="Poziom logowania (domyślnie INFO)",
-    )
-    p.set_defaults(_handler=_handle_run)
-    return p
+    return _configure_run_parser(p)
 
 
 def _resolve_signing_key_for_run(
@@ -157,43 +165,57 @@ def _handle_run(args: argparse.Namespace) -> int:
         _LOGGER.error("Drill resilience wykazał naruszenia progów")
         return 3
 
-    print(f"Zakończono drill '{report.name}' – status: {'failed' if report.has_failures() else 'passed'}.")
+    report_name = getattr(report, "name", getattr(resilience_config, "name", "resilience_failover"))
+    status = "failed" if report.has_failures() else "passed"
+    print(f"Zakończono drill '{report_name}' – status: {status}.")
     return 0
 
 
 # ----------------------------- subcommand: evaluate (HEAD) -----------------------------
+def _configure_evaluate_parser(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+    parser.add_argument("--bundle", required=True, help="Ścieżka do paczki odpornościowej (.zip/.tar itp.)")
+    parser.add_argument("--plan", required=True, help="Ścieżka do planu failover (JSON)")
+    parser.add_argument("--output-json", required=True, help="Ścieżka do zapisu podsumowania JSON")
+    parser.add_argument("--output-csv", help="Opcjonalna ścieżka do raportu CSV z wynikami usług")
+
+    # podpis podsumowania (HEAD naming)
+    parser.add_argument("--signing-key", help="Ścieżka do klucza HMAC (podpis podsumowania)")
+    parser.add_argument("--signing-key-id", help="Identyfikator klucza HMAC dołączany do podpisu")
+    parser.add_argument(
+        "--signature-path", help="Ręcznie wskazana ścieżka dokumentu podpisu (domyślnie obok JSON)"
+    )
+
+    # self-healing (HEAD)
+    parser.add_argument("--self-heal-config", help="Konfiguracja self-healing (JSON z regułami)")
+    parser.add_argument(
+        "--self-heal-mode",
+        choices=("plan", "execute"),
+        default="plan",
+        help="Tryb self-healing: tylko plan lub wykonanie",
+    )
+    parser.add_argument(
+        "--self-heal-output", help="Ścieżka zapisu raportu self-healing (domyślnie obok podsumowania)"
+    )
+    parser.add_argument("--self-heal-signing-key", help="Klucz HMAC do podpisu raportu self-healing")
+    parser.add_argument(
+        "--self-heal-signing-key-id", help="Identyfikator klucza HMAC raportu self-healing"
+    )
+    parser.add_argument(
+        "--self-heal-signature-path", help="Ścieżka pliku podpisu self-healing (domyślnie obok raportu)"
+    )
+
+    parser.add_argument("--log-level", default="INFO", help="Poziom logowania (domyślnie INFO)")
+    parser.set_defaults(_handler=_handle_evaluate)
+    return parser
+
+
 def _build_parser_evaluate(sub: argparse._SubParsersAction) -> argparse.ArgumentParser:
     p = sub.add_parser(
         "evaluate",
         help="Ocena paczki failover + planu oraz (opcjonalnie) self-healing",
         description="Symulacja ćwiczenia failover Stage6 wraz z raportowaniem i podpisem HMAC.",
     )
-    p.add_argument("--bundle", required=True, help="Ścieżka do paczki odpornościowej (.zip/.tar itp.)")
-    p.add_argument("--plan", required=True, help="Ścieżka do planu failover (JSON)")
-    p.add_argument("--output-json", required=True, help="Ścieżka do zapisu podsumowania JSON")
-    p.add_argument("--output-csv", help="Opcjonalna ścieżka do raportu CSV z wynikami usług")
-
-    # podpis podsumowania (HEAD naming)
-    p.add_argument("--signing-key", help="Ścieżka do klucza HMAC (podpis podsumowania)")
-    p.add_argument("--signing-key-id", help="Identyfikator klucza HMAC dołączany do podpisu")
-    p.add_argument("--signature-path", help="Ręcznie wskazana ścieżka dokumentu podpisu (domyślnie obok JSON)")
-
-    # self-healing (HEAD)
-    p.add_argument("--self-heal-config", help="Konfiguracja self-healing (JSON z regułami)")
-    p.add_argument(
-        "--self-heal-mode",
-        choices=("plan", "execute"),
-        default="plan",
-        help="Tryb self-healing: tylko plan lub wykonanie",
-    )
-    p.add_argument("--self-heal-output", help="Ścieżka zapisu raportu self-healing (domyślnie obok podsumowania)")
-    p.add_argument("--self-heal-signing-key", help="Klucz HMAC do podpisu raportu self-healing")
-    p.add_argument("--self-heal-signing-key-id", help="Identyfikator klucza HMAC raportu self-healing")
-    p.add_argument("--self-heal-signature-path", help="Ścieżka pliku podpisu self-healing (domyślnie obok raportu)")
-
-    p.add_argument("--log-level", default="INFO", help="Poziom logowania (domyślnie INFO)")
-    p.set_defaults(_handler=_handle_evaluate)
-    return p
+    return _configure_evaluate_parser(p)
 
 
 def _handle_evaluate(args: argparse.Namespace) -> int:
@@ -286,10 +308,49 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = _build_parser()
-    args = parser.parse_args(argv)
-    return args._handler(args)
+def _build_compat_run_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Stage6 Resilience Failover Drill – tryb kompatybilności (ustawienia core.yaml)"
+        )
+    )
+    return _configure_run_parser(parser)
+
+
+def _build_compat_evaluate_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Stage6 Resilience Failover Drill – tryb kompatybilności (bundle + plan failover)"
+        )
+    )
+    return _configure_evaluate_parser(parser)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args_list = list(argv) if argv is not None else sys.argv[1:]
+
+    if not args_list:
+        parser = _build_parser()
+        parser.print_help()
+        return 2
+
+    if any(arg in {"run", "evaluate"} for arg in args_list):
+        parser = _build_parser()
+        parsed = parser.parse_args(args_list)
+        return parsed._handler(parsed)
+
+    if any(arg == "--bundle" or arg.startswith("--bundle=") for arg in args_list):
+        compat_parser = _build_compat_evaluate_parser()
+        args_namespace = compat_parser.parse_args(args_list)
+        return args_namespace._handler(args_namespace)
+
+    compat_parser = _build_compat_run_parser()
+    args_namespace = compat_parser.parse_args(args_list)
+    return args_namespace._handler(args_namespace)
+
+
+def run(argv: Sequence[str] | None = None) -> int:
+    return main(argv)
 
 
 if __name__ == "__main__":  # pragma: no cover
