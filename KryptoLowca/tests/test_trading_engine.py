@@ -151,6 +151,40 @@ class MockDB:
         )
 
 
+class DummyIntelBaseline:
+    def __init__(self, symbol: str, mid_price: float) -> None:
+        self.symbol = symbol
+        self.mid_price = mid_price
+        self.avg_depth_usd = 25_000.0
+        self.avg_spread_bps = 4.5
+        self.funding_rate_bps = 0.0
+        self.sentiment_score = 0.0
+        self.realized_volatility = 0.1
+
+    def to_mapping(self) -> dict[str, float | str]:
+        return {
+            "symbol": self.symbol,
+            "mid_price": self.mid_price,
+            "avg_depth_usd": self.avg_depth_usd,
+            "avg_spread_bps": self.avg_spread_bps,
+            "funding_rate_bps": self.funding_rate_bps,
+            "sentiment_score": self.sentiment_score,
+            "realized_volatility": self.realized_volatility,
+        }
+
+
+class DummyMarketIntelAggregator:
+    def __init__(self, *, symbol: str = "BTCUSDT", mid_price: float = 123.45) -> None:
+        self._symbol = symbol
+        self._mid_price = mid_price
+        self._mode = "sqlite"
+        self.calls = 0
+
+    def build(self):
+        self.calls += 1
+        return (DummyIntelBaseline(self._symbol, self._mid_price),)
+
+
 @pytest.fixture
 def engine():
     exchange = MockExchange()
@@ -197,6 +231,22 @@ def test_execute_live_tick(engine):
     assert engine.ex_mgr.created_orders  # type: ignore[attr-defined]
     assert engine.db_manager.orders  # type: ignore[attr-defined]
     assert engine.db_manager.risk_limits  # type: ignore[attr-defined]
+
+
+def test_market_intel_enriches_plan(engine):
+    aggregator = DummyMarketIntelAggregator(mid_price=150.25)
+    engine.set_market_intel(aggregator)
+
+    df = _sample_df()
+    df.loc[df.index[-1], "close"] = 0.0
+    preds = pd.Series(np.full(len(df), 10.0), index=df.index)
+
+    plan = asyncio.run(engine.execute_live_tick("BTC/USDT", df, preds))
+
+    assert plan is not None
+    assert plan["price_ref"] == pytest.approx(150.25)
+    assert plan["market_intel"]["mid_price"] == pytest.approx(150.25)
+    assert aggregator.calls == 1
 
 
 def test_no_signal(engine):

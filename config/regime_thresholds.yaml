@@ -1,0 +1,12 @@
+# Calibrated thresholds for MarketRegimeClassifier.
+# Generated using data/sample_ohlcv reference series.
+defaults:
+  min_history: 30
+  trend_window: 50
+  daily_window: 20
+  trend_strength_threshold: 0.01
+  momentum_threshold: 0.0015
+  volatility_threshold: 0.015
+  intraday_threshold: 0.02
+  autocorr_threshold: -0.2
+  volume_trend_threshold: 0.15

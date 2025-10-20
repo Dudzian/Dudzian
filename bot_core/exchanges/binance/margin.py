@@ -39,6 +39,7 @@ class BinanceMarginAdapter(BinanceSpotAdapter):
             environment=environment or credentials.environment,
             settings=settings,
             metrics_registry=metrics_registry,
+            watchdog=watchdog,
         )
         config = dict(settings or {})
         margin_type = str(config.get("margin_type", "cross") or "cross").lower()
@@ -46,6 +47,7 @@ class BinanceMarginAdapter(BinanceSpotAdapter):
             margin_type = "cross"
         self._margin_type = margin_type
         self._watchdog = watchdog or Watchdog()
+
 
     # ------------------------------------------------------------------
     # ExchangeAdapter API

@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import json
 from datetime import datetime, timedelta, timezone
+from typing import Sequence
 
 import pytest
 from cryptography.fernet import Fernet
@@ -24,6 +25,16 @@ import KryptoLowca.exchanges.binance as binance_module
 import KryptoLowca.exchanges.kraken as kraken_module
 import KryptoLowca.exchanges.zonda as zonda_module
 from KryptoLowca.managers.multi_account_manager import MultiExchangeAccountManager
+
+from bot_core.execution import ExecutionContext, LiveExecutionRouter
+from bot_core.execution.live_router import RouteDefinition
+from bot_core.exchanges.base import (
+    AccountSnapshot,
+    ExchangeAdapter as CoreExchangeAdapter,
+    ExchangeCredentials as CoreExchangeCredentials,
+    OrderRequest as CoreOrderRequest,
+    OrderResult as CoreOrderResult,
+)
 
 
 class StubResponse:
@@ -513,116 +524,109 @@ async def test_api_key_manager_rotation(tmp_path):
     assert removed >= 1
 
 
-class StubAdapter:
+class StubLiveAdapter(CoreExchangeAdapter):
+    """Minimalny adapter zgodny z bot_core do testów routera live."""
+
+    class _Stream:
+        async def __aenter__(self):  # pragma: no cover - prosty kontekst
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):  # pragma: no cover - prosty kontekst
+            return False
+
     def __init__(self, name: str) -> None:
+        super().__init__(CoreExchangeCredentials(key_id=f"{name}-key"))
         self.name = name
-        self.demo_mode = True
-        self._orders: dict[str, OrderStatus] = {}
+        self._orders: dict[str, CoreOrderResult] = {}
+        self._counter = 0
 
-    async def connect(self) -> None:
+    def configure_network(self, *, ip_allowlist=None) -> None:  # pragma: no cover - brak logiki
         return None
 
-    async def close(self) -> None:  # pragma: no cover - not used in tests
-        return None
+    def fetch_account_snapshot(self) -> AccountSnapshot:  # pragma: no cover - brak logiki
+        return AccountSnapshot(balances={}, total_equity=0.0, available_margin=0.0, maintenance_margin=0.0)
 
-    async def authenticate(self, credentials: ExchangeCredentials) -> None:
-        self.credentials = credentials
+    def fetch_symbols(self) -> Sequence[str]:  # pragma: no cover - brak logiki
+        return ("BTCUSDT",)
 
-    async def fetch_market_data(self, symbol: str) -> dict[str, str]:  # pragma: no cover - not used
-        return {"symbol": symbol}
+    def fetch_ohlcv(self, symbol: str, interval: str, start=None, end=None, limit=None):  # pragma: no cover
+        return []
 
-    async def stream_market_data(self, subscriptions, callback):  # pragma: no cover - not used
-        class _Dummy:
-            async def __aenter__(self_inner):
-                return self_inner
-
-            async def __aexit__(self_inner, exc_type, exc, tb):
-                return None
-
-        return _Dummy()
-
-    async def submit_order(self, order: OrderRequest) -> OrderStatus:
-        order_id = f"{self.name}-{len(self._orders) + 1}"
-        status = OrderStatus(
+    def place_order(self, request: CoreOrderRequest) -> CoreOrderResult:
+        self._counter += 1
+        order_id = f"{self.name}-{self._counter}"
+        result = CoreOrderResult(
             order_id=order_id,
             status="NEW",
             filled_quantity=0.0,
-            remaining_quantity=order.quantity,
-            average_price=None,
-            raw={"exchange": self.name},
+            avg_price=None,
+            raw_response={"exchange": self.name},
         )
-        self._orders[order_id] = status
-        return status
+        self._orders[order_id] = result
+        return result
 
-    async def fetch_order_status(self, order_id: str, *, symbol: str | None = None) -> OrderStatus:
-        return self._orders[order_id]
+    def cancel_order(self, order_id: str, *, symbol: str | None = None) -> None:
+        self._orders.pop(order_id, None)
 
-    async def cancel_order(self, order_id: str, *, symbol: str | None = None) -> OrderStatus:
-        status = OrderStatus(
-            order_id=order_id,
-            status="CANCELED",
-            filled_quantity=0.0,
-            remaining_quantity=0.0,
-            average_price=None,
-            raw={"exchange": self.name},
-        )
-        self._orders[order_id] = status
-        return status
+    def stream_public_data(self, *, channels):  # pragma: no cover - brak logiki
+        return self._Stream()
 
-    async def monitor_order(
-        self,
-        order_id: str,
-        *,
-        poll_interval: float = 0.0,
-        symbol: str | None = None,
-        timeout: float = 0.0,
-    ) -> OrderStatus:
-        status = self._orders[order_id]
-        filled = OrderStatus(
-            order_id=order_id,
-            status="FILLED",
-            filled_quantity=status.remaining_quantity,
-            remaining_quantity=0.0,
-            average_price=status.average_price,
-            raw=status.raw,
-        )
-        self._orders[order_id] = filled
-        return filled
+    def stream_private_data(self, *, channels):  # pragma: no cover - brak logiki
+        return self._Stream()
 
 
 @pytest.mark.asyncio
 async def test_multi_account_round_robin():
-    manager = MultiExchangeAccountManager()
-    adapter_a = StubAdapter("binance")
-    adapter_b = StubAdapter("kraken")
-    manager.register_account(exchange="binance", account="a", adapter=adapter_a)
-    manager.register_account(exchange="kraken", account="b", adapter=adapter_b)
-
-    creds = {
-        ("binance", "a"): ExchangeCredentials(api_key="a", api_secret="a"),
-        ("kraken", "b"): ExchangeCredentials(api_key="b", api_secret="b"),
+    adapters = {
+        "binance": StubLiveAdapter("binance"),
+        "kraken": StubLiveAdapter("kraken"),
     }
-    await manager.connect_all(creds)
+    router = LiveExecutionRouter(
+        adapters=adapters,
+        routes=(
+            RouteDefinition(name="binance_route", exchanges=("binance",)),
+            RouteDefinition(name="kraken_route", exchanges=("kraken",)),
+        ),
+        default_route="binance_route",
+    )
+    context = ExecutionContext(
+        portfolio_id="default",
+        risk_profile="balanced",
+        environment="live",
+        metadata={},
+    )
+    manager = MultiExchangeAccountManager(router, base_context=context)
+    manager.register_account(exchange="binance", account="a", execution_route="binance_route")
+    manager.register_account(exchange="kraken", account="b", execution_route="kraken_route")
 
-    order = OrderRequest(symbol="BTCUSDT", side="buy", quantity=1.0)
+    order = CoreOrderRequest(symbol="BTCUSDT", side="BUY", quantity=1.0, order_type="MARKET")
     first = await manager.dispatch_order(order)
     second = await manager.dispatch_order(order)
 
     assert first.order_id.startswith("binance")
     assert second.order_id.startswith("kraken")
+    assert set(manager.supported_exchanges) == {"binance", "kraken"}
 
-    status = await manager.fetch_order_status(first.order_id)
-    assert status.status == "NEW"
-
-    cancel_status = await manager.cancel_order(second.order_id)
-    assert cancel_status.status == "CANCELED"
-
-    summary = await manager.monitor_open_orders()
-    assert summary[first.order_id].status == "FILLED"
+    await manager.cancel_order(first.order_id)
 
 
 def test_multi_account_supported_exchanges():
-    assert "zonda" in MultiExchangeAccountManager.SUPPORTED_EXCHANGES
+    adapters = {"binance": StubLiveAdapter("binance")}
+    router = LiveExecutionRouter(
+        adapters=adapters,
+        routes=(RouteDefinition(name="binance", exchanges=("binance",)),),
+        default_route="binance",
+    )
+    context = ExecutionContext(
+        portfolio_id="demo",
+        risk_profile="paper",
+        environment="testnet",
+        metadata={},
+    )
+    manager = MultiExchangeAccountManager(router, base_context=context)
+    manager.register_account(exchange="binance", account="primary")
+
+    assert manager.supported_exchanges == ("binance",)
 
 
 @pytest.mark.asyncio

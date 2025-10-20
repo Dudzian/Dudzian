@@ -61,12 +61,37 @@ Moduł `bot_core.exchanges.health` udostępnia `HealthMonitor`, `Watchdog` oraz
 `CircuitBreaker`, które są automatycznie wykorzystywane przez menedżera giełd
 w dystrybucji desktopowej. W przypadku problemów sieciowych (np. limity API)
 watchdog podejmuje ponowne próby, a po przekroczeniu progu błędów otwiera
-wyłącznik, aby ochronić konto przed eskalacją problemu.
+wyłącznik, aby ochronić konto przed eskalacją problemu. `ExchangeManager`
+posiada metody `set_watchdog()` i `configure_watchdog()`, dzięki czemu można
+dostosować liczbę ponowień, próg wyłącznika i listę wyjątków, które mają
+inicjować retry. Tę samą instancję strażnika można wykorzystać w monitoringu
+zdrowia: metoda `create_health_monitor()` zwraca `HealthMonitor` dzielący
+watchdog-a z natywnymi adapterami, co pozwala raportować spójny stan w panelu
+desktopowym.
+
+```python
+from bot_core.exchanges.manager import ExchangeManager
+from bot_core.exchanges.health import HealthCheck
+
+manager = ExchangeManager(exchange_id="binance")
+manager.set_mode(margin=True)
+manager.configure_watchdog(
+    retry_policy={"max_attempts": 5, "base_delay": 0.5, "max_delay": 2.0},
+    circuit_breaker={"failure_threshold": 3, "recovery_timeout": 60.0},
+)
+
+health_monitor = manager.create_health_monitor([
+    HealthCheck(name="private_api", check=lambda: manager.fetch_balance()),
+])
+```
 
 Aby ręcznie uruchomić diagnostykę, użyj polecenia:
 
 ```
 python -m bot_core.cli health-check --exchange binance
+
+# opcjonalnie można pominąć prywatny check (np. gdy testujemy tylko publiczne API)
+python -m bot_core.cli health-check --exchange binance --skip-private
 ```
 
 Polecenie wypisze statusy `healthy`, `degraded` lub `unavailable` dla

@@ -29,6 +29,15 @@ from bot_core.exchanges.binance.symbols import (
 from bot_core.observability.metrics import MetricsRegistry
 
 
+class _RecordingWatchdog:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def execute(self, operation: str, func):
+        self.calls.append(operation)
+        return func()
+
+
 class _FakeResponse:
     def __init__(self, payload: Any, headers: Mapping[str, str] | None = None) -> None:
         self._payload = payload
@@ -93,6 +102,35 @@ def test_fetch_account_snapshot_parses_balances(monkeypatch: pytest.MonkeyPatch)
     headers = {name.lower(): value for name, value in captured_request.header_items()}
     assert headers["x-mbx-apikey"] == "test-key"
     assert "signature=" in captured_request.full_url
+
+
+def test_fetch_account_snapshot_uses_watchdog(monkeypatch: pytest.MonkeyPatch) -> None:
+    watchdog = _RecordingWatchdog()
+
+    credentials = ExchangeCredentials(
+        key_id="watchdog", secret="secret", permissions=("read", "trade"), environment=Environment.LIVE
+    )
+    adapter = BinanceSpotAdapter(credentials, watchdog=watchdog)
+
+    monkeypatch.setattr(
+        adapter,
+        "_signed_request",
+        lambda *args, **kwargs: {
+            "balances": [
+                {"asset": "USDT", "free": "10", "locked": "0"},
+            ]
+        },
+    )
+    monkeypatch.setattr(
+        adapter,
+        "_public_request",
+        lambda *args, **kwargs: [{"symbol": "USDTUSDT", "price": "1"}],
+    )
+
+    snapshot = adapter.fetch_account_snapshot()
+
+    assert snapshot.total_equity == pytest.approx(10.0)
+    assert "binance_spot_fetch_account" in watchdog.calls
 
 
 def test_fetch_account_snapshot_maps_api_error(monkeypatch: pytest.MonkeyPatch) -> None:

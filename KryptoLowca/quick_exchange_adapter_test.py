@@ -1,6 +1,7 @@
 # quick_exchange_adapter_test.py
 # -*- coding: utf-8 -*-
 
+from dataclasses import asdict, is_dataclass
 from pathlib import Path
 import sys
 
@@ -21,45 +22,66 @@ if __package__ in (None, ""):
 
 
 from KryptoLowca.managers.database_manager import DatabaseManager
-from KryptoLowca.managers.exchange_adapter import ExchangeAdapter
+from KryptoLowca.managers.exchange_manager import ExchangeManager
 
-def main():
-    db = DatabaseManager("sqlite+aiosqlite:///trading.db")
-    db.sync.init_db()
 
-    ex = ExchangeAdapter(
-        db,
-        mode="paper",                 # tu w przyszłości podmienisz na 'live'
-        symbol="BTC/USDT",
-        starting_balance=10_000.0,
-        fee_rate=0.001,
-        slippage_bps=5,
-        max_partial_fill_qty=0.01,
-    )
+SYMBOL = "BTC/USDT"
+DB_URL = "sqlite+aiosqlite:///trading.db"
+
+
+def _pretty(obj):
+    return asdict(obj) if is_dataclass(obj) else obj
+
+
+def _build_paper_manager() -> ExchangeManager:
+    manager = ExchangeManager(exchange_id="binance", db_url=DB_URL)
+    manager.set_mode(paper=True)
+    manager.set_paper_balance(10_000.0)
+    manager.set_paper_fee_rate(0.001)
+    manager.load_markets()
+    return manager
+
+
+def main() -> None:
+    manager = _build_paper_manager()
 
     prices = [50_000, 50_800, 51_300, 51_900, 52_100, 51_400]
-    ex.process_tick(prices[0])
+    manager.process_paper_tick(SYMBOL, prices[0])
 
-    # Market buy 0.02
-    ex.create_order(side="BUY", type="MARKET", quantity=0.02, client_order_id="qa-mkt-1")
+    manager.create_order(
+        SYMBOL,
+        side="BUY",
+        type="MARKET",
+        quantity=0.02,
+        client_order_id="qa-mkt-1",
+    )
 
-    # Limit sell 0.02 @ 52_000
-    ex.create_order(side="SELL", type="LIMIT", quantity=0.02, price=52_000, client_order_id="qa-lim-1")
+    manager.create_order(
+        SYMBOL,
+        side="SELL",
+        type="LIMIT",
+        quantity=0.02,
+        price=52_000,
+        client_order_id="qa-lim-1",
+    )
 
-    for p in prices[1:]:
-        ex.process_tick(p)
+    for price in prices[1:]:
+        manager.process_paper_tick(SYMBOL, price)
 
     print("\nOPEN ORDERS:")
-    for o in ex.get_open_orders():
-        print(o)
+    for order in manager.fetch_open_orders(SYMBOL):
+        print(_pretty(order))
 
-    print("\nPOSITION:")
-    print(ex.get_position())
+    print("\nPOZYCJE:")
+    for position in manager.fetch_positions(SYMBOL):
+        print(_pretty(position))
 
-    # Eksport na koniec
+    # Eksport na koniec – korzystamy z tej samej bazy co ExchangeManager
+    db = DatabaseManager(DB_URL)
     db.sync.export_trades_csv(path="backups/trades_adapter.csv")
     db.sync.export_table_json(table="positions", path="backups/positions_adapter.json")
     print("\nEksport: backups/trades_adapter.csv, backups/positions_adapter.json")
+
 
 if __name__ == "__main__":
     main()

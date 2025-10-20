@@ -34,6 +34,7 @@ class ZondaMarginAdapter(ZondaSpotAdapter):
             environment=environment,
             settings=settings,
             metrics_registry=metrics_registry,
+            watchdog=watchdog,
         )
         config = dict(settings or {})
         currency = str(config.get("valuation_currency", "PLN") or "PLN").upper()
