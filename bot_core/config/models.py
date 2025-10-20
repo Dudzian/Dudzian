@@ -489,6 +489,7 @@ class DecisionEngineConfig:
     min_probability: float = 0.0
     require_cost_data: bool = False
     penalty_cost_bps: float = 0.0
+    evaluation_history_limit: int = 256
     tco: DecisionEngineTCOConfig | None = None
 
 
