@@ -773,3 +773,42 @@ def test_format_and_log_ensemble_registry(caplog):
     assert "Zespół: hybrid" in logged
     assert "Liczba zespołów" in logged
     assert "Zmiany w rejestrze zespołów" in logged
+
+
+@pytest.mark.parametrize(
+    "exception_cls",
+    [TypeError, ValueError, AttributeError, ZeroDivisionError, OverflowError],
+    ids=[
+        "type_error",
+        "value_error",
+        "attribute_error",
+        "zero_division_error",
+        "overflow_error",
+    ],
+)
+def test_detect_drift_falls_back_to_python_math(tmp_path, monkeypatch, exception_cls):
+    manager = ai_manager_module.AIManager(ai_threshold_bps=5.0, model_dir=tmp_path)
+
+    base = _make_df(16)
+    recent = base.copy()
+    recent.loc[recent.index[-4]:, "close"] *= 6
+    recent.loc[recent.index[-6]:, "volume"] *= 3
+
+    base_obj = base.astype(str)
+    recent_obj = recent.astype(str)
+
+    def _boom(self, *args, **kwargs):
+        raise exception_cls("forced pct_change failure")
+
+    monkeypatch.setattr(pd.DataFrame, "pct_change", _boom, raising=False)
+
+    report = manager.detect_drift(
+        base_obj,
+        recent_obj,
+        feature_cols=["close", "volume"],
+        threshold=0.1,
+    )
+
+    assert report.triggered is True
+    assert report.volatility_shift > 0.0
+    assert report.feature_drift > 0.0

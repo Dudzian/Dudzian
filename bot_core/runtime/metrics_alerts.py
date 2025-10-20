@@ -414,7 +414,6 @@ class UiTelemetryAlertSink:
         )
         if self._should_write_jsonl:
             self._jsonl_path.parent.mkdir(parents=True, exist_ok=True)
-            self._jsonl_path.touch(exist_ok=True)
 
         # Metadane profilu ryzyka (opcjonalne)
         normalized_profile = _normalize_risk_profile(risk_profile)
@@ -1784,6 +1783,7 @@ class UiTelemetryAlertSink:
     ) -> None:
         if not (self._jsonl_path and self._should_write_jsonl):
             return
+        self._jsonl_path.parent.mkdir(parents=True, exist_ok=True)
         generated_at = _timestamp_to_iso(snapshot) if snapshot is not None else None
         if generated_at is None:
             generated_at = _datetime_to_iso(datetime.now(timezone.utc))

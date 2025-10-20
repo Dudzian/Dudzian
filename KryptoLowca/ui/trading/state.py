@@ -40,3 +40,12 @@ class AppState:
     license_summary: tk.StringVar | None = None
     license_notice: tk.StringVar | None = None
     license_path: str | None = None
+    market_intel_label: tk.StringVar | None = None
+    market_intel_summary: str = "Market intel: —"
+    market_intel_history_label: tk.StringVar | None = None
+    market_intel_history: list[str] = field(default_factory=list)
+    market_intel_history_display: str = "Brak historii market intel"
+    market_intel_auto_save: tk.BooleanVar | None = None
+    market_intel_history_destination: str | None = None
+    market_intel_history_destination_display: str = "Plik historii: domyślny"
+    market_intel_history_path_label: tk.StringVar | None = None

@@ -13,6 +13,15 @@ from .manager import (
     PipelineHistorySnapshot,
 )
 from .models import ModelArtifact, ModelScore
+from .regime import (
+    MarketRegime,
+    MarketRegimeAssessment,
+    MarketRegimeClassifier,
+    RegimeHistory,
+    RegimeSnapshot,
+    RegimeSummary,
+    RiskLevel,
+)
 from .scheduler import (
     RetrainingScheduler,
     ScheduledTrainingJob,
@@ -41,6 +50,13 @@ __all__ = [
     "ModelEvaluation",
     "ModelRepository",
     "ModelScore",
+    "MarketRegime",
+    "MarketRegimeAssessment",
+    "MarketRegimeClassifier",
+    "RegimeHistory",
+    "RegimeSnapshot",
+    "RegimeSummary",
+    "RiskLevel",
     "ExternalModelAdapter",
     "ModelTrainer",
     "RetrainingScheduler",

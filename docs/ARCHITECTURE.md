@@ -16,7 +16,7 @@ Przepływ danych przebiega następująco:
 Proces przejścia środowisk jest sekwencyjny i wymusza blokady bezpieczeństwa na każdym etapie:
 
 - **Demo/Testnet:** domyślny tryb uruchomieniowy. `StrategyContext.require_demo_mode` blokuje wykonanie w środowisku innym niż demo, dopóki nie zostaną spełnione wymagania bezpieczeństwa.
-- **Paper:** po udokumentowanych wynikach testów demo pipeline przechodzi w tryb paper trading. `bot_core/runtime.bootstrap_environment` weryfikuje konfigurację (`core.yaml`), podpisane poświadczenia, kanały alertów i profile ryzyka przed startem.
+- **Paper:** po udokumentowanych wynikach testów demo pipeline przechodzi w tryb paper trading. `bot_core/runtime.bootstrap_environment` weryfikuje konfigurację (`core.yaml`), podpisane poświadczenia, kanały alertów i profile ryzyka przed startem, a `KryptoLowca.runtime.bootstrap.bootstrap_frontend_services` dostarcza frontom (GUI, dashboard, launcher AutoTradera) wspólny `ExchangeManager`, `LiveExecutionRouter`, `MultiExchangeAccountManager` i `MarketIntelAggregator`.
 - **Live:** aktywacja możliwa wyłącznie po przedstawieniu raportów z testów paper, przeglądu kodu bezpieczeństwa (`bot_core/security`) oraz zatwierdzenia compliance. `bot_core/execution` korzysta wówczas z adapterów `live`, włączane są rozszerzone alerty (kanały krytyczne + throttling) oraz automatyczne eskalacje do zespołu bezpieczeństwa.
 
 Każdy etap wymaga aktualnych podpisów KYC/AML, potwierdzenia limitów w `RiskProfile` i rejestrowania zdarzeń audytowych. Przejście na wyższy poziom bez kompletu dokumentacji jest blokowane przez `runtime` (flagi `require_demo_mode`, `compliance_confirmed`) i walidację konfiguracji.
@@ -56,7 +56,7 @@ Moduł raportowania buduje archiwa dziennego blottera z symulatora paper trading
 
 ### `bot_core/runtime`
 
-`bootstrap_environment` integruje konfigurację (`load_core_config`), adaptery giełdowe, profile ryzyka, alerty i manager sekretów w `BootstrapContext`. Runtime odpowiada za sekwencjonowanie przejść demo → paper → live, walidację flag compliance, rejestrację kontrolnych checklist oraz inicjalizację repozytoriów danych. Mechanizmy ochronne blokują start środowiska, jeśli brakuje kluczy API, audytów lub aktualnych podpisów regulacyjnych.
+`bootstrap_environment` integruje konfigurację (`load_core_config`), adaptery giełdowe, profile ryzyka, alerty i manager sekretów w `BootstrapContext`. Runtime odpowiada za sekwencjonowanie przejść demo → paper → live, walidację flag compliance, rejestrację kontrolnych checklist oraz inicjalizację repozytoriów danych. Mechanizmy ochronne blokują start środowiska, jeśli brakuje kluczy API, audytów lub aktualnych podpisów regulacyjnych. Uzupełniający `KryptoLowca.runtime.bootstrap.bootstrap_frontend_services` udostępnia desktopowym frontom spójny `ExchangeManager`, `LiveExecutionRouter`, `MultiExchangeAccountManager` i `MarketIntelAggregator`, dzięki czemu GUI i dashboard używają tych samych usług egzekucji oraz danych wywiadu rynkowego.
 
 ### `bot_core/security`
 

@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Sequence
+from typing import TYPE_CHECKING, Sequence
 
-from bot_core.config.models import EnvironmentConfig
+if TYPE_CHECKING:  # pragma: no cover - tylko dla wskazówek typów
+    from bot_core.config.models import EnvironmentConfig
+else:  # pragma: no cover - środowiska bootstrapowe mogą mieć niepełne modele
+    EnvironmentConfig = object  # type: ignore[assignment]
 from bot_core.data.backtest_library import (
     BacktestDatasetLibrary,
     DataQualityReport,

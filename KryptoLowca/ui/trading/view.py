@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Optional
 
 import tkinter as tk
-from tkinter import ttk
+from tkinter import filedialog, ttk
 
 from .state import AppState
 
@@ -138,6 +139,111 @@ class TradingView:
         ttk.Label(balances, text="Paper balance:").pack(side="left")
         ttk.Label(balances, textvariable=self.state.paper_balance).pack(side="left", padx=4)
 
+        intel_var = getattr(self.state, "market_intel_label", None)
+        summary_value = getattr(self.state, "market_intel_summary", None)
+        if not isinstance(summary_value, str) or not summary_value:
+            summary_value = "Market intel: —"
+        if isinstance(intel_var, tk.Variable):
+            setter = getattr(intel_var, "set", None)
+            if callable(setter):
+                try:
+                    setter(summary_value)
+                except Exception:  # pragma: no cover - defensywne
+                    logger.debug("Nie udało się zsynchronizować etykiety market intel", exc_info=True)
+        else:
+            intel_var = tk.StringVar(value=summary_value)
+            self.state.market_intel_label = intel_var
+
+        history_var = getattr(self.state, "market_intel_history_label", None)
+        history_value = getattr(self.state, "market_intel_history_display", "Brak historii market intel")
+        if isinstance(history_var, tk.Variable):
+            setter = getattr(history_var, "set", None)
+            if callable(setter):
+                try:
+                    setter(history_value)
+                except Exception:  # pragma: no cover - defensywne
+                    logger.debug("Nie udało się zsynchronizować historii market intel", exc_info=True)
+        else:
+            history_var = tk.StringVar(value=history_value)
+            self.state.market_intel_history_label = history_var
+
+        intel_frame = ttk.Frame(main)
+        intel_frame.pack(fill="x", pady=(0, 8))
+        ttk.Label(intel_frame, textvariable=intel_var, justify="left").pack(anchor="w")
+        ttk.Label(intel_frame, text="Historia market intel:").pack(anchor="w", pady=(4, 0))
+        ttk.Label(intel_frame, textvariable=history_var, justify="left").pack(anchor="w")
+        ttk.Button(
+            intel_frame,
+            text="Wyczyść historię",
+            command=self._clear_history_clicked,
+        ).pack(anchor="w", pady=(4, 0))
+        ttk.Button(
+            intel_frame,
+            text="Kopiuj historię",
+            command=self._copy_history_clicked,
+        ).pack(anchor="w")
+        ttk.Button(
+            intel_frame,
+            text="Zapisz historię",
+            command=self._save_history_clicked,
+        ).pack(anchor="w")
+        ttk.Button(
+            intel_frame,
+            text="Wczytaj historię",
+            command=self._load_history_clicked,
+        ).pack(anchor="w")
+        ttk.Button(
+            intel_frame,
+            text="Otwórz plik historii",
+            command=self._open_history_clicked,
+        ).pack(anchor="w")
+        ttk.Button(
+            intel_frame,
+            text="Ustaw plik historii…",
+            command=self._choose_history_destination_clicked,
+        ).pack(anchor="w")
+        ttk.Button(
+            intel_frame,
+            text="Przywróć domyślny plik",
+            command=self._reset_history_destination_clicked,
+        ).pack(anchor="w")
+        destination_var = getattr(self.state, "market_intel_history_path_label", None)
+        destination_value = getattr(
+            self.state,
+            "market_intel_history_destination_display",
+            "Plik historii: domyślny",
+        )
+        if isinstance(destination_var, tk.Variable):
+            setter = getattr(destination_var, "set", None)
+            if callable(setter):
+                try:
+                    setter(destination_value)
+                except Exception:  # pragma: no cover - defensywne
+                    logger.debug(
+                        "Nie udało się zsynchronizować etykiety pliku historii",
+                        exc_info=True,
+                    )
+        else:
+            destination_var = tk.StringVar(value=destination_value)
+            self.state.market_intel_history_path_label = destination_var
+        ttk.Label(
+            intel_frame,
+            textvariable=destination_var,
+            justify="left",
+        ).pack(anchor="w")
+        auto_save_var = getattr(self.state, "market_intel_auto_save", None)
+        if isinstance(auto_save_var, tk.Variable):
+            pass
+        else:
+            auto_save_var = tk.BooleanVar(value=bool(auto_save_var))
+            self.state.market_intel_auto_save = auto_save_var
+        ttk.Checkbutton(
+            intel_frame,
+            text="Auto-zapis historii",
+            variable=auto_save_var,
+            command=self._auto_save_toggled,
+        ).pack(anchor="w", pady=(4, 0))
+
         content = ttk.Frame(main)
         content.pack(fill="both", expand=True)
         content.columnconfigure(0, weight=1)
@@ -186,6 +292,160 @@ class TradingView:
         self.log_text.insert("end", message + "\n")
         self.log_text.configure(state="disabled")
         self.log_text.see("end")
+
+    # ------------------------------------------------------------------
+    def _clear_history_clicked(self) -> None:
+        try:
+            self.controller.clear_market_intel_history()
+        except Exception:  # pragma: no cover - defensywnie logujemy
+            logger.exception("Nie udało się wyczyścić historii market intel z GUI")
+
+    # ------------------------------------------------------------------
+    def _copy_history_clicked(self) -> None:
+        try:
+            history_text = self.controller.get_market_intel_history_text()
+        except Exception:  # pragma: no cover - defensywne logowanie
+            logger.exception("Nie udało się pobrać historii market intel")
+            return
+
+        try:
+            clipboard_clear = getattr(self.root, "clipboard_clear", None)
+            clipboard_append = getattr(self.root, "clipboard_append", None)
+            if callable(clipboard_clear):
+                clipboard_clear()
+            if callable(clipboard_append):
+                clipboard_append(history_text)
+            status = getattr(self.state, "status", None)
+            setter = getattr(status, "set", None)
+            if callable(setter):
+                setter("Skopiowano historię market intel do schowka")
+            self.append_log("[INFO] Skopiowano historię market intel do schowka")
+        except Exception:  # pragma: no cover - defensywne logowanie
+            logger.exception("Nie udało się skopiować historii market intel do schowka")
+
+    # ------------------------------------------------------------------
+    def _save_history_clicked(self) -> None:
+        try:
+            path = self.controller.export_market_intel_history()
+        except Exception:  # pragma: no cover - defensywne logowanie
+            logger.exception("Nie udało się zapisać historii market intel")
+            status = getattr(self.state, "status", None)
+            setter = getattr(status, "set", None)
+            if callable(setter):
+                setter("Nie udało się zapisać historii market intel")
+            return
+
+        self.append_log(f"[INFO] Zapisano historię market intel do {path}")
+
+    # ------------------------------------------------------------------
+    def _load_history_clicked(self) -> None:
+        try:
+            entries = self.controller.load_market_intel_history()
+        except Exception:  # pragma: no cover - defensywne logowanie
+            logger.exception("Nie udało się wczytać historii market intel")
+            status = getattr(self.state, "status", None)
+            setter = getattr(status, "set", None)
+            if callable(setter):
+                setter("Nie udało się wczytać historii market intel")
+            return
+
+        self.append_log(
+            f"[INFO] Wczytano {len(entries)} wpisów historii market intel"
+        )
+
+    # ------------------------------------------------------------------
+    def _open_history_clicked(self) -> None:
+        try:
+            path = self.controller.reveal_market_intel_history()
+        except FileNotFoundError:
+            logger.info("Brak zapisanej historii market intel do otwarcia")
+            self.append_log("[WARN] Brak zapisanej historii market intel")
+        except Exception:  # pragma: no cover - defensywne logowanie
+            logger.exception("Nie udało się otworzyć pliku historii market intel")
+            self.append_log("[ERROR] Nie udało się otworzyć pliku historii market intel")
+        else:
+            self.append_log(f"[INFO] Otwarto plik historii market intel: {path}")
+
+    # ------------------------------------------------------------------
+    def _choose_history_destination_clicked(self) -> None:
+        try:
+            initial_path = self.controller.get_market_intel_history_destination()
+        except Exception:  # pragma: no cover - defensywne logowanie
+            logger.exception("Nie udało się pobrać bieżącej ścieżki historii market intel")
+            initial_path = None
+
+        initialdir: Optional[str] = None
+        initialfile: Optional[str] = None
+        if isinstance(initial_path, Path):
+            try:
+                parent = initial_path.parent
+                if parent.exists():
+                    initialdir = str(parent)
+                initialfile = initial_path.name
+            except Exception:  # pragma: no cover - defensywne logowanie
+                logger.debug("Nie udało się przygotować parametrów dialogu zapisu", exc_info=True)
+
+        filename = filedialog.asksaveasfilename(
+            parent=self.root,
+            defaultextension=".txt",
+            filetypes=(("Pliki tekstowe", "*.txt"), ("Wszystkie pliki", "*.*")),
+            initialdir=initialdir,
+            initialfile=initialfile,
+        )
+        if not filename:
+            return
+
+        try:
+            path = self.controller.set_market_intel_history_destination(filename)
+        except Exception:  # pragma: no cover - defensywne logowanie
+            logger.exception("Nie udało się ustawić nowego pliku historii market intel")
+            status = getattr(self.state, "status", None)
+            setter = getattr(status, "set", None)
+            if callable(setter):
+                setter("Nie udało się ustawić pliku historii market intel")
+            return
+
+        display_path = path if path is not None else filename
+        self.append_log(f"[INFO] Ustawiono plik historii market intel: {display_path}")
+
+    # ------------------------------------------------------------------
+    def _reset_history_destination_clicked(self) -> None:
+        try:
+            self.controller.set_market_intel_history_destination(None)
+        except Exception:  # pragma: no cover - defensywne logowanie
+            logger.exception("Nie udało się przywrócić domyślnego pliku historii market intel")
+            status = getattr(self.state, "status", None)
+            setter = getattr(status, "set", None)
+            if callable(setter):
+                setter("Nie udało się przywrócić domyślnego pliku historii market intel")
+            return
+
+        self.append_log("[INFO] Przywrócono domyślny plik historii market intel")
+
+    # ------------------------------------------------------------------
+    def _auto_save_toggled(self) -> None:
+        var = getattr(self.state, "market_intel_auto_save", None)
+        if hasattr(var, "get"):
+            try:
+                enabled = bool(var.get())
+            except Exception:  # pragma: no cover - defensywne logowanie
+                logger.debug("Nie udało się odczytać market_intel_auto_save", exc_info=True)
+                enabled = False
+        else:
+            enabled = bool(var)
+
+        try:
+            self.controller.set_market_intel_auto_save(enabled)
+        except Exception:  # pragma: no cover - defensywne logowanie
+            logger.exception("Nie udało się zmienić trybu auto-zapisu historii market intel")
+            return
+
+        message = (
+            "Auto-zapis historii market intel włączony"
+            if enabled
+            else "Auto-zapis historii market intel wyłączony"
+        )
+        self.append_log(f"[INFO] {message}")
 
     # ------------------------------------------------------------------
     def _start_clicked(self) -> None:

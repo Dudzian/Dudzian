@@ -468,7 +468,9 @@ def _run_provision(args: argparse.Namespace) -> int:
     if args.valid_days <= 0:
         raise ProvisioningError("Ważność licencji musi być dodatnia.")
 
-    if args.fingerprint:
+    if args.fingerprint is not None:
+        if not str(args.fingerprint).strip():
+            raise ProvisioningError("Fingerprint nie może być pusty.")
         fp_source = load_fingerprint_maybe_json(args.fingerprint)
     else:
         generator = DeviceFingerprintGenerator()
@@ -520,6 +522,14 @@ def _run_provision(args: argparse.Namespace) -> int:
         if len(key_bytes) < 32:
             raise ProvisioningError("Klucz podpisu musi mieć co najmniej 32 bajty.")
         record = sign_with_single_key(payload, key_bytes=key_bytes, key_id=args.key_id)
+        if not args.no_mark_rotation:
+            rotation_log_path = Path(args.rotation_log)
+            registry = RotationRegistry(rotation_log_path)
+            registry.mark_rotated(
+                args.key_id or "default",
+                DEFAULT_PURPOSE,
+                timestamp=_iso_now(),
+            )
 
     registry_path = Path(args.output)
     append_jsonl(registry_path, record)

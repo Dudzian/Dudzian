@@ -1,14 +1,10 @@
-"""Testy integracyjne warstwy paper trading."""
-
-from __future__ import annotations
-
-import asyncio
 import datetime as dt
+from typing import Iterable, Tuple
 
 import pytest
 
-from KryptoLowca.managers.database_manager import DatabaseManager
-from KryptoLowca.managers.paper_exchange import BUY, LIMIT, MARKET, PaperExchange
+from bot_core.exchanges.core import MarketRules, Mode, OrderSide, OrderStatus, OrderType
+from KryptoLowca.managers.exchange_manager import ExchangeManager
 
 
 class DummyDB:
@@ -23,7 +19,10 @@ class DummyDB:
         self.closed: list[str] = []
         self.sync = self
 
-    # --- API wykorzystywane przez PaperExchange ---
+    # --- API kompatybilne z PaperBackend ---
+    def init_db(self) -> None:
+        return None
+
     def record_order(self, payload: dict) -> int:
         order_id = len(self.orders) + 1
         entry = dict(payload)
@@ -32,7 +31,16 @@ class DummyDB:
         return order_id
 
     def update_order_status(self, **payload: object) -> None:
-        self.order_updates.append(dict(payload))
+        data = dict(payload)
+        self.order_updates.append(data)
+        order_id = data.get("order_id")
+        status = data.get("status")
+        if order_id is None or status is None:
+            return
+        for entry in self.orders:
+            if entry.get("id") == order_id:
+                entry["status"] = status
+                break
 
     def record_trade(self, payload: dict) -> None:
         self.trades.append(dict(payload))
@@ -47,98 +55,132 @@ class DummyDB:
         self.equity.append(dict(payload))
 
 
+class FakeFeed:
+    def __init__(self) -> None:
+        self.last_price = 100.0
+        self._rules = {
+            "BTC/USDT": MarketRules(
+                symbol="BTC/USDT",
+                price_step=0.1,
+                amount_step=0.001,
+                min_notional=10.0,
+            )
+        }
+
+    def load_markets(self) -> dict[str, MarketRules]:
+        return self._rules
+
+    def get_market_rules(self, symbol: str) -> MarketRules:
+        return self._rules[symbol]
+
+    def fetch_ticker(self, symbol: str) -> dict[str, float]:
+        return {"last": float(self.last_price)}
+
+    def fetch_ohlcv(
+        self, symbol: str, timeframe: str, limit: int = 500
+    ) -> Iterable[Iterable[float]]:
+        return []
+
+
 @pytest.fixture()
-def paper_exchange() -> PaperExchange:
-    db = DummyDB()
-    exchange = PaperExchange(
-        db,
-        symbol="BTC/USDT",
-        starting_balance=10_000.0,
-        fee_rate=0.0,
-        slippage_bps=0,
+def paper_manager() -> Tuple[ExchangeManager, FakeFeed, DummyDB]:
+    manager = ExchangeManager()
+    dummy_db = DummyDB()
+    feed = FakeFeed()
+    # wstrzykujemy stuby, aby ExchangeManager nie próbował inicjalizować CCXT ani prawdziwej bazy
+    manager._db = dummy_db  # type: ignore[attr-defined]
+    manager._db_failed = False  # type: ignore[attr-defined]
+    manager._public = feed  # type: ignore[attr-defined]
+    manager.set_mode(paper=True)
+    manager.set_paper_balance(10_000.0, asset="USDT")
+    manager.set_paper_fee_rate(0.0)
+    manager.load_markets()
+    manager.process_paper_tick("BTC/USDT", feed.last_price, timestamp=dt.datetime.utcnow())
+    return manager, feed, dummy_db
+
+
+def test_market_order_flow(paper_manager: Tuple[ExchangeManager, FakeFeed, DummyDB]) -> None:
+    manager, feed, db = paper_manager
+    feed.last_price = 100.0
+    manager.process_paper_tick("BTC/USDT", feed.last_price, timestamp=dt.datetime.utcnow())
+
+    order = manager.create_order(
+        "BTC/USDT",
+        OrderSide.BUY.value,
+        OrderType.MARKET.value,
+        0.5,
     )
-    # ustawiamy ostatnią cenę, aby zlecenia MARKET wypełniały się natychmiast
-    exchange.process_tick(100.0, ts=dt.datetime.utcnow())
-    return exchange
+
+    assert order.status == OrderStatus.FILLED
+    positions = manager.fetch_positions("BTC/USDT")
+    assert positions and positions[0].quantity == pytest.approx(0.5)
+    assert db.orders[0]["status"] == OrderStatus.FILLED.value
+    assert db.order_updates[-1]["status"] == OrderStatus.FILLED.value
+    assert db.trades
 
 
-def test_market_order_flow(paper_exchange: PaperExchange) -> None:
-    order_id = paper_exchange.create_order(side=BUY, type=MARKET, quantity=0.5)
+def test_limit_order_requires_tick(
+    paper_manager: Tuple[ExchangeManager, FakeFeed, DummyDB]
+) -> None:
+    manager, feed, db = paper_manager
 
-    assert order_id == 1
-    assert paper_exchange.get_position()["quantity"] == pytest.approx(0.5)
-    assert paper_exchange.db.sync.orders[0]["status"] == "NEW"  # type: ignore[attr-defined]
-    # ostatnia aktualizacja statusu powinna oznaczać FILLED
-    assert paper_exchange.db.sync.order_updates[-1]["status"] == "FILLED"  # type: ignore[attr-defined]
-    assert paper_exchange.db.sync.trades  # type: ignore[attr-defined]
+    order = manager.create_order(
+        "BTC/USDT",
+        OrderSide.BUY.value,
+        OrderType.LIMIT.value,
+        0.25,
+        price=99.5,
+    )
+    assert order.status == OrderStatus.OPEN
+    assert db.order_updates[-1]["status"] == OrderStatus.OPEN.value
 
-
-def test_limit_order_requires_tick(paper_exchange: PaperExchange) -> None:
-    order_id = paper_exchange.create_order(side=BUY, type=LIMIT, quantity=0.25, price=99.5)
-    assert order_id == 1
-    # brak fill przed osiągnięciem ceny
-    assert paper_exchange.db.sync.order_updates[-1]["status"] == "OPEN"  # type: ignore[attr-defined]
-
-    # cena spada poniżej limitu -> zlecenie powinno się stopniowo wypełniać
-    for price in (99.0, 98.8, 98.5, 98.0):
-        paper_exchange.process_tick(price, ts=dt.datetime.utcnow())
-        if paper_exchange.db.sync.order_updates[-1]["status"] == "FILLED":  # type: ignore[attr-defined]
+    for price in (100.0, 99.8, 99.5, 99.0):
+        feed.last_price = price
+        manager.process_paper_tick("BTC/USDT", price, timestamp=dt.datetime.utcnow())
+        if db.order_updates[-1]["status"] == OrderStatus.FILLED.value:
             break
 
-    assert paper_exchange.db.sync.order_updates[-1]["status"] in {"PARTIALLY_FILLED", "FILLED"}  # type: ignore[attr-defined]
-
-    filled = any(
-        update["status"] == "FILLED"
-        for update in paper_exchange.db.sync.order_updates  # type: ignore[attr-defined]
-    )
-    if not filled:
-        for _ in range(10):
-            paper_exchange.process_tick(98.0, ts=dt.datetime.utcnow())
-            if paper_exchange.db.sync.order_updates[-1]["status"] == "FILLED":  # type: ignore[attr-defined]
-                filled = True
-                break
-
-    assert filled
-    assert paper_exchange.get_position()["quantity"] == pytest.approx(0.25)
+    assert db.order_updates[-1]["status"] == OrderStatus.FILLED.value
+    positions = manager.fetch_positions("BTC/USDT")
+    assert positions and positions[0].quantity == pytest.approx(0.25)
 
 
-def test_equity_logging(paper_exchange: PaperExchange) -> None:
-    paper_exchange.process_tick(101.0, ts=dt.datetime.utcnow())
-    paper_exchange.process_tick(102.0, ts=dt.datetime.utcnow())
+def test_equity_logging(paper_manager: Tuple[ExchangeManager, FakeFeed, DummyDB]) -> None:
+    manager, feed, db = paper_manager
 
-    assert paper_exchange.db.sync.equity  # type: ignore[attr-defined]
-    last_entry = paper_exchange.db.sync.equity[-1]  # type: ignore[attr-defined]
+    feed.last_price = 101.0
+    manager.process_paper_tick("BTC/USDT", feed.last_price, timestamp=dt.datetime.utcnow())
+    feed.last_price = 102.0
+    manager.process_paper_tick("BTC/USDT", feed.last_price, timestamp=dt.datetime.utcnow())
+
+    assert db.equity
+    last_entry = db.equity[-1]
     assert set(last_entry.keys()) >= {"equity", "balance", "pnl", "mode"}
+    assert last_entry["mode"] == Mode.PAPER.value
 
 
-def test_paper_exchange_with_real_database(tmp_path) -> None:
-    """Zapewnia, że PaperExchange współpracuje z prawdziwym DatabaseManagerem."""
-
+def test_paper_manager_with_real_database(tmp_path) -> None:
     db_path = tmp_path / "paper_smoke.db"
     db_url = f"sqlite+aiosqlite:///{db_path}"
-    db = DatabaseManager(db_url=db_url)
-    asyncio.run(db.init_db(create=True))
+    manager = ExchangeManager(db_url=db_url)
+    feed = FakeFeed()
+    manager._public = feed  # type: ignore[attr-defined]
+    manager.set_mode(paper=True)
+    manager.set_paper_balance(5_000.0, asset="USDT")
+    manager.set_paper_fee_rate(0.0)
+    manager.load_markets()
+    manager.process_paper_tick("BTC/USDT", 100.0, timestamp=dt.datetime.utcnow())
 
-    try:
-        exchange = PaperExchange(
-            db,
-            symbol="BTC/USDT",
-            starting_balance=5_000.0,
-            fee_rate=0.0,
-            slippage_bps=0,
-        )
-        exchange.process_tick(100.0, ts=dt.datetime.utcnow())
+    order = manager.create_order(
+        "BTC/USDT",
+        OrderSide.BUY.value,
+        OrderType.MARKET.value,
+        0.25,
+    )
+    assert order.status == OrderStatus.FILLED
 
-        order_id = exchange.create_order(side=BUY, type=MARKET, quantity=0.25)
-        assert order_id == 1
+    trades = manager._ensure_db().sync.fetch_trades(symbol="BTC/USDT", mode=Mode.PAPER.value)  # type: ignore[attr-defined]
+    assert trades
 
-        # W bazie powinien pojawić się wpis o transakcji
-        trades = asyncio.run(db.fetch_trades(symbol="BTC/USDT"))
-        assert trades, "Oczekiwano zarejestrowanych transakcji w bazie"
-
-        position = exchange.get_position()
-        assert position["quantity"] == pytest.approx(0.25)
-        assert position["balance_quote"] < 5_000.0
-    finally:
-        if hasattr(db, "_state") and db._state.engine is not None:  # type: ignore[attr-defined]
-            asyncio.run(db._state.engine.dispose())
+    positions = manager.fetch_positions("BTC/USDT")
+    assert positions and positions[0].quantity == pytest.approx(0.25)

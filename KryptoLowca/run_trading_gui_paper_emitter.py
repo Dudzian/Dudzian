@@ -1,6 +1,7 @@
 # run_trading_gui_paper_emitter.py
 from __future__ import annotations
 
+from importlib import import_module
 from pathlib import Path
 import sys
 
@@ -24,7 +25,7 @@ import logging
 import os
 import threading
 import time
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Tuple
 
 # Logging – czytelne, po PL
 LOG_LEVEL = os.getenv("APP_LOG_LEVEL", "INFO").upper()
@@ -44,20 +45,63 @@ from KryptoLowca.event_emitter_adapter import (
     EventType,
 )
 
+from bot_core.runtime.paths import DesktopAppPaths, build_desktop_app_paths
+from KryptoLowca.logging_utils import DEFAULT_LOG_FILE, LOGS_DIR
+from KryptoLowca.runtime.bootstrap import FrontendBootstrap, bootstrap_frontend_services
+
 # Import GUI (pakiet modułowy udostępnia klasę TradingGUI)
 try:
-    from KryptoLowca.ui.trading import (
-        TradingGUI,
-        build_risk_profile_hint,
-        compute_default_notional,
-        format_notional,
-        snapshot_from_app,
-    )
+    from KryptoLowca.ui.trading import TradingGUI
+    from KryptoLowca.ui.trading.risk_helpers import apply_runtime_risk_context
 except Exception:
     logger.exception(
         "Nie udało się zaimportować TradingGUI z KryptoLowca.ui.trading"
     )
     raise
+
+
+_FRONTEND_PATHS: DesktopAppPaths | None = None
+
+
+def _build_frontend_bootstrap(
+    *,
+    core_config_path: str | Path | None = None,
+    core_environment: str | None = None,
+) -> Tuple[DesktopAppPaths | None, FrontendBootstrap | None]:
+    """Buduje wspólny zestaw usług dla launchera event emitter."""
+
+    global _FRONTEND_PATHS
+
+    if _FRONTEND_PATHS is None:
+        module_file: Path | None = None
+        try:
+            trading_app = import_module("KryptoLowca.ui.trading.app")
+            candidate = getattr(trading_app, "__file__", None)
+            if candidate is not None:
+                module_file = Path(candidate)
+        except Exception:
+            logger.debug("Nie udało się ustalić modułu TradingGUI", exc_info=True)
+            module_file = None
+        if module_file is not None:
+            try:
+                _FRONTEND_PATHS = build_desktop_app_paths(
+                    module_file,
+                    logs_dir=LOGS_DIR,
+                    text_log_file=DEFAULT_LOG_FILE,
+                )
+            except Exception:
+                logger.debug(
+                    "Nie udało się przygotować ścieżek aplikacji desktopowej",
+                    exc_info=True,
+                )
+                _FRONTEND_PATHS = None
+
+    services = bootstrap_frontend_services(
+        paths=_FRONTEND_PATHS,
+        config_path=core_config_path,
+        environment=core_environment,
+    )
+    return _FRONTEND_PATHS, services
 
 try:
     from bot_core.runtime.metadata import load_risk_manager_settings
@@ -130,53 +174,22 @@ def _configure_runtime_risk(
 ) -> None:
     """Uzupełnia GUI o dane profilu ryzyka oraz loguje domyślne wartości."""
 
-    profile_name: str | None = None
-    profile_payload: object | None = None
-    settings = getattr(gui, "risk_manager_settings", None)
-
-    if callable(load_risk_manager_settings):
-        try:
-            profile_name, profile_payload, settings = load_risk_manager_settings(
-                entrypoint,
-                config_path=config_path,
-                logger=logger,
-            )
-        except Exception:
-            logger.debug(
-                "Nie udało się wczytać ustawień risk managera dla %s",
-                entrypoint,
-                exc_info=True,
-            )
-
-    if profile_name and hasattr(gui, "risk_profile_name"):
-        try:
-            gui.risk_profile_name = profile_name
-        except Exception:
-            logger.debug("Nie udało się ustawić nazwy profilu ryzyka w GUI.", exc_info=True)
-
-    if profile_payload is not None and hasattr(gui, "risk_profile_config"):
-        try:
-            gui.risk_profile_config = profile_payload
-        except Exception:
-            logger.debug(
-                "Nie udało się ustawić konfiguracji profilu ryzyka w GUI.",
-                exc_info=True,
-            )
-
-    if settings is not None and hasattr(gui, "risk_manager_settings"):
-        try:
-            gui.risk_manager_settings = settings
-        except Exception:
-            logger.debug(
-                "Nie udało się ustawić obiektu RiskManagerSettings w GUI.",
-                exc_info=True,
-            )
-
-    snapshot = snapshot_from_app(gui)
-    notional = compute_default_notional(
-        snapshot,
+    apply_runtime_risk_context(
+        gui,
+        entrypoint=entrypoint,
+        config_path=config_path,
         default_notional=DEFAULT_PAPER_ORDER_NOTIONAL,
+        logger=logger,
     )
+    if settings is not None and snapshot.paper_balance > 0:
+        try:
+            risk_per_trade = float(settings.max_risk_per_trade)
+        except Exception:
+            risk_per_trade = 0.0
+        if risk_per_trade > 0:
+            risk_notional = float(snapshot.paper_balance) * risk_per_trade
+            if risk_notional > notional:
+                notional = risk_notional
     hint = build_risk_profile_hint(snapshot)
 
     if hint:
@@ -268,8 +281,14 @@ def main() -> None:
     )
 
     # 3) Utworzenie GUI (zgodnie z tym, co wcześniej wyskoczyło – GUI wymaga parametru 'root')
+    paths, services = _build_frontend_bootstrap()
+    gui_kwargs: dict[str, Any] = {}
+    if paths is not None:
+        gui_kwargs["paths"] = paths
+    if services is not None:
+        gui_kwargs["frontend_services"] = services
     try:
-        gui = TradingGUI(root)
+        gui = TradingGUI(root, **gui_kwargs)
     except TypeError:
         # Spróbuj wariantu z event_bus (jeśli GUI ma taki konstruktor)
         try:

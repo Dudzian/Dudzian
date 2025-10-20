@@ -11,6 +11,11 @@ from typing import Any, Callable, Dict, Iterable, Optional, Protocol
 
 import tkinter as tk
 
+try:  # pragma: no cover - zależność opcjonalna
+    from bot_core.market_intel import MarketIntelAggregator
+except Exception:  # pragma: no cover - fallback gdy moduł nie istnieje
+    MarketIntelAggregator = None  # type: ignore[assignment]
+
 from bot_core.runtime.paths import (
     DesktopAppPaths,
     build_desktop_app_paths,
@@ -23,8 +28,8 @@ from bot_core.runtime.metadata import (
     load_risk_manager_settings,
     load_runtime_entrypoint_metadata,
 )
-from bot_core.security.capabilities import LicenseCapabilities
-from bot_core.security.guards import CapabilityGuard
+from bot_core.runtime.preset_service import PresetConfigService
+from bot_core.security.file_storage import EncryptedFileSecretStorage
 
 from KryptoLowca.logging_utils import (
     DEFAULT_LOG_FILE,
@@ -32,9 +37,8 @@ from KryptoLowca.logging_utils import (
     get_logger,
     setup_app_logging,
 )
+from KryptoLowca.runtime.bootstrap import FrontendBootstrap, bootstrap_frontend_services
 from KryptoLowca.database_manager import DatabaseManager
-from KryptoLowca.managers.security_manager import SecurityManager
-from KryptoLowca.managers.config_manager import ConfigManager
 from KryptoLowca.managers.report_manager import ReportManager
 from KryptoLowca.managers.risk_manager_adapter import RiskManager
 from KryptoLowca.managers.ai_manager import AIManager
@@ -95,6 +99,8 @@ class TradingGUI:
             Callable[[AppState], TradingSessionController]
         ] = None,
         trade_executor: Optional[TradeExecutor] = None,
+        market_intel: Optional["MarketIntelAggregator"] = None,
+        frontend_services: FrontendBootstrap | None = None,
     ) -> None:
         self.root = root or tk.Tk()
         self.paths = paths or build_desktop_app_paths(
@@ -102,20 +108,31 @@ class TradingGUI:
             logs_dir=GLOBAL_LOGS_DIR,
             text_log_file=DEFAULT_LOG_FILE,
         )
-        (
-            self._license_path,
-            self.license_capabilities,
-            self.license_guard,
-            self._license_ui_context,
-        ) = self._load_license_context()
-        self._core_config_path = self._resolve_core_config_path()
+        core_config_path = self._resolve_core_config_path()
+        if frontend_services is None:
+            services = bootstrap_frontend_services(
+                paths=self.paths,
+                config_path=core_config_path,
+            )
+        else:
+            services = frontend_services
+        self.frontend_services = services
+        self.market_intel = market_intel or self.frontend_services.market_intel
+        self._core_config_path = core_config_path
         self.runtime_metadata = self._load_metadata(self._core_config_path)
         (
             self._risk_profile_name,
             self._risk_profile_config,
             self.risk_manager_settings,
         ) = self._load_risk_profile(self.runtime_metadata, self._core_config_path)
-        self.risk_manager_config = self.risk_manager_settings.to_dict()
+        self._risk_repository_dir = self.paths.logs_dir / "risk_state"
+        self._risk_repository_dir.mkdir(parents=True, exist_ok=True)
+        self._risk_repository = FileRiskRepository(self._risk_repository_dir)
+        self._risk_decision_log = RiskDecisionLog(
+            max_entries=500,
+            jsonl_path=self.paths.logs_dir / "risk_decisions.jsonl",
+        )
+        self.risk_manager_config = self._settings_to_adapter_config(self.risk_manager_settings)
         self._risk_config_mtime = self._get_risk_config_timestamp()
         self._risk_watchdog_after: Optional[str] = None
         self._risk_watch_interval_ms = 5_000
@@ -125,6 +142,11 @@ class TradingGUI:
         self.state = self._create_state()
         controller_factory = session_controller_factory or self._default_controller_factory
         self.controller: TradingSessionController = controller_factory(self.state)
+        if getattr(self.controller, "market_intel", None) is None and self.market_intel is not None:
+            try:
+                self.controller.market_intel = self.market_intel  # type: ignore[attr-defined]
+            except Exception:  # pragma: no cover - defensywnie
+                logger.debug("Nie udało się wstrzyknąć MarketIntelAggregator do kontrolera", exc_info=True)
         self.view = TradingView(
             self.root,
             self.state,
@@ -134,7 +156,7 @@ class TradingGUI:
         self._apply_license_restrictions()
         self._configure_fraction_widget(self.risk_manager_settings)
         self._configure_logging_handler()
-        self.ex_mgr = None
+        self.ex_mgr = self.frontend_services.exchange_manager
         self.network_var = self.state.network
         self.timeframe_var = self.state.timeframe
         self.symbol_var = tk.StringVar(value="BTC/USDT")
@@ -160,16 +182,61 @@ class TradingGUI:
             except Exception:  # pragma: no cover - środowiska bez WM
                 logger.debug("Nie udało się ustawić handlera WM_DELETE_WINDOW", exc_info=True)
 
+    def _settings_to_adapter_config(
+        self, settings: RiskManagerSettings | None
+    ) -> Dict[str, Any]:
+        if not isinstance(settings, RiskManagerSettings):
+            return {}
+
+        payload: Dict[str, Any] = dict(settings.to_dict())
+        payload.setdefault("max_daily_loss_pct", float(settings.max_daily_loss_pct))
+        payload.setdefault(
+            "max_drawdown_pct", float(settings.emergency_stop_drawdown)
+        )
+        payload.setdefault(
+            "hard_drawdown_pct", float(settings.emergency_stop_drawdown)
+        )
+        payload.setdefault("max_positions", int(settings.max_positions))
+        payload.setdefault("max_risk_per_trade", float(settings.max_risk_per_trade))
+        payload.setdefault("max_portfolio_risk", float(settings.max_portfolio_risk))
+        if settings.profile_name:
+            payload.setdefault("risk_profile_name", settings.profile_name)
+        return payload
+
     # ------------------------------------------------------------------
     def _default_controller_factory(self, state: AppState) -> TradingSessionController:
+        db_manager = DatabaseManager()
+        risk_settings = self.state.risk_manager_settings or self.risk_manager_settings
+        config_payload = self._settings_to_adapter_config(risk_settings)
+        if not config_payload:
+            config_payload = dict(self.risk_manager_config or {})
+
+        risk_mode = "paper"
+        try:
+            network = (state.network.get() if hasattr(state.network, "get") else "testnet")
+            risk_mode = "paper" if str(network).lower() != "live" else "live"
+        except Exception:
+            risk_mode = "paper"
+
+        risk_manager = RiskManager(
+            config=config_payload,
+            db_manager=db_manager,
+            mode=risk_mode,
+            profile_name=config_payload.get("risk_profile_name"),
+            decision_log=self._risk_decision_log,
+            repository=self._risk_repository,
+        )
+
         return TradingSessionController(
             state,
-            DatabaseManager(),
+            db_manager,
             SecurityManager(self.paths.keys_file, self.paths.salt_file),
             ConfigManager(self.paths.presets_dir),
             ReportManager(str(self.paths.db_file)),
-            RiskManager(config=self.risk_manager_config),
+            risk_manager,
             self._build_ai_manager(),
+            exchange_manager=self.frontend_services.exchange_manager,
+            market_intel=self.market_intel,
         )
 
     # ------------------------------------------------------------------
@@ -321,6 +388,28 @@ class TradingGUI:
                 return AIManager(self.paths.models_dir)
 
     # ------------------------------------------------------------------
+    def _build_secret_storage(self) -> EncryptedFileSecretStorage:
+        vault_path = getattr(self.paths, "secret_vault_file", None)
+        if vault_path is None:
+            vault_path = self.paths.keys_file.with_suffix(".vault")
+        passphrase = os.environ.get("DUDZIAN_GUI_SECRET_PASSPHRASE")
+        if not passphrase:
+            logger.warning(
+                "Brak zmiennej DUDZIAN_GUI_SECRET_PASSPHRASE – użyto domyślnego hasła magazynu."
+            )
+            passphrase = "trading-gui"
+        return EncryptedFileSecretStorage(vault_path, passphrase)
+
+    # ------------------------------------------------------------------
+    def _build_preset_service(self) -> PresetConfigService:
+        core_path = self._core_config_path or resolve_core_config_path()
+        try:
+            return PresetConfigService(core_path)
+        except Exception:  # pragma: no cover - konfiguracja może być niepełna podczas developmentu
+            logger.exception("Nie udało się utworzyć serwisu konfiguracji presetów")
+            return PresetConfigService(core_path)
+
+    # ------------------------------------------------------------------
     def _configure_logging_handler(self) -> None:
         handler = _TkLogHandler(self.view)
         logging.getLogger().addHandler(handler)
@@ -446,7 +535,7 @@ class TradingGUI:
         self.risk_profile_name = resolved_name
         self.risk_profile_config = profile_payload
         self.risk_manager_settings = settings
-        self.risk_manager_config = settings.to_dict()
+        self.risk_manager_config = self._settings_to_adapter_config(settings)
         self._risk_config_mtime = self._get_risk_config_timestamp()
 
         self.state.risk_profile_name = resolved_name

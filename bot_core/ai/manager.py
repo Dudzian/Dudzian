@@ -44,6 +44,12 @@ import numpy as np
 import pandas as pd
 
 from ._license import ensure_ai_signals_enabled
+from .regime import (
+    MarketRegimeAssessment,
+    MarketRegimeClassifier,
+    RegimeHistory,
+    RegimeSummary,
+)
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:
@@ -386,6 +392,9 @@ class AIManager:
         self._pipeline_history_limit = 100
         self._model_init_kwargs: Dict[str, Any] = {}
         self._ensembles: Dict[str, EnsembleDefinition] = {}
+        self._regime_classifier = MarketRegimeClassifier()
+        self._latest_regimes: Dict[str, MarketRegimeAssessment] = {}
+        self._regime_histories: Dict[str, RegimeHistory] = {}
         try:
             init_signature = inspect.signature(_AIModels.__init__)  # type: ignore[attr-defined]
         except (TypeError, ValueError, AttributeError):
@@ -422,6 +431,53 @@ class AIManager:
 
     def _model_key(self, symbol: str, model_type: str) -> str:
         return f"{self._normalize_symbol(symbol)}:{self._normalize_model_type(model_type)}"
+
+    # --------------------------- Market regimes ---------------------------
+    def assess_market_regime(
+        self,
+        symbol: str,
+        market_data: pd.DataFrame,
+        *,
+        price_col: str = "close",
+    ) -> MarketRegimeAssessment:
+        """Classify the current market regime for ``symbol``."""
+
+        if not isinstance(market_data, pd.DataFrame):
+            raise TypeError("market_data must be a pandas DataFrame")
+
+        normalized_symbol = self._normalize_symbol(symbol)
+        sanitized = market_data.dropna(subset=[price_col])
+        if sanitized.empty:
+            raise ValueError("market_data must contain at least one complete row")
+        if price_col not in sanitized.columns:
+            raise ValueError(f"Column {price_col!r} missing from market data")
+
+        assessment = self._regime_classifier.assess(
+            sanitized,
+            price_col=price_col,
+            symbol=normalized_symbol,
+        )
+        self._latest_regimes[normalized_symbol] = assessment
+        history = self._regime_histories.setdefault(normalized_symbol, RegimeHistory())
+        history.update(assessment)
+        _emit_history_log(
+            f"Regime[{normalized_symbol}] => {assessment.regime.value} (risk={assessment.risk_score:.2f}, confidence={assessment.confidence:.2f})",
+            level=logging.DEBUG,
+        )
+        return assessment
+
+    def get_last_regime_assessment(self, symbol: str) -> Optional[MarketRegimeAssessment]:
+        """Return the cached regime classification for ``symbol`` if available."""
+
+        return self._latest_regimes.get(self._normalize_symbol(symbol))
+
+    def get_regime_summary(self, symbol: str) -> Optional[RegimeSummary]:
+        """Zwróć wygładzoną historię reżimów dla danego symbolu."""
+
+        history = self._regime_histories.get(self._normalize_symbol(symbol))
+        if history is None:
+            return None
+        return history.summarise()
 
     # --------------------------- Modele aktywne ---------------------------
     def set_active_model(self, symbol: str, model_type: str | None) -> None:
@@ -2346,6 +2402,8 @@ def log_ensemble_registry_diff(
 
 __all__ = [
     "AIManager",
+    "MarketRegimeClassifier",
+    "MarketRegimeAssessment",
     "TrainResult",
     "ModelEvaluation",
     "StrategySelectionResult",
