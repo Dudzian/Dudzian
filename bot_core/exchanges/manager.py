@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import logging
 import os
 from collections.abc import Iterable
@@ -393,6 +394,7 @@ class ExchangeManager:
         self._paper: Optional[PaperBackend] = None
         self._paper_initial_cash = float(paper_initial_cash)
         self._paper_cash_asset = paper_cash_asset.upper()
+        self._paper_fee_rate = getattr(PaperBackend, "FEE_RATE", 0.001)
         self._db_url = db_url or "sqlite+aiosqlite:///trading.db"
         self._db: Optional[DatabaseManager] = None
         self._db_failed: bool = False
@@ -612,6 +614,8 @@ class ExchangeManager:
                 event_bus=self._event_bus,
                 initial_cash=self._paper_initial_cash,
                 cash_asset=self._paper_cash_asset,
+                fee_rate=self._paper_fee_rate,
+                database=self._ensure_db(),
             )
             self._paper.load_markets()
         return self._paper
@@ -638,6 +642,16 @@ class ExchangeManager:
             if asset:
                 self._paper._cash_asset = self._paper_cash_asset  # type: ignore[attr-defined]
 
+    def set_paper_fee_rate(self, fee_rate: float) -> None:
+        self._paper_fee_rate = max(0.0, float(fee_rate))
+        if self._paper is not None:
+            self._paper.set_fee_rate(self._paper_fee_rate)
+
+    def get_paper_fee_rate(self) -> float:
+        if self._paper is not None:
+            return self._paper.get_fee_rate()
+        return self._paper_fee_rate
+
     def load_markets(self) -> Dict[str, MarketRules]:
         public = self._ensure_public()
         rules = public.load_markets()
@@ -654,6 +668,50 @@ class ExchangeManager:
 
     def fetch_order_book(self, symbol: str, limit: int = 50) -> Optional[Dict[str, Any]]:
         return self._ensure_public().fetch_order_book(symbol, limit=limit)
+
+    def fetch_batch(
+        self,
+        symbols: Iterable[str],
+        *,
+        timeframe: str = "1m",
+        use_orderbook: bool = False,
+        limit_ohlcv: int = 500,
+    ) -> List[Tuple[str, Optional[List[List[float]]], Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[str]]]:
+        results: List[
+            Tuple[
+                str,
+                Optional[List[List[float]]],
+                Optional[Dict[str, Any]],
+                Optional[Dict[str, Any]],
+                Optional[str],
+            ]
+        ] = []
+        for symbol in symbols:
+            ohlcv: Optional[List[List[float]]] = None
+            ticker: Optional[Dict[str, Any]] = None
+            orderbook: Optional[Dict[str, Any]] = None
+            errors: List[str] = []
+
+            try:
+                ohlcv = self.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit_ohlcv)
+            except Exception as exc:  # pragma: no cover - defensywnie
+                errors.append(f"ohlcv: {exc}")
+
+            try:
+                ticker = self.fetch_ticker(symbol)
+            except Exception as exc:  # pragma: no cover - defensywnie
+                errors.append(f"ticker: {exc}")
+
+            if use_orderbook:
+                try:
+                    orderbook = self.fetch_order_book(symbol, limit=50)
+                except Exception as exc:  # pragma: no cover - defensywnie
+                    errors.append(f"orderbook: {exc}")
+
+            error_msg = "; ".join(errors) if errors else None
+            results.append((symbol, ohlcv, ticker, orderbook, error_msg))
+
+        return results
 
     def get_market_rules(self, symbol: str) -> Optional[MarketRules]:
         public = self._ensure_public()
@@ -1099,6 +1157,21 @@ class ExchangeManager:
                 )
             )
         return out
+
+    def process_paper_tick(
+        self,
+        symbol: str,
+        price: float,
+        *,
+        timestamp: Optional[dt.datetime] = None,
+    ) -> None:
+        if self.mode != Mode.PAPER:
+            raise RuntimeError("process_paper_tick dostępne tylko w trybie paper")
+        backend = self._ensure_paper()
+        processor = getattr(backend, "process_tick", None)
+        if not callable(processor):
+            raise RuntimeError("Paper backend nie obsługuje process_tick")
+        processor(symbol, price, timestamp=timestamp)
 
     def _resolve_symbol_from_markets(
         self,
