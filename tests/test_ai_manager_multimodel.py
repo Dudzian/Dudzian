@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from bot_core import ai_manager as ai_manager_module
+from bot_core.ai import manager as ai_manager_module
 
 
 def _make_df(rows: int = 20) -> pd.DataFrame:

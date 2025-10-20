@@ -1,0 +1,55 @@
+{
+  "id": "grid_balanced",
+  "name": "Grid Balanced",
+  "description": "Strategia grid trading na parach o umiarkowanej zmienności z automatycznym rebalancingiem.",
+  "risk_level": "moderate",
+  "recommended_min_balance": 2500,
+  "timeframe": "4h",
+  "exchanges": ["binance", "okx"],
+  "tags": ["grid", "market-neutral", "yield"],
+  "version": "1.0.0",
+  "last_updated": "2024-07-01T09:15:00+00:00",
+  "compatibility": {
+    "app": ">=3.0.0",
+    "schema": "1.3"
+  },
+  "compliance": {
+    "required_flags": [
+      "compliance_confirmed",
+      "api_keys_configured"
+    ],
+    "allow_live": true
+  },
+  "config": {
+    "strategy": {
+      "engine": "grid",
+      "profile": "GRID_BAL",
+      "grid_size": 7,
+      "grid_spacing": 0.006,
+      "max_inventory": 1.5
+    },
+    "trade": {
+      "rebalance_interval_m": 60,
+      "max_notional_per_leg": 1500,
+      "hedge_with_futures": false
+    }
+  },
+  "evaluation": {
+    "rank": 3,
+    "risk_label": "income",
+    "risk_score": 0.38,
+    "highlights": [
+      "Stabilne przepływy gotówkowe",
+      "Automatyczny hedge ekwiti"
+    ],
+    "backtest": {
+      "period": "2023-01-01/2023-12-31",
+      "cagr": 0.164,
+      "sharpe": 1.41,
+      "max_drawdown": -0.11,
+      "win_rate": 0.63,
+      "trades": 420,
+      "profit_factor": 1.88
+    }
+  }
+}

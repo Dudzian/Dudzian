@@ -13,14 +13,30 @@ Drawer {
 
     property var instrumentForm: ({})
     property var guardForm: ({})
+    property var riskRefreshForm: ({})
+    property var riskSchedule: ({})
     property string statusMessage: ""
     property color statusColor: palette.highlight
+    property string riskStatusMessage: ""
+    property color riskStatusColor: palette.highlight
+    property string riskHistoryStatusMessage: ""
+    property color riskHistoryStatusColor: palette.highlight
+
+    function updateRiskSchedule() {
+        if (typeof appController === "undefined")
+            return
+        riskSchedule = appController.riskRefreshSchedule
+    }
 
     function syncForms() {
         if (typeof appController === "undefined")
             return
         instrumentForm = appController.instrumentConfigSnapshot()
         guardForm = appController.performanceGuardSnapshot()
+        riskRefreshForm = appController.riskRefreshSnapshot()
+        updateRiskSchedule()
+        riskStatusMessage = ""
+        riskHistoryStatusMessage = ""
     }
 
     function refreshData() {
@@ -31,7 +47,36 @@ Drawer {
             reportController.refresh()
     }
 
+    function formatTimestamp(value) {
+        if (!value || value.length === 0)
+            return qsTr("—")
+        var date = new Date(value)
+        if (isNaN(date.getTime()))
+            return value
+        return Qt.formatDateTime(date, Qt.DefaultLocaleShortDate)
+    }
+
+    function formatCountdown(value) {
+        if (value === undefined || value === null || value < 0)
+            return qsTr("wstrzymane")
+        var remaining = Math.max(0, Math.floor(value))
+        var minutes = Math.floor(remaining / 60)
+        var seconds = remaining % 60
+        if (minutes > 0) {
+            var secondsText = seconds < 10 ? "0" + seconds : seconds
+            return qsTr("%1 min %2 s").arg(minutes).arg(secondsText)
+        }
+        return qsTr("%1 s").arg(seconds)
+    }
+
     onOpened: refreshData()
+
+    Timer {
+        interval: 1000
+        running: adminPanel.visible
+        repeat: true
+        onTriggered: adminPanel.updateRiskSchedule()
+    }
 
     background: Rectangle {
         color: Qt.darker(adminPanel.palette.window, 1.2)
@@ -260,6 +305,290 @@ Drawer {
         }
 
         Tab {
+            title: qsTr("Alerty")
+
+            AlertCenterPanel {
+                anchors.fill: parent
+                summaryModel: alertsModel
+                listModel: alertsFilterModel
+            }
+        }
+
+        Tab {
+            title: qsTr("Ryzyko")
+
+            ColumnLayout {
+                anchors.fill: parent
+                spacing: 12
+                padding: 12
+
+                GroupBox {
+                    title: qsTr("Odświeżanie stanu ryzyka")
+                    Layout.fillWidth: true
+
+                    ColumnLayout {
+                        anchors.fill: parent
+                        spacing: 10
+
+                        Switch {
+                            id: riskRefreshSwitch
+                            text: qsTr("Aktywne odpytywanie serwisu ryzyka")
+                            checked: riskRefreshForm && riskRefreshForm.enabled !== false
+                            onToggled: {
+                                riskRefreshForm.enabled = checked
+                            }
+                            Binding {
+                                target: riskRefreshSwitch
+                                property: "checked"
+                                value: riskRefreshForm && riskRefreshForm.enabled !== false
+                                when: !riskRefreshSwitch.down && !riskRefreshSwitch.activeFocus
+                            }
+                        }
+
+                        GridLayout {
+                            columns: 2
+                            columnSpacing: 12
+                            rowSpacing: 8
+                            Layout.fillWidth: true
+
+                            Label {
+                                text: qsTr("Interwał odświeżania (s)")
+                            }
+
+                            SpinBox {
+                                id: riskIntervalSpin
+                                from: 1000
+                                to: 300000
+                                stepSize: 500
+                                editable: true
+                                Layout.fillWidth: true
+                                enabled: riskRefreshSwitch.checked
+                                valueFromText: function(text, locale) {
+                                    var number = Number.fromLocaleString(locale, text)
+                                    if (isNaN(number))
+                                        number = parseFloat(text)
+                                    if (isNaN(number))
+                                        return value
+                                    return Math.max(from, Math.min(to, Math.round(number * 1000)))
+                                }
+                                textFromValue: function(value, locale) {
+                                    return Qt.formatLocaleNumber(value / 1000, 'f', 2, locale)
+                                }
+                                onValueModified: {
+                                    riskRefreshForm.intervalSeconds = value / 1000
+                                }
+                                Binding {
+                                    target: riskIntervalSpin
+                                    property: "value"
+                                    value: Math.round((riskRefreshForm && riskRefreshForm.intervalSeconds
+                                                       ? riskRefreshForm.intervalSeconds
+                                                       : 5) * 1000)
+                                    when: !riskIntervalSpin.activeFocus
+                                }
+                            }
+                        }
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 4
+
+                            Label {
+                                text: qsTr("Status harmonogramu: %1")
+                                      .arg(riskSchedule && riskSchedule.active
+                                               ? qsTr("aktywny")
+                                               : qsTr("wstrzymany"))
+                                color: riskSchedule && riskSchedule.active
+                                       ? Qt.rgba(0.35, 0.75, 0.45, 1)
+                                       : Qt.rgba(0.95, 0.68, 0.26, 1)
+                            }
+
+                            Label {
+                                text: qsTr("Ostatnie zapytanie: %1")
+                                      .arg(formatTimestamp(riskSchedule.lastRequestAt))
+                                color: palette.midlight
+                            }
+
+                            Label {
+                                text: qsTr("Ostatnia aktualizacja: %1")
+                                      .arg(formatTimestamp(riskSchedule.lastUpdateAt))
+                                color: palette.midlight
+                            }
+
+                            Label {
+                                text: qsTr("Kolejne odświeżenie za: %1")
+                                      .arg(formatCountdown(riskSchedule.nextRefreshInSeconds))
+                                color: palette.highlight
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 12
+
+                            Button {
+                                text: qsTr("Przywróć aktualne")
+                                onClicked: {
+                                    riskRefreshForm = appController.riskRefreshSnapshot()
+                                    riskStatusMessage = ""
+                                    adminPanel.updateRiskSchedule()
+                                }
+                            }
+
+                            Button {
+                                text: qsTr("Odśwież teraz")
+                                onClicked: {
+                                    const okManual = appController.triggerRiskRefreshNow()
+                                    if (okManual) {
+                                        riskStatusMessage = qsTr("Zainicjowano ręczne odświeżenie ryzyka")
+                                        riskStatusColor = Qt.rgba(0.3, 0.7, 0.4, 1)
+                                        adminPanel.updateRiskSchedule()
+                                    } else {
+                                        riskStatusMessage = qsTr("Nie udało się zainicjować odświeżenia ryzyka")
+                                        riskStatusColor = Qt.rgba(0.9, 0.4, 0.3, 1)
+                                    }
+                                }
+                            }
+
+                            Item { Layout.fillWidth: true }
+
+                            Button {
+                                text: qsTr("Zapisz odświeżanie")
+                                highlighted: true
+                                onClicked: {
+                                    const ok = appController.updateRiskRefresh(
+                                                riskRefreshForm && riskRefreshForm.enabled !== false,
+                                                riskRefreshForm && riskRefreshForm.intervalSeconds
+                                                    ? riskRefreshForm.intervalSeconds
+                                                    : 0)
+                                    if (ok) {
+                                        riskStatusMessage = qsTr("Zapisano konfigurację odświeżania ryzyka")
+                                        riskStatusColor = Qt.rgba(0.3, 0.7, 0.4, 1)
+                                        riskRefreshForm = appController.riskRefreshSnapshot()
+                                        adminPanel.updateRiskSchedule()
+                                    } else {
+                                        riskStatusMessage = qsTr("Nie udało się zaktualizować harmonogramu ryzyka")
+                                        riskStatusColor = Qt.rgba(0.9, 0.4, 0.3, 1)
+                                    }
+                                }
+                            }
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            visible: riskStatusMessage.length > 0
+                            text: riskStatusMessage
+                            color: riskStatusColor
+                        }
+                    }
+                }
+
+                GroupBox {
+                    title: qsTr("Historia ryzyka")
+                    Layout.fillWidth: true
+
+                    ColumnLayout {
+                        anchors.fill: parent
+                        spacing: 10
+
+                        Label {
+                            text: qsTr("Limit przechowywanych próbek")
+                        }
+
+                        SpinBox {
+                            id: historyLimitSpin
+                            from: 1
+                            to: 500
+                            stepSize: 1
+                            editable: true
+                            Layout.fillWidth: true
+                            valueFromText: function(text, locale) {
+                                var number = Number.fromLocaleString(locale, text)
+                                if (isNaN(number))
+                                    number = parseFloat(text)
+                                if (isNaN(number))
+                                    return value
+                                return Math.max(from, Math.min(to, Math.round(number)))
+                            }
+                            textFromValue: function(value, locale) {
+                                return Qt.formatLocaleNumber(value, 'f', 0, locale)
+                            }
+                            onValueModified: {
+                                if (typeof appController === "undefined")
+                                    return
+                                const ok = appController.updateRiskHistoryLimit(value)
+                                if (ok) {
+                                    riskHistoryStatusMessage = qsTr("Ustawiono limit historii na %1 próbek").arg(value)
+                                    riskHistoryStatusColor = Qt.rgba(0.3, 0.7, 0.4, 1)
+                                } else {
+                                    riskHistoryStatusMessage = qsTr("Nie udało się ustawić limitu historii ryzyka")
+                                    riskHistoryStatusColor = Qt.rgba(0.9, 0.4, 0.3, 1)
+                                    if (riskHistoryModel)
+                                        historyLimitSpin.value = riskHistoryModel.maximumEntries
+                                }
+                            }
+                            Binding {
+                                target: historyLimitSpin
+                                property: "value"
+                                value: riskHistoryModel ? riskHistoryModel.maximumEntries : 50
+                                when: !historyLimitSpin.activeFocus
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 12
+
+                            Button {
+                                text: qsTr("Wyczyść historię")
+                                onClicked: {
+                                    if (typeof appController === "undefined")
+                                        return
+                                    appController.clearRiskHistory()
+                                    riskHistoryStatusMessage = qsTr("Wyczyszczono zapisane próbki ryzyka")
+                                    riskHistoryStatusColor = Qt.rgba(0.9, 0.55, 0.25, 1)
+                                }
+                            }
+
+                            Item { Layout.fillWidth: true }
+
+                            Label {
+                                text: riskHistoryModel && riskHistoryModel.hasSamples
+                                      ? qsTr("Zapisanych próbek: %1").arg(riskHistoryModel.entryCount)
+                                      : qsTr("Brak zapisanych próbek")
+                                color: palette.midlight
+                            }
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            visible: riskHistoryStatusMessage.length > 0
+                            text: riskHistoryStatusMessage
+                            color: riskHistoryStatusColor
+                            wrapMode: Text.WordWrap
+                        }
+
+                        Connections {
+                            target: riskHistoryModel
+                            enabled: typeof riskHistoryModel !== "undefined" && riskHistoryModel !== null
+                            function onMaximumEntriesChanged() {
+                                if (typeof riskHistoryModel === "undefined" || riskHistoryModel === null)
+                                    return
+                                historyLimitSpin.value = riskHistoryModel.maximumEntries
+                            }
+                        }
+                    }
+                }
+
+                RiskMonitorPanel {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    model: riskModel
+                    historyModel: riskHistoryModel
+                }
+            }
+        }
+
+        Tab {
             title: qsTr("Monitorowanie")
 
             ReportBrowser {
@@ -436,5 +765,6 @@ Drawer {
         target: appController
         function onInstrumentChanged() { adminPanel.syncForms() }
         function onPerformanceGuardChanged() { adminPanel.syncForms() }
+        function onRiskRefreshScheduleChanged() { adminPanel.updateRiskSchedule() }
     }
 }

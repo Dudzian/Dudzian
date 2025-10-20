@@ -40,10 +40,12 @@ from bot_core.runtime import (
     catalog_runtime_entrypoints,
     resolve_runtime_entrypoint,
 )
+from bot_core.runtime.metadata import RiskManagerSettings
 from bot_core.runtime.bootstrap import (
     _DEFAULT_ADAPTERS,
     _instantiate_adapter,
     _apply_adapter_factory_specs,
+    _load_initial_tco_costs,
     get_registered_adapter_factories,
     register_adapter_factory,
     register_adapter_factory_from_path,
@@ -53,6 +55,7 @@ from bot_core.runtime.bootstrap import (
 )
 from bot_core.runtime.metrics_alerts import DEFAULT_UI_ALERTS_JSONL_PATH
 from bot_core.security import SecretManager, SecretStorage, SecretStorageError
+from bot_core.security.signing import build_hmac_signature
 
 
 class _MemorySecretStorage(SecretStorage):
@@ -197,6 +200,79 @@ _BASE_CONFIG = dedent(
           credential_key: sms_orange
     """
 )
+
+
+_LICENSE_KEY = bytes.fromhex("6b" * 32)
+_FINGERPRINT_KEY = bytes.fromhex("5a" * 32)
+
+
+def _write_hmac_keys_file(path: Path, *, key_id: str, secret: bytes) -> Path:
+    payload = {"keys": {key_id: f"hex:{secret.hex()}"}}
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+def _prepare_signed_license_bundle(base_dir: Path) -> Mapping[str, Path]:
+    base_dir.mkdir(parents=True, exist_ok=True)
+    fingerprint_payload = {
+        "version": 1,
+        "collected_at": "2024-01-01T00:00:00Z",
+        "components": {},
+        "component_digests": {},
+        "fingerprint": {"algorithm": "sha256", "value": "abc123"},
+    }
+    fingerprint_signature = build_hmac_signature(
+        fingerprint_payload,
+        key=_FINGERPRINT_KEY,
+        algorithm="HMAC-SHA384",
+        key_id="fp-1",
+    )
+    license_payload = {
+        "schema": "core.oem.license",
+        "schema_version": "1.0",
+        "issued_at": "2024-01-01T00:00:00Z",
+        "expires_at": "2040-01-01T00:00:00Z",
+        "issuer": "qa",
+        "profile": "paper",
+        "license_id": "lic-valid",
+        "fingerprint": fingerprint_payload["fingerprint"],
+        "fingerprint_payload": fingerprint_payload,
+        "fingerprint_signature": fingerprint_signature,
+    }
+    license_signature = build_hmac_signature(
+        license_payload,
+        key=_LICENSE_KEY,
+        algorithm="HMAC-SHA384",
+        key_id="lic-1",
+    )
+    license_path = base_dir / "license.json"
+    license_document = {"payload": license_payload, "signature": license_signature}
+    license_path.write_text(
+        json.dumps(license_document, ensure_ascii=False), encoding="utf-8"
+    )
+
+    fingerprint_path = base_dir / "fingerprint.json"
+    fingerprint_document = {
+        "payload": fingerprint_payload,
+        "signature": fingerprint_signature,
+    }
+    fingerprint_path.write_text(
+        json.dumps(fingerprint_document, ensure_ascii=False), encoding="utf-8"
+    )
+
+    license_keys_path = _write_hmac_keys_file(
+        base_dir / "license_keys.json", key_id="lic-1", secret=_LICENSE_KEY
+    )
+    fingerprint_keys_path = _write_hmac_keys_file(
+        base_dir / "fingerprint_keys.json", key_id="fp-1", secret=_FINGERPRINT_KEY
+    )
+
+    return {
+        "license": license_path,
+        "fingerprint": fingerprint_path,
+        "license_keys": license_keys_path,
+        "fingerprint_keys": fingerprint_keys_path,
+    }
 
 
 _RISK_TLS_CERT = """-----BEGIN CERTIFICATE-----
@@ -367,6 +443,10 @@ def test_bootstrap_environment_initialises_components(tmp_path: Path) -> None:
     assert isinstance(context, BootstrapContext)
     assert context.environment.name == "binance_paper"
     assert context.risk_profile_name == "balanced"
+    assert context.risk_profile_config.name == "balanced"
+    assert isinstance(context.risk_manager_settings, RiskManagerSettings)
+    assert context.risk_manager_settings.profile_name == "balanced"
+    assert context.risk_manager_settings.max_daily_loss_pct == pytest.approx(0.015)
     assert context.credentials.key_id == "paper-key"
     assert context.adapter.credentials.key_id == "paper-key"
 
@@ -550,6 +630,8 @@ def test_bootstrap_environment_allows_risk_profile_override(tmp_path: Path) -> N
 
     assert context.risk_profile_name == "aggressive"
     assert context.environment.risk_profile == "aggressive"
+    assert isinstance(context.risk_manager_settings, RiskManagerSettings)
+    assert context.risk_manager_settings.profile_name == "aggressive"
     assert context.risk_engine.should_liquidate(profile_name="aggressive") is False
 
 
@@ -621,8 +703,20 @@ def test_bootstrap_environment_supports_zonda(tmp_path: Path) -> None:
       messenger_channels: {}
     """
 
+    license_bundle = _prepare_signed_license_bundle(tmp_path / "license")
+
     config_path = tmp_path / "core.yaml"
     config_path.write_text(config_content, encoding="utf-8")
+    config_data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    config_data["license"] = {
+        "license_path": str(license_bundle["license"]),
+        "fingerprint_path": str(license_bundle["fingerprint"]),
+        "license_keys_path": str(license_bundle["license_keys"]),
+        "fingerprint_keys_path": str(license_bundle["fingerprint_keys"]),
+    }
+    config_path.write_text(
+        yaml.safe_dump(config_data, sort_keys=False), encoding="utf-8"
+    )
 
     credentials_payload = {
         "key_id": "zonda-key",
@@ -631,7 +725,7 @@ def test_bootstrap_environment_supports_zonda(tmp_path: Path) -> None:
         "environment": Environment.LIVE.value,
     }
     storage.set_secret("tests:zonda_live_key:trading", json.dumps(credentials_payload))
-    manager.store_secret_value("telegram_token", "tg-token", purpose="alerts:telegram")
+    manager.store_secret_value("telegram_token", "telegram-secret", purpose="alerts:telegram")
 
     context = bootstrap_environment("zonda_live", config_path=config_path, secret_manager=manager)
 

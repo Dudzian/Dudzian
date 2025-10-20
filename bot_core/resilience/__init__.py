@@ -52,22 +52,56 @@ if _HAS_HEAD_SUBMODULES:
     __all__.extend(["audit", "bundle", "drill", "hypercare", "policy", "self_healing"])
 
 if _HAS_FAILOVER:
-    __all__.extend(_FAILOVER_SYMBOLS)
+    __all__.extend(
+        [
+            "FailoverDrillMetrics",
+            "FailoverDrillResult",
+            "FailoverDrillReport",
+            "ResilienceFailoverDrill",
+        ]
+    )
 
 
-def __getattr__(name: str) -> Any:
-    if name in _FAILOVER_CACHE:
-        return _FAILOVER_CACHE[name]
-    if name in _FAILOVER_SYMBOLS:
-        module = importlib.import_module("bot_core.resilience.failover")
-        value = getattr(module, name)
-        _FAILOVER_CACHE[name] = value
-        globals()[name] = value
-        if name not in __all__:
-            __all__.append(name)
-        return value
+def __getattr__(name: str):  # pragma: no cover - mechanizm awaryjny
+    """Lazy import failover symbols when optional dependency becomes available."""
+
+    global _HAS_FAILOVER
+
+    if name in {
+        "FailoverDrillMetrics",
+        "FailoverDrillResult",
+        "FailoverDrillReport",
+        "ResilienceFailoverDrill",
+    }:
+        try:
+            from bot_core.resilience.failover import (  # type: ignore
+                FailoverDrillMetrics as _FailoverDrillMetrics,
+                FailoverDrillReport as _FailoverDrillReport,
+                FailoverDrillResult as _FailoverDrillResult,
+                ResilienceFailoverDrill as _ResilienceFailoverDrill,
+            )
+        except Exception as exc:  # pragma: no cover - propagate the root cause
+            raise ImportError(
+                "Nie można zaimportować komponentów failover resilience"
+            ) from (_FAILOVER_IMPORT_ERROR or exc)
+
+        globals().update(
+            {
+                "FailoverDrillMetrics": _FailoverDrillMetrics,
+                "FailoverDrillReport": _FailoverDrillReport,
+                "FailoverDrillResult": _FailoverDrillResult,
+                "ResilienceFailoverDrill": _ResilienceFailoverDrill,
+            }
+        )
+        if not _HAS_FAILOVER:
+            __all__.extend(
+                [
+                    "FailoverDrillMetrics",
+                    "FailoverDrillResult",
+                    "FailoverDrillReport",
+                    "ResilienceFailoverDrill",
+                ]
+            )
+            _HAS_FAILOVER = True
+        return globals()[name]
     raise AttributeError(name)
-
-
-def __dir__() -> list[str]:
-    return sorted(set(list(globals().keys()) + list(_FAILOVER_SYMBOLS)))

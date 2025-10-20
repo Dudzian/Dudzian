@@ -19,6 +19,8 @@ from bot_core.exchanges.base import (
     OrderRequest,
     OrderResult,
 )
+from bot_core.exchanges.error_mapping import raise_for_kraken_error
+from bot_core.exchanges.errors import ExchangeAPIError
 from bot_core.exchanges.streaming import LocalLongPollStream
 
 _API_PREFIX = "/derivatives/api/v3"
@@ -437,14 +439,42 @@ def _to_float(value: Any) -> float:
 
 
 def _ensure_success(payload: Mapping[str, Any]) -> None:
-    result = payload.get("result") if isinstance(payload, Mapping) else None
+    if not isinstance(payload, Mapping):
+        raise ExchangeAPIError(
+            message="Kraken Futures API zwróciło nieoczekiwaną odpowiedź.",
+            status_code=400,
+            payload=payload,
+        )
+
+    errors = payload.get("error")
+    if isinstance(errors, Sequence):
+        filtered = [item for item in errors if item]
+        if filtered:
+            raise_for_kraken_error(
+                payload=payload,
+                default_message="Kraken Futures API zwróciło błąd",
+            )
+
+    result = payload.get("result")
     if isinstance(result, str) and result.lower() == "success":
         return
-    if "error" in payload and not payload.get("error"):
+    if isinstance(result, Mapping):
+        status = result.get("status") or result.get("result")
+        if isinstance(status, str) and status.lower() in {"success", "ok"}:
+            return
+
+    send_status = payload.get("sendStatus")
+    if isinstance(send_status, str) and send_status.lower() in {"acknowledged", "ok", "success"}:
         return
-    if result is None and "sendStatus" in payload:
+
+    if isinstance(errors, Sequence) and not errors:
         return
-    raise RuntimeError(f"Kraken Futures API zwróciło błąd: {payload}")
+
+    raise ExchangeAPIError(
+        message="Kraken Futures API zwróciło błąd.",
+        status_code=400,
+        payload=payload,
+    )
 
 
 __all__ = ["KrakenFuturesAdapter"]

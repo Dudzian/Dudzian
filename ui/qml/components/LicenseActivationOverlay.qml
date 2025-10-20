@@ -78,6 +78,12 @@ FocusScope {
                         }
 
                         Button {
+                            text: qsTr("Automatyczna aktywacja")
+                            enabled: licenseController && !licenseController.provisioningInProgress
+                            onClicked: licenseController.autoProvision(activationController ? activationController.fingerprint : ({}))
+                        }
+
+                        Button {
                             text: qsTr("Wyczyść pole")
                             onClicked: manualInput.text = ""
                         }
@@ -110,6 +116,11 @@ FocusScope {
                 color: licenseController.statusIsError
                         ? Qt.rgba(0.94, 0.36, 0.32, 1)
                         : Qt.rgba(0.36, 0.74, 0.52, 1)
+            }
+
+            BusyIndicator {
+                running: licenseController && licenseController.provisioningInProgress
+                visible: running
             }
 
             Label {

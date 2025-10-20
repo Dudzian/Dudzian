@@ -1,10 +1,8 @@
-# -*- coding: utf-8 -*-
-"""Asynchroniczny menedżer modeli AI zgodny z testami jednostkowymi.
+"""Warstwa zgodności delegująca do natywnego modułu ``bot_core.ai.manager``.
 
-Moduł zapewnia interfejs wysokiego poziomu wykorzystywany przez stare
-skrypty i testy (``tests/test_ai_manager.py``). Został zaprojektowany tak,
-aby współpracował z nową architekturą, ale jednocześnie zachował kontrakt
-API znany z pierwszych iteracji projektu.
+Moduł ``bot_core.ai.manager`` zawiera właściwą implementację asynchronicznego
+menedżera modeli AI.  Pakiet ``KryptoLowca`` nadal eksportuje te same symbole,
+aby zachować kompatybilność wsteczną ze starszymi skryptami i testami.
 """
 from __future__ import annotations
 
@@ -20,26 +18,16 @@ from os import PathLike
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, Iterable, List, Mapping, Optional, Tuple, Union
 
-try:  # pragma: no cover - środowisko testowe może nie mieć joblib
-    import joblib
-except Exception:  # pragma: no cover - fallback na pickle
-    joblib = None  # type: ignore
-    import pickle
+from bot_core.ai import manager as _impl
+from bot_core.ai.manager import *  # noqa: F401,F403
 
-    def _joblib_dump(obj: Any, path: Path) -> None:
-        with path.open("wb") as fh:
-            pickle.dump(obj, fh)
+__doc__ = _impl.__doc__
+__all__ = list(getattr(_impl, "__all__", ()))
 
-    def _joblib_load(path: Path) -> Any:
-        with path.open("rb") as fh:
-            return pickle.load(fh)
-else:
 
-    def _joblib_dump(obj: Any, path: Path) -> None:
-        joblib.dump(obj, path)
+def __getattr__(name: str) -> Any:  # pragma: no cover - delegacja dla atrybutów pomocniczych
+    return getattr(_impl, name)
 
-    def _joblib_load(path: Path) -> Any:
-        return joblib.load(path)
 
 import numpy as np
 import pandas as pd

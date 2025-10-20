@@ -35,5 +35,23 @@
       "model_types": ["rf"],
       "threshold_bps": 3.0
     }
+  },
+  "evaluation": {
+    "rank": 4,
+    "risk_label": "capital_preservation",
+    "risk_score": 0.2,
+    "highlights": [
+      "Najniższa zmienność w katalogu",
+      "Dodatnia krzywa kapitału przy niskiej ekspozycji"
+    ],
+    "backtest": {
+      "period": "2023-01-01/2023-12-31",
+      "cagr": 0.082,
+      "sharpe": 1.35,
+      "max_drawdown": -0.06,
+      "win_rate": 0.61,
+      "trades": 184,
+      "profit_factor": 1.75
+    }
   }
 }

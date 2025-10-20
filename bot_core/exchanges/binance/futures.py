@@ -33,6 +33,7 @@ from bot_core.exchanges.errors import (
     ExchangeNetworkError,
     ExchangeThrottlingError,
 )
+from bot_core.exchanges.error_mapping import raise_for_binance_error
 from bot_core.exchanges.streaming import LocalLongPollStream
 from bot_core.observability.metrics import MetricsRegistry, get_global_metrics_registry
 
@@ -373,7 +374,7 @@ class BinanceFuturesAdapter(ExchangeAdapter):
             data = urlencode(_stringify_params(params)).encode("utf-8")
             headers["Content-Type"] = "application/x-www-form-urlencoded"
         request = Request(url, headers=headers, data=data, method=method)
-        return self._execute_request(request, signed=False)
+        return self._execute_request(request, signed=False, endpoint=path)
 
     def _signed_request(
         self,
@@ -408,19 +409,21 @@ class BinanceFuturesAdapter(ExchangeAdapter):
         else:
             separator = "?" if "?" not in url else "&"
             request = Request(f"{url}{separator}{signed_query}", headers=headers, method=method)
-        return self._execute_request(request, signed=True)
+        return self._execute_request(request, signed=True, endpoint=path)
 
     def _execute_request(
         self,
         request: Request,
         *,
         signed: bool,
+        endpoint: str,
     ) -> dict[str, object] | list[object]:
         attempt = 0
         while True:
             start = time.perf_counter()
             try:
                 with urlopen(request, timeout=15) as response:  # nosec: B310 - zaufany endpoint
+                    status_code = getattr(response, "status", getattr(response, "code", 200))
                     payload = response.read()
                     headers = {k.lower(): v for k, v in response.headers.items()}
             except HTTPError as exc:  # pragma: no cover - zachowanie walidowane w testach jednostkowych
@@ -448,9 +451,19 @@ class BinanceFuturesAdapter(ExchangeAdapter):
                     self._metric_weight.set(weight, labels=self._metric_base_labels)
                 if signed:
                     self._metric_signed_requests.inc(labels=self._metric_base_labels)
-                return self._parse_payload(payload)
+                return self._parse_payload(
+                    payload,
+                    status_code=int(status_code or 200),
+                    endpoint=endpoint,
+                )
 
-    def _parse_payload(self, payload: bytes) -> dict[str, object] | list[object]:
+    def _parse_payload(
+        self,
+        payload: bytes,
+        *,
+        status_code: int,
+        endpoint: str,
+    ) -> dict[str, object] | list[object]:
         try:
             data = json.loads(payload)
         except json.JSONDecodeError as exc:  # pragma: no cover - błąd po stronie API
@@ -460,6 +473,11 @@ class BinanceFuturesAdapter(ExchangeAdapter):
                 status_code=500,
                 payload=payload.decode("utf-8", "replace"),
             ) from exc
+        self._raise_for_api_error(
+            data,
+            status_code=status_code,
+            default_message=f"Binance Futures API zwróciło błąd ({endpoint})",
+        )
         return data
 
     def _translate_http_error(self, exc: HTTPError) -> ExchangeAPIError:
@@ -518,6 +536,37 @@ class BinanceFuturesAdapter(ExchangeAdapter):
 
     def _sleep(self, seconds: float) -> None:
         time.sleep(seconds)
+
+    def _raise_for_api_error(
+        self,
+        payload: object,
+        *,
+        status_code: int,
+        default_message: str,
+    ) -> None:
+        if not isinstance(payload, Mapping):
+            return
+
+        code_value = payload.get("code")
+        try:
+            numeric_code = int(code_value) if code_value is not None else None
+        except (TypeError, ValueError):
+            numeric_code = None
+
+        if numeric_code not in (None, 0):
+            raise_for_binance_error(
+                status_code=status_code,
+                payload=payload,
+                default_message=default_message,
+            )
+
+        success = payload.get("success")
+        if success in {False, "false", "False"}:
+            raise_for_binance_error(
+                status_code=status_code,
+                payload=payload,
+                default_message=default_message,
+            )
 
     def fetch_account_snapshot(self) -> AccountSnapshot:
         if not ({"read", "trade"} & self._permission_set):

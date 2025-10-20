@@ -29,6 +29,7 @@ from bot_core.exchanges.errors import (
     ExchangeNetworkError,
     ExchangeThrottlingError,
 )
+from bot_core.exchanges.error_mapping import raise_for_kraken_error
 from bot_core.exchanges.streaming import LocalLongPollStream
 from bot_core.observability.metrics import MetricsRegistry, get_global_metrics_registry
 
@@ -912,35 +913,21 @@ class KrakenSpotAdapter(ExchangeAdapter):
         errors = payload.get("error") if isinstance(payload, Mapping) else None
         if not errors:
             return
-        normalized: list[str] = []
-        for item in errors:
-            if isinstance(item, str) and item:
-                normalized.append(item)
-        if not normalized:
-            return
-        message = "; ".join(normalized)
-        lowered = message.lower()
         labels = self._labels(endpoint=endpoint, signed="true" if signed else "false")
-        if "invalid key" in lowered or "permission denied" in lowered:
+        try:
+            raise_for_kraken_error(
+                payload=payload,
+                default_message=f"Kraken API zwróciło błąd ({endpoint})",
+            )
+        except ExchangeAuthError:
             self._metric_api_errors.inc(labels={**labels, "reason": "auth"})
-            raise ExchangeAuthError(
-                f"Kraken API odrzuciło uwierzytelnienie: {message}",
-                401,
-                payload=payload,
-            )
-        if "rate limit" in lowered or "throttle" in lowered:
+            raise
+        except ExchangeThrottlingError:
             self._metric_api_errors.inc(labels={**labels, "reason": "throttled"})
-            raise ExchangeThrottlingError(
-                f"Kraken API zgłosiło limit: {message}",
-                429,
-                payload=payload,
-            )
-        self._metric_api_errors.inc(labels={**labels, "reason": "api_error"})
-        raise ExchangeAPIError(
-            f"Kraken API zwróciło błąd: {message}",
-            400,
-            payload=payload,
-        )
+            raise
+        except ExchangeAPIError:
+            self._metric_api_errors.inc(labels={**labels, "reason": "api_error"})
+            raise
 
     def _generate_nonce(self) -> str:
         candidate = int(time.time() * 1000)

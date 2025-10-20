@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import math
 import sys
+import yaml
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Iterable, Mapping, MutableMapping, Sequence
 
 import pytest
@@ -23,10 +25,14 @@ from bot_core.exchanges.base import (
     ExchangeCredentials,
     OrderRequest,
 )
+from bot_core.runtime.bootstrap import bootstrap_environment
+from bot_core.runtime import pipeline as pipeline_module
 from bot_core.risk.engine import ThresholdRiskEngine
 from bot_core.risk.profiles.balanced import BalancedProfile
 from bot_core.strategies import MarketSnapshot
 from bot_core.strategies.daily_trend import DailyTrendMomentumSettings, DailyTrendMomentumStrategy
+
+from tests.test_runtime_bootstrap import _prepare_manager, _write_config
 
 
 class _InMemoryStorage(CacheStorage):
@@ -282,3 +288,300 @@ def test_paper_pipeline_executes_and_alerts(tmp_path: Path) -> None:
     assert channel.messages == [alert]
     exported = list(audit_log.export())
     assert exported and exported[0]["channel"] == channel.name
+
+
+def test_bootstrap_environment_provides_paper_execution_service(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bot_core.runtime import bootstrap as bootstrap_module
+    from bot_core.security.license import LicenseValidationResult
+
+    dummy_license = LicenseValidationResult(
+        status="valid",
+        fingerprint="test",
+        license_path=Path("license.json"),
+        issued_at=None,
+        expires_at=None,
+        fingerprint_source=None,
+        profile=None,
+        issuer=None,
+        schema=None,
+        schema_version=None,
+        license_id=None,
+        revocation_list_path=None,
+        revocation_status=None,
+        revocation_reason=None,
+        revocation_revoked_at=None,
+        revocation_generated_at=None,
+        revocation_checked=False,
+        revocation_signature_key=None,
+        errors=[],
+        warnings=[],
+        payload=None,
+        license_signature_key=None,
+        fingerprint_signature_key=None,
+    )
+
+    monkeypatch.setattr(
+        bootstrap_module,
+        "validate_license_from_config",
+        lambda _config: dummy_license,
+    )
+
+    dummy_router = SimpleNamespace(register=lambda *args, **kwargs: None, audit_log=None)
+    monkeypatch.setattr(
+        bootstrap_module,
+        "build_alert_channels",
+        lambda **_kwargs: ({}, dummy_router, SimpleNamespace()),
+    )
+
+    config_path = _write_config(tmp_path)
+    config_data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    config_data.setdefault("instrument_universes", {})["paper_test"] = {
+        "description": "Test universe for paper execution",
+        "instruments": {
+            "BTC_USDT": {
+                "base_asset": "BTC",
+                "quote_asset": "USDT",
+                "exchanges": {"binance_spot": "BTCUSDT"},
+                "categories": ["paper"],
+            }
+        },
+    }
+    config_data["environments"]["binance_paper"]["instrument_universe"] = "paper_test"
+    config_path.write_text(yaml.safe_dump(config_data, sort_keys=False), encoding="utf-8")
+    _, manager = _prepare_manager()
+
+    context = bootstrap_environment(
+        "binance_paper",
+        config_path=config_path,
+        secret_manager=manager,
+    )
+
+    service = context.execution_service
+    assert isinstance(service, PaperTradingExecutionService)
+
+    order = OrderRequest(
+        symbol="BTCUSDT",
+        side="buy",
+        quantity=0.01,
+        order_type="market",
+        price=30_000.0,
+    )
+    exec_context = ExecutionContext(
+        portfolio_id="autotrader",
+        risk_profile=context.risk_profile_name,
+        environment=context.environment.environment.value,
+        metadata={},
+    )
+
+    result = service.execute(order, exec_context)
+    assert result.status == "filled"
+    assert result.avg_price is not None
+
+
+def test_select_execution_service_prefers_bootstrap_instance(tmp_path: Path) -> None:
+    ledger_dir = tmp_path / "ledger"
+    ledger_dir.mkdir(parents=True, exist_ok=True)
+
+    markets = {
+        "BTCUSDT": MarketMetadata(
+            base_asset="BTC",
+            quote_asset="USDT",
+            min_quantity=0.001,
+            min_notional=10.0,
+            step_size=0.001,
+        )
+    }
+    service = PaperTradingExecutionService(
+        markets,
+        initial_balances={"USDT": 50_000.0},
+        ledger_directory=ledger_dir,
+    )
+
+    context = SimpleNamespace(execution_service=service)
+
+    resolved = pipeline_module._select_execution_service(
+        context,
+        markets,
+        {
+            "initial_balances": {"USDT": 10_000.0},
+            "maker_fee": 0.0004,
+            "taker_fee": 0.0006,
+            "slippage_bps": 5.0,
+            "ledger_directory": ledger_dir,
+            "ledger_filename_pattern": "ledger-%Y%m%d.jsonl",
+            "ledger_retention_days": 730,
+            "ledger_fsync": False,
+        },
+    )
+
+    assert resolved is service
+
+
+def test_select_execution_service_persists_created_instance(tmp_path: Path) -> None:
+    ledger_dir = tmp_path / "ledger"
+    ledger_dir.mkdir(parents=True, exist_ok=True)
+
+    markets = {
+        "BTCUSDT": MarketMetadata(
+            base_asset="BTC",
+            quote_asset="USDT",
+            min_quantity=0.001,
+            min_notional=10.0,
+            step_size=0.001,
+        )
+    }
+
+    context = SimpleNamespace(execution_service=None)
+
+    resolved = pipeline_module._select_execution_service(
+        context,
+        markets,
+        {
+            "initial_balances": {"USDT": 10_000.0},
+            "maker_fee": 0.0004,
+            "taker_fee": 0.0006,
+            "slippage_bps": 5.0,
+            "ledger_directory": ledger_dir,
+            "ledger_filename_pattern": "ledger-%Y%m%d.jsonl",
+            "ledger_retention_days": 730,
+            "ledger_fsync": False,
+        },
+    )
+
+    assert isinstance(resolved, PaperTradingExecutionService)
+    assert context.execution_service is resolved
+
+
+def test_build_daily_trend_pipeline_reuses_bootstrap_service(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ledger_dir = tmp_path / "ledger"
+    ledger_dir.mkdir(parents=True, exist_ok=True)
+
+    markets = {
+        "BTCUSDT": MarketMetadata(
+            base_asset="BTC",
+            quote_asset="USDT",
+            min_quantity=0.001,
+            min_notional=10.0,
+            step_size=0.001,
+        )
+    }
+    service = PaperTradingExecutionService(
+        markets,
+        initial_balances={"USDT": 50_000.0},
+        ledger_directory=ledger_dir,
+    )
+
+    environment = SimpleNamespace(
+        environment=Environment.PAPER,
+        exchange="binance_spot",
+        adapter_settings={
+            "paper_trading": {
+                "quote_assets": ["USDT"],
+                "initial_balances": {"USDT": 50_000.0},
+            }
+        },
+        data_cache_path=str(tmp_path / "cache"),
+        name="binance_paper",
+        default_strategy="daily_trend",
+        default_controller="daily_trend",
+    )
+    bootstrap_ctx = SimpleNamespace(
+        core_config=object(),
+        environment=environment,
+        risk_profile_name="balanced",
+        risk_engine=object(),
+        adapter=object(),
+        execution_service=service,
+        tco_reporter=None,
+    )
+
+    monkeypatch.setattr(
+        pipeline_module,
+        "bootstrap_environment",
+        lambda *args, **kwargs: bootstrap_ctx,
+    )
+    monkeypatch.setattr(
+        pipeline_module,
+        "_resolve_strategy",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            fast_ma=3,
+            slow_ma=5,
+            breakout_lookback=4,
+            momentum_window=3,
+            atr_window=3,
+            atr_multiplier=1.5,
+            min_trend_strength=0.0,
+            min_momentum=0.0,
+        ),
+    )
+    monkeypatch.setattr(
+        pipeline_module,
+        "_resolve_runtime",
+        lambda *_args, **_kwargs: SimpleNamespace(interval="1d"),
+    )
+    monkeypatch.setattr(
+        pipeline_module,
+        "_resolve_universe",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            instruments=[
+                SimpleNamespace(
+                    exchange_symbols={"binance_spot": "BTCUSDT"},
+                    quote_asset="USDT",
+                    base_asset="BTC",
+                )
+            ]
+        ),
+    )
+
+    cache_stub = SimpleNamespace(
+        storage=SimpleNamespace(
+            latest_timestamp=lambda _key: None,
+            read=lambda _key: {"rows": []},
+        ),
+        _cache_key=lambda symbol, interval: f"{symbol}:{interval}",
+    )
+    monkeypatch.setattr(
+        pipeline_module,
+        "_create_cached_source",
+        lambda *_args, **_kwargs: cache_stub,
+    )
+    monkeypatch.setattr(
+        pipeline_module,
+        "OHLCVBackfillService",
+        lambda _source: SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        pipeline_module,
+        "_build_account_loader",
+        lambda **_kwargs: lambda: SimpleNamespace(),
+    )
+
+    class _DummyController:
+        def __init__(self, **kwargs):
+            self.execution_context = kwargs["execution_context"]
+            self.account_loader = kwargs["account_loader"]
+
+    monkeypatch.setattr(pipeline_module, "DailyTrendController", _DummyController)
+
+    call_detected = {"flag": False}
+
+    def _fail_build(*_args, **_kwargs):
+        call_detected["flag"] = True
+        raise AssertionError("_build_execution_service should not be invoked")
+
+    monkeypatch.setattr(pipeline_module, "_build_execution_service", _fail_build)
+
+    pipeline = pipeline_module.build_daily_trend_pipeline(
+        environment_name="binance_paper",
+        strategy_name=None,
+        controller_name=None,
+        config_path=tmp_path / "core.yaml",
+        secret_manager=object(),
+    )
+
+    assert pipeline.execution_service is service
+    assert call_detected["flag"] is False

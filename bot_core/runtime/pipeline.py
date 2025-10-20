@@ -183,7 +183,11 @@ def build_daily_trend_pipeline(
     storage = cached_source.storage
     backfill_service = OHLCVBackfillService(cached_source)
 
-    execution_service = _build_execution_service(markets, paper_settings)
+    execution_service = _select_execution_service(
+        bootstrap_ctx,
+        markets,
+        paper_settings,
+    )
 
     strategy = DailyTrendMomentumStrategy(
         DailyTrendMomentumSettings(
@@ -520,6 +524,25 @@ def _build_execution_service(
         ledger_retention_days=paper_settings["ledger_retention_days"],  # type: ignore[arg-type]
         ledger_fsync=bool(paper_settings["ledger_fsync"]),
     )
+
+
+def _select_execution_service(
+    bootstrap_ctx: BootstrapContext,
+    markets: Mapping[str, MarketMetadata],
+    paper_settings: Mapping[str, object],
+) -> PaperTradingExecutionService:
+    """Zwraca usługę egzekucyjną preferując instancję z bootstrapu."""
+
+    context_service = getattr(bootstrap_ctx, "execution_service", None)
+    if isinstance(context_service, PaperTradingExecutionService):
+        return context_service
+
+    service = _build_execution_service(markets, paper_settings)
+    try:
+        bootstrap_ctx.execution_service = service
+    except Exception:  # pragma: no cover - kontekst może być typu tylko-do-odczytu
+        _LOGGER.debug("Nie udało się zapisać PaperTradingExecutionService w BootstrapContext", exc_info=True)
+    return service
 
 
 def _optional_float(value: object) -> float | None:

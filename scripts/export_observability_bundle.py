@@ -557,6 +557,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["fallback", "builder"],
         default="fallback",
         help="Tryb eksportu: fallback (zip + manifest) lub builder (jeśli dostępny).",
+        help="Tryb eksportu: fallback (tar.gz + manifest) lub builder (jeśli dostępny).",
     )
     # podpis
     p.add_argument(

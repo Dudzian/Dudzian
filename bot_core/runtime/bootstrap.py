@@ -39,6 +39,29 @@ from bot_core.alerts import (
     get_sms_provider,
 )
 from bot_core.alerts.base import AlertAuditLog, AlertChannel
+
+_ALERT_COMPONENT_CACHE: dict[str, Any] | None = None
+
+
+def _get_alert_components() -> Mapping[str, Any]:
+    """Return alert-related classes without repeated imports."""
+
+    global _ALERT_COMPONENT_CACHE
+    if _ALERT_COMPONENT_CACHE is None:
+        _ALERT_COMPONENT_CACHE = {
+            "AlertThrottle": AlertThrottle,
+            "DefaultAlertRouter": DefaultAlertRouter,
+            "FileAlertAuditLog": FileAlertAuditLog,
+            "InMemoryAlertAuditLog": InMemoryAlertAuditLog,
+            "TelegramChannel": TelegramChannel,
+            "EmailChannel": EmailChannel,
+            "SMSChannel": SMSChannel,
+            "SignalChannel": SignalChannel,
+            "MessengerChannel": MessengerChannel,
+            "WhatsAppChannel": WhatsAppChannel,
+            "get_sms_provider": get_sms_provider,
+        }
+    return _ALERT_COMPONENT_CACHE
 from bot_core.alerts.channels.providers import SmsProviderConfig
 from bot_core.config.loader import load_core_config
 from bot_core.config.models import (
@@ -88,6 +111,20 @@ from bot_core.security.license import (
 from bot_core.security.tokens import ServiceTokenValidator
 from bot_core.runtime.tco_reporting import RuntimeTCOReporter
 
+try:  # pragma: no cover - ExecutionService może być niedostępny w niektórych dystrybucjach
+    from bot_core.execution.base import ExecutionService as CoreExecutionService  # type: ignore[attr-defined]
+except Exception:  # pragma: no cover - brak modułu execution
+    CoreExecutionService = None  # type: ignore
+
+try:  # pragma: no cover - PaperTradingExecutionService zależy od modułów opcjonalnych
+    from bot_core.execution.paper import (  # type: ignore[attr-defined]
+        MarketMetadata as PaperMarketMetadata,
+        PaperTradingExecutionService,
+    )
+except Exception:  # pragma: no cover - brak modułu paper execution
+    PaperTradingExecutionService = None  # type: ignore
+    PaperMarketMetadata = None  # type: ignore
+
 if TYPE_CHECKING:  # pragma: no cover - tylko do typów
     from bot_core.alerts import (
         DefaultAlertRouter,
@@ -111,7 +148,49 @@ if TYPE_CHECKING:  # pragma: no cover - tylko do typów
         SignalChannelSettings,
         TelegramChannelSettings,
         WhatsAppChannelSettings,
+        InstrumentUniverseConfig,
     )
+else:  # pragma: no cover - w runtime typy nie są wymagane
+    if "DefaultAlertRouter" not in globals():
+        DefaultAlertRouter = Any  # type: ignore[misc,assignment]
+    if "AlertAuditLog" not in globals():
+        AlertAuditLog = Any  # type: ignore[misc,assignment]
+    if "AlertChannel" not in globals():
+        AlertChannel = Any  # type: ignore[misc,assignment]
+    if "EmailChannel" not in globals():
+        EmailChannel = Any  # type: ignore[misc,assignment]
+    if "SMSChannel" not in globals():
+        SMSChannel = Any  # type: ignore[misc,assignment]
+    if "TelegramChannel" not in globals():
+        TelegramChannel = Any  # type: ignore[misc,assignment]
+    if "SignalChannel" not in globals():
+        SignalChannel = Any  # type: ignore[misc,assignment]
+    if "WhatsAppChannel" not in globals():
+        WhatsAppChannel = Any  # type: ignore[misc,assignment]
+    if "MessengerChannel" not in globals():
+        MessengerChannel = Any  # type: ignore[misc,assignment]
+    if "SmsProviderConfig" not in globals():
+        SmsProviderConfig = Any  # type: ignore[misc,assignment]
+    if "CoreConfig" not in globals():
+        CoreConfig = Any  # type: ignore[misc,assignment]
+    if "DecisionJournalConfig" not in globals():
+        DecisionJournalConfig = Any  # type: ignore[misc,assignment]
+    if "EmailChannelSettings" not in globals():
+        EmailChannelSettings = Any  # type: ignore[misc,assignment]
+    if "EnvironmentConfig" not in globals():
+        EnvironmentConfig = Any  # type: ignore[misc,assignment]
+    if "MessengerChannelSettings" not in globals():
+        MessengerChannelSettings = Any  # type: ignore[misc,assignment]
+    if "RiskProfileConfig" not in globals():
+        RiskProfileConfig = Any  # type: ignore[misc,assignment]
+    if "SMSProviderSettings" not in globals():
+        SMSProviderSettings = Any  # type: ignore[misc,assignment]
+    if "SignalChannelSettings" not in globals():
+        SignalChannelSettings = Any  # type: ignore[misc,assignment]
+    if "TelegramChannelSettings" not in globals():
+        TelegramChannelSettings = Any  # type: ignore[misc,assignment]
+    if "WhatsAppChannelSettings" not in globals():
+        WhatsAppChannelSettings = Any  # type: ignore[misc,assignment]
 
 from bot_core.runtime.journal import (
     InMemoryTradingDecisionJournal,
@@ -132,9 +211,32 @@ except Exception:  # pragma: no cover
     DecisionOrchestrator = None  # type: ignore
 
 try:  # pragma: no cover - integracja z AIManagerem jest opcjonalna
-    from bot_core.ai_manager import AIManager  # type: ignore[attr-defined]
-except Exception:  # pragma: no cover - środowiska bez modułu bot_core.ai_manager
-    AIManager = None  # type: ignore
+    from bot_core.ai.manager import AIManager
+except Exception:  # pragma: no cover - środowiska bez modułu bot_core.ai.manager
+    AIManager = None  # type: ignore[assignment]
+
+# --- Alert component registry ---------------------------------------------------------
+
+
+@lru_cache(maxsize=1)
+def _get_alert_components() -> Mapping[str, Any]:
+    """Zwraca mapę klas komponentów alertowych używanych w bootstrapie."""
+
+    return {
+        "FileAlertAuditLog": FileAlertAuditLog,
+        "InMemoryAlertAuditLog": InMemoryAlertAuditLog,
+        "AlertThrottle": AlertThrottle,
+        "DefaultAlertRouter": DefaultAlertRouter,
+        "EmailChannel": EmailChannel,
+        "TelegramChannel": TelegramChannel,
+        "SMSChannel": SMSChannel,
+        "SignalChannel": SignalChannel,
+        "WhatsAppChannel": WhatsAppChannel,
+        "MessengerChannel": MessengerChannel,
+        "SmsProviderConfig": SmsProviderConfig,
+        "get_sms_provider": get_sms_provider,
+    }
+
 
 # --- Alert component registry ---------------------------------------------------------
 
@@ -186,6 +288,9 @@ try:  # pragma: no cover - eksporter metryk może być niedostępny
     from bot_core.runtime.risk_metrics import RiskMetricsExporter  # type: ignore
 except Exception:  # pragma: no cover
     RiskMetricsExporter = None  # type: ignore
+
+if TYPE_CHECKING:  # pragma: no cover - tylko do typów
+    from bot_core.runtime.metadata import RiskManagerSettings
 
 try:  # pragma: no cover - PortfolioGovernor może nie istnieć w tej gałęzi
     from bot_core.portfolio import PortfolioGovernor  # type: ignore
@@ -570,6 +675,58 @@ def _load_callable_from_path(target: str) -> Callable[..., Any]:
 _LOGGER = logging.getLogger(__name__)
 
 
+def _get_alert_components() -> dict[str, Any]:
+    """Zwraca podstawowe klasy i funkcje kanałów alertowych."""
+
+    try:
+        from bot_core.alerts import (
+            AlertThrottle as _AlertThrottle,
+            DefaultAlertRouter as _DefaultAlertRouter,
+            EmailChannel as _EmailChannel,
+            MessengerChannel as _MessengerChannel,
+            SMSChannel as _SMSChannel,
+            SignalChannel as _SignalChannel,
+            TelegramChannel as _TelegramChannel,
+            WhatsAppChannel as _WhatsAppChannel,
+            get_sms_provider as _get_sms_provider,
+        )
+        from bot_core.alerts.audit import (
+            FileAlertAuditLog as _FileAlertAuditLog,
+            InMemoryAlertAuditLog as _InMemoryAlertAuditLog,
+        )
+        from bot_core.alerts.channels.providers import (
+            SmsProviderConfig as _SmsProviderConfig,
+        )
+    except Exception:  # pragma: no cover - środowiska bez modułu alerts
+        _AlertThrottle = AlertThrottle
+        _DefaultAlertRouter = DefaultAlertRouter
+        _EmailChannel = EmailChannel
+        _MessengerChannel = MessengerChannel
+        _SMSChannel = SMSChannel
+        _SignalChannel = SignalChannel
+        _TelegramChannel = TelegramChannel
+        _WhatsAppChannel = WhatsAppChannel
+        _FileAlertAuditLog = FileAlertAuditLog
+        _InMemoryAlertAuditLog = InMemoryAlertAuditLog
+        _SmsProviderConfig = SmsProviderConfig
+        _get_sms_provider = get_sms_provider
+
+    return {
+        "AlertThrottle": _AlertThrottle,
+        "DefaultAlertRouter": _DefaultAlertRouter,
+        "EmailChannel": _EmailChannel,
+        "SMSChannel": _SMSChannel,
+        "SignalChannel": _SignalChannel,
+        "TelegramChannel": _TelegramChannel,
+        "WhatsAppChannel": _WhatsAppChannel,
+        "MessengerChannel": _MessengerChannel,
+        "FileAlertAuditLog": _FileAlertAuditLog,
+        "InMemoryAlertAuditLog": _InMemoryAlertAuditLog,
+        "get_sms_provider": _get_sms_provider,
+        "SmsProviderConfig": _SmsProviderConfig,
+    }
+
+
 @dataclass(slots=True, frozen=True)
 class RuntimeEntrypoint:
     """Deklaracja punktu wejścia korzystającego z bootstrap_environment."""
@@ -900,6 +1057,201 @@ def _initialize_runtime_tco_reporter(
     return reporter
 
 
+def _optional_float(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):  # pragma: no cover - defensywne parsowanie
+        return None
+
+
+def _normalize_paper_execution_settings(environment: EnvironmentConfig) -> MutableMapping[str, Any]:
+    if environment.environment not in {Environment.PAPER, Environment.TESTNET}:
+        raise ValueError("Paper execution settings are available only for paper/testnet environments")
+
+    raw_adapter = getattr(environment, "adapter_settings", {}) or {}
+    raw_settings = raw_adapter.get("paper_trading", {}) or {}
+
+    base_path_value = getattr(environment, "data_cache_path", None) or Path("var/data") / environment.name
+    try:
+        base_path = Path(str(base_path_value)).expanduser()
+        if not base_path.is_absolute():
+            base_path = base_path.resolve(strict=False)
+    except Exception:  # pragma: no cover - fallback na ścieżkę absolutną
+        base_path = Path(str(base_path_value))
+
+    valuation_asset = str(raw_settings.get("valuation_asset", "USDT")).upper()
+    allowed_quotes = {
+        *(str(asset).upper() for asset in raw_settings.get("quote_assets", (valuation_asset,))),
+    }
+
+    initial_balances = {
+        str(asset).upper(): float(amount)
+        for asset, amount in (raw_settings.get("initial_balances", {}) or {}).items()
+    }
+    for quote in allowed_quotes:
+        initial_balances.setdefault(quote, 100_000.0)
+
+    default_market = raw_settings.get("default_market", {}) or {}
+    market_overrides = {
+        str(symbol): {str(k): v for k, v in entry.items()}
+        for symbol, entry in (raw_settings.get("markets", {}) or {}).items()
+    }
+
+    ledger_directory_setting = raw_settings.get("ledger_directory")
+    if ledger_directory_setting is None:
+        ledger_directory: Path | None = base_path / "audit" / "ledger"
+    else:
+        text = str(ledger_directory_setting).strip()
+        if not text:
+            ledger_directory = None
+        else:
+            candidate = Path(text).expanduser()
+            ledger_directory = (
+                candidate
+                if candidate.is_absolute()
+                else (base_path / candidate)
+            )
+
+    ledger_filename_pattern = str(raw_settings.get("ledger_filename_pattern", "ledger-%Y%m%d.jsonl"))
+    ledger_retention_days_raw = raw_settings.get("ledger_retention_days", 730)
+    if ledger_retention_days_raw in (None, ""):
+        ledger_retention_days = None
+    else:
+        try:
+            ledger_retention_days = int(float(ledger_retention_days_raw))
+        except (TypeError, ValueError):  # pragma: no cover - diagnostyka konfiguracji
+            ledger_retention_days = 730
+
+    return {
+        "valuation_asset": valuation_asset,
+        "allowed_quotes": allowed_quotes,
+        "initial_balances": initial_balances,
+        "default_market": default_market,
+        "market_overrides": market_overrides,
+        "position_size": float(raw_settings.get("position_size", 0.1) or 0.0),
+        "default_leverage": float(raw_settings.get("default_leverage", 1.0) or 1.0),
+        "portfolio_id": str(raw_settings.get("portfolio_id", environment.name)),
+        "maker_fee": float(raw_settings.get("maker_fee", 0.0004)),
+        "taker_fee": float(raw_settings.get("taker_fee", 0.0006)),
+        "slippage_bps": float(raw_settings.get("slippage_bps", 5.0)),
+        "ledger_directory": ledger_directory,
+        "ledger_filename_pattern": ledger_filename_pattern,
+        "ledger_retention_days": ledger_retention_days,
+        "ledger_fsync": bool(raw_settings.get("ledger_fsync", False)),
+    }
+
+
+def _build_paper_execution_markets(
+    *,
+    core_config: CoreConfig,
+    environment: EnvironmentConfig,
+    paper_settings: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    if PaperMarketMetadata is None:
+        return {}
+
+    universe_name = getattr(environment, "instrument_universe", None)
+    if not universe_name:
+        _LOGGER.warning(
+            "Środowisko %s nie ma zdefiniowanego instrument_universe – pomijam PaperTradingExecutionService.",
+            environment.name,
+        )
+        return {}
+
+    universes = getattr(core_config, "instrument_universes", {}) or {}
+    try:
+        universe: InstrumentUniverseConfig = universes[universe_name]
+    except KeyError:
+        _LOGGER.warning(
+            "Konfiguracja nie zawiera uniwersum '%s' wymaganego przez środowisko %s.",
+            universe_name,
+            environment.name,
+        )
+        return {}
+
+    markets: dict[str, Any] = {}
+    default_market = paper_settings["default_market"]  # type: ignore[index]
+    overrides: Mapping[str, Mapping[str, Any]] = paper_settings["market_overrides"]  # type: ignore[index]
+
+    for instrument in getattr(universe, "instruments", ()):
+        symbol = getattr(instrument, "exchange_symbols", {}).get(environment.exchange)
+        if not symbol:
+            continue
+        quote = str(getattr(instrument, "quote_asset", "")).upper()
+        if quote not in paper_settings["allowed_quotes"]:  # type: ignore[index]
+            continue
+
+        override = overrides.get(symbol, {})
+        market = PaperMarketMetadata(
+            base_asset=str(getattr(instrument, "base_asset", "")).upper(),
+            quote_asset=quote,
+            min_quantity=float(override.get("min_quantity", default_market.get("min_quantity", 0.0))),
+            min_notional=float(override.get("min_notional", default_market.get("min_notional", 0.0))),
+            step_size=_optional_float(override.get("step_size", default_market.get("step_size"))),
+            tick_size=_optional_float(override.get("tick_size", default_market.get("tick_size"))),
+        )
+        markets[symbol] = market
+
+    return markets
+
+
+def _initialize_paper_execution_service(
+    *,
+    core_config: CoreConfig,
+    environment: EnvironmentConfig,
+    risk_profile: str,
+) -> CoreExecutionService | None:
+    if CoreExecutionService is None or PaperTradingExecutionService is None:
+        return None
+
+    try:
+        settings = _normalize_paper_execution_settings(environment)
+    except Exception:  # pragma: no cover - diagnostyka konfiguracji
+        _LOGGER.debug(
+            "Nie udało się znormalizować konfiguracji paper trading dla środowiska %s.",
+            environment.name,
+            exc_info=True,
+        )
+        return None
+
+    markets = _build_paper_execution_markets(
+        core_config=core_config,
+        environment=environment,
+        paper_settings=settings,
+    )
+    if not markets:
+        return None
+
+    try:
+        service = PaperTradingExecutionService(
+            markets,
+            initial_balances=settings["initial_balances"],  # type: ignore[arg-type]
+            maker_fee=float(settings["maker_fee"]),
+            taker_fee=float(settings["taker_fee"]),
+            slippage_bps=float(settings["slippage_bps"]),
+            ledger_directory=settings["ledger_directory"],
+            ledger_filename_pattern=str(settings["ledger_filename_pattern"]),
+            ledger_retention_days=settings["ledger_retention_days"],  # type: ignore[arg-type]
+            ledger_fsync=bool(settings["ledger_fsync"]),
+        )
+    except Exception:  # pragma: no cover - diagnostyka inicjalizacji
+        _LOGGER.exception(
+            "Nie udało się zainicjalizować PaperTradingExecutionService dla środowiska %s.",
+            environment.name,
+        )
+        return None
+
+    _LOGGER.info(
+        "PaperTradingExecutionService aktywny (środowisko=%s, profil=%s, rynki=%s)",
+        environment.name,
+        risk_profile,
+        ",".join(sorted(markets)) or "<none>",
+    )
+    return service
+
+
 @dataclass(slots=True)
 class BootstrapContext:
     """Zawiera wszystkie komponenty zainicjalizowane dla danego środowiska."""
@@ -918,6 +1270,8 @@ class BootstrapContext:
     risk_decision_log: RiskDecisionLog | None
     risk_profile_name: str
     license_validation: LicenseValidationResult
+    risk_profile_config: RiskProfileConfig | Mapping[str, Any] | None = None
+    risk_manager_settings: RiskManagerSettings | Mapping[str, Any] | None = None
     portfolio_decision_log: PortfolioDecisionLog | None = None
     decision_engine_config: Any | None = None
     decision_orchestrator: Any | None = None
@@ -952,6 +1306,7 @@ class BootstrapContext:
     ai_ensembles_registered: Sequence[str] | None = None
     ai_pipeline_schedules: Sequence[str] | None = None
     ai_pipeline_pending: Sequence[str] | None = None
+    execution_service: Any | None = None
 
 
 def bootstrap_environment(
@@ -964,10 +1319,10 @@ def bootstrap_environment(
     core_config: CoreConfig | None = None,
 ) -> BootstrapContext:
     """Tworzy kompletny kontekst uruchomieniowy dla wskazanego środowiska."""
-    from bot_core.config.loader import load_core_config as _load_core_config
     from bot_core.config.validation import assert_core_config_valid
 
-    core_config = _load_core_config(config_path)
+    if core_config is None:
+        core_config = load_core_config(config_path)
     validation = assert_core_config_valid(core_config)
     for warning in validation.warnings:
         _LOGGER.warning("Walidacja konfiguracji: %s", warning)
@@ -1058,7 +1413,98 @@ def bootstrap_environment(
             environment.name,
         )
     selected_profile = risk_profile_name or environment.risk_profile
+    license_config = getattr(core_config, "license", None)
+    if not isinstance(license_config, LicenseValidationConfig):
+        license_config = LicenseValidationConfig()
+
+    environment_type = getattr(environment, "environment", None)
+    is_paper_like = environment_type in {Environment.PAPER, Environment.TESTNET}
+    license_result: LicenseValidationResult | None = None
+    try:
+        license_result = validate_license_from_config(license_config)
+    except LicenseValidationError as exc:
+        if is_paper_like or offline_mode:
+            context = exc.result.to_context() if exc.result else {
+                "status": "skipped",
+                "reason": str(exc),
+                "license_path": str(Path(license_config.license_path).expanduser()),
+            }
+            _LOGGER.warning(
+                "Pomijam weryfikację licencji OEM dla środowiska %s: %s",
+                environment.name,
+                exc,
+            )
+            emit_alert(
+                "Weryfikacja licencji OEM pominięta dla środowiska testowego.",
+                severity=AlertSeverity.WARNING,
+                source="security.license",
+                context=context,
+                exception=exc,
+            )
+        else:
+            context = exc.result.to_context() if exc.result else {
+                "status": "invalid",
+                "license_path": str(Path(license_config.license_path).expanduser()),
+            }
+            emit_alert(
+                "Weryfikacja licencji OEM zakończona błędem – zatrzymuję kontroler.",
+                severity=AlertSeverity.CRITICAL,
+                source="security.license",
+                context=context,
+                exception=exc,
+            )
+            _LOGGER.critical("Weryfikacja licencji OEM nie powiodła się: %s", exc)
+            raise RuntimeError(str(exc)) from exc
+    else:
+        try:
+            license_result = validate_license_from_config(license_config)
+        except LicenseValidationError as exc:
+            context = exc.result.to_context() if exc.result else {
+                "status": "invalid",
+                "license_path": str(Path(license_config.license_path).expanduser()),
+            }
+            emit_alert(
+                "Weryfikacja licencji OEM zakończona błędem – zatrzymuję kontroler.",
+                severity=AlertSeverity.CRITICAL,
+                source="security.license",
+                context=context,
+                exception=exc,
+            )
+            _LOGGER.critical("Weryfikacja licencji OEM nie powiodła się: %s", exc)
+            raise RuntimeError(str(exc)) from exc
+        else:
+            if license_result.warnings:
+                for message in license_result.warnings:
+                    _LOGGER.warning("Weryfikacja licencji: %s", message)
+            _LOGGER.info(
+                "Licencja OEM zweryfikowana (id=%s, fingerprint=%s, wygasa=%s, revocation=%s)",
+                license_result.license_id or "brak",
+                license_result.fingerprint,
+                license_result.expires_at or "brak informacji",
+                license_result.revocation_status or "n/a",
+            )
+            emit_alert(
+                "Licencja OEM zweryfikowana pomyślnie." if not license_result.warnings else "Licencja OEM zweryfikowana z ostrzeżeniami.",
+                severity=AlertSeverity.WARNING if license_result.warnings else AlertSeverity.INFO,
+                source="security.license",
+                context=license_result.to_context(),
+            )
+
+    from bot_core.runtime.metadata import derive_risk_manager_settings
+
     risk_profile_config = _resolve_risk_profile(core_config.risk_profiles, selected_profile)
+    try:
+        risk_manager_settings: RiskManagerSettings | None = derive_risk_manager_settings(
+            risk_profile_config,
+            profile_name=selected_profile,
+        )
+    except Exception:  # pragma: no cover - defensywne logowanie
+        risk_manager_settings = None
+        _LOGGER.debug(
+            "Nie udało się wyprowadzić ustawień menedżera ryzyka z profilu %s",
+            selected_profile,
+            exc_info=True,
+        )
 
     risk_repository_path = Path(environment.data_cache_path) / "risk_state"
     risk_repository = FileRiskRepository(risk_repository_path)
@@ -1090,6 +1536,17 @@ def bootstrap_environment(
             _LOGGER.exception("Nie udało się zainicjalizować PortfolioGovernora")
     elif portfolio_governor_config:
         _LOGGER.debug("Konfiguracja portfolio_governor jest dostępna, ale moduł nie został załadowany")
+    tco_config = getattr(decision_engine_config, "tco", None)
+
+    if tco_config is not None:
+        reporter = _initialize_runtime_tco_reporter(
+            tco_config,
+            environment=environment,
+            risk_profile=selected_profile,
+        )
+        if reporter is not None:
+            tco_reporter = reporter
+
     if decision_engine_config and DecisionOrchestrator is not None:
         try:
             decision_orchestrator = DecisionOrchestrator(decision_engine_config)
@@ -1146,7 +1603,7 @@ def bootstrap_environment(
         ai_threshold_bps = float(environment_ai.threshold_bps)
         if AIManager is None:
             _LOGGER.warning(
-                "Sekcja environment.ai została zignorowana: moduł KryptoLowca.ai_manager nie jest dostępny"
+                "Sekcja environment.ai została zignorowana: moduł bot_core.ai.manager nie jest dostępny"
             )
         else:
             model_dir_value = environment_ai.model_dir
@@ -2177,6 +2634,14 @@ def bootstrap_environment(
     if risk_security_warnings:
         risk_security_warnings = list(dict.fromkeys(risk_security_warnings))
 
+    execution_service: CoreExecutionService | None = None
+    if environment.environment in {Environment.PAPER, Environment.TESTNET}:
+        execution_service = _initialize_paper_execution_service(
+            core_config=core_config,
+            environment=environment,
+            risk_profile=selected_profile,
+        )
+
     return BootstrapContext(
         core_config=core_config,
         environment=environment,
@@ -2191,6 +2656,8 @@ def bootstrap_environment(
         decision_journal=decision_journal,
         risk_decision_log=risk_decision_log,
         risk_profile_name=selected_profile,
+        risk_profile_config=risk_profile_config,
+        risk_manager_settings=risk_manager_settings,
         license_validation=license_result,
         decision_engine_config=decision_engine_config,
         decision_orchestrator=decision_orchestrator,
@@ -2234,6 +2701,7 @@ def bootstrap_environment(
         if ai_pipeline_schedules
         else None,
         ai_pipeline_pending=tuple(ai_pipeline_pending) if ai_pipeline_pending else None,
+        execution_service=execution_service,
     )
 
 
