@@ -1,12 +1,16 @@
 #pragma once
 
 #include <QObject>
+#include <QByteArray>
+#include <QPair>
 #include <QString>
 #include <QStringList>
+#include <QVector>
 #include <atomic>
 #include <memory>
 #include <mutex>
 #include <thread>
+#include <vector>
 
 #include <google/protobuf/repeated_field.h>
 
@@ -67,6 +71,11 @@ public:
     void setHistoryLimit(int limit);
     void setPerformanceGuard(const PerformanceGuard& guard);
     void setTlsConfig(const TlsConfig& config);
+    void setAuthToken(const QString& token);
+    void setRbacRole(const QString& role);
+    void setRbacScopes(const QStringList& scopes);
+
+    QVector<QPair<QByteArray, QByteArray>> authMetadataForTesting() const;
 
     // Używane przez Application.cpp
     InstrumentConfig instrumentConfig() const { return m_instrumentConfig; }
@@ -96,6 +105,10 @@ private:
     OhlcvPoint convertCandle(const botcore::trading::v1::OhlcvCandle& candle) const;
     void streamLoop();
     RiskSnapshotData convertRiskState(const botcore::trading::v1::RiskState& state) const;
+    std::shared_ptr<grpc::ClientContext> createContext() const;
+    void applyAuthMetadata(grpc::ClientContext& context) const;
+    std::vector<std::pair<std::string, std::string>> buildAuthMetadata() const;
+    void triggerStreamRestart();
 
     // --- Konfiguracja połączenia/rynku ---
     QString m_endpoint = QStringLiteral("127.0.0.1:50061");
@@ -121,4 +134,11 @@ private:
     std::thread m_streamThread;
     std::mutex m_contextMutex;
     std::shared_ptr<grpc::ClientContext> m_activeContext;
+    std::atomic<bool> m_restartRequested{false};
+
+    // --- Autoryzacja ---
+    mutable std::mutex m_authMutex;
+    QString m_authToken;
+    QString m_rbacRole;
+    QStringList m_rbacScopes;
 };

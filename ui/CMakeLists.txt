@@ -60,6 +60,7 @@ set(UI_SOURCES
     src/main.cpp
     src/app/Application.cpp
     src/app/ActivationController.cpp
+    src/app/StrategyConfigController.cpp
     src/grpc/BotCoreLocalService.cpp
     src/grpc/TradingClient.cpp
     src/grpc/MetricsClient.cpp
@@ -74,11 +75,13 @@ set(UI_SOURCES
     src/license/LicenseActivationController.cpp
     src/security/SecurityAdminController.cpp
     src/reporting/ReportCenterController.cpp
+    src/support/SupportBundleController.cpp
 )
 
 set(UI_HEADERS
     src/app/Application.hpp
     src/app/ActivationController.hpp
+    src/app/StrategyConfigController.hpp
     src/grpc/BotCoreLocalService.hpp
     src/grpc/TradingClient.hpp
     src/grpc/MetricsClient.hpp
@@ -95,6 +98,7 @@ set(UI_HEADERS
     src/license/LicenseActivationController.hpp
     src/security/SecurityAdminController.hpp
     src/reporting/ReportCenterController.hpp
+    src/support/SupportBundleController.hpp
 )
 
 qt_add_executable(bot_trading_shell
@@ -408,6 +412,21 @@ if(BUILD_TESTING)
     )
     add_test(NAME bot_core_local_service_tests COMMAND bot_core_local_service_tests)
 
+    add_executable(trading_client_auth_metadata_tests
+        tests/TradingClientAuthMetadataTest.cpp
+        src/grpc/TradingClient.cpp
+    )
+    target_include_directories(trading_client_auth_metadata_tests PRIVATE src ${GENERATED_DIR})
+    target_link_libraries(trading_client_auth_metadata_tests
+        PRIVATE
+            Qt6::Core
+            Qt6::Test
+            trading_proto
+            protobuf::libprotobuf
+            gRPC::grpc++
+    )
+    add_test(NAME trading_client_auth_metadata_tests COMMAND trading_client_auth_metadata_tests)
+
     add_executable(report_center_controller_tests
         tests/ReportCenterControllerTest.cpp
         src/reporting/ReportCenterController.cpp
@@ -415,4 +434,20 @@ if(BUILD_TESTING)
     target_include_directories(report_center_controller_tests PRIVATE src)
     target_link_libraries(report_center_controller_tests PRIVATE Qt6::Core Qt6::Test)
     add_test(NAME report_center_controller_tests COMMAND report_center_controller_tests)
+
+    add_executable(strategy_config_controller_tests
+        tests/StrategyConfigControllerTest.cpp
+        src/app/StrategyConfigController.cpp
+    )
+    target_include_directories(strategy_config_controller_tests PRIVATE src ${GENERATED_DIR})
+    target_link_libraries(strategy_config_controller_tests PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME strategy_config_controller_tests COMMAND strategy_config_controller_tests)
+
+    add_executable(support_bundle_controller_tests
+        tests/SupportBundleControllerTest.cpp
+        src/support/SupportBundleController.cpp
+    )
+    target_include_directories(support_bundle_controller_tests PRIVATE src ${GENERATED_DIR})
+    target_link_libraries(support_bundle_controller_tests PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME support_bundle_controller_tests COMMAND support_bundle_controller_tests)
 endif()
