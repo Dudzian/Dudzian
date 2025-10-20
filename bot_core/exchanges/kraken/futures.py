@@ -21,6 +21,7 @@ from bot_core.exchanges.base import (
 )
 from bot_core.exchanges.error_mapping import raise_for_kraken_error
 from bot_core.exchanges.errors import ExchangeAPIError
+from bot_core.exchanges.health import Watchdog
 from bot_core.exchanges.streaming import LocalLongPollStream
 
 _API_PREFIX = "/derivatives/api/v3"
@@ -59,6 +60,7 @@ class KrakenFuturesAdapter(ExchangeAdapter):
         *,
         environment: Environment,
         settings: Mapping[str, object] | None = None,
+        watchdog: Watchdog | None = None,
     ) -> None:
         super().__init__(credentials)
         self._environment = environment
@@ -70,6 +72,7 @@ class KrakenFuturesAdapter(ExchangeAdapter):
         self._ip_allowlist: Sequence[str] | None = None
         self._http_timeout = 20
         self._settings = dict(settings or {})
+        self._watchdog = watchdog or Watchdog()
 
     # ------------------------------------------------------------------
     # Konfiguracja streamingu long-pollowego
@@ -213,7 +216,10 @@ class KrakenFuturesAdapter(ExchangeAdapter):
             raise PermissionError("Poświadczenia Kraken Futures nie mają uprawnień do odczytu.")
 
         context = _RequestContext(path="/accounts", method="GET", params={})
-        payload = self._private_request(context)
+        payload = self._watchdog.execute(
+            "kraken_futures_private_request",
+            lambda: self._private_request(context),
+        )
         accounts = payload.get("accounts", {}) if isinstance(payload, Mapping) else {}
         futures = accounts.get("futures", {}) if isinstance(accounts, Mapping) else {}
 
@@ -244,7 +250,10 @@ class KrakenFuturesAdapter(ExchangeAdapter):
         )
 
     def fetch_symbols(self) -> Sequence[str]:  # type: ignore[override]
-        payload = self._public_request("/instruments", params={})
+        def _call() -> Mapping[str, Any]:
+            return self._public_request("/instruments", params={})
+
+        payload = self._watchdog.execute("kraken_futures_fetch_symbols", _call)
         instruments = payload.get("instruments") if isinstance(payload, Mapping) else None
         symbols: list[str] = []
         if isinstance(instruments, Sequence):
@@ -272,7 +281,10 @@ class KrakenFuturesAdapter(ExchangeAdapter):
         if end is not None:
             params["to"] = int(end)
 
-        payload = self._public_request("/ohlc", params=params)
+        def _call() -> Mapping[str, Any]:
+            return self._public_request("/ohlc", params=params)
+
+        payload = self._watchdog.execute("kraken_futures_fetch_ohlcv", _call)
         candles: list[Sequence[float]] = []
         series = payload.get("series") if isinstance(payload, Mapping) else None
         if isinstance(series, Sequence):
@@ -324,7 +336,10 @@ class KrakenFuturesAdapter(ExchangeAdapter):
             body["cliOrdId"] = request.client_order_id
 
         context = _RequestContext(path="/orders", method="POST", params={}, body=body)
-        payload = self._private_request(context)
+        payload = self._watchdog.execute(
+            "kraken_futures_place_order",
+            lambda: self._private_request(context),
+        )
 
         send_status = payload.get("sendStatus") if isinstance(payload, Mapping) else None
         order_id = ""
@@ -359,7 +374,10 @@ class KrakenFuturesAdapter(ExchangeAdapter):
             raise PermissionError("Poświadczenia Kraken Futures nie mają uprawnień tradingowych.")
 
         context = _RequestContext(path=f"/orders/{order_id}", method="DELETE", params={})
-        payload = self._private_request(context)
+        payload = self._watchdog.execute(
+            "kraken_futures_cancel_order",
+            lambda: self._private_request(context),
+        )
         result = payload.get("cancelStatus") if isinstance(payload, Mapping) else None
         if not isinstance(result, Mapping) or str(result.get("status")).lower() != "cancelled":
             raise RuntimeError(f"Kraken Futures nie potwierdził anulowania zlecenia: {payload}")

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 import KryptoLowca.run_trading_gui_paper_emitter as emitter
+import KryptoLowca.ui.trading.risk_helpers as risk_helpers
 from bot_core.runtime.metadata import RiskManagerSettings
 
 
@@ -51,7 +53,7 @@ def test_configure_runtime_risk_updates_gui(monkeypatch: pytest.MonkeyPatch, cap
         captured_entrypoint["value"] = entrypoint
         return "balanced", {"max_position_pct": 0.02}, settings
 
-    monkeypatch.setattr(emitter, "load_risk_manager_settings", fake_loader)
+    monkeypatch.setattr(risk_helpers, "load_risk_manager_settings", fake_loader)
     gui = _make_gui_stub(balance=20_000.0)
 
     caplog.set_level(logging.INFO, emitter.logger.name)
@@ -72,7 +74,7 @@ def test_configure_runtime_risk_handles_loader_failure(monkeypatch: pytest.Monke
     def boom(*_: object, **__: object) -> tuple[None, None, RiskManagerSettings]:
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(emitter, "load_risk_manager_settings", boom)
+    monkeypatch.setattr(risk_helpers, "load_risk_manager_settings", boom)
     gui = _make_gui_stub(balance=0.0)
 
     caplog.set_level(logging.INFO, emitter.logger.name)
@@ -81,3 +83,33 @@ def test_configure_runtime_risk_handles_loader_failure(monkeypatch: pytest.Monke
 
     assert gui.default_paper_notional == pytest.approx(emitter.DEFAULT_PAPER_ORDER_NOTIONAL)
     assert "Domyślny notional (paper):" in caplog.text
+
+
+def test_build_frontend_bootstrap_uses_runtime_services(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(emitter, "_FRONTEND_PATHS", None)
+
+    captured: dict[str, object] = {}
+    dummy_paths = SimpleNamespace(app_root=Path("/tmp/emitter"), db_file=Path("/tmp/emitter.db"))
+
+    def fake_build(app_file: Path, *, logs_dir, text_log_file):  # type: ignore[override]
+        captured["build_args"] = (app_file, logs_dir, text_log_file)
+        return dummy_paths
+
+    dummy_services = emitter.FrontendBootstrap(exchange_manager="mgr", market_intel="intel")
+
+    def fake_bootstrap(**kwargs: object) -> emitter.FrontendBootstrap:
+        captured["bootstrap_kwargs"] = kwargs
+        return dummy_services
+
+    monkeypatch.setattr(emitter, "build_desktop_app_paths", fake_build)
+    monkeypatch.setattr(emitter, "bootstrap_frontend_services", fake_bootstrap)
+
+    paths, services = emitter._build_frontend_bootstrap()
+
+    assert paths is dummy_paths
+    assert services is dummy_services
+    assert captured["bootstrap_kwargs"] == {
+        "paths": dummy_paths,
+        "config_path": None,
+        "environment": None,
+    }

@@ -721,7 +721,7 @@ def test_main_print_pythonpath_windows_style_json(
                 "windows",
             ]
         )
-        out, err = _read_output(capsys)
+        captured = capsys.readouterr()
     finally:
         clear_cache()
 
@@ -798,6 +798,19 @@ def test_main_combines_additional_paths_file_env_and_cli(
     payload = json.loads(out)
 
     assert exit_code == 0
+    assert captured.err == ""
+    assert payload["additional_paths"] == [expected_data, expected_docs, expected_tests]
+
+
+def test_main_prints_pythonpath_value(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("PATHBOOTSTRAP_ADD_PATHS", raising=False)
+
+    clear_cache()
+    try:
+        exit_code = main(["--print-pythonpath", "--add-path", "tests"])
+        captured = capsys.readouterr()
     assert err == ""
     assert payload["additional_paths"] == [
         expected_data,
@@ -830,8 +843,10 @@ def test_main_prints_pythonpath_value(
 
     clear_cache()
     try:
-        exit_code = main(["--print-pythonpath", "--add-path", "tests"])
-        out, err = _read_output(capsys)
+        exit_code = main(
+            ["--print-pythonpath", "--format", "json", "--add-path", "tests"]
+        )
+        captured = capsys.readouterr()
     finally:
         clear_cache()
 

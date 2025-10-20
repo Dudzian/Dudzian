@@ -29,6 +29,15 @@ from bot_core.exchanges.zonda.spot import (
 from bot_core.observability.metrics import MetricsRegistry
 
 
+class _RecordingWatchdog:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def execute(self, operation: str, func):
+        self.calls.append(operation)
+        return func()
+
+
 class _FakeResponse:
     def __init__(
         self,
@@ -105,6 +114,26 @@ def test_fetch_account_snapshot_builds_signature(monkeypatch: pytest.MonkeyPatch
         adapter._metric_rate_limit_remaining.value(labels=adapter._metric_base_labels)  # type: ignore[attr-defined]
         == pytest.approx(97.0)
     )
+
+
+def test_fetch_account_snapshot_uses_watchdog(monkeypatch: pytest.MonkeyPatch) -> None:
+    watchdog = _RecordingWatchdog()
+
+    credentials = ExchangeCredentials(
+        key_id="watchdog",
+        secret="secret",
+        permissions=("read",),
+        environment=Environment.LIVE,
+    )
+    adapter = ZondaSpotAdapter(credentials, watchdog=watchdog)
+
+    monkeypatch.setattr(adapter, "_signed_request", lambda *args, **kwargs: {"balances": []})
+    monkeypatch.setattr(adapter, "_fetch_price_map", lambda: {})
+
+    snapshot = adapter.fetch_account_snapshot()
+
+    assert isinstance(snapshot, AccountSnapshot)
+    assert "zonda_spot_fetch_account" in watchdog.calls
 
 
 def test_fetch_ohlcv_maps_items(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -479,11 +508,13 @@ def test_public_request_raises_network_error(monkeypatch: pytest.MonkeyPatch) ->
     retries = adapter._metric_retries.value(  # type: ignore[attr-defined]
         labels={**adapter._metric_base_labels, "reason": "network"},
     )
-    assert retries == pytest.approx(3.0)
+    expected_retries = adapter._watchdog.retry_policy.max_attempts * 3.0  # type: ignore[attr-defined]
+    assert retries == pytest.approx(expected_retries)
     api_errors = adapter._metric_api_errors.value(  # type: ignore[attr-defined]
         labels={**adapter._metric_base_labels, "reason": "network"},
     )
-    assert api_errors == pytest.approx(1.0)
+    expected_api_errors = float(adapter._watchdog.retry_policy.max_attempts)  # type: ignore[attr-defined]
+    assert api_errors == pytest.approx(expected_api_errors)
 
 
 def test_public_request_raises_api_error(monkeypatch: pytest.MonkeyPatch) -> None:

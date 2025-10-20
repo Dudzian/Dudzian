@@ -1,6 +1,8 @@
+#include <QFile>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QSignalSpy>
+#include <QTemporaryDir>
 #include <QtTest/QtTest>
 
 #include <cmath>
@@ -18,6 +20,8 @@ private slots:
     void serializesAndRestoresJson();
     void capturesExposureDetails();
     void exposesEntryCountProperty();
+    void exportsToCsv();
+    void exportsLimitedSubsetToCsv();
 };
 
 void RiskHistoryModelTest::recordsSnapshots()
@@ -272,6 +276,78 @@ void RiskHistoryModelTest::exposesEntryCountProperty()
 
     model.clear();
     QCOMPARE(model.entryCount(), 0);
+}
+
+void RiskHistoryModelTest::exportsToCsv()
+{
+    RiskHistoryModel model;
+
+    RiskSnapshotData snapshot;
+    snapshot.hasData = true;
+    snapshot.profileLabel = QStringLiteral("Aggressive");
+    snapshot.generatedAt = QDateTime::fromString(QStringLiteral("2024-04-01T15:30:00Z"), Qt::ISODate);
+    snapshot.currentDrawdown = 0.075;
+    snapshot.usedLeverage = 3.25;
+    snapshot.portfolioValue = 875'000.0;
+
+    RiskExposureData exposure;
+    exposure.code = QStringLiteral("BTC");
+    exposure.currentValue = 120'000.0;
+    exposure.thresholdValue = 100'000.0;
+    exposure.maxValue = 150'000.0;
+    snapshot.exposures = {exposure};
+
+    model.recordSnapshot(snapshot);
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString filePath = dir.filePath(QStringLiteral("history.csv"));
+    QVERIFY(model.exportToCsv(filePath));
+
+    QFile file(filePath);
+    QVERIFY(file.open(QIODevice::ReadOnly | QIODevice::Text));
+    const QStringList lines = QString::fromUtf8(file.readAll()).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    QVERIFY(lines.size() >= 2);
+    QCOMPARE(lines.at(0), QStringLiteral("timestamp,profile_label,drawdown,leverage,portfolio_value,breach_count,has_breach,max_exposure_utilization,exposures"));
+
+    const QString dataRow = lines.at(1);
+    QVERIFY(dataRow.contains(QStringLiteral("Aggressive")));
+    QVERIFY(dataRow.contains(QStringLiteral("true")));
+    QVERIFY(dataRow.contains(QStringLiteral("BTC")));
+}
+
+void RiskHistoryModelTest::exportsLimitedSubsetToCsv()
+{
+    RiskHistoryModel model;
+
+    for (int i = 0; i < 3; ++i) {
+        RiskSnapshotData snapshot;
+        snapshot.hasData = true;
+        snapshot.profileLabel = QStringLiteral("Sample %1").arg(i + 1);
+        snapshot.generatedAt = QDateTime::fromString(
+            QStringLiteral("2024-04-0%1T10:%2:00Z")
+                .arg(i + 1)
+                .arg(QString::number(i * 5).rightJustified(2, QChar::fromLatin1('0'))),
+            Qt::ISODate);
+        snapshot.currentDrawdown = 0.01 * (i + 1);
+        snapshot.usedLeverage = 1.0 + i;
+        snapshot.portfolioValue = 1'000'000.0 + (i * 50'000.0);
+        model.recordSnapshot(snapshot);
+    }
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString filePath = dir.filePath(QStringLiteral("history-limited.csv"));
+    QVERIFY(model.exportToCsv(filePath, 2));
+
+    QFile file(filePath);
+    QVERIFY(file.open(QIODevice::ReadOnly | QIODevice::Text));
+    const QStringList lines = QString::fromUtf8(file.readAll()).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    QCOMPARE(lines.size(), 3);
+    QVERIFY(lines.at(1).contains(QStringLiteral("Sample 2")));
+    QVERIFY(lines.at(2).contains(QStringLiteral("Sample 3")));
+    QVERIFY(!lines.at(1).contains(QStringLiteral("Sample 1")));
+    QVERIFY(!lines.at(2).contains(QStringLiteral("Sample 1")));
 }
 
 QTEST_MAIN(RiskHistoryModelTest)

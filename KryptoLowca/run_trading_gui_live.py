@@ -12,14 +12,21 @@ NIC nie modyfikuje modułowego Trading GUI – importujemy i „doklejamy” fun
 
 from __future__ import annotations
 
+from importlib import import_module
 from pathlib import Path
 import sys
 import math
+import logging
 import traceback
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 
 import tkinter as tk
 from tkinter import ttk, messagebox
+
+
+from bot_core.runtime.paths import DesktopAppPaths, build_desktop_app_paths
+from KryptoLowca.logging_utils import DEFAULT_LOG_FILE, LOGS_DIR
+from KryptoLowca.runtime.bootstrap import FrontendBootstrap, bootstrap_frontend_services
 
 
 def _ensure_repo_root() -> None:
@@ -44,14 +51,66 @@ from KryptoLowca.ui.trading import (
     format_notional as _fmt_notional,
     snapshot_from_app,
 )
+from KryptoLowca.ui.trading.risk_helpers import apply_runtime_risk_context
 
 
 DEFAULT_NOTIONAL_USDT = 12.0
 
 
+_FRONTEND_PATHS: DesktopAppPaths | None = None
+
+
+def _build_frontend_bootstrap(
+    *,
+    core_config_path: str | Path | None = None,
+    core_environment: str | None = None,
+) -> Tuple[DesktopAppPaths | None, FrontendBootstrap | None]:
+    """Przygotowuje wspólne usługi frontowe dla launchera GUI."""
+
+    global _FRONTEND_PATHS
+
+    if _FRONTEND_PATHS is None:
+        module_file: Path | None = None
+        try:
+            trading_app = import_module("KryptoLowca.ui.trading.app")
+            candidate = getattr(trading_app, "__file__", None)
+            if candidate is not None:
+                module_file = Path(candidate)
+        except Exception:
+            module_file = None
+        if module_file is not None:
+            try:
+                _FRONTEND_PATHS = build_desktop_app_paths(
+                    module_file,
+                    logs_dir=LOGS_DIR,
+                    text_log_file=DEFAULT_LOG_FILE,
+                )
+            except Exception:
+                _FRONTEND_PATHS = None
+
+    services = bootstrap_frontend_services(
+        paths=_FRONTEND_PATHS,
+        config_path=core_config_path,
+        environment=core_environment,
+    )
+    return _FRONTEND_PATHS, services
+
+
 def _compute_default_notional(app: TradingGUI) -> float:
     snapshot = snapshot_from_app(app)
-    return _compute_notional(snapshot, default_notional=DEFAULT_NOTIONAL_USDT)
+    value = _compute_notional(snapshot, default_notional=DEFAULT_NOTIONAL_USDT)
+    settings = getattr(snapshot, "settings", None)
+    balance = getattr(snapshot, "paper_balance", 0.0)
+    if not settings or balance <= 0:
+        return value
+    try:
+        risk_per_trade = float(settings.max_risk_per_trade)
+    except Exception:
+        risk_per_trade = 0.0
+    if risk_per_trade <= 0:
+        return value
+    risk_limit = float(balance) * risk_per_trade
+    return max(value, risk_limit)
 
 
 def _format_notional(value: float) -> str:
@@ -329,5 +388,12 @@ def _open_paper_panel_on_start(app: TradingGUI):
 if __name__ == "__main__":
     root = tk.Tk()
     app = TradingGUI(root, trade_executor=_paper_trade_executor)
+    apply_runtime_risk_context(
+        app,
+        entrypoint="trading_gui",
+        config_path=getattr(app, "_core_config_path", None),
+        default_notional=DEFAULT_NOTIONAL_USDT,
+        logger=logger,
+    )
     _open_paper_panel_on_start(app)
     root.mainloop()

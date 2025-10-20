@@ -21,10 +21,14 @@
 #include <QQuickWindow>
 #include <QSaveFile>
 #include <QScreen>
+#include <QRegularExpression>
+#include <QUrl>
 #include <QTimer>
+#include <QScopeGuard>
 #include <QtGlobal>
 #include <optional>
 #include <cmath>
+#include <algorithm>
 
 #include "telemetry/TelemetryReporter.hpp"
 #include "telemetry/UiTelemetryReporter.hpp"
@@ -45,6 +49,14 @@ constexpr int kMaxRiskRefreshIntervalMs = 300000;
 constexpr int kUiSettingsDebounceMs = 500;
 constexpr auto kUiSettingsEnv = QByteArrayLiteral("BOT_CORE_UI_SETTINGS_PATH");
 constexpr auto kUiSettingsDisableEnv = QByteArrayLiteral("BOT_CORE_UI_SETTINGS_DISABLE");
+constexpr auto kRiskHistoryExportDirEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_EXPORT_DIR");
+constexpr auto kRiskHistoryExportLimitEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_EXPORT_LIMIT");
+constexpr auto kRiskHistoryExportLimitEnabledEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_EXPORT_LIMIT_ENABLED");
+constexpr auto kRiskHistoryAutoExportEnabledEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_AUTO_EXPORT");
+constexpr auto kRiskHistoryAutoExportIntervalEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_AUTO_EXPORT_INTERVAL_MINUTES");
+constexpr auto kRiskHistoryAutoExportBasenameEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_AUTO_EXPORT_BASENAME");
+constexpr auto kRiskHistoryAutoExportDirEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_AUTO_EXPORT_DIR");
+constexpr auto kRiskHistoryAutoExportLocalTimeEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_AUTO_EXPORT_USE_LOCAL_TIME");
 
 std::optional<QString> envValue(const QByteArray& key)
 {
@@ -106,6 +118,33 @@ QString readTokenFile(const QString& rawPath)
         return {};
     }
     return token;
+}
+
+QString sanitizeAutoExportBasename(const QString& raw)
+{
+    QString sanitized = raw.trimmed();
+    if (sanitized.isEmpty())
+        return QStringLiteral("risk-history");
+
+    static const QRegularExpression invalidCharacters(QStringLiteral("[^A-Za-z0-9_-]+"));
+    sanitized.replace(invalidCharacters, QStringLiteral("_"));
+
+    static const QRegularExpression repeatedUnderscore(QStringLiteral("_+"));
+    sanitized.replace(repeatedUnderscore, QStringLiteral("_"));
+
+    while (sanitized.startsWith(QLatin1Char('_')))
+        sanitized.remove(0, 1);
+    while (sanitized.endsWith(QLatin1Char('_')))
+        sanitized.chop(1);
+
+    if (sanitized.isEmpty())
+        return QStringLiteral("risk-history");
+
+    constexpr int kMaxLength = 80;
+    if (sanitized.size() > kMaxLength)
+        sanitized = sanitized.left(kMaxLength);
+
+    return sanitized;
 }
 
 } // namespace
@@ -200,6 +239,9 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
             scheduleUiSettingsPersist();
     });
 
+    connect(&m_riskHistoryModel, &RiskHistoryModel::snapshotRecorded, this,
+            &Application::handleRiskHistorySnapshotRecorded);
+
     m_riskRefreshTimer.setTimerType(Qt::VeryCoarseTimer);
     m_riskRefreshTimer.setInterval(m_riskRefreshIntervalMs);
     m_riskRefreshTimer.setSingleShot(false);
@@ -256,6 +298,26 @@ void Application::configureParser(QCommandLineParser& parser) const {
                       QString::number(kDefaultRiskRefreshSeconds, 'f', 1)});
     parser.addOption({"risk-refresh-disable",
                       tr("Wyłącz automatyczne pobieranie stanu ryzyka")});
+    parser.addOption({"risk-history-export-dir",
+                      tr("Katalog eksportu historii ryzyka"), tr("path"), QString()});
+    parser.addOption({"risk-history-export-limit",
+                      tr("Limit próbek eksportowanych do CSV"), tr("count"), QString()});
+    parser.addOption({"risk-history-export-limit-disable",
+                      tr("Wyłącza limit próbek eksportu historii ryzyka")});
+    parser.addOption({"risk-history-auto-export",
+                      tr("Włącza automatyczny eksport historii ryzyka")});
+    parser.addOption({"risk-history-auto-export-disable",
+                      tr("Wyłącza automatyczny eksport historii ryzyka")});
+    parser.addOption({"risk-history-auto-export-interval",
+                      tr("Interwał autoeksportu historii ryzyka (min)"), tr("minutes"), QString()});
+    parser.addOption({"risk-history-auto-export-basename",
+                      tr("Prefiks plików autoeksportu historii ryzyka"), tr("name"), QString()});
+    parser.addOption({"risk-history-auto-export-local-time",
+                      tr("Nazwy plików autoeksportu używają czasu lokalnego")});
+    parser.addOption({"risk-history-auto-export-utc",
+                      tr("Nazwy plików autoeksportu używają czasu UTC")});
+    parser.addOption({"risk-history-auto-export-dir",
+                      tr("Katalog docelowy automatycznego eksportu historii ryzyka"), tr("path"), QString()});
     parser.addOption({"ui-settings-path", tr("Ścieżka pliku ustawień UI"), tr("path"), QString()});
     parser.addOption({"disable-ui-settings", tr("Wyłącza zapisywanie konfiguracji UI")});
     parser.addOption({"enable-ui-settings",
@@ -484,6 +546,8 @@ bool Application::applyParser(const QCommandLineParser& parser) {
 
     configureRiskRefresh(riskRefreshEnabled, riskRefreshSeconds);
 
+    applyRiskHistoryCliOverrides(parser);
+
     // TLS config (MetricsService)
     TelemetryTlsConfig mtls;
     mtls.enabled = parser.isSet("metrics-use-tls");
@@ -681,6 +745,169 @@ void Application::applyUiSettingsCliOverrides(const QCommandLineParser& parser)
         setUiSettingsPath(cliPath);
 }
 
+void Application::applyRiskHistoryCliOverrides(const QCommandLineParser& parser)
+{
+    const bool previousLoading = m_loadingUiSettings;
+    m_loadingUiSettings = true;
+
+    const auto restoreLoadingFlag = qScopeGuard([this, previousLoading]() {
+        m_loadingUiSettings = previousLoading;
+    });
+
+    const auto applyDirectory = [this](const QString& raw) {
+        const QString trimmed = raw.trimmed();
+        if (trimmed.isEmpty())
+            return;
+
+        QUrl url(trimmed);
+        if (!url.isValid() || url.scheme().isEmpty()) {
+            const QString expanded = expandUserPath(trimmed);
+            const QString absolute = QDir(expanded).absolutePath();
+            url = QUrl::fromLocalFile(absolute);
+        } else if (url.isLocalFile()) {
+            url = QUrl::fromLocalFile(QDir(url.toLocalFile()).absolutePath());
+        }
+
+        if (!url.isValid() || (!url.isLocalFile() && !url.scheme().isEmpty())) {
+            qCWarning(lcAppMetrics)
+                << "Nieprawidłowy katalog eksportu historii ryzyka:" << raw;
+            return;
+        }
+
+        setRiskHistoryExportLastDirectory(url);
+    };
+
+    const auto applyLimitValue = [this](const QString& raw) -> bool {
+        const QString trimmed = raw.trimmed();
+        if (trimmed.isEmpty())
+            return false;
+
+        bool ok = false;
+        const int value = trimmed.toInt(&ok);
+        if (!ok) {
+            qCWarning(lcAppMetrics)
+                << "Nieprawidłowy limit eksportu historii ryzyka:" << raw;
+            return false;
+        }
+
+        if (value <= 0) {
+            setRiskHistoryExportLimitEnabled(false);
+            return true;
+        }
+
+        setRiskHistoryExportLimitValue(value);
+        setRiskHistoryExportLimitEnabled(true);
+        return true;
+    };
+
+    const auto applyAutoInterval = [this](const QString& raw) {
+        const QString trimmed = raw.trimmed();
+        if (trimmed.isEmpty())
+            return;
+
+        bool ok = false;
+        int minutes = trimmed.toInt(&ok);
+        if (!ok) {
+            qCWarning(lcAppMetrics)
+                << "Nieprawidłowy interwał autoeksportu historii ryzyka:" << raw;
+            return;
+        }
+
+        minutes = qMax(1, minutes);
+        setRiskHistoryAutoExportIntervalMinutes(minutes);
+    };
+
+    const auto applyBasename = [this](const QString& raw) {
+        const QString trimmed = raw.trimmed();
+        if (trimmed.isEmpty())
+            return;
+        setRiskHistoryAutoExportBasename(trimmed);
+    };
+
+    if (parser.isSet("risk-history-export-dir"))
+        applyDirectory(parser.value("risk-history-export-dir"));
+    else if (const auto envDir = envValue(kRiskHistoryExportDirEnv); envDir.has_value())
+        applyDirectory(envDir->trimmed());
+
+    if (parser.isSet("risk-history-auto-export-dir"))
+        applyDirectory(parser.value("risk-history-auto-export-dir"));
+    else if (const auto envAutoDir = envValue(kRiskHistoryAutoExportDirEnv); envAutoDir.has_value())
+        applyDirectory(envAutoDir->trimmed());
+
+    bool limitValueApplied = false;
+    bool limitEnabledForced = false;
+
+    if (parser.isSet("risk-history-export-limit")) {
+        limitValueApplied = applyLimitValue(parser.value("risk-history-export-limit"));
+        if (limitValueApplied)
+            limitEnabledForced = true;
+    }
+
+    if (parser.isSet("risk-history-export-limit-disable")) {
+        setRiskHistoryExportLimitEnabled(false);
+        limitEnabledForced = true;
+    }
+
+    if (!limitValueApplied) {
+        if (const auto envLimit = envValue(kRiskHistoryExportLimitEnv); envLimit.has_value())
+            limitValueApplied = applyLimitValue(envLimit->trimmed());
+    }
+
+    if (!limitEnabledForced) {
+        if (const auto envLimitEnabled = envBool(kRiskHistoryExportLimitEnabledEnv); envLimitEnabled.has_value()) {
+            setRiskHistoryExportLimitEnabled(envLimitEnabled.value());
+            limitEnabledForced = true;
+        }
+    }
+
+    bool autoExportEnabledForced = false;
+    if (parser.isSet("risk-history-auto-export")) {
+        setRiskHistoryAutoExportEnabled(true);
+        autoExportEnabledForced = true;
+    }
+    if (parser.isSet("risk-history-auto-export-disable")) {
+        setRiskHistoryAutoExportEnabled(false);
+        autoExportEnabledForced = true;
+    }
+    if (!autoExportEnabledForced) {
+        if (const auto envAutoEnabled = envBool(kRiskHistoryAutoExportEnabledEnv); envAutoEnabled.has_value()) {
+            setRiskHistoryAutoExportEnabled(envAutoEnabled.value());
+            autoExportEnabledForced = true;
+        }
+    }
+
+    bool autoExportTimeForced = false;
+    if (parser.isSet("risk-history-auto-export-local-time")) {
+        setRiskHistoryAutoExportUseLocalTime(true);
+        autoExportTimeForced = true;
+    }
+    if (parser.isSet("risk-history-auto-export-utc")) {
+        setRiskHistoryAutoExportUseLocalTime(false);
+        autoExportTimeForced = true;
+    }
+    if (!autoExportTimeForced) {
+        if (const auto envLocalTime = envBool(kRiskHistoryAutoExportLocalTimeEnv); envLocalTime.has_value()) {
+            setRiskHistoryAutoExportUseLocalTime(envLocalTime.value());
+            autoExportTimeForced = true;
+        }
+    }
+
+    bool intervalApplied = false;
+    if (parser.isSet("risk-history-auto-export-interval")) {
+        applyAutoInterval(parser.value("risk-history-auto-export-interval"));
+        intervalApplied = true;
+    }
+    if (!intervalApplied) {
+        if (const auto envInterval = envValue(kRiskHistoryAutoExportIntervalEnv); envInterval.has_value())
+            applyAutoInterval(envInterval->trimmed());
+    }
+
+    if (parser.isSet("risk-history-auto-export-basename"))
+        applyBasename(parser.value("risk-history-auto-export-basename"));
+    else if (const auto envBasename = envValue(kRiskHistoryAutoExportBasenameEnv); envBasename.has_value())
+        applyBasename(envBasename->trimmed());
+}
+
 void Application::setUiSettingsPersistenceEnabled(bool enabled)
 {
     if (m_uiSettingsPersistenceEnabled == enabled)
@@ -841,6 +1068,73 @@ void Application::loadUiSettings()
             const QJsonValue entriesValue = historyObject.value(QStringLiteral("entries"));
             if (entriesValue.isArray())
                 m_riskHistoryModel.restoreFromJson(entriesValue.toArray());
+
+            const QJsonValue exportValue = historyObject.value(QStringLiteral("export"));
+            if (exportValue.isObject()) {
+                const QJsonObject exportObject = exportValue.toObject();
+                setRiskHistoryExportLimitEnabled(exportObject.value(QStringLiteral("limitEnabled"))
+                                                    .toBool(m_riskHistoryExportLimitEnabled));
+
+                const QJsonValue limitValue = exportObject.value(QStringLiteral("limitValue"));
+                if (limitValue.isDouble())
+                    setRiskHistoryExportLimitValue(std::max(1, limitValue.toInt(m_riskHistoryExportLimitValue)));
+
+                if (exportObject.contains(QStringLiteral("lastDirectory"))) {
+                    const QString lastDirValue = exportObject.value(QStringLiteral("lastDirectory"))
+                                                       .toString();
+                    const QString trimmed = lastDirValue.trimmed();
+                    if (!trimmed.isEmpty()) {
+                        QUrl directoryUrl(trimmed);
+                        if (!directoryUrl.isValid() || directoryUrl.scheme().isEmpty())
+                            directoryUrl = QUrl::fromLocalFile(expandUserPath(trimmed));
+                        setRiskHistoryExportLastDirectory(directoryUrl);
+                    }
+                }
+
+                const QJsonValue autoValue = exportObject.value(QStringLiteral("auto"));
+                if (autoValue.isObject()) {
+                    const QJsonObject autoObject = autoValue.toObject();
+                    setRiskHistoryAutoExportEnabled(autoObject.value(QStringLiteral("enabled"))
+                                                       .toBool(m_riskHistoryAutoExportEnabled));
+
+                    const QJsonValue intervalValue = autoObject.value(QStringLiteral("intervalMinutes"));
+                    if (intervalValue.isDouble()) {
+                        const int intervalMinutes = std::max(1, intervalValue.toInt(m_riskHistoryAutoExportIntervalMinutes));
+                        setRiskHistoryAutoExportIntervalMinutes(intervalMinutes);
+                    }
+
+                    if (autoObject.contains(QStringLiteral("basename")))
+                        setRiskHistoryAutoExportBasename(autoObject.value(QStringLiteral("basename"))
+                                                            .toString(m_riskHistoryAutoExportBasename));
+
+                    if (autoObject.contains(QStringLiteral("useLocalTime")))
+                        setRiskHistoryAutoExportUseLocalTime(autoObject.value(QStringLiteral("useLocalTime"))
+                                                                .toBool(m_riskHistoryAutoExportUseLocalTime));
+
+                    if (autoObject.contains(QStringLiteral("lastExportAt"))) {
+                        const QString lastExportString = autoObject.value(QStringLiteral("lastExportAt")).toString();
+                        QDateTime parsed = QDateTime::fromString(lastExportString, Qt::ISODateWithMs);
+                        if (!parsed.isValid())
+                            parsed = QDateTime::fromString(lastExportString, Qt::ISODate);
+                        if (parsed.isValid()) {
+                            parsed = parsed.toUTC();
+                            m_lastRiskHistoryAutoExportUtc = parsed;
+                            Q_EMIT riskHistoryLastAutoExportAtChanged();
+                        }
+                    }
+
+                    if (autoObject.contains(QStringLiteral("lastPath"))) {
+                        const QString lastPath = autoObject.value(QStringLiteral("lastPath")).toString();
+                        if (!lastPath.trimmed().isEmpty()) {
+                            QUrl pathUrl(lastPath);
+                            if (!pathUrl.isValid() || pathUrl.scheme().isEmpty())
+                                pathUrl = QUrl::fromLocalFile(expandUserPath(lastPath));
+                            m_lastRiskHistoryAutoExportPath = pathUrl;
+                            Q_EMIT riskHistoryLastAutoExportPathChanged();
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -935,9 +1229,145 @@ QJsonObject Application::buildUiSettingsPayload() const
     const QJsonArray historyEntries = m_riskHistoryModel.toJson();
     if (!historyEntries.isEmpty())
         history.insert(QStringLiteral("entries"), historyEntries);
+
+    QJsonObject exportPrefs;
+    exportPrefs.insert(QStringLiteral("limitEnabled"), m_riskHistoryExportLimitEnabled);
+    exportPrefs.insert(QStringLiteral("limitValue"), m_riskHistoryExportLimitValue);
+    if (!m_riskHistoryExportLastDirectory.isEmpty())
+        exportPrefs.insert(QStringLiteral("lastDirectory"),
+                           m_riskHistoryExportLastDirectory.toString(QUrl::PreferLocalFile));
+    QJsonObject autoPrefs;
+    autoPrefs.insert(QStringLiteral("enabled"), m_riskHistoryAutoExportEnabled);
+    autoPrefs.insert(QStringLiteral("intervalMinutes"), m_riskHistoryAutoExportIntervalMinutes);
+    autoPrefs.insert(QStringLiteral("basename"), m_riskHistoryAutoExportBasename);
+    autoPrefs.insert(QStringLiteral("useLocalTime"), m_riskHistoryAutoExportUseLocalTime);
+    if (m_lastRiskHistoryAutoExportUtc.isValid())
+        autoPrefs.insert(QStringLiteral("lastExportAt"),
+                         m_lastRiskHistoryAutoExportUtc.toUTC().toString(Qt::ISODateWithMs));
+    if (!m_lastRiskHistoryAutoExportPath.isEmpty())
+        autoPrefs.insert(QStringLiteral("lastPath"),
+                         m_lastRiskHistoryAutoExportPath.toString(QUrl::PreferLocalFile));
+    exportPrefs.insert(QStringLiteral("auto"), autoPrefs);
+    history.insert(QStringLiteral("export"), exportPrefs);
     root.insert(QStringLiteral("riskHistory"), history);
 
     return root;
+}
+
+void Application::maybeAutoExportRiskHistory(const QDateTime& snapshotTimestamp)
+{
+    if (!m_riskHistoryAutoExportEnabled)
+        return;
+
+    if (m_riskHistoryExportLastDirectory.isEmpty()) {
+        if (!m_riskHistoryAutoExportDirectoryWarned) {
+            qCWarning(lcAppMetrics)
+                << "Automatyczny eksport historii ryzyka pominięty – brak skonfigurowanego katalogu docelowego.";
+            m_riskHistoryAutoExportDirectoryWarned = true;
+        }
+        return;
+    }
+
+    QString directoryPath;
+    if (m_riskHistoryExportLastDirectory.isLocalFile() || m_riskHistoryExportLastDirectory.scheme().isEmpty())
+        directoryPath = m_riskHistoryExportLastDirectory.toLocalFile();
+    else
+        directoryPath = m_riskHistoryExportLastDirectory.toString(QUrl::PreferLocalFile);
+
+    directoryPath = directoryPath.trimmed();
+    if (directoryPath.isEmpty()) {
+        if (!m_riskHistoryAutoExportDirectoryWarned) {
+            qCWarning(lcAppMetrics)
+                << "Automatyczny eksport historii ryzyka pominięty – ścieżka katalogu docelowego jest pusta.";
+            m_riskHistoryAutoExportDirectoryWarned = true;
+        }
+        return;
+    }
+
+    QDir directory(directoryPath);
+    if (!directory.exists() && !directory.mkpath(QStringLiteral("."))) {
+        qCWarning(lcAppMetrics)
+            << "Automatyczny eksport historii ryzyka pominięty – nie udało się utworzyć katalogu"
+            << directory.absolutePath();
+        return;
+    }
+
+    const QDateTime nowUtc = QDateTime::currentDateTimeUtc();
+    const int intervalSeconds = qMax(1, m_riskHistoryAutoExportIntervalMinutes) * 60;
+    if (m_lastRiskHistoryAutoExportUtc.isValid()) {
+        if (m_lastRiskHistoryAutoExportUtc.secsTo(nowUtc) < intervalSeconds)
+            return;
+    }
+
+    const QDateTime exportTimestamp = snapshotTimestamp.isValid() ? snapshotTimestamp : nowUtc;
+    const QString filePath = resolveAutoExportFilePath(directory, m_riskHistoryAutoExportBasename, exportTimestamp);
+    if (filePath.isEmpty()) {
+        qCWarning(lcAppMetrics)
+            << "Automatyczny eksport historii ryzyka pominięty – nie udało się wyznaczyć docelowej nazwy pliku.";
+        return;
+    }
+
+    int limit = -1;
+    if (m_riskHistoryExportLimitEnabled)
+        limit = m_riskHistoryExportLimitValue;
+
+    if (!m_riskHistoryModel.exportToCsv(filePath, limit)) {
+        qCWarning(lcAppMetrics)
+            << "Automatyczny eksport historii ryzyka nie powiódł się do pliku" << filePath;
+        return;
+    }
+
+    m_lastRiskHistoryAutoExportUtc = nowUtc;
+    m_lastRiskHistoryAutoExportPath = QUrl::fromLocalFile(filePath);
+    m_riskHistoryAutoExportDirectoryWarned = false;
+    Q_EMIT riskHistoryLastAutoExportAtChanged();
+    Q_EMIT riskHistoryLastAutoExportPathChanged();
+    qCInfo(lcAppMetrics) << "Automatycznie wyeksportowano historię ryzyka do" << filePath;
+}
+
+QString Application::resolveAutoExportFilePath(const QDir& directory,
+                                               const QString& basename,
+                                               const QDateTime& timestamp) const
+{
+    const QString sanitizedBase = sanitizeAutoExportBasename(basename);
+    const QString effectiveBase = sanitizedBase.isEmpty() ? QStringLiteral("risk-history") : sanitizedBase;
+    const bool useLocalTime = m_riskHistoryAutoExportUseLocalTime;
+
+    QDateTime normalizedTimestamp;
+    if (timestamp.isValid())
+        normalizedTimestamp = useLocalTime ? timestamp.toLocalTime() : timestamp.toUTC();
+    else
+        normalizedTimestamp = useLocalTime ? QDateTime::currentDateTime() : QDateTime::currentDateTimeUtc();
+
+    const QString timePart = normalizedTimestamp.toString(QStringLiteral("yyyyMMdd_HHmmss"));
+
+    QString baseName;
+    if (useLocalTime) {
+        const int offsetSeconds = normalizedTimestamp.offsetFromUtc();
+        const int offsetMinutes = offsetSeconds / 60;
+        const int offsetHours = offsetMinutes / 60;
+        const int remainingMinutes = std::abs(offsetMinutes % 60);
+        const QChar sign = offsetSeconds >= 0 ? QLatin1Char('+') : QLatin1Char('-');
+        const QString zoneSuffix = QStringLiteral("%1%2%3")
+                                      .arg(sign)
+                                      .arg(std::abs(offsetHours), 2, 10, QLatin1Char('0'))
+                                      .arg(remainingMinutes, 2, 10, QLatin1Char('0'));
+        baseName = QStringLiteral("%1_%2_%3").arg(effectiveBase, timePart, zoneSuffix);
+    } else {
+        baseName = QStringLiteral("%1_%2").arg(effectiveBase, timePart);
+    }
+    QString candidate = directory.absoluteFilePath(baseName + QStringLiteral(".csv"));
+    if (!QFileInfo::exists(candidate))
+        return candidate;
+
+    for (int attempt = 1; attempt <= 100; ++attempt) {
+        const QString alternate = directory.absoluteFilePath(
+            QStringLiteral("%1_%2.csv").arg(baseName).arg(attempt));
+        if (!QFileInfo::exists(alternate))
+            return alternate;
+    }
+
+    return {};
 }
 
 void Application::configureLocalBotCoreService(const QCommandLineParser& parser, QString& endpoint)
@@ -1093,6 +1523,14 @@ void Application::handleRiskState(const RiskSnapshotData& snapshot) {
     if (!m_lastRiskRefreshRequestUtc.isValid())
         m_lastRiskRefreshRequestUtc = m_lastRiskUpdateUtc;
     Q_EMIT riskRefreshScheduleChanged();
+}
+
+void Application::handleRiskHistorySnapshotRecorded(const QDateTime& timestamp)
+{
+    if (m_loadingUiSettings)
+        return;
+
+    maybeAutoExportRiskHistory(timestamp);
 }
 
 void Application::exposeToQml() {
@@ -1378,6 +1816,169 @@ void Application::clearRiskHistory()
     m_riskHistoryModel.clear();
 }
 
+bool Application::exportRiskHistoryToCsv(const QUrl& destination, int limit)
+{
+    if (limit == 0 || limit < -1) {
+        qCWarning(lcAppMetrics)
+            << "Nieprawidłowy limit eksportu historii ryzyka:" << limit;
+        return false;
+    }
+
+    if (limit > 0)
+        setRiskHistoryExportLimitValue(limit);
+
+    setRiskHistoryExportLimitEnabled(limit > 0);
+
+    if (!destination.isValid()) {
+        qCWarning(lcAppMetrics)
+            << "Nieprawidłowy adres docelowy eksportu historii ryzyka:" << destination;
+        return false;
+    }
+
+    QString path;
+    if (destination.isLocalFile() || destination.scheme().isEmpty()) {
+        path = destination.isLocalFile() ? destination.toLocalFile() : destination.toString(QUrl::PreferLocalFile);
+    } else {
+        path = destination.toLocalFile();
+    }
+
+    if (path.trimmed().isEmpty()) {
+        qCWarning(lcAppMetrics) << "Brak ścieżki docelowej do eksportu historii ryzyka";
+        return false;
+    }
+
+    QFileInfo info(path);
+    if (info.fileName().isEmpty()) {
+        qCWarning(lcAppMetrics) << "Ścieżka eksportu historii ryzyka nie zawiera nazwy pliku:" << path;
+        return false;
+    }
+
+    QDir directory = info.dir();
+    if (!directory.exists() && !directory.mkpath(QStringLiteral("."))) {
+        qCWarning(lcAppMetrics)
+            << "Nie udało się utworzyć katalogu docelowego eksportu historii ryzyka:" << directory.absolutePath();
+        return false;
+    }
+
+    const bool ok = m_riskHistoryModel.exportToCsv(info.absoluteFilePath(), limit);
+    if (!ok) {
+        qCWarning(lcAppMetrics) << "Eksport historii ryzyka nie powiódł się do pliku" << info.absoluteFilePath();
+        return false;
+    }
+
+    setRiskHistoryExportLastDirectory(QUrl::fromLocalFile(info.dir().absolutePath()));
+
+    return true;
+}
+
+bool Application::setRiskHistoryExportLimitEnabled(bool enabled)
+{
+    if (m_riskHistoryExportLimitEnabled == enabled)
+        return true;
+
+    m_riskHistoryExportLimitEnabled = enabled;
+    Q_EMIT riskHistoryExportLimitEnabledChanged();
+    scheduleUiSettingsPersist();
+    return true;
+}
+
+bool Application::setRiskHistoryExportLimitValue(int limit)
+{
+    if (limit < 1) {
+        qCWarning(lcAppMetrics)
+            << "Odmowa ustawienia limitu eksportu historii ryzyka na wartość mniejszą niż 1:" << limit;
+        return false;
+    }
+
+    if (m_riskHistoryExportLimitValue == limit)
+        return true;
+
+    m_riskHistoryExportLimitValue = limit;
+    Q_EMIT riskHistoryExportLimitValueChanged();
+    scheduleUiSettingsPersist();
+    return true;
+}
+
+bool Application::setRiskHistoryExportLastDirectory(const QUrl& directory)
+{
+    if (!directory.isValid() && !directory.isEmpty())
+        return false;
+
+    QString path;
+    if (directory.isLocalFile() || directory.scheme().isEmpty()) {
+        path = directory.isLocalFile() ? directory.toLocalFile() : directory.toString(QUrl::PreferLocalFile);
+    } else {
+        return false;
+    }
+
+    path = path.trimmed();
+    if (path.isEmpty())
+        return false;
+
+    const QString normalizedPath = QDir(path).absolutePath();
+    const QUrl normalizedUrl = QUrl::fromLocalFile(normalizedPath);
+
+    if (m_riskHistoryExportLastDirectory == normalizedUrl)
+        return true;
+
+    m_riskHistoryExportLastDirectory = normalizedUrl;
+    m_riskHistoryAutoExportDirectoryWarned = false;
+    Q_EMIT riskHistoryExportLastDirectoryChanged();
+    scheduleUiSettingsPersist();
+    return true;
+}
+
+bool Application::setRiskHistoryAutoExportEnabled(bool enabled)
+{
+    if (m_riskHistoryAutoExportEnabled == enabled)
+        return true;
+
+    m_riskHistoryAutoExportEnabled = enabled;
+    Q_EMIT riskHistoryAutoExportEnabledChanged();
+    scheduleUiSettingsPersist();
+    return true;
+}
+
+bool Application::setRiskHistoryAutoExportIntervalMinutes(int minutes)
+{
+    if (minutes < 1) {
+        qCWarning(lcAppMetrics)
+            << "Odmowa ustawienia interwału auto-eksportu historii ryzyka na wartość mniejszą niż 1 minuta:" << minutes;
+        return false;
+    }
+
+    if (m_riskHistoryAutoExportIntervalMinutes == minutes)
+        return true;
+
+    m_riskHistoryAutoExportIntervalMinutes = minutes;
+    Q_EMIT riskHistoryAutoExportIntervalMinutesChanged();
+    scheduleUiSettingsPersist();
+    return true;
+}
+
+bool Application::setRiskHistoryAutoExportBasename(const QString& basename)
+{
+    const QString sanitized = sanitizeAutoExportBasename(basename);
+    if (m_riskHistoryAutoExportBasename == sanitized)
+        return true;
+
+    m_riskHistoryAutoExportBasename = sanitized;
+    Q_EMIT riskHistoryAutoExportBasenameChanged();
+    scheduleUiSettingsPersist();
+    return true;
+}
+
+bool Application::setRiskHistoryAutoExportUseLocalTime(bool useLocalTime)
+{
+    if (m_riskHistoryAutoExportUseLocalTime == useLocalTime)
+        return true;
+
+    m_riskHistoryAutoExportUseLocalTime = useLocalTime;
+    Q_EMIT riskHistoryAutoExportUseLocalTimeChanged();
+    scheduleUiSettingsPersist();
+    return true;
+}
+
 void Application::saveUiSettingsImmediatelyForTesting()
 {
     if (m_uiSettingsSaveTimer.isActive())
@@ -1445,6 +2046,21 @@ void Application::startRiskRefreshTimerForTesting()
 {
     m_started = true;
     applyRiskRefreshTimerState();
+}
+
+void Application::setLastRiskHistoryAutoExportForTesting(const QDateTime& timestamp)
+{
+    if (timestamp.isValid())
+        m_lastRiskHistoryAutoExportUtc = timestamp.toUTC();
+    else
+        m_lastRiskHistoryAutoExportUtc = {};
+    Q_EMIT riskHistoryLastAutoExportAtChanged();
+}
+
+void Application::setRiskHistoryAutoExportLastPathForTesting(const QUrl& url)
+{
+    m_lastRiskHistoryAutoExportPath = url;
+    Q_EMIT riskHistoryLastAutoExportPathChanged();
 }
 
 void Application::applyMetricsEnvironmentOverrides(const QCommandLineParser& parser,
