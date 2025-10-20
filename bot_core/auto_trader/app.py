@@ -13,9 +13,11 @@ structure for compatibility with code that serialises decisions.
 """
 from __future__ import annotations
 
+import asyncio
 import copy
 import enum
 import logging
+import math
 import threading
 import time
 from datetime import datetime, timezone, tzinfo
@@ -34,6 +36,13 @@ from bot_core.ai.regime import (
     RiskLevel,
 )
 from bot_core.ai.config_loader import load_risk_thresholds
+
+try:  # pragma: no cover - decision module opcjonalny
+    from bot_core.decision import DecisionCandidate, DecisionEvaluation, DecisionOrchestrator
+except Exception:  # pragma: no cover - moduł decision nieobowiązkowy
+    DecisionCandidate = None  # type: ignore
+    DecisionEvaluation = None  # type: ignore
+    DecisionOrchestrator = None  # type: ignore
 
 
 LOGGER = logging.getLogger(__name__)
@@ -175,6 +184,21 @@ class AutoTrader:
         self.execution_service = execution_service
         self.data_provider = data_provider
         self.bootstrap_context = bootstrap_context
+        self.decision_orchestrator = (
+            getattr(bootstrap_context, "decision_orchestrator", None)
+            if bootstrap_context is not None
+            else None
+        )
+        self._decision_risk_engine = (
+            getattr(bootstrap_context, "risk_engine", None)
+            if bootstrap_context is not None
+            else None
+        )
+        self._decision_engine_config = (
+            getattr(bootstrap_context, "decision_engine_config", None)
+            if bootstrap_context is not None
+            else None
+        )
         self.core_risk_engine = core_risk_engine
         self.core_execution_service = core_execution_service
         self.ai_connector = ai_connector
@@ -209,10 +233,12 @@ class AutoTrader:
         self._controller_cycle_history_ttl_s = self._normalise_cycle_history_ttl(
             controller_cycle_history_ttl_s
         )
+        self._last_ai_context: Mapping[str, Any] | None = None
         self._cooldown_until: float = 0.0
         self._cooldown_reason: str | None = None
         self._last_guardrail_reasons: list[str] = []
         self._last_guardrail_triggers: list[GuardrailTrigger] = []
+        self._ai_degraded = False
 
         self._stop = threading.Event()
         self._auto_trade_stop = threading.Event()
@@ -526,6 +552,180 @@ class AutoTrader:
             return self.ai_connector
         return None
 
+    def _ai_feature_columns(self, market_data: pd.DataFrame) -> list[str]:
+        numeric_cols = [
+            str(column)
+            for column in market_data.columns
+            if pd.api.types.is_numeric_dtype(market_data[column])
+        ]
+        if numeric_cols:
+            return numeric_cols
+        return [str(column) for column in market_data.columns]
+
+    @staticmethod
+    def _ai_probability_from_prediction(prediction: float) -> float:
+        clamped = max(min(float(prediction) * 4.0, 20.0), -20.0)
+        return 1.0 / (1.0 + math.exp(-clamped))
+
+    def _compute_ai_signal_context(
+        self,
+        ai_manager: Any | None,
+        symbol: str,
+        market_data: pd.DataFrame,
+    ) -> Mapping[str, object] | None:
+        if ai_manager is None:
+            return None
+
+        require_real = getattr(ai_manager, "require_real_models", None)
+        if callable(require_real):
+            try:
+                require_real()
+            except RuntimeError as exc:
+                self._log(
+                    "AI manager reports degraded backend; holding signals",
+                    level=logging.WARNING,
+                    symbol=symbol,
+                    error=str(exc),
+                )
+                return None
+
+        predictor = getattr(ai_manager, "predict_series", None)
+        if predictor is None:
+            return None
+
+        feature_cols = self._ai_feature_columns(market_data)
+        try:
+            prediction_result = predictor(symbol, market_data, feature_cols=feature_cols)
+        except TypeError:
+            prediction_result = predictor(symbol, market_data)
+        except Exception as exc:
+            self._log(
+                f"AI predict_series invocation failed: {exc!r}",
+                level=logging.ERROR,
+                symbol=symbol,
+            )
+            return None
+
+        if asyncio.iscoroutine(prediction_result):
+            loop = asyncio.new_event_loop()
+            try:
+                asyncio.set_event_loop(loop)
+                predictions = loop.run_until_complete(prediction_result)
+            finally:
+                asyncio.set_event_loop(None)
+                loop.close()
+        else:
+            predictions = prediction_result
+
+        if not isinstance(predictions, pd.Series):
+            try:
+                predictions = pd.Series(
+                    predictions,
+                    index=market_data.index[-len(predictions) :],
+                )
+            except Exception:
+                predictions = pd.Series(predictions)
+
+        if predictions.empty:
+            return None
+
+        value = float(predictions.iloc[-1])
+        prediction_bps = value * 10_000.0
+        threshold = float(getattr(ai_manager, "ai_threshold_bps", 0.0))
+        if prediction_bps >= threshold:
+            direction = "buy"
+        elif prediction_bps <= -threshold:
+            direction = "sell"
+        else:
+            direction = "hold"
+
+        probability = self._ai_probability_from_prediction(value)
+        evaluated_at_raw = predictions.index[-1]
+        evaluated_at: str | float | None
+        if hasattr(evaluated_at_raw, "isoformat"):
+            evaluated_at = evaluated_at_raw.isoformat()
+        elif isinstance(evaluated_at_raw, (int, float)):
+            evaluated_at = float(evaluated_at_raw)
+        else:
+            evaluated_at = None
+
+        snapshot: Dict[str, object] = {
+            "prediction": value,
+            "prediction_bps": prediction_bps,
+            "threshold_bps": threshold,
+            "direction": direction,
+            "probability": probability,
+        }
+        if evaluated_at is not None:
+            snapshot["evaluated_at"] = evaluated_at
+
+        self._log(
+            "AI prediction snapshot",
+            level=logging.DEBUG,
+            symbol=symbol,
+            prediction_bps=prediction_bps,
+            direction=direction,
+            threshold_bps=threshold,
+        )
+        return snapshot
+
+    def _normalize_ai_context(
+        self,
+        ai_context: Mapping[str, object],
+        *,
+        default_return_bps: float,
+        default_probability: float,
+    ) -> tuple[float, float, Dict[str, Any]]:
+        normalized_return = float(default_return_bps)
+        normalized_probability = max(0.0, min(1.0, float(default_probability)))
+        payload: Dict[str, Any] = {}
+
+        prediction_raw = ai_context.get("prediction")
+        if prediction_raw is not None:
+            try:
+                payload["prediction"] = float(prediction_raw)
+            except (TypeError, ValueError):
+                pass
+
+        prediction_bps_raw = ai_context.get("prediction_bps")
+        if prediction_bps_raw is not None:
+            try:
+                normalized_return = float(prediction_bps_raw)
+            except (TypeError, ValueError):
+                pass
+        payload["prediction_bps"] = normalized_return
+
+        threshold_raw = ai_context.get("threshold_bps")
+        try:
+            payload["threshold_bps"] = float(threshold_raw) if threshold_raw is not None else 0.0
+        except (TypeError, ValueError):
+            payload["threshold_bps"] = 0.0
+
+        payload["direction"] = ai_context.get("direction")
+
+        probability_raw = ai_context.get("probability")
+        if probability_raw is not None:
+            try:
+                ai_probability = max(0.0, min(1.0, float(probability_raw)))
+            except (TypeError, ValueError):
+                ai_probability = None
+            if ai_probability is not None:
+                payload["probability"] = ai_probability
+                normalized_probability = max(normalized_probability, ai_probability)
+
+        if "evaluated_at" in ai_context:
+            payload["evaluated_at"] = ai_context["evaluated_at"]
+
+        return normalized_return, normalized_probability, payload
+
+    def _resolve_decision_orchestrator(self) -> Any | None:
+        orchestrator = self.decision_orchestrator
+        if orchestrator is not None:
+            return orchestrator
+        if self.bootstrap_context is not None:
+            return getattr(self.bootstrap_context, "decision_orchestrator", None)
+        return None
+
     def _fetch_market_data(self, symbol: str, timeframe: str) -> pd.DataFrame | None:
         provider = self.market_data_provider or self.data_provider
         if provider is None:
@@ -566,6 +766,178 @@ class AutoTrader:
                         except TypeError:
                             return None
         return None
+
+    def _decision_risk_profile_name(self) -> str:
+        if self.bootstrap_context is not None:
+            profile = getattr(self.bootstrap_context, "risk_profile_name", None)
+            if profile:
+                return str(profile)
+        return "default"
+
+    def _estimate_candidate_notional(self, symbol: str) -> float:
+        del symbol  # symbol not used yet
+        leverage = abs(getattr(self, "current_leverage", 1.0))
+        return max(1000.0, leverage * 1000.0)
+
+    def _build_decision_candidate(
+        self,
+        *,
+        symbol: str,
+        signal: str,
+        market_data: pd.DataFrame,
+        assessment: MarketRegimeAssessment,
+        last_return: float,
+        ai_context: Mapping[str, object] | None = None,
+    ) -> Any | None:
+        if DecisionCandidate is None:
+            return None
+        if market_data.empty:
+            return None
+        try:
+            row = market_data.iloc[-1]
+        except Exception:
+            return None
+        features: Dict[str, float] = {}
+        for key, value in row.items():
+            try:
+                features[str(key)] = float(value)
+            except (TypeError, ValueError):
+                continue
+        features["assessment_confidence"] = float(assessment.confidence)
+        features["assessment_risk"] = float(assessment.risk_score)
+        features["signal_direction"] = 1.0 if signal == "buy" else -1.0
+        timestamp = getattr(row, "name", None)
+        metadata: Dict[str, Any] = {
+            "auto_trader": {
+                "signal": signal,
+                "strategy": self.current_strategy,
+            },
+            "decision_engine": {
+                "features": features,
+                "generated_at": timestamp,
+            },
+        }
+        expected_return = float(last_return * 10_000.0)
+        if signal == "sell":
+            expected_return = -abs(expected_return)
+        elif signal == "buy":
+            expected_return = abs(expected_return)
+        expected_probability = max(0.0, min(1.0, float(assessment.confidence)))
+        if ai_context:
+            expected_return, expected_probability, ai_payload = self._normalize_ai_context(
+                ai_context,
+                default_return_bps=expected_return,
+                default_probability=expected_probability,
+            )
+            metadata["decision_engine"]["ai"] = ai_payload
+        candidate = DecisionCandidate(
+            strategy=self.current_strategy,
+            action="enter" if signal == "buy" else "exit",
+            risk_profile=self._decision_risk_profile_name(),
+            symbol=symbol,
+            notional=self._estimate_candidate_notional(symbol),
+            expected_return_bps=expected_return,
+            expected_probability=expected_probability,
+            metadata=metadata,
+        )
+        return candidate
+
+    def _build_risk_snapshot(self, profile: str) -> Mapping[str, object]:
+        engine = self._decision_risk_engine or self.core_risk_engine
+        if engine is not None and hasattr(engine, "snapshot_state"):
+            try:
+                snapshot = engine.snapshot_state(profile)
+            except Exception:
+                snapshot = None
+            if snapshot:
+                return snapshot
+        return {
+            "profile": profile,
+            "start_of_day_equity": 0.0,
+            "last_equity": 0.0,
+            "peak_equity": 0.0,
+            "daily_realized_pnl": 0.0,
+            "positions": {},
+        }
+
+    def _decision_threshold_snapshot(self) -> Mapping[str, object]:
+        config = self._decision_engine_config
+        thresholds: Mapping[str, object] | None = None
+        if config is not None:
+            orchestrator_cfg = getattr(config, "orchestrator", None)
+            if orchestrator_cfg is not None:
+                thresholds = {
+                    "max_cost_bps": getattr(orchestrator_cfg, "max_cost_bps", None),
+                    "min_net_edge_bps": getattr(orchestrator_cfg, "min_net_edge_bps", None),
+                    "min_probability": getattr(config, "min_probability", None),
+                }
+        return thresholds or {}
+
+    def _serialize_decision_evaluation(
+        self,
+        evaluation: Any,
+        *,
+        thresholds: Mapping[str, object] | None = None,
+    ) -> Mapping[str, object]:
+        payload: Dict[str, Any] = {
+            "accepted": bool(getattr(evaluation, "accepted", False)),
+            "reasons": list(getattr(evaluation, "reasons", ())),
+            "model": getattr(evaluation, "model_name", None),
+            "net_edge_bps": getattr(evaluation, "net_edge_bps", None),
+            "cost_bps": getattr(evaluation, "cost_bps", None),
+            "model_expected_return_bps": getattr(
+                evaluation, "model_expected_return_bps", None
+            ),
+            "model_success_probability": getattr(
+                evaluation, "model_success_probability", None
+            ),
+        }
+        selection = getattr(evaluation, "model_selection", None)
+        if selection is not None and hasattr(selection, "to_mapping"):
+            try:
+                payload["model_selection"] = selection.to_mapping()
+            except Exception:
+                payload["model_selection"] = {
+                    "selected": getattr(selection, "selected", None),
+                }
+        snapshot = thresholds or getattr(evaluation, "thresholds_snapshot", None)
+        if snapshot:
+            payload["thresholds"] = dict(snapshot)
+        return payload
+
+    def _evaluate_decision_candidate(
+        self,
+        *,
+        symbol: str,
+        signal: str,
+        market_data: pd.DataFrame,
+        assessment: MarketRegimeAssessment,
+        last_return: float,
+        ai_context: Mapping[str, object] | None = None,
+    ) -> Any | None:
+        orchestrator = self._resolve_decision_orchestrator()
+        if orchestrator is None or DecisionCandidate is None:
+            return None
+        candidate = self._build_decision_candidate(
+            symbol=symbol,
+            signal=signal,
+            market_data=market_data,
+            assessment=assessment,
+            last_return=last_return,
+            ai_context=ai_context,
+        )
+        if candidate is None:
+            return None
+        snapshot = self._build_risk_snapshot(candidate.risk_profile)
+        try:
+            evaluation = orchestrator.evaluate_candidate(candidate, snapshot)
+        except Exception as exc:  # pragma: no cover - defensywne logowanie
+            self._log(
+                f"DecisionOrchestrator evaluation failed: {exc!r}",
+                level=logging.ERROR,
+            )
+            return None
+        return evaluation
 
     def _map_regime_to_signal(
         self,
@@ -1534,9 +1906,10 @@ class AutoTrader:
         cooldown_reason: str | None = None,
         guardrail_reasons: list[str] | None = None,
         guardrail_triggers: list[GuardrailTrigger] | None = None,
+        decision_engine: Any | None = None,
+        ai_context: Mapping[str, object] | None = None,
     ) -> RiskDecision:
         should_trade = signal in {"buy", "sell"} and self.current_leverage > 0 and not cooldown_active
-        fraction = self.current_leverage if should_trade else 0.0
         if cooldown_active:
             state = "halted"
         else:
@@ -1557,12 +1930,46 @@ class AutoTrader:
         details["guardrail_triggers"] = [trigger.to_dict() for trigger in guardrail_triggers or []]
         if summary is not None:
             details["summary"] = summary.to_dict()
+        decision_payload: Dict[str, Any] | None = None
+        if decision_engine is not None:
+            decision_payload = self._serialize_decision_evaluation(
+                decision_engine,
+                thresholds=self._decision_threshold_snapshot(),
+            )
+        if ai_context:
+            base_return_raw = ai_context.get("prediction_bps", 0.0)
+            try:
+                base_return = float(base_return_raw)
+            except (TypeError, ValueError):
+                base_return = 0.0
+            base_probability_raw = ai_context.get("probability", 0.0)
+            try:
+                base_probability = float(base_probability_raw)
+            except (TypeError, ValueError):
+                base_probability = 0.0
+            _, _, ai_payload = self._normalize_ai_context(
+                ai_context,
+                default_return_bps=base_return,
+                default_probability=base_probability,
+            )
+            if decision_payload is None:
+                decision_payload = {}
+            decision_payload["ai"] = ai_payload
+        if decision_payload is not None:
+            details["decision_engine"] = decision_payload
         mode = "demo"
         if hasattr(self.gui, "is_demo_mode_active"):
             try:
                 mode = "demo" if self.gui.is_demo_mode_active() else "live"
             except Exception:
                 mode = "demo"
+        if getattr(self, "_ai_degraded", False):
+            details["ai_degraded"] = True
+            if mode == "live":
+                should_trade = False
+                state = "halted"
+                reason = "AI backend degraded"
+        fraction = self.current_leverage if should_trade else 0.0
         return RiskDecision(
             should_trade=should_trade,
             fraction=fraction,
@@ -1611,6 +2018,12 @@ class AutoTrader:
                 timeframe = "1h"
 
         ai_manager = self._resolve_ai_manager()
+        self._ai_degraded = bool(getattr(ai_manager, "is_degraded", False)) if ai_manager else False
+        if self._ai_degraded:
+            self._log(
+                "AI manager running in degraded mode – live trades require explicit confirmation.",
+                level=logging.WARNING,
+            )
         if not symbol or ai_manager is None:
             self._log("Auto-trade prerequisites missing AI manager or symbol", level=logging.DEBUG)
             self._auto_trade_stop.wait(self.auto_trade_interval_s)
@@ -1653,6 +2066,22 @@ class AutoTrader:
             changes = returns.pct_change().dropna()
             if not changes.empty:
                 last_return = float(changes.iloc[-1])
+
+        ai_context = self._compute_ai_signal_context(ai_manager, symbol, market_data)
+        self._last_ai_context = ai_context
+        ai_direction = None
+        ai_prediction_bps = 0.0
+        ai_threshold_bps = 0.0
+        if ai_context:
+            ai_direction = ai_context.get("direction")
+            try:
+                ai_prediction_bps = float(ai_context.get("prediction_bps", 0.0))
+            except (TypeError, ValueError):
+                ai_prediction_bps = 0.0
+            try:
+                ai_threshold_bps = float(ai_context.get("threshold_bps", 0.0))
+            except (TypeError, ValueError):
+                ai_threshold_bps = 0.0
 
         effective_risk = assessment.risk_score
         if summary is not None:
@@ -1990,9 +2419,68 @@ class AutoTrader:
         self._adjust_strategy_parameters(assessment, aggregated_risk=effective_risk, summary=summary)
         signal = self._map_regime_to_signal(assessment, last_return, summary=summary)
         signal = self._apply_signal_guardrails(signal, effective_risk, summary)
+        pre_ai_signal = signal
+        ai_force_hold = False
+        if ai_context is None:
+            if pre_ai_signal in {"buy", "sell"}:
+                self._log(
+                    "AI predictions unavailable – forcing HOLD",
+                    level=logging.WARNING,
+                    symbol=symbol,
+                )
+            signal = "hold"
+            ai_force_hold = True
+        else:
+            if ai_direction == "hold":
+                if pre_ai_signal in {"buy", "sell"}:
+                    self._log(
+                        "AI prediction below quality threshold; forcing HOLD",
+                        level=logging.INFO,
+                        symbol=symbol,
+                        prediction_bps=ai_prediction_bps,
+                        threshold_bps=ai_threshold_bps,
+                    )
+                signal = "hold"
+                ai_force_hold = True
+            elif pre_ai_signal in {"buy", "sell"} and ai_direction not in (None, pre_ai_signal):
+                self._log(
+                    "AI prediction disagrees with regime signal; forcing HOLD",
+                    level=logging.INFO,
+                    symbol=symbol,
+                    regime_signal=pre_ai_signal,
+                    ai_direction=ai_direction,
+                    prediction_bps=ai_prediction_bps,
+                )
+                signal = "hold"
+                ai_force_hold = True
+
+        decision_evaluation: Any | None = None
+        if signal in {"buy", "sell"}:
+            decision_evaluation = self._evaluate_decision_candidate(
+                symbol=symbol,
+                signal=signal,
+                market_data=market_data,
+                assessment=assessment,
+                last_return=last_return,
+                ai_context=ai_context,
+            )
+            if decision_evaluation is not None and not getattr(
+                decision_evaluation, "accepted", True
+            ):
+                thresholds_snapshot = self._decision_threshold_snapshot()
+                self._log(
+                    "DecisionOrchestrator rejected signal",  # type: ignore[arg-type]
+                    level=logging.INFO,
+                    symbol=symbol,
+                    signal=signal,
+                    reasons=list(getattr(decision_evaluation, "reasons", ())),
+                    thresholds=thresholds_snapshot,
+                )
+                signal = "hold"
+                ai_force_hold = True
         guardrail_reasons = list(self._last_guardrail_reasons)
         guardrail_triggers = [trigger.to_dict() for trigger in self._last_guardrail_triggers]
-        if guardrail_reasons and signal == "hold":
+        if guardrail_reasons and signal == "hold" and not ai_force_hold:
             self._log(
                 "Signal overridden by guardrails",
                 level=logging.INFO,
@@ -2012,6 +2500,8 @@ class AutoTrader:
             cooldown_reason=self._cooldown_reason,
             guardrail_reasons=guardrail_reasons,
             guardrail_triggers=self._last_guardrail_triggers,
+            decision_engine=decision_evaluation,
+            ai_context=ai_context,
         )
 
         self._last_signal = signal
@@ -2023,7 +2513,7 @@ class AutoTrader:
             level=logging.INFO,
         )
         if hasattr(self.emitter, "emit"):
-            payload = {
+            payload: dict[str, Any] = {
                 "symbol": symbol,
                 "signal": signal,
                 "regime": assessment.regime.value,
@@ -2505,6 +2995,7 @@ class AutoTrader:
             until_ts=until_ts,
         )
 
+        iterator: Iterable[dict[str, Any]]
         if reverse:
             iterator = reversed(filtered_records)
         else:
@@ -3436,10 +3927,11 @@ class AutoTrader:
         if flatten_decision and "decision" in df.columns:
             prefix = str(decision_prefix)
             decision_series = df["decision"]
+            ordered_keys: list[Any]
             if normalized_decision_fields is not None:
                 ordered_keys = list(normalized_decision_fields)
             else:
-                ordered_keys: list[Any] = []
+                ordered_keys = []
                 for payload in decision_series:
                     if isinstance(payload, dict):
                         for key in payload.keys():

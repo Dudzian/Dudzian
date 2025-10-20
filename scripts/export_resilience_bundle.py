@@ -427,71 +427,22 @@ def _run_stage5(argv: Sequence[str]) -> int:
     if key_source:
         logging.info("Użyto klucza HMAC z %s", key_source)
 
-def _load_stage5_signing_key(args: argparse.Namespace) -> tuple[bytes | None, str | None]:
-    inline = args.hmac_key or getattr(args, "signing_key", None)
-    env_name = args.hmac_key_env or getattr(args, "signing_key_env", None)
-    file_path = args.hmac_key_file or getattr(args, "signing_key_path", None)
-    return _load_signing_key(inline=inline, env=env_name, path=file_path)
-
-
-def _run_stage5(argv: Sequence[str]) -> int:
-    parser = _build_stage5_parser()
-    args = parser.parse_args(argv)
-    logging.basicConfig(level=args.log_level.upper(), format="%(levelname)s %(message)s")
-
-def main(argv: Sequence[str] | None = None) -> int:
-    try:
-        effective = sys.argv[1:] if argv is None else argv
-        return run(effective)
-    except SystemExit as exc:  # pragma: no cover - przekazujemy kod wyjścia
-        raise
-    except Exception as exc:  # noqa: BLE001 - komunikat przyjazny CLI
-        print(str(exc))
-        return 2
-
-    include = tuple(args.include) if args.include else None
-    exclude = tuple(args.exclude) if args.exclude else None
-    metadata = _parse_metadata(args.metadata)
-
-    try:
-        builder = ResilienceBundleBuilder(
-            args.source,
-            include=include,
-            exclude=exclude,
-        )
-        artifacts = builder.build(
-            bundle_name=args.bundle_name,
-            output_dir=args.output_dir,
-            metadata=metadata,
-            signing_key=signing_key,
-            signing_key_id=args.hmac_key_id,
-        )
-    except ValueError as exc:
-        logging.error("Budowa paczki nie powiodła się: %s", exc)
-        return 2
-    except Exception:  # noqa: BLE001 - zachowujemy stack trace w logach
-        logging.exception("Budowa paczki nie powiodła się")
-        return 2
-
-    if key_source:
-        logging.info("Użyto klucza HMAC z %s", key_source)
-
     print(artifacts.bundle_path)
     return 0
 
 
 def run(argv: Sequence[str] | None = None) -> int:
-    args = list(argv or ())
-    if not args or any(item.startswith("--source") or item == "--source" for item in args):
+    args = list(argv or sys.argv[1:])
+    if not args or any(item == "--source" or item.startswith("--source=") for item in args):
         return _run_stage5(args)
     return _run_stage6(args)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     try:
-        effective = sys.argv[1:] if argv is None else argv
+        effective = list(argv or sys.argv[1:])
         return run(effective)
-    except SystemExit as exc:  # pragma: no cover - przekazujemy kod wyjścia
+    except SystemExit:  # pragma: no cover - przekazujemy kod wyjścia
         raise
     except Exception as exc:  # noqa: BLE001 - komunikat przyjazny CLI
         print(str(exc))

@@ -4,6 +4,9 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
+from pytest import CaptureFixture
+
 from bot_core.compliance.training import TrainingSession, write_training_log
 from bot_core.reporting.tco import (
     TcoCostItem,
@@ -127,7 +130,9 @@ def _prepare_inputs(tmp_path: Path) -> dict[str, Path | str]:
     }
 
 
-def test_run_stage5_hypercare_cycle_creates_summary(tmp_path: Path, capsys: "CaptureFixture[str]") -> None:
+def test_run_stage5_hypercare_cycle_creates_summary(
+    tmp_path: Path, capsys: CaptureFixture[str]
+) -> None:
     paths = _prepare_inputs(tmp_path)
     output_path = tmp_path / "summary.json"
     signature_path = tmp_path / "summary.signature.json"

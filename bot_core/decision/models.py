@@ -162,6 +162,7 @@ class DecisionEvaluation:
     model_success_probability: float | None = None
     model_name: str | None = None
     model_selection: "ModelSelectionMetadata | None" = None
+    thresholds_snapshot: Mapping[str, float | None] | None = None
 
     def to_mapping(self) -> Mapping[str, object]:
         payload: MutableMapping[str, object] = {
@@ -178,6 +179,8 @@ class DecisionEvaluation:
         }
         if self.model_selection is not None:
             payload["model_selection"] = self.model_selection.to_mapping()
+        if self.thresholds_snapshot is not None:
+            payload["thresholds"] = dict(self.thresholds_snapshot)
         return payload
 
 

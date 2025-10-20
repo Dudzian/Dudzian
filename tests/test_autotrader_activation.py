@@ -30,9 +30,10 @@ class _DummyGui:
         self.timeframe_var = _DummyVar()
         self.ai_mgr = None
         self.ex_mgr = None
+        self._demo_mode_active = True
 
     def is_demo_mode_active(self) -> bool:
-        return True
+        return bool(self._demo_mode_active)
 
 
 def test_auto_trader_requires_manual_confirmation() -> None:

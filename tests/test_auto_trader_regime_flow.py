@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import enum
 import copy
+import time
 from pathlib import Path
 import enum
 from dataclasses import MISSING as _MISSING, dataclass
 from typing import Any
+from dataclasses import dataclass
 from types import SimpleNamespace
+from typing import Any
+from collections.abc import Iterable
 
 import numpy as np
 import pandas as pd
@@ -20,7 +25,7 @@ from bot_core.ai.regime import (
     RegimeSummary,
     RiskLevel,
 )
-from bot_core.auto_trader.app import AutoTrader, RiskDecision
+from bot_core.auto_trader.app import AutoTrader, GuardrailTrigger, RiskDecision
 from tests.sample_data_loader import load_summary_for_regime
 
 
@@ -70,6 +75,11 @@ class _RiskServiceStub:
         self.calls: list[RiskDecision] = []
 
     def __call__(self, decision: RiskDecision) -> bool:
+    def __init__(self, approval: Any) -> None:
+        self._approval = approval
+        self.calls: list[RiskDecision] = []
+
+    def evaluate_decision(self, decision: RiskDecision) -> Any:
         self.calls.append(decision)
         return self._approval
 
@@ -84,6 +94,12 @@ class _RiskServiceResponseStub:
         if callable(self._response):
             return self._response()
         return self._response
+    def evaluate_decision(self, decision: RiskDecision) -> Any:
+        self.calls.append(decision)
+        result = self._response
+        if callable(result):
+            result = result()
+        return result
 
 
 class _ExecutionServiceStub:
@@ -98,6 +114,12 @@ class _ExecutionServiceStub:
     def execute(self, decision: RiskDecision) -> None:
         self.calls.append(decision)
         self.methods.append("execute")
+        self.methods.append("execute_decision")
+        self.calls.append(decision)
+
+    def execute(self, decision: RiskDecision) -> None:
+        self.methods.append("execute")
+        self.calls.append(decision)
 
 
 class _ExecutionServiceExecuteOnly:
@@ -108,11 +130,37 @@ class _ExecutionServiceExecuteOnly:
     def execute(self, decision: RiskDecision) -> None:
         self.calls.append(decision)
         self.methods.append("execute")
+        self.methods.append("execute")
+        self.calls.append(decision)
+
+
+_MISSING = object()
 
 
 class _Approval(enum.Enum):
     APPROVED = "approved"
     DENIED = "denied"
+
+
+def _build_summary(
+    regime: MarketRegime,
+    *,
+    dataset: str | None = None,
+    step: int = 24,
+    **overrides: Any,
+) -> RegimeSummary:
+    rename_map = {"risk": "risk_score"}
+    normalized: dict[str, Any] = {}
+    for key, value in overrides.items():
+        mapped = rename_map.get(key, key)
+        normalized[mapped] = value
+    overrides_map = normalized or None
+    return load_summary_for_regime(
+        regime,
+        dataset=dataset,
+        step=step,
+        overrides=overrides_map,
+    )
 
 
 def test_map_regime_to_signal_respects_config(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -484,6 +532,7 @@ class _DummyAssessment:
     regime: MarketRegime
     risk_score: float
     confidence: float = 0.8
+    ai_prediction: float = 0.015
 
     def to_assessment(self, symbol: str) -> MarketRegimeAssessment:
         return MarketRegimeAssessment(
@@ -512,14 +561,37 @@ class _AIManagerStub:
         self._queue = assessments
         self.calls: list[str] = []
         self._summaries = summaries or {}
+        self.ai_threshold_bps = 5.0
+        self.is_degraded = False
+        self._last_prediction = assessments[0].ai_prediction if assessments else 0.0
 
     def assess_market_regime(self, symbol: str, market_data: pd.DataFrame, **_: Any) -> MarketRegimeAssessment:
         self.calls.append(symbol)
         next_assessment = self._queue.pop(0)
+        self._last_prediction = next_assessment.ai_prediction
         return next_assessment.to_assessment(symbol)
 
     def get_regime_summary(self, symbol: str) -> RegimeSummary | None:
         return self._summaries.get(symbol)
+
+    async def predict_series(
+        self,
+        symbol: str,
+        df: pd.DataFrame,
+        *,
+        model_types: Any | None = None,
+        feature_cols: Any | None = None,
+    ) -> pd.Series:
+        del symbol, model_types, feature_cols
+        if not isinstance(df, pd.DataFrame) or df.empty:
+            index = pd.RangeIndex(start=0, stop=1)
+        else:
+            index = df.index[-1:]
+        return pd.Series([float(self._last_prediction)], index=index)
+
+    def require_real_models(self) -> None:
+        if self.is_degraded:
+            raise RuntimeError("fallback backend")
 
 
 def _assert_summary_details(
@@ -742,6 +814,38 @@ def test_auto_trader_respects_high_risk_regime() -> None:
     assert trader.current_leverage == 0.0
     assert decision.should_trade is False
     result.assert_provider_called("ETHUSDT")
+
+
+def test_auto_trader_holds_when_ai_signal_below_threshold() -> None:
+    result = _execute_auto_trade(
+        "SOLUSDT",
+        [_DummyAssessment(regime=MarketRegime.TREND, risk_score=0.32, ai_prediction=0.0)],
+    )
+    decision, trader, _, provider, _ = result
+
+    assert decision.should_trade is False
+    assert trader._last_signal == "hold"
+    ai_details = decision.details.get("decision_engine", {}).get("ai")
+    assert ai_details is not None
+    assert ai_details.get("direction") == "hold"
+    assert ai_details.get("prediction_bps") == pytest.approx(0.0)
+    result.assert_provider_called("SOLUSDT")
+
+
+def test_auto_trader_ai_conflict_forces_hold() -> None:
+    result = _execute_auto_trade(
+        "XRPUSDT",
+        [_DummyAssessment(regime=MarketRegime.TREND, risk_score=0.3, ai_prediction=-0.02)],
+    )
+    decision, trader, _, provider, _ = result
+
+    assert decision.should_trade is False
+    assert trader._last_signal == "hold"
+    ai_details = decision.details.get("decision_engine", {}).get("ai")
+    assert ai_details is not None
+    assert ai_details.get("direction") == "sell"
+    assert ai_details.get("prediction_bps") == pytest.approx(-200.0)
+    result.assert_provider_called("XRPUSDT")
 
 
 def test_auto_trader_uses_summary_to_lock_trading_on_high_risk() -> None:

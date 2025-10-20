@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
 
+from bot_core.alerts import DefaultAlertRouter
 from bot_core.alerts.coverage import (
     build_environment_coverage_report,
     dispatch_coverage_alert,
