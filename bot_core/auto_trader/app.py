@@ -1787,7 +1787,7 @@ class AutoTrader:
             level=logging.INFO,
         )
         if hasattr(self.emitter, "emit"):
-            payload = {
+            payload: dict[str, Any] = {
                 "symbol": symbol,
                 "signal": signal,
                 "regime": assessment.regime.value,
@@ -2152,6 +2152,7 @@ class AutoTrader:
             until_ts=until_ts,
         )
 
+        iterator: Iterable[dict[str, Any]]
         if reverse:
             iterator = reversed(filtered_records)
         else:
@@ -2378,10 +2379,11 @@ class AutoTrader:
         if flatten_decision and "decision" in df.columns:
             prefix = str(decision_prefix)
             decision_series = df["decision"]
+            ordered_keys: list[Any]
             if normalized_decision_fields is not None:
                 ordered_keys = list(normalized_decision_fields)
             else:
-                ordered_keys: list[Any] = []
+                ordered_keys = []
                 for payload in decision_series:
                     if isinstance(payload, dict):
                         for key in payload.keys():

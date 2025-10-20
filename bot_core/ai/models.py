@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Mapping, MutableMapping, Sequence
+from typing import Any, Mapping, MutableMapping, Sequence, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .training import SupportsInference
 
 
 def _parse_trained_at(value: object) -> datetime:
@@ -85,7 +88,7 @@ class ModelArtifact:
             backend=backend,
         )
 
-    def build_model(self) -> "SupportsInference":
+    def build_model(self) -> SupportsInference:
         from .training import SimpleGradientBoostingModel
         from .training import get_external_model_adapter
 
