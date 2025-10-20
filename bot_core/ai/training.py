@@ -15,6 +15,7 @@ from typing import (
     runtime_checkable,
 )
 
+from ._license import ensure_ai_signals_enabled
 from .feature_engineering import FeatureDataset
 from .models import ModelArtifact
 
@@ -68,6 +69,7 @@ _EXTERNAL_ADAPTERS: dict[str, ExternalModelAdapter] = {}
 def register_external_model_adapter(adapter: ExternalModelAdapter) -> None:
     """Rejestruje adapter modelu zewnętrznego."""
 
+    ensure_ai_signals_enabled("rejestracji adapterów modeli AI")
     backend = adapter.backend.lower()
     _EXTERNAL_ADAPTERS[backend] = ExternalModelAdapter(
         backend=backend,
@@ -325,6 +327,7 @@ class ModelTrainer:
         backend: str = "builtin",
         adapter_options: Mapping[str, object] | None = None,
     ) -> None:
+        ensure_ai_signals_enabled("trenowania modeli AI")
         if not 0.0 <= validation_split < 1.0:
             raise ValueError("validation_split musi zawierać się w przedziale [0, 1)")
         self.learning_rate = float(learning_rate)

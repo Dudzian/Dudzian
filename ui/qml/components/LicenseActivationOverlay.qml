@@ -78,6 +78,12 @@ FocusScope {
                         }
 
                         Button {
+                            text: qsTr("Automatyczna aktywacja")
+                            enabled: licenseController && !licenseController.provisioningInProgress
+                            onClicked: licenseController.autoProvision(activationController ? activationController.fingerprint : ({}))
+                        }
+
+                        Button {
                             text: qsTr("Wyczyść pole")
                             onClicked: manualInput.text = ""
                         }
@@ -112,13 +118,18 @@ FocusScope {
                         : Qt.rgba(0.36, 0.74, 0.52, 1)
             }
 
+            BusyIndicator {
+                running: licenseController && licenseController.provisioningInProgress
+                visible: running
+            }
+
             Label {
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
                 visible: licenseController.licenseActive
-                text: qsTr("Aktywowano profil %1. Licencja ważna do %2.")
-                          .arg(licenseController.licenseProfile)
-                          .arg(licenseController.licenseExpiresAt)
+                text: qsTr("Aktywowano edycję %1. Utrzymanie do %2.")
+                          .arg(licenseController.licenseEdition)
+                          .arg(licenseController.licenseMaintenanceUntil || qsTr("bez terminu"))
             }
         }
     }

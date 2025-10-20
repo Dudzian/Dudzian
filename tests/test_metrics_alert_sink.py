@@ -1449,6 +1449,8 @@ def test_retry_backlog_alerts_can_be_disabled(tmp_path: Path) -> None:
         log_overlay_events=False,
         log_jank_events=False,
         log_retry_backlog_events=False,
+        log_tag_inactivity_events=False,
+        log_performance_events=False,
     )
 
     snapshot = _make_snapshot(

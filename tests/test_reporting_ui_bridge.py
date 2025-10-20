@@ -1448,7 +1448,7 @@ def test_cli_delete_returns_json(tmp_path: Path, capsys: pytest.CaptureFixture[s
 
     captured = capsys.readouterr()
     payload = json.loads(captured.out)
-    assert payload["status"] == "ok"
+    assert payload["status"] == "deleted"
 
     # katalog powinien zostać usunięty
     assert not report_dir.exists()

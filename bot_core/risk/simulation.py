@@ -19,6 +19,11 @@ except Exception:  # pragma: no cover
     pa = None  # type: ignore
     pq = None  # type: ignore
 
+try:  # PyYAML bywa opcjonalne w minimalnych buildach
+    import yaml
+except Exception:  # pragma: no cover - fallback wykorzystuje json
+    yaml = None  # type: ignore
+
 # konfiguracja i profile (różne gałęzie)
 try:
     from bot_core.config import load_core_config
@@ -897,11 +902,46 @@ class RiskSimulationRunner:
 def load_profiles_from_config(path: str | Path) -> Sequence[RiskProfile]:
     """Wczytuje i instancjuje profile ryzyka na podstawie konfiguracji."""
     if load_core_config is None or build_risk_profile_from_config is None:
-        raise RuntimeError("Config-based profiles are not available in this build.")
+        return _load_profiles_from_yaml(path)
     config = load_core_config(path)
     profiles: list[RiskProfile] = []
     for profile_config in config.risk_profiles.values():
         profiles.append(build_risk_profile_from_config(profile_config))
+    if not profiles:
+        raise RuntimeError("Brak profili ryzyka w konfiguracji")
+    return profiles
+
+
+def _load_profiles_from_yaml(path: str | Path) -> Sequence[RiskProfile]:
+    """Minimalny fallback wykorzystujący ManualProfile i YAML."""
+
+    if ManualProfile is None:
+        raise RuntimeError("ManualProfile is not available in this build.")
+    if yaml is None:
+        raise RuntimeError("PyYAML is required to load risk profiles from config.")
+
+    payload = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+    risk_profiles = payload.get("risk_profiles") if isinstance(payload, Mapping) else None
+    if not isinstance(risk_profiles, Mapping):
+        raise RuntimeError("Config does not define risk_profiles section")
+
+    profiles: list[RiskProfile] = []
+    for name, config in risk_profiles.items():
+        if not isinstance(config, Mapping):
+            continue
+        max_positions = int(config.get("max_open_positions", config.get("max_positions", 1)))
+        profile = ManualProfile(
+            name=str(name),
+            max_positions=max_positions,
+            max_leverage=float(config.get("max_leverage", 1.0)),
+            drawdown_limit=float(config.get("hard_drawdown_pct", config.get("drawdown_limit", 0.1))),
+            daily_loss_limit=float(config.get("max_daily_loss_pct", 0.05)),
+            max_position_pct=float(config.get("max_position_pct", 0.2)),
+            target_volatility=float(config.get("target_volatility", 0.15)),
+            stop_loss_atr_multiple=float(config.get("stop_loss_atr_multiple", 1.0)),
+        )
+        profiles.append(profile)
+
     if not profiles:
         raise RuntimeError("Brak profili ryzyka w konfiguracji")
     return profiles

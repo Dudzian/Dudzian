@@ -1,9 +1,9 @@
-"""Warstwa zgodności eksportująca nowe komponenty GUI."""
+"""Kompatybilna nakładka na nowy moduł GUI w ``KryptoLowca.ui.trading``."""
 
 from __future__ import annotations
 
-from pathlib import Path
-import sys
+# Zachowujemy minimalne zależności – nowe moduły samodzielnie dbają o konfigurację
+# środowiska (ścieżki repo, logging itp.).
 
 
 def _ensure_repo_root() -> None:
@@ -57,6 +57,8 @@ except Exception:
 
 # --- LOGGING ---
 import logging
+from bot_core.risk.events import RiskDecisionLog
+from bot_core.risk.repository import FileRiskRepository
 from KryptoLowca.logging_utils import (
     LOGS_DIR as GLOBAL_LOGS_DIR,
     DEFAULT_LOG_FILE,
@@ -108,8 +110,7 @@ from KryptoLowca.ui.trading import view as trading_view
 from KryptoLowca.ui.trading.state import AppState
 from KryptoLowca.ui.trading.controller import TradingSessionController
 
-# =====================================
-# Pomocnicze
+# ==============================# Pomocnicze
 # =====================================
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -310,18 +311,34 @@ class TradingGUI:
         self.risk_manager_settings: Dict[str, Any] = {}
         self.risk_manager_config: Optional[Any] = None
         self.risk_profile_var = tk.StringVar(value="—")
+        self._risk_repository = FileRiskRepository(RISK_STATE_DIR)
+        self._risk_decision_log = RiskDecisionLog(
+            max_entries=500,
+            jsonl_path=RISK_DECISIONS_LOG,
+        )
 
         # ====== MENEDŻERY ======
         self.db = DatabaseManager()  # bezargumentowy
         self.sec = SecurityManager(KEYS_FILE, SALT_FILE)
         self.cfg = ConfigManager(PRESETS_DIR)
         self.reporter = ReportManager(str(DB_FILE))
+        initial_risk_config: Dict[str, Any] = {
+            "max_risk_per_trade": float(self.risk_per_trade.get()),
+            "max_portfolio_risk": float(self.portfolio_risk.get()),
+            "max_daily_loss_pct": float(self.max_daily_loss_pct),
+            "max_drawdown_pct": float(self.portfolio_risk.get()),
+            "hard_drawdown_pct": float(self.portfolio_risk.get()),
+        }
+        if self.risk_profile_name:
+            initial_risk_config["risk_profile_name"] = self.risk_profile_name
+        risk_mode = "paper" if self.is_demo_mode_active() else "live"
         self.risk_mgr = RiskManager(
-            config={
-                "max_risk_per_trade": float(self.risk_per_trade.get()),
-                "max_portfolio_risk": float(self.portfolio_risk.get()),
-                "max_daily_loss_pct": float(self.max_daily_loss_pct),
-            }
+            config=initial_risk_config,
+            db_manager=self.db,
+            mode=risk_mode,
+            repository=self._risk_repository,
+            decision_log=self._risk_decision_log,
+            profile_name=self.risk_profile_name,
         )
         # --- AIManager: zgodność z różnymi sygnaturami konstruktora
         try:
@@ -857,16 +874,39 @@ class TradingGUI:
             self._log("Risk profile settings unavailable in core.yaml", "WARNING")
             return profile_name, settings, profile_cfg
 
+        payload = dict(settings)
+        drawdown = payload.get(
+            "hard_drawdown_pct",
+            payload.get("max_drawdown_pct", payload.get("max_portfolio_risk")),
+        )
+        if drawdown is not None:
+            try:
+                drawdown_value = float(drawdown)
+            except Exception:
+                drawdown_value = None
+            if drawdown_value is not None:
+                payload.setdefault("hard_drawdown_pct", drawdown_value)
+                payload.setdefault("max_drawdown_pct", drawdown_value)
+        if profile_name:
+            payload.setdefault("risk_profile_name", profile_name)
+        risk_mode = "paper" if self.is_demo_mode_active() else "live"
         try:
-            self.risk_mgr = RiskManager(config=dict(settings))
+            self.risk_mgr = RiskManager(
+                config=payload,
+                db_manager=self.db,
+                mode=risk_mode,
+                repository=self._risk_repository,
+                decision_log=self._risk_decision_log,
+                profile_name=profile_name,
+            )
         except Exception as exc:
             self._log(f"Risk manager reload failed: {exc}", "ERROR")
             raise
 
         self.risk_profile_name = profile_name
-        self.risk_manager_settings = dict(settings)
-        self.risk_manager_config = profile_cfg
-        self._apply_risk_settings_to_ui(settings, profile_name)
+        self.risk_manager_settings = dict(payload)
+        self.risk_manager_config = profile_cfg or payload
+        self._apply_risk_settings_to_ui(payload, profile_name)
         self._log(f"Risk settings reloaded ({profile_name})", "INFO")
         return profile_name, dict(settings), profile_cfg
 

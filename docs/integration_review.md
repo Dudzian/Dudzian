@@ -17,6 +17,8 @@
   metryki tras wraz z fallbackiem dla profili ryzyka.
 - ZondaAdapter dostępny w `KryptoLowca/exchanges/zonda.py` wraz ze smoke testem tickera i scenariuszem cyklu życia zlecenia w `KryptoLowca/tests/integration/test_demo_sandboxes.py`. Streaming WebSocket pozostaje funkcją opcjonalną, domyślnie wyłączoną w produkcji, a `MarketDataPoller` w `KryptoLowca/exchanges/polling.py` zapewnia REST-owe odpytywanie dla finalnego GUI i progresywny backoff błędów, aby ograniczyć obciążenie API podczas awarii.
 - Nowy Trading GUI korzysta z `MarketDataPoller` poprzez mostek REST, aktualizując ticker w interfejsie po kliknięciu „Start”, prezentując komunikaty o stanie połączenia (łączenie, aktywny ticker, błędy REST) i utrzymując kompatybilność z trybem sandbox/live. Domyślny symbol oraz interwał odpytywania można nadpisać zmiennymi środowiskowymi `TRADING_GUI_DEFAULT_SYMBOL` oraz `TRADING_GUI_MARKET_INTERVAL`.
+- Encrypted API key manager oparty na `EncryptedFileSecretStorage` i adapterze `PresetConfigService`, zapewniający rotację i kontrolę zgodności.
+- Multi-exchange account manager supporting round-robin order dispatch and monitoring across adapters.
 
 ## Missing Scope / Follow-up Items
 - Finalne GUI korzysta wyłącznie z odpytywania REST; ewentualne włączenie strumieni WebSocket wymaga osobnej walidacji wydajnościowej i monitoringu reconnectów w stagingu.

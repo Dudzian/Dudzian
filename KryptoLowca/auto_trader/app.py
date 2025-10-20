@@ -6,9 +6,23 @@ import threading
 import time
 import statistics
 import asyncio
-from typing import Iterable, Mapping, Optional, List, Dict, Any, Callable, Tuple, TYPE_CHECKING
+import math
+from typing import (
+    Iterable,
+    Mapping,
+    Optional,
+    Sequence,
+    List,
+    Dict,
+    Any,
+    Callable,
+    Tuple,
+    TYPE_CHECKING,
+)
+from datetime import datetime, timezone
 import inspect
 from pathlib import Path
+from types import SimpleNamespace
 
 import pandas as pd
 try:
@@ -27,11 +41,22 @@ from importlib import import_module
 
 from bot_core.alerts import AlertSeverity, emit_alert as _core_emit_alert
 from bot_core.auto_trader.app import EmitterLike, RiskDecision as _CoreRiskDecision
-from KryptoLowca.logging_utils import get_logger
+from bot_core.risk.events import RiskDecisionLog
+from bot_core.risk.repository import FileRiskRepository
+try:  # pragma: no cover - środowiska testowe mogą nie zawierać kompletu modeli
+    from bot_core.config.models import RiskProfileConfig  # type: ignore
+except Exception:  # pragma: no cover - fallback gdy modele konfiguracji są niedostępne
+    RiskProfileConfig = None  # type: ignore
+from KryptoLowca.logging_utils import get_logger, LOGS_DIR
 from KryptoLowca.config_manager import StrategyConfig
 from KryptoLowca.telemetry.prometheus_exporter import metrics as prometheus_metrics
 from KryptoLowca.core.services import ExecutionService, RiskService, SignalService, exception_guard
 from KryptoLowca.core.services.data_provider import ExchangeDataProvider
+try:  # pragma: no cover - zależność opcjonalna w środowisku CI
+    from bot_core.market_intel import MarketIntelAggregator, MarketIntelQuery  # type: ignore[attr-defined]
+except Exception:  # pragma: no cover - fallback gdy moduł nie występuje
+    MarketIntelAggregator = None  # type: ignore[assignment]
+    MarketIntelQuery = None  # type: ignore[assignment]
 try:  # pragma: no cover - zależności runtime mogą być niekompletne
     from bot_core.runtime import PaperTradingAdapter  # type: ignore[attr-defined]
 except Exception:  # pragma: no cover - fallback gdy adapter nie jest eksportowany
@@ -60,7 +85,10 @@ try:  # pragma: no cover - zależności bot_core mogą nie być dostępne w każ
     from bot_core.execution.base import ExecutionContext as CoreExecutionContext  # type: ignore
     from bot_core.execution.base import ExecutionService as CoreExecutionService  # type: ignore
     from bot_core.exchanges.base import AccountSnapshot, OrderRequest  # type: ignore
+    from bot_core.risk.base import RiskProfile  # type: ignore
     from bot_core.risk.engine import ThresholdRiskEngine  # type: ignore
+    from bot_core.risk.factory import build_risk_profile_from_config  # type: ignore
+    from bot_core.risk.profiles.manual import ManualProfile  # type: ignore
 except Exception:  # pragma: no cover - fallback gdy bot_core nie jest kompletny
     AIManagerDecisionConnector = None  # type: ignore
     CoreExecutionContext = None  # type: ignore
@@ -68,9 +96,15 @@ except Exception:  # pragma: no cover - fallback gdy bot_core nie jest kompletny
     AccountSnapshot = None  # type: ignore
     OrderRequest = None  # type: ignore
     ThresholdRiskEngine = None  # type: ignore
+    RiskProfile = None  # type: ignore
+    build_risk_profile_from_config = None  # type: ignore
+
+try:  # pragma: no cover - RiskDecisionLog może nie być dostępny w trybie offline
+    from bot_core.risk.events import RiskDecisionLog  # type: ignore
+except Exception:  # pragma: no cover - fallback defensywny
+    RiskDecisionLog = None  # type: ignore
 
 if TYPE_CHECKING:  # pragma: no cover
-    from bot_core.config.models import RiskProfileConfig
     from KryptoLowca.data.market_data import MarketDataProvider, MarketDataRequest
 
 logger = get_logger(__name__)
@@ -143,6 +177,7 @@ class AutoTrader:
         core_risk_engine: Any | None = None,
         core_execution_service: Any | None = None,
         ai_connector: Any | None = None,
+        market_intel: Any | None = None,
     ) -> None:
         self.emitter = emitter
         self.gui = gui
@@ -234,7 +269,22 @@ class AutoTrader:
         if resolved_name:
             self._risk_profile_name = resolved_name
         self._risk_profile_config = profile_config
+        if risk_manager_settings is None:
+            risk_manager_settings = RiskManagerSettings(
+                max_risk_per_trade=0.02,
+                max_daily_loss_pct=0.10,
+                max_portfolio_risk=0.10,
+                max_positions=5,
+                emergency_stop_drawdown=0.15,
+            )
         self._risk_manager_settings = risk_manager_settings
+        self._risk_repository_dir = self._resolve_risk_repository_dir()
+        self._risk_repository = FileRiskRepository(self._risk_repository_dir)
+        self._risk_decision_log = RiskDecisionLog(
+            max_entries=1_000,
+            jsonl_path=self._resolve_risk_decision_log_path(),
+        )
+        self._uses_custom_risk_service = self._provided_risk_service is not None
         if self._provided_risk_service is None:
             service_kwargs = self._risk_manager_settings.risk_service_kwargs()
             self._risk_service = RiskService(**service_kwargs)
@@ -248,6 +298,10 @@ class AutoTrader:
                     except Exception:  # pragma: no cover - defensywne
                         logger.debug("Nie udało się zaktualizować %s w RiskService", attr, exc_info=True)
         self._provided_risk_service = None
+        self._risk_manager_adapter = self._build_risk_manager_adapter(
+            self._risk_manager_settings,
+            profile_name=self._risk_profile_name,
+        )
         if self._risk_profile_config is not None:
             applied = self._apply_runtime_risk_budget(self._strategy_config, force=True)
             if applied is not self._strategy_config:
@@ -275,25 +329,46 @@ class AutoTrader:
         self._core_execution_service = None
         self._core_execution_environment = "paper"
         self._core_portfolio_id = "autotrader"
-        self._core_risk_profile: Optional[str] = None
+        self._core_risk_profile: RiskProfile | None = None  # type: ignore[assignment]
+        self._core_risk_profile_name: Optional[str] = None
         self._core_ai_connector: Optional[AIManagerDecisionConnector] = None
         self._core_ai_notional_by_symbol: Dict[str, float] = {}
         self._core_ai_default_notional: float | None = None
         self._core_account_equity: float = 1_000_000.0
+        self._market_intel: Any | None = market_intel or getattr(gui, "market_intel", None)
+        self._market_intel_cache: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        self._market_intel_cache_ts: Dict[Tuple[str, str], float] = {}
+        self._market_intel_cache_ttl = 60.0
 
         if bootstrap_context is not None:
             self._core_risk_engine = core_risk_engine or getattr(
                 bootstrap_context, "risk_engine", None
             )
-            # TODO(core-risk): confirm register_profile downstream gets real profile
-            # objects when bootstrap_context is missing or incomplete.
+            ctx_profile_obj = getattr(bootstrap_context, "risk_profile", None)
+            if RiskProfile is None or isinstance(ctx_profile_obj, RiskProfile):
+                self._core_risk_profile = ctx_profile_obj
+            ctx_profile_name = getattr(bootstrap_context, "risk_profile_name", None)
+            if ctx_profile_name:
+                self._core_risk_profile_name = str(ctx_profile_name)
+            if self._core_risk_profile is not None:
+                derived_name = getattr(self._core_risk_profile, "name", None)
+                if derived_name:
+                    self._core_risk_profile_name = str(derived_name)
+            if (
+                self._risk_profile_config is None
+                and getattr(bootstrap_context, "risk_profile_config", None) is not None
+            ):
+                self._risk_profile_config = getattr(
+                    bootstrap_context, "risk_profile_config", None
+                )
             env = getattr(bootstrap_context, "environment", None)
             if env is not None:
                 self._core_portfolio_id = getattr(env, "name", self._core_portfolio_id)
                 env_value = getattr(getattr(env, "environment", None), "value", None)
                 if env_value:
                     self._core_execution_environment = str(env_value)
-            self._core_risk_profile = getattr(bootstrap_context, "risk_profile_name", None)
+            if self._core_risk_profile_name and not self._risk_profile_name:
+                self._risk_profile_name = self._core_risk_profile_name
             candidate_execution_service = core_execution_service
             if (
                 candidate_execution_service is None
@@ -347,8 +422,15 @@ class AutoTrader:
                         normalized = self._normalize_symbol(symbol_value)
                         self._core_ai_notional_by_symbol[normalized] = float(notional_value)
 
+        if self._core_risk_engine is not None:
+            with self._lock:
+                self._ensure_core_risk_profile_registered_locked()
+
         if self._core_ai_default_notional is None and self._core_ai_connector is not None:
             self._core_ai_default_notional = self._core_ai_connector.default_notional
+
+        with self._lock:
+            self._ensure_core_risk_profile_registered_locked()
 
         self._started = False
         self._auto_trade_thread_active = False
@@ -410,6 +492,66 @@ class AutoTrader:
             )
             return cfg
 
+    def _settings_to_adapter_config(self, settings: RiskManagerSettings) -> Dict[str, Any]:
+        payload: Dict[str, Any] = dict(settings.to_dict())
+        payload.setdefault("max_risk_per_trade", float(settings.max_risk_per_trade))
+        payload.setdefault("max_portfolio_risk", float(settings.max_portfolio_risk))
+        payload.setdefault("max_positions", int(settings.max_positions))
+        payload.setdefault("max_daily_loss_pct", float(settings.max_daily_loss_pct))
+        payload.setdefault("max_drawdown_pct", float(settings.emergency_stop_drawdown))
+        payload.setdefault("hard_drawdown_pct", float(settings.emergency_stop_drawdown))
+        payload.setdefault("emergency_stop_drawdown", float(settings.emergency_stop_drawdown))
+        if settings.confidence_level is not None:
+            payload.setdefault("confidence_level", float(settings.confidence_level))
+        if settings.target_volatility is not None:
+            payload.setdefault("target_volatility", float(settings.target_volatility))
+        if settings.profile_name:
+            payload.setdefault("risk_profile_name", settings.profile_name)
+        return payload
+
+    def _resolve_risk_repository_dir(self) -> Path:
+        environment = (
+            str(self._runtime_metadata.get("environment"))
+            if self._runtime_metadata.get("environment")
+            else self._core_execution_environment
+        ) or "paper"
+        slug = "".join(ch if ch.isalnum() else "_" for ch in environment.lower()) or "paper"
+        path = Path("var") / "data" / slug / "risk_state"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def _resolve_risk_decision_log_path(self) -> Path:
+        environment = (
+            str(self._runtime_metadata.get("environment"))
+            if self._runtime_metadata.get("environment")
+            else self._core_execution_environment
+        ) or "paper"
+        slug = "".join(ch if ch.isalnum() else "_" for ch in environment.lower()) or "paper"
+        return LOGS_DIR / f"auto_trader_risk_decisions_{slug}.jsonl"
+
+    def _build_risk_manager_adapter(
+        self,
+        settings: RiskManagerSettings,
+        *,
+        profile_name: str | None,
+    ) -> ThresholdRiskManager | None:
+        try:
+            config = self._settings_to_adapter_config(settings)
+            if profile_name:
+                config.setdefault("risk_profile_name", profile_name)
+            mode = self._resolve_mode()
+            return ThresholdRiskManager(
+                config=config,
+                db_manager=self._db_manager,
+                mode=mode,
+                profile_name=profile_name,
+                decision_log=self._risk_decision_log,
+                repository=self._risk_repository,
+            )
+        except Exception:
+            logger.exception("Nie udało się zainicjalizować adaptera ThresholdRiskEngine")
+            return None
+
     def update_risk_manager_settings(
         self,
         settings: RiskManagerSettings,
@@ -425,7 +567,11 @@ class AutoTrader:
             if profile_name:
                 normalized_profile = str(profile_name)
                 self._risk_profile_name = normalized_profile
-                self._core_risk_profile = normalized_profile
+                self._core_risk_profile_name = normalized_profile
+                if self._core_risk_profile is not None:
+                    current_name = getattr(self._core_risk_profile, "name", None)
+                    if current_name and current_name != normalized_profile:
+                        self._core_risk_profile = None
             if profile_config is not None:
                 self._risk_profile_config = profile_config
 
@@ -449,12 +595,168 @@ class AutoTrader:
                         "Zaktualizowano konfigurację strategii na podstawie profilu %s",
                         self._risk_profile_name,
                     )
+            if self._core_risk_engine is not None:
+                self._ensure_core_risk_profile_registered_locked()
+
+            self._risk_manager_adapter = self._build_risk_manager_adapter(
+                self._risk_manager_settings,
+                profile_name=self._risk_profile_name,
+            )
+            self._ensure_core_risk_profile_registered_locked()
 
         message = f"Risk profile active: {self._risk_profile_name or 'default'}"
         try:
             self.emitter.log(message, component="AutoTrader")
         except Exception:  # pragma: no cover - defensywne logowanie
             logger.info(message)
+
+    def update_account_equity(self, equity: float) -> None:
+        """Synchronizuje kapitał konta wykorzystywany przez silnik ryzyka."""
+
+        try:
+            value = float(equity)
+        except Exception:  # pragma: no cover - defensywne logowanie
+            logger.debug("Nie udało się zaktualizować kapitału konta", exc_info=True)
+            return
+
+        if value < 0:
+            value = 0.0
+
+        with self._lock:
+            self._core_account_equity = value
+            try:
+                self._runtime_metadata["account_equity"] = value
+            except Exception:
+                logger.debug("Runtime metadata nie pozwoliło na zapis equity", exc_info=True)
+
+    def _ensure_core_risk_profile_registered_locked(self) -> None:
+        """Gwarantuje, że aktywny profil został zarejestrowany w silniku core."""
+
+        if ThresholdRiskEngine is None or self._core_risk_engine is None:
+            return
+
+        risk_engine = self._core_risk_engine
+        profile_name = self._core_risk_profile or self._risk_profile_name or "default"
+
+        config_obj = self._risk_profile_config
+        settings = self._risk_manager_settings
+
+        profile = None
+        if build_risk_profile_from_config is not None and config_obj is not None:
+            candidate = config_obj
+            if RiskProfileConfig is not None and not isinstance(candidate, RiskProfileConfig):
+                if isinstance(candidate, Mapping):
+                    try:
+                        candidate = RiskProfileConfig(**dict(candidate))
+                    except Exception:
+                        candidate = SimpleNamespace(**dict(candidate))
+            elif isinstance(candidate, Mapping):
+                candidate = SimpleNamespace(**dict(candidate))
+            try:
+                profile = build_risk_profile_from_config(candidate)  # type: ignore[arg-type]
+            except Exception:
+                logger.debug(
+                    "Nie udało się zbudować profilu ryzyka z konfiguracji bootstrapu",
+                    exc_info=True,
+                )
+
+        if profile is None and ManualProfile is not None:
+            def _read_float(name: str, default: float) -> float:
+                sources: tuple[Any, ...] = (
+                    config_obj,
+                    settings,
+                )
+                for source in sources:
+                    if source is None:
+                        continue
+                    value: Any
+                    if isinstance(source, Mapping):
+                        if name in source and source[name] is not None:
+                            value = source[name]
+                        else:
+                            continue
+                    elif hasattr(source, name):
+                        value = getattr(source, name)
+                    else:
+                        continue
+                    try:
+                        return float(value)
+                    except Exception:
+                        continue
+                return default
+
+            def _read_int(name: str, default: int) -> int:
+                sources: tuple[Any, ...] = (
+                    config_obj,
+                    settings,
+                )
+                for source in sources:
+                    if source is None:
+                        continue
+                    value: Any
+                    if isinstance(source, Mapping):
+                        if name in source and source[name] is not None:
+                            value = source[name]
+                        else:
+                            continue
+                    elif hasattr(source, name):
+                        value = getattr(source, name)
+                    else:
+                        continue
+                    try:
+                        return int(value)
+                    except Exception:
+                        continue
+                return default
+
+            max_positions = _read_int("max_open_positions", int(getattr(settings, "max_positions", 5) or 5))
+            max_leverage = _read_float("max_leverage", 1.0)
+            drawdown = _read_float(
+                "hard_drawdown_pct",
+                float(getattr(settings, "emergency_stop_drawdown", 0.2) or 0.2),
+            )
+            daily_loss = _read_float(
+                "max_daily_loss_pct",
+                float(getattr(settings, "max_daily_loss_pct", 0.05) or 0.05),
+            )
+            position_pct = _read_float(
+                "max_position_pct",
+                float(getattr(settings, "max_risk_per_trade", 0.05) or 0.05),
+            )
+            target_volatility = _read_float(
+                "target_volatility",
+                float(getattr(settings, "target_volatility", 0.0) or 0.0),
+            )
+            stop_loss_atr = _read_float("stop_loss_atr_multiple", 1.0)
+
+            try:
+                profile = ManualProfile(
+                    name=str(profile_name),
+                    max_positions=max_positions,
+                    max_leverage=max_leverage,
+                    drawdown_limit=drawdown,
+                    daily_loss_limit=daily_loss,
+                    max_position_pct=position_pct,
+                    target_volatility=target_volatility,
+                    stop_loss_atr_multiple=stop_loss_atr,
+                )
+            except Exception:
+                logger.debug("Nie udało się zbudować profilu ManualProfile", exc_info=True)
+                profile = None
+
+        if profile is None:
+            return
+
+        try:
+            if getattr(profile, "name", None) != profile_name:
+                try:
+                    setattr(profile, "name", str(profile_name))
+                except Exception:
+                    logger.debug("Nie udało się ustawić nazwy profilu ryzyka", exc_info=True)
+            risk_engine.register_profile(profile)
+            self._core_risk_profile = getattr(profile, "name", str(profile_name))
+        except Exception:
+            logger.exception("Rejestracja profilu ryzyka w ThresholdRiskEngine nie powiodła się")
 
     def reload_risk_manager_settings(
         self,
@@ -487,6 +789,87 @@ class AutoTrader:
         )
         self._risk_config_mtime = self._get_risk_config_mtime()
         return final_name, settings, profile_cfg
+
+    def _ensure_core_risk_profile_registered_locked(self) -> bool:
+        """Gwarantuje, że rdzeniowy silnik ryzyka ma zarejestrowany aktywny profil."""
+
+        risk_engine = self._core_risk_engine
+        if risk_engine is None:
+            return False
+        register = getattr(risk_engine, "register_profile", None)
+        if not callable(register):
+            return False
+
+        profile_obj: Any | None = self._core_risk_profile
+        profile_name = self._core_risk_profile_name or self._risk_profile_name
+        if profile_obj is None:
+            config = self._risk_profile_config
+            if config is not None and build_risk_profile_from_config is not None:
+                try:
+                    profile_obj = build_risk_profile_from_config(config)  # type: ignore[arg-type]
+                except TypeError:
+                    if isinstance(config, Mapping):
+                        try:
+                            from bot_core.config.models import RiskProfileConfig  # type: ignore
+
+                            profile_obj = build_risk_profile_from_config(  # type: ignore[arg-type]
+                                RiskProfileConfig(**dict(config))
+                            )
+                        except Exception:
+                            logger.debug(
+                                "Nie udało się zbudować profilu ryzyka z mapy konfiguracji",
+                                exc_info=True,
+                            )
+                    else:
+                        logger.debug(
+                            "Nieobsługiwany typ konfiguracji profilu ryzyka: %s",
+                            type(config),
+                        )
+                except Exception:
+                    logger.debug(
+                        "Nie udało się zbudować profilu ryzyka z konfiguracji",
+                        exc_info=True,
+                    )
+
+        if profile_obj is None:
+            return False
+
+        derived_name = getattr(profile_obj, "name", None)
+        if derived_name:
+            profile_name = str(derived_name)
+        if profile_name:
+            profile_name = str(profile_name)
+
+        try:
+            existing = tuple(risk_engine.profile_names())  # type: ignore[attr-defined]
+        except Exception:
+            existing = ()
+
+        if profile_name and profile_name in existing:
+            self._core_risk_profile = profile_obj if RiskProfile is None or isinstance(profile_obj, RiskProfile) else None
+            self._core_risk_profile_name = profile_name
+            if not self._risk_profile_name:
+                self._risk_profile_name = profile_name
+            return True
+
+        try:
+            register(profile_obj)
+        except Exception:
+            logger.debug(
+                "Nie udało się zarejestrować profilu ryzyka %s w silniku core",
+                profile_name or "<unknown>",
+                exc_info=True,
+            )
+            return False
+
+        if RiskProfile is None or isinstance(profile_obj, RiskProfile):
+            self._core_risk_profile = profile_obj
+        else:
+            self._core_risk_profile = None
+        if profile_name:
+            self._core_risk_profile_name = profile_name
+            self._risk_profile_name = profile_name
+        return True
 
     def _get_risk_config_mtime(self) -> float | None:
         if not self._core_config_path:
@@ -1045,6 +1428,253 @@ class AutoTrader:
             component="AutoTrader",
         )
 
+    def _build_risk_portfolio_payload(
+        self,
+        symbol: str,
+        snapshot: Mapping[str, Any],
+        *,
+        price: float,
+    ) -> Dict[str, Any]:
+        capital = float(
+            snapshot.get("value")
+            or snapshot.get("portfolio_value")
+            or snapshot.get("equity")
+            or snapshot.get("capital")
+            or 0.0
+        )
+        positions_payload: Dict[str, Dict[str, Any]] = {}
+        raw_positions = snapshot.get("positions") or snapshot.get("open_positions")
+        if isinstance(raw_positions, Mapping):
+            for key, value in raw_positions.items():
+                if not isinstance(value, Mapping):
+                    continue
+                qty_raw = value.get("qty") or value.get("quantity") or value.get("size")
+                try:
+                    qty_value = float(qty_raw)
+                except Exception:
+                    continue
+                if qty_value == 0:
+                    continue
+                entry_price_raw = value.get("entry") or value.get("entry_price") or value.get("price") or price
+                try:
+                    entry_price = float(entry_price_raw)
+                except Exception:
+                    entry_price = price
+                side_raw = value.get("side") or value.get("direction")
+                side = (
+                    str(side_raw).lower()
+                    if isinstance(side_raw, str)
+                    else ("buy" if qty_value >= 0 else "sell")
+                )
+                positions_payload[str(key).upper()] = {
+                    "symbol": str(key),
+                    "qty": abs(qty_value),
+                    "side": side,
+                    "entry_price": entry_price,
+                }
+        else:
+            qty_raw = snapshot.get("position") or snapshot.get("qty")
+            try:
+                qty_value = float(qty_raw) if qty_raw is not None else 0.0
+            except Exception:
+                qty_value = 0.0
+            if qty_value:
+                entry_price_raw = (
+                    snapshot.get("entry")
+                    or snapshot.get("entry_price")
+                    or snapshot.get("price")
+                    or price
+                )
+                try:
+                    entry_price = float(entry_price_raw)
+                except Exception:
+                    entry_price = price
+                side = "buy" if qty_value >= 0 else "sell"
+                positions_payload[symbol.upper()] = {
+                    "symbol": symbol,
+                    "qty": abs(qty_value),
+                    "side": side,
+                    "entry_price": entry_price,
+                }
+
+        return {
+            "capital": capital,
+            "equity": capital,
+            "positions": positions_payload,
+        }
+
+    def _build_risk_signal_payload(
+        self,
+        signal: StrategySignal,
+        *,
+        portfolio_value: float,
+    ) -> Dict[str, Any]:
+        payload = dict(getattr(signal, "payload", {}) or {})
+        payload.setdefault("symbol", signal.symbol)
+        try:
+            confidence = float(signal.confidence)
+        except Exception:
+            confidence = 0.0
+        payload.setdefault("confidence", confidence)
+        payload.setdefault("strength", confidence)
+        direction = str(signal.action or "").upper()
+        if direction == "SELL":
+            payload.setdefault("direction", "SHORT")
+        else:
+            payload.setdefault("direction", "LONG")
+        if signal.size is not None and portfolio_value > 0:
+            try:
+                fraction_hint = float(signal.size) / portfolio_value
+            except Exception:
+                fraction_hint = None
+            if fraction_hint is not None and fraction_hint > 0:
+                payload.setdefault("target_fraction", max(0.0, fraction_hint))
+        return payload
+
+    def _assess_with_legacy_risk_service(
+        self,
+        signal: StrategySignal,
+        context: StrategyContext,
+        market_state: Mapping[str, Any],
+        portfolio_value: float,
+        cfg: StrategyConfig,
+    ) -> Tuple[RiskDecision, float | None, float | None, float | None]:
+        assessment = self._risk_service.assess(signal, context, market_state)
+        base_value = portfolio_value if portfolio_value > 0 else 1.0
+        try:
+            size_value = float(assessment.size) if assessment.size is not None else None
+        except Exception:
+            size_value = None
+        fraction = max(0.0, (size_value or 0.0) / base_value)
+        details: Dict[str, Any] = {
+            "market_state": dict(market_state),
+            "source": "legacy_risk_service",
+        }
+        decision = RiskDecision(
+            should_trade=bool(assessment.allow),
+            fraction=fraction,
+            state="ok" if assessment.allow else "reject",
+            reason=assessment.reason,
+            details=details,
+            stop_loss_pct=assessment.stop_loss,
+            take_profit_pct=assessment.take_profit,
+            mode=cfg.mode,
+        )
+        return decision, size_value, assessment.stop_loss, assessment.take_profit
+
+    def _assess_with_threshold_engine(
+        self,
+        symbol: str,
+        signal: StrategySignal,
+        context: StrategyContext,
+        market_payload: Mapping[str, Any],
+        portfolio_snapshot: Mapping[str, Any],
+        market_state: Mapping[str, Any],
+        cfg: StrategyConfig,
+    ) -> Tuple[RiskDecision, float | None, None, None]:
+        manager = getattr(self, "_risk_manager_adapter", None)
+        portfolio_value = float(market_state.get("portfolio_value") or context.portfolio_value or 0.0)
+        if manager is None:
+            return self._assess_with_legacy_risk_service(
+                signal,
+                context,
+                market_state,
+                portfolio_value,
+                cfg,
+            )
+
+        raw_price = (
+            market_payload.get("price")
+            or market_payload.get("close")
+            or market_state.get("price")
+        )
+        try:
+            price = float(raw_price)
+        except Exception:
+            price = 0.0
+
+        if price <= 0 or portfolio_value <= 0:
+            details = {
+                "market_state": dict(market_state),
+                "source": "threshold_risk_engine",
+                "error": "missing_price_or_capital",
+            }
+            reason = "Brak danych o kapitale lub cenie"
+            decision = RiskDecision(
+                should_trade=False,
+                fraction=0.0,
+                state="reject",
+                reason=reason,
+                details=details,
+                stop_loss_pct=signal.stop_loss,
+                take_profit_pct=signal.take_profit,
+                mode=cfg.mode,
+            )
+            return decision, None, None, None
+
+        portfolio_payload = self._build_risk_portfolio_payload(symbol, portfolio_snapshot, price=price)
+        signal_payload = self._build_risk_signal_payload(signal, portfolio_value=portfolio_value)
+        try:
+            fraction, details = manager.calculate_position_size(
+                symbol,
+                signal_payload,
+                market_payload,
+                portfolio_payload,
+                return_details=True,
+            )
+        except Exception:
+            logger.exception("Risk manager sizing failed")
+            details = {
+                "market_state": dict(market_state),
+                "source": "threshold_risk_engine",
+                "error": "sizing_exception",
+            }
+            decision = RiskDecision(
+                should_trade=False,
+                fraction=0.0,
+                state="reject",
+                reason="Risk manager error",
+                details=details,
+                stop_loss_pct=signal.stop_loss,
+                take_profit_pct=signal.take_profit,
+                mode=cfg.mode,
+            )
+            return decision, None, None, None
+
+        recommended_fraction = max(0.0, float(details.get("recommended_size", fraction) or 0.0))
+        allowed = bool(details.get("allowed", recommended_fraction > 0))
+        reason = details.get("reason")
+        details_payload: Dict[str, Any] = {
+            "market_state": dict(market_state),
+            "source": "threshold_risk_engine",
+        }
+        for key, value in details.items():
+            if key == "recommended_size":
+                continue
+            details_payload[key] = value
+
+        quantity = recommended_fraction * portfolio_value / price if price > 0 else 0.0
+        if quantity <= 0:
+            allowed = False
+            if not reason:
+                reason = "Brak dostępnego budżetu ryzyka"
+
+        state = "ok" if allowed else "reject"
+        if allowed and details_payload.get("adjustments"):
+            state = "adjusted"
+
+        decision = RiskDecision(
+            should_trade=allowed,
+            fraction=recommended_fraction if allowed else 0.0,
+            state=state,
+            reason=reason,
+            details=details_payload,
+            stop_loss_pct=signal.stop_loss,
+            take_profit_pct=signal.take_profit,
+            mode=cfg.mode,
+        )
+        return decision, (quantity if allowed else None), None, None
+
     async def _trade_once(self, symbol: str, timeframe: str) -> None:
         if self._data_provider is None:
             return
@@ -1088,35 +1718,57 @@ class AutoTrader:
             if signal is None:
                 return
             market_state = self._build_market_state(portfolio_snapshot, market_payload)
-            assessment = self._risk_service.assess(signal, context, market_state)
-            base_value = portfolio_value if portfolio_value > 0 else 1.0
-            fraction = float(assessment.size or 0.0) / base_value
-            decision = RiskDecision(
-                should_trade=bool(assessment.allow),
-                fraction=fraction,
-                state="ok" if assessment.allow else "reject",
-                reason=assessment.reason,
-                details={"market_state": market_state},
-                stop_loss_pct=assessment.stop_loss,
-                take_profit_pct=assessment.take_profit,
-                mode=cfg.mode,
-            )
+            if self._uses_custom_risk_service:
+                decision, size_override, sl_override, tp_override = self._assess_with_legacy_risk_service(
+                    signal,
+                    context,
+                    market_state,
+                    portfolio_value,
+                    cfg,
+                )
+            else:
+                (
+                    decision,
+                    size_override,
+                    sl_override,
+                    tp_override,
+                ) = self._assess_with_threshold_engine(
+                    symbol,
+                    signal,
+                    context,
+                    market_payload,
+                    portfolio_snapshot,
+                    market_state,
+                    cfg,
+                )
+
             self._emit_risk_audit(
                 symbol,
                 signal.action or "HOLD",
                 decision,
-                float(market_state.get("price") or 0.0),
+                float(market_state.get("price") or price or 0.0),
             )
-            if not assessment.allow:
-                self._register_cooldown(symbol, assessment.reason or "risk_rejected")
+            if not decision.should_trade:
+                self._register_cooldown(symbol, decision.reason or "risk_rejected")
                 return
 
-            if assessment.size is not None:
-                signal.size = assessment.size
-            if assessment.stop_loss is not None and signal.stop_loss is None:
-                signal.stop_loss = assessment.stop_loss
-            if assessment.take_profit is not None and signal.take_profit is None:
-                signal.take_profit = assessment.take_profit
+            if size_override is not None:
+                signal.size = size_override
+
+            try:
+                size_numeric = float(signal.size) if signal.size is not None else 0.0
+            except Exception:
+                size_numeric = 0.0
+            if size_numeric <= 0:
+                self._register_cooldown(symbol, decision.reason or "risk_zero_size")
+                return
+
+            signal.size = size_numeric
+
+            if sl_override is not None and signal.stop_loss is None:
+                signal.stop_loss = sl_override
+            if tp_override is not None and signal.take_profit is None:
+                signal.take_profit = tp_override
             signal.payload.setdefault("market_state", market_state)
             signal.payload.setdefault("price", market_state.get("price"))
 
@@ -1193,6 +1845,7 @@ class AutoTrader:
                     gui.paper_balance = balance_value
                 except Exception:
                     pass
+                self.update_account_equity(balance_value)
                 balance_var = getattr(gui, "paper_balance_var", None)
                 if balance_var is not None and hasattr(balance_var, "set"):
                     try:
@@ -1244,7 +1897,147 @@ class AutoTrader:
             "ticker": ticker or {},
         }
         payload["price"] = self._extract_price_from_payload(payload)
+        intel_snapshot = self._collect_market_intel(symbol, timeframe)
+        if intel_snapshot:
+            payload["market_intel"] = intel_snapshot
+            fallback_price = self._resolve_price_from_intel(intel_snapshot)
+            current_price = payload.get("price")
+            try:
+                current_price_value = float(current_price)
+            except Exception:
+                current_price_value = 0.0
+            if fallback_price is not None and (current_price_value <= 0 or current_price is None):
+                payload["price"] = fallback_price
         return payload
+
+    def _collect_market_intel(self, symbol: str, timeframe: str) -> Optional[Dict[str, Any]]:
+        aggregator = self._market_intel or getattr(self.gui, "market_intel", None)
+        if aggregator is None:
+            return None
+
+        if self._market_intel is None:
+            self._market_intel = aggregator
+
+        cache_key = (symbol, timeframe)
+        now = time.monotonic()
+        cached = self._market_intel_cache.get(cache_key)
+        if cached is not None:
+            ts = self._market_intel_cache_ts.get(cache_key, 0.0)
+            if now - ts <= self._market_intel_cache_ttl:
+                return dict(cached)
+
+        payload: Optional[Dict[str, Any]] = None
+        mode = getattr(aggregator, "_mode", None)
+
+        if mode == "cache" and MarketIntelQuery is not None and hasattr(aggregator, "build_snapshot"):
+            try:
+                query_symbol = self._normalise_market_intel_symbol(symbol, mode="cache")
+                interval = self._normalise_market_intel_interval(timeframe)
+                query = MarketIntelQuery(  # type: ignore[call-arg]
+                    symbol=query_symbol,
+                    interval=interval,
+                    lookback_bars=96,
+                )
+                snapshot = aggregator.build_snapshot(query)  # type: ignore[attr-defined]
+            except Exception:  # pragma: no cover - zależne od implementacji agregatora
+                logger.debug("Market intel snapshot failed for %s/%s", symbol, timeframe, exc_info=True)
+            else:
+                payload = self._snapshot_to_mapping(snapshot)
+        else:
+            payload = self._collect_sqlite_market_intel(aggregator, symbol)
+
+        if payload:
+            self._market_intel_cache[cache_key] = payload
+            self._market_intel_cache_ts[cache_key] = now
+            return dict(payload)
+        return None
+
+    def _collect_sqlite_market_intel(self, aggregator: Any, symbol: str) -> Optional[Dict[str, Any]]:
+        if not hasattr(aggregator, "build"):
+            return None
+        try:
+            baselines = aggregator.build()  # type: ignore[attr-defined]
+        except Exception:  # pragma: no cover - zależne od implementacji agregatora
+            logger.debug("Market intel baseline build failed for %s", symbol, exc_info=True)
+            return None
+        symbol_aliases = self._market_intel_symbol_aliases(symbol)
+        for baseline in baselines or ():
+            candidate = str(getattr(baseline, "symbol", "")).upper()
+            if candidate not in symbol_aliases:
+                continue
+            if hasattr(baseline, "to_mapping"):
+                mapping = baseline.to_mapping()  # type: ignore[attr-defined]
+                return {k: v for k, v in mapping.items() if v is not None}
+            attrs: Dict[str, Any] = {}
+            for key in dir(baseline):
+                if key.startswith("_"):
+                    continue
+                value = getattr(baseline, key)
+                if callable(value):
+                    continue
+                attrs[key] = value
+            if attrs:
+                return {k: v for k, v in attrs.items() if v is not None}
+        return None
+
+    @staticmethod
+    def _snapshot_to_mapping(snapshot: Any) -> Dict[str, Any]:
+        if snapshot is None:
+            return {}
+        if hasattr(snapshot, "to_dict"):
+            mapping = snapshot.to_dict()  # type: ignore[attr-defined]
+            return {k: v for k, v in mapping.items() if v is not None}
+        attrs: Dict[str, Any] = {}
+        for key in dir(snapshot):
+            if key.startswith("_"):
+                continue
+            value = getattr(snapshot, key)
+            if callable(value):
+                continue
+            attrs[key] = value
+        return {k: v for k, v in attrs.items() if v is not None}
+
+    @staticmethod
+    def _normalise_market_intel_interval(timeframe: str) -> str:
+        if not timeframe:
+            return "1h"
+        return str(timeframe).strip()
+
+    @staticmethod
+    def _normalise_market_intel_symbol(symbol: str, *, mode: str) -> str:
+        base = str(symbol or "").upper().strip()
+        if mode == "cache":
+            return base.replace("/", "_").replace("-", "_")
+        return base.replace("/", "").replace("-", "")
+
+    def _market_intel_symbol_aliases(self, symbol: str) -> set[str]:
+        base = str(symbol or "").upper().strip()
+        aliases = {
+            base,
+            base.replace("/", "_").replace("-", "_"),
+            base.replace("/", "").replace("-", ""),
+        }
+        return {alias for alias in aliases if alias}
+
+    @staticmethod
+    def _resolve_price_from_intel(payload: Mapping[str, Any]) -> Optional[float]:
+        for key in ("price", "mid_price", "close", "last"):
+            value = payload.get(key)
+            try:
+                if value is not None and float(value) > 0:
+                    return float(value)
+            except Exception:
+                continue
+        metadata = payload.get("metadata") if isinstance(payload, Mapping) else None
+        if isinstance(metadata, Mapping):
+            for key in ("mid_price", "price"):
+                value = metadata.get(key)
+                try:
+                    if value is not None and float(value) > 0:
+                        return float(value)
+                except Exception:
+                    continue
+        return None
 
     def _build_market_state(
         self,
@@ -1753,7 +2546,11 @@ class AutoTrader:
         except Exception:  # pragma: no cover - brak klas bot_core
             return False
 
-        profile_name = self._core_risk_profile or candidate.risk_profile
+        profile_name = (
+            self._core_risk_profile_name
+            or (getattr(self._core_risk_profile, "name", None) if self._core_risk_profile is not None else None)
+            or candidate.risk_profile
+        )
 
         try:
             risk_result = risk_engine.apply_pre_trade_checks(
@@ -1770,8 +2567,32 @@ class AutoTrader:
             logger.exception("Core risk engine error during auto trade")
             return True
 
-        if not risk_result.allowed:
-            reason_text = risk_result.reason or "risk_denied"
+        portfolio_ctx = self._core_portfolio_context(account_snapshot)
+        decision = self._build_core_risk_decision(
+            symbol=normalized_symbol,
+            side=side,
+            price=price,
+            candidate=candidate,
+            order_request=order_request,
+            risk_result=risk_result,
+            account_snapshot=account_snapshot,
+            portfolio_ctx=portfolio_ctx,
+            profile_name=profile_name,
+        )
+        decision = self._finalize_risk_decision(
+            normalized_symbol,
+            side,
+            price,
+            decision,
+            portfolio_ctx,
+        )
+        self._emit_risk_audit(normalized_symbol, side, decision, price)
+        if not decision.should_trade:
+            reason_text = (
+                decision.details.get("risk_reason")
+                if isinstance(decision.details, Mapping)
+                else None
+            ) or risk_result.reason or decision.reason
             self.emitter.log(
                 f"Core auto-trade denied for {symbol}: {reason_text}",
                 level="WARNING",
@@ -1828,6 +2649,49 @@ class AutoTrader:
             maintenance_margin=float(self._core_account_equity) * 0.1,
         )
 
+    def _core_portfolio_context(self, account_snapshot: Any) -> Dict[str, Any]:
+        context: Dict[str, Any] = {"positions": {}, "total_notional": 0.0}
+        equity = 0.0
+        available_margin = 0.0
+        maintenance_margin = 0.0
+        try:
+            equity = float(getattr(account_snapshot, "total_equity", 0.0) or 0.0)
+        except Exception:
+            equity = 0.0
+        try:
+            available_margin = float(
+                getattr(account_snapshot, "available_margin", 0.0) or 0.0
+            )
+        except Exception:
+            available_margin = 0.0
+        try:
+            maintenance_margin = float(
+                getattr(account_snapshot, "maintenance_margin", 0.0) or 0.0
+            )
+        except Exception:
+            maintenance_margin = 0.0
+
+        context["equity"] = equity
+        context["cash"] = available_margin
+        context["total_notional"] = max(0.0, equity)
+        context["account_snapshot"] = {
+            "total_equity": equity,
+            "available_margin": available_margin,
+            "maintenance_margin": maintenance_margin,
+        }
+
+        balances = getattr(account_snapshot, "balances", None)
+        if isinstance(balances, Mapping):
+            safe_balances: Dict[str, float] = {}
+            for key, value in balances.items():
+                try:
+                    safe_balances[str(key)] = float(value)
+                except Exception:
+                    continue
+            context["balances"] = safe_balances
+
+        return context
+
     def _build_core_execution_context(
         self, metadata: Mapping[str, object]
     ) -> Any:
@@ -1835,15 +2699,180 @@ class AutoTrader:
             raise RuntimeError("ExecutionContext class unavailable")
         meta: Dict[str, object] = {"source": "AutoTrader"}
         meta.update(dict(metadata))
-        risk_profile = self._core_risk_profile
-        if not risk_profile and self._core_ai_connector is not None:
-            risk_profile = self._core_ai_connector.risk_profile
+        profile_name: Any = self._core_risk_profile_name
+        if profile_name is None and self._core_risk_profile is not None:
+            profile_name = getattr(self._core_risk_profile, "name", None)
+        if (profile_name is None or profile_name == "") and self._core_ai_connector is not None:
+            connector_profile = getattr(self._core_ai_connector, "risk_profile", None)
+            profile_name = getattr(connector_profile, "name", None) or connector_profile
         return CoreExecutionContext(
             portfolio_id=self._core_portfolio_id,
-            risk_profile=str(risk_profile or "default"),
+            risk_profile=str(profile_name or "default"),
             environment=str(self._core_execution_environment),
             metadata=meta,
         )
+
+    def _build_core_risk_decision(
+        self,
+        *,
+        symbol: str,
+        side: str,
+        price: float,
+        candidate: Any,
+        order_request: Any,
+        risk_result: Any,
+        account_snapshot: Any,
+        portfolio_ctx: Mapping[str, Any],
+        profile_name: str,
+    ) -> RiskDecision:
+        risk_allowed = bool(getattr(risk_result, "allowed", False))
+        reason_text = getattr(risk_result, "reason", None)
+        adjustments_raw = getattr(risk_result, "adjustments", None)
+        metadata_raw = getattr(risk_result, "metadata", None)
+
+        try:
+            account_value = float(getattr(account_snapshot, "total_equity", 0.0) or 0.0)
+        except Exception:
+            try:
+                account_value = float(portfolio_ctx.get("equity", 0.0) or 0.0)
+            except Exception:
+                account_value = 0.0
+
+        try:
+            candidate_notional = float(getattr(candidate, "notional", 0.0) or 0.0)
+        except Exception:
+            candidate_notional = 0.0
+
+        base_fraction = 0.0
+        if account_value > 0 and candidate_notional > 0:
+            base_fraction = candidate_notional / account_value
+        base_fraction = max(0.0, min(1.0, base_fraction))
+        recommended_fraction = base_fraction
+
+        adjustments: Dict[str, Any] | None = None
+        if isinstance(adjustments_raw, Mapping):
+            adjustments = {}
+            for key, value in adjustments_raw.items():
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    adjustments[str(key)] = float(value)
+                else:
+                    adjustments[str(key)] = value
+
+            max_quantity = adjustments.get("max_quantity")
+            if (
+                isinstance(max_quantity, (int, float))
+                and account_value > 0
+                and price > 0
+            ):
+                try:
+                    recommended_notional = float(max_quantity) * float(price)
+                except Exception:
+                    recommended_notional = 0.0
+                if recommended_notional > 0:
+                    recommended_fraction = max(
+                        0.0,
+                        min(1.0, recommended_notional / account_value),
+                    )
+
+        metadata_details: Dict[str, Any] | None = None
+        if isinstance(metadata_raw, Mapping):
+            metadata_details = {str(key): value for key, value in metadata_raw.items()}
+
+        risk_engine_details: Dict[str, Any] = {"allowed": risk_allowed}
+        if reason_text:
+            risk_engine_details["reason"] = reason_text
+        if adjustments:
+            risk_engine_details["adjustments"] = adjustments
+        if metadata_details:
+            risk_engine_details["metadata"] = metadata_details
+
+        risk_state: Mapping[str, Any] | None = None
+        engine = self._core_risk_engine
+        if engine is not None and hasattr(engine, "snapshot_state"):
+            try:
+                snapshot = engine.snapshot_state(profile_name)
+            except Exception:
+                snapshot = None
+            if isinstance(snapshot, Mapping):
+                risk_state = {str(k): v for k, v in snapshot.items()}
+        if risk_state:
+            risk_engine_details["state"] = risk_state
+
+        limit_events: List[Dict[str, Any]] = []
+        if not risk_allowed:
+            event: Dict[str, Any] = {"type": "risk_engine_denied"}
+            if reason_text:
+                event["reason"] = reason_text
+            limit_events.append(event)
+
+        if adjustments:
+            limit_events.append({"type": "risk_engine_adjustment", "adjustments": adjustments})
+
+        if adjustments and recommended_fraction + 1e-9 < base_fraction:
+            limit_events.append(
+                {
+                    "type": "risk_engine_clamp",
+                    "baseline": base_fraction,
+                    "value": recommended_fraction,
+                }
+            )
+
+        requested_fraction = base_fraction
+        effective_fraction = recommended_fraction if risk_allowed else 0.0
+
+        order_details: Dict[str, Any] = {
+            "symbol": getattr(order_request, "symbol", symbol),
+            "side": getattr(order_request, "side", side),
+        }
+        try:
+            order_details["quantity"] = float(getattr(order_request, "quantity", 0.0) or 0.0)
+        except Exception:
+            order_details["quantity"] = 0.0
+        order_price = getattr(order_request, "price", None)
+        try:
+            if order_price is not None:
+                order_details["price"] = float(order_price)
+        except Exception:
+            pass
+        order_details["order_type"] = getattr(order_request, "order_type", None)
+        metadata_section = getattr(order_request, "metadata", None)
+        if isinstance(metadata_section, Mapping) and metadata_section:
+            order_details["metadata"] = {str(k): v for k, v in metadata_section.items()}
+
+        details: Dict[str, Any] = {
+            "risk_engine_allowed": risk_allowed,
+            "risk_engine": risk_engine_details,
+            "risk_reason": reason_text,
+            "account_value": account_value,
+            "candidate_notional": candidate_notional,
+            "recommended_size": recommended_fraction,
+            "requested_fraction": requested_fraction,
+            "order_request": order_details,
+        }
+
+        if hasattr(candidate, "to_mapping"):
+            try:
+                details["decision_candidate"] = candidate.to_mapping()
+            except Exception:
+                details["decision_candidate"] = dict(getattr(candidate, "__dict__", {}))
+        elif hasattr(candidate, "__dict__"):
+            details["decision_candidate"] = dict(getattr(candidate, "__dict__", {}))
+
+        if limit_events:
+            details["limit_events"] = limit_events
+
+        decision = RiskDecision(
+            should_trade=risk_allowed,
+            fraction=effective_fraction,
+            state="ok" if risk_allowed else "lock",
+            reason="risk_ok" if risk_allowed else "risk_engine_denied",
+            details=details,
+            stop_loss_pct=None,
+            take_profit_pct=None,
+            mode=str(self._core_execution_environment),
+        )
+
+        return decision
 
     def _post_core_fill(
         self,
@@ -1854,32 +2883,853 @@ class AutoTrader:
     ) -> None:
         if self._core_risk_engine is None:
             return
-        avg_price = getattr(result, "avg_price", None)
-        if avg_price is None:
-            avg_price = getattr(request, "price", 0.0)
-        filled_quantity = getattr(result, "filled_quantity", None)
-        if filled_quantity is None:
-            filled_quantity = getattr(request, "quantity", 0.0)
+        raw_response_source = getattr(result, "raw_response", None)
+        request_metadata_source = getattr(request, "metadata", None)
+
+        def _coerce_float(value: Any) -> float | None:
+            if value is None:
+                return None
+            try:
+                result = float(value)
+            except (TypeError, ValueError):
+                return None
+            if not math.isfinite(result):
+                return None
+            return result
+
+        def _locate_float(
+            *values: Any,
+            search_keys: Iterable[str] | None = None,
+            containers: Sequence[Any] = (),
+            nested_search_keys: Iterable[str] | None = None,
+        ) -> float | None:
+            key_sequences: tuple[tuple[str, ...], tuple[str, ...]] | None = None
+
+            def _maybe_extract(container: Any) -> float | None:
+                nonlocal key_sequences
+                if container is None:
+                    return None
+                if key_sequences is None:
+                    primary_keys = tuple(search_keys or ())
+                    secondary_keys = tuple(nested_search_keys or ())
+                    key_sequences = (primary_keys, secondary_keys)
+                else:
+                    primary_keys, secondary_keys = key_sequences
+
+                def _extract_from(container_obj: Any, keys: tuple[str, ...]) -> float | None:
+                    if not keys:
+                        return None
+                    for key in keys:
+                        extracted = _extract_nested(container_obj, {key})
+                        coerced = _coerce_float(extracted)
+                        if coerced is not None:
+                            return coerced
+                        if (
+                            extracted is not None
+                            and secondary_keys
+                            and _should_descend(extracted)
+                        ):
+                            nested = _extract_nested(extracted, secondary_keys)
+                            coerced_nested = _coerce_float(nested)
+                            if coerced_nested is not None:
+                                return coerced_nested
+                    return None
+
+                primary_result = _extract_from(container, primary_keys)
+                if primary_result is not None:
+                    return primary_result
+                if secondary_keys:
+                    secondary_result = _extract_from(container, secondary_keys)
+                    if secondary_result is not None:
+                        return secondary_result
+                return None
+
+            for candidate in values:
+                coerced = _coerce_float(candidate)
+                if coerced is not None:
+                    return coerced
+                if (search_keys or nested_search_keys) and _should_descend(candidate):
+                    nested_value = _maybe_extract(candidate)
+                    if nested_value is not None:
+                        return nested_value
+            if search_keys or nested_search_keys:
+                for container in containers:
+                    nested_value = _maybe_extract(container)
+                    if nested_value is not None:
+                        return nested_value
+            return None
+
+        def _first_valid_float(
+            *values: Any,
+            default: float = 0.0,
+            search_keys: Iterable[str] | None = None,
+            containers: Sequence[Any] = (),
+        ) -> float:
+            located = _locate_float(
+                *values, search_keys=search_keys, containers=containers
+            )
+            if located is not None:
+                return located
+            return float(default)
+
+        def _as_mapping(candidate: Any) -> Mapping[str, Any] | None:
+            if isinstance(candidate, Mapping):
+                return candidate
+            if hasattr(candidate, "_asdict"):
+                try:
+                    mapping = candidate._asdict()  # type: ignore[attr-defined]
+                except Exception:
+                    mapping = None
+                else:
+                    if isinstance(mapping, Mapping):
+                        return mapping
+            if hasattr(candidate, "__dict__"):
+                try:
+                    mapping = vars(candidate)
+                except TypeError:
+                    return None
+                if isinstance(mapping, Mapping):
+                    return mapping
+            return None
+
+        def _should_descend(value: Any) -> bool:
+            if value is None:
+                return False
+            if isinstance(value, (str, bytes, bytearray)):
+                return False
+            if isinstance(value, Mapping):
+                return True
+            if isinstance(value, Sequence):
+                return True
+            if isinstance(value, set):
+                return True
+            return _as_mapping(value) is not None
+
+        def _extract_nested(container: Any, keys: Iterable[str]) -> Any | None:
+            key_set = set(keys)
+            stack: list[Any] = [container]
+            seen: set[int] = set()
+
+            while stack:
+                current = stack.pop()
+                marker = id(current)
+                if marker in seen:
+                    continue
+                seen.add(marker)
+
+                mapping_view = _as_mapping(current)
+                if mapping_view is not None:
+                    for key, value in mapping_view.items():
+                        if key in key_set and value is not None:
+                            return value
+                        if _should_descend(value):
+                            stack.append(value)
+                    continue
+
+                if isinstance(current, (Sequence, set)) and not isinstance(
+                    current, (str, bytes, bytearray)
+                ):
+                    if (
+                        isinstance(current, Sequence)
+                        and len(current) == 2
+                        and isinstance(current[0], str)
+                        and current[0] in key_set
+                        and current[1] is not None
+                    ):
+                        return current[1]
+                    iterable = current if isinstance(current, Sequence) else list(current)
+                    for item in iterable:
+                        if isinstance(item, Sequence) and not isinstance(
+                            item, (str, bytes, bytearray)
+                        ):
+                            if (
+                                len(item) == 2
+                                and isinstance(item[0], str)
+                                and item[0] in key_set
+                                and item[1] is not None
+                            ):
+                                return item[1]
+                        if _should_descend(item):
+                            stack.append(item)
+
+            return None
+
+        def _normalize_non_empty(value: Any) -> Any | None:
+            if value is None:
+                return None
+            try:
+                if pd.isna(value):
+                    return None
+            except Exception:
+                pass
+            if isinstance(value, str):
+                candidate = value.strip()
+                return candidate or None
+            return value
+
+        def _normalize_liquidity(value: Any) -> str | None:
+            if value is None:
+                return None
+            if isinstance(value, bool):
+                return "maker" if value else "taker"
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                numeric = float(value)
+                if math.isfinite(numeric):
+                    if math.isclose(numeric, 1.0, rel_tol=1e-9, abs_tol=1e-9):
+                        return "maker"
+                    if math.isclose(numeric, 0.0, rel_tol=1e-9, abs_tol=1e-9):
+                        return "taker"
+            if isinstance(value, str):
+                candidate = value.strip().lower()
+                if not candidate:
+                    return None
+                mapping = {
+                    "maker": "maker",
+                    "m": "maker",
+                    "maker_flag": "maker",
+                    "makerrole": "maker",
+                    "add": "maker",
+                    "passive": "maker",
+                    "taker": "taker",
+                    "t": "taker",
+                    "taker_flag": "taker",
+                    "takerrole": "taker",
+                    "remove": "taker",
+                    "active": "taker",
+                }
+                normalized = mapping.get(candidate)
+                if normalized is not None:
+                    return normalized
+                if candidate in {"true", "yes"}:
+                    return "maker"
+                if candidate in {"false", "no"}:
+                    return "taker"
+            return None
+
+        def _first_non_empty(
+            *values: Any,
+            search_keys: Iterable[str] | None = None,
+            containers: Sequence[Any] = (),
+            transform: Callable[[Any], Any] | None = None,
+            nested_search_keys: Iterable[str] | None = None,
+        ) -> Any | None:
+            nested_keys = tuple(nested_search_keys or ())
+
+            def _resolve(candidate: Any) -> Any | None:
+                normalized = _normalize_non_empty(candidate)
+                if normalized is None:
+                    return None
+                resolved = normalized
+                if nested_keys and _should_descend(resolved):
+                    for key in nested_keys:
+                        extracted = _extract_nested(resolved, {key})
+                        nested_normalized = _normalize_non_empty(extracted)
+                        if nested_normalized is not None:
+                            resolved = nested_normalized
+                            break
+                if _should_descend(resolved):
+                    return None
+                if transform is not None:
+                    try:
+                        return transform(resolved)
+                    except Exception:
+                        return None
+                return resolved
+
+            for candidate in values:
+                resolved = _resolve(candidate)
+                if resolved is not None:
+                    return resolved
+            if search_keys or nested_keys:
+                combined_keys = tuple(search_keys or ())
+
+                def _probe(container: Any) -> Any | None:
+                    if container is None:
+                        return None
+                    if combined_keys:
+                        for key in combined_keys:
+                            extracted = _extract_nested(container, {key})
+                            resolved = _resolve(extracted)
+                            if resolved is not None:
+                                return resolved
+                    if nested_keys:
+                        for key in nested_keys:
+                            extracted = _extract_nested(container, {key})
+                            resolved = _resolve(extracted)
+                            if resolved is not None:
+                                return resolved
+                    return None
+
+                for container in containers:
+                    resolved = _probe(container)
+                    if resolved is not None:
+                        return resolved
+            return None
+
+        def _clone_for_log(
+            value: Any,
+            *,
+            max_depth: int = 6,
+            _seen: set[int] | None = None,
+        ) -> Any:
+            if max_depth <= 0:
+                return repr(value)
+            if value is None or isinstance(value, (str, bytes, bytearray, int, float, bool)):
+                return value
+
+            if _seen is None:
+                _seen = set()
+            marker = id(value)
+            if marker in _seen:
+                return "<cycle>"
+            _seen.add(marker)
+
+            mapping_view = _as_mapping(value)
+            if mapping_view is not None:
+                cloned: Dict[str, Any] = {}
+                for key, child in mapping_view.items():
+                    cloned[str(key)] = _clone_for_log(child, max_depth=max_depth - 1, _seen=_seen)
+                return cloned
+
+            if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+                return [
+                    _clone_for_log(item, max_depth=max_depth - 1, _seen=_seen)
+                    for item in value
+                ]
+
+            if isinstance(value, set):
+                try:
+                    ordered = sorted(value, key=repr)
+                except Exception:
+                    ordered = list(value)
+                return [
+                    _clone_for_log(item, max_depth=max_depth - 1, _seen=_seen)
+                    for item in ordered
+                ]
+
+            return value
+
+        raw_response = _clone_for_log(raw_response_source)
+        cloned_request_metadata = _clone_for_log(request_metadata_source)
+        request_metadata = cloned_request_metadata if cloned_request_metadata is not None else {}
+        raw_search_container = raw_response_source if raw_response_source is not None else raw_response
+        request_search_container = (
+            request_metadata_source if request_metadata_source is not None else request_metadata
+        )
+
+        def _normalize_timestamp(value: Any) -> datetime | None:
+            if value is None:
+                return None
+            try:
+                if pd.isna(value):
+                    return None
+            except Exception:
+                pass
+            if isinstance(value, datetime):
+                if value.tzinfo is None:
+                    return value.replace(tzinfo=timezone.utc)
+                return value.astimezone(timezone.utc)
+            if isinstance(value, pd.Timestamp):
+                if pd.isna(value):
+                    return None
+                ts = value.tz_convert("UTC") if value.tzinfo else value.tz_localize("UTC")
+                normalized = ts.to_pydatetime()
+                if normalized is None:
+                    return None
+                return normalized
+            if isinstance(value, (int, float)):
+                numeric = float(value)
+                if not math.isfinite(numeric):
+                    return None
+                abs_value = abs(numeric)
+                if abs_value >= 1e18:  # nanoseconds
+                    numeric /= 1_000_000_000.0
+                elif abs_value >= 1e15:  # microseconds
+                    numeric /= 1_000_000.0
+                elif abs_value >= 1e12:  # milliseconds
+                    numeric /= 1_000.0
+                return datetime.fromtimestamp(numeric, tz=timezone.utc)
+            if isinstance(value, str):
+                candidate = value.strip()
+                if not candidate:
+                    return None
+                lowered = candidate.lower()
+                if lowered in {"nan", "nat"}:
+                    return None
+                if candidate.isdigit():
+                    try:
+                        numeric = float(candidate)
+                    except ValueError:
+                        numeric = None
+                    else:
+                        return _normalize_timestamp(numeric)
+                try:
+                    parsed = pd.to_datetime(candidate, utc=True)
+                except Exception:
+                    return None
+                if isinstance(parsed, pd.Timestamp):
+                    if pd.isna(parsed):
+                        return None
+                    return parsed.to_pydatetime()
+                return None
+            return None
+
+        avg_price_val = _first_valid_float(
+            getattr(result, "avg_price", None),
+            getattr(result, "price", None),
+            getattr(request, "avg_price", None),
+            getattr(request, "price", None),
+            default=0.0,
+            search_keys=(
+                "avg_price",
+                "average_price",
+                "price",
+                "avgPrice",
+                "averagePrice",
+                "executionPrice",
+                "fill_price",
+                "executedPrice",
+            ),
+            containers=(raw_search_container, request_search_container),
+        )
+        filled_qty_val = _first_valid_float(
+            getattr(result, "filled_quantity", None),
+            getattr(result, "quantity", None),
+            getattr(request, "filled_quantity", None),
+            getattr(request, "quantity", None),
+            default=0.0,
+            search_keys=(
+                "filled_quantity",
+                "quantity",
+                "qty",
+                "filledQty",
+                "executedQty",
+                "size",
+                "amount",
+                "baseQty",
+                "base_quantity",
+            ),
+            containers=(raw_search_container, request_search_container),
+        )
+        default_notional = abs(avg_price_val) * abs(filled_qty_val)
+        notional_value = _first_valid_float(
+            getattr(result, "notional", None),
+            getattr(result, "filled_notional", None),
+            getattr(request, "notional", None),
+            getattr(request, "filled_notional", None),
+            default=default_notional,
+            search_keys=(
+                "notional",
+                "filled_notional",
+                "quoteQty",
+                "quote_quantity",
+                "cummulativeQuoteQty",
+                "quote_volume",
+                "quoteAmount",
+                "fillNotional",
+                "cost",
+            ),
+            containers=(raw_search_container, request_search_container),
+        )
+
+        pnl_value = _locate_float(
+            getattr(result, "pnl", None),
+            search_keys=(
+                "pnl",
+                "realized_pnl",
+                "realizedPnl",
+                "profit",
+                "profit_loss",
+                "realizedProfit",
+            ),
+            containers=(raw_search_container, request_search_container),
+        )
+        pnl_value = float(pnl_value or 0.0)
+
+        fee_value = _locate_float(
+            getattr(result, "fee", None),
+            getattr(result, "commission", None),
+            getattr(request, "fee", None),
+            getattr(request, "commission", None),
+            search_keys=(
+                "fee",
+                "fees",
+                "commission",
+                "fee_amount",
+                "feeAmount",
+                "feeValue",
+                "fee_cost",
+                "commissionAmount",
+                "commission_amount",
+                "tradingFee",
+                "fill_fee",
+            ),
+            containers=(raw_search_container, request_search_container),
+            nested_search_keys=(
+                "amount",
+                "value",
+                "cost",
+                "feeAmount",
+                "feeValue",
+                "fee_cost",
+                "commissionAmount",
+                "commission_amount",
+                "commissionValue",
+            ),
+        )
+
+        if (
+            fee_value is not None
+            and not math.isclose(default_notional, 0.0)
+            and math.isclose(abs(notional_value), abs(fee_value), rel_tol=1e-9, abs_tol=1e-9)
+        ):
+            notional_value = default_notional
+
+        notional = abs(notional_value)
+
+        fee_currency = _first_non_empty(
+            getattr(result, "fee_currency", None),
+            getattr(result, "commission_currency", None),
+            getattr(result, "fee_asset", None),
+            getattr(request, "fee_currency", None),
+            getattr(request, "commission_currency", None),
+            getattr(request, "fee_asset", None),
+            search_keys=(
+                "fee_currency",
+                "feeCurrency",
+                "fee_asset",
+                "feeAsset",
+                "commissionCurrency",
+                "commissionAsset",
+                "feeAssetCode",
+            ),
+            containers=(raw_search_container, request_search_container),
+            transform=str,
+            nested_search_keys=(
+                "currency",
+                "asset",
+                "code",
+                "symbol",
+                "commissionCurrency",
+                "commissionAsset",
+                "feeCurrency",
+                "feeAsset",
+            ),
+        )
+
+        fee_rate_value = _locate_float(
+            getattr(result, "fee_rate", None),
+            getattr(result, "commission_rate", None),
+            getattr(result, "maker_commission_rate", None),
+            getattr(result, "taker_commission_rate", None),
+            getattr(request, "fee_rate", None),
+            getattr(request, "commission_rate", None),
+            getattr(request, "maker_commission_rate", None),
+            getattr(request, "taker_commission_rate", None),
+            search_keys=(
+                "fee_rate",
+                "commission_rate",
+                "maker_commission_rate",
+                "taker_commission_rate",
+                "makerCommissionRate",
+                "takerCommissionRate",
+                "commissionRate",
+                "feeRate",
+                "fee_rate_pct",
+                "commissionRatePct",
+            ),
+            containers=(raw_search_container, request_search_container),
+            nested_search_keys=(
+                "rate",
+                "feeRate",
+                "commissionRate",
+                "makerCommissionRate",
+                "takerCommissionRate",
+                "commission_rate",
+                "fee_rate",
+            ),
+        )
+
+        liquidity_role = _first_non_empty(
+            getattr(result, "liquidity", None),
+            getattr(result, "liquidity_type", None),
+            getattr(result, "execution_role", None),
+            getattr(result, "executionRole", None),
+            getattr(result, "trade_liquidity", None),
+            getattr(result, "is_maker", None),
+            getattr(request, "liquidity", None),
+            getattr(request, "liquidity_type", None),
+            getattr(request, "execution_role", None),
+            getattr(request, "executionRole", None),
+            getattr(request, "trade_liquidity", None),
+            getattr(request, "is_maker", None),
+            search_keys=(
+                "liquidity",
+                "liquidity_type",
+                "liquidityType",
+                "execution_role",
+                "executionRole",
+                "execution_type",
+                "executionType",
+                "trade_liquidity",
+                "tradeLiquidity",
+                "liquidity_role",
+                "liquidityRole",
+                "makerFlag",
+                "makerRole",
+                "is_maker",
+                "isMaker",
+                "maker",
+            ),
+            containers=(raw_search_container, request_search_container),
+            nested_search_keys=(
+                "liquidity",
+                "liquidity_type",
+                "liquidityType",
+                "execution_role",
+                "executionRole",
+                "execution_type",
+                "executionType",
+                "trade_liquidity",
+                "tradeLiquidity",
+                "makerFlag",
+                "maker",
+                "is_maker",
+                "isMaker",
+                "role",
+                "type",
+            ),
+            transform=_normalize_liquidity,
+        )
+
+        order_id = _first_non_empty(
+            getattr(result, "order_id", None),
+            getattr(result, "orderId", None),
+            getattr(request, "order_id", None),
+            getattr(request, "orderId", None),
+            search_keys=(
+                "order_id",
+                "orderId",
+                "id",
+                "origClientOrderId",
+                "orig_order_id",
+            ),
+            containers=(raw_search_container, request_search_container),
+            transform=str,
+        )
+
+        client_order_id = _first_non_empty(
+            getattr(result, "client_order_id", None),
+            getattr(result, "clientOrderId", None),
+            getattr(request, "client_order_id", None),
+            getattr(request, "clientOrderId", None),
+            search_keys=(
+                "client_order_id",
+                "clientOrderId",
+                "client_id",
+                "clientId",
+                "origClientOrderId",
+            ),
+            containers=(raw_search_container, request_search_container),
+            transform=str,
+        )
+
+        trade_id = _first_non_empty(
+            getattr(result, "trade_id", None),
+            getattr(result, "tradeId", None),
+            search_keys=(
+                "trade_id",
+                "tradeId",
+                "deal_id",
+                "dealId",
+            ),
+            containers=(raw_search_container, request_search_container),
+            transform=str,
+        )
+
+        fill_id = _first_non_empty(
+            getattr(result, "fill_id", None),
+            getattr(result, "fillId", None),
+            search_keys=(
+                "fill_id",
+                "fillId",
+                "execution_id",
+                "execId",
+                "executionId",
+            ),
+            containers=(raw_search_container, request_search_container),
+            transform=str,
+        )
+
+        timestamp_candidate = _normalize_timestamp(getattr(result, "timestamp", None))
+        if timestamp_candidate is None:
+            timestamp_candidate = _normalize_timestamp(getattr(result, "ts", None))
+        if timestamp_candidate is None and raw_search_container is not None:
+            timestamp_candidate = _normalize_timestamp(
+                _extract_nested(
+                    raw_search_container,
+                    {
+                        "timestamp",
+                        "ts",
+                        "time",
+                        "transactTime",
+                        "updateTime",
+                        "filled_at",
+                        "created_at",
+                        "event_time",
+                    },
+                )
+            )
+        if timestamp_candidate is None and request_search_container is not None:
+            timestamp_candidate = _normalize_timestamp(
+                _extract_nested(
+                    request_search_container,
+                    {
+                        "timestamp",
+                        "ts",
+                        "time",
+                        "decision_time",
+                        "generated_at",
+                        "created_at",
+                    },
+                )
+            )
+
+        explicit_position_value = _locate_float(
+            getattr(result, "position_value", None),
+            getattr(result, "positionValue", None),
+            getattr(request, "position_value", None),
+            getattr(request, "positionValue", None),
+            search_keys={
+                "position_value",
+                "positionValue",
+                "position_notional",
+                "positionNotional",
+                "position_value_usd",
+                "positionValueUsd",
+                "exposure",
+                "positionExposure",
+            },
+            containers=(raw_search_container, request_search_container),
+        )
+
+        explicit_position_delta = _locate_float(
+            getattr(result, "position_delta", None),
+            getattr(result, "positionDelta", None),
+            getattr(request, "position_delta", None),
+            getattr(request, "positionDelta", None),
+            search_keys={
+                "position_delta",
+                "positionDelta",
+                "position_change",
+                "positionChange",
+                "delta_notional",
+                "deltaNotional",
+                "positionDeltaNotional",
+            },
+            containers=(raw_search_container, request_search_container),
+        )
+
+        side_lower = str(side or "").lower()
+        default_position_value = notional if side_lower == "buy" else 0.0
+        position_value = (
+            explicit_position_value
+            if explicit_position_value is not None
+            else default_position_value
+        )
+        position_delta = (
+            explicit_position_delta
+            if explicit_position_delta is not None
+            else (notional if side_lower == "buy" else -notional)
+        )
+
+        profile_name = self._core_risk_profile
+        candidate_metadata = None
+        if isinstance(request_metadata, Mapping):
+            candidate_metadata = request_metadata.get("decision_candidate")
+        if candidate_metadata is None and request_search_container is not None:
+            candidate_metadata = _extract_nested(
+                request_search_container,
+                {"decision_candidate"},
+            )
+        if not profile_name and isinstance(candidate_metadata, Mapping):
+            candidate_profile = candidate_metadata.get("risk_profile")
+            if candidate_profile:
+                profile_name = str(candidate_profile)
+        if not profile_name and self._core_ai_connector is not None:
+            profile_name = getattr(self._core_ai_connector, "risk_profile", None)
+        profile_name = profile_name or "default"
+
         try:
-            notional = float(avg_price or 0.0) * float(filled_quantity or 0.0)
-        except Exception:
-            notional = 0.0
-        side_lower = side.lower()
-        position_value = notional if side_lower == "buy" else 0.0
-        try:
-            profile_name = self._core_risk_profile
-            if not profile_name and self._core_ai_connector is not None:
-                profile_name = self._core_ai_connector.risk_profile
             self._core_risk_engine.on_fill(
-                profile_name=profile_name or "default",
+                profile_name=profile_name,
                 symbol=symbol,
                 side=side_lower,
                 position_value=position_value,
-                pnl=0.0,
+                pnl=pnl_value,
+                timestamp=timestamp_candidate,
             )
         except Exception:
-            # TODO(core-risk): validate metadata merging and risk logging clarity here.
             logger.debug("Failed to update risk engine post fill", exc_info=True)
+
+        decision_log = getattr(self._core_risk_engine, "_decision_log", None)
+        if decision_log is None:
+            decision_log = getattr(self._core_risk_engine, "decision_log", None)
+        record_log = None
+        if RiskDecisionLog is not None and isinstance(decision_log, RiskDecisionLog):
+            record_log = decision_log
+        elif decision_log is not None and hasattr(decision_log, "record"):
+            record_log = decision_log
+        if record_log is not None:
+            metadata_payload: Dict[str, object] = {"source": "auto_trader_core_fill"}
+            if request_metadata_source is not None or request_metadata:
+                metadata_payload["request"] = request_metadata
+            if raw_response_source is not None or raw_response:
+                metadata_payload["fill"] = raw_response
+            metrics: Dict[str, object] = {
+                "avg_price": avg_price_val,
+                "filled_quantity": filled_qty_val,
+                "notional": notional,
+                "position_value": position_value,
+                "pnl": pnl_value,
+            }
+            metrics["position_delta"] = position_delta
+            if fee_value is not None:
+                metrics["fee"] = fee_value
+            if fee_currency is not None:
+                metrics["fee_currency"] = fee_currency
+            if fee_rate_value is not None:
+                metrics["fee_rate"] = fee_rate_value
+            if timestamp_candidate is not None:
+                metadata_payload["fill_timestamp"] = timestamp_candidate.isoformat()
+            if liquidity_role is not None:
+                metadata_payload["liquidity"] = liquidity_role
+            identifiers: Dict[str, str] = {}
+            if order_id is not None:
+                identifiers["order_id"] = order_id
+            if client_order_id is not None:
+                identifiers["client_order_id"] = client_order_id
+            if trade_id is not None:
+                identifiers["trade_id"] = trade_id
+            if fill_id is not None:
+                identifiers["fill_id"] = fill_id
+            if identifiers:
+                metadata_payload["identifiers"] = identifiers
+            metadata_payload["metrics"] = metrics
+            try:
+                record_log.record(
+                    profile=profile_name,
+                    symbol=symbol,
+                    side=side_lower,
+                    quantity=filled_qty_val,
+                    price=avg_price_val,
+                    notional=notional,
+                    allowed=True,
+                    reason="fill",
+                    metadata=metadata_payload,
+                )
+            except Exception:
+                logger.debug("Failed to append fill to risk decision log", exc_info=True)
     # --- Prediction helpers ---
     def _resolve_prediction_result(self, result: Any, *, context: str) -> Any:
         if not inspect.isawaitable(result):
@@ -2221,42 +4071,60 @@ class AutoTrader:
         ro_until = self._reduce_only_until.get(symbol, 0.0)
         if ro_until and now < ro_until and side_u == "BUY":
             details = {"until": ro_until, "now": now, "policy": "reduce_only"}
-            return RiskDecision(
-                should_trade=False,
-                fraction=0.0,
-                state="lock",
-                reason="reduce_only_active",
-                details=details,
-                stop_loss_pct=strategy_cfg.default_sl,
-                take_profit_pct=strategy_cfg.default_tp,
-                mode=strategy_cfg.mode,
+            return self._finalize_risk_decision(
+                symbol,
+                side,
+                price,
+                RiskDecision(
+                    should_trade=False,
+                    fraction=0.0,
+                    state="lock",
+                    reason="reduce_only_active",
+                    details=details,
+                    stop_loss_pct=strategy_cfg.default_sl,
+                    take_profit_pct=strategy_cfg.default_tp,
+                    mode=strategy_cfg.mode,
+                ),
+                None,
             )
 
         if self._risk_lock_until and now < self._risk_lock_until and side_u == "BUY":
             details = {"until": self._risk_lock_until, "now": now, "policy": "cooldown"}
-            return RiskDecision(
-                should_trade=False,
-                fraction=0.0,
-                state="lock",
-                reason="cooldown_active",
-                details=details,
-                stop_loss_pct=strategy_cfg.default_sl,
-                take_profit_pct=strategy_cfg.default_tp,
-                mode=strategy_cfg.mode,
+            return self._finalize_risk_decision(
+                symbol,
+                side,
+                price,
+                RiskDecision(
+                    should_trade=False,
+                    fraction=0.0,
+                    state="lock",
+                    reason="cooldown_active",
+                    details=details,
+                    stop_loss_pct=strategy_cfg.default_sl,
+                    take_profit_pct=strategy_cfg.default_tp,
+                    mode=strategy_cfg.mode,
+                ),
+                None,
             )
 
         env_mode = self._resolve_mode()
         if strategy_cfg.mode == "demo" and env_mode != "paper":
             details = {"configured_mode": strategy_cfg.mode, "env_mode": env_mode}
-            return RiskDecision(
-                should_trade=False,
-                fraction=0.0,
-                state="lock",
-                reason="demo_mode_enforced",
-                details=details,
-                stop_loss_pct=strategy_cfg.default_sl,
-                take_profit_pct=strategy_cfg.default_tp,
-                mode=strategy_cfg.mode,
+            return self._finalize_risk_decision(
+                symbol,
+                side,
+                price,
+                RiskDecision(
+                    should_trade=False,
+                    fraction=0.0,
+                    state="lock",
+                    reason="demo_mode_enforced",
+                    details=details,
+                    stop_loss_pct=strategy_cfg.default_sl,
+                    take_profit_pct=strategy_cfg.default_tp,
+                    mode=strategy_cfg.mode,
+                ),
+                None,
             )
 
         compliance_state = {
@@ -2275,25 +4143,35 @@ class AutoTrader:
                     f"{summary}"
                 )
                 self.emitter.log(log_message, level="WARNING", component="AutoTrader")
-                return RiskDecision(
-                    should_trade=False,
-                    fraction=0.0,
-                    state="lock",
-                    reason="live_compliance_missing",
-                    details={
-                        "missing_checks": missing_checks,
-                        "compliance_state": compliance_state,
-                    },
-                    stop_loss_pct=strategy_cfg.default_sl,
-                    take_profit_pct=strategy_cfg.default_tp,
-                    mode=strategy_cfg.mode,
+                return self._finalize_risk_decision(
+                    symbol,
+                    side,
+                    price,
+                    RiskDecision(
+                        should_trade=False,
+                        fraction=0.0,
+                        state="lock",
+                        reason="live_compliance_missing",
+                        details={
+                            "missing_checks": missing_checks,
+                            "compliance_state": compliance_state,
+                        },
+                        stop_loss_pct=strategy_cfg.default_sl,
+                        take_profit_pct=strategy_cfg.default_tp,
+                        mode=strategy_cfg.mode,
+                    ),
+                    None,
                 )
 
         portfolio_ctx = self._build_portfolio_context(symbol, price)
         risk_mgr = getattr(self.gui, "risk_mgr", None)
-        fraction = strategy_cfg.trade_risk_pct
+        try:
+            base_fraction = float(strategy_cfg.trade_risk_pct)
+        except Exception:
+            base_fraction = 0.0
+        fraction = base_fraction
         details: Dict[str, Any] = {}
-        risk_engine_details: Optional[Dict[str, Any]] = None
+        risk_engine_snapshot: Optional[Dict[str, Any]] = None
 
         try:
             positions_ctx = portfolio_ctx.get("positions") or {}
@@ -2352,8 +4230,31 @@ class AutoTrader:
                 logger.exception("Risk manager calculate_position_size failed")
                 fraction = 0.0
                 details = {"error": str(exc)}
+            else:
+                if hasattr(risk_mgr, "latest_guard_state"):
+                    try:
+                        snapshot_candidate = risk_mgr.latest_guard_state()
+                    except Exception:
+                        logger.debug(
+                            "Risk manager latest_guard_state failed", exc_info=True
+                        )
+                    else:
+                        if isinstance(snapshot_candidate, Mapping):
+                            risk_engine_snapshot = {
+                                str(key): value for key, value in snapshot_candidate.items()
+                            }
         else:
             details["risk_mgr"] = "missing"
+
+        adjustments_raw = details.get("adjustments") if isinstance(details, dict) else None
+        adjustments: Optional[Dict[str, Any]] = None
+        if isinstance(adjustments_raw, Mapping):
+            adjustments = {str(key): value for key, value in adjustments_raw.items()}
+
+        metadata_raw = details.get("metadata") if isinstance(details, dict) else None
+        metadata_details: Optional[Dict[str, Any]] = None
+        if isinstance(metadata_raw, Mapping):
+            metadata_details = {str(key): value for key, value in metadata_raw.items()}
 
         try:
             fraction = float(fraction)
@@ -2361,8 +4262,52 @@ class AutoTrader:
             fraction = 0.0
         fraction = max(0.0, min(1.0, fraction))
 
-        if fraction is not None and "recommended_size" not in details:
-            details["recommended_size"] = fraction
+        recommended_fraction = fraction
+        if isinstance(details, dict):
+            candidate_fraction = details.get("recommended_size")
+            if candidate_fraction is None:
+                candidate_fraction = details.get("fraction") or details.get("size")
+            if candidate_fraction is not None:
+                try:
+                    recommended_fraction = float(candidate_fraction)
+                except Exception:
+                    recommended_fraction = fraction
+        recommended_fraction = max(0.0, min(1.0, recommended_fraction))
+        details["recommended_size"] = recommended_fraction
+        fraction = recommended_fraction
+
+        risk_allowed: Optional[bool] = None
+        risk_reason_text: Optional[str] = None
+        if isinstance(details, dict):
+            raw_allowed = details.get("allowed")
+            if raw_allowed is not None:
+                risk_allowed = bool(raw_allowed)
+            raw_reason = details.get("reason")
+            if raw_reason is not None:
+                risk_reason_text = str(raw_reason)
+                details["risk_reason"] = risk_reason_text
+
+        risk_engine_details: Dict[str, Any] = {}
+        if risk_allowed is not None:
+            risk_engine_details["allowed"] = risk_allowed
+            details["risk_engine_allowed"] = risk_allowed
+        if risk_reason_text:
+            risk_engine_details["reason"] = risk_reason_text
+        if adjustments:
+            risk_engine_details["adjustments"] = {
+                key: (
+                    float(value)
+                    if isinstance(value, (int, float)) and not isinstance(value, bool)
+                    else value
+                )
+                for key, value in adjustments.items()
+            }
+        if metadata_details:
+            risk_engine_details["metadata"] = metadata_details
+        if risk_engine_snapshot:
+            risk_engine_details["state"] = risk_engine_snapshot
+        if risk_engine_details:
+            details["risk_engine"] = risk_engine_details
 
         try:
             if stop_loss_pct is not None:
@@ -2379,16 +4324,58 @@ class AutoTrader:
         state = "ok"
         limit_events: List[Dict[str, Any]] = []
 
-        # (opcjonalnie) przepisanie szczegółów od silnika ryzyka z innego wariantu
-        if risk_engine_details:
-            risk_engine_details = {
-                key: (float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else value)
-                for key, value in risk_engine_details.items()
-            }
-            risk_engine_details.setdefault(
-                "source", getattr(getattr(risk_mgr, "__class__", None), "__name__", type(risk_mgr).__name__)
+        if risk_allowed is False:
+            limit_event = {"type": "risk_engine_denied"}
+            if risk_reason_text:
+                limit_event["reason"] = risk_reason_text
+            limit_events.append(limit_event)
+            details.setdefault("limit_events", []).extend(limit_events)
+            if strategy_cfg.reduce_only_after_violation:
+                self._trigger_reduce_only(symbol, "risk_engine_denied", strategy_cfg)
+            return self._finalize_risk_decision(
+                symbol,
+                side,
+                price,
+                RiskDecision(
+                    should_trade=False,
+                    fraction=fraction,
+                    state="lock",
+                    reason="risk_engine_denied",
+                    details=details,
+                    stop_loss_pct=stop_loss_pct,
+                    take_profit_pct=take_profit_pct,
+                    mode=strategy_cfg.mode,
+                ),
+                portfolio_ctx,
             )
-            details["risk_engine"] = risk_engine_details
+
+        if adjustments:
+            limit_events.append(
+                {
+                    "type": "risk_engine_adjustment",
+                    "adjustments": {
+                        key: (
+                            float(value)
+                            if isinstance(value, (int, float)) and not isinstance(value, bool)
+                            else value
+                        )
+                        for key, value in adjustments.items()
+                    },
+                }
+            )
+            if state != "lock":
+                state = "warn"
+
+        if base_fraction > 0 and fraction < base_fraction - 1e-9:
+            limit_events.append(
+                {
+                    "type": "risk_engine_clamp",
+                    "baseline": base_fraction,
+                    "value": fraction,
+                }
+            )
+            if state != "lock":
+                state = "warn"
 
         # limit pozycyjny względem notional
         max_pct = float(strategy_cfg.max_position_notional_pct)
@@ -2411,15 +4398,21 @@ class AutoTrader:
             if strategy_cfg.reduce_only_after_violation:
                 self._trigger_reduce_only(symbol, "no_account_value", strategy_cfg)
             details.update({"account_value": account_value, "portfolio_ctx": portfolio_ctx})
-            return RiskDecision(
-                should_trade=False,
-                fraction=0.0,
-                state="lock",
-                reason="account_value_non_positive",
-                details=details,
-                stop_loss_pct=stop_loss_pct,
-                take_profit_pct=take_profit_pct,
-                mode=strategy_cfg.mode,
+            return self._finalize_risk_decision(
+                symbol,
+                side,
+                price,
+                RiskDecision(
+                    should_trade=False,
+                    fraction=0.0,
+                    state="lock",
+                    reason="account_value_non_positive",
+                    details=details,
+                    stop_loss_pct=stop_loss_pct,
+                    take_profit_pct=take_profit_pct,
+                    mode=strategy_cfg.mode,
+                ),
+                portfolio_ctx,
             )
 
         projected_notional = total_notional
@@ -2437,34 +4430,46 @@ class AutoTrader:
             })
             if strategy_cfg.reduce_only_after_violation:
                 self._trigger_reduce_only(symbol, "max_leverage", strategy_cfg)
-            return RiskDecision(
-                should_trade=False,
-                fraction=0.0,
-                state="lock",
-                reason="max_leverage_exceeded",
-                details={
-                    "leverage_after": leverage_after,
-                    "max_leverage": strategy_cfg.max_leverage,
-                    "limit_events": limit_events,
-                },
-                stop_loss_pct=stop_loss_pct,
-                take_profit_pct=take_profit_pct,
-                mode=strategy_cfg.mode,
+            return self._finalize_risk_decision(
+                symbol,
+                side,
+                price,
+                RiskDecision(
+                    should_trade=False,
+                    fraction=0.0,
+                    state="lock",
+                    reason="max_leverage_exceeded",
+                    details={
+                        "leverage_after": leverage_after,
+                        "max_leverage": strategy_cfg.max_leverage,
+                        "limit_events": limit_events,
+                    },
+                    stop_loss_pct=stop_loss_pct,
+                    take_profit_pct=take_profit_pct,
+                    mode=strategy_cfg.mode,
+                ),
+                portfolio_ctx,
             )
 
         if fraction <= 0.0:
             if strategy_cfg.reduce_only_after_violation:
                 self._trigger_reduce_only(symbol, "fraction_non_positive", strategy_cfg)
             details["limit_events"] = limit_events
-            return RiskDecision(
-                should_trade=False,
-                fraction=0.0,
-                state="lock",
-                reason="risk_fraction_zero",
-                details=details,
-                stop_loss_pct=stop_loss_pct,
-                take_profit_pct=take_profit_pct,
-                mode=strategy_cfg.mode,
+            return self._finalize_risk_decision(
+                symbol,
+                side,
+                price,
+                RiskDecision(
+                    should_trade=False,
+                    fraction=0.0,
+                    state="lock",
+                    reason="risk_fraction_zero",
+                    details=details,
+                    stop_loss_pct=stop_loss_pct,
+                    take_profit_pct=take_profit_pct,
+                    mode=strategy_cfg.mode,
+                ),
+                portfolio_ctx,
             )
 
         if side_u == "SELL" and ro_until and now < ro_until:
@@ -2496,7 +4501,133 @@ class AutoTrader:
             mode=strategy_cfg.mode,
         )
         self._apply_violation_cooldown(symbol, side_u, strategy_cfg, decision)
+        return self._finalize_risk_decision(
+            symbol,
+            side,
+            price,
+            decision,
+            portfolio_ctx,
+        )
+
+    def _finalize_risk_decision(
+        self,
+        symbol: str,
+        side: str,
+        price: float,
+        decision: RiskDecision,
+        portfolio_ctx: Mapping[str, Any] | None,
+    ) -> RiskDecision:
+        try:
+            self._record_risk_decision(
+                symbol=symbol,
+                side=side,
+                price=price,
+                decision=decision,
+                portfolio_ctx=portfolio_ctx,
+            )
+        except Exception:
+            logger.debug("Risk decision logging failed", exc_info=True)
         return decision
+
+    def _record_risk_decision(
+        self,
+        *,
+        symbol: str,
+        side: str,
+        price: float,
+        decision: RiskDecision,
+        portfolio_ctx: Mapping[str, Any] | None,
+    ) -> None:
+        log = getattr(self, "_risk_decision_log", None)
+        if log is None:
+            return
+
+        profile = (
+            self._risk_profile_name
+            or getattr(self._risk_manager_settings, "profile_name", None)
+            or self._core_risk_profile
+            or "default"
+        )
+
+        try:
+            fraction = float(decision.fraction)
+        except Exception:
+            fraction = 0.0
+
+        allowed = bool(decision.should_trade and decision.state != "lock")
+
+        details: Mapping[str, Any] | None = None
+        if isinstance(decision.details, Mapping):
+            details = decision.details
+
+        account_value: float | None = None
+        if details is not None:
+            candidate = details.get("account_value") or details.get("portfolio_value")
+            try:
+                if candidate is not None:
+                    account_value = float(candidate)
+            except (TypeError, ValueError):
+                account_value = None
+
+        if account_value is None and portfolio_ctx is not None:
+            try:
+                account_value = float(self._resolve_account_value(portfolio_ctx))
+            except Exception:
+                account_value = None
+
+        notional: float | None = None
+        quantity = 0.0
+        if account_value is not None and account_value > 0:
+            notional = max(0.0, account_value * fraction)
+            if price > 0:
+                try:
+                    quantity = notional / price
+                except Exception:
+                    quantity = 0.0
+
+        adjustments: Dict[str, Any] | None = None
+        if details is not None:
+            risk_info = details.get("risk_engine")
+            if isinstance(risk_info, Mapping):
+                candidate = risk_info.get("adjustments")
+                if isinstance(candidate, Mapping):
+                    try:
+                        adjustments = {
+                            str(key): (
+                                float(value)
+                                if isinstance(value, (int, float)) and not isinstance(value, bool)
+                                else value
+                            )
+                            for key, value in candidate.items()
+                        }
+                    except Exception:
+                        adjustments = None
+
+        metadata: Dict[str, Any] = {
+            "mode": decision.mode,
+            "state": decision.state,
+            "reason": decision.reason,
+            "stop_loss_pct": decision.stop_loss_pct,
+            "take_profit_pct": decision.take_profit_pct,
+            "source": "auto_trader",
+        }
+        if details is not None:
+            metadata["details"] = dict(details)
+            if "limit_events" in details:
+                metadata["limit_events"] = details.get("limit_events")
+
+        log.record(
+            profile=str(profile or "default"),
+            symbol=self._normalize_symbol(symbol),
+            side=str(side).lower(),
+            quantity=max(0.0, float(quantity)),
+            price=price if price > 0 else None,
+            notional=notional,
+            allowed=allowed,
+            reason=decision.reason,
+            adjustments=adjustments,
+            metadata=metadata,
+        )
 
     def _emit_risk_audit(self, symbol: str, side: str, decision: RiskDecision, price: float) -> None:
         payload = {

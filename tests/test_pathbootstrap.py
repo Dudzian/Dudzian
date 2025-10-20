@@ -648,6 +648,17 @@ def test_main_with_position_append_places_repo_at_end(
     assert captured.out.strip() == repo_str
 
 
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def _read_output(
+    capsys: pytest.CaptureFixture[str],
+) -> tuple[str, str]:
+    captured = capsys.readouterr()
+    return captured.out, captured.err
+
+
 def test_main_prints_json_with_additional_paths(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -656,16 +667,16 @@ def test_main_prints_json_with_additional_paths(
     clear_cache()
     try:
         exit_code = main(["--format", "json", "--add-path", "tests"])
-        captured = capsys.readouterr()
+        out, err = _read_output(capsys)
     finally:
         clear_cache()
 
-    repo_root = Path(__file__).resolve().parents[1]
+    repo_root = _repo_root()
     expected = str((repo_root / "tests").resolve())
-    payload = json.loads(captured.out)
+    payload = json.loads(out)
 
     assert exit_code == 0
-    assert captured.err == ""
+    assert err == ""
     assert payload == {
         "repo_root": str(repo_root),
         "additional_paths": [expected],
@@ -675,7 +686,7 @@ def test_main_prints_json_with_additional_paths(
 def test_main_with_add_path_includes_additional_entries(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    repo_root = Path(__file__).resolve().parents[1]
+    repo_root = _repo_root()
     repo_str = str(repo_root)
     cleaned_path = [entry for entry in sys.path if entry != repo_str]
     monkeypatch.setattr(sys, "path", [*cleaned_path, "/tmp/gamma"], raising=False)
@@ -683,13 +694,13 @@ def test_main_with_add_path_includes_additional_entries(
     clear_cache()
     try:
         exit_code = main(["--ensure", "--add-path", "tests"])
-        captured = capsys.readouterr()
+        out, err = _read_output(capsys)
     finally:
         clear_cache()
 
     assert exit_code == 0
-    assert captured.err == ""
-    assert captured.out.strip() == repo_str
+    assert err == ""
+    assert out.strip() == repo_str
 
 
 def test_main_print_pythonpath_windows_style_json(
@@ -710,17 +721,17 @@ def test_main_print_pythonpath_windows_style_json(
                 "windows",
             ]
         )
-        captured = capsys.readouterr()
+        out, err = _read_output(capsys)
     finally:
         clear_cache()
 
-    repo_root = Path(__file__).resolve().parents[1]
+    repo_root = _repo_root()
     expected_repo = str(repo_root).replace("/", "\\")
     expected_tests = str((repo_root / "tests").resolve()).replace("/", "\\")
-    payload = json.loads(captured.out)
+    payload = json.loads(out)
 
     assert exit_code == 0
-    assert captured.err == ""
+    assert err == ""
     assert payload == {
         "repo_root": expected_repo,
         "additional_paths": [expected_tests],
@@ -741,17 +752,17 @@ def test_main_prints_json_with_additional_paths_from_file(
     clear_cache()
     try:
         exit_code = main(["--format", "json", "--add-path-file", str(path_file)])
-        captured = capsys.readouterr()
+        out, err = _read_output(capsys)
     finally:
         clear_cache()
 
-    repo_root = Path(__file__).resolve().parents[1]
-    payload = json.loads(captured.out)
+    repo_root = _repo_root()
+    payload = json.loads(out)
     expected_tests = str((repo_root / "tests").resolve())
     expected_docs = str((repo_root / "docs").resolve())
 
     assert exit_code == 0
-    assert captured.err == ""
+    assert err == ""
     assert payload["additional_paths"] == [expected_tests, expected_docs]
 
 
@@ -776,19 +787,40 @@ def test_main_combines_additional_paths_file_env_and_cli(
                 "tests",
             ]
         )
-        captured = capsys.readouterr()
+        out, err = _read_output(capsys)
     finally:
         clear_cache()
 
-    repo_root = Path(__file__).resolve().parents[1]
-    payload = json.loads(captured.out)
+    repo_root = _repo_root()
     expected_data = str((repo_root / "data").resolve())
     expected_docs = str((repo_root / "docs").resolve())
     expected_tests = str((repo_root / "tests").resolve())
+    payload = json.loads(out)
 
     assert exit_code == 0
-    assert captured.err == ""
-    assert payload["additional_paths"] == [expected_data, expected_docs, expected_tests]
+    assert err == ""
+    assert payload["additional_paths"] == [
+        expected_data,
+        expected_docs,
+        expected_tests,
+    ]
+
+
+def test_main_with_set_env_prints_assignment(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo_root = _repo_root()
+
+    clear_cache()
+    try:
+        exit_code = main(["--set-env", "REPO_ROOT"])
+        out, err = _read_output(capsys)
+    finally:
+        clear_cache()
+
+    assert exit_code == 0
+    assert err == ""
+    assert out.strip() == f"REPO_ROOT={repo_root}"
 
 
 def test_main_with_set_env_prints_assignment(capsys: pytest.CaptureFixture[str]) -> None:
@@ -816,29 +848,82 @@ def test_main_prints_pythonpath_value(
     clear_cache()
     try:
         exit_code = main(["--print-pythonpath", "--add-path", "tests"])
+        out, err = _read_output(capsys)
+    finally:
+        clear_cache()
+
+    repo_root = _repo_root()
+    expected_tests = str((repo_root / "tests").resolve())
+
+    assert exit_code == 0
+    assert err == ""
+    assert out.strip() == ":".join([str(repo_root), expected_tests])
+
+
+def test_main_with_set_env_prints_assignment(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo_root = _repo_root()
+
+    clear_cache()
+    try:
+        exit_code = main(
+            [
+                "--export",
+                "--set-env",
+                "REPO_ROOT",
+                "--set-env-format",
+                "posix",
+            ]
+        )
+        out, err = _read_output(capsys)
+    finally:
+        clear_cache()
+
+    assert exit_code == 0
+    assert err == ""
+    assert out.strip() == f"export REPO_ROOT={repo_root}"
+
+
+def test_main_prints_pythonpath_value(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("PATHBOOTSTRAP_ADD_PATHS", raising=False)
+
+    clear_cache()
+    try:
+        exit_code = main(
+            ["--print-pythonpath", "--format", "json", "--add-path", "tests"]
+        )
         captured = capsys.readouterr()
     finally:
         clear_cache()
 
-    repo_root = Path(__file__).resolve().parents[1]
-    expected_repo = str(repo_root)
+    repo_root = _repo_root()
     expected_tests = str((repo_root / "tests").resolve())
-    expected_pythonpath = os.pathsep.join([expected_repo, expected_tests])
 
     assert exit_code == 0
-    assert captured.err == ""
-    assert captured.out.strip() == expected_pythonpath
+    assert err == ""
+    assert out.strip() == ":".join([str(repo_root), expected_tests])
 
 
 def test_main_with_set_env_and_export_prints_export_command(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    repo_root = Path(__file__).resolve().parents[1]
+    repo_root = _repo_root()
 
     clear_cache()
     try:
-        exit_code = main(["--export", "--set-env", "REPO_ROOT"])
-        captured = capsys.readouterr()
+        exit_code = main(
+            [
+                "--export",
+                "--set-env",
+                "REPO_ROOT",
+                "--set-env-format",
+                "posix",
+            ]
+        )
+        out, err = _read_output(capsys)
     finally:
         clear_cache()
 
@@ -869,7 +954,7 @@ def test_main_prints_pythonpath_json(
     payload = json.loads(captured.out)
 
     assert exit_code == 0
-    assert captured.err == ""
+    assert err == ""
     assert payload == {
         "repo_root": expected_repo,
         "additional_paths": [expected_tests],

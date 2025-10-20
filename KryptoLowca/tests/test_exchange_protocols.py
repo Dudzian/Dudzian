@@ -7,6 +7,7 @@ import hmac
 import json
 import os
 from datetime import datetime, timedelta, timezone
+from typing import Sequence
 
 import pytest
 
@@ -29,6 +30,16 @@ import KryptoLowca.exchanges.binance as binance_module
 import KryptoLowca.exchanges.kraken as kraken_module
 import KryptoLowca.exchanges.polling as polling_module
 import KryptoLowca.exchanges.zonda as zonda_module
+
+from bot_core.execution import ExecutionContext, LiveExecutionRouter
+from bot_core.execution.live_router import RouteDefinition
+from bot_core.exchanges.base import (
+    AccountSnapshot,
+    ExchangeAdapter as CoreExchangeAdapter,
+    ExchangeCredentials as CoreExchangeCredentials,
+    OrderRequest as CoreOrderRequest,
+    OrderResult as CoreOrderResult,
+)
 
 
 class StubResponse:
@@ -835,6 +846,147 @@ def test_live_execution_router_named_route_selection():
     result = router.execute(request, context)
     assert result.order_id == "vip-route"
     assert router.binding_for_order("vip-route") == "kraken"
+@pytest.mark.asyncio
+async def test_api_key_manager_rotation(tmp_path):
+    encryption_key = Fernet.generate_key()
+    cfg = await ConfigManager.create(config_path=str(tmp_path / "config.json"), encryption_key=encryption_key)
+    manager = cfg.api_key_manager
+
+    creds = ExchangeCredentials(api_key="demo", api_secret="secret", metadata={"environment": "demo"})
+    record = manager.save_credentials("binance", "acct", creds)
+    stored = json.loads((tmp_path / "api_keys_store.json").read_text())
+    assert stored["records"][0]["data"]["api_key"] != "demo"
+
+    rotated = manager.rotate_credentials(
+        "binance",
+        "acct",
+        ExchangeCredentials(api_key="demo2", api_secret="secret2", metadata={"environment": "demo"}),
+    )
+    assert rotated.version == 2
+    latest = manager.load_credentials("binance", "acct")
+    assert latest.api_key == "demo2"
+
+    with pytest.raises(ValueError):
+        manager.save_credentials(
+            "binance",
+            "live",
+            ExchangeCredentials(api_key="live", api_secret="live", metadata={"environment": "live"}),
+        )
+
+    manager.save_credentials(
+        "binance",
+        "live",
+        ExchangeCredentials(api_key="live", api_secret="live", metadata={"environment": "live"}),
+        compliance_ack=True,
+        expires_at=datetime.now(timezone.utc) - timedelta(days=1),
+    )
+    removed = manager.purge_expired()
+    assert removed >= 1
+
+
+class StubLiveAdapter(CoreExchangeAdapter):
+    """Minimalny adapter zgodny z bot_core do testów routera live."""
+
+    class _Stream:
+        async def __aenter__(self):  # pragma: no cover - prosty kontekst
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):  # pragma: no cover - prosty kontekst
+            return False
+
+    def __init__(self, name: str) -> None:
+        super().__init__(CoreExchangeCredentials(key_id=f"{name}-key"))
+        self.name = name
+        self._orders: dict[str, CoreOrderResult] = {}
+        self._counter = 0
+
+    def configure_network(self, *, ip_allowlist=None) -> None:  # pragma: no cover - brak logiki
+        return None
+
+    def fetch_account_snapshot(self) -> AccountSnapshot:  # pragma: no cover - brak logiki
+        return AccountSnapshot(balances={}, total_equity=0.0, available_margin=0.0, maintenance_margin=0.0)
+
+    def fetch_symbols(self) -> Sequence[str]:  # pragma: no cover - brak logiki
+        return ("BTCUSDT",)
+
+    def fetch_ohlcv(self, symbol: str, interval: str, start=None, end=None, limit=None):  # pragma: no cover
+        return []
+
+    def place_order(self, request: CoreOrderRequest) -> CoreOrderResult:
+        self._counter += 1
+        order_id = f"{self.name}-{self._counter}"
+        result = CoreOrderResult(
+            order_id=order_id,
+            status="NEW",
+            filled_quantity=0.0,
+            avg_price=None,
+            raw_response={"exchange": self.name},
+        )
+        self._orders[order_id] = result
+        return result
+
+    def cancel_order(self, order_id: str, *, symbol: str | None = None) -> None:
+        self._orders.pop(order_id, None)
+
+    def stream_public_data(self, *, channels):  # pragma: no cover - brak logiki
+        return self._Stream()
+
+    def stream_private_data(self, *, channels):  # pragma: no cover - brak logiki
+        return self._Stream()
+
+
+@pytest.mark.asyncio
+async def test_multi_account_round_robin():
+    adapters = {
+        "binance": StubLiveAdapter("binance"),
+        "kraken": StubLiveAdapter("kraken"),
+    }
+    router = LiveExecutionRouter(
+        adapters=adapters,
+        routes=(
+            RouteDefinition(name="binance_route", exchanges=("binance",)),
+            RouteDefinition(name="kraken_route", exchanges=("kraken",)),
+        ),
+        default_route="binance_route",
+    )
+    context = ExecutionContext(
+        portfolio_id="default",
+        risk_profile="balanced",
+        environment="live",
+        metadata={},
+    )
+    manager = MultiExchangeAccountManager(router, base_context=context)
+    manager.register_account(exchange="binance", account="a", execution_route="binance_route")
+    manager.register_account(exchange="kraken", account="b", execution_route="kraken_route")
+
+    order = CoreOrderRequest(symbol="BTCUSDT", side="BUY", quantity=1.0, order_type="MARKET")
+    first = await manager.dispatch_order(order)
+    second = await manager.dispatch_order(order)
+
+    assert first.order_id.startswith("binance")
+    assert second.order_id.startswith("kraken")
+    assert set(manager.supported_exchanges) == {"binance", "kraken"}
+
+    await manager.cancel_order(first.order_id)
+
+
+def test_multi_account_supported_exchanges():
+    adapters = {"binance": StubLiveAdapter("binance")}
+    router = LiveExecutionRouter(
+        adapters=adapters,
+        routes=(RouteDefinition(name="binance", exchanges=("binance",)),),
+        default_route="binance",
+    )
+    context = ExecutionContext(
+        portfolio_id="demo",
+        risk_profile="paper",
+        environment="testnet",
+        metadata={},
+    )
+    manager = MultiExchangeAccountManager(router, base_context=context)
+    manager.register_account(exchange="binance", account="primary")
+
+    assert manager.supported_exchanges == ("binance",)
 
 
 @pytest.mark.asyncio

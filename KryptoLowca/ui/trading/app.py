@@ -9,10 +9,16 @@ import os
 import queue
 import threading
 import sys
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Protocol
 
 import tkinter as tk
+
+try:  # pragma: no cover - zależność opcjonalna
+    from bot_core.market_intel import MarketIntelAggregator
+except Exception:  # pragma: no cover - fallback gdy moduł nie istnieje
+    MarketIntelAggregator = None  # type: ignore[assignment]
 
 from bot_core.runtime.paths import (
     DesktopAppPaths,
@@ -26,6 +32,8 @@ from bot_core.runtime.metadata import (
     load_risk_manager_settings,
     load_runtime_entrypoint_metadata,
 )
+from bot_core.runtime.preset_service import PresetConfigService
+from bot_core.security.file_storage import EncryptedFileSecretStorage
 
 from KryptoLowca.logging_utils import (
     DEFAULT_LOG_FILE,
@@ -33,6 +41,7 @@ from KryptoLowca.logging_utils import (
     get_logger,
     setup_app_logging,
 )
+from KryptoLowca.runtime.bootstrap import FrontendBootstrap, bootstrap_frontend_services
 from KryptoLowca.database_manager import DatabaseManager
 from KryptoLowca.security_manager import SecurityManager
 from KryptoLowca.config_manager import ConfigManager
@@ -46,6 +55,7 @@ from KryptoLowca.exchanges.zonda import ZondaAdapter
 from .state import AppState
 from .controller import TradingSessionController
 from .view import TradingView
+from .license_context import LicenseUiContext, build_license_ui_context
 from .risk_helpers import (
     RiskSnapshot,
     build_risk_limits_summary,
@@ -198,14 +208,31 @@ class TradingGUI:
             logs_dir=GLOBAL_LOGS_DIR,
             text_log_file=DEFAULT_LOG_FILE,
         )
-        self._core_config_path = self._resolve_core_config_path()
+        core_config_path = self._resolve_core_config_path()
+        if frontend_services is None:
+            services = bootstrap_frontend_services(
+                paths=self.paths,
+                config_path=core_config_path,
+            )
+        else:
+            services = frontend_services
+        self.frontend_services = services
+        self.market_intel = market_intel or self.frontend_services.market_intel
+        self._core_config_path = core_config_path
         self.runtime_metadata = self._load_metadata(self._core_config_path)
         (
             self._risk_profile_name,
             self._risk_profile_config,
             self.risk_manager_settings,
         ) = self._load_risk_profile(self.runtime_metadata, self._core_config_path)
-        self.risk_manager_config = self.risk_manager_settings.to_dict()
+        self._risk_repository_dir = self.paths.logs_dir / "risk_state"
+        self._risk_repository_dir.mkdir(parents=True, exist_ok=True)
+        self._risk_repository = FileRiskRepository(self._risk_repository_dir)
+        self._risk_decision_log = RiskDecisionLog(
+            max_entries=500,
+            jsonl_path=self.paths.logs_dir / "risk_decisions.jsonl",
+        )
+        self.risk_manager_config = self._settings_to_adapter_config(self.risk_manager_settings)
         self._risk_config_mtime = self._get_risk_config_timestamp()
         self._risk_watchdog_after: Optional[str] = None
         self._risk_watch_interval_ms = 5_000
@@ -215,6 +242,11 @@ class TradingGUI:
         self.state = self._create_state()
         controller_factory = session_controller_factory or self._default_controller_factory
         self.controller: TradingSessionController = controller_factory(self.state)
+        if getattr(self.controller, "market_intel", None) is None and self.market_intel is not None:
+            try:
+                self.controller.market_intel = self.market_intel  # type: ignore[attr-defined]
+            except Exception:  # pragma: no cover - defensywnie
+                logger.debug("Nie udało się wstrzyknąć MarketIntelAggregator do kontrolera", exc_info=True)
         self.view = TradingView(
             self.root,
             self.state,
@@ -223,9 +255,10 @@ class TradingGUI:
             on_start=self._handle_view_start,
             on_stop=self._handle_view_stop,
         )
+        self._apply_license_restrictions()
         self._configure_fraction_widget(self.risk_manager_settings)
         self._configure_logging_handler()
-        self.ex_mgr = None
+        self.ex_mgr = self.frontend_services.exchange_manager
         self.network_var = self.state.network
         self.timeframe_var = self.state.timeframe
         self.symbol_var = self.state.symbol
@@ -269,16 +302,61 @@ class TradingGUI:
             except Exception:  # pragma: no cover - środowiska bez WM
                 logger.debug("Nie udało się ustawić handlera WM_DELETE_WINDOW", exc_info=True)
 
+    def _settings_to_adapter_config(
+        self, settings: RiskManagerSettings | None
+    ) -> Dict[str, Any]:
+        if not isinstance(settings, RiskManagerSettings):
+            return {}
+
+        payload: Dict[str, Any] = dict(settings.to_dict())
+        payload.setdefault("max_daily_loss_pct", float(settings.max_daily_loss_pct))
+        payload.setdefault(
+            "max_drawdown_pct", float(settings.emergency_stop_drawdown)
+        )
+        payload.setdefault(
+            "hard_drawdown_pct", float(settings.emergency_stop_drawdown)
+        )
+        payload.setdefault("max_positions", int(settings.max_positions))
+        payload.setdefault("max_risk_per_trade", float(settings.max_risk_per_trade))
+        payload.setdefault("max_portfolio_risk", float(settings.max_portfolio_risk))
+        if settings.profile_name:
+            payload.setdefault("risk_profile_name", settings.profile_name)
+        return payload
+
     # ------------------------------------------------------------------
     def _default_controller_factory(self, state: AppState) -> TradingSessionController:
+        db_manager = DatabaseManager()
+        risk_settings = self.state.risk_manager_settings or self.risk_manager_settings
+        config_payload = self._settings_to_adapter_config(risk_settings)
+        if not config_payload:
+            config_payload = dict(self.risk_manager_config or {})
+
+        risk_mode = "paper"
+        try:
+            network = (state.network.get() if hasattr(state.network, "get") else "testnet")
+            risk_mode = "paper" if str(network).lower() != "live" else "live"
+        except Exception:
+            risk_mode = "paper"
+
+        risk_manager = RiskManager(
+            config=config_payload,
+            db_manager=db_manager,
+            mode=risk_mode,
+            profile_name=config_payload.get("risk_profile_name"),
+            decision_log=self._risk_decision_log,
+            repository=self._risk_repository,
+        )
+
         return TradingSessionController(
             state,
-            DatabaseManager(),
+            db_manager,
             SecurityManager(self.paths.keys_file, self.paths.salt_file),
             ConfigManager(self.paths.presets_dir),
             ReportManager(str(self.paths.db_file)),
-            RiskManager(config=self.risk_manager_config),
+            risk_manager,
             self._build_ai_manager(),
+            exchange_manager=self.frontend_services.exchange_manager,
+            market_intel=self.market_intel,
         )
 
     # ------------------------------------------------------------------
@@ -303,6 +381,94 @@ class TradingGUI:
         except Exception:  # pragma: no cover - środowisko bez konfiguracji
             logger.exception("Nie udało się wczytać metadanych runtime")
             return None
+
+    # ------------------------------------------------------------------
+    def _load_license_context(
+        self,
+    ) -> tuple[Path | None, LicenseCapabilities | None, CapabilityGuard | None, LicenseUiContext]:
+        license_path: Path | None = None
+        capabilities: LicenseCapabilities | None = None
+        guard: CapabilityGuard | None = None
+        extra_notice = ""
+
+        public_key = os.environ.get("BOT_CORE_LICENSE_PUBLIC_KEY")
+        license_path_value = os.environ.get("BOT_CORE_LICENSE_PATH")
+
+        if not public_key or not license_path_value:
+            extra_notice = (
+                "Brak skonfigurowanej licencji offline. Skontaktuj się z opiekunem licencji."
+            )
+            logger.warning(extra_notice)
+        else:
+            try:
+                from bot_core.security.guards import install_capability_guard
+                from bot_core.security.license_service import (
+                    LicenseService,
+                    LicenseServiceError,
+                )
+            except Exception:
+                logger.exception("Nie udało się zaimportować modułów obsługi licencji")
+                extra_notice = "Nie udało się zainicjalizować obsługi licencji offline."
+            else:
+                license_path = Path(license_path_value).expanduser()
+                try:
+                    service = LicenseService(verify_key_hex=public_key)
+                    snapshot = service.load_from_file(license_path)
+                except FileNotFoundError:
+                    extra_notice = (
+                        f"Nie znaleziono pliku licencji: {license_path}. Skontaktuj się z opiekunem licencji."
+                    )
+                    logger.error(extra_notice)
+                except LicenseServiceError as exc:
+                    extra_notice = f"Nie udało się zweryfikować licencji offline: {exc}"
+                    logger.error(extra_notice)
+                except Exception:
+                    logger.exception("Nieoczekiwany błąd podczas ładowania licencji offline")
+                    extra_notice = (
+                        "Wystąpił nieoczekiwany błąd podczas ładowania licencji offline."
+                    )
+                else:
+                    capabilities = snapshot.capabilities
+                    guard = install_capability_guard(capabilities)
+
+        context = build_license_ui_context(capabilities)
+        if extra_notice:
+            context = replace(
+                context,
+                notice=self._combine_notices(extra_notice, context.notice),
+            )
+        return license_path, capabilities, guard, context
+
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _combine_notices(*messages: str) -> str:
+        merged: list[str] = []
+        for message in messages:
+            text = (message or "").strip()
+            if not text:
+                continue
+            if text not in merged:
+                merged.append(text)
+        return " ".join(merged)
+
+    # ------------------------------------------------------------------
+    def _apply_license_restrictions(self) -> None:
+        context = getattr(self, "_license_ui_context", None)
+        if context is None:
+            return
+
+        self.state.capability_guard = self.license_guard
+        self.state.license_capabilities = self.license_capabilities
+        if self.state.license_summary is not None:
+            self.state.license_summary.set(context.summary)
+        if self.state.license_notice is not None:
+            self.state.license_notice.set(context.notice)
+        if hasattr(self.view, "configure_network_options"):
+            self.view.configure_network_options(live_enabled=context.live_enabled)
+        if hasattr(self.view, "configure_mode_options"):
+            self.view.configure_mode_options(futures_enabled=context.futures_enabled)
+        if hasattr(self.view, "set_start_enabled"):
+            self.view.set_start_enabled(context.auto_trader_enabled)
 
     # ------------------------------------------------------------------
     def _create_state(self) -> AppState:
@@ -334,8 +500,11 @@ class TradingGUI:
             paper_balance=tk.StringVar(value="10 000.00"),
             account_balance=tk.StringVar(value="—"),
             status=tk.StringVar(value="Oczekiwanie na start"),
-            market_symbol=market_symbol_var,
-            market_price=market_price_var,
+            license_capabilities=self.license_capabilities,
+            capability_guard=self.license_guard,
+            license_summary=license_summary,
+            license_notice=license_notice,
+            license_path=str(self._license_path) if self._license_path else None,
         )
 
     # ------------------------------------------------------------------
@@ -347,6 +516,28 @@ class TradingGUI:
                 return AIManager(self.paths.models_dir, logger)
             except TypeError:
                 return AIManager(self.paths.models_dir)
+
+    # ------------------------------------------------------------------
+    def _build_secret_storage(self) -> EncryptedFileSecretStorage:
+        vault_path = getattr(self.paths, "secret_vault_file", None)
+        if vault_path is None:
+            vault_path = self.paths.keys_file.with_suffix(".vault")
+        passphrase = os.environ.get("DUDZIAN_GUI_SECRET_PASSPHRASE")
+        if not passphrase:
+            logger.warning(
+                "Brak zmiennej DUDZIAN_GUI_SECRET_PASSPHRASE – użyto domyślnego hasła magazynu."
+            )
+            passphrase = "trading-gui"
+        return EncryptedFileSecretStorage(vault_path, passphrase)
+
+    # ------------------------------------------------------------------
+    def _build_preset_service(self) -> PresetConfigService:
+        core_path = self._core_config_path or resolve_core_config_path()
+        try:
+            return PresetConfigService(core_path)
+        except Exception:  # pragma: no cover - konfiguracja może być niepełna podczas developmentu
+            logger.exception("Nie udało się utworzyć serwisu konfiguracji presetów")
+            return PresetConfigService(core_path)
 
     # ------------------------------------------------------------------
     def _configure_logging_handler(self) -> None:
@@ -691,7 +882,7 @@ class TradingGUI:
         self.risk_profile_name = resolved_name
         self.risk_profile_config = profile_payload
         self.risk_manager_settings = settings
-        self.risk_manager_config = settings.to_dict()
+        self.risk_manager_config = self._settings_to_adapter_config(settings)
         self._risk_config_mtime = self._get_risk_config_timestamp()
 
         self.state.risk_profile_name = resolved_name

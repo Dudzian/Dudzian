@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -12,7 +13,9 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping
 
 from bot_core.config.loader import load_core_config
+from bot_core.security.guards import CapabilityGuard, LicenseCapabilityError
 from bot_core.security.license import validate_license_from_config
+from bot_core.security.license_service import LicenseService, LicenseServiceError
 from bot_core.security.update import verify_update_bundle
 from deploy.packaging.build_pyinstaller_bundle import build_bundle as build_pyinstaller_bundle
 
@@ -87,6 +90,28 @@ def cmd_prepare(args: argparse.Namespace, environments: Mapping[str, Environment
 
 def cmd_bundle(args: argparse.Namespace, environments: Mapping[str, EnvironmentDefinition], *, state_path: Path) -> None:
     env = _ensure_environment(args.environment, environments=environments)
+    license_result = _resolve_license_result(env.config_path)
+    guard = _require_capability_guard(license_result)
+    capabilities = guard.capabilities
+
+    if args.allowed_profile and license_result.profile:
+        allowed = {profile.strip().lower() for profile in args.allowed_profile}
+        if license_result.profile.lower() not in allowed:
+            raise SystemExit(
+                "Profil licencji OEM nie jest dozwolony w manifeście aktualizacji – zaktualizuj --allowed-profile."
+            )
+
+    if not capabilities.is_maintenance_active():
+        raise SystemExit("Licencja utrzymaniowa wygasła – budowanie bundla jest zablokowane.")
+
+    try:
+        guard.require_module(
+            "oem_updater",
+            message="Licencja nie zawiera modułu OEM Updater wymaganego do dystrybucji bundli.",
+        )
+    except LicenseCapabilityError as exc:
+        raise SystemExit(str(exc)) from exc
+
     base_dir = Path(args.base_dir).expanduser().resolve()
     env_dir = base_dir / env.name
     env_dir.mkdir(parents=True, exist_ok=True)
@@ -150,6 +175,42 @@ def cmd_bundle(args: argparse.Namespace, environments: Mapping[str, EnvironmentD
 
 def cmd_launch(args: argparse.Namespace, environments: Mapping[str, EnvironmentDefinition], *, state_path: Path) -> None:
     env = _ensure_environment(args.environment, environments=environments)
+    license_result = _resolve_license_result(env.config_path)
+    guard = _require_capability_guard(license_result)
+
+    try:
+        guard.require_environment(
+            env.name,
+            message=f"Licencja nie pozwala na uruchomienie środowiska '{env.name}'.",
+        )
+    except LicenseCapabilityError as exc:
+        raise SystemExit(str(exc)) from exc
+
+    try:
+        guard.require_runtime(
+            "multi_strategy_scheduler",
+            message="Multi-strategy scheduler jest zablokowany przez licencję.",
+        )
+    except LicenseCapabilityError as exc:
+        raise SystemExit(str(exc)) from exc
+
+    try:
+        guard.require_module(
+            "walk_forward",
+            message="Scheduler multi-strategy wymaga modułu Walk Forward w licencji.",
+        )
+    except LicenseCapabilityError as exc:
+        raise SystemExit(str(exc)) from exc
+
+    if env.name == "live":
+        try:
+            guard.require_edition(
+                "pro",
+                message="Uruchomienie środowiska live wymaga licencji w edycji Pro lub wyższej.",
+            )
+        except LicenseCapabilityError as exc:
+            raise SystemExit(str(exc)) from exc
+
     config_path = env.config_path.expanduser().resolve()
     command = [
         sys.executable,
@@ -187,7 +248,41 @@ def _resolve_license_result(config_path: Path):
     license_config = getattr(getattr(core_config, "security", None), "license", None)
     if license_config is None:
         raise SystemExit("Konfiguracja core nie zawiera sekcji security.license")
-    return validate_license_from_config(license_config)
+    result = validate_license_from_config(license_config)
+
+    offline_license_path = os.environ.get("BOT_CORE_LICENSE_PATH")
+    offline_public_key = os.environ.get("BOT_CORE_LICENSE_PUBLIC_KEY")
+    if not offline_license_path or not offline_public_key:
+        LOGGER.error(
+            "Brak zmiennych BOT_CORE_LICENSE_PATH/BOT_CORE_LICENSE_PUBLIC_KEY – licencja offline jest wymagana."
+        )
+        raise SystemExit("Nie znaleziono licencji offline wymaganej przez orchestratora.")
+
+    try:
+        service = LicenseService(verify_key_hex=offline_public_key)
+        snapshot = service.load_from_file(
+            offline_license_path,
+            expected_hwid=result.fingerprint,
+        )
+    except FileNotFoundError as exc:
+        LOGGER.error("Plik licencji offline nie istnieje: %s", offline_license_path)
+        raise SystemExit("Plik licencji offline nie został znaleziony.") from exc
+    except LicenseServiceError as exc:
+        LOGGER.error("Błąd podczas ładowania licencji offline: %s", exc)
+        raise SystemExit(f"Nie udało się odczytać licencji offline: {exc}") from exc
+
+    guard = CapabilityGuard(snapshot.capabilities)
+    result.capabilities = snapshot.capabilities
+    result.capability_guard = guard
+    return result
+
+
+def _require_capability_guard(result) -> CapabilityGuard:
+    guard = getattr(result, "capability_guard", None)
+    capabilities = getattr(result, "capabilities", None)
+    if guard is None or capabilities is None:
+        raise SystemExit("Licencja offline nie dostarczyła capabilities – operacja zabroniona.")
+    return guard
 
 
 def cmd_verify_update(args: argparse.Namespace, environments: Mapping[str, EnvironmentDefinition]) -> None:

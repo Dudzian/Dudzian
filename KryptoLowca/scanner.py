@@ -6,6 +6,13 @@ import time
 from typing import Dict, Any, List, Optional
 
 from KryptoLowca.exchange_manager import ExchangeManager
+try:  # pragma: no cover - zależność opcjonalna
+    from bot_core.market_intel import MarketIntelAggregator, MarketIntelQuery
+except Exception:  # pragma: no cover - fallback gdy moduł niedostępny
+    MarketIntelAggregator = None  # type: ignore[assignment]
+    MarketIntelQuery = None  # type: ignore[assignment]
+
+from KryptoLowca.managers.exchange_manager import ExchangeManager
 
 
 def _compute_atr(ohlcv: List[List[float]], length: int) -> Optional[float]:
@@ -39,8 +46,14 @@ class MarketScanner:
         {"symbol","last","atr","atr_pct","spread_pct","volume"}.
     """
 
-    def __init__(self, ex_mgr: ExchangeManager):
+    def __init__(
+        self,
+        ex_mgr: ExchangeManager,
+        *,
+        market_intel: Optional["MarketIntelAggregator"] = None,
+    ):
         self.ex = ex_mgr
+        self.market_intel = market_intel
         self._last_rules: Dict[str, Any] = {}
 
     def ensure_markets(self) -> None:
@@ -123,4 +136,30 @@ class MarketScanner:
 
         # sortuj po atr_pct malejąco, potem po volume
         out.sort(key=lambda x: (x["atr_pct"], x["volume"]), reverse=True)
-        return out[:max(1, int(top_n))]
+        out = out[:max(1, int(top_n))]
+
+        if out and self.market_intel is not None and MarketIntelQuery is not None:
+            symbols = [row["symbol"].replace("/", "_") for row in out]
+            try:
+                queries = [
+                    MarketIntelQuery(symbol=sym, interval="1h", lookback_bars=96)
+                    for sym in symbols
+                ]
+                snapshots = self.market_intel.build_many(queries)  # type: ignore[attr-defined]
+                for row in out:
+                    key = row["symbol"].replace("/", "_")
+                    snapshot = snapshots.get(key)
+                    if snapshot is None:
+                        continue
+                    row.setdefault("intel", {})
+                    row["intel"].update(
+                        {
+                            "liquidity_usd": getattr(snapshot, "liquidity_usd", None),
+                            "momentum_score": getattr(snapshot, "momentum_score", None),
+                            "volatility_pct": getattr(snapshot, "volatility_pct", None),
+                        }
+                    )
+            except Exception:  # pragma: no cover - zależne od konfiguracji
+                pass
+
+        return out

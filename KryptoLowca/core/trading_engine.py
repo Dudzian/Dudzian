@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any, Callable, Dict, Optional, Tuple, Union
 
 import pandas as pd
@@ -32,6 +33,12 @@ from KryptoLowca.trading_strategies import (  # type: ignore
     TradingParameters,
     TradingStrategies,
 )
+
+try:  # pragma: no cover - moduł market intel jest opcjonalny
+    from bot_core.market_intel import MarketIntelAggregator, MarketIntelQuery  # type: ignore[attr-defined]
+except Exception:  # pragma: no cover - fallback gdy bot_core nie dostarcza agregatora
+    MarketIntelAggregator = None  # type: ignore[assignment]
+    MarketIntelQuery = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:
@@ -54,7 +61,12 @@ class TradingEngine:
         db_manager: DatabaseManager for logging and position tracking.
     """
 
-    def __init__(self, db_manager: Optional[DatabaseManager] = None):
+    def __init__(
+        self,
+        db_manager: Optional[DatabaseManager] = None,
+        *,
+        market_intel: Optional["MarketIntelAggregator"] = None,
+    ):
         self.ex_mgr: Optional[ExchangeManager] = None
         self.ai_mgr: Optional[AIManager] = None
         self.risk_mgr: Optional[RiskManager] = None
@@ -69,6 +81,10 @@ class TradingEngine:
         self._order_executor: Optional[OrderExecutor] = None
         self._alert_dispatcher = get_alert_dispatcher()
         self._alert_listener_token: Optional[str] = None
+        self._market_intel: Optional["MarketIntelAggregator"] = market_intel
+        self._market_intel_cache: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        self._market_intel_cache_ts: Dict[Tuple[str, str], float] = {}
+        self._market_intel_cache_ttl = 60.0
 
     async def configure(self, ex_mgr: ExchangeManager, ai_mgr: AIManager, risk_mgr: RiskManager) -> None:
         """Configure the engine with dependencies."""
@@ -89,18 +105,25 @@ class TradingEngine:
             if self._alert_listener_token is not None:
                 self._alert_dispatcher.unregister(self._alert_listener_token)
                 self._alert_listener_token = None
-            self._alert_listener_token = self._alert_dispatcher.register(
-                self._handle_alert_event,
-                name=f"trading-engine-{id(self)}",
-            )
+        self._alert_listener_token = self._alert_dispatcher.register(
+            self._handle_alert_event,
+            name=f"trading-engine-{id(self)}",
+        )
 
-            # wykonawca z limitem frakcji zsynchronizowanym z konfiguracją
-            self._order_executor = OrderExecutor(
-                ex_mgr,
-                self.db_manager,
-                max_fraction=self._fraction_cap(),
-            )
-            self._order_executor.set_user(self._user_id)
+        # wykonawca z limitem frakcji zsynchronizowanym z konfiguracją
+        self._order_executor = OrderExecutor(
+            ex_mgr,
+            self.db_manager,
+            max_fraction=self._fraction_cap(),
+        )
+        self._order_executor.set_user(self._user_id)
+
+    def set_market_intel(self, aggregator: Optional["MarketIntelAggregator"]) -> None:
+        """Pozwala wstrzyknąć/agregator Market Intel do silnika."""
+
+        self._market_intel = aggregator
+        self._market_intel_cache.clear()
+        self._market_intel_cache_ts.clear()
 
     def __del__(self) -> None:  # pragma: no cover - cleanup best-effort
         try:
@@ -307,9 +330,16 @@ class TradingEngine:
                         logger.warning("Strategy execution skipped: %s", exc)
 
                 latest_pred = float(preds.iloc[-1])
+                timeframe = self._infer_timeframe(df)
                 latest_price = float(df["close"].iloc[-1])
+                intel_snapshot: Optional[Dict[str, Any]] = None
                 if latest_price <= 0:
-                    raise ValueError("Latest price must be positive")
+                    intel_snapshot = self._collect_market_intel(symbol_key, timeframe)
+                    fallback_price = self._resolve_price_from_intel(intel_snapshot)
+                    if fallback_price is not None and fallback_price > 0:
+                        latest_price = fallback_price
+                    else:
+                        raise ValueError("Latest price must be positive")
 
                 shorting_enabled = bool(getattr(ec, "enable_shorting", False))
                 if latest_pred > 0:
@@ -428,6 +458,11 @@ class TradingEngine:
                         category="trade",
                     )
 
+                if intel_snapshot is None:
+                    intel_snapshot = self._collect_market_intel(symbol_key, timeframe)
+                if intel_snapshot:
+                    plan["market_intel"] = dict(intel_snapshot)
+
                 auto_execute = bool(getattr(ec, "auto_execute", True))
                 if auto_execute and order_executor:
                     await self._emit_event(
@@ -480,6 +515,190 @@ class TradingEngine:
                     )
                 await self._emit_event({"type": "error", "symbol": symbol_key, "error": str(exc)})
                 raise TradingError(str(exc)) from exc
+
+    def _collect_market_intel(
+        self, symbol: str, timeframe: str
+    ) -> Optional[Dict[str, Any]]:
+        aggregator = self._market_intel
+        if aggregator is None:
+            return None
+
+        cache_key = (symbol.upper(), timeframe)
+        now = time.monotonic()
+        cached = self._market_intel_cache.get(cache_key)
+        if cached is not None:
+            ts = self._market_intel_cache_ts.get(cache_key, 0.0)
+            if now - ts <= self._market_intel_cache_ttl:
+                return dict(cached)
+
+        payload: Optional[Dict[str, Any]] = None
+        mode = getattr(aggregator, "_mode", None)
+        if mode == "cache" and MarketIntelQuery is not None and hasattr(aggregator, "build_snapshot"):
+            try:
+                query_symbol = self._normalise_market_intel_symbol(symbol, mode="cache")
+                interval = self._normalise_market_intel_interval(timeframe)
+                query = MarketIntelQuery(  # type: ignore[call-arg]
+                    symbol=query_symbol,
+                    interval=interval,
+                    lookback_bars=96,
+                )
+                snapshot = aggregator.build_snapshot(query)  # type: ignore[attr-defined]
+            except Exception:
+                logger.debug(
+                    "Market intel snapshot failed for %s/%s", symbol, timeframe, exc_info=True
+                )
+            else:
+                payload = self._snapshot_to_mapping(snapshot)
+        else:
+            payload = self._collect_sqlite_market_intel(aggregator, symbol)
+
+        if payload:
+            self._market_intel_cache[cache_key] = payload
+            self._market_intel_cache_ts[cache_key] = now
+            return dict(payload)
+        return None
+
+    def _collect_sqlite_market_intel(
+        self, aggregator: Any, symbol: str
+    ) -> Optional[Dict[str, Any]]:
+        if not hasattr(aggregator, "build"):
+            return None
+        try:
+            baselines = aggregator.build()  # type: ignore[attr-defined]
+        except Exception:
+            logger.debug("Market intel baseline build failed for %s", symbol, exc_info=True)
+            return None
+
+        aliases = self._market_intel_symbol_aliases(symbol)
+        for baseline in baselines or ():
+            candidate = str(getattr(baseline, "symbol", "")).upper()
+            if candidate not in aliases:
+                continue
+            if hasattr(baseline, "to_mapping"):
+                mapping = baseline.to_mapping()  # type: ignore[attr-defined]
+                return {k: v for k, v in mapping.items() if v is not None}
+            attrs: Dict[str, Any] = {}
+            for key in dir(baseline):
+                if key.startswith("_"):
+                    continue
+                value = getattr(baseline, key)
+                if callable(value):
+                    continue
+                attrs[key] = value
+            if attrs:
+                return {k: v for k, v in attrs.items() if v is not None}
+        return None
+
+    @staticmethod
+    def _snapshot_to_mapping(snapshot: Any) -> Dict[str, Any]:
+        if snapshot is None:
+            return {}
+        if hasattr(snapshot, "to_dict"):
+            mapping = snapshot.to_dict()  # type: ignore[attr-defined]
+            return {k: v for k, v in mapping.items() if v is not None}
+        attrs: Dict[str, Any] = {}
+        for key in dir(snapshot):
+            if key.startswith("_"):
+                continue
+            value = getattr(snapshot, key)
+            if callable(value):
+                continue
+            attrs[key] = value
+        return {k: v for k, v in attrs.items() if v is not None}
+
+    @staticmethod
+    def _resolve_price_from_intel(payload: Optional[Dict[str, Any]]) -> Optional[float]:
+        if not payload:
+            return None
+        for key in ("mid_price", "price", "last_price", "close", "mid"):
+            value = payload.get(key)
+            if value is None:
+                continue
+            try:
+                price = float(value)
+            except Exception:
+                continue
+            if price > 0:
+                return price
+        return None
+
+    @staticmethod
+    def _normalise_market_intel_interval(timeframe: str) -> str:
+        text = str(timeframe or "").strip().lower()
+        if not text:
+            return "1h"
+        mapping = {
+            "1": "1m",
+            "1m": "1m",
+            "3m": "3m",
+            "5m": "5m",
+            "15m": "15m",
+            "30m": "30m",
+            "1h": "1h",
+            "2h": "2h",
+            "4h": "4h",
+            "6h": "6h",
+            "12h": "12h",
+            "1d": "1d",
+        }
+        if text in mapping:
+            return mapping[text]
+        if text.endswith("m") or text.endswith("h") or text.endswith("d"):
+            return text
+        return "1h"
+
+    @staticmethod
+    def _normalise_market_intel_symbol(symbol: str, *, mode: str) -> str:
+        text = str(symbol or "").strip().upper()
+        if not text:
+            return text
+        if mode == "cache":
+            return text.replace("/", "").replace("-", "")
+        return text
+
+    @staticmethod
+    def _market_intel_symbol_aliases(symbol: str) -> set[str]:
+        text = str(symbol or "").strip().upper()
+        if not text:
+            return {text}
+        collapsed = text.replace("/", "").replace("-", "").replace("_", "")
+        return {
+            text,
+            collapsed,
+            collapsed.replace("USDT", "/USDT"),
+            collapsed.replace("USDT", "-USDT"),
+            collapsed.replace("USDT", "_USDT"),
+        }
+
+    @staticmethod
+    def _infer_timeframe(df: pd.DataFrame) -> str:
+        if "timestamp" in df.columns and not df["timestamp"].empty:
+            series = df["timestamp"].dropna()
+            if len(series) >= 2:
+                delta = series.iloc[-1] - series.iloc[-2]
+                return TradingEngine._timedelta_to_timeframe(delta)
+        if isinstance(df.index, pd.DatetimeIndex) and len(df.index) >= 2:
+            delta = df.index[-1] - df.index[-2]
+            return TradingEngine._timedelta_to_timeframe(delta)
+        return "1h"
+
+    @staticmethod
+    def _timedelta_to_timeframe(delta: pd.Timedelta) -> str:
+        minutes = int(delta.total_seconds() // 60)
+        mapping = {
+            1: "1m",
+            3: "3m",
+            5: "5m",
+            15: "15m",
+            30: "30m",
+            60: "1h",
+            120: "2h",
+            240: "4h",
+            360: "6h",
+            720: "12h",
+            1440: "1d",
+        }
+        return mapping.get(minutes, "1h")
 
     def _fraction_cap(
         self,

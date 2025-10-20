@@ -1314,13 +1314,30 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     """Uruchom moduł w trybie skryptu."""
 
     parser = _build_parser()
-    args = parser.parse_args(list(argv) if argv is not None else None)
+    if argv is None:
+        argv_list = list(sys.argv[1:])
+    else:
+        argv_list = list(argv)
+    args = parser.parse_args(argv_list)
+    set_env_format_specified = any(
+        entry == "--set-env-format" or entry.startswith("--set-env-format=")
+        for entry in argv_list
+    )
 
     if args.clear_cache:
         clear_cache()
 
     if args.json_indent is not None and args.format != "json":
         parser.error("opcja --json-indent wymaga jednoczesnego użycia z --format=json")
+
+    if args.shell_path and not args.shell:
+        parser.error("opcja --shell-path wymaga jednoczesnego użycia z --shell")
+
+    if args.shell and args.module:
+        parser.error("opcja --shell nie może być łączona z --module")
+
+    if set_env_format_specified and not (args.set_env or args.export):
+        parser.error("opcja --set-env-format wymaga jednoczesnego użycia z --set-env")
     if args.json_indent is not None and args.json_indent < 0:
         parser.error("wartość --json-indent musi być nieujemna")
     if args.max_depth is not None and args.max_depth < 0:
@@ -1655,6 +1672,45 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         parser.error("należy podać polecenie po separatorze '--'")
 
     should_run_command = bool(command or module_name or shell_requested)
+    if args.output and should_run_command:
+        parser.error("opcja --output nie może być używana razem z poleceniem do uruchomienia")
+
+    set_env_format_effective = args.set_env_format
+    if args.export:
+        if not args.set_env:
+            parser.error("opcja --export wymaga jednoczesnego użycia z --set-env")
+        if set_env_format_specified and args.set_env_format != "posix":
+            parser.error("opcja --set-env-format musi mieć wartość 'posix' przy użyciu --export")
+        set_env_format_effective = "posix"
+    else:
+        if args.set_env and args.set_env_format not in SET_ENV_FORMATS:
+            parser.error("opcja --set-env-format ma nieprawidłową wartość")
+
+    args.set_env_format = set_env_format_effective
+
+    if args.print_discovery and args.set_env:
+        parser.error("opcja --print-discovery nie może być łączona z --set-env")
+
+    if args.print_pythonpath and args.print_sys_path:
+        parser.error("opcja --print-pythonpath nie może być łączona z --print-sys-path")
+
+    if args.print_config and args.print_pythonpath:
+        parser.error("opcja --print-config nie może być łączona z --print-pythonpath")
+
+    if args.print_config and args.print_sys_path:
+        parser.error("opcja --print-config nie może być łączona z --print-sys-path")
+
+    if args.print_pythonpath and (args.set_env or args.export or should_run_command):
+        parser.error("opcja --print-pythonpath nie może być łączona z innymi trybami uruchamiania")
+
+    if args.print_sys_path and (args.set_env or args.export or should_run_command):
+        parser.error("opcja --print-sys-path nie może być łączona z innymi trybami uruchamiania")
+
+    if args.print_config and (args.set_env or args.export or should_run_command):
+        parser.error("opcja --print-config nie może być łączona z innymi trybami uruchamiania")
+
+    if args.print_discovery and should_run_command:
+        parser.error("opcja --print-discovery nie może być łączona z poleceniem do uruchomienia")
 
     # Early "list" style commands
     sentinel_arg = _resolve_sentinels(sentinel_candidates)
@@ -2689,6 +2745,24 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         sys_path_display_value: Optional[str] = None
         sys_path_snapshot = list(sys.path)
 
+        if args.ensure:
+            _apply_entries(sys.path, (repo_str, *normalized_additional), position)
+
+        if args.verbose:
+            env_additional_raw = os.environ.get(ENV_ADDITIONAL_PATHS)
+            env_additional_display = env_additional_raw if env_additional_raw else "(brak)"
+            file_entries_verbose = [
+                *additional_config_file_entries_display,
+                *additional_cli_file_entries_display,
+            ]
+            file_entries_text = ", ".join(file_entries_verbose) if file_entries_verbose else "(brak)"
+            print(f"{prefix} katalog repozytorium: {repo_display}", file=sys.stderr)
+            print(f"{prefix} {ENV_ADDITIONAL_PATHS}: {env_additional_display}", file=sys.stderr)
+            print(
+                f"{prefix} dodatkowe ścieżki z plików: {file_entries_text}",
+                file=sys.stderr,
+            )
+
         if args.print_discovery and args.verbose:
             print(f"{prefix} punkt startowy wykrycia: {discovery_start_display}", file=sys.stderr)
 
@@ -2731,6 +2805,27 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
             if args.set_env:
                 env[args.set_env] = repo_str
+
+            if args.verbose:
+                inserted_display = (
+                    ", ".join(_format_path_sequence(inserted, path_style))
+                    if inserted
+                    else "(brak)"
+                )
+                print(
+                    f"{prefix} aktualizacja {pythonpath_var}: {inserted_display}",
+                    file=sys.stderr,
+                )
+                if shell_requested and shell_command_display is not None:
+                    command_display = shell_command_display
+                elif command_to_run:
+                    command_display = shlex.join(command_to_run)
+                else:
+                    command_display = "(brak)"
+                print(
+                    f"{prefix} uruchamianie polecenia: {command_display}",
+                    file=sys.stderr,
+                )
 
             completed = subprocess.run(command_to_run, check=False, env=env)
             return completed.returncode

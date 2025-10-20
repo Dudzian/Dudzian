@@ -12,6 +12,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 from bot_core.execution.paper import PaperTradingExecutionService
 from bot_core.runtime.journal import TradingDecisionJournal
+from bot_core.security.guards import get_capability_guard
 
 
 @dataclass(slots=True)
@@ -53,6 +54,16 @@ def _time_window(report_date: date, tz: tzinfo) -> tuple[datetime, datetime]:
     start_local = datetime.combine(report_date, dt_time.min, tzinfo=tz)
     end_local = start_local + timedelta(days=1)
     return start_local.astimezone(timezone.utc), end_local.astimezone(timezone.utc)
+
+
+def _require_reporting_capability() -> None:
+    guard = get_capability_guard()
+    if guard is None:
+        return
+    guard.require_module(
+        "reporting_pro",
+        message="Moduł Reporting Pro jest wymagany do generowania archiwów raportów paper.",
+    )
 
 
 def _ledger_header() -> Sequence[str]:
@@ -191,6 +202,7 @@ def generate_daily_paper_report(
     ledger_entries: Iterable[Mapping[str, object]] | None = None,
 ) -> PaperReportArtifacts:
     """Generuje archiwum ZIP z dziennym blotterem i (opcjonalnie) dziennikiem decyzji."""
+    _require_reporting_capability()
     tzinfo_obj = _ensure_timezone(tz)
     report_day = report_date or datetime.now(tzinfo_obj).date()
     output_path = Path(output_dir)

@@ -7,6 +7,8 @@ Ten dokument opisuje, jak chronić klucze API, rotować je automatycznie i zapew
 - Klucze przechowywane lokalnie szyfrowane są przez `bot_core.security.SecretManager` z backendem `EncryptedFileSecretStorage` (AES-256-GCM).
 - Harmonogram rotacji prowadź w pliku `var/security/rotation.json` przy użyciu `bot_core.security.RotationRegistry`.
 - Helper `KryptoLowca.security.KeyRotationManager` łączy magazyn sekretów z rejestrem rotacji i udostępnia metody `ensure_exchange_rotation()` oraz `ensure_secret_rotation()`, co upraszcza pisanie skryptów cron/CLI.
+- Klucze przechowywane lokalnie szyfrowane są przez `bot_core.security.file_storage.EncryptedFileSecretStorage` (AES-256-GCM, PBKDF2 390k iteracji).
+- `KeyRotationManager` zapisuje metadane rotacji w pliku `api_keys.enc.rotation.json`.
 - Aby wymusić rotację raz na 30 dni, uruchom:
 
 ```bash

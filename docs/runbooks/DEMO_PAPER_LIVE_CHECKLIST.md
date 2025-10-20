@@ -28,11 +28,17 @@ Zapewnienie, że każda promocja środowiska tradingowego spełnia wymagania tec
 | 2. Konfiguruj `config/core.yaml` sekcję `execution.live` oraz `alerts.prometheus` | Inżynier Runtime | Nowa wersja `config/core.yaml`, diff Git | PR zatwierdzony, hash wpisany do decision logu |
 | 3. Uruchom `python scripts/live_execution_dry_run.py --config config/core.yaml --audit-json audit/decision_logs/live_execution.jsonl --dry-run` | Zespół Egzekucji | Raport dry-run, decision log | Dry-run PASS, brak błędów adapterów |
 | 4. Przeprowadź checklistę `docs/runbooks/LIVE_EXECUTION_CHECKLIST.md` | Operator Live | Wypełniony formularz checklisty | Wszystkie pola `Akceptacja` oznaczone jako `[x]` |
-| 5. Potwierdź gotowość UI (telemetria guard, reduce motion, fps monitor) | Zespół UI | Logi UI (`logs/ui_telemetry_alerts.jsonl`) | Guard aktywny, brak ostrzeżeń | 
+| 5. Potwierdź gotowość UI (telemetria guard, reduce motion, fps monitor) | Zespół UI | Logi UI (`logs/ui_telemetry_alerts.jsonl`) | Guard aktywny, brak ostrzeżeń |
 | 6. Wpisz `status=live_ready` w decision logu (`audit/decision_logs/live_execution.jsonl`) | Compliance | Decision log live | Wpis podpisany HMAC, zweryfikowany `verify_decision_log.py --strict` |
+
+## Sekcja Stage6 – migracja profilu i sekretów
+| Krok | Odpowiedzialny | Artefakty | Akceptacja |
+| --- | --- | --- | --- |
+| 1. Uruchom migrację Stage6 (`python KryptoLowca/scripts/preset_editor_cli.py --core-config config/core.yaml --legacy-preset presets/gui.json --profile-name stage6_gui --core-backup config/core.yaml.bak --core-diff --secrets-input secrets/legacy.yaml --secrets-output secrets/api_keys.vault --secret-passphrase-file secrets/pass.txt --summary-json var/audit/stage6/migration_summary.json`) | Operator Stage6 | `config/core.yaml`, `config/core.yaml.bak`, `secrets/api_keys.vault`, `var/audit/stage6/migration_summary.json` | Diff z `--core-diff` przejrzany, kopia zapasowa zarchiwizowana, magazyn sekretów zaszyfrowany, sumy SHA-256 w `migration_summary.json` potwierdzone (core, backup, magazyn, źródłowe pliki sekretów i opcjonalna sól), zarejestrowane źródła haseł (`output_passphrase`, `legacy_security_passphrase` = inline/plik/env) oraz brak ostrzeżeń w polu `warnings` (ewentualne wpisy udokumentowane w decision logu); sekcja `cli_invocation` zawiera zanonimizowaną listę argumentów (hasła zastąpione `***REDACTED***`), a sekcja `tool` rejestruje interpreter, wersję pakietu i rewizję git migratora (wartości potwierdzone w decision logu) |
+| 2. Dołącz plik `migration_summary.json` do decision logu (`audit/decision_logs/stage6.jsonl`) i podpisz wpis HMAC | Compliance/Risk Stage6 | Decision log Stage6, plik podsumowania | Wpis zawiera hash SHA-384 podsumowania oraz status `stage6_profile_ready` |
 
 ## Artefakty/Akceptacja
 - Decision logi: `audit/decision_logs/demo.jsonl`, `audit/decision_logs/paper.jsonl`, `audit/decision_logs/live_execution.jsonl` z podpisami HMAC-SHA384.
 - Raporty Paper Labs (JSON + PDF), smoke paper, logi dry-run live.
 - Hash SHA-384 konfiguracji `config/core.yaml` oraz bundla OEM przypisany do release.
-- Checklisty podpisane przez odpowiedzialne role i zarchiwizowane w `var/audit/`.
+- Checklisty podpisane przez odpowiedzialne role i zarchiwizowane w `var/audit/`, w tym `var/audit/stage6/migration_summary.json` z migracji Stage6 zawierający sumy SHA-256 dla `core.yaml`, kopii zapasowej, magazynu sekretów oraz źródłowych artefaktów (plików sekretów/`SecurityManager` + soli), identyfikację źródeł haseł (inline/plik/env), potwierdzenie, że pole `warnings` jest puste (lub opisano zarejestrowane ostrzeżenia w decision logu), zanonimizowaną sekcję `cli_invocation` z argumentami CLI (hasła → `***REDACTED***`) oraz metadane sekcji `tool` (ścieżka interpretera, wersja Pythona, dostępność pakietu `dudzian-bot`, rewizja git).

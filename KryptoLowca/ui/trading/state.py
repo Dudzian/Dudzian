@@ -9,6 +9,8 @@ import tkinter as tk
 
 from bot_core.runtime.paths import DesktopAppPaths
 from bot_core.runtime.metadata import RuntimeEntrypointMetadata, RiskManagerSettings
+from bot_core.security.capabilities import LicenseCapabilities
+from bot_core.security.guards import CapabilityGuard
 
 
 @dataclass
@@ -36,3 +38,17 @@ class AppState:
     risk_notional_label: tk.StringVar | None = None
     market_symbol: tk.StringVar | None = None
     market_price: tk.StringVar | None = None
+    license_capabilities: LicenseCapabilities | None = None
+    capability_guard: CapabilityGuard | None = None
+    license_summary: tk.StringVar | None = None
+    license_notice: tk.StringVar | None = None
+    license_path: str | None = None
+    market_intel_label: tk.StringVar | None = None
+    market_intel_summary: str = "Market intel: —"
+    market_intel_history_label: tk.StringVar | None = None
+    market_intel_history: list[str] = field(default_factory=list)
+    market_intel_history_display: str = "Brak historii market intel"
+    market_intel_auto_save: tk.BooleanVar | None = None
+    market_intel_history_destination: str | None = None
+    market_intel_history_destination_display: str = "Plik historii: domyślny"
+    market_intel_history_path_label: tk.StringVar | None = None

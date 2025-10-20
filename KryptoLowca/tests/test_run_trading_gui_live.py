@@ -1,3 +1,4 @@
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -68,3 +69,37 @@ def test_paper_trade_executor_handles_errors(monkeypatch: pytest.MonkeyPatch) ->
     assert captured["error"][0] == "Paper"
     assert "boom" in captured["error"][1]
     assert any(level == "ERROR" for level, _ in gui.logged)
+
+
+def test_build_frontend_bootstrap_delegates_to_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(launcher, "_FRONTEND_PATHS", None)
+
+    captured: dict[str, object] = {}
+
+    dummy_paths = SimpleNamespace(app_root=Path("/tmp/app"), db_file=Path("/tmp/db.sqlite"))
+
+    def fake_build(app_file: Path, *, logs_dir, text_log_file):  # type: ignore[override]
+        captured["build_args"] = (app_file, logs_dir, text_log_file)
+        return dummy_paths
+
+    dummy_services = launcher.FrontendBootstrap(exchange_manager="mgr", market_intel="intel")
+
+    def fake_bootstrap(**kwargs: object) -> launcher.FrontendBootstrap:
+        captured["bootstrap_kwargs"] = kwargs
+        return dummy_services
+
+    monkeypatch.setattr(launcher, "build_desktop_app_paths", fake_build)
+    monkeypatch.setattr(launcher, "bootstrap_frontend_services", fake_bootstrap)
+
+    paths, services = launcher._build_frontend_bootstrap(
+        core_config_path="core.yaml",
+        core_environment="demo",
+    )
+
+    assert paths is dummy_paths
+    assert services is dummy_services
+    assert captured["bootstrap_kwargs"] == {
+        "paths": dummy_paths,
+        "config_path": "core.yaml",
+        "environment": "demo",
+    }
