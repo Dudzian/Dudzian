@@ -242,6 +242,22 @@ def test_fetch_ticker_updates_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+def test_fetch_ticker_maps_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    credentials = ExchangeCredentials(key_id="public", environment=Environment.LIVE)
+    adapter = ZondaSpotAdapter(credentials)
+
+    def fake_public_request(self, path: str, *, params=None, method="GET"):
+        assert path == "/trading/ticker"
+        payload = {"status": "Fail", "errors": [{"code": 429, "message": "limit"}]}
+        adapter._ensure_success(payload, status=429, endpoint=path, signed=False)
+        return payload
+
+    monkeypatch.setattr(ZondaSpotAdapter, "_public_request", fake_public_request)
+
+    with pytest.raises(ExchangeThrottlingError):
+        adapter.fetch_ticker("BTC-PLN")
+
+
 def test_fetch_order_book_parses_levels(monkeypatch: pytest.MonkeyPatch) -> None:
     metrics = MetricsRegistry()
     credentials = ExchangeCredentials(key_id="public", environment=Environment.LIVE)
@@ -341,6 +357,29 @@ def test_public_request_retries_throttling(monkeypatch: pytest.MonkeyPatch) -> N
         adapter._metric_rate_limit_remaining.value(labels=adapter._metric_base_labels)  # type: ignore[attr-defined]
         == pytest.approx(99.0)
     )
+
+
+def test_fetch_account_snapshot_maps_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    credentials = ExchangeCredentials(
+        key_id="key",
+        secret="secret",
+        permissions=("read", "trade"),
+        environment=Environment.LIVE,
+    )
+    adapter = ZondaSpotAdapter(credentials)
+
+    def fake_signed_request(self, method: str, path: str, *, params=None, data=None):
+        assert method == "POST"
+        assert path == "/trading/balance"
+        payload = {"status": "Fail", "errors": [{"code": 4002, "message": "Invalid signature"}]}
+        adapter._ensure_success(payload, status=403, endpoint=path, signed=True)
+        return payload
+
+    monkeypatch.setattr(ZondaSpotAdapter, "_signed_request", fake_signed_request)
+    monkeypatch.setattr(ZondaSpotAdapter, "_fetch_price_map", lambda self: {})
+
+    with pytest.raises(ExchangeAuthError):
+        adapter.fetch_account_snapshot()
 
 
 def test_fetch_account_snapshot_converts_balances(monkeypatch: pytest.MonkeyPatch) -> None:

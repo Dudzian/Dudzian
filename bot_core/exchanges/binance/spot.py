@@ -38,6 +38,7 @@ from bot_core.exchanges.errors import (
     ExchangeNetworkError,
     ExchangeThrottlingError,
 )
+from bot_core.exchanges.error_mapping import raise_for_binance_error
 from bot_core.exchanges.streaming import LocalLongPollStream
 from bot_core.observability.metrics import MetricsRegistry, get_global_metrics_registry
 
@@ -518,6 +519,7 @@ class BinanceSpotAdapter(ExchangeAdapter):
                 self._metric_signed_requests.inc(labels={**self._metric_base_labels, "method": method})
             try:
                 with urlopen(request, timeout=15) as response:  # nosec: B310 - endpoint zaufany
+                    status_code = getattr(response, "status", getattr(response, "code", 200))
                     payload = response.read()
                     headers = getattr(response, "headers", None)
                 latency = time.monotonic() - start
@@ -538,6 +540,11 @@ class BinanceSpotAdapter(ExchangeAdapter):
                         status_code=0,
                         payload=None,
                     ) from exc
+                self._raise_for_api_error(
+                    data,
+                    status_code=int(status_code or 200),
+                    default_message=f"Binance API zwróciło błąd ({path})",
+                )
                 return data
             except HTTPError as exc:
                 latency = time.monotonic() - start
@@ -641,10 +648,50 @@ class BinanceSpotAdapter(ExchangeAdapter):
                 time.sleep(delay)
                 continue
 
-        raise ExchangeNetworkError(
-            message="Nie udało się uzyskać odpowiedzi od API Binance po wielokrotnych próbach.",
-            reason=None,
+                raise ExchangeNetworkError(
+                    message="Nie udało się uzyskać odpowiedzi od API Binance po wielokrotnych próbach.",
+                    reason=None,
         )
+
+    def _raise_for_api_error(
+        self,
+        payload: object,
+        *,
+        status_code: int,
+        default_message: str,
+    ) -> None:
+        if not isinstance(payload, Mapping):
+            return
+
+        code_value = payload.get("code")
+        numeric_code: int | None
+        try:
+            numeric_code = int(code_value) if code_value is not None else None
+        except (TypeError, ValueError):
+            numeric_code = None
+
+        if numeric_code not in (None, 0):
+            raise_for_binance_error(
+                status_code=status_code,
+                payload=payload,
+                default_message=default_message,
+            )
+
+        status_field = payload.get("status")
+        if isinstance(status_field, str) and status_field.lower() == "error":
+            raise_for_binance_error(
+                status_code=status_code,
+                payload=payload,
+                default_message=default_message,
+            )
+
+        success = payload.get("success")
+        if success in {False, "false", "False"}:
+            raise_for_binance_error(
+                status_code=status_code,
+                payload=payload,
+                default_message=default_message,
+            )
 
     # ----------------------------------------------------------------------------------
     # ExchangeAdapter API

@@ -95,6 +95,26 @@ def test_fetch_account_snapshot_parses_balances(monkeypatch: pytest.MonkeyPatch)
     assert "signature=" in captured_request.full_url
 
 
+def test_fetch_account_snapshot_maps_api_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_urlopen(request: Request, timeout: int = 15):  # type: ignore[override]
+        if "/api/v3/account" in request.full_url:
+            return _FakeResponse({"code": -2015, "msg": "Invalid API-key"})
+        raise AssertionError(f"Unexpected endpoint {request.full_url}")
+
+    monkeypatch.setattr("bot_core.exchanges.binance.spot.urlopen", fake_urlopen)
+
+    credentials = ExchangeCredentials(
+        key_id="key",
+        secret="secret",
+        permissions=("read", "trade"),
+        environment=Environment.LIVE,
+    )
+    adapter = BinanceSpotAdapter(credentials)
+
+    with pytest.raises(ExchangeAuthError):
+        adapter.fetch_account_snapshot()
+
+
 def test_fetch_account_snapshot_values_mixed_portfolio(monkeypatch: pytest.MonkeyPatch) -> None:
     signed_request: Request | None = None
     ticker_requested = False
@@ -139,6 +159,26 @@ def test_fetch_account_snapshot_values_mixed_portfolio(monkeypatch: pytest.Monke
     assert snapshot.available_margin == pytest.approx(5450.0)
     assert ticker_requested is True
     assert signed_request is not None
+
+
+def test_fetch_ticker_maps_throttling(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_urlopen(request: Request, timeout: int = 15):  # type: ignore[override]
+        if "/api/v3/ticker/24hr" in request.full_url:
+            return _FakeResponse({"code": -1003, "msg": "Too many requests"})
+        raise AssertionError(f"Unexpected endpoint {request.full_url}")
+
+    monkeypatch.setattr("bot_core.exchanges.binance.spot.urlopen", fake_urlopen)
+
+    credentials = ExchangeCredentials(
+        key_id="test-key",
+        secret="secret",
+        permissions=("read", "trade"),
+        environment=Environment.LIVE,
+    )
+    adapter = BinanceSpotAdapter(credentials)
+
+    with pytest.raises(ExchangeThrottlingError):
+        adapter.fetch_ticker("BTC-USDT")
 
 
 def test_fetch_account_snapshot_respects_custom_valuation_asset(
