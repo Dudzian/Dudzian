@@ -62,6 +62,7 @@ public:
 
     QJsonArray toJson(int limit = -1) const;
     void restoreFromJson(const QJsonArray& array);
+    bool exportToCsv(const QString& filePath, int limit = -1) const;
 
 public slots:
     void recordSnapshot(const RiskSnapshotData& snapshot);
@@ -71,6 +72,7 @@ signals:
     void historyChanged();
     void maximumEntriesChanged();
     void summaryChanged();
+    void snapshotRecorded(const QDateTime& timestamp);
 
 private:
     struct Entry {

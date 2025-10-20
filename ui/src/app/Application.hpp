@@ -7,7 +7,9 @@
 #include <QDateTime>
 #include <QElapsedTimer>
 #include <QTimer>
+#include <QUrl>
 #include <QJsonObject>
+#include <QDir>
 
 #include <memory>
 #include <optional>
@@ -45,6 +47,15 @@ class Application : public QObject {
     Q_PROPERTY(QObject*         reportController READ reportController CONSTANT)
     Q_PROPERTY(int              telemetryPendingRetryCount READ telemetryPendingRetryCount NOTIFY telemetryPendingRetryCountChanged)
     Q_PROPERTY(QVariantMap      riskRefreshSchedule READ riskRefreshSchedule NOTIFY riskRefreshScheduleChanged)
+    Q_PROPERTY(bool             riskHistoryExportLimitEnabled READ riskHistoryExportLimitEnabled WRITE setRiskHistoryExportLimitEnabled NOTIFY riskHistoryExportLimitEnabledChanged)
+    Q_PROPERTY(int              riskHistoryExportLimitValue READ riskHistoryExportLimitValue WRITE setRiskHistoryExportLimitValue NOTIFY riskHistoryExportLimitValueChanged)
+    Q_PROPERTY(QUrl             riskHistoryExportLastDirectory READ riskHistoryExportLastDirectory WRITE setRiskHistoryExportLastDirectory NOTIFY riskHistoryExportLastDirectoryChanged)
+    Q_PROPERTY(bool             riskHistoryAutoExportEnabled READ riskHistoryAutoExportEnabled WRITE setRiskHistoryAutoExportEnabled NOTIFY riskHistoryAutoExportEnabledChanged)
+    Q_PROPERTY(int              riskHistoryAutoExportIntervalMinutes READ riskHistoryAutoExportIntervalMinutes WRITE setRiskHistoryAutoExportIntervalMinutes NOTIFY riskHistoryAutoExportIntervalMinutesChanged)
+    Q_PROPERTY(QString          riskHistoryAutoExportBasename READ riskHistoryAutoExportBasename WRITE setRiskHistoryAutoExportBasename NOTIFY riskHistoryAutoExportBasenameChanged)
+    Q_PROPERTY(bool             riskHistoryAutoExportUseLocalTime READ riskHistoryAutoExportUseLocalTime WRITE setRiskHistoryAutoExportUseLocalTime NOTIFY riskHistoryAutoExportUseLocalTimeChanged)
+    Q_PROPERTY(QDateTime        riskHistoryLastAutoExportAt READ riskHistoryLastAutoExportAt NOTIFY riskHistoryLastAutoExportAtChanged)
+    Q_PROPERTY(QUrl             riskHistoryLastAutoExportPath READ riskHistoryLastAutoExportPath NOTIFY riskHistoryLastAutoExportPathChanged)
 
 public:
     explicit Application(QQmlApplicationEngine& engine, QObject* parent = nullptr);
@@ -71,6 +82,15 @@ public:
     QObject*         alertsFilterModel() const { return const_cast<AlertsFilterProxyModel*>(&m_filteredAlertsModel); }
     QObject*         riskHistoryModel() const { return const_cast<RiskHistoryModel*>(&m_riskHistoryModel); }
     int              telemetryPendingRetryCount() const { return m_pendingRetryCount; }
+    bool             riskHistoryExportLimitEnabled() const { return m_riskHistoryExportLimitEnabled; }
+    int              riskHistoryExportLimitValue() const { return m_riskHistoryExportLimitValue; }
+    QUrl             riskHistoryExportLastDirectory() const { return m_riskHistoryExportLastDirectory; }
+    bool             riskHistoryAutoExportEnabled() const { return m_riskHistoryAutoExportEnabled; }
+    int              riskHistoryAutoExportIntervalMinutes() const { return m_riskHistoryAutoExportIntervalMinutes; }
+    QString          riskHistoryAutoExportBasename() const { return m_riskHistoryAutoExportBasename; }
+    bool             riskHistoryAutoExportUseLocalTime() const { return m_riskHistoryAutoExportUseLocalTime; }
+    QDateTime        riskHistoryLastAutoExportAt() const { return m_lastRiskHistoryAutoExportUtc; }
+    QUrl             riskHistoryLastAutoExportPath() const { return m_lastRiskHistoryAutoExportPath; }
 
 public slots:
     void start();
@@ -98,11 +118,21 @@ public slots:
     Q_INVOKABLE bool triggerRiskRefreshNow();
     Q_INVOKABLE bool updateRiskHistoryLimit(int maximumEntries);
     Q_INVOKABLE void clearRiskHistory();
+    Q_INVOKABLE bool exportRiskHistoryToCsv(const QUrl& destination, int limit = -1);
+    Q_INVOKABLE bool setRiskHistoryExportLimitEnabled(bool enabled);
+    Q_INVOKABLE bool setRiskHistoryExportLimitValue(int limit);
+    Q_INVOKABLE bool setRiskHistoryExportLastDirectory(const QUrl& directory);
+    Q_INVOKABLE bool setRiskHistoryAutoExportEnabled(bool enabled);
+    Q_INVOKABLE bool setRiskHistoryAutoExportIntervalMinutes(int minutes);
+    Q_INVOKABLE bool setRiskHistoryAutoExportBasename(const QString& basename);
+    Q_INVOKABLE bool setRiskHistoryAutoExportUseLocalTime(bool useLocalTime);
 
     // Test helpers (persistent UI state)
     void saveUiSettingsImmediatelyForTesting();
     QString uiSettingsPathForTesting() const { return m_uiSettingsPath; }
     bool uiSettingsPersistenceEnabledForTesting() const { return m_uiSettingsPersistenceEnabled; }
+    void setLastRiskHistoryAutoExportForTesting(const QDateTime& timestamp);
+    void setRiskHistoryAutoExportLastPathForTesting(const QUrl& url);
 
     // Test helpers
     void ingestFpsSampleForTesting(double fps);
@@ -116,12 +146,22 @@ signals:
     void reduceMotionActiveChanged();
     void telemetryPendingRetryCountChanged(int pending);
     void riskRefreshScheduleChanged();
+    void riskHistoryExportLimitEnabledChanged();
+    void riskHistoryExportLimitValueChanged();
+    void riskHistoryExportLastDirectoryChanged();
+    void riskHistoryAutoExportEnabledChanged();
+    void riskHistoryAutoExportIntervalMinutesChanged();
+    void riskHistoryAutoExportBasenameChanged();
+    void riskHistoryAutoExportUseLocalTimeChanged();
+    void riskHistoryLastAutoExportAtChanged();
+    void riskHistoryLastAutoExportPathChanged();
 
 private slots:
     void handleHistory(const QList<OhlcvPoint>& candles);
     void handleCandle(const OhlcvPoint& candle);
     void handleRiskState(const RiskSnapshotData& snapshot);
     void handleTelemetryPendingRetryCountChanged(int pending);
+    void handleRiskHistorySnapshotRecorded(const QDateTime& timestamp);
 
 private:
     // Rejestracja obiektów w kontekście QML
@@ -152,12 +192,15 @@ private:
     void initializeUiSettingsStorage();
     void ensureUiSettingsTimerConfigured();
     void applyUiSettingsCliOverrides(const QCommandLineParser& parser);
+    void applyRiskHistoryCliOverrides(const QCommandLineParser& parser);
     void setUiSettingsPersistenceEnabled(bool enabled);
     void setUiSettingsPath(const QString& path, bool reload = true);
     void loadUiSettings();
     void scheduleUiSettingsPersist();
     void persistUiSettings();
     QJsonObject buildUiSettingsPayload() const;
+    void maybeAutoExportRiskHistory(const QDateTime& snapshotTimestamp);
+    QString resolveAutoExportFilePath(const QDir& directory, const QString& basename, const QDateTime& timestamp) const;
 
     // --- Stan i komponenty ---
     QQmlApplicationEngine& m_engine;
@@ -221,6 +264,16 @@ private:
     bool                               m_loadingUiSettings = false;
     bool                               m_uiSettingsPersistenceEnabled = true;
     bool                               m_uiSettingsTimerConfigured = false;
+    bool                               m_riskHistoryExportLimitEnabled = false;
+    int                                m_riskHistoryExportLimitValue = 50;
+    QUrl                               m_riskHistoryExportLastDirectory;
+    bool                               m_riskHistoryAutoExportEnabled = false;
+    int                                m_riskHistoryAutoExportIntervalMinutes = 15;
+    QString                            m_riskHistoryAutoExportBasename = QStringLiteral("risk-history");
+    bool                               m_riskHistoryAutoExportUseLocalTime = false;
+    QDateTime                          m_lastRiskHistoryAutoExportUtc;
+    QUrl                               m_lastRiskHistoryAutoExportPath;
+    bool                               m_riskHistoryAutoExportDirectoryWarned = false;
 
     struct OverlayState {
         int  active = 0;
