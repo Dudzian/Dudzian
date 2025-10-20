@@ -60,7 +60,9 @@ try:  # pragma: no cover - zależności bot_core mogą nie być dostępne w każ
     from bot_core.execution.base import ExecutionContext as CoreExecutionContext  # type: ignore
     from bot_core.execution.base import ExecutionService as CoreExecutionService  # type: ignore
     from bot_core.exchanges.base import AccountSnapshot, OrderRequest  # type: ignore
+    from bot_core.risk.base import RiskProfile  # type: ignore
     from bot_core.risk.engine import ThresholdRiskEngine  # type: ignore
+    from bot_core.risk.factory import build_risk_profile_from_config  # type: ignore
 except Exception:  # pragma: no cover - fallback gdy bot_core nie jest kompletny
     AIManagerDecisionConnector = None  # type: ignore
     CoreExecutionContext = None  # type: ignore
@@ -68,6 +70,8 @@ except Exception:  # pragma: no cover - fallback gdy bot_core nie jest kompletny
     AccountSnapshot = None  # type: ignore
     OrderRequest = None  # type: ignore
     ThresholdRiskEngine = None  # type: ignore
+    RiskProfile = None  # type: ignore
+    build_risk_profile_from_config = None  # type: ignore
 
 if TYPE_CHECKING:  # pragma: no cover
     from bot_core.config.models import RiskProfileConfig
@@ -275,7 +279,8 @@ class AutoTrader:
         self._core_execution_service = None
         self._core_execution_environment = "paper"
         self._core_portfolio_id = "autotrader"
-        self._core_risk_profile: Optional[str] = None
+        self._core_risk_profile: RiskProfile | None = None  # type: ignore[assignment]
+        self._core_risk_profile_name: Optional[str] = None
         self._core_ai_connector: Optional[AIManagerDecisionConnector] = None
         self._core_ai_notional_by_symbol: Dict[str, float] = {}
         self._core_ai_default_notional: float | None = None
@@ -285,15 +290,31 @@ class AutoTrader:
             self._core_risk_engine = core_risk_engine or getattr(
                 bootstrap_context, "risk_engine", None
             )
-            # TODO(core-risk): confirm register_profile downstream gets real profile
-            # objects when bootstrap_context is missing or incomplete.
+            ctx_profile_obj = getattr(bootstrap_context, "risk_profile", None)
+            if RiskProfile is None or isinstance(ctx_profile_obj, RiskProfile):
+                self._core_risk_profile = ctx_profile_obj
+            ctx_profile_name = getattr(bootstrap_context, "risk_profile_name", None)
+            if ctx_profile_name:
+                self._core_risk_profile_name = str(ctx_profile_name)
+            if self._core_risk_profile is not None:
+                derived_name = getattr(self._core_risk_profile, "name", None)
+                if derived_name:
+                    self._core_risk_profile_name = str(derived_name)
+            if (
+                self._risk_profile_config is None
+                and getattr(bootstrap_context, "risk_profile_config", None) is not None
+            ):
+                self._risk_profile_config = getattr(
+                    bootstrap_context, "risk_profile_config", None
+                )
             env = getattr(bootstrap_context, "environment", None)
             if env is not None:
                 self._core_portfolio_id = getattr(env, "name", self._core_portfolio_id)
                 env_value = getattr(getattr(env, "environment", None), "value", None)
                 if env_value:
                     self._core_execution_environment = str(env_value)
-            self._core_risk_profile = getattr(bootstrap_context, "risk_profile_name", None)
+            if self._core_risk_profile_name and not self._risk_profile_name:
+                self._risk_profile_name = self._core_risk_profile_name
             candidate_execution_service = core_execution_service
             if (
                 candidate_execution_service is None
@@ -346,6 +367,10 @@ class AutoTrader:
                     if notional_value and symbol_value:
                         normalized = self._normalize_symbol(symbol_value)
                         self._core_ai_notional_by_symbol[normalized] = float(notional_value)
+
+        if self._core_risk_engine is not None:
+            with self._lock:
+                self._ensure_core_risk_profile_registered_locked()
 
         if self._core_ai_default_notional is None and self._core_ai_connector is not None:
             self._core_ai_default_notional = self._core_ai_connector.default_notional
@@ -425,7 +450,11 @@ class AutoTrader:
             if profile_name:
                 normalized_profile = str(profile_name)
                 self._risk_profile_name = normalized_profile
-                self._core_risk_profile = normalized_profile
+                self._core_risk_profile_name = normalized_profile
+                if self._core_risk_profile is not None:
+                    current_name = getattr(self._core_risk_profile, "name", None)
+                    if current_name and current_name != normalized_profile:
+                        self._core_risk_profile = None
             if profile_config is not None:
                 self._risk_profile_config = profile_config
 
@@ -449,6 +478,8 @@ class AutoTrader:
                         "Zaktualizowano konfigurację strategii na podstawie profilu %s",
                         self._risk_profile_name,
                     )
+            if self._core_risk_engine is not None:
+                self._ensure_core_risk_profile_registered_locked()
 
         message = f"Risk profile active: {self._risk_profile_name or 'default'}"
         try:
@@ -487,6 +518,87 @@ class AutoTrader:
         )
         self._risk_config_mtime = self._get_risk_config_mtime()
         return final_name, settings, profile_cfg
+
+    def _ensure_core_risk_profile_registered_locked(self) -> bool:
+        """Gwarantuje, że rdzeniowy silnik ryzyka ma zarejestrowany aktywny profil."""
+
+        risk_engine = self._core_risk_engine
+        if risk_engine is None:
+            return False
+        register = getattr(risk_engine, "register_profile", None)
+        if not callable(register):
+            return False
+
+        profile_obj: Any | None = self._core_risk_profile
+        profile_name = self._core_risk_profile_name or self._risk_profile_name
+        if profile_obj is None:
+            config = self._risk_profile_config
+            if config is not None and build_risk_profile_from_config is not None:
+                try:
+                    profile_obj = build_risk_profile_from_config(config)  # type: ignore[arg-type]
+                except TypeError:
+                    if isinstance(config, Mapping):
+                        try:
+                            from bot_core.config.models import RiskProfileConfig  # type: ignore
+
+                            profile_obj = build_risk_profile_from_config(  # type: ignore[arg-type]
+                                RiskProfileConfig(**dict(config))
+                            )
+                        except Exception:
+                            logger.debug(
+                                "Nie udało się zbudować profilu ryzyka z mapy konfiguracji",
+                                exc_info=True,
+                            )
+                    else:
+                        logger.debug(
+                            "Nieobsługiwany typ konfiguracji profilu ryzyka: %s",
+                            type(config),
+                        )
+                except Exception:
+                    logger.debug(
+                        "Nie udało się zbudować profilu ryzyka z konfiguracji",
+                        exc_info=True,
+                    )
+
+        if profile_obj is None:
+            return False
+
+        derived_name = getattr(profile_obj, "name", None)
+        if derived_name:
+            profile_name = str(derived_name)
+        if profile_name:
+            profile_name = str(profile_name)
+
+        try:
+            existing = tuple(risk_engine.profile_names())  # type: ignore[attr-defined]
+        except Exception:
+            existing = ()
+
+        if profile_name and profile_name in existing:
+            self._core_risk_profile = profile_obj if RiskProfile is None or isinstance(profile_obj, RiskProfile) else None
+            self._core_risk_profile_name = profile_name
+            if not self._risk_profile_name:
+                self._risk_profile_name = profile_name
+            return True
+
+        try:
+            register(profile_obj)
+        except Exception:
+            logger.debug(
+                "Nie udało się zarejestrować profilu ryzyka %s w silniku core",
+                profile_name or "<unknown>",
+                exc_info=True,
+            )
+            return False
+
+        if RiskProfile is None or isinstance(profile_obj, RiskProfile):
+            self._core_risk_profile = profile_obj
+        else:
+            self._core_risk_profile = None
+        if profile_name:
+            self._core_risk_profile_name = profile_name
+            self._risk_profile_name = profile_name
+        return True
 
     def _get_risk_config_mtime(self) -> float | None:
         if not self._core_config_path:
@@ -1753,7 +1865,11 @@ class AutoTrader:
         except Exception:  # pragma: no cover - brak klas bot_core
             return False
 
-        profile_name = self._core_risk_profile or candidate.risk_profile
+        profile_name = (
+            self._core_risk_profile_name
+            or (getattr(self._core_risk_profile, "name", None) if self._core_risk_profile is not None else None)
+            or candidate.risk_profile
+        )
 
         try:
             risk_result = risk_engine.apply_pre_trade_checks(
@@ -1835,12 +1951,15 @@ class AutoTrader:
             raise RuntimeError("ExecutionContext class unavailable")
         meta: Dict[str, object] = {"source": "AutoTrader"}
         meta.update(dict(metadata))
-        risk_profile = self._core_risk_profile
-        if not risk_profile and self._core_ai_connector is not None:
-            risk_profile = self._core_ai_connector.risk_profile
+        profile_name: Any = self._core_risk_profile_name
+        if profile_name is None and self._core_risk_profile is not None:
+            profile_name = getattr(self._core_risk_profile, "name", None)
+        if (profile_name is None or profile_name == "") and self._core_ai_connector is not None:
+            connector_profile = getattr(self._core_ai_connector, "risk_profile", None)
+            profile_name = getattr(connector_profile, "name", None) or connector_profile
         return CoreExecutionContext(
             portfolio_id=self._core_portfolio_id,
-            risk_profile=str(risk_profile or "default"),
+            risk_profile=str(profile_name or "default"),
             environment=str(self._core_execution_environment),
             metadata=meta,
         )
@@ -1867,9 +1986,12 @@ class AutoTrader:
         side_lower = side.lower()
         position_value = notional if side_lower == "buy" else 0.0
         try:
-            profile_name = self._core_risk_profile
-            if not profile_name and self._core_ai_connector is not None:
-                profile_name = self._core_ai_connector.risk_profile
+            profile_name = self._core_risk_profile_name
+            if (not profile_name) and self._core_risk_profile is not None:
+                profile_name = getattr(self._core_risk_profile, "name", None)
+            if (not profile_name) and self._core_ai_connector is not None:
+                connector_profile = getattr(self._core_ai_connector, "risk_profile", None)
+                profile_name = getattr(connector_profile, "name", None) or connector_profile
             self._core_risk_engine.on_fill(
                 profile_name=profile_name or "default",
                 symbol=symbol,
