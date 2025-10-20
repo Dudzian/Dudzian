@@ -10,7 +10,7 @@ import sys
 import pytest
 import yaml
 from bot_core.security.file_storage import EncryptedFileSecretStorage
-from KryptoLowca.managers.security_manager import SecurityManager
+from KryptoLowca.security_manager import SecurityManager
 from KryptoLowca.scripts import preset_editor_cli
 
 
