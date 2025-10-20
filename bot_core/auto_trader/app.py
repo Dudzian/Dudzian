@@ -18,6 +18,8 @@ import enum
 import logging
 import threading
 import time
+from datetime import datetime, timezone, tzinfo
+from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Mapping, Optional, Protocol, cast
@@ -39,6 +41,7 @@ LOGGER = logging.getLogger(__name__)
 
 _NO_FILTER = object()
 _UNKNOWN_SERVICE = "<unknown>"
+_CONTROLLER_HISTORY_DEFAULT_LIMIT = 32
 
 
 class EmitterLike(Protocol):
@@ -153,6 +156,11 @@ class AutoTrader:
         ai_connector: Any | None = None,
         thresholds_loader: Callable[[], Mapping[str, Any]] | None = None,
         risk_evaluations_limit: int | None = 256,
+        risk_evaluations_ttl_s: float | None = None,
+        controller_runner: Any | None = None,
+        controller_runner_factory: Callable[[], Any] | None = None,
+        controller_cycle_history_limit: int | None = 32,
+        controller_cycle_history_ttl_s: float | None = None,
     ) -> None:
         self.emitter = emitter
         self.gui = gui
@@ -177,6 +185,9 @@ class AutoTrader:
         self._thresholds: Mapping[str, Any] = {}
         self.reload_thresholds()
 
+        self._controller_runner: Any | None = controller_runner
+        self._controller_runner_factory: Callable[[], Any] | None = controller_runner_factory
+
         self.current_strategy: str = "neutral"
         self.current_leverage: float = 1.0
         self.current_stop_loss_pct: float = 0.02
@@ -184,6 +195,20 @@ class AutoTrader:
         self._last_signal: str | None = None
         self._last_regime: MarketRegimeAssessment | None = None
         self._last_risk_decision: RiskDecision | None = None
+        self._controller_cycle_signals: tuple[Any, ...] | None = None
+        self._controller_cycle_results: tuple[Any, ...] | None = None
+        self._controller_cycle_started_at: float | None = None
+        self._controller_cycle_finished_at: float | None = None
+        self._controller_cycle_last_duration: float | None = None
+        self._controller_cycle_sequence: int = 0
+        self._controller_cycle_last_orders: int = 0
+        self._controller_cycle_history: list[dict[str, Any]] = []
+        self._controller_cycle_history_limit = self._normalise_cycle_history_limit(
+            controller_cycle_history_limit
+        )
+        self._controller_cycle_history_ttl_s = self._normalise_cycle_history_ttl(
+            controller_cycle_history_ttl_s
+        )
         self._cooldown_until: float = 0.0
         self._cooldown_reason: str | None = None
         self._last_guardrail_reasons: list[str] = []
@@ -198,6 +223,9 @@ class AutoTrader:
         self._lock = threading.RLock()
         self._risk_evaluations: list[dict[str, Any]] = []
         self._risk_evaluations_limit: int | None = None
+        self._risk_evaluations_ttl_s: float | None = self._normalise_cycle_history_ttl(
+            risk_evaluations_ttl_s
+        )
         self.configure_risk_evaluation_history(risk_evaluations_limit)
 
     def reload_thresholds(self) -> None:
@@ -281,6 +309,208 @@ class AutoTrader:
             self._stop.set()
             self._cancel_auto_trade_thread_locked()
             self._log("AutoTrader stopped.")
+
+    def configure_controller_runner(
+        self,
+        runner: Any | None = None,
+        *,
+        factory: Callable[[], Any] | None = None,
+    ) -> None:
+        """Configure an optional realtime runner bridging controller signals to TradingController."""
+
+        with self._lock:
+            self._controller_runner = runner
+            self._controller_runner_factory = factory
+
+        if runner is not None:
+            self._log("Controller runner attached", level=logging.INFO)
+        elif factory is not None:
+            self._log("Controller runner factory configured", level=logging.INFO)
+        else:
+            self._log("Controller runner disabled", level=logging.DEBUG)
+
+    def _resolve_controller_runner(self) -> Any | None:
+        with self._lock:
+            runner = self._controller_runner
+            factory = self._controller_runner_factory if runner is None else None
+
+        if runner is not None:
+            return runner
+        if factory is None:
+            return None
+
+        try:
+            candidate = factory()
+        except Exception as exc:  # pragma: no cover - defensive guard
+            self._log(
+                f"Controller runner factory failed: {exc!r}",
+                level=logging.ERROR,
+            )
+            return None
+
+        if candidate is None:
+            self._log("Controller runner factory returned None", level=logging.DEBUG)
+            return None
+
+        with self._lock:
+            self._controller_runner = candidate
+
+        self._log("Controller runner instantiated", level=logging.INFO)
+        return candidate
+
+    def _execute_controller_runner_cycle(self, runner: Any) -> None:
+        run_once = getattr(runner, "run_once", None)
+        if not callable(run_once):
+            self._log(
+                "Configured controller runner does not expose run_once(); disabling bridge",
+                level=logging.ERROR,
+            )
+            with self._lock:
+                if runner is self._controller_runner:
+                    self._controller_runner = None
+            return
+
+        invocation_started = time.time()
+
+        try:
+            results = run_once()
+        except Exception as exc:  # pragma: no cover - defensive guard
+            self._log(
+                f"Controller runner cycle failed: {exc!r}",
+                level=logging.ERROR,
+            )
+            return
+
+        def _normalise_sequence(payload: Any) -> tuple[Any, ...]:
+            if payload is None:
+                return ()
+            if isinstance(payload, tuple):
+                return payload
+            if isinstance(payload, Iterable) and not isinstance(payload, (str, bytes)):
+                try:
+                    return tuple(payload)
+                except TypeError:
+                    payload = list(payload)
+                    return tuple(payload)
+            return (payload,)
+
+        cycle_signals = getattr(runner, "last_cycle_signals", None)
+        raw_cycle_results = getattr(runner, "last_cycle_results", None)
+        if raw_cycle_results is None:
+            raw_cycle_results = results
+
+        stored_signals = _normalise_sequence(cycle_signals)
+        stored_results = _normalise_sequence(raw_cycle_results)
+
+        orders_count = len(stored_results)
+        last_signal_label: str | None = None
+        if stored_signals:
+            try:
+                signal_payload = getattr(stored_signals[-1], "signal", stored_signals[-1])
+                side = getattr(signal_payload, "side", None)
+                if isinstance(side, str):
+                    last_signal_label = side.lower()
+            except Exception:  # pragma: no cover - optional metadata only
+                last_signal_label = None
+
+        started_at = getattr(runner, "last_cycle_started_at", None)
+        started_timestamp: float | None = None
+        if started_at is not None:
+            if hasattr(started_at, "timestamp"):
+                try:
+                    started_timestamp = float(started_at.timestamp())  # type: ignore[call-arg]
+                except Exception:  # pragma: no cover - defensive guard
+                    started_timestamp = None
+            else:
+                try:
+                    started_timestamp = float(started_at)  # type: ignore[arg-type]
+                except (TypeError, ValueError):  # pragma: no cover - defensive guard
+                    started_timestamp = None
+        elif stored_signals or stored_results:
+            started_timestamp = float(invocation_started)
+
+        finished_timestamp = float(time.time())
+        duration_seconds: float | None = None
+        if started_timestamp is not None:
+            duration_seconds = max(0.0, finished_timestamp - started_timestamp)
+        elif stored_signals or stored_results:
+            duration_seconds = max(0.0, finished_timestamp - invocation_started)
+        telemetry_payload = {
+            "signals": stored_signals,
+            "results": stored_results,
+            "started_at": started_timestamp,
+            "finished_at": finished_timestamp,
+            "duration_s": duration_seconds,
+            "orders": orders_count,
+        }
+
+        self._log(
+            "AutoTrader controller runner executed cycle",
+            level=logging.INFO,
+            orders=orders_count,
+            last_signal=last_signal_label,
+            signals=len(stored_signals),
+        )
+
+        sequence = 0
+        trimmed_by_limit = 0
+        trimmed_by_ttl = 0
+        limit_snapshot = self._controller_cycle_history_limit
+        ttl_snapshot = self._controller_cycle_history_ttl_s
+        history_size = 0
+        with self._lock:
+            self._controller_cycle_signals = stored_signals
+            self._controller_cycle_results = stored_results
+            self._controller_cycle_started_at = started_timestamp
+            self._controller_cycle_finished_at = finished_timestamp
+            self._controller_cycle_last_duration = duration_seconds
+            self._controller_cycle_last_orders = orders_count
+            self._controller_cycle_sequence += 1
+            sequence = self._controller_cycle_sequence
+
+            history_entry = {
+                "sequence": sequence,
+                "signals": stored_signals,
+                "results": stored_results,
+                "started_at": started_timestamp,
+                "finished_at": finished_timestamp,
+                "duration_s": duration_seconds,
+                "orders": orders_count,
+            }
+            self._controller_cycle_history.append(history_entry)
+            trimmed_by_limit, trimmed_by_ttl = self._prune_controller_cycle_history_locked(
+                reference_time=finished_timestamp
+            )
+            limit_snapshot = self._controller_cycle_history_limit
+            ttl_snapshot = self._controller_cycle_history_ttl_s
+            history_size = len(self._controller_cycle_history)
+
+        telemetry_payload["sequence"] = sequence
+
+        if trimmed_by_limit or trimmed_by_ttl:
+            self._log(
+                "Przycięto historię cykli kontrolera po nowym cyklu",
+                level=logging.DEBUG,
+                limit=None if limit_snapshot <= 0 else limit_snapshot,
+                ttl=ttl_snapshot,
+                trimmed_by_limit=trimmed_by_limit,
+                trimmed_by_ttl=trimmed_by_ttl,
+                history=history_size,
+            )
+
+        if last_signal_label:
+            self._last_signal = last_signal_label
+        self._last_risk_decision = None
+
+        emitter_emit = getattr(self.emitter, "emit", None)
+        if callable(emitter_emit):
+            try:
+                emitter_emit("auto_trader.controller_cycle", **telemetry_payload)
+            except Exception:  # pragma: no cover - defensive logging
+                self._log(
+                    "Emitter failed to publish controller cycle telemetry",
+                    level=logging.DEBUG,
+                )
 
     # ------------------------------------------------------------------
     # Market intelligence helpers -------------------------------------
@@ -1351,6 +1581,12 @@ class AutoTrader:
     # Extension hook ----------------------------------------------------
     # ------------------------------------------------------------------
     def _auto_trade_loop(self) -> None:
+        runner = self._resolve_controller_runner()
+        if runner is not None:
+            self._execute_controller_runner_cycle(runner)
+            self._auto_trade_stop.wait(self.auto_trade_interval_s)
+            return
+
         risk_service = getattr(self, "risk_service", None)
         if risk_service is None:
             risk_service = getattr(self, "core_risk_engine", None)
@@ -2003,6 +2239,24 @@ class AutoTrader:
         bucket = decision.details.setdefault("risk_service", {})
         bucket["response"] = summary
 
+    def _log_risk_history_trimmed(
+        self,
+        *,
+        context: str,
+        trimmed: int,
+        ttl: float | None,
+        history: int,
+    ) -> None:
+        if trimmed:
+            self._log(
+                "Przycięto historię ocen ryzyka na podstawie TTL",
+                level=logging.DEBUG,
+                context=context,
+                trimmed=trimmed,
+                ttl=ttl,
+                history=history,
+            )
+
     def _record_risk_evaluation(
         self,
         decision: RiskDecision,
@@ -2026,6 +2280,9 @@ class AutoTrader:
             entry["error"] = repr(error)
         else:
             entry["response"] = self._summarize_risk_response(response)
+        trimmed_by_ttl = 0
+        ttl_snapshot: float | None = None
+        history_size = 0
         with self._lock:
             self._risk_evaluations.append(entry)
             limit = self._risk_evaluations_limit
@@ -2036,6 +2293,54 @@ class AutoTrader:
                     overflow = len(self._risk_evaluations) - limit
                     if overflow > 0:
                         del self._risk_evaluations[:overflow]
+            trimmed_by_ttl = self._prune_risk_evaluations_locked(
+                reference_time=entry["timestamp"]
+            )
+            ttl_snapshot = self._risk_evaluations_ttl_s
+            history_size = len(self._risk_evaluations)
+        self._log_risk_history_trimmed(
+            context="record",
+            trimmed=trimmed_by_ttl,
+            ttl=ttl_snapshot,
+            history=history_size,
+        )
+
+    def _prune_risk_evaluations_locked(
+        self,
+        *,
+        reference_time: float | None = None,
+    ) -> int:
+        trimmed = 0
+        ttl = self._risk_evaluations_ttl_s
+        if ttl is None or ttl <= 0.0:
+            return 0
+        history = self._risk_evaluations
+        if not history:
+            return 0
+
+        try:
+            cutoff_reference = (
+                float(reference_time)
+                if reference_time is not None
+                else float(time.time())
+            )
+        except (TypeError, ValueError):  # pragma: no cover - defensive guard
+            cutoff_reference = float(time.time())
+
+        cutoff = cutoff_reference - ttl
+        if cutoff <= float("-inf"):
+            return 0
+
+        retained: list[dict[str, Any]] = []
+        for entry in history:
+            timestamp = entry.get("timestamp")
+            if timestamp is None or timestamp >= cutoff:
+                retained.append(entry)
+            else:
+                trimmed += 1
+        if trimmed:
+            history[:] = retained
+        return trimmed
 
     # Compatibility helpers -------------------------------------------
     def set_enable_auto_trade(self, flag: bool) -> None:
@@ -2045,6 +2350,42 @@ class AutoTrader:
 
     def is_running(self) -> bool:
         return self._started and not self._stop.is_set()
+
+    @staticmethod
+    def _normalise_cycle_history_limit(limit: int | None) -> int:
+        if limit is None:
+            return -1
+        try:
+            normalized = int(limit)
+        except (TypeError, ValueError):  # pragma: no cover - defensive guard
+            return _CONTROLLER_HISTORY_DEFAULT_LIMIT
+        if normalized <= 0:
+            return -1
+        return normalized
+
+    @staticmethod
+    def _normalise_cycle_history_ttl(ttl: float | None) -> float | None:
+        if ttl is None:
+            return None
+        try:
+            normalized = float(ttl)
+        except (TypeError, ValueError):  # pragma: no cover - defensive guard
+            return None
+        if not normalized or normalized <= 0.0:
+            return None
+        return float(normalized)
+
+    @staticmethod
+    def _normalize_history_export_limit(limit: object) -> int | None:
+        if limit is None:
+            return None
+        try:
+            normalized = int(limit)
+        except (TypeError, ValueError):  # pragma: no cover - defensive guard
+            return None
+        if normalized <= 0:
+            return 0
+        return normalized
 
     @staticmethod
     def _prepare_bool_filter(value: object) -> set[bool | None] | None:
@@ -2139,8 +2480,20 @@ class AutoTrader:
                 if normalized_limit < 0:
                     normalized_limit = 0
 
+        trimmed_by_ttl = 0
+        ttl_snapshot: float | None = None
+        history_size = 0
         with self._lock:
+            trimmed_by_ttl = self._prune_risk_evaluations_locked()
             records = list(self._risk_evaluations)
+            ttl_snapshot = self._risk_evaluations_ttl_s
+            history_size = len(self._risk_evaluations)
+        self._log_risk_history_trimmed(
+            context="get",
+            trimmed=trimmed_by_ttl,
+            ttl=ttl_snapshot,
+            history=history_size,
+        )
 
         filtered_records = self._apply_risk_evaluation_filters(
             records,
@@ -2168,6 +2521,687 @@ class AutoTrader:
         with self._lock:
             self._risk_evaluations.clear()
 
+    def _prune_controller_cycle_history_locked(
+        self,
+        *,
+        reference_time: float | None = None,
+    ) -> tuple[int, int]:
+        trimmed_by_limit = 0
+        trimmed_by_ttl = 0
+        history = self._controller_cycle_history
+
+        limit = self._controller_cycle_history_limit
+        if limit > 0 and len(history) > limit:
+            trimmed_by_limit = len(history) - limit
+            if trimmed_by_limit > 0:
+                del history[:trimmed_by_limit]
+
+        ttl = self._controller_cycle_history_ttl_s
+        if ttl is not None and ttl > 0.0 and history:
+            try:
+                cutoff_reference = (
+                    float(reference_time)
+                    if reference_time is not None
+                    else float(time.time())
+                )
+            except (TypeError, ValueError):  # pragma: no cover - defensive guard
+                cutoff_reference = float(time.time())
+
+            cutoff = cutoff_reference - ttl
+            if cutoff > float("-inf"):
+                retained: list[dict[str, Any]] = []
+                for entry in history:
+                    timestamp = entry.get("finished_at")
+                    if timestamp is None:
+                        timestamp = entry.get("started_at")
+                    if timestamp is None or timestamp >= cutoff:
+                        retained.append(entry)
+                    else:
+                        trimmed_by_ttl += 1
+                if trimmed_by_ttl:
+                    history[:] = retained
+
+        return trimmed_by_limit, trimmed_by_ttl
+
+    def get_last_controller_cycle(self) -> dict[str, Any] | None:
+        """Zwraca zrzut ostatniego cyklu runnera realtime.
+
+        Słownik zawiera surowe obiekty sygnałów i wyników zwrócone przez runnera
+        oraz znacznik czasu rozpoczęcia cyklu (w sekundach unix epoch), jeśli był
+        dostępny.  Zwracana jest kopia danych, dzięki czemu wywołujący nie może
+        zmodyfikować wewnętrznego stanu AutoTradera.
+        """
+
+        duration = None
+        orders = 0
+        with self._lock:
+            if (
+                self._controller_cycle_signals is None
+                and self._controller_cycle_results is None
+                and self._controller_cycle_started_at is None
+                and self._controller_cycle_finished_at is None
+            ):
+                return None
+
+            signals = tuple(self._controller_cycle_signals or ())
+            results = tuple(self._controller_cycle_results or ())
+            started_at = self._controller_cycle_started_at
+            finished_at = self._controller_cycle_finished_at
+            sequence = self._controller_cycle_sequence
+            duration = self._controller_cycle_last_duration
+            orders = self._controller_cycle_last_orders
+
+        if (
+            not signals
+            and not results
+            and started_at is None
+            and finished_at is None
+        ):
+            return None
+
+        return {
+            "signals": signals,
+            "results": results,
+            "started_at": started_at,
+            "finished_at": finished_at,
+            "sequence": sequence,
+            "duration_s": duration,
+            "orders": orders,
+        }
+
+    def get_controller_cycle_history(
+        self,
+        *,
+        limit: int | None = None,
+        reverse: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Zwraca historię cykli bridge'a realtime.
+
+        Parametr ``limit`` ogranicza liczbę rekordów (domyślnie wykorzystuje
+        wewnętrzny limit AutoTradera), a ``reverse`` pozwala uzyskać dane w
+        kolejności malejącej po sekwencji.
+        """
+
+        if limit is not None:
+            try:
+                normalized_limit = int(limit)
+            except (TypeError, ValueError):  # pragma: no cover - defensive guard
+                normalized_limit = None
+            else:
+                if normalized_limit < 0:
+                    normalized_limit = 0
+                if normalized_limit == 0:
+                    return []
+        else:
+            normalized_limit = None
+
+        with self._lock:
+            history = list(self._controller_cycle_history)
+
+        if not history:
+            return []
+
+        iterator: Iterable[dict[str, Any]]
+        if reverse:
+            iterator = reversed(history)
+        else:
+            iterator = iter(history)
+
+        results: list[dict[str, Any]] = []
+        for entry in iterator:
+            copied = {
+                "sequence": entry.get("sequence"),
+                "signals": tuple(entry.get("signals", ())),
+                "results": tuple(entry.get("results", ())),
+                "started_at": entry.get("started_at"),
+                "finished_at": entry.get("finished_at"),
+                "duration_s": entry.get("duration_s"),
+                "orders": entry.get("orders"),
+            }
+            results.append(copied)
+            if normalized_limit is not None and len(results) >= normalized_limit:
+                break
+        return results
+
+    def set_controller_cycle_history_limit(self, limit: int | None) -> int:
+        """Aktualizuje limit przechowywania historii cykli kontrolera.
+
+        Zwracana wartość to znormalizowany limit – ``-1`` oznacza brak
+        ograniczenia (historia rośnie do rozmiaru pamięci).  Podanie
+        ``None`` lub wartości nie-dodatniej dezaktywuje przycinanie historii.
+        """
+
+        normalized = self._normalise_cycle_history_limit(limit)
+        trimmed_by_limit = 0
+        trimmed_by_ttl = 0
+        ttl_snapshot: float | None = None
+        history_size = 0
+        with self._lock:
+            self._controller_cycle_history_limit = normalized
+            trimmed_by_limit, trimmed_by_ttl = self._prune_controller_cycle_history_locked()
+            ttl_snapshot = self._controller_cycle_history_ttl_s
+            history_size = len(self._controller_cycle_history)
+        self._log(
+            "Zmieniono limit historii cykli kontrolera",
+            level=logging.DEBUG,
+            limit=None if normalized <= 0 else normalized,
+            ttl=ttl_snapshot,
+            trimmed_by_limit=trimmed_by_limit,
+            trimmed_by_ttl=trimmed_by_ttl,
+            history=history_size,
+        )
+        return normalized
+
+    def get_controller_cycle_history_ttl(self) -> float | None:
+        """Zwraca obowiązujący TTL (w sekundach) dla historii cykli kontrolera."""
+
+        with self._lock:
+            ttl = self._controller_cycle_history_ttl_s
+        return ttl
+
+    def set_controller_cycle_history_ttl(self, ttl: float | None) -> float | None:
+        """Aktualizuje czas życia rekordów historii cykli kontrolera."""
+
+        normalized = self._normalise_cycle_history_ttl(ttl)
+        trimmed_by_limit = 0
+        trimmed_by_ttl = 0
+        limit_snapshot = 0
+        history_size = 0
+        with self._lock:
+            self._controller_cycle_history_ttl_s = normalized
+            trimmed_by_limit, trimmed_by_ttl = self._prune_controller_cycle_history_locked()
+            limit_snapshot = self._controller_cycle_history_limit
+            history_size = len(self._controller_cycle_history)
+        self._log(
+            "Zmieniono TTL historii cykli kontrolera",
+            level=logging.DEBUG,
+            ttl=normalized,
+            limit=None if limit_snapshot <= 0 else limit_snapshot,
+            trimmed_by_limit=trimmed_by_limit,
+            trimmed_by_ttl=trimmed_by_ttl,
+            history=history_size,
+        )
+        return normalized
+
+    def clear_controller_cycle_history(self) -> None:
+        """Usuwa wszystkie zapisane cykle kontrolera."""
+
+        cleared = 0
+        with self._lock:
+            if self._controller_cycle_history:
+                cleared = len(self._controller_cycle_history)
+                self._controller_cycle_history.clear()
+        if cleared:
+            self._log(
+                "Wyczyszczono historię cykli kontrolera",
+                level=logging.DEBUG,
+                cleared=cleared,
+            )
+
+    def summarize_controller_cycle_history(
+        self,
+        *,
+        since: object = None,
+        until: object = None,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
+        """Buduje zbiorczy raport z historii cykli kontrolera.
+
+        Parametry ``since`` i ``until`` pozwalają ograniczyć analizę do
+        zadanego przedziału czasowego (akceptują ``datetime``, ``Timestamp``
+        Pandas oraz float/int jako sekundę epoki).  Opcjonalny ``limit``
+        ogranicza liczbę najnowszych rekordów uwzględnionych w raporcie –
+        ``0`` zwraca pusty raport.
+        """
+
+        normalized_limit: int | None
+        if limit is None:
+            normalized_limit = None
+        else:
+            try:
+                normalized_limit = int(limit)
+            except (TypeError, ValueError):  # pragma: no cover - defensive guard
+                normalized_limit = None
+            else:
+                if normalized_limit <= 0:
+                    normalized_limit = 0
+
+        since_ts = self._normalize_time_bound(since)
+        until_ts = self._normalize_time_bound(until)
+
+        with self._lock:
+            history_snapshot = list(self._controller_cycle_history)
+            limit_cfg = self._controller_cycle_history_limit
+            ttl_cfg = self._controller_cycle_history_ttl_s
+
+        effective_history: list[dict[str, Any]] = []
+        for entry in history_snapshot:
+            timestamp = entry.get("finished_at")
+            if timestamp is None:
+                timestamp = entry.get("started_at")
+            if since_ts is not None and (timestamp is None or timestamp < since_ts):
+                continue
+            if until_ts is not None and (timestamp is None or timestamp > until_ts):
+                continue
+            effective_history.append(entry)
+
+        if normalized_limit == 0:
+            effective_history = []
+        elif normalized_limit is not None and len(effective_history) > normalized_limit:
+            effective_history = effective_history[-normalized_limit:]
+
+        total = len(effective_history)
+        summary: dict[str, Any] = {
+            "total": total,
+            "filters": {
+                "since": since_ts,
+                "until": until_ts,
+                "limit": normalized_limit,
+            },
+            "config": {
+                "limit": None if limit_cfg <= 0 else limit_cfg,
+                "ttl": ttl_cfg,
+            },
+        }
+
+        if total == 0:
+            summary.update(
+                {
+                    "orders": {
+                        "total": 0,
+                        "average": 0.0,
+                        "min": 0,
+                        "max": 0,
+                    },
+                    "signals": {
+                        "total": 0,
+                        "average": 0.0,
+                        "min": 0,
+                        "max": 0,
+                        "by_side": {},
+                    },
+                    "results": {
+                        "total": 0,
+                        "average": 0.0,
+                        "min": 0,
+                        "max": 0,
+                        "status_counts": {},
+                    },
+                    "duration": {
+                        "total": 0.0,
+                        "average": 0.0,
+                        "min": None,
+                        "max": None,
+                    },
+                    "first_sequence": None,
+                    "last_sequence": None,
+                    "first_timestamp": None,
+                    "last_timestamp": None,
+                }
+            )
+            return summary
+
+        orders_per_cycle: list[int] = []
+        signals_per_cycle: list[int] = []
+        results_per_cycle: list[int] = []
+        durations: list[float] = []
+        signal_sides: Counter[str] = Counter()
+        result_statuses: Counter[str] = Counter()
+        first_sequence: int | None = None
+        last_sequence: int | None = None
+        first_timestamp: float | None = None
+        last_timestamp: float | None = None
+
+        for entry in effective_history:
+            sequence = entry.get("sequence")
+            if sequence is not None:
+                try:
+                    sequence_int = int(sequence)
+                except (TypeError, ValueError):  # pragma: no cover - defensive guard
+                    sequence_int = None
+                else:
+                    if first_sequence is None:
+                        first_sequence = sequence_int
+                    last_sequence = sequence_int
+
+            timestamp = entry.get("finished_at")
+            if timestamp is None:
+                timestamp = entry.get("started_at")
+            if timestamp is not None:
+                try:
+                    timestamp_float = float(timestamp)
+                except (TypeError, ValueError):  # pragma: no cover - defensive guard
+                    timestamp_float = None
+                else:
+                    if first_timestamp is None:
+                        first_timestamp = timestamp_float
+                    last_timestamp = timestamp_float
+
+            orders_value = entry.get("orders")
+            if isinstance(orders_value, (int, float)):
+                orders_count = max(0, int(orders_value))
+            else:
+                orders_count = len(entry.get("results", ()) or ())
+            orders_per_cycle.append(orders_count)
+
+            signals_sequence = entry.get("signals") or ()
+            results_sequence = entry.get("results") or ()
+
+            signals_count = len(signals_sequence)
+            results_count = len(results_sequence)
+            signals_per_cycle.append(signals_count)
+            results_per_cycle.append(results_count)
+
+            duration_value = entry.get("duration_s")
+            if duration_value is not None:
+                try:
+                    durations.append(max(0.0, float(duration_value)))
+                except (TypeError, ValueError):  # pragma: no cover - defensive guard
+                    pass
+
+            for raw_signal in signals_sequence:
+                side = None
+                payload = getattr(raw_signal, "signal", raw_signal)
+                if isinstance(payload, Mapping):
+                    side = payload.get("side")
+                if side is None:
+                    side = getattr(payload, "side", None)
+                if side is None and isinstance(raw_signal, Mapping):
+                    side = raw_signal.get("side")
+                if side is None:
+                    side = getattr(raw_signal, "side", None)
+                if side is None:
+                    continue
+                side_str = str(side).lower()
+                signal_sides[side_str] += 1
+
+            for raw_result in results_sequence:
+                status = getattr(raw_result, "status", None)
+                if status is None and isinstance(raw_result, Mapping):
+                    status = raw_result.get("status")
+                if status is None:
+                    continue
+                result_statuses[str(status).lower()] += 1
+
+        def _aggregate_numbers(values: list[int]) -> dict[str, Any]:
+            if not values:
+                return {"total": 0, "average": 0.0, "min": 0, "max": 0}
+            total_value = sum(values)
+            return {
+                "total": total_value,
+                "average": total_value / len(values),
+                "min": min(values),
+                "max": max(values),
+            }
+
+        duration_metrics: dict[str, Any]
+        if durations:
+            total_duration = sum(durations)
+            duration_metrics = {
+                "total": total_duration,
+                "average": total_duration / len(durations),
+                "min": min(durations),
+                "max": max(durations),
+            }
+        else:
+            duration_metrics = {
+                "total": 0.0,
+                "average": 0.0,
+                "min": None,
+                "max": None,
+            }
+
+        summary.update(
+            {
+                "orders": _aggregate_numbers(orders_per_cycle),
+                "signals": {
+                    **_aggregate_numbers(signals_per_cycle),
+                    "by_side": dict(signal_sides),
+                },
+                "results": {
+                    **_aggregate_numbers(results_per_cycle),
+                    "status_counts": dict(result_statuses),
+                },
+                "duration": duration_metrics,
+                "first_sequence": first_sequence,
+                "last_sequence": last_sequence,
+                "first_timestamp": first_timestamp,
+                "last_timestamp": last_timestamp,
+            }
+        )
+        return summary
+
+    def _filtered_controller_cycle_history(
+        self,
+        *,
+        since_ts: float | None,
+        until_ts: float | None,
+        reverse: bool,
+    ) -> list[tuple[dict[str, Any], float | None, float | None]]:
+        with self._lock:
+            history_snapshot = list(self._controller_cycle_history)
+
+        if not history_snapshot:
+            return []
+
+        filtered: list[tuple[dict[str, Any], float | None, float | None]] = []
+        for entry in history_snapshot:
+            started_raw = entry.get("started_at")
+            finished_raw = entry.get("finished_at")
+            started_ts = self._normalize_time_bound(started_raw)
+            finished_ts = self._normalize_time_bound(finished_raw)
+            pivot_ts = finished_ts if finished_ts is not None else started_ts
+            if since_ts is not None and (pivot_ts is None or pivot_ts < since_ts):
+                continue
+            if until_ts is not None and (pivot_ts is None or pivot_ts > until_ts):
+                continue
+            filtered.append((entry, started_ts, finished_ts))
+
+        if reverse:
+            filtered.reverse()
+
+        return filtered
+
+    def controller_cycle_history_to_records(
+        self,
+        *,
+        since: object = None,
+        until: object = None,
+        limit: int | None = None,
+        reverse: bool = False,
+        include_sequences: bool = True,
+        include_counts: bool = True,
+        coerce_timestamps: bool = False,
+        tz: tzinfo | None = timezone.utc,
+    ) -> list[dict[str, Any]]:
+        """Zwraca listę rekordów historii cykli kontrolera."""
+
+        normalized_limit = self._normalize_history_export_limit(limit)
+        if normalized_limit == 0:
+            return []
+
+        since_ts = self._normalize_time_bound(since)
+        until_ts = self._normalize_time_bound(until)
+
+        filtered = self._filtered_controller_cycle_history(
+            since_ts=since_ts,
+            until_ts=until_ts,
+            reverse=reverse,
+        )
+
+        if not filtered:
+            return []
+
+        def _convert_timestamp(value_ts: float | None, raw: object) -> object:
+            if not coerce_timestamps:
+                return raw
+            if value_ts is None:
+                return None
+            if tz is not None:
+                return datetime.fromtimestamp(value_ts, tz=tz)
+            return datetime.fromtimestamp(value_ts, tz=timezone.utc).replace(tzinfo=None)
+
+        records: list[dict[str, Any]] = []
+        for entry, started_ts, finished_ts in filtered:
+            signals = tuple(entry.get("signals", ()) or ())
+            results = tuple(entry.get("results", ()) or ())
+            orders_value = entry.get("orders")
+            if isinstance(orders_value, (int, float)):
+                orders_count = max(0, int(orders_value))
+            else:
+                orders_count = len(results)
+
+            started_raw = entry.get("started_at")
+            finished_raw = entry.get("finished_at")
+
+            record: dict[str, Any] = {
+                "sequence": entry.get("sequence"),
+                "duration_s": entry.get("duration_s"),
+                "orders": orders_count,
+                "started_at": _convert_timestamp(started_ts, started_raw),
+                "finished_at": _convert_timestamp(finished_ts, finished_raw),
+            }
+
+            if include_counts:
+                record["signals_count"] = len(signals)
+                record["results_count"] = len(results)
+
+            if include_sequences:
+                record["signals"] = signals
+                record["results"] = results
+
+            records.append(record)
+            if normalized_limit is not None and len(records) >= normalized_limit:
+                break
+
+        return records
+
+    def controller_cycle_history_to_dataframe(
+        self,
+        *,
+        since: object = None,
+        until: object = None,
+        limit: int | None = None,
+        reverse: bool = False,
+        include_sequences: bool = True,
+        include_counts: bool = True,
+        coerce_timestamps: bool = True,
+    ) -> pd.DataFrame:
+        """Buduje ``DataFrame`` z historią cykli kontrolera.
+
+        Parametry ``since`` i ``until`` filtrują rekordy według czasu zakończenia
+        (z zapasem czasu rozpoczęcia jeśli ``finished_at`` jest niedostępne).
+        ``limit`` oraz ``reverse`` odwzorowują zachowanie ``get_controller_cycle_history``.
+        ``include_sequences`` pozwala kontrolować obecność surowych sekwencji sygnałów
+        i wyników, natomiast ``include_counts`` dodaje kolumny z ich licznością.
+        Włączenie ``coerce_timestamps`` zamienia znaczniki czasu na ``Timestamp`` UTC,
+        co ułatwia dalszą analizę w Pandas.
+        """
+
+        normalized_limit = self._normalize_history_export_limit(limit)
+        if normalized_limit == 0:
+            columns = [
+                "sequence",
+                "started_at",
+                "finished_at",
+                "duration_s",
+                "orders",
+            ]
+            if include_counts:
+                columns.extend(["signals_count", "results_count"])
+            if include_sequences:
+                columns.extend(["signals", "results"])
+            return pd.DataFrame(columns=columns)
+
+        since_ts = self._normalize_time_bound(since)
+        until_ts = self._normalize_time_bound(until)
+
+        filtered = self._filtered_controller_cycle_history(
+            since_ts=since_ts,
+            until_ts=until_ts,
+            reverse=reverse,
+        )
+
+        if not filtered:
+            columns = [
+                "sequence",
+                "started_at",
+                "finished_at",
+                "duration_s",
+                "orders",
+            ]
+            if include_counts:
+                columns.extend(["signals_count", "results_count"])
+            if include_sequences:
+                columns.extend(["signals", "results"])
+            return pd.DataFrame(columns=columns)
+
+        rows: list[dict[str, Any]] = []
+        for entry, started_ts, finished_ts in filtered:
+            signals = tuple(entry.get("signals", ()) or ())
+            results = tuple(entry.get("results", ()) or ())
+            orders_value = entry.get("orders")
+            if isinstance(orders_value, (int, float)):
+                orders_count = max(0, int(orders_value))
+            else:
+                orders_count = len(results)
+
+            started_raw = entry.get("started_at")
+            finished_raw = entry.get("finished_at")
+
+            row: dict[str, Any] = {
+                "sequence": entry.get("sequence"),
+                "duration_s": entry.get("duration_s"),
+                "orders": orders_count,
+            }
+
+            if coerce_timestamps:
+                row["started_at"] = (
+                    pd.to_datetime(started_ts, unit="s", utc=True)
+                    if started_ts is not None
+                    else pd.NaT
+                )
+                row["finished_at"] = (
+                    pd.to_datetime(finished_ts, unit="s", utc=True)
+                    if finished_ts is not None
+                    else pd.NaT
+                )
+            else:
+                row["started_at"] = started_raw
+                row["finished_at"] = finished_raw
+
+            if include_counts:
+                row["signals_count"] = len(signals)
+                row["results_count"] = len(results)
+
+            if include_sequences:
+                row["signals"] = signals
+                row["results"] = results
+
+            rows.append(row)
+            if normalized_limit is not None and len(rows) >= normalized_limit:
+                break
+
+        df = pd.DataFrame.from_records(rows)
+
+        expected_columns = [
+            "sequence",
+            "started_at",
+            "finished_at",
+            "duration_s",
+            "orders",
+        ]
+        if include_counts:
+            expected_columns.extend(["signals_count", "results_count"])
+        if include_sequences:
+            expected_columns.extend(["signals", "results"])
+
+        for column in expected_columns:
+            if column not in df.columns:
+                df[column] = pd.NA
+
+        return df[expected_columns]
+
     def summarize_risk_evaluations(
         self,
         *,
@@ -2183,8 +3217,20 @@ class AutoTrader:
         service_filter = self._prepare_service_filter(service)
         since_ts = self._normalize_time_bound(since)
         until_ts = self._normalize_time_bound(until)
+        trimmed_by_ttl = 0
+        ttl_snapshot: float | None = None
+        history_size = 0
         with self._lock:
+            trimmed_by_ttl = self._prune_risk_evaluations_locked()
             records = list(self._risk_evaluations)
+            ttl_snapshot = self._risk_evaluations_ttl_s
+            history_size = len(self._risk_evaluations)
+        self._log_risk_history_trimmed(
+            context="summarize",
+            trimmed=trimmed_by_ttl,
+            ttl=ttl_snapshot,
+            history=history_size,
+        )
 
         filtered_records = self._apply_risk_evaluation_filters(
             records,
@@ -2332,8 +3378,20 @@ class AutoTrader:
             if not normalized_decision_fields:
                 normalized_decision_fields = []
 
+        trimmed_by_ttl = 0
+        ttl_snapshot: float | None = None
+        history_size = 0
         with self._lock:
+            trimmed_by_ttl = self._prune_risk_evaluations_locked()
             records = list(self._risk_evaluations)
+            ttl_snapshot = self._risk_evaluations_ttl_s
+            history_size = len(self._risk_evaluations)
+        self._log_risk_history_trimmed(
+            context="dataframe",
+            trimmed=trimmed_by_ttl,
+            ttl=ttl_snapshot,
+            history=history_size,
+        )
 
         filtered_records = self._apply_risk_evaluation_filters(
             records,
@@ -2425,6 +3483,9 @@ class AutoTrader:
             else:
                 if normalised < 0:
                     normalised = 0
+        trimmed_by_ttl = 0
+        ttl_snapshot: float | None = None
+        history_size = 0
         with self._lock:
             self._risk_evaluations_limit = normalised
             if normalised is not None:
@@ -2434,6 +3495,44 @@ class AutoTrader:
                     overflow = len(self._risk_evaluations) - normalised
                     if overflow > 0:
                         del self._risk_evaluations[:overflow]
+            trimmed_by_ttl = self._prune_risk_evaluations_locked()
+            ttl_snapshot = self._risk_evaluations_ttl_s
+            history_size = len(self._risk_evaluations)
+        self._log_risk_history_trimmed(
+            context="configure",
+            trimmed=trimmed_by_ttl,
+            ttl=ttl_snapshot,
+            history=history_size,
+        )
+
+    def get_risk_evaluations_ttl(self) -> float | None:
+        """Zwraca obowiązujący TTL (w sekundach) dla historii ocen ryzyka."""
+
+        with self._lock:
+            ttl = self._risk_evaluations_ttl_s
+        return ttl
+
+    def set_risk_evaluations_ttl(self, ttl: float | None) -> float | None:
+        """Aktualizuje czas życia historii ocen ryzyka."""
+
+        normalized = self._normalise_cycle_history_ttl(ttl)
+        trimmed_by_ttl = 0
+        history_size = 0
+        limit_snapshot: int | None = None
+        with self._lock:
+            self._risk_evaluations_ttl_s = normalized
+            trimmed_by_ttl = self._prune_risk_evaluations_locked()
+            history_size = len(self._risk_evaluations)
+            limit_snapshot = self._risk_evaluations_limit
+        self._log(
+            "Zmieniono TTL historii ocen ryzyka",
+            level=logging.DEBUG,
+            ttl=normalized,
+            limit=limit_snapshot,
+            trimmed=trimmed_by_ttl,
+            history=history_size,
+        )
+        return normalized
 
 
 __all__ = ["AutoTrader", "RiskDecision", "EmitterLike", "GuardrailTrigger"]
