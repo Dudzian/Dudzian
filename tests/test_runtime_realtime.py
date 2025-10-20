@@ -29,7 +29,7 @@ from bot_core.execution.paper import MarketMetadata, PaperTradingExecutionServic
 from bot_core.exchanges.base import AccountSnapshot, Environment, OrderResult
 from bot_core.risk.engine import ThresholdRiskEngine
 from bot_core.risk.profiles.manual import ManualProfile
-from bot_core.runtime.controller import DailyTrendController, TradingController
+from bot_core.runtime.controller import ControllerSignal, DailyTrendController, TradingController
 from bot_core.runtime.realtime import DailyTrendRealtimeRunner
 from bot_core.strategies.daily_trend import DailyTrendMomentumSettings, DailyTrendMomentumStrategy
 

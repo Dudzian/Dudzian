@@ -903,8 +903,8 @@ def test_main_prints_pythonpath_value(
     expected_tests = str((repo_root / "tests").resolve())
 
     assert exit_code == 0
-    assert err == ""
-    assert out.strip() == ":".join([str(repo_root), expected_tests])
+    assert captured.err == ""
+    assert captured.out.strip() == ":".join([str(repo_root), expected_tests])
 
 
 def test_main_with_set_env_and_export_prints_export_command(
@@ -930,8 +930,8 @@ def test_main_with_set_env_and_export_prints_export_command(
     expected_repo = str(repo_root)
 
     assert exit_code == 0
-    assert captured.err == ""
-    assert captured.out.strip() == f"export REPO_ROOT={expected_repo}"
+    assert err == ""
+    assert out.strip() == f"export REPO_ROOT={expected_repo}"
 
 
 def test_main_prints_pythonpath_json(
@@ -954,7 +954,7 @@ def test_main_prints_pythonpath_json(
     payload = json.loads(captured.out)
 
     assert exit_code == 0
-    assert err == ""
+    assert captured.err == ""
     assert payload == {
         "repo_root": expected_repo,
         "additional_paths": [expected_tests],

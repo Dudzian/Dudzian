@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import enum
 import copy
+import time
 from pathlib import Path
 from dataclasses import dataclass
-from typing import Any
 from types import SimpleNamespace
+from typing import Any
+from collections.abc import Iterable
 
 import numpy as np
 import pandas as pd
@@ -19,7 +22,7 @@ from bot_core.ai.regime import (
     RegimeSummary,
     RiskLevel,
 )
-from bot_core.auto_trader.app import AutoTrader, RiskDecision
+from bot_core.auto_trader.app import AutoTrader, GuardrailTrigger, RiskDecision
 from tests.sample_data_loader import load_summary_for_regime
 
 
@@ -61,6 +64,82 @@ class _Provider:
     def get_historical(self, symbol: str, timeframe: str, limit: int = 256) -> pd.DataFrame:
         self.calls.append((symbol, timeframe, limit))
         return self.df
+
+
+class _RiskServiceStub:
+    def __init__(self, approval: Any) -> None:
+        self._approval = approval
+        self.calls: list[RiskDecision] = []
+
+    def evaluate_decision(self, decision: RiskDecision) -> Any:
+        self.calls.append(decision)
+        return self._approval
+
+
+class _RiskServiceResponseStub:
+    def __init__(self, response: Any) -> None:
+        self._response = response
+        self.calls: list[RiskDecision] = []
+
+    def evaluate_decision(self, decision: RiskDecision) -> Any:
+        self.calls.append(decision)
+        result = self._response
+        if callable(result):
+            result = result()
+        return result
+
+
+class _ExecutionServiceStub:
+    def __init__(self) -> None:
+        self.calls: list[RiskDecision] = []
+        self.methods: list[str] = []
+
+    def execute_decision(self, decision: RiskDecision) -> None:
+        self.methods.append("execute_decision")
+        self.calls.append(decision)
+
+    def execute(self, decision: RiskDecision) -> None:
+        self.methods.append("execute")
+        self.calls.append(decision)
+
+
+class _ExecutionServiceExecuteOnly:
+    def __init__(self) -> None:
+        self.calls: list[RiskDecision] = []
+        self.methods: list[str] = []
+
+    def execute(self, decision: RiskDecision) -> None:
+        self.methods.append("execute")
+        self.calls.append(decision)
+
+
+_MISSING = object()
+
+
+class _Approval(enum.Enum):
+    APPROVED = "approved"
+    DENIED = "denied"
+
+
+def _build_summary(
+    regime: MarketRegime,
+    *,
+    dataset: str | None = None,
+    step: int = 24,
+    **overrides: Any,
+) -> RegimeSummary:
+    rename_map = {"risk": "risk_score"}
+    normalized: dict[str, Any] = {}
+    for key, value in overrides.items():
+        mapped = rename_map.get(key, key)
+        normalized[mapped] = value
+    overrides_map = normalized or None
+    return load_summary_for_regime(
+        regime,
+        dataset=dataset,
+        step=step,
+        overrides=overrides_map,
+    )
 
 
 def test_map_regime_to_signal_respects_config(monkeypatch: pytest.MonkeyPatch) -> None:
