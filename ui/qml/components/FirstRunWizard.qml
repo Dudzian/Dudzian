@@ -19,6 +19,8 @@ FocusScope {
             step = 0
             if (activationController)
                 activationController.refresh()
+            if (licenseController)
+                licenseController.autoProvision(activationController ? activationController.fingerprint : ({}))
         }
     }
 
@@ -172,11 +174,22 @@ FocusScope {
                             }
 
                             Button {
+                                text: qsTr("Automatyczna aktywacja")
+                                enabled: licenseController && !licenseController.provisioningInProgress
+                                onClicked: licenseController.autoProvision(activationController ? activationController.fingerprint : ({}))
+                            }
+
+                            Button {
                                 text: qsTr("Wyczyść")
                                 onClicked: licensePayload.text = ""
                             }
 
                             Item { Layout.fillWidth: true }
+                        }
+
+                        BusyIndicator {
+                            running: licenseController && licenseController.provisioningInProgress
+                            visible: running
                         }
 
                         TextArea {
@@ -201,9 +214,9 @@ FocusScope {
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
                             visible: licenseController.licenseActive
-                            text: qsTr("Aktywowano profil %1 – ważna do %2")
-                                  .arg(licenseController.licenseProfile)
-                                  .arg(licenseController.licenseExpiresAt)
+                            text: qsTr("Aktywowano edycję %1 – utrzymanie do %2")
+                                  .arg(licenseController.licenseEdition)
+                                  .arg(licenseController.licenseMaintenanceUntil || qsTr("bez terminu"))
                         }
                     }
                 }
@@ -226,9 +239,9 @@ FocusScope {
                         }
 
                         Label {
-                            text: qsTr("Profil: %1 (ważna do %2)")
-                                  .arg(licenseController.licenseProfile)
-                                  .arg(licenseController.licenseExpiresAt)
+                            text: qsTr("Edycja: %1 (utrzymanie do %2)")
+                                  .arg(licenseController.licenseEdition)
+                                  .arg(licenseController.licenseMaintenanceUntil || qsTr("bez terminu"))
                         }
                     }
                 }

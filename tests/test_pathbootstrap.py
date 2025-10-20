@@ -843,6 +843,53 @@ def test_main_prints_pythonpath_value(
     assert out.strip() == ":".join([str(repo_root), expected_tests])
 
 
+def test_main_with_set_env_prints_assignment(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo_root = _repo_root()
+
+    clear_cache()
+    try:
+        exit_code = main(
+            [
+                "--export",
+                "--set-env",
+                "REPO_ROOT",
+                "--set-env-format",
+                "posix",
+            ]
+        )
+        out, err = _read_output(capsys)
+    finally:
+        clear_cache()
+
+    assert exit_code == 0
+    assert err == ""
+    assert out.strip() == f"export REPO_ROOT={repo_root}"
+
+
+def test_main_prints_pythonpath_value(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("PATHBOOTSTRAP_ADD_PATHS", raising=False)
+
+    clear_cache()
+    try:
+        exit_code = main(
+            ["--print-pythonpath", "--format", "json", "--add-path", "tests"]
+        )
+        captured = capsys.readouterr()
+    finally:
+        clear_cache()
+
+    repo_root = _repo_root()
+    expected_tests = str((repo_root / "tests").resolve())
+
+    assert exit_code == 0
+    assert err == ""
+    assert out.strip() == ":".join([str(repo_root), expected_tests])
+
+
 def test_main_with_set_env_and_export_prints_export_command(
     capsys: pytest.CaptureFixture[str],
 ) -> None:

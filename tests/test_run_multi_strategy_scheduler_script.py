@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -11,6 +12,8 @@ import pytest
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from scripts import run_multi_strategy_scheduler  # type: ignore  # noqa: E402
+from bot_core.security.guards import LicenseCapabilityError
+from bot_core.security.license import LicenseValidationError
 
 
 class _DummyScheduler:
@@ -26,6 +29,14 @@ class _DummyScheduler:
 
     def stop(self) -> None:  # pragma: no cover - nie wywołujemy w scenariuszach pozytywnych
         pass
+
+
+class _DummySecretStorage:
+    def get_secret(self, *_args: object, **_kwargs: object) -> str | None:  # pragma: no cover - proste stuby
+        return None
+
+    def put_secret(self, *_args: object, **_kwargs: object) -> None:  # pragma: no cover - proste stuby
+        return None
 
 
 def _invoke_main(
@@ -112,3 +123,74 @@ def test_main_supports_remove_spec(monkeypatch: pytest.MonkeyPatch) -> None:
     assert captured["async_coro_name"] == "run_once"
     assert scheduler.run_once_called is True
     assert scheduler.run_forever_called is False
+
+
+def test_build_scheduler_reraises_license_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    license_exc = LicenseCapabilityError("Scheduler wymaga modułu Walk Forward.")
+
+    def fake_build_runtime(*_args: object, **_kwargs: object) -> object:
+        raise RuntimeError("bootstrap failed") from license_exc
+
+    monkeypatch.setattr(run_multi_strategy_scheduler, "build_multi_strategy_runtime", fake_build_runtime)
+    monkeypatch.setattr(
+        run_multi_strategy_scheduler,
+        "create_default_secret_storage",
+        lambda: _DummySecretStorage(),
+    )
+
+    with pytest.raises(LicenseCapabilityError) as exc:
+        run_multi_strategy_scheduler._build_scheduler(  # type: ignore[attr-defined]
+            config_path=Path("config/core.yaml"),
+            environment="binance_paper",
+            scheduler_name=None,
+            adapter_factories=None,
+        )
+    assert "Walk Forward" in str(exc.value)
+
+
+def test_run_returns_error_code_on_license_block(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    def fake_build_runtime(*_args: object, **_kwargs: object) -> object:
+        raise RuntimeError("bootstrap failed") from LicenseCapabilityError("Brak modułu multi-strategy")
+
+    monkeypatch.setattr(run_multi_strategy_scheduler, "build_multi_strategy_runtime", fake_build_runtime)
+    monkeypatch.setattr(
+        run_multi_strategy_scheduler,
+        "create_default_secret_storage",
+        lambda: _DummySecretStorage(),
+    )
+
+    with caplog.at_level(logging.ERROR, logger=run_multi_strategy_scheduler.LOGGER.name):
+        exit_code = run_multi_strategy_scheduler.run(["--environment", "binance_paper"])
+
+    assert exit_code == 2
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert "Uruchomienie scheduler-a multi-strategy zablokowane przez licencję" in caplog.text
+
+
+def test_run_returns_error_code_on_license_validation(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    def fake_build_runtime(*_args: object, **_kwargs: object) -> object:
+        raise LicenseValidationError("Brak licencji Pro")
+
+    monkeypatch.setattr(run_multi_strategy_scheduler, "build_multi_strategy_runtime", fake_build_runtime)
+    monkeypatch.setattr(
+        run_multi_strategy_scheduler,
+        "create_default_secret_storage",
+        lambda: _DummySecretStorage(),
+    )
+
+    with caplog.at_level(logging.ERROR, logger=run_multi_strategy_scheduler.LOGGER.name):
+        exit_code = run_multi_strategy_scheduler.run(["--environment", "binance_paper"])
+
+    assert exit_code == 2
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert "Walidacja licencji nie powiodła się" in caplog.text

@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shlex
 import signal
 import threading
+from contextlib import suppress
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from types import SimpleNamespace
@@ -20,9 +22,22 @@ from KryptoLowca.event_emitter_adapter import (
     wire_gui_logs_to_adapter,
 )
 from KryptoLowca.logging_utils import get_logger
+from KryptoLowca.ui.trading.risk_helpers import (
+    apply_runtime_risk_context,
+    refresh_runtime_risk_context,
+)
 
-from .app import AutoTrader
+from .app import AutoTrader, _emit_alert
 from bot_core.execution import ExecutionService
+from bot_core.alerts import AlertSeverity
+from bot_core.security.capabilities import LicenseCapabilities
+from bot_core.security.guards import (
+    CapabilityGuard,
+    LicenseCapabilityError,
+    get_capability_guard,
+    install_capability_guard,
+)
+from bot_core.security.license_service import LicenseService, LicenseServiceError
 from bot_core.runtime.metadata import (
     RiskManagerSettings,
     load_risk_manager_settings,
@@ -69,6 +84,10 @@ class HeadlessTradingStub:
     risk_profile_name: str | None = None
     risk_manager_settings: RiskManagerSettings = field(default_factory=_default_risk_settings)
 
+    _balance_listeners: list[Callable[[float], None]] = field(
+        default_factory=list, init=False, repr=False
+    )
+
     def __post_init__(self) -> None:
         self.account_balance = float(self.paper_balance)
         self.network_var = SimpleNamespace(get=lambda: "demo")
@@ -110,6 +129,23 @@ class HeadlessTradingStub:
         self.risk_profile_name = name
         self.risk_manager_settings = settings
         self.account_balance = float(self.paper_balance)
+
+    def add_balance_listener(self, callback: Callable[[float], None]) -> None:
+        """Rejestruje obserwatora zmian salda symulowanego portfela."""
+
+        if not callable(callback):
+            raise TypeError("Oczekiwano wywoływalnego callbacku")
+        self._balance_listeners.append(callback)
+
+    def remove_balance_listener(self, callback: Callable[[float], None]) -> None:
+        """Usuwa uprzednio zarejestrowanego obserwatora salda."""
+
+        try:
+            self._balance_listeners.remove(callback)
+        except ValueError:  # pragma: no cover - defensywne logowanie
+            logger.debug(
+                "Próba usunięcia niezarejestrowanego listenera salda", exc_info=True
+            )
 
     def _bridge_execute_trade(self, symbol: str, side: str, price: float) -> None:
         """Symuluje wykonanie transakcji na potrzeby AutoTradera."""
@@ -157,6 +193,19 @@ class HeadlessTradingStub:
             pnl,
         )
         self._open_positions.pop(symbol_key, None)
+        self._notify_balance_listeners()
+
+    def _notify_balance_listeners(self) -> None:
+        """Powiadamia zarejestrowanych słuchaczy o nowym saldzie."""
+
+        if not self._balance_listeners:
+            return
+        balance = float(self.paper_balance)
+        for callback in tuple(self._balance_listeners):
+            try:
+                callback(balance)
+            except Exception:  # pragma: no cover - defensywne logowanie
+                logger.exception("Listener zmian salda headless stuba zgłosił wyjątek")
 
 
 class PaperAutoTradeApp:
@@ -182,12 +231,31 @@ class PaperAutoTradeApp:
         self.use_dummy_feed = use_dummy_feed
         self.paper_balance = paper_balance
 
-        self.core_config_path = self._resolve_core_config_path(core_config_path)
+        self.bootstrap_context = bootstrap_context
         self.core_environment = self._infer_environment_hint(
             core_environment,
             bootstrap_context,
         )
-        self.bootstrap_context = bootstrap_context
+        (
+            self.license_path,
+            self.license_capabilities,
+            self.capability_guard,
+            self._license_notice,
+        ) = self._load_license_context()
+        self._reserved_slot_kind: str | None = None
+        self._bot_slot_reserved = False
+        self._license_slot_kind: str | None = None
+        try:
+            self._license_slot_kind = self._evaluate_license_requirements()
+        except LicenseCapabilityError as exc:
+            if self._license_notice:
+                logger.warning(self._license_notice)
+            self._emit_license_alert(str(exc), capability=exc.capability)
+            raise
+        if self._license_notice:
+            logger.warning(self._license_notice)
+
+        self.core_config_path = self._resolve_core_config_path(core_config_path)
         (
             self.risk_profile_name,
             self.risk_profile_config,
@@ -211,6 +279,8 @@ class PaperAutoTradeApp:
         ] = []
         self._provided_gui = gui
         self.headless_stub = headless_stub
+        services = bootstrap_frontend_services(config_path=self.core_config_path)
+        self.frontend_services = services
         self.gui, self.symbol_getter = self._build_gui()
         self._sync_headless_stub_settings()
 
@@ -218,12 +288,16 @@ class PaperAutoTradeApp:
             bootstrap_context,
             execution_service,
         )
+        if resolved_execution_service is None and services.execution_service is not None:
+            resolved_execution_service = services.execution_service
 
         autotrader_kwargs: dict[str, Any] = {"walkforward_interval_s": None}
         if resolved_execution_service is not None:
             autotrader_kwargs["execution_service"] = resolved_execution_service
         if bootstrap_context is not None:
             autotrader_kwargs["bootstrap_context"] = bootstrap_context
+        if services.market_intel is not None and "market_intel" not in autotrader_kwargs:
+            autotrader_kwargs["market_intel"] = services.market_intel
 
         self.trader = AutoTrader(
             self.adapter.emitter,
@@ -231,6 +305,7 @@ class PaperAutoTradeApp:
             self.symbol_getter,
             **autotrader_kwargs,
         )
+        self._update_trader_balance(self.paper_balance)
         self.feed = self._build_feed()
         self._stop_event = threading.Event()
         self._stopped = True
@@ -253,6 +328,221 @@ class PaperAutoTradeApp:
             self.risk_manager_settings,
             self.risk_profile_config,
         )
+
+    def _load_license_context(
+        self,
+    ) -> tuple[Path | None, LicenseCapabilities | None, CapabilityGuard | None, str]:
+        guard: CapabilityGuard | None = None
+        capabilities: LicenseCapabilities | None = None
+        notice = ""
+        license_path: Path | None = None
+
+        context = self.bootstrap_context
+        if context is not None:
+            ctx_guard = getattr(context, "capability_guard", None)
+            if isinstance(ctx_guard, CapabilityGuard):
+                guard = ctx_guard
+                capabilities = ctx_guard.capabilities
+            else:
+                ctx_capabilities = getattr(context, "license_capabilities", None)
+                if isinstance(ctx_capabilities, LicenseCapabilities):
+                    capabilities = ctx_capabilities
+
+        if guard is None:
+            existing = get_capability_guard()
+            if existing is not None:
+                guard = existing
+                capabilities = existing.capabilities
+
+        if guard is None and capabilities is not None:
+            guard = install_capability_guard(capabilities)
+        elif guard is not None and capabilities is None:
+            capabilities = guard.capabilities
+
+        if guard is None:
+            public_key = os.environ.get("BOT_CORE_LICENSE_PUBLIC_KEY")
+            license_path_value = os.environ.get("BOT_CORE_LICENSE_PATH")
+            if public_key and license_path_value:
+                candidate_path = Path(license_path_value).expanduser()
+                try:
+                    service = LicenseService(verify_key_hex=public_key)
+                    snapshot = service.load_from_file(candidate_path)
+                except FileNotFoundError:
+                    notice = (
+                        f"Nie znaleziono pliku licencji: {candidate_path}. Skontaktuj się z opiekunem licencji."
+                    )
+                except LicenseServiceError as exc:
+                    notice = f"Nie udało się zweryfikować licencji offline: {exc}"
+                except Exception:
+                    logger.exception(
+                        "Nieoczekiwany błąd podczas ładowania licencji offline"
+                    )
+                    notice = (
+                        "Wystąpił nieoczekiwany błąd podczas ładowania licencji offline."
+                    )
+                else:
+                    capabilities = snapshot.capabilities
+                    guard = install_capability_guard(capabilities)
+                    license_path = snapshot.bundle_path
+            else:
+                notice = (
+                    "Brak skonfigurowanej licencji offline. Skontaktuj się z opiekunem licencji."
+                )
+
+        if guard is not None and license_path is None:
+            path_value = getattr(context, "license_path", None) if context is not None else None
+            if isinstance(path_value, (str, Path)):
+                license_path = Path(path_value)
+
+        return license_path, capabilities, guard, notice
+
+    def _evaluate_license_requirements(self) -> str:
+        guard = self.capability_guard
+        capabilities = self.license_capabilities
+        if guard is None or capabilities is None:
+            raise LicenseCapabilityError(
+                "Licencja nie obejmuje modułu AutoTrader. Skontaktuj się z opiekunem licencji.",
+                capability="auto_trader",
+            )
+
+        guard.require_runtime(
+            "auto_trader",
+            message="Licencja nie obejmuje modułu AutoTrader. Skontaktuj się z opiekunem licencji.",
+        )
+        environment_kind = self._determine_environment_kind()
+        if environment_kind == "live":
+            guard.require_environment(
+                "live",
+                message="Tryb live wymaga edycji Pro. Skontaktuj się z opiekunem licencji.",
+            )
+            guard.require_edition(
+                "pro",
+                message="Tryb live wymaga edycji Pro. Skontaktuj się z opiekunem licencji.",
+            )
+            slot_kind = "live_controller"
+        else:
+            aliases = ("paper", "demo", "testnet")
+            if not any(capabilities.is_environment_allowed(alias) for alias in aliases):
+                raise LicenseCapabilityError(
+                    "Licencja nie obejmuje środowiska demo/testnet. Skontaktuj się z opiekunem licencji.",
+                    capability="environment",
+                )
+            slot_kind = "paper_controller"
+
+        if self._requires_futures_module():
+            guard.require_module(
+                "futures",
+                message="Dodaj moduł Futures, aby aktywować handel kontraktami.",
+            )
+
+        return slot_kind
+
+    def _determine_environment_kind(self) -> str:
+        context = self.bootstrap_context
+        if context is not None:
+            environment = getattr(context, "environment", None)
+            candidate = self._normalize_environment_value(environment)
+            if candidate:
+                return candidate
+
+        hint = str(self.core_environment or "").lower()
+        if "live" in hint:
+            return "live"
+        if any(alias in hint for alias in ("paper", "demo", "testnet", "sim")):
+            return "paper"
+        return "paper"
+
+    @staticmethod
+    def _normalize_environment_value(environment: object) -> str | None:
+        if environment is None:
+            return None
+        values: list[str] = []
+        candidate = getattr(environment, "environment", None)
+        if isinstance(candidate, str):
+            values.append(candidate)
+        elif candidate is not None:
+            values.append(str(getattr(candidate, "value", candidate)))
+        if isinstance(environment, Mapping):
+            raw = environment.get("environment") or environment.get("mode")  # type: ignore[index]
+            if isinstance(raw, str):
+                values.append(raw)
+        for value in values:
+            normalized = value.strip().lower()
+            if normalized == "live":
+                return "live"
+            if normalized in {"paper", "demo", "testnet"}:
+                return "paper"
+        return None
+
+    def _requires_futures_module(self) -> bool:
+        context = self.bootstrap_context
+        exchange_hint = ""
+        if context is not None:
+            environment = getattr(context, "environment", None)
+            exchange_hint = str(getattr(environment, "exchange", "")) if environment is not None else ""
+            if not exchange_hint and isinstance(environment, Mapping):
+                raw = environment.get("exchange") or environment.get("adapter")  # type: ignore[index]
+                if isinstance(raw, str):
+                    exchange_hint = raw
+        if not exchange_hint and isinstance(self.core_environment, str):
+            exchange_hint = self.core_environment
+        normalized = exchange_hint.lower()
+        return any(token in normalized for token in ("futures", "perp"))
+
+    def _reserve_license_slots(self) -> None:
+        guard = self.capability_guard
+        if guard is None or not self._license_slot_kind:
+            return
+        reserved: list[str] = []
+        try:
+            guard.reserve_slot(self._license_slot_kind)
+            reserved.append(self._license_slot_kind)
+            guard.reserve_slot("bot")
+            reserved.append("bot")
+        except LicenseCapabilityError as exc:
+            for kind in reserved:
+                with suppress(Exception):
+                    guard.release_slot(kind)
+            self._emit_license_alert(str(exc), capability=exc.capability)
+            raise
+        self._reserved_slot_kind = self._license_slot_kind
+        self._bot_slot_reserved = True
+
+    def _release_license_slots(self) -> None:
+        guard = self.capability_guard
+        if guard is None:
+            return
+        if self._reserved_slot_kind:
+            with suppress(Exception):
+                guard.release_slot(self._reserved_slot_kind)
+            self._reserved_slot_kind = None
+        if self._bot_slot_reserved:
+            with suppress(Exception):
+                guard.release_slot("bot")
+            self._bot_slot_reserved = False
+
+    def _emit_license_alert(
+        self,
+        message: str,
+        *,
+        capability: str | None = None,
+        severity: AlertSeverity = AlertSeverity.ERROR,
+    ) -> None:
+        logger.warning("Blokada licencyjna AutoTradera: %s", message)
+        context = {
+            "component": "auto_trader.paper",
+            "environment": str(self.core_environment or "unknown"),
+            "capability": capability or "unknown",
+        }
+        try:
+            _emit_alert(
+                message,
+                severity=severity,
+                source="license_restriction",
+                context=context,
+            )
+        except Exception:
+            logger.debug("Nie udało się wysłać alertu licencyjnego", exc_info=True)
 
     @staticmethod
     def _infer_environment_hint(
@@ -503,6 +793,8 @@ class PaperAutoTradeApp:
             except Exception:
                 logger.debug("Nie udało się zaktualizować risk_manager_settings na GUI")
 
+        self._refresh_runtime_risk_context()
+
         signature = self._make_signature(
             settings,
             self.risk_profile_name,
@@ -540,6 +832,174 @@ class PaperAutoTradeApp:
         settings = self.reload_risk_profile(self.risk_profile_name)
         return self.risk_profile_name, settings, self.risk_profile_config
 
+    def _runtime_risk_default_notional(self) -> float:
+        """Szacuje domyślny notional na podstawie salda i profilu ryzyka."""
+
+        gui = getattr(self, "gui", None)
+        balance_value: float | None = None
+        if gui is not None and hasattr(gui, "paper_balance"):
+            try:
+                balance_attr = getattr(gui, "paper_balance")
+                if balance_attr is not None:
+                    balance_value = float(balance_attr)
+            except Exception:
+                logger.debug(
+                    "Nie udało się odczytać salda z GUI podczas wyliczania notionala",
+                    exc_info=True,
+                )
+
+        if balance_value is None:
+            try:
+                balance_value = float(getattr(self, "paper_balance", 0.0) or 0.0)
+            except Exception:
+                balance_value = 0.0
+
+        balance = float(balance_value or 0.0)
+        if balance > 0:
+            self.paper_balance = balance
+        if balance <= 0:
+            return 0.0
+
+        settings = getattr(self, "risk_manager_settings", None)
+        fraction = 0.0
+        if isinstance(settings, RiskManagerSettings):
+            try:
+                fraction = float(settings.max_risk_per_trade)
+            except Exception:
+                fraction = 0.0
+
+        fraction = max(0.0, fraction)
+        if fraction <= 0:
+            return 0.0
+
+        return balance * min(fraction, 1.0)
+
+    def _handle_headless_balance_change(self, balance: float) -> None:
+        """Synchronizuje saldo aplikacji headless i odświeża domyślny notional."""
+
+        try:
+            value = float(balance)
+        except Exception:  # pragma: no cover - defensywne logowanie
+            logger.debug(
+                "Headless stub przekazał niepoprawne saldo: %r", balance, exc_info=True
+            )
+            return
+
+        self.paper_balance = value
+        gui = getattr(self, "gui", None)
+        if gui is not None and hasattr(gui, "paper_balance"):
+            try:
+                setattr(gui, "paper_balance", value)
+            except Exception:  # pragma: no cover - defensywne logowanie
+                logger.debug(
+                    "Nie udało się zsynchronizować salda na GUI headless", exc_info=True
+                )
+
+        self._update_trader_balance(value)
+        self._refresh_runtime_risk_context()
+
+    def _update_trader_balance(self, balance: float) -> None:
+        trader = getattr(self, "trader", None)
+        if trader is None:
+            return
+        update_method = getattr(trader, "update_account_equity", None)
+        if not callable(update_method):
+            return
+        try:
+            update_method(balance)
+        except Exception:  # pragma: no cover - defensywne logowanie
+            logger.debug(
+                "Nie udało się zaktualizować salda AutoTradera",
+                exc_info=True,
+            )
+
+    def _apply_runtime_risk_context(self, gui: object) -> None:
+        """Aktualizuje GUI przy pomocy helpera runtime, ignorując błędy."""
+
+        if gui is None:
+            return
+
+        try:
+            config_path = (
+                str(self.core_config_path) if getattr(self, "core_config_path", None) else None
+            )
+        except Exception:
+            config_path = None
+
+        snapshot = None
+        try:
+            snapshot = apply_runtime_risk_context(
+                gui,
+                entrypoint="auto_trader",
+                config_path=config_path,
+                default_notional=self._runtime_risk_default_notional(),
+                logger=logger,
+            )
+        except Exception:  # pragma: no cover - defensywne logowanie
+            logger.debug(
+                "Nie udało się zastosować runtime risk context dla GUI AutoTradera",
+                exc_info=True,
+            )
+        else:
+            self._consume_risk_snapshot(snapshot, target_gui=gui)
+
+    def _refresh_runtime_risk_context(self) -> None:
+        gui = self.gui
+        if gui is None:
+            return
+        snapshot = None
+        try:
+            snapshot = refresh_runtime_risk_context(
+                gui,
+                default_notional=self._runtime_risk_default_notional(),
+                logger=logger,
+            )
+        except Exception:  # pragma: no cover - defensywne logowanie
+            logger.debug(
+                "Nie udało się odświeżyć runtime risk context dla GUI AutoTradera",
+                exc_info=True,
+            )
+        else:
+            self._consume_risk_snapshot(snapshot)
+
+    def _consume_risk_snapshot(
+        self,
+        snapshot: object | None,
+        *,
+        target_gui: object | None = None,
+    ) -> None:
+        if snapshot is None:
+            return
+
+        gui = target_gui if target_gui is not None else getattr(self, "gui", None)
+
+        try:
+            balance_value = getattr(snapshot, "paper_balance", None)
+        except Exception:
+            balance_value = None
+
+        if balance_value is not None:
+            try:
+                numeric_balance = float(balance_value)
+            except Exception:
+                numeric_balance = None
+            if numeric_balance is not None:
+                self.paper_balance = numeric_balance
+                if gui is not None and hasattr(gui, "paper_balance"):
+                    try:
+                        setattr(gui, "paper_balance", numeric_balance)
+                    except Exception:  # pragma: no cover - defensywne logowanie
+                        logger.debug("GUI nie przyjęło zaktualizowanego salda", exc_info=True)
+                self._update_trader_balance(numeric_balance)
+
+        settings = getattr(snapshot, "settings", None)
+        if isinstance(settings, RiskManagerSettings):
+            self.risk_manager_settings = settings
+
+        profile_name = getattr(snapshot, "profile_name", None)
+        if isinstance(profile_name, str) and profile_name:
+            self.risk_profile_name = profile_name
+
     def _build_gui(self) -> tuple[object, Callable[[], str]]:
         provided_gui = getattr(self, "_provided_gui", None)
         provided_stub = self.headless_stub
@@ -547,6 +1007,21 @@ class PaperAutoTradeApp:
         if provided_gui is not None:
             self.enable_gui = True
             gui = provided_gui
+            if self.frontend_services is not None:
+                if hasattr(gui, "frontend_services"):
+                    try:
+                        gui.frontend_services = self.frontend_services  # type: ignore[attr-defined]
+                    except Exception:  # pragma: no cover - defensywne
+                        logger.debug("Nie udało się ustawić frontend_services na przekazanym GUI", exc_info=True)
+                market_intel = getattr(self.frontend_services, "market_intel", None)
+                if (
+                    market_intel is not None
+                    and getattr(gui, "market_intel", None) is None
+                ):
+                    try:
+                        gui.market_intel = market_intel  # type: ignore[attr-defined]
+                    except Exception:  # pragma: no cover - defensywne
+                        logger.debug("Nie udało się wstrzyknąć market_intel do przekazanego GUI", exc_info=True)
             self._gui_risk_listener_active = False
             register_listener = getattr(gui, "add_risk_reload_listener", None)
             if callable(register_listener):
@@ -561,6 +1036,8 @@ class PaperAutoTradeApp:
                     setattr(gui, "paper_balance", self.paper_balance)
                 except Exception:  # pragma: no cover - defensywne
                     logger.debug("Nie udało się ustawić paper_balance na przekazanym GUI", exc_info=True)
+
+            self._apply_runtime_risk_context(gui)
 
             def getter() -> str:
                 symbol_var = getattr(gui, "symbol_var", None)
@@ -593,7 +1070,7 @@ class PaperAutoTradeApp:
                 from KryptoLowca.ui.trading import TradingGUI
 
                 root = tk.Tk()
-                gui = TradingGUI(root)
+                gui = TradingGUI(root, frontend_services=self.frontend_services)
                 gui.paper_balance = self.paper_balance
                 register_listener = getattr(gui, "add_risk_reload_listener", None)
                 if callable(register_listener):
@@ -603,6 +1080,8 @@ class PaperAutoTradeApp:
                     root.wm_title("KryptoLowca AutoTrader (paper)")
                 except Exception:  # pragma: no cover - brak wsparcia tytułów
                     pass
+
+                self._apply_runtime_risk_context(gui)
 
                 def getter() -> str:
                     var = getattr(gui, "symbol_var", None)
@@ -650,6 +1129,22 @@ class PaperAutoTradeApp:
         except Exception:  # pragma: no cover - defensywne
             logger.debug("Stub headless nie przyjął ustawień startowych", exc_info=True)
 
+        register_balance_listener = getattr(stub, "add_balance_listener", None)
+        if callable(register_balance_listener):
+            try:
+                register_balance_listener(self._handle_headless_balance_change)
+            except Exception:  # pragma: no cover - defensywne logowanie
+                logger.debug(
+                    "Nie udało się podpiąć listenera salda headless stuba", exc_info=True
+                )
+
+        previous_gui = getattr(self, "gui", None)
+        try:
+            self.gui = stub
+            self._refresh_runtime_risk_context()
+        finally:
+            self.gui = previous_gui
+
         def getter() -> str:
             getter_method = getattr(stub, "get_symbol", None)
             if callable(getter_method):
@@ -675,11 +1170,17 @@ class PaperAutoTradeApp:
     def start(self) -> None:
         if not self._stopped:
             return
+        self._reserve_license_slots()
         self._stopped = False
-        self.trader.start()
-        if self.feed is not None:
-            self.feed.start()
-        self._start_risk_watcher()
+        try:
+            self.trader.start()
+            if self.feed is not None:
+                self.feed.start()
+            self._start_risk_watcher()
+        except Exception:
+            self._stopped = True
+            self._release_license_slots()
+            raise
         logger.info("AutoTrader paper app started (symbol=%s, gui=%s)", self.symbol, self.enable_gui)
 
     def stop(self, *_: object) -> None:
@@ -702,6 +1203,7 @@ class PaperAutoTradeApp:
             self.adapter.bus.close()
         except Exception:  # pragma: no cover - defensywne
             logger.debug("Problem z zamknięciem EventBus", exc_info=True)
+        self._release_license_slots()
         logger.info("AutoTrader paper app stopped")
 
     def start_auto_reload(self, interval: float | None = None) -> None:
@@ -905,11 +1407,30 @@ class PaperAutoTradeApp:
             self.risk_profile_name = profile_name
         self.risk_manager_settings = settings
         self.risk_profile_config = profile_payload
+        gui = self.gui
+        if gui is not None:
+            if hasattr(gui, "risk_manager_settings"):
+                try:
+                    setattr(gui, "risk_manager_settings", settings)
+                except Exception:  # pragma: no cover - defensywne logowanie
+                    logger.debug(
+                        "GUI nie przyjęło nowych risk_manager_settings podczas reloadu",
+                        exc_info=True,
+                    )
+            if profile_payload is not None and hasattr(gui, "risk_profile_config"):
+                try:
+                    setattr(gui, "risk_profile_config", profile_payload)
+                except Exception:  # pragma: no cover - defensywne logowanie
+                    logger.debug(
+                        "GUI nie przyjęło nowego payloadu profilu podczas reloadu",
+                        exc_info=True,
+                    )
         self._notify_trader_of_risk_update(settings, profile_payload)
         self._notify_listeners(settings, profile_payload)
         self._risk_config_mtime = self._get_risk_config_mtime()
         self._sync_headless_stub_settings()
         self._update_bootstrap_context(settings, profile_payload)
+        self._refresh_runtime_risk_context()
 
     def _notify_listeners(
         self,
@@ -1093,15 +1614,23 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     )
     effective_argv = list(argv if argv is not None else [])
     options = parse_cli_args(effective_argv)
-    app = PaperAutoTradeApp(
-        symbol=options.symbol,
-        enable_gui=options.enable_gui,
-        use_dummy_feed=options.use_dummy_feed,
-        paper_balance=options.paper_balance,
-        core_config_path=options.core_config_path,
-        risk_profile=options.risk_profile,
-    )
-    app.run()
+    try:
+        app = PaperAutoTradeApp(
+            symbol=options.symbol,
+            enable_gui=options.enable_gui,
+            use_dummy_feed=options.use_dummy_feed,
+            paper_balance=options.paper_balance,
+            core_config_path=options.core_config_path,
+            risk_profile=options.risk_profile,
+        )
+    except LicenseCapabilityError as exc:
+        logger.error("Uruchomienie AutoTradera zablokowane przez licencję: %s", exc)
+        raise SystemExit(1) from exc
+    try:
+        app.run()
+    except LicenseCapabilityError as exc:
+        logger.error("AutoTrader zatrzymany z powodu ograniczeń licencyjnych: %s", exc)
+        raise SystemExit(2) from exc
 
 
 __all__ = [

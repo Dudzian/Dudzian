@@ -3,13 +3,19 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
 from pathlib import Path
 from typing import Mapping, Sequence, cast
 
 from bot_core.exchanges.base import ExchangeAdapterFactory
 from bot_core.runtime.bootstrap import parse_adapter_factory_cli_specs
 from bot_core.runtime.pipeline import MultiStrategyRuntime, build_multi_strategy_runtime
-from bot_core.security import SecretManager
+from bot_core.security import SecretManager, create_default_secret_storage
+from bot_core.security.guards import LicenseCapabilityError
+from bot_core.security.license import LicenseValidationError
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _build_scheduler(
@@ -19,16 +25,23 @@ def _build_scheduler(
     scheduler_name: str | None,
     adapter_factories: Mapping[str, object] | None,
 ) -> object:
-    runtime = build_multi_strategy_runtime(
-        environment_name=environment,
-        scheduler_name=scheduler_name,
-        config_path=config_path,
-        secret_manager=SecretManager(),
-        adapter_factories=cast(Mapping[str, ExchangeAdapterFactory] | None, adapter_factories),
-        telemetry_emitter=lambda name, payload: print(
-            f"[telemetry] schedule={name} signals={payload.get('signals', 0)} latency_ms={payload.get('latency_ms', 0.0):.2f}"
-        ),
-    )
+    try:
+        runtime = build_multi_strategy_runtime(
+            environment_name=environment,
+            scheduler_name=scheduler_name,
+            config_path=config_path,
+            secret_manager=SecretManager(create_default_secret_storage()),
+            adapter_factories=cast(Mapping[str, ExchangeAdapterFactory] | None, adapter_factories),
+            telemetry_emitter=lambda name, payload: print(
+                f"[telemetry] schedule={name} signals={payload.get('signals', 0)} "
+                f"latency_ms={payload.get('latency_ms', 0.0):.2f}"
+            ),
+        )
+    except RuntimeError as exc:
+        cause = exc.__cause__
+        if isinstance(cause, LicenseCapabilityError):
+            raise cause
+        raise
     scheduler = runtime.scheduler
     setattr(scheduler, "_runtime", runtime)
     return scheduler
@@ -65,12 +78,22 @@ def run(argv: Sequence[str] | None = None) -> int:
     )
     adapter_factories: Mapping[str, object] | None = cli_adapter_specs if cli_adapter_specs else None
 
-    scheduler = _build_scheduler(
-        config_path=config_path,
-        environment=args.environment,
-        scheduler_name=args.scheduler,
-        adapter_factories=adapter_factories,
-    )
+    try:
+        scheduler = _build_scheduler(
+            config_path=config_path,
+            environment=args.environment,
+            scheduler_name=args.scheduler,
+            adapter_factories=adapter_factories,
+        )
+    except LicenseCapabilityError as exc:
+        LOGGER.error(
+            "Uruchomienie scheduler-a multi-strategy zablokowane przez licencję: %s",
+            exc,
+        )
+        return 2
+    except LicenseValidationError as exc:
+        LOGGER.error("Walidacja licencji nie powiodła się: %s", exc)
+        return 2
 
     runtime: MultiStrategyRuntime | None = getattr(scheduler, "_runtime", None)
 

@@ -38,6 +38,10 @@ from bot_core.exchanges.streaming import LocalLongPollStream, StreamBatch
 from bot_core.market_intel import MarketIntelAggregator, MarketIntelQuery, MarketIntelSnapshot
 from bot_core.portfolio import PortfolioDecisionLog, PortfolioGovernor
 from bot_core.runtime.bootstrap import BootstrapContext, bootstrap_environment
+from bot_core.security.guards import (
+    LicenseCapabilityError,
+    get_capability_guard,
+)
 from bot_core.runtime.multi_strategy_scheduler import (
     MultiStrategyScheduler,
     StrategyDataFeed,
@@ -151,6 +155,7 @@ def build_daily_trend_pipeline(
     core_config = bootstrap_ctx.core_config
     environment = bootstrap_ctx.environment
     effective_risk_profile = bootstrap_ctx.risk_profile_name
+    guard = getattr(bootstrap_ctx, "capability_guard", None) or get_capability_guard()
 
     resolved_strategy_name = strategy_name or getattr(environment, "default_strategy", None)
     if not resolved_strategy_name:
@@ -158,6 +163,24 @@ def build_daily_trend_pipeline(
             "Środowisko '{environment}' nie ma zdefiniowanej domyślnej strategii, a parametr strategy_name nie został podany."
             .format(environment=environment_name)
         )
+
+    if guard is not None:
+        try:
+            guard.require_strategy(
+                "trend_d1",
+                message=(
+                    f"Strategia Trend D1 '{resolved_strategy_name}' wymaga aktywnej licencji Trend D1."
+                ),
+            )
+            guard.reserve_slot("bot")
+            slot_kind = (
+                "live_controller"
+                if environment.environment is Environment.LIVE
+                else "paper_controller"
+            )
+            guard.reserve_slot(slot_kind)
+        except LicenseCapabilityError as exc:
+            raise RuntimeError(str(exc)) from exc
 
     resolved_controller_name = controller_name or getattr(environment, "default_controller", None)
     if not resolved_controller_name:
@@ -1645,6 +1668,26 @@ def build_multi_strategy_runtime(
         secret_manager=secret_manager,
         adapter_factories=adapter_factories,
     )
+    guard = getattr(bootstrap_ctx, "capability_guard", None) or get_capability_guard()
+    if guard is not None:
+        try:
+            guard.require_runtime(
+                "multi_strategy_scheduler",
+                message="Scheduler multi-strategy wymaga aktywnego runtime Multi-Strategy.",
+            )
+            guard.require_module(
+                "walk_forward",
+                message="Moduł Walk Forward jest wymagany do uruchomienia scheduler-a multi-strategy.",
+            )
+            guard.reserve_slot("bot")
+            slot_kind = (
+                "live_controller"
+                if bootstrap_ctx.environment.environment is Environment.LIVE
+                else "paper_controller"
+            )
+            guard.reserve_slot(slot_kind)
+        except LicenseCapabilityError as exc:
+            raise RuntimeError(str(exc)) from exc
     core_config = bootstrap_ctx.core_config
     environment = bootstrap_ctx.environment
     scheduler_configs = getattr(core_config, "multi_strategy_schedulers", {})
@@ -1851,7 +1894,19 @@ def build_multi_strategy_runtime(
 
 def _instantiate_strategies(core_config: CoreConfig) -> dict[str, StrategyEngine]:
     registry: dict[str, StrategyEngine] = {}
+    guard = get_capability_guard()
+
+    def _require(capability: str, *, label: str, strategy_name: str) -> None:
+        if guard is None:
+            return
+        guard.require_strategy(capability, message=label.format(name=strategy_name))
+
     for name, cfg in getattr(core_config, "strategies", {}).items():
+        _require(
+            "trend_d1",
+            label="Strategia Trend D1 '{name}' wymaga aktywnej licencji Trend D1.",
+            strategy_name=name,
+        )
         registry[name] = DailyTrendMomentumStrategy(
             DailyTrendMomentumSettings(
                 fast_ma=cfg.fast_ma,
@@ -1865,6 +1920,11 @@ def _instantiate_strategies(core_config: CoreConfig) -> dict[str, StrategyEngine
             )
         )
     for name, cfg in getattr(core_config, "mean_reversion_strategies", {}).items():
+        _require(
+            "mean_reversion",
+            label="Strategia Mean Reversion '{name}' wymaga aktywnej licencji Mean Reversion.",
+            strategy_name=name,
+        )
         registry[name] = MeanReversionStrategy(
             MeanReversionSettings(
                 lookback=cfg.lookback,
@@ -1876,6 +1936,11 @@ def _instantiate_strategies(core_config: CoreConfig) -> dict[str, StrategyEngine
             )
         )
     for name, cfg in getattr(core_config, "volatility_target_strategies", {}).items():
+        _require(
+            "volatility_target",
+            label="Strategia Volatility Target '{name}' wymaga aktywnej licencji Volatility Target.",
+            strategy_name=name,
+        )
         registry[name] = VolatilityTargetStrategy(
             VolatilityTargetSettings(
                 target_volatility=cfg.target_volatility,
@@ -1887,6 +1952,11 @@ def _instantiate_strategies(core_config: CoreConfig) -> dict[str, StrategyEngine
             )
         )
     for name, cfg in getattr(core_config, "cross_exchange_arbitrage_strategies", {}).items():
+        _require(
+            "cross_exchange",
+            label="Strategia Cross-Exchange '{name}' wymaga aktywnej licencji Cross-Exchange.",
+            strategy_name=name,
+        )
         registry[name] = CrossExchangeArbitrageStrategy(
             CrossExchangeArbitrageSettings(
                 primary_exchange=cfg.primary_exchange,

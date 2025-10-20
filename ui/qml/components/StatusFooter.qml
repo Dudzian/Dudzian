@@ -37,17 +37,39 @@ Pane {
 
         Label {
             text: licenseController.licenseActive
-                    ? qsTr("Licencja: %1 • ważna do %2 • FP %3")
-                          .arg(licenseController.licenseProfile)
-                          .arg(licenseController.licenseExpiresAt.length > 0
-                                   ? Qt.formatDateTime(new Date(licenseController.licenseExpiresAt), "yyyy-MM-dd")
-                                   : qsTr("-")
-                          )
+                    ? qsTr("Licencja: %1 • utrzymanie do %2 • HWID %3")
+                          .arg(licenseController.licenseEdition)
+                          .arg(licenseController.licenseMaintenanceUntil.length > 0
+                                   ? licenseController.licenseMaintenanceUntil
+                                   : qsTr("bez terminu"))
                           .arg(licenseController.licenseFingerprint)
                     : qsTr("Licencja: nieaktywna")
             color: licenseController.licenseActive
                     ? palette.windowText
                     : Qt.rgba(0.94, 0.36, 0.32, 1)
+        }
+
+        Label {
+            readonly property bool active: alertsModel && alertsModel.hasActiveAlerts
+            readonly property bool hasUnacked: alertsModel && alertsModel.hasUnacknowledgedAlerts
+            text: active
+                    ? hasUnacked
+                          ? qsTr("Alerty: %1K / %2W • %3 niepotw.")
+                                .arg(alertsModel.criticalCount)
+                                .arg(alertsModel.warningCount)
+                                .arg(alertsModel.unacknowledgedCount)
+                          : qsTr("Alerty: %1K / %2W")
+                                .arg(alertsModel.criticalCount)
+                                .arg(alertsModel.warningCount)
+                    : qsTr("Alerty: brak")
+            color: alertsModel && alertsModel.criticalCount > 0
+                    ? Qt.rgba(0.94, 0.36, 0.32, 1)
+                    : alertsModel && alertsModel.warningCount > 0
+                          ? Qt.rgba(0.96, 0.7, 0.25, 1)
+                          : hasUnacked
+                                ? Qt.rgba(0.96, 0.68, 0.26, 1)
+                                : palette.windowText
+            font.bold: (alertsModel && alertsModel.criticalCount > 0) || hasUnacked
         }
 
         Label {

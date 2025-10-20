@@ -231,6 +231,60 @@ def test_trading_gui_initializes_with_injected_controller(tk_root):
     assert "200" in notional_label
 
 
+def test_trading_gui_reuses_injected_frontend_services(monkeypatch, tk_root):
+    class _StubServices:
+        def __init__(self) -> None:
+            self.exchange_manager = object()
+            self.market_intel = object()
+            self.execution_service = object()
+            self.account_manager = object()
+            self.router = object()
+
+    services = _StubServices()
+    called: dict[str, bool] = {"bootstrap": False}
+
+    def _fail_bootstrap(*args, **kwargs):  # pragma: no cover - defensywne
+        called["bootstrap"] = True
+        raise AssertionError("bootstrap_frontend_services should not be invoked")
+
+    monkeypatch.setattr(trading_app_module, "bootstrap_frontend_services", _fail_bootstrap)
+
+    class StubController:
+        def __init__(self, state: AppState) -> None:
+            self.state = state
+            self.market_intel = None
+            self._exchange = services.exchange_manager
+            self.updated_settings = None
+
+        def start(self) -> None:  # pragma: no cover - prosty stub
+            self.state.running = True
+
+        def stop(self) -> None:  # pragma: no cover - prosty stub
+            self.state.running = False
+
+        def ensure_exchange(self):  # pragma: no cover - prosty stub
+            return self._exchange
+
+        def get_exchange(self):  # pragma: no cover - prosty stub
+            return self._exchange
+
+        def update_risk_settings(self, settings) -> None:
+            self.updated_settings = settings
+
+    gui = TradingGUI(
+        tk_root,
+        session_controller_factory=StubController,
+        frontend_services=services,
+    )
+
+    assert gui.frontend_services is services
+    assert gui.market_intel is services.market_intel
+    assert gui.ex_mgr is services.exchange_manager
+    assert isinstance(gui.controller, StubController)
+    assert gui.controller.updated_settings is not None
+    assert called["bootstrap"] is False
+
+
 def test_trading_gui_start_stop_updates_state(tk_root):
     gui = TradingGUI(tk_root, session_controller_factory=DummyController)
     gui.view._start_clicked()

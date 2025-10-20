@@ -60,9 +60,13 @@ set(UI_SOURCES
     src/main.cpp
     src/app/Application.cpp
     src/app/ActivationController.cpp
+    src/grpc/BotCoreLocalService.cpp
     src/grpc/TradingClient.cpp
     src/grpc/MetricsClient.cpp
     src/models/OhlcvListModel.cpp
+    src/models/AlertsModel.cpp
+    src/models/AlertsFilterProxyModel.cpp
+    src/models/RiskHistoryModel.cpp
     src/models/RiskStateModel.cpp
     src/utils/PerformanceGuard.cpp
     src/utils/FrameRateMonitor.cpp
@@ -75,9 +79,13 @@ set(UI_SOURCES
 set(UI_HEADERS
     src/app/Application.hpp
     src/app/ActivationController.hpp
+    src/grpc/BotCoreLocalService.hpp
     src/grpc/TradingClient.hpp
     src/grpc/MetricsClient.hpp
+    src/models/AlertsModel.hpp
+    src/models/AlertsFilterProxyModel.hpp
     src/models/OhlcvListModel.hpp
+    src/models/RiskHistoryModel.hpp
     src/models/RiskStateModel.hpp
     src/models/RiskTypes.hpp
     src/utils/PerformanceGuard.hpp
@@ -130,7 +138,10 @@ if(BUILD_TESTING)
         tests/ApplicationTelemetryTest.cpp
         src/app/Application.cpp
         src/grpc/TradingClient.cpp
+        src/models/AlertsModel.cpp
+        src/models/AlertsFilterProxyModel.cpp
         src/models/OhlcvListModel.cpp
+        src/models/RiskHistoryModel.cpp
         src/utils/PerformanceGuard.cpp
         src/utils/FrameRateMonitor.cpp
         src/telemetry/UiTelemetryReporter.cpp
@@ -147,6 +158,96 @@ if(BUILD_TESTING)
             gRPC::grpc++
     )
     add_test(NAME ui_application_telemetry_tests COMMAND ui_application_telemetry_tests)
+
+    add_executable(application_risk_refresh_tests
+        tests/ApplicationRiskRefreshTest.cpp
+        src/app/Application.cpp
+        src/grpc/TradingClient.cpp
+        src/grpc/BotCoreLocalService.cpp
+        src/models/OhlcvListModel.cpp
+        src/models/AlertsModel.cpp
+        src/models/AlertsFilterProxyModel.cpp
+        src/models/RiskHistoryModel.cpp
+        src/models/RiskStateModel.cpp
+        src/utils/PerformanceGuard.cpp
+        src/utils/FrameRateMonitor.cpp
+        src/telemetry/UiTelemetryReporter.cpp
+        src/license/LicenseActivationController.cpp
+        src/security/SecurityAdminController.cpp
+        src/reporting/ReportCenterController.cpp
+    )
+    target_include_directories(application_risk_refresh_tests PRIVATE src ${GENERATED_DIR})
+    target_link_libraries(application_risk_refresh_tests
+        PRIVATE
+            Qt6::Core
+            Qt6::Gui
+            Qt6::Quick
+            Qt6::Test
+            trading_proto
+            protobuf::libprotobuf
+            gRPC::grpc++
+    )
+    add_test(NAME application_risk_refresh_tests COMMAND application_risk_refresh_tests)
+
+    add_executable(application_settings_persistence_tests
+        tests/ApplicationSettingsPersistenceTest.cpp
+        src/app/Application.cpp
+        src/grpc/TradingClient.cpp
+        src/grpc/BotCoreLocalService.cpp
+        src/models/OhlcvListModel.cpp
+        src/models/AlertsModel.cpp
+        src/models/AlertsFilterProxyModel.cpp
+        src/models/RiskHistoryModel.cpp
+        src/models/RiskStateModel.cpp
+        src/utils/PerformanceGuard.cpp
+        src/utils/FrameRateMonitor.cpp
+        src/telemetry/UiTelemetryReporter.cpp
+        src/license/LicenseActivationController.cpp
+        src/security/SecurityAdminController.cpp
+        src/reporting/ReportCenterController.cpp
+    )
+    target_include_directories(application_settings_persistence_tests PRIVATE src ${GENERATED_DIR})
+    target_link_libraries(application_settings_persistence_tests
+        PRIVATE
+            Qt6::Core
+            Qt6::Gui
+            Qt6::Quick
+            Qt6::Test
+            trading_proto
+            protobuf::libprotobuf
+            gRPC::grpc++
+    )
+    add_test(NAME application_settings_persistence_tests COMMAND application_settings_persistence_tests)
+
+    add_executable(application_risk_history_auto_export_tests
+        tests/ApplicationRiskHistoryAutoExportTest.cpp
+        src/app/Application.cpp
+        src/grpc/TradingClient.cpp
+        src/grpc/BotCoreLocalService.cpp
+        src/models/OhlcvListModel.cpp
+        src/models/AlertsModel.cpp
+        src/models/AlertsFilterProxyModel.cpp
+        src/models/RiskHistoryModel.cpp
+        src/models/RiskStateModel.cpp
+        src/utils/PerformanceGuard.cpp
+        src/utils/FrameRateMonitor.cpp
+        src/telemetry/UiTelemetryReporter.cpp
+        src/license/LicenseActivationController.cpp
+        src/security/SecurityAdminController.cpp
+        src/reporting/ReportCenterController.cpp
+    )
+    target_include_directories(application_risk_history_auto_export_tests PRIVATE src ${GENERATED_DIR})
+    target_link_libraries(application_risk_history_auto_export_tests
+        PRIVATE
+            Qt6::Core
+            Qt6::Gui
+            Qt6::Quick
+            Qt6::Test
+            trading_proto
+            protobuf::libprotobuf
+            gRPC::grpc++
+    )
+    add_test(NAME application_risk_history_auto_export_tests COMMAND application_risk_history_auto_export_tests)
 
     # FrameRateMonitor tests
     add_executable(frame_rate_monitor_tests
@@ -181,6 +282,31 @@ if(BUILD_TESTING)
     target_include_directories(risk_state_model_tests PRIVATE src)
     target_link_libraries(risk_state_model_tests PRIVATE Qt6::Core Qt6::Test)
     add_test(NAME risk_state_model_tests COMMAND risk_state_model_tests)
+
+    add_executable(risk_history_model_tests
+        tests/RiskHistoryModelTest.cpp
+        src/models/RiskHistoryModel.cpp
+    )
+    target_include_directories(risk_history_model_tests PRIVATE src)
+    target_link_libraries(risk_history_model_tests PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME risk_history_model_tests COMMAND risk_history_model_tests)
+
+    add_executable(alerts_model_tests
+        tests/AlertsModelTest.cpp
+        src/models/AlertsModel.cpp
+    )
+    target_include_directories(alerts_model_tests PRIVATE src)
+    target_link_libraries(alerts_model_tests PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME alerts_model_tests COMMAND alerts_model_tests)
+
+    add_executable(alerts_filter_proxy_model_tests
+        tests/AlertsFilterProxyModelTest.cpp
+        src/models/AlertsModel.cpp
+        src/models/AlertsFilterProxyModel.cpp
+    )
+    target_include_directories(alerts_filter_proxy_model_tests PRIVATE src)
+    target_link_libraries(alerts_filter_proxy_model_tests PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME alerts_filter_proxy_model_tests COMMAND alerts_filter_proxy_model_tests)
 
     # SidePanel QML tests
     add_executable(side_panel_tests
@@ -243,6 +369,44 @@ if(BUILD_TESTING)
             Qt6::Test
     )
     add_test(NAME admin_dialog_e2e_tests COMMAND admin_dialog_e2e_tests)
+
+    add_executable(first_run_wizard_e2e_tests
+        tests/FirstRunWizardE2ETest.cpp
+    )
+    target_include_directories(first_run_wizard_e2e_tests PRIVATE src)
+    qt_add_resources(first_run_wizard_e2e_tests first_run_wizard_e2e_qml
+        PREFIX "/qml/components"
+        FILES qml/components/FirstRunWizard.qml
+    )
+    target_link_libraries(first_run_wizard_e2e_tests
+        PRIVATE
+            Qt6::Core
+            Qt6::Gui
+            Qt6::Qml
+            Qt6::Quick
+            Qt6::QuickControls2
+            Qt6::Test
+    )
+    add_test(NAME first_run_wizard_e2e_tests COMMAND first_run_wizard_e2e_tests)
+
+    add_executable(bot_core_local_service_tests
+        tests/BotCoreLocalServiceTest.cpp
+        src/grpc/BotCoreLocalService.cpp
+        src/grpc/TradingClient.cpp
+    )
+    target_include_directories(bot_core_local_service_tests PRIVATE src ${GENERATED_DIR})
+    target_link_libraries(bot_core_local_service_tests
+        PRIVATE
+            Qt6::Core
+            Qt6::Gui
+            Qt6::Qml
+            Qt6::Quick
+            Qt6::Test
+            trading_proto
+            protobuf::libprotobuf
+            gRPC::grpc++
+    )
+    add_test(NAME bot_core_local_service_tests COMMAND bot_core_local_service_tests)
 
     add_executable(report_center_controller_tests
         tests/ReportCenterControllerTest.cpp

@@ -68,10 +68,10 @@ Domyślne parametry są zgodne z plikiem `ui/config/example.yaml`. Wartości `--
 
 Przy pierwszym uruchomieniu powłoka wyświetla ekran aktywacyjny licencji OEM. Aby odblokować UI:
 
-1. Przygotuj podpisany dokument licencyjny (`.json`/`.jsonl`) z `scripts/oem_provision_license.py` lub zeskanuj payload z kodu QR.
-2. Zweryfikuj, że fingerprint z licencji odpowiada wartości oczekiwanej (`config/fingerprint.expected.json`).
-3. Wczytaj plik z nośnika USB lub wklej payload (JSON albo base64) do pola tekstowego i zatwierdź.
-4. Po poprawnej weryfikacji licencja zostanie zapisana w `var/licenses/active/license.json`, a status stopki pokaże profil, fingerprint i datę wygaśnięcia.
+1. Przygotuj podpisany pakiet `.lic` (`payload_b64` + `signature_b64`) z `scripts/generate_license.py` lub zeskanuj payload z kodu QR.
+2. Zweryfikuj, że fingerprint HWID z licencji odpowiada wartości oczekiwanej (`config/fingerprint.expected.json`).
+3. Wczytaj plik z nośnika USB lub wklej tekst pakietu (JSON albo base64) do pola tekstowego i zatwierdź.
+4. Po poprawnej weryfikacji licencja zostanie zapisana w `var/licenses/active/license.json`, a stopka pokaże aktywną edycję, status utrzymania i HWID licencji.
 
 Opcje CLI `--license-storage` oraz `--expected-fingerprint-path` pozwalają wskazać niestandardowe lokalizacje docelowej licencji oraz pliku fingerprintu (np. w środowisku produkcyjnym bundla OEM).
 
