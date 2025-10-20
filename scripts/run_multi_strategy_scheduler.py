@@ -12,13 +12,13 @@ from bot_core.runtime.pipeline import MultiStrategyRuntime, build_multi_strategy
 from bot_core.security import SecretManager
 
 
-def _build_runtime(
+def _build_scheduler(
     *,
     config_path: Path,
     environment: str,
     scheduler_name: str | None,
     adapter_factories: Mapping[str, object] | None,
-) -> MultiStrategyRuntime:
+) -> object:
     runtime = build_multi_strategy_runtime(
         environment_name=environment,
         scheduler_name=scheduler_name,
@@ -29,10 +29,12 @@ def _build_runtime(
             f"[telemetry] schedule={name} signals={payload.get('signals', 0)} latency_ms={payload.get('latency_ms', 0.0):.2f}"
         ),
     )
-    return runtime
+    scheduler = runtime.scheduler
+    setattr(scheduler, "_runtime", runtime)
+    return scheduler
 
 
-def main() -> None:
+def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the multi-strategy scheduler")
     parser.add_argument("--config", default="config/core.yaml", help="Ścieżka do pliku core.yaml")
     parser.add_argument("--environment", required=True, help="Nazwa środowiska (np. binance_paper)")
@@ -52,22 +54,25 @@ def main() -> None:
         action="store_true",
         help="Wykonaj pojedynczy cykl harmonogramu i zakończ (tryb smoke/audit)",
     )
-    args = parser.parse_args()
+    return parser.parse_args(argv)
 
+
+def run(argv: Sequence[str] | None = None) -> int:
+    args = _parse_args(argv)
     config_path = Path(args.config).expanduser().resolve()
     cli_adapter_specs = parse_adapter_factory_cli_specs(
         cast(Sequence[str] | None, getattr(args, "adapter_factories", None))
     )
     adapter_factories: Mapping[str, object] | None = cli_adapter_specs if cli_adapter_specs else None
 
-    runtime = _build_runtime(
+    scheduler = _build_scheduler(
         config_path=config_path,
         environment=args.environment,
         scheduler_name=args.scheduler,
         adapter_factories=adapter_factories,
     )
 
-    scheduler = runtime.scheduler
+    runtime: MultiStrategyRuntime | None = getattr(scheduler, "_runtime", None)
 
     try:
         if args.run_once:
@@ -75,10 +80,18 @@ def main() -> None:
         else:
             asyncio.run(scheduler.run_forever())
     except KeyboardInterrupt:
-        scheduler.stop()
+        stop = getattr(scheduler, "stop", None)
+        if callable(stop):
+            stop()
     finally:
-        runtime.shutdown()
+        if runtime is not None:
+            runtime.shutdown()
+    return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    return run(argv)
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

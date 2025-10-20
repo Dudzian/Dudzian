@@ -14,7 +14,7 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence
 
 # --- repo path bootstrap ---
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -236,9 +236,29 @@ def _handle_run(args: argparse.Namespace) -> int:
 
 # =====================================================================
 
+def _inject_default_command(argv: Sequence[str] | None) -> list[str]:
+    args = list(argv or ())
+    if args and args[0] in {"run", "evaluate"}:
+        return args
+    evaluate_markers = {
+        "--definitions",
+        "--risk-report",
+        "--output-json",
+        "--output-csv",
+        "--overrides-csv",
+        "--signing-key",
+        "--signature-path",
+    }
+    if any(item.split("=", 1)[0] in evaluate_markers for item in args):
+        return ["evaluate", *args]
+    return ["run", *args]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
-    args = parser.parse_args(argv)
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+    effective_argv = _inject_default_command(raw_argv)
+    args = parser.parse_args(effective_argv)
     return args._handler(args)
 
 

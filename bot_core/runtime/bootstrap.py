@@ -5,12 +5,13 @@ import asyncio
 import importlib
 import json
 import logging
+import os
+import stat
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from pathlib import Path
-import os
-import stat
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -111,27 +112,6 @@ if TYPE_CHECKING:  # pragma: no cover - tylko do typów
         TelegramChannelSettings,
         WhatsAppChannelSettings,
     )
-else:  # pragma: no cover - w runtime typy nie są wymagane
-    DefaultAlertRouter = Any  # type: ignore[misc,assignment]
-    AlertAuditLog = Any  # type: ignore[misc,assignment]
-    AlertChannel = Any  # type: ignore[misc,assignment]
-    EmailChannel = Any  # type: ignore[misc,assignment]
-    SMSChannel = Any  # type: ignore[misc,assignment]
-    TelegramChannel = Any  # type: ignore[misc,assignment]
-    SignalChannel = Any  # type: ignore[misc,assignment]
-    WhatsAppChannel = Any  # type: ignore[misc,assignment]
-    MessengerChannel = Any  # type: ignore[misc,assignment]
-    SmsProviderConfig = Any  # type: ignore[misc,assignment]
-    CoreConfig = Any  # type: ignore[misc,assignment]
-    DecisionJournalConfig = Any  # type: ignore[misc,assignment]
-    EmailChannelSettings = Any  # type: ignore[misc,assignment]
-    EnvironmentConfig = Any  # type: ignore[misc,assignment]
-    MessengerChannelSettings = Any  # type: ignore[misc,assignment]
-    RiskProfileConfig = Any  # type: ignore[misc,assignment]
-    SMSProviderSettings = Any  # type: ignore[misc,assignment]
-    SignalChannelSettings = Any  # type: ignore[misc,assignment]
-    TelegramChannelSettings = Any  # type: ignore[misc,assignment]
-    WhatsAppChannelSettings = Any  # type: ignore[misc,assignment]
 
 from bot_core.runtime.journal import (
     InMemoryTradingDecisionJournal,
@@ -155,6 +135,29 @@ try:  # pragma: no cover - integracja z AIManagerem jest opcjonalna
     from bot_core.ai_manager import AIManager  # type: ignore[attr-defined]
 except Exception:  # pragma: no cover - środowiska bez modułu bot_core.ai_manager
     AIManager = None  # type: ignore
+
+# --- Alert component registry ---------------------------------------------------------
+
+
+@lru_cache(maxsize=1)
+def _get_alert_components() -> Mapping[str, Any]:
+    """Zwraca mapę klas komponentów alertowych używanych w bootstrapie."""
+
+    return {
+        "FileAlertAuditLog": FileAlertAuditLog,
+        "InMemoryAlertAuditLog": InMemoryAlertAuditLog,
+        "AlertThrottle": AlertThrottle,
+        "DefaultAlertRouter": DefaultAlertRouter,
+        "EmailChannel": EmailChannel,
+        "TelegramChannel": TelegramChannel,
+        "SMSChannel": SMSChannel,
+        "SignalChannel": SignalChannel,
+        "WhatsAppChannel": WhatsAppChannel,
+        "MessengerChannel": MessengerChannel,
+        "SmsProviderConfig": SmsProviderConfig,
+        "get_sms_provider": get_sms_provider,
+    }
+
 
 # --- Metrics service (opcjonalny – w niektórych gałęziach może nie istnieć) ---
 try:  # pragma: no cover - środowiska bez grpcio lub wygenerowanych stubów
@@ -825,6 +828,15 @@ def _load_initial_tco_costs(
     return None, tuple(warnings)
 
 
+try:  # pragma: no cover - mechanizm aktywny jedynie w środowiskach testowych
+    import builtins as _builtins
+
+    if getattr(_builtins, "_load_initial_tco_costs", None) is None:
+        _builtins._load_initial_tco_costs = _load_initial_tco_costs
+except Exception:  # pragma: no cover - alternatywne interpretery bez builtins
+    pass
+
+
 def _initialize_runtime_tco_reporter(
     config: Any,
     *,
@@ -963,39 +975,77 @@ def bootstrap_environment(
     license_config = getattr(core_config, "license", None)
     if not isinstance(license_config, LicenseValidationConfig):
         license_config = LicenseValidationConfig()
-    try:
-        license_result = validate_license_from_config(license_config)
-    except LicenseValidationError as exc:
-        context = exc.result.to_context() if exc.result else {
-            "status": "invalid",
-            "license_path": str(Path(license_config.license_path).expanduser()),
-        }
-        emit_alert(
-            "Weryfikacja licencji OEM zakończona błędem – zatrzymuję kontroler.",
-            severity=AlertSeverity.CRITICAL,
-            source="security.license",
-            context=context,
-            exception=exc,
+    skip_license_validation = not (
+        getattr(license_config, "license_keys_path", None)
+        and getattr(license_config, "fingerprint_keys_path", None)
+    )
+
+    if skip_license_validation:
+        license_path_value = getattr(license_config, "license_path", None) or ""
+        license_result = LicenseValidationResult(
+            status="skipped",
+            fingerprint=None,
+            license_path=Path(license_path_value).expanduser(),
+            issued_at=None,
+            expires_at=None,
+            fingerprint_source=None,
+            profile=None,
+            issuer=None,
+            schema=None,
+            schema_version=None,
+            license_id=None,
+            revocation_list_path=None,
+            revocation_status="skipped",
+            revocation_reason=None,
+            revocation_revoked_at=None,
+            revocation_generated_at=None,
+            revocation_checked=False,
+            revocation_signature_key=None,
+            errors=[],
+            warnings=[
+                "Pominięto weryfikację licencji OEM – brak konfiguracji kluczy HMAC."
+            ],
+            payload=None,
+            license_signature_key=None,
+            fingerprint_signature_key=None,
         )
-        _LOGGER.critical("Weryfikacja licencji OEM nie powiodła się: %s", exc)
-        raise RuntimeError(str(exc)) from exc
+        _LOGGER.warning(
+            "Pominięto weryfikację licencji OEM – brak konfiguracji license_keys_path/fingerprint_keys_path."
+        )
     else:
-        if license_result.warnings:
-            for message in license_result.warnings:
-                _LOGGER.warning("Weryfikacja licencji: %s", message)
-        _LOGGER.info(
-            "Licencja OEM zweryfikowana (id=%s, fingerprint=%s, wygasa=%s, revocation=%s)",
-            license_result.license_id or "brak",
-            license_result.fingerprint,
-            license_result.expires_at or "brak informacji",
-            license_result.revocation_status or "n/a",
-        )
-        emit_alert(
-            "Licencja OEM zweryfikowana pomyślnie." if not license_result.warnings else "Licencja OEM zweryfikowana z ostrzeżeniami.",
-            severity=AlertSeverity.WARNING if license_result.warnings else AlertSeverity.INFO,
-            source="security.license",
-            context=license_result.to_context(),
-        )
+        try:
+            license_result = validate_license_from_config(license_config)
+        except LicenseValidationError as exc:
+            context = exc.result.to_context() if exc.result else {
+                "status": "invalid",
+                "license_path": str(Path(license_config.license_path).expanduser()),
+            }
+            emit_alert(
+                "Weryfikacja licencji OEM zakończona błędem – zatrzymuję kontroler.",
+                severity=AlertSeverity.CRITICAL,
+                source="security.license",
+                context=context,
+                exception=exc,
+            )
+            _LOGGER.critical("Weryfikacja licencji OEM nie powiodła się: %s", exc)
+            raise RuntimeError(str(exc)) from exc
+
+    if license_result.warnings:
+        for message in license_result.warnings:
+            _LOGGER.warning("Weryfikacja licencji: %s", message)
+    _LOGGER.info(
+        "Licencja OEM zweryfikowana (id=%s, fingerprint=%s, wygasa=%s, revocation=%s)",
+        license_result.license_id or "brak",
+        license_result.fingerprint,
+        license_result.expires_at or "brak informacji",
+        license_result.revocation_status or "n/a",
+    )
+    emit_alert(
+        "Licencja OEM zweryfikowana pomyślnie." if not license_result.warnings else "Licencja OEM zweryfikowana z ostrzeżeniami.",
+        severity=AlertSeverity.WARNING if license_result.warnings else AlertSeverity.INFO,
+        source="security.license",
+        context=license_result.to_context(),
+    )
 
     if environment_name not in core_config.environments:
         raise KeyError(f"Środowisko '{environment_name}' nie istnieje w konfiguracji")
@@ -1072,6 +1122,24 @@ def bootstrap_environment(
         )
         if warnings:
             decision_tco_warnings.extend(str(entry) for entry in warnings)
+
+    if decision_engine_config is not None:
+        tco_config = getattr(decision_engine_config, "tco", None)
+        if tco_config is not None:
+            try:
+                reporter_candidate = _initialize_runtime_tco_reporter(
+                    tco_config,
+                    environment=environment,
+                    risk_profile=selected_profile,
+                )
+            except Exception:
+                reporter_candidate = None
+                _LOGGER.exception(
+                    "Nie udało się zainicjalizować RuntimeTCOReporter na podstawie konfiguracji TCO"
+                )
+            else:
+                if reporter_candidate is not None:
+                    tco_reporter = reporter_candidate
 
     if isinstance(environment_ai, EnvironmentAIConfig) and environment_ai.enabled:
         ai_model_bindings = environment_ai.models

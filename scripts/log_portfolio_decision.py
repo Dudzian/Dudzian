@@ -4,15 +4,23 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Mapping
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from bot_core.config import load_core_config
 from bot_core.observability import SLOStatus
 from bot_core.portfolio import (
     PortfolioDecisionLog,
+    PortfolioDriftTolerance,
     PortfolioGovernor,
+    PortfolioGovernorConfig,
+    PortfolioAssetConfig,
     load_allocations_file,
     load_json_or_yaml,
     parse_market_intel_payload,
@@ -26,6 +34,49 @@ from bot_core.risk import StressOverrideRecommendation
 def _default_output(governor: str) -> Path:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     return Path("var/audit/decision_log") / f"portfolio_decision_{governor}_{timestamp}.jsonl"
+
+
+def _fallback_governor_config(
+    raw_config: Mapping[str, object],
+    name: str,
+) -> PortfolioGovernorConfig | None:
+    if not isinstance(raw_config, Mapping):
+        return None
+    assets_cfg: list[PortfolioAssetConfig] = []
+    for entry in raw_config.get("assets", []) or []:  # type: ignore[assignment]
+        if not isinstance(entry, Mapping):
+            continue
+        symbol = entry.get("symbol")
+        if not symbol:
+            continue
+        assets_cfg.append(
+            PortfolioAssetConfig(
+                symbol=str(symbol),
+                target_weight=float(entry.get("target_weight", 0.0)),
+                min_weight=float(entry.get("min_weight", 0.0)),
+                max_weight=float(entry.get("max_weight", 1.0)),
+            )
+        )
+    if not assets_cfg:
+        return None
+
+    drift_entry = raw_config.get("drift_tolerance") or raw_config.get("drift") or {}
+    drift = PortfolioDriftTolerance()
+    if isinstance(drift_entry, Mapping):
+        drift = PortfolioDriftTolerance(
+            absolute=float(drift_entry.get("absolute", drift_entry.get("abs", drift.absolute))),
+            relative=float(drift_entry.get("relative", drift_entry.get("rel", drift.relative))),
+        )
+
+    return PortfolioGovernorConfig(
+        name=str(raw_config.get("name", name)),
+        portfolio_id=str(raw_config.get("portfolio_id", name)),
+        drift_tolerance=drift,
+        rebalance_cooldown_seconds=int(raw_config.get("rebalance_cooldown_seconds", 900)),
+        min_rebalance_value=float(raw_config.get("min_rebalance_value", 0.0)),
+        min_rebalance_weight=float(raw_config.get("min_rebalance_weight", 0.0)),
+        assets=tuple(assets_cfg),
+    )
 
 
 def main() -> None:
@@ -51,10 +102,14 @@ def main() -> None:
     core_config = load_core_config(args.config)
     if args.environment not in core_config.environments:
         raise SystemExit(f"Środowisko {args.environment} nie istnieje w konfiguracji")
-    if args.governor not in core_config.portfolio_governors:
+    governor_cfg = core_config.portfolio_governors.get(args.governor)
+    if governor_cfg is None:
+        raw_core = load_json_or_yaml(Path(args.config))
+        if isinstance(raw_core, Mapping):
+            raw_governor = (raw_core.get("portfolio_governors") or {}).get(args.governor)  # type: ignore[index]
+            governor_cfg = _fallback_governor_config(raw_governor or {}, args.governor) if raw_governor else None
+    if governor_cfg is None:
         raise SystemExit(f"PortfolioGovernor {args.governor} nie istnieje w konfiguracji")
-
-    governor_cfg = core_config.portfolio_governors[args.governor]
     allocations = load_allocations_file(Path(args.allocations))
     market_payload = load_json_or_yaml(Path(args.market_intel))
     if not isinstance(market_payload, Mapping):

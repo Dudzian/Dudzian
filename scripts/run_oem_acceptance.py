@@ -18,6 +18,8 @@ from typing import Any, Iterable, List, Mapping, Sequence
 from deploy.packaging.build_core_bundle import SUPPORTED_PLATFORMS, build_from_cli
 from bot_core.security.signing import build_hmac_signature
 
+LOGGER = logging.getLogger("run_oem_acceptance")
+
 # --- opcjonalne zależności kroków --------------------------------------------
 # (kroki, których moduły nie są dostępne, zgłoszą czytelny błąd przy użyciu)
 
@@ -520,16 +522,31 @@ def _run_mtls_step(args: argparse.Namespace) -> dict[str, Any]:
         )
 
     if _generate_structured_mtls_bundle is not None:
-        metadata = _generate_structured_mtls_bundle(
-            output_dir,
-            ca_subject=f"/CN={args.mtls_common_name} Root CA/O={args.mtls_organization}",
-            server_subject=f"/CN={args.mtls_common_name} Trading Daemon/O={args.mtls_organization}",
-            client_subject=f"/CN={args.mtls_common_name} Client/O={args.mtls_organization}",
-            validity_days=args.mtls_valid_days,
-            key_size=args.mtls_key_size,
-            overwrite=True,
-            rotation_registry=args.mtls_rotation_registry,
-        )
+        try:
+            metadata = _generate_structured_mtls_bundle(
+                output_dir,
+                ca_subject=f"/CN={args.mtls_common_name} Root CA/O={args.mtls_organization}",
+                server_subject=f"/CN={args.mtls_common_name} Trading Daemon/O={args.mtls_organization}",
+                client_subject=f"/CN={args.mtls_common_name} Client/O={args.mtls_organization}",
+                validity_days=args.mtls_valid_days,
+                key_size=args.mtls_key_size,
+                overwrite=True,
+                rotation_registry=args.mtls_rotation_registry,
+            )
+        except TypeError:
+            LOGGER.warning(
+                "Structured mTLS generator nie obsługuje rozszerzonego interfejsu – używam wersji zastępczej"
+            )
+            return _generate_placeholder_mtls_bundle(
+                output_dir,
+                bundle_name=bundle_name,
+                common_name=args.mtls_common_name,
+                organization=args.mtls_organization,
+                valid_days=args.mtls_valid_days,
+                hostnames=args.mtls_server_hostnames,
+            )
+        except Exception as exc:  # pragma: no cover - propagujemy czytelny błąd
+            raise AcceptanceError(f"Generowanie mTLS zakończyło się błędem: {exc}") from exc
         normalized = dict(metadata)
         normalized["bundle"] = bundle_name
         normalized.setdefault("bundle_path", str(output_dir))

@@ -183,8 +183,8 @@ class RouteDefinition:
     exchanges: Sequence[str]
     symbols: Sequence[str] = ()
     risk_profiles: Sequence[str] = ()
-    # Domyślnie 2 (wartość ze starszej gałęzi); minimalny retry i tak jest egzekwowany niżej.
-    max_retries_per_exchange: int = 2
+    # Domyślnie jedna próba – dodatkowe retry należy zadeklarować explicite.
+    max_retries_per_exchange: int = 1
     latency_budget_ms: float = 250.0
     metadata: Mapping[str, str] = field(default_factory=dict)
 
@@ -307,6 +307,17 @@ class LiveExecutionRouter(ExecutionService):
         self._m_success = self._metrics.counter(
             "live_orders_success_total", "Liczba zleceń zrealizowanych."
         )
+        self._m_orders_total = self._metrics.counter(
+            "live_orders_total", "Łączna liczba zleceń obsłużonych przez router live."
+        )
+        self._m_router_fallbacks = self._metrics.counter(
+            "live_router_fallbacks_total",
+            "Liczba zleceń wymagających fallbacku (metryka kompatybilności).",
+        )
+        self._m_router_failures = self._metrics.counter(
+            "live_router_failures_total",
+            "Liczba zleceń zakończonych niepowodzeniem (metryka kompatybilności).",
+        )
         self._g_breaker_open = getattr(self._metrics, "gauge", self._metrics.counter)(
             "live_breaker_open", "Stan breakerów (1=open, 0=closed)."
         )
@@ -360,9 +371,9 @@ class LiveExecutionRouter(ExecutionService):
         last_error: Exception | None = None
 
         for exchange_name, max_retries in exchanges_and_retries:
-            now = self._time()
+            breaker_now = self._time()
             breaker = self._breakers.get(exchange_name)
-            if breaker and not breaker.allow(now):
+            if breaker and not breaker.allow(breaker_now):
                 attempts_rec.append({"exchange": exchange_name, "status": "breaker_open"})
                 self._set_breaker_metric(exchange_name, open_=True)
                 continue
@@ -375,9 +386,10 @@ class LiveExecutionRouter(ExecutionService):
 
             for attempt in range(1, max_retries + 1):
                 # budżet opóźnień (per route)
+                attempt_now = self._time()
                 if latency_budget_ms is not None:
-                    elapsed_ms = (self._time() - start) * 1000.0
-                    if elapsed_ms >= latency_budget_ms:
+                    elapsed_ms = (attempt_now - start) * 1000.0
+                    if elapsed_ms > latency_budget_ms:
                         attempts_rec.append({"exchange": exchange_name, "status": "latency_budget_exceeded"})
                         last_error = last_error or TimeoutError("Przekroczono budżet opóźnień trasy")
                         break
@@ -391,7 +403,8 @@ class LiveExecutionRouter(ExecutionService):
                 try:
                     result = adapter.place_order(request)
                 except (ExchangeNetworkError, ExchangeThrottlingError) as exc:
-                    elapsed = max(0.0, self._time() - start)
+                    current_time = self._time()
+                    elapsed = max(0.0, current_time - start)
                     self._m_latency.observe(elapsed, labels={**labels, "result": "error"})
                     self._m_attempts.inc(labels={**labels, "result": "error"})
                     attempts_rec.append(
@@ -399,7 +412,7 @@ class LiveExecutionRouter(ExecutionService):
                     )
                     last_error = exc
                     if breaker:
-                        breaker.record_failure(self._time())
+                        breaker.record_failure(current_time)
                     # retry jeśli dostępny
                     if attempt < max_retries:
                         time.sleep(_exp_backoff_with_jitter(attempt))
@@ -427,7 +440,8 @@ class LiveExecutionRouter(ExecutionService):
                     # błąd twardy (bez dalszego fallbacku)
                     raise
                 except Exception as exc:  # noqa: BLE001
-                    elapsed = max(0.0, self._time() - start)
+                    current_time = self._time()
+                    elapsed = max(0.0, current_time - start)
                     self._m_latency.observe(elapsed, labels={**labels, "result": "exception"})
                     self._m_attempts.inc(labels={**labels, "result": "exception"})
                     attempts_rec.append(
@@ -435,22 +449,36 @@ class LiveExecutionRouter(ExecutionService):
                     )
                     last_error = exc
                     if breaker:
-                        breaker.record_failure(self._time())
+                        breaker.record_failure(current_time)
                     if attempt < max_retries:
                         time.sleep(_exp_backoff_with_jitter(attempt))
                         continue
                     break
 
                 # sukces
-                elapsed = max(0.0, self._time() - start)
+                current_time = self._time()
+                elapsed = max(0.0, current_time - start)
                 self._m_latency.observe(elapsed, labels={**labels, "result": "success"})
                 self._m_attempts.inc(labels={**labels, "result": "success"})
                 self._m_success.inc(labels={"symbol": request.symbol, "portfolio": context.portfolio_id})
+                self._m_orders_total.inc(
+                    labels={
+                        "exchange": exchange_name,
+                        "route": route_name or "default",
+                    }
+                )
                 if breaker:
                     breaker.record_success()
                     self._set_breaker_metric(exchange_name, open_=False)
                 if attempts_counter > 1:
-                    self._m_fallbacks.inc(labels={"symbol": request.symbol, "portfolio": context.portfolio_id})
+                    self._m_fallbacks.inc(labels={"route": route_name or "default"})
+                    self._m_router_fallbacks.inc(
+                        labels={
+                            "exchange": exchange_name,
+                            "symbol": request.symbol,
+                            "portfolio": context.portfolio_id,
+                        }
+                    )
                     fallback_used = True
 
                 self._remember_binding(result.order_id, exchange_name)
@@ -470,7 +498,10 @@ class LiveExecutionRouter(ExecutionService):
         # brak sukcesu
         elapsed = max(0.0, self._time() - start)
         attempts_rec.append({"status": "failed", "latency_s": f"{elapsed:.6f}"})
-        self._m_failures.inc(labels={"symbol": request.symbol, "portfolio": context.portfolio_id})
+        self._m_failures.inc(labels={"route": route_name or "default"})
+        self._m_router_failures.inc(
+            labels={"symbol": request.symbol, "portfolio": context.portfolio_id}
+        )
         self._maybe_write_decision_log(
             route_name=(route_name or "default"),
             route_metadata=route_meta,

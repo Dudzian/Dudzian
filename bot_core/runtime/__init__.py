@@ -738,6 +738,130 @@ temporary_adapter_factories = None  # type: ignore
 register_adapter_factory_from_path = None  # type: ignore
 parse_adapter_factory_cli_specs = None  # type: ignore
 
+_BOOTSTRAP_IMPORT_STATE: dict[str, object | None] = {
+    "module": None,
+    "error": None,
+}
+
+
+def _load_bootstrap_module() -> Any:
+    """Import lazily ``bot_core.runtime.bootstrap`` when required."""
+
+    module = _BOOTSTRAP_IMPORT_STATE.get("module")
+    if module is not None:
+        return module
+
+    try:
+        module = import_module("bot_core.runtime.bootstrap")
+    except Exception as exc:  # pragma: no cover - przekazujemy szczegóły dalej
+        _BOOTSTRAP_IMPORT_STATE["error"] = exc
+        raise
+
+    _BOOTSTRAP_IMPORT_STATE["module"] = module
+    _BOOTSTRAP_IMPORT_STATE["error"] = None
+    return module
+
+
+def _resolve_bootstrap_symbol(name: str) -> Any:
+    """Zwróć symbol z modułu ``runtime.bootstrap`` i zaktualizuj cache."""
+
+    try:
+        module = _load_bootstrap_module()
+    except Exception as exc:  # pragma: no cover - propagujemy informację o błędzie
+        raise AttributeError(
+            f"bootstrap symbol '{name}' could not be resolved"
+        ) from exc
+
+    value = getattr(module, name)
+    globals()[name] = value
+    return value
+
+
+def _make_bootstrap_function(name: str):
+    """Utwórz leniwy wrapper na funkcję z ``runtime.bootstrap``."""
+
+    def _proxy(*args: Any, **kwargs: Any):
+        target = _resolve_bootstrap_symbol(name)
+        return target(*args, **kwargs)
+
+    _proxy.__name__ = name
+    _proxy.__qualname__ = name
+    _proxy.__doc__ = (
+        f"Lazy proxy for bot_core.runtime.bootstrap.{name}"
+    )
+    return _proxy
+
+
+class _LazyBootstrapType(type):
+    """Metaklasa wczytująca klasy bootstrapu dopiero przy użyciu."""
+
+    _target_name: str
+
+    def _resolve(cls):
+        target = _resolve_bootstrap_symbol(cls._target_name)
+        cls._resolved_target = target  # type: ignore[attr-defined]
+        return target
+
+    def __call__(cls, *args: Any, **kwargs: Any):  # pragma: no cover - delegacja
+        target = cls._resolve()
+        return target(*args, **kwargs)
+
+    def __instancecheck__(cls, instance: object) -> bool:  # pragma: no cover - delegacja
+        target = cls._resolve()
+        return isinstance(instance, target)
+
+    def __subclasscheck__(cls, subclass: type) -> bool:  # pragma: no cover - delegacja
+        target = cls._resolve()
+        return issubclass(subclass, target)
+
+    def __getattr__(cls, item: str) -> Any:  # pragma: no cover - delegacja
+        target = cls._resolve()
+        return getattr(target, item)
+
+    def __dir__(cls) -> list[str]:  # pragma: no cover - pomocnicze
+        try:
+            target = cls._resolve()
+        except Exception:
+            return sorted(set(super().__dir__()))
+        return sorted(set(dir(target)))
+
+    def __mro_entries__(cls, bases: tuple[type, ...]) -> tuple[type, ...]:
+        target = cls._resolve()
+        return (target,)
+
+
+def _install_bootstrap_proxies(import_error: Exception | None) -> None:
+    """Skonfiguruj leniwe proxy dla symboli bootstrapu."""
+
+    if import_error is not None:
+        _BOOTSTRAP_IMPORT_STATE["error"] = import_error
+
+    class _BootstrapContextProxy(metaclass=_LazyBootstrapType):  # type: ignore[misc]
+        _target_name = "BootstrapContext"
+        __name__ = "BootstrapContext"
+        __qualname__ = "BootstrapContext"
+
+    class _RuntimeEntrypointProxy(metaclass=_LazyBootstrapType):  # type: ignore[misc]
+        _target_name = "RuntimeEntrypoint"
+        __name__ = "RuntimeEntrypoint"
+        __qualname__ = "RuntimeEntrypoint"
+
+    globals()["BootstrapContext"] = _BootstrapContextProxy
+    globals()["RuntimeEntrypoint"] = _RuntimeEntrypointProxy
+
+    for _name in (
+        "bootstrap_environment",
+        "catalog_runtime_entrypoints",
+        "resolve_runtime_entrypoint",
+        "get_registered_adapter_factories",
+        "register_adapter_factory",
+        "unregister_adapter_factory",
+        "temporary_adapter_factories",
+        "register_adapter_factory_from_path",
+        "parse_adapter_factory_cli_specs",
+    ):
+        globals()[_name] = _make_bootstrap_function(_name)
+
 try:  # pragma: no cover - minimalne importy dostępne nawet przy brakach zależności
     from bot_core.runtime.bootstrap import (
         BootstrapContext,
@@ -752,8 +876,11 @@ try:  # pragma: no cover - minimalne importy dostępne nawet przy brakach zależ
         parse_adapter_factory_cli_specs,
         temporary_adapter_factories,
     )
-except Exception:  # pragma: no cover - bootstrap może być niedostępny w tej dystrybucji
-    pass
+except Exception as _bootstrap_exc:  # pragma: no cover - bootstrap może być niedostępny
+    _install_bootstrap_proxies(_bootstrap_exc)
+else:
+    if bootstrap_environment is None or BootstrapContext is None:
+        _install_bootstrap_proxies(None)
 
 PaperTradingAdapter = None  # type: ignore
 try:  # pragma: no cover - PaperTradingAdapter zależy od modułów KryptoLowca
