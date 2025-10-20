@@ -283,7 +283,7 @@ class TradingGUI:
 
     # ------------------------------------------------------------------
     def _default_market_adapter_factory(self, *, demo_mode: bool) -> ZondaAdapter:
-        return ZondaAdapter(demo_mode=demo_mode)
+        return ZondaAdapter(demo_mode=demo_mode, compliance_ack=not demo_mode)
 
     # ------------------------------------------------------------------
     def _load_metadata(
