@@ -286,7 +286,7 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def run(argv: Sequence[str] | None = None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
     bundle_arg = args.bundle_option or args.bundle
@@ -332,7 +332,7 @@ def _execute(parser: argparse.ArgumentParser, args: argparse.Namespace, bundle_p
     return 0
 
 
-def run(argv: Optional[Sequence[str]] = None) -> int:
+def run(argv: Sequence[str] | None = None) -> int:
     """Wrapper used by tests to execute the CLI without exiting the interpreter."""
 
     if argv is None:
@@ -342,7 +342,8 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
     if not args:
         return main([])
 
-    if "--bundle" not in args and args[0] and not str(args[0]).startswith("-"):
+    first = args[0] if args else None
+    if "--bundle" not in args and first and not str(first).startswith("-"):
         args = ["--bundle", *args]
 
     return main(args)

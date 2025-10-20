@@ -7,7 +7,7 @@
 ## Implemented Scope
 - Unified adapter abstraction defined in `KryptoLowca/exchanges/interfaces.py`, with REST and WebSocket helpers, rate limiting, and order handling primitives.
 - Binance Testnet and Kraken Demo adapters leveraging shared base classes, with dependency injection points for HTTP and WebSocket clients.
-- Encrypted API key manager integrated with `ConfigManager` for credential storage, rotation, and compliance controls.
+- Encrypted API key manager oparty na `EncryptedFileSecretStorage` i adapterze `PresetConfigService`, zapewniający rotację i kontrolę zgodności.
 - Multi-exchange account manager supporting round-robin order dispatch and monitoring across adapters.
 
 ## Missing Scope / Follow-up Items

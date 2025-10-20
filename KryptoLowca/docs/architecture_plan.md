@@ -26,7 +26,7 @@
 3. **Testy E2E**: scenariusze Playwright/Selenium na sandboxie paper tradingu.
 
 ## Zależności i ryzyka
-- **Bezpieczeństwo kluczy**: backend przejmuje odpowiedzialność za odszyfrowywanie, dlatego należy stosować `SecurityManager` i separację sieciową.
+- **Bezpieczeństwo kluczy**: backend przejmuje odpowiedzialność za odszyfrowywanie, dlatego należy stosować `EncryptedFileSecretStorage` (lub równoważny backend) i separację sieciową.
 - **Migracje DB**: przed startem backendu wdrożyć Alembica, aby zmiany schematu nie blokowały deployu.
 - **Skalowanie**: backend przygotować pod konteneryzację (Docker Compose/Kubernetes) z osobnym workerem do backtestów.
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Optional, Protocol
@@ -21,6 +22,8 @@ from bot_core.runtime.metadata import (
     load_risk_manager_settings,
     load_runtime_entrypoint_metadata,
 )
+from bot_core.runtime.preset_service import PresetConfigService
+from bot_core.security.file_storage import EncryptedFileSecretStorage
 
 from KryptoLowca.logging_utils import (
     DEFAULT_LOG_FILE,
@@ -29,8 +32,6 @@ from KryptoLowca.logging_utils import (
     setup_app_logging,
 )
 from KryptoLowca.database_manager import DatabaseManager
-from KryptoLowca.managers.security_manager import SecurityManager
-from KryptoLowca.managers.config_manager import ConfigManager
 from KryptoLowca.managers.report_manager import ReportManager
 from KryptoLowca.managers.risk_manager_adapter import RiskManager
 from KryptoLowca.managers.ai_manager import AIManager
@@ -150,11 +151,13 @@ class TradingGUI:
 
     # ------------------------------------------------------------------
     def _default_controller_factory(self, state: AppState) -> TradingSessionController:
+        secret_storage = self._build_secret_storage()
+        preset_service = self._build_preset_service()
         return TradingSessionController(
             state,
             DatabaseManager(),
-            SecurityManager(self.paths.keys_file, self.paths.salt_file),
-            ConfigManager(self.paths.presets_dir),
+            secret_storage,
+            preset_service,
             ReportManager(str(self.paths.db_file)),
             RiskManager(config=self.risk_manager_config),
             self._build_ai_manager(),
@@ -212,6 +215,28 @@ class TradingGUI:
                 return AIManager(self.paths.models_dir, logger)
             except TypeError:
                 return AIManager(self.paths.models_dir)
+
+    # ------------------------------------------------------------------
+    def _build_secret_storage(self) -> EncryptedFileSecretStorage:
+        vault_path = getattr(self.paths, "secret_vault_file", None)
+        if vault_path is None:
+            vault_path = self.paths.keys_file.with_suffix(".vault")
+        passphrase = os.environ.get("DUDZIAN_GUI_SECRET_PASSPHRASE")
+        if not passphrase:
+            logger.warning(
+                "Brak zmiennej DUDZIAN_GUI_SECRET_PASSPHRASE – użyto domyślnego hasła magazynu."
+            )
+            passphrase = "trading-gui"
+        return EncryptedFileSecretStorage(vault_path, passphrase)
+
+    # ------------------------------------------------------------------
+    def _build_preset_service(self) -> PresetConfigService:
+        core_path = self._core_config_path or resolve_core_config_path()
+        try:
+            return PresetConfigService(core_path)
+        except Exception:  # pragma: no cover - konfiguracja może być niepełna podczas developmentu
+            logger.exception("Nie udało się utworzyć serwisu konfiguracji presetów")
+            return PresetConfigService(core_path)
 
     # ------------------------------------------------------------------
     def _configure_logging_handler(self) -> None:
