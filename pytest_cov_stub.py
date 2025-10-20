@@ -53,6 +53,13 @@ def _reset_state(*, keep_tracer: bool = True) -> None:
     global _STATE
 
     previous_tracer = _STATE.tracer
+    if previous_tracer is not None and keep_tracer:
+        results = previous_tracer.results()
+        results.counts.clear()
+        results.calledfuncs.clear()
+        called_by_line = getattr(results, "calledfuncs_by_line", None)
+        if called_by_line is not None:
+            called_by_line.clear()
     if not keep_tracer and previous_tracer is not None:
         sys.settrace(None)
         threading.settrace(None)
