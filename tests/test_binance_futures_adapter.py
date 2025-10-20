@@ -247,6 +247,18 @@ def test_create_listen_key_validates_payload(monkeypatch: pytest.MonkeyPatch) ->
     assert captured and (captured[0].method or "POST").upper() == "POST"
 
 
+def test_create_listen_key_maps_api_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_urlopen(request: Request, timeout: int = 15):  # type: ignore[override]
+        return _FakeResponse({"code": -2015, "msg": "Invalid key"})
+
+    monkeypatch.setattr("bot_core.exchanges.binance.futures.urlopen", fake_urlopen)
+
+    adapter = BinanceFuturesAdapter(_build_credentials())
+
+    with pytest.raises(ExchangeAuthError):
+        adapter.create_listen_key()
+
+
 def test_keepalive_listen_key_requires_value() -> None:
     adapter = BinanceFuturesAdapter(_build_credentials())
     with pytest.raises(ValueError):

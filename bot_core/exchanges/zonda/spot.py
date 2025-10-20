@@ -27,6 +27,7 @@ from bot_core.exchanges.errors import (
     ExchangeNetworkError,
     ExchangeThrottlingError,
 )
+from bot_core.exchanges.error_mapping import raise_for_zonda_error
 from bot_core.exchanges.streaming import LocalLongPollStream
 from bot_core.observability.metrics import MetricsRegistry, get_global_metrics_registry
 
@@ -471,6 +472,7 @@ class ZondaSpotAdapter(ExchangeAdapter):
         request: Request,
         *,
         signed: bool,
+        endpoint: str,
     ) -> dict[str, object] | list[object]:
         retries = 0
         backoff = _BASE_BACKOFF
@@ -526,7 +528,14 @@ class ZondaSpotAdapter(ExchangeAdapter):
                 latency = time.monotonic() - start
                 self._metric_http_latency.observe(latency, labels=self._metric_base_labels)
                 self._update_rate_limit(headers)
-                return self._parse_response(payload)
+                parsed = self._parse_response(payload)
+                self._ensure_success(
+                    parsed,
+                    status=status,
+                    endpoint=endpoint,
+                    signed=signed,
+                )
+                return parsed
 
     def _public_request(
         self,
@@ -537,7 +546,7 @@ class ZondaSpotAdapter(ExchangeAdapter):
     ) -> dict[str, object] | list[object]:
         query = f"?{urlencode(params or {})}" if params else ""
         request = Request(self._build_url(path) + query, headers=dict(_DEFAULT_HEADERS), method=method)
-        return self._execute_request(request, signed=False)
+        return self._execute_request(request, signed=False, endpoint=path)
 
     def _signed_request(
         self,
@@ -580,7 +589,7 @@ class ZondaSpotAdapter(ExchangeAdapter):
             data=data_bytes,
             method=method,
         )
-        return self._execute_request(request, signed=True)
+        return self._execute_request(request, signed=True, endpoint=path)
 
     def _update_rate_limit(self, headers: object) -> None:
         if not headers:
@@ -646,6 +655,50 @@ class ZondaSpotAdapter(ExchangeAdapter):
             status_code=200,
             payload=parsed,
         )
+
+    def _ensure_success(
+        self,
+        payload: object,
+        *,
+        status: int,
+        endpoint: str,
+        signed: bool,
+    ) -> None:
+        if not isinstance(payload, Mapping):
+            return
+
+        status_value = payload.get("status")
+        normalized_status = status_value.lower() if isinstance(status_value, str) else None
+        errors_obj = payload.get("errors")
+        has_errors = isinstance(errors_obj, Sequence) and bool(errors_obj)
+
+        if not has_errors and normalized_status in (None, "", "ok", "success"):
+            return
+
+        if isinstance(errors_obj, Sequence) and not has_errors and normalized_status is None:
+            return
+
+        labels = dict(self._metric_base_labels)
+        labels["reason"] = "api_error"
+
+        try:
+            raise_for_zonda_error(
+                status_code=int(status or 400),
+                payload=payload,
+                default_message=f"Zonda API zgłosiła błąd ({endpoint})",
+            )
+        except ExchangeAuthError:
+            labels["reason"] = "auth"
+            self._metric_api_errors.inc(amount=1.0, labels=labels)
+            raise
+        except ExchangeThrottlingError:
+            labels["reason"] = "throttled"
+            self._metric_api_errors.inc(amount=1.0, labels=labels)
+            raise
+        except ExchangeAPIError:
+            labels["reason"] = "api_error"
+            self._metric_api_errors.inc(amount=1.0, labels=labels)
+            raise
 
     def _extract_error_details(self, payload: bytes) -> tuple[str | None, object | None]:
         if not payload:
