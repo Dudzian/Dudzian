@@ -731,11 +731,26 @@ class ExchangeManager:
         if self.mode in {Mode.MARGIN, Mode.FUTURES}:
             adapter = self._ensure_native_adapter()
             snapshot = adapter.fetch_account_snapshot()
+            balances = {
+                asset: float(amount)
+                for asset, amount in dict(snapshot.balances).items()
+                if isinstance(asset, str)
+            }
+            free = dict(balances)
+            total = dict(balances)
+            used = {asset: 0.0 for asset in balances}
+            # Zachowujemy historyczną strukturę (total/free/klucze walut), aby
+            # istniejący kod (np. silnik handlowy) nadal znajdował dostępny
+            # kapitał w snapshotach dla trybu margin/futures.
             return {
-                "balances": dict(snapshot.balances),
-                "total_equity": snapshot.total_equity,
-                "available_margin": snapshot.available_margin,
-                "maintenance_margin": snapshot.maintenance_margin,
+                **balances,
+                "balances": balances,
+                "total_equity": float(snapshot.total_equity),
+                "available_margin": float(snapshot.available_margin),
+                "maintenance_margin": float(snapshot.maintenance_margin),
+                "total": total,
+                "free": free,
+                "used": used,
             }
 
         backend = self._ensure_private()
