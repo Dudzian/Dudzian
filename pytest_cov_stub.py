@@ -54,12 +54,16 @@ def _reset_state(*, keep_tracer: bool = True) -> None:
 
     previous_tracer = _STATE.tracer
     if previous_tracer is not None and keep_tracer:
-        results = previous_tracer.results()
-        results.counts.clear()
-        results.calledfuncs.clear()
-        called_by_line = getattr(results, "calledfuncs_by_line", None)
-        if called_by_line is not None:
-            called_by_line.clear()
+        previous_tracer.counts.clear()
+        called_funcs = getattr(previous_tracer, "_calledfuncs", None)
+        if called_funcs is not None:
+            called_funcs.clear()
+        callers = getattr(previous_tracer, "_callers", None)
+        if callers is not None:
+            callers.clear()
+        timings = getattr(previous_tracer, "timings", None)
+        if isinstance(timings, MutableMapping):
+            timings.clear()
     if not keep_tracer and previous_tracer is not None:
         sys.settrace(None)
         threading.settrace(None)
