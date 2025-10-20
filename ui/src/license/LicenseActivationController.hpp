@@ -1,10 +1,13 @@
 #pragma once
 
 #include <QObject>
+#include <QFileSystemWatcher>
 #include <QJsonDocument>
 #include <QString>
 #include <QStringList>
+#include <QTimer>
 #include <QUrl>
+#include <QVariantMap>
 
 class LicenseActivationController : public QObject {
     Q_OBJECT
@@ -20,6 +23,8 @@ class LicenseActivationController : public QObject {
     Q_PROPERTY(QStringList licenseFeatures READ licenseFeatures NOTIFY licenseDataChanged)
     Q_PROPERTY(QString expectedFingerprint READ expectedFingerprint NOTIFY expectedFingerprintChanged)
     Q_PROPERTY(bool expectedFingerprintAvailable READ expectedFingerprintAvailable NOTIFY expectedFingerprintChanged)
+    Q_PROPERTY(bool provisioningInProgress READ provisioningInProgress NOTIFY provisioningInProgressChanged)
+    Q_PROPERTY(QString provisioningDirectory READ provisioningDirectory WRITE setProvisioningDirectory NOTIFY provisioningDirectoryChanged)
 
 public:
     explicit LicenseActivationController(QObject* parent = nullptr);
@@ -27,6 +32,7 @@ public:
     void setConfigDirectory(const QString& path);
     void setLicenseStoragePath(const QString& path);
     void setFingerprintDocumentPath(const QString& path);
+    Q_INVOKABLE void setProvisioningDirectory(const QString& path);
     void initialize();
 
     Q_INVOKABLE bool loadLicenseUrl(const QUrl& url);
@@ -35,6 +41,7 @@ public:
     Q_INVOKABLE QString licenseStoragePath() const;
     Q_INVOKABLE bool saveExpectedFingerprint(const QString& fingerprint);
     Q_INVOKABLE void overrideExpectedFingerprint(const QString& fingerprint);
+    Q_INVOKABLE bool autoProvision(const QVariantMap& fingerprintDocument = QVariantMap());
 
     bool licenseActive() const { return m_licenseActive; }
     QString statusMessage() const { return m_statusMessage; }
@@ -50,6 +57,8 @@ public:
 
     QString expectedFingerprint() const { return m_expectedFingerprint; }
     bool expectedFingerprintAvailable() const { return !m_expectedFingerprint.isEmpty(); }
+    bool provisioningInProgress() const { return m_provisioningInProgress; }
+    QString provisioningDirectory() const { return m_provisioningDirectory; }
 
 signals:
     void licenseActiveChanged();
@@ -57,6 +66,8 @@ signals:
     void licenseDataChanged();
     void expectedFingerprintChanged();
     void licensePersisted(const QString& path);
+    void provisioningInProgressChanged();
+    void provisioningDirectoryChanged();
 
 private:
     struct LicenseInfo {
@@ -73,6 +84,7 @@ private:
     bool ensureInitialized();
     QString resolveLicenseOutputPath() const;
     QString resolveFingerprintDocumentPath() const;
+    QString resolveProvisioningDirectory() const;
     void refreshExpectedFingerprint();
     void loadPersistedLicense();
     bool activateFromDocument(const QJsonDocument& document, bool persist, const QString& sourceDescription);
@@ -80,11 +92,22 @@ private:
     bool persistLicense(const QJsonDocument& document);
     void setStatusMessage(const QString& message, bool isError);
     bool persistExpectedFingerprint(const QString& fingerprint, QString* errorMessage);
+    bool provisionFromDirectory(const QString& directory, const QString& expectedFingerprint);
+    static QString fingerprintFromVariant(const QVariantMap& fingerprintDocument);
+    bool tryProvisionFile(const QString& path, const QString& expectedFingerprint);
+    bool activateIfMatching(const QJsonDocument& document, bool persist, const QString& sourceDescription,
+                            const QString& expectedFingerprint);
     static QString expandPath(const QString& path);
+    void setupProvisioningWatcher();
+    void handleProvisioningDirectoryEvent(const QString& path);
+    void scheduleProvisioningScan(int delayMs = 0, bool reportNotFound = false);
+    void attemptAutomaticProvisioning(bool reportNotFound);
+    bool runProvisioningScan(const QString& expectedFingerprint, bool reportNotFound);
 
     bool m_initialized = false;
     bool m_licenseActive = false;
     bool m_statusIsError = false;
+    bool m_provisioningInProgress = false;
 
     QString m_statusMessage;
     QString m_licenseFingerprint;
@@ -100,4 +123,9 @@ private:
     QString m_licenseOutputPath;
     QString m_fingerprintDocumentPath;
     QString m_expectedFingerprint;
+    QString m_provisioningDirectory;
+
+    QFileSystemWatcher m_provisioningWatcher;
+    QTimer m_provisioningScanTimer;
+    bool m_pendingProvisioningError = false;
 };

@@ -1,20 +1,30 @@
 #include "Application.hpp"
 
-#include <QQmlContext>
-#include <QQuickWindow>
-#include <QtGlobal>
+#include <QByteArray>
+#include <QCommandLineParser>
+#include <QCoreApplication>
+#include <QDateTime>
+#include <QDebug>
 #include <QDir>
 #include <QFile>
-#include <QIODevice>
-#include <QLoggingCategory>
-#include <QDebug>
-#include <QByteArray>
+#include <QFileInfo>
 #include <QGuiApplication>
+#include <QIODevice>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QLoggingCategory>
+#include <QStringList>
 #include <QPoint>
 #include <QRect>
+#include <QQmlContext>
+#include <QQuickWindow>
+#include <QSaveFile>
 #include <QScreen>
-#include <QCommandLineParser>
+#include <QTimer>
+#include <QtGlobal>
 #include <optional>
+#include <cmath>
 
 #include "telemetry/TelemetryReporter.hpp"
 #include "telemetry/UiTelemetryReporter.hpp"
@@ -23,10 +33,18 @@
 #include "app/ActivationController.hpp"
 #include "security/SecurityAdminController.hpp"
 #include "reporting/ReportCenterController.hpp"
+#include "grpc/BotCoreLocalService.hpp"
 
 Q_LOGGING_CATEGORY(lcAppMetrics, "bot.shell.app.metrics")
 
 namespace {
+
+constexpr double kDefaultRiskRefreshSeconds = 5.0;
+constexpr int kMinRiskRefreshIntervalMs = 1000;
+constexpr int kMaxRiskRefreshIntervalMs = 300000;
+constexpr int kUiSettingsDebounceMs = 500;
+constexpr auto kUiSettingsEnv = QByteArrayLiteral("BOT_CORE_UI_SETTINGS_PATH");
+constexpr auto kUiSettingsDisableEnv = QByteArrayLiteral("BOT_CORE_UI_SETTINGS_DISABLE");
 
 std::optional<QString> envValue(const QByteArray& key)
 {
@@ -117,6 +135,18 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
     m_reportController->setReportsDirectory(QDir::current().absoluteFilePath(QStringLiteral("var/reports")));
     m_reportController->setReportsRoot(QDir::current().absoluteFilePath(QStringLiteral("var/reports")));
 
+    m_filteredAlertsModel.setSourceModel(&m_alertsModel);
+    m_filteredAlertsModel.setSeverityFilter(AlertsFilterProxyModel::WarningsAndCritical);
+
+    connect(&m_filteredAlertsModel, &AlertsFilterProxyModel::filterChanged, this, [this]() {
+        if (!m_loadingUiSettings)
+            scheduleUiSettingsPersist();
+    });
+
+    initializeUiSettingsStorage();
+
+    m_repoRoot = locateRepoRoot();
+
     exposeToQml();
 
     // Podłącz okno po utworzeniu (dla FrameRateMonitor)
@@ -154,6 +184,41 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
 
     // Risk state (jeśli dostępne po stronie serwera)
     connect(&m_client, &TradingClient::riskStateReceived, this, &Application::handleRiskState);
+
+    connect(&m_alertsModel, &AlertsModel::acknowledgementsChanged, this, [this]() {
+        if (!m_loadingUiSettings)
+            scheduleUiSettingsPersist();
+    });
+
+    connect(&m_riskHistoryModel, &RiskHistoryModel::historyChanged, this, [this]() {
+        if (!m_loadingUiSettings)
+            scheduleUiSettingsPersist();
+    });
+
+    connect(&m_riskHistoryModel, &RiskHistoryModel::maximumEntriesChanged, this, [this]() {
+        if (!m_loadingUiSettings)
+            scheduleUiSettingsPersist();
+    });
+
+    m_riskRefreshTimer.setTimerType(Qt::VeryCoarseTimer);
+    m_riskRefreshTimer.setInterval(m_riskRefreshIntervalMs);
+    m_riskRefreshTimer.setSingleShot(false);
+    m_riskRefreshTimer.setParent(this);
+    connect(&m_riskRefreshTimer, &QTimer::timeout, this, [this]() {
+        if (!m_riskRefreshEnabled)
+            return;
+
+        m_lastRiskRefreshRequestUtc = QDateTime::currentDateTimeUtc();
+        m_client.refreshRiskState();
+        m_nextRiskRefreshUtc = m_lastRiskRefreshRequestUtc.addMSecs(m_riskRefreshIntervalMs);
+        Q_EMIT riskRefreshScheduleChanged();
+    });
+}
+
+Application::~Application()
+{
+    if (m_localService)
+        m_localService->stop();
 }
 
 QString Application::instrumentLabel() const {
@@ -186,6 +251,15 @@ void Application::configureParser(QCommandLineParser& parser) const {
     parser.addOption({"overlay-disable-secondary-fps",
                       tr("Próg FPS wyłączający nakładki drugorzędne"), tr("fps"),
                       QStringLiteral("0")});
+    parser.addOption({"risk-refresh-interval",
+                      tr("Interwał automatycznego odświeżania ryzyka (s)"), tr("seconds"),
+                      QString::number(kDefaultRiskRefreshSeconds, 'f', 1)});
+    parser.addOption({"risk-refresh-disable",
+                      tr("Wyłącz automatyczne pobieranie stanu ryzyka")});
+    parser.addOption({"ui-settings-path", tr("Ścieżka pliku ustawień UI"), tr("path"), QString()});
+    parser.addOption({"disable-ui-settings", tr("Wyłącza zapisywanie konfiguracji UI")});
+    parser.addOption({"enable-ui-settings",
+                      tr("Wymusza zapisywanie konfiguracji UI nawet przy dezaktywacji w zmiennych środowiskowych")});
 
     parser.addOption({"screen-name", tr("Preferowany ekran (nazwa QScreen)"), tr("name")});
     parser.addOption({"screen-index", tr("Preferowany ekran (indeks)"), tr("index")});
@@ -200,6 +274,16 @@ void Application::configureParser(QCommandLineParser& parser) const {
     parser.addOption({"metrics-rbac-role", tr("Rola RBAC przekazywana do MetricsService"), tr("role"), QString()});
     parser.addOption({"disable-metrics", tr("Wyłącza wysyłkę telemetrii")});
     parser.addOption({"no-metrics", tr("Alias: wyłącza wysyłkę telemetrii")});
+
+    // Lokalny stub bot_core (gRPC)
+    parser.addOption({"local-core", tr("Uruchamia lokalny stub API bot_core")});
+    parser.addOption({"no-local-core", tr("Wyłącza lokalny stub API bot_core")});
+    parser.addOption({"local-core-host", tr("Adres nasłuchu stubu"), tr("host"), QStringLiteral("127.0.0.1")});
+    parser.addOption({"local-core-port", tr("Port stubu (0 = przydziel losowo)"), tr("port"), QStringLiteral("0")});
+    parser.addOption({"local-core-python", tr("Interpreter Pythona stubu bot_core"), tr("path"), QString()});
+    parser.addOption({"local-core-dataset", tr("Plik YAML z danymi stubu"), tr("path"), QString()});
+    parser.addOption({"local-core-stream-repeat", tr("Powtarza strumień OHLCV stubu")});
+    parser.addOption({"local-core-stream-interval", tr("Opóźnienie strumienia (s)"), tr("seconds"), QStringLiteral("0")});
 
     // TLS/mTLS gRPC (demon tradingowy)
     parser.addOption({"grpc-use-mtls", tr("Wymusza mTLS dla klienta tradingowego")});
@@ -248,7 +332,9 @@ bool Application::applyParser(const QCommandLineParser& parser) {
     instrument.baseCurrency = parser.value("base");
     instrument.granularityIso8601 = parser.value("granularity");
 
-    m_client.setEndpoint(parser.value("endpoint"));
+    QString endpoint = parser.value("endpoint");
+    configureLocalBotCoreService(parser, endpoint);
+    m_client.setEndpoint(endpoint);
     m_client.setInstrument(instrument);
     m_instrument = instrument;
     Q_EMIT instrumentChanged();
@@ -325,13 +411,20 @@ bool Application::applyParser(const QCommandLineParser& parser) {
     if (!cliClientKey.isEmpty())
         tradingTls.clientKeyPath = expandUserPath(cliClientKey);
     tradingTls.targetNameOverride = parser.value("grpc-target-name");
+    if (m_localServiceEnabled) {
+        tradingTls.enabled = false;
+        tradingTls.rootCertificatePath.clear();
+        tradingTls.clientCertificatePath.clear();
+        tradingTls.clientKeyPath.clear();
+        tradingTls.targetNameOverride.clear();
+    }
     m_tradingTlsConfig = tradingTls;
 
     // --- Telemetria ---
     m_metricsEndpoint = parser.value("metrics-endpoint");
     if (m_metricsEndpoint.isEmpty()) {
         // Fallback: użyj endpointu tradingowego, jeśli nie podano dedykowanego dla MetricsService
-        m_metricsEndpoint = parser.value("endpoint");
+        m_metricsEndpoint = endpoint;
     }
     m_metricsTag = parser.value("metrics-tag");
     m_metricsEnabled = !(parser.isSet("disable-metrics") || parser.isSet("no-metrics"));
@@ -357,6 +450,39 @@ bool Application::applyParser(const QCommandLineParser& parser) {
 
     applyTradingTlsEnvironmentOverrides(parser);
     m_client.setTlsConfig(m_tradingTlsConfig);
+
+    bool riskRefreshEnabled = !parser.isSet("risk-refresh-disable");
+    bool intervalOk = false;
+    double riskRefreshSeconds = parser.value("risk-refresh-interval").toDouble(&intervalOk);
+    if (!intervalOk || riskRefreshSeconds <= 0.0) {
+        if (parser.isSet("risk-refresh-interval")) {
+            qCWarning(lcAppMetrics)
+                << "Nieprawidłowy interwał --risk-refresh-interval:" << parser.value("risk-refresh-interval")
+                << "– używam wartości domyślnej";
+        }
+        riskRefreshSeconds = kDefaultRiskRefreshSeconds;
+    }
+
+    if (!parser.isSet("risk-refresh-interval")) {
+        if (const auto envInterval = envValue("BOT_CORE_UI_RISK_REFRESH_SECONDS")) {
+            bool envOk = false;
+            const double candidate = envInterval->toDouble(&envOk);
+            if (envOk && candidate > 0.0) {
+                riskRefreshSeconds = candidate;
+            } else {
+                qCWarning(lcAppMetrics)
+                    << "Nieprawidłowa wartość BOT_CORE_UI_RISK_REFRESH_SECONDS:" << *envInterval
+                    << "– oczekiwano liczby dodatniej";
+            }
+        }
+    }
+
+    if (!parser.isSet("risk-refresh-disable")) {
+        if (const auto envDisable = envBool("BOT_CORE_UI_RISK_REFRESH_DISABLE"))
+            riskRefreshEnabled = !envDisable.value();
+    }
+
+    configureRiskRefresh(riskRefreshEnabled, riskRefreshSeconds);
 
     // TLS config (MetricsService)
     TelemetryTlsConfig mtls;
@@ -435,15 +561,489 @@ bool Application::applyParser(const QCommandLineParser& parser) {
         m_reportController->refresh();
     }
 
+    applyUiSettingsCliOverrides(parser);
+
     // Inicjalizacja/reportera + token
     ensureTelemetry();
 
     return true;
 }
 
+QString Application::locateRepoRoot() const
+{
+    QDir dir(QCoreApplication::applicationDirPath());
+    for (int depth = 0; depth < 12; ++depth) {
+        if (dir.exists(QStringLiteral("bot_core")) && dir.exists(QStringLiteral("ui")))
+            return dir.absolutePath();
+        if (!dir.cdUp())
+            break;
+    }
+
+    dir = QDir(QDir::currentPath());
+    for (int depth = 0; depth < 12; ++depth) {
+        if (dir.exists(QStringLiteral("bot_core")) && dir.exists(QStringLiteral("ui")))
+            return dir.absolutePath();
+        if (!dir.cdUp())
+            break;
+    }
+
+    return QDir::currentPath();
+}
+
+void Application::configureRiskRefresh(bool enabled, double intervalSeconds)
+{
+    double sanitizedSeconds = intervalSeconds > 0.0 ? intervalSeconds : kDefaultRiskRefreshSeconds;
+    const int rawMs = static_cast<int>(std::llround(sanitizedSeconds * 1000.0));
+    const int clampedMs = qBound(kMinRiskRefreshIntervalMs, rawMs, kMaxRiskRefreshIntervalMs);
+
+    m_riskRefreshIntervalMs = clampedMs;
+    m_riskRefreshEnabled = enabled && sanitizedSeconds > 0.0;
+
+    m_riskRefreshTimer.stop();
+    m_riskRefreshTimer.setInterval(m_riskRefreshIntervalMs);
+    if (!m_riskRefreshEnabled)
+        m_nextRiskRefreshUtc = {};
+    Q_EMIT riskRefreshScheduleChanged();
+}
+
+void Application::applyRiskRefreshTimerState()
+{
+    if (m_riskRefreshEnabled && m_started) {
+        const bool needsRestart = !m_riskRefreshTimer.isActive()
+            || m_riskRefreshTimer.interval() != m_riskRefreshIntervalMs;
+        if (needsRestart)
+            m_riskRefreshTimer.start(m_riskRefreshIntervalMs);
+        m_nextRiskRefreshUtc = QDateTime::currentDateTimeUtc().addMSecs(m_riskRefreshIntervalMs);
+    } else {
+        if (m_riskRefreshTimer.isActive())
+            m_riskRefreshTimer.stop();
+        m_nextRiskRefreshUtc = {};
+    }
+    Q_EMIT riskRefreshScheduleChanged();
+}
+
+void Application::initializeUiSettingsStorage()
+{
+    if (const auto disableEnv = envBool(kUiSettingsDisableEnv); disableEnv.has_value())
+        m_uiSettingsPersistenceEnabled = !disableEnv.value();
+
+    if (m_uiSettingsPath.trimmed().isEmpty()) {
+        QString candidate;
+        if (const auto envPath = envValue(kUiSettingsEnv); envPath.has_value()) {
+            const QString trimmed = envPath->trimmed();
+            if (!trimmed.isEmpty())
+                candidate = expandUserPath(trimmed);
+        }
+
+        if (candidate.isEmpty())
+            candidate = QDir::current().absoluteFilePath(QStringLiteral("var/state/ui_settings.json"));
+
+        QFileInfo info(candidate);
+        if (!info.isAbsolute())
+            candidate = QDir::current().absoluteFilePath(candidate);
+
+        m_uiSettingsPath = candidate;
+    } else {
+        QFileInfo info(m_uiSettingsPath);
+        if (!info.isAbsolute())
+            m_uiSettingsPath = QDir::current().absoluteFilePath(m_uiSettingsPath);
+    }
+
+    ensureUiSettingsTimerConfigured();
+
+    if (!m_uiSettingsPersistenceEnabled)
+        return;
+
+    loadUiSettings();
+}
+
+void Application::ensureUiSettingsTimerConfigured()
+{
+    if (m_uiSettingsTimerConfigured)
+        return;
+
+    m_uiSettingsSaveTimer.setParent(this);
+    m_uiSettingsSaveTimer.setSingleShot(true);
+    m_uiSettingsSaveTimer.setInterval(kUiSettingsDebounceMs);
+    connect(&m_uiSettingsSaveTimer, &QTimer::timeout, this, &Application::persistUiSettings);
+    m_uiSettingsTimerConfigured = true;
+}
+
+void Application::applyUiSettingsCliOverrides(const QCommandLineParser& parser)
+{
+    if (parser.isSet("enable-ui-settings"))
+        setUiSettingsPersistenceEnabled(true);
+    if (parser.isSet("disable-ui-settings"))
+        setUiSettingsPersistenceEnabled(false);
+
+    const QString cliPath = parser.value("ui-settings-path").trimmed();
+    if (!cliPath.isEmpty())
+        setUiSettingsPath(cliPath);
+}
+
+void Application::setUiSettingsPersistenceEnabled(bool enabled)
+{
+    if (m_uiSettingsPersistenceEnabled == enabled)
+        return;
+
+    m_uiSettingsPersistenceEnabled = enabled;
+    if (!enabled) {
+        if (m_uiSettingsSaveTimer.isActive())
+            m_uiSettingsSaveTimer.stop();
+        return;
+    }
+
+    ensureUiSettingsTimerConfigured();
+    loadUiSettings();
+}
+
+void Application::setUiSettingsPath(const QString& path, bool reload)
+{
+    QString candidate = path.trimmed();
+    if (candidate.isEmpty())
+        return;
+
+    candidate = expandUserPath(candidate);
+    QFileInfo info(candidate);
+    if (!info.isAbsolute())
+        candidate = QDir::current().absoluteFilePath(candidate);
+
+    if (m_uiSettingsPath == candidate)
+        return;
+
+    m_uiSettingsPath = candidate;
+
+    if (m_uiSettingsPersistenceEnabled && reload)
+        loadUiSettings();
+}
+
+void Application::loadUiSettings()
+{
+    if (!m_uiSettingsPersistenceEnabled)
+        return;
+    if (m_uiSettingsPath.trimmed().isEmpty())
+        return;
+
+    QFile file(m_uiSettingsPath);
+    if (!file.exists())
+        return;
+
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        qCWarning(lcAppMetrics) << "Nie udało się odczytać pliku ustawień UI" << m_uiSettingsPath
+                                << file.errorString();
+        return;
+    }
+
+    const QByteArray data = file.readAll();
+    file.close();
+
+    const QJsonDocument document = QJsonDocument::fromJson(data);
+    if (!document.isObject()) {
+        qCWarning(lcAppMetrics) << "Plik ustawień UI ma nieprawidłowy format JSON" << m_uiSettingsPath;
+        return;
+    }
+
+    const QJsonObject root = document.object();
+
+    const auto requireString = [](const QJsonObject& object, const QString& key) -> QString {
+        const QJsonValue value = object.value(key);
+        if (!value.isString())
+            return {};
+        return value.toString().trimmed();
+    };
+
+    m_loadingUiSettings = true;
+
+    if (root.contains(QStringLiteral("instrument")) && root.value(QStringLiteral("instrument")).isObject()) {
+        const QJsonObject instrument = root.value(QStringLiteral("instrument")).toObject();
+        const QString exchange = requireString(instrument, QStringLiteral("exchange"));
+        const QString symbol = requireString(instrument, QStringLiteral("symbol"));
+        const QString venueSymbol = requireString(instrument, QStringLiteral("venueSymbol"));
+        const QString quote = requireString(instrument, QStringLiteral("quoteCurrency"));
+        const QString base = requireString(instrument, QStringLiteral("baseCurrency"));
+        const QString granularity = requireString(instrument, QStringLiteral("granularity"));
+
+        if (!exchange.isEmpty() && !symbol.isEmpty() && !venueSymbol.isEmpty() && !quote.isEmpty()
+            && !base.isEmpty() && !granularity.isEmpty()) {
+            updateInstrument(exchange, symbol, venueSymbol, quote, base, granularity);
+        }
+    }
+
+    if (root.contains(QStringLiteral("performanceGuard"))
+        && root.value(QStringLiteral("performanceGuard")).isObject()) {
+        const QJsonObject guardObj = root.value(QStringLiteral("performanceGuard")).toObject();
+        const int fpsTarget = guardObj.value(QStringLiteral("fpsTarget")).toInt(m_guard.fpsTarget);
+        const double reduceMotionAfter = guardObj.value(QStringLiteral("reduceMotionAfter"))
+                                             .toDouble(m_guard.reduceMotionAfterSeconds);
+        const double jankThreshold = guardObj.value(QStringLiteral("jankThresholdMs"))
+                                         .toDouble(m_guard.jankThresholdMs);
+        const int overlays = guardObj.value(QStringLiteral("maxOverlayCount")).toInt(m_guard.maxOverlayCount);
+        const int disableSecondary = guardObj.value(QStringLiteral("disableSecondaryWhenBelow"))
+                                         .toInt(m_guard.disableSecondaryWhenFpsBelow);
+        updatePerformanceGuard(fpsTarget, reduceMotionAfter, jankThreshold, overlays, disableSecondary);
+    }
+
+    if (root.contains(QStringLiteral("riskRefresh")) && root.value(QStringLiteral("riskRefresh")).isObject()) {
+        const QJsonObject riskObj = root.value(QStringLiteral("riskRefresh")).toObject();
+        const bool enabled = riskObj.value(QStringLiteral("enabled")).toBool(m_riskRefreshEnabled);
+        const double intervalSeconds = riskObj.value(QStringLiteral("intervalSeconds"))
+                                         .toDouble(static_cast<double>(m_riskRefreshIntervalMs) / 1000.0);
+        updateRiskRefresh(enabled, intervalSeconds);
+    }
+
+    if (root.contains(QStringLiteral("alerts")) && root.value(QStringLiteral("alerts")).isObject()) {
+        const QJsonObject alertsObj = root.value(QStringLiteral("alerts")).toObject();
+        const bool hideAcknowledged = alertsObj.value(QStringLiteral("hideAcknowledged"))
+                                          .toBool(m_filteredAlertsModel.hideAcknowledged());
+        m_filteredAlertsModel.setHideAcknowledged(hideAcknowledged);
+
+        const int severityValue = alertsObj.value(QStringLiteral("severityFilter"))
+                                      .toInt(static_cast<int>(m_filteredAlertsModel.severityFilter()));
+        if (severityValue >= AlertsFilterProxyModel::AllSeverities
+            && severityValue <= AlertsFilterProxyModel::WarningOnly) {
+            m_filteredAlertsModel.setSeverityFilter(
+                static_cast<AlertsFilterProxyModel::SeverityFilter>(severityValue));
+        }
+
+        const int sortValue = alertsObj.value(QStringLiteral("sortMode"))
+                                  .toInt(static_cast<int>(m_filteredAlertsModel.sortMode()));
+        if (sortValue >= AlertsFilterProxyModel::NewestFirst
+            && sortValue <= AlertsFilterProxyModel::TitleAscending) {
+            m_filteredAlertsModel.setSortMode(static_cast<AlertsFilterProxyModel::SortMode>(sortValue));
+        }
+
+        if (alertsObj.contains(QStringLiteral("searchText")))
+            m_filteredAlertsModel.setSearchText(alertsObj.value(QStringLiteral("searchText")).toString());
+
+        const QJsonValue acknowledgedValue = alertsObj.value(QStringLiteral("acknowledgedIds"));
+        if (acknowledgedValue.isArray()) {
+            const QJsonArray ackArray = acknowledgedValue.toArray();
+            QStringList ids;
+            ids.reserve(ackArray.size());
+            for (const QJsonValue& value : ackArray) {
+                if (value.isString())
+                    ids.append(value.toString());
+            }
+            m_alertsModel.setAcknowledgedAlertIds(ids);
+        }
+    }
+
+    if (root.contains(QStringLiteral("riskHistory"))) {
+        const QJsonValue riskHistoryValue = root.value(QStringLiteral("riskHistory"));
+        if (riskHistoryValue.isArray()) {
+            m_riskHistoryModel.restoreFromJson(riskHistoryValue.toArray());
+        } else if (riskHistoryValue.isObject()) {
+            const QJsonObject historyObject = riskHistoryValue.toObject();
+            const QJsonValue maxValue = historyObject.value(QStringLiteral("maximumEntries"));
+            if (maxValue.isDouble())
+                m_riskHistoryModel.setMaximumEntries(maxValue.toInt(m_riskHistoryModel.maximumEntries()));
+
+            const QJsonValue entriesValue = historyObject.value(QStringLiteral("entries"));
+            if (entriesValue.isArray())
+                m_riskHistoryModel.restoreFromJson(entriesValue.toArray());
+        }
+    }
+
+    m_loadingUiSettings = false;
+}
+
+void Application::scheduleUiSettingsPersist()
+{
+    if (m_loadingUiSettings || !m_uiSettingsPersistenceEnabled || !m_uiSettingsTimerConfigured
+        || m_uiSettingsPath.trimmed().isEmpty())
+        return;
+
+    m_uiSettingsSaveTimer.start();
+}
+
+void Application::persistUiSettings()
+{
+    if (!m_uiSettingsPersistenceEnabled || m_uiSettingsPath.trimmed().isEmpty())
+        return;
+
+    const QJsonObject payload = buildUiSettingsPayload();
+    if (payload.isEmpty())
+        return;
+
+    const QFileInfo info(m_uiSettingsPath);
+    QDir dir = info.dir();
+    if (!dir.exists()) {
+        if (!dir.mkpath(QStringLiteral("."))) {
+            qCWarning(lcAppMetrics) << "Nie udało się utworzyć katalogu ustawień UI" << dir.absolutePath();
+            return;
+        }
+    }
+
+    QSaveFile file(m_uiSettingsPath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        qCWarning(lcAppMetrics) << "Nie udało się zapisać ustawień UI" << m_uiSettingsPath
+                                << file.errorString();
+        return;
+    }
+
+    const QJsonDocument document(payload);
+    file.write(document.toJson(QJsonDocument::Compact));
+    if (!file.commit()) {
+        qCWarning(lcAppMetrics) << "Nie udało się zatwierdzić pliku ustawień UI" << m_uiSettingsPath
+                                << file.errorString();
+    } else {
+        qCInfo(lcAppMetrics) << "Zapisano konfigurację UI do" << m_uiSettingsPath;
+    }
+}
+
+QJsonObject Application::buildUiSettingsPayload() const
+{
+    QJsonObject root;
+
+    QJsonObject instrument;
+    instrument.insert(QStringLiteral("exchange"), m_instrument.exchange);
+    instrument.insert(QStringLiteral("symbol"), m_instrument.symbol);
+    instrument.insert(QStringLiteral("venueSymbol"), m_instrument.venueSymbol);
+    instrument.insert(QStringLiteral("quoteCurrency"), m_instrument.quoteCurrency);
+    instrument.insert(QStringLiteral("baseCurrency"), m_instrument.baseCurrency);
+    instrument.insert(QStringLiteral("granularity"), m_instrument.granularityIso8601);
+    root.insert(QStringLiteral("instrument"), instrument);
+
+    QJsonObject guard;
+    guard.insert(QStringLiteral("fpsTarget"), m_guard.fpsTarget);
+    guard.insert(QStringLiteral("reduceMotionAfter"), m_guard.reduceMotionAfterSeconds);
+    guard.insert(QStringLiteral("jankThresholdMs"), m_guard.jankThresholdMs);
+    guard.insert(QStringLiteral("maxOverlayCount"), m_guard.maxOverlayCount);
+    guard.insert(QStringLiteral("disableSecondaryWhenBelow"), m_guard.disableSecondaryWhenFpsBelow);
+    root.insert(QStringLiteral("performanceGuard"), guard);
+
+    QJsonObject risk;
+    risk.insert(QStringLiteral("enabled"), m_riskRefreshEnabled);
+    risk.insert(QStringLiteral("intervalSeconds"), static_cast<double>(m_riskRefreshIntervalMs) / 1000.0);
+    root.insert(QStringLiteral("riskRefresh"), risk);
+
+    QJsonObject alerts;
+    QJsonArray acknowledged;
+    const QStringList ackIds = m_alertsModel.acknowledgedAlertIds();
+    for (const QString& id : ackIds)
+        acknowledged.append(id);
+    alerts.insert(QStringLiteral("acknowledgedIds"), acknowledged);
+    alerts.insert(QStringLiteral("hideAcknowledged"), m_filteredAlertsModel.hideAcknowledged());
+    alerts.insert(QStringLiteral("severityFilter"),
+                  static_cast<int>(m_filteredAlertsModel.severityFilter()));
+    alerts.insert(QStringLiteral("sortMode"), static_cast<int>(m_filteredAlertsModel.sortMode()));
+    alerts.insert(QStringLiteral("searchText"), m_filteredAlertsModel.searchText());
+    root.insert(QStringLiteral("alerts"), alerts);
+
+    QJsonObject history;
+    history.insert(QStringLiteral("maximumEntries"), m_riskHistoryModel.maximumEntries());
+    const QJsonArray historyEntries = m_riskHistoryModel.toJson();
+    if (!historyEntries.isEmpty())
+        history.insert(QStringLiteral("entries"), historyEntries);
+    root.insert(QStringLiteral("riskHistory"), history);
+
+    return root;
+}
+
+void Application::configureLocalBotCoreService(const QCommandLineParser& parser, QString& endpoint)
+{
+    if (parser.isSet(QStringLiteral("no-local-core"))) {
+        if (m_localService && m_localServiceEnabled) {
+            m_localService->stop();
+        }
+        m_localServiceEnabled = false;
+        return;
+    }
+
+    bool requested = true;
+    if (const auto envFlag = envBool("BOT_CORE_UI_LOCAL_CORE")) {
+        requested = envFlag.value();
+    }
+    if (parser.isSet(QStringLiteral("local-core"))) {
+        requested = true;
+    }
+
+    if (!requested)
+        return;
+
+    if (!m_localService)
+        m_localService = std::make_unique<BotCoreLocalService>(this);
+
+    if (m_repoRoot.isEmpty())
+        m_repoRoot = locateRepoRoot();
+
+    if (!m_repoRoot.isEmpty())
+        m_localService->setRepoRoot(m_repoRoot);
+
+    QString pythonExecutable = parser.value(QStringLiteral("local-core-python")).trimmed();
+    if (pythonExecutable.isEmpty()) {
+        if (const auto envPython = envValue("BOT_CORE_UI_LOCAL_CORE_PYTHON"))
+            pythonExecutable = envPython->trimmed();
+    }
+    if (!pythonExecutable.isEmpty())
+        m_localService->setPythonExecutable(expandUserPath(pythonExecutable));
+
+    QString datasetPath = parser.value(QStringLiteral("local-core-dataset")).trimmed();
+    if (datasetPath.isEmpty()) {
+        if (const auto envDataset = envValue("BOT_CORE_UI_LOCAL_CORE_DATASET"))
+            datasetPath = envDataset->trimmed();
+    }
+    if (!datasetPath.isEmpty())
+        m_localService->setDatasetPath(expandUserPath(datasetPath));
+
+    QString host = parser.value(QStringLiteral("local-core-host")).trimmed();
+    if (host.isEmpty()) {
+        if (const auto envHost = envValue("BOT_CORE_UI_LOCAL_CORE_HOST"))
+            host = envHost->trimmed();
+    }
+    if (host.isEmpty())
+        host = QStringLiteral("127.0.0.1");
+    m_localService->setHost(host);
+
+    int port = 0;
+    bool portOk = false;
+    if (!parser.value(QStringLiteral("local-core-port")).trimmed().isEmpty()) {
+        port = parser.value(QStringLiteral("local-core-port")).toInt(&portOk);
+        if (!portOk) {
+            qCWarning(lcAppMetrics)
+                << "Nieprawidłowa wartość --local-core-port" << parser.value("local-core-port");
+            port = 0;
+        }
+    }
+    if (const auto envPort = envValue("BOT_CORE_UI_LOCAL_CORE_PORT")) {
+        bool envOk = false;
+        const int candidate = envPort->toInt(&envOk);
+        if (envOk)
+            port = candidate;
+    }
+    m_localService->setPort(port);
+
+    bool repeat = parser.isSet(QStringLiteral("local-core-stream-repeat"));
+    if (const auto envRepeat = envBool("BOT_CORE_UI_LOCAL_CORE_STREAM_REPEAT"))
+        repeat = envRepeat.value();
+    m_localService->setStreamRepeat(repeat);
+
+    double interval = parser.value(QStringLiteral("local-core-stream-interval")).toDouble();
+    if (const auto envInterval = envValue("BOT_CORE_UI_LOCAL_CORE_STREAM_INTERVAL")) {
+        bool ok = false;
+        const double candidate = envInterval->toDouble(&ok);
+        if (ok)
+            interval = candidate;
+    }
+    m_localService->setStreamInterval(interval);
+
+    if (!m_localService->start()) {
+        qCWarning(lcAppMetrics)
+            << "Nie udało się uruchomić lokalnego serwisu bot_core:" << m_localService->lastError();
+        m_localServiceEnabled = false;
+        return;
+    }
+
+    endpoint = m_localService->endpoint();
+    m_localServiceEnabled = true;
+    qCInfo(lcAppMetrics) << "Uruchomiono lokalny stub bot_core pod adresem" << endpoint;
+}
+
 void Application::start() {
     m_ohlcvModel.setMaximumSamples(m_maxSamples);
     m_riskModel.clear();
+    m_riskHistoryModel.clear();
+    m_alertsModel.reset();
 
     ensureFrameMonitor();
 
@@ -458,10 +1058,20 @@ void Application::start() {
     }
 
     m_client.start();
+    m_started = true;
+    applyRiskRefreshTimerState();
 }
 
 void Application::stop() {
     m_client.stop();
+    m_alertsModel.reset();
+    m_riskHistoryModel.clear();
+    if (m_localService && m_localServiceEnabled) {
+        m_localService->stop();
+        m_localServiceEnabled = false;
+    }
+    m_started = false;
+    applyRiskRefreshTimerState();
 }
 
 void Application::handleHistory(const QList<OhlcvPoint>& candles) {
@@ -474,12 +1084,24 @@ void Application::handleCandle(const OhlcvPoint& candle) {
 
 void Application::handleRiskState(const RiskSnapshotData& snapshot) {
     m_riskModel.updateFromSnapshot(snapshot);
+    m_riskHistoryModel.recordSnapshot(snapshot);
+    m_alertsModel.updateFromRiskSnapshot(snapshot);
+    if (snapshot.generatedAt.isValid())
+        m_lastRiskUpdateUtc = snapshot.generatedAt.toUTC();
+    else
+        m_lastRiskUpdateUtc = QDateTime::currentDateTimeUtc();
+    if (!m_lastRiskRefreshRequestUtc.isValid())
+        m_lastRiskRefreshRequestUtc = m_lastRiskUpdateUtc;
+    Q_EMIT riskRefreshScheduleChanged();
 }
 
 void Application::exposeToQml() {
     m_engine.rootContext()->setContextProperty(QStringLiteral("appController"), this);
     m_engine.rootContext()->setContextProperty(QStringLiteral("ohlcvModel"), &m_ohlcvModel);
     m_engine.rootContext()->setContextProperty(QStringLiteral("riskModel"), &m_riskModel);
+    m_engine.rootContext()->setContextProperty(QStringLiteral("riskHistoryModel"), &m_riskHistoryModel);
+    m_engine.rootContext()->setContextProperty(QStringLiteral("alertsModel"), &m_alertsModel);
+    m_engine.rootContext()->setContextProperty(QStringLiteral("alertsFilterModel"), &m_filteredAlertsModel);
     m_engine.rootContext()->setContextProperty(QStringLiteral("licenseController"), m_licenseController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("activationController"), m_activationController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("securityController"), m_securityController.get());
@@ -594,6 +1216,29 @@ QVariantMap Application::performanceGuardSnapshot() const {
     return map;
 }
 
+QVariantMap Application::riskRefreshSnapshot() const
+{
+    QVariantMap map;
+    map.insert(QStringLiteral("enabled"), m_riskRefreshEnabled);
+    map.insert(QStringLiteral("intervalSeconds"), static_cast<double>(m_riskRefreshIntervalMs) / 1000.0);
+    map.insert(QStringLiteral("active"), m_riskRefreshEnabled && m_riskRefreshTimer.isActive());
+    map.insert(QStringLiteral("lastRequestAt"),
+               m_lastRiskRefreshRequestUtc.isValid()
+                   ? m_lastRiskRefreshRequestUtc.toString(Qt::ISODateWithMs)
+                   : QString());
+    map.insert(QStringLiteral("lastUpdateAt"),
+               m_lastRiskUpdateUtc.isValid() ? m_lastRiskUpdateUtc.toString(Qt::ISODateWithMs) : QString());
+    map.insert(QStringLiteral("nextRefreshDueAt"),
+               m_nextRiskRefreshUtc.isValid() ? m_nextRiskRefreshUtc.toString(Qt::ISODateWithMs) : QString());
+    double remainingSeconds = -1.0;
+    if (m_nextRiskRefreshUtc.isValid()) {
+        const qint64 remainingMs = QDateTime::currentDateTimeUtc().msecsTo(m_nextRiskRefreshUtc);
+        remainingSeconds = remainingMs > 0 ? static_cast<double>(remainingMs) / 1000.0 : 0.0;
+    }
+    map.insert(QStringLiteral("nextRefreshInSeconds"), remainingSeconds);
+    return map;
+}
+
 bool Application::updateInstrument(const QString& exchange,
                                    const QString& symbol,
                                    const QString& venueSymbol,
@@ -615,6 +1260,12 @@ bool Application::updateInstrument(const QString& exchange,
         return false;
     }
 
+    const bool changed = config.exchange != m_instrument.exchange
+        || config.symbol != m_instrument.symbol || config.venueSymbol != m_instrument.venueSymbol
+        || config.quoteCurrency != m_instrument.quoteCurrency
+        || config.baseCurrency != m_instrument.baseCurrency
+        || config.granularityIso8601 != m_instrument.granularityIso8601;
+
     const bool wasStreaming = m_client.isStreaming();
     if (wasStreaming)
         m_client.stop();
@@ -625,6 +1276,9 @@ bool Application::updateInstrument(const QString& exchange,
 
     if (wasStreaming)
         m_client.start();
+
+    if (changed && !m_loadingUiSettings)
+        scheduleUiSettingsPersist();
 
     return true;
 }
@@ -641,6 +1295,12 @@ bool Application::updatePerformanceGuard(int fpsTarget,
     guard.maxOverlayCount = qMax(0, maxOverlayCount);
     guard.disableSecondaryWhenFpsBelow = qMax(0, disableSecondaryWhenBelow);
 
+    const bool changed = guard.fpsTarget != m_guard.fpsTarget
+        || !qFuzzyCompare(guard.reduceMotionAfterSeconds + 1.0, m_guard.reduceMotionAfterSeconds + 1.0)
+        || !qFuzzyCompare(guard.jankThresholdMs + 1.0, m_guard.jankThresholdMs + 1.0)
+        || guard.maxOverlayCount != m_guard.maxOverlayCount
+        || guard.disableSecondaryWhenFpsBelow != m_guard.disableSecondaryWhenFpsBelow;
+
     m_client.setPerformanceGuard(guard);
     m_guard = guard;
     Q_EMIT performanceGuardChanged();
@@ -648,7 +1308,81 @@ bool Application::updatePerformanceGuard(int fpsTarget,
     if (m_frameMonitor)
         m_frameMonitor->setPerformanceGuard(m_guard);
 
+    if (changed && !m_loadingUiSettings)
+        scheduleUiSettingsPersist();
+
     return true;
+}
+
+bool Application::updateRiskRefresh(bool enabled, double intervalSeconds)
+{
+    const bool previousEnabled = m_riskRefreshEnabled;
+    const int previousInterval = m_riskRefreshIntervalMs;
+
+    double effectiveInterval = intervalSeconds;
+    if (enabled) {
+        if (!std::isfinite(intervalSeconds) || intervalSeconds <= 0.0) {
+            qCWarning(lcAppMetrics)
+                << "Odmowa aktualizacji harmonogramu ryzyka – oczekiwano dodatniego interwału (s), otrzymano"
+                << intervalSeconds;
+            return false;
+        }
+    } else if (!std::isfinite(intervalSeconds) || intervalSeconds <= 0.0) {
+        effectiveInterval = static_cast<double>(m_riskRefreshIntervalMs) / 1000.0;
+    }
+
+    configureRiskRefresh(enabled, effectiveInterval);
+    applyRiskRefreshTimerState();
+
+    if (!m_loadingUiSettings
+        && (previousEnabled != m_riskRefreshEnabled || previousInterval != m_riskRefreshIntervalMs)) {
+        scheduleUiSettingsPersist();
+    }
+
+    return true;
+}
+
+bool Application::triggerRiskRefreshNow()
+{
+    const QDateTime requestTime = QDateTime::currentDateTimeUtc();
+    m_lastRiskRefreshRequestUtc = requestTime;
+    m_client.refreshRiskState();
+
+    if (m_riskRefreshEnabled && m_started) {
+        m_riskRefreshTimer.start(m_riskRefreshIntervalMs);
+        m_nextRiskRefreshUtc = requestTime.addMSecs(m_riskRefreshIntervalMs);
+    } else if (!m_riskRefreshEnabled) {
+        m_nextRiskRefreshUtc = {};
+    }
+
+    Q_EMIT riskRefreshScheduleChanged();
+    return true;
+}
+
+bool Application::updateRiskHistoryLimit(int maximumEntries)
+{
+    if (maximumEntries < 1) {
+        qCWarning(lcAppMetrics)
+            << "Odmowa aktualizacji limitu historii ryzyka – oczekiwano dodatniej liczby próbek, otrzymano"
+            << maximumEntries;
+        return false;
+    }
+
+    m_riskHistoryModel.setMaximumEntries(maximumEntries);
+
+    return true;
+}
+
+void Application::clearRiskHistory()
+{
+    m_riskHistoryModel.clear();
+}
+
+void Application::saveUiSettingsImmediatelyForTesting()
+{
+    if (m_uiSettingsSaveTimer.isActive())
+        m_uiSettingsSaveTimer.stop();
+    persistUiSettings();
 }
 
 void Application::applyTradingTlsEnvironmentOverrides(const QCommandLineParser& parser)
@@ -705,6 +1439,12 @@ void Application::simulateFrameIntervalForTesting(double seconds) {
     if (!m_frameMonitor)
         return;
     m_frameMonitor->simulateFrameIntervalForTest(seconds);
+}
+
+void Application::startRiskRefreshTimerForTesting()
+{
+    m_started = true;
+    applyRiskRefreshTimerState();
 }
 
 void Application::applyMetricsEnvironmentOverrides(const QCommandLineParser& parser,
