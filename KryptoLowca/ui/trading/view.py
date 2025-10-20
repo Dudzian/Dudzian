@@ -27,11 +27,15 @@ class TradingView:
         controller: "TradingSessionController",
         *,
         on_refresh_risk: Optional[Callable[[], None]] = None,
+        on_start: Optional[Callable[[], None]] = None,
+        on_stop: Optional[Callable[[], None]] = None,
     ):
         self.root = root
         self.state = state
         self.controller = controller
         self._on_refresh_risk = on_refresh_risk
+        self._on_start = on_start
+        self._on_stop = on_stop
         self._build_layout()
 
     # ------------------------------------------------------------------
@@ -73,6 +77,8 @@ class TradingView:
             width=10,
             state="readonly",
         ).pack(side="left", padx=(4, 12))
+        ttk.Label(header, text="Symbol").pack(side="left")
+        ttk.Entry(header, textvariable=self.state.symbol, width=12).pack(side="left", padx=(4, 12))
         ttk.Label(header, text="Fraction").pack(side="left")
         self._fraction_spinbox = ttk.Spinbox(
             header,
@@ -112,6 +118,10 @@ class TradingView:
         ttk.Label(balances, textvariable=self.state.account_balance).pack(side="left", padx=(4, 12))
         ttk.Label(balances, text="Paper balance:").pack(side="left")
         ttk.Label(balances, textvariable=self.state.paper_balance).pack(side="left", padx=4)
+        ttk.Label(balances, text="Market:").pack(side="left", padx=(12, 0))
+        ttk.Label(balances, textvariable=self.state.market_symbol).pack(side="left", padx=(4, 12))
+        ttk.Label(balances, text="Last price:").pack(side="left")
+        ttk.Label(balances, textvariable=self.state.market_price).pack(side="left", padx=4)
 
         content = ttk.Frame(main)
         content.pack(fill="both", expand=True)
@@ -166,11 +176,21 @@ class TradingView:
     def _start_clicked(self) -> None:
         self.controller.start()
         self.append_log("[INFO] Start trading session")
+        if callable(self._on_start):
+            try:
+                self._on_start()
+            except Exception:  # pragma: no cover - defensywne logowanie
+                logger.exception("Błąd callbacku start GUI")
 
     # ------------------------------------------------------------------
     def _stop_clicked(self) -> None:
         self.controller.stop()
         self.append_log("[INFO] Stop trading session")
+        if callable(self._on_stop):
+            try:
+                self._on_stop()
+            except Exception:  # pragma: no cover - defensywne logowanie
+                logger.exception("Błąd callbacku stop GUI")
 
     # ------------------------------------------------------------------
     def _refresh_risk_clicked(self) -> None:

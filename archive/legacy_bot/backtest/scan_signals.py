@@ -16,7 +16,7 @@ import math
 from datetime import datetime, timezone
 from typing import List, Sequence
 
-from KryptoLowca.managers.exchange_manager import ExchangeManager
+from KryptoLowca.exchange_manager import ExchangeManager
 
 
 def ts_to_utc_str(ms: int) -> str:

@@ -181,6 +181,9 @@ class BacktestEngine(_CoreBacktestEngine):
         except BacktestError as exc:  # pragma: no cover - defensywne
             raise ValidationError(str(exc)) from exc
 
+        # Zamieniamy natywny matching engine na warstwę zgodności z legacy API.
+        self._matching_engine = MatchingEngine(matching)
+
         self._strategy_name = strategy_name
         self._matching_config = matching
         self._allow_short = bool(allow_short)

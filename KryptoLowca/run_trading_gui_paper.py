@@ -52,7 +52,7 @@ from KryptoLowca.ui.trading import (
     format_notional as _format_notional,
     snapshot_from_app,
 )
-from KryptoLowca.managers.database_manager import DatabaseManager
+from KryptoLowca.database_manager import DatabaseManager
 
 
 # ----------------- KONFIG / POMOCNICZE -----------------

@@ -1,86 +1,106 @@
-import asyncio
+"""Testy integracji z modułem ryzyka i bazą danych `bot_core`."""
 
-import numpy as np
-import pandas as pd
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from pathlib import Path
+
 import pytest
 
-from bot_core.alerts import AlertSeverity, get_alert_dispatcher
-from KryptoLowca.managers.database_manager import DatabaseManager
-from KryptoLowca.managers.risk_manager_adapter import RiskManager
-from KryptoLowca.risk_management import RiskLevel, RiskManagement
+from bot_core.database.manager import DatabaseManager
+from bot_core.exchanges.base import AccountSnapshot, OrderRequest
+from bot_core.risk.engine import InMemoryRiskRepository, ThresholdRiskEngine
+from bot_core.risk.profiles.balanced import BalancedProfile
 
 
-async def test_risk_manager_logs_snapshot(tmp_path):
+def _account(equity: float) -> AccountSnapshot:
+    return AccountSnapshot(
+        balances={"USDT": equity},
+        total_equity=equity,
+        available_margin=equity * 0.9,
+        maintenance_margin=equity * 0.1,
+    )
+
+
+def _order(notional: float) -> OrderRequest:
+    price = 20_000.0
+    quantity = notional / price
+    return OrderRequest(
+        symbol="BTC/USDT",
+        side="buy",
+        quantity=quantity,
+        order_type="limit",
+        price=price,
+        atr=150.0,
+        stop_price=price * 0.98,
+        metadata={"atr": 150.0, "stop_price": price * 0.98},
+    )
+
+
+@pytest.mark.asyncio
+async def test_threshold_risk_engine_enforces_daily_loss() -> None:
+    engine = ThresholdRiskEngine(repository=InMemoryRiskRepository())
+    engine.register_profile(BalancedProfile())
+
+    # Pierwsza transakcja powinna przejść – brak ekspozycji i limity w normie.
+    account = _account(100_000.0)
+    request = _order(4_000.0)
+    decision = engine.apply_pre_trade_checks(request, account=account, profile_name="balanced")
+    assert decision.allowed is True
+
+    # Aktualizujemy stan o stratę dzienną przekraczającą dopuszczalny limit.
+    engine.on_fill(
+        profile_name="balanced",
+        symbol="BTC/USDT",
+        side="buy",
+        position_value=4_000.0,
+        pnl=-5_000.0,
+        timestamp=datetime.now(timezone.utc),
+    )
+
+    # Symulujemy spadek kapitału i sprawdzamy, że kolejne zlecenie zostaje zablokowane.
+    degraded_account = _account(94_000.0)
+    denial = engine.apply_pre_trade_checks(
+        _order(2_000.0),
+        account=degraded_account,
+        profile_name="balanced",
+    )
+
+    assert denial.allowed is False
+    assert "limit" in (denial.reason or "").lower()
+    assert engine.should_liquidate(profile_name="balanced") is True
+
+
+@pytest.mark.asyncio
+async def test_database_manager_persists_logs(tmp_path: Path) -> None:
     db_path = tmp_path / "risk.db"
-    db = DatabaseManager(f"sqlite+aiosqlite:///{db_path}")
-    await db.init_db()
+    manager = DatabaseManager(f"sqlite+aiosqlite:///{db_path}")
+    await manager.init_db()
 
-    adapter = RiskManager(config={}, db_manager=db, mode="paper")
+    user_id = await manager.ensure_user("tester@example.com")
+    entry_id = await manager.log(user_id, "info", "Risk metrics recalculated", category="risk")
+    assert entry_id > 0
 
-    df = pd.DataFrame(
+    rows = await manager.fetch_logs(level="info", source="risk")
+    assert rows, "Oczekiwano co najmniej jednego logu ryzyka"
+    payload = rows[0]
+    assert payload["message"] == "Risk metrics recalculated"
+    assert payload["level"] == "INFO"
+
+    # Zapisanie audytu ryzyka i pobranie go z bazy.
+    audit_id = await manager.log_risk_audit(
         {
-            "close": np.linspace(100, 105, 180),
-            "volume": np.linspace(1_000_000, 900_000, 180),
+            "symbol": "BTC/USDT",
+            "state": "warning",
+            "reason": "daily_loss_limit",
+            "fraction": 0.05,
+            "mode": "paper",
+            "ts": datetime.now(timezone.utc).timestamp(),
+            "details": {"max_daily_loss_pct": 0.015},
         }
     )
+    assert audit_id > 0
 
-    size, details = adapter.calculate_position_size(
-        "BTC/USDT",
-        {"strength": 0.6, "confidence": 0.7},
-        df,
-        {"ETH/USDT": {"size": 0.1, "volatility": 0.25}},
-        return_details=True,
-    )
+    audits = await manager.fetch_risk_audits(symbol="BTC/USDT")
+    assert audits and audits[0]["reason"] == "daily_loss_limit"
 
-    assert 0.0 <= size <= 1.0
-    assert "recommended_size" in details
-
-    await asyncio.sleep(0)
-
-    rows = await db.fetch_risk_limits(symbol="BTC/USDT")
-    assert rows, "Oczekiwano zapisu limitów ryzyka w bazie"
-    latest = rows[0]
-    assert latest["recommended_size"] == pytest.approx(size)
-    assert latest["mode"] == "paper"
-
-
-def test_risk_metrics_and_alert_dispatch():
-    dispatcher = get_alert_dispatcher()
-    received = []
-
-    def _handler(event):
-        if event.source == "risk":
-            received.append(event)
-
-    token = dispatcher.register(_handler, name="test-risk")
-    try:
-        rm = RiskManagement({"max_portfolio_risk": 0.2, "max_risk_per_trade": 0.05})
-        rm.portfolio_value_history = [100, 102, 98, 95, 90, 87, 85, 84, 82, 80, 78, 77]
-
-        portfolio = {
-            "BTC/USDT": {"size": 0.12, "volatility": 0.3},
-            "ETH/USDT": {"size": 0.11, "volatility": 0.28},
-        }
-        base_prices = np.linspace(100, 110, 300)
-        df = pd.DataFrame(
-            {
-                "close": base_prices,
-                "volume": np.linspace(800_000, 700_000, 300),
-            }
-        )
-        market = {symbol: df.copy() for symbol in portfolio}
-
-        metrics = rm.calculate_risk_metrics(portfolio, market)
-        assert isinstance(metrics.var_95, float)
-        assert isinstance(metrics.risk_level, RiskLevel)
-
-        emergency = rm.emergency_risk_check(60_000, 100_000, portfolio)
-        assert isinstance(emergency, dict)
-        assert emergency["actions_required"], "Powinny istnieć działania awaryjne"
-
-        assert any(evt.source == "risk" for evt in received), "Alerty ryzyka powinny zostać zarejestrowane"
-        assert any(
-            evt.severity in (AlertSeverity.WARNING, AlertSeverity.CRITICAL) for evt in received if evt.source == "risk"
-        )
-    finally:
-        dispatcher.unregister(token)

@@ -13,6 +13,7 @@ __all__ = [
     "ConfigManager",
     "ExchangeManager",
     "ReportManager",
+    "RiskManager",
     "RiskManagerAdapter",
     "SecurityManager",
     "KeyRotationManager",
@@ -27,7 +28,7 @@ __all__ = [
 
 # --- Re-eksport menedżerów ---
 try:
-    from .managers.database_manager import DatabaseManager, DBOptions  # type: ignore
+    from .database_manager import DatabaseManager, DBOptions  # type: ignore
 except Exception:  # pragma: no cover
     DatabaseManager = None  # type: ignore
     DBOptions = None  # type: ignore
@@ -38,27 +39,28 @@ except Exception:  # pragma: no cover
     AIManager = None  # type: ignore
 
 try:
-    from .managers.config_manager import ConfigManager  # type: ignore
+    from .config_manager import ConfigManager  # type: ignore
 except Exception:  # pragma: no cover
     ConfigManager = None  # type: ignore
 
 try:
-    from .managers.exchange_manager import ExchangeManager  # type: ignore
+    from .exchange_manager import ExchangeManager  # type: ignore
 except Exception:  # pragma: no cover
     ExchangeManager = None  # type: ignore
 
 try:
-    from .managers.report_manager import ReportManager  # type: ignore
+    from .report_manager import ReportManager  # type: ignore
 except Exception:  # pragma: no cover
     ReportManager = None  # type: ignore
 
 try:
-    from .managers.risk_manager_adapter import RiskManagerAdapter  # type: ignore
+    from .risk_manager import RiskManager  # type: ignore
+    RiskManagerAdapter = RiskManager
 except Exception:  # pragma: no cover
     RiskManagerAdapter = None  # type: ignore
 
 try:
-    from .managers.security_manager import SecurityManager  # type: ignore
+    from .security_manager import SecurityManager  # type: ignore
 except Exception:  # pragma: no cover
     SecurityManager = None  # type: ignore
 

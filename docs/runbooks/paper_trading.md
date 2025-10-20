@@ -3,6 +3,8 @@
 Ten runbook opisuje, jak uruchomić, monitorować i bezpiecznie zatrzymać tryb paper tradingu w ramach Etapu 4 – z biblioteką strategii obejmującą trend-following D1, mean reversion, volatility targeting oraz arbitraż międzygiełdowy zarządzany przez harmonogram multi-strategy. Dokument przeznaczony jest dla operatorów i analityków, którzy realizują proces backtest → paper → ograniczony live przy zachowaniu rygorystycznej kontroli ryzyka (ThresholdRiskEngine + decision log podpisany HMAC). Wszystkie kroki wykonujemy na kontach demo/testnet z kluczami o minimalnych uprawnieniach (brak wypłat).
 
 > **AutoTrader – tryb demo/paper**: `bootstrap_environment` dostarcza teraz gotowy `PaperTradingExecutionService`, a AutoTrader automatycznie przełącza ExecutionService na silnik paper zawsze, gdy strategia pracuje w trybie `demo`/`paper`. Paper trading zostaje również wymuszony, gdy brak jest skonfigurowanego adaptera live i aktywny pozostaje profil testnet. Dzięki temu każde środowisko bez produkcyjnych kluczy wykonuje zlecenia w symulatorze paper bez manualnego przełączania.
+
+> **Regresje i testy**: utrzymujemy `pytest KryptoLowca/tests/test_paper_trading_integration.py`, który weryfikuje scenariusze paper na `bot_core.execution.paper.PaperTradingExecutionService`. Wszelkie zmiany w symulatorze muszą przechodzić te testy – legacy `PaperExchange` pozostaje jedynie w katalogu `archive/` dla historycznych porównań i nie powinien być używany w nowych wdrożeniach.
 >
 > **Tryb awaryjny**: `_NullExchangeAdapter` pozostaje jedynie mechanizmem awaryjnym – jeśli AutoTrader nie otrzyma ExecutionService z bootstrapu, loguje ostrzeżenie „paper-only mode”, blokuje flagę live i nie pozwala na aktywację trybu produkcyjnego do czasu uzupełnienia konfiguracji.
 >

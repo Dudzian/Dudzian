@@ -41,6 +41,7 @@ filterwarnings = [
 ]
 markers = [
   "timeout: oznaczenie testów z ograniczeniem czasu wykonywania",
+  "integration: testy wymagające środowisk demo/sandbox lub zewnętrznych zasobów",
 ]
 
 [project]
