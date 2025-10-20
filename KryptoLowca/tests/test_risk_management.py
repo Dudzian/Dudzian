@@ -1,86 +1,124 @@
-import asyncio
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Mapping
 
 import numpy as np
 import pandas as pd
 import pytest
 
 from bot_core.alerts import AlertSeverity, get_alert_dispatcher
-from KryptoLowca.managers.database_manager import DatabaseManager
+from bot_core.risk.events import RiskDecisionLog
 from KryptoLowca.managers.risk_manager_adapter import RiskManager
-from KryptoLowca.risk_management import RiskLevel, RiskManagement
 
 
-async def test_risk_manager_logs_snapshot(tmp_path):
-    db_path = tmp_path / "risk.db"
-    db = DatabaseManager(f"sqlite+aiosqlite:///{db_path}")
-    await db.init_db()
-
-    adapter = RiskManager(config={}, db_manager=db, mode="paper")
-
-    df = pd.DataFrame(
+def _sample_market() -> pd.DataFrame:
+    return pd.DataFrame(
         {
-            "close": np.linspace(100, 105, 180),
-            "volume": np.linspace(1_000_000, 900_000, 180),
+            "close": np.linspace(100, 110, 120),
+            "high": np.linspace(101, 111, 120),
+            "low": np.linspace(99, 109, 120),
         }
     )
 
-    size, details = adapter.calculate_position_size(
+
+def _sample_portfolio() -> Mapping[str, object]:
+    return {"capital": 10_000.0, "positions": []}
+
+
+def test_risk_manager_records_decision(tmp_path: Path) -> None:
+    log_path = tmp_path / "decisions.jsonl"
+    decision_log = RiskDecisionLog(jsonl_path=log_path, max_entries=10)
+    manager = RiskManager(
+        config={
+            "max_risk_per_trade": 0.02,
+            "max_drawdown_pct": 0.2,
+            "max_daily_loss_pct": 0.1,
+            "max_positions": 5,
+        },
+        mode="paper",
+        decision_log=decision_log,
+    )
+
+    fraction, details = manager.calculate_position_size(
         "BTC/USDT",
-        {"strength": 0.6, "confidence": 0.7},
-        df,
-        {"ETH/USDT": {"size": 0.1, "volatility": 0.25}},
+        0.75,
+        _sample_market(),
+        _sample_portfolio(),
         return_details=True,
     )
 
-    assert 0.0 <= size <= 1.0
-    assert "recommended_size" in details
+    assert 0.0 <= fraction <= 1.0
+    assert details["recommended_size"] == fraction
+    tail = decision_log.tail(limit=1)
+    assert tail, "RiskDecisionLog powinien zawierać wpis"
+    entry = tail[0]
+    assert entry["symbol"] == "BTC/USDT"
+    assert "allowed" in entry
+    assert entry["metadata"]["source"] == "risk_manager_adapter"
+    assert entry["metadata"]["mode"] == "paper"
 
-    await asyncio.sleep(0)
 
-    rows = await db.fetch_risk_limits(symbol="BTC/USDT")
-    assert rows, "Oczekiwano zapisu limitów ryzyka w bazie"
-    latest = rows[0]
-    assert latest["recommended_size"] == pytest.approx(size)
-    assert latest["mode"] == "paper"
-
-
-def test_risk_metrics_and_alert_dispatch():
+def test_risk_manager_emits_alert_on_denial() -> None:
     dispatcher = get_alert_dispatcher()
     received = []
 
-    def _handler(event):
+    def _handler(event) -> None:
         if event.source == "risk":
             received.append(event)
 
-    token = dispatcher.register(_handler, name="test-risk")
+    token = dispatcher.register(_handler, name="risk-manager-test")
     try:
-        rm = RiskManagement({"max_portfolio_risk": 0.2, "max_risk_per_trade": 0.05})
-        rm.portfolio_value_history = [100, 102, 98, 95, 90, 87, 85, 84, 82, 80, 78, 77]
-
-        portfolio = {
-            "BTC/USDT": {"size": 0.12, "volatility": 0.3},
-            "ETH/USDT": {"size": 0.11, "volatility": 0.28},
-        }
-        base_prices = np.linspace(100, 110, 300)
-        df = pd.DataFrame(
-            {
-                "close": base_prices,
-                "volume": np.linspace(800_000, 700_000, 300),
-            }
+        manager = RiskManager(
+            config={"max_risk_per_trade": 0.01, "max_positions": 1},
+            mode="paper",
         )
-        market = {symbol: df.copy() for symbol in portfolio}
-
-        metrics = rm.calculate_risk_metrics(portfolio, market)
-        assert isinstance(metrics.var_95, float)
-        assert isinstance(metrics.risk_level, RiskLevel)
-
-        emergency = rm.emergency_risk_check(60_000, 100_000, portfolio)
-        assert isinstance(emergency, dict)
-        assert emergency["actions_required"], "Powinny istnieć działania awaryjne"
-
-        assert any(evt.source == "risk" for evt in received), "Alerty ryzyka powinny zostać zarejestrowane"
-        assert any(
-            evt.severity in (AlertSeverity.WARNING, AlertSeverity.CRITICAL) for evt in received if evt.source == "risk"
+        manager.calculate_position_size(
+            "BTC/USDT",
+            0.5,
+            _sample_market(),
+            {"capital": 0.0},
         )
     finally:
         dispatcher.unregister(token)
+
+    assert received, "Brak zarejestrowanych alertów ryzyka"
+    severities = {event.severity for event in received}
+    assert AlertSeverity.WARNING in severities
+
+
+class _DummyDB:
+    def __init__(self) -> None:
+        self.logged: list[Mapping[str, object]] = []
+
+    async def log_risk_limit(self, payload: Mapping[str, object]) -> None:
+        self.logged.append(dict(payload))
+
+
+def test_risk_manager_logs_snapshot_to_db() -> None:
+    db = _DummyDB()
+    manager = RiskManager(
+        config={
+            "max_risk_per_trade": 0.05,
+            "max_daily_loss_pct": 0.2,
+            "max_positions": 5,
+        },
+        mode="paper",
+        db_manager=db,
+    )
+
+    fraction = manager.calculate_position_size(
+        "ETH/USDT",
+        0.6,
+        _sample_market(),
+        _sample_portfolio(),
+        return_details=False,
+    )
+
+    assert db.logged, "Powinien zostać zapisany snapshot limitu ryzyka"
+    snapshot = db.logged[0]
+    assert snapshot["symbol"] == "ETH/USDT"
+    assert snapshot["mode"] == "paper"
+    assert pytest.approx(snapshot["recommended_size"]) == fraction
+    assert "profile" in snapshot["details"]
+

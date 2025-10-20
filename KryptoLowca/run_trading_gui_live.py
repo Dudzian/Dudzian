@@ -15,6 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 import math
+import logging
 import traceback
 from typing import Optional, List, Dict, Any
 
@@ -44,14 +45,22 @@ from KryptoLowca.ui.trading import (
     format_notional as _fmt_notional,
     snapshot_from_app,
 )
+from KryptoLowca.ui.trading.risk_helpers import apply_runtime_risk_context
 
 
 DEFAULT_NOTIONAL_USDT = 12.0
 
 
+logger = logging.getLogger(__name__)
+
+
 def _compute_default_notional(app: TradingGUI) -> float:
     snapshot = snapshot_from_app(app)
-    return _compute_notional(snapshot, default_notional=DEFAULT_NOTIONAL_USDT)
+    value = _compute_notional(snapshot, default_notional=DEFAULT_NOTIONAL_USDT)
+    limit_value = _compute_notional(snapshot, default_notional=float("inf"))
+    if math.isfinite(limit_value) and limit_value > value:
+        value = limit_value
+    return value
 
 
 def _format_notional(value: float) -> str:
@@ -329,5 +338,12 @@ def _open_paper_panel_on_start(app: TradingGUI):
 if __name__ == "__main__":
     root = tk.Tk()
     app = TradingGUI(root, trade_executor=_paper_trade_executor)
+    apply_runtime_risk_context(
+        app,
+        entrypoint="trading_gui",
+        config_path=getattr(app, "_core_config_path", None),
+        default_notional=DEFAULT_NOTIONAL_USDT,
+        logger=logger,
+    )
     _open_paper_panel_on_start(app)
     root.mainloop()

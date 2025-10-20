@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 import KryptoLowca.run_trading_gui_paper_emitter as emitter
+import KryptoLowca.ui.trading.risk_helpers as risk_helpers
 from bot_core.runtime.metadata import RiskManagerSettings
 
 
@@ -51,7 +52,7 @@ def test_configure_runtime_risk_updates_gui(monkeypatch: pytest.MonkeyPatch, cap
         captured_entrypoint["value"] = entrypoint
         return "balanced", {"max_position_pct": 0.02}, settings
 
-    monkeypatch.setattr(emitter, "load_risk_manager_settings", fake_loader)
+    monkeypatch.setattr(risk_helpers, "load_risk_manager_settings", fake_loader)
     gui = _make_gui_stub(balance=20_000.0)
 
     caplog.set_level(logging.INFO, emitter.logger.name)
@@ -72,7 +73,7 @@ def test_configure_runtime_risk_handles_loader_failure(monkeypatch: pytest.Monke
     def boom(*_: object, **__: object) -> tuple[None, None, RiskManagerSettings]:
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(emitter, "load_risk_manager_settings", boom)
+    monkeypatch.setattr(risk_helpers, "load_risk_manager_settings", boom)
     gui = _make_gui_stub(balance=0.0)
 
     caplog.set_level(logging.INFO, emitter.logger.name)

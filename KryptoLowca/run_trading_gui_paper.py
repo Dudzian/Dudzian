@@ -22,6 +22,8 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 import traceback
+import logging
+import math
 from typing import Optional, List, Dict, Any, Set, Tuple
 
 import tkinter as tk
@@ -52,6 +54,7 @@ from KryptoLowca.ui.trading import (
     format_notional as _format_notional,
     snapshot_from_app,
 )
+from KryptoLowca.ui.trading.risk_helpers import apply_runtime_risk_context
 from KryptoLowca.managers.database_manager import DatabaseManager
 
 
@@ -83,6 +86,8 @@ TP_PORTION_PRESETS: Dict[str, Tuple[float,float,float]] = {
     "Dwa-TP (50/50/0)": (0.50, 0.50, 0.00),
 }
 
+logger = logging.getLogger(__name__)
+
 
 def _derive_risk_defaults(snapshot: RiskSnapshot) -> tuple[float, float, float, float]:
     """Zwraca (kapitał, ryzyko %, ekspozycja %, notional) zgodne z profilem runtime."""
@@ -108,6 +113,9 @@ def _derive_risk_defaults(snapshot: RiskSnapshot) -> tuple[float, float, float, 
         portfolio_pct = DEFAULT_PORTFOLIO_PCT
 
     notional = _compute_notional(snapshot, default_notional=DEFAULT_NOTIONAL_USDT)
+    limit_notional = _compute_notional(snapshot, default_notional=float("inf"))
+    if math.isfinite(limit_notional) and limit_notional > notional:
+        notional = limit_notional
 
     return capital, risk_pct, portfolio_pct, notional
 
@@ -1452,5 +1460,12 @@ def _open_paper_panel_on_start(app: TradingGUI):
 if __name__ == "__main__":
     root = tk.Tk()
     app = TradingGUI(root, trade_executor=_paper_trade_executor)
+    apply_runtime_risk_context(
+        app,
+        entrypoint="trading_gui",
+        config_path=getattr(app, "_core_config_path", None),
+        default_notional=DEFAULT_NOTIONAL_USDT,
+        logger=logger,
+    )
     _open_paper_panel_on_start(app)
     root.mainloop()

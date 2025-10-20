@@ -46,23 +46,13 @@ from KryptoLowca.event_emitter_adapter import (
 
 # Import GUI (pakiet modułowy udostępnia klasę TradingGUI)
 try:
-    from KryptoLowca.ui.trading import (
-        TradingGUI,
-        build_risk_profile_hint,
-        compute_default_notional,
-        format_notional,
-        snapshot_from_app,
-    )
+    from KryptoLowca.ui.trading import TradingGUI
+    from KryptoLowca.ui.trading.risk_helpers import apply_runtime_risk_context
 except Exception:
     logger.exception(
         "Nie udało się zaimportować TradingGUI z KryptoLowca.ui.trading"
     )
     raise
-
-try:
-    from bot_core.runtime.metadata import load_risk_manager_settings
-except Exception:  # pragma: no cover - środowisko bez runtime
-    load_risk_manager_settings = None  # type: ignore[assignment]
 
 
 DEFAULT_PAPER_ORDER_NOTIONAL = 25.0
@@ -130,75 +120,13 @@ def _configure_runtime_risk(
 ) -> None:
     """Uzupełnia GUI o dane profilu ryzyka oraz loguje domyślne wartości."""
 
-    profile_name: str | None = None
-    profile_payload: object | None = None
-    settings = getattr(gui, "risk_manager_settings", None)
-
-    if callable(load_risk_manager_settings):
-        try:
-            profile_name, profile_payload, settings = load_risk_manager_settings(
-                entrypoint,
-                config_path=config_path,
-                logger=logger,
-            )
-        except Exception:
-            logger.debug(
-                "Nie udało się wczytać ustawień risk managera dla %s",
-                entrypoint,
-                exc_info=True,
-            )
-
-    if profile_name and hasattr(gui, "risk_profile_name"):
-        try:
-            gui.risk_profile_name = profile_name
-        except Exception:
-            logger.debug("Nie udało się ustawić nazwy profilu ryzyka w GUI.", exc_info=True)
-
-    if profile_payload is not None and hasattr(gui, "risk_profile_config"):
-        try:
-            gui.risk_profile_config = profile_payload
-        except Exception:
-            logger.debug(
-                "Nie udało się ustawić konfiguracji profilu ryzyka w GUI.",
-                exc_info=True,
-            )
-
-    if settings is not None and hasattr(gui, "risk_manager_settings"):
-        try:
-            gui.risk_manager_settings = settings
-        except Exception:
-            logger.debug(
-                "Nie udało się ustawić obiektu RiskManagerSettings w GUI.",
-                exc_info=True,
-            )
-
-    snapshot = snapshot_from_app(gui)
-    notional = compute_default_notional(
-        snapshot,
+    apply_runtime_risk_context(
+        gui,
+        entrypoint=entrypoint,
+        config_path=config_path,
         default_notional=DEFAULT_PAPER_ORDER_NOTIONAL,
+        logger=logger,
     )
-    hint = build_risk_profile_hint(snapshot)
-
-    if hint:
-        logger.info("%s", hint)
-    logger.info(
-        "Domyślny notional (paper): %s USDT",
-        format_notional(notional),
-    )
-
-    try:
-        setattr(gui, "default_paper_notional", notional)
-    except Exception:
-        logger.debug("Nie udało się zapisać domyślnego notional w GUI.", exc_info=True)
-
-    root = getattr(gui, "root", None)
-    if hint and root is not None:
-        try:
-            current_title = root.title()
-            if current_title:
-                root.title(f"{current_title} — {hint}")
-        except Exception:
-            logger.debug("Nie udało się zaktualizować tytułu okna GUI.", exc_info=True)
 
 def _wire_gui_with_bus(root, gui: Any, bus: EventBus) -> None:
     """

@@ -45,7 +45,22 @@ class TradingSessionController:
         self.ai_manager = ai_manager
         self.exchange: Optional[ExchangeManager] = None
         self.engine = TradingEngine()
+        self._risk_repository = getattr(risk, "_repository", None)
+        self._risk_decision_log = getattr(risk, "_decision_log", None)
         self._attach_engine_callbacks()
+
+    @staticmethod
+    def _settings_to_adapter_config(settings: RiskManagerSettings) -> Dict[str, Any]:
+        config = dict(settings.to_dict())
+        config.setdefault("max_daily_loss_pct", float(settings.max_daily_loss_pct))
+        config.setdefault("max_drawdown_pct", float(settings.emergency_stop_drawdown))
+        config.setdefault("hard_drawdown_pct", float(settings.emergency_stop_drawdown))
+        config.setdefault("max_positions", int(settings.max_positions))
+        config.setdefault("max_risk_per_trade", float(settings.max_risk_per_trade))
+        config.setdefault("max_portfolio_risk", float(settings.max_portfolio_risk))
+        if settings.profile_name:
+            config.setdefault("risk_profile_name", settings.profile_name)
+        return config
 
     # ------------------------------------------------------------------
     def _attach_engine_callbacks(self) -> None:
@@ -124,11 +139,24 @@ class TradingSessionController:
         if not isinstance(settings, RiskManagerSettings):
             raise TypeError("Oczekiwano instancji RiskManagerSettings")
 
-        config = settings.to_dict()
+        config = self._settings_to_adapter_config(settings)
         self.state.risk_manager_settings = settings
         self.state.risk_manager_config = config
+        if settings.profile_name:
+            self.state.risk_profile_name = settings.profile_name
         mode = self.state.mode.get() if hasattr(self.state.mode, "get") else "paper"
-        self.risk = RiskManager(config=config, db_manager=self.db, mode=str(mode or "paper"))
+        existing_repository = getattr(self.risk, "_repository", self._risk_repository)
+        existing_log = getattr(self.risk, "_decision_log", self._risk_decision_log)
+        self.risk = RiskManager(
+            config=config,
+            db_manager=self.db,
+            mode=str(mode or "paper"),
+            profile_name=settings.profile_name,
+            repository=existing_repository,
+            decision_log=existing_log,
+        )
+        self._risk_repository = getattr(self.risk, "_repository", existing_repository)
+        self._risk_decision_log = getattr(self.risk, "_decision_log", existing_log)
 
 
 __all__ = ["TradingSessionController"]

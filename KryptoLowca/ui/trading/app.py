@@ -21,6 +21,8 @@ from bot_core.runtime.metadata import (
     load_risk_manager_settings,
     load_runtime_entrypoint_metadata,
 )
+from bot_core.risk.events import RiskDecisionLog
+from bot_core.risk.repository import FileRiskRepository
 
 from KryptoLowca.logging_utils import (
     DEFAULT_LOG_FILE,
@@ -104,7 +106,14 @@ class TradingGUI:
             self._risk_profile_config,
             self.risk_manager_settings,
         ) = self._load_risk_profile(self.runtime_metadata, self._core_config_path)
-        self.risk_manager_config = self.risk_manager_settings.to_dict()
+        self._risk_repository_dir = self.paths.logs_dir / "risk_state"
+        self._risk_repository_dir.mkdir(parents=True, exist_ok=True)
+        self._risk_repository = FileRiskRepository(self._risk_repository_dir)
+        self._risk_decision_log = RiskDecisionLog(
+            max_entries=500,
+            jsonl_path=self.paths.logs_dir / "risk_decisions.jsonl",
+        )
+        self.risk_manager_config = self._settings_to_adapter_config(self.risk_manager_settings)
         self._risk_config_mtime = self._get_risk_config_timestamp()
         self._risk_watchdog_after: Optional[str] = None
         self._risk_watch_interval_ms = 5_000
@@ -148,15 +157,58 @@ class TradingGUI:
             except Exception:  # pragma: no cover - środowiska bez WM
                 logger.debug("Nie udało się ustawić handlera WM_DELETE_WINDOW", exc_info=True)
 
+    def _settings_to_adapter_config(
+        self, settings: RiskManagerSettings | None
+    ) -> Dict[str, Any]:
+        if not isinstance(settings, RiskManagerSettings):
+            return {}
+
+        payload: Dict[str, Any] = dict(settings.to_dict())
+        payload.setdefault("max_daily_loss_pct", float(settings.max_daily_loss_pct))
+        payload.setdefault(
+            "max_drawdown_pct", float(settings.emergency_stop_drawdown)
+        )
+        payload.setdefault(
+            "hard_drawdown_pct", float(settings.emergency_stop_drawdown)
+        )
+        payload.setdefault("max_positions", int(settings.max_positions))
+        payload.setdefault("max_risk_per_trade", float(settings.max_risk_per_trade))
+        payload.setdefault("max_portfolio_risk", float(settings.max_portfolio_risk))
+        if settings.profile_name:
+            payload.setdefault("risk_profile_name", settings.profile_name)
+        return payload
+
     # ------------------------------------------------------------------
     def _default_controller_factory(self, state: AppState) -> TradingSessionController:
+        db_manager = DatabaseManager()
+        risk_settings = self.state.risk_manager_settings or self.risk_manager_settings
+        config_payload = self._settings_to_adapter_config(risk_settings)
+        if not config_payload:
+            config_payload = dict(self.risk_manager_config or {})
+
+        risk_mode = "paper"
+        try:
+            network = (state.network.get() if hasattr(state.network, "get") else "testnet")
+            risk_mode = "paper" if str(network).lower() != "live" else "live"
+        except Exception:
+            risk_mode = "paper"
+
+        risk_manager = RiskManager(
+            config=config_payload,
+            db_manager=db_manager,
+            mode=risk_mode,
+            profile_name=config_payload.get("risk_profile_name"),
+            decision_log=self._risk_decision_log,
+            repository=self._risk_repository,
+        )
+
         return TradingSessionController(
             state,
-            DatabaseManager(),
+            db_manager,
             SecurityManager(self.paths.keys_file, self.paths.salt_file),
             ConfigManager(self.paths.presets_dir),
             ReportManager(str(self.paths.db_file)),
-            RiskManager(config=self.risk_manager_config),
+            risk_manager,
             self._build_ai_manager(),
         )
 
@@ -339,7 +391,7 @@ class TradingGUI:
         self.risk_profile_name = resolved_name
         self.risk_profile_config = profile_payload
         self.risk_manager_settings = settings
-        self.risk_manager_config = settings.to_dict()
+        self.risk_manager_config = self._settings_to_adapter_config(settings)
         self._risk_config_mtime = self._get_risk_config_timestamp()
 
         self.state.risk_profile_name = resolved_name
