@@ -466,7 +466,7 @@ def build_default_dataset() -> InMemoryTradingDataset:
             trading_pb2.RiskState(
                 profile=trading_pb2.RiskProfile.RISK_PROFILE_BALANCED,
                 portfolio_value=1_000_000.0,
-                current_drawdown=0.02,
+                current_drawdown=0.07,
                 max_daily_loss=0.05,
                 used_leverage=1.2,
                 limits=[
@@ -475,6 +475,18 @@ def build_default_dataset() -> InMemoryTradingDataset:
                         max_value=100_000.0,
                         current_value=20_000.0,
                         threshold_value=80_000.0,
+                    ),
+                    trading_pb2.ExposureLimit(
+                        code="DAILY_LOSS",
+                        max_value=90_000.0,
+                        current_value=70_000.0,
+                        threshold_value=80_000.0,
+                    ),
+                    trading_pb2.ExposureLimit(
+                        code="MARGIN_USAGE",
+                        max_value=120_000.0,
+                        current_value=95_000.0,
+                        threshold_value=90_000.0,
                     )
                 ],
                 generated_at=_make_timestamp("2024-01-01T00:05:00Z"),

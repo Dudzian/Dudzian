@@ -51,6 +51,29 @@ Pane {
         }
 
         Label {
+            readonly property bool active: alertsModel && alertsModel.hasActiveAlerts
+            readonly property bool hasUnacked: alertsModel && alertsModel.hasUnacknowledgedAlerts
+            text: active
+                    ? hasUnacked
+                          ? qsTr("Alerty: %1K / %2W • %3 niepotw.")
+                                .arg(alertsModel.criticalCount)
+                                .arg(alertsModel.warningCount)
+                                .arg(alertsModel.unacknowledgedCount)
+                          : qsTr("Alerty: %1K / %2W")
+                                .arg(alertsModel.criticalCount)
+                                .arg(alertsModel.warningCount)
+                    : qsTr("Alerty: brak")
+            color: alertsModel && alertsModel.criticalCount > 0
+                    ? Qt.rgba(0.94, 0.36, 0.32, 1)
+                    : alertsModel && alertsModel.warningCount > 0
+                          ? Qt.rgba(0.96, 0.7, 0.25, 1)
+                          : hasUnacked
+                                ? Qt.rgba(0.96, 0.68, 0.26, 1)
+                                : palette.windowText
+            font.bold: (alertsModel && alertsModel.criticalCount > 0) || hasUnacked
+        }
+
+        Label {
             text: appController.reduceMotionActive
                     ? qsTr("Animacje: ograniczone")
                     : qsTr("Animacje: pełne")
