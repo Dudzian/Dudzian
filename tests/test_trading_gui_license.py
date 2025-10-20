@@ -27,9 +27,9 @@ if "reporting" not in sys.modules:
     reporting_stub.TradeInfo = dict
     sys.modules["reporting"] = reporting_stub
 
-from KryptoLowca.ui.trading.controller import TradingSessionController
-from KryptoLowca.ui.trading.license_context import COMMUNITY_NOTICE, build_license_ui_context
-from KryptoLowca.ui.trading.state import AppState
+from bot_core.ui.trading.controller import TradingSessionController
+from bot_core.ui.trading.license_context import COMMUNITY_NOTICE, build_license_ui_context
+from bot_core.ui.trading.state import AppState
 
 
 class DummyVar:
@@ -56,6 +56,7 @@ def _paths() -> DesktopAppPaths:
         models_dir=base,
         keys_file=base / "keys.enc",
         salt_file=base / "salt.bin",
+        secret_vault_file=base / "stage6.vault",
     )
 
 
@@ -69,6 +70,7 @@ def _build_state(
     return AppState(
         paths=_paths(),
         runtime_metadata=None,
+        symbol=DummyVar("BTCUSDT"),
         network=DummyVar(network),
         mode=DummyVar(mode),
         timeframe=DummyVar("1m"),
@@ -169,7 +171,7 @@ def test_controller_blocks_live_without_permission(mock_messagebox: MagicMock) -
 
     assert state.running is False
     assert "Tryb live" in str(state.status.get())
-    assert controller._reserved_slot is None
+    assert getattr(controller, "_reserved_slot", None) is None
     mock_messagebox.assert_called()
 
 
@@ -188,7 +190,7 @@ def test_controller_reserves_and_releases_slot(mock_messagebox: MagicMock) -> No
 
     controller.start()
     assert state.running is True
-    assert controller._reserved_slot == "live_controller"
+    assert getattr(controller, "_reserved_slot", None) == "live_controller"
     assert guard._slots["live_controller"] == 1
 
     controller.stop()
@@ -214,7 +216,7 @@ def test_controller_blocks_futures_without_module(mock_messagebox: MagicMock) ->
 
     assert state.running is False
     assert "Dodaj moduł Futures" in str(state.status.get())
-    assert controller._reserved_slot is None
+    assert getattr(controller, "_reserved_slot", None) is None
     mock_messagebox.assert_called()
 
 
@@ -235,5 +237,5 @@ def test_controller_blocks_autotrader_when_disabled(mock_messagebox: MagicMock) 
 
     assert state.running is False
     assert "AutoTrader" in str(state.status.get())
-    assert controller._reserved_slot is None
+    assert getattr(controller, "_reserved_slot", None) is None
     mock_messagebox.assert_called()

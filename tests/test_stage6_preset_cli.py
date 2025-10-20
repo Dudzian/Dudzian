@@ -9,9 +9,9 @@ import sys
 
 import pytest
 import yaml
+from bot_core.cli import preset_editor as preset_editor_cli
+from bot_core.legacy.security_manager import SecurityManager
 from bot_core.security.file_storage import EncryptedFileSecretStorage
-from KryptoLowca.managers.security_manager import SecurityManager
-from KryptoLowca.scripts import preset_editor_cli
 
 
 def _copy_core_config(tmp_path: Path) -> Path:
