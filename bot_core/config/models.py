@@ -742,6 +742,18 @@ class CrossExchangeArbitrageStrategyConfig:
 
 
 @dataclass(slots=True)
+class StrategyDefinitionConfig:
+    """Ogólny opis strategii konfigurowanej w schedulerze."""
+
+    name: str
+    engine: str
+    parameters: Mapping[str, float | int | str | bool]
+    risk_profile: str | None = None
+    tags: Sequence[str] = field(default_factory=tuple)
+    metadata: Mapping[str, object] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class StrategyScheduleConfig:
     """Opis pojedynczego zadania harmonogramu strategii."""
     name: str
@@ -765,6 +777,9 @@ class MultiStrategySchedulerConfig:
     rbac_tokens: Sequence[ServiceTokenConfig] = field(default_factory=tuple)
     portfolio_governor: str | None = None
     portfolio_inputs: "PortfolioRuntimeInputsConfig" | None = None
+    signal_limits: Mapping[str, Mapping[str, int]] = field(default_factory=dict)
+    capital_policy: Mapping[str, Any] | str | None = None
+    allocation_rebalance_seconds: int | None = None
 
 
 @dataclass(slots=True)
@@ -1033,6 +1048,7 @@ class CoreConfig:
     permission_profiles: Mapping[str, PermissionProfileConfig] = field(default_factory=dict)
     instrument_universes: Mapping[str, InstrumentUniverseConfig] = field(default_factory=dict)
     instrument_buckets: Mapping[str, InstrumentBucketConfig] = field(default_factory=dict)
+    strategy_definitions: Mapping[str, StrategyDefinitionConfig] = field(default_factory=dict)
     strategies: Mapping[str, DailyTrendMomentumStrategyConfig] = field(default_factory=dict)
     mean_reversion_strategies: Mapping[str, MeanReversionStrategyConfig] = field(default_factory=dict)
     volatility_target_strategies: Mapping[str, VolatilityTargetingStrategyConfig] = field(default_factory=dict)
@@ -1086,6 +1102,7 @@ __all__ = [
     "InstrumentUniverseConfig",
     "InstrumentBucketConfig",
     "PermissionProfileConfig",
+    "StrategyDefinitionConfig",
     "DailyTrendMomentumStrategyConfig",
     "MeanReversionStrategyConfig",
     "VolatilityTargetingStrategyConfig",

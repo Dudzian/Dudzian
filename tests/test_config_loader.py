@@ -695,6 +695,17 @@ def test_load_core_config_reads_portfolio_inputs(tmp_path: Path) -> None:
                 slo_max_age_minutes: 60
                 stress_lab_report_path: var/audit/stage6/stress_lab_report.json
                 stress_max_age_minutes: 240
+              allocation_rebalance_seconds: 45
+              capital_policy:
+                name: fixed_weight
+                rebalance_seconds: 75
+                weights:
+                  trend_schedule: 0.6
+                  mean_reversion:
+                    balanced: 0.4
+              signal_limits:
+                mean_reversion:
+                  balanced: 3
               schedules: {}
         """,
         encoding="utf-8",
@@ -712,6 +723,14 @@ def test_load_core_config_reads_portfolio_inputs(tmp_path: Path) -> None:
         == "var/audit/stage6/stress_lab_report.json"
     )
     assert scheduler.portfolio_inputs.stress_max_age_minutes == 240
+    assert scheduler.signal_limits == {"mean_reversion": {"balanced": 3}}
+    assert scheduler.allocation_rebalance_seconds == 45
+    assert isinstance(scheduler.capital_policy, Mapping)
+    assert scheduler.capital_policy.get("name") == "fixed_weight"
+    weights_cfg = scheduler.capital_policy.get("weights")
+    assert isinstance(weights_cfg, Mapping)
+    assert weights_cfg.get("trend_schedule") == 0.6
+    assert isinstance(weights_cfg.get("mean_reversion"), Mapping)
 
 
 def test_load_core_config_parses_alert_audit(tmp_path: Path) -> None:

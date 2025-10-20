@@ -10,6 +10,15 @@ from bot_core.strategies.daily_trend import (
     DailyTrendMomentumSettings,
     DailyTrendMomentumStrategy,
 )
+from bot_core.strategies.catalog import (
+    DEFAULT_STRATEGY_CATALOG,
+    StrategyCatalog,
+    StrategyDefinition,
+)
+from bot_core.strategies.cross_exchange_arbitrage import (
+    CrossExchangeArbitrageSettings,
+    CrossExchangeArbitrageStrategy,
+)
 from bot_core.strategies.grid import GridTradingSettings, GridTradingStrategy
 from bot_core.strategies.mean_reversion import MeanReversionSettings, MeanReversionStrategy
 from bot_core.strategies.options import OptionsIncomeSettings, OptionsIncomeStrategy
@@ -22,10 +31,6 @@ from bot_core.strategies.volatility_target import (
     VolatilityTargetSettings,
     VolatilityTargetStrategy,
 )
-from bot_core.strategies.cross_exchange_arbitrage import (
-    CrossExchangeArbitrageSettings,
-    CrossExchangeArbitrageStrategy,
-)
 
 __all__ = [
     "MarketSnapshot",
@@ -34,6 +39,9 @@ __all__ = [
     "WalkForwardOptimizer",
     "DailyTrendMomentumSettings",
     "DailyTrendMomentumStrategy",
+    "StrategyCatalog",
+    "StrategyDefinition",
+    "DEFAULT_STRATEGY_CATALOG",
     "GridTradingSettings",
     "GridTradingStrategy",
     "MeanReversionSettings",
