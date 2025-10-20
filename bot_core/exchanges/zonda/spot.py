@@ -28,6 +28,7 @@ from bot_core.exchanges.errors import (
     ExchangeThrottlingError,
 )
 from bot_core.exchanges.error_mapping import raise_for_zonda_error
+from bot_core.exchanges.health import Watchdog
 from bot_core.exchanges.streaming import LocalLongPollStream
 from bot_core.observability.metrics import MetricsRegistry, get_global_metrics_registry
 
@@ -232,6 +233,7 @@ class ZondaSpotAdapter(ExchangeAdapter):
         "_metric_ticker_spread",
         "_metric_orderbook_levels",
         "_metric_trades_fetched",
+        "_watchdog",
     )
     name: str = "zonda_spot"
 
@@ -242,6 +244,7 @@ class ZondaSpotAdapter(ExchangeAdapter):
         environment: Environment | None = None,
         settings: Mapping[str, object] | None = None,
         metrics_registry: MetricsRegistry | None = None,
+        watchdog: Watchdog | None = None,
     ) -> None:
         super().__init__(credentials)
         self._environment = environment or credentials.environment
@@ -297,6 +300,7 @@ class ZondaSpotAdapter(ExchangeAdapter):
             "zonda_spot_trades_fetched_total",
             "Łączna liczba transakcji pobranych z API Zonda Spot.",
         )
+        self._watchdog = watchdog or Watchdog()
 
     # --- Streaming long-pollowy ---------------------------------------------
 
@@ -804,13 +808,16 @@ class ZondaSpotAdapter(ExchangeAdapter):
             _LOGGER.info("Zonda allowlist IP ustawiony na: %s", self._ip_allowlist)
 
     def fetch_symbols(self) -> Iterable[str]:  # type: ignore[override]
-        response = self._public_request("/trading/ticker")
-        if not isinstance(response, Mapping):
+        def _call() -> Iterable[str]:
+            response = self._public_request("/trading/ticker")
+            if not isinstance(response, Mapping):
+                return []
+            items = response.get("items")
+            if isinstance(items, Mapping):
+                return sorted(str(symbol) for symbol in items.keys())
             return []
-        items = response.get("items")
-        if isinstance(items, Mapping):
-            return sorted(str(symbol) for symbol in items.keys())
-        return []
+
+        return self._watchdog.execute("zonda_spot_fetch_symbols", _call)
 
     def _labels(self, **extra: str) -> Mapping[str, str]:
         labels = dict(self._metric_base_labels)
@@ -825,88 +832,99 @@ class ZondaSpotAdapter(ExchangeAdapter):
         end: Optional[int] = None,
         limit: Optional[int] = None,
     ) -> Sequence[Sequence[float]]:
-        resolution = _normalize_interval(interval)
-        params: dict[str, object] = {}
-        # API Zondy przyjmuje znacznik czasu w sekundach
-        if start is not None:
-            params["from"] = int(start // 1000)
-        if end is not None:
-            params["to"] = int(end // 1000)
-        if limit is not None:
-            params["limit"] = int(limit)
+        def _call() -> Sequence[Sequence[float]]:
+            resolution = _normalize_interval(interval)
+            params: dict[str, object] = {}
+            # API Zondy przyjmuje znacznik czasu w sekundach
+            if start is not None:
+                params["from"] = int(start // 1000)
+            if end is not None:
+                params["to"] = int(end // 1000)
+            if limit is not None:
+                params["limit"] = int(limit)
 
-        path = f"/trading/candle/history/{symbol}/{resolution}"
-        response = self._public_request(path, params=params)
-        if not isinstance(response, Mapping):
-            raise RuntimeError("Niepoprawna odpowiedź świec z Zonda")
-        items = response.get("items")
-        if not isinstance(items, list):
-            return []
+            path = f"/trading/candle/history/{symbol}/{resolution}"
+            response = self._public_request(path, params=params)
+            if not isinstance(response, Mapping):
+                raise RuntimeError("Niepoprawna odpowiedź świec z Zonda")
+            items = response.get("items")
+            if not isinstance(items, list):
+                return []
 
-        candles: list[Sequence[float]] = []
-        for entry in items:
-            if not isinstance(entry, Mapping):
-                continue
-            # Zwracamy ms (spójnie z resztą systemu)
-            timestamp = int(_to_float(entry.get("time"))) * 1000
-            open_price = _to_float(entry.get("open") or entry.get("o"))
-            high_price = _to_float(entry.get("high") or entry.get("h"))
-            low_price = _to_float(entry.get("low") or entry.get("l"))
-            close_price = _to_float(entry.get("close") or entry.get("c"))
-            volume = _to_float(entry.get("volume") or entry.get("v"))
-            candles.append([float(timestamp), open_price, high_price, low_price, close_price, volume])
-        return candles
+            candles: list[Sequence[float]] = []
+            for entry in items:
+                if not isinstance(entry, Mapping):
+                    continue
+                # Zwracamy ms (spójnie z resztą systemu)
+                timestamp = int(_to_float(entry.get("time"))) * 1000
+                open_price = _to_float(entry.get("open") or entry.get("o"))
+                high_price = _to_float(entry.get("high") or entry.get("h"))
+                low_price = _to_float(entry.get("low") or entry.get("l"))
+                close_price = _to_float(entry.get("close") or entry.get("c"))
+                volume = _to_float(entry.get("volume") or entry.get("v"))
+                candles.append([float(timestamp), open_price, high_price, low_price, close_price, volume])
+            return candles
+
+        return self._watchdog.execute("zonda_spot_fetch_ohlcv", _call)
 
     def fetch_account_snapshot(self) -> AccountSnapshot:  # type: ignore[override]
         if "read" not in self._permission_set and "trade" not in self._permission_set:
             raise PermissionError("Poświadczenia Zonda nie mają uprawnień do odczytu sald.")
 
-        response = self._signed_request("POST", "/trading/balance")
-        if not isinstance(response, Mapping):
-            raise RuntimeError("Niepoprawna odpowiedź balansu z Zonda")
+        def _call() -> AccountSnapshot:
+            response = self._signed_request("POST", "/trading/balance")
+            if not isinstance(response, Mapping):
+                raise RuntimeError("Niepoprawna odpowiedź balansu z Zonda")
 
-        balances_section = response.get("balances", [])
-        balances: dict[str, float] = {}
-        free_balances: dict[str, float] = {}
-        if isinstance(balances_section, list):
-            for entry in balances_section:
-                if not isinstance(entry, Mapping):
-                    continue
-                currency = entry.get("currency") or entry.get("code")
-                available = _to_float(entry.get("available"))
-                locked = _to_float(entry.get("locked") or entry.get("reserved"))
-                if not isinstance(currency, str):
-                    continue
-                asset = currency.strip().upper()
-                if not asset:
-                    continue
-                total_balance = available + locked
-                balances[asset] = total_balance
-                free_balances[asset] = available
+            balances_section = response.get("balances", [])
+            balances: dict[str, float] = {}
+            free_balances: dict[str, float] = {}
+            if isinstance(balances_section, list):
+                for entry in balances_section:
+                    if not isinstance(entry, Mapping):
+                        continue
+                    currency = entry.get("currency") or entry.get("code")
+                    available = _to_float(entry.get("available"))
+                    locked = _to_float(entry.get("locked") or entry.get("reserved"))
+                    if not isinstance(currency, str):
+                        continue
+                    asset = currency.strip().upper()
+                    if not asset:
+                        continue
+                    total_balance = available + locked
+                    balances[asset] = total_balance
+                    free_balances[asset] = available
 
-        prices = self._fetch_price_map()
-        valuation_currency = self._valuation_asset
-        intermediaries = self._secondary_valuation_assets
-        total_equity = 0.0
-        available_margin = 0.0
-        for asset, total_balance in balances.items():
-            conversion = _convert_with_intermediaries(asset, valuation_currency, prices, intermediaries)
-            if conversion is None:
-                _LOGGER.debug(
-                    "Pomijam aktywo %s – brak kursu do %s w danych ticker.",
+            prices = self._fetch_price_map()
+            valuation_currency = self._valuation_asset
+            intermediaries = self._secondary_valuation_assets
+            total_equity = 0.0
+            available_margin = 0.0
+            for asset, total_balance in balances.items():
+                conversion = _convert_with_intermediaries(
                     asset,
                     valuation_currency,
+                    prices,
+                    intermediaries,
                 )
-                continue
-            total_equity += total_balance * conversion
-            available_margin += free_balances.get(asset, 0.0) * conversion
+                if conversion is None:
+                    _LOGGER.debug(
+                        "Pomijam aktywo %s – brak kursu do %s w danych ticker.",
+                        asset,
+                        valuation_currency,
+                    )
+                    continue
+                total_equity += total_balance * conversion
+                available_margin += free_balances.get(asset, 0.0) * conversion
 
-        return AccountSnapshot(
-            balances=balances,
-            total_equity=total_equity,
-            available_margin=available_margin,
-            maintenance_margin=0.0,
-        )
+            return AccountSnapshot(
+                balances=balances,
+                total_equity=total_equity,
+                available_margin=available_margin,
+                maintenance_margin=0.0,
+            )
+
+        return self._watchdog.execute("zonda_spot_fetch_account", _call)
 
     def _parse_order_payload(self, response: Mapping[str, object]) -> _OrderPayload:
         order_payload: Mapping[str, object]
@@ -943,122 +961,129 @@ class ZondaSpotAdapter(ExchangeAdapter):
         if "trade" not in self._permission_set:
             raise PermissionError("Poświadczenia Zonda nie mają uprawnień tradingowych.")
 
-        payload: dict[str, object] = {
-            "market": request.symbol,
-            "side": request.side.lower(),
-            "type": request.order_type.lower(),
-            "amount": str(request.quantity),
-        }
-        if request.price is not None:
-            payload["price"] = str(request.price)
-        if request.time_in_force:
-            payload["timeInForce"] = request.time_in_force
-        if request.client_order_id:
-            payload["clientOrderId"] = request.client_order_id
+        def _call() -> OrderResult:
+            payload: dict[str, object] = {
+                "market": request.symbol,
+                "side": request.side.lower(),
+                "type": request.order_type.lower(),
+                "amount": str(request.quantity),
+            }
+            if request.price is not None:
+                payload["price"] = str(request.price)
+            if request.time_in_force:
+                payload["timeInForce"] = request.time_in_force
+            if request.client_order_id:
+                payload["clientOrderId"] = request.client_order_id
 
-        response = self._signed_request("POST", "/trading/offer", data=payload)
-        if not isinstance(response, Mapping):
-            raise RuntimeError("Niepoprawna odpowiedź zlecenia z Zonda")
-        order = self._parse_order_payload(response)
-        return OrderResult(
-            order_id=order.order_id,
-            status=order.status,
-            filled_quantity=order.filled_quantity,
-            avg_price=order.avg_price,
-            raw_response=dict(response),
-        )
+            response = self._signed_request("POST", "/trading/offer", data=payload)
+            if not isinstance(response, Mapping):
+                raise RuntimeError("Niepoprawna odpowiedź zlecenia z Zonda")
+            order = self._parse_order_payload(response)
+            return OrderResult(
+                order_id=order.order_id,
+                status=order.status,
+                filled_quantity=order.filled_quantity,
+                avg_price=order.avg_price,
+                raw_response=dict(response),
+            )
+
+        return self._watchdog.execute("zonda_spot_place_order", _call)
 
     def cancel_order(self, order_id: str, *, symbol: Optional[str] = None) -> None:  # type: ignore[override]
-        del symbol  # Zonda nie wymaga symbolu do anulowania
-        response = self._signed_request("DELETE", f"/trading/order/{order_id}")
-        if isinstance(response, Mapping):
-            order = self._parse_order_payload(response)
-            if order.status in {"CANCELLED", "CANCELED", "REJECTED"}:
-                return
-        raise RuntimeError(f"Nieoczekiwana odpowiedź anulowania Zonda: {response}")
+        def _call() -> None:
+            response = self._signed_request("DELETE", f"/trading/order/{order_id}")
+            if isinstance(response, Mapping):
+                order = self._parse_order_payload(response)
+                if order.status in {"CANCELLED", "CANCELED", "REJECTED"}:
+                    return
+            raise RuntimeError(f"Nieoczekiwana odpowiedź anulowania Zonda: {response}")
+
+        self._watchdog.execute("zonda_spot_cancel_order", _call)
 
     def fetch_ticker(self, symbol: str) -> ZondaTicker:
         """Pobiera ticker oraz aktualizuje metryki top-of-book."""
+        def _call() -> ZondaTicker:
+            payload = self._public_request("/trading/ticker")
+            if not isinstance(payload, Mapping):
+                raise ExchangeAPIError(
+                    "Zonda nie zwróciła poprawnej odpowiedzi tickera.",
+                    400,
+                    payload=payload,
+                )
 
-        payload = self._public_request("/trading/ticker")
-        if not isinstance(payload, Mapping):
-            raise ExchangeAPIError(
-                "Zonda nie zwróciła poprawnej odpowiedzi tickera.",
-                400,
-                payload=payload,
+            items = payload.get("items") if isinstance(payload, Mapping) else None
+            entry: Mapping[str, object] | None = None
+            if isinstance(items, Mapping):
+                raw_entry = items.get(symbol)
+                if isinstance(raw_entry, Mapping):
+                    entry = raw_entry  # type: ignore[assignment]
+            if entry is None:
+                raise ExchangeAPIError(
+                    f"Ticker dla symbolu {symbol} nie został znaleziony.",
+                    404,
+                    payload=payload,
+                )
+
+            ticker_section = entry.get("ticker") if isinstance(entry.get("ticker"), Mapping) else entry
+            best_bid = _to_float(
+                ticker_section.get("highestBid")
+                or ticker_section.get("bid")
+                or ticker_section.get("bestBid")
+            )
+            best_ask = _to_float(
+                ticker_section.get("lowestAsk")
+                or ticker_section.get("ask")
+                or ticker_section.get("bestAsk")
+            )
+            last_price = _to_float(
+                ticker_section.get("rate")
+                or ticker_section.get("last")
+                or ticker_section.get("lastPrice")
+            )
+            volume_24h = _to_float(
+                ticker_section.get("volume")
+                or ticker_section.get("volume24h")
+                or ticker_section.get("24hVolume")
+            )
+            high_24h = _to_float(
+                ticker_section.get("max")
+                or ticker_section.get("high")
+                or ticker_section.get("highestPrice")
+            )
+            low_24h = _to_float(
+                ticker_section.get("min")
+                or ticker_section.get("low")
+                or ticker_section.get("lowestPrice")
+            )
+            vwap_24h = _to_float(
+                ticker_section.get("vwap")
+                or ticker_section.get("average")
+                or ticker_section.get("averagePrice")
+            )
+            timestamp_raw = entry.get("time") or ticker_section.get("time") or time.time()
+            timestamp = _to_float(timestamp_raw, default=time.time())
+            if timestamp > 10_000_000_000:  # wartości w ms -> konwersja na sekundy
+                timestamp /= 1000.0
+
+            ticker = ZondaTicker(
+                symbol=symbol,
+                best_bid=best_bid,
+                best_ask=best_ask,
+                last_price=last_price,
+                volume_24h=volume_24h,
+                high_24h=high_24h,
+                low_24h=low_24h,
+                vwap_24h=vwap_24h,
+                timestamp=timestamp,
             )
 
-        items = payload.get("items") if isinstance(payload, Mapping) else None
-        entry: Mapping[str, object] | None = None
-        if isinstance(items, Mapping):
-            raw_entry = items.get(symbol)
-            if isinstance(raw_entry, Mapping):
-                entry = raw_entry  # type: ignore[assignment]
-        if entry is None:
-            raise ExchangeAPIError(
-                f"Ticker dla symbolu {symbol} nie został znaleziony.",
-                404,
-                payload=payload,
-            )
+            labels = self._labels(symbol=symbol)
+            self._metric_ticker_last_price.set(ticker.last_price, labels=labels)
+            spread = max(ticker.best_ask - ticker.best_bid, 0.0) if (ticker.best_ask and ticker.best_bid) else 0.0
+            self._metric_ticker_spread.set(spread, labels=labels)
+            return ticker
 
-        ticker_section = entry.get("ticker") if isinstance(entry.get("ticker"), Mapping) else entry
-        best_bid = _to_float(
-            ticker_section.get("highestBid")
-            or ticker_section.get("bid")
-            or ticker_section.get("bestBid")
-        )
-        best_ask = _to_float(
-            ticker_section.get("lowestAsk")
-            or ticker_section.get("ask")
-            or ticker_section.get("bestAsk")
-        )
-        last_price = _to_float(
-            ticker_section.get("rate")
-            or ticker_section.get("last")
-            or ticker_section.get("lastPrice")
-        )
-        volume_24h = _to_float(
-            ticker_section.get("volume")
-            or ticker_section.get("volume24h")
-            or ticker_section.get("24hVolume")
-        )
-        high_24h = _to_float(
-            ticker_section.get("max")
-            or ticker_section.get("high")
-            or ticker_section.get("highestPrice")
-        )
-        low_24h = _to_float(
-            ticker_section.get("min")
-            or ticker_section.get("low")
-            or ticker_section.get("lowestPrice")
-        )
-        vwap_24h = _to_float(
-            ticker_section.get("vwap")
-            or ticker_section.get("average")
-            or ticker_section.get("averagePrice")
-        )
-        timestamp_raw = entry.get("time") or ticker_section.get("time") or time.time()
-        timestamp = _to_float(timestamp_raw, default=time.time())
-        if timestamp > 10_000_000_000:  # wartości w ms -> konwersja na sekundy
-            timestamp /= 1000.0
-
-        ticker = ZondaTicker(
-            symbol=symbol,
-            best_bid=best_bid,
-            best_ask=best_ask,
-            last_price=last_price,
-            volume_24h=volume_24h,
-            high_24h=high_24h,
-            low_24h=low_24h,
-            vwap_24h=vwap_24h,
-            timestamp=timestamp,
-        )
-
-        labels = self._labels(symbol=symbol)
-        self._metric_ticker_last_price.set(ticker.last_price, labels=labels)
-        spread = max(ticker.best_ask - ticker.best_bid, 0.0) if (ticker.best_ask and ticker.best_bid) else 0.0
-        self._metric_ticker_spread.set(spread, labels=labels)
-        return ticker
+        return self._watchdog.execute("zonda_spot_fetch_ticker", _call)
 
     def fetch_order_book(self, symbol: str, *, depth: int = 50) -> ZondaOrderBook:
         """Pobiera orderbook ograniczony do wskazanej głębokości."""
@@ -1066,45 +1091,48 @@ class ZondaSpotAdapter(ExchangeAdapter):
         if depth <= 0:
             raise ValueError("Parametr depth musi być dodatni.")
 
-        payload = self._public_request(f"/trading/orderbook-limited/{symbol}/{int(depth)}")
-        if not isinstance(payload, Mapping):
-            raise ExchangeAPIError(
-                "Zonda nie zwróciła poprawnej struktury orderbooka.",
-                400,
-                payload=payload,
-            )
+        def _call() -> ZondaOrderBook:
+            payload = self._public_request(f"/trading/orderbook-limited/{symbol}/{int(depth)}")
+            if not isinstance(payload, Mapping):
+                raise ExchangeAPIError(
+                    "Zonda nie zwróciła poprawnej struktury orderbooka.",
+                    400,
+                    payload=payload,
+                )
 
-        raw_buy = payload.get("buy")
-        raw_sell = payload.get("sell")
+            raw_buy = payload.get("buy")
+            raw_sell = payload.get("sell")
 
-        def _parse_levels(entries: object) -> list[ZondaOrderBookLevel]:
-            levels: list[ZondaOrderBookLevel] = []
-            if isinstance(entries, Sequence):
-                for record in entries:
-                    if isinstance(record, Mapping):
-                        price = _to_float(record.get("ra") or record.get("price") or record.get("r"))
-                        quantity = _to_float(record.get("ca") or record.get("amount") or record.get("q"))
-                    elif isinstance(record, Sequence) and len(record) >= 2:
-                        price = _to_float(record[0])
-                        quantity = _to_float(record[1])
-                    else:
-                        continue
-                    if price <= 0 or quantity <= 0:
-                        continue
-                    levels.append(ZondaOrderBookLevel(price=price, quantity=quantity))
-            return levels
+            def _parse_levels(entries: object) -> list[ZondaOrderBookLevel]:
+                levels: list[ZondaOrderBookLevel] = []
+                if isinstance(entries, Sequence):
+                    for record in entries:
+                        if isinstance(record, Mapping):
+                            price = _to_float(record.get("ra") or record.get("price") or record.get("r"))
+                            quantity = _to_float(record.get("ca") or record.get("amount") or record.get("q"))
+                        elif isinstance(record, Sequence) and len(record) >= 2:
+                            price = _to_float(record[0])
+                            quantity = _to_float(record[1])
+                        else:
+                            continue
+                        if price <= 0 or quantity <= 0:
+                            continue
+                        levels.append(ZondaOrderBookLevel(price=price, quantity=quantity))
+                return levels
 
-        bids = _parse_levels(raw_buy)
-        asks = _parse_levels(raw_sell)
-        timestamp_raw = payload.get("time") or payload.get("timestamp") or time.time()
-        timestamp = _to_float(timestamp_raw, default=time.time())
-        if timestamp > 10_000_000_000:
-            timestamp /= 1000.0
+            bids = _parse_levels(raw_buy)
+            asks = _parse_levels(raw_sell)
+            timestamp_raw = payload.get("time") or payload.get("timestamp") or time.time()
+            timestamp = _to_float(timestamp_raw, default=time.time())
+            if timestamp > 10_000_000_000:
+                timestamp /= 1000.0
 
-        orderbook = ZondaOrderBook(symbol=symbol, bids=bids, asks=asks, timestamp=timestamp)
-        labels = self._labels(symbol=symbol)
-        self._metric_orderbook_levels.set(len(bids) + len(asks), labels=labels)
-        return orderbook
+            orderbook = ZondaOrderBook(symbol=symbol, bids=bids, asks=asks, timestamp=timestamp)
+            labels = self._labels(symbol=symbol)
+            self._metric_orderbook_levels.set(len(bids) + len(asks), labels=labels)
+            return orderbook
+
+        return self._watchdog.execute("zonda_spot_fetch_order_book", _call)
 
     def fetch_recent_trades(self, symbol: str, *, limit: int = 50) -> Sequence[ZondaTrade]:
         """Pobiera ostatnie transakcje dla wskazanego symbolu."""
@@ -1112,69 +1140,72 @@ class ZondaSpotAdapter(ExchangeAdapter):
         if limit <= 0:
             raise ValueError("Parametr limit musi być dodatni.")
 
-        payload = self._public_request(
-            f"/trading/transactions/{symbol}",
-            params={"limit": int(limit)},
-        )
-        if isinstance(payload, Mapping):
-            maybe_items = payload.get("items") or payload.get("transactions")
-            items = maybe_items if isinstance(maybe_items, Sequence) else []
-        elif isinstance(payload, Sequence):
-            items = payload
-        else:
-            raise ExchangeAPIError(
-                "Zonda nie zwróciła poprawnej listy transakcji.",
-                400,
-                payload=payload,
+        def _call() -> Sequence[ZondaTrade]:
+            payload = self._public_request(
+                f"/trading/transactions/{symbol}",
+                params={"limit": int(limit)},
             )
-
-        trades: list[ZondaTrade] = []
-        for record in items:
-            if isinstance(record, Mapping):
-                trade_id = str(
-                    record.get("id")
-                    or record.get("tid")
-                    or record.get("transactionId")
-                    or ""
-                )
-                price = _to_float(record.get("rate") or record.get("price"))
-                quantity = _to_float(record.get("amount") or record.get("quantity"))
-                side_raw = str(record.get("side") or record.get("type") or record.get("direction") or "")
-                side = side_raw.lower() if side_raw else "unknown"
-                timestamp_raw = record.get("time") or record.get("timestamp") or 0
-                timestamp = _to_float(timestamp_raw)
-                if timestamp > 10_000_000_000:
-                    timestamp /= 1000.0
-                trades.append(
-                    ZondaTrade(
-                        trade_id=trade_id,
-                        price=price,
-                        quantity=quantity,
-                        side=side,
-                        timestamp=timestamp,
-                    )
-                )
-            elif isinstance(record, Sequence) and len(record) >= 4:
-                trade_id = str(record[0])
-                price = _to_float(record[1])
-                quantity = _to_float(record[2])
-                side = str(record[3]).lower()
-                timestamp = _to_float(record[4] if len(record) > 4 else 0)
-                if timestamp > 10_000_000_000:
-                    timestamp /= 1000.0
-                trades.append(
-                    ZondaTrade(
-                        trade_id=trade_id,
-                        price=price,
-                        quantity=quantity,
-                        side=side,
-                        timestamp=timestamp,
-                    )
+            if isinstance(payload, Mapping):
+                maybe_items = payload.get("items") or payload.get("transactions")
+                items = maybe_items if isinstance(maybe_items, Sequence) else []
+            elif isinstance(payload, Sequence):
+                items = payload
+            else:
+                raise ExchangeAPIError(
+                    "Zonda nie zwróciła poprawnej listy transakcji.",
+                    400,
+                    payload=payload,
                 )
 
-        labels = self._labels(symbol=symbol)
-        self._metric_trades_fetched.inc(amount=float(len(trades)), labels=labels)
-        return trades
+            trades: list[ZondaTrade] = []
+            for record in items:
+                if isinstance(record, Mapping):
+                    trade_id = str(
+                        record.get("id")
+                        or record.get("tid")
+                        or record.get("transactionId")
+                        or ""
+                    )
+                    price = _to_float(record.get("rate") or record.get("price"))
+                    quantity = _to_float(record.get("amount") or record.get("quantity"))
+                    side_raw = str(record.get("side") or record.get("type") or record.get("direction") or "")
+                    side = side_raw.lower() if side_raw else "unknown"
+                    timestamp_raw = record.get("time") or record.get("timestamp") or 0
+                    timestamp = _to_float(timestamp_raw)
+                    if timestamp > 10_000_000_000:
+                        timestamp /= 1000.0
+                    trades.append(
+                        ZondaTrade(
+                            trade_id=trade_id,
+                            price=price,
+                            quantity=quantity,
+                            side=side,
+                            timestamp=timestamp,
+                        )
+                    )
+                elif isinstance(record, Sequence) and len(record) >= 4:
+                    trade_id = str(record[0])
+                    price = _to_float(record[1])
+                    quantity = _to_float(record[2])
+                    side = str(record[3]).lower()
+                    timestamp = _to_float(record[4] if len(record) > 4 else 0)
+                    if timestamp > 10_000_000_000:
+                        timestamp /= 1000.0
+                    trades.append(
+                        ZondaTrade(
+                            trade_id=trade_id,
+                            price=price,
+                            quantity=quantity,
+                            side=side,
+                            timestamp=timestamp,
+                        )
+                    )
+
+            labels = self._labels(symbol=symbol)
+            self._metric_trades_fetched.inc(amount=float(len(trades)), labels=labels)
+            return trades
+
+        return self._watchdog.execute("zonda_spot_fetch_recent_trades", _call)
 
     def stream_public_data(self, *, channels: Sequence[str]):  # type: ignore[override]
         return self._build_stream("public", channels)

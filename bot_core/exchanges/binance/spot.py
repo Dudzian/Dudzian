@@ -39,6 +39,7 @@ from bot_core.exchanges.errors import (
     ExchangeThrottlingError,
 )
 from bot_core.exchanges.error_mapping import raise_for_binance_error
+from bot_core.exchanges.health import Watchdog
 from bot_core.exchanges.streaming import LocalLongPollStream
 from bot_core.observability.metrics import MetricsRegistry, get_global_metrics_registry
 
@@ -195,6 +196,7 @@ class BinanceSpotAdapter(ExchangeAdapter):
         "_metric_retries",
         "_metric_signed_requests",
         "_metric_weight",
+        "_watchdog",
     )
 
     name: str = "binance_spot"
@@ -206,6 +208,7 @@ class BinanceSpotAdapter(ExchangeAdapter):
         environment: Environment | None = None,
         settings: Mapping[str, object] | None = None,
         metrics_registry: MetricsRegistry | None = None,
+        watchdog: Watchdog | None = None,
     ) -> None:
         super().__init__(credentials)
         self._environment = environment or credentials.environment
@@ -238,6 +241,7 @@ class BinanceSpotAdapter(ExchangeAdapter):
             "binance_spot_used_weight",
             "Ostatnie wartości nagłówków X-MBX-USED-WEIGHT od Binance Spot.",
         )
+        self._watchdog = watchdog or Watchdog()
 
     # ----------------------------------------------------------------------------------
     # Konfiguracja streamingu long-pollowego
@@ -709,88 +713,94 @@ class BinanceSpotAdapter(ExchangeAdapter):
         if not ({"read", "trade"} & self._permission_set):
             raise PermissionError("Poświadczenia nie pozwalają na odczyt danych konta Binance.")
 
-        payload = self._signed_request("/api/v3/account")
-        if not isinstance(payload, dict):
-            raise RuntimeError("Niepoprawna odpowiedź konta z Binance")
+        def _call() -> AccountSnapshot:
+            payload = self._signed_request("/api/v3/account")
+            if not isinstance(payload, dict):
+                raise RuntimeError("Niepoprawna odpowiedź konta z Binance")
 
-        balances_section = payload.get("balances", [])
-        balances: dict[str, float] = {}
-        free_balances: dict[str, float] = {}
-        if isinstance(balances_section, list):
-            for entry in balances_section:
-                if not isinstance(entry, Mapping):
-                    continue
-                asset = entry.get("asset")
-                free = _to_float(entry.get("free", 0.0))
-                locked = _to_float(entry.get("locked", 0.0))
-                if not isinstance(asset, str):
-                    continue
-                balances[asset] = free + locked
-                free_balances[asset] = free
-
-        ticker_payload = self._public_request("/api/v3/ticker/price")
-        prices: dict[str, float] = {}
-        if isinstance(ticker_payload, list):
-            for entry in ticker_payload:
-                if not isinstance(entry, Mapping):
-                    continue
-                symbol = entry.get("symbol")
-                price = _to_float(entry.get("price", 0.0))
-                if isinstance(symbol, str):
-                    prices[symbol] = price
-
-        valuation_currency = self._valuation_asset
-        secondary_currencies = self._secondary_valuation_assets or ("USDX",)
-        total_equity = 0.0
-        available_margin = 0.0
-        for asset, total_balance in balances.items():
-            conversion = _convert_to_target(asset, valuation_currency, prices)
-            if conversion is None:
-                for secondary in secondary_currencies:
-                    first_leg = _convert_to_target(asset, secondary, prices)
-                    if first_leg is None:
+            balances_section = payload.get("balances", [])
+            balances: dict[str, float] = {}
+            free_balances: dict[str, float] = {}
+            if isinstance(balances_section, list):
+                for entry in balances_section:
+                    if not isinstance(entry, Mapping):
                         continue
-                    second_leg = _convert_to_target(secondary, valuation_currency, prices)
-                    if second_leg is None:
+                    asset = entry.get("asset")
+                    free = _to_float(entry.get("free", 0.0))
+                    locked = _to_float(entry.get("locked", 0.0))
+                    if not isinstance(asset, str):
                         continue
-                    conversion = first_leg * second_leg
-                    break
-            if conversion is None:
-                continue
-            total_equity += total_balance * conversion
-            available_margin += free_balances.get(asset, 0.0) * conversion
+                    balances[asset] = free + locked
+                    free_balances[asset] = free
 
-        maintenance_margin = _to_float(
-            payload.get("maintMarginBalance", payload.get("totalMarginBalance", 0.0))
-        )
+            ticker_payload = self._public_request("/api/v3/ticker/price")
+            prices: dict[str, float] = {}
+            if isinstance(ticker_payload, list):
+                for entry in ticker_payload:
+                    if not isinstance(entry, Mapping):
+                        continue
+                    symbol = entry.get("symbol")
+                    price = _to_float(entry.get("price", 0.0))
+                    if isinstance(symbol, str):
+                        prices[symbol] = price
 
-        return AccountSnapshot(
-            balances=balances,
-            total_equity=total_equity,
-            available_margin=available_margin,
-            maintenance_margin=maintenance_margin,
-        )
+            valuation_currency = self._valuation_asset
+            secondary_currencies = self._secondary_valuation_assets or ("USDX",)
+            total_equity = 0.0
+            available_margin = 0.0
+            for asset, total_balance in balances.items():
+                conversion = _convert_to_target(asset, valuation_currency, prices)
+                if conversion is None:
+                    for secondary in secondary_currencies:
+                        first_leg = _convert_to_target(asset, secondary, prices)
+                        if first_leg is None:
+                            continue
+                        second_leg = _convert_to_target(secondary, valuation_currency, prices)
+                        if second_leg is None:
+                            continue
+                        conversion = first_leg * second_leg
+                        break
+                if conversion is None:
+                    continue
+                total_equity += total_balance * conversion
+                available_margin += free_balances.get(asset, 0.0) * conversion
+
+            maintenance_margin = _to_float(
+                payload.get("maintMarginBalance", payload.get("totalMarginBalance", 0.0))
+            )
+
+            return AccountSnapshot(
+                balances=balances,
+                total_equity=total_equity,
+                available_margin=available_margin,
+                maintenance_margin=maintenance_margin,
+            )
+
+        return self._watchdog.execute("binance_spot_fetch_account", _call)
 
     def fetch_symbols(self) -> Iterable[str]:
         """Pobiera listę aktywnych symboli spot z Binance."""
-        payload = self._public_request("/api/v3/exchangeInfo")
-        if not isinstance(payload, dict) or "symbols" not in payload:
-            raise RuntimeError("Niepoprawna odpowiedź exchangeInfo z Binance")
+        def _call() -> Iterable[str]:
+            payload = self._public_request("/api/v3/exchangeInfo")
+            if not isinstance(payload, dict) or "symbols" not in payload:
+                raise RuntimeError("Niepoprawna odpowiedź exchangeInfo z Binance")
 
-        symbols_section = payload.get("symbols")
-        if not isinstance(symbols_section, list):
-            raise RuntimeError("Pole 'symbols' w odpowiedzi Binance ma niepoprawny format")
+            symbols_section = payload.get("symbols")
+            if not isinstance(symbols_section, list):
+                raise RuntimeError("Pole 'symbols' w odpowiedzi Binance ma niepoprawny format")
 
-        raw_symbols: list[str] = []
-        for entry in symbols_section:
-            if not isinstance(entry, dict):
-                continue
-            status = entry.get("status")
-            symbol = entry.get("symbol")
-            if status != "TRADING" or not isinstance(symbol, str):
-                continue
-            raw_symbols.append(symbol)
-        return filter_supported_exchange_symbols(raw_symbols)
+            raw_symbols: list[str] = []
+            for entry in symbols_section:
+                if not isinstance(entry, dict):
+                    continue
+                status = entry.get("status")
+                symbol = entry.get("symbol")
+                if status != "TRADING" or not isinstance(symbol, str):
+                    continue
+                raw_symbols.append(symbol)
+            return filter_supported_exchange_symbols(raw_symbols)
+
+        return self._watchdog.execute("binance_spot_fetch_symbols", _call)
 
     def fetch_ohlcv(
         self,
@@ -813,22 +823,25 @@ class BinanceSpotAdapter(ExchangeAdapter):
         if limit is not None:
             params["limit"] = int(limit)
 
-        payload = self._public_request("/api/v3/klines", params=params)
-        if not isinstance(payload, list):
-            raise RuntimeError("Odpowiedź klines z Binance ma nieoczekiwany format")
+        def _call() -> Sequence[Sequence[float]]:
+            payload = self._public_request("/api/v3/klines", params=params)
+            if not isinstance(payload, list):
+                raise RuntimeError("Odpowiedź klines z Binance ma nieoczekiwany format")
 
-        candles: list[Sequence[float]] = []
-        for entry in payload:
-            if not isinstance(entry, list) or len(entry) < 6:
-                continue
-            open_time = float(entry[0])
-            open_price = float(entry[1])
-            high = float(entry[2])
-            low = float(entry[3])
-            close = float(entry[4])
-            volume = float(entry[5])
-            candles.append([open_time, open_price, high, low, close, volume])
-        return candles
+            candles: list[Sequence[float]] = []
+            for entry in payload:
+                if not isinstance(entry, list) or len(entry) < 6:
+                    continue
+                open_time = float(entry[0])
+                open_price = float(entry[1])
+                high = float(entry[2])
+                low = float(entry[3])
+                close = float(entry[4])
+                volume = float(entry[5])
+                candles.append([open_time, open_price, high, low, close, volume])
+            return candles
+
+        return self._watchdog.execute("binance_spot_fetch_ohlcv", _call)
 
     def _resolve_symbol(self, symbol: str) -> tuple[str, str]:
         """Zwraca parę (symbol_binance, symbol_kanoniczny)."""
@@ -849,37 +862,40 @@ class BinanceSpotAdapter(ExchangeAdapter):
 
         exchange_symbol, canonical_symbol = self._resolve_symbol(symbol)
 
-        payload = self._public_request("/api/v3/ticker/24hr", params={"symbol": exchange_symbol})
-        if not isinstance(payload, Mapping):
-            raise ExchangeAPIError(
-                "Binance Spot zwrócił niepoprawną strukturę tickera.",
-                400,
-                payload=payload,
-            )
-        best_bid = _to_float(payload.get("bidPrice"))
-        best_ask = _to_float(payload.get("askPrice"))
-        last_price = _to_float(payload.get("lastPrice"))
-        price_change_percent = _to_float(payload.get("priceChangePercent"))
-        open_price = _to_float(payload.get("openPrice"))
-        high_24h = _to_float(payload.get("highPrice"))
-        low_24h = _to_float(payload.get("lowPrice"))
-        volume_base = _to_float(payload.get("volume"))
-        volume_quote = _to_float(payload.get("quoteVolume"))
-        timestamp = _timestamp_ms_to_seconds(payload.get("closeTime"), fallback=time.time())
+        def _call() -> BinanceTicker:
+            payload = self._public_request("/api/v3/ticker/24hr", params={"symbol": exchange_symbol})
+            if not isinstance(payload, Mapping):
+                raise ExchangeAPIError(
+                    "Binance Spot zwrócił niepoprawną strukturę tickera.",
+                    400,
+                    payload=payload,
+                )
+            best_bid = _to_float(payload.get("bidPrice"))
+            best_ask = _to_float(payload.get("askPrice"))
+            last_price = _to_float(payload.get("lastPrice"))
+            price_change_percent = _to_float(payload.get("priceChangePercent"))
+            open_price = _to_float(payload.get("openPrice"))
+            high_24h = _to_float(payload.get("highPrice"))
+            low_24h = _to_float(payload.get("lowPrice"))
+            volume_base = _to_float(payload.get("volume"))
+            volume_quote = _to_float(payload.get("quoteVolume"))
+            timestamp = _timestamp_ms_to_seconds(payload.get("closeTime"), fallback=time.time())
 
-        return BinanceTicker(
-            symbol=canonical_symbol,
-            best_bid=best_bid,
-            best_ask=best_ask,
-            last_price=last_price,
-            price_change_percent=price_change_percent,
-            open_price=open_price,
-            high_24h=high_24h,
-            low_24h=low_24h,
-            volume_24h_base=volume_base,
-            volume_24h_quote=volume_quote,
-            timestamp=timestamp,
-        )
+            return BinanceTicker(
+                symbol=canonical_symbol,
+                best_bid=best_bid,
+                best_ask=best_ask,
+                last_price=last_price,
+                price_change_percent=price_change_percent,
+                open_price=open_price,
+                high_24h=high_24h,
+                low_24h=low_24h,
+                volume_24h_base=volume_base,
+                volume_24h_quote=volume_quote,
+                timestamp=timestamp,
+            )
+
+        return self._watchdog.execute("binance_spot_fetch_ticker", _call)
 
     def fetch_order_book(self, symbol: str, *, depth: int = 50) -> BinanceOrderBook:
         """Pobiera orderbook (bids/asks) ograniczony do wskazanej głębokości."""
@@ -888,52 +904,55 @@ class BinanceSpotAdapter(ExchangeAdapter):
 
         normalized_depth = _normalize_depth(depth)
         params = {"symbol": exchange_symbol, "limit": normalized_depth}
-        payload = self._public_request("/api/v3/depth", params=params)
-        if not isinstance(payload, Mapping):
-            raise ExchangeAPIError(
-                "Binance Spot zwrócił niepoprawną strukturę orderbooka.",
-                400,
-                payload=payload,
+        def _call() -> BinanceOrderBook:
+            payload = self._public_request("/api/v3/depth", params=params)
+            if not isinstance(payload, Mapping):
+                raise ExchangeAPIError(
+                    "Binance Spot zwrócił niepoprawną strukturę orderbooka.",
+                    400,
+                    payload=payload,
+                )
+
+            bids_raw = payload.get("bids")
+            asks_raw = payload.get("asks")
+            bids: list[BinanceOrderBookLevel] = []
+            if isinstance(bids_raw, Sequence):
+                for entry in bids_raw:
+                    if not isinstance(entry, Sequence) or len(entry) < 2:
+                        continue
+                    price = _to_float(entry[0])
+                    quantity = _to_float(entry[1])
+                    if price <= 0 or quantity <= 0:
+                        continue
+                    bids.append(BinanceOrderBookLevel(price=price, quantity=quantity))
+
+            asks: list[BinanceOrderBookLevel] = []
+            if isinstance(asks_raw, Sequence):
+                for entry in asks_raw:
+                    if not isinstance(entry, Sequence) or len(entry) < 2:
+                        continue
+                    price = _to_float(entry[0])
+                    quantity = _to_float(entry[1])
+                    if price <= 0 or quantity <= 0:
+                        continue
+                    asks.append(BinanceOrderBookLevel(price=price, quantity=quantity))
+
+            try:
+                last_update_id = int(payload.get("lastUpdateId", 0))
+            except (TypeError, ValueError):
+                last_update_id = 0
+            timestamp = _timestamp_ms_to_seconds(payload.get("E"), fallback=time.time())
+
+            return BinanceOrderBook(
+                symbol=canonical_symbol,
+                bids=tuple(bids),
+                asks=tuple(asks),
+                depth=normalized_depth,
+                last_update_id=last_update_id,
+                timestamp=timestamp,
             )
 
-        bids_raw = payload.get("bids")
-        asks_raw = payload.get("asks")
-        bids: list[BinanceOrderBookLevel] = []
-        if isinstance(bids_raw, Sequence):
-            for entry in bids_raw:
-                if not isinstance(entry, Sequence) or len(entry) < 2:
-                    continue
-                price = _to_float(entry[0])
-                quantity = _to_float(entry[1])
-                if price <= 0 or quantity <= 0:
-                    continue
-                bids.append(BinanceOrderBookLevel(price=price, quantity=quantity))
-
-        asks: list[BinanceOrderBookLevel] = []
-        if isinstance(asks_raw, Sequence):
-            for entry in asks_raw:
-                if not isinstance(entry, Sequence) or len(entry) < 2:
-                    continue
-                price = _to_float(entry[0])
-                quantity = _to_float(entry[1])
-                if price <= 0 or quantity <= 0:
-                    continue
-                asks.append(BinanceOrderBookLevel(price=price, quantity=quantity))
-
-        try:
-            last_update_id = int(payload.get("lastUpdateId", 0))
-        except (TypeError, ValueError):
-            last_update_id = 0
-        timestamp = _timestamp_ms_to_seconds(payload.get("E"), fallback=time.time())
-
-        return BinanceOrderBook(
-            symbol=canonical_symbol,
-            bids=tuple(bids),
-            asks=tuple(asks),
-            depth=normalized_depth,
-            last_update_id=last_update_id,
-            timestamp=timestamp,
-        )
+        return self._watchdog.execute("binance_spot_fetch_order_book", _call)
 
     def fetch_open_orders(self) -> Sequence[BinanceOpenOrder]:
         """Zwraca listę otwartych zleceń wykorzystując podpisane API Binance."""
@@ -941,50 +960,53 @@ class BinanceSpotAdapter(ExchangeAdapter):
         if not ({"read", "trade"} & self._permission_set):
             raise PermissionError("Poświadczenia nie pozwalają na odczyt zleceń Binance Spot.")
 
-        payload = self._signed_request("/api/v3/openOrders")
-        if not isinstance(payload, list):
-            raise ExchangeAPIError(
-                "Binance Spot zwrócił niepoprawną strukturę listy zleceń.",
-                400,
-                payload=payload,
-            )
+        def _call() -> Sequence[BinanceOpenOrder]:
+            payload = self._signed_request("/api/v3/openOrders")
+            if not isinstance(payload, list):
+                raise ExchangeAPIError(
+                    "Binance Spot zwrócił niepoprawną strukturę listy zleceń.",
+                    400,
+                    payload=payload,
+                )
 
-        orders: list[BinanceOpenOrder] = []
-        for entry in payload:
-            if not isinstance(entry, Mapping):
-                continue
-            raw_symbol = entry.get("symbol")
-            exchange_symbol = str(raw_symbol) if isinstance(raw_symbol, str) else ""
-            canonical_symbol = normalize_symbol(exchange_symbol) or exchange_symbol
-            price_value = _to_float(entry.get("price"))
-            price = price_value if price_value > 0 else None
-            stop_price_value = _to_float(entry.get("stopPrice"))
-            stop_price = stop_price_value if stop_price_value > 0 else None
-            iceberg_value = _to_float(entry.get("icebergQty"))
-            iceberg = iceberg_value if iceberg_value > 0 else None
-            timestamp = _timestamp_ms_to_seconds(entry.get("updateTime") or entry.get("time"))
-            order = BinanceOpenOrder(
-                order_id=str(entry.get("orderId", "")),
-                symbol=canonical_symbol,
-                status=str(entry.get("status", "")),
-                side=str(entry.get("side", "")),
-                order_type=str(entry.get("type", "")),
-                price=price,
-                orig_quantity=_to_float(entry.get("origQty")),
-                executed_quantity=_to_float(entry.get("executedQty")),
-                time_in_force=(str(entry.get("timeInForce")) if entry.get("timeInForce") else None),
-                client_order_id=(
-                    str(entry.get("clientOrderId")) if entry.get("clientOrderId") not in (None, "") else None
-                ),
-                stop_price=stop_price,
-                iceberg_quantity=iceberg,
-                is_working=bool(entry.get("isWorking", True)),
-                update_time=timestamp,
-            )
-            orders.append(order)
+            orders: list[BinanceOpenOrder] = []
+            for entry in payload:
+                if not isinstance(entry, Mapping):
+                    continue
+                raw_symbol = entry.get("symbol")
+                exchange_symbol = str(raw_symbol) if isinstance(raw_symbol, str) else ""
+                canonical_symbol = normalize_symbol(exchange_symbol) or exchange_symbol
+                price_value = _to_float(entry.get("price"))
+                price = price_value if price_value > 0 else None
+                stop_price_value = _to_float(entry.get("stopPrice"))
+                stop_price = stop_price_value if stop_price_value > 0 else None
+                iceberg_value = _to_float(entry.get("icebergQty"))
+                iceberg = iceberg_value if iceberg_value > 0 else None
+                timestamp = _timestamp_ms_to_seconds(entry.get("updateTime") or entry.get("time"))
+                order = BinanceOpenOrder(
+                    order_id=str(entry.get("orderId", "")),
+                    symbol=canonical_symbol,
+                    status=str(entry.get("status", "")),
+                    side=str(entry.get("side", "")),
+                    order_type=str(entry.get("type", "")),
+                    price=price,
+                    orig_quantity=_to_float(entry.get("origQty")),
+                    executed_quantity=_to_float(entry.get("executedQty")),
+                    time_in_force=(str(entry.get("timeInForce")) if entry.get("timeInForce") else None),
+                    client_order_id=(
+                        str(entry.get("clientOrderId")) if entry.get("clientOrderId") not in (None, "") else None
+                    ),
+                    stop_price=stop_price,
+                    iceberg_quantity=iceberg,
+                    is_working=bool(entry.get("isWorking", True)),
+                    update_time=timestamp,
+                )
+                orders.append(order)
 
-        orders.sort(key=lambda item: item.update_time)
-        return orders
+            orders.sort(key=lambda item: item.update_time)
+            return orders
+
+        return self._watchdog.execute("binance_spot_fetch_open_orders", _call)
 
     def place_order(self, request: OrderRequest) -> OrderResult:
         """Składa podpisane zlecenie typu limit/market na rynku spot."""
@@ -1010,25 +1032,28 @@ class BinanceSpotAdapter(ExchangeAdapter):
         if request.client_order_id is not None:
             params["newClientOrderId"] = request.client_order_id
 
-        payload = self._signed_request("/api/v3/order", method="POST", params=params)
-        if not isinstance(payload, Mapping):
-            raise RuntimeError("Odpowiedź z endpointu order ma niepoprawny format")
+        def _call() -> OrderResult:
+            payload = self._signed_request("/api/v3/order", method="POST", params=params)
+            if not isinstance(payload, Mapping):
+                raise RuntimeError("Odpowiedź z endpointu order ma niepoprawny format")
 
-        payload_dict = dict(payload)
+            payload_dict = dict(payload)
 
-        order_id = str(payload_dict.get("orderId"))
-        status = str(payload_dict.get("status", "UNKNOWN"))
-        filled_qty = _to_float(payload_dict.get("executedQty", 0.0))
-        raw_price = payload_dict.get("price")
-        avg_price = _to_float(raw_price) if raw_price not in (None, "0", 0, 0.0) else None
+            order_id = str(payload_dict.get("orderId"))
+            status = str(payload_dict.get("status", "UNKNOWN"))
+            filled_qty = _to_float(payload_dict.get("executedQty", 0.0))
+            raw_price = payload_dict.get("price")
+            avg_price = _to_float(raw_price) if raw_price not in (None, "0", 0, 0.0) else None
 
-        return OrderResult(
-            order_id=order_id,
-            status=status,
-            filled_quantity=filled_qty,
-            avg_price=avg_price,
-            raw_response=payload_dict,
-        )
+            return OrderResult(
+                order_id=order_id,
+                status=status,
+                filled_quantity=filled_qty,
+                avg_price=avg_price,
+                raw_response=payload_dict,
+            )
+
+        return self._watchdog.execute("binance_spot_place_order", _call)
 
     def cancel_order(self, order_id: str, *, symbol: Optional[str] = None) -> None:
         if "trade" not in self._permission_set:
@@ -1039,13 +1064,16 @@ class BinanceSpotAdapter(ExchangeAdapter):
             if exchange_symbol is None:
                 raise ValueError("Symbol anulowanego zlecenia ma niepoprawny format.")
             params["symbol"] = exchange_symbol
-        response = self._signed_request("/api/v3/order", method="DELETE", params=params)
-        if isinstance(response, Mapping):
-            response_map = dict(response)
-            if response_map.get("status") in {"CANCELED", "PENDING_CANCEL"}:
-                return
-            raise RuntimeError(f"Nieoczekiwana odpowiedź anulowania z Binance: {response_map}")
-        raise RuntimeError("Niepoprawna odpowiedź anulowania z Binance")
+        def _call() -> None:
+            response = self._signed_request("/api/v3/order", method="DELETE", params=params)
+            if isinstance(response, Mapping):
+                response_map = dict(response)
+                if response_map.get("status") in {"CANCELED", "PENDING_CANCEL"}:
+                    return
+                raise RuntimeError(f"Nieoczekiwana odpowiedź anulowania z Binance: {response_map}")
+            raise RuntimeError("Niepoprawna odpowiedź anulowania z Binance")
+
+        self._watchdog.execute("binance_spot_cancel_order", _call)
 
     def stream_public_data(self, *, channels: Sequence[str]):  # type: ignore[override]
         return self._build_stream("public", channels)
