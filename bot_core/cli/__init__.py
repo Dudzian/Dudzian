@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import os
 import re
@@ -104,11 +105,6 @@ def create_parser() -> argparse.ArgumentParser:
             "Nazwa środowiska z pliku YAML. Opcjonalna, jeśli plik definiuje "
             "defaults.environment."
         ),
-        help="Ścieżka do pliku YAML opisującego środowiska (domyślnie config/environments/exchange_modes.yaml).",
-    )
-    health.add_argument(
-        "--environment",
-        help="Nazwa środowiska z pliku YAML, które ma zostać załadowane.",
     )
     health.add_argument(
         "--skip-public",
@@ -245,6 +241,16 @@ def create_parser() -> argparse.ArgumentParser:
         "--watchdog-half-open-success",
         type=int,
         help="Ustawia liczbę udanych prób wymaganych do zamknięcia stanu half-open (wartość dodatnia).",
+    )
+    health.add_argument(
+        "--watchdog-retry-exception",
+        dest="watchdog_retry_exceptions",
+        action="append",
+        metavar="MODULE.Class",
+        help=(
+            "Dodaje klasę wyjątku do listy retry watchdog-a (np. builtins.TimeoutError)."
+            " Argument można powtarzać wielokrotnie."
+        ),
     )
     health.add_argument(
         "--native-setting",
@@ -457,7 +463,6 @@ def _extract_jitter_pair(value: object) -> tuple[float, float] | None:
 def _read_environment_payload(
     path: str | Path,
 ) -> tuple[Path, Mapping[str, object] | None, dict[str, Mapping[str, object]]]:
-def _load_environment_profile(path: str | Path, environment: str) -> dict[str, object]:
     if yaml is None:  # pragma: no cover - opcjonalna zależność
         raise CLIUsageError("Wczytanie konfiguracji środowisk wymaga pakietu PyYAML (pip install pyyaml).")
 
@@ -500,7 +505,6 @@ def _load_environment_profile(path: str | Path, environment: str) -> dict[str, o
     storage, defaults, environments = _read_environment_payload(path)
 
     section = environments.get(environment)
-    section = payload.get(environment)
     if not isinstance(section, Mapping):
         raise CLIUsageError(f"Środowisko '{environment}' nie istnieje w pliku {storage}.")
 
@@ -588,17 +592,99 @@ def _configure_mode(manager: ExchangeManager, mode: str | None, *, testnet: bool
         manager.set_mode(spot=True, testnet=testnet)
 
 
+def _resolve_exception_class(path: str, *, context: str) -> type[Exception]:
+    candidate = path.strip()
+    if not candidate:
+        raise CLIUsageError(f"{context} wymaga niepustej nazwy klasy wyjątku.")
+    module_path, separator, class_name = candidate.replace(":", ".").rpartition(".")
+    if not separator:
+        raise CLIUsageError(
+            f"{context} wymaga pełnej ścieżki modułowej (np. module.ExceptionClass)."
+        )
+    try:
+        module = importlib.import_module(module_path)
+    except ImportError as exc:  # pragma: no cover - zależne od środowiska uruchomienia
+        raise CLIUsageError(f"Nie udało się zaimportować modułu {module_path!r}: {exc}") from exc
+    try:
+        attr = getattr(module, class_name)
+    except AttributeError as exc:
+        raise CLIUsageError(
+            f"Moduł {module_path!r} nie zawiera klasy {class_name!r} wymaganej przez {context}."
+        ) from exc
+    if not isinstance(attr, type) or not issubclass(attr, Exception):
+        raise CLIUsageError(
+            f"{candidate!r} nie jest klasą wyjątku – wymagane są typy dziedziczące po Exception."
+        )
+    return attr
+
+
+def _parse_retry_exceptions_config(value: object, *, context: str) -> tuple[type[Exception], ...]:
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        candidates: Sequence[object] = (value,)
+    elif isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray, str)):
+        candidates = value
+    else:
+        raise CLIUsageError(f"{context} musi być listą nazw klas wyjątków.")
+
+    resolved: list[type[Exception]] = []
+    for entry in candidates:
+        if isinstance(entry, type) and issubclass(entry, Exception):
+            resolved.append(entry)
+            continue
+        if not isinstance(entry, str):
+            raise CLIUsageError(f"{context} może zawierać wyłącznie nazwy klas wyjątków.")
+        resolved.append(_resolve_exception_class(entry, context=context))
+    return tuple(resolved)
+
+
+def _stringify_retry_exception(entry: object) -> str:
+    if isinstance(entry, type) and issubclass(entry, Exception):
+        return f"{entry.__module__}.{entry.__qualname__}"
+    return str(entry)
+
+
+def _serialize_watchdog_config(config: Mapping[str, object] | None) -> dict[str, object] | None:
+    if not isinstance(config, Mapping) or not config:
+        return None
+    payload: dict[str, object] = {}
+    retry_policy = config.get("retry_policy")
+    if isinstance(retry_policy, Mapping):
+        payload["retry_policy"] = dict(retry_policy)
+    circuit_breaker = config.get("circuit_breaker")
+    if isinstance(circuit_breaker, Mapping):
+        payload["circuit_breaker"] = dict(circuit_breaker)
+    if "retry_exceptions" in config:
+        raw_exceptions = config.get("retry_exceptions")
+        if isinstance(raw_exceptions, Sequence) and not isinstance(raw_exceptions, (bytes, bytearray, str)):
+            items = list(raw_exceptions)
+        elif raw_exceptions is None:
+            items = []
+        else:
+            items = [raw_exceptions]
+        payload["retry_exceptions"] = [
+            _stringify_retry_exception(item) for item in items if item is not None
+        ]
+    return payload or None
+
+
 def _configure_watchdog(manager: ExchangeManager, profile: Mapping[str, object]) -> None:
     watchdog = profile.get("watchdog")
     if not isinstance(watchdog, Mapping):
         return
     retry_policy = watchdog.get("retry_policy")
     circuit_breaker = watchdog.get("circuit_breaker")
-    kwargs: dict[str, Mapping[str, object]] = {}
+    retry_exceptions = watchdog.get("retry_exceptions")
+    kwargs: dict[str, object] = {}
     if isinstance(retry_policy, Mapping):
         kwargs["retry_policy"] = retry_policy
     if isinstance(circuit_breaker, Mapping):
         kwargs["circuit_breaker"] = circuit_breaker
+    if retry_exceptions is not None:
+        kwargs["retry_exceptions"] = _parse_retry_exceptions_config(
+            retry_exceptions, context="Konfiguracja watchdog.retry_exceptions"
+        )
     if kwargs:
         manager.configure_watchdog(**kwargs)
 
@@ -721,6 +807,7 @@ def run_health_check(
     env_config_arg = getattr(args, "environment_config", None)
     environment_summary: str | None = None
     native_adapter_payload: dict[str, object] | None = None
+    watchdog_payload: dict[str, object] | None = None
     if environment_name or env_config_arg:
         config_path = env_config_arg or str(DEFAULT_ENVIRONMENT_CONFIG_PATH)
         selected_environment = environment_name
@@ -739,14 +826,6 @@ def run_health_check(
             selected_environment = default_env
         environment_profile = _load_environment_profile(config_path, selected_environment)
         environment_summary = _summarize_environment(environment_profile)
-    if getattr(args, "environment_config", None) and not getattr(args, "environment", None):
-        raise CLIUsageError("Argument --environment-config wymaga podania nazwy środowiska (--environment).")
-
-    environment_profile: dict[str, object] = {}
-    if getattr(args, "environment", None):
-        config_path = getattr(args, "environment_config", None) or str(DEFAULT_ENVIRONMENT_CONFIG_PATH)
-        environment_profile = _load_environment_profile(config_path, args.environment)
-
     exchange_id = args.exchange or environment_profile.get("exchange")
     if not exchange_id:
         raise CLIUsageError("Nie określono giełdy – podaj --exchange lub konfigurację środowiska.")
@@ -980,6 +1059,17 @@ def run_health_check(
     retry_policy: dict[str, object] = dict(retry_cfg) if isinstance(retry_cfg, Mapping) else {}
     retry_overridden = False
 
+    cli_retry_exception_args = getattr(args, "watchdog_retry_exceptions", None) or []
+    if cli_retry_exception_args:
+        normalized_exceptions: list[str] = []
+        for raw_exc in cli_retry_exception_args:
+            if not isinstance(raw_exc, str) or not raw_exc.strip():
+                raise CLIUsageError(
+                    "Opcja --watchdog-retry-exception wymaga niepustej nazwy klasy wyjątku."
+                )
+            normalized_exceptions.append(raw_exc.strip())
+        combined_watchdog["retry_exceptions"] = normalized_exceptions
+
     cli_retry_max_attempts = getattr(args, "watchdog_max_attempts", None)
     if cli_retry_max_attempts is not None:
         if cli_retry_max_attempts <= 0:
@@ -1047,6 +1137,8 @@ def run_health_check(
     if circuit_breaker or circuit_overridden:
         combined_watchdog["circuit_breaker"] = circuit_breaker
 
+    watchdog_payload = _serialize_watchdog_config(combined_watchdog)
+
     if combined_watchdog:
         _configure_watchdog(manager, {"watchdog": combined_watchdog})
 
@@ -1098,24 +1190,6 @@ def run_health_check(
             "mode": target_mode.value,
             "settings": dict(native_settings),
         }
-    env_native = env_manager_cfg.get("native_adapter")
-    if isinstance(env_native, Mapping):
-        native_settings = env_native.get("settings")
-        native_mode_raw = env_native.get("mode")
-        target_mode = None
-        if isinstance(native_mode_raw, str):
-            normalized = native_mode_raw.strip().lower()
-            if normalized == "margin":
-                target_mode = Mode.MARGIN
-            elif normalized == "futures":
-                target_mode = Mode.FUTURES
-            else:
-                raise CLIUsageError(
-                    "Konfiguracja natywnego adaptera wspiera tylko tryby 'margin' lub 'futures'."
-                )
-        if isinstance(native_settings, Mapping):
-            manager.configure_native_adapter(settings=native_settings, mode=target_mode)
-
     health_profile = _merge_mappings(
         profile.get("health_check") if isinstance(profile.get("health_check"), Mapping) else None,
         environment_profile.get("health_check")
@@ -1245,6 +1319,7 @@ def run_health_check(
             "private_asset": private_asset,
             "private_min_balance": private_min_balance,
             "paper": paper_payload,
+            "watchdog": watchdog_payload,
             "native_adapter": native_adapter_payload,
             "results": [
                 {

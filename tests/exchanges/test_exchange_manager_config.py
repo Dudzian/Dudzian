@@ -227,13 +227,26 @@ def test_configure_paper_simulator_merges_overrides() -> None:
     assert settings["funding_interval_seconds"] == pytest.approx(7_200.0)
 
 
-def test_configure_paper_simulator_rejects_unknown_keys() -> None:
+def test_configure_paper_simulator_accepts_custom_keys() -> None:
     manager = ExchangeManager("binance")
     manager.set_mode(paper=True)
     manager.set_paper_variant("margin")
 
-    with pytest.raises(ValueError, match="funding_interval_seconds"):
-        manager.configure_paper_simulator(unknown=5)
+    manager.configure_paper_simulator(liquidation_buffer=0.05)
+    manager.configure_paper_simulator(funding_rate=0.0003)
+
+    settings = manager.get_paper_simulator_settings()
+    assert settings["liquidation_buffer"] == pytest.approx(0.05)
+    assert settings["funding_rate"] == pytest.approx(0.0003)
+
+
+def test_configure_paper_simulator_requires_numeric_values() -> None:
+    manager = ExchangeManager("binance")
+    manager.set_mode(paper=True)
+    manager.set_paper_variant("margin")
+
+    with pytest.raises(ValueError, match="liczbowej"):
+        manager.configure_paper_simulator(liquidation_buffer="abc")
 
 
 def test_configure_paper_simulator_rejects_non_positive_interval() -> None:
