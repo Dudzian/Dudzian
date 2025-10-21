@@ -2,9 +2,8 @@
 target-version = "py310"
 line-length = 100
 extend-exclude = [
-  "KryptoLowca/2.8",
-  "KryptoLowca/backups",
-  "KryptoLowca/KryptoLowca.zip",
+  "KryptoLowca",
+  "archive",
 ]
 
 [tool.ruff.lint]
@@ -23,10 +22,7 @@ show_error_codes = true
 namespace_packages = true
 follow_imports = "silent"
 files = [
-  "KryptoLowca/core/services",
-  "KryptoLowca/strategies/base",
-  "KryptoLowca/config_manager.py",
-  "KryptoLowca/strategies/marketplace.py",
+  "bot_core/config/models.py",
 ]
 
 [[tool.mypy.overrides]]

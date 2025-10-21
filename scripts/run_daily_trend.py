@@ -49,7 +49,7 @@ from bot_core.reporting.upload import (
     SmokeArchiveUploadResult,
 )
 from bot_core.data.ohlcv import evaluate_coverage
-from bot_core.security import SecretManager, SecretStorageError, create_default_secret_storage
+from bot_core.security import SecretManager, SecretStorageError
 from bot_core.runtime.bootstrap import parse_adapter_factory_cli_specs
 from bot_core.runtime.file_metadata import (
     directory_metadata as _directory_metadata,
@@ -59,6 +59,7 @@ from bot_core.runtime.file_metadata import (
     security_flags_from_mode as _security_flags_from_mode,
 )
 from scripts import paper_precheck as paper_precheck_cli
+from scripts._cli_common import create_secret_manager
 
 if TYPE_CHECKING:
     from bot_core.config.models import CoreConfig, EnvironmentConfig, RiskProfileConfig
@@ -1632,15 +1633,16 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
 # --------------------------------------------------------------------------------------
 # Pomocnicze I/O, formaty i konwersje
 # --------------------------------------------------------------------------------------
+
+
 def _create_secret_manager(args: argparse.Namespace) -> SecretManager:
-    storage = create_default_secret_storage(
+    """Zachowuje kompatybilność z testami oczekującymi starej nazwy helpera."""
+
+    return create_secret_manager(
         namespace=args.secret_namespace,
         headless_passphrase=args.headless_passphrase,
         headless_path=args.headless_storage,
     )
-    return SecretManager(storage, namespace=args.secret_namespace)
-
-
 def _persist_precheck_audit(
     payload: Mapping[str, object],
     *,

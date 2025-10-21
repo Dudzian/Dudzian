@@ -5,20 +5,11 @@ import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Dict, Protocol
+from typing import Dict
 from urllib import request
 
 from bot_core.alerts.base import AlertChannel, AlertDeliveryError, AlertMessage
-
-
-class _HttpOpener(Protocol):
-    def __call__(self, req: request.Request, *, timeout: float) -> request.addinfourl:
-        ...
-
-
-def _default_opener(req: request.Request, *, timeout: float) -> request.addinfourl:
-    return request.urlopen(req, timeout=timeout)  # noqa: S310 - docelowo wywołujemy zaufane API
-
+from bot_core.alerts.channels._http import HttpOpener, default_opener
 
 @dataclass(slots=True)
 class TelegramChannel(AlertChannel):
@@ -30,7 +21,7 @@ class TelegramChannel(AlertChannel):
     name: str = "telegram"
     timeout: float = 10.0
     logger: logging.Logger = field(default_factory=lambda: logging.getLogger("bot_core.alerts.telegram"))
-    _opener: _HttpOpener = field(default=_default_opener, repr=False)
+    _opener: HttpOpener = field(default=default_opener, repr=False)
     _last_success: datetime | None = field(default=None, init=False, repr=False)
     _last_error: str | None = field(default=None, init=False, repr=False)
 

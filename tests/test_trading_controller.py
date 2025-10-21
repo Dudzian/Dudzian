@@ -11,8 +11,7 @@ import pytest
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from bot_core.alerts import AlertMessage, DefaultAlertRouter, InMemoryAlertAuditLog
-from bot_core.alerts.base import AlertChannel
+from bot_core.alerts import DefaultAlertRouter, InMemoryAlertAuditLog
 from bot_core.execution import ExecutionService
 from bot_core.observability import MetricsRegistry
 
@@ -22,18 +21,7 @@ from bot_core.runtime import TradingController
 from bot_core.runtime.journal import TradingDecisionEvent
 from bot_core.strategies import StrategySignal
 
-
-class CollectingChannel(AlertChannel):
-    name = "collector"
-
-    def __init__(self) -> None:
-        self.messages: list[AlertMessage] = []
-
-    def send(self, message: AlertMessage) -> None:
-        self.messages.append(message)
-
-    def health_check(self) -> Mapping[str, str]:
-        return {"status": "ok", "latency_ms": "5"}
+from tests._alert_channel_helpers import CollectingChannel
 
 
 class CollectingDecisionJournal:
@@ -136,7 +124,7 @@ def _account_snapshot() -> AccountSnapshot:
 def _router_with_channel() -> tuple[DefaultAlertRouter, CollectingChannel, InMemoryAlertAuditLog]:
     audit = InMemoryAlertAuditLog()
     router = DefaultAlertRouter(audit_log=audit)
-    channel = CollectingChannel()
+    channel = CollectingChannel(health_overrides={"latency_ms": "5"})
     router.register(channel)
     return router, channel, audit
 
@@ -190,6 +178,52 @@ def test_controller_emits_alert_on_buy_signal() -> None:
     exported = tuple(audit.export())
     assert len(exported) >= 2
     assert any(event["event"] == "order_executed" for event in journal.export())
+
+
+def test_controller_reverses_position_before_opening_new_one() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    router, channel, audit = _router_with_channel()
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        health_check_interval=timedelta(hours=1),
+        decision_journal=journal,
+    )
+
+    signal = StrategySignal(
+        symbol="BTC/USDT",
+        side="SELL",
+        confidence=0.9,
+        metadata={
+            "quantity": "2",
+            "price": "101",
+            "order_type": "market",
+            "current_position_qty": "1.5",
+            "current_position_side": "LONG",
+            "reverse_position": "true",
+        },
+    )
+
+    results = controller.process_signals([signal])
+
+    assert len(results) == 1
+    assert len(execution.requests) == 2
+    close_request, open_request = execution.requests
+    assert close_request.side == "SELL"
+    assert close_request.quantity == pytest.approx(1.5)
+    assert close_request.metadata["action"] == "close"
+    assert open_request.side == "SELL"
+    assert open_request.quantity == pytest.approx(2.0)
+
+    journal_events = journal.export()
+    assert any(event["event"] == "order_close_for_reversal" for event in journal_events)
 
 
 def test_controller_alerts_on_risk_rejection_and_limit() -> None:

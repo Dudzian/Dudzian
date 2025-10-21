@@ -398,6 +398,7 @@ def test_decision_aware_sink_exposes_history_and_summary() -> None:
                 },
                 "risk_flags": ("volatility_spike",),
                 "stress_failures": ("latency_budget",),
+                "thresholds_snapshot": {"min_probability": 0.55},
             },
             {
                 "accepted": True,
@@ -418,6 +419,7 @@ def test_decision_aware_sink_exposes_history_and_summary() -> None:
                 },
                 "risk_flags": ("latency_surge",),
                 "stress_failures": (),
+                "thresholds_snapshot": {"min_probability": 0.6, "max_cost_bps": 15.0},
             },
             {
                 "accepted": False,
@@ -439,6 +441,7 @@ def test_decision_aware_sink_exposes_history_and_summary() -> None:
                     "max_latency_ms": 50.0,
                     "max_trade_notional": 800.0,
                 },
+                "thresholds_snapshot": {"min_probability": 0.7, "max_cost_bps": 12.0},
             },
         ]
     )
@@ -533,6 +536,9 @@ def test_decision_aware_sink_exposes_history_and_summary() -> None:
     assert summary["latest_candidate"]["symbol"] == "ETH/USDT"
     assert summary["latest_generated_at"] == "2024-05-01T00:00:00+00:00"
     assert summary["history_start_generated_at"] == "2024-04-01T00:00:00+00:00"
+    assert summary["latest_thresholds"]["min_probability"] == pytest.approx(0.7)
+    assert summary["latest_candidate"]["symbol"] == "ETH/USDT"
+    assert summary["latest_generated_at"] == "2024-05-01T00:00:00+00:00"
     assert summary["rejection_reasons"] == {"too_costly": 1}
     assert summary["avg_expected_probability"] == pytest.approx((0.65 + 0.72 + 0.4) / 3)
     assert summary["avg_cost_bps"] == pytest.approx((1.2 + 1.4 + 2.5) / 3)

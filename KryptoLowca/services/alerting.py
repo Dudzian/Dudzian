@@ -29,7 +29,8 @@ class AlertSink(Protocol):
         ...
 
     def close(self) -> None:  # pragma: no cover - opcjonalne
-        ...
+        """Zwolnij zasoby powiązane z kanałem."""
+        raise NotImplementedError
 
 
 @dataclass(slots=True)

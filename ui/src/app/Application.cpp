@@ -21,7 +21,11 @@
 #include <QQuickWindow>
 #include <QSaveFile>
 #include <QScreen>
+#include <QHash>
+#include <QPair>
 #include <QRegularExpression>
+#include <QSysInfo>
+#include <QSet>
 #include <QUrl>
 #include <QTimer>
 #include <QScopeGuard>
@@ -35,7 +39,9 @@
 #include "utils/FrameRateMonitor.hpp"
 #include "license/LicenseActivationController.hpp"
 #include "app/ActivationController.hpp"
+#include "app/StrategyConfigController.hpp"
 #include "security/SecurityAdminController.hpp"
+#include "support/SupportBundleController.hpp"
 #include "reporting/ReportCenterController.hpp"
 #include "grpc/BotCoreLocalService.hpp"
 
@@ -96,28 +102,48 @@ QString expandUserPath(QString path)
     return path;
 }
 
-QString readTokenFile(const QString& rawPath)
+QString readTokenFile(const QString& rawPath, const QString& label = QStringLiteral("MetricsService"))
 {
     if (rawPath.trimmed().isEmpty())
         return {};
     const QString path = expandUserPath(rawPath.trimmed());
     QFile file(path);
     if (!file.exists()) {
-        qCWarning(lcAppMetrics) << "Plik z tokenem MetricsService nie istnieje:" << path;
+        qCWarning(lcAppMetrics) << "Plik z tokenem" << label << "nie istnieje:" << path;
         return {};
     }
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        qCWarning(lcAppMetrics) << "Nie udało się odczytać pliku z tokenem" << path
+        qCWarning(lcAppMetrics) << "Nie udało się odczytać pliku z tokenem" << label << ':' << path
                                 << file.errorString();
         return {};
     }
     const QByteArray data = file.readAll();
     QString token = QString::fromUtf8(data).trimmed();
     if (token.isEmpty()) {
-        qCWarning(lcAppMetrics) << "Plik" << path << "nie zawiera tokenu autoryzacyjnego MetricsService";
+        qCWarning(lcAppMetrics) << "Plik" << path << "nie zawiera tokenu autoryzacyjnego" << label;
         return {};
     }
     return token;
+}
+
+QStringList splitScopesList(const QString& raw)
+{
+    QString normalized = raw;
+    normalized.replace(QLatin1Char(';'), QLatin1Char(','));
+    QStringList parts = normalized.split(QRegularExpression(QStringLiteral("[\n\r\t, ]+")),
+                                        Qt::SkipEmptyParts);
+    QStringList unique;
+    QSet<QString> seen;
+    for (QString part : parts) {
+        const QString trimmed = part.trimmed();
+        if (trimmed.isEmpty())
+            continue;
+        if (seen.contains(trimmed))
+            continue;
+        seen.insert(trimmed);
+        unique.append(trimmed);
+    }
+    return unique;
 }
 
 QString sanitizeAutoExportBasename(const QString& raw)
@@ -174,6 +200,12 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
     m_reportController->setReportsDirectory(QDir::current().absoluteFilePath(QStringLiteral("var/reports")));
     m_reportController->setReportsRoot(QDir::current().absoluteFilePath(QStringLiteral("var/reports")));
 
+    m_strategyController = std::make_unique<StrategyConfigController>(this);
+    m_strategyController->setConfigPath(QDir::current().absoluteFilePath(QStringLiteral("config/core.yaml")));
+    m_strategyController->setScriptPath(QDir::current().absoluteFilePath(QStringLiteral("scripts/ui_config_bridge.py")));
+
+    m_supportController = std::make_unique<SupportBundleController>(this);
+
     m_filteredAlertsModel.setSourceModel(&m_alertsModel);
     m_filteredAlertsModel.setSeverityFilter(AlertsFilterProxyModel::WarningsAndCritical);
 
@@ -185,6 +217,13 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
     initializeUiSettingsStorage();
 
     m_repoRoot = locateRepoRoot();
+
+    if (m_supportController) {
+        if (!m_repoRoot.isEmpty())
+            m_supportController->setScriptPath(QDir(m_repoRoot).absoluteFilePath(QStringLiteral("scripts/export_support_bundle.py")));
+        else
+            m_supportController->setScriptPath(QDir::current().absoluteFilePath(QStringLiteral("scripts/export_support_bundle.py")));
+    }
 
     exposeToQml();
 
@@ -352,6 +391,10 @@ void Application::configureParser(QCommandLineParser& parser) const {
     parser.addOption({"grpc-root-cert", tr("Root CA (PEM) dla kanału tradingowego"), tr("path"), QString()});
     parser.addOption({"grpc-client-cert", tr("Certyfikat klienta (PEM)"), tr("path"), QString()});
     parser.addOption({"grpc-client-key", tr("Klucz klienta (PEM)"), tr("path"), QString()});
+    parser.addOption({"grpc-auth-token", tr("Token autoryzacyjny TradingService"), tr("token")});
+    parser.addOption({"grpc-auth-token-file", tr("Ścieżka pliku z tokenem TradingService"), tr("path")});
+    parser.addOption({"grpc-rbac-role", tr("Rola RBAC przekazywana do TradingService"), tr("role"), QString()});
+    parser.addOption({"grpc-rbac-scopes", tr("Lista scope RBAC (oddzielone przecinkami)") , tr("scopes"), QString()});
     parser.addOption({"grpc-target-name", tr("Override nazwy hosta TLS"), tr("name"), QString()});
 
     // TLS/mTLS dla TradingClient (ogólne przełączniki – mogą być nadpisane przez --grpc-*)
@@ -383,6 +426,21 @@ void Application::configureParser(QCommandLineParser& parser) const {
     parser.addOption({"reports-directory", tr("Katalog raportów pipeline"), tr("path"),
                       QStringLiteral("var/reports")});
     parser.addOption({"reporting-python", tr("Interpreter Pythona mostka raportów"), tr("path"), QString()});
+    parser.addOption({"core-config", tr("Plik głównej konfiguracji core.yaml"), tr("path"),
+                      QStringLiteral("config/core.yaml")});
+    parser.addOption({"strategy-config-python", tr("Interpreter Pythona mostka konfiguracji strategii"), tr("path"),
+                      QString()});
+    parser.addOption({"strategy-config-bridge", tr("Ścieżka do scripts/ui_config_bridge.py"), tr("path"), QString()});
+    parser.addOption({"support-bundle-python", tr("Interpreter Pythona eksportu pakietu wsparcia"), tr("path"), QString()});
+    parser.addOption({"support-bundle-script", tr("Ścieżka do scripts/export_support_bundle.py"), tr("path"), QString()});
+    parser.addOption({"support-bundle-output-dir", tr("Katalog docelowy pakietów wsparcia"), tr("path"), QString()});
+    parser.addOption({"support-bundle-format", tr("Format pakietu wsparcia (tar.gz lub zip)"), tr("format"),
+                      QStringLiteral("tar.gz")});
+    parser.addOption({"support-bundle-basename", tr("Bazowa nazwa pliku pakietu wsparcia"), tr("name"),
+                      QStringLiteral("support-bundle")});
+    parser.addOption({"support-bundle-include", tr("Dodatkowa ścieżka pakietu wsparcia (label=path)"), tr("spec")});
+    parser.addOption({"support-bundle-disable", tr("Wyłącz domyślny zasób pakietu wsparcia (np. logs)"), tr("label")});
+    parser.addOption({"support-bundle-metadata", tr("Para metadata key=value dla pakietu wsparcia"), tr("pair")});
 }
 
 bool Application::applyParser(const QCommandLineParser& parser) {
@@ -482,6 +540,39 @@ bool Application::applyParser(const QCommandLineParser& parser) {
     }
     m_tradingTlsConfig = tradingTls;
 
+    QString cliTradingToken = parser.value("grpc-auth-token").trimmed();
+    QString cliTradingTokenFile = parser.value("grpc-auth-token-file").trimmed();
+    const bool cliTradingTokenProvided = !cliTradingToken.isEmpty();
+    const bool cliTradingTokenFileProvided = !cliTradingTokenFile.isEmpty();
+    if (cliTradingTokenProvided && cliTradingTokenFileProvided) {
+        qCWarning(lcAppMetrics)
+            << "Podano jednocześnie --grpc-auth-token oraz --grpc-auth-token-file. Użyję tokenu przekazanego bezpośrednio.";
+    }
+
+    if (cliTradingTokenProvided) {
+        m_tradingAuthToken = cliTradingToken;
+    } else if (cliTradingTokenFileProvided) {
+        m_tradingAuthToken = readTokenFile(cliTradingTokenFile, QStringLiteral("TradingService"));
+    } else {
+        m_tradingAuthToken.clear();
+    }
+
+    QString cliTradingRole = parser.value("grpc-rbac-role").trimmed();
+    const bool cliTradingRoleProvided = !cliTradingRole.isEmpty();
+    if (cliTradingRoleProvided) {
+        m_tradingRbacRole = cliTradingRole;
+    } else {
+        m_tradingRbacRole.clear();
+    }
+
+    QString cliTradingScopesRaw = parser.value("grpc-rbac-scopes").trimmed();
+    const bool cliTradingScopesProvided = !cliTradingScopesRaw.isEmpty();
+    if (cliTradingScopesProvided) {
+        m_tradingRbacScopes = splitScopesList(cliTradingScopesRaw);
+    } else {
+        m_tradingRbacScopes.clear();
+    }
+
     // --- Telemetria ---
     m_metricsEndpoint = parser.value("metrics-endpoint");
     if (m_metricsEndpoint.isEmpty()) {
@@ -511,7 +602,15 @@ bool Application::applyParser(const QCommandLineParser& parser) {
     m_metricsRbacRole = parser.value("metrics-rbac-role").trimmed();
 
     applyTradingTlsEnvironmentOverrides(parser);
+    applyTradingAuthEnvironmentOverrides(parser,
+                                         cliTradingTokenProvided,
+                                         cliTradingTokenFileProvided,
+                                         cliTradingRoleProvided,
+                                         cliTradingScopesProvided);
     m_client.setTlsConfig(m_tradingTlsConfig);
+    m_client.setAuthToken(m_tradingAuthToken);
+    m_client.setRbacRole(m_tradingRbacRole);
+    m_client.setRbacScopes(m_tradingRbacScopes);
 
     bool riskRefreshEnabled = !parser.isSet("risk-refresh-disable");
     bool intervalOk = false;
@@ -547,6 +646,8 @@ bool Application::applyParser(const QCommandLineParser& parser) {
     configureRiskRefresh(riskRefreshEnabled, riskRefreshSeconds);
 
     applyRiskHistoryCliOverrides(parser);
+    configureStrategyBridge(parser);
+    configureSupportBundle(parser);
 
     // TLS config (MetricsService)
     TelemetryTlsConfig mtls;
@@ -906,6 +1007,234 @@ void Application::applyRiskHistoryCliOverrides(const QCommandLineParser& parser)
         applyBasename(parser.value("risk-history-auto-export-basename"));
     else if (const auto envBasename = envValue(kRiskHistoryAutoExportBasenameEnv); envBasename.has_value())
         applyBasename(envBasename->trimmed());
+}
+
+void Application::configureStrategyBridge(const QCommandLineParser& parser)
+{
+    if (!m_strategyController)
+        return;
+
+    QString configPath = parser.value("core-config").trimmed();
+    if (!parser.isSet("core-config")) {
+        if (const auto envConfig = envValue(QByteArrayLiteral("BOT_CORE_UI_CORE_CONFIG_PATH")))
+            configPath = envConfig->trimmed();
+    }
+    if (configPath.isEmpty())
+        configPath = QStringLiteral("config/core.yaml");
+    m_strategyController->setConfigPath(expandUserPath(configPath));
+
+    QString pythonExec = parser.value("strategy-config-python").trimmed();
+    if (pythonExec.isEmpty()) {
+        if (const auto envPython = envValue(QByteArrayLiteral("BOT_CORE_UI_STRATEGY_PYTHON")))
+            pythonExec = envPython->trimmed();
+    }
+    if (!pythonExec.isEmpty())
+        m_strategyController->setPythonExecutable(expandUserPath(pythonExec));
+
+    QString bridgePath = parser.value("strategy-config-bridge").trimmed();
+    if (bridgePath.isEmpty()) {
+        if (const auto envBridge = envValue(QByteArrayLiteral("BOT_CORE_UI_STRATEGY_BRIDGE")))
+            bridgePath = envBridge->trimmed();
+    }
+    if (bridgePath.isEmpty()) {
+        if (!m_repoRoot.isEmpty())
+            bridgePath = QDir(m_repoRoot).absoluteFilePath(QStringLiteral("scripts/ui_config_bridge.py"));
+        else
+            bridgePath = QDir::current().absoluteFilePath(QStringLiteral("scripts/ui_config_bridge.py"));
+    }
+    m_strategyController->setScriptPath(expandUserPath(bridgePath));
+
+    if (!m_strategyController->refresh()) {
+        const QString error = m_strategyController->lastError();
+        if (!error.isEmpty())
+            qCWarning(lcAppMetrics) << "Mostek konfiguracji strategii zwrócił błąd:" << error;
+    }
+}
+
+void Application::configureSupportBundle(const QCommandLineParser& parser)
+{
+    if (!m_supportController)
+        return;
+
+    const auto envTrimmed = [](const QByteArray& key) -> std::optional<QString> {
+        if (const auto value = envValue(key); value.has_value())
+            return value->trimmed();
+        return std::nullopt;
+    };
+
+    if (parser.isSet("support-bundle-python"))
+        m_supportController->setPythonExecutable(expandUserPath(parser.value("support-bundle-python")));
+    else if (const auto envPython = envTrimmed(QByteArrayLiteral("BOT_CORE_UI_SUPPORT_PYTHON")); envPython.has_value())
+        m_supportController->setPythonExecutable(expandUserPath(envPython.value()));
+
+    if (parser.isSet("support-bundle-script"))
+        m_supportController->setScriptPath(expandUserPath(parser.value("support-bundle-script")));
+    else if (const auto envScript = envTrimmed(QByteArrayLiteral("BOT_CORE_UI_SUPPORT_SCRIPT")); envScript.has_value())
+        m_supportController->setScriptPath(expandUserPath(envScript.value()));
+
+    if (parser.isSet("support-bundle-output-dir"))
+        m_supportController->setOutputDirectory(expandUserPath(parser.value("support-bundle-output-dir")));
+    else if (const auto envOutput = envTrimmed(QByteArrayLiteral("BOT_CORE_UI_SUPPORT_OUTPUT_DIR")); envOutput.has_value())
+        m_supportController->setOutputDirectory(expandUserPath(envOutput.value()));
+
+    if (parser.isSet("support-bundle-format"))
+        m_supportController->setFormat(parser.value("support-bundle-format"));
+    else if (const auto envFormat = envTrimmed(QByteArrayLiteral("BOT_CORE_UI_SUPPORT_FORMAT")); envFormat.has_value())
+        m_supportController->setFormat(envFormat.value());
+
+    if (parser.isSet("support-bundle-basename"))
+        m_supportController->setDefaultBasename(parser.value("support-bundle-basename"));
+    else if (const auto envBasename = envTrimmed(QByteArrayLiteral("BOT_CORE_UI_SUPPORT_BASENAME")); envBasename.has_value())
+        m_supportController->setDefaultBasename(envBasename.value());
+
+    const auto splitSpecs = [](const QString& raw) {
+        return raw.split(QRegularExpression(QStringLiteral("[;,\\n]")), Qt::SkipEmptyParts);
+    };
+
+    QStringList includeEnv;
+    if (const auto envInclude = envTrimmed(QByteArrayLiteral("BOT_CORE_UI_SUPPORT_INCLUDE")); envInclude.has_value())
+        includeEnv = splitSpecs(envInclude.value());
+    const QStringList includeCli = parser.values(QStringLiteral("support-bundle-include"));
+
+    QStringList disableEnv;
+    if (const auto envDisable = envTrimmed(QByteArrayLiteral("BOT_CORE_UI_SUPPORT_DISABLE")); envDisable.has_value())
+        disableEnv = splitSpecs(envDisable.value());
+    const QStringList disableCli = parser.values(QStringLiteral("support-bundle-disable"));
+
+    QStringList metadataEnv;
+    if (const auto envMetadata = envTrimmed(QByteArrayLiteral("BOT_CORE_UI_SUPPORT_METADATA")); envMetadata.has_value())
+        metadataEnv = splitSpecs(envMetadata.value());
+    const QStringList metadataCli = parser.values(QStringLiteral("support-bundle-metadata"));
+
+    QStringList extraOrder;
+    QHash<QString, QPair<QString, QString>> extraMap;
+
+    const auto storeExtra = [&](const QString& label, const QString& path) {
+        const QString lower = label.toLower();
+        if (!extraMap.contains(lower))
+            extraOrder.append(lower);
+        extraMap.insert(lower, qMakePair(label, path));
+    };
+
+    const auto handleInclude = [&](const QString& rawSpec) {
+        const QString trimmed = rawSpec.trimmed();
+        if (trimmed.isEmpty())
+            return;
+        const int eq = trimmed.indexOf('=');
+        if (eq <= 0) {
+            qCWarning(lcAppMetrics) << "Nieprawidłowa ścieżka pakietu wsparcia" << trimmed;
+            return;
+        }
+        const QString label = trimmed.left(eq).trimmed();
+        const QString path = trimmed.mid(eq + 1).trimmed();
+        if (label.isEmpty() || path.isEmpty()) {
+            qCWarning(lcAppMetrics) << "Nieprawidłowa ścieżka pakietu wsparcia" << trimmed;
+            return;
+        }
+        const QString lower = label.toLower();
+        const QString expandedPath = expandUserPath(path);
+        if (lower == QStringLiteral("logs")) {
+            m_supportController->setLogsPath(expandedPath);
+            m_supportController->setIncludeLogs(true);
+        } else if (lower == QStringLiteral("reports")) {
+            m_supportController->setReportsPath(expandedPath);
+            m_supportController->setIncludeReports(true);
+        } else if (lower == QStringLiteral("licenses")) {
+            m_supportController->setLicensesPath(expandedPath);
+            m_supportController->setIncludeLicenses(true);
+        } else if (lower == QStringLiteral("metrics")) {
+            m_supportController->setMetricsPath(expandedPath);
+            m_supportController->setIncludeMetrics(true);
+        } else if (lower == QStringLiteral("audit")) {
+            m_supportController->setAuditPath(expandedPath);
+            m_supportController->setIncludeAudit(true);
+        } else {
+            storeExtra(label, expandedPath);
+        }
+    };
+
+    for (const QString& spec : includeEnv)
+        handleInclude(spec);
+    for (const QString& spec : includeCli)
+        handleInclude(spec);
+
+    QSet<QString> disabledCustom;
+    const auto handleDisable = [&](const QString& rawLabel) {
+        const QString label = rawLabel.trimmed().toLower();
+        if (label.isEmpty())
+            return;
+        if (label == QStringLiteral("logs")) {
+            m_supportController->setIncludeLogs(false);
+        } else if (label == QStringLiteral("reports")) {
+            m_supportController->setIncludeReports(false);
+        } else if (label == QStringLiteral("licenses")) {
+            m_supportController->setIncludeLicenses(false);
+        } else if (label == QStringLiteral("metrics")) {
+            m_supportController->setIncludeMetrics(false);
+        } else if (label == QStringLiteral("audit")) {
+            m_supportController->setIncludeAudit(false);
+        } else {
+            disabledCustom.insert(label);
+        }
+    };
+
+    for (const QString& spec : disableEnv)
+        handleDisable(spec);
+    for (const QString& spec : disableCli)
+        handleDisable(spec);
+
+    if (!disabledCustom.isEmpty()) {
+        QStringList filteredOrder;
+        QHash<QString, QPair<QString, QString>> filteredMap;
+        for (const QString& key : std::as_const(extraOrder)) {
+            if (disabledCustom.contains(key))
+                continue;
+            filteredOrder.append(key);
+            filteredMap.insert(key, extraMap.value(key));
+        }
+        extraOrder = filteredOrder;
+        extraMap = filteredMap;
+    }
+
+    QStringList extraSpecs;
+    extraSpecs.reserve(extraOrder.size());
+    for (const QString& key : std::as_const(extraOrder)) {
+        const auto pair = extraMap.value(key);
+        extraSpecs.append(QStringLiteral("%1=%2").arg(pair.first, pair.second));
+    }
+    m_supportController->setExtraIncludeSpecs(extraSpecs);
+
+    QVariantMap metadata;
+    metadata.insert(QStringLiteral("origin"), QStringLiteral("desktop_ui"));
+    metadata.insert(QStringLiteral("instrument"), instrumentLabel());
+    metadata.insert(QStringLiteral("exchange"), m_instrument.exchange);
+    metadata.insert(QStringLiteral("symbol"), m_instrument.symbol);
+    metadata.insert(QStringLiteral("connection_status"), m_connectionStatus);
+    metadata.insert(QStringLiteral("app_version"), QCoreApplication::applicationVersion());
+    metadata.insert(QStringLiteral("hostname"), QSysInfo::machineHostName());
+
+    const auto applyMetadata = [&](const QString& rawSpec) {
+        const QString trimmed = rawSpec.trimmed();
+        if (trimmed.isEmpty())
+            return;
+        const int eq = trimmed.indexOf('=');
+        if (eq <= 0) {
+            qCWarning(lcAppMetrics) << "Nieprawidłowa para metadata pakietu wsparcia" << trimmed;
+            return;
+        }
+        const QString key = trimmed.left(eq).trimmed();
+        const QString value = trimmed.mid(eq + 1).trimmed();
+        if (key.isEmpty())
+            return;
+        metadata.insert(key, value);
+    };
+
+    for (const QString& spec : metadataEnv)
+        applyMetadata(spec);
+    for (const QString& spec : metadataCli)
+        applyMetadata(spec);
+
+    m_supportController->setMetadata(metadata);
 }
 
 void Application::setUiSettingsPersistenceEnabled(bool enabled)
@@ -1544,6 +1873,8 @@ void Application::exposeToQml() {
     m_engine.rootContext()->setContextProperty(QStringLiteral("activationController"), m_activationController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("securityController"), m_securityController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("reportController"), m_reportController.get());
+    m_engine.rootContext()->setContextProperty(QStringLiteral("strategyController"), m_strategyController.get());
+    m_engine.rootContext()->setContextProperty(QStringLiteral("supportController"), m_supportController.get());
 }
 
 QObject* Application::activationController() const
@@ -1554,6 +1885,16 @@ QObject* Application::activationController() const
 QObject* Application::reportController() const
 {
     return m_reportController.get();
+}
+
+QObject* Application::strategyController() const
+{
+    return m_strategyController.get();
+}
+
+QObject* Application::supportController() const
+{
+    return m_supportController.get();
 }
 
 void Application::ensureFrameMonitor() {
@@ -2015,9 +2356,76 @@ void Application::applyTradingTlsEnvironmentOverrides(const QCommandLineParser& 
     applyPathFromEnv(QByteArrayLiteral("BOT_CORE_UI_GRPC_CLIENT_KEY"), parser.value("grpc-client-key"),
                      &TradingClient::TlsConfig::clientKeyPath);
 
+    if (parser.value("tls-pinned-sha256").trimmed().isEmpty()) {
+        if (const auto pinnedEnv = envValue(QByteArrayLiteral("BOT_CORE_UI_GRPC_PINNED_SHA256")); pinnedEnv.has_value()) {
+            m_tradingTlsConfig.pinnedServerFingerprint = pinnedEnv->trimmed();
+        }
+    }
+
     if (parser.value("grpc-target-name").trimmed().isEmpty()) {
         if (const auto targetEnv = envValue(QByteArrayLiteral("BOT_CORE_UI_GRPC_TARGET_NAME")))
             m_tradingTlsConfig.targetNameOverride = targetEnv->trimmed();
+    }
+}
+
+void Application::applyTradingAuthEnvironmentOverrides(const QCommandLineParser& parser,
+                                                       bool cliTokenProvided,
+                                                       bool cliTokenFileProvided,
+                                                       bool cliRoleProvided,
+                                                       bool cliScopesProvided)
+{
+    Q_UNUSED(parser);
+
+    if (!cliTokenProvided && !cliTokenFileProvided) {
+        const auto envToken = envValue(QByteArrayLiteral("BOT_CORE_UI_GRPC_AUTH_TOKEN"));
+        const auto envTokenFile = envValue(QByteArrayLiteral("BOT_CORE_UI_GRPC_AUTH_TOKEN_FILE"));
+        const bool envTokenNonEmpty = envToken.has_value() && !envToken->trimmed().isEmpty();
+        const bool envTokenFileNonEmpty = envTokenFile.has_value() && !envTokenFile->trimmed().isEmpty();
+
+        if (envTokenNonEmpty && envTokenFileNonEmpty) {
+            qCWarning(lcAppMetrics)
+                << "Zmiennie BOT_CORE_UI_GRPC_AUTH_TOKEN oraz BOT_CORE_UI_GRPC_AUTH_TOKEN_FILE są ustawione równocześnie."
+                << "Użyję wartości tokenu przekazanej w zmiennej BOT_CORE_UI_GRPC_AUTH_TOKEN.";
+        }
+
+        bool applied = false;
+        if (envToken.has_value()) {
+            const QString trimmed = envToken->trimmed();
+            if (!trimmed.isEmpty()) {
+                m_tradingAuthToken = trimmed;
+                applied = true;
+            }
+        }
+
+        if (!applied && envTokenFileNonEmpty) {
+            const QString tokenFromFile = readTokenFile(envTokenFile->trimmed(), QStringLiteral("TradingService"));
+            if (!tokenFromFile.isEmpty()) {
+                m_tradingAuthToken = tokenFromFile;
+                applied = true;
+            }
+        }
+
+        if (!applied && ((envToken.has_value() && envToken->trimmed().isEmpty())
+                         || (envTokenFile.has_value() && envTokenFile->trimmed().isEmpty()))) {
+            m_tradingAuthToken.clear();
+        }
+    }
+
+    if (!cliRoleProvided) {
+        if (const auto roleEnv = envValue(QByteArrayLiteral("BOT_CORE_UI_GRPC_RBAC_ROLE")); roleEnv.has_value()) {
+            m_tradingRbacRole = roleEnv->trimmed();
+        }
+    }
+
+    if (!cliScopesProvided) {
+        if (const auto scopesEnv = envValue(QByteArrayLiteral("BOT_CORE_UI_GRPC_RBAC_SCOPES")); scopesEnv.has_value()) {
+            const QString trimmed = scopesEnv->trimmed();
+            if (trimmed.isEmpty()) {
+                m_tradingRbacScopes.clear();
+            } else {
+                m_tradingRbacScopes = splitScopesList(trimmed);
+            }
+        }
     }
 }
 

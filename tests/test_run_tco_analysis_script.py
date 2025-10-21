@@ -7,6 +7,9 @@ from pathlib import Path
 
 import pytest
 
+from tests._cli_parser_helpers import parser_supports
+from tests._signing_helpers import write_random_hmac_key
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -32,33 +35,14 @@ def _parser():
     return build()
 
 
-def _parser_supports(*flags: str) -> bool:
-    parser = _parser()
-    actions = getattr(parser, "_actions", ())
-    option_set = set()
-    for act in actions:
-        option_set.update(getattr(act, "option_strings", []) or [])
-    return all(flag in option_set for flag in flags)
-
-
 def _supports_head_cli() -> bool:
     # HEAD: --input / --artifact-root / --signing-key-file / --json-name / --csv-name / --signature-name
-    return _parser_supports("--input", "--artifact-root")
+    return parser_supports(_parser, "--input", "--artifact-root")
 
 
 def _supports_main_cli() -> bool:
     # main: --fills / --output-dir / --basename / --signing-key-path
-    return _parser_supports("--fills", "--output-dir")
-
-
-# ----------------- pomocnicze -----------------
-def _write_key(path: Path) -> bytes:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    data = os.urandom(48)
-    path.write_bytes(data)
-    if os.name != "nt":
-        path.chmod(0o600)
-    return data
+    return parser_supports(_parser, "--fills", "--output-dir")
 
 
 # ----------------- TESTY -----------------
@@ -174,7 +158,7 @@ def test_run_tco_analysis_generates_signed_reports_or_summary(tmp_path: Path) ->
         )
 
         signing_key_path = tmp_path / "keys" / "hmac.key"
-        signing_key = _write_key(signing_key_path)
+        signing_key = write_random_hmac_key(signing_key_path)
 
         output_dir = tmp_path / "reports"
         exit_code = run_tco(

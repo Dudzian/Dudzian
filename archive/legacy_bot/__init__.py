@@ -1,57 +1,6 @@
-# -*- coding: utf-8 -*-
-"""Top-level package for the trading bot.
-
-Ten plik sprawia, że katalog staje się pakietem Pythona i udostępnia najważniejsze klasy
-(re-eksporty), aby importy były krótsze i kompatybilne wstecz.
-"""
+"""Legacy compatibility shim delegating to :mod:`KryptoLowca.__init__`."""
 from __future__ import annotations
 
-__all__ = [
-    "DatabaseManager", "DBOptions",
-    "AIManager", "ConfigManager", "ExchangeManager", "ReportManager", "RiskManagerAdapter", "SecurityManager",
-    "TradingEngine", "TradingError",
-]
+from archive.legacy_bot._compat import proxy_globals
 
-# --- Re-eksport menedżerów ---
-try:
-    from KryptoLowca.database_manager import DatabaseManager, DBOptions  # type: ignore
-except Exception:  # pragma: no cover
-    DatabaseManager = None  # type: ignore
-    DBOptions = None  # type: ignore
-
-try:
-    from .managers.ai_manager import AIManager  # type: ignore
-except Exception:  # pragma: no cover
-    AIManager = None  # type: ignore
-
-try:
-    from KryptoLowca.config_manager import ConfigManager  # type: ignore
-except Exception:  # pragma: no cover
-    ConfigManager = None  # type: ignore
-
-try:
-    from .managers.exchange_manager import ExchangeManager  # type: ignore
-except Exception:  # pragma: no cover
-    ExchangeManager = None  # type: ignore
-
-try:
-    from .managers.report_manager import ReportManager  # type: ignore
-except Exception:  # pragma: no cover
-    ReportManager = None  # type: ignore
-
-try:
-    from .managers.risk_manager_adapter import RiskManagerAdapter  # type: ignore
-except Exception:  # pragma: no cover
-    RiskManagerAdapter = None  # type: ignore
-
-try:
-    from .managers.security_manager import SecurityManager  # type: ignore
-except Exception:  # pragma: no cover
-    SecurityManager = None  # type: ignore
-
-# --- Re-eksport silnika ---
-try:
-    from .core.trading_engine import TradingEngine, TradingError  # type: ignore
-except Exception:  # pragma: no cover
-    class TradingError(Exception): ...
-    TradingEngine = None  # type: ignore
+proxy_globals(globals(), "KryptoLowca.__init__", "__init__.py")

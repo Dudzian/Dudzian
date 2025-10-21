@@ -8,6 +8,12 @@
 > `bot_core.execution.live_router.LiveExecutionRouter` and
 > `bot_core.exchanges.ccxt_adapter.CCXTSpotAdapter` (or higher-level helpers in
 > `KryptoLowca.exchange_adapter`).
+>
+> **2025-02 sanity sweep:** Legacy compatibility layers now re-export the canonical
+> implementations from `bot_core`.  Modules such as `KryptoLowca.ai_manager` and
+> `archive.legacy_bot.managers.exchange_core` only proxy to the modern runtime.  Use
+> `python scripts/find_duplicates.py --json` to verify that no redundant
+> implementations reappear when touching this area.
 
 ## Implemented Scope
 - Unified adapter abstraction defined in `KryptoLowca/exchanges/interfaces.py`, with REST and WebSocket helpers, rate limiting, and order handling primitives.

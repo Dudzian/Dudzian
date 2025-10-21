@@ -12,6 +12,21 @@ from typing import Iterable, Mapping, MutableMapping, Sequence
 from bot_core.data.base import OHLCVRequest, OHLCVResponse
 
 
+def _ema_series(values: Sequence[float], span: int) -> list[float]:
+    """Zwraca kolejne wartości wykładniczej średniej kroczącej."""
+
+    if not values:
+        return []
+    span = max(1, int(span))
+    alpha = 2.0 / (span + 1.0)
+    ema_values: list[float] = [float(values[0])]
+    ema = ema_values[0]
+    for value in values[1:]:
+        ema = alpha * float(value) + (1.0 - alpha) * ema
+        ema_values.append(ema)
+    return ema_values
+
+
 @dataclass(slots=True)
 class FeatureVector:
     """Pojedynczy wektor cech z przypisanym targetem (future return w bps)."""
@@ -2689,9 +2704,9 @@ class FeatureEngineer:
         if len(closes) < 4:
             return 0.0
         period = min(max(self._window, 5), len(closes))
-        ema1 = self._ema_series(closes, period)
-        ema2 = self._ema_series(ema1, period)
-        ema3 = self._ema_series(ema2, period)
+        ema1 = _ema_series(closes, period)
+        ema2 = _ema_series(ema1, period)
+        ema3 = _ema_series(ema2, period)
         if len(ema3) < 2:
             return 0.0
         prev = ema3[-2]
@@ -2700,19 +2715,6 @@ class FeatureEngineer:
             return 0.0
         value = (current - prev) / abs(prev)
         return self._clamp(value, -5.0, 5.0)
-
-    def _ema_series(self, values: Sequence[float], span: int) -> list[float]:
-        if not values:
-            return []
-        span = max(1, int(span))
-        alpha = 2.0 / (span + 1.0)
-        ema_values: list[float] = []
-        ema = float(values[0])
-        ema_values.append(ema)
-        for value in values[1:]:
-            ema = alpha * float(value) + (1.0 - alpha) * ema
-            ema_values.append(ema)
-        return ema_values
 
     def _ultimate_oscillator(
         self,
@@ -3309,41 +3311,29 @@ class FeatureEngineer:
         alpha = 2.0 / (span + 1.0)
         return alpha * float(value) + (1.0 - alpha) * float(previous)
 
-    def _ema_series(self, values: Sequence[float], span: int) -> list[float]:
-        if not values:
-            return []
-        span = max(1, int(span))
-        alpha = 2.0 / (span + 1.0)
-        ema_values: list[float] = [float(values[0])]
-        ema = ema_values[0]
-        for value in values[1:]:
-            ema = alpha * float(value) + (1.0 - alpha) * ema
-            ema_values.append(ema)
-        return ema_values
-
     def _dema(self, values: Sequence[float], span: int) -> float:
         if not values:
             return 0.0
-        ema_first_series = self._ema_series(values, span)
+        ema_first_series = _ema_series(values, span)
         if not ema_first_series:
             return 0.0
         ema_first = ema_first_series[-1]
-        ema_second_series = self._ema_series(ema_first_series, span)
+        ema_second_series = _ema_series(ema_first_series, span)
         ema_second = ema_second_series[-1] if ema_second_series else ema_first
         return 2.0 * ema_first - ema_second
 
     def _tema(self, values: Sequence[float], span: int) -> float:
         if not values:
             return 0.0
-        ema_first_series = self._ema_series(values, span)
+        ema_first_series = _ema_series(values, span)
         if not ema_first_series:
             return 0.0
         ema_first = ema_first_series[-1]
-        ema_second_series = self._ema_series(ema_first_series, span)
+        ema_second_series = _ema_series(ema_first_series, span)
         if not ema_second_series:
             return ema_first
         ema_second = ema_second_series[-1]
-        ema_third_series = self._ema_series(ema_second_series, span)
+        ema_third_series = _ema_series(ema_second_series, span)
         ema_third = ema_third_series[-1] if ema_third_series else ema_second
         return 3.0 * ema_first - 3.0 * ema_second + ema_third
 
@@ -3703,14 +3693,14 @@ class FeatureEngineer:
             return 0.0
         period = max(1, int(period))
         vf = max(0.0, min(float(volume_factor), 1.0))
-        ema1 = self._ema_series(closes, period)
+        ema1 = _ema_series(closes, period)
         if not ema1:
             return float(closes[-1])
-        ema2 = self._ema_series(ema1, period)
-        ema3 = self._ema_series(ema2, period)
-        ema4 = self._ema_series(ema3, period)
-        ema5 = self._ema_series(ema4, period)
-        ema6 = self._ema_series(ema5, period)
+        ema2 = _ema_series(ema1, period)
+        ema3 = _ema_series(ema2, period)
+        ema4 = _ema_series(ema3, period)
+        ema5 = _ema_series(ema4, period)
+        ema6 = _ema_series(ema5, period)
         ema3_last = ema3[-1] if ema3 else float(closes[-1])
         ema4_last = ema4[-1] if ema4 else ema3_last
         ema5_last = ema5[-1] if ema5 else ema4_last

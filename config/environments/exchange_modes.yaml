@@ -1,0 +1,71 @@
+# YAML templates describing how to switch between paper and live environments.
+
+defaults:
+  exchange: binance
+  portfolio: core-macro
+  environment: paper
+
+paper:
+  description: Paper environment used for integration tests.
+  exchange_manager:
+    mode: paper
+    paper_variant: spot
+    paper_initial_cash: 25000
+    paper_cash_asset: USDT
+  credentials:
+    api_key: null
+    secret: null
+  telemetry:
+    margin_events: enabled
+
+paper_margin:
+  description: Paper simulation with margin leverage/funding.
+  exchange_manager:
+    mode: paper
+    paper_variant: margin
+    simulator:
+      leverage_limit: 5.0
+      maintenance_margin_ratio: 0.12
+      funding_rate: 0.00005
+
+paper_futures:
+  description: Futures simulator mirroring production risk checks.
+  exchange_manager:
+    mode: paper
+    paper_variant: futures
+    simulator:
+      leverage_limit: 12.0
+      maintenance_margin_ratio: 0.04
+      funding_rate: 0.0001
+
+testnet:
+  description: CCXT-backed testnet with real order routing disabled.
+  exchange_manager:
+    mode: margin
+    testnet: true
+    watchdog:
+      retry_policy:
+        max_attempts: 5
+        base_delay: 0.5
+  credentials:
+    api_key: ${TESTNET_API_KEY}
+    secret: ${TESTNET_SECRET}
+
+live:
+  description: Production configuration with native adapters.
+  exchange_manager:
+    mode: margin
+    testnet: false
+    watchdog:
+      retry_policy:
+        max_attempts: 3
+        base_delay: 1.5
+      circuit_breaker:
+        failure_threshold: 5
+        recovery_time_seconds: 60
+    native_adapter:
+      settings:
+        margin_type: cross
+  credentials:
+    api_key: ${LIVE_API_KEY}
+    secret: ${LIVE_SECRET}

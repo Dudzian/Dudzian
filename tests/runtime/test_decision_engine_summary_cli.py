@@ -36,6 +36,7 @@ def _record_event(
         risk_profile="balanced",
         symbol=symbol,
         side=side,
+        side="BUY",
         strategy=strategy,
         schedule=schedule,
         status=status,
@@ -78,6 +79,9 @@ def test_export_decision_engine_summary(tmp_path: Path) -> None:
             "generated_at": "2024-05-01T00:00:00Z",
             "latency_ms": "42.0",
             "risk_flags": "volatility_spike",
+            "decision_thresholds": json.dumps({"min_probability": 0.6, "max_cost_bps": 18.0}),
+            "generated_at": "2024-05-01T00:00:00Z",
+            "latency_ms": "42.0",
         },
     )
 
@@ -111,6 +115,9 @@ def test_export_decision_engine_summary(tmp_path: Path) -> None:
             "latency_ms": "55.0",
             "risk_flags": "liquidity",
             "stress_failures": "stress_liquidity",
+            "decision_thresholds": json.dumps({"min_probability": 0.65, "max_cost_bps": 12.0}),
+            "decision_reasons": "too_costly",
+            "latency_ms": "55.0",
         },
     )
 
@@ -566,6 +573,8 @@ def test_export_decision_engine_summary(tmp_path: Path) -> None:
     assert summary["std_model_expected_return_bps"] == pytest.approx(3.0)
     assert summary["std_model_expected_value_bps"] == pytest.approx(2.5475)
     assert summary["std_model_expected_value_minus_cost_bps"] == pytest.approx(3.1975)
+    assert summary["latest_model"] == "gbm_v6"
+    assert summary["history_limit"] == 10
     assert len(summary["history"]) == 2
     assert summary["history"][0]["candidate"]["symbol"] == "BTC/USDT"
 

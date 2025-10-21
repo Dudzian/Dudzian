@@ -10,6 +10,13 @@ import pytest
 import yaml
 
 from scripts import run_trading_stub_server
+from tests._metrics_service_helpers import (
+    MemoryAuditStub,
+    RouterStub,
+    SinkStub,
+    UiSinkStub,
+    get_security_section,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -297,12 +304,7 @@ def test_metrics_server_optional(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
         lambda path, fsync=False: ("jsonl", Path(path), fsync),
     )
 
-    class DummyUiSink:
-        def __init__(self, _router, **kwargs):
-            self.kwargs = kwargs
-            self.jsonl_path = kwargs.get("jsonl_path")
-
-    monkeypatch.setattr(run_trading_stub_server, "UiTelemetryAlertSink", DummyUiSink)
+    monkeypatch.setattr(run_trading_stub_server, "UiTelemetryAlertSink", UiSinkStub)
 
     server = _DummyServer(None, "127.0.0.1", 0, 0)
     monkeypatch.setattr(run_trading_stub_server, "TradingStubServer", lambda *args, **kwargs: server)
@@ -332,7 +334,7 @@ def test_metrics_server_optional(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     sinks = created_kwargs["sinks"]
     assert isinstance(sinks, list)
     assert any(isinstance(sink, tuple) and sink[0] == "jsonl" for sink in sinks)
-    assert any(isinstance(sink, DummyUiSink) for sink in sinks)
+    assert any(isinstance(sink, UiSinkStub) for sink in sinks)
     ui_cfg = created_kwargs.get("ui_alerts_config")
     assert ui_cfg is not None
     assert ui_cfg["reduce_mode"] == "enable"
@@ -358,11 +360,7 @@ def test_metrics_ui_alert_cli_forwarding(monkeypatch: pytest.MonkeyPatch, tmp_pa
         lambda path, fsync=False: ("jsonl", Path(path), fsync),
     )
 
-    class DummyUiSink:
-        def __init__(self, _router, **kwargs):
-            self.kwargs = kwargs
-
-    monkeypatch.setattr(run_trading_stub_server, "UiTelemetryAlertSink", DummyUiSink)
+    monkeypatch.setattr(run_trading_stub_server, "UiTelemetryAlertSink", UiSinkStub)
     monkeypatch.setattr(run_trading_stub_server, "TradingStubServer", lambda *args, **kwargs: _DummyServer(None, "127.0.0.1", 0, 0))
 
     alerts_jsonl = tmp_path / "alerts.jsonl"
@@ -458,24 +456,9 @@ def test_metrics_ui_alert_cli_forwarding(monkeypatch: pytest.MonkeyPatch, tmp_pa
 def test_build_ui_alert_sink_memory_note_when_file_backend_missing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    class DummyRouter:
-        def __init__(self, audit_log) -> None:
-            self.audit_log = audit_log
-
-        def register(self, channel) -> None:
-            return None
-
-    class DummyAudit:
-        def __init__(self, *_, **__):
-            pass
-
-    class DummySink:
-        def __init__(self, _router, **kwargs) -> None:
-            self.kwargs = kwargs
-
-    monkeypatch.setattr(run_trading_stub_server, "DefaultAlertRouter", DummyRouter)
-    monkeypatch.setattr(run_trading_stub_server, "InMemoryAlertAuditLog", DummyAudit)
-    monkeypatch.setattr(run_trading_stub_server, "UiTelemetryAlertSink", DummySink)
+    monkeypatch.setattr(run_trading_stub_server, "DefaultAlertRouter", RouterStub)
+    monkeypatch.setattr(run_trading_stub_server, "InMemoryAlertAuditLog", MemoryAuditStub)
+    monkeypatch.setattr(run_trading_stub_server, "UiTelemetryAlertSink", SinkStub)
     monkeypatch.setattr(run_trading_stub_server, "FileAlertAuditLog", None)
 
     args = SimpleNamespace(
@@ -630,7 +613,7 @@ def test_print_runtime_plan(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, cap
     assert parameter_sources.get("metrics_jsonl_path") == "cli"
     assert parameter_sources.get("enable_metrics") == "cli"
     assert parameter_sources.get("fail_on_security_warnings") == "default"
-    security = _get_security_section(plan)
+    security = get_security_section(plan)
     assert security["enabled"] is False
     assert security["source"] == "default"
     assert security["parameter_source"] == "default"
@@ -828,7 +811,7 @@ def test_fail_on_security_warnings_blocks_runtime_plan(
     payload = json.loads(captured.out)
     parameter_sources = payload.get("environment", {}).get("parameter_sources", {})
     assert parameter_sources.get("fail_on_security_warnings") == "cli"
-    security = _get_security_section(payload)
+    security = get_security_section(payload)
     assert security["enabled"] is True
     assert security["source"] == "cli"
     assert security["parameter_source"] == "cli"
@@ -853,12 +836,7 @@ def test_runtime_plan_jsonl_written(monkeypatch: pytest.MonkeyPatch, tmp_path: P
         lambda path, fsync=False: ("jsonl", Path(path), fsync),
     )
 
-    class DummyUiSink:
-        def __init__(self, _router, **kwargs):
-            self.kwargs = kwargs
-            self.jsonl_path = kwargs.get("jsonl_path")
-
-    monkeypatch.setattr(run_trading_stub_server, "UiTelemetryAlertSink", DummyUiSink)
+    monkeypatch.setattr(run_trading_stub_server, "UiTelemetryAlertSink", UiSinkStub)
     server = _DummyServer(None, "127.0.0.1", 0, 0)
     monkeypatch.setattr(run_trading_stub_server, "TradingStubServer", lambda *args, **kwargs: server)
 
@@ -887,19 +865,9 @@ def test_runtime_plan_jsonl_written(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     assert payload["metrics"]["ui_alerts"]["overlay_logging"] is True
     assert payload["dataset"]["sources"][-1]["path"] == str(dataset_yaml)
     assert payload["environment"]["parameter_sources"]["metrics_jsonl_path"] == "cli"
-    security = _get_security_section(payload)
+    security = get_security_section(payload)
     assert security["enabled"] is False
     assert security["source"] == "default"
-
-
-def _get_security_section(payload: Mapping[str, object]) -> Mapping[str, object]:
-    section = payload.get("security")
-    assert isinstance(section, Mapping)
-    fail_section = section.get("fail_on_security_warnings")
-    assert isinstance(fail_section, Mapping)
-    return fail_section
-
-
 def test_environment_overrides_apply(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys) -> None:
     metrics_jsonl = tmp_path / "metrics_env.jsonl"
     dataset_a = tmp_path / "dataset_a.yaml"
@@ -940,7 +908,7 @@ def test_environment_overrides_apply(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     assert plan["environment"]["parameter_sources"]["dataset_paths"] == "env"
     assert plan["environment"]["parameter_sources"]["include_default_dataset"] == "env"
     assert plan["environment"]["parameter_sources"]["fail_on_security_warnings"] == "default"
-    security = _get_security_section(plan)
+    security = get_security_section(plan)
     assert security["enabled"] is False
     assert security["source"] == "default"
 
@@ -970,7 +938,7 @@ def test_environment_override_fail_on_security_warnings(
     )
     parameter_sources = environment_section.get("parameter_sources", {})
     assert parameter_sources.get("fail_on_security_warnings") == "env"
-    security = _get_security_section(payload)
+    security = get_security_section(payload)
     assert security["enabled"] is True
     assert security["source"] == "env:RUN_TRADING_STUB_FAIL_ON_SECURITY_WARNINGS"
     assert security["parameter_source"] == "env"
@@ -997,7 +965,7 @@ def test_environment_override_ignored_by_cli(monkeypatch: pytest.MonkeyPatch, ca
     assert port_override["applied"] is False
     assert port_override["reason"] == "cli_override"
     assert plan["environment"]["parameter_sources"]["port"] == "cli"
-    security = _get_security_section(plan)
+    security = get_security_section(plan)
     assert security["enabled"] is False
     assert security["source"] == "default"
 

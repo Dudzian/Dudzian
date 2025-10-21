@@ -82,6 +82,7 @@ try:
         CrossExchangeArbitrageStrategyConfig,
         MeanReversionStrategyConfig,
         MultiStrategySchedulerConfig,
+        StrategyDefinitionConfig,
         StrategyScheduleConfig,
         VolatilityTargetingStrategyConfig,
     )
@@ -89,6 +90,7 @@ except Exception:  # brak rozszerzonej biblioteki strategii
     CrossExchangeArbitrageStrategyConfig = None  # type: ignore
     MeanReversionStrategyConfig = None  # type: ignore
     MultiStrategySchedulerConfig = None  # type: ignore
+    StrategyDefinitionConfig = None  # type: ignore
     StrategyScheduleConfig = None  # type: ignore
     VolatilityTargetingStrategyConfig = None  # type: ignore
 
@@ -495,6 +497,66 @@ def _load_cross_exchange_arbitrage_strategies(raw: Mapping[str, Any]):
     return strategies
 
 
+def _load_strategy_definitions(raw: Mapping[str, Any]):
+    if StrategyDefinitionConfig is None:
+        return {}
+
+    def _normalize_mapping(values: Mapping[str, Any] | None) -> Mapping[str, Any]:
+        if not values:
+            return {}
+        return {str(key): value for key, value in values.items()}
+
+    definitions: dict[str, StrategyDefinitionConfig] = {}
+
+    for name, entry in (raw.get("strategies", {}) or {}).items():
+        engine = str(entry.get("engine", "")).strip()
+        if not engine:
+            continue
+        parameters = _normalize_mapping(entry.get("parameters"))
+        metadata = _normalize_mapping(entry.get("metadata"))
+        tags_source = entry.get("tags") or ()
+        tags: tuple[str, ...]
+        if isinstance(tags_source, (list, tuple)):
+            tags = tuple(str(tag) for tag in tags_source)
+        else:
+            tags = (str(tags_source),) if tags_source else ()
+        definitions[name] = StrategyDefinitionConfig(
+            name=name,
+            engine=engine,
+            parameters=parameters,
+            risk_profile=str(entry.get("risk_profile")) if entry.get("risk_profile") else None,
+            tags=tags,
+            metadata=metadata,
+        )
+
+    def _ensure(name: str, engine: str, params: Mapping[str, Any]) -> None:
+        if name in definitions:
+            return
+        definitions[name] = StrategyDefinitionConfig(
+            name=name,
+            engine=engine,
+            parameters=_normalize_mapping(params),
+        )
+
+    for name, entry in (raw.get("mean_reversion_strategies", {}) or {}).items():
+        params = entry.get("parameters", entry) or {}
+        _ensure(name, "mean_reversion", params)
+
+    for name, entry in (raw.get("volatility_target_strategies", {}) or {}).items():
+        params = entry.get("parameters", entry) or {}
+        _ensure(name, "volatility_target", params)
+
+    for name, entry in (raw.get("cross_exchange_arbitrage_strategies", {}) or {}).items():
+        params = entry.get("parameters", entry) or {}
+        _ensure(name, "cross_exchange_arbitrage", params)
+
+    for name, entry in (raw.get("grid_strategies", {}) or {}).items():
+        params = entry.get("parameters", entry) or {}
+        _ensure(name, "grid_trading", params)
+
+    return definitions
+
+
 def _load_strategy_schedule(entry_name: str, entry: Mapping[str, Any]) -> StrategyScheduleConfig:
     assert StrategyScheduleConfig is not None
     return StrategyScheduleConfig(
@@ -553,6 +615,33 @@ def _load_multi_strategy_schedulers(raw: Mapping[str, Any]):
                     stress_lab_report_path=_format_optional_text(stress_path_value),
                     stress_max_age_minutes=_maybe_int(stress_age_value),
                 )
+            signal_limits_entry = entry.get("signal_limits") or {}
+            signal_limits: dict[str, dict[str, int]] = {}
+            if isinstance(signal_limits_entry, Mapping):
+                for strategy_key, profile_entry in signal_limits_entry.items():
+                    if not isinstance(profile_entry, Mapping):
+                        continue
+                    profiles: dict[str, int] = {}
+                    for profile_key, limit_value in profile_entry.items():
+                        parsed = _maybe_int(limit_value)
+                        if parsed is None:
+                            continue
+                        profiles[str(profile_key)] = max(0, int(parsed))
+                    if profiles:
+                        signal_limits[str(strategy_key)] = profiles
+
+            capital_policy_entry = entry.get("capital_policy")
+            if isinstance(capital_policy_entry, Mapping):
+                capital_policy = {str(key): value for key, value in capital_policy_entry.items()}
+            elif capital_policy_entry in (None, ""):
+                capital_policy = None
+            else:
+                capital_policy = str(capital_policy_entry)
+
+            allocation_rebalance_value = (
+                entry.get("allocation_rebalance_seconds")
+                or entry.get("capital_rebalance_seconds")
+            )
             schedulers[name] = MultiStrategySchedulerConfig(
                 name=name,
                 schedules=tuple(schedules),
@@ -570,6 +659,9 @@ def _load_multi_strategy_schedulers(raw: Mapping[str, Any]):
                     else None
                 ),
                 portfolio_inputs=inputs_config,
+                signal_limits=signal_limits,
+                capital_policy=capital_policy,
+                allocation_rebalance_seconds=_maybe_int(allocation_rebalance_value),
             )
     return schedulers
 
@@ -3327,6 +3419,7 @@ def load_core_config(path: str | Path) -> CoreConfig:
     mean_reversion_strategies = _load_mean_reversion_strategies(raw)
     volatility_target_strategies = _load_volatility_target_strategies(raw)
     cross_exchange_arbitrage_strategies = _load_cross_exchange_arbitrage_strategies(raw)
+    strategy_definitions = _load_strategy_definitions(raw)
     scheduler_configs = _load_multi_strategy_schedulers(raw)
     portfolio_governor_configs = _load_portfolio_governors(raw)
 
@@ -3375,6 +3468,8 @@ def load_core_config(path: str | Path) -> CoreConfig:
         core_kwargs["instrument_universes"] = instrument_universes
     if _core_has("instrument_buckets"):
         core_kwargs["instrument_buckets"] = instrument_buckets
+    if _core_has("strategy_definitions"):
+        core_kwargs["strategy_definitions"] = strategy_definitions
     if _core_has("strategies"):
         core_kwargs["strategies"] = strategies
     if _core_has("mean_reversion_strategies"):
