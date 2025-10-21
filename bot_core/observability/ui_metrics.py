@@ -14,6 +14,7 @@ from bot_core.observability.metrics import (
     MetricsRegistry,
     get_global_metrics_registry,
 )
+from bot_core.observability._tag_utils import extract_tag
 from bot_core.security.guards import get_capability_guard
 
 try:  # pragma: no cover - optional dependency during unit tests
@@ -43,15 +44,6 @@ def _safe_json_loads(payload: str) -> Mapping[str, Any]:
         return data
     LOGGER.debug("Pole notes powinno zawierać obiekt JSON, otrzymano: %r", data)
     return {}
-
-
-def _extract_tag(payload: Mapping[str, Any]) -> str | None:
-    tag = payload.get("tag")
-    if isinstance(tag, str):
-        normalized = tag.strip()
-        if normalized:
-            return normalized
-    return None
 
 
 def _timestamp_to_epoch_seconds(snapshot) -> float | None:
@@ -503,7 +495,7 @@ class UiTelemetryPrometheusExporter:
             now_monotonic = float(time.time())
         payload = _safe_json_loads(getattr(snapshot, "notes", ""))
         event = str(payload.get("event") or "").strip()
-        tag_value = _extract_tag(payload)
+        tag_value = extract_tag(payload)
         tag_labels = {"tag": tag_value} if tag_value else None
 
         self._snapshot_total.inc()

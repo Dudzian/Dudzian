@@ -3,75 +3,17 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Iterator, Mapping, Sequence
+from typing import Mapping, Sequence
 
 import pytest
 
 from bot_core.execution.base import ExecutionContext
 from bot_core.execution.live_router import LiveExecutionRouter, RouteDefinition
-from bot_core.exchanges.base import (
-    AccountSnapshot,
-    Environment,
-    ExchangeAdapter,
-    ExchangeCredentials,
-    OrderRequest,
-    OrderResult,
-)
+from bot_core.exchanges.base import Environment, OrderRequest, OrderResult
 from bot_core.exchanges.errors import ExchangeNetworkError
 from bot_core.observability import MetricsRegistry
 
-
-class DummyAdapter(ExchangeAdapter):
-    """Minimalna implementacja adaptera giełdowego do testów routera live."""
-
-    def __init__(self, name: str, responses: Sequence[OrderResult | Exception]) -> None:
-        super().__init__(ExchangeCredentials(key_id=name, environment=Environment.LIVE))
-        self.name = name
-        self._responses: Iterator[OrderResult | Exception] = iter(responses)
-        self.placed: list[OrderRequest] = []
-        self.cancelled: list[str] = []
-
-    # ------------------------------------------------------------------
-    # ExchangeAdapter API (nieużywane metody implementujemy symbolicznie)
-    # ------------------------------------------------------------------
-    def configure_network(self, *, ip_allowlist: Sequence[str] | None = None) -> None:  # noqa: ARG002
-        return None
-
-    def fetch_account_snapshot(self) -> AccountSnapshot:
-        return AccountSnapshot(balances={}, total_equity=0.0, available_margin=0.0, maintenance_margin=0.0)
-
-    def fetch_symbols(self) -> Iterable[str]:
-        return ()
-
-    def fetch_ohlcv(
-        self,
-        symbol: str,
-        interval: str,
-        start: int | None = None,
-        end: int | None = None,
-        limit: int | None = None,
-    ) -> Sequence[Sequence[float]]:  # noqa: ARG002
-        return ()
-
-    def place_order(self, request: OrderRequest) -> OrderResult:
-        self.placed.append(request)
-        try:
-            response = next(self._responses)
-        except StopIteration as exc:  # pragma: no cover - defensywnie
-            raise RuntimeError("Brak przygotowanej odpowiedzi w dummy adapterze") from exc
-        if isinstance(response, Exception):
-            raise response
-        return response
-
-    def cancel_order(self, order_id: str, *, symbol: str | None = None) -> None:  # noqa: ARG002
-        self.cancelled.append(order_id)
-
-    def stream_public_data(self, *, channels: Sequence[str]):  # noqa: ARG002
-        raise NotImplementedError
-
-    def stream_private_data(self, *, channels: Sequence[str]):  # noqa: ARG002
-        raise NotImplementedError
-
+from tests._exchange_adapter_helpers import StubExchangeAdapter
 
 @dataclass(slots=True)
 class FakeClock:
@@ -111,8 +53,12 @@ def test_live_router_executes_on_primary(tmp_path: Path) -> None:
     clock = FakeClock()
     success = OrderResult(order_id="1", status="FILLED", filled_quantity=1.0, avg_price=100.0, raw_response={})
     adapters = {
-        "primary": DummyAdapter("primary", [success]),
-        "fallback": DummyAdapter("fallback", []),
+        "primary": StubExchangeAdapter.from_name(
+            "primary",
+            environment=Environment.LIVE,
+            responses=[success],
+        ),
+        "fallback": StubExchangeAdapter.from_name("fallback", environment=Environment.LIVE),
     }
     router = LiveExecutionRouter(
         adapters=adapters,
@@ -139,10 +85,17 @@ def test_live_router_uses_fallback(tmp_path: Path) -> None:
     registry = MetricsRegistry()
     clock = FakeClock()
     adapters = {
-        "primary": DummyAdapter("primary", [ExchangeNetworkError("fail", None)]),
-        "secondary": DummyAdapter(
+        "primary": StubExchangeAdapter.from_name(
+            "primary",
+            environment=Environment.LIVE,
+            responses=[ExchangeNetworkError("fail", None)],
+        ),
+        "secondary": StubExchangeAdapter.from_name(
             "secondary",
-            [OrderResult(order_id="2", status="FILLED", filled_quantity=1.0, avg_price=99.5, raw_response={})],
+            environment=Environment.LIVE,
+            responses=[
+                OrderResult(order_id="2", status="FILLED", filled_quantity=1.0, avg_price=99.5, raw_response={})
+            ],
         ),
     }
     router = LiveExecutionRouter(
@@ -166,8 +119,16 @@ def test_live_router_raises_when_all_fail(tmp_path: Path) -> None:
     registry = MetricsRegistry()
     clock = FakeClock()
     adapters = {
-        "primary": DummyAdapter("primary", [ExchangeNetworkError("fail", None)]),
-        "secondary": DummyAdapter("secondary", [ExchangeNetworkError("fail", None)]),
+        "primary": StubExchangeAdapter.from_name(
+            "primary",
+            environment=Environment.LIVE,
+            responses=[ExchangeNetworkError("fail", None)],
+        ),
+        "secondary": StubExchangeAdapter.from_name(
+            "secondary",
+            environment=Environment.LIVE,
+            responses=[ExchangeNetworkError("fail", None)],
+        ),
     }
     router = LiveExecutionRouter(
         adapters=adapters,
@@ -190,11 +151,14 @@ def test_cancel_uses_recorded_exchange(tmp_path: Path) -> None:
     registry = MetricsRegistry()
     clock = FakeClock()
     adapters = {
-        "primary": DummyAdapter(
+        "primary": StubExchangeAdapter.from_name(
             "primary",
-            [OrderResult(order_id="abc", status="FILLED", filled_quantity=2.0, avg_price=50.0, raw_response={})],
+            environment=Environment.LIVE,
+            responses=[
+                OrderResult(order_id="abc", status="FILLED", filled_quantity=2.0, avg_price=50.0, raw_response={})
+            ],
         ),
-        "fallback": DummyAdapter("fallback", []),
+        "fallback": StubExchangeAdapter.from_name("fallback", environment=Environment.LIVE),
     }
     router = LiveExecutionRouter(
         adapters=adapters,

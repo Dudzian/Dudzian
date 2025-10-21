@@ -802,6 +802,17 @@ class AIManager:
         await self._invoke_model_method(model, "train", prefer_thread=True, **train_kwargs)
         return model
 
+    def _safe_pct_change(self, frame: pd.DataFrame, feats: Iterable[str]) -> pd.DataFrame:
+        """Oblicz zmiany procentowe z obsługą awaryjnego trybu dla ramek legacy."""
+
+        columns = list(feats)
+        try:
+            return frame[columns].pct_change()
+        except (TypeError, ValueError, AttributeError, ZeroDivisionError, OverflowError):
+            numeric = frame[columns].apply(pd.to_numeric, errors="coerce")
+            shifted = numeric.shift(1)
+            return (numeric - shifted) / shifted
+
     def detect_drift(
         self,
         baseline: pd.DataFrame,
@@ -816,8 +827,12 @@ class AIManager:
         self._validate_dataframe(baseline, feats)
         self._validate_dataframe(recent, feats)
 
-        baseline_pct = baseline[feats].pct_change().replace([np.inf, -np.inf], np.nan).dropna()
-        recent_pct = recent[feats].pct_change().replace([np.inf, -np.inf], np.nan).dropna()
+        baseline_pct = (
+            self._safe_pct_change(baseline, feats).replace([np.inf, -np.inf], np.nan).dropna()
+        )
+        recent_pct = (
+            self._safe_pct_change(recent, feats).replace([np.inf, -np.inf], np.nan).dropna()
+        )
 
         if baseline_pct.empty or recent_pct.empty:
             return DriftReport(0.0, 0.0, False, threshold)

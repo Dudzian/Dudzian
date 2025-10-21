@@ -10,8 +10,7 @@ import pytest
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from bot_core.alerts import AlertMessage, DefaultAlertRouter, InMemoryAlertAuditLog
-from bot_core.alerts.base import AlertChannel
+from bot_core.alerts import DefaultAlertRouter, InMemoryAlertAuditLog
 from bot_core.execution import ExecutionService
 from bot_core.observability import MetricsRegistry
 
@@ -21,18 +20,7 @@ from bot_core.runtime import TradingController
 from bot_core.runtime.journal import TradingDecisionEvent
 from bot_core.strategies import StrategySignal
 
-
-class CollectingChannel(AlertChannel):
-    name = "collector"
-
-    def __init__(self) -> None:
-        self.messages: list[AlertMessage] = []
-
-    def send(self, message: AlertMessage) -> None:
-        self.messages.append(message)
-
-    def health_check(self) -> Mapping[str, str]:
-        return {"status": "ok", "latency_ms": "5"}
+from tests._alert_channel_helpers import CollectingChannel
 
 
 class CollectingDecisionJournal:
@@ -128,7 +116,7 @@ def _account_snapshot() -> AccountSnapshot:
 def _router_with_channel() -> tuple[DefaultAlertRouter, CollectingChannel, InMemoryAlertAuditLog]:
     audit = InMemoryAlertAuditLog()
     router = DefaultAlertRouter(audit_log=audit)
-    channel = CollectingChannel()
+    channel = CollectingChannel(health_overrides={"latency_ms": "5"})
     router.register(channel)
     return router, channel, audit
 

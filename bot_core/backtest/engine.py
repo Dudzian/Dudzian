@@ -20,6 +20,7 @@ from typing import (
     Sequence,
     Tuple,
     TypeVar,
+    runtime_checkable,
 )
 
 import pandas as pd
@@ -47,6 +48,7 @@ class BacktestError(RuntimeError):
     """Ogólny wyjątek zgłaszany w przypadku błędów konfiguracji."""
 
 
+@runtime_checkable
 class DataProviderProtocol(Protocol):
     async def get_ohlcv(self, symbol: str, timeframe: str, *, limit: int = 500) -> Mapping[str, Any]:
         ...

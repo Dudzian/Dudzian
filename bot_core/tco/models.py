@@ -3,12 +3,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from decimal import Decimal, ROUND_HALF_UP, getcontext
+from decimal import Decimal, getcontext
 from typing import Any, Mapping, MutableMapping
 
-getcontext().prec = 28
+from bot_core.tco.utils import quantize_decimal
 
-_DECIMAL_QUANT = Decimal("0.000001")
+getcontext().prec = 28
 
 
 def _to_decimal(value: Any, *, field_name: str) -> Decimal:
@@ -22,10 +22,6 @@ def _to_decimal(value: Any, *, field_name: str) -> Decimal:
             return Decimal("0")
         return Decimal(text)
     raise TypeError(f"Pole '{field_name}' musi być liczbą, otrzymano: {type(value)!r}")
-
-
-def _quantize(value: Decimal) -> Decimal:
-    return value.quantize(_DECIMAL_QUANT, rounding=ROUND_HALF_UP)
 
 
 def _parse_timestamp(raw: Any) -> datetime:
@@ -113,6 +109,16 @@ class TradeCostEvent:
         return self.commission + self.slippage + self.funding + self.other
 
     def to_dict(self) -> dict[str, Any]:
+        quantized = {
+            "quantity": quantize_decimal(self.quantity),
+            "price": quantize_decimal(self.price),
+            "commission": quantize_decimal(self.commission),
+            "slippage": quantize_decimal(self.slippage),
+            "funding": quantize_decimal(self.funding),
+            "other": quantize_decimal(self.other),
+            "total_cost": quantize_decimal(self.total_cost),
+            "notional": quantize_decimal(self.notional),
+        }
         return {
             "timestamp": self.timestamp.isoformat(),
             "strategy": self.strategy,
@@ -120,14 +126,14 @@ class TradeCostEvent:
             "instrument": self.instrument,
             "exchange": self.exchange,
             "side": self.side,
-            "quantity": float(_quantize(self.quantity)),
-            "price": float(_quantize(self.price)),
-            "commission": float(_quantize(self.commission)),
-            "slippage": float(_quantize(self.slippage)),
-            "funding": float(_quantize(self.funding)),
-            "other": float(_quantize(self.other)),
-            "total_cost": float(_quantize(self.total_cost)),
-            "notional": float(_quantize(self.notional)),
+            "quantity": float(quantized["quantity"]),
+            "price": float(quantized["price"]),
+            "commission": float(quantized["commission"]),
+            "slippage": float(quantized["slippage"]),
+            "funding": float(quantized["funding"]),
+            "other": float(quantized["other"]),
+            "total_cost": float(quantized["total_cost"]),
+            "notional": float(quantized["notional"]),
             "metadata": dict(self.metadata),
         }
 
@@ -156,11 +162,11 @@ class CostBreakdown:
 
     def to_dict(self) -> dict[str, float]:
         return {
-            "commission": float(_quantize(self.commission)),
-            "slippage": float(_quantize(self.slippage)),
-            "funding": float(_quantize(self.funding)),
-            "other": float(_quantize(self.other)),
-            "total": float(_quantize(self.total)),
+            "commission": float(quantize_decimal(self.commission)),
+            "slippage": float(quantize_decimal(self.slippage)),
+            "funding": float(quantize_decimal(self.funding)),
+            "other": float(quantize_decimal(self.other)),
+            "total": float(quantize_decimal(self.total)),
         }
 
 
@@ -191,10 +197,10 @@ class ProfileCostSummary:
         return {
             "profile": self.profile,
             "trade_count": self.trade_count,
-            "notional": float(_quantize(self.notional)),
+            "notional": float(quantize_decimal(self.notional)),
             "breakdown": self.breakdown.to_dict(),
-            "cost_per_trade": float(_quantize(self.cost_per_trade)),
-            "cost_bps": float(_quantize(self.cost_bps)),
+            "cost_per_trade": float(quantize_decimal(self.cost_per_trade)),
+            "cost_bps": float(quantize_decimal(self.cost_bps)),
         }
 
 

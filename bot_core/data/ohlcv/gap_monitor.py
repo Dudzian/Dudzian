@@ -7,36 +7,13 @@ from typing import Callable, Mapping, MutableMapping, Sequence
 
 from bot_core.alerts import AlertMessage, AlertRouter
 from bot_core.data.ohlcv.audit import GapAuditLogger, GapAuditRecord
+from bot_core.data.ohlcv.utils import interval_to_minutes
 
 _MILLISECONDS_IN_MINUTE = 60_000
 
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
-
-
-def _interval_to_minutes(interval: str) -> int:
-    mapping = {
-        "1m": 1,
-        "3m": 3,
-        "5m": 5,
-        "15m": 15,
-        "30m": 30,
-        "1h": 60,
-        "2h": 120,
-        "4h": 240,
-        "6h": 360,
-        "8h": 480,
-        "12h": 720,
-        "1d": 1440,
-        "3d": 4320,
-        "1w": 10_080,
-        "1M": 43_200,
-    }
-    try:
-        return mapping[interval]
-    except KeyError as exc:  # pragma: no cover - walidacja configu na starcie
-        raise ValueError(f"Nieobsługiwany interwał: {interval}") from exc
 
 
 def _safe_int(value: object | None) -> int | None:
@@ -62,7 +39,7 @@ class GapAlertPolicy:
         if minutes is not None:
             return max(1, int(minutes))
         # domyślnie przyjmujemy dwukrotność interwału jako bezpieczne okno
-        return max(1, _interval_to_minutes(interval) * 2)
+        return max(1, interval_to_minutes(interval) * 2)
 
 
 @dataclass(slots=True)

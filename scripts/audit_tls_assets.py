@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import os
 import sys
@@ -15,29 +14,12 @@ except Exception:  # pragma: no cover - minimalne środowiska testowe
     load_core_config = None  # type: ignore
 
 from bot_core.security.tls_audit import audit_tls_assets
+from scripts._cli_common import env_flag, env_value, should_print
+from scripts._json_utils import dump_json
 
 LOGGER = logging.getLogger("bot_core.scripts.audit_tls_assets")
 
 _ENV_PREFIX = "BOT_CORE_TLS_AUDIT_"
-
-
-def _env_flag(name: str, default: bool) -> bool:
-    value = os.environ.get(f"{_ENV_PREFIX}{name}")
-    if value is None:
-        return default
-    normalized = value.strip().lower()
-    if normalized in {"1", "true", "yes", "on"}:
-        return True
-    if normalized in {"0", "false", "no", "off"}:
-        return False
-    return default
-
-
-def _env_value(name: str, default: str | None = None) -> str | None:
-    value = os.environ.get(f"{_ENV_PREFIX}{name}")
-    if value is None:
-        return default
-    return value.strip() or default
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
@@ -81,7 +63,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 
 
 def _resolve_config_path(args: argparse.Namespace) -> Path:
-    env_override = _env_value("CONFIG")
+    env_override = env_value(_ENV_PREFIX, "CONFIG")
     if args.config:
         return Path(args.config).expanduser()
     if env_override:
@@ -92,43 +74,40 @@ def _resolve_config_path(args: argparse.Namespace) -> Path:
 def _resolve_json_output(args: argparse.Namespace) -> str | None:
     if args.json_output:
         return args.json_output
-    return _env_value("JSON_OUTPUT")
+    return env_value(_ENV_PREFIX, "JSON_OUTPUT")
 
 
 def _resolve_warn_days(args: argparse.Namespace) -> float:
     if args.warn_expiring_days is not None:
         return float(args.warn_expiring_days)
-    env_value = _env_value("WARN_EXPIRING_DAYS")
-    if env_value is not None:
+    env_override = env_value(_ENV_PREFIX, "WARN_EXPIRING_DAYS")
+    if env_override is not None:
         try:
-            return float(env_value)
+            return float(env_override)
         except ValueError:  # pragma: no cover - diagnostyka konfiguracji
-            LOGGER.warning("Nieprawidłowa wartość WARN_EXPIRING_DAYS='%s'", env_value)
+            LOGGER.warning("Nieprawidłowa wartość WARN_EXPIRING_DAYS='%s'", env_override)
     return 30.0
 
 
 def _should_print(args: argparse.Namespace) -> bool:
-    if args.print_stdout:
-        return True
-    return _env_flag("PRINT", not bool(args.json_output))
+    return should_print(
+        _ENV_PREFIX,
+        json_output=args.json_output,
+        cli_flag=args.print_stdout,
+        default_when_unspecified=not bool(args.json_output),
+    )
 
 
 def _should_fail_on_warning(args: argparse.Namespace) -> bool:
     if args.fail_on_warning:
         return True
-    return _env_flag("FAIL_ON_WARNING", False)
+    return env_flag(_ENV_PREFIX, "FAIL_ON_WARNING", False)
 
 
 def _should_fail_on_error(args: argparse.Namespace) -> bool:
     if args.fail_on_error:
         return True
-    return _env_flag("FAIL_ON_ERROR", False)
-
-
-def _dump_json(payload: Any, *, pretty: bool) -> str:
-    if pretty:
-        return json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
-    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    return env_flag(_ENV_PREFIX, "FAIL_ON_ERROR", False)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -137,7 +116,7 @@ def main(argv: list[str] | None = None) -> int:
     config_path = _resolve_config_path(args)
     json_output = _resolve_json_output(args)
     warn_days = _resolve_warn_days(args)
-    pretty = args.pretty or _env_flag("PRETTY", False)
+    pretty = args.pretty or env_flag(_ENV_PREFIX, "PRETTY", False)
     print_stdout = _should_print(args)
     fail_on_warning = _should_fail_on_warning(args)
     fail_on_error = _should_fail_on_error(args)
@@ -151,7 +130,7 @@ def main(argv: list[str] | None = None) -> int:
     core_config = load_core_config(str(config_path))
     report = audit_tls_assets(core_config, warn_expiring_within_days=warn_days)
 
-    serialized = _dump_json(report, pretty=pretty)
+    serialized = dump_json(report, pretty=pretty)
 
     if json_output:
         output_path = Path(json_output).expanduser()

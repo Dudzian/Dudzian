@@ -35,13 +35,7 @@ from deploy.packaging.build_core_bundle import (  # type: ignore
     _ensure_windows_safe_tree,
 )
 
-# =====================================================================
-# Helpers wspólne
-# =====================================================================
-
-def _now_iso() -> str:
-    return _dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
-
+from scripts._cli_common import now_iso
 
 # =====================================================================
 # Subcommand: report (HEAD)
@@ -366,7 +360,7 @@ def _handle_register(args: argparse.Namespace) -> int:
     materials = _normalize_unique(args.materials, label="Materiały warsztatowe") if args.materials else []
     artifacts = _prepare_artifacts(args.artifacts)
 
-    recorded_at = _now_iso()
+    recorded_at = now_iso()
     session_id = _derive_session_id(
         explicit=args.session_id,
         training_date=training_date,
@@ -463,7 +457,7 @@ def _prepare_argv(argv: Sequence[str] | None) -> list[str]:
             return ["register", *args]
     return args
 
-def run(argv: Sequence[str] | None = None) -> int:
+def _execute_cli(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
     args = _prepare_argv(argv)
     try:
@@ -472,24 +466,14 @@ def run(argv: Sequence[str] | None = None) -> int:
         return int(exc.code)
     return parsed._handler(parsed)
 
-def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover
-    return run(argv)
-
-
 def run(argv: Sequence[str] | None = None) -> int:
-    """Convenient entry point for invoking the CLI programmatically."""
+    """Programmatic entry point – zachowuje dotychczasowe API."""
 
-    if argv is None:
-        return main(None)
+    return _execute_cli(argv)
 
-    args = list(argv)
-    if not args:
-        return main([])
 
-    if args[0] not in {"report", "register"}:
-        args.insert(0, "register")
-
-    return main(args)
+def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover
+    return _execute_cli(argv)
 
 
 if __name__ == "__main__":  # pragma: no cover

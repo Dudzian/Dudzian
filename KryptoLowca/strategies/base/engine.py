@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, Mapping, MutableMapping, Optional, Protocol
 
+from bot_core.backtest.engine import DataProviderProtocol as _DataProviderProtocol
+
 from KryptoLowca.logging_utils import get_logger
 
 __all__ = [
@@ -95,14 +97,10 @@ class StrategySignal:
         return self
 
 
-class DataProvider(Protocol):
-    """Minimalny interfejs wymagany do pobierania danych przez strategie."""
+class DataProvider(_DataProviderProtocol, Protocol):
+    """Legacy alias delegating to the canonical protocol implementation."""
 
-    async def get_ohlcv(self, symbol: str, timeframe: str, *, limit: int = 500) -> Mapping[str, Any]:
-        ...
-
-    async def get_ticker(self, symbol: str) -> Mapping[str, Any]:  # pragma: no cover - interfejs
-        ...
+    pass
 
 
 class BaseStrategy(ABC):

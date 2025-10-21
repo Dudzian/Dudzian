@@ -16,6 +16,8 @@ import grpc
 import yaml
 from google.protobuf import timestamp_pb2
 
+from bot_core.runtime._grpc_support import GrpcServerLifecycleMixin
+
 __all__ = [
     "InMemoryTradingDataset",
     "TradingStubServer",
@@ -354,7 +356,7 @@ class _HealthService:
         return self._health_cls(version="stub", git_commit="dev", started_at=ts)
 
 
-class TradingStubServer:
+class TradingStubServer(GrpcServerLifecycleMixin):
     """Lekki serwer gRPC zgodny z kontraktem tradingowym."""
 
     def __init__(
@@ -403,12 +405,6 @@ class TradingStubServer:
 
     def start(self) -> None:
         self._server.start()
-
-    def stop(self, grace: Optional[float] = None) -> None:
-        self._server.stop(grace).wait()
-
-    def wait_for_termination(self, timeout: Optional[float] = None) -> None:
-        self._server.wait_for_termination(timeout)
 
     @property
     def performance_guard(self) -> Dict[str, Any]:

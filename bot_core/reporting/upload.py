@@ -16,6 +16,7 @@ from bot_core.config.models import (
     SmokeArchiveS3Config,
     SmokeArchiveUploadConfig,
 )
+from bot_core.reporting._s3 import load_s3_credentials
 from bot_core.security import SecretManager, SecretStorageError
 
 
@@ -221,28 +222,6 @@ class SmokeArchiveUploader:
         location = f"s3://{s3_cfg.bucket}/{object_key}"
         return location, verification
 
-    def _load_s3_credentials(self) -> Mapping[str, str]:
-        if not self._config.credential_secret:
-            raise SecretStorageError(
-                "Konfiguracja backendu 's3' wymaga podania credential_secret z kluczami dostępowymi"
-            )
-        if self._secret_manager is None:
-            raise SecretStorageError("Brak dostępu do SecretManager przy backendzie 's3'")
-
-        raw_value = self._secret_manager.load_secret_value(self._config.credential_secret)
-        try:
-            payload = json.loads(raw_value)
-        except json.JSONDecodeError as exc:
-            raise SecretStorageError("Sekret S3 ma nieprawidłowy format JSON") from exc
-
-        expected_keys = {"access_key_id", "secret_access_key"}
-        missing = sorted(key for key in expected_keys if key not in payload)
-        if missing:
-            raise SecretStorageError(
-                "Sekret S3 nie zawiera wymaganych pól: " + ", ".join(missing)
-            )
-        return {str(key): str(value) for key, value in payload.items()}
-
     @staticmethod
     def _build_object_key(
         config: SmokeArchiveS3Config,
@@ -261,6 +240,11 @@ class SmokeArchiveUploader:
             for chunk in iter(lambda: handle.read(8192), b""):
                 digest.update(chunk)
         return digest.hexdigest()
+
+    def _load_s3_credentials(self) -> Mapping[str, str]:
+        """Zachowuje kompatybilność z dotychczasowymi testami."""
+
+        return load_s3_credentials(self._secret_manager, self._config.credential_secret)
 
 
 __all__ = [
