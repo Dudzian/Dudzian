@@ -6,16 +6,13 @@ from typing import Mapping, Sequence
 
 import pytest
 
-from bot_core.runtime.multi_strategy_scheduler import (
+from bot_core.runtime.capital_policies import (
     BlendedCapitalAllocation,
     DrawdownAdaptiveAllocation,
     EqualWeightAllocation,
     FixedWeightAllocation,
     MetricWeightedAllocation,
     MetricWeightRule,
-    DrawdownAdaptiveAllocation,
-    EqualWeightAllocation,
-    FixedWeightAllocation,
     RiskParityAllocation,
     RiskProfileBudgetAllocation,
     SignalStrengthAllocation,

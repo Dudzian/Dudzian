@@ -1235,6 +1235,44 @@ environments:
       retention_days: 730
       fsync: true
 
+  okx_margin_testnet:
+    exchange: okx_margin
+    environment: testnet
+    keychain_key: okx_margin_testnet_trading
+    data_cache_path: ./var/data/okx_margin_testnet
+    risk_profile: balanced
+    default_strategy: core_daily_trend
+    default_controller: daily_trend_core
+    alert_channels:
+      - telegram:primary
+      - email:ops
+    ip_allowlist: []
+    required_permissions: [read, trade]
+    forbidden_permissions: [withdraw]
+    instrument_universe: core_multi_exchange
+    health_check:
+      public_symbol: BTC-USDT
+      private_asset: USDT
+      private_min_balance: 75.0
+    watchdog:
+      retry_policy:
+        max_attempts: 4
+        base_delay: 0.4
+        max_delay: 3.0
+        jitter: [0.05, 0.3]
+      circuit_breaker:
+        failure_threshold: 4
+        recovery_timeout: 60.0
+        half_open_success_threshold: 2
+    adapter_settings:
+      native_adapter:
+        settings:
+          marginMode: cross
+      stream:
+        public_params:
+          symbol: BTC-USDT
+          depth: 50
+
   kucoin_paper:
     exchange: kucoin_spot
     environment: paper
@@ -1334,6 +1372,44 @@ environments:
       filename_pattern: decisions-%Y%m%d.jsonl
       retention_days: 730
       fsync: true
+
+  bybit_futures_testnet:
+    exchange: bybit_futures
+    environment: testnet
+    keychain_key: bybit_futures_testnet_trading
+    data_cache_path: ./var/data/bybit_futures_testnet
+    risk_profile: balanced
+    default_strategy: core_daily_trend
+    default_controller: daily_trend_core
+    alert_channels:
+      - telegram:primary
+      - email:ops
+    ip_allowlist: []
+    required_permissions: [read, trade]
+    forbidden_permissions: [withdraw]
+    instrument_universe: core_multi_exchange
+    health_check:
+      public_symbol: BTCUSDT
+      private_asset: USDT
+      private_min_balance: 50.0
+    watchdog:
+      retry_policy:
+        max_attempts: 4
+        base_delay: 0.35
+        max_delay: 2.5
+        jitter: [0.05, 0.25]
+      circuit_breaker:
+        failure_threshold: 5
+        recovery_timeout: 45.0
+        half_open_success_threshold: 2
+    adapter_settings:
+      native_adapter:
+        settings:
+          hedgeMode: true
+      stream:
+        public_params:
+          symbol: BTCUSDT
+          depth: 100
 
   coinbase_paper:
     exchange: coinbase_spot
@@ -1749,6 +1825,71 @@ environments:
       filename_pattern: reports-%Y%m%d.json
       retention_days: 365
       fsync: true
+
+  coinbase_margin_paper:
+    exchange: coinbase_margin
+    environment: paper
+    keychain_key: coinbase_margin_paper_trading
+    data_cache_path: ./var/data/coinbase_margin_paper
+    risk_profile: balanced
+    default_strategy: core_daily_trend
+    default_controller: daily_trend_core
+    alert_channels: []
+    ip_allowlist: []
+    required_permissions: [read, trade]
+    forbidden_permissions: [withdraw]
+    instrument_universe: core_multi_exchange
+    health_check:
+      public_symbol: BTC-USD
+      private_asset: USDC
+      private_min_balance: 40.0
+    adapter_settings:
+      native_adapter:
+        settings:
+          product_type: margin
+      stream:
+        public_params:
+          symbol: BTC-USD
+          depth: 50
+
+  coinbase_futures_live:
+    exchange: coinbase_futures
+    environment: live
+    keychain_key: coinbase_futures_live_trading
+    data_cache_path: ./var/data/coinbase_futures_live
+    risk_profile: conservative
+    default_strategy: core_daily_trend
+    default_controller: daily_trend_core
+    alert_channels:
+      - telegram:primary
+      - sms:orange_local
+      - email:ops
+    ip_allowlist: []
+    required_permissions: [read, trade]
+    forbidden_permissions: [withdraw]
+    instrument_universe: core_multi_exchange
+    health_check:
+      public_symbol: BTC-USD
+      private_asset: USDC
+      private_min_balance: 100.0
+    watchdog:
+      retry_policy:
+        max_attempts: 3
+        base_delay: 0.5
+        max_delay: 3.5
+        jitter: [0.05, 0.2]
+      circuit_breaker:
+        failure_threshold: 4
+        recovery_timeout: 75.0
+        half_open_success_threshold: 2
+    adapter_settings:
+      native_adapter:
+        settings:
+          product_type: futures
+      stream:
+        public_params:
+          symbol: BTC-USD
+          depth: 100
 
   zonda_paper:
     exchange: zonda_spot

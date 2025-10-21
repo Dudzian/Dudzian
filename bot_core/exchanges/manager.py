@@ -33,8 +33,14 @@ from bot_core.exchanges.base import (
 )
 from bot_core.exchanges.binance.futures import BinanceFuturesAdapter
 from bot_core.exchanges.binance.margin import BinanceMarginAdapter
+from bot_core.exchanges.bybit.futures import BybitFuturesAdapter
+from bot_core.exchanges.bybit.margin import BybitMarginAdapter
+from bot_core.exchanges.coinbase.futures import CoinbaseFuturesAdapter
+from bot_core.exchanges.coinbase.margin import CoinbaseMarginAdapter
 from bot_core.exchanges.kraken.futures import KrakenFuturesAdapter
 from bot_core.exchanges.kraken.margin import KrakenMarginAdapter
+from bot_core.exchanges.okx.futures import OKXFuturesAdapter
+from bot_core.exchanges.okx.margin import OKXMarginAdapter
 from bot_core.exchanges.health import (
     CircuitBreaker,
     HealthCheck,
@@ -130,6 +136,12 @@ register_native_adapter(exchange_id="kraken", mode=Mode.MARGIN, factory=KrakenMa
 register_native_adapter(exchange_id="zonda", mode=Mode.MARGIN, factory=ZondaMarginAdapter, supports_testnet=False)
 register_native_adapter(exchange_id="binance", mode=Mode.FUTURES, factory=BinanceFuturesAdapter)
 register_native_adapter(exchange_id="kraken", mode=Mode.FUTURES, factory=KrakenFuturesAdapter)
+register_native_adapter(exchange_id="bybit", mode=Mode.MARGIN, factory=BybitMarginAdapter)
+register_native_adapter(exchange_id="bybit", mode=Mode.FUTURES, factory=BybitFuturesAdapter)
+register_native_adapter(exchange_id="okx", mode=Mode.MARGIN, factory=OKXMarginAdapter)
+register_native_adapter(exchange_id="okx", mode=Mode.FUTURES, factory=OKXFuturesAdapter)
+register_native_adapter(exchange_id="coinbase", mode=Mode.MARGIN, factory=CoinbaseMarginAdapter)
+register_native_adapter(exchange_id="coinbase", mode=Mode.FUTURES, factory=CoinbaseFuturesAdapter)
 
 _STATUS_MAPPING = {
     "NEW": OrderStatus.OPEN,
@@ -597,9 +609,6 @@ class ExchangeManager:
         self._paper_simulator_settings = merged
         if self._paper is not None:
             log.info("Reconfiguring paper simulator with settings: %s", merged)
-        self._paper_simulator_settings = dict(settings)
-        if self._paper is not None:
-            log.info("Reconfiguring paper simulator with settings: %s", settings)
         self._paper = None
 
     def set_credentials(
@@ -620,6 +629,9 @@ class ExchangeManager:
             api_key_length,
             secret_length,
             passphrase_length,
+            len(self._api_key or ""),
+            len(self._secret or ""),
+            len(self._passphrase or ""),
         )
         self._native_adapter = None
         self._private = None
@@ -717,6 +729,12 @@ class ExchangeManager:
             candidates.append(os.getenv("KRAKEN_ENVIRONMENT"))
         if self.exchange_id.startswith("zonda"):
             candidates.append(os.getenv("ZONDA_ENVIRONMENT"))
+        if self.exchange_id.startswith("bybit"):
+            candidates.append(os.getenv("BYBIT_ENVIRONMENT"))
+        if self.exchange_id.startswith("okx"):
+            candidates.append(os.getenv("OKX_ENVIRONMENT"))
+        if self.exchange_id.startswith("coinbase"):
+            candidates.append(os.getenv("COINBASE_ENVIRONMENT"))
         candidates.append(os.getenv("EXCHANGE_ENVIRONMENT"))
 
         for candidate in candidates:
@@ -822,11 +840,6 @@ class ExchangeManager:
             elif self._paper_variant == "futures":
                 defaults = self._default_paper_simulator_settings()
                 defaults.update(settings)
-                    leverage_limit=float(settings.get("leverage_limit", 3.0)),
-                    maintenance_margin_ratio=float(settings.get("maintenance_margin_ratio", 0.15)),
-                    funding_rate=float(settings.get("funding_rate", 0.0)),
-                )
-            elif self._paper_variant == "futures":
                 simulator = PaperFuturesSimulator(
                     public,
                     event_bus=self._event_bus,
@@ -838,9 +851,6 @@ class ExchangeManager:
                     maintenance_margin_ratio=float(defaults.get("maintenance_margin_ratio", 0.05)),
                     funding_rate=float(defaults.get("funding_rate", 0.0001)),
                     funding_interval_seconds=float(defaults.get("funding_interval_seconds", 0.0)),
-                    leverage_limit=float(settings.get("leverage_limit", 10.0)),
-                    maintenance_margin_ratio=float(settings.get("maintenance_margin_ratio", 0.05)),
-                    funding_rate=float(settings.get("funding_rate", 0.0001)),
                 )
             else:
                 simulator = PaperBackend(

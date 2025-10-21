@@ -190,7 +190,10 @@ deleguje zapytania do `HealthClient`, kolejkując retry w tle i publikując
 wyniki do QML. Domyślnie kanał dziedziczy konfigurację TLS/mTLS klienta tradingowego,
 ale zestaw `--health-use-tls`/`--health-disable-tls` oraz `--health-tls-*`
 pozwala w razie potrzeby wstrzyknąć odrębne certyfikaty i fingerprinty
-HealthService.【F:ui/qml/components/AdminPanel.qml†L2067-L2166】【F:ui/src/health/HealthStatusController.cpp†L15-L180】【F:ui/src/grpc/HealthClient.cpp†L88-L268】【F:ui/src/app/Application.cpp†L540-L742】
+HealthService. Jeżeli dostarczony fingerprint SHA-256 nie zgadza się z
+odczytanym z materiału TLS, `HealthClient` nie tworzy kanału gRPC, a próba
+`check()` zwraca błąd do czasu aktualizacji certyfikatów lub konfiguracji
+pinningu.【F:ui/qml/components/AdminPanel.qml†L2067-L2166】【F:ui/src/health/HealthStatusController.cpp†L15-L180】【F:ui/src/grpc/HealthClient.cpp†L88-L293】【F:ui/src/app/Application.cpp†L540-L742】
 
 ## Architektura komponentów
 
