@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import enum
 import copy
+from dataclasses import dataclass
+from enum import Enum
+from pathlib import Path
 import enum
 import time
 from datetime import datetime, timezone
@@ -33,6 +36,17 @@ from bot_core.ai.regime import (
 )
 from bot_core.auto_trader.app import AutoTrader, GuardrailTrigger, RiskDecision
 from tests.sample_data_loader import load_summary_for_regime
+
+
+_MISSING = object()
+
+
+class _Approval(Enum):
+    APPROVED = "approved"
+    DENIED = "denied"
+
+    def __bool__(self) -> bool:  # pragma: no cover - sugar for readability
+        return self is _Approval.APPROVED
 
 
 class _Emitter:
@@ -75,6 +89,7 @@ class _Provider:
         return self.df
 
 
+class _RiskServiceStub:
 def _prepare_guardrail_history(monkeypatch: pytest.MonkeyPatch) -> AutoTrader:
     emitter = _Emitter()
     gui = _GUI()
@@ -841,12 +856,26 @@ class _RiskServiceStub:
         self.calls.append(decision)
         return self._approval
 
+    def __call__(self, decision: RiskDecision) -> Any:  # pragma: no cover - compatibility shim
+        return self.evaluate_decision(decision)
+
 
 class _RiskServiceResponseStub:
     def __init__(self, response: Any) -> None:
         self._response = response
         self.calls: list[RiskDecision] = []
 
+    def _resolve(self) -> Any:
+        if callable(self._response):
+            return self._response()
+        return self._response
+
+    def evaluate_decision(self, decision: RiskDecision) -> Any:
+        self.calls.append(decision)
+        return self._resolve()
+
+    def __call__(self, decision: RiskDecision) -> Any:  # pragma: no cover - compatibility shim
+        return self.evaluate_decision(decision)
     def __call__(self, decision: RiskDecision) -> Any:
         self.calls.append(decision)
         if callable(self._response):

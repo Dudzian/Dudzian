@@ -5,6 +5,8 @@
 #include <QJsonObject>
 #include <QLoggingCategory>
 
+#include "utils/PathUtils.hpp"
+
 namespace {
 
 Q_LOGGING_CATEGORY(lcSupportBundle, "bot.shell.support")
@@ -187,6 +189,7 @@ void SupportBundleController::setExtraIncludeSpecs(const QStringList& specs)
 
 QString SupportBundleController::expandPath(const QString& path) const
 {
+    return bot::shell::utils::expandPath(path);
     return normalizePath(path);
 }
 

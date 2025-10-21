@@ -84,11 +84,27 @@ certyfikaty klienta oraz odcisk SHA-256 przed zbudowaniem kanału【F:ui/src/grp
   `--grpc-auth-token`, `--grpc-auth-token-file`, `--grpc-rbac-role` oraz
   `--grpc-rbac-scopes` (lub zmienne `BOT_CORE_UI_GRPC_*`). Zmiana metadanych
   restartuje strumień z automatycznym backoffem i ponownym snapshotem,
+  zachowując synchronizację modeli QML. Pliki przekazane w `--*-auth-token-file`
+  są monitorowane i każda aktualizacja jest stosowana bez restartu
+  aplikacji.【F:ui/src/app/Application.cpp†L470-L520】【F:ui/src/app/Application.cpp†L2948-L3033】【F:ui/src/grpc/TradingClient.cpp†L225-L392】
   zachowując synchronizację modeli QML.【F:ui/src/app/Application.cpp†L470-L520】【F:ui/src/grpc/TradingClient.cpp†L225-L392】
 * Kanał market data/Risk odpytywany jest synchronicznie i strumieniowo;
   snapshot historii OHLCV oraz strumień incrementów wypełniają modele QML, a
   `refreshRiskState()` umożliwia manualne/okresowe odpytywanie Decision Engine
   o profil ryzyka.【F:ui/src/grpc/TradingClient.cpp†L177-L289】【F:ui/src/app/Application.cpp†L238-L253】
+* HealthService udostępnia status backendu (wersja, commit, uptime) i jest
+  monitorowany przez `HealthClient` oraz `HealthStatusController`. Flagi
+  `--health-endpoint`, `--health-auth-token`, `--health-auth-token-file`,
+  `--health-rbac-role`, `--health-rbac-scopes`, `--health-refresh-interval` oraz
+  `--health-disable-auto-refresh` (lub zmienne `BOT_CORE_UI_HEALTH_*`) pozwalają
+  sterować zachowaniem panelu. Dodatkowe przełączniki
+  `--health-use-tls`/`--health-disable-tls` i `--health-tls-*`
+  (`root-cert`, `client-cert`, `client-key`, `server-name`, `target-name`,
+  `pinned-sha256`, `--health-tls-require-client-auth`) umożliwiają niezależną od
+  kanału tradingowego konfigurację certyfikatów i pinningu (również przez
+  zmienne środowiskowe `BOT_CORE_UI_HEALTH_TLS_*`). Checklisty TLS/RBAC weryfikują
+  kompletność materiału kryptograficznego i ostrzegają przed niespójnymi
+  ustawieniami jeszcze przed zestawieniem kanału.【F:ui/src/grpc/HealthClient.cpp†L18-L268】【F:ui/src/app/Application.cpp†L540-L742】
 
 W środowisku OEM rekomendowane jest przechowywanie certyfikatów w
 `secrets/mtls/<rola>/` i wskazywanie ich przez flagi `--tls-*` oraz
@@ -163,6 +179,19 @@ Analogiczne ustawienia można wstrzyknąć zmiennymi środowiskowymi
 zależności poza systemowym Pythonem 3.11+, dlatego można go bundlować razem z
 dystrybucją OEM.
 
+## Monitorowanie HealthService
+
+Zakładka „Monitorowanie” prezentuje sekcję **Status backendu**, która wyświetla
+wynik ostatniego zapytania HealthService: wersję, skrócony commit, czas
+uruchomienia (UTC/lokalny), bieżący uptime oraz stempel ostatniego sprawdzenia.
+Operator może ręcznie odświeżyć dane, przełączyć auto-odświeżanie i zmienić
+interwał bez restartu aplikacji. Kontroler QML (`HealthStatusController`)
+deleguje zapytania do `HealthClient`, kolejkując retry w tle i publikując
+wyniki do QML. Domyślnie kanał dziedziczy konfigurację TLS/mTLS klienta tradingowego,
+ale zestaw `--health-use-tls`/`--health-disable-tls` oraz `--health-tls-*`
+pozwala w razie potrzeby wstrzyknąć odrębne certyfikaty i fingerprinty
+HealthService.【F:ui/qml/components/AdminPanel.qml†L2067-L2166】【F:ui/src/health/HealthStatusController.cpp†L15-L180】【F:ui/src/grpc/HealthClient.cpp†L88-L268】【F:ui/src/app/Application.cpp†L540-L742】
+
 ## Architektura komponentów
 
 * `src/grpc/TradingClient.*` – cienki klient gRPC pobierający historię i strumień OHLCV.
@@ -200,6 +229,14 @@ do `var/licenses/active`. Kontroler obsługuje pliki, payload base64 i skan
 hot-folderu, a błędy zapisu są przekazywane użytkownikowi w formie komunikatu.
 Przy każdej zmianie fingerprintu aktualizowany jest dokument HMAC
 `fingerprint.expected.json`, co domyka przepływ OEM (UI → backend → storage).【F:ui/src/license/LicenseActivationController.cpp†L66-L216】【F:ui/src/license/LicenseActivationController.cpp†L240-L360】
+
+Kontroler śledzi również opóźnione dostarczenie dokumentu fingerprintu oraz
+aktywnej licencji – obserwuje katalogi nadrzędne i automatycznie przeładowuje
+konfigurację, gdy `fingerprint.expected.json` lub `var/licenses/active/*.json`
+zostaną utworzone, zmodyfikowane bądź usunięte. Dzięki temu UI natychmiast
+odświeża widok licencji przy reinstalacji lub wymianie nośnika OEM, a
+niezgodności fingerprintu ponownie uruchamiają proces provisioning bez
+restartu aplikacji.【F:ui/src/license/LicenseActivationController.cpp†L66-L216】【F:ui/src/license/LicenseActivationController.cpp†L360-L552】【F:ui/src/license/LicenseActivationController.cpp†L900-L1054】
 
 ## Telemetria, alerty i logi
 

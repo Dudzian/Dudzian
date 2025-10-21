@@ -10,10 +10,12 @@
 #include <QUrl>
 #include <QJsonObject>
 #include <QDir>
+#include <QFileSystemWatcher>
 
 #include <memory>
 #include <optional>
 
+#include "grpc/GrpcTlsConfig.hpp"
 #include "grpc/TradingClient.hpp"
 #include "models/AlertsModel.hpp"
 #include "models/AlertsFilterProxyModel.hpp"
@@ -34,6 +36,7 @@ class ReportCenterController;          // forward decl (reporting/ReportCenterCo
 class BotCoreLocalService;             // forward decl (grpc/BotCoreLocalService.hpp)
 class StrategyConfigController;        // forward decl (app/StrategyConfigController.hpp)
 class SupportBundleController;         // forward decl (support/SupportBundleController.hpp)
+class HealthStatusController;          // forward decl (health/HealthStatusController.hpp)
 
 class Application : public QObject {
     Q_OBJECT
@@ -49,6 +52,7 @@ class Application : public QObject {
     Q_PROPERTY(QObject*         reportController READ reportController CONSTANT)
     Q_PROPERTY(QObject*         strategyController READ strategyController CONSTANT)
     Q_PROPERTY(QObject*         supportController READ supportController CONSTANT)
+    Q_PROPERTY(QObject*         healthController READ healthController CONSTANT)
     Q_PROPERTY(int              telemetryPendingRetryCount READ telemetryPendingRetryCount NOTIFY telemetryPendingRetryCountChanged)
     Q_PROPERTY(QVariantMap      riskRefreshSchedule READ riskRefreshSchedule NOTIFY riskRefreshScheduleChanged)
     Q_PROPERTY(bool             riskHistoryExportLimitEnabled READ riskHistoryExportLimitEnabled WRITE setRiskHistoryExportLimitEnabled NOTIFY riskHistoryExportLimitEnabledChanged)
@@ -84,6 +88,7 @@ public:
     QObject*         reportController() const;
     QObject*         strategyController() const;
     QObject*         supportController() const;
+    QObject*         healthController() const;
     QObject*         alertsModel() const { return const_cast<AlertsModel*>(&m_alertsModel); }
     QObject*         alertsFilterModel() const { return const_cast<AlertsFilterProxyModel*>(&m_filteredAlertsModel); }
     QObject*         riskHistoryModel() const { return const_cast<RiskHistoryModel*>(&m_riskHistoryModel); }
@@ -168,6 +173,9 @@ private slots:
     void handleRiskState(const RiskSnapshotData& snapshot);
     void handleTelemetryPendingRetryCountChanged(int pending);
     void handleRiskHistorySnapshotRecorded(const QDateTime& timestamp);
+    void handleTradingTokenPathChanged(const QString& path);
+    void handleMetricsTokenPathChanged(const QString& path);
+    void handleHealthTokenPathChanged(const QString& path);
 
 private:
     // Rejestracja obiektów w kontekście QML
@@ -184,12 +192,35 @@ private:
     void reportJankTelemetry(double frameMs, double thresholdMs);
     void applyMetricsEnvironmentOverrides(const QCommandLineParser& parser,
                                           bool cliTokenProvided,
-                                          bool cliTokenFileProvided);
+                                          bool cliTokenFileProvided,
+                                          QString& metricsToken,
+                                          QString& metricsTokenFile);
     void applyTradingTlsEnvironmentOverrides(const QCommandLineParser& parser);
     void applyTradingAuthEnvironmentOverrides(const QCommandLineParser& parser,
                                               bool cliTokenProvided,
                                               bool cliTokenFileProvided,
                                               bool cliRoleProvided,
+                                              bool cliScopesProvided,
+                                              QString& tradingToken,
+                                              QString& tradingTokenFile);
+    void applyHealthEnvironmentOverrides(const QCommandLineParser& parser,
+                                         bool cliEndpointProvided,
+                                         bool cliTokenProvided,
+                                         bool cliTokenFileProvided,
+                                         bool cliRoleProvided,
+                                         bool cliScopesProvided,
+                                         bool cliIntervalProvided,
+                                         bool cliTlsEnableProvided,
+                                         bool cliTlsDisableProvided,
+                                         bool cliTlsRequireClientAuthProvided,
+                                         bool cliTlsRootProvided,
+                                         bool cliTlsClientCertProvided,
+                                         bool cliTlsClientKeyProvided,
+                                         bool cliTlsServerNameProvided,
+                                         bool cliTlsTargetNameProvided,
+                                         bool cliTlsPinnedProvided,
+                                         QString& healthToken,
+                                         QString& healthTokenFile);
                                               bool cliScopesProvided);
     void applyScreenEnvironmentOverrides(const QCommandLineParser& parser);
     void applyPreferredScreen(QQuickWindow* window);
@@ -214,6 +245,32 @@ private:
     QJsonObject buildUiSettingsPayload() const;
     void maybeAutoExportRiskHistory(const QDateTime& snapshotTimestamp);
     QString resolveAutoExportFilePath(const QDir& directory, const QString& basename, const QDateTime& timestamp) const;
+    void setTradingAuthTokenFile(const QString& path);
+    void setMetricsAuthTokenFile(const QString& path);
+    void setHealthAuthTokenFile(const QString& path);
+    void reloadTradingTokenFromFile();
+    void reloadMetricsTokenFromFile();
+    void reloadHealthTokenFromFile();
+    void configureTokenWatcher(QFileSystemWatcher& watcher,
+                               QString& trackedFile,
+                               QString& trackedDir,
+                               const QString& filePath,
+                               const char* label);
+    void configureTlsWatcher(QFileSystemWatcher& watcher,
+                              QStringList& trackedFiles,
+                              QStringList& trackedDirs,
+                              const QStringList& filePaths,
+                              const char* label);
+    void configureTradingTlsWatchers();
+    void configureMetricsTlsWatchers();
+    void configureHealthTlsWatchers();
+    void applyHealthAuthTokenToController();
+    void applyTradingTlsConfig();
+    void applyMetricsTlsConfig();
+    void applyHealthTlsConfig();
+    void handleTradingTlsPathChanged(const QString& path);
+    void handleMetricsTlsPathChanged(const QString& path);
+    void handleHealthTlsPathChanged(const QString& path);
 
     // --- Stan i komponenty ---
     QQmlApplicationEngine& m_engine;
@@ -230,6 +287,7 @@ private:
     int                    m_maxSamples = 10240;
     TradingClient::TlsConfig m_tradingTlsConfig{};
     QString                m_tradingAuthToken;
+    QString                m_tradingAuthTokenFile;
     QString                m_tradingRbacRole;
     QStringList            m_tradingRbacScopes;
 
@@ -252,6 +310,7 @@ private:
     std::unique_ptr<ReportCenterController>    m_reportController;
     std::unique_ptr<StrategyConfigController>  m_strategyController;
     std::unique_ptr<SupportBundleController>   m_supportController;
+    std::unique_ptr<HealthStatusController>    m_healthController;
 
     // --- Telemetry state ---
     std::unique_ptr<TelemetryReporter> m_telemetry;
@@ -259,10 +318,19 @@ private:
     QString                            m_metricsTag;
     bool                               m_metricsEnabled = false;
     QString                            m_metricsAuthToken;
+    QString                            m_metricsAuthTokenFile;
     QString                            m_metricsRbacRole;
     double                             m_latestFpsSample = 0.0;
     int                                m_windowCount = 1;
     TelemetryTlsConfig                 m_tlsConfig;
+    GrpcTlsConfig                      m_healthTlsConfig{};
+    QString                            m_healthEndpoint;
+    QString                            m_healthAuthToken;
+    QString                            m_healthAuthTokenFile;
+    QString                            m_healthRbacRole;
+    QStringList                        m_healthRbacScopes;
+    int                                m_healthRefreshIntervalSeconds = 60;
+    bool                               m_healthAutoRefreshEnabled = true;
     QString                            m_preferredScreenName;
     int                                m_preferredScreenIndex = -1;
     bool                               m_forcePrimaryScreen = false;
@@ -311,6 +379,27 @@ private:
     bool                                               m_jankTelemetryTimerValid = false;
     int                                                m_jankTelemetryCooldownMs = 400;
     int                                                m_pendingRetryCount = 0;
+    QFileSystemWatcher                                 m_tradingTokenWatcher;
+    QFileSystemWatcher                                 m_metricsTokenWatcher;
+    QFileSystemWatcher                                 m_healthTokenWatcher;
+    QFileSystemWatcher                                 m_tradingTlsWatcher;
+    QFileSystemWatcher                                 m_metricsTlsWatcher;
+    QFileSystemWatcher                                 m_healthTlsWatcher;
+    QString                                            m_tradingTokenWatcherFile;
+    QStringList                                        m_tradingTokenWatcherDirs;
+    QString                                            m_metricsTokenWatcherFile;
+    QStringList                                        m_metricsTokenWatcherDirs;
+    QString                                            m_healthTokenWatcherFile;
+    QStringList                                        m_healthTokenWatcherDirs;
+    QStringList                                        m_tradingTlsWatcherFiles;
+    QStringList                                        m_tradingTlsWatcherDirs;
+    QStringList                                        m_metricsTlsWatcherFiles;
+    QStringList                                        m_metricsTlsWatcherDirs;
+    QStringList                                        m_healthTlsWatcherFiles;
+    QStringList                                        m_healthTlsWatcherDirs;
+    quint64                                            m_tradingTlsReloadGeneration = 0;
+    quint64                                            m_metricsTlsReloadGeneration = 0;
+    quint64                                            m_healthTlsReloadGeneration = 0;
 
 public: // test helpers
     int  riskRefreshIntervalMsForTesting() const { return m_riskRefreshIntervalMs; }
@@ -320,4 +409,8 @@ public: // test helpers
     QDateTime nextRiskRefreshDueUtcForTesting() const { return m_nextRiskRefreshUtc; }
     QDateTime lastRiskUpdateUtcForTesting() const { return m_lastRiskUpdateUtc; }
     void startRiskRefreshTimerForTesting();
+    TradingClient* tradingClientForTesting() { return &m_client; }
+    quint64 tradingTlsReloadGenerationForTesting() const { return m_tradingTlsReloadGeneration; }
+    quint64 metricsTlsReloadGenerationForTesting() const { return m_metricsTlsReloadGeneration; }
+    quint64 healthTlsReloadGenerationForTesting() const { return m_healthTlsReloadGeneration; }
 };

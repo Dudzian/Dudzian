@@ -64,6 +64,7 @@ set(UI_SOURCES
     src/grpc/BotCoreLocalService.cpp
     src/grpc/TradingClient.cpp
     src/grpc/MetricsClient.cpp
+    src/grpc/HealthClient.cpp
     src/models/OhlcvListModel.cpp
     src/models/AlertsModel.cpp
     src/models/AlertsFilterProxyModel.cpp
@@ -71,11 +72,13 @@ set(UI_SOURCES
     src/models/RiskStateModel.cpp
     src/utils/PerformanceGuard.cpp
     src/utils/FrameRateMonitor.cpp
+    src/utils/PathUtils.cpp
     src/telemetry/UiTelemetryReporter.cpp
     src/license/LicenseActivationController.cpp
     src/security/SecurityAdminController.cpp
     src/reporting/ReportCenterController.cpp
     src/support/SupportBundleController.cpp
+    src/health/HealthStatusController.cpp
 )
 
 set(UI_HEADERS
@@ -85,6 +88,8 @@ set(UI_HEADERS
     src/grpc/BotCoreLocalService.hpp
     src/grpc/TradingClient.hpp
     src/grpc/MetricsClient.hpp
+    src/grpc/HealthClient.hpp
+    src/grpc/GrpcTlsConfig.hpp
     src/models/AlertsModel.hpp
     src/models/AlertsFilterProxyModel.hpp
     src/models/OhlcvListModel.hpp
@@ -93,12 +98,14 @@ set(UI_HEADERS
     src/models/RiskTypes.hpp
     src/utils/PerformanceGuard.hpp
     src/utils/FrameRateMonitor.hpp
+    src/utils/PathUtils.hpp
     src/telemetry/TelemetryReporter.hpp
     src/telemetry/UiTelemetryReporter.hpp
     src/license/LicenseActivationController.hpp
     src/security/SecurityAdminController.hpp
     src/reporting/ReportCenterController.hpp
     src/support/SupportBundleController.hpp
+    src/health/HealthStatusController.hpp
 )
 
 qt_add_executable(bot_trading_shell
@@ -140,8 +147,13 @@ if(BUILD_TESTING)
     # Application-level telemetry tests
     add_executable(ui_application_telemetry_tests
         tests/ApplicationTelemetryTest.cpp
+        tests/ApplicationHealthConfigTest.cpp
+        tests/ApplicationAuthTokenWatcherTest.cpp
         src/app/Application.cpp
+        src/utils/PathUtils.cpp
         src/grpc/TradingClient.cpp
+        src/grpc/HealthClient.cpp
+        src/health/HealthStatusController.cpp
         src/models/AlertsModel.cpp
         src/models/AlertsFilterProxyModel.cpp
         src/models/OhlcvListModel.cpp
@@ -163,9 +175,68 @@ if(BUILD_TESTING)
     )
     add_test(NAME ui_application_telemetry_tests COMMAND ui_application_telemetry_tests)
 
+    add_executable(metrics_client_preflight_tests
+        tests/MetricsClientPreflightTest.cpp
+        src/grpc/MetricsClient.cpp
+    )
+    target_include_directories(metrics_client_preflight_tests PRIVATE src ${GENERATED_DIR})
+    target_link_libraries(metrics_client_preflight_tests
+        PRIVATE
+            Qt6::Core
+            Qt6::Test
+            trading_proto
+            protobuf::libprotobuf
+            gRPC::grpc++
+    )
+    add_test(NAME metrics_client_preflight_tests COMMAND metrics_client_preflight_tests)
+
+    add_executable(health_client_tests
+        tests/HealthClientTest.cpp
+        src/grpc/HealthClient.cpp
+    )
+    target_include_directories(health_client_tests PRIVATE src ${GENERATED_DIR})
+    target_link_libraries(health_client_tests
+        PRIVATE
+            Qt6::Core
+            Qt6::Test
+            trading_proto
+            protobuf::libprotobuf
+            gRPC::grpc++
+    )
+    add_test(NAME health_client_tests COMMAND health_client_tests)
+
+    add_executable(path_utils_tests
+        tests/PathUtilsTest.cpp
+        src/utils/PathUtils.cpp
+    )
+    target_include_directories(path_utils_tests PRIVATE src)
+    target_link_libraries(path_utils_tests
+        PRIVATE
+            Qt6::Core
+            Qt6::Test
+    )
+    add_test(NAME path_utils_tests COMMAND path_utils_tests)
+
+    add_executable(health_status_controller_tests
+        tests/HealthStatusControllerTest.cpp
+        src/health/HealthStatusController.cpp
+        src/grpc/HealthClient.cpp
+    )
+    target_include_directories(health_status_controller_tests PRIVATE src ${GENERATED_DIR})
+    target_link_libraries(health_status_controller_tests
+        PRIVATE
+            Qt6::Core
+            Qt6::Test
+            trading_proto
+            protobuf::libprotobuf
+            gRPC::grpc++
+    )
+    add_test(NAME health_status_controller_tests COMMAND health_status_controller_tests)
+
     add_executable(application_risk_refresh_tests
         tests/ApplicationRiskRefreshTest.cpp
         src/app/Application.cpp
+        src/utils/PathUtils.cpp
         src/grpc/TradingClient.cpp
         src/grpc/BotCoreLocalService.cpp
         src/models/OhlcvListModel.cpp
@@ -196,6 +267,7 @@ if(BUILD_TESTING)
     add_executable(application_settings_persistence_tests
         tests/ApplicationSettingsPersistenceTest.cpp
         src/app/Application.cpp
+        src/utils/PathUtils.cpp
         src/grpc/TradingClient.cpp
         src/grpc/BotCoreLocalService.cpp
         src/models/OhlcvListModel.cpp
@@ -226,6 +298,7 @@ if(BUILD_TESTING)
     add_executable(application_risk_history_auto_export_tests
         tests/ApplicationRiskHistoryAutoExportTest.cpp
         src/app/Application.cpp
+        src/utils/PathUtils.cpp
         src/grpc/TradingClient.cpp
         src/grpc/BotCoreLocalService.cpp
         src/models/OhlcvListModel.cpp
@@ -337,6 +410,7 @@ if(BUILD_TESTING)
     add_executable(license_activation_controller_tests
         tests/LicenseActivationControllerTest.cpp
         src/license/LicenseActivationController.cpp
+        src/utils/PathUtils.cpp
     )
     target_include_directories(license_activation_controller_tests PRIVATE src)
     target_link_libraries(license_activation_controller_tests
@@ -421,6 +495,7 @@ if(BUILD_TESTING)
         PRIVATE
             Qt6::Core
             Qt6::Test
+            Qt6::Network
             trading_proto
             protobuf::libprotobuf
             gRPC::grpc++

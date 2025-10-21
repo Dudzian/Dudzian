@@ -12,22 +12,9 @@
 #include <QProcess>
 #include <QtGlobal>
 
+#include "utils/PathUtils.hpp"
+
 Q_LOGGING_CATEGORY(lcSecurityAdmin, "bot.shell.security.admin")
-
-namespace {
-
-QString expandPath(const QString& path)
-{
-    if (path.startsWith(QStringLiteral("~/"))) {
-        return QDir::homePath() + path.mid(1);
-    }
-    if (path == QStringLiteral("~")) {
-        return QDir::homePath();
-    }
-    return path;
-}
-
-} // namespace
 
 SecurityAdminController::SecurityAdminController(QObject* parent)
     : QObject(parent)
@@ -44,17 +31,17 @@ void SecurityAdminController::setPythonExecutable(const QString& executable)
 
 void SecurityAdminController::setProfilesPath(const QString& path)
 {
-    m_profilesPath = expandPath(path);
+    m_profilesPath = bot::shell::utils::expandPath(path);
 }
 
 void SecurityAdminController::setLicensePath(const QString& path)
 {
-    m_licensePath = expandPath(path);
+    m_licensePath = bot::shell::utils::expandPath(path);
 }
 
 void SecurityAdminController::setLogPath(const QString& path)
 {
-    m_logPath = expandPath(path);
+    m_logPath = bot::shell::utils::expandPath(path);
 }
 
 bool SecurityAdminController::refresh()

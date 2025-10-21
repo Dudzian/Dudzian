@@ -17,6 +17,7 @@
 #include "models/OhlcvListModel.hpp"
 #include "models/RiskTypes.hpp"
 #include "utils/PerformanceGuard.hpp"
+#include "GrpcTlsConfig.hpp"
 
 namespace botcore::trading::v1 {
 class Instrument;
@@ -46,16 +47,7 @@ public:
         QString granularityIso8601;
     };
 
-    struct TlsConfig {
-        bool enabled = false;
-        bool requireClientAuth = false;          // mTLS wymagany?
-        QString rootCertificatePath;             // PEM root CA
-        QString clientCertificatePath;           // PEM cert klienta (opcjonalnie)
-        QString clientKeyPath;                   // PEM klucz klienta  (opcjonalnie)
-        QString serverNameOverride;              // opcjonalny override SNI (legacy)
-        QString targetNameOverride;              // GRPC_SSL_TARGET_NAME_OVERRIDE_ARG
-        QString pinnedServerFingerprint;         // oczekiwany SHA-256 (hex, bez ':')
-    };
+    using TlsConfig = GrpcTlsConfig;
 
     struct PreLiveChecklistResult {
         bool ok = false;

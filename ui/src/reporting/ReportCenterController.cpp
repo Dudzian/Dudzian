@@ -24,6 +24,8 @@
 #include <QtConcurrent>
 #include <memory>
 
+#include "utils/PathUtils.hpp"
+
 Q_LOGGING_CATEGORY(lcReportCenter, "bot.shell.reporting")
 
 namespace {
@@ -1353,14 +1355,7 @@ QString ReportCenterController::resolveReportsDirectory() const
 
 QString ReportCenterController::expandPath(const QString& path)
 {
-    if (path.trimmed().isEmpty())
-        return {};
-    QString normalized = path.trimmed();
-    if (normalized == QStringLiteral("~"))
-        normalized = QDir::homePath();
-    else if (normalized.startsWith(QStringLiteral("~/")))
-        normalized = QDir::homePath() + normalized.mid(1);
-    return cleanPath(normalized);
+    return cleanPath(bot::shell::utils::expandPath(path));
 }
 
 void ReportCenterController::appendFilterArguments(QStringList& args, bool includePagination) const

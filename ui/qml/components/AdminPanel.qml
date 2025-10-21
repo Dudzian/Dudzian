@@ -2070,8 +2070,142 @@ Drawer {
         Tab {
             title: qsTr("Monitorowanie")
 
-            ReportBrowser {
+            Item {
                 anchors.fill: parent
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 16
+                    spacing: 16
+
+                    GroupBox {
+                        title: qsTr("Status backendu")
+                        Layout.fillWidth: true
+
+                        ColumnLayout {
+                            spacing: 12
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 12
+
+                                BusyIndicator {
+                                    running: healthController && healthController.busy
+                                    visible: running
+                                }
+
+                                Label {
+                                    Layout.fillWidth: true
+                                    wrapMode: Text.WordWrap
+                                    text: healthController ? (healthController.statusMessage || qsTr("Brak danych o HealthService"))
+                                                          : qsTr("Brak danych o HealthService")
+                                    color: healthController && healthController.healthy ? Qt.rgba(0.3, 0.7, 0.4, 1)
+                                                                                         : Qt.rgba(0.86, 0.35, 0.35, 1)
+                                }
+
+                                Button {
+                                    text: qsTr("Odśwież")
+                                    enabled: healthController && !healthController.busy
+                                    onClicked: healthController && healthController.refresh()
+                                }
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 12
+
+                                CheckBox {
+                                    text: qsTr("Auto-odświeżanie")
+                                    checked: healthController && healthController.autoRefreshEnabled
+                                    enabled: !!healthController
+                                    onToggled: {
+                                        if (!healthController)
+                                            return
+                                        healthController.setAutoRefreshEnabled(checked)
+                                    }
+                                }
+
+                                Label { text: qsTr("Interwał (s)") }
+
+                                SpinBox {
+                                    id: healthIntervalSpin
+                                    from: 5
+                                    to: 3600
+                                    stepSize: 5
+                                    value: healthController ? healthController.refreshIntervalSeconds : 60
+                                    enabled: healthController && healthController.autoRefreshEnabled
+                                    onValueModified: {
+                                        if (!healthController)
+                                            return
+                                        healthController.setRefreshIntervalSeconds(value)
+                                    }
+                                    Binding {
+                                        target: healthIntervalSpin
+                                        property: "value"
+                                        value: healthController ? healthController.refreshIntervalSeconds : 60
+                                        when: !!healthController && !healthIntervalSpin.activeFocus
+                                    }
+                                }
+                            }
+
+                            GridLayout {
+                                columns: 2
+                                columnSpacing: 12
+                                rowSpacing: 6
+                                Layout.fillWidth: true
+
+                                Label { text: qsTr("Wersja") }
+                                Label {
+                                    wrapMode: Text.WrapAnywhere
+                                    text: healthController && healthController.version.length > 0
+                                          ? healthController.version
+                                          : qsTr("n/d")
+                                }
+
+                                Label { text: qsTr("Commit") }
+                                Label {
+                                    wrapMode: Text.WrapAnywhere
+                                    text: healthController && healthController.gitCommit.length > 0
+                                          ? healthController.gitCommitShort
+                                          : qsTr("n/d")
+                                }
+
+                                Label { text: qsTr("Start (UTC)") }
+                                Label {
+                                    text: healthController && healthController.startedAt.length > 0
+                                          ? healthController.startedAt
+                                          : qsTr("n/d")
+                                }
+
+                                Label { text: qsTr("Start (lokalny)") }
+                                Label {
+                                    text: healthController && healthController.startedAtLocal.length > 0
+                                          ? healthController.startedAtLocal
+                                          : qsTr("n/d")
+                                }
+
+                                Label { text: qsTr("Czas działania") }
+                                Label {
+                                    text: healthController && healthController.uptime.length > 0
+                                          ? healthController.uptime
+                                          : qsTr("n/d")
+                                }
+
+                                Label { text: qsTr("Ostatnie sprawdzenie") }
+                                Label {
+                                    text: healthController && healthController.lastCheckedAt.length > 0
+                                          ? healthController.lastCheckedAt
+                                          : qsTr("n/d")
+                                }
+                            }
+                        }
+                    }
+
+                    ReportBrowser {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                    }
+                }
             }
         }
 

@@ -24,6 +24,9 @@
 #include <thread>
 
 #include "trading.grpc.pb.h"
+#include "utils/PathUtils.hpp"
+
+Q_LOGGING_CATEGORY(lcTradingClient, "bot.shell.trading.grpc")
 
 Q_LOGGING_CATEGORY(lcTradingClient, "bot.shell.trading.grpc")
 
@@ -44,18 +47,8 @@ qint64 timestampToMs(const google::protobuf::Timestamp& ts) {
     return static_cast<qint64>(ts.seconds()) * 1000 + ts.nanos() / 1000000;
 }
 
-QString expandUserPath(const QString& path) {
-    if (path == QStringLiteral("~")) {
-        return QDir::homePath();
-    }
-    if (path.startsWith(QStringLiteral("~/"))) {
-        return QDir::homePath() + path.mid(1);
-    }
-    return path;
-}
-
 std::optional<QByteArray> readFileUtf8(const QString& rawPath) {
-    const QString path = expandUserPath(rawPath);
+    const QString path = bot::shell::utils::expandPath(rawPath);
     if (path.trimmed().isEmpty()) {
         return std::nullopt;
     }
@@ -612,7 +605,7 @@ TradingClient::PreLiveChecklistResult TradingClient::runPreLiveChecklist() const
     }
 
     if (m_tlsConfig.enabled) {
-        const QString rootPath = expandUserPath(m_tlsConfig.rootCertificatePath);
+        const QString rootPath = bot::shell::utils::expandPath(m_tlsConfig.rootCertificatePath);
         if (rootPath.trimmed().isEmpty()) {
             result.errors.append(tr("Włączone TLS wymaga wskazania pliku root CA."));
         } else if (!QFile::exists(rootPath)) {
@@ -632,8 +625,8 @@ TradingClient::PreLiveChecklistResult TradingClient::runPreLiveChecklist() const
             }
         }
 
-        const QString clientCert = expandUserPath(m_tlsConfig.clientCertificatePath);
-        const QString clientKey = expandUserPath(m_tlsConfig.clientKeyPath);
+        const QString clientCert = bot::shell::utils::expandPath(m_tlsConfig.clientCertificatePath);
+        const QString clientKey = bot::shell::utils::expandPath(m_tlsConfig.clientKeyPath);
         const bool hasClientCert = !clientCert.trimmed().isEmpty();
         const bool hasClientKey = !clientKey.trimmed().isEmpty();
 

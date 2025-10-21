@@ -8,6 +8,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QFileSystemWatcher>
 #include <QGuiApplication>
 #include <QIODevice>
 #include <QJsonArray>
@@ -33,15 +34,18 @@
 #include <optional>
 #include <cmath>
 #include <algorithm>
+#include <utility>
 
 #include "telemetry/TelemetryReporter.hpp"
 #include "telemetry/UiTelemetryReporter.hpp"
 #include "utils/FrameRateMonitor.hpp"
+#include "utils/PathUtils.hpp"
 #include "license/LicenseActivationController.hpp"
 #include "app/ActivationController.hpp"
 #include "app/StrategyConfigController.hpp"
 #include "security/SecurityAdminController.hpp"
 #include "support/SupportBundleController.hpp"
+#include "health/HealthStatusController.hpp"
 #include "reporting/ReportCenterController.hpp"
 #include "grpc/BotCoreLocalService.hpp"
 
@@ -63,6 +67,9 @@ constexpr auto kRiskHistoryAutoExportIntervalEnv = QByteArrayLiteral("BOT_CORE_U
 constexpr auto kRiskHistoryAutoExportBasenameEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_AUTO_EXPORT_BASENAME");
 constexpr auto kRiskHistoryAutoExportDirEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_AUTO_EXPORT_DIR");
 constexpr auto kRiskHistoryAutoExportLocalTimeEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_AUTO_EXPORT_USE_LOCAL_TIME");
+
+using bot::shell::utils::expandPath;
+using bot::shell::utils::watchableDirectories;
 
 std::optional<QString> envValue(const QByteArray& key)
 {
@@ -106,7 +113,7 @@ QString readTokenFile(const QString& rawPath, const QString& label = QStringLite
 {
     if (rawPath.trimmed().isEmpty())
         return {};
-    const QString path = expandUserPath(rawPath.trimmed());
+    const QString path = expandPath(rawPath.trimmed());
     QFile file(path);
     if (!file.exists()) {
         qCWarning(lcAppMetrics) << "Plik z tokenem" << label << "nie istnieje:" << path;
@@ -205,6 +212,64 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
     m_strategyController->setScriptPath(QDir::current().absoluteFilePath(QStringLiteral("scripts/ui_config_bridge.py")));
 
     m_supportController = std::make_unique<SupportBundleController>(this);
+
+    m_healthController = std::make_unique<HealthStatusController>(this);
+
+    m_tradingTokenWatcher.setParent(this);
+    m_metricsTokenWatcher.setParent(this);
+    m_healthTokenWatcher.setParent(this);
+    m_tradingTlsWatcher.setParent(this);
+    m_metricsTlsWatcher.setParent(this);
+    m_healthTlsWatcher.setParent(this);
+
+    connect(&m_tradingTokenWatcher,
+            &QFileSystemWatcher::fileChanged,
+            this,
+            &Application::handleTradingTokenPathChanged);
+    connect(&m_tradingTokenWatcher,
+            &QFileSystemWatcher::directoryChanged,
+            this,
+            &Application::handleTradingTokenPathChanged);
+    connect(&m_metricsTokenWatcher,
+            &QFileSystemWatcher::fileChanged,
+            this,
+            &Application::handleMetricsTokenPathChanged);
+    connect(&m_metricsTokenWatcher,
+            &QFileSystemWatcher::directoryChanged,
+            this,
+            &Application::handleMetricsTokenPathChanged);
+    connect(&m_healthTokenWatcher,
+            &QFileSystemWatcher::fileChanged,
+            this,
+            &Application::handleHealthTokenPathChanged);
+    connect(&m_healthTokenWatcher,
+            &QFileSystemWatcher::directoryChanged,
+            this,
+            &Application::handleHealthTokenPathChanged);
+    connect(&m_tradingTlsWatcher,
+            &QFileSystemWatcher::fileChanged,
+            this,
+            &Application::handleTradingTlsPathChanged);
+    connect(&m_tradingTlsWatcher,
+            &QFileSystemWatcher::directoryChanged,
+            this,
+            &Application::handleTradingTlsPathChanged);
+    connect(&m_metricsTlsWatcher,
+            &QFileSystemWatcher::fileChanged,
+            this,
+            &Application::handleMetricsTlsPathChanged);
+    connect(&m_metricsTlsWatcher,
+            &QFileSystemWatcher::directoryChanged,
+            this,
+            &Application::handleMetricsTlsPathChanged);
+    connect(&m_healthTlsWatcher,
+            &QFileSystemWatcher::fileChanged,
+            this,
+            &Application::handleHealthTlsPathChanged);
+    connect(&m_healthTlsWatcher,
+            &QFileSystemWatcher::directoryChanged,
+            this,
+            &Application::handleHealthTlsPathChanged);
 
     m_filteredAlertsModel.setSourceModel(&m_alertsModel);
     m_filteredAlertsModel.setSeverityFilter(AlertsFilterProxyModel::WarningsAndCritical);
@@ -415,6 +480,27 @@ void Application::configureParser(QCommandLineParser& parser) const {
     parser.addOption({"metrics-server-sha256", tr("Oczekiwany odcisk SHA-256 certyfikatu serwera"), tr("hex"),
                       QString()});
 
+    // HealthService
+    parser.addOption({"health-endpoint", tr("Adres serwera HealthService"), tr("endpoint"),
+                      QString()});
+    parser.addOption({"health-auth-token", tr("Token autoryzacyjny HealthService"), tr("token")});
+    parser.addOption({"health-auth-token-file", tr("Plik z tokenem HealthService"), tr("path")});
+    parser.addOption({"health-rbac-role", tr("Rola RBAC HealthService"), tr("role"), QString()});
+    parser.addOption({"health-rbac-scopes", tr("Scope RBAC HealthService"), tr("scopes"), QString()});
+    parser.addOption({"health-use-tls", tr("Wymusza połączenie TLS z HealthService")});
+    parser.addOption({"health-disable-tls", tr("Wyłącza TLS dla HealthService i dziedziczenie po TradingService")});
+    parser.addOption({"health-tls-root-cert", tr("Plik root CA (PEM) dla HealthService"), tr("path"), QString()});
+    parser.addOption({"health-tls-client-cert", tr("Certyfikat klienta (PEM) dla HealthService"), tr("path"), QString()});
+    parser.addOption({"health-tls-client-key", tr("Klucz klienta (PEM) dla HealthService"), tr("path"), QString()});
+    parser.addOption({"health-tls-server-name", tr("Override nazwy serwera TLS HealthService"), tr("name"), QString()});
+    parser.addOption({"health-tls-target-name", tr("Override nazwy celu TLS HealthService"), tr("name"), QString()});
+    parser.addOption({"health-tls-pinned-sha256", tr("Oczekiwany fingerprint SHA-256 certyfikatu HealthService"),
+                      tr("hex"), QString()});
+    parser.addOption({"health-tls-require-client-auth", tr("Wymaga certyfikatu klienta (mTLS) dla HealthService")});
+    parser.addOption({"health-refresh-interval", tr("Interwał odświeżania HealthService (s)"), tr("seconds"),
+                      QStringLiteral("60")});
+    parser.addOption({"health-disable-auto-refresh", tr("Wyłącza automatyczne odświeżanie HealthService")});
+
     // Licencje OEM
     parser.addOption({"license-storage", tr("Ścieżka zapisu aktywowanej licencji OEM"), tr("path"),
                       QStringLiteral("var/licenses/active/license.json")});
@@ -523,13 +609,13 @@ bool Application::applyParser(const QCommandLineParser& parser) {
     tradingTls.enabled = parser.isSet("grpc-use-mtls");
     const QString cliRootCert = parser.value("grpc-root-cert").trimmed();
     if (!cliRootCert.isEmpty())
-        tradingTls.rootCertificatePath = expandUserPath(cliRootCert);
+        tradingTls.rootCertificatePath = expandPath(cliRootCert);
     const QString cliClientCert = parser.value("grpc-client-cert").trimmed();
     if (!cliClientCert.isEmpty())
-        tradingTls.clientCertificatePath = expandUserPath(cliClientCert);
+        tradingTls.clientCertificatePath = expandPath(cliClientCert);
     const QString cliClientKey = parser.value("grpc-client-key").trimmed();
     if (!cliClientKey.isEmpty())
-        tradingTls.clientKeyPath = expandUserPath(cliClientKey);
+        tradingTls.clientKeyPath = expandPath(cliClientKey);
     tradingTls.targetNameOverride = parser.value("grpc-target-name");
     if (m_localServiceEnabled) {
         tradingTls.enabled = false;
@@ -539,6 +625,92 @@ bool Application::applyParser(const QCommandLineParser& parser) {
         tradingTls.targetNameOverride.clear();
     }
     m_tradingTlsConfig = tradingTls;
+    m_healthTlsConfig = m_tradingTlsConfig;
+
+    const bool cliHealthTlsEnable = parser.isSet("health-use-tls");
+    const bool cliHealthTlsDisable = parser.isSet("health-disable-tls");
+    if (cliHealthTlsEnable && cliHealthTlsDisable) {
+        qCWarning(lcAppMetrics)
+            << "Podano jednocześnie --health-use-tls oraz --health-disable-tls. Priorytet ma wyłączenie TLS.";
+    }
+    if (cliHealthTlsEnable) {
+        m_healthTlsConfig.enabled = true;
+    }
+    if (cliHealthTlsDisable) {
+        m_healthTlsConfig.enabled = false;
+    }
+
+    const bool cliHealthRequireClientCert = parser.isSet("health-tls-require-client-auth");
+    if (cliHealthRequireClientCert) {
+        m_healthTlsConfig.requireClientAuth = true;
+    }
+
+    const bool cliHealthRootProvided = parser.isSet("health-tls-root-cert");
+    if (cliHealthRootProvided) {
+        const QString value = parser.value("health-tls-root-cert").trimmed();
+        m_healthTlsConfig.rootCertificatePath = value.isEmpty() ? QString() : expandPath(value);
+    }
+
+    const bool cliHealthClientCertProvided = parser.isSet("health-tls-client-cert");
+    if (cliHealthClientCertProvided) {
+        const QString value = parser.value("health-tls-client-cert").trimmed();
+        m_healthTlsConfig.clientCertificatePath = value.isEmpty() ? QString() : expandPath(value);
+    }
+
+    const bool cliHealthClientKeyProvided = parser.isSet("health-tls-client-key");
+    if (cliHealthClientKeyProvided) {
+        const QString value = parser.value("health-tls-client-key").trimmed();
+        m_healthTlsConfig.clientKeyPath = value.isEmpty() ? QString() : expandPath(value);
+    }
+
+    const bool cliHealthServerNameProvided = parser.isSet("health-tls-server-name");
+    if (cliHealthServerNameProvided) {
+        m_healthTlsConfig.serverNameOverride = parser.value("health-tls-server-name").trimmed();
+    }
+
+    const bool cliHealthTargetNameProvided = parser.isSet("health-tls-target-name");
+    if (cliHealthTargetNameProvided) {
+        m_healthTlsConfig.targetNameOverride = parser.value("health-tls-target-name").trimmed();
+    }
+
+    const bool cliHealthPinnedProvided = parser.isSet("health-tls-pinned-sha256");
+    if (cliHealthPinnedProvided) {
+        m_healthTlsConfig.pinnedServerFingerprint = parser.value("health-tls-pinned-sha256").trimmed();
+    }
+
+    QString cliTradingToken = parser.value("grpc-auth-token").trimmed();
+    QString cliTradingTokenFile = parser.value("grpc-auth-token-file").trimmed();
+    const bool cliTradingTokenProvided = !cliTradingToken.isEmpty();
+    const bool cliTradingTokenFileProvided = !cliTradingTokenFile.isEmpty();
+    if (cliTradingTokenProvided && cliTradingTokenFileProvided) {
+        qCWarning(lcAppMetrics)
+            << "Podano jednocześnie --grpc-auth-token oraz --grpc-auth-token-file. Użyję tokenu przekazanego bezpośrednio.";
+    }
+
+    QString tradingAuthToken;
+    QString tradingAuthTokenFile;
+    if (cliTradingTokenProvided) {
+        tradingAuthToken = cliTradingToken;
+    } else if (cliTradingTokenFileProvided) {
+        tradingAuthTokenFile = expandPath(cliTradingTokenFile);
+        tradingAuthToken = readTokenFile(tradingAuthTokenFile, QStringLiteral("TradingService"));
+    }
+
+    QString cliTradingRole = parser.value("grpc-rbac-role").trimmed();
+    const bool cliTradingRoleProvided = !cliTradingRole.isEmpty();
+    if (cliTradingRoleProvided) {
+        m_tradingRbacRole = cliTradingRole;
+    } else {
+        m_tradingRbacRole.clear();
+    }
+
+    QString cliTradingScopesRaw = parser.value("grpc-rbac-scopes").trimmed();
+    const bool cliTradingScopesProvided = !cliTradingScopesRaw.isEmpty();
+    if (cliTradingScopesProvided) {
+        m_tradingRbacScopes = splitScopesList(cliTradingScopesRaw);
+    } else {
+        m_tradingRbacScopes.clear();
+    }
 
     QString cliTradingToken = parser.value("grpc-auth-token").trimmed();
     QString cliTradingTokenFile = parser.value("grpc-auth-token-file").trimmed();
@@ -591,21 +763,141 @@ bool Application::applyParser(const QCommandLineParser& parser) {
             << "Podano jednocześnie --metrics-auth-token oraz --metrics-auth-token-file. Użyję tokenu przekazanego bezpośrednio.";
     }
 
+    QString metricsAuthToken;
+    QString metricsAuthTokenFile;
     if (cliTokenProvided) {
-        m_metricsAuthToken = cliToken;
+        metricsAuthToken = cliToken;
     } else if (cliTokenFileProvided) {
-        m_metricsAuthToken = readTokenFile(cliTokenFile);
-    } else {
-        m_metricsAuthToken.clear();
+        metricsAuthTokenFile = expandPath(cliTokenFile);
+        metricsAuthToken = readTokenFile(metricsAuthTokenFile);
     }
 
     m_metricsRbacRole = parser.value("metrics-rbac-role").trimmed();
 
+    // --- HealthService ---
+    QString cliHealthEndpoint = parser.value("health-endpoint").trimmed();
+    const bool cliHealthEndpointProvided = !cliHealthEndpoint.isEmpty();
+    if (cliHealthEndpointProvided) {
+        m_healthEndpoint = cliHealthEndpoint;
+    } else {
+        m_healthEndpoint.clear();
+    }
+
+    QString cliHealthToken = parser.value("health-auth-token").trimmed();
+    QString cliHealthTokenFile = parser.value("health-auth-token-file").trimmed();
+    const bool cliHealthTokenProvided = !cliHealthToken.isEmpty();
+    const bool cliHealthTokenFileProvided = !cliHealthTokenFile.isEmpty();
+    if (cliHealthTokenProvided && cliHealthTokenFileProvided) {
+        qCWarning(lcAppMetrics)
+            << "Podano jednocześnie --health-auth-token oraz --health-auth-token-file. Użyję tokenu przekazanego bezpośrednio.";
+    }
+
+    QString healthAuthToken;
+    QString healthAuthTokenFile;
+    if (cliHealthTokenProvided) {
+        healthAuthToken = cliHealthToken;
+    } else if (cliHealthTokenFileProvided) {
+        healthAuthTokenFile = expandPath(cliHealthTokenFile);
+        healthAuthToken = readTokenFile(healthAuthTokenFile, QStringLiteral("HealthService"));
+    }
+
+    QString cliHealthRole = parser.value("health-rbac-role").trimmed();
+    const bool cliHealthRoleProvided = !cliHealthRole.isEmpty();
+    if (cliHealthRoleProvided) {
+        m_healthRbacRole = cliHealthRole;
+    } else {
+        m_healthRbacRole.clear();
+    }
+
+    QString cliHealthScopesRaw = parser.value("health-rbac-scopes").trimmed();
+    const bool cliHealthScopesProvided = !cliHealthScopesRaw.isEmpty();
+    if (cliHealthScopesProvided) {
+        m_healthRbacScopes = splitScopesList(cliHealthScopesRaw);
+    } else {
+        m_healthRbacScopes.clear();
+    }
+
+    bool healthIntervalOk = false;
+    const QString cliHealthIntervalRaw = parser.value("health-refresh-interval");
+    int healthIntervalSeconds = cliHealthIntervalRaw.toInt(&healthIntervalOk);
+    if (!healthIntervalOk || healthIntervalSeconds <= 0) {
+        if (parser.isSet("health-refresh-interval")) {
+            qCWarning(lcAppMetrics)
+                << "Nieprawidłowy --health-refresh-interval:" << cliHealthIntervalRaw
+                << "– używam wartości domyślnej 60 s.";
+        }
+        healthIntervalSeconds = 60;
+    }
+    m_healthRefreshIntervalSeconds = healthIntervalSeconds;
+    m_healthAutoRefreshEnabled = !parser.isSet("health-disable-auto-refresh");
+
     applyTradingTlsEnvironmentOverrides(parser);
+    configureTradingTlsWatchers();
     applyTradingAuthEnvironmentOverrides(parser,
                                          cliTradingTokenProvided,
                                          cliTradingTokenFileProvided,
                                          cliTradingRoleProvided,
+                                         cliTradingScopesProvided,
+                                         tradingAuthToken,
+                                         tradingAuthTokenFile);
+    applyHealthEnvironmentOverrides(parser,
+                                    cliHealthEndpointProvided,
+                                    cliHealthTokenProvided,
+                                    cliHealthTokenFileProvided,
+                                    cliHealthRoleProvided,
+                                    cliHealthScopesProvided,
+                                    parser.isSet("health-refresh-interval"),
+                                    cliHealthTlsEnable,
+                                    cliHealthTlsDisable,
+                                    cliHealthRequireClientCert,
+                                    cliHealthRootProvided,
+                                    cliHealthClientCertProvided,
+                                    cliHealthClientKeyProvided,
+                                    cliHealthServerNameProvided,
+                                    cliHealthTargetNameProvided,
+                                    cliHealthPinnedProvided,
+                                    healthAuthToken,
+                                    healthAuthTokenFile);
+    configureHealthTlsWatchers();
+
+    m_tradingAuthToken = tradingAuthToken.trimmed();
+    setTradingAuthTokenFile(tradingAuthTokenFile);
+    applyTradingTlsConfig();
+    m_client.setAuthToken(m_tradingAuthToken);
+    m_client.setRbacRole(m_tradingRbacRole);
+    m_client.setRbacScopes(m_tradingRbacScopes);
+
+    m_healthAuthToken = healthAuthToken.trimmed();
+    setHealthAuthTokenFile(healthAuthTokenFile);
+
+    if (m_healthController) {
+        const QString endpointForHealth = !m_healthEndpoint.isEmpty() ? m_healthEndpoint : endpoint;
+        m_healthController->setEndpoint(endpointForHealth);
+        applyHealthTlsConfig();
+
+        QString healthTokenEffective = m_healthAuthToken.trimmed();
+        if (healthTokenEffective.isEmpty()) {
+            healthTokenEffective = m_tradingAuthToken;
+        }
+        m_healthController->setAuthToken(healthTokenEffective.trimmed());
+
+        QString healthRoleEffective = m_healthRbacRole.trimmed();
+        if (healthRoleEffective.isEmpty()) {
+            healthRoleEffective = m_tradingRbacRole;
+        }
+        m_healthController->setRbacRole(healthRoleEffective.trimmed());
+
+        QStringList healthScopesEffective = m_healthRbacScopes;
+        if (healthScopesEffective.isEmpty()) {
+            healthScopesEffective = m_tradingRbacScopes;
+        }
+        if (healthScopesEffective.isEmpty()) {
+            healthScopesEffective = QStringList{QStringLiteral("health.read")};
+        }
+        m_healthController->setRbacScopes(healthScopesEffective);
+        m_healthController->setRefreshIntervalSeconds(m_healthRefreshIntervalSeconds);
+        m_healthController->setAutoRefreshEnabled(m_healthAutoRefreshEnabled);
+    }
                                          cliTradingScopesProvided);
     m_client.setTlsConfig(m_tradingTlsConfig);
     m_client.setAuthToken(m_tradingAuthToken);
@@ -662,23 +954,31 @@ bool Application::applyParser(const QCommandLineParser& parser) {
     // Konfiguracja licencji OEM (CLI/ENV)
     const QString cliLicensePath = parser.value("license-storage").trimmed();
     if (!cliLicensePath.isEmpty())
-        m_licenseController->setLicenseStoragePath(expandUserPath(cliLicensePath));
+        m_licenseController->setLicenseStoragePath(expandPath(cliLicensePath));
     const QString cliExpectedFingerprint = parser.value("expected-fingerprint-path").trimmed();
     if (!cliExpectedFingerprint.isEmpty())
-        m_licenseController->setFingerprintDocumentPath(expandUserPath(cliExpectedFingerprint));
+        m_licenseController->setFingerprintDocumentPath(expandPath(cliExpectedFingerprint));
     m_licenseController->initialize();
 
-    applyMetricsEnvironmentOverrides(parser, cliTokenProvided, cliTokenFileProvided);
+    applyMetricsEnvironmentOverrides(parser,
+                                     cliTokenProvided,
+                                     cliTokenFileProvided,
+                                     metricsAuthToken,
+                                     metricsAuthTokenFile);
+    configureMetricsTlsWatchers();
+    applyMetricsTlsConfig();
+    m_metricsAuthToken = metricsAuthToken.trimmed();
+    setMetricsAuthTokenFile(metricsAuthTokenFile);
 
     if (m_securityController) {
         if (!parser.value("security-profiles-path").trimmed().isEmpty()) {
-            m_securityController->setProfilesPath(expandUserPath(parser.value("security-profiles-path")));
+            m_securityController->setProfilesPath(expandPath(parser.value("security-profiles-path")));
         }
         if (!parser.value("security-python").trimmed().isEmpty()) {
             m_securityController->setPythonExecutable(parser.value("security-python"));
         }
         if (!parser.value("security-log-path").trimmed().isEmpty()) {
-            m_securityController->setLogPath(expandUserPath(parser.value("security-log-path")));
+            m_securityController->setLogPath(expandPath(parser.value("security-log-path")));
         }
         m_securityController->refresh();
     }
@@ -688,7 +988,7 @@ bool Application::applyParser(const QCommandLineParser& parser) {
             const QString trimmed = candidate.trimmed();
             if (trimmed.isEmpty())
                 return;
-            m_reportController->setReportsDirectory(expandUserPath(trimmed));
+            m_reportController->setReportsDirectory(expandPath(trimmed));
         };
         if (parser.isSet("reports-directory")) {
             applyReportsDirectory(parser.value("reports-directory"));
@@ -710,7 +1010,7 @@ bool Application::applyParser(const QCommandLineParser& parser) {
             const QString trimmed = candidate.trimmed();
             if (trimmed.isEmpty())
                 return;
-            m_reportController->setPythonExecutable(expandUserPath(trimmed));
+            m_reportController->setPythonExecutable(expandPath(trimmed));
         };
         if (parser.isSet("reporting-python")) {
             applyPythonExecutable(parser.value("reporting-python"));
@@ -797,7 +1097,7 @@ void Application::initializeUiSettingsStorage()
         if (const auto envPath = envValue(kUiSettingsEnv); envPath.has_value()) {
             const QString trimmed = envPath->trimmed();
             if (!trimmed.isEmpty())
-                candidate = expandUserPath(trimmed);
+                candidate = expandPath(trimmed);
         }
 
         if (candidate.isEmpty())
@@ -862,7 +1162,7 @@ void Application::applyRiskHistoryCliOverrides(const QCommandLineParser& parser)
 
         QUrl url(trimmed);
         if (!url.isValid() || url.scheme().isEmpty()) {
-            const QString expanded = expandUserPath(trimmed);
+            const QString expanded = expandPath(trimmed);
             const QString absolute = QDir(expanded).absolutePath();
             url = QUrl::fromLocalFile(absolute);
         } else if (url.isLocalFile()) {
@@ -1021,6 +1321,7 @@ void Application::configureStrategyBridge(const QCommandLineParser& parser)
     }
     if (configPath.isEmpty())
         configPath = QStringLiteral("config/core.yaml");
+    m_strategyController->setConfigPath(expandPath(configPath));
     m_strategyController->setConfigPath(expandUserPath(configPath));
 
     QString pythonExec = parser.value("strategy-config-python").trimmed();
@@ -1029,6 +1330,7 @@ void Application::configureStrategyBridge(const QCommandLineParser& parser)
             pythonExec = envPython->trimmed();
     }
     if (!pythonExec.isEmpty())
+        m_strategyController->setPythonExecutable(expandPath(pythonExec));
         m_strategyController->setPythonExecutable(expandUserPath(pythonExec));
 
     QString bridgePath = parser.value("strategy-config-bridge").trimmed();
@@ -1042,6 +1344,7 @@ void Application::configureStrategyBridge(const QCommandLineParser& parser)
         else
             bridgePath = QDir::current().absoluteFilePath(QStringLiteral("scripts/ui_config_bridge.py"));
     }
+    m_strategyController->setScriptPath(expandPath(bridgePath));
     m_strategyController->setScriptPath(expandUserPath(bridgePath));
 
     if (!m_strategyController->refresh()) {
@@ -1063,6 +1366,19 @@ void Application::configureSupportBundle(const QCommandLineParser& parser)
     };
 
     if (parser.isSet("support-bundle-python"))
+        m_supportController->setPythonExecutable(expandPath(parser.value("support-bundle-python")));
+    else if (const auto envPython = envTrimmed(QByteArrayLiteral("BOT_CORE_UI_SUPPORT_PYTHON")); envPython.has_value())
+        m_supportController->setPythonExecutable(expandPath(envPython.value()));
+
+    if (parser.isSet("support-bundle-script"))
+        m_supportController->setScriptPath(expandPath(parser.value("support-bundle-script")));
+    else if (const auto envScript = envTrimmed(QByteArrayLiteral("BOT_CORE_UI_SUPPORT_SCRIPT")); envScript.has_value())
+        m_supportController->setScriptPath(expandPath(envScript.value()));
+
+    if (parser.isSet("support-bundle-output-dir"))
+        m_supportController->setOutputDirectory(expandPath(parser.value("support-bundle-output-dir")));
+    else if (const auto envOutput = envTrimmed(QByteArrayLiteral("BOT_CORE_UI_SUPPORT_OUTPUT_DIR")); envOutput.has_value())
+        m_supportController->setOutputDirectory(expandPath(envOutput.value()));
         m_supportController->setPythonExecutable(expandUserPath(parser.value("support-bundle-python")));
     else if (const auto envPython = envTrimmed(QByteArrayLiteral("BOT_CORE_UI_SUPPORT_PYTHON")); envPython.has_value())
         m_supportController->setPythonExecutable(expandUserPath(envPython.value()));
@@ -1132,6 +1448,7 @@ void Application::configureSupportBundle(const QCommandLineParser& parser)
             return;
         }
         const QString lower = label.toLower();
+        const QString expandedPath = expandPath(path);
         const QString expandedPath = expandUserPath(path);
         if (lower == QStringLiteral("logs")) {
             m_supportController->setLogsPath(expandedPath);
@@ -1259,7 +1576,7 @@ void Application::setUiSettingsPath(const QString& path, bool reload)
     if (candidate.isEmpty())
         return;
 
-    candidate = expandUserPath(candidate);
+    candidate = expandPath(candidate);
     QFileInfo info(candidate);
     if (!info.isAbsolute())
         candidate = QDir::current().absoluteFilePath(candidate);
@@ -1415,7 +1732,7 @@ void Application::loadUiSettings()
                     if (!trimmed.isEmpty()) {
                         QUrl directoryUrl(trimmed);
                         if (!directoryUrl.isValid() || directoryUrl.scheme().isEmpty())
-                            directoryUrl = QUrl::fromLocalFile(expandUserPath(trimmed));
+                            directoryUrl = QUrl::fromLocalFile(expandPath(trimmed));
                         setRiskHistoryExportLastDirectory(directoryUrl);
                     }
                 }
@@ -1457,7 +1774,7 @@ void Application::loadUiSettings()
                         if (!lastPath.trimmed().isEmpty()) {
                             QUrl pathUrl(lastPath);
                             if (!pathUrl.isValid() || pathUrl.scheme().isEmpty())
-                                pathUrl = QUrl::fromLocalFile(expandUserPath(lastPath));
+                                pathUrl = QUrl::fromLocalFile(expandPath(lastPath));
                             m_lastRiskHistoryAutoExportPath = pathUrl;
                             Q_EMIT riskHistoryLastAutoExportPathChanged();
                         }
@@ -1735,7 +2052,7 @@ void Application::configureLocalBotCoreService(const QCommandLineParser& parser,
             pythonExecutable = envPython->trimmed();
     }
     if (!pythonExecutable.isEmpty())
-        m_localService->setPythonExecutable(expandUserPath(pythonExecutable));
+        m_localService->setPythonExecutable(expandPath(pythonExecutable));
 
     QString datasetPath = parser.value(QStringLiteral("local-core-dataset")).trimmed();
     if (datasetPath.isEmpty()) {
@@ -1743,7 +2060,7 @@ void Application::configureLocalBotCoreService(const QCommandLineParser& parser,
             datasetPath = envDataset->trimmed();
     }
     if (!datasetPath.isEmpty())
-        m_localService->setDatasetPath(expandUserPath(datasetPath));
+        m_localService->setDatasetPath(expandPath(datasetPath));
 
     QString host = parser.value(QStringLiteral("local-core-host")).trimmed();
     if (host.isEmpty()) {
@@ -1816,6 +2133,10 @@ void Application::start() {
         m_telemetry->setWindowCount(m_windowCount);
     }
 
+    if (m_healthController) {
+        m_healthController->refresh();
+    }
+
     m_client.start();
     m_started = true;
     applyRiskRefreshTimerState();
@@ -1875,6 +2196,7 @@ void Application::exposeToQml() {
     m_engine.rootContext()->setContextProperty(QStringLiteral("reportController"), m_reportController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("strategyController"), m_strategyController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("supportController"), m_supportController.get());
+    m_engine.rootContext()->setContextProperty(QStringLiteral("healthController"), m_healthController.get());
 }
 
 QObject* Application::activationController() const
@@ -1895,6 +2217,11 @@ QObject* Application::strategyController() const
 QObject* Application::supportController() const
 {
     return m_supportController.get();
+}
+
+QObject* Application::healthController() const
+{
+    return m_healthController.get();
 }
 
 void Application::ensureFrameMonitor() {
@@ -2344,7 +2671,7 @@ void Application::applyTradingTlsEnvironmentOverrides(const QCommandLineParser& 
                 || trimmed.compare(QStringLiteral("NULL"), Qt::CaseInsensitive) == 0) {
                 m_tradingTlsConfig.*field = QString();
             } else {
-                m_tradingTlsConfig.*field = expandUserPath(trimmed);
+                m_tradingTlsConfig.*field = expandPath(trimmed);
             }
         }
     };
@@ -2372,6 +2699,9 @@ void Application::applyTradingAuthEnvironmentOverrides(const QCommandLineParser&
                                                        bool cliTokenProvided,
                                                        bool cliTokenFileProvided,
                                                        bool cliRoleProvided,
+                                                       bool cliScopesProvided,
+                                                       QString& tradingToken,
+                                                       QString& tradingTokenFile)
                                                        bool cliScopesProvided)
 {
     Q_UNUSED(parser);
@@ -2392,12 +2722,19 @@ void Application::applyTradingAuthEnvironmentOverrides(const QCommandLineParser&
         if (envToken.has_value()) {
             const QString trimmed = envToken->trimmed();
             if (!trimmed.isEmpty()) {
+                tradingToken = trimmed;
+                tradingTokenFile.clear();
                 m_tradingAuthToken = trimmed;
                 applied = true;
             }
         }
 
         if (!applied && envTokenFileNonEmpty) {
+            const QString expandedPath = expandPath(envTokenFile->trimmed());
+            const QString tokenFromFile = readTokenFile(expandedPath, QStringLiteral("TradingService"));
+            if (!tokenFromFile.isEmpty()) {
+                tradingToken = tokenFromFile;
+                tradingTokenFile = expandedPath;
             const QString tokenFromFile = readTokenFile(envTokenFile->trimmed(), QStringLiteral("TradingService"));
             if (!tokenFromFile.isEmpty()) {
                 m_tradingAuthToken = tokenFromFile;
@@ -2407,6 +2744,8 @@ void Application::applyTradingAuthEnvironmentOverrides(const QCommandLineParser&
 
         if (!applied && ((envToken.has_value() && envToken->trimmed().isEmpty())
                          || (envTokenFile.has_value() && envTokenFile->trimmed().isEmpty()))) {
+            tradingToken.clear();
+            tradingTokenFile.clear();
             m_tradingAuthToken.clear();
         }
     }
@@ -2425,6 +2764,163 @@ void Application::applyTradingAuthEnvironmentOverrides(const QCommandLineParser&
             } else {
                 m_tradingRbacScopes = splitScopesList(trimmed);
             }
+        }
+    }
+}
+
+void Application::applyHealthEnvironmentOverrides(const QCommandLineParser& parser,
+                                                  bool cliEndpointProvided,
+                                                  bool cliTokenProvided,
+                                                  bool cliTokenFileProvided,
+                                                  bool cliRoleProvided,
+                                                  bool cliScopesProvided,
+                                                  bool cliIntervalProvided,
+                                                  bool cliTlsEnableProvided,
+                                                  bool cliTlsDisableProvided,
+                                                  bool cliTlsRequireClientAuthProvided,
+                                                  bool cliTlsRootProvided,
+                                                  bool cliTlsClientCertProvided,
+                                                  bool cliTlsClientKeyProvided,
+                                                  bool cliTlsServerNameProvided,
+                                                  bool cliTlsTargetNameProvided,
+                                                  bool cliTlsPinnedProvided,
+                                                  QString& healthToken,
+                                                  QString& healthTokenFile)
+{
+    if (!cliTlsEnableProvided && !cliTlsDisableProvided) {
+        if (const auto tlsEnv = envBool(QByteArrayLiteral("BOT_CORE_UI_HEALTH_USE_TLS")); tlsEnv.has_value()) {
+            m_healthTlsConfig.enabled = tlsEnv.value();
+        }
+    }
+
+    if (!cliTlsRequireClientAuthProvided) {
+        if (const auto requireEnv = envBool(QByteArrayLiteral("BOT_CORE_UI_HEALTH_TLS_REQUIRE_CLIENT_AUTH"));
+            requireEnv.has_value()) {
+            m_healthTlsConfig.requireClientAuth = requireEnv.value();
+        }
+    }
+
+    auto applyHealthTlsPath = [&](const QByteArray& key, bool cliProvided, QString GrpcTlsConfig::*field) {
+        if (cliProvided)
+            return;
+        if (const auto value = envValue(key)) {
+            const QString trimmed = value->trimmed();
+            if (trimmed.compare(QStringLiteral("NONE"), Qt::CaseInsensitive) == 0
+                || trimmed.compare(QStringLiteral("NULL"), Qt::CaseInsensitive) == 0) {
+                m_healthTlsConfig.*field = QString();
+            } else {
+                m_healthTlsConfig.*field = expandPath(trimmed);
+            }
+        }
+    };
+
+    applyHealthTlsPath(QByteArrayLiteral("BOT_CORE_UI_HEALTH_TLS_ROOT_CERT"),
+                       cliTlsRootProvided,
+                       &GrpcTlsConfig::rootCertificatePath);
+    applyHealthTlsPath(QByteArrayLiteral("BOT_CORE_UI_HEALTH_TLS_CLIENT_CERT"),
+                       cliTlsClientCertProvided,
+                       &GrpcTlsConfig::clientCertificatePath);
+    applyHealthTlsPath(QByteArrayLiteral("BOT_CORE_UI_HEALTH_TLS_CLIENT_KEY"),
+                       cliTlsClientKeyProvided,
+                       &GrpcTlsConfig::clientKeyPath);
+
+    if (!cliTlsServerNameProvided) {
+        if (const auto serverEnv = envValue(QByteArrayLiteral("BOT_CORE_UI_HEALTH_TLS_SERVER_NAME")); serverEnv.has_value()) {
+            m_healthTlsConfig.serverNameOverride = serverEnv->trimmed();
+        }
+    }
+
+    if (!cliTlsTargetNameProvided) {
+        if (const auto targetEnv = envValue(QByteArrayLiteral("BOT_CORE_UI_HEALTH_TLS_TARGET_NAME")); targetEnv.has_value()) {
+            m_healthTlsConfig.targetNameOverride = targetEnv->trimmed();
+        }
+    }
+
+    if (!cliTlsPinnedProvided) {
+        if (const auto pinnedEnv = envValue(QByteArrayLiteral("BOT_CORE_UI_HEALTH_TLS_PINNED_SHA256")); pinnedEnv.has_value()) {
+            m_healthTlsConfig.pinnedServerFingerprint = pinnedEnv->trimmed();
+        }
+    }
+
+    if (!cliEndpointProvided) {
+        if (const auto endpointEnv = envValue(QByteArrayLiteral("BOT_CORE_UI_HEALTH_ENDPOINT")); endpointEnv.has_value()) {
+            m_healthEndpoint = endpointEnv->trimmed();
+        }
+    }
+
+    if (!cliTokenProvided && !cliTokenFileProvided) {
+        const auto envToken = envValue(QByteArrayLiteral("BOT_CORE_UI_HEALTH_AUTH_TOKEN"));
+        const auto envTokenFile = envValue(QByteArrayLiteral("BOT_CORE_UI_HEALTH_AUTH_TOKEN_FILE"));
+        const bool envTokenNonEmpty = envToken.has_value() && !envToken->trimmed().isEmpty();
+        const bool envTokenFileNonEmpty = envTokenFile.has_value() && !envTokenFile->trimmed().isEmpty();
+
+        if (envTokenNonEmpty && envTokenFileNonEmpty) {
+            qCWarning(lcAppMetrics)
+                << "Zmiennie BOT_CORE_UI_HEALTH_AUTH_TOKEN oraz BOT_CORE_UI_HEALTH_AUTH_TOKEN_FILE są ustawione jednocześnie."
+                << "Użyję tokenu z BOT_CORE_UI_HEALTH_AUTH_TOKEN.";
+        }
+
+        bool applied = false;
+        if (envToken.has_value()) {
+            const QString trimmed = envToken->trimmed();
+            if (!trimmed.isEmpty()) {
+                healthToken = trimmed;
+                healthTokenFile.clear();
+                applied = true;
+            }
+        }
+
+        if (!applied && envTokenFileNonEmpty) {
+            const QString expandedPath = expandPath(envTokenFile->trimmed());
+            const QString tokenFromFile = readTokenFile(expandedPath, QStringLiteral("HealthService"));
+            if (!tokenFromFile.isEmpty()) {
+                healthToken = tokenFromFile;
+                healthTokenFile = expandedPath;
+                applied = true;
+            }
+        }
+
+        if (!applied && ((envToken.has_value() && envToken->trimmed().isEmpty())
+                         || (envTokenFile.has_value() && envTokenFile->trimmed().isEmpty()))) {
+            healthToken.clear();
+            healthTokenFile.clear();
+        }
+    }
+
+    if (!cliRoleProvided) {
+        if (const auto roleEnv = envValue(QByteArrayLiteral("BOT_CORE_UI_HEALTH_RBAC_ROLE")); roleEnv.has_value()) {
+            m_healthRbacRole = roleEnv->trimmed();
+        }
+    }
+
+    if (!cliScopesProvided) {
+        if (const auto scopesEnv = envValue(QByteArrayLiteral("BOT_CORE_UI_HEALTH_RBAC_SCOPES")); scopesEnv.has_value()) {
+            const QString trimmed = scopesEnv->trimmed();
+            if (trimmed.isEmpty()) {
+                m_healthRbacScopes.clear();
+            } else {
+                m_healthRbacScopes = splitScopesList(trimmed);
+            }
+        }
+    }
+
+    if (!cliIntervalProvided) {
+        if (const auto intervalEnv = envValue(QByteArrayLiteral("BOT_CORE_UI_HEALTH_REFRESH_SECONDS")); intervalEnv.has_value()) {
+            bool ok = false;
+            const double candidate = intervalEnv->toDouble(&ok);
+            if (ok && candidate > 0.0) {
+                m_healthRefreshIntervalSeconds = static_cast<int>(candidate);
+            } else {
+                qCWarning(lcAppMetrics)
+                    << "Nieprawidłowa wartość BOT_CORE_UI_HEALTH_REFRESH_SECONDS:" << *intervalEnv
+                    << "– oczekiwano liczby dodatniej.";
+            }
+        }
+    }
+
+    if (!parser.isSet("health-disable-auto-refresh")) {
+        if (const auto autoEnv = envBool(QByteArrayLiteral("BOT_CORE_UI_HEALTH_AUTO_REFRESH")); autoEnv.has_value()) {
+            m_healthAutoRefreshEnabled = autoEnv.value();
         }
     }
 }
@@ -2473,7 +2969,9 @@ void Application::setRiskHistoryAutoExportLastPathForTesting(const QUrl& url)
 
 void Application::applyMetricsEnvironmentOverrides(const QCommandLineParser& parser,
                                                     bool cliTokenProvided,
-                                                    bool cliTokenFileProvided) {
+                                                    bool cliTokenFileProvided,
+                                                    QString& metricsToken,
+                                                    QString& metricsTokenFile) {
     if (const auto endpointEnv = envValue(QByteArrayLiteral("BOT_CORE_UI_METRICS_ENDPOINT"));
         endpointEnv.has_value()) {
         m_metricsEndpoint = endpointEnv->trimmed();
@@ -2508,7 +3006,7 @@ void Application::applyMetricsEnvironmentOverrides(const QCommandLineParser& par
             if (trimmed.isEmpty()) {
                 m_tlsConfig.*field = QString();
             } else {
-                m_tlsConfig.*field = expandUserPath(trimmed);
+                m_tlsConfig.*field = expandPath(trimmed);
                 tlsMaterialProvided = true;
             }
         }
@@ -2547,22 +3045,26 @@ void Application::applyMetricsEnvironmentOverrides(const QCommandLineParser& par
         if (envToken.has_value()) {
             const QString trimmed = envToken->trimmed();
             if (!trimmed.isEmpty()) {
-                m_metricsAuthToken = trimmed;
+                metricsToken = trimmed;
+                metricsTokenFile.clear();
                 applied = true;
             }
         }
 
         if (!applied && envTokenFileNonEmpty) {
-            const QString tokenFromFile = readTokenFile(envTokenFile->trimmed());
+            const QString expandedPath = expandPath(envTokenFile->trimmed());
+            const QString tokenFromFile = readTokenFile(expandedPath);
             if (!tokenFromFile.isEmpty()) {
-                m_metricsAuthToken = tokenFromFile;
+                metricsToken = tokenFromFile;
+                metricsTokenFile = expandedPath;
                 applied = true;
             }
         }
 
         if (!applied && ((envToken.has_value() && envToken->trimmed().isEmpty()) ||
                          (envTokenFile.has_value() && envTokenFile->trimmed().isEmpty()))) {
-            m_metricsAuthToken.clear();
+            metricsToken.clear();
+            metricsTokenFile.clear();
         }
     }
 
@@ -2571,6 +3073,308 @@ void Application::applyMetricsEnvironmentOverrides(const QCommandLineParser& par
             m_metricsRbacRole = roleEnv->trimmed();
         }
     }
+}
+
+void Application::configureTokenWatcher(QFileSystemWatcher& watcher,
+                                       QString& trackedFile,
+                                       QStringList& trackedDirs,
+                                       const QString& filePath,
+                                       const char* label)
+{
+    if (!trackedFile.isEmpty())
+        watcher.removePath(trackedFile);
+    for (const QString& dir : std::as_const(trackedDirs))
+        watcher.removePath(dir);
+
+    trackedFile.clear();
+    trackedDirs.clear();
+
+    if (filePath.trimmed().isEmpty())
+        return;
+
+    QFileInfo info(filePath);
+    trackedFile = info.absoluteFilePath();
+    if (QFile::exists(trackedFile)) {
+        if (!watcher.addPath(trackedFile)) {
+            qCWarning(lcAppMetrics) << "Nie można obserwować pliku tokenu" << trackedFile << "dla" << label;
+        }
+    }
+
+    const QStringList directories = watchableDirectories(info.absolutePath());
+    for (const QString& directory : directories) {
+        if (directory.isEmpty())
+            continue;
+        if (trackedDirs.contains(directory))
+            continue;
+        if (!watcher.addPath(directory)) {
+            qCWarning(lcAppMetrics) << "Nie można obserwować katalogu tokenu" << directory << "dla" << label;
+            continue;
+        }
+        trackedDirs.append(directory);
+    }
+}
+
+void Application::configureTlsWatcher(QFileSystemWatcher& watcher,
+                                      QStringList& trackedFiles,
+                                      QStringList& trackedDirs,
+                                      const QStringList& filePaths,
+                                      const char* label)
+{
+    for (const QString& path : std::as_const(trackedFiles))
+        watcher.removePath(path);
+    for (const QString& path : std::as_const(trackedDirs))
+        watcher.removePath(path);
+
+    trackedFiles.clear();
+    trackedDirs.clear();
+
+    for (const QString& rawPath : filePaths) {
+        const QString trimmed = rawPath.trimmed();
+        if (trimmed.isEmpty())
+            continue;
+
+        const QString expanded = expandPath(trimmed);
+        QFileInfo info(expanded);
+        const QString absoluteFile = info.absoluteFilePath();
+        if (QFile::exists(absoluteFile)) {
+            if (!trackedFiles.contains(absoluteFile)) {
+                if (!watcher.addPath(absoluteFile)) {
+                    qCWarning(lcAppMetrics) << "Nie można obserwować pliku TLS" << absoluteFile << "dla" << label;
+                }
+                trackedFiles.append(absoluteFile);
+            }
+        }
+
+        const QStringList directories = watchableDirectories(info.absolutePath());
+        for (const QString& directory : directories) {
+            if (directory.isEmpty())
+                continue;
+            if (trackedDirs.contains(directory))
+                continue;
+            if (!watcher.addPath(directory)) {
+                qCWarning(lcAppMetrics) << "Nie można obserwować katalogu TLS" << directory << "dla" << label;
+                continue;
+            }
+            trackedDirs.append(directory);
+        }
+    }
+}
+
+void Application::configureTradingTlsWatchers()
+{
+    const QStringList files{
+        m_tradingTlsConfig.rootCertificatePath,
+        m_tradingTlsConfig.clientCertificatePath,
+        m_tradingTlsConfig.clientKeyPath
+    };
+    configureTlsWatcher(m_tradingTlsWatcher,
+                        m_tradingTlsWatcherFiles,
+                        m_tradingTlsWatcherDirs,
+                        files,
+                        "TradingService TLS");
+}
+
+void Application::configureMetricsTlsWatchers()
+{
+    const QStringList files{
+        m_tlsConfig.rootCertificatePath,
+        m_tlsConfig.clientCertificatePath,
+        m_tlsConfig.clientKeyPath
+    };
+    configureTlsWatcher(m_metricsTlsWatcher,
+                        m_metricsTlsWatcherFiles,
+                        m_metricsTlsWatcherDirs,
+                        files,
+                        "MetricsService TLS");
+}
+
+void Application::configureHealthTlsWatchers()
+{
+    const QStringList files{
+        m_healthTlsConfig.rootCertificatePath,
+        m_healthTlsConfig.clientCertificatePath,
+        m_healthTlsConfig.clientKeyPath
+    };
+    configureTlsWatcher(m_healthTlsWatcher,
+                        m_healthTlsWatcherFiles,
+                        m_healthTlsWatcherDirs,
+                        files,
+                        "HealthService TLS");
+}
+
+void Application::setTradingAuthTokenFile(const QString& path)
+{
+    QString normalized = path.trimmed();
+    if (!normalized.isEmpty())
+        normalized = expandPath(normalized);
+    if (m_tradingAuthTokenFile == normalized)
+        return;
+    m_tradingAuthTokenFile = normalized;
+    configureTokenWatcher(m_tradingTokenWatcher,
+                          m_tradingTokenWatcherFile,
+                          m_tradingTokenWatcherDirs,
+                          m_tradingAuthTokenFile,
+                          "TradingService");
+    if (!m_tradingAuthTokenFile.isEmpty()) {
+        reloadTradingTokenFromFile();
+    }
+}
+
+void Application::setMetricsAuthTokenFile(const QString& path)
+{
+    QString normalized = path.trimmed();
+    if (!normalized.isEmpty())
+        normalized = expandPath(normalized);
+    if (m_metricsAuthTokenFile == normalized)
+        return;
+    m_metricsAuthTokenFile = normalized;
+    configureTokenWatcher(m_metricsTokenWatcher,
+                          m_metricsTokenWatcherFile,
+                          m_metricsTokenWatcherDirs,
+                          m_metricsAuthTokenFile,
+                          "MetricsService");
+    if (!m_metricsAuthTokenFile.isEmpty()) {
+        reloadMetricsTokenFromFile();
+    } else {
+        ensureTelemetry();
+    }
+}
+
+void Application::setHealthAuthTokenFile(const QString& path)
+{
+    QString normalized = path.trimmed();
+    if (!normalized.isEmpty())
+        normalized = expandPath(normalized);
+    if (m_healthAuthTokenFile == normalized)
+        return;
+    m_healthAuthTokenFile = normalized;
+    configureTokenWatcher(m_healthTokenWatcher,
+                          m_healthTokenWatcherFile,
+                          m_healthTokenWatcherDirs,
+                          m_healthAuthTokenFile,
+                          "HealthService");
+    if (!m_healthAuthTokenFile.isEmpty()) {
+        reloadHealthTokenFromFile();
+    } else {
+        applyHealthAuthTokenToController();
+    }
+}
+
+void Application::reloadTradingTokenFromFile()
+{
+    if (m_tradingAuthTokenFile.trimmed().isEmpty())
+        return;
+
+    const QString token = readTokenFile(m_tradingAuthTokenFile, QStringLiteral("TradingService"));
+    if (token == m_tradingAuthToken)
+        return;
+
+    m_tradingAuthToken = token.trimmed();
+    m_client.setAuthToken(m_tradingAuthToken);
+}
+
+void Application::reloadMetricsTokenFromFile()
+{
+    if (m_metricsAuthTokenFile.trimmed().isEmpty())
+        return;
+
+    const QString token = readTokenFile(m_metricsAuthTokenFile);
+    if (token == m_metricsAuthToken)
+        return;
+
+    m_metricsAuthToken = token.trimmed();
+    ensureTelemetry();
+}
+
+void Application::reloadHealthTokenFromFile()
+{
+    if (m_healthAuthTokenFile.trimmed().isEmpty())
+        return;
+
+    const QString token = readTokenFile(m_healthAuthTokenFile, QStringLiteral("HealthService"));
+    if (token == m_healthAuthToken)
+        return;
+
+    m_healthAuthToken = token.trimmed();
+    applyHealthAuthTokenToController();
+}
+
+void Application::applyHealthAuthTokenToController()
+{
+    if (!m_healthController)
+        return;
+
+    QString effective = m_healthAuthToken.trimmed();
+    if (effective.isEmpty())
+        effective = m_tradingAuthToken;
+    m_healthController->setAuthToken(effective.trimmed());
+}
+
+void Application::applyTradingTlsConfig()
+{
+    ++m_tradingTlsReloadGeneration;
+    m_client.setTlsConfig(m_tradingTlsConfig);
+}
+
+void Application::applyMetricsTlsConfig()
+{
+    ++m_metricsTlsReloadGeneration;
+    ensureTelemetry();
+}
+
+void Application::applyHealthTlsConfig()
+{
+    ++m_healthTlsReloadGeneration;
+    if (m_healthController)
+        m_healthController->setTlsConfig(m_healthTlsConfig);
+}
+
+void Application::handleTradingTlsPathChanged(const QString&)
+{
+    configureTradingTlsWatchers();
+    applyTradingTlsConfig();
+}
+
+void Application::handleMetricsTlsPathChanged(const QString&)
+{
+    configureMetricsTlsWatchers();
+    applyMetricsTlsConfig();
+}
+
+void Application::handleHealthTlsPathChanged(const QString&)
+{
+    configureHealthTlsWatchers();
+    applyHealthTlsConfig();
+}
+
+void Application::handleTradingTokenPathChanged(const QString&)
+{
+    configureTokenWatcher(m_tradingTokenWatcher,
+                          m_tradingTokenWatcherFile,
+                          m_tradingTokenWatcherDirs,
+                          m_tradingAuthTokenFile,
+                          "TradingService");
+    reloadTradingTokenFromFile();
+}
+
+void Application::handleMetricsTokenPathChanged(const QString&)
+{
+    configureTokenWatcher(m_metricsTokenWatcher,
+                          m_metricsTokenWatcherFile,
+                          m_metricsTokenWatcherDirs,
+                          m_metricsAuthTokenFile,
+                          "MetricsService");
+    reloadMetricsTokenFromFile();
+}
+
+void Application::handleHealthTokenPathChanged(const QString&)
+{
+    configureTokenWatcher(m_healthTokenWatcher,
+                          m_healthTokenWatcherFile,
+                          m_healthTokenWatcherDirs,
+                          m_healthAuthTokenFile,
+                          "HealthService");
+    reloadHealthTokenFromFile();
 }
 
 void Application::applyScreenEnvironmentOverrides(const QCommandLineParser& parser)
