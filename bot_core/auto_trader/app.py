@@ -16,8 +16,11 @@ from __future__ import annotations
 import copy
 import enum
 import logging
+import math
 import threading
 import time
+from datetime import datetime, timezone, tzinfo
+from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Mapping, Optional, Protocol, cast
@@ -39,6 +42,13 @@ LOGGER = logging.getLogger(__name__)
 
 _NO_FILTER = object()
 _UNKNOWN_SERVICE = "<unknown>"
+_MISSING_GUARDRAIL_LABEL = "<no-label>"
+_MISSING_GUARDRAIL_COMPARATOR = "<no-comparator>"
+_MISSING_GUARDRAIL_UNIT = "<no-unit>"
+_MISSING_DECISION_STATE = "<no-state>"
+_MISSING_DECISION_REASON = "<no-reason>"
+_MISSING_DECISION_MODE = "<no-mode>"
+_CONTROLLER_HISTORY_DEFAULT_LIMIT = 32
 
 
 class EmitterLike(Protocol):
@@ -102,6 +112,7 @@ class GuardrailTrigger:
     label: str
     comparator: str
     threshold: float
+    unit: Optional[str] = None
     value: Optional[float] = None
 
     def to_dict(self) -> Dict[str, Any]:
@@ -111,6 +122,8 @@ class GuardrailTrigger:
             "comparator": self.comparator,
             "threshold": float(self.threshold),
         }
+        if self.unit is not None:
+            payload["unit"] = self.unit
         if self.value is not None:
             payload["value"] = float(self.value)
         return payload
@@ -153,6 +166,11 @@ class AutoTrader:
         ai_connector: Any | None = None,
         thresholds_loader: Callable[[], Mapping[str, Any]] | None = None,
         risk_evaluations_limit: int | None = 256,
+        risk_evaluations_ttl_s: float | None = None,
+        controller_runner: Any | None = None,
+        controller_runner_factory: Callable[[], Any] | None = None,
+        controller_cycle_history_limit: int | None = 32,
+        controller_cycle_history_ttl_s: float | None = None,
     ) -> None:
         self.emitter = emitter
         self.gui = gui
@@ -177,6 +195,9 @@ class AutoTrader:
         self._thresholds: Mapping[str, Any] = {}
         self.reload_thresholds()
 
+        self._controller_runner: Any | None = controller_runner
+        self._controller_runner_factory: Callable[[], Any] | None = controller_runner_factory
+
         self.current_strategy: str = "neutral"
         self.current_leverage: float = 1.0
         self.current_stop_loss_pct: float = 0.02
@@ -184,6 +205,20 @@ class AutoTrader:
         self._last_signal: str | None = None
         self._last_regime: MarketRegimeAssessment | None = None
         self._last_risk_decision: RiskDecision | None = None
+        self._controller_cycle_signals: tuple[Any, ...] | None = None
+        self._controller_cycle_results: tuple[Any, ...] | None = None
+        self._controller_cycle_started_at: float | None = None
+        self._controller_cycle_finished_at: float | None = None
+        self._controller_cycle_last_duration: float | None = None
+        self._controller_cycle_sequence: int = 0
+        self._controller_cycle_last_orders: int = 0
+        self._controller_cycle_history: list[dict[str, Any]] = []
+        self._controller_cycle_history_limit = self._normalise_cycle_history_limit(
+            controller_cycle_history_limit
+        )
+        self._controller_cycle_history_ttl_s = self._normalise_cycle_history_ttl(
+            controller_cycle_history_ttl_s
+        )
         self._cooldown_until: float = 0.0
         self._cooldown_reason: str | None = None
         self._last_guardrail_reasons: list[str] = []
@@ -198,6 +233,9 @@ class AutoTrader:
         self._lock = threading.RLock()
         self._risk_evaluations: list[dict[str, Any]] = []
         self._risk_evaluations_limit: int | None = None
+        self._risk_evaluations_ttl_s: float | None = self._normalise_cycle_history_ttl(
+            risk_evaluations_ttl_s
+        )
         self.configure_risk_evaluation_history(risk_evaluations_limit)
 
     def reload_thresholds(self) -> None:
@@ -281,6 +319,208 @@ class AutoTrader:
             self._stop.set()
             self._cancel_auto_trade_thread_locked()
             self._log("AutoTrader stopped.")
+
+    def configure_controller_runner(
+        self,
+        runner: Any | None = None,
+        *,
+        factory: Callable[[], Any] | None = None,
+    ) -> None:
+        """Configure an optional realtime runner bridging controller signals to TradingController."""
+
+        with self._lock:
+            self._controller_runner = runner
+            self._controller_runner_factory = factory
+
+        if runner is not None:
+            self._log("Controller runner attached", level=logging.INFO)
+        elif factory is not None:
+            self._log("Controller runner factory configured", level=logging.INFO)
+        else:
+            self._log("Controller runner disabled", level=logging.DEBUG)
+
+    def _resolve_controller_runner(self) -> Any | None:
+        with self._lock:
+            runner = self._controller_runner
+            factory = self._controller_runner_factory if runner is None else None
+
+        if runner is not None:
+            return runner
+        if factory is None:
+            return None
+
+        try:
+            candidate = factory()
+        except Exception as exc:  # pragma: no cover - defensive guard
+            self._log(
+                f"Controller runner factory failed: {exc!r}",
+                level=logging.ERROR,
+            )
+            return None
+
+        if candidate is None:
+            self._log("Controller runner factory returned None", level=logging.DEBUG)
+            return None
+
+        with self._lock:
+            self._controller_runner = candidate
+
+        self._log("Controller runner instantiated", level=logging.INFO)
+        return candidate
+
+    def _execute_controller_runner_cycle(self, runner: Any) -> None:
+        run_once = getattr(runner, "run_once", None)
+        if not callable(run_once):
+            self._log(
+                "Configured controller runner does not expose run_once(); disabling bridge",
+                level=logging.ERROR,
+            )
+            with self._lock:
+                if runner is self._controller_runner:
+                    self._controller_runner = None
+            return
+
+        invocation_started = time.time()
+
+        try:
+            results = run_once()
+        except Exception as exc:  # pragma: no cover - defensive guard
+            self._log(
+                f"Controller runner cycle failed: {exc!r}",
+                level=logging.ERROR,
+            )
+            return
+
+        def _normalise_sequence(payload: Any) -> tuple[Any, ...]:
+            if payload is None:
+                return ()
+            if isinstance(payload, tuple):
+                return payload
+            if isinstance(payload, Iterable) and not isinstance(payload, (str, bytes)):
+                try:
+                    return tuple(payload)
+                except TypeError:
+                    payload = list(payload)
+                    return tuple(payload)
+            return (payload,)
+
+        cycle_signals = getattr(runner, "last_cycle_signals", None)
+        raw_cycle_results = getattr(runner, "last_cycle_results", None)
+        if raw_cycle_results is None:
+            raw_cycle_results = results
+
+        stored_signals = _normalise_sequence(cycle_signals)
+        stored_results = _normalise_sequence(raw_cycle_results)
+
+        orders_count = len(stored_results)
+        last_signal_label: str | None = None
+        if stored_signals:
+            try:
+                signal_payload = getattr(stored_signals[-1], "signal", stored_signals[-1])
+                side = getattr(signal_payload, "side", None)
+                if isinstance(side, str):
+                    last_signal_label = side.lower()
+            except Exception:  # pragma: no cover - optional metadata only
+                last_signal_label = None
+
+        started_at = getattr(runner, "last_cycle_started_at", None)
+        started_timestamp: float | None = None
+        if started_at is not None:
+            if hasattr(started_at, "timestamp"):
+                try:
+                    started_timestamp = float(started_at.timestamp())  # type: ignore[call-arg]
+                except Exception:  # pragma: no cover - defensive guard
+                    started_timestamp = None
+            else:
+                try:
+                    started_timestamp = float(started_at)  # type: ignore[arg-type]
+                except (TypeError, ValueError):  # pragma: no cover - defensive guard
+                    started_timestamp = None
+        elif stored_signals or stored_results:
+            started_timestamp = float(invocation_started)
+
+        finished_timestamp = float(time.time())
+        duration_seconds: float | None = None
+        if started_timestamp is not None:
+            duration_seconds = max(0.0, finished_timestamp - started_timestamp)
+        elif stored_signals or stored_results:
+            duration_seconds = max(0.0, finished_timestamp - invocation_started)
+        telemetry_payload = {
+            "signals": stored_signals,
+            "results": stored_results,
+            "started_at": started_timestamp,
+            "finished_at": finished_timestamp,
+            "duration_s": duration_seconds,
+            "orders": orders_count,
+        }
+
+        self._log(
+            "AutoTrader controller runner executed cycle",
+            level=logging.INFO,
+            orders=orders_count,
+            last_signal=last_signal_label,
+            signals=len(stored_signals),
+        )
+
+        sequence = 0
+        trimmed_by_limit = 0
+        trimmed_by_ttl = 0
+        limit_snapshot = self._controller_cycle_history_limit
+        ttl_snapshot = self._controller_cycle_history_ttl_s
+        history_size = 0
+        with self._lock:
+            self._controller_cycle_signals = stored_signals
+            self._controller_cycle_results = stored_results
+            self._controller_cycle_started_at = started_timestamp
+            self._controller_cycle_finished_at = finished_timestamp
+            self._controller_cycle_last_duration = duration_seconds
+            self._controller_cycle_last_orders = orders_count
+            self._controller_cycle_sequence += 1
+            sequence = self._controller_cycle_sequence
+
+            history_entry = {
+                "sequence": sequence,
+                "signals": stored_signals,
+                "results": stored_results,
+                "started_at": started_timestamp,
+                "finished_at": finished_timestamp,
+                "duration_s": duration_seconds,
+                "orders": orders_count,
+            }
+            self._controller_cycle_history.append(history_entry)
+            trimmed_by_limit, trimmed_by_ttl = self._prune_controller_cycle_history_locked(
+                reference_time=finished_timestamp
+            )
+            limit_snapshot = self._controller_cycle_history_limit
+            ttl_snapshot = self._controller_cycle_history_ttl_s
+            history_size = len(self._controller_cycle_history)
+
+        telemetry_payload["sequence"] = sequence
+
+        if trimmed_by_limit or trimmed_by_ttl:
+            self._log(
+                "Przycięto historię cykli kontrolera po nowym cyklu",
+                level=logging.DEBUG,
+                limit=None if limit_snapshot <= 0 else limit_snapshot,
+                ttl=ttl_snapshot,
+                trimmed_by_limit=trimmed_by_limit,
+                trimmed_by_ttl=trimmed_by_ttl,
+                history=history_size,
+            )
+
+        if last_signal_label:
+            self._last_signal = last_signal_label
+        self._last_risk_decision = None
+
+        emitter_emit = getattr(self.emitter, "emit", None)
+        if callable(emitter_emit):
+            try:
+                emitter_emit("auto_trader.controller_cycle", **telemetry_payload)
+            except Exception:  # pragma: no cover - defensive logging
+                self._log(
+                    "Emitter failed to publish controller cycle telemetry",
+                    level=logging.DEBUG,
+                )
 
     # ------------------------------------------------------------------
     # Market intelligence helpers -------------------------------------
@@ -1351,6 +1591,12 @@ class AutoTrader:
     # Extension hook ----------------------------------------------------
     # ------------------------------------------------------------------
     def _auto_trade_loop(self) -> None:
+        runner = self._resolve_controller_runner()
+        if runner is not None:
+            self._execute_controller_runner_cycle(runner)
+            self._auto_trade_stop.wait(self.auto_trade_interval_s)
+            return
+
         risk_service = getattr(self, "risk_service", None)
         if risk_service is None:
             risk_service = getattr(self, "core_risk_engine", None)
@@ -2003,6 +2249,24 @@ class AutoTrader:
         bucket = decision.details.setdefault("risk_service", {})
         bucket["response"] = summary
 
+    def _log_risk_history_trimmed(
+        self,
+        *,
+        context: str,
+        trimmed: int,
+        ttl: float | None,
+        history: int,
+    ) -> None:
+        if trimmed:
+            self._log(
+                "Przycięto historię ocen ryzyka na podstawie TTL",
+                level=logging.DEBUG,
+                context=context,
+                trimmed=trimmed,
+                ttl=ttl,
+                history=history,
+            )
+
     def _record_risk_evaluation(
         self,
         decision: RiskDecision,
@@ -2026,6 +2290,9 @@ class AutoTrader:
             entry["error"] = repr(error)
         else:
             entry["response"] = self._summarize_risk_response(response)
+        trimmed_by_ttl = 0
+        ttl_snapshot: float | None = None
+        history_size = 0
         with self._lock:
             self._risk_evaluations.append(entry)
             limit = self._risk_evaluations_limit
@@ -2036,6 +2303,54 @@ class AutoTrader:
                     overflow = len(self._risk_evaluations) - limit
                     if overflow > 0:
                         del self._risk_evaluations[:overflow]
+            trimmed_by_ttl = self._prune_risk_evaluations_locked(
+                reference_time=entry["timestamp"]
+            )
+            ttl_snapshot = self._risk_evaluations_ttl_s
+            history_size = len(self._risk_evaluations)
+        self._log_risk_history_trimmed(
+            context="record",
+            trimmed=trimmed_by_ttl,
+            ttl=ttl_snapshot,
+            history=history_size,
+        )
+
+    def _prune_risk_evaluations_locked(
+        self,
+        *,
+        reference_time: float | None = None,
+    ) -> int:
+        trimmed = 0
+        ttl = self._risk_evaluations_ttl_s
+        if ttl is None or ttl <= 0.0:
+            return 0
+        history = self._risk_evaluations
+        if not history:
+            return 0
+
+        try:
+            cutoff_reference = (
+                float(reference_time)
+                if reference_time is not None
+                else float(time.time())
+            )
+        except (TypeError, ValueError):  # pragma: no cover - defensive guard
+            cutoff_reference = float(time.time())
+
+        cutoff = cutoff_reference - ttl
+        if cutoff <= float("-inf"):
+            return 0
+
+        retained: list[dict[str, Any]] = []
+        for entry in history:
+            timestamp = entry.get("timestamp")
+            if timestamp is None or timestamp >= cutoff:
+                retained.append(entry)
+            else:
+                trimmed += 1
+        if trimmed:
+            history[:] = retained
+        return trimmed
 
     # Compatibility helpers -------------------------------------------
     def set_enable_auto_trade(self, flag: bool) -> None:
@@ -2045,6 +2360,42 @@ class AutoTrader:
 
     def is_running(self) -> bool:
         return self._started and not self._stop.is_set()
+
+    @staticmethod
+    def _normalise_cycle_history_limit(limit: int | None) -> int:
+        if limit is None:
+            return -1
+        try:
+            normalized = int(limit)
+        except (TypeError, ValueError):  # pragma: no cover - defensive guard
+            return _CONTROLLER_HISTORY_DEFAULT_LIMIT
+        if normalized <= 0:
+            return -1
+        return normalized
+
+    @staticmethod
+    def _normalise_cycle_history_ttl(ttl: float | None) -> float | None:
+        if ttl is None:
+            return None
+        try:
+            normalized = float(ttl)
+        except (TypeError, ValueError):  # pragma: no cover - defensive guard
+            return None
+        if not normalized or normalized <= 0.0:
+            return None
+        return float(normalized)
+
+    @staticmethod
+    def _normalize_history_export_limit(limit: object) -> int | None:
+        if limit is None:
+            return None
+        try:
+            normalized = int(limit)
+        except (TypeError, ValueError):  # pragma: no cover - defensive guard
+            return None
+        if normalized <= 0:
+            return 0
+        return normalized
 
     @staticmethod
     def _prepare_bool_filter(value: object) -> set[bool | None] | None:
@@ -2068,6 +2419,193 @@ class AutoTrader:
         return {str(value)}
 
     @staticmethod
+    def _prepare_string_filter(value: object) -> set[str] | None:
+        if value is _NO_FILTER:
+            return None
+        if isinstance(value, Iterable) and not isinstance(value, (str, bytes, bytearray)):
+            return {str(item) for item in value}
+        return {str(value)}
+
+    @staticmethod
+    def _prepare_guardrail_filter(
+        value: object,
+        *,
+        missing_token: str,
+    ) -> set[str] | None:
+        if value is _NO_FILTER:
+            return None
+        if isinstance(value, Iterable) and not isinstance(value, (str, bytes, bytearray)):
+            prepared: set[str] = set()
+            for item in value:
+                if item is None:
+                    prepared.add(missing_token)
+                else:
+                    prepared.add(str(item))
+            return prepared
+        if value is None:
+            return {missing_token}
+        return {str(value)}
+
+    @staticmethod
+    def _prepare_decision_filter(
+        value: object,
+        *,
+        missing_token: str,
+    ) -> set[str] | None:
+        if value is _NO_FILTER:
+            return None
+        if isinstance(value, Iterable) and not isinstance(value, (str, bytes, bytearray)):
+            prepared: set[str] = set()
+            for item in value:
+                if item is None:
+                    prepared.add(missing_token)
+                else:
+                    prepared.add(str(item))
+            return prepared
+        if value is None:
+            return {missing_token}
+        return {str(value)}
+
+    @staticmethod
+    def _normalize_decision_dimension_value(
+        value: object,
+        *,
+        missing_token: str,
+    ) -> str:
+        if value is None:
+            return missing_token
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped if stripped else missing_token
+        try:
+            return str(value)
+        except Exception:  # pragma: no cover - defensywne logowanie
+            return missing_token
+
+    @staticmethod
+    def _prepare_guardrail_numeric_filter(
+        value: object,
+    ) -> tuple[set[float], bool] | None:
+        if value is _NO_FILTER:
+            return None
+        include_missing = False
+        numeric_values: set[float] = set()
+        if isinstance(value, Iterable) and not isinstance(
+            value,
+            (str, bytes, bytearray),
+        ):
+            for item in value:
+                if item is None:
+                    include_missing = True
+                    continue
+                coerced = AutoTrader._coerce_float(item)
+                if coerced is not None:
+                    numeric_values.add(coerced)
+            return (numeric_values, include_missing)
+        if value is None:
+            return (set(), True)
+        coerced = AutoTrader._coerce_float(value)
+        if coerced is None:
+            return (set(), False)
+        return ({coerced}, False)
+
+    @staticmethod
+    def _create_decision_bucket() -> dict[str, Any]:
+        return {
+            "total": 0,
+            "approved": 0,
+            "rejected": 0,
+            "unknown": 0,
+            "errors": 0,
+            "raw_true": 0,
+            "raw_false": 0,
+            "raw_none": 0,
+            "services": Counter(),
+        }
+
+    @staticmethod
+    def _update_decision_bucket(
+        bucket: dict[str, Any],
+        *,
+        normalized_value: bool | None,
+        raw_value: bool | None,
+        has_error: bool,
+        service_key: str,
+    ) -> None:
+        bucket["total"] += 1
+        if normalized_value is True:
+            bucket["approved"] += 1
+        elif normalized_value is False:
+            bucket["rejected"] += 1
+        else:
+            bucket["unknown"] += 1
+
+        if raw_value is True:
+            bucket["raw_true"] += 1
+        elif raw_value is False:
+            bucket["raw_false"] += 1
+        else:
+            bucket["raw_none"] += 1
+
+        if has_error:
+            bucket["errors"] += 1
+
+        services_counter = bucket.get("services")
+        if not isinstance(services_counter, Counter):
+            services_counter = Counter()
+            bucket["services"] = services_counter
+        services_counter[service_key] += 1
+
+    @staticmethod
+    def _finalize_decision_bucket(bucket: dict[str, Any]) -> None:
+        total = bucket.get("total", 0) or 0
+        approved = bucket.get("approved", 0) or 0
+        errors = bucket.get("errors", 0) or 0
+        bucket["approval_rate"] = approved / total if total else 0.0
+        bucket["error_rate"] = errors / total if total else 0.0
+
+        services_counter = bucket.get("services")
+        if isinstance(services_counter, Counter):
+            sorted_services = sorted(
+                services_counter.items(),
+                key=lambda item: (-item[1], item[0]),
+            )
+            bucket["services"] = {key: value for key, value in sorted_services}
+        elif isinstance(services_counter, dict):
+            sorted_services = sorted(
+                services_counter.items(),
+                key=lambda item: (-item[1], item[0]),
+            )
+            bucket["services"] = {key: value for key, value in sorted_services}
+        else:  # pragma: no cover - defensive guard
+            bucket["services"] = {}
+
+    @staticmethod
+    def _finalize_dimension_counter(
+        counter: Counter[str] | dict[str, int] | None,
+    ) -> dict[str, int]:
+        if isinstance(counter, Counter):
+            items = counter.items()
+        elif isinstance(counter, dict):
+            items = counter.items()
+        else:
+            return {}
+        ordered = sorted(items, key=lambda item: (-int(item[1]), str(item[0])))
+        return {str(key): int(value) for key, value in ordered}
+
+    @staticmethod
+    def _sort_decision_dimension(
+        dimension: dict[str, dict[str, Any]]
+    ) -> dict[str, dict[str, Any]]:
+        if not dimension:
+            return {}
+        ordered = sorted(
+            dimension.items(),
+            key=lambda item: (-item[1].get("total", 0), item[0]),
+        )
+        return {key: value for key, value in ordered}
+
+    @staticmethod
     def _normalize_time_bound(value: object) -> float | None:
         if value is None:
             return None
@@ -2079,6 +2617,368 @@ class AutoTrader:
             return None
         return float(timestamp.value) / 1_000_000_000
 
+    @staticmethod
+    def _normalize_timestamp_for_export(
+        value: Any,
+        *,
+        coerce: bool,
+        tz: tzinfo | None,
+    ) -> Any:
+        if not coerce:
+            return copy.deepcopy(value)
+        if value is None:
+            return None
+        if value is pd.NA or value is pd.NaT:  # type: ignore[attr-defined]
+            return None
+        if isinstance(value, float) and math.isnan(value):
+            return None
+
+        timestamp_value: float
+        if isinstance(value, (int, float)):
+            timestamp_value = float(value)
+        else:
+            try:
+                timestamp_value = float(value)
+            except (TypeError, ValueError):
+                try:
+                    parsed = pd.Timestamp(value)
+                except (TypeError, ValueError):  # pragma: no cover - defensive
+                    return None
+                if pd.isna(parsed):
+                    return None
+                timestamp_value = float(parsed.value) / 1_000_000_000
+
+        if tz is not None:
+            return datetime.fromtimestamp(timestamp_value, tz=tz)
+        return datetime.fromtimestamp(timestamp_value, tz=timezone.utc).replace(
+            tzinfo=None
+        )
+
+    @staticmethod
+    def _coerce_float(value: Any) -> float | None:
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            try:
+                return float(value)
+            except (TypeError, ValueError):  # pragma: no cover - defensive
+                return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _init_guardrail_numeric_stats() -> dict[str, Any]:
+        return {
+            "count": 0,
+            "sum": 0.0,
+            "min": None,
+            "max": None,
+            "missing": 0,
+        }
+
+    @staticmethod
+    def _ingest_guardrail_numeric_value(
+        stats: dict[str, Any],
+        value: Any,
+    ) -> None:
+        coerced = AutoTrader._coerce_float(value)
+        if coerced is None:
+            stats["missing"] = int(stats.get("missing", 0)) + 1
+            return
+
+        stats["count"] = int(stats.get("count", 0)) + 1
+        stats["sum"] = float(stats.get("sum", 0.0)) + coerced
+
+        current_min = stats.get("min")
+        if current_min is None or coerced < float(current_min):
+            stats["min"] = coerced
+
+        current_max = stats.get("max")
+        if current_max is None or coerced > float(current_max):
+            stats["max"] = coerced
+
+    @staticmethod
+    def _finalize_guardrail_numeric_stats(
+        stats: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        if not stats:
+            return {}
+
+        count = int(stats.get("count", 0))
+        missing = int(stats.get("missing", 0))
+        if count <= 0 and missing <= 0:
+            return {}
+
+        total = float(stats.get("sum", 0.0)) if count > 0 else 0.0
+        minimum = stats.get("min")
+        maximum = stats.get("max")
+        average: float | None
+        if count > 0:
+            average = total / count
+        else:
+            average = None
+
+        return {
+            "count": count,
+            "missing": missing,
+            "sum": total,
+            "min": minimum,
+            "max": maximum,
+            "average": average,
+        }
+
+    @staticmethod
+    def _normalize_guardrail_trigger_payload(trigger: Any) -> dict[str, Any] | None:
+        if isinstance(trigger, GuardrailTrigger):
+            return trigger.to_dict()
+        if hasattr(trigger, "to_dict"):
+            try:
+                payload = trigger.to_dict()  # type: ignore[call-arg]
+            except Exception:  # pragma: no cover - defensywne logowanie
+                return None
+            if isinstance(payload, Mapping):
+                trigger = payload
+            else:
+                return None
+        if not isinstance(trigger, Mapping):
+            return None
+        normalized: dict[str, Any] = {}
+        for key, value in trigger.items():
+            if key in {"threshold", "value"}:
+                coerced = AutoTrader._coerce_float(value)
+                normalized[key] = coerced if coerced is not None else copy.deepcopy(value)
+            else:
+                normalized[key] = copy.deepcopy(value)
+        return normalized
+
+    def _extract_guardrail_metadata(
+        self,
+        entry: Mapping[str, Any],
+    ) -> tuple[tuple[str, ...], tuple[dict[str, Any], ...]]:
+        decision_payload = entry.get("decision")
+        if not isinstance(decision_payload, Mapping):
+            return (), ()
+        details = decision_payload.get("details")
+        if not isinstance(details, Mapping):
+            return (), ()
+
+        reasons_payload = details.get("guardrail_reasons")
+        if isinstance(reasons_payload, Iterable) and not isinstance(
+            reasons_payload,
+            (str, bytes, bytearray),
+        ):
+            reasons: tuple[str, ...] = tuple(str(reason) for reason in reasons_payload)
+        else:
+            reasons = ()
+
+        triggers_payload = details.get("guardrail_triggers")
+        triggers: list[dict[str, Any]] = []
+        if isinstance(triggers_payload, Iterable) and not isinstance(
+            triggers_payload,
+            (str, bytes, bytearray),
+        ):
+            for candidate in triggers_payload:
+                normalized = AutoTrader._normalize_guardrail_trigger_payload(candidate)
+                if normalized is not None:
+                    triggers.append(normalized)
+
+        return reasons, tuple(triggers)
+
+    def _collect_guardrail_events(
+        self,
+        *,
+        include_errors: bool,
+        approved_filter: set[bool | None] | None,
+        normalized_filter: set[bool | None] | None,
+        service_filter: set[str] | None,
+        decision_state_filter: set[str] | None,
+        decision_reason_filter: set[str] | None,
+        decision_mode_filter: set[str] | None,
+        since_ts: float | None,
+        until_ts: float | None,
+        reason_filter: set[str] | None,
+        trigger_filter: set[str] | None,
+        trigger_label_filter: set[str] | None,
+        trigger_comparator_filter: set[str] | None,
+        trigger_unit_filter: set[str] | None,
+        trigger_threshold_filter: tuple[set[float], bool] | None,
+        trigger_threshold_min: float | None,
+        trigger_threshold_max: float | None,
+        trigger_value_filter: tuple[set[float], bool] | None,
+        trigger_value_min: float | None,
+        trigger_value_max: float | None,
+    ) -> tuple[
+        list[tuple[dict[str, Any], tuple[str, ...], tuple[dict[str, Any], ...]]],
+        int,
+        float | None,
+        int,
+        list[dict[str, Any]],
+    ]:
+        (
+            filtered_records,
+            trimmed_by_ttl,
+            ttl_snapshot,
+            history_size,
+        ) = self._collect_filtered_risk_evaluations(
+            include_errors=include_errors,
+            approved_filter=approved_filter,
+            normalized_filter=normalized_filter,
+            service_filter=service_filter,
+            since_ts=since_ts,
+            until_ts=until_ts,
+            state_filter=decision_state_filter,
+            reason_filter=decision_reason_filter,
+            mode_filter=decision_mode_filter,
+        )
+
+        guardrail_records: list[
+            tuple[dict[str, Any], tuple[str, ...], tuple[dict[str, Any], ...]]
+        ] = []
+        for entry in filtered_records:
+            reasons, triggers = self._extract_guardrail_metadata(entry)
+            if not reasons and not triggers:
+                continue
+
+            if reason_filter is not None and not any(
+                reason in reason_filter for reason in reasons
+            ):
+                continue
+
+            if trigger_filter is not None:
+                trigger_names = {
+                    str(trigger.get("name", "<unknown>")) for trigger in triggers
+                }
+                if not trigger_names & trigger_filter:
+                    continue
+
+            if trigger_label_filter is not None:
+                trigger_labels = {
+                    (
+                        _MISSING_GUARDRAIL_LABEL
+                        if trigger.get("label") is None
+                        else str(trigger.get("label"))
+                    )
+                    for trigger in triggers
+                }
+                if not trigger_labels & trigger_label_filter:
+                    continue
+
+            if trigger_comparator_filter is not None:
+                trigger_comparators = {
+                    (
+                        _MISSING_GUARDRAIL_COMPARATOR
+                        if trigger.get("comparator") is None
+                        else str(trigger.get("comparator"))
+                    )
+                    for trigger in triggers
+                }
+                if not trigger_comparators & trigger_comparator_filter:
+                    continue
+
+            if trigger_unit_filter is not None:
+                trigger_units = {
+                    (
+                        _MISSING_GUARDRAIL_UNIT
+                        if trigger.get("unit") is None
+                        else str(trigger.get("unit"))
+                    )
+                    for trigger in triggers
+                }
+                if not trigger_units & trigger_unit_filter:
+                    continue
+
+            if (
+                trigger_threshold_filter is not None
+                or trigger_threshold_min is not None
+                or trigger_threshold_max is not None
+            ):
+                threshold_values: list[float] = []
+                threshold_missing = False
+                for trigger in triggers:
+                    raw_threshold = trigger.get("threshold")
+                    if raw_threshold is None:
+                        threshold_missing = True
+                    coerced_threshold = AutoTrader._coerce_float(raw_threshold)
+                    if coerced_threshold is not None:
+                        threshold_values.append(coerced_threshold)
+
+                if trigger_threshold_filter is not None:
+                    threshold_set, include_missing = trigger_threshold_filter
+                    match = False
+                    if include_missing and threshold_missing:
+                        match = True
+                    if not match and threshold_set:
+                        if any(value in threshold_set for value in threshold_values):
+                            match = True
+                    if not match:
+                        continue
+
+                if trigger_threshold_min is not None or trigger_threshold_max is not None:
+                    def _within_threshold_bounds(candidate: float) -> bool:
+                        if trigger_threshold_min is not None and candidate < trigger_threshold_min:
+                            return False
+                        if trigger_threshold_max is not None and candidate > trigger_threshold_max:
+                            return False
+                        return True
+
+                    if not any(
+                        _within_threshold_bounds(candidate)
+                        for candidate in threshold_values
+                    ):
+                        continue
+
+            if (
+                trigger_value_filter is not None
+                or trigger_value_min is not None
+                or trigger_value_max is not None
+            ):
+                value_values: list[float] = []
+                value_missing = False
+                for trigger in triggers:
+                    raw_value = trigger.get("value")
+                    if raw_value is None:
+                        value_missing = True
+                    coerced_value = AutoTrader._coerce_float(raw_value)
+                    if coerced_value is not None:
+                        value_values.append(coerced_value)
+
+                if trigger_value_filter is not None:
+                    value_set, include_missing = trigger_value_filter
+                    match = False
+                    if include_missing and value_missing:
+                        match = True
+                    if not match and value_set:
+                        if any(value in value_set for value in value_values):
+                            match = True
+                    if not match:
+                        continue
+
+                if trigger_value_min is not None or trigger_value_max is not None:
+                    def _within_value_bounds(candidate: float) -> bool:
+                        if trigger_value_min is not None and candidate < trigger_value_min:
+                            return False
+                        if trigger_value_max is not None and candidate > trigger_value_max:
+                            return False
+                        return True
+
+                    if not any(
+                        _within_value_bounds(candidate)
+                        for candidate in value_values
+                    ):
+                        continue
+
+            guardrail_records.append((entry, reasons, triggers))
+
+        return (
+            guardrail_records,
+            trimmed_by_ttl,
+            ttl_snapshot,
+            history_size,
+            filtered_records,
+        )
+
     def _apply_risk_evaluation_filters(
         self,
         records: Iterable[dict[str, Any]],
@@ -2089,6 +2989,9 @@ class AutoTrader:
         service_filter: set[str] | None,
         since_ts: float | None,
         until_ts: float | None,
+        state_filter: set[str] | None,
+        reason_filter: set[str] | None,
+        mode_filter: set[str] | None,
     ) -> list[dict[str, Any]]:
         filtered: list[dict[str, Any]] = []
         for entry in records:
@@ -2106,8 +3009,68 @@ class AutoTrader:
                 continue
             if until_ts is not None and (timestamp is None or timestamp > until_ts):
                 continue
+
+            decision_payload = entry.get("decision")
+            decision_state_token = _MISSING_DECISION_STATE
+            decision_reason_token = _MISSING_DECISION_REASON
+            decision_mode_token = _MISSING_DECISION_MODE
+            if isinstance(decision_payload, Mapping):
+                state_value = decision_payload.get("state")
+                if state_value is not None:
+                    decision_state_token = str(state_value)
+                reason_value = decision_payload.get("reason")
+                if reason_value is not None:
+                    decision_reason_token = str(reason_value)
+                mode_value = decision_payload.get("mode")
+                if mode_value is not None:
+                    decision_mode_token = str(mode_value)
+
+            if state_filter is not None and decision_state_token not in state_filter:
+                continue
+            if reason_filter is not None and decision_reason_token not in reason_filter:
+                continue
+            if mode_filter is not None and decision_mode_token not in mode_filter:
+                continue
+
             filtered.append(entry)
         return filtered
+
+    def _collect_filtered_risk_evaluations(
+        self,
+        *,
+        include_errors: bool,
+        approved_filter: set[bool | None] | None,
+        normalized_filter: set[bool | None] | None,
+        service_filter: set[str] | None,
+        since_ts: float | None,
+        until_ts: float | None,
+        state_filter: set[str] | None,
+        reason_filter: set[str] | None,
+        mode_filter: set[str] | None,
+    ) -> tuple[list[dict[str, Any]], int, float | None, int]:
+        trimmed_by_ttl = 0
+        ttl_snapshot: float | None = None
+        history_size = 0
+        with self._lock:
+            trimmed_by_ttl = self._prune_risk_evaluations_locked()
+            records = list(self._risk_evaluations)
+            ttl_snapshot = self._risk_evaluations_ttl_s
+            history_size = len(self._risk_evaluations)
+
+        filtered_records = self._apply_risk_evaluation_filters(
+            records,
+            include_errors=include_errors,
+            approved_filter=approved_filter,
+            normalized_filter=normalized_filter,
+            service_filter=service_filter,
+            since_ts=since_ts,
+            until_ts=until_ts,
+            state_filter=state_filter,
+            reason_filter=reason_filter,
+            mode_filter=mode_filter,
+        )
+
+        return filtered_records, trimmed_by_ttl, ttl_snapshot, history_size
 
     def get_risk_evaluations(
         self,
@@ -2118,12 +3081,27 @@ class AutoTrader:
         limit: int | None = None,
         reverse: bool = False,
         service: str | None | Iterable[str | None] | object = _NO_FILTER,
+        decision_state: str | Iterable[str | None] | object = _NO_FILTER,
+        decision_reason: str | Iterable[str | None] | object = _NO_FILTER,
+        decision_mode: str | Iterable[str | None] | object = _NO_FILTER,
         since: Any = None,
         until: Any = None,
     ) -> list[dict[str, Any]]:
         approved_filter = self._prepare_bool_filter(approved)
         normalized_filter = self._prepare_bool_filter(normalized)
         service_filter = self._prepare_service_filter(service)
+        decision_state_filter = self._prepare_decision_filter(
+            decision_state,
+            missing_token=_MISSING_DECISION_STATE,
+        )
+        decision_reason_filter = self._prepare_decision_filter(
+            decision_reason,
+            missing_token=_MISSING_DECISION_REASON,
+        )
+        decision_mode_filter = self._prepare_decision_filter(
+            decision_mode,
+            missing_token=_MISSING_DECISION_MODE,
+        )
         since_ts = self._normalize_time_bound(since)
         until_ts = self._normalize_time_bound(until)
 
@@ -2139,17 +3117,27 @@ class AutoTrader:
                 if normalized_limit < 0:
                     normalized_limit = 0
 
-        with self._lock:
-            records = list(self._risk_evaluations)
-
-        filtered_records = self._apply_risk_evaluation_filters(
-            records,
+        (
+            filtered_records,
+            trimmed_by_ttl,
+            ttl_snapshot,
+            history_size,
+        ) = self._collect_filtered_risk_evaluations(
             include_errors=include_errors,
             approved_filter=approved_filter,
             normalized_filter=normalized_filter,
             service_filter=service_filter,
             since_ts=since_ts,
             until_ts=until_ts,
+            state_filter=decision_state_filter,
+            reason_filter=decision_reason_filter,
+            mode_filter=decision_mode_filter,
+        )
+        self._log_risk_history_trimmed(
+            context="get",
+            trimmed=trimmed_by_ttl,
+            ttl=ttl_snapshot,
+            history=history_size,
         )
 
         if reverse:
@@ -2168,6 +3156,687 @@ class AutoTrader:
         with self._lock:
             self._risk_evaluations.clear()
 
+    def _prune_controller_cycle_history_locked(
+        self,
+        *,
+        reference_time: float | None = None,
+    ) -> tuple[int, int]:
+        trimmed_by_limit = 0
+        trimmed_by_ttl = 0
+        history = self._controller_cycle_history
+
+        limit = self._controller_cycle_history_limit
+        if limit > 0 and len(history) > limit:
+            trimmed_by_limit = len(history) - limit
+            if trimmed_by_limit > 0:
+                del history[:trimmed_by_limit]
+
+        ttl = self._controller_cycle_history_ttl_s
+        if ttl is not None and ttl > 0.0 and history:
+            try:
+                cutoff_reference = (
+                    float(reference_time)
+                    if reference_time is not None
+                    else float(time.time())
+                )
+            except (TypeError, ValueError):  # pragma: no cover - defensive guard
+                cutoff_reference = float(time.time())
+
+            cutoff = cutoff_reference - ttl
+            if cutoff > float("-inf"):
+                retained: list[dict[str, Any]] = []
+                for entry in history:
+                    timestamp = entry.get("finished_at")
+                    if timestamp is None:
+                        timestamp = entry.get("started_at")
+                    if timestamp is None or timestamp >= cutoff:
+                        retained.append(entry)
+                    else:
+                        trimmed_by_ttl += 1
+                if trimmed_by_ttl:
+                    history[:] = retained
+
+        return trimmed_by_limit, trimmed_by_ttl
+
+    def get_last_controller_cycle(self) -> dict[str, Any] | None:
+        """Zwraca zrzut ostatniego cyklu runnera realtime.
+
+        Słownik zawiera surowe obiekty sygnałów i wyników zwrócone przez runnera
+        oraz znacznik czasu rozpoczęcia cyklu (w sekundach unix epoch), jeśli był
+        dostępny.  Zwracana jest kopia danych, dzięki czemu wywołujący nie może
+        zmodyfikować wewnętrznego stanu AutoTradera.
+        """
+
+        duration = None
+        orders = 0
+        with self._lock:
+            if (
+                self._controller_cycle_signals is None
+                and self._controller_cycle_results is None
+                and self._controller_cycle_started_at is None
+                and self._controller_cycle_finished_at is None
+            ):
+                return None
+
+            signals = tuple(self._controller_cycle_signals or ())
+            results = tuple(self._controller_cycle_results or ())
+            started_at = self._controller_cycle_started_at
+            finished_at = self._controller_cycle_finished_at
+            sequence = self._controller_cycle_sequence
+            duration = self._controller_cycle_last_duration
+            orders = self._controller_cycle_last_orders
+
+        if (
+            not signals
+            and not results
+            and started_at is None
+            and finished_at is None
+        ):
+            return None
+
+        return {
+            "signals": signals,
+            "results": results,
+            "started_at": started_at,
+            "finished_at": finished_at,
+            "sequence": sequence,
+            "duration_s": duration,
+            "orders": orders,
+        }
+
+    def get_controller_cycle_history(
+        self,
+        *,
+        limit: int | None = None,
+        reverse: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Zwraca historię cykli bridge'a realtime.
+
+        Parametr ``limit`` ogranicza liczbę rekordów (domyślnie wykorzystuje
+        wewnętrzny limit AutoTradera), a ``reverse`` pozwala uzyskać dane w
+        kolejności malejącej po sekwencji.
+        """
+
+        if limit is not None:
+            try:
+                normalized_limit = int(limit)
+            except (TypeError, ValueError):  # pragma: no cover - defensive guard
+                normalized_limit = None
+            else:
+                if normalized_limit < 0:
+                    normalized_limit = 0
+                if normalized_limit == 0:
+                    return []
+        else:
+            normalized_limit = None
+
+        with self._lock:
+            history = list(self._controller_cycle_history)
+
+        if not history:
+            return []
+
+        iterator: Iterable[dict[str, Any]]
+        if reverse:
+            iterator = reversed(history)
+        else:
+            iterator = iter(history)
+
+        results: list[dict[str, Any]] = []
+        for entry in iterator:
+            copied = {
+                "sequence": entry.get("sequence"),
+                "signals": tuple(entry.get("signals", ())),
+                "results": tuple(entry.get("results", ())),
+                "started_at": entry.get("started_at"),
+                "finished_at": entry.get("finished_at"),
+                "duration_s": entry.get("duration_s"),
+                "orders": entry.get("orders"),
+            }
+            results.append(copied)
+            if normalized_limit is not None and len(results) >= normalized_limit:
+                break
+        return results
+
+    def set_controller_cycle_history_limit(self, limit: int | None) -> int:
+        """Aktualizuje limit przechowywania historii cykli kontrolera.
+
+        Zwracana wartość to znormalizowany limit – ``-1`` oznacza brak
+        ograniczenia (historia rośnie do rozmiaru pamięci).  Podanie
+        ``None`` lub wartości nie-dodatniej dezaktywuje przycinanie historii.
+        """
+
+        normalized = self._normalise_cycle_history_limit(limit)
+        trimmed_by_limit = 0
+        trimmed_by_ttl = 0
+        ttl_snapshot: float | None = None
+        history_size = 0
+        with self._lock:
+            self._controller_cycle_history_limit = normalized
+            trimmed_by_limit, trimmed_by_ttl = self._prune_controller_cycle_history_locked()
+            ttl_snapshot = self._controller_cycle_history_ttl_s
+            history_size = len(self._controller_cycle_history)
+        self._log(
+            "Zmieniono limit historii cykli kontrolera",
+            level=logging.DEBUG,
+            limit=None if normalized <= 0 else normalized,
+            ttl=ttl_snapshot,
+            trimmed_by_limit=trimmed_by_limit,
+            trimmed_by_ttl=trimmed_by_ttl,
+            history=history_size,
+        )
+        return normalized
+
+    def get_controller_cycle_history_ttl(self) -> float | None:
+        """Zwraca obowiązujący TTL (w sekundach) dla historii cykli kontrolera."""
+
+        with self._lock:
+            ttl = self._controller_cycle_history_ttl_s
+        return ttl
+
+    def set_controller_cycle_history_ttl(self, ttl: float | None) -> float | None:
+        """Aktualizuje czas życia rekordów historii cykli kontrolera."""
+
+        normalized = self._normalise_cycle_history_ttl(ttl)
+        trimmed_by_limit = 0
+        trimmed_by_ttl = 0
+        limit_snapshot = 0
+        history_size = 0
+        with self._lock:
+            self._controller_cycle_history_ttl_s = normalized
+            trimmed_by_limit, trimmed_by_ttl = self._prune_controller_cycle_history_locked()
+            limit_snapshot = self._controller_cycle_history_limit
+            history_size = len(self._controller_cycle_history)
+        self._log(
+            "Zmieniono TTL historii cykli kontrolera",
+            level=logging.DEBUG,
+            ttl=normalized,
+            limit=None if limit_snapshot <= 0 else limit_snapshot,
+            trimmed_by_limit=trimmed_by_limit,
+            trimmed_by_ttl=trimmed_by_ttl,
+            history=history_size,
+        )
+        return normalized
+
+    def clear_controller_cycle_history(self) -> None:
+        """Usuwa wszystkie zapisane cykle kontrolera."""
+
+        cleared = 0
+        with self._lock:
+            if self._controller_cycle_history:
+                cleared = len(self._controller_cycle_history)
+                self._controller_cycle_history.clear()
+        if cleared:
+            self._log(
+                "Wyczyszczono historię cykli kontrolera",
+                level=logging.DEBUG,
+                cleared=cleared,
+            )
+
+    def summarize_controller_cycle_history(
+        self,
+        *,
+        since: object = None,
+        until: object = None,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
+        """Buduje zbiorczy raport z historii cykli kontrolera.
+
+        Parametry ``since`` i ``until`` pozwalają ograniczyć analizę do
+        zadanego przedziału czasowego (akceptują ``datetime``, ``Timestamp``
+        Pandas oraz float/int jako sekundę epoki).  Opcjonalny ``limit``
+        ogranicza liczbę najnowszych rekordów uwzględnionych w raporcie –
+        ``0`` zwraca pusty raport.
+        """
+
+        normalized_limit: int | None
+        if limit is None:
+            normalized_limit = None
+        else:
+            try:
+                normalized_limit = int(limit)
+            except (TypeError, ValueError):  # pragma: no cover - defensive guard
+                normalized_limit = None
+            else:
+                if normalized_limit <= 0:
+                    normalized_limit = 0
+
+        since_ts = self._normalize_time_bound(since)
+        until_ts = self._normalize_time_bound(until)
+
+        with self._lock:
+            history_snapshot = list(self._controller_cycle_history)
+            limit_cfg = self._controller_cycle_history_limit
+            ttl_cfg = self._controller_cycle_history_ttl_s
+
+        effective_history: list[dict[str, Any]] = []
+        for entry in history_snapshot:
+            timestamp = entry.get("finished_at")
+            if timestamp is None:
+                timestamp = entry.get("started_at")
+            if since_ts is not None and (timestamp is None or timestamp < since_ts):
+                continue
+            if until_ts is not None and (timestamp is None or timestamp > until_ts):
+                continue
+            effective_history.append(entry)
+
+        if normalized_limit == 0:
+            effective_history = []
+        elif normalized_limit is not None and len(effective_history) > normalized_limit:
+            effective_history = effective_history[-normalized_limit:]
+
+        total = len(effective_history)
+        summary: dict[str, Any] = {
+            "total": total,
+            "filters": {
+                "since": since_ts,
+                "until": until_ts,
+                "limit": normalized_limit,
+            },
+            "config": {
+                "limit": None if limit_cfg <= 0 else limit_cfg,
+                "ttl": ttl_cfg,
+            },
+        }
+
+        if total == 0:
+            summary.update(
+                {
+                    "orders": {
+                        "total": 0,
+                        "average": 0.0,
+                        "min": 0,
+                        "max": 0,
+                    },
+                    "signals": {
+                        "total": 0,
+                        "average": 0.0,
+                        "min": 0,
+                        "max": 0,
+                        "by_side": {},
+                    },
+                    "results": {
+                        "total": 0,
+                        "average": 0.0,
+                        "min": 0,
+                        "max": 0,
+                        "status_counts": {},
+                    },
+                    "duration": {
+                        "total": 0.0,
+                        "average": 0.0,
+                        "min": None,
+                        "max": None,
+                    },
+                    "first_sequence": None,
+                    "last_sequence": None,
+                    "first_timestamp": None,
+                    "last_timestamp": None,
+                }
+            )
+            return summary
+
+        orders_per_cycle: list[int] = []
+        signals_per_cycle: list[int] = []
+        results_per_cycle: list[int] = []
+        durations: list[float] = []
+        signal_sides: Counter[str] = Counter()
+        result_statuses: Counter[str] = Counter()
+        first_sequence: int | None = None
+        last_sequence: int | None = None
+        first_timestamp: float | None = None
+        last_timestamp: float | None = None
+
+        for entry in effective_history:
+            sequence = entry.get("sequence")
+            if sequence is not None:
+                try:
+                    sequence_int = int(sequence)
+                except (TypeError, ValueError):  # pragma: no cover - defensive guard
+                    sequence_int = None
+                else:
+                    if first_sequence is None:
+                        first_sequence = sequence_int
+                    last_sequence = sequence_int
+
+            timestamp = entry.get("finished_at")
+            if timestamp is None:
+                timestamp = entry.get("started_at")
+            if timestamp is not None:
+                try:
+                    timestamp_float = float(timestamp)
+                except (TypeError, ValueError):  # pragma: no cover - defensive guard
+                    timestamp_float = None
+                else:
+                    if first_timestamp is None:
+                        first_timestamp = timestamp_float
+                    last_timestamp = timestamp_float
+
+            orders_value = entry.get("orders")
+            if isinstance(orders_value, (int, float)):
+                orders_count = max(0, int(orders_value))
+            else:
+                orders_count = len(entry.get("results", ()) or ())
+            orders_per_cycle.append(orders_count)
+
+            signals_sequence = entry.get("signals") or ()
+            results_sequence = entry.get("results") or ()
+
+            signals_count = len(signals_sequence)
+            results_count = len(results_sequence)
+            signals_per_cycle.append(signals_count)
+            results_per_cycle.append(results_count)
+
+            duration_value = entry.get("duration_s")
+            if duration_value is not None:
+                try:
+                    durations.append(max(0.0, float(duration_value)))
+                except (TypeError, ValueError):  # pragma: no cover - defensive guard
+                    pass
+
+            for raw_signal in signals_sequence:
+                side = None
+                payload = getattr(raw_signal, "signal", raw_signal)
+                if isinstance(payload, Mapping):
+                    side = payload.get("side")
+                if side is None:
+                    side = getattr(payload, "side", None)
+                if side is None and isinstance(raw_signal, Mapping):
+                    side = raw_signal.get("side")
+                if side is None:
+                    side = getattr(raw_signal, "side", None)
+                if side is None:
+                    continue
+                side_str = str(side).lower()
+                signal_sides[side_str] += 1
+
+            for raw_result in results_sequence:
+                status = getattr(raw_result, "status", None)
+                if status is None and isinstance(raw_result, Mapping):
+                    status = raw_result.get("status")
+                if status is None:
+                    continue
+                result_statuses[str(status).lower()] += 1
+
+        def _aggregate_numbers(values: list[int]) -> dict[str, Any]:
+            if not values:
+                return {"total": 0, "average": 0.0, "min": 0, "max": 0}
+            total_value = sum(values)
+            return {
+                "total": total_value,
+                "average": total_value / len(values),
+                "min": min(values),
+                "max": max(values),
+            }
+
+        duration_metrics: dict[str, Any]
+        if durations:
+            total_duration = sum(durations)
+            duration_metrics = {
+                "total": total_duration,
+                "average": total_duration / len(durations),
+                "min": min(durations),
+                "max": max(durations),
+            }
+        else:
+            duration_metrics = {
+                "total": 0.0,
+                "average": 0.0,
+                "min": None,
+                "max": None,
+            }
+
+        summary.update(
+            {
+                "orders": _aggregate_numbers(orders_per_cycle),
+                "signals": {
+                    **_aggregate_numbers(signals_per_cycle),
+                    "by_side": dict(signal_sides),
+                },
+                "results": {
+                    **_aggregate_numbers(results_per_cycle),
+                    "status_counts": dict(result_statuses),
+                },
+                "duration": duration_metrics,
+                "first_sequence": first_sequence,
+                "last_sequence": last_sequence,
+                "first_timestamp": first_timestamp,
+                "last_timestamp": last_timestamp,
+            }
+        )
+        return summary
+
+    def _filtered_controller_cycle_history(
+        self,
+        *,
+        since_ts: float | None,
+        until_ts: float | None,
+        reverse: bool,
+    ) -> list[tuple[dict[str, Any], float | None, float | None]]:
+        with self._lock:
+            history_snapshot = list(self._controller_cycle_history)
+
+        if not history_snapshot:
+            return []
+
+        filtered: list[tuple[dict[str, Any], float | None, float | None]] = []
+        for entry in history_snapshot:
+            started_raw = entry.get("started_at")
+            finished_raw = entry.get("finished_at")
+            started_ts = self._normalize_time_bound(started_raw)
+            finished_ts = self._normalize_time_bound(finished_raw)
+            pivot_ts = finished_ts if finished_ts is not None else started_ts
+            if since_ts is not None and (pivot_ts is None or pivot_ts < since_ts):
+                continue
+            if until_ts is not None and (pivot_ts is None or pivot_ts > until_ts):
+                continue
+            filtered.append((entry, started_ts, finished_ts))
+
+        if reverse:
+            filtered.reverse()
+
+        return filtered
+
+    def controller_cycle_history_to_records(
+        self,
+        *,
+        since: object = None,
+        until: object = None,
+        limit: int | None = None,
+        reverse: bool = False,
+        include_sequences: bool = True,
+        include_counts: bool = True,
+        coerce_timestamps: bool = False,
+        tz: tzinfo | None = timezone.utc,
+    ) -> list[dict[str, Any]]:
+        """Zwraca listę rekordów historii cykli kontrolera."""
+
+        normalized_limit = self._normalize_history_export_limit(limit)
+        if normalized_limit == 0:
+            return []
+
+        since_ts = self._normalize_time_bound(since)
+        until_ts = self._normalize_time_bound(until)
+
+        filtered = self._filtered_controller_cycle_history(
+            since_ts=since_ts,
+            until_ts=until_ts,
+            reverse=reverse,
+        )
+
+        if not filtered:
+            return []
+
+        def _convert_timestamp(value_ts: float | None, raw: object) -> object:
+            if not coerce_timestamps:
+                return raw
+            if value_ts is None:
+                return None
+            if tz is not None:
+                return datetime.fromtimestamp(value_ts, tz=tz)
+            return datetime.fromtimestamp(value_ts, tz=timezone.utc).replace(tzinfo=None)
+
+        records: list[dict[str, Any]] = []
+        for entry, started_ts, finished_ts in filtered:
+            signals = tuple(entry.get("signals", ()) or ())
+            results = tuple(entry.get("results", ()) or ())
+            orders_value = entry.get("orders")
+            if isinstance(orders_value, (int, float)):
+                orders_count = max(0, int(orders_value))
+            else:
+                orders_count = len(results)
+
+            started_raw = entry.get("started_at")
+            finished_raw = entry.get("finished_at")
+
+            record: dict[str, Any] = {
+                "sequence": entry.get("sequence"),
+                "duration_s": entry.get("duration_s"),
+                "orders": orders_count,
+                "started_at": _convert_timestamp(started_ts, started_raw),
+                "finished_at": _convert_timestamp(finished_ts, finished_raw),
+            }
+
+            if include_counts:
+                record["signals_count"] = len(signals)
+                record["results_count"] = len(results)
+
+            if include_sequences:
+                record["signals"] = signals
+                record["results"] = results
+
+            records.append(record)
+            if normalized_limit is not None and len(records) >= normalized_limit:
+                break
+
+        return records
+
+    def controller_cycle_history_to_dataframe(
+        self,
+        *,
+        since: object = None,
+        until: object = None,
+        limit: int | None = None,
+        reverse: bool = False,
+        include_sequences: bool = True,
+        include_counts: bool = True,
+        coerce_timestamps: bool = True,
+    ) -> pd.DataFrame:
+        """Buduje ``DataFrame`` z historią cykli kontrolera.
+
+        Parametry ``since`` i ``until`` filtrują rekordy według czasu zakończenia
+        (z zapasem czasu rozpoczęcia jeśli ``finished_at`` jest niedostępne).
+        ``limit`` oraz ``reverse`` odwzorowują zachowanie ``get_controller_cycle_history``.
+        ``include_sequences`` pozwala kontrolować obecność surowych sekwencji sygnałów
+        i wyników, natomiast ``include_counts`` dodaje kolumny z ich licznością.
+        Włączenie ``coerce_timestamps`` zamienia znaczniki czasu na ``Timestamp`` UTC,
+        co ułatwia dalszą analizę w Pandas.
+        """
+
+        normalized_limit = self._normalize_history_export_limit(limit)
+        if normalized_limit == 0:
+            columns = [
+                "sequence",
+                "started_at",
+                "finished_at",
+                "duration_s",
+                "orders",
+            ]
+            if include_counts:
+                columns.extend(["signals_count", "results_count"])
+            if include_sequences:
+                columns.extend(["signals", "results"])
+            return pd.DataFrame(columns=columns)
+
+        since_ts = self._normalize_time_bound(since)
+        until_ts = self._normalize_time_bound(until)
+
+        filtered = self._filtered_controller_cycle_history(
+            since_ts=since_ts,
+            until_ts=until_ts,
+            reverse=reverse,
+        )
+
+        if not filtered:
+            columns = [
+                "sequence",
+                "started_at",
+                "finished_at",
+                "duration_s",
+                "orders",
+            ]
+            if include_counts:
+                columns.extend(["signals_count", "results_count"])
+            if include_sequences:
+                columns.extend(["signals", "results"])
+            return pd.DataFrame(columns=columns)
+
+        rows: list[dict[str, Any]] = []
+        for entry, started_ts, finished_ts in filtered:
+            signals = tuple(entry.get("signals", ()) or ())
+            results = tuple(entry.get("results", ()) or ())
+            orders_value = entry.get("orders")
+            if isinstance(orders_value, (int, float)):
+                orders_count = max(0, int(orders_value))
+            else:
+                orders_count = len(results)
+
+            started_raw = entry.get("started_at")
+            finished_raw = entry.get("finished_at")
+
+            row: dict[str, Any] = {
+                "sequence": entry.get("sequence"),
+                "duration_s": entry.get("duration_s"),
+                "orders": orders_count,
+            }
+
+            if coerce_timestamps:
+                row["started_at"] = (
+                    pd.to_datetime(started_ts, unit="s", utc=True)
+                    if started_ts is not None
+                    else pd.NaT
+                )
+                row["finished_at"] = (
+                    pd.to_datetime(finished_ts, unit="s", utc=True)
+                    if finished_ts is not None
+                    else pd.NaT
+                )
+            else:
+                row["started_at"] = started_raw
+                row["finished_at"] = finished_raw
+
+            if include_counts:
+                row["signals_count"] = len(signals)
+                row["results_count"] = len(results)
+
+            if include_sequences:
+                row["signals"] = signals
+                row["results"] = results
+
+            rows.append(row)
+            if normalized_limit is not None and len(rows) >= normalized_limit:
+                break
+
+        df = pd.DataFrame.from_records(rows)
+
+        expected_columns = [
+            "sequence",
+            "started_at",
+            "finished_at",
+            "duration_s",
+            "orders",
+        ]
+        if include_counts:
+            expected_columns.extend(["signals_count", "results_count"])
+        if include_sequences:
+            expected_columns.extend(["signals", "results"])
+
+        for column in expected_columns:
+            if column not in df.columns:
+                df[column] = pd.NA
+
+        return df[expected_columns]
+
     def summarize_risk_evaluations(
         self,
         *,
@@ -2175,25 +3844,50 @@ class AutoTrader:
         normalized: bool | None | Iterable[bool | None] | object = _NO_FILTER,
         include_errors: bool = True,
         service: str | None | Iterable[str | None] | object = _NO_FILTER,
+        decision_state: str | Iterable[str | None] | object = _NO_FILTER,
+        decision_reason: str | Iterable[str | None] | object = _NO_FILTER,
+        decision_mode: str | Iterable[str | None] | object = _NO_FILTER,
         since: Any = None,
         until: Any = None,
     ) -> dict[str, Any]:
         approved_filter = self._prepare_bool_filter(approved)
         normalized_filter = self._prepare_bool_filter(normalized)
         service_filter = self._prepare_service_filter(service)
+        decision_state_filter = self._prepare_decision_filter(
+            decision_state,
+            missing_token=_MISSING_DECISION_STATE,
+        )
+        decision_reason_filter = self._prepare_decision_filter(
+            decision_reason,
+            missing_token=_MISSING_DECISION_REASON,
+        )
+        decision_mode_filter = self._prepare_decision_filter(
+            decision_mode,
+            missing_token=_MISSING_DECISION_MODE,
+        )
         since_ts = self._normalize_time_bound(since)
         until_ts = self._normalize_time_bound(until)
-        with self._lock:
-            records = list(self._risk_evaluations)
-
-        filtered_records = self._apply_risk_evaluation_filters(
-            records,
+        (
+            filtered_records,
+            trimmed_by_ttl,
+            ttl_snapshot,
+            history_size,
+        ) = self._collect_filtered_risk_evaluations(
             include_errors=include_errors,
             approved_filter=approved_filter,
             normalized_filter=normalized_filter,
             service_filter=service_filter,
             since_ts=since_ts,
             until_ts=until_ts,
+            state_filter=decision_state_filter,
+            reason_filter=decision_reason_filter,
+            mode_filter=decision_mode_filter,
+        )
+        self._log_risk_history_trimmed(
+            context="summarize",
+            trimmed=trimmed_by_ttl,
+            ttl=ttl_snapshot,
+            history=history_size,
         )
 
         total = len(filtered_records)
@@ -2287,6 +3981,2032 @@ class AutoTrader:
 
         return summary
 
+    def summarize_risk_guardrails(
+        self,
+        *,
+        approved: bool | None | Iterable[bool | None] | object = _NO_FILTER,
+        normalized: bool | None | Iterable[bool | None] | object = _NO_FILTER,
+        include_errors: bool = True,
+        service: str | None | Iterable[str | None] | object = _NO_FILTER,
+        decision_state: str | Iterable[str | None] | object = _NO_FILTER,
+        decision_reason: str | Iterable[str | None] | object = _NO_FILTER,
+        decision_mode: str | Iterable[str | None] | object = _NO_FILTER,
+        reason: str | Iterable[str] | object = _NO_FILTER,
+        trigger: str | Iterable[str] | object = _NO_FILTER,
+        trigger_label: str | Iterable[str | None] | object = _NO_FILTER,
+        trigger_comparator: str | Iterable[str | None] | object = _NO_FILTER,
+        trigger_unit: str | Iterable[str | None] | object = _NO_FILTER,
+        trigger_threshold: float | None | Iterable[float | None] | object = _NO_FILTER,
+        trigger_threshold_min: Any = None,
+        trigger_threshold_max: Any = None,
+        trigger_value: float | None | Iterable[float | None] | object = _NO_FILTER,
+        trigger_value_min: Any = None,
+        trigger_value_max: Any = None,
+        since: Any = None,
+        until: Any = None,
+    ) -> dict[str, Any]:
+        approved_filter = self._prepare_bool_filter(approved)
+        normalized_filter = self._prepare_bool_filter(normalized)
+        service_filter = self._prepare_service_filter(service)
+        reason_filter = self._prepare_string_filter(reason)
+        trigger_filter = self._prepare_string_filter(trigger)
+        trigger_label_filter = self._prepare_guardrail_filter(
+            trigger_label,
+            missing_token=_MISSING_GUARDRAIL_LABEL,
+        )
+        trigger_comparator_filter = self._prepare_guardrail_filter(
+            trigger_comparator,
+            missing_token=_MISSING_GUARDRAIL_COMPARATOR,
+        )
+        trigger_unit_filter = self._prepare_guardrail_filter(
+            trigger_unit,
+            missing_token=_MISSING_GUARDRAIL_UNIT,
+        )
+        trigger_threshold_filter = self._prepare_guardrail_numeric_filter(
+            trigger_threshold
+        )
+        trigger_value_filter = self._prepare_guardrail_numeric_filter(trigger_value)
+        decision_state_filter = self._prepare_decision_filter(
+            decision_state,
+            missing_token=_MISSING_DECISION_STATE,
+        )
+        decision_reason_filter = self._prepare_decision_filter(
+            decision_reason,
+            missing_token=_MISSING_DECISION_REASON,
+        )
+        decision_mode_filter = self._prepare_decision_filter(
+            decision_mode,
+            missing_token=_MISSING_DECISION_MODE,
+        )
+        trigger_threshold_min_value = (
+            self._coerce_float(trigger_threshold_min)
+            if trigger_threshold_min is not None
+            else None
+        )
+        trigger_threshold_max_value = (
+            self._coerce_float(trigger_threshold_max)
+            if trigger_threshold_max is not None
+            else None
+        )
+        trigger_value_min_value = (
+            self._coerce_float(trigger_value_min)
+            if trigger_value_min is not None
+            else None
+        )
+        trigger_value_max_value = (
+            self._coerce_float(trigger_value_max)
+            if trigger_value_max is not None
+            else None
+        )
+        since_ts = self._normalize_time_bound(since)
+        until_ts = self._normalize_time_bound(until)
+
+        (
+            guardrail_records,
+            trimmed_by_ttl,
+            ttl_snapshot,
+            history_size,
+            filtered_records,
+        ) = self._collect_guardrail_events(
+            include_errors=include_errors,
+            approved_filter=approved_filter,
+            normalized_filter=normalized_filter,
+            service_filter=service_filter,
+            decision_state_filter=decision_state_filter,
+            decision_reason_filter=decision_reason_filter,
+            decision_mode_filter=decision_mode_filter,
+            since_ts=since_ts,
+            until_ts=until_ts,
+            reason_filter=reason_filter,
+            trigger_filter=trigger_filter,
+            trigger_label_filter=trigger_label_filter,
+            trigger_comparator_filter=trigger_comparator_filter,
+            trigger_unit_filter=trigger_unit_filter,
+            trigger_threshold_filter=trigger_threshold_filter,
+            trigger_threshold_min=trigger_threshold_min_value,
+            trigger_threshold_max=trigger_threshold_max_value,
+            trigger_value_filter=trigger_value_filter,
+            trigger_value_min=trigger_value_min_value,
+            trigger_value_max=trigger_value_max_value,
+        )
+        self._log_risk_history_trimmed(
+            context="guardrails",
+            trimmed=trimmed_by_ttl,
+            ttl=ttl_snapshot,
+            history=history_size,
+        )
+
+        base_total = len(filtered_records)
+        apply_guardrail_filters = any(
+            filter_set is not None
+            for filter_set in (
+                reason_filter,
+                trigger_filter,
+                trigger_label_filter,
+                trigger_comparator_filter,
+                trigger_unit_filter,
+                trigger_threshold_filter,
+                trigger_value_filter,
+            )
+        ) or any(
+            bound is not None
+            for bound in (
+                trigger_threshold_min_value,
+                trigger_threshold_max_value,
+                trigger_value_min_value,
+                trigger_value_max_value,
+            )
+        )
+        total = len(guardrail_records) if apply_guardrail_filters else base_total
+        summary: dict[str, Any] = {
+            "total": total,
+            "guardrail_events": 0,
+            "reasons": {},
+            "triggers": {},
+            "services": {},
+        }
+        if total == 0:
+            return summary
+
+        reason_counts: Counter[str] = Counter()
+        service_buckets: dict[str, dict[str, Any]] = {}
+        trigger_buckets: dict[str, dict[str, Any]] = {}
+
+        if apply_guardrail_filters:
+            service_source = [entry for entry, _, _ in guardrail_records]
+        else:
+            service_source = filtered_records
+
+        for entry in service_source:
+            service_key = entry.get("service") or _UNKNOWN_SERVICE
+            service_name = str(service_key)
+            service_buckets.setdefault(
+                service_name,
+                {
+                    "total": 0,
+                    "guardrail_events": 0,
+                    "reasons": Counter(),
+                    "triggers": Counter(),
+                },
+            )
+            service_buckets[service_name]["total"] += 1
+
+        for entry, reasons, triggers in guardrail_records:
+            service_key = entry.get("service") or _UNKNOWN_SERVICE
+            service_name = str(service_key)
+            service_bucket = service_buckets.setdefault(
+                service_name,
+                {
+                    "total": 0,
+                    "guardrail_events": 0,
+                    "reasons": Counter(),
+                    "triggers": Counter(),
+                },
+            )
+
+            for reason_value in reasons:
+                reason_counts[reason_value] += 1
+                service_bucket["reasons"][reason_value] += 1
+
+            for trigger_entry in triggers:
+                trigger_name_raw = trigger_entry.get("name")
+                trigger_name = (
+                    str(trigger_name_raw)
+                    if trigger_name_raw is not None
+                    else "<unknown>"
+                )
+                trigger_bucket = trigger_buckets.setdefault(
+                    trigger_name,
+                    {
+                        "count": 0,
+                        "label": None,
+                        "comparator": None,
+                        "unit": None,
+                        "threshold": None,
+                        "value_min": None,
+                        "value_max": None,
+                        "value_last": None,
+                        "_value_sum": 0.0,
+                        "_value_count": 0,
+                        "services": Counter(),
+                    },
+                )
+                trigger_bucket["count"] += 1
+                trigger_label = trigger_entry.get("label")
+                if trigger_label and trigger_bucket["label"] is None:
+                    trigger_bucket["label"] = str(trigger_label)
+                comparator = trigger_entry.get("comparator")
+                if comparator and trigger_bucket["comparator"] is None:
+                    trigger_bucket["comparator"] = str(comparator)
+
+                trigger_unit = trigger_entry.get("unit")
+                if trigger_unit and trigger_bucket["unit"] is None:
+                    trigger_bucket["unit"] = str(trigger_unit)
+
+                threshold_value = trigger_entry.get("threshold")
+                threshold_float = AutoTrader._coerce_float(threshold_value)
+                if trigger_bucket["threshold"] is None:
+                    trigger_bucket["threshold"] = (
+                        threshold_float
+                        if threshold_float is not None
+                        else threshold_value
+                    )
+
+                value_raw = trigger_entry.get("value")
+                value_float = AutoTrader._coerce_float(value_raw)
+                trigger_bucket["value_last"] = copy.deepcopy(value_raw)
+                if value_float is not None:
+                    current_min = trigger_bucket["value_min"]
+                    if current_min is None or value_float < current_min:
+                        trigger_bucket["value_min"] = value_float
+                    current_max = trigger_bucket["value_max"]
+                    if current_max is None or value_float > current_max:
+                        trigger_bucket["value_max"] = value_float
+                    trigger_bucket["_value_sum"] += value_float
+                    trigger_bucket["_value_count"] += 1
+
+                trigger_bucket["services"][service_name] += 1
+                service_bucket["triggers"][trigger_name] += 1
+
+            summary["guardrail_events"] += 1
+            service_bucket["guardrail_events"] += 1
+
+        summary["reasons"] = dict(reason_counts)
+
+        normalized_triggers: dict[str, Any] = {}
+        for trigger_name, trigger_bucket in trigger_buckets.items():
+            value_count = trigger_bucket.pop("_value_count", 0)
+            value_sum = trigger_bucket.pop("_value_sum", 0.0)
+            trigger_bucket["services"] = dict(trigger_bucket["services"])
+            if value_count:
+                trigger_bucket["value_avg"] = value_sum / value_count
+            else:
+                trigger_bucket["value_avg"] = None
+            normalized_triggers[trigger_name] = trigger_bucket
+        summary["triggers"] = normalized_triggers
+
+        summary["services"] = {
+            service_name: {
+                "total": bucket["total"],
+                "guardrail_events": bucket["guardrail_events"],
+                "reasons": dict(bucket["reasons"]),
+                "triggers": dict(bucket["triggers"]),
+            }
+            for service_name, bucket in service_buckets.items()
+        }
+
+        return summary
+
+    def summarize_risk_decision_dimensions(
+        self,
+        *,
+        approved: bool | None | Iterable[bool | None] | object = _NO_FILTER,
+        normalized: bool | None | Iterable[bool | None] | object = _NO_FILTER,
+        include_errors: bool = True,
+        service: str | None | Iterable[str | None] | object = _NO_FILTER,
+        decision_state: str | Iterable[str | None] | object = _NO_FILTER,
+        decision_reason: str | Iterable[str | None] | object = _NO_FILTER,
+        decision_mode: str | Iterable[str | None] | object = _NO_FILTER,
+        since: Any = None,
+        until: Any = None,
+    ) -> dict[str, Any]:
+        """Agreguje historię decyzji ryzyka po stanie, powodzie i trybie."""
+
+        approved_filter = self._prepare_bool_filter(approved)
+        normalized_filter = self._prepare_bool_filter(normalized)
+        service_filter = self._prepare_service_filter(service)
+        decision_state_filter = self._prepare_decision_filter(
+            decision_state,
+            missing_token=_MISSING_DECISION_STATE,
+        )
+        decision_reason_filter = self._prepare_decision_filter(
+            decision_reason,
+            missing_token=_MISSING_DECISION_REASON,
+        )
+        decision_mode_filter = self._prepare_decision_filter(
+            decision_mode,
+            missing_token=_MISSING_DECISION_MODE,
+        )
+        since_ts = self._normalize_time_bound(since)
+        until_ts = self._normalize_time_bound(until)
+
+        (
+            filtered_records,
+            trimmed_by_ttl,
+            ttl_snapshot,
+            history_size,
+        ) = self._collect_filtered_risk_evaluations(
+            include_errors=include_errors,
+            approved_filter=approved_filter,
+            normalized_filter=normalized_filter,
+            service_filter=service_filter,
+            since_ts=since_ts,
+            until_ts=until_ts,
+            state_filter=decision_state_filter,
+            reason_filter=decision_reason_filter,
+            mode_filter=decision_mode_filter,
+        )
+        self._log_risk_history_trimmed(
+            context="decision-dimensions",
+            trimmed=trimmed_by_ttl,
+            ttl=ttl_snapshot,
+            history=history_size,
+        )
+
+        total = len(filtered_records)
+        summary: dict[str, Any] = {
+            "total": total,
+            "states": {},
+            "reasons": {},
+            "modes": {},
+            "combinations": [],
+            "services": {},
+            "first_timestamp": None,
+            "last_timestamp": None,
+        }
+        if total == 0:
+            return summary
+
+        states_summary: dict[str, dict[str, Any]] = {}
+        reasons_summary: dict[str, dict[str, Any]] = {}
+        modes_summary: dict[str, dict[str, Any]] = {}
+        combinations_summary: dict[tuple[str, str, str], dict[str, Any]] = {}
+        services_counter: Counter[str] = Counter()
+
+        for entry in filtered_records:
+            decision_payload = entry.get("decision") or {}
+            state_raw = decision_payload.get("state")
+            reason_raw = decision_payload.get("reason")
+            mode_raw = decision_payload.get("mode")
+
+            state_key = str(state_raw) if state_raw is not None else _MISSING_DECISION_STATE
+            reason_key = (
+                _MISSING_DECISION_REASON
+                if reason_raw is None
+                else str(reason_raw)
+            )
+            mode_key = (
+                _MISSING_DECISION_MODE
+                if mode_raw is None
+                else str(mode_raw)
+            )
+
+            normalized_value = entry.get("normalized")
+            if normalized_value is True:
+                normalized_state: bool | None = True
+            elif normalized_value is False:
+                normalized_state = False
+            else:
+                normalized_state = None
+
+            raw_value = entry.get("approved")
+            if raw_value is True:
+                raw_state: bool | None = True
+            elif raw_value is False:
+                raw_state = False
+            else:
+                raw_state = None
+
+            has_error = "error" in entry
+            service_key = entry.get("service") or _UNKNOWN_SERVICE
+            service_name = str(service_key)
+            services_counter[service_name] += 1
+
+            state_bucket = states_summary.setdefault(
+                state_key, self._create_decision_bucket()
+            )
+            self._update_decision_bucket(
+                state_bucket,
+                normalized_value=normalized_state,
+                raw_value=raw_state,
+                has_error=has_error,
+                service_key=service_name,
+            )
+
+            reason_bucket = reasons_summary.setdefault(
+                reason_key, self._create_decision_bucket()
+            )
+            self._update_decision_bucket(
+                reason_bucket,
+                normalized_value=normalized_state,
+                raw_value=raw_state,
+                has_error=has_error,
+                service_key=service_name,
+            )
+
+            mode_bucket = modes_summary.setdefault(
+                mode_key, self._create_decision_bucket()
+            )
+            self._update_decision_bucket(
+                mode_bucket,
+                normalized_value=normalized_state,
+                raw_value=raw_state,
+                has_error=has_error,
+                service_key=service_name,
+            )
+
+            combination_bucket = combinations_summary.setdefault(
+                (state_key, reason_key, mode_key),
+                self._create_decision_bucket(),
+            )
+            self._update_decision_bucket(
+                combination_bucket,
+                normalized_value=normalized_state,
+                raw_value=raw_state,
+                has_error=has_error,
+                service_key=service_name,
+            )
+
+        for bucket in states_summary.values():
+            self._finalize_decision_bucket(bucket)
+        for bucket in reasons_summary.values():
+            self._finalize_decision_bucket(bucket)
+        for bucket in modes_summary.values():
+            self._finalize_decision_bucket(bucket)
+        for bucket in combinations_summary.values():
+            self._finalize_decision_bucket(bucket)
+
+        combinations_list: list[dict[str, Any]] = []
+        for (state_key, reason_key, mode_key), bucket in combinations_summary.items():
+            payload = {**bucket}
+            payload["state"] = state_key
+            payload["reason"] = reason_key
+            payload["mode"] = mode_key
+            combinations_list.append(payload)
+
+        combinations_list.sort(
+            key=lambda item: (
+                -item.get("total", 0),
+                item.get("state", ""),
+                item.get("reason", ""),
+                item.get("mode", ""),
+            )
+        )
+
+        summary["states"] = self._sort_decision_dimension(states_summary)
+        summary["reasons"] = self._sort_decision_dimension(reasons_summary)
+        summary["modes"] = self._sort_decision_dimension(modes_summary)
+        summary["combinations"] = combinations_list
+        summary["services"] = {
+            name: count
+            for name, count in sorted(
+                services_counter.items(),
+                key=lambda item: (-item[1], item[0]),
+            )
+        }
+        summary["first_timestamp"] = filtered_records[0].get("timestamp")
+        summary["last_timestamp"] = filtered_records[-1].get("timestamp")
+
+        return summary
+
+    def _build_risk_decision_timeline(
+        self,
+        *,
+        context: str,
+        bucket_value: float,
+        include_errors: bool,
+        include_services: bool,
+        include_decision_dimensions: bool,
+        fill_gaps: bool,
+        coerce_timestamps: bool,
+        tz: tzinfo | None,
+        approved_filter: Any,
+        normalized_filter: Any,
+        service_filter: Any,
+        decision_state_filter: Any,
+        decision_reason_filter: Any,
+        decision_mode_filter: Any,
+        since_ts: float | None,
+        until_ts: float | None,
+    ) -> dict[str, Any]:
+        (
+            filtered_records,
+            trimmed_by_ttl,
+            ttl_snapshot,
+            history_size,
+        ) = self._collect_filtered_risk_evaluations(
+            include_errors=include_errors,
+            approved_filter=approved_filter,
+            normalized_filter=normalized_filter,
+            service_filter=service_filter,
+            since_ts=since_ts,
+            until_ts=until_ts,
+            state_filter=decision_state_filter,
+            reason_filter=decision_reason_filter,
+            mode_filter=decision_mode_filter,
+        )
+        self._log_risk_history_trimmed(
+            context=context,
+            trimmed=trimmed_by_ttl,
+            ttl=ttl_snapshot,
+            history=history_size,
+        )
+
+        summary: dict[str, Any] = {
+            "bucket_s": bucket_value,
+            "total": len(filtered_records),
+            "buckets": [],
+            "first_timestamp": None,
+            "last_timestamp": None,
+        }
+        if not filtered_records:
+            return summary
+
+        def build_bucket() -> dict[str, Any]:
+            bucket = self._create_decision_bucket()
+            if include_decision_dimensions:
+                bucket["states"] = Counter()
+                bucket["reasons"] = Counter()
+                bucket["modes"] = Counter()
+            return bucket
+
+        bucket_map: dict[int, dict[str, Any]] = {}
+        missing_bucket: dict[str, Any] | None = None
+        first_ts: float | None = None
+        last_ts: float | None = None
+
+        for entry in filtered_records:
+            timestamp_value = self._normalize_time_bound(entry.get("timestamp"))
+            if timestamp_value is not None:
+                if not math.isfinite(timestamp_value) or math.isnan(timestamp_value):
+                    timestamp_value = None
+
+            if timestamp_value is None:
+                if missing_bucket is None:
+                    missing_bucket = build_bucket()
+                bucket_payload = missing_bucket
+            else:
+                if first_ts is None or timestamp_value < first_ts:
+                    first_ts = timestamp_value
+                if last_ts is None or timestamp_value > last_ts:
+                    last_ts = timestamp_value
+
+                bucket_index = int(math.floor(timestamp_value / bucket_value))
+                bucket_payload = bucket_map.get(bucket_index)
+                if bucket_payload is None:
+                    bucket_payload = build_bucket()
+                    bucket_map[bucket_index] = bucket_payload
+
+            normalized_value = entry.get("normalized")
+            raw_value = entry.get("approved")
+            has_error = "error" in entry
+            service_key = entry.get("service") or _UNKNOWN_SERVICE
+
+            self._update_decision_bucket(
+                bucket_payload,
+                normalized_value=normalized_value,
+                raw_value=raw_value,
+                has_error=has_error,
+                service_key=str(service_key),
+            )
+
+            if include_decision_dimensions:
+                decision_payload = entry.get("decision")
+                decision_map = (
+                    decision_payload
+                    if isinstance(decision_payload, Mapping)
+                    else {}
+                )
+                state_value = self._normalize_decision_dimension_value(
+                    decision_map.get("state"),
+                    missing_token=_MISSING_DECISION_STATE,
+                )
+                reason_value = self._normalize_decision_dimension_value(
+                    decision_map.get("reason"),
+                    missing_token=_MISSING_DECISION_REASON,
+                )
+                mode_value = self._normalize_decision_dimension_value(
+                    decision_map.get("mode"),
+                    missing_token=_MISSING_DECISION_MODE,
+                )
+
+                states_counter = bucket_payload.setdefault("states", Counter())
+                reasons_counter = bucket_payload.setdefault("reasons", Counter())
+                modes_counter = bucket_payload.setdefault("modes", Counter())
+
+                states_counter[state_value] += 1
+                reasons_counter[reason_value] += 1
+                modes_counter[mode_value] += 1
+
+        if fill_gaps and bucket_map:
+            bucket_indices = sorted(bucket_map.keys())
+            for bucket_index in range(bucket_indices[0], bucket_indices[-1] + 1):
+                bucket_map.setdefault(bucket_index, build_bucket())
+
+        buckets_output: list[dict[str, Any]] = []
+        for bucket_index in sorted(bucket_map.keys()):
+            bucket_payload = bucket_map[bucket_index]
+            self._finalize_decision_bucket(bucket_payload)
+
+            start_ts = bucket_index * bucket_value
+            end_ts = start_ts + bucket_value
+
+            bucket_summary: dict[str, Any] = {
+                "index": bucket_index,
+                "start": self._normalize_timestamp_for_export(
+                    start_ts,
+                    coerce=coerce_timestamps,
+                    tz=tz,
+                ),
+                "end": self._normalize_timestamp_for_export(
+                    end_ts,
+                    coerce=coerce_timestamps,
+                    tz=tz,
+                ),
+                "total": bucket_payload.get("total", 0),
+                "approved": bucket_payload.get("approved", 0),
+                "rejected": bucket_payload.get("rejected", 0),
+                "unknown": bucket_payload.get("unknown", 0),
+                "errors": bucket_payload.get("errors", 0),
+                "raw_true": bucket_payload.get("raw_true", 0),
+                "raw_false": bucket_payload.get("raw_false", 0),
+                "raw_none": bucket_payload.get("raw_none", 0),
+                "approval_rate": bucket_payload.get("approval_rate", 0.0),
+                "error_rate": bucket_payload.get("error_rate", 0.0),
+            }
+
+            if include_services:
+                bucket_summary["services"] = dict(bucket_payload.get("services", {}))
+            if include_decision_dimensions:
+                bucket_summary["states"] = self._finalize_dimension_counter(
+                    bucket_payload.get("states")
+                )
+                bucket_summary["reasons"] = self._finalize_dimension_counter(
+                    bucket_payload.get("reasons")
+                )
+                bucket_summary["modes"] = self._finalize_dimension_counter(
+                    bucket_payload.get("modes")
+                )
+
+            buckets_output.append(bucket_summary)
+
+        summary["buckets"] = buckets_output
+        summary["first_timestamp"] = first_ts
+        summary["last_timestamp"] = last_ts
+
+        if missing_bucket is not None and missing_bucket.get("total", 0):
+            self._finalize_decision_bucket(missing_bucket)
+            missing_summary: dict[str, Any] = {
+                "index": None,
+                "total": missing_bucket.get("total", 0),
+                "approved": missing_bucket.get("approved", 0),
+                "rejected": missing_bucket.get("rejected", 0),
+                "unknown": missing_bucket.get("unknown", 0),
+                "errors": missing_bucket.get("errors", 0),
+                "raw_true": missing_bucket.get("raw_true", 0),
+                "raw_false": missing_bucket.get("raw_false", 0),
+                "raw_none": missing_bucket.get("raw_none", 0),
+                "approval_rate": missing_bucket.get("approval_rate", 0.0),
+                "error_rate": missing_bucket.get("error_rate", 0.0),
+            }
+            if include_services:
+                missing_summary["services"] = dict(missing_bucket.get("services", {}))
+            if include_decision_dimensions:
+                missing_summary["states"] = self._finalize_dimension_counter(
+                    missing_bucket.get("states")
+                )
+                missing_summary["reasons"] = self._finalize_dimension_counter(
+                    missing_bucket.get("reasons")
+                )
+                missing_summary["modes"] = self._finalize_dimension_counter(
+                    missing_bucket.get("modes")
+                )
+            summary["missing_timestamp"] = missing_summary
+
+        if not include_services:
+            for bucket in summary["buckets"]:
+                bucket.pop("services", None)
+            missing_entry = summary.get("missing_timestamp")
+            if isinstance(missing_entry, dict):
+                missing_entry.pop("services", None)
+
+        return summary
+
+    def summarize_risk_decision_timeline(
+        self,
+        *,
+        bucket_s: float,
+        approved: bool | None | Iterable[bool | None] | object = _NO_FILTER,
+        normalized: bool | None | Iterable[bool | None] | object = _NO_FILTER,
+        include_errors: bool = True,
+        service: str | None | Iterable[str | None] | object = _NO_FILTER,
+        decision_state: str | Iterable[str | None] | object = _NO_FILTER,
+        decision_reason: str | Iterable[str | None] | object = _NO_FILTER,
+        decision_mode: str | Iterable[str | None] | object = _NO_FILTER,
+        since: Any = None,
+        until: Any = None,
+        include_services: bool = True,
+        include_decision_dimensions: bool = False,
+        fill_gaps: bool = False,
+        coerce_timestamps: bool = False,
+        tz: tzinfo | None = timezone.utc,
+    ) -> dict[str, Any]:
+        """Agreguje decyzje ryzyka w kubełkach czasowych."""
+
+        try:
+            bucket_value = float(bucket_s)
+        except (TypeError, ValueError) as exc:  # pragma: no cover - walidacja wejścia
+            raise ValueError("bucket_s must be a positive number") from exc
+        if not math.isfinite(bucket_value) or bucket_value <= 0.0:
+            raise ValueError("bucket_s must be a positive number")
+
+        approved_filter = self._prepare_bool_filter(approved)
+        normalized_filter = self._prepare_bool_filter(normalized)
+        service_filter = self._prepare_service_filter(service)
+        decision_state_filter = self._prepare_decision_filter(
+            decision_state,
+            missing_token=_MISSING_DECISION_STATE,
+        )
+        decision_reason_filter = self._prepare_decision_filter(
+            decision_reason,
+            missing_token=_MISSING_DECISION_REASON,
+        )
+        decision_mode_filter = self._prepare_decision_filter(
+            decision_mode,
+            missing_token=_MISSING_DECISION_MODE,
+        )
+
+        since_ts = self._normalize_time_bound(since)
+        until_ts = self._normalize_time_bound(until)
+
+        return self._build_risk_decision_timeline(
+            context="decision-timeline",
+            bucket_value=bucket_value,
+            include_errors=include_errors,
+            include_services=include_services,
+            include_decision_dimensions=include_decision_dimensions,
+            fill_gaps=fill_gaps,
+            coerce_timestamps=coerce_timestamps,
+            tz=tz,
+            approved_filter=approved_filter,
+            normalized_filter=normalized_filter,
+            service_filter=service_filter,
+            decision_state_filter=decision_state_filter,
+            decision_reason_filter=decision_reason_filter,
+            decision_mode_filter=decision_mode_filter,
+            since_ts=since_ts,
+            until_ts=until_ts,
+        )
+
+    def risk_decision_timeline_to_records(
+        self,
+        *,
+        bucket_s: float,
+        approved: bool | None | Iterable[bool | None] | object = _NO_FILTER,
+        normalized: bool | None | Iterable[bool | None] | object = _NO_FILTER,
+        include_errors: bool = True,
+        service: str | None | Iterable[str | None] | object = _NO_FILTER,
+        decision_state: str | Iterable[str | None] | object = _NO_FILTER,
+        decision_reason: str | Iterable[str | None] | object = _NO_FILTER,
+        decision_mode: str | Iterable[str | None] | object = _NO_FILTER,
+        since: Any = None,
+        until: Any = None,
+        include_services: bool = True,
+        include_decision_dimensions: bool = False,
+        fill_gaps: bool = False,
+        include_missing_bucket: bool = False,
+        coerce_timestamps: bool = False,
+        tz: tzinfo | None = timezone.utc,
+    ) -> list[dict[str, Any]]:
+        """Eksportuje kubełki timeline'u decyzji w formie listy rekordów."""
+
+        try:
+            bucket_value = float(bucket_s)
+        except (TypeError, ValueError) as exc:  # pragma: no cover - walidacja wejścia
+            raise ValueError("bucket_s must be a positive number") from exc
+        if not math.isfinite(bucket_value) or bucket_value <= 0.0:
+            raise ValueError("bucket_s must be a positive number")
+
+        approved_filter = self._prepare_bool_filter(approved)
+        normalized_filter = self._prepare_bool_filter(normalized)
+        service_filter = self._prepare_service_filter(service)
+        decision_state_filter = self._prepare_decision_filter(
+            decision_state,
+            missing_token=_MISSING_DECISION_STATE,
+        )
+        decision_reason_filter = self._prepare_decision_filter(
+            decision_reason,
+            missing_token=_MISSING_DECISION_REASON,
+        )
+        decision_mode_filter = self._prepare_decision_filter(
+            decision_mode,
+            missing_token=_MISSING_DECISION_MODE,
+        )
+
+        since_ts = self._normalize_time_bound(since)
+        until_ts = self._normalize_time_bound(until)
+
+        summary = self._build_risk_decision_timeline(
+            context="decision-timeline-records",
+            bucket_value=bucket_value,
+            include_errors=include_errors,
+            include_services=include_services,
+            include_decision_dimensions=include_decision_dimensions,
+            fill_gaps=fill_gaps,
+            coerce_timestamps=coerce_timestamps,
+            tz=tz,
+            approved_filter=approved_filter,
+            normalized_filter=normalized_filter,
+            service_filter=service_filter,
+            decision_state_filter=decision_state_filter,
+            decision_reason_filter=decision_reason_filter,
+            decision_mode_filter=decision_mode_filter,
+            since_ts=since_ts,
+            until_ts=until_ts,
+        )
+
+        records: list[dict[str, Any]] = []
+        for bucket in summary.get("buckets", []):
+            bucket_record = copy.deepcopy(bucket)
+            bucket_record.setdefault("bucket_type", "bucket")
+            records.append(bucket_record)
+
+        if include_missing_bucket:
+            missing_entry = summary.get("missing_timestamp")
+            if isinstance(missing_entry, Mapping) and missing_entry.get("total", 0):
+                missing_record = copy.deepcopy(missing_entry)
+                missing_record.setdefault("bucket_type", "missing")
+                missing_record.setdefault("index", None)
+                missing_record["start"] = None
+                missing_record["end"] = None
+                records.append(missing_record)
+
+        return records
+
+    def risk_decision_timeline_to_dataframe(
+        self,
+        *,
+        bucket_s: float,
+        approved: bool | None | Iterable[bool | None] | object = _NO_FILTER,
+        normalized: bool | None | Iterable[bool | None] | object = _NO_FILTER,
+        include_errors: bool = True,
+        service: str | None | Iterable[str | None] | object = _NO_FILTER,
+        decision_state: str | Iterable[str | None] | object = _NO_FILTER,
+        decision_reason: str | Iterable[str | None] | object = _NO_FILTER,
+        decision_mode: str | Iterable[str | None] | object = _NO_FILTER,
+        since: Any = None,
+        until: Any = None,
+        include_services: bool = True,
+        include_decision_dimensions: bool = False,
+        fill_gaps: bool = False,
+        include_missing_bucket: bool = False,
+        coerce_timestamps: bool = True,
+        tz: tzinfo | None = timezone.utc,
+    ) -> pd.DataFrame:
+        """Buduje ``DataFrame`` z kubełkami timeline'u decyzji ryzyka."""
+
+        records = self.risk_decision_timeline_to_records(
+            bucket_s=bucket_s,
+            approved=approved,
+            normalized=normalized,
+            include_errors=include_errors,
+            service=service,
+            decision_state=decision_state,
+            decision_reason=decision_reason,
+            decision_mode=decision_mode,
+            since=since,
+            until=until,
+            include_services=include_services,
+            include_decision_dimensions=include_decision_dimensions,
+            fill_gaps=fill_gaps,
+            include_missing_bucket=include_missing_bucket,
+            coerce_timestamps=coerce_timestamps,
+            tz=tz,
+        )
+
+        base_columns = [
+            "bucket_type",
+            "index",
+            "start",
+            "end",
+            "total",
+            "approved",
+            "rejected",
+            "unknown",
+            "errors",
+            "raw_true",
+            "raw_false",
+            "raw_none",
+            "approval_rate",
+            "error_rate",
+        ]
+        if include_services:
+            base_columns.append("services")
+        if include_decision_dimensions:
+            base_columns.extend(["states", "reasons", "modes"])
+
+        if not records:
+            return pd.DataFrame(columns=base_columns)
+
+        rows: list[dict[str, Any]] = []
+        for record in records:
+            row = {column: record.get(column) for column in base_columns}
+            rows.append(row)
+
+        df = pd.DataFrame.from_records(rows, columns=base_columns)
+        return df
+
+    def guardrail_events_to_records(
+        self,
+        *,
+        approved: bool | None | Iterable[bool | None] | object = _NO_FILTER,
+        normalized: bool | None | Iterable[bool | None] | object = _NO_FILTER,
+        include_errors: bool = True,
+        service: str | None | Iterable[str | None] | object = _NO_FILTER,
+        decision_state: str | Iterable[str | None] | object = _NO_FILTER,
+        decision_reason: str | Iterable[str | None] | object = _NO_FILTER,
+        decision_mode: str | Iterable[str | None] | object = _NO_FILTER,
+        reason: str | Iterable[str] | object = _NO_FILTER,
+        trigger: str | Iterable[str] | object = _NO_FILTER,
+        trigger_label: str | Iterable[str | None] | object = _NO_FILTER,
+        trigger_comparator: str | Iterable[str | None] | object = _NO_FILTER,
+        trigger_unit: str | Iterable[str | None] | object = _NO_FILTER,
+        trigger_threshold: float | None | Iterable[float | None] | object = _NO_FILTER,
+        trigger_threshold_min: Any = None,
+        trigger_threshold_max: Any = None,
+        trigger_value: float | None | Iterable[float | None] | object = _NO_FILTER,
+        trigger_value_min: Any = None,
+        trigger_value_max: Any = None,
+        since: Any = None,
+        until: Any = None,
+        limit: int | None = None,
+        reverse: bool = False,
+        include_decision: bool = True,
+        coerce_timestamps: bool = False,
+        tz: tzinfo | None = timezone.utc,
+    ) -> list[dict[str, Any]]:
+        """Eksportuje zdarzenia guardrail z historii ocen ryzyka."""
+
+        normalized_limit = self._normalize_history_export_limit(limit)
+        if normalized_limit == 0:
+            return []
+
+        approved_filter = self._prepare_bool_filter(approved)
+        normalized_filter = self._prepare_bool_filter(normalized)
+        service_filter = self._prepare_service_filter(service)
+        reason_filter = self._prepare_string_filter(reason)
+        trigger_filter = self._prepare_string_filter(trigger)
+        trigger_label_filter = self._prepare_guardrail_filter(
+            trigger_label,
+            missing_token=_MISSING_GUARDRAIL_LABEL,
+        )
+        trigger_comparator_filter = self._prepare_guardrail_filter(
+            trigger_comparator,
+            missing_token=_MISSING_GUARDRAIL_COMPARATOR,
+        )
+        trigger_unit_filter = self._prepare_guardrail_filter(
+            trigger_unit,
+            missing_token=_MISSING_GUARDRAIL_UNIT,
+        )
+        trigger_threshold_filter = self._prepare_guardrail_numeric_filter(
+            trigger_threshold
+        )
+        trigger_value_filter = self._prepare_guardrail_numeric_filter(trigger_value)
+        decision_state_filter = self._prepare_decision_filter(
+            decision_state,
+            missing_token=_MISSING_DECISION_STATE,
+        )
+        decision_reason_filter = self._prepare_decision_filter(
+            decision_reason,
+            missing_token=_MISSING_DECISION_REASON,
+        )
+        decision_mode_filter = self._prepare_decision_filter(
+            decision_mode,
+            missing_token=_MISSING_DECISION_MODE,
+        )
+        trigger_threshold_min_value = (
+            self._coerce_float(trigger_threshold_min)
+            if trigger_threshold_min is not None
+            else None
+        )
+        trigger_threshold_max_value = (
+            self._coerce_float(trigger_threshold_max)
+            if trigger_threshold_max is not None
+            else None
+        )
+        trigger_value_min_value = (
+            self._coerce_float(trigger_value_min)
+            if trigger_value_min is not None
+            else None
+        )
+        trigger_value_max_value = (
+            self._coerce_float(trigger_value_max)
+            if trigger_value_max is not None
+            else None
+        )
+        since_ts = self._normalize_time_bound(since)
+        until_ts = self._normalize_time_bound(until)
+
+        (
+            guardrail_records,
+            trimmed_by_ttl,
+            ttl_snapshot,
+            history_size,
+            _filtered_records,
+        ) = self._collect_guardrail_events(
+            include_errors=include_errors,
+            approved_filter=approved_filter,
+            normalized_filter=normalized_filter,
+            service_filter=service_filter,
+            decision_state_filter=decision_state_filter,
+            decision_reason_filter=decision_reason_filter,
+            decision_mode_filter=decision_mode_filter,
+            since_ts=since_ts,
+            until_ts=until_ts,
+            reason_filter=reason_filter,
+            trigger_filter=trigger_filter,
+            trigger_label_filter=trigger_label_filter,
+            trigger_comparator_filter=trigger_comparator_filter,
+            trigger_unit_filter=trigger_unit_filter,
+            trigger_threshold_filter=trigger_threshold_filter,
+            trigger_threshold_min=trigger_threshold_min_value,
+            trigger_threshold_max=trigger_threshold_max_value,
+            trigger_value_filter=trigger_value_filter,
+            trigger_value_min=trigger_value_min_value,
+            trigger_value_max=trigger_value_max_value,
+        )
+        self._log_risk_history_trimmed(
+            context="guardrail-records",
+            trimmed=trimmed_by_ttl,
+            ttl=ttl_snapshot,
+            history=history_size,
+        )
+
+        if not guardrail_records:
+            return []
+
+        if reverse:
+            guardrail_records = list(reversed(guardrail_records))
+
+        records: list[dict[str, Any]] = []
+        for entry, reasons, triggers in guardrail_records:
+            record: dict[str, Any] = {
+                "timestamp": self._normalize_timestamp_for_export(
+                    entry.get("timestamp"),
+                    coerce=coerce_timestamps,
+                    tz=tz,
+                ),
+                "approved": entry.get("approved"),
+                "normalized": entry.get("normalized"),
+                "service": entry.get("service") or _UNKNOWN_SERVICE,
+                "response": copy.deepcopy(entry.get("response")),
+                "error": copy.deepcopy(entry.get("error")),
+                "guardrail_reasons": tuple(reasons),
+                "guardrail_triggers": tuple(
+                    copy.deepcopy(trigger) for trigger in triggers
+                ),
+                "guardrail_reason_count": len(reasons),
+                "guardrail_trigger_count": len(triggers),
+            }
+            if include_decision:
+                record["decision"] = copy.deepcopy(entry.get("decision"))
+
+            records.append(record)
+            if normalized_limit is not None and len(records) >= normalized_limit:
+                break
+
+        return records
+
+    def guardrail_events_to_dataframe(
+        self,
+        *,
+        approved: bool | None | Iterable[bool | None] | object = _NO_FILTER,
+        normalized: bool | None | Iterable[bool | None] | object = _NO_FILTER,
+        include_errors: bool = True,
+        service: str | None | Iterable[str | None] | object = _NO_FILTER,
+        decision_state: str | Iterable[str | None] | object = _NO_FILTER,
+        decision_reason: str | Iterable[str | None] | object = _NO_FILTER,
+        decision_mode: str | Iterable[str | None] | object = _NO_FILTER,
+        reason: str | Iterable[str] | object = _NO_FILTER,
+        trigger: str | Iterable[str] | object = _NO_FILTER,
+        trigger_label: str | Iterable[str | None] | object = _NO_FILTER,
+        trigger_comparator: str | Iterable[str | None] | object = _NO_FILTER,
+        trigger_unit: str | Iterable[str | None] | object = _NO_FILTER,
+        trigger_threshold: float | None | Iterable[float | None] | object = _NO_FILTER,
+        trigger_threshold_min: Any = None,
+        trigger_threshold_max: Any = None,
+        trigger_value: float | None | Iterable[float | None] | object = _NO_FILTER,
+        trigger_value_min: Any = None,
+        trigger_value_max: Any = None,
+        since: Any = None,
+        until: Any = None,
+        limit: int | None = None,
+        reverse: bool = False,
+        include_decision: bool = False,
+        coerce_timestamps: bool = True,
+        tz: tzinfo | None = timezone.utc,
+    ) -> pd.DataFrame:
+        """Buduje DataFrame ze zdarzeń guardrail."""
+
+        normalized_limit = self._normalize_history_export_limit(limit)
+        base_columns = [
+            "timestamp",
+            "approved",
+            "normalized",
+            "service",
+            "response",
+            "error",
+            "guardrail_reasons",
+            "guardrail_triggers",
+            "guardrail_reason_count",
+            "guardrail_trigger_count",
+        ]
+        if include_decision:
+            base_columns.append("decision")
+
+        if normalized_limit == 0:
+            return pd.DataFrame(columns=base_columns)
+
+        approved_filter = self._prepare_bool_filter(approved)
+        normalized_filter = self._prepare_bool_filter(normalized)
+        service_filter = self._prepare_service_filter(service)
+        reason_filter = self._prepare_string_filter(reason)
+        trigger_filter = self._prepare_string_filter(trigger)
+        trigger_label_filter = self._prepare_guardrail_filter(
+            trigger_label,
+            missing_token=_MISSING_GUARDRAIL_LABEL,
+        )
+        trigger_comparator_filter = self._prepare_guardrail_filter(
+            trigger_comparator,
+            missing_token=_MISSING_GUARDRAIL_COMPARATOR,
+        )
+        trigger_unit_filter = self._prepare_guardrail_filter(
+            trigger_unit,
+            missing_token=_MISSING_GUARDRAIL_UNIT,
+        )
+        trigger_threshold_filter = self._prepare_guardrail_numeric_filter(
+            trigger_threshold
+        )
+        trigger_value_filter = self._prepare_guardrail_numeric_filter(trigger_value)
+        decision_state_filter = self._prepare_decision_filter(
+            decision_state,
+            missing_token=_MISSING_DECISION_STATE,
+        )
+        decision_reason_filter = self._prepare_decision_filter(
+            decision_reason,
+            missing_token=_MISSING_DECISION_REASON,
+        )
+        decision_mode_filter = self._prepare_decision_filter(
+            decision_mode,
+            missing_token=_MISSING_DECISION_MODE,
+        )
+        trigger_threshold_min_value = (
+            self._coerce_float(trigger_threshold_min)
+            if trigger_threshold_min is not None
+            else None
+        )
+        trigger_threshold_max_value = (
+            self._coerce_float(trigger_threshold_max)
+            if trigger_threshold_max is not None
+            else None
+        )
+        trigger_value_min_value = (
+            self._coerce_float(trigger_value_min)
+            if trigger_value_min is not None
+            else None
+        )
+        trigger_value_max_value = (
+            self._coerce_float(trigger_value_max)
+            if trigger_value_max is not None
+            else None
+        )
+        since_ts = self._normalize_time_bound(since)
+        until_ts = self._normalize_time_bound(until)
+
+        (
+            guardrail_records,
+            trimmed_by_ttl,
+            ttl_snapshot,
+            history_size,
+            _filtered_records,
+        ) = self._collect_guardrail_events(
+            include_errors=include_errors,
+            approved_filter=approved_filter,
+            normalized_filter=normalized_filter,
+            service_filter=service_filter,
+            decision_state_filter=decision_state_filter,
+            decision_reason_filter=decision_reason_filter,
+            decision_mode_filter=decision_mode_filter,
+            since_ts=since_ts,
+            until_ts=until_ts,
+            reason_filter=reason_filter,
+            trigger_filter=trigger_filter,
+            trigger_label_filter=trigger_label_filter,
+            trigger_comparator_filter=trigger_comparator_filter,
+            trigger_unit_filter=trigger_unit_filter,
+            trigger_threshold_filter=trigger_threshold_filter,
+            trigger_threshold_min=trigger_threshold_min_value,
+            trigger_threshold_max=trigger_threshold_max_value,
+            trigger_value_filter=trigger_value_filter,
+            trigger_value_min=trigger_value_min_value,
+            trigger_value_max=trigger_value_max_value,
+        )
+        self._log_risk_history_trimmed(
+            context="guardrail-dataframe",
+            trimmed=trimmed_by_ttl,
+            ttl=ttl_snapshot,
+            history=history_size,
+        )
+
+        if not guardrail_records:
+            return pd.DataFrame(columns=base_columns)
+
+        if reverse:
+            guardrail_records = list(reversed(guardrail_records))
+
+        rows: list[dict[str, Any]] = []
+        for entry, reasons, triggers in guardrail_records:
+            row: dict[str, Any] = {
+                "timestamp": copy.deepcopy(entry.get("timestamp")),
+                "approved": entry.get("approved"),
+                "normalized": entry.get("normalized"),
+                "service": entry.get("service") or _UNKNOWN_SERVICE,
+                "response": copy.deepcopy(entry.get("response")),
+                "error": copy.deepcopy(entry.get("error")),
+                "guardrail_reasons": tuple(reasons),
+                "guardrail_triggers": tuple(
+                    copy.deepcopy(trigger) for trigger in triggers
+                ),
+                "guardrail_reason_count": len(reasons),
+                "guardrail_trigger_count": len(triggers),
+            }
+            if include_decision:
+                row["decision"] = copy.deepcopy(entry.get("decision"))
+            rows.append(row)
+            if normalized_limit is not None and len(rows) >= normalized_limit:
+                break
+
+        df = pd.DataFrame.from_records(rows, columns=base_columns)
+        if coerce_timestamps and "timestamp" in df.columns:
+            df["timestamp"] = [
+                self._normalize_timestamp_for_export(value, coerce=True, tz=tz)
+                for value in df["timestamp"].tolist()
+            ]
+
+        return df
+
+    def _build_guardrail_timeline(
+        self,
+        *,
+        context: str,
+        bucket_value: float,
+        include_errors: bool,
+        include_services: bool,
+        include_guardrail_dimensions: bool,
+        include_decision_dimensions: bool,
+        fill_gaps: bool,
+        coerce_timestamps: bool,
+        tz: tzinfo | None,
+        approved_filter: Any,
+        normalized_filter: Any,
+        service_filter: Any,
+        decision_state_filter: Any,
+        decision_reason_filter: Any,
+        decision_mode_filter: Any,
+        reason_filter: Any,
+        trigger_filter: Any,
+        trigger_label_filter: Any,
+        trigger_comparator_filter: Any,
+        trigger_unit_filter: Any,
+        trigger_threshold_filter: Any,
+        trigger_threshold_min: float | None,
+        trigger_threshold_max: float | None,
+        trigger_value_filter: Any,
+        trigger_value_min: float | None,
+        trigger_value_max: float | None,
+        since_ts: float | None,
+        until_ts: float | None,
+    ) -> dict[str, Any]:
+        (
+            guardrail_records,
+            trimmed_by_ttl,
+            ttl_snapshot,
+            history_size,
+            filtered_records,
+        ) = self._collect_guardrail_events(
+            include_errors=include_errors,
+            approved_filter=approved_filter,
+            normalized_filter=normalized_filter,
+            service_filter=service_filter,
+            decision_state_filter=decision_state_filter,
+            decision_reason_filter=decision_reason_filter,
+            decision_mode_filter=decision_mode_filter,
+            since_ts=since_ts,
+            until_ts=until_ts,
+            reason_filter=reason_filter,
+            trigger_filter=trigger_filter,
+            trigger_label_filter=trigger_label_filter,
+            trigger_comparator_filter=trigger_comparator_filter,
+            trigger_unit_filter=trigger_unit_filter,
+            trigger_threshold_filter=trigger_threshold_filter,
+            trigger_threshold_min=trigger_threshold_min,
+            trigger_threshold_max=trigger_threshold_max,
+            trigger_value_filter=trigger_value_filter,
+            trigger_value_min=trigger_value_min,
+            trigger_value_max=trigger_value_max,
+        )
+        self._log_risk_history_trimmed(
+            context=context,
+            trimmed=trimmed_by_ttl,
+            ttl=ttl_snapshot,
+            history=history_size,
+        )
+
+        summary: dict[str, Any] = {
+            "bucket_s": bucket_value,
+            "total": len(guardrail_records),
+            "evaluations": len(filtered_records),
+            "buckets": [],
+            "first_timestamp": None,
+            "last_timestamp": None,
+        }
+        total_services: dict[str, dict[str, int]] | None = None
+        if include_services:
+            summary["services"] = {}
+            total_services = {}
+        if include_guardrail_dimensions:
+            summary["guardrail_trigger_thresholds"] = {}
+            summary["guardrail_trigger_values"] = {}
+        if not filtered_records and not guardrail_records:
+            return summary
+
+        total_threshold_stats = (
+            self._init_guardrail_numeric_stats()
+            if include_guardrail_dimensions
+            else None
+        )
+        total_value_stats = (
+            self._init_guardrail_numeric_stats()
+            if include_guardrail_dimensions
+            else None
+        )
+
+        def build_bucket() -> dict[str, Any]:
+            bucket: dict[str, Any] = {
+                "guardrail_events": 0,
+                "evaluations": 0,
+            }
+            if include_services:
+                bucket["services"] = {}
+            if include_guardrail_dimensions:
+                bucket["guardrail_reasons"] = Counter()
+                bucket["guardrail_triggers"] = Counter()
+                bucket["guardrail_trigger_labels"] = Counter()
+                bucket["guardrail_trigger_comparators"] = Counter()
+                bucket["guardrail_trigger_units"] = Counter()
+                bucket["guardrail_trigger_thresholds"] = (
+                    self._init_guardrail_numeric_stats()
+                )
+                bucket["guardrail_trigger_values"] = (
+                    self._init_guardrail_numeric_stats()
+                )
+            if include_decision_dimensions:
+                bucket["decision_states"] = Counter()
+                bucket["decision_reasons"] = Counter()
+                bucket["decision_modes"] = Counter()
+            return bucket
+
+        bucket_map: dict[int, dict[str, Any]] = {}
+        missing_bucket: dict[str, Any] | None = None
+        first_ts: float | None = None
+        last_ts: float | None = None
+
+        def resolve_bucket(timestamp_value: float | None) -> dict[str, Any]:
+            nonlocal first_ts, last_ts, missing_bucket
+            if timestamp_value is not None:
+                if not math.isfinite(timestamp_value) or math.isnan(timestamp_value):
+                    timestamp_value = None
+
+            if timestamp_value is None:
+                if missing_bucket is None:
+                    missing_bucket = build_bucket()
+                return missing_bucket
+
+            if first_ts is None or timestamp_value < first_ts:
+                first_ts = timestamp_value
+            if last_ts is None or timestamp_value > last_ts:
+                last_ts = timestamp_value
+
+            bucket_index = int(math.floor(timestamp_value / bucket_value))
+            bucket_payload = bucket_map.get(bucket_index)
+            if bucket_payload is None:
+                bucket_payload = build_bucket()
+                bucket_map[bucket_index] = bucket_payload
+            return bucket_payload
+
+        for entry in filtered_records:
+            timestamp_value = self._normalize_time_bound(entry.get("timestamp"))
+            bucket_payload = resolve_bucket(timestamp_value)
+            bucket_payload["evaluations"] += 1
+
+            if include_services:
+                service_key = str(entry.get("service") or _UNKNOWN_SERVICE)
+                services_bucket = bucket_payload.setdefault("services", {})
+                service_payload = services_bucket.get(service_key)
+                if service_payload is None:
+                    service_payload = {"evaluations": 0, "guardrail_events": 0}
+                    services_bucket[service_key] = service_payload
+                service_payload["evaluations"] += 1
+                if total_services is not None:
+                    service_totals = total_services.setdefault(
+                        service_key,
+                        {"evaluations": 0, "guardrail_events": 0},
+                    )
+                    service_totals["evaluations"] += 1
+
+        for entry, reasons, triggers in guardrail_records:
+            timestamp_value = self._normalize_time_bound(entry.get("timestamp"))
+            bucket_payload = resolve_bucket(timestamp_value)
+            bucket_payload["guardrail_events"] += 1
+
+            if include_services:
+                service_key = str(entry.get("service") or _UNKNOWN_SERVICE)
+                services_bucket = bucket_payload.setdefault("services", {})
+                service_payload = services_bucket.get(service_key)
+                if service_payload is None:
+                    service_payload = {"evaluations": 0, "guardrail_events": 0}
+                    services_bucket[service_key] = service_payload
+                service_payload["guardrail_events"] += 1
+                if total_services is not None:
+                    service_totals = total_services.setdefault(
+                        service_key,
+                        {"evaluations": 0, "guardrail_events": 0},
+                    )
+                    service_totals["guardrail_events"] += 1
+
+            if include_guardrail_dimensions:
+                reasons_counter = bucket_payload.setdefault(
+                    "guardrail_reasons", Counter()
+                )
+                for reason_value in reasons:
+                    reasons_counter[str(reason_value)] += 1
+
+                triggers_counter = bucket_payload.setdefault(
+                    "guardrail_triggers", Counter()
+                )
+                for trigger_entry in triggers:
+                    trigger_name_raw = trigger_entry.get("name")
+                    trigger_name = (
+                        str(trigger_name_raw)
+                        if trigger_name_raw is not None
+                        else "<unknown>"
+                    )
+                    triggers_counter[trigger_name] += 1
+
+                labels_counter = bucket_payload.setdefault(
+                    "guardrail_trigger_labels", Counter()
+                )
+                comparators_counter = bucket_payload.setdefault(
+                    "guardrail_trigger_comparators", Counter()
+                )
+                units_counter = bucket_payload.setdefault(
+                    "guardrail_trigger_units", Counter()
+                )
+                threshold_stats = bucket_payload.get(
+                    "guardrail_trigger_thresholds"
+                )
+                value_stats = bucket_payload.get("guardrail_trigger_values")
+                for trigger_entry in triggers:
+                    label_raw = trigger_entry.get("label")
+                    label_value = (
+                        _MISSING_GUARDRAIL_LABEL
+                        if label_raw is None
+                        else str(label_raw)
+                    )
+                    labels_counter[label_value] += 1
+
+                    comparator_raw = trigger_entry.get("comparator")
+                    comparator_value = (
+                        _MISSING_GUARDRAIL_COMPARATOR
+                        if comparator_raw is None
+                        else str(comparator_raw)
+                    )
+                    comparators_counter[comparator_value] += 1
+
+                    unit_raw = trigger_entry.get("unit")
+                    unit_value = (
+                        _MISSING_GUARDRAIL_UNIT
+                        if unit_raw is None
+                        else str(unit_raw)
+                    )
+                    units_counter[unit_value] += 1
+
+                    if threshold_stats is not None:
+                        self._ingest_guardrail_numeric_value(
+                            threshold_stats,
+                            trigger_entry.get("threshold"),
+                        )
+                    if value_stats is not None:
+                        self._ingest_guardrail_numeric_value(
+                            value_stats,
+                            trigger_entry.get("value"),
+                        )
+                    if total_threshold_stats is not None:
+                        self._ingest_guardrail_numeric_value(
+                            total_threshold_stats,
+                            trigger_entry.get("threshold"),
+                        )
+                    if total_value_stats is not None:
+                        self._ingest_guardrail_numeric_value(
+                            total_value_stats,
+                            trigger_entry.get("value"),
+                        )
+
+            if include_decision_dimensions:
+                decision_payload = entry.get("decision")
+                decision_map = (
+                    decision_payload
+                    if isinstance(decision_payload, Mapping)
+                    else {}
+                )
+                state_value = self._normalize_decision_dimension_value(
+                    decision_map.get("state"),
+                    missing_token=_MISSING_DECISION_STATE,
+                )
+                reason_value = self._normalize_decision_dimension_value(
+                    decision_map.get("reason"),
+                    missing_token=_MISSING_DECISION_REASON,
+                )
+                mode_value = self._normalize_decision_dimension_value(
+                    decision_map.get("mode"),
+                    missing_token=_MISSING_DECISION_MODE,
+                )
+
+                states_counter = bucket_payload.setdefault(
+                    "decision_states", Counter()
+                )
+                reasons_counter = bucket_payload.setdefault(
+                    "decision_reasons", Counter()
+                )
+                modes_counter = bucket_payload.setdefault(
+                    "decision_modes", Counter()
+                )
+
+                states_counter[state_value] += 1
+                reasons_counter[reason_value] += 1
+                modes_counter[mode_value] += 1
+
+        if fill_gaps and bucket_map:
+            bucket_indices = sorted(bucket_map.keys())
+            for bucket_index in range(bucket_indices[0], bucket_indices[-1] + 1):
+                bucket_map.setdefault(bucket_index, build_bucket())
+
+        buckets_output: list[dict[str, Any]] = []
+        for bucket_index in sorted(bucket_map.keys()):
+            bucket_payload = bucket_map[bucket_index]
+            start_ts = bucket_index * bucket_value
+            end_ts = start_ts + bucket_value
+
+            bucket_summary: dict[str, Any] = {
+                "index": bucket_index,
+                "start": self._normalize_timestamp_for_export(
+                    start_ts,
+                    coerce=coerce_timestamps,
+                    tz=tz,
+                ),
+                "end": self._normalize_timestamp_for_export(
+                    end_ts,
+                    coerce=coerce_timestamps,
+                    tz=tz,
+                ),
+                "guardrail_events": bucket_payload.get("guardrail_events", 0),
+                "evaluations": bucket_payload.get("evaluations", 0),
+            }
+
+            if include_services:
+                services_payload = bucket_payload.get("services", {})
+                bucket_summary["services"] = {
+                    service_name: {
+                        "evaluations": data.get("evaluations", 0),
+                        "guardrail_events": data.get("guardrail_events", 0),
+                    }
+                    for service_name, data in sorted(services_payload.items())
+                }
+
+            if include_guardrail_dimensions:
+                bucket_summary["guardrail_reasons"] = self._finalize_dimension_counter(
+                    bucket_payload.get("guardrail_reasons")
+                )
+                bucket_summary["guardrail_triggers"] = self._finalize_dimension_counter(
+                    bucket_payload.get("guardrail_triggers")
+                )
+                bucket_summary[
+                    "guardrail_trigger_labels"
+                ] = self._finalize_dimension_counter(
+                    bucket_payload.get("guardrail_trigger_labels")
+                )
+                bucket_summary[
+                    "guardrail_trigger_comparators"
+                ] = self._finalize_dimension_counter(
+                    bucket_payload.get("guardrail_trigger_comparators")
+                )
+                bucket_summary[
+                    "guardrail_trigger_units"
+                ] = self._finalize_dimension_counter(
+                    bucket_payload.get("guardrail_trigger_units")
+                )
+                bucket_summary["guardrail_trigger_thresholds"] = (
+                    self._finalize_guardrail_numeric_stats(
+                        bucket_payload.get("guardrail_trigger_thresholds")
+                    )
+                )
+                bucket_summary["guardrail_trigger_values"] = (
+                    self._finalize_guardrail_numeric_stats(
+                        bucket_payload.get("guardrail_trigger_values")
+                    )
+                )
+
+            if include_decision_dimensions:
+                bucket_summary["decision_states"] = self._finalize_dimension_counter(
+                    bucket_payload.get("decision_states")
+                )
+                bucket_summary["decision_reasons"] = self._finalize_dimension_counter(
+                    bucket_payload.get("decision_reasons")
+                )
+                bucket_summary["decision_modes"] = self._finalize_dimension_counter(
+                    bucket_payload.get("decision_modes")
+                )
+
+            buckets_output.append(bucket_summary)
+
+        summary["buckets"] = buckets_output
+        summary["first_timestamp"] = first_ts
+        summary["last_timestamp"] = last_ts
+        if total_services is not None:
+            summary["services"] = {
+                service_name: {
+                    "evaluations": totals.get("evaluations", 0),
+                    "guardrail_events": totals.get("guardrail_events", 0),
+                }
+                for service_name, totals in sorted(total_services.items())
+            }
+        if include_guardrail_dimensions:
+            summary["guardrail_trigger_thresholds"] = (
+                self._finalize_guardrail_numeric_stats(total_threshold_stats)
+            )
+            summary["guardrail_trigger_values"] = (
+                self._finalize_guardrail_numeric_stats(total_value_stats)
+            )
+
+        if missing_bucket is not None and (
+            missing_bucket.get("guardrail_events", 0)
+            or missing_bucket.get("evaluations", 0)
+        ):
+            missing_summary: dict[str, Any] = {
+                "index": None,
+                "start": None,
+                "end": None,
+                "guardrail_events": missing_bucket.get("guardrail_events", 0),
+                "evaluations": missing_bucket.get("evaluations", 0),
+            }
+            if include_services:
+                services_payload = missing_bucket.get("services", {})
+                missing_summary["services"] = {
+                    service_name: {
+                        "evaluations": data.get("evaluations", 0),
+                        "guardrail_events": data.get("guardrail_events", 0),
+                    }
+                    for service_name, data in sorted(services_payload.items())
+                }
+            if include_guardrail_dimensions:
+                missing_summary["guardrail_reasons"] = self._finalize_dimension_counter(
+                    missing_bucket.get("guardrail_reasons")
+                )
+                missing_summary["guardrail_triggers"] = self._finalize_dimension_counter(
+                    missing_bucket.get("guardrail_triggers")
+                )
+                missing_summary[
+                    "guardrail_trigger_labels"
+                ] = self._finalize_dimension_counter(
+                    missing_bucket.get("guardrail_trigger_labels")
+                )
+                missing_summary[
+                    "guardrail_trigger_comparators"
+                ] = self._finalize_dimension_counter(
+                    missing_bucket.get("guardrail_trigger_comparators")
+                )
+                missing_summary[
+                    "guardrail_trigger_units"
+                ] = self._finalize_dimension_counter(
+                    missing_bucket.get("guardrail_trigger_units")
+                )
+                missing_summary["guardrail_trigger_thresholds"] = (
+                    self._finalize_guardrail_numeric_stats(
+                        missing_bucket.get("guardrail_trigger_thresholds")
+                    )
+                )
+                missing_summary["guardrail_trigger_values"] = (
+                    self._finalize_guardrail_numeric_stats(
+                        missing_bucket.get("guardrail_trigger_values")
+                    )
+                )
+            if include_decision_dimensions:
+                missing_summary["decision_states"] = self._finalize_dimension_counter(
+                    missing_bucket.get("decision_states")
+                )
+                missing_summary["decision_reasons"] = self._finalize_dimension_counter(
+                    missing_bucket.get("decision_reasons")
+                )
+                missing_summary["decision_modes"] = self._finalize_dimension_counter(
+                    missing_bucket.get("decision_modes")
+                )
+            summary["missing_timestamp"] = missing_summary
+
+        return summary
+
+    def summarize_guardrail_timeline(
+        self,
+        *,
+        bucket_s: float,
+        approved: bool | None | Iterable[bool | None] | object = _NO_FILTER,
+        normalized: bool | None | Iterable[bool | None] | object = _NO_FILTER,
+        include_errors: bool = True,
+        service: str | None | Iterable[str | None] | object = _NO_FILTER,
+        decision_state: str | Iterable[str | None] | object = _NO_FILTER,
+        decision_reason: str | Iterable[str | None] | object = _NO_FILTER,
+        decision_mode: str | Iterable[str | None] | object = _NO_FILTER,
+        reason: str | Iterable[str] | object = _NO_FILTER,
+        trigger: str | Iterable[str] | object = _NO_FILTER,
+        trigger_label: str | Iterable[str | None] | object = _NO_FILTER,
+        trigger_comparator: str | Iterable[str | None] | object = _NO_FILTER,
+        trigger_unit: str | Iterable[str | None] | object = _NO_FILTER,
+        trigger_threshold: float | None | Iterable[float | None] | object = _NO_FILTER,
+        trigger_threshold_min: Any = None,
+        trigger_threshold_max: Any = None,
+        trigger_value: float | None | Iterable[float | None] | object = _NO_FILTER,
+        trigger_value_min: Any = None,
+        trigger_value_max: Any = None,
+        since: Any = None,
+        until: Any = None,
+        include_services: bool = True,
+        include_guardrail_dimensions: bool = True,
+        include_decision_dimensions: bool = False,
+        fill_gaps: bool = False,
+        coerce_timestamps: bool = False,
+        tz: tzinfo | None = timezone.utc,
+    ) -> dict[str, Any]:
+        try:
+            bucket_value = float(bucket_s)
+        except (TypeError, ValueError) as exc:  # pragma: no cover - walidacja wejścia
+            raise ValueError("bucket_s must be a positive number") from exc
+        if not math.isfinite(bucket_value) or bucket_value <= 0.0:
+            raise ValueError("bucket_s must be a positive number")
+
+        approved_filter = self._prepare_bool_filter(approved)
+        normalized_filter = self._prepare_bool_filter(normalized)
+        service_filter = self._prepare_service_filter(service)
+        reason_filter = self._prepare_string_filter(reason)
+        trigger_filter = self._prepare_string_filter(trigger)
+        trigger_label_filter = self._prepare_guardrail_filter(
+            trigger_label,
+            missing_token=_MISSING_GUARDRAIL_LABEL,
+        )
+        trigger_comparator_filter = self._prepare_guardrail_filter(
+            trigger_comparator,
+            missing_token=_MISSING_GUARDRAIL_COMPARATOR,
+        )
+        trigger_unit_filter = self._prepare_guardrail_filter(
+            trigger_unit,
+            missing_token=_MISSING_GUARDRAIL_UNIT,
+        )
+        trigger_threshold_filter = self._prepare_guardrail_numeric_filter(
+            trigger_threshold
+        )
+        trigger_value_filter = self._prepare_guardrail_numeric_filter(trigger_value)
+        decision_state_filter = self._prepare_decision_filter(
+            decision_state,
+            missing_token=_MISSING_DECISION_STATE,
+        )
+        decision_reason_filter = self._prepare_decision_filter(
+            decision_reason,
+            missing_token=_MISSING_DECISION_REASON,
+        )
+        decision_mode_filter = self._prepare_decision_filter(
+            decision_mode,
+            missing_token=_MISSING_DECISION_MODE,
+        )
+
+        trigger_threshold_min_value = (
+            self._coerce_float(trigger_threshold_min)
+            if trigger_threshold_min is not None
+            else None
+        )
+        trigger_threshold_max_value = (
+            self._coerce_float(trigger_threshold_max)
+            if trigger_threshold_max is not None
+            else None
+        )
+        trigger_value_min_value = (
+            self._coerce_float(trigger_value_min)
+            if trigger_value_min is not None
+            else None
+        )
+        trigger_value_max_value = (
+            self._coerce_float(trigger_value_max)
+            if trigger_value_max is not None
+            else None
+        )
+
+        since_ts = self._normalize_time_bound(since)
+        until_ts = self._normalize_time_bound(until)
+
+        return self._build_guardrail_timeline(
+            context="guardrail-timeline",
+            bucket_value=bucket_value,
+            include_errors=include_errors,
+            include_services=include_services,
+            include_guardrail_dimensions=include_guardrail_dimensions,
+            include_decision_dimensions=include_decision_dimensions,
+            fill_gaps=fill_gaps,
+            coerce_timestamps=coerce_timestamps,
+            tz=tz,
+            approved_filter=approved_filter,
+            normalized_filter=normalized_filter,
+            service_filter=service_filter,
+            decision_state_filter=decision_state_filter,
+            decision_reason_filter=decision_reason_filter,
+            decision_mode_filter=decision_mode_filter,
+            reason_filter=reason_filter,
+            trigger_filter=trigger_filter,
+            trigger_label_filter=trigger_label_filter,
+            trigger_comparator_filter=trigger_comparator_filter,
+            trigger_unit_filter=trigger_unit_filter,
+            trigger_threshold_filter=trigger_threshold_filter,
+            trigger_threshold_min=trigger_threshold_min_value,
+            trigger_threshold_max=trigger_threshold_max_value,
+            trigger_value_filter=trigger_value_filter,
+            trigger_value_min=trigger_value_min_value,
+            trigger_value_max=trigger_value_max_value,
+            since_ts=since_ts,
+            until_ts=until_ts,
+        )
+
+    def guardrail_timeline_to_records(
+        self,
+        *,
+        bucket_s: float,
+        approved: bool | None | Iterable[bool | None] | object = _NO_FILTER,
+        normalized: bool | None | Iterable[bool | None] | object = _NO_FILTER,
+        include_errors: bool = True,
+        service: str | None | Iterable[str | None] | object = _NO_FILTER,
+        decision_state: str | Iterable[str | None] | object = _NO_FILTER,
+        decision_reason: str | Iterable[str | None] | object = _NO_FILTER,
+        decision_mode: str | Iterable[str | None] | object = _NO_FILTER,
+        reason: str | Iterable[str] | object = _NO_FILTER,
+        trigger: str | Iterable[str] | object = _NO_FILTER,
+        trigger_label: str | Iterable[str | None] | object = _NO_FILTER,
+        trigger_comparator: str | Iterable[str | None] | object = _NO_FILTER,
+        trigger_unit: str | Iterable[str | None] | object = _NO_FILTER,
+        trigger_threshold: float | None | Iterable[float | None] | object = _NO_FILTER,
+        trigger_threshold_min: Any = None,
+        trigger_threshold_max: Any = None,
+        trigger_value: float | None | Iterable[float | None] | object = _NO_FILTER,
+        trigger_value_min: Any = None,
+        trigger_value_max: Any = None,
+        since: Any = None,
+        until: Any = None,
+        include_services: bool = True,
+        include_guardrail_dimensions: bool = True,
+        include_decision_dimensions: bool = False,
+        fill_gaps: bool = False,
+        include_missing_bucket: bool = False,
+        coerce_timestamps: bool = False,
+        tz: tzinfo | None = timezone.utc,
+    ) -> list[dict[str, Any]]:
+        summary = self.summarize_guardrail_timeline(
+            bucket_s=bucket_s,
+            approved=approved,
+            normalized=normalized,
+            include_errors=include_errors,
+            service=service,
+            decision_state=decision_state,
+            decision_reason=decision_reason,
+            decision_mode=decision_mode,
+            reason=reason,
+            trigger=trigger,
+            trigger_label=trigger_label,
+            trigger_comparator=trigger_comparator,
+            trigger_unit=trigger_unit,
+            trigger_threshold=trigger_threshold,
+            trigger_threshold_min=trigger_threshold_min,
+            trigger_threshold_max=trigger_threshold_max,
+            trigger_value=trigger_value,
+            trigger_value_min=trigger_value_min,
+            trigger_value_max=trigger_value_max,
+            since=since,
+            until=until,
+            include_services=include_services,
+            include_guardrail_dimensions=include_guardrail_dimensions,
+            include_decision_dimensions=include_decision_dimensions,
+            fill_gaps=fill_gaps,
+            coerce_timestamps=coerce_timestamps,
+            tz=tz,
+        )
+
+        records: list[dict[str, Any]] = []
+        for bucket in summary.get("buckets", []):
+            bucket_record = copy.deepcopy(bucket)
+            bucket_record.setdefault("bucket_type", "bucket")
+            records.append(bucket_record)
+
+        if include_missing_bucket:
+            missing_entry = summary.get("missing_timestamp")
+            if isinstance(missing_entry, Mapping) and (
+                missing_entry.get("guardrail_events")
+                or missing_entry.get("evaluations")
+            ):
+                missing_record = copy.deepcopy(missing_entry)
+                missing_record.setdefault("bucket_type", "missing")
+                missing_record.setdefault("index", None)
+                missing_record["start"] = None
+                missing_record["end"] = None
+                records.append(missing_record)
+
+        return records
+
+    def guardrail_timeline_to_dataframe(
+        self,
+        *,
+        bucket_s: float,
+        approved: bool | None | Iterable[bool | None] | object = _NO_FILTER,
+        normalized: bool | None | Iterable[bool | None] | object = _NO_FILTER,
+        include_errors: bool = True,
+        service: str | None | Iterable[str | None] | object = _NO_FILTER,
+        decision_state: str | Iterable[str | None] | object = _NO_FILTER,
+        decision_reason: str | Iterable[str | None] | object = _NO_FILTER,
+        decision_mode: str | Iterable[str | None] | object = _NO_FILTER,
+        reason: str | Iterable[str] | object = _NO_FILTER,
+        trigger: str | Iterable[str] | object = _NO_FILTER,
+        trigger_label: str | Iterable[str | None] | object = _NO_FILTER,
+        trigger_comparator: str | Iterable[str | None] | object = _NO_FILTER,
+        trigger_unit: str | Iterable[str | None] | object = _NO_FILTER,
+        trigger_threshold: float | None | Iterable[float | None] | object = _NO_FILTER,
+        trigger_threshold_min: Any = None,
+        trigger_threshold_max: Any = None,
+        trigger_value: float | None | Iterable[float | None] | object = _NO_FILTER,
+        trigger_value_min: Any = None,
+        trigger_value_max: Any = None,
+        since: Any = None,
+        until: Any = None,
+        include_services: bool = True,
+        include_guardrail_dimensions: bool = True,
+        include_decision_dimensions: bool = False,
+        fill_gaps: bool = False,
+        include_missing_bucket: bool = False,
+        coerce_timestamps: bool = True,
+        tz: tzinfo | None = timezone.utc,
+    ) -> pd.DataFrame:
+        records = self.guardrail_timeline_to_records(
+            bucket_s=bucket_s,
+            approved=approved,
+            normalized=normalized,
+            include_errors=include_errors,
+            service=service,
+            decision_state=decision_state,
+            decision_reason=decision_reason,
+            decision_mode=decision_mode,
+            reason=reason,
+            trigger=trigger,
+            trigger_label=trigger_label,
+            trigger_comparator=trigger_comparator,
+            trigger_unit=trigger_unit,
+            trigger_threshold=trigger_threshold,
+            trigger_threshold_min=trigger_threshold_min,
+            trigger_threshold_max=trigger_threshold_max,
+            trigger_value=trigger_value,
+            trigger_value_min=trigger_value_min,
+            trigger_value_max=trigger_value_max,
+            since=since,
+            until=until,
+            include_services=include_services,
+            include_guardrail_dimensions=include_guardrail_dimensions,
+            include_decision_dimensions=include_decision_dimensions,
+            fill_gaps=fill_gaps,
+            include_missing_bucket=include_missing_bucket,
+            coerce_timestamps=coerce_timestamps,
+            tz=tz,
+        )
+
+        if not records:
+            return pd.DataFrame(
+                columns=[
+                    "index",
+                    "start",
+                    "end",
+                    "guardrail_events",
+                    "evaluations",
+                    "services",
+                    "guardrail_reasons",
+                    "guardrail_triggers",
+                    "decision_states",
+                    "decision_reasons",
+                    "decision_modes",
+                    "bucket_type",
+                ]
+            )
+
+        return pd.DataFrame(records)
+
     def risk_evaluations_to_dataframe(
         self,
         *,
@@ -2294,6 +6014,9 @@ class AutoTrader:
         normalized: bool | None | Iterable[bool | None] | object = _NO_FILTER,
         include_errors: bool = True,
         service: str | None | Iterable[str | None] | object = _NO_FILTER,
+        decision_state: str | Iterable[str | None] | object = _NO_FILTER,
+        decision_reason: str | Iterable[str | None] | object = _NO_FILTER,
+        decision_mode: str | Iterable[str | None] | object = _NO_FILTER,
         since: Any = None,
         until: Any = None,
         flatten_decision: bool = False,
@@ -2301,12 +6024,26 @@ class AutoTrader:
         decision_fields: Iterable[Any] | Any | None = None,
         drop_decision_column: bool = False,
         fill_value: Any = pd.NA,
+        coerce_timestamps: bool = False,
+        tz: tzinfo | None = timezone.utc,
     ) -> pd.DataFrame:
         """Return risk evaluations as a pandas DataFrame with optional filters."""
 
         approved_filter = self._prepare_bool_filter(approved)
         normalized_filter = self._prepare_bool_filter(normalized)
         service_filter = self._prepare_service_filter(service)
+        decision_state_filter = self._prepare_decision_filter(
+            decision_state,
+            missing_token=_MISSING_DECISION_STATE,
+        )
+        decision_reason_filter = self._prepare_decision_filter(
+            decision_reason,
+            missing_token=_MISSING_DECISION_REASON,
+        )
+        decision_mode_filter = self._prepare_decision_filter(
+            decision_mode,
+            missing_token=_MISSING_DECISION_MODE,
+        )
         since_ts = self._normalize_time_bound(since)
         until_ts = self._normalize_time_bound(until)
 
@@ -2332,17 +6069,27 @@ class AutoTrader:
             if not normalized_decision_fields:
                 normalized_decision_fields = []
 
-        with self._lock:
-            records = list(self._risk_evaluations)
-
-        filtered_records = self._apply_risk_evaluation_filters(
-            records,
+        (
+            filtered_records,
+            trimmed_by_ttl,
+            ttl_snapshot,
+            history_size,
+        ) = self._collect_filtered_risk_evaluations(
             include_errors=include_errors,
             approved_filter=approved_filter,
             normalized_filter=normalized_filter,
             service_filter=service_filter,
             since_ts=since_ts,
             until_ts=until_ts,
+            state_filter=decision_state_filter,
+            reason_filter=decision_reason_filter,
+            mode_filter=decision_mode_filter,
+        )
+        self._log_risk_history_trimmed(
+            context="dataframe",
+            trimmed=trimmed_by_ttl,
+            ttl=ttl_snapshot,
+            history=history_size,
         )
 
         base_columns = [
@@ -2373,6 +6120,12 @@ class AutoTrader:
         for column in base_columns:
             if column not in df.columns:
                 df[column] = pd.NA
+
+        if coerce_timestamps and "timestamp" in df.columns:
+            df["timestamp"] = [
+                self._normalize_timestamp_for_export(value, coerce=True, tz=tz)
+                for value in df["timestamp"].tolist()
+            ]
 
         flattened_columns: list[str] = []
         if flatten_decision and "decision" in df.columns:
@@ -2413,6 +6166,146 @@ class AutoTrader:
         ordered_columns = ordered_base_columns + flattened_columns + remaining_columns
         return df[ordered_columns]
 
+    def risk_evaluations_to_records(
+        self,
+        *,
+        approved: bool | None | Iterable[bool | None] | object = _NO_FILTER,
+        normalized: bool | None | Iterable[bool | None] | object = _NO_FILTER,
+        include_errors: bool = True,
+        service: str | None | Iterable[str | None] | object = _NO_FILTER,
+        decision_state: str | Iterable[str | None] | object = _NO_FILTER,
+        decision_reason: str | Iterable[str | None] | object = _NO_FILTER,
+        decision_mode: str | Iterable[str | None] | object = _NO_FILTER,
+        since: Any = None,
+        until: Any = None,
+        flatten_decision: bool = False,
+        decision_prefix: str = "decision_",
+        decision_fields: Iterable[Any] | Any | None = None,
+        drop_decision_column: bool = False,
+        fill_value: Any = pd.NA,
+        coerce_timestamps: bool = False,
+        tz: tzinfo | None = timezone.utc,
+    ) -> list[dict[str, Any]]:
+        """Eksportuje historię ocen ryzyka jako listę słowników."""
+
+        approved_filter = self._prepare_bool_filter(approved)
+        normalized_filter = self._prepare_bool_filter(normalized)
+        service_filter = self._prepare_service_filter(service)
+        decision_state_filter = self._prepare_decision_filter(
+            decision_state,
+            missing_token=_MISSING_DECISION_STATE,
+        )
+        decision_reason_filter = self._prepare_decision_filter(
+            decision_reason,
+            missing_token=_MISSING_DECISION_REASON,
+        )
+        decision_mode_filter = self._prepare_decision_filter(
+            decision_mode,
+            missing_token=_MISSING_DECISION_MODE,
+        )
+        since_ts = self._normalize_time_bound(since)
+        until_ts = self._normalize_time_bound(until)
+
+        normalized_decision_fields: list[Any] | None
+        if decision_fields is None:
+            normalized_decision_fields = None
+        else:
+            if isinstance(decision_fields, Iterable) and not isinstance(
+                decision_fields,
+                (str, bytes, bytearray),
+            ):
+                candidates = decision_fields
+            else:
+                candidates = [decision_fields]
+
+            normalized_decision_fields = []
+            for candidate in candidates:
+                if candidate is None:
+                    continue
+                if any(existing == candidate for existing in normalized_decision_fields):
+                    continue
+                normalized_decision_fields.append(candidate)
+            if not normalized_decision_fields:
+                normalized_decision_fields = []
+
+        (
+            filtered_records,
+            trimmed_by_ttl,
+            ttl_snapshot,
+            history_size,
+        ) = self._collect_filtered_risk_evaluations(
+            include_errors=include_errors,
+            approved_filter=approved_filter,
+            normalized_filter=normalized_filter,
+            service_filter=service_filter,
+            since_ts=since_ts,
+            until_ts=until_ts,
+            state_filter=decision_state_filter,
+            reason_filter=decision_reason_filter,
+            mode_filter=decision_mode_filter,
+        )
+        self._log_risk_history_trimmed(
+            context="records",
+            trimmed=trimmed_by_ttl,
+            ttl=ttl_snapshot,
+            history=history_size,
+        )
+
+        if not filtered_records:
+            return []
+
+        if normalized_decision_fields is not None:
+            ordered_keys = list(normalized_decision_fields)
+        else:
+            ordered_keys: list[Any] = []
+            for entry in filtered_records:
+                payload = entry.get("decision")
+                if isinstance(payload, Mapping):
+                    for key in payload.keys():
+                        if not any(existing == key for existing in ordered_keys):
+                            ordered_keys.append(key)
+
+        base_columns = [
+            "timestamp",
+            "approved",
+            "normalized",
+            "decision",
+            "service",
+            "response",
+            "error",
+        ]
+
+        prefix = str(decision_prefix)
+        records: list[dict[str, Any]] = []
+        for entry in filtered_records:
+            record = copy.deepcopy(entry)
+            raw_timestamp = record.get("timestamp")
+            record["timestamp"] = self._normalize_timestamp_for_export(
+                raw_timestamp,
+                coerce=coerce_timestamps,
+                tz=tz,
+            )
+
+            for column in base_columns:
+                if column not in record:
+                    record[column] = None
+
+            if flatten_decision:
+                payload = record.get("decision")
+                for key in ordered_keys:
+                    column_name = f"{prefix}{key}"
+                    if isinstance(payload, Mapping) and key in payload:
+                        record[column_name] = copy.deepcopy(payload[key])
+                    else:
+                        record[column_name] = copy.deepcopy(fill_value)
+
+            if drop_decision_column:
+                record.pop("decision", None)
+
+            records.append(record)
+
+        return records
+
     def configure_risk_evaluation_history(self, limit: int | None) -> None:
         normalised: int | None
         if limit is None:
@@ -2425,6 +6318,9 @@ class AutoTrader:
             else:
                 if normalised < 0:
                     normalised = 0
+        trimmed_by_ttl = 0
+        ttl_snapshot: float | None = None
+        history_size = 0
         with self._lock:
             self._risk_evaluations_limit = normalised
             if normalised is not None:
@@ -2434,6 +6330,44 @@ class AutoTrader:
                     overflow = len(self._risk_evaluations) - normalised
                     if overflow > 0:
                         del self._risk_evaluations[:overflow]
+            trimmed_by_ttl = self._prune_risk_evaluations_locked()
+            ttl_snapshot = self._risk_evaluations_ttl_s
+            history_size = len(self._risk_evaluations)
+        self._log_risk_history_trimmed(
+            context="configure",
+            trimmed=trimmed_by_ttl,
+            ttl=ttl_snapshot,
+            history=history_size,
+        )
+
+    def get_risk_evaluations_ttl(self) -> float | None:
+        """Zwraca obowiązujący TTL (w sekundach) dla historii ocen ryzyka."""
+
+        with self._lock:
+            ttl = self._risk_evaluations_ttl_s
+        return ttl
+
+    def set_risk_evaluations_ttl(self, ttl: float | None) -> float | None:
+        """Aktualizuje czas życia historii ocen ryzyka."""
+
+        normalized = self._normalise_cycle_history_ttl(ttl)
+        trimmed_by_ttl = 0
+        history_size = 0
+        limit_snapshot: int | None = None
+        with self._lock:
+            self._risk_evaluations_ttl_s = normalized
+            trimmed_by_ttl = self._prune_risk_evaluations_locked()
+            history_size = len(self._risk_evaluations)
+            limit_snapshot = self._risk_evaluations_limit
+        self._log(
+            "Zmieniono TTL historii ocen ryzyka",
+            level=logging.DEBUG,
+            ttl=normalized,
+            limit=limit_snapshot,
+            trimmed=trimmed_by_ttl,
+            history=history_size,
+        )
+        return normalized
 
 
 __all__ = ["AutoTrader", "RiskDecision", "EmitterLike", "GuardrailTrigger"]
