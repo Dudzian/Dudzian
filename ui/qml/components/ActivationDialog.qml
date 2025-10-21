@@ -114,6 +114,54 @@ Dialog {
                 }
             }
 
+            GroupBox {
+                title: qsTr("Walidacja OEM")
+                Layout.fillWidth: true
+                visible: controller && controller.oemLicense && Object.keys(controller.oemLicense).length > 0
+                contentItem: ColumnLayout {
+                    spacing: 6
+
+                    property var summary: controller ? controller.oemLicense : ({})
+                    property var effective: summary.effective || ({})
+                    property var primary: summary.primary || ({})
+                    property var fallback: summary.fallback || null
+
+                    Label {
+                        text: qsTr("Status efektywny: %1").arg(parent.effective.status || qsTr("(nieznany)"))
+                        font.bold: true
+                    }
+
+                    Label {
+                        visible: summary.using_fallback === true
+                        text: qsTr("Używany fallback licencyjny")
+                        color: "#f0ad4e"
+                    }
+
+                    Label {
+                        text: qsTr("Licencja podstawowa: %1").arg(parent.primary.status || qsTr("(brak)"))
+                        color: "#6c757d"
+                    }
+
+                    Label {
+                        visible: !!parent.fallback
+                        text: qsTr("Fallback: %1").arg(parent.fallback && parent.fallback.status ? parent.fallback.status : qsTr("(brak)"))
+                        color: "#6c757d"
+                    }
+
+                    Label {
+                        visible: parent.effective.valid_to
+                        text: qsTr("Ważna do: %1").arg(parent.effective.valid_to)
+                    }
+
+                    Label {
+                        visible: parent.effective.fingerprint
+                        text: qsTr("Fingerprint licencji: %1").arg(parent.effective.fingerprint)
+                        wrapMode: Text.Wrap
+                        font.family: "monospace"
+                    }
+                }
+            }
+
             RowLayout {
                 Layout.alignment: Qt.AlignRight
                 spacing: 8

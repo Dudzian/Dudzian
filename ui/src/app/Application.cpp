@@ -43,6 +43,7 @@
 #include "license/LicenseActivationController.hpp"
 #include "app/ActivationController.hpp"
 #include "app/StrategyConfigController.hpp"
+#include "runtime/OfflineRuntimeBridge.hpp"
 #include "security/SecurityAdminController.hpp"
 #include "support/SupportBundleController.hpp"
 #include "health/HealthStatusController.hpp"
@@ -186,6 +187,7 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
     : QObject(parent)
     , m_engine(engine)
 {
+    m_offlineStatus = tr("Offline daemon: nieaktywny");
     m_activationController = std::make_unique<ActivationController>(this);
 
     // Startowe ustawienia instrumentu z klienta (mogą być nadpisane przez CLI)
@@ -355,7 +357,12 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
             return;
 
         m_lastRiskRefreshRequestUtc = QDateTime::currentDateTimeUtc();
-        m_client.refreshRiskState();
+        if (m_offlineMode) {
+            if (m_offlineBridge)
+                m_offlineBridge->refreshRiskNow();
+        } else {
+            m_client.refreshRiskState();
+        }
         m_nextRiskRefreshUtc = m_lastRiskRefreshRequestUtc.addMSecs(m_riskRefreshIntervalMs);
         Q_EMIT riskRefreshScheduleChanged();
     });
@@ -363,6 +370,8 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
 
 Application::~Application()
 {
+    if (m_offlineBridge)
+        m_offlineBridge->stop();
     if (m_localService)
         m_localService->stop();
 }
@@ -451,6 +460,13 @@ void Application::configureParser(QCommandLineParser& parser) const {
     parser.addOption({"local-core-stream-repeat", tr("Powtarza strumień OHLCV stubu")});
     parser.addOption({"local-core-stream-interval", tr("Opóźnienie strumienia (s)"), tr("seconds"), QStringLiteral("0")});
 
+    // Tryb offline (REST)
+    parser.addOption({"offline-mode", tr("Uruchamia UI w trybie offline z lokalnym daemonem REST")});
+    parser.addOption({"offline-endpoint", tr("Adres URL lokalnego daemona offline"), tr("url"),
+                      QStringLiteral("http://127.0.0.1:58081")});
+    parser.addOption({"offline-strategy-config", tr("Plik JSON z konfiguracją strategii offline"), tr("path"), QString()});
+    parser.addOption({"offline-auto-run", tr("Automatycznie uruchamia tryb auto-run po starcie")});
+
     // TLS/mTLS gRPC (demon tradingowy)
     parser.addOption({"grpc-use-mtls", tr("Wymusza mTLS dla klienta tradingowego")});
     parser.addOption({"grpc-root-cert", tr("Root CA (PEM) dla kanału tradingowego"), tr("path"), QString()});
@@ -538,6 +554,40 @@ bool Application::applyParser(const QCommandLineParser& parser) {
     instrument.baseCurrency = parser.value("base");
     instrument.granularityIso8601 = parser.value("granularity");
 
+    m_offlineMode = parser.isSet("offline-mode");
+    m_offlineEndpoint = parser.value("offline-endpoint").trimmed();
+    if (m_offlineEndpoint.trimmed().isEmpty())
+        m_offlineEndpoint = QStringLiteral("http://127.0.0.1:58081");
+    m_offlineAutoRun = parser.isSet("offline-auto-run");
+    m_offlineStrategyConfig.clear();
+    m_offlineAutomationRunning = false;
+    m_offlineStatus = tr("Offline daemon: nieaktywny");
+    const QString offlineConfigPath = parser.value("offline-strategy-config").trimmed();
+    m_offlineStrategyPath.clear();
+    if (!offlineConfigPath.isEmpty()) {
+        const QString expanded = expandPath(offlineConfigPath);
+        QFile configFile(expanded);
+        if (!configFile.exists()) {
+            qCWarning(lcAppMetrics)
+                << "Plik konfiguracji offline nie istnieje:" << expanded;
+        } else if (!configFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            qCWarning(lcAppMetrics)
+                << "Nie udało się otworzyć konfiguracji offline" << expanded << configFile.errorString();
+        } else {
+            QJsonParseError error{};
+            const QJsonDocument doc = QJsonDocument::fromJson(configFile.readAll(), &error);
+            if (error.error != QJsonParseError::NoError || !doc.isObject()) {
+                qCWarning(lcAppMetrics)
+                    << "Niepoprawny JSON konfiguracji offline" << expanded << error.errorString();
+            } else {
+                m_offlineStrategyConfig = doc.object().toVariantMap();
+                m_offlineStrategyPath = expanded;
+            }
+        }
+    }
+
+    Q_EMIT offlineStrategyPathChanged();
+
     QString endpoint = parser.value("endpoint");
     configureLocalBotCoreService(parser, endpoint);
     m_client.setEndpoint(endpoint);
@@ -558,6 +608,8 @@ bool Application::applyParser(const QCommandLineParser& parser) {
 
     const int historyLimit = parser.value("history-limit").toInt();
     m_client.setHistoryLimit(historyLimit);
+    if (historyLimit > 0)
+        m_historyLimit = historyLimit;
 
     m_maxSamples = parser.value("max-samples").toInt();
     if (m_maxSamples <= 0)
@@ -2018,6 +2070,13 @@ QString Application::resolveAutoExportFilePath(const QDir& directory,
 
 void Application::configureLocalBotCoreService(const QCommandLineParser& parser, QString& endpoint)
 {
+    if (m_offlineMode) {
+        if (m_localService && m_localServiceEnabled)
+            m_localService->stop();
+        m_localServiceEnabled = false;
+        return;
+    }
+
     if (parser.isSet(QStringLiteral("no-local-core"))) {
         if (m_localService && m_localServiceEnabled) {
             m_localService->stop();
@@ -2137,13 +2196,33 @@ void Application::start() {
         m_healthController->refresh();
     }
 
-    m_client.start();
+    if (m_offlineMode) {
+        ensureOfflineBridge();
+        if (m_offlineBridge) {
+            const QUrl endpointUrl = QUrl::fromUserInput(m_offlineEndpoint);
+            m_offlineBridge->setEndpoint(endpointUrl);
+            m_offlineBridge->setInstrument(m_instrument);
+            m_offlineBridge->setHistoryLimit(m_historyLimit);
+            m_offlineBridge->setStrategyConfig(m_offlineStrategyConfig);
+            m_offlineBridge->setAutoRunEnabled(m_offlineAutoRun);
+            m_connectionStatus = m_offlineStatus;
+            Q_EMIT connectionStatusChanged();
+            m_offlineBridge->start();
+        }
+    } else {
+        m_client.start();
+    }
     m_started = true;
     applyRiskRefreshTimerState();
 }
 
 void Application::stop() {
-    m_client.stop();
+    if (m_offlineMode) {
+        if (m_offlineBridge)
+            m_offlineBridge->stop();
+    } else {
+        m_client.stop();
+    }
     m_alertsModel.reset();
     m_riskHistoryModel.clear();
     if (m_localService && m_localServiceEnabled) {
@@ -2173,6 +2252,66 @@ void Application::handleRiskState(const RiskSnapshotData& snapshot) {
     if (!m_lastRiskRefreshRequestUtc.isValid())
         m_lastRiskRefreshRequestUtc = m_lastRiskUpdateUtc;
     Q_EMIT riskRefreshScheduleChanged();
+}
+
+void Application::ensureOfflineBridge()
+{
+    if (m_offlineBridge)
+        return;
+    m_offlineBridge = std::make_unique<OfflineRuntimeBridge>(this);
+    connect(m_offlineBridge.get(), &OfflineRuntimeBridge::historyReceived, this, &Application::handleHistory);
+    connect(m_offlineBridge.get(), &OfflineRuntimeBridge::riskStateReceived, this, &Application::handleRiskState);
+    connect(m_offlineBridge.get(), &OfflineRuntimeBridge::performanceGuardUpdated, this,
+            [this](const PerformanceGuard& guard) {
+                m_guard = guard;
+                Q_EMIT performanceGuardChanged();
+                if (m_frameMonitor)
+                    m_frameMonitor->setPerformanceGuard(m_guard);
+                reportOverlayTelemetry();
+            });
+    connect(m_offlineBridge.get(), &OfflineRuntimeBridge::connectionStateChanged, this,
+            &Application::handleOfflineStatusChanged);
+    connect(m_offlineBridge.get(), &OfflineRuntimeBridge::automationStateChanged, this,
+            &Application::handleOfflineAutomationChanged);
+}
+
+void Application::handleOfflineStatusChanged(const QString& status)
+{
+    if (m_offlineStatus == status)
+        return;
+    m_offlineStatus = status;
+    Q_EMIT offlineDaemonStatusChanged();
+    if (m_offlineMode) {
+        if (m_connectionStatus != status) {
+            m_connectionStatus = status;
+            Q_EMIT connectionStatusChanged();
+        }
+    }
+}
+
+void Application::handleOfflineAutomationChanged(bool running)
+{
+    if (m_offlineAutomationRunning == running)
+        return;
+    m_offlineAutomationRunning = running;
+    Q_EMIT offlineAutomationRunningChanged(running);
+}
+
+void Application::startOfflineAutomation()
+{
+    if (!m_offlineMode)
+        return;
+    ensureOfflineBridge();
+    if (m_offlineBridge)
+        m_offlineBridge->startAutomation();
+}
+
+void Application::stopOfflineAutomation()
+{
+    if (!m_offlineMode)
+        return;
+    if (m_offlineBridge)
+        m_offlineBridge->stopAutomation();
 }
 
 void Application::handleRiskHistorySnapshotRecorded(const QDateTime& timestamp)
@@ -2373,14 +2512,16 @@ bool Application::updateInstrument(const QString& exchange,
         || config.granularityIso8601 != m_instrument.granularityIso8601;
 
     const bool wasStreaming = m_client.isStreaming();
-    if (wasStreaming)
+    if (wasStreaming && !m_offlineMode)
         m_client.stop();
 
     m_client.setInstrument(config);
     m_instrument = config;
+    if (m_offlineBridge)
+        m_offlineBridge->setInstrument(m_instrument);
     Q_EMIT instrumentChanged();
 
-    if (wasStreaming)
+    if (wasStreaming && !m_offlineMode)
         m_client.start();
 
     if (changed && !m_loadingUiSettings)
@@ -2452,7 +2593,12 @@ bool Application::triggerRiskRefreshNow()
 {
     const QDateTime requestTime = QDateTime::currentDateTimeUtc();
     m_lastRiskRefreshRequestUtc = requestTime;
-    m_client.refreshRiskState();
+    if (m_offlineMode) {
+        if (m_offlineBridge)
+            m_offlineBridge->refreshRiskNow();
+    } else {
+        m_client.refreshRiskState();
+    }
 
     if (m_riskRefreshEnabled && m_started) {
         m_riskRefreshTimer.start(m_riskRefreshIntervalMs);
