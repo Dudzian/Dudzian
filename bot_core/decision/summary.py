@@ -1,11 +1,12 @@
 """Utilities for aggregating Decision Engine evaluation payloads."""
 from __future__ import annotations
 
+import math
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from typing import Iterable, Mapping, Sequence
 
-from bot_core.decision.schemas import DecisionEngineSummary
+from bot_core.decision.models import DecisionEngineSummary
 
 __all__ = ["DecisionSummaryAggregator", "summarize_evaluation_payloads", "DecisionEngineSummary"]
 
@@ -166,6 +167,194 @@ _THRESHOLD_DEFINITIONS: Mapping[str, tuple[str, str, str]] = {
 }
 
 
+def _percentile(sorted_values: Sequence[float], percentile: float) -> float:
+    if not sorted_values:
+        raise ValueError("Cannot compute percentile of empty sequence")
+    if len(sorted_values) == 1:
+        return sorted_values[0]
+    position = (len(sorted_values) - 1) * percentile
+    lower_index = int(math.floor(position))
+    upper_index = int(math.ceil(position))
+    if lower_index == upper_index:
+        return sorted_values[lower_index]
+    lower_value = sorted_values[lower_index]
+    upper_value = sorted_values[upper_index]
+    fraction = position - lower_index
+    return lower_value + fraction * (upper_value - lower_value)
+
+
+def _compute_stats(values: Sequence[float]) -> dict[str, float | int | None]:
+    count = len(values)
+    if not count:
+        return {
+            "count": 0,
+            "sum": 0.0,
+            "avg": 0.0,
+            "median": None,
+            "p10": None,
+            "p90": None,
+            "p95": None,
+            "min": None,
+            "max": None,
+            "std": 0.0,
+        }
+    sorted_values = sorted(values)
+    total = math.fsum(sorted_values)
+    average = total / count
+    variance = math.fsum((value - average) ** 2 for value in sorted_values) / count
+    std = math.sqrt(variance)
+    return {
+        "count": count,
+        "sum": total,
+        "avg": average,
+        "median": _percentile(sorted_values, 0.5),
+        "p10": _percentile(sorted_values, 0.1),
+        "p90": _percentile(sorted_values, 0.9),
+        "p95": _percentile(sorted_values, 0.95),
+        "min": sorted_values[0],
+        "max": sorted_values[-1],
+        "std": std,
+    }
+
+
+@dataclass
+class _StatAccumulator:
+    total: list[float] = field(default_factory=list)
+    accepted: list[float] = field(default_factory=list)
+    rejected: list[float] = field(default_factory=list)
+
+    def add(self, value: float, *, accepted: bool) -> None:
+        self.total.append(value)
+        if accepted:
+            self.accepted.append(value)
+        else:
+            self.rejected.append(value)
+
+    def finalize(
+        self,
+        name: str,
+        summary: dict[str, object],
+        *,
+        include_p95: bool = True,
+    ) -> None:
+        total_stats = _compute_stats(self.total)
+        summary[f"{name}_count"] = total_stats["count"]
+        summary[f"sum_{name}"] = total_stats["sum"]
+        summary[f"avg_{name}"] = total_stats["avg"]
+        summary[f"median_{name}"] = total_stats["median"]
+        summary[f"p10_{name}"] = total_stats["p10"]
+        summary[f"p90_{name}"] = total_stats["p90"]
+        if include_p95:
+            summary[f"p95_{name}"] = total_stats["p95"]
+        summary[f"min_{name}"] = total_stats["min"]
+        summary[f"max_{name}"] = total_stats["max"]
+        summary[f"std_{name}"] = total_stats["std"]
+
+        accepted_stats = _compute_stats(self.accepted)
+        summary[f"accepted_{name}_count"] = accepted_stats["count"]
+        summary[f"accepted_sum_{name}"] = accepted_stats["sum"]
+        summary[f"accepted_avg_{name}"] = accepted_stats["avg"]
+        summary[f"accepted_median_{name}"] = accepted_stats["median"]
+        summary[f"accepted_p10_{name}"] = accepted_stats["p10"]
+        summary[f"accepted_p90_{name}"] = accepted_stats["p90"]
+        if include_p95:
+            summary[f"accepted_p95_{name}"] = accepted_stats["p95"]
+        summary[f"accepted_min_{name}"] = accepted_stats["min"]
+        summary[f"accepted_max_{name}"] = accepted_stats["max"]
+        summary[f"accepted_std_{name}"] = accepted_stats["std"]
+
+        rejected_stats = _compute_stats(self.rejected)
+        summary[f"rejected_{name}_count"] = rejected_stats["count"]
+        summary[f"rejected_sum_{name}"] = rejected_stats["sum"]
+        summary[f"rejected_avg_{name}"] = rejected_stats["avg"]
+        summary[f"rejected_median_{name}"] = rejected_stats["median"]
+        summary[f"rejected_p10_{name}"] = rejected_stats["p10"]
+        summary[f"rejected_p90_{name}"] = rejected_stats["p90"]
+        if include_p95:
+            summary[f"rejected_p95_{name}"] = rejected_stats["p95"]
+        summary[f"rejected_min_{name}"] = rejected_stats["min"]
+        summary[f"rejected_max_{name}"] = rejected_stats["max"]
+        summary[f"rejected_std_{name}"] = rejected_stats["std"]
+
+
+@dataclass
+class _ThresholdAccumulator:
+    margin_key: str
+    total: list[float] = field(default_factory=list)
+    accepted: list[float] = field(default_factory=list)
+    rejected: list[float] = field(default_factory=list)
+    total_breaches: int = 0
+    accepted_breaches: int = 0
+    rejected_breaches: int = 0
+
+    def add(self, value: float, *, accepted: bool) -> None:
+        self.total.append(value)
+        breached = value < 0.0
+        if accepted:
+            self.accepted.append(value)
+            if breached:
+                self.accepted_breaches += 1
+        else:
+            self.rejected.append(value)
+            if breached:
+                self.rejected_breaches += 1
+        if breached:
+            self.total_breaches += 1
+
+    def finalize(self, base_name: str, summary: dict[str, object]) -> None:
+        total_stats = _compute_stats(self.total)
+        margin_key = self.margin_key
+        summary[f"{margin_key}_count"] = total_stats["count"]
+        summary[f"sum_{margin_key}"] = total_stats["sum"]
+        summary[f"avg_{margin_key}"] = total_stats["avg"]
+        summary[f"median_{margin_key}"] = total_stats["median"]
+        summary[f"p10_{margin_key}"] = total_stats["p10"]
+        summary[f"p90_{margin_key}"] = total_stats["p90"]
+        summary[f"min_{margin_key}"] = total_stats["min"]
+        summary[f"max_{margin_key}"] = total_stats["max"]
+        summary[f"std_{margin_key}"] = total_stats["std"]
+        summary[f"{base_name}_threshold_breaches"] = self.total_breaches
+        summary[f"{base_name}_threshold_breach_rate"] = (
+            self.total_breaches / total_stats["count"]
+            if total_stats["count"]
+            else 0.0
+        )
+
+        accepted_stats = _compute_stats(self.accepted)
+        summary[f"accepted_{margin_key}_count"] = accepted_stats["count"]
+        summary[f"accepted_sum_{margin_key}"] = accepted_stats["sum"]
+        summary[f"accepted_avg_{margin_key}"] = accepted_stats["avg"]
+        summary[f"accepted_median_{margin_key}"] = accepted_stats["median"]
+        summary[f"accepted_p10_{margin_key}"] = accepted_stats["p10"]
+        summary[f"accepted_p90_{margin_key}"] = accepted_stats["p90"]
+        summary[f"accepted_min_{margin_key}"] = accepted_stats["min"]
+        summary[f"accepted_max_{margin_key}"] = accepted_stats["max"]
+        summary[f"accepted_std_{margin_key}"] = accepted_stats["std"]
+        summary[f"accepted_{base_name}_threshold_breaches"] = self.accepted_breaches
+        summary[f"accepted_{base_name}_threshold_breach_rate"] = (
+            self.accepted_breaches / accepted_stats["count"]
+            if accepted_stats["count"]
+            else 0.0
+        )
+
+        rejected_stats = _compute_stats(self.rejected)
+        summary[f"rejected_{margin_key}_count"] = rejected_stats["count"]
+        summary[f"rejected_sum_{margin_key}"] = rejected_stats["sum"]
+        summary[f"rejected_avg_{margin_key}"] = rejected_stats["avg"]
+        summary[f"rejected_median_{margin_key}"] = rejected_stats["median"]
+        summary[f"rejected_p10_{margin_key}"] = rejected_stats["p10"]
+        summary[f"rejected_p90_{margin_key}"] = rejected_stats["p90"]
+        summary[f"rejected_min_{margin_key}"] = rejected_stats["min"]
+        summary[f"rejected_max_{margin_key}"] = rejected_stats["max"]
+        summary[f"rejected_std_{margin_key}"] = rejected_stats["std"]
+        summary[f"rejected_{base_name}_threshold_breaches"] = self.rejected_breaches
+        summary[f"rejected_{base_name}_threshold_breach_rate"] = (
+            self.rejected_breaches / rejected_stats["count"]
+            if rejected_stats["count"]
+            else 0.0
+        )
+
+
 class DecisionSummaryAggregator:
     """Aggregates raw evaluation payloads into a summary mapping."""
 
@@ -199,6 +388,34 @@ class DecisionSummaryAggregator:
     def build_summary(self) -> dict[str, object]:
         summary: dict[str, object] = {}
 
+        metric_accumulators: dict[str, _StatAccumulator] = {
+            "net_edge_bps": _StatAccumulator(),
+            "cost_bps": _StatAccumulator(),
+            "latency_ms": _StatAccumulator(),
+            "expected_probability": _StatAccumulator(),
+            "expected_return_bps": _StatAccumulator(),
+            "expected_value_bps": _StatAccumulator(),
+            "expected_value_minus_cost_bps": _StatAccumulator(),
+            "notional": _StatAccumulator(),
+            "model_success_probability": _StatAccumulator(),
+            "model_expected_return_bps": _StatAccumulator(),
+            "model_expected_value_bps": _StatAccumulator(),
+            "model_expected_value_minus_cost_bps": _StatAccumulator(),
+        }
+        metrics_without_p95 = {"expected_probability", "model_success_probability"}
+
+        threshold_accumulators = {
+            "probability": _ThresholdAccumulator("probability_threshold_margin"),
+            "net_edge": _ThresholdAccumulator("net_edge_threshold_margin"),
+            "cost": _ThresholdAccumulator("cost_threshold_margin"),
+            "latency": _ThresholdAccumulator("latency_threshold_margin"),
+            "notional": _ThresholdAccumulator("notional_threshold_margin"),
+        }
+        margin_to_base = {
+            accumulator.margin_key: base
+            for base, accumulator in threshold_accumulators.items()
+        }
+
         accepted_count = 0
         rejected_count = 0
         latest_payload: Mapping[str, object] | None = None
@@ -218,13 +435,6 @@ class DecisionSummaryAggregator:
         action_breakdown: dict[str, _BreakdownAccumulator] = {}
         strategy_breakdown: dict[str, _BreakdownAccumulator] = {}
         symbol_breakdown: dict[str, _BreakdownAccumulator] = {}
-
-        cost_sum = 0.0
-        cost_count = 0
-        net_edge_sum = 0.0
-        net_edge_count = 0
-        expected_probability_sum = 0.0
-        expected_probability_count = 0
 
         longest_acceptance_streak = 0
         longest_rejection_streak = 0
@@ -258,18 +468,17 @@ class DecisionSummaryAggregator:
 
             cost = _coerce_float(payload.get("cost_bps"))
             if cost is not None:
-                cost_sum += cost
-                cost_count += 1
+                metric_accumulators["cost_bps"].add(cost, accepted=accepted)
 
             net_edge = _coerce_float(payload.get("net_edge_bps"))
             if net_edge is not None:
-                net_edge_sum += net_edge
-                net_edge_count += 1
+                metric_accumulators["net_edge_bps"].add(net_edge, accepted=accepted)
 
             expected_probability = _coerce_float(candidate.get("expected_probability"))
             if expected_probability is not None:
-                expected_probability_sum += expected_probability
-                expected_probability_count += 1
+                metric_accumulators["expected_probability"].add(
+                    expected_probability, accepted=accepted
+                )
 
             expected_return = _coerce_float(candidate.get("expected_return_bps"))
             expected_value = (
@@ -299,6 +508,39 @@ class DecisionSummaryAggregator:
                 if model_expected_value is not None and cost is not None
                 else None
             )
+
+            if expected_return is not None:
+                metric_accumulators["expected_return_bps"].add(
+                    expected_return, accepted=accepted
+                )
+            if expected_value is not None:
+                metric_accumulators["expected_value_bps"].add(
+                    expected_value, accepted=accepted
+                )
+            if expected_value_minus_cost is not None:
+                metric_accumulators["expected_value_minus_cost_bps"].add(
+                    expected_value_minus_cost, accepted=accepted
+                )
+            if notional is not None:
+                metric_accumulators["notional"].add(notional, accepted=accepted)
+            if latency is not None:
+                metric_accumulators["latency_ms"].add(latency, accepted=accepted)
+            if model_success_probability is not None:
+                metric_accumulators["model_success_probability"].add(
+                    model_success_probability, accepted=accepted
+                )
+            if model_expected_return is not None:
+                metric_accumulators["model_expected_return_bps"].add(
+                    model_expected_return, accepted=accepted
+                )
+            if model_expected_value is not None:
+                metric_accumulators["model_expected_value_bps"].add(
+                    model_expected_value, accepted=accepted
+                )
+            if model_expected_value_minus_cost is not None:
+                metric_accumulators["model_expected_value_minus_cost_bps"].add(
+                    model_expected_value_minus_cost, accepted=accepted
+                )
 
             breakdown_metrics: dict[str, float] = {}
             if net_edge is not None:
@@ -427,6 +669,11 @@ class DecisionSummaryAggregator:
                     else:
                         margin = threshold_value - observed
                     summary[f"latest_{margin_key}"] = margin
+                    base_name = margin_to_base.get(margin_key)
+                    if base_name is not None:
+                        threshold_accumulators[base_name].add(
+                            margin, accepted=accepted
+                        )
 
         if "rejection_reasons" in summary:
             rejection_counter: Counter[str] = summary["rejection_reasons"]  # type: ignore[assignment]
@@ -521,13 +768,12 @@ class DecisionSummaryAggregator:
 
         summary["history_start_generated_at"] = history_start_generated_at
 
-        summary["avg_expected_probability"] = (
-            expected_probability_sum / expected_probability_count if expected_probability_count else 0.0
-        )
-        summary["avg_cost_bps"] = cost_sum / cost_count if cost_count else 0.0
-        summary["avg_net_edge_bps"] = net_edge_sum / net_edge_count if net_edge_count else 0.0
-        summary["sum_cost_bps"] = cost_sum
-        summary["sum_net_edge_bps"] = net_edge_sum
+        for name, accumulator in metric_accumulators.items():
+            include_p95 = name not in metrics_without_p95
+            accumulator.finalize(name, summary, include_p95=include_p95)
+
+        for base_name, accumulator in threshold_accumulators.items():
+            accumulator.finalize(base_name, summary)
 
         if latest_payload is None:
             summary.setdefault("generated_at", None)
