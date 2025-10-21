@@ -44,6 +44,8 @@ import numpy as np
 import pandas as pd
 
 from ._license import ensure_ai_signals_enabled
+from .inference import DecisionModelInference, ModelRepository
+from .models import ModelScore
 from .regime import (
     MarketRegimeAssessment,
     MarketRegimeClassifier,
@@ -169,6 +171,11 @@ except Exception:
 # Zmienne modułowe podmieniane w testach jednostkowych
 _AIModels = _DefaultAIModels
 _windowize = _default_windowize
+
+try:  # pragma: no cover - DecisionOrchestrator nie zawsze dostępny w minimalnych buildach
+    from bot_core.decision.orchestrator import DecisionOrchestrator as _DecisionOrchestrator
+except Exception:  # pragma: no cover - komponent optionalny
+    _DecisionOrchestrator = None  # type: ignore[misc]
 
 
 @dataclass(slots=True)
@@ -399,6 +406,10 @@ class AIManager:
         self._regime_histories: Dict[str, RegimeHistory] = {}
         self._degraded = bool(_AI_IMPORT_ERROR)
         self._degradation_reason: str | None = None
+        self._decision_model_repository: ModelRepository | None = None
+        self._decision_inferences: Dict[str, DecisionModelInference] = {}
+        self._decision_default_name: str | None = None
+        self._decision_orchestrator: Any | None = None
         if self._degraded:
             self._degradation_reason = (
                 "fallback_ai_models"
@@ -529,12 +540,172 @@ class AIManager:
     def require_real_models(self) -> None:
         """Zgłasza wyjątek gdy dostępne są tylko fallbackowe modele AI."""
 
-        if self._degraded:
+        if self._degraded or not self._decision_inferences:
             reason = self._degradation_reason or "AI backend in degraded mode"
             raise RuntimeError(
                 "Real models are required for live trading; current backend is degraded: "
                 + str(reason)
             )
+
+    # ------------------------ Decision Engine repo ------------------------
+    def configure_decision_repository(self, base_path: PathInput) -> ModelRepository:
+        """Skonfiguruj repozytorium artefaktów Decision Engine."""
+
+        repository_path = Path(base_path).expanduser().resolve()
+        repository_path.mkdir(parents=True, exist_ok=True)
+        repository = ModelRepository(repository_path)
+        self._decision_model_repository = repository
+        return repository
+
+    def attach_decision_orchestrator(
+        self,
+        orchestrator: Any,
+        *,
+        default_model: str | None = None,
+    ) -> None:
+        """Podłącz istniejący DecisionOrchestrator do menedżera."""
+
+        if _DecisionOrchestrator is not None and not isinstance(orchestrator, _DecisionOrchestrator):
+            raise TypeError("orchestrator must be DecisionOrchestrator instance")
+        self._decision_orchestrator = orchestrator
+        if default_model:
+            self._decision_default_name = self._normalize_model_type(default_model)
+        for index, (name, inference) in enumerate(self._decision_inferences.items()):
+            set_default = self._decision_default_name == name or (
+                self._decision_default_name is None and index == 0
+            )
+            try:
+                orchestrator.attach_named_inference(name, inference, set_default=set_default)
+            except Exception:  # pragma: no cover - zabezpieczenie przed zmianami API
+                logger.exception("Failed to attach inference %s to DecisionOrchestrator", name)
+
+    def detach_decision_orchestrator(self) -> None:
+        """Odłącz aktualny DecisionOrchestrator."""
+
+        if self._decision_orchestrator is None:
+            return
+        orchestrator = self._decision_orchestrator
+        for name in list(self._decision_inferences):
+            try:
+                orchestrator.detach_named_inference(name)
+            except Exception:  # pragma: no cover - API defensywne
+                logger.debug("Could not detach inference %s", name, exc_info=True)
+        self._decision_orchestrator = None
+
+    def _decision_repository(self) -> ModelRepository:
+        if self._decision_model_repository is None:
+            repository_path = self.model_dir / "decision_engine"
+            repository_path.mkdir(parents=True, exist_ok=True)
+            self._decision_model_repository = ModelRepository(repository_path)
+        return self._decision_model_repository
+
+    def load_decision_artifact(
+        self,
+        name: str,
+        artifact: PathInput,
+        *,
+        repository_root: PathInput | None = None,
+        set_default: bool = False,
+    ) -> DecisionModelInference:
+        """Załaduj artefakt Decision Engine i zarejestruj inference."""
+
+        normalized_name = self._normalize_model_type(name)
+        if repository_root is not None:
+            repository = self.configure_decision_repository(repository_root)
+        else:
+            repository = self._decision_model_repository or self._decision_repository()
+
+        inference = DecisionModelInference(repository)
+        artifact_path = Path(artifact)
+        if artifact_path.is_absolute():
+            if not artifact_path.exists():
+                raise FileNotFoundError(artifact_path)
+            load_target: Path | str = artifact_path
+        else:
+            load_target = artifact_path
+
+        inference.load_weights(load_target)
+        self._decision_inferences[normalized_name] = inference
+        if set_default or self._decision_default_name is None:
+            self._decision_default_name = normalized_name
+        if self._decision_orchestrator is not None:
+            try:
+                self._decision_orchestrator.attach_named_inference(
+                    normalized_name,
+                    inference,
+                    set_default=set_default or self._decision_default_name == normalized_name,
+                )
+            except Exception:  # pragma: no cover - defensywnie logujemy
+                logger.exception(
+                    "Nie udało się podłączyć inference %s do DecisionOrchestratora", normalized_name
+                )
+        self._mark_backend_ready(inference)
+        return inference
+
+    def _resolve_decision_inference(self, model_name: str | None = None) -> DecisionModelInference:
+        if not self._decision_inferences:
+            raise RuntimeError("Decision model inference repository is empty")
+        if model_name is None:
+            if self._decision_default_name is None:
+                model = next(iter(self._decision_inferences.values()))
+                return model
+            model_name = self._decision_default_name
+        normalized = self._normalize_model_type(model_name)
+        try:
+            return self._decision_inferences[normalized]
+        except KeyError as exc:
+            raise KeyError(f"Decision model {normalized!r} nie jest załadowany") from exc
+
+    def score_decision_features(
+        self,
+        features: Mapping[str, float],
+        *,
+        model_name: str | None = None,
+    ) -> ModelScore:
+        """Zwróć wynik inference Decision Engine dla podanych cech."""
+
+        inference = self._resolve_decision_inference(model_name)
+        return inference.score(features)
+
+    def build_decision_engine_payload(
+        self,
+        *,
+        strategy: str,
+        action: str,
+        risk_profile: str,
+        symbol: str,
+        notional: float,
+        features: Mapping[str, float],
+        model_name: str | None = None,
+    ) -> Mapping[str, object]:
+        """Przygotuj metadane zgodne z oczekiwaniami RiskEngine."""
+
+        score = self.score_decision_features(features, model_name=model_name)
+        candidate_payload: Dict[str, object] = {
+            "strategy": strategy,
+            "action": action,
+            "risk_profile": risk_profile,
+            "symbol": symbol,
+            "notional": float(notional),
+            "expected_return_bps": float(score.expected_return_bps),
+            "expected_probability": float(score.success_probability),
+            "metadata": {
+                "decision_engine": {
+                    "features": dict(features),
+                }
+            },
+        }
+        threshold = float(getattr(self, "ai_threshold_bps", 0.0))
+        ai_payload = {
+            "prediction_bps": float(score.expected_return_bps),
+            "probability": float(score.success_probability),
+            "model": model_name or self._decision_default_name or "default",
+            "threshold_bps": threshold,
+        }
+        return {
+            "candidate": candidate_payload,
+            "ai": ai_payload,
+        }
 
     # --------------------------- Zespoły modeli ---------------------------
     def register_ensemble(
@@ -792,6 +963,10 @@ class AIManager:
 
     def _mark_backend_ready(self, model: Any) -> None:
         if not self._degraded:
+            return
+        if isinstance(model, DecisionModelInference) and getattr(model, "is_ready", False):
+            self._degraded = False
+            self._degradation_reason = None
             return
         if _AI_IMPORT_ERROR is not None:
             return

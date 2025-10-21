@@ -36,6 +36,7 @@ from bot_core.ai.regime import (
     RiskLevel,
 )
 from bot_core.ai.config_loader import load_risk_thresholds
+from bot_core.risk.engine import ThresholdRiskEngine
 
 try:  # pragma: no cover - decision module opcjonalny
     from bot_core.decision import DecisionCandidate, DecisionEvaluation, DecisionOrchestrator
@@ -210,12 +211,12 @@ class AutoTrader:
         self.execution_service = execution_service
         self.data_provider = data_provider
         self.bootstrap_context = bootstrap_context
-        self.decision_orchestrator = (
+        bootstrap_orchestrator = (
             getattr(bootstrap_context, "decision_orchestrator", None)
             if bootstrap_context is not None
             else None
         )
-        self._decision_risk_engine = (
+        bootstrap_risk_engine = (
             getattr(bootstrap_context, "risk_engine", None)
             if bootstrap_context is not None
             else None
@@ -225,10 +226,38 @@ class AutoTrader:
             if bootstrap_context is not None
             else None
         )
-        self.core_risk_engine = core_risk_engine
+        if core_risk_engine is not None:
+            self.core_risk_engine = core_risk_engine
+        else:
+            self.core_risk_engine = bootstrap_risk_engine or self._build_default_risk_engine()
+        self._decision_risk_engine = bootstrap_risk_engine or self.core_risk_engine
+        self.decision_orchestrator = bootstrap_orchestrator
+        if (
+            self.decision_orchestrator is None
+            and self._decision_engine_config is not None
+            and DecisionOrchestrator is not None
+        ):
+            try:
+                self.decision_orchestrator = DecisionOrchestrator(self._decision_engine_config)
+            except Exception:  # pragma: no cover - diagnostyka inicjalizacji
+                LOGGER.debug("AutoTrader failed to initialise DecisionOrchestrator", exc_info=True)
+                self.decision_orchestrator = None
+        if (
+            self.decision_orchestrator is not None
+            and hasattr(self.core_risk_engine, "attach_decision_orchestrator")
+        ):
+            try:
+                self.core_risk_engine.attach_decision_orchestrator(self.decision_orchestrator)
+            except Exception:  # pragma: no cover - defensywne logowanie
+                LOGGER.debug(
+                    "AutoTrader could not attach DecisionOrchestrator to risk engine",
+                    exc_info=True,
+                )
         self.core_execution_service = core_execution_service
         self.ai_connector = ai_connector
         self.ai_manager: Any | None = getattr(gui, "ai_mgr", None)
+        if self.ai_manager is None and bootstrap_context is not None:
+            self.ai_manager = getattr(bootstrap_context, "ai_manager", None)
         self._thresholds_loader: Callable[[], Mapping[str, Any]] = (
             thresholds_loader or load_risk_thresholds
         )
@@ -578,6 +607,13 @@ class AutoTrader:
             return self.ai_connector
         return None
 
+    def _build_default_risk_engine(self) -> Any | None:
+        try:
+            return ThresholdRiskEngine()
+        except Exception:  # pragma: no cover - środowisko testowe może nie mieć zależności
+            LOGGER.debug("AutoTrader could not create default ThresholdRiskEngine", exc_info=True)
+            return None
+
     def _ai_feature_columns(self, market_data: pd.DataFrame) -> list[str]:
         numeric_cols = [
             str(column)
@@ -814,6 +850,7 @@ class AutoTrader:
         assessment: MarketRegimeAssessment,
         last_return: float,
         ai_context: Mapping[str, object] | None = None,
+        ai_manager: Any | None = None,
     ) -> Any | None:
         if DecisionCandidate is None:
             return None
@@ -843,25 +880,45 @@ class AutoTrader:
                 "generated_at": timestamp,
             },
         }
+        decision_section = metadata["decision_engine"]
         expected_return = float(last_return * 10_000.0)
         if signal == "sell":
             expected_return = -abs(expected_return)
         elif signal == "buy":
             expected_return = abs(expected_return)
         expected_probability = max(0.0, min(1.0, float(assessment.confidence)))
+        candidate_notional = self._estimate_candidate_notional(symbol)
+        if ai_manager is not None and hasattr(ai_manager, "build_decision_engine_payload"):
+            try:
+                engine_payload = ai_manager.build_decision_engine_payload(
+                    strategy=self.current_strategy,
+                    action="enter" if signal == "buy" else "exit",
+                    risk_profile=self._decision_risk_profile_name(),
+                    symbol=symbol,
+                    notional=candidate_notional,
+                    features=features,
+                )
+            except Exception:  # pragma: no cover - diagnostyka integracji
+                engine_payload = None
+                LOGGER.debug("AI manager decision payload generation failed", exc_info=True)
+            else:
+                if isinstance(engine_payload, Mapping):
+                    decision_section.update(engine_payload)
+                    if ai_context is None and isinstance(engine_payload.get("ai"), Mapping):
+                        ai_context = engine_payload.get("ai")
         if ai_context:
             expected_return, expected_probability, ai_payload = self._normalize_ai_context(
                 ai_context,
                 default_return_bps=expected_return,
                 default_probability=expected_probability,
             )
-            metadata["decision_engine"]["ai"] = ai_payload
+            decision_section["ai"] = ai_payload
         candidate = DecisionCandidate(
             strategy=self.current_strategy,
             action="enter" if signal == "buy" else "exit",
             risk_profile=self._decision_risk_profile_name(),
             symbol=symbol,
-            notional=self._estimate_candidate_notional(symbol),
+            notional=candidate_notional,
             expected_return_bps=expected_return,
             expected_probability=expected_probability,
             metadata=metadata,
@@ -940,6 +997,7 @@ class AutoTrader:
         assessment: MarketRegimeAssessment,
         last_return: float,
         ai_context: Mapping[str, object] | None = None,
+        ai_manager: Any | None = None,
     ) -> Any | None:
         orchestrator = self._resolve_decision_orchestrator()
         if orchestrator is None or DecisionCandidate is None:
@@ -951,6 +1009,7 @@ class AutoTrader:
             assessment=assessment,
             last_return=last_return,
             ai_context=ai_context,
+            ai_manager=ai_manager,
         )
         if candidate is None:
             return None
@@ -2489,6 +2548,7 @@ class AutoTrader:
                 assessment=assessment,
                 last_return=last_return,
                 ai_context=ai_context,
+                ai_manager=ai_manager,
             )
             if decision_evaluation is not None and not getattr(
                 decision_evaluation, "accepted", True
