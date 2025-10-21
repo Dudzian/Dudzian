@@ -727,6 +727,9 @@ def test_load_core_config_reads_portfolio_inputs(tmp_path: Path) -> None:
                     limit: 3
                     reason: manual
                     duration: 600
+              signal_limits:
+                mean_reversion:
+                  balanced: 3
               schedules: {}
         """,
         encoding="utf-8",
@@ -752,6 +755,7 @@ def test_load_core_config_reads_portfolio_inputs(tmp_path: Path) -> None:
     assert override.reason == "manual"
     assert override.until is None
     assert override.duration_seconds == pytest.approx(600.0)
+    assert scheduler.signal_limits == {"mean_reversion": {"balanced": 3}}
     assert scheduler.allocation_rebalance_seconds == 45
     assert isinstance(scheduler.capital_policy, Mapping)
     assert scheduler.capital_policy.get("name") == "fixed_weight"

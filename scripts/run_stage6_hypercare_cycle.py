@@ -50,6 +50,7 @@ from bot_core.runtime.stage6_hypercare import (  # noqa: E402
     Stage6HypercareConfig,
     Stage6HypercareCycle,
 )
+from scripts._cli_common import default_decision_log_path, timestamp_slug
 
 
 def _load_text_config(path: Path) -> Mapping[str, Any]:
@@ -86,13 +87,7 @@ def _minutes_to_timedelta(value: Any) -> timedelta | None:
 
 
 def _default_summary_path() -> Path:
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    return Path("var/audit/stage6") / f"stage6_hypercare_summary_{timestamp}.json"
-
-
-def _default_decision_log_path(governor: str) -> Path:
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    return Path("var/audit/decision_log") / f"portfolio_decision_{governor}_{timestamp}.jsonl"
+    return Path("var/audit/stage6") / f"stage6_hypercare_summary_{timestamp_slug()}.json"
 
 
 def _default_portfolio_summary_path(governor: str) -> Path:
@@ -375,7 +370,7 @@ def _parse_portfolio(config: Mapping[str, Any] | None) -> tuple[PortfolioCycleCo
         configured_path, decision_log_kwargs = resolve_decision_log_config(core_config)
         decision_log_path = _expand_path(decision_section.get("path"))
         if decision_log_path is None:
-            decision_log_path = configured_path or _default_decision_log_path(governor_name)
+            decision_log_path = configured_path or default_decision_log_path(governor_name)
         if decision_log_path:
             decision_log_path.parent.mkdir(parents=True, exist_ok=True)
             decision_log = PortfolioDecisionLog(

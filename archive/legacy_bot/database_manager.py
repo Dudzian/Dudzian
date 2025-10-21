@@ -1,8 +1,6 @@
-# database_manager.py
-# -*- coding: utf-8 -*-
-"""
-Shim kompatybilności: re-eksportuje publiczny interfejs z KryptoLowca.database_manager.
-Zostaw ten plik w katalogu głównym projektu, aby stare importy nadal działały.
-"""
+"""Legacy compatibility shim delegating to :mod:`KryptoLowca.database_manager`."""
 from __future__ import annotations
-from KryptoLowca.database_manager import *  # noqa: F401,F403
+
+from archive.legacy_bot._compat import proxy_globals
+
+proxy_globals(globals(), "KryptoLowca.database_manager", "database_manager.py")

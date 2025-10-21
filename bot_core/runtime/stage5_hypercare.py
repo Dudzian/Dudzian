@@ -81,6 +81,16 @@ class Stage5OemAcceptanceConfig:
 
 
 @dataclass(slots=True)
+class Stage5DecisionEngineConfig:
+    summary_path: Path
+    min_acceptance_rate: float | None = None
+    warn_acceptance_rate: float | None = None
+    min_observations: int | None = None
+    require_latest_model: bool = True
+    require_thresholds: bool = True
+
+
+@dataclass(slots=True)
 class Stage5HypercareConfig:
     output_path: Path
     signature_path: Path | None = None
@@ -92,6 +102,7 @@ class Stage5HypercareConfig:
     training: Stage5TrainingConfig | None = None
     slo: Stage5SloConfig | None = None
     oem: Stage5OemAcceptanceConfig | None = None
+    decision_engine: Stage5DecisionEngineConfig | None = None
 
 
 @dataclass(slots=True)
@@ -161,6 +172,11 @@ class Stage5HypercareCycle:
             artifacts["oem_acceptance"] = oem_result
             issues.extend(oem_result["issues"])
             warnings.extend(oem_result["warnings"])
+        if self._config.decision_engine:
+            decision_result = self._evaluate_decision_engine(self._config.decision_engine)
+            artifacts["decision_engine"] = decision_result
+            issues.extend(decision_result["issues"])
+            warnings.extend(decision_result["warnings"])
 
         overall_status = _status_from_flags(issues, warnings)
         payload: MutableMapping[str, Any] = {
@@ -533,6 +549,112 @@ class Stage5HypercareCycle:
 
         return self._build_section_payload(issues, warnings, details)
 
+    def _evaluate_decision_engine(
+        self, config: Stage5DecisionEngineConfig
+    ) -> Mapping[str, Any]:
+        issues: list[str] = []
+        warnings: list[str] = []
+        summary_path = config.summary_path.expanduser()
+        details: MutableMapping[str, Any] = {"summary_path": str(summary_path)}
+
+        try:
+            payload = _load_json(summary_path)
+        except FileNotFoundError:
+            issues.append("Brak pliku z podsumowaniem Decision Engine.")
+            return self._build_section_payload(issues, warnings, details)
+        except json.JSONDecodeError:
+            issues.append("Nieprawidłowy format JSON w podsumowaniu Decision Engine.")
+            return self._build_section_payload(issues, warnings, details)
+
+        if payload.get("type") != "decision_engine_summary":
+            issues.append(
+                "Niepoprawny typ raportu Decision Engine (oczekiwano 'decision_engine_summary')."
+            )
+
+        filters = payload.get("filters") if isinstance(payload.get("filters"), Mapping) else None
+        if filters:
+            details["filters"] = dict(filters)
+
+        details.update(
+            {
+                "total": payload.get("total"),
+                "accepted": payload.get("accepted"),
+                "rejected": payload.get("rejected"),
+                "acceptance_rate": payload.get("acceptance_rate"),
+                "latest_model": payload.get("latest_model"),
+                "history_limit": payload.get("history_limit"),
+                "history_window": payload.get("history_window"),
+            }
+        )
+
+        rejection_reasons = payload.get("rejection_reasons")
+        if isinstance(rejection_reasons, Mapping):
+            details["rejection_reasons"] = dict(rejection_reasons)
+
+        latest_generated_at = payload.get("latest_generated_at")
+        if latest_generated_at is not None:
+            details["latest_generated_at"] = latest_generated_at
+
+        total_raw = payload.get("total")
+        try:
+            total = int(total_raw)
+        except (TypeError, ValueError):
+            issues.append("Pole 'total' w raporcie Decision Engine musi być liczbą całkowitą.")
+            total = 0
+
+        acceptance_raw = payload.get("acceptance_rate")
+        acceptance_rate: float | None
+        try:
+            acceptance_rate = float(acceptance_raw) if acceptance_raw is not None else None
+        except (TypeError, ValueError):
+            acceptance_rate = None
+            issues.append(
+                "Pole 'acceptance_rate' w raporcie Decision Engine musi być liczbą zmiennoprzecinkową."
+            )
+
+        if total <= 0:
+            issues.append("Raport Decision Engine nie zawiera żadnych ewaluacji.")
+        elif config.min_observations and total < config.min_observations:
+            issues.append(
+                "Zbyt mało ewaluacji Decision Engine ({}), wymagane minimum to {}.".format(
+                    total, config.min_observations
+                )
+            )
+
+        if acceptance_rate is not None:
+            if (
+                config.min_acceptance_rate is not None
+                and acceptance_rate < config.min_acceptance_rate
+            ):
+                issues.append(
+                    "Akceptacja Decision Engine ({:.3f}) poniżej wymaganego progu {:.3f}.".format(
+                        acceptance_rate, config.min_acceptance_rate
+                    )
+                )
+            elif (
+                config.warn_acceptance_rate is not None
+                and acceptance_rate < config.warn_acceptance_rate
+            ):
+                warnings.append(
+                    "Akceptacja Decision Engine ({:.3f}) poniżej progu ostrzegawczego {:.3f}.".format(
+                        acceptance_rate, config.warn_acceptance_rate
+                    )
+                )
+        else:
+            issues.append("Brak poprawnej wartości 'acceptance_rate' w podsumowaniu Decision Engine.")
+
+        latest_model = payload.get("latest_model")
+        if config.require_latest_model and not latest_model:
+            warnings.append("Podsumowanie Decision Engine nie zawiera informacji o ostatnim modelu.")
+
+        latest_thresholds = payload.get("latest_thresholds")
+        if config.require_thresholds and not latest_thresholds:
+            warnings.append(
+                "Podsumowanie Decision Engine nie zawiera migawki progów decyzyjnych."
+            )
+
+        return self._build_section_payload(issues, warnings, details)
+
     # ------------------------------------------------------------------
     # Narzędzia pomocnicze
     # ------------------------------------------------------------------
@@ -697,6 +819,7 @@ __all__ = [
     "Stage5TrainingConfig",
     "Stage5SloConfig",
     "Stage5OemAcceptanceConfig",
+    "Stage5DecisionEngineConfig",
     "Stage5HypercareVerificationResult",
     "verify_stage5_hypercare_summary",
 ]

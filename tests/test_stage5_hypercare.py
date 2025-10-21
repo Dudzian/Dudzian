@@ -4,6 +4,8 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
+
 from bot_core.compliance.training import TrainingSession, write_training_log
 from bot_core.reporting.tco import (
     TcoCostItem,
@@ -13,6 +15,7 @@ from bot_core.reporting.tco import (
 )
 from bot_core.runtime.stage5_hypercare import (
     Stage5ComplianceConfig,
+    Stage5DecisionEngineConfig,
     Stage5HypercareConfig,
     Stage5HypercareCycle,
     Stage5OemAcceptanceConfig,
@@ -146,6 +149,27 @@ def _write_oem(tmp_path: Path) -> tuple[Path, Path, bytes]:
     return path, signature_path, key
 
 
+def _write_decision_summary(tmp_path: Path) -> Path:
+    payload = {
+        "type": "decision_engine_summary",
+        "generated_at": datetime(2024, 5, 1, tzinfo=timezone.utc).isoformat().replace("+00:00", "Z"),
+        "total": 12,
+        "accepted": 9,
+        "rejected": 3,
+        "acceptance_rate": 0.75,
+        "history_limit": 512,
+        "history_window": 12,
+        "latest_model": "gbm_v5",
+        "latest_thresholds": {"min_probability": 0.62, "max_cost_bps": 15.0},
+        "latest_generated_at": "2024-05-01T12:00:00Z",
+        "rejection_reasons": {"too_costly": 2, "risk": 1},
+        "filters": {"environment": "paper"},
+    }
+    path = tmp_path / "decision_summary.json"
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return path
+
+
 def test_stage5_hypercare_cycle_builds_signed_summary(tmp_path: Path) -> None:
     tco_summary, tco_signature, tco_key = _write_tco(tmp_path)
     rotation_summary, rotation_key = _write_rotation(tmp_path)
@@ -153,6 +177,7 @@ def test_stage5_hypercare_cycle_builds_signed_summary(tmp_path: Path) -> None:
     training_log, training_key = _write_training(tmp_path)
     slo_report, slo_signature, slo_key = _write_slo(tmp_path)
     oem_summary, oem_signature, oem_key = _write_oem(tmp_path)
+    decision_summary = _write_decision_summary(tmp_path)
 
     output_path = tmp_path / "hypercare_summary.json"
     signature_path = tmp_path / "hypercare_summary.signature.json"
@@ -196,6 +221,12 @@ def test_stage5_hypercare_cycle_builds_signed_summary(tmp_path: Path) -> None:
             signing_key=oem_key,
             require_signature=True,
         ),
+        decision_engine=Stage5DecisionEngineConfig(
+            summary_path=decision_summary,
+            min_acceptance_rate=0.7,
+            warn_acceptance_rate=0.72,
+            min_observations=10,
+        ),
     )
 
     cycle = Stage5HypercareCycle(config)
@@ -219,6 +250,8 @@ def test_stage5_hypercare_cycle_builds_signed_summary(tmp_path: Path) -> None:
     assert artifacts["training"]["status"] == "ok"
     assert artifacts["slo_monitor"]["status"] == "ok"
     assert artifacts["oem_acceptance"]["status"] == "ok"
+    assert artifacts["decision_engine"]["status"] == "ok"
+    assert artifacts["decision_engine"]["details"]["acceptance_rate"] == pytest.approx(0.75)
     assert artifacts["oem_acceptance"]["details"]["signature"]["verified"] is True
 
     signature = json.loads(signature_path.read_text(encoding="utf-8"))
@@ -266,3 +299,40 @@ def test_oem_signature_invalid(tmp_path: Path) -> None:
     oem_artifact = result.payload["artifacts"]["oem_acceptance"]
     assert oem_artifact["status"] == "fail"
     assert any("Podpis HMAC podsumowania OEM jest niepoprawny" in issue for issue in oem_artifact["issues"])
+
+
+def test_stage5_decision_engine_thresholds(tmp_path: Path) -> None:
+    payload = {
+        "type": "decision_engine_summary",
+        "generated_at": datetime(2024, 5, 2, tzinfo=timezone.utc).isoformat(),
+        "total": 3,
+        "accepted": 1,
+        "rejected": 2,
+        "acceptance_rate": 0.4,
+        "history_limit": 128,
+        "history_window": 3,
+        "latest_model": None,
+        "rejection_reasons": {"too_costly": 2},
+    }
+    decision_path = tmp_path / "decision_summary_bad.json"
+    decision_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    output_path = tmp_path / "hypercare_summary.json"
+    config = Stage5HypercareConfig(
+        output_path=output_path,
+        decision_engine=Stage5DecisionEngineConfig(
+            summary_path=decision_path,
+            min_acceptance_rate=0.6,
+            warn_acceptance_rate=0.5,
+            min_observations=5,
+            require_latest_model=True,
+            require_thresholds=True,
+        ),
+    )
+
+    result = Stage5HypercareCycle(config).run()
+    artifact = result.payload["artifacts"]["decision_engine"]
+    assert artifact["status"] == "fail"
+    assert any("Zbyt mało ewaluacji" in issue for issue in artifact["issues"])
+    assert any("Akceptacja Decision Engine" in issue for issue in artifact["issues"])
+    assert any("migawki progów" in warning for warning in artifact["warnings"])

@@ -158,7 +158,10 @@ class DemoFeeder(threading.Thread):
             time.sleep(self.delay)
 
     def stop(self) -> None:
-        self._stop.set()
+        if not self._stop.is_set():
+            self._stop.set()
+        if self.is_alive():
+            self.join(timeout=1.0)
 
 
 # ==========================================

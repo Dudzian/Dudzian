@@ -9,7 +9,7 @@ import sys
 import zipfile
 from pathlib import Path
 
-from bot_core.security.signing import build_hmac_signature, canonical_json_bytes
+from bot_core.security.signing import build_hmac_signature
 
 
 def _verify_signature(archive: Path, signature_path: Path, key: str) -> None:
@@ -17,7 +17,7 @@ def _verify_signature(archive: Path, signature_path: Path, key: str) -> None:
         "archive": str(archive.resolve()),
         "size": archive.stat().st_size,
     }
-    calculated = build_hmac_signature(key.encode("utf-8"), canonical_json_bytes(payload))
+    calculated = build_hmac_signature(payload, key=key.encode("utf-8"))
     expected = signature_path.read_text(encoding="utf-8").strip()
     if calculated.get("value") != expected:
         raise SystemExit("Updater signature verification failed")

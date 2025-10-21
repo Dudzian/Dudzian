@@ -64,6 +64,54 @@ Aby włączyć TLS/mTLS gRPC, dodaj dodatkowe opcje:
 
 Domyślne parametry są zgodne z plikiem `ui/config/example.yaml`. Wartości `--max-samples` oraz `--history-limit` pozwalają kontrolować rozmiar buforów i wpływają na wymagania pamięciowe.
 
+## Integracja z backendem produkcyjnym
+
+Projekt korzysta z tych samych stubów gRPC co demon produkcyjny – generowanych
+automatycznie podczas konfiguracji CMake (`trading.grpc.pb.cc/h`). Po
+uruchomieniu zrealizowany jest pełny przepływ TLS/mTLS, pinning fingerprintów
+oraz retry obsługiwane w `TradingClient` (kanał rynkowy/risk) i
+`MetricsClient` (kanał telemetrii). Klient rynku weryfikuje pliki root CA,
+certyfikaty klienta oraz odcisk SHA-256 przed zbudowaniem kanału【F:ui/src/grpc/TradingClient.cpp†L88-L175】【F:ui/src/grpc/MetricsClient.cpp†L47-L123】.
+
+* Parametry TLS (`tls.*`, `grpc.tls.*`) pochodzą z `ui/config/*.yaml` lub
+  odpowiadających im flag CLI – aplikacja ponownie zestawia połączenia po
+  zmianie certyfikatów bez restartu procesu.【F:ui/src/grpc/TradingClient.cpp†L146-L189】【F:ui/src/grpc/MetricsClient.cpp†L63-L99】
+* RBAC i tokeny dostępowe są wstrzykiwane przez metadane gRPC – kanał
+  telemetrii dodaje `authorization`, `x-bot-scope`, `x-bot-role`, a status UI
+  reaguje na błędy `connectionStateChanged`, co pozwala QML-owi wyświetlać
+  komunikaty o próbie ponownego połączenia i błędach autoryzacji.【F:ui/src/grpc/MetricsClient.cpp†L125-L138】【F:ui/src/app/Application.cpp†L205-L226】
+* Kanał tradingowy obsługuje tokeny i role RBAC przekazywane przez
+  `--grpc-auth-token`, `--grpc-auth-token-file`, `--grpc-rbac-role` oraz
+  `--grpc-rbac-scopes` (lub zmienne `BOT_CORE_UI_GRPC_*`). Zmiana metadanych
+  restartuje strumień z automatycznym backoffem i ponownym snapshotem,
+  zachowując synchronizację modeli QML. Pliki przekazane w `--*-auth-token-file`
+  są monitorowane i każda aktualizacja jest stosowana bez restartu
+  aplikacji.【F:ui/src/app/Application.cpp†L470-L520】【F:ui/src/app/Application.cpp†L2948-L3033】【F:ui/src/grpc/TradingClient.cpp†L225-L392】
+  zachowując synchronizację modeli QML.【F:ui/src/app/Application.cpp†L470-L520】【F:ui/src/grpc/TradingClient.cpp†L225-L392】
+* Kanał market data/Risk odpytywany jest synchronicznie i strumieniowo;
+  snapshot historii OHLCV oraz strumień incrementów wypełniają modele QML, a
+  `refreshRiskState()` umożliwia manualne/okresowe odpytywanie Decision Engine
+  o profil ryzyka.【F:ui/src/grpc/TradingClient.cpp†L177-L289】【F:ui/src/app/Application.cpp†L238-L253】
+* HealthService udostępnia status backendu (wersja, commit, uptime) i jest
+  monitorowany przez `HealthClient` oraz `HealthStatusController`. Flagi
+  `--health-endpoint`, `--health-auth-token`, `--health-auth-token-file`,
+  `--health-rbac-role`, `--health-rbac-scopes`, `--health-refresh-interval` oraz
+  `--health-disable-auto-refresh` (lub zmienne `BOT_CORE_UI_HEALTH_*`) pozwalają
+  sterować zachowaniem panelu. Dodatkowe przełączniki
+  `--health-use-tls`/`--health-disable-tls` i `--health-tls-*`
+  (`root-cert`, `client-cert`, `client-key`, `server-name`, `target-name`,
+  `pinned-sha256`, `--health-tls-require-client-auth`) umożliwiają niezależną od
+  kanału tradingowego konfigurację certyfikatów i pinningu (również przez
+  zmienne środowiskowe `BOT_CORE_UI_HEALTH_TLS_*`). Checklisty TLS/RBAC weryfikują
+  kompletność materiału kryptograficznego i ostrzegają przed niespójnymi
+  ustawieniami jeszcze przed zestawieniem kanału.【F:ui/src/grpc/HealthClient.cpp†L18-L268】【F:ui/src/app/Application.cpp†L540-L742】
+
+W środowisku OEM rekomendowane jest przechowywanie certyfikatów w
+`secrets/mtls/<rola>/` i wskazywanie ich przez flagi `--tls-*` oraz
+`--metrics-*`. Aplikacja raportuje status kanałów na panelu bocznym (sekcja
+„Połączenie”) – błędy TLS/RBAC są mapowane na komunikaty w stopce i alerty,
+przez co operator natychmiast widzi problemy z konfiguracją.
+
 ## Aktywacja licencji OEM
 
 Przy pierwszym uruchomieniu powłoka wyświetla ekran aktywacyjny licencji OEM. Aby odblokować UI:
@@ -74,6 +122,75 @@ Przy pierwszym uruchomieniu powłoka wyświetla ekran aktywacyjny licencji OEM. 
 4. Po poprawnej weryfikacji licencja zostanie zapisana w `var/licenses/active/license.json`, a stopka pokaże aktywną edycję, status utrzymania i HWID licencji.
 
 Opcje CLI `--license-storage` oraz `--expected-fingerprint-path` pozwalają wskazać niestandardowe lokalizacje docelowej licencji oraz pliku fingerprintu (np. w środowisku produkcyjnym bundla OEM).
+
+## Konfiguracja strategii i Decision Engine
+
+Zakładka „Strategia” udostępnia teraz pełną konfigurację DecisionOrchestratora oraz schedulera
+multi-strategy. Sekcja *DecisionOrchestrator* pozwala edytować globalne limity kosztów, progi
+prawdopodobieństwa i parametry latencji wraz z nadpisaniami dla poszczególnych profili ryzyka.
+Przycisk **Zapisz DecisionOrchestrator** zapisuje dane do `core.yaml`, korzystając z mostka
+`scripts/ui_config_bridge.py`, który waliduje zmiany przy pomocy `bot_core.config.loader`.
+
+Druga sekcja prezentuje listę schedulerów wraz z zadaniami (`schedules`). Operator może
+aktualizować m.in. `health_check_interval`, przypisany `portfolio_governor` oraz szczegóły
+każdego zadania (cadence, profil ryzyka, limit sygnałów). UI utrzymuje synchronizację z backendem
+i w przypadku błędów (np. nieistniejącej nazwy zadania) komunikat z mostka wyświetlany jest w
+panelu.
+
+Ścieżki i interpreter mostka można dostosować flagami CLI:
+
+```bash
+ui/build/bot_trading_shell \
+  --core-config /etc/bot_core/core.yaml \
+  --strategy-config-python /usr/bin/python3 \
+  --strategy-config-bridge /opt/oem/ui_config_bridge.py
+```
+
+Analogiczne wartości mogą pochodzić ze zmiennych środowiskowych
+`BOT_CORE_UI_CORE_CONFIG_PATH`, `BOT_CORE_UI_STRATEGY_PYTHON` oraz
+`BOT_CORE_UI_STRATEGY_BRIDGE`.
+
+## Pakiet wsparcia i eksport logów
+
+Zakładka „Wsparcie” w panelu administratora umożliwia przygotowanie pakietu
+pomocowego dla zespołu L2. UI uruchamia skrypt
+`scripts/export_support_bundle.py`, który archiwizuje katalogi `logs/`,
+`var/reports`, `var/licenses`, `var/metrics` oraz – opcjonalnie – `var/audit`
+do formatu `tar.gz` lub `zip`. Manifest (`bundle_manifest.json`) zawiera
+podsumowanie wielkości i liczby plików oraz metadane środowiskowe (hostname,
+instrument, status połączenia).
+
+Najważniejsze flagi CLI sterujące pakietem wsparcia:
+
+```bash
+ui/build/bot_trading_shell \
+  --support-bundle-python /usr/bin/python3 \
+  --support-bundle-script /opt/oem/export_support_bundle.py \
+  --support-bundle-output-dir /var/support \
+  --support-bundle-format zip \
+  --support-bundle-basename customer-support \
+  --support-bundle-include extra=/var/custom_artifacts \
+  --support-bundle-disable audit
+```
+
+Analogiczne ustawienia można wstrzyknąć zmiennymi środowiskowymi
+`BOT_CORE_UI_SUPPORT_*` (np. `BOT_CORE_UI_SUPPORT_INCLUDE` jako lista
+`label=ścieżka` oddzielona średnikami). Skrypt nie wymaga dodatkowych
+zależności poza systemowym Pythonem 3.11+, dlatego można go bundlować razem z
+dystrybucją OEM.
+
+## Monitorowanie HealthService
+
+Zakładka „Monitorowanie” prezentuje sekcję **Status backendu**, która wyświetla
+wynik ostatniego zapytania HealthService: wersję, skrócony commit, czas
+uruchomienia (UTC/lokalny), bieżący uptime oraz stempel ostatniego sprawdzenia.
+Operator może ręcznie odświeżyć dane, przełączyć auto-odświeżanie i zmienić
+interwał bez restartu aplikacji. Kontroler QML (`HealthStatusController`)
+deleguje zapytania do `HealthClient`, kolejkując retry w tle i publikując
+wyniki do QML. Domyślnie kanał dziedziczy konfigurację TLS/mTLS klienta tradingowego,
+ale zestaw `--health-use-tls`/`--health-disable-tls` oraz `--health-tls-*`
+pozwala w razie potrzeby wstrzyknąć odrębne certyfikaty i fingerprinty
+HealthService.【F:ui/qml/components/AdminPanel.qml†L2067-L2166】【F:ui/src/health/HealthStatusController.cpp†L15-L180】【F:ui/src/grpc/HealthClient.cpp†L88-L268】【F:ui/src/app/Application.cpp†L540-L742】
 
 ## Architektura komponentów
 
@@ -88,6 +205,72 @@ Opcje CLI `--license-storage` oraz `--expected-fingerprint-path` pozwalają wska
 * `qml/components/BotAppWindow.qml` – okno główne z menu kontekstowym, skrótem `Ctrl+N` do otwierania nowych okien i automatycznym przywracaniem profilu workspace.
 
 Po uruchomieniu głównego okna można otwierać kolejne wykresy (`Nowe okno` lub `Ctrl+N`). Aplikacja zapamiętuje pozycję i liczbę okien między sesjami (`Qt.labs.settings`), a stopka informuje o aktywnym trybie „reduce motion”, kiedy `FrameRateMonitor` zasygnalizuje spadek FPS.
+
+## Harmonogram ryzyka i konfiguracja Decision Engine
+
+Panel administratora pozwala operatorowi ustawić, czy UI ma okresowo
+odświeżać stan risk/AI – parametry (włącz/wyłącz, interwał w sekundach) są
+przechowywane w ustawieniach użytkownika i synchronizowane pomiędzy sesjami.
+Zmiana interwału restartuje wewnętrzny timer i natychmiast planuje kolejne
+wywołanie `refreshRiskState()` – dzięki temu harmonogram Decision Engine jest
+zgodny z polityką compliance bez restartu aplikacji.【F:ui/src/app/Application.cpp†L238-L256】【F:ui/src/app/Application.cpp†L516-L686】
+
+Modele ryzyka (`RiskHistoryModel`, `RiskStateModel`) eksportują snapshoty CSV
+z zachowaniem limitów i automatycznego eksportu do katalogu roboczego. Operator
+może wymusić natychmiastowe wykonanie eksportu, wskazać katalog docelowy z
+poziomu UI lub CLI oraz kontrolować limit próbek, co ułatwia synchronizację z
+DecisionOrchestrator/Schedulerem backendowym.【F:ui/src/app/Application.cpp†L827-L906】【F:ui/src/app/Application.cpp†L1233-L1314】
+
+## Licencjonowanie OEM end-to-end
+
+Pierwsze uruchomienie prowadzi przez kontroler aktywacji licencji, który
+odczytuje oczekiwany fingerprint, nasłuchuje katalogu provisioning (`var/licenses/inbox`) i zapisuje podpisane pakiety `.lic`
+do `var/licenses/active`. Kontroler obsługuje pliki, payload base64 i skan
+hot-folderu, a błędy zapisu są przekazywane użytkownikowi w formie komunikatu.
+Przy każdej zmianie fingerprintu aktualizowany jest dokument HMAC
+`fingerprint.expected.json`, co domyka przepływ OEM (UI → backend → storage).【F:ui/src/license/LicenseActivationController.cpp†L66-L216】【F:ui/src/license/LicenseActivationController.cpp†L240-L360】
+
+Kontroler śledzi również opóźnione dostarczenie dokumentu fingerprintu oraz
+aktywnej licencji – obserwuje katalogi nadrzędne i automatycznie przeładowuje
+konfigurację, gdy `fingerprint.expected.json` lub `var/licenses/active/*.json`
+zostaną utworzone, zmodyfikowane bądź usunięte. Dzięki temu UI natychmiast
+odświeża widok licencji przy reinstalacji lub wymianie nośnika OEM, a
+niezgodności fingerprintu ponownie uruchamiają proces provisioning bez
+restartu aplikacji.【F:ui/src/license/LicenseActivationController.cpp†L66-L216】【F:ui/src/license/LicenseActivationController.cpp†L360-L552】【F:ui/src/license/LicenseActivationController.cpp†L900-L1054】
+
+## Telemetria, alerty i logi
+
+`UiTelemetryReporter` buforuje i ponawia wysyłki metryk FPS/janku, za każdym
+razem wzbogacając payload o parametry ekranów oraz informację o backlogu retry.
+Kanał telemetryczny korzysta z TLS/mTLS i RBAC opisanych powyżej; wszystkie
+niepowodzenia są logowane i widoczne w panelu administracyjnym, a bufor retry
+jest emitowany jako metryka do QML.【F:ui/src/telemetry/UiTelemetryReporter.cpp†L200-L272】
+
+Administratorzy mogą zarządzać profilami RBAC za pomocą mostka Pythona – każda
+operacja zapisuje log do `logs/security_admin.log` oraz emituje zdarzenie,
+które UI wyświetla w sekcji audytów. Dzięki temu operator ma pełny wgląd w
+zmiany uprawnień i może eksportować logi wsparcia razem z raportami risk.【F:ui/src/security/SecurityAdminController.cpp†L31-L115】【F:ui/src/security/SecurityAdminController.cpp†L116-L175】
+
+## Pakiet OEM i instalacja offline
+
+Artefakty desktopowe są dostarczane w bundlu `core-oem-<wersja>-<platforma>`
+budowanym przez `deploy/packaging/build_core_bundle.py`. Manifest podpisany
+HMAC opisuje wszystkie pliki (`daemon`, `ui`, `config`, `bootstrap`), a skrypty
+instalacyjne weryfikują fingerprint urządzenia zanim licencja zostanie
+zapisana. Szczegółowy proces instalacji, walidacji podpisów oraz wymagane
+artefakty znajdują się w runbooku `docs/runbooks/OEM_INSTALLER_ACCEPTANCE.md` i
+powiązanych checklistach OEM.【F:deploy/packaging/README.md†L1-L61】【F:docs/runbooks/OEM_INSTALLER_ACCEPTANCE.md†L1-L88】
+
+## Testy
+
+Warstwa desktopowa posiada bogaty zestaw testów jednostkowych (`ctest`),
+obejmujących aktywację licencji, kontroler raportów, modele alertów oraz
+regresję FPS. Dodatkowe testy end-to-end (Qt Quick Test) sprawdzają przepływ
+aktywacji licencji i podstawowe scenariusze tradingowe – warto wykonywać je
+przed przygotowaniem bundla OEM: `ctest --test-dir ui/build` oraz wybrane testy
+regexem (`ctest --test-dir ui/build --tests-regex LicenseActivation`). Backend
+mostkujący może być weryfikowany poprzez `pytest` w katalogu głównym projektu
+(`pytest tests/ui_bridge`).
 
 ## Panel administratora – raporty i archiwizacja
 

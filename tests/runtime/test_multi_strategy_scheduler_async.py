@@ -16,6 +16,10 @@ from bot_core.runtime.multi_strategy_scheduler import (
     SignalStrengthAllocation,
     SmoothedCapitalAllocationPolicy,
     TagQuotaAllocation,
+    FixedWeightAllocation,
+    MultiStrategyScheduler,
+    RiskProfileBudgetAllocation,
+    SignalStrengthAllocation,
 )
 
 from tests.test_multi_strategy_scheduler import (

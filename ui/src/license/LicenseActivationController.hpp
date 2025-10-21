@@ -156,4 +156,17 @@ private:
     QFileSystemWatcher m_provisioningWatcher;
     QTimer m_provisioningScanTimer;
     bool m_pendingProvisioningError = false;
+
+    QFileSystemWatcher m_licenseWatcher;
+    QFileSystemWatcher m_fingerprintWatcher;
+    QTimer m_licenseReloadTimer;
+    QTimer m_fingerprintReloadTimer;
+
+    void setupLicenseWatcher();
+    void setupFingerprintWatcher();
+    void handleLicensePathEvent(const QString& path);
+    void handleFingerprintPathEvent(const QString& path);
+    void scheduleLicenseReload(int delayMs = 0);
+    void scheduleFingerprintReload(int delayMs = 0);
+    void clearLicenseState();
 };

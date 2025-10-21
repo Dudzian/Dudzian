@@ -10,6 +10,7 @@ import pandas as pd
 import pytest
 
 from bot_core.ai import manager as ai_manager_module
+from tests._ai_manager_helpers import make_stub_model, positive_negative_predict
 
 
 def _make_df(rows: int = 20) -> pd.DataFrame:
@@ -29,34 +30,19 @@ def test_ai_manager_rank_and_train_multiple_models(tmp_path, monkeypatch):
     calls: list[tuple[str, str, Path | None]] = []
     lock = threading.Lock()
 
-    class StubModel:
-        def __init__(self, input_size: int, seq_len: int, model_type: str, *, model_dir: Path | None = None):
-            self.input_size = input_size
-            self.seq_len = seq_len
-            self.model_type = model_type
-            self.model_dir = Path(model_dir) if model_dir is not None else None
-            with lock:
-                calls.append(("init", model_type, self.model_dir))
+    def _record(action: str, model_type: str, payload: Path | None = None) -> None:
+        with lock:
+            calls.append((action, model_type, payload))
 
-        def train(self, X, y, **_):
-            with lock:
-                calls.append(("train", self.model_type, None))
-            # symulujemy szybki trening
-            return None
+    stub_model = make_stub_model(
+        predict_fn=positive_negative_predict,
+        init_hook=lambda model_type, model_dir: _record("init", model_type, model_dir),
+        train_hook=lambda model_type: _record("train", model_type, None),
+        predict_hook=lambda model_type: _record("predict", model_type, None),
+        predict_series_hook=lambda model_type: _record("predict_series", model_type, None),
+    )
 
-        def predict(self, X):
-            with lock:
-                calls.append(("predict", self.model_type, None))
-            sign = 1.0 if self.model_type == "alpha" else -1.0
-            return np.full((len(X),), sign, dtype=float)
-
-        def predict_series(self, df, feature_cols):
-            with lock:
-                calls.append(("predict_series", self.model_type, None))
-            sign = 1.0 if self.model_type == "alpha" else -1.0
-            return pd.Series(np.full(len(df), sign, dtype=float), index=df.index)
-
-    monkeypatch.setattr(ai_manager_module, "_AIModels", StubModel)
+    monkeypatch.setattr(ai_manager_module, "_AIModels", stub_model)
 
     manager = ai_manager_module.AIManager(ai_threshold_bps=5.0, model_dir=tmp_path)
     df = _make_df()
@@ -93,27 +79,11 @@ def test_ai_manager_rank_and_train_multiple_models(tmp_path, monkeypatch):
 
 
 def test_run_pipeline_sets_active_model(tmp_path, monkeypatch):
-    lock = threading.Lock()
-
-    class StubModel:
-        def __init__(self, input_size: int, seq_len: int, model_type: str, *, model_dir: Path | None = None):
-            self.input_size = input_size
-            self.seq_len = seq_len
-            self.model_type = model_type
-            self.model_dir = Path(model_dir) if model_dir is not None else None
-
-        def train(self, X, y, **_):
-            return None
-
-        def predict(self, X):
-            sign = 1.0 if self.model_type == "alpha" else -1.0
-            return np.full((len(X),), sign, dtype=float)
-
-        def predict_series(self, df, feature_cols):
-            sign = 1.0 if self.model_type == "alpha" else -1.0
-            return pd.Series(np.full(len(df), sign, dtype=float), index=df.index)
-
-    monkeypatch.setattr(ai_manager_module, "_AIModels", StubModel)
+    monkeypatch.setattr(
+        ai_manager_module,
+        "_AIModels",
+        make_stub_model(predict_fn=positive_negative_predict),
+    )
 
     manager = ai_manager_module.AIManager(ai_threshold_bps=5.0, model_dir=tmp_path)
     df = _make_df(40)
@@ -151,25 +121,11 @@ def test_run_pipeline_sets_active_model(tmp_path, monkeypatch):
 
 
 def test_schedule_pipeline_runs_and_updates_active_model(tmp_path, monkeypatch):
-    class StubModel:
-        def __init__(self, input_size: int, seq_len: int, model_type: str, *, model_dir: Path | None = None):
-            self.input_size = input_size
-            self.seq_len = seq_len
-            self.model_type = model_type
-            self.model_dir = Path(model_dir) if model_dir is not None else None
-
-        def train(self, X, y, **_):
-            return None
-
-        def predict(self, X):
-            sign = 1.0 if self.model_type == "alpha" else -1.0
-            return np.full((len(X),), sign, dtype=float)
-
-        def predict_series(self, df, feature_cols):
-            sign = 1.0 if self.model_type == "alpha" else -1.0
-            return pd.Series(np.full(len(df), sign, dtype=float), index=df.index)
-
-    monkeypatch.setattr(ai_manager_module, "_AIModels", StubModel)
+    monkeypatch.setattr(
+        ai_manager_module,
+        "_AIModels",
+        make_stub_model(predict_fn=positive_negative_predict),
+    )
 
     async def _run() -> tuple[list[str], ai_manager_module.AIManager]:
         manager = ai_manager_module.AIManager(ai_threshold_bps=5.0, model_dir=tmp_path)
@@ -401,23 +357,11 @@ def test_pipeline_history_diff_and_serialization(tmp_path):
 
 
 def test_pipeline_history_snapshot_roundtrip(tmp_path, monkeypatch):
-    class StubModel:
-        def __init__(self, input_size: int, seq_len: int, model_type: str, *, model_dir: Path | None = None):
-            self.input_size = input_size
-            self.seq_len = seq_len
-            self.model_type = model_type
-            self.model_dir = Path(model_dir) if model_dir is not None else None
-
-        def train(self, X, y, **_):
-            return None
-
-        def predict(self, X):
-            return np.ones(len(X), dtype=float)
-
-        def predict_series(self, df, feature_cols):
-            return pd.Series(np.ones(len(df), dtype=float), index=df.index)
-
-    monkeypatch.setattr(ai_manager_module, "_AIModels", StubModel)
+    monkeypatch.setattr(
+        ai_manager_module,
+        "_AIModels",
+        make_stub_model(predict_fn=1.0),
+    )
 
     manager = ai_manager_module.AIManager(ai_threshold_bps=5.0, model_dir=tmp_path)
     df = _make_df(60)
@@ -483,25 +427,11 @@ def test_pipeline_history_snapshot_roundtrip(tmp_path, monkeypatch):
 
 
 def test_pipeline_history_helpers(tmp_path, monkeypatch):
-    class StubModel:
-        def __init__(self, input_size: int, seq_len: int, model_type: str, *, model_dir: Path | None = None):
-            self.input_size = input_size
-            self.seq_len = seq_len
-            self.model_type = model_type
-            self.model_dir = Path(model_dir) if model_dir is not None else None
-
-        def train(self, X, y, **_):
-            return None
-
-        def predict(self, X):
-            sign = 1.0 if self.model_type == "alpha" else -1.0
-            return np.full((len(X),), sign, dtype=float)
-
-        def predict_series(self, df, feature_cols):
-            sign = 1.0 if self.model_type == "alpha" else -1.0
-            return pd.Series(np.full(len(df), sign, dtype=float), index=df.index)
-
-    monkeypatch.setattr(ai_manager_module, "_AIModels", StubModel)
+    monkeypatch.setattr(
+        ai_manager_module,
+        "_AIModels",
+        make_stub_model(predict_fn=positive_negative_predict),
+    )
 
     manager = ai_manager_module.AIManager(ai_threshold_bps=5.0, model_dir=tmp_path)
     df = _make_df(30)
@@ -545,25 +475,11 @@ def test_pipeline_history_helpers(tmp_path, monkeypatch):
 
 
 def test_pipeline_history_formatting_and_logging(tmp_path, monkeypatch, caplog):
-    class StubModel:
-        def __init__(self, input_size: int, seq_len: int, model_type: str, *, model_dir: Path | None = None):
-            self.input_size = input_size
-            self.seq_len = seq_len
-            self.model_type = model_type
-            self.model_dir = Path(model_dir) if model_dir is not None else None
-
-        def train(self, X, y, **_):
-            return None
-
-        def predict(self, X):
-            sign = 1.0 if self.model_type == "alpha" else -1.0
-            return np.full((len(X),), sign, dtype=float)
-
-        def predict_series(self, df, feature_cols):
-            sign = 1.0 if self.model_type == "alpha" else -1.0
-            return pd.Series(np.full(len(df), sign, dtype=float), index=df.index)
-
-    monkeypatch.setattr(ai_manager_module, "_AIModels", StubModel)
+    monkeypatch.setattr(
+        ai_manager_module,
+        "_AIModels",
+        make_stub_model(predict_fn=positive_negative_predict),
+    )
 
     manager = ai_manager_module.AIManager(ai_threshold_bps=5.0, model_dir=tmp_path)
     df = _make_df(36)
@@ -630,25 +546,11 @@ def test_pipeline_history_formatting_and_logging(tmp_path, monkeypatch, caplog):
 
 
 def test_predict_series_with_ensemble(tmp_path, monkeypatch):
-    class StubModel:
-        def __init__(self, input_size: int, seq_len: int, model_type: str, *, model_dir: Path | None = None):
-            self.input_size = input_size
-            self.seq_len = seq_len
-            self.model_type = model_type
-            self.model_dir = Path(model_dir) if model_dir is not None else None
-
-        def train(self, X, y, **_):
-            return None
-
-        def predict(self, X):
-            sign = 1.0 if self.model_type == "alpha" else -1.0
-            return np.full((len(X),), sign, dtype=float)
-
-        def predict_series(self, df, feature_cols):
-            sign = 1.0 if self.model_type == "alpha" else -1.0
-            return pd.Series(np.full(len(df), sign, dtype=float), index=df.index)
-
-    monkeypatch.setattr(ai_manager_module, "_AIModels", StubModel)
+    monkeypatch.setattr(
+        ai_manager_module,
+        "_AIModels",
+        make_stub_model(predict_fn=positive_negative_predict),
+    )
 
     manager = ai_manager_module.AIManager(ai_threshold_bps=5.0, model_dir=tmp_path)
     df = _make_df(32)

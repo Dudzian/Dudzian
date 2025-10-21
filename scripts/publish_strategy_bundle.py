@@ -28,14 +28,11 @@ from deploy.packaging.build_strategy_bundle import (  # type: ignore
     build_from_cli as build_strategy_bundle,
 )
 from bot_core.security.signing import build_hmac_signature
+from scripts._cli_common import now_iso
 
 
 DEFAULT_STAGING_DIR = REPO_ROOT / "var/dist/strategies"
 DEFAULT_RELEASE_ROOT = REPO_ROOT / "var/releases/strategies"
-
-
-def _now_iso() -> str:
-    return _dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
 
 
 def _sha256_digest(path: Path) -> dict[str, str | int]:
@@ -168,7 +165,7 @@ def _copy_release_artifacts(
     metadata = {
         "schema": "stage4.strategy_release.metadata",
         "schema_version": "1.0",
-        "generated_at": _now_iso(),
+        "generated_at": now_iso(),
         "bundle_name": BUNDLE_NAME,
         "version": basename.removeprefix(f"{BUNDLE_NAME}-"),
         "artifacts": artifacts,
@@ -192,7 +189,7 @@ def _build_decision_payload(
     entry: dict[str, Any] = {
         "schema": "stage4.strategy_release",
         "schema_version": "1.0",
-        "timestamp": _now_iso(),
+        "timestamp": now_iso(),
         "version": metadata["version"],
         "bundle_name": metadata["bundle_name"],
         "release_path": release_dir.as_posix(),

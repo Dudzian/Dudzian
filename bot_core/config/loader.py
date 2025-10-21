@@ -724,6 +724,19 @@ def _load_multi_strategy_schedulers(raw: Mapping[str, Any]):
                 or entry.get("initial_signal_limit_overrides")
             )
             initial_signal_limits = _collect_signal_limit_configs(initial_signal_limits_entry)
+            signal_limits: dict[str, dict[str, int]] = {}
+            if isinstance(signal_limits_entry, Mapping):
+                for strategy_key, profile_entry in signal_limits_entry.items():
+                    if not isinstance(profile_entry, Mapping):
+                        continue
+                    profiles: dict[str, int] = {}
+                    for profile_key, limit_value in profile_entry.items():
+                        parsed = _maybe_int(limit_value)
+                        if parsed is None:
+                            continue
+                        profiles[str(profile_key)] = max(0, int(parsed))
+                    if profiles:
+                        signal_limits[str(strategy_key)] = profiles
 
             capital_policy_entry = entry.get("capital_policy")
             if isinstance(capital_policy_entry, Mapping):
@@ -2695,6 +2708,13 @@ def _load_decision_engine_config(
     min_probability = float(raw.get("min_probability", 0.0))
     require_cost_data = bool(raw.get("require_cost_data", False))
     penalty_cost_bps = float(raw.get("penalty_cost_bps", 0.0))
+    history_limit_raw = raw.get("evaluation_history_limit")
+    evaluation_history_limit = 256
+    if history_limit_raw not in (None, ""):
+        try:
+            evaluation_history_limit = max(1, int(float(history_limit_raw)))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("decision_engine.evaluation_history_limit musi być liczbą całkowitą") from exc
     tco_config: DecisionEngineTCOConfig | None = None
     tco_raw = raw.get("tco")
     if DecisionEngineTCOConfig is not None and tco_raw:
@@ -2781,6 +2801,7 @@ def _load_decision_engine_config(
         min_probability=min_probability,
         require_cost_data=require_cost_data,
         penalty_cost_bps=penalty_cost_bps,
+        evaluation_history_limit=evaluation_history_limit,
         tco=tco_config,
     )
 

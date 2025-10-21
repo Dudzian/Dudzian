@@ -47,6 +47,7 @@ strategies:
 
 - Harmonogramy (`multi_strategy_schedulers`) wskazują strategie z katalogu oraz parametry czasowe. Nowe pola:
   - `signal_limits`: ograniczenia liczby sygnałów per strategia/profil (opcjonalnie, konfigurowane przez API) – wpis może być prostą liczbą lub słownikiem z polami `limit`, `reason`, `until`, `duration_seconds`.
+  - `signal_limits`: ograniczenia liczby sygnałów per strategia/profil (opcjonalnie, konfigurowane przez API).
   - `capital_policy`: nazwa (`equal_weight`, `risk_parity`, `volatility_target`, `signal_strength`, `fixed_weight`) lub słownik z polami `name`, `weights`, `label`, `rebalance_seconds`.
   - `allocation_rebalance_seconds`: wymusza minimalny odstęp pomiędzy obliczeniami alokacji (sekundy).
   - `portfolio_governor`: integracja z PortfolioGovernorem (jak dotychczas), rozszerzona o dynamiczne wagi.
@@ -81,6 +82,11 @@ strategies:
   - Analogicznie można zadeklarować startowe nadpisania limitów sygnałów (`initial_signal_limits`) dla par strategia/profil ryzyka;
     wartości zostaną zapisane w schedulerze przed pierwszym uruchomieniem i pojawią się w migawce `signal_limit_snapshot()` oraz
     eksporcie CLI.
+- API runtime udostępnia `MultiStrategyScheduler.set_capital_policy(...)` oraz `replace_capital_policy(...)`,
+  dzięki czemu można dynamicznie podmienić politykę kapitału (np. po zmianie konfiguracji YAML lub interwencji operatora).
+  Aktualny stan wag można odczytać metodą `allocation_snapshot()`.
+- W przypadku polityki `RiskProfileBudgetAllocation` można odpytać `profile_allocation_snapshot()` i flagę `floor_adjustment_applied`,
+  a scheduler publikuje również metrykę `allocator_profile_weight` dla każdego harmonogramu oraz dodatkowy log z udziałami profili.
 
 Obsługiwane polityki kapitału:
 
@@ -118,6 +124,7 @@ multi_strategy_schedulers:
           limit: 3
           reason: risk_cap
           until: 2024-01-05T12:00:00+00:00
+        balanced: 3
       grid_engine:
         aggressive: 1
     schedules:
@@ -281,6 +288,7 @@ Polityki `fixed_weight` nadal wspierają dotychczasowy format wag:
         balanced:
           limit: 3
           reason: risk_cap
+        balanced: 3
       grid_engine:
         aggressive: 1
     schedules:

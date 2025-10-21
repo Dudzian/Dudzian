@@ -1,9 +1,11 @@
 from datetime import datetime, timezone
+import json
 import time
 from types import SimpleNamespace
 
 import pytest
 
+from bot_core.decision.models import DecisionEvaluation
 from bot_core.exchanges.streaming import StreamBatch
 from bot_core.runtime.pipeline import (
     DecisionAwareSignalSink,
@@ -82,6 +84,13 @@ def test_decision_aware_sink_filters_signals() -> None:
         def evaluate_candidate(self, candidate, _snapshot):
             self.invocations.append(candidate)
             accepted_flag = candidate.expected_probability >= 0.6
+            thresholds = {"max_cost_bps": 12.0, "min_net_edge_bps": 3.0}
+            selection = SimpleNamespace(
+                to_mapping=lambda: {
+                    "selected": "gbm_v1",
+                    "candidates": [],
+                }
+            )
             return SimpleNamespace(
                 candidate=candidate,
                 accepted=accepted_flag,
@@ -90,6 +99,11 @@ def test_decision_aware_sink_filters_signals() -> None:
                 reasons=(),
                 risk_flags=(),
                 stress_failures=(),
+                thresholds_snapshot=thresholds,
+                model_selection=selection,
+                model_name="gbm_v1",
+                model_success_probability=0.7,
+                model_expected_return_bps=8.0,
             )
 
     orchestrator = _StubOrchestrator()
@@ -124,6 +138,13 @@ def test_decision_aware_sink_filters_signals() -> None:
     assert orchestrator.invocations[0].symbol == "BTC/USDT"
     assert [event.status for event in journal.events] == ["accepted", "filtered"]
     assert all(event.portfolio == "paper-01" for event in journal.events)
+    accepted_event = journal.events[0]
+    thresholds_payload = json.loads(accepted_event.metadata["decision_thresholds"])
+    assert thresholds_payload["max_cost_bps"] == pytest.approx(12.0)
+    selection_payload = json.loads(accepted_event.metadata["model_selection"])
+    assert selection_payload["selected"] == "gbm_v1"
+    assert accepted_event.metadata["model_name"] == "gbm_v1"
+    assert accepted_event.metadata["model_success_probability"] == "0.700000"
     assert journal.events[1].metadata.get("decision_reason") == "probability_below_threshold"
     assert journal.events[1].metadata.get("decision_status") == "filtered"
 
@@ -218,6 +239,61 @@ def test_decision_aware_sink_respects_min_probability_threshold() -> None:
     assert filtered_event.metadata.get("min_probability") == "0.550000"
 
 
+def test_decision_aware_sink_limits_evaluation_history() -> None:
+    base_sink = InMemoryStrategySignalSink()
+
+    class _StubOrchestrator:
+        def __init__(self) -> None:
+            self.counter = 0
+
+        def evaluate_candidate(self, candidate, _snapshot):
+            self.counter += 1
+            return SimpleNamespace(
+                candidate=candidate,
+                accepted=True,
+                cost_bps=None,
+                net_edge_bps=4.0,
+                reasons=(),
+                risk_flags=(),
+                stress_failures=(),
+            )
+
+    orchestrator = _StubOrchestrator()
+    sink = DecisionAwareSignalSink(
+        base_sink=base_sink,
+        orchestrator=orchestrator,
+        risk_engine=SimpleNamespace(snapshot_state=lambda _: {}),
+        default_notional=1_000.0,
+        environment="paper",
+        exchange="binance_spot",
+        min_probability=0.1,
+        portfolio="paper-01",
+        journal=_DummyJournal(),
+        evaluation_history_limit=2,
+    )
+
+    for idx in range(3):
+        signal = StrategySignal(
+            symbol="BTC/USDT",
+            side="BUY",
+            confidence=0.9,
+            metadata={"expected_return_bps": 10.0 + idx},
+        )
+        sink.submit(
+            strategy_name="daily",
+            schedule_name="schedule",
+            risk_profile="balanced",
+            timestamp=datetime.now(timezone.utc),
+            signals=(signal,),
+        )
+
+    evaluations = sink.evaluations()
+    assert len(evaluations) == 2
+    assert orchestrator.counter == 3
+    assert evaluations[0].candidate.expected_return_bps == pytest.approx(11.0)
+    assert evaluations[1].candidate.expected_return_bps == pytest.approx(12.0)
+
+
 def test_decision_aware_sink_handles_missing_confidence_for_expected_return() -> None:
     base_sink = InMemoryStrategySignalSink()
 
@@ -270,3 +346,684 @@ def test_decision_aware_sink_handles_missing_confidence_for_expected_return() ->
     assert candidate.expected_return_bps == pytest.approx(5.0)
     records = sink.export()
     assert records and records[0][1] == (signal,)
+
+
+def test_decision_aware_sink_exposes_history_and_summary() -> None:
+    base_sink = InMemoryStrategySignalSink()
+
+    class _StubOrchestrator:
+        def __init__(self, templates):
+            self._templates = list(templates)
+            self.invocations: list = []
+
+        def evaluate_candidate(self, candidate, _snapshot):
+            if not self._templates:
+                raise AssertionError("Brak szablonów ewaluacji")
+            template = self._templates.pop(0)
+            self.invocations.append(candidate)
+            evaluation = DecisionEvaluation(
+                candidate=candidate,
+                accepted=template["accepted"],
+                cost_bps=template.get("cost_bps"),
+                net_edge_bps=template.get("net_edge_bps"),
+                reasons=tuple(template.get("reasons", ())),
+                risk_flags=tuple(template.get("risk_flags", ())),
+                stress_failures=tuple(template.get("stress_failures", ())),
+                model_expected_return_bps=template.get("model_expected_return_bps"),
+                model_success_probability=template.get("model_success_probability"),
+                model_name=template.get("model_name"),
+                model_selection=template.get("model_selection"),
+                thresholds_snapshot=template.get("thresholds_snapshot"),
+            )
+            return evaluation
+
+    orchestrator = _StubOrchestrator(
+        [
+            {
+                "accepted": True,
+                "cost_bps": 1.2,
+                "net_edge_bps": 6.5,
+                "model_expected_return_bps": 7.8,
+                "model_success_probability": 0.68,
+                "model_name": "gbm_v1",
+                "model_selection": SimpleNamespace(
+                    to_mapping=lambda: {"selected": "gbm_v1", "candidates": []}
+                ),
+                "thresholds_snapshot": {
+                    "min_probability": 0.55,
+                    "max_cost_bps": 18.0,
+                    "min_net_edge_bps": 5.5,
+                    "max_latency_ms": 60.0,
+                    "max_trade_notional": 1_500.0,
+                },
+                "risk_flags": ("volatility_spike",),
+                "stress_failures": ("latency_budget",),
+                "thresholds_snapshot": {"min_probability": 0.55},
+            },
+            {
+                "accepted": True,
+                "cost_bps": 1.4,
+                "net_edge_bps": 8.1,
+                "model_expected_return_bps": 9.0,
+                "model_success_probability": 0.72,
+                "model_name": "gbm_v2",
+                "model_selection": SimpleNamespace(
+                    to_mapping=lambda: {"selected": "gbm_v2"}
+                ),
+                "thresholds_snapshot": {
+                    "min_probability": 0.6,
+                    "max_cost_bps": 15.0,
+                    "min_net_edge_bps": 6.0,
+                    "max_latency_ms": 55.0,
+                    "max_trade_notional": 1_200.0,
+                },
+                "risk_flags": ("latency_surge",),
+                "stress_failures": (),
+                "thresholds_snapshot": {"min_probability": 0.6, "max_cost_bps": 15.0},
+            },
+            {
+                "accepted": False,
+                "cost_bps": 2.5,
+                "net_edge_bps": 1.0,
+                "reasons": ("too_costly",),
+                "risk_flags": ("drawdown_risk",),
+                "stress_failures": ("liquidity",),
+                "model_expected_return_bps": 3.5,
+                "model_success_probability": 0.42,
+                "model_name": "gbm_v3",
+                "model_selection": SimpleNamespace(
+                    to_mapping=lambda: {"selected": "gbm_v3", "reason": "fallback"}
+                ),
+                "thresholds_snapshot": {
+                    "min_probability": 0.7,
+                    "max_cost_bps": 2.0,
+                    "min_net_edge_bps": 1.5,
+                    "max_latency_ms": 50.0,
+                    "max_trade_notional": 800.0,
+                },
+                "thresholds_snapshot": {"min_probability": 0.7, "max_cost_bps": 12.0},
+            },
+        ]
+    )
+
+    journal = _DummyJournal()
+    sink = DecisionAwareSignalSink(
+        base_sink=base_sink,
+        orchestrator=orchestrator,
+        risk_engine=SimpleNamespace(snapshot_state=lambda _: {}),
+        default_notional=1_000.0,
+        environment="paper",
+        exchange="binance_spot",
+        min_probability=0.1,
+        portfolio="paper-01",
+        journal=journal,
+        evaluation_history_limit=4,
+    )
+
+    signals = (
+        StrategySignal(
+            symbol="BTC/USDT",
+            side="BUY",
+            confidence=0.7,
+            metadata={
+                "expected_return_bps": 12.0,
+                "expected_probability": 0.65,
+                "generated_at": "2024-04-01T00:00:00+00:00",
+                "latency_ms": 41.0,
+            },
+        ),
+        StrategySignal(
+            symbol="ETH/USDT",
+            side="BUY",
+            confidence=0.82,
+            metadata={
+                "expected_return_bps": 15.0,
+                "expected_probability": 0.72,
+                "generated_at": "2024-04-02T00:00:00+00:00",
+                "latency_ms": 37.5,
+            },
+        ),
+        StrategySignal(
+            symbol="ETH/USDT",
+            side="SELL",
+            confidence=0.45,
+            metadata={
+                "expected_return_bps": 3.0,
+                "expected_probability": 0.4,
+                "generated_at": "2024-05-01T00:00:00+00:00",
+                "cost_bps": 2.5,
+                "latency_ms": 58.0,
+            },
+        ),
+    )
+
+    for signal in signals:
+        sink.submit(
+            strategy_name="daily",
+            schedule_name="schedule",
+            risk_profile="balanced",
+            timestamp=datetime.now(timezone.utc),
+            signals=(signal,),
+        )
+
+    history_with_candidates = sink.evaluation_history(include_candidates=True)
+    assert len(history_with_candidates) == 3
+    assert history_with_candidates[-1]["candidate"]["metadata"]["generated_at"] == (
+        "2024-05-01T00:00:00+00:00"
+    )
+    assert history_with_candidates[0]["model_selection"]["selected"] == "gbm_v1"
+    assert history_with_candidates[-1]["thresholds"]["min_probability"] == pytest.approx(0.7)
+
+    history_without_candidates = sink.evaluation_history(limit=2)
+    assert len(history_without_candidates) == 2
+    assert all("candidate" not in payload for payload in history_without_candidates)
+    assert history_without_candidates[0]["model_name"] == "gbm_v2"
+    assert history_without_candidates[1]["model_name"] == "gbm_v3"
+
+    summary = sink.evaluation_summary()
+    assert summary["total"] == 3
+    assert summary["accepted"] == 2
+    assert summary["rejected"] == 1
+    assert summary["history_limit"] == 4
+    assert summary["history_window"] == 3
+    assert summary["latest_model"] == "gbm_v3"
+    assert summary["latest_status"] == "rejected"
+    assert summary["latest_reasons"] == ["too_costly"]
+    assert summary["latest_risk_flags"] == ["drawdown_risk"]
+    assert summary["latest_stress_failures"] == ["liquidity"]
+    assert summary["latest_model_selection"]["selected"] == "gbm_v3"
+    assert summary["latest_thresholds"]["min_probability"] == pytest.approx(0.7)
+    assert summary["latest_candidate"]["symbol"] == "ETH/USDT"
+    assert summary["latest_generated_at"] == "2024-05-01T00:00:00+00:00"
+    assert summary["history_start_generated_at"] == "2024-04-01T00:00:00+00:00"
+    assert summary["latest_thresholds"]["min_probability"] == pytest.approx(0.7)
+    assert summary["latest_candidate"]["symbol"] == "ETH/USDT"
+    assert summary["latest_generated_at"] == "2024-05-01T00:00:00+00:00"
+    assert summary["rejection_reasons"] == {"too_costly": 1}
+    assert summary["avg_expected_probability"] == pytest.approx((0.65 + 0.72 + 0.4) / 3)
+    assert summary["avg_cost_bps"] == pytest.approx((1.2 + 1.4 + 2.5) / 3)
+    assert summary["avg_net_edge_bps"] == pytest.approx((6.5 + 8.1 + 1.0) / 3)
+    assert summary["sum_cost_bps"] == pytest.approx(5.1)
+    assert summary["sum_net_edge_bps"] == pytest.approx(15.6)
+    assert summary["median_net_edge_bps"] == pytest.approx(6.5)
+    assert summary["p90_net_edge_bps"] == pytest.approx(7.78, rel=1e-3)
+    assert summary["p95_net_edge_bps"] == pytest.approx(7.94, rel=1e-3)
+    assert summary["min_net_edge_bps"] == pytest.approx(1.0)
+    assert summary["max_net_edge_bps"] == pytest.approx(8.1)
+    assert summary["median_cost_bps"] == pytest.approx(1.4)
+    assert summary["p90_cost_bps"] == pytest.approx(2.28, rel=1e-3)
+    assert summary["min_cost_bps"] == pytest.approx(1.2)
+    assert summary["max_cost_bps"] == pytest.approx(2.5)
+    assert summary["avg_latency_ms"] == pytest.approx((41.0 + 37.5 + 58.0) / 3)
+    assert summary["sum_latency_ms"] == pytest.approx(136.5)
+    assert summary["median_latency_ms"] == pytest.approx(41.0)
+    assert summary["p90_latency_ms"] == pytest.approx(54.6, rel=1e-3)
+    assert summary["p95_latency_ms"] == pytest.approx(56.3, rel=1e-3)
+    assert summary["min_latency_ms"] == pytest.approx(37.5)
+    assert summary["max_latency_ms"] == pytest.approx(58.0)
+    assert summary["median_expected_probability"] == pytest.approx(0.65)
+    assert summary["median_expected_return_bps"] == pytest.approx(12.0)
+    assert summary["median_model_success_probability"] == pytest.approx(0.68)
+    assert summary["median_model_expected_return_bps"] == pytest.approx(7.8)
+    assert summary["avg_expected_value_bps"] == pytest.approx(6.6)
+    assert summary["sum_expected_return_bps"] == pytest.approx(30.0)
+    assert summary["sum_expected_value_bps"] == pytest.approx(19.8)
+    assert summary["median_expected_value_bps"] == pytest.approx(7.8)
+    assert summary["min_expected_value_bps"] == pytest.approx(1.2)
+    assert summary["max_expected_value_bps"] == pytest.approx(10.8)
+    assert summary["avg_expected_value_minus_cost_bps"] == pytest.approx(4.9)
+    assert summary["sum_expected_value_minus_cost_bps"] == pytest.approx(14.7)
+    assert summary["probability_threshold_margin_count"] == 3
+    assert summary["avg_probability_threshold_margin"] == pytest.approx(
+        (0.65 - 0.55 + 0.72 - 0.6 + 0.4 - 0.7) / 3
+    )
+    assert summary["probability_threshold_breaches"] == 1
+    assert summary["probability_threshold_breach_rate"] == pytest.approx(1 / 3)
+    assert summary["accepted_probability_threshold_margin_count"] == 2
+    assert summary["accepted_avg_probability_threshold_margin"] == pytest.approx(0.11)
+    assert summary["accepted_probability_threshold_breaches"] == 0
+    assert summary["accepted_min_probability_threshold_margin"] == pytest.approx(0.1)
+    assert summary["accepted_max_probability_threshold_margin"] == pytest.approx(0.12)
+    assert summary["accepted_median_probability_threshold_margin"] == pytest.approx(0.11)
+    assert summary["accepted_p10_probability_threshold_margin"] == pytest.approx(0.102)
+    assert summary["accepted_p90_probability_threshold_margin"] == pytest.approx(0.118)
+    assert summary["accepted_std_probability_threshold_margin"] == pytest.approx(0.01)
+    assert summary["rejected_probability_threshold_margin_count"] == 1
+    assert summary["rejected_avg_probability_threshold_margin"] == pytest.approx(-0.3)
+    assert summary["rejected_probability_threshold_breaches"] == 1
+    assert summary["rejected_min_probability_threshold_margin"] == pytest.approx(-0.3)
+    assert summary["rejected_max_probability_threshold_margin"] == pytest.approx(-0.3)
+    assert summary["rejected_median_probability_threshold_margin"] == pytest.approx(-0.3)
+    assert summary["rejected_p10_probability_threshold_margin"] == pytest.approx(-0.3)
+    assert summary["rejected_p90_probability_threshold_margin"] == pytest.approx(-0.3)
+    assert summary["rejected_std_probability_threshold_margin"] == pytest.approx(0.0)
+    assert summary["cost_threshold_margin_count"] == 3
+    assert summary["avg_cost_threshold_margin"] == pytest.approx(
+        (18.0 - 1.2 + 15.0 - 1.4 + 2.0 - 2.5) / 3
+    )
+    assert summary["cost_threshold_breaches"] == 1
+    assert summary["cost_threshold_breach_rate"] == pytest.approx(1 / 3)
+    assert summary["accepted_cost_threshold_margin_count"] == 2
+    assert summary["accepted_avg_cost_threshold_margin"] == pytest.approx(15.2)
+    assert summary["accepted_cost_threshold_breaches"] == 0
+    assert summary["accepted_min_cost_threshold_margin"] == pytest.approx(13.6)
+    assert summary["accepted_max_cost_threshold_margin"] == pytest.approx(16.8)
+    assert summary["accepted_median_cost_threshold_margin"] == pytest.approx(15.2)
+    assert summary["accepted_p10_cost_threshold_margin"] == pytest.approx(13.92)
+    assert summary["accepted_p90_cost_threshold_margin"] == pytest.approx(16.48)
+    assert summary["accepted_std_cost_threshold_margin"] == pytest.approx(1.6)
+    assert summary["rejected_cost_threshold_margin_count"] == 1
+    assert summary["rejected_avg_cost_threshold_margin"] == pytest.approx(-0.5)
+    assert summary["rejected_cost_threshold_breaches"] == 1
+    assert summary["rejected_min_cost_threshold_margin"] == pytest.approx(-0.5)
+    assert summary["rejected_max_cost_threshold_margin"] == pytest.approx(-0.5)
+    assert summary["rejected_median_cost_threshold_margin"] == pytest.approx(-0.5)
+    assert summary["rejected_p10_cost_threshold_margin"] == pytest.approx(-0.5)
+    assert summary["rejected_p90_cost_threshold_margin"] == pytest.approx(-0.5)
+    assert summary["rejected_std_cost_threshold_margin"] == pytest.approx(0.0)
+    assert summary["net_edge_threshold_margin_count"] == 3
+    assert summary["avg_net_edge_threshold_margin"] == pytest.approx(
+        (6.5 - 5.5 + 8.1 - 6.0 + 1.0 - 1.5) / 3
+    )
+    assert summary["net_edge_threshold_breaches"] == 1
+    assert summary["accepted_net_edge_threshold_margin_count"] == 2
+    assert summary["accepted_avg_net_edge_threshold_margin"] == pytest.approx(
+        (1.0 + 2.1) / 2
+    )
+    assert summary["accepted_net_edge_threshold_breaches"] == 0
+    assert summary["accepted_min_net_edge_threshold_margin"] == pytest.approx(1.0)
+    assert summary["accepted_max_net_edge_threshold_margin"] == pytest.approx(2.1)
+    assert summary["accepted_median_net_edge_threshold_margin"] == pytest.approx(1.55)
+    assert summary["accepted_p10_net_edge_threshold_margin"] == pytest.approx(1.11)
+    assert summary["accepted_p90_net_edge_threshold_margin"] == pytest.approx(1.99)
+    assert summary["accepted_std_net_edge_threshold_margin"] == pytest.approx(0.55)
+    assert summary["rejected_net_edge_threshold_margin_count"] == 1
+    assert summary["rejected_avg_net_edge_threshold_margin"] == pytest.approx(-0.5)
+    assert summary["rejected_net_edge_threshold_breaches"] == 1
+    assert summary["rejected_min_net_edge_threshold_margin"] == pytest.approx(-0.5)
+    assert summary["rejected_max_net_edge_threshold_margin"] == pytest.approx(-0.5)
+    assert summary["rejected_median_net_edge_threshold_margin"] == pytest.approx(-0.5)
+    assert summary["rejected_p10_net_edge_threshold_margin"] == pytest.approx(-0.5)
+    assert summary["rejected_p90_net_edge_threshold_margin"] == pytest.approx(-0.5)
+    assert summary["rejected_std_net_edge_threshold_margin"] == pytest.approx(0.0)
+    assert summary["latency_threshold_margin_count"] == 3
+    assert summary["avg_latency_threshold_margin"] == pytest.approx(
+        (60.0 - 41.0 + 55.0 - 37.5 + 50.0 - 58.0) / 3
+    )
+    assert summary["latency_threshold_breaches"] == 1
+    assert summary["accepted_latency_threshold_margin_count"] == 2
+    assert summary["accepted_avg_latency_threshold_margin"] == pytest.approx(
+        (19.0 + 17.5) / 2
+    )
+    assert summary["accepted_latency_threshold_breaches"] == 0
+    assert summary["accepted_min_latency_threshold_margin"] == pytest.approx(17.5)
+    assert summary["accepted_max_latency_threshold_margin"] == pytest.approx(19.0)
+    assert summary["accepted_median_latency_threshold_margin"] == pytest.approx(18.25)
+    assert summary["accepted_p10_latency_threshold_margin"] == pytest.approx(17.65)
+    assert summary["accepted_p90_latency_threshold_margin"] == pytest.approx(18.85)
+    assert summary["accepted_std_latency_threshold_margin"] == pytest.approx(0.75)
+    assert summary["rejected_latency_threshold_margin_count"] == 1
+    assert summary["rejected_avg_latency_threshold_margin"] == pytest.approx(-8.0)
+    assert summary["rejected_latency_threshold_breaches"] == 1
+    assert summary["rejected_min_latency_threshold_margin"] == pytest.approx(-8.0)
+    assert summary["rejected_max_latency_threshold_margin"] == pytest.approx(-8.0)
+    assert summary["rejected_median_latency_threshold_margin"] == pytest.approx(-8.0)
+    assert summary["rejected_p10_latency_threshold_margin"] == pytest.approx(-8.0)
+    assert summary["rejected_p90_latency_threshold_margin"] == pytest.approx(-8.0)
+    assert summary["rejected_std_latency_threshold_margin"] == pytest.approx(0.0)
+    assert summary["notional_threshold_margin_count"] == 3
+    assert summary["avg_notional_threshold_margin"] == pytest.approx(
+        (1_500.0 - 1_000.0 + 1_200.0 - 1_000.0 + 800.0 - 1_000.0) / 3
+    )
+    assert summary["notional_threshold_breaches"] == 1
+    assert summary["accepted_notional_threshold_margin_count"] == 2
+    assert summary["accepted_avg_notional_threshold_margin"] == pytest.approx(
+        (500.0 + 200.0) / 2
+    )
+    assert summary["accepted_notional_threshold_breaches"] == 0
+    assert summary["accepted_min_notional_threshold_margin"] == pytest.approx(200.0)
+    assert summary["accepted_max_notional_threshold_margin"] == pytest.approx(500.0)
+    assert summary["accepted_median_notional_threshold_margin"] == pytest.approx(350.0)
+    assert summary["accepted_p10_notional_threshold_margin"] == pytest.approx(230.0)
+    assert summary["accepted_p90_notional_threshold_margin"] == pytest.approx(470.0)
+    assert summary["accepted_std_notional_threshold_margin"] == pytest.approx(150.0)
+    assert summary["rejected_notional_threshold_margin_count"] == 1
+    assert summary["rejected_avg_notional_threshold_margin"] == pytest.approx(-200.0)
+    assert summary["rejected_notional_threshold_breaches"] == 1
+    assert summary["rejected_min_notional_threshold_margin"] == pytest.approx(-200.0)
+    assert summary["rejected_max_notional_threshold_margin"] == pytest.approx(-200.0)
+    assert summary["rejected_median_notional_threshold_margin"] == pytest.approx(-200.0)
+    assert summary["rejected_p10_notional_threshold_margin"] == pytest.approx(-200.0)
+    assert summary["rejected_p90_notional_threshold_margin"] == pytest.approx(-200.0)
+    assert summary["rejected_std_notional_threshold_margin"] == pytest.approx(0.0)
+    assert summary["accepted_avg_net_edge_bps"] == pytest.approx(7.3)
+    assert summary["accepted_median_net_edge_bps"] == pytest.approx(7.3)
+    assert summary["accepted_p10_net_edge_bps"] == pytest.approx(6.66, rel=1e-2)
+    assert summary["accepted_p90_net_edge_bps"] == pytest.approx(7.94, rel=1e-3)
+    assert summary["accepted_min_net_edge_bps"] == pytest.approx(6.5)
+    assert summary["accepted_max_net_edge_bps"] == pytest.approx(8.1)
+    assert summary["accepted_std_net_edge_bps"] == pytest.approx(0.8)
+    assert summary["accepted_sum_net_edge_bps"] == pytest.approx(14.6)
+    assert summary["accepted_net_edge_bps_count"] == 2
+    assert summary["rejected_avg_net_edge_bps"] == pytest.approx(1.0)
+    assert summary["rejected_median_net_edge_bps"] == pytest.approx(1.0)
+    assert summary["rejected_p10_net_edge_bps"] == pytest.approx(1.0)
+    assert summary["rejected_p90_net_edge_bps"] == pytest.approx(1.0)
+    assert summary["rejected_min_net_edge_bps"] == pytest.approx(1.0)
+    assert summary["rejected_max_net_edge_bps"] == pytest.approx(1.0)
+    assert summary["rejected_std_net_edge_bps"] == pytest.approx(0.0)
+    assert summary["rejected_sum_net_edge_bps"] == pytest.approx(1.0)
+    assert summary["rejected_net_edge_bps_count"] == 1
+    assert summary["accepted_avg_cost_bps"] == pytest.approx(1.3)
+    assert summary["accepted_median_cost_bps"] == pytest.approx(1.3)
+    assert summary["accepted_p10_cost_bps"] == pytest.approx(1.22, rel=1e-2)
+    assert summary["accepted_p90_cost_bps"] == pytest.approx(1.38, rel=1e-2)
+    assert summary["accepted_min_cost_bps"] == pytest.approx(1.2)
+    assert summary["accepted_max_cost_bps"] == pytest.approx(1.4)
+    assert summary["accepted_std_cost_bps"] == pytest.approx(0.1)
+    assert summary["accepted_sum_cost_bps"] == pytest.approx(2.6)
+    assert summary["accepted_cost_bps_count"] == 2
+    assert summary["rejected_avg_cost_bps"] == pytest.approx(2.5)
+    assert summary["rejected_median_cost_bps"] == pytest.approx(2.5)
+    assert summary["rejected_p10_cost_bps"] == pytest.approx(2.5)
+    assert summary["rejected_p90_cost_bps"] == pytest.approx(2.5)
+    assert summary["rejected_min_cost_bps"] == pytest.approx(2.5)
+    assert summary["rejected_max_cost_bps"] == pytest.approx(2.5)
+    assert summary["rejected_std_cost_bps"] == pytest.approx(0.0)
+    assert summary["rejected_sum_cost_bps"] == pytest.approx(2.5)
+    assert summary["rejected_cost_bps_count"] == 1
+    assert summary["accepted_avg_expected_probability"] == pytest.approx(0.685)
+    assert summary["accepted_median_expected_probability"] == pytest.approx(0.685)
+    assert summary["accepted_std_expected_probability"] == pytest.approx(0.035)
+    assert summary["accepted_expected_probability_count"] == 2
+    assert summary["rejected_avg_expected_probability"] == pytest.approx(0.4)
+    assert summary["rejected_median_expected_probability"] == pytest.approx(0.4)
+    assert summary["rejected_std_expected_probability"] == pytest.approx(0.0)
+    assert summary["rejected_expected_probability_count"] == 1
+    assert summary["accepted_avg_expected_return_bps"] == pytest.approx(13.5)
+    assert summary["accepted_median_expected_return_bps"] == pytest.approx(13.5)
+    assert summary["accepted_p90_expected_return_bps"] == pytest.approx(14.7)
+    assert summary["accepted_std_expected_return_bps"] == pytest.approx(1.5)
+    assert summary["accepted_sum_expected_return_bps"] == pytest.approx(27.0)
+    assert summary["accepted_expected_return_bps_count"] == 2
+    assert summary["rejected_avg_expected_return_bps"] == pytest.approx(3.0)
+    assert summary["rejected_median_expected_return_bps"] == pytest.approx(3.0)
+    assert summary["rejected_p90_expected_return_bps"] == pytest.approx(3.0)
+    assert summary["rejected_std_expected_return_bps"] == pytest.approx(0.0)
+    assert summary["rejected_sum_expected_return_bps"] == pytest.approx(3.0)
+    assert summary["rejected_expected_return_bps_count"] == 1
+    assert summary["accepted_avg_expected_value_bps"] == pytest.approx(9.3)
+    assert summary["accepted_median_expected_value_bps"] == pytest.approx(9.3)
+    assert summary["accepted_p90_expected_value_bps"] == pytest.approx(10.5)
+    assert summary["accepted_std_expected_value_bps"] == pytest.approx(1.5)
+    assert summary["accepted_sum_expected_value_bps"] == pytest.approx(18.6)
+    assert summary["accepted_expected_value_bps_count"] == 2
+    assert summary["rejected_avg_expected_value_bps"] == pytest.approx(1.2)
+    assert summary["rejected_median_expected_value_bps"] == pytest.approx(1.2)
+    assert summary["rejected_p90_expected_value_bps"] == pytest.approx(1.2)
+    assert summary["rejected_std_expected_value_bps"] == pytest.approx(0.0)
+    assert summary["rejected_sum_expected_value_bps"] == pytest.approx(1.2)
+    assert summary["rejected_expected_value_bps_count"] == 1
+    assert summary["accepted_avg_expected_value_minus_cost_bps"] == pytest.approx(8.0)
+    assert summary["accepted_median_expected_value_minus_cost_bps"] == pytest.approx(8.0)
+    assert summary["accepted_p90_expected_value_minus_cost_bps"] == pytest.approx(9.12, rel=1e-2)
+    assert summary["accepted_min_expected_value_minus_cost_bps"] == pytest.approx(6.6)
+    assert summary["accepted_max_expected_value_minus_cost_bps"] == pytest.approx(9.4)
+    assert summary["accepted_std_expected_value_minus_cost_bps"] == pytest.approx(1.4)
+    assert summary["accepted_sum_expected_value_minus_cost_bps"] == pytest.approx(16.0)
+    assert summary["accepted_expected_value_minus_cost_bps_count"] == 2
+    assert summary["rejected_avg_expected_value_minus_cost_bps"] == pytest.approx(-1.3)
+    assert summary["rejected_median_expected_value_minus_cost_bps"] == pytest.approx(-1.3)
+    assert summary["rejected_p90_expected_value_minus_cost_bps"] == pytest.approx(-1.3)
+    assert summary["rejected_min_expected_value_minus_cost_bps"] == pytest.approx(-1.3)
+    assert summary["rejected_max_expected_value_minus_cost_bps"] == pytest.approx(-1.3)
+    assert summary["rejected_std_expected_value_minus_cost_bps"] == pytest.approx(0.0)
+    assert summary["rejected_sum_expected_value_minus_cost_bps"] == pytest.approx(-1.3)
+    assert summary["rejected_expected_value_minus_cost_bps_count"] == 1
+    assert summary["accepted_avg_notional"] == pytest.approx(1_000.0)
+    assert summary["accepted_median_notional"] == pytest.approx(1_000.0)
+    assert summary["accepted_p90_notional"] == pytest.approx(1_000.0)
+    assert summary["accepted_min_notional"] == pytest.approx(1_000.0)
+    assert summary["accepted_max_notional"] == pytest.approx(1_000.0)
+    assert summary["accepted_std_notional"] == pytest.approx(0.0)
+    assert summary["accepted_sum_notional"] == pytest.approx(2_000.0)
+    assert summary["accepted_notional_count"] == 2
+    assert summary["rejected_avg_notional"] == pytest.approx(1_000.0)
+    assert summary["rejected_median_notional"] == pytest.approx(1_000.0)
+    assert summary["rejected_p90_notional"] == pytest.approx(1_000.0)
+    assert summary["rejected_min_notional"] == pytest.approx(1_000.0)
+    assert summary["rejected_max_notional"] == pytest.approx(1_000.0)
+    assert summary["rejected_std_notional"] == pytest.approx(0.0)
+    assert summary["rejected_sum_notional"] == pytest.approx(1_000.0)
+    assert summary["rejected_notional_count"] == 1
+    assert summary["accepted_avg_latency_ms"] == pytest.approx(39.25)
+    assert summary["accepted_median_latency_ms"] == pytest.approx(39.25)
+    assert summary["accepted_p90_latency_ms"] == pytest.approx(40.65, rel=1e-2)
+    assert summary["accepted_p95_latency_ms"] == pytest.approx(40.825, rel=1e-3)
+    assert summary["accepted_min_latency_ms"] == pytest.approx(37.5)
+    assert summary["accepted_max_latency_ms"] == pytest.approx(41.0)
+    assert summary["accepted_std_latency_ms"] == pytest.approx(1.75)
+    assert summary["accepted_sum_latency_ms"] == pytest.approx(78.5)
+    assert summary["accepted_latency_ms_count"] == 2
+    assert summary["rejected_avg_latency_ms"] == pytest.approx(58.0)
+    assert summary["rejected_median_latency_ms"] == pytest.approx(58.0)
+    assert summary["rejected_p90_latency_ms"] == pytest.approx(58.0)
+    assert summary["rejected_p95_latency_ms"] == pytest.approx(58.0)
+    assert summary["rejected_min_latency_ms"] == pytest.approx(58.0)
+    assert summary["rejected_max_latency_ms"] == pytest.approx(58.0)
+    assert summary["rejected_std_latency_ms"] == pytest.approx(0.0)
+    assert summary["rejected_sum_latency_ms"] == pytest.approx(58.0)
+    assert summary["rejected_latency_ms_count"] == 1
+    assert summary["accepted_avg_model_success_probability"] == pytest.approx(0.7)
+    assert summary["accepted_median_model_success_probability"] == pytest.approx(0.7)
+    assert summary["accepted_std_model_success_probability"] == pytest.approx(0.02)
+    assert summary["accepted_model_success_probability_count"] == 2
+    assert summary["rejected_avg_model_success_probability"] == pytest.approx(0.42)
+    assert summary["rejected_median_model_success_probability"] == pytest.approx(0.42)
+    assert summary["rejected_std_model_success_probability"] == pytest.approx(0.0)
+    assert summary["rejected_model_success_probability_count"] == 1
+    assert summary["accepted_avg_model_expected_return_bps"] == pytest.approx(8.4)
+    assert summary["accepted_median_model_expected_return_bps"] == pytest.approx(8.4)
+    assert summary["accepted_p90_model_expected_return_bps"] == pytest.approx(8.88)
+    assert summary["accepted_std_model_expected_return_bps"] == pytest.approx(0.6)
+    assert summary["accepted_sum_model_expected_return_bps"] == pytest.approx(16.8)
+    assert summary["accepted_model_expected_return_bps_count"] == 2
+    assert summary["rejected_avg_model_expected_return_bps"] == pytest.approx(3.5)
+    assert summary["rejected_median_model_expected_return_bps"] == pytest.approx(3.5)
+    assert summary["rejected_p90_model_expected_return_bps"] == pytest.approx(3.5)
+    assert summary["rejected_std_model_expected_return_bps"] == pytest.approx(0.0)
+    assert summary["rejected_sum_model_expected_return_bps"] == pytest.approx(3.5)
+    assert summary["rejected_model_expected_return_bps_count"] == 1
+    assert summary["accepted_avg_model_expected_value_bps"] == pytest.approx(5.892)
+    assert summary["accepted_median_model_expected_value_bps"] == pytest.approx(5.892)
+    assert summary["accepted_p90_model_expected_value_bps"] == pytest.approx(6.3624, rel=1e-4)
+    assert summary["accepted_std_model_expected_value_bps"] == pytest.approx(0.588, rel=1e-3)
+    assert summary["accepted_sum_model_expected_value_bps"] == pytest.approx(11.784)
+    assert summary["accepted_model_expected_value_bps_count"] == 2
+    assert summary["rejected_avg_model_expected_value_bps"] == pytest.approx(1.47)
+    assert summary["rejected_median_model_expected_value_bps"] == pytest.approx(1.47)
+    assert summary["rejected_p90_model_expected_value_bps"] == pytest.approx(1.47)
+    assert summary["rejected_std_model_expected_value_bps"] == pytest.approx(0.0)
+    assert summary["rejected_sum_model_expected_value_bps"] == pytest.approx(1.47)
+    assert summary["rejected_model_expected_value_bps_count"] == 1
+    assert summary["accepted_avg_model_expected_value_minus_cost_bps"] == pytest.approx(
+        4.592
+    )
+    assert summary["accepted_median_model_expected_value_minus_cost_bps"] == pytest.approx(
+        4.592
+    )
+    assert summary["accepted_p90_model_expected_value_minus_cost_bps"] == pytest.approx(
+        4.9824, rel=1e-3
+    )
+    assert summary["accepted_min_model_expected_value_minus_cost_bps"] == pytest.approx(
+        4.104
+    )
+    assert summary["accepted_max_model_expected_value_minus_cost_bps"] == pytest.approx(
+        5.08
+    )
+    assert summary["accepted_std_model_expected_value_minus_cost_bps"] == pytest.approx(
+        0.488, rel=1e-3
+    )
+    assert summary["accepted_sum_model_expected_value_minus_cost_bps"] == pytest.approx(
+        9.184
+    )
+    assert summary["accepted_model_expected_value_minus_cost_bps_count"] == 2
+    assert summary["rejected_avg_model_expected_value_minus_cost_bps"] == pytest.approx(
+        -1.03
+    )
+    assert summary["rejected_median_model_expected_value_minus_cost_bps"] == pytest.approx(
+        -1.03
+    )
+    assert summary["rejected_p90_model_expected_value_minus_cost_bps"] == pytest.approx(
+        -1.03
+    )
+    assert summary["rejected_min_model_expected_value_minus_cost_bps"] == pytest.approx(
+        -1.03
+    )
+    assert summary["rejected_max_model_expected_value_minus_cost_bps"] == pytest.approx(
+        -1.03
+    )
+    assert summary["rejected_std_model_expected_value_minus_cost_bps"] == pytest.approx(0.0)
+    assert summary["rejected_sum_model_expected_value_minus_cost_bps"] == pytest.approx(
+        -1.03
+    )
+    assert summary["rejected_model_expected_value_minus_cost_bps_count"] == 1
+    assert summary["median_expected_value_minus_cost_bps"] == pytest.approx(6.6)
+    assert summary["min_expected_value_minus_cost_bps"] == pytest.approx(-1.3)
+    assert summary["max_expected_value_minus_cost_bps"] == pytest.approx(9.4)
+    assert summary["avg_model_expected_value_bps"] == pytest.approx(4.418)
+    assert summary["sum_model_expected_return_bps"] == pytest.approx(20.3)
+    assert summary["sum_model_expected_value_bps"] == pytest.approx(13.254)
+    assert summary["median_model_expected_value_bps"] == pytest.approx(5.304)
+    assert summary["min_model_expected_value_bps"] == pytest.approx(1.47)
+    assert summary["max_model_expected_value_bps"] == pytest.approx(6.48)
+    assert summary["avg_model_expected_value_minus_cost_bps"] == pytest.approx(2.718)
+    assert summary["sum_model_expected_value_minus_cost_bps"] == pytest.approx(8.154)
+    assert summary["median_model_expected_value_minus_cost_bps"] == pytest.approx(4.104)
+    assert summary["min_model_expected_value_minus_cost_bps"] == pytest.approx(-1.03)
+    assert summary["max_model_expected_value_minus_cost_bps"] == pytest.approx(5.08)
+    assert summary["risk_flag_counts"] == {
+        "volatility_spike": 1,
+        "latency_surge": 1,
+        "drawdown_risk": 1,
+    }
+    assert summary["risk_flags_with_accepts"] == 2
+    assert summary["risk_flag_breakdown"] == {
+        "volatility_spike": {
+            "total": 1,
+            "accepted": 1,
+            "rejected": 0,
+            "acceptance_rate": pytest.approx(1.0),
+        },
+        "latency_surge": {
+            "total": 1,
+            "accepted": 1,
+            "rejected": 0,
+            "acceptance_rate": pytest.approx(1.0),
+        },
+        "drawdown_risk": {
+            "total": 1,
+            "accepted": 0,
+            "rejected": 1,
+            "acceptance_rate": pytest.approx(0.0),
+        },
+    }
+    assert summary["unique_risk_flags"] == 3
+    assert summary["stress_failure_counts"] == {
+        "latency_budget": 1,
+        "liquidity": 1,
+    }
+    assert summary["stress_failures_with_accepts"] == 1
+    assert summary["stress_failure_breakdown"] == {
+        "latency_budget": {
+            "total": 1,
+            "accepted": 1,
+            "rejected": 0,
+            "acceptance_rate": pytest.approx(1.0),
+        },
+        "liquidity": {
+            "total": 1,
+            "accepted": 0,
+            "rejected": 1,
+            "acceptance_rate": pytest.approx(0.0),
+        },
+    }
+    assert summary["unique_stress_failures"] == 2
+    assert summary["model_usage"] == {
+        "gbm_v1": 1,
+        "gbm_v2": 1,
+        "gbm_v3": 1,
+    }
+    assert summary["unique_models"] == 3
+    assert summary["models_with_accepts"] == 2
+    model_breakdown = summary["model_breakdown"]
+    gbm_v1_metrics = model_breakdown["gbm_v1"]["metrics"]
+    assert gbm_v1_metrics["net_edge_bps"]["accepted_sum"] == pytest.approx(6.5)
+    assert gbm_v1_metrics["expected_value_minus_cost_bps"]["accepted_sum"] == pytest.approx(6.6)
+    gbm_v2_metrics = model_breakdown["gbm_v2"]["metrics"]
+    assert gbm_v2_metrics["net_edge_bps"]["accepted_sum"] == pytest.approx(8.1)
+    assert gbm_v2_metrics["expected_value_minus_cost_bps"]["accepted_sum"] == pytest.approx(9.4)
+    gbm_v3_metrics = model_breakdown["gbm_v3"]["metrics"]
+    assert gbm_v3_metrics["net_edge_bps"]["rejected_sum"] == pytest.approx(1.0)
+    assert gbm_v3_metrics["expected_value_minus_cost_bps"]["rejected_sum"] == pytest.approx(-1.3)
+    assert summary["latest_candidate"]["expected_value_bps"] == pytest.approx(1.2)
+    assert summary["latest_expected_value_bps"] == pytest.approx(1.2)
+    assert summary["latest_expected_value_minus_cost_bps"] == pytest.approx(-1.3)
+    assert summary["latest_net_edge_bps"] == pytest.approx(1.0)
+    assert summary["latest_cost_bps"] == pytest.approx(2.5)
+    assert summary["latest_latency_ms"] == pytest.approx(58.0)
+    assert summary["latest_expected_probability"] == pytest.approx(0.4)
+    assert summary["latest_expected_return_bps"] == pytest.approx(3.0)
+    assert summary["latest_notional"] == pytest.approx(1_000.0)
+    assert summary["latest_probability_threshold_margin"] == pytest.approx(-0.3)
+    assert summary["latest_cost_threshold_margin"] == pytest.approx(-0.5)
+    assert summary["latest_net_edge_threshold_margin"] == pytest.approx(-0.5)
+    assert summary["latest_latency_threshold_margin"] == pytest.approx(-8.0)
+    assert summary["latest_notional_threshold_margin"] == pytest.approx(-200.0)
+    assert summary["latest_model_expected_value_bps"] == pytest.approx(1.47)
+    assert summary["latest_model_expected_value_minus_cost_bps"] == pytest.approx(-1.03)
+    assert summary["latest_model_expected_return_bps"] == pytest.approx(3.5)
+    assert summary["latest_model_success_probability"] == pytest.approx(0.42)
+    assert summary["std_net_edge_bps"] == pytest.approx(3.040833219, rel=1e-6)
+    assert summary["std_cost_bps"] == pytest.approx(0.571547607, rel=1e-6)
+    assert summary["std_latency_ms"] == pytest.approx(8.953584012, rel=1e-6)
+    assert summary["std_expected_probability"] == pytest.approx(0.137355985, rel=1e-6)
+    assert summary["std_expected_return_bps"] == pytest.approx(5.099019514, rel=1e-6)
+    assert summary["std_expected_value_bps"] == pytest.approx(4.009987531, rel=1e-6)
+    assert summary["std_expected_value_minus_cost_bps"] == pytest.approx(4.530636453, rel=1e-6)
+    assert summary["std_model_success_probability"] == pytest.approx(0.132999582, rel=1e-6)
+    assert summary["std_model_expected_return_bps"] == pytest.approx(2.361261433, rel=1e-6)
+    assert summary["std_model_expected_value_bps"] == pytest.approx(2.139123185, rel=1e-6)
+    assert summary["std_model_expected_value_minus_cost_bps"] == pytest.approx(
+        2.680021393,
+        rel=1e-6,
+    )
+    assert summary["longest_acceptance_streak"] == 2
+    assert summary["longest_rejection_streak"] == 1
+    assert summary["current_acceptance_streak"] == 0
+    assert summary["current_rejection_streak"] == 1
+    assert summary["action_usage"] == {"enter": 2, "exit": 1}
+    assert summary["unique_actions"] == 2
+    assert summary["actions_with_accepts"] == 1
+    action_breakdown = summary["action_breakdown"]
+    enter_metrics = action_breakdown["enter"]["metrics"]
+    assert enter_metrics["net_edge_bps"]["accepted_sum"] == pytest.approx(14.6)
+    assert enter_metrics["expected_value_minus_cost_bps"]["accepted_sum"] == pytest.approx(16.0)
+    exit_metrics = action_breakdown["exit"]["metrics"]
+    assert exit_metrics["expected_value_minus_cost_bps"]["rejected_sum"] == pytest.approx(-1.3)
+    assert summary["unique_strategies"] == 1
+    assert summary["strategies_with_accepts"] == 1
+    assert summary["strategy_usage"] == {"daily": 3}
+    strategy_breakdown = summary["strategy_breakdown"]
+    strategy_metrics = strategy_breakdown["daily"]["metrics"]
+    assert strategy_metrics["net_edge_bps"]["total_sum"] == pytest.approx(15.6)
+    assert strategy_metrics["expected_value_minus_cost_bps"]["total_sum"] == pytest.approx(14.7)
+    assert strategy_metrics["expected_value_minus_cost_bps"]["rejected_sum"] == pytest.approx(-1.3)
+    assert summary["symbol_usage"] == {"ETH/USDT": 2, "BTC/USDT": 1}
+    assert summary["unique_symbols"] == 2
+    assert summary["symbols_with_accepts"] == 2
+    symbol_breakdown = summary["symbol_breakdown"]
+    eth_metrics = symbol_breakdown["ETH/USDT"]["metrics"]
+    assert eth_metrics["expected_value_minus_cost_bps"]["total_sum"] == pytest.approx(8.1)
+    btc_metrics = symbol_breakdown["BTC/USDT"]["metrics"]
+    assert btc_metrics["expected_value_minus_cost_bps"]["accepted_sum"] == pytest.approx(6.6)

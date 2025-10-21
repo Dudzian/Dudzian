@@ -23,6 +23,17 @@ Drawer {
     property color riskStatusColor: palette.highlight
     property string riskHistoryStatusMessage: ""
     property color riskHistoryStatusColor: palette.highlight
+    property var decisionForm: ({})
+    property var decisionOverrides: []
+    property string decisionStatusMessage: ""
+    property color decisionStatusColor: palette.highlight
+    property var schedulerListModel: []
+    property string selectedSchedulerName: ""
+    property var schedulerForm: ({})
+    property var schedulerSchedules: []
+    property int selectedScheduleIndex: -1
+    property string schedulerStatusMessage: ""
+    property color schedulerStatusColor: palette.highlight
     property bool riskHistoryExportLimitEnabled: false
     property int riskHistoryExportLimitValue: 50
     property url riskHistoryExportLastDirectory: ""
@@ -39,6 +50,12 @@ Drawer {
         riskSchedule = appController.riskRefreshSchedule
     }
 
+    function clone(value) {
+        if (value === undefined || value === null)
+            return value
+        return JSON.parse(JSON.stringify(value))
+    }
+
     function syncForms() {
         if (typeof appController === "undefined")
             return
@@ -48,6 +65,8 @@ Drawer {
         updateRiskSchedule()
         riskStatusMessage = ""
         riskHistoryStatusMessage = ""
+        decisionStatusMessage = ""
+        schedulerStatusMessage = ""
         if (typeof appController !== "undefined") {
             riskHistoryExportLimitEnabled = appController.riskHistoryExportLimitEnabled
             riskHistoryExportLimitValue = appController.riskHistoryExportLimitValue
@@ -61,14 +80,441 @@ Drawer {
             var lastPathUrl = appController.riskHistoryLastAutoExportPath
             riskHistoryLastAutoExportPath = lastPathUrl && lastPathUrl.toLocalFile ? lastPathUrl.toLocalFile() : ""
         }
+        if (typeof strategyController !== "undefined") {
+            var decisionSnapshot = strategyController.decisionConfigSnapshot()
+            decisionForm = clone(decisionSnapshot) || ({})
+            decisionOverrides = decisionForm.profile_overrides ? clone(decisionForm.profile_overrides) : []
+            schedulerListModel = strategyController.schedulerList() || []
+            if (schedulerListModel.length > 0) {
+                if (!selectedSchedulerName || schedulerListModel.findIndex(function(item) { return item.name === selectedSchedulerName }) === -1)
+                    selectedSchedulerName = schedulerListModel[0].name
+                var schedulerSnapshot = strategyController.schedulerConfigSnapshot(selectedSchedulerName)
+                schedulerForm = clone(schedulerSnapshot) || ({})
+                schedulerSchedules = schedulerForm.schedules ? clone(schedulerForm.schedules) : []
+                if (schedulerSchedules.length > 0) {
+                    if (selectedScheduleIndex < 0 || selectedScheduleIndex >= schedulerSchedules.length)
+                        selectedScheduleIndex = 0
+                } else {
+                    selectedScheduleIndex = -1
+                }
+            } else {
+                schedulerForm = ({})
+                schedulerSchedules = []
+                selectedSchedulerName = ""
+                selectedScheduleIndex = -1
+            }
+        }
+
+        Tab {
+            title: qsTr("Wsparcie")
+
+            property string pendingPathTarget: ""
+
+            Flickable {
+                anchors.fill: parent
+                contentWidth: width
+                contentHeight: supportLayout.implicitHeight
+                clip: true
+
+                ColumnLayout {
+                    id: supportLayout
+                    width: parent.width
+                    spacing: 16
+                    padding: 16
+
+                    GroupBox {
+                        title: qsTr("Zakres pakietu")
+                        Layout.fillWidth: true
+
+                        ColumnLayout {
+                            spacing: 12
+
+                            Repeater {
+                                model: [
+                                    {
+                                        label: qsTr("Logi runtime"),
+                                        enabledProperty: "includeLogs",
+                                        pathProperty: "logsPath",
+                                        target: "logs"
+                                    },
+                                    {
+                                        label: qsTr("Raporty i eksporty"),
+                                        enabledProperty: "includeReports",
+                                        pathProperty: "reportsPath",
+                                        target: "reports"
+                                    },
+                                    {
+                                        label: qsTr("Licencje OEM"),
+                                        enabledProperty: "includeLicenses",
+                                        pathProperty: "licensesPath",
+                                        target: "licenses"
+                                    },
+                                    {
+                                        label: qsTr("Telemetria / metryki"),
+                                        enabledProperty: "includeMetrics",
+                                        pathProperty: "metricsPath",
+                                        target: "metrics"
+                                    },
+                                    {
+                                        label: qsTr("Artefakty audytu"),
+                                        enabledProperty: "includeAudit",
+                                        pathProperty: "auditPath",
+                                        target: "audit"
+                                    }
+                                ]
+
+                                delegate: RowLayout {
+                                    required property string label
+                                    required property string enabledProperty
+                                    required property string pathProperty
+                                    required property string target
+
+                                    Layout.fillWidth: true
+                                    spacing: 12
+
+                                    CheckBox {
+                                        text: label
+                                        checked: supportController && supportController[enabledProperty]
+                                        enabled: supportController && !supportController.busy
+                                        onToggled: {
+                                            if (!supportController)
+                                                return
+                                            supportController[enabledProperty] = checked
+                                        }
+                                    }
+
+                                    TextField {
+                                        Layout.fillWidth: true
+                                        readOnly: true
+                                        text: supportController ? supportController[pathProperty] : ""
+                                        placeholderText: qsTr("Ścieżka nieustawiona")
+                                        color: enabled ? palette.text : palette.mid
+                                    }
+
+                                    Button {
+                                        text: qsTr("Wybierz…")
+                                        enabled: supportController && !supportController.busy
+                                        onClicked: {
+                                            if (!supportController)
+                                                return
+                                            pendingPathTarget = target
+                                            const basePath = supportController[pathProperty]
+                                                    ? QUrl.fromLocalFile(supportController[pathProperty])
+                                                    : Qt.resolvedUrl(".")
+                                            supportFolderDialog.folder = basePath
+                                            supportFolderDialog.open()
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    GroupBox {
+                        title: qsTr("Eksport")
+                        Layout.fillWidth: true
+
+                        GridLayout {
+                            columns: 3
+                            columnSpacing: 12
+                            rowSpacing: 8
+                            Layout.fillWidth: true
+
+                            Label { text: qsTr("Format") }
+                            ComboBox {
+                                id: supportFormatCombo
+                                Layout.fillWidth: true
+                                model: ["tar.gz", "zip"]
+                                enabled: supportController && !supportController.busy
+                                onActivated: {
+                                    if (supportController)
+                                        supportController.format = model[index]
+                                }
+                                Component.onCompleted: {
+                                    if (supportController) {
+                                        const idx = model.indexOf(supportController.format)
+                                        currentIndex = idx >= 0 ? idx : 0
+                                    }
+                                }
+                                Binding {
+                                    target: supportFormatCombo
+                                    property: "currentIndex"
+                                    value: {
+                                        if (!supportController)
+                                            return 0
+                                        const idx = model.indexOf(supportController.format)
+                                        return idx >= 0 ? idx : 0
+                                    }
+                                    when: supportController && !supportFormatCombo.activeFocus
+                                }
+                            }
+                            Item {}
+
+                            Label { text: qsTr("Katalog wyjściowy") }
+                            TextField {
+                                Layout.fillWidth: true
+                                readOnly: true
+                                text: supportController ? supportController.outputDirectory : ""
+                                placeholderText: qsTr("Domyślnie var/support")
+                            }
+                            Button {
+                                text: qsTr("Wybierz…")
+                                enabled: supportController && !supportController.busy
+                                onClicked: {
+                                    pendingPathTarget = "output"
+                                    const dir = supportController && supportController.outputDirectory
+                                            ? QUrl.fromLocalFile(supportController.outputDirectory)
+                                            : Qt.resolvedUrl(".")
+                                    supportFolderDialog.folder = dir
+                                    supportFolderDialog.open()
+                                }
+                            }
+
+                            Label { text: qsTr("Bazowa nazwa pliku") }
+                            TextField {
+                                Layout.fillWidth: true
+                                enabled: supportController && !supportController.busy
+                                text: supportController ? supportController.defaultBasename : "support-bundle"
+                                onEditingFinished: {
+                                    if (supportController && text.length > 0)
+                                        supportController.defaultBasename = text.trim()
+                                }
+                            }
+                            Item {}
+
+                            Item { Layout.columnSpan: 3; Layout.fillWidth: true }
+                        }
+                    }
+
+                    GroupBox {
+                        title: qsTr("Status")
+                        Layout.fillWidth: true
+
+                        ColumnLayout {
+                            spacing: 8
+
+                            RowLayout {
+                                spacing: 12
+                                Label {
+                                    text: supportController && supportController.busy
+                                            ? qsTr("Trwa eksport pakietu wsparcia…")
+                                            : qsTr("Gotowe do eksportu")
+                                    font.bold: true
+                                }
+                                BusyIndicator {
+                                    running: supportController && supportController.busy
+                                    visible: running
+                                }
+                            }
+
+                            Label {
+                                visible: supportController && supportController.lastStatusMessage.length > 0
+                                text: supportController ? supportController.lastStatusMessage : ""
+                                color: Qt.rgba(0.3, 0.7, 0.4, 1)
+                                wrapMode: Text.WordWrap
+                            }
+
+                            Label {
+                                visible: supportController && supportController.lastErrorMessage.length > 0
+                                text: supportController ? supportController.lastErrorMessage : ""
+                                color: Qt.rgba(0.9, 0.4, 0.3, 1)
+                                wrapMode: Text.WordWrap
+                            }
+
+                            RowLayout {
+                                visible: supportController && supportController.lastBundlePath.length > 0
+                                spacing: 8
+
+                                Label { text: qsTr("Ostatni pakiet:") }
+                                TextField {
+                                    Layout.fillWidth: true
+                                    readOnly: true
+                                    text: supportController ? supportController.lastBundlePath : ""
+                                }
+                                Button {
+                                    text: qsTr("Otwórz")
+                                    onClicked: {
+                                        if (supportController && supportController.lastBundlePath.length > 0)
+                                            Qt.openUrlExternally(QUrl.fromLocalFile(supportController.lastBundlePath))
+                                    }
+                                }
+                            }
+
+                            RowLayout {
+                                spacing: 12
+
+                                Button {
+                                    text: qsTr("Eksportuj…")
+                                    enabled: supportController && !supportController.busy
+                                    onClicked: supportBundleDialog.open()
+                                }
+
+                                Button {
+                                    text: qsTr("Szybki eksport")
+                                    enabled: supportController && !supportController.busy
+                                    onClicked: {
+                                        if (supportController)
+                                            supportController.exportBundle()
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    GroupBox {
+                        title: qsTr("Ostatni manifest")
+                        Layout.fillWidth: true
+
+                        ColumnLayout {
+                            spacing: 6
+
+                            ListView {
+                                id: supportEntriesView
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: Math.min(contentHeight, 240)
+                                clip: true
+                                model: supportController && supportController.lastResult
+                                       && supportController.lastResult.entries
+                                       ? supportController.lastResult.entries
+                                       : []
+                                delegate: Frame {
+                                    required property var modelData
+                                    Layout.fillWidth: true
+                                    padding: 8
+                                    background: Rectangle {
+                                        color: Qt.rgba(0.18, 0.24, 0.32, 0.4)
+                                        radius: 6
+                                    }
+
+                                    ColumnLayout {
+                                        anchors.fill: parent
+                                        spacing: 4
+
+                                        Label {
+                                            text: modelData.label || qsTr("nieznany zasób")
+                                            font.bold: true
+                                        }
+
+                                        Label {
+                                            text: modelData.source || ""
+                                            wrapMode: Text.WordWrap
+                                            color: palette.midlight
+                                        }
+
+                                        Label {
+                                            text: qsTr("Pliki: %1, rozmiar: %2 B").arg(modelData.file_count || 0)
+                                                      .arg(modelData.size_bytes || 0)
+                                        }
+
+                                        Label {
+                                            visible: modelData.exists === false
+                                            text: qsTr("Uwaga: ścieżka nie istnieje")
+                                            color: Qt.rgba(0.95, 0.45, 0.3, 1)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            FolderDialog {
+                id: supportFolderDialog
+                title: qsTr("Wybierz katalog")
+                onAccepted: {
+                    if (!supportController)
+                        return
+                    const url = supportFolderDialog.selectedFolder
+                                 ? supportFolderDialog.selectedFolder
+                                 : (currentFolder || folder)
+                    if (!url)
+                        return
+                    const localPath = url.toLocalFile ? url.toLocalFile() : url.toString().replace("file://", "")
+                    switch (pendingPathTarget) {
+                    case "logs": supportController.logsPath = localPath; break
+                    case "reports": supportController.reportsPath = localPath; break
+                    case "licenses": supportController.licensesPath = localPath; break
+                    case "metrics": supportController.metricsPath = localPath; break
+                    case "audit": supportController.auditPath = localPath; break
+                    case "output": supportController.outputDirectory = localPath; break
+                    }
+                }
+            }
+
+            FileDialog {
+                id: supportBundleDialog
+                title: qsTr("Zapisz pakiet wsparcia")
+                fileMode: FileDialog.SaveFile
+                defaultSuffix: supportController && supportController.format === "zip" ? "zip" : "tar.gz"
+                nameFilters: [qsTr("Archiwa (*.tar.gz *.zip)"), qsTr("Wszystkie pliki (*)")]
+                onAccepted: {
+                    if (supportController)
+                        supportController.exportBundle(selectedFile)
+                }
+            }
+        }
     }
 
     function refreshData() {
+        if (typeof strategyController !== "undefined")
+            strategyController.refresh()
         syncForms()
         if (typeof securityController !== "undefined")
             securityController.refresh()
         if (typeof reportController !== "undefined")
             reportController.refresh()
+    }
+
+    function currentSchedule() {
+        if (!schedulerSchedules || schedulerSchedules.length === 0)
+            return null
+        if (selectedScheduleIndex < 0 || selectedScheduleIndex >= schedulerSchedules.length)
+            return null
+        return schedulerSchedules[selectedScheduleIndex]
+    }
+
+    function updateDecisionField(key, value) {
+        var copy = clone(decisionForm) || {}
+        copy[key] = value
+        decisionForm = copy
+    }
+
+    function updateDecisionOverrideField(index, key, value) {
+        if (!decisionOverrides || index < 0 || index >= decisionOverrides.length)
+            return
+        var overrides = clone(decisionOverrides)
+        if (!overrides[index])
+            overrides[index] = {}
+        overrides[index][key] = value
+        decisionOverrides = overrides
+    }
+
+    function updateSchedulerField(key, value) {
+        var copy = clone(schedulerForm) || {}
+        copy[key] = value
+        schedulerForm = copy
+    }
+
+    function updateScheduleField(index, key, value) {
+        if (!schedulerSchedules || index < 0 || index >= schedulerSchedules.length)
+            return
+        var schedules = clone(schedulerSchedules)
+        if (!schedules[index])
+            schedules[index] = {}
+        schedules[index][key] = value
+        schedulerSchedules = schedules
+    }
+
+    function selectScheduler(name) {
+        if (typeof strategyController === "undefined" || !name)
+            return
+        selectedSchedulerName = name
+        var snapshot = strategyController.schedulerConfigSnapshot(name)
+        schedulerForm = clone(snapshot) || ({})
+        schedulerSchedules = schedulerForm.schedules ? clone(schedulerForm.schedules) : []
+        selectedScheduleIndex = schedulerSchedules.length > 0 ? 0 : -1
+        schedulerStatusMessage = ""
     }
 
     function defaultExportFolder() {
@@ -287,6 +733,701 @@ Drawer {
                                 from: 0
                                 to: 120
                                 onValueModified: guardForm.disableSecondaryWhenBelow = value
+                            }
+                        }
+                    }
+
+                    GroupBox {
+                        title: qsTr("DecisionOrchestrator")
+                        Layout.fillWidth: true
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 12
+
+                            GridLayout {
+                                columns: 2
+                                columnSpacing: 12
+                                rowSpacing: 8
+                                Layout.fillWidth: true
+
+                                Label { text: qsTr("Maks. koszt (bps)") }
+                                TextField {
+                                    id: decisionMaxCostField
+                                    Layout.fillWidth: true
+                                    inputMethodHints: Qt.ImhFormattedNumbersOnly
+                                    text: decisionForm.max_cost_bps !== undefined ? String(decisionForm.max_cost_bps) : ""
+                                    onEditingFinished: {
+                                        var value = parseFloat(text)
+                                        if (!isNaN(value))
+                                            updateDecisionField("max_cost_bps", value)
+                                    }
+                                    Binding {
+                                        target: decisionMaxCostField
+                                        property: "text"
+                                        value: decisionForm.max_cost_bps !== undefined ? String(decisionForm.max_cost_bps) : ""
+                                        when: !decisionMaxCostField.activeFocus
+                                    }
+                                }
+
+                                Label { text: qsTr("Minimalny edge netto (bps)") }
+                                TextField {
+                                    id: decisionMinEdgeField
+                                    Layout.fillWidth: true
+                                    inputMethodHints: Qt.ImhFormattedNumbersOnly
+                                    text: decisionForm.min_net_edge_bps !== undefined ? String(decisionForm.min_net_edge_bps) : ""
+                                    onEditingFinished: {
+                                        var value = parseFloat(text)
+                                        if (!isNaN(value))
+                                            updateDecisionField("min_net_edge_bps", value)
+                                    }
+                                    Binding {
+                                        target: decisionMinEdgeField
+                                        property: "text"
+                                        value: decisionForm.min_net_edge_bps !== undefined ? String(decisionForm.min_net_edge_bps) : ""
+                                        when: !decisionMinEdgeField.activeFocus
+                                    }
+                                }
+
+                                Label { text: qsTr("Maks. dzienny drawdown (%)") }
+                                TextField {
+                                    id: decisionDailyLossField
+                                    Layout.fillWidth: true
+                                    inputMethodHints: Qt.ImhFormattedNumbersOnly
+                                    text: decisionForm.max_daily_loss_pct !== undefined ? String(decisionForm.max_daily_loss_pct) : ""
+                                    onEditingFinished: {
+                                        var value = parseFloat(text)
+                                        if (!isNaN(value))
+                                            updateDecisionField("max_daily_loss_pct", value)
+                                    }
+                                    Binding {
+                                        target: decisionDailyLossField
+                                        property: "text"
+                                        value: decisionForm.max_daily_loss_pct !== undefined ? String(decisionForm.max_daily_loss_pct) : ""
+                                        when: !decisionDailyLossField.activeFocus
+                                    }
+                                }
+
+                                Label { text: qsTr("Maks. drawdown (%)") }
+                                TextField {
+                                    id: decisionDrawdownField
+                                    Layout.fillWidth: true
+                                    inputMethodHints: Qt.ImhFormattedNumbersOnly
+                                    text: decisionForm.max_drawdown_pct !== undefined ? String(decisionForm.max_drawdown_pct) : ""
+                                    onEditingFinished: {
+                                        var value = parseFloat(text)
+                                        if (!isNaN(value))
+                                            updateDecisionField("max_drawdown_pct", value)
+                                    }
+                                    Binding {
+                                        target: decisionDrawdownField
+                                        property: "text"
+                                        value: decisionForm.max_drawdown_pct !== undefined ? String(decisionForm.max_drawdown_pct) : ""
+                                        when: !decisionDrawdownField.activeFocus
+                                    }
+                                }
+
+                                Label { text: qsTr("Maks. ekspozycja (%)") }
+                                TextField {
+                                    id: decisionPositionField
+                                    Layout.fillWidth: true
+                                    inputMethodHints: Qt.ImhFormattedNumbersOnly
+                                    text: decisionForm.max_position_ratio !== undefined ? String(decisionForm.max_position_ratio) : ""
+                                    onEditingFinished: {
+                                        var value = parseFloat(text)
+                                        if (!isNaN(value))
+                                            updateDecisionField("max_position_ratio", value)
+                                    }
+                                    Binding {
+                                        target: decisionPositionField
+                                        property: "text"
+                                        value: decisionForm.max_position_ratio !== undefined ? String(decisionForm.max_position_ratio) : ""
+                                        when: !decisionPositionField.activeFocus
+                                    }
+                                }
+
+                                Label { text: qsTr("Maks. liczba pozycji") }
+                                TextField {
+                                    id: decisionOpenPositionsField
+                                    Layout.fillWidth: true
+                                    inputMethodHints: Qt.ImhDigitsOnly
+                                    text: decisionForm.max_open_positions !== undefined ? String(decisionForm.max_open_positions) : ""
+                                    onEditingFinished: {
+                                        var value = parseInt(text)
+                                        if (!isNaN(value))
+                                            updateDecisionField("max_open_positions", value)
+                                    }
+                                    Binding {
+                                        target: decisionOpenPositionsField
+                                        property: "text"
+                                        value: decisionForm.max_open_positions !== undefined ? String(decisionForm.max_open_positions) : ""
+                                        when: !decisionOpenPositionsField.activeFocus
+                                    }
+                                }
+
+                                Label { text: qsTr("Budżet latencji (ms)") }
+                                TextField {
+                                    id: decisionLatencyField
+                                    Layout.fillWidth: true
+                                    inputMethodHints: Qt.ImhFormattedNumbersOnly
+                                    text: decisionForm.max_latency_ms !== undefined ? String(decisionForm.max_latency_ms) : ""
+                                    onEditingFinished: {
+                                        var value = parseFloat(text)
+                                        if (!isNaN(value))
+                                            updateDecisionField("max_latency_ms", value)
+                                    }
+                                    Binding {
+                                        target: decisionLatencyField
+                                        property: "text"
+                                        value: decisionForm.max_latency_ms !== undefined ? String(decisionForm.max_latency_ms) : ""
+                                        when: !decisionLatencyField.activeFocus
+                                    }
+                                }
+
+                                Label { text: qsTr("Min. prawdopodobieństwo") }
+                                TextField {
+                                    id: decisionProbabilityField
+                                    Layout.fillWidth: true
+                                    inputMethodHints: Qt.ImhFormattedNumbersOnly
+                                    text: decisionForm.min_probability !== undefined ? String(decisionForm.min_probability) : ""
+                                    onEditingFinished: {
+                                        var value = parseFloat(text)
+                                        if (!isNaN(value)) {
+                                            value = Math.max(0.0, Math.min(1.0, value))
+                                            updateDecisionField("min_probability", value)
+                                            text = String(value)
+                                        }
+                                    }
+                                    Binding {
+                                        target: decisionProbabilityField
+                                        property: "text"
+                                        value: decisionForm.min_probability !== undefined ? String(decisionForm.min_probability) : ""
+                                        when: !decisionProbabilityField.activeFocus
+                                    }
+                                }
+
+                                Label { text: qsTr("Kara kosztowa (bps)") }
+                                TextField {
+                                    id: decisionPenaltyField
+                                    Layout.fillWidth: true
+                                    inputMethodHints: Qt.ImhFormattedNumbersOnly
+                                    text: decisionForm.penalty_cost_bps !== undefined ? String(decisionForm.penalty_cost_bps) : ""
+                                    onEditingFinished: {
+                                        var value = parseFloat(text)
+                                        if (!isNaN(value))
+                                            updateDecisionField("penalty_cost_bps", value)
+                                    }
+                                    Binding {
+                                        target: decisionPenaltyField
+                                        property: "text"
+                                        value: decisionForm.penalty_cost_bps !== undefined ? String(decisionForm.penalty_cost_bps) : ""
+                                        when: !decisionPenaltyField.activeFocus
+                                    }
+                                }
+                            }
+
+                            Switch {
+                                id: requireCostSwitch
+                                text: qsTr("Wymagaj danych kosztowych Decision Engine")
+                                checked: decisionForm.require_cost_data === undefined ? true : decisionForm.require_cost_data
+                                onToggled: updateDecisionField("require_cost_data", checked)
+                                Binding {
+                                    target: requireCostSwitch
+                                    property: "checked"
+                                    value: decisionForm.require_cost_data === undefined ? true : decisionForm.require_cost_data
+                                    when: !requireCostSwitch.down && !requireCostSwitch.activeFocus
+                                }
+                            }
+
+                            Repeater {
+                                model: decisionOverrides.length
+                                delegate: GroupBox {
+                                    title: qsTr("Profil %1").arg(decisionOverrides[index] && decisionOverrides[index].profile ? decisionOverrides[index].profile : qsTr("nieznany"))
+                                    Layout.fillWidth: true
+
+                                    GridLayout {
+                                        columns: 2
+                                        columnSpacing: 12
+                                        rowSpacing: 8
+                                        Layout.fillWidth: true
+
+                                        Label { text: qsTr("Maks. koszt (bps)") }
+                                        TextField {
+                                            id: overrideMaxCostField
+                                            Layout.fillWidth: true
+                                            inputMethodHints: Qt.ImhFormattedNumbersOnly
+                                            text: decisionOverrides[index] && decisionOverrides[index].max_cost_bps !== undefined ? String(decisionOverrides[index].max_cost_bps) : ""
+                                            onEditingFinished: {
+                                                var value = parseFloat(text)
+                                                if (!isNaN(value))
+                                                    updateDecisionOverrideField(index, "max_cost_bps", value)
+                                            }
+                                            Binding {
+                                                target: overrideMaxCostField
+                                                property: "text"
+                                                value: decisionOverrides[index] && decisionOverrides[index].max_cost_bps !== undefined ? String(decisionOverrides[index].max_cost_bps) : ""
+                                                when: !overrideMaxCostField.activeFocus
+                                            }
+                                        }
+
+                                        Label { text: qsTr("Minimalny edge netto (bps)") }
+                                        TextField {
+                                            id: overrideMinEdgeField
+                                            Layout.fillWidth: true
+                                            inputMethodHints: Qt.ImhFormattedNumbersOnly
+                                            text: decisionOverrides[index] && decisionOverrides[index].min_net_edge_bps !== undefined ? String(decisionOverrides[index].min_net_edge_bps) : ""
+                                            onEditingFinished: {
+                                                var value = parseFloat(text)
+                                                if (!isNaN(value))
+                                                    updateDecisionOverrideField(index, "min_net_edge_bps", value)
+                                            }
+                                            Binding {
+                                                target: overrideMinEdgeField
+                                                property: "text"
+                                                value: decisionOverrides[index] && decisionOverrides[index].min_net_edge_bps !== undefined ? String(decisionOverrides[index].min_net_edge_bps) : ""
+                                                when: !overrideMinEdgeField.activeFocus
+                                            }
+                                        }
+
+                                        Label { text: qsTr("Maks. dzienny drawdown (%)") }
+                                        TextField {
+                                            id: overrideDailyLossField
+                                            Layout.fillWidth: true
+                                            inputMethodHints: Qt.ImhFormattedNumbersOnly
+                                            text: decisionOverrides[index] && decisionOverrides[index].max_daily_loss_pct !== undefined ? String(decisionOverrides[index].max_daily_loss_pct) : ""
+                                            onEditingFinished: {
+                                                var value = parseFloat(text)
+                                                if (!isNaN(value))
+                                                    updateDecisionOverrideField(index, "max_daily_loss_pct", value)
+                                            }
+                                            Binding {
+                                                target: overrideDailyLossField
+                                                property: "text"
+                                                value: decisionOverrides[index] && decisionOverrides[index].max_daily_loss_pct !== undefined ? String(decisionOverrides[index].max_daily_loss_pct) : ""
+                                                when: !overrideDailyLossField.activeFocus
+                                            }
+                                        }
+
+                                        Label { text: qsTr("Maks. drawdown (%)") }
+                                        TextField {
+                                            id: overrideDrawdownField
+                                            Layout.fillWidth: true
+                                            inputMethodHints: Qt.ImhFormattedNumbersOnly
+                                            text: decisionOverrides[index] && decisionOverrides[index].max_drawdown_pct !== undefined ? String(decisionOverrides[index].max_drawdown_pct) : ""
+                                            onEditingFinished: {
+                                                var value = parseFloat(text)
+                                                if (!isNaN(value))
+                                                    updateDecisionOverrideField(index, "max_drawdown_pct", value)
+                                            }
+                                            Binding {
+                                                target: overrideDrawdownField
+                                                property: "text"
+                                                value: decisionOverrides[index] && decisionOverrides[index].max_drawdown_pct !== undefined ? String(decisionOverrides[index].max_drawdown_pct) : ""
+                                                when: !overrideDrawdownField.activeFocus
+                                            }
+                                        }
+
+                                        Label { text: qsTr("Maks. ekspozycja (%)") }
+                                        TextField {
+                                            id: overridePositionField
+                                            Layout.fillWidth: true
+                                            inputMethodHints: Qt.ImhFormattedNumbersOnly
+                                            text: decisionOverrides[index] && decisionOverrides[index].max_position_ratio !== undefined ? String(decisionOverrides[index].max_position_ratio) : ""
+                                            onEditingFinished: {
+                                                var value = parseFloat(text)
+                                                if (!isNaN(value))
+                                                    updateDecisionOverrideField(index, "max_position_ratio", value)
+                                            }
+                                            Binding {
+                                                target: overridePositionField
+                                                property: "text"
+                                                value: decisionOverrides[index] && decisionOverrides[index].max_position_ratio !== undefined ? String(decisionOverrides[index].max_position_ratio) : ""
+                                                when: !overridePositionField.activeFocus
+                                            }
+                                        }
+
+                                        Label { text: qsTr("Maks. liczba pozycji") }
+                                        TextField {
+                                            id: overrideOpenPositionsField
+                                            Layout.fillWidth: true
+                                            inputMethodHints: Qt.ImhDigitsOnly
+                                            text: decisionOverrides[index] && decisionOverrides[index].max_open_positions !== undefined ? String(decisionOverrides[index].max_open_positions) : ""
+                                            onEditingFinished: {
+                                                var value = parseInt(text)
+                                                if (!isNaN(value))
+                                                    updateDecisionOverrideField(index, "max_open_positions", value)
+                                            }
+                                            Binding {
+                                                target: overrideOpenPositionsField
+                                                property: "text"
+                                                value: decisionOverrides[index] && decisionOverrides[index].max_open_positions !== undefined ? String(decisionOverrides[index].max_open_positions) : ""
+                                                when: !overrideOpenPositionsField.activeFocus
+                                            }
+                                        }
+
+                                        Label { text: qsTr("Budżet latencji (ms)") }
+                                        TextField {
+                                            id: overrideLatencyField
+                                            Layout.fillWidth: true
+                                            inputMethodHints: Qt.ImhFormattedNumbersOnly
+                                            text: decisionOverrides[index] && decisionOverrides[index].max_latency_ms !== undefined ? String(decisionOverrides[index].max_latency_ms) : ""
+                                            onEditingFinished: {
+                                                var value = parseFloat(text)
+                                                if (!isNaN(value))
+                                                    updateDecisionOverrideField(index, "max_latency_ms", value)
+                                            }
+                                            Binding {
+                                                target: overrideLatencyField
+                                                property: "text"
+                                                value: decisionOverrides[index] && decisionOverrides[index].max_latency_ms !== undefined ? String(decisionOverrides[index].max_latency_ms) : ""
+                                                when: !overrideLatencyField.activeFocus
+                                            }
+                                        }
+
+                                        Label { text: qsTr("Limit notional (USD)") }
+                                        TextField {
+                                            id: overrideNotionalField
+                                            Layout.fillWidth: true
+                                            inputMethodHints: Qt.ImhFormattedNumbersOnly
+                                            text: decisionOverrides[index] && decisionOverrides[index].max_trade_notional !== undefined ? String(decisionOverrides[index].max_trade_notional) : ""
+                                            onEditingFinished: {
+                                                var value = parseFloat(text)
+                                                if (!isNaN(value))
+                                                    updateDecisionOverrideField(index, "max_trade_notional", value)
+                                            }
+                                            Binding {
+                                                target: overrideNotionalField
+                                                property: "text"
+                                                value: decisionOverrides[index] && decisionOverrides[index].max_trade_notional !== undefined ? String(decisionOverrides[index].max_trade_notional) : ""
+                                                when: !overrideNotionalField.activeFocus
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 12
+
+                                Button {
+                                    text: qsTr("Przywróć")
+                                    onClicked: syncForms()
+                                }
+
+                                Item { Layout.fillWidth: true }
+
+                                Button {
+                                    text: qsTr("Zapisz DecisionOrchestrator")
+                                    highlighted: true
+                                    enabled: typeof strategyController !== "undefined"
+                                    onClicked: {
+                                        if (typeof strategyController === "undefined")
+                                            return
+                                        var payload = clone(decisionForm) || ({})
+                                        payload.profile_overrides = decisionOverrides || []
+                                        if (strategyController.saveDecisionConfig(payload)) {
+                                            decisionStatusMessage = qsTr("Zapisano konfigurację DecisionOrchestratora")
+                                            decisionStatusColor = Qt.rgba(0.3, 0.7, 0.4, 1)
+                                            syncForms()
+                                        } else {
+                                            decisionStatusMessage = strategyController.lastError || qsTr("Nie udało się zapisać konfiguracji DecisionOrchestratora")
+                                            decisionStatusColor = Qt.rgba(0.9, 0.4, 0.3, 1)
+                                        }
+                                    }
+                                }
+                            }
+
+                            Label {
+                                Layout.fillWidth: true
+                                visible: decisionStatusMessage.length > 0
+                                text: decisionStatusMessage
+                                color: decisionStatusColor
+                            }
+                        }
+                    }
+
+                    GroupBox {
+                        title: qsTr("Scheduler strategii/AI")
+                        Layout.fillWidth: true
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 12
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 12
+
+                                Label {
+                                    text: qsTr("Scheduler")
+                                    enabled: schedulerListModel && schedulerListModel.length > 0
+                                }
+
+                                ComboBox {
+                                    id: schedulerCombo
+                                    Layout.fillWidth: true
+                                    model: schedulerListModel
+                                    textRole: "name"
+                                    enabled: schedulerListModel && schedulerListModel.length > 0
+                                    onActivated: selectScheduler(model[index].name)
+                                    Binding {
+                                        target: schedulerCombo
+                                        property: "currentIndex"
+                                        value: schedulerListModel && schedulerListModel.length > 0 ? schedulerListModel.findIndex(function(item) { return item.name === selectedSchedulerName }) : -1
+                                        when: !schedulerCombo.popup.visible
+                                    }
+                                }
+                            }
+
+                            GridLayout {
+                                columns: 2
+                                columnSpacing: 12
+                                rowSpacing: 8
+                                Layout.fillWidth: true
+
+                                Label { text: qsTr("Namespace telemetrii") }
+                                TextField {
+                                    id: schedulerTelemetryField
+                                    Layout.fillWidth: true
+                                    text: schedulerForm.telemetry_namespace !== undefined ? schedulerForm.telemetry_namespace : ""
+                                    onEditingFinished: updateSchedulerField("telemetry_namespace", text)
+                                    Binding {
+                                        target: schedulerTelemetryField
+                                        property: "text"
+                                        value: schedulerForm.telemetry_namespace !== undefined ? schedulerForm.telemetry_namespace : ""
+                                        when: !schedulerTelemetryField.activeFocus
+                                    }
+                                }
+
+                                Label { text: qsTr("Kategoria decision logu") }
+                                TextField {
+                                    id: schedulerDecisionLogField
+                                    Layout.fillWidth: true
+                                    text: schedulerForm.decision_log_category !== undefined ? schedulerForm.decision_log_category : ""
+                                    onEditingFinished: updateSchedulerField("decision_log_category", text)
+                                    Binding {
+                                        target: schedulerDecisionLogField
+                                        property: "text"
+                                        value: schedulerForm.decision_log_category !== undefined ? schedulerForm.decision_log_category : ""
+                                        when: !schedulerDecisionLogField.activeFocus
+                                    }
+                                }
+
+                                Label { text: qsTr("Interwał health-check (s)") }
+                                SpinBox {
+                                    id: schedulerHealthSpin
+                                    from: 30
+                                    to: 3600
+                                    stepSize: 10
+                                    value: schedulerForm.health_check_interval !== undefined ? schedulerForm.health_check_interval : 300
+                                    onValueModified: updateSchedulerField("health_check_interval", value)
+                                    Binding {
+                                        target: schedulerHealthSpin
+                                        property: "value"
+                                        value: schedulerForm.health_check_interval !== undefined ? schedulerForm.health_check_interval : 300
+                                        when: !schedulerHealthSpin.activeFocus
+                                    }
+                                }
+
+                                Label { text: qsTr("Portfolio Governor") }
+                                TextField {
+                                    id: schedulerGovernorField
+                                    Layout.fillWidth: true
+                                    text: schedulerForm.portfolio_governor !== undefined ? schedulerForm.portfolio_governor : ""
+                                    onEditingFinished: updateSchedulerField("portfolio_governor", text)
+                                    Binding {
+                                        target: schedulerGovernorField
+                                        property: "text"
+                                        value: schedulerForm.portfolio_governor !== undefined ? schedulerForm.portfolio_governor : ""
+                                        when: !schedulerGovernorField.activeFocus
+                                    }
+                                }
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 12
+
+                                Label {
+                                    text: qsTr("Zadanie harmonogramu")
+                                    enabled: schedulerSchedules && schedulerSchedules.length > 0
+                                }
+
+                                ComboBox {
+                                    id: scheduleCombo
+                                    Layout.fillWidth: true
+                                    model: schedulerSchedules
+                                    textRole: "name"
+                                    enabled: schedulerSchedules && schedulerSchedules.length > 0
+                                    onActivated: selectedScheduleIndex = index
+                                    Binding {
+                                        target: scheduleCombo
+                                        property: "currentIndex"
+                                        value: selectedScheduleIndex
+                                        when: !scheduleCombo.popup.visible
+                                    }
+                                }
+                            }
+
+                            GridLayout {
+                                visible: currentSchedule() !== null
+                                columns: 2
+                                columnSpacing: 12
+                                rowSpacing: 8
+                                Layout.fillWidth: true
+
+                                Label { text: qsTr("Strategia") }
+                                TextField {
+                                    id: scheduleStrategyField
+                                    Layout.fillWidth: true
+                                    enabled: currentSchedule() !== null
+                                    text: currentSchedule() ? (currentSchedule().strategy || "") : ""
+                                    onEditingFinished: updateScheduleField(selectedScheduleIndex, "strategy", text)
+                                    Binding {
+                                        target: scheduleStrategyField
+                                        property: "text"
+                                        value: currentSchedule() ? (currentSchedule().strategy || "") : ""
+                                        when: !scheduleStrategyField.activeFocus
+                                    }
+                                }
+
+                                Label { text: qsTr("Ryzyko (profil)") }
+                                TextField {
+                                    id: scheduleRiskField
+                                    Layout.fillWidth: true
+                                    enabled: currentSchedule() !== null
+                                    text: currentSchedule() ? (currentSchedule().risk_profile || "") : ""
+                                    onEditingFinished: updateScheduleField(selectedScheduleIndex, "risk_profile", text)
+                                    Binding {
+                                        target: scheduleRiskField
+                                        property: "text"
+                                        value: currentSchedule() ? (currentSchedule().risk_profile || "") : ""
+                                        when: !scheduleRiskField.activeFocus
+                                    }
+                                }
+
+                                Label { text: qsTr("Cadence (s)") }
+                                SpinBox {
+                                    id: scheduleCadenceSpin
+                                    from: 1
+                                    to: 3600
+                                    stepSize: 5
+                                    enabled: currentSchedule() !== null
+                                    value: currentSchedule() ? (currentSchedule().cadence_seconds || 60) : 60
+                                    onValueModified: updateScheduleField(selectedScheduleIndex, "cadence_seconds", value)
+                                    Binding {
+                                        target: scheduleCadenceSpin
+                                        property: "value"
+                                        value: currentSchedule() ? (currentSchedule().cadence_seconds || 60) : 60
+                                        when: !scheduleCadenceSpin.activeFocus
+                                    }
+                                }
+
+                                Label { text: qsTr("Maks. dryf (s)") }
+                                SpinBox {
+                                    id: scheduleDriftSpin
+                                    from: 0
+                                    to: 3600
+                                    stepSize: 5
+                                    enabled: currentSchedule() !== null
+                                    value: currentSchedule() ? (currentSchedule().max_drift_seconds || 0) : 0
+                                    onValueModified: updateScheduleField(selectedScheduleIndex, "max_drift_seconds", value)
+                                    Binding {
+                                        target: scheduleDriftSpin
+                                        property: "value"
+                                        value: currentSchedule() ? (currentSchedule().max_drift_seconds || 0) : 0
+                                        when: !scheduleDriftSpin.activeFocus
+                                    }
+                                }
+
+                                Label { text: qsTr("Warmup (bary)") }
+                                SpinBox {
+                                    id: scheduleWarmupSpin
+                                    from: 0
+                                    to: 2000
+                                    stepSize: 1
+                                    enabled: currentSchedule() !== null
+                                    value: currentSchedule() ? (currentSchedule().warmup_bars || 0) : 0
+                                    onValueModified: updateScheduleField(selectedScheduleIndex, "warmup_bars", value)
+                                    Binding {
+                                        target: scheduleWarmupSpin
+                                        property: "value"
+                                        value: currentSchedule() ? (currentSchedule().warmup_bars || 0) : 0
+                                        when: !scheduleWarmupSpin.activeFocus
+                                    }
+                                }
+
+                                Label { text: qsTr("Limit sygnałów") }
+                                SpinBox {
+                                    id: scheduleSignalsSpin
+                                    from: 1
+                                    to: 100
+                                    stepSize: 1
+                                    enabled: currentSchedule() !== null
+                                    value: currentSchedule() ? (currentSchedule().max_signals || 10) : 10
+                                    onValueModified: updateScheduleField(selectedScheduleIndex, "max_signals", value)
+                                    Binding {
+                                        target: scheduleSignalsSpin
+                                        property: "value"
+                                        value: currentSchedule() ? (currentSchedule().max_signals || 10) : 10
+                                        when: !scheduleSignalsSpin.activeFocus
+                                    }
+                                }
+
+                                Label { text: qsTr("Interwał cron") }
+                                TextField {
+                                    id: scheduleIntervalField
+                                    Layout.fillWidth: true
+                                    enabled: currentSchedule() !== null
+                                    text: currentSchedule() ? (currentSchedule().interval || "") : ""
+                                    onEditingFinished: updateScheduleField(selectedScheduleIndex, "interval", text)
+                                    Binding {
+                                        target: scheduleIntervalField
+                                        property: "text"
+                                        value: currentSchedule() ? (currentSchedule().interval || "") : ""
+                                        when: !scheduleIntervalField.activeFocus
+                                    }
+                                }
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 12
+
+                                Button {
+                                    text: qsTr("Przywróć scheduler")
+                                    onClicked: syncForms()
+                                }
+
+                                Item { Layout.fillWidth: true }
+
+                                Button {
+                                    text: qsTr("Zapisz scheduler")
+                                    highlighted: true
+                                    enabled: typeof strategyController !== "undefined" && selectedSchedulerName.length > 0
+                                    onClicked: {
+                                        if (typeof strategyController === "undefined" || selectedSchedulerName.length === 0)
+                                            return
+                                        var payload = clone(schedulerForm) || ({})
+                                        payload.schedules = schedulerSchedules || []
+                                        if (strategyController.saveSchedulerConfig(selectedSchedulerName, payload)) {
+                                            schedulerStatusMessage = qsTr("Zapisano konfigurację schedulera %1").arg(selectedSchedulerName)
+                                            schedulerStatusColor = Qt.rgba(0.3, 0.7, 0.4, 1)
+                                            syncForms()
+                                        } else {
+                                            schedulerStatusMessage = strategyController.lastError || qsTr("Nie udało się zapisać konfiguracji schedulera")
+                                            schedulerStatusColor = Qt.rgba(0.9, 0.4, 0.3, 1)
+                                        }
+                                    }
+                                }
+                            }
+
+                            Label {
+                                Layout.fillWidth: true
+                                visible: schedulerStatusMessage.length > 0
+                                text: schedulerStatusMessage
+                                color: schedulerStatusColor
                             }
                         }
                     }
@@ -929,8 +2070,142 @@ Drawer {
         Tab {
             title: qsTr("Monitorowanie")
 
-            ReportBrowser {
+            Item {
                 anchors.fill: parent
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 16
+                    spacing: 16
+
+                    GroupBox {
+                        title: qsTr("Status backendu")
+                        Layout.fillWidth: true
+
+                        ColumnLayout {
+                            spacing: 12
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 12
+
+                                BusyIndicator {
+                                    running: healthController && healthController.busy
+                                    visible: running
+                                }
+
+                                Label {
+                                    Layout.fillWidth: true
+                                    wrapMode: Text.WordWrap
+                                    text: healthController ? (healthController.statusMessage || qsTr("Brak danych o HealthService"))
+                                                          : qsTr("Brak danych o HealthService")
+                                    color: healthController && healthController.healthy ? Qt.rgba(0.3, 0.7, 0.4, 1)
+                                                                                         : Qt.rgba(0.86, 0.35, 0.35, 1)
+                                }
+
+                                Button {
+                                    text: qsTr("Odśwież")
+                                    enabled: healthController && !healthController.busy
+                                    onClicked: healthController && healthController.refresh()
+                                }
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 12
+
+                                CheckBox {
+                                    text: qsTr("Auto-odświeżanie")
+                                    checked: healthController && healthController.autoRefreshEnabled
+                                    enabled: !!healthController
+                                    onToggled: {
+                                        if (!healthController)
+                                            return
+                                        healthController.setAutoRefreshEnabled(checked)
+                                    }
+                                }
+
+                                Label { text: qsTr("Interwał (s)") }
+
+                                SpinBox {
+                                    id: healthIntervalSpin
+                                    from: 5
+                                    to: 3600
+                                    stepSize: 5
+                                    value: healthController ? healthController.refreshIntervalSeconds : 60
+                                    enabled: healthController && healthController.autoRefreshEnabled
+                                    onValueModified: {
+                                        if (!healthController)
+                                            return
+                                        healthController.setRefreshIntervalSeconds(value)
+                                    }
+                                    Binding {
+                                        target: healthIntervalSpin
+                                        property: "value"
+                                        value: healthController ? healthController.refreshIntervalSeconds : 60
+                                        when: !!healthController && !healthIntervalSpin.activeFocus
+                                    }
+                                }
+                            }
+
+                            GridLayout {
+                                columns: 2
+                                columnSpacing: 12
+                                rowSpacing: 6
+                                Layout.fillWidth: true
+
+                                Label { text: qsTr("Wersja") }
+                                Label {
+                                    wrapMode: Text.WrapAnywhere
+                                    text: healthController && healthController.version.length > 0
+                                          ? healthController.version
+                                          : qsTr("n/d")
+                                }
+
+                                Label { text: qsTr("Commit") }
+                                Label {
+                                    wrapMode: Text.WrapAnywhere
+                                    text: healthController && healthController.gitCommit.length > 0
+                                          ? healthController.gitCommitShort
+                                          : qsTr("n/d")
+                                }
+
+                                Label { text: qsTr("Start (UTC)") }
+                                Label {
+                                    text: healthController && healthController.startedAt.length > 0
+                                          ? healthController.startedAt
+                                          : qsTr("n/d")
+                                }
+
+                                Label { text: qsTr("Start (lokalny)") }
+                                Label {
+                                    text: healthController && healthController.startedAtLocal.length > 0
+                                          ? healthController.startedAtLocal
+                                          : qsTr("n/d")
+                                }
+
+                                Label { text: qsTr("Czas działania") }
+                                Label {
+                                    text: healthController && healthController.uptime.length > 0
+                                          ? healthController.uptime
+                                          : qsTr("n/d")
+                                }
+
+                                Label { text: qsTr("Ostatnie sprawdzenie") }
+                                Label {
+                                    text: healthController && healthController.lastCheckedAt.length > 0
+                                          ? healthController.lastCheckedAt
+                                          : qsTr("n/d")
+                                }
+                            }
+                        }
+                    }
+
+                    ReportBrowser {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                    }
+                }
             }
         }
 

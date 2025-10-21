@@ -344,6 +344,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 def run(argv: Sequence[str] | None = None) -> int:
     """Compatibility wrapper matching the previous public API."""
 
+    args = list(argv or [])
     first = args[0] if args else None
     if "--bundle" not in args and first and not str(first).startswith("-"):
         args = ["--bundle", *args]

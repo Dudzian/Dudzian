@@ -5,6 +5,7 @@ import asyncio
 import logging
 import math
 from collections import Counter, defaultdict
+from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import (
@@ -527,6 +528,19 @@ class SmoothedCapitalAllocationPolicy:
                 smoothed_value = numeric_raw
             else:
                 delta = numeric_raw - previous
+            try:
+                raw_value = float(raw_allocation.get(name, 0.0))
+            except (TypeError, ValueError):
+                raw_value = 0.0
+            if not math.isfinite(raw_value) or raw_value < 0.0:
+                raw_value = 0.0
+            raw_weights[name] = raw_value
+
+            previous = self._last_smoothed.get(name)
+            if previous is None:
+                smoothed_value = raw_value
+            else:
+                delta = raw_value - previous
                 if abs(delta) < self.min_delta:
                     smoothed_value = previous
                 else:
@@ -538,6 +552,7 @@ class SmoothedCapitalAllocationPolicy:
             normalized = EqualWeightAllocation().allocate(schedules)
 
         self._last_raw = _normalize_weights(raw_weights)
+        self._last_raw = raw_weights
         self._last_smoothed = dict(normalized)
         return normalized
 
@@ -1260,6 +1275,14 @@ class MultiStrategyScheduler:
         for strategy, profiles in (signal_limits or {}).items():
             for profile, limit in (profiles or {}).items():
                 self.configure_signal_limit(strategy, profile, limit)
+        self._signal_limits: dict[tuple[str, str], int] = {}
+        for strategy, profiles in (signal_limits or {}).items():
+            for profile, limit in (profiles or {}).items():
+                try:
+                    value = int(limit)
+                except (TypeError, ValueError):
+                    continue
+                self._signal_limits[(strategy, profile)] = max(0, value)
 
     def set_capital_policy(self, policy: CapitalAllocationPolicy | None) -> None:
         """Ustawia politykę alokacji bez natychmiastowego przeliczenia."""
@@ -1781,6 +1804,24 @@ class MultiStrategyScheduler:
             for tag_name, record in self._tag_suspensions.items():
                 tags[tag_name] = record.as_dict(now)
         return {"schedules": schedules, "tags": tags}
+        self, strategy_name: str, risk_profile: str, limit: int | None
+    ) -> None:
+        key = (strategy_name, risk_profile)
+        if limit is None:
+            self._signal_limits.pop(key, None)
+            return
+        try:
+            value = int(limit)
+        except (TypeError, ValueError):
+            return
+        self._signal_limits[key] = max(0, value)
+
+    def configure_signal_limits(
+        self, limits: Mapping[str, Mapping[str, int]]
+    ) -> None:
+        for strategy, profiles in limits.items():
+            for profile, limit in profiles.items():
+                self.configure_signal_limit(strategy, profile, limit)
 
     def attach_portfolio_coordinator(
         self, coordinator: "PortfolioRuntimeCoordinator"
@@ -2243,6 +2284,14 @@ class MultiStrategyScheduler:
         diagnostics_snapshot: dict[str, Mapping[str, float]] = {}
         floor_adjustment_flag: bool | None = None
         fallback_flag: bool | None = None
+    async def _maybe_rebalance_allocation(self, timestamp: datetime) -> None:
+        policy = getattr(self, "_capital_policy", None)
+        if policy is None:
+            return
+        if self._allocation_rebalance_seconds is not None and self._last_allocation_at is not None:
+            delta = (timestamp - self._last_allocation_at).total_seconds()
+            if delta < self._allocation_rebalance_seconds:
+                return
         async with self._allocation_lock:
             schedules_snapshot = tuple(self._schedules)
             weights = policy.allocate(schedules_snapshot)
@@ -2370,6 +2419,8 @@ class MultiStrategyScheduler:
             self._last_allocator_tag_counts = {}
             self._last_allocator_diagnostics = {}
             self._last_allocator_flags = {}
+            self._last_allocation_at = timestamp
+        if not normalized:
             return
         log_payload = {name: round(weight, 4) for name, weight in normalized.items()}
         _LOGGER.info("Capital allocator %s weights: %s", policy.name, log_payload)
@@ -2383,6 +2434,24 @@ class MultiStrategyScheduler:
             numeric_weight = float(weight or 0.0)
             schedule_weights[schedule.name] = numeric_weight
             profile_totals[schedule.risk_profile] += numeric_weight
+
+        profile_snapshot: Mapping[str, float] | None = None
+        snapshot_getter = getattr(policy, "profile_allocation_snapshot", None)
+        if callable(snapshot_getter):
+            try:
+                snapshot = snapshot_getter()
+            except Exception:  # pragma: no cover - diagnostyka polityki
+                _LOGGER.exception(
+                    "Nie udało się pobrać rozkładu profili z polityki %s",
+                    policy.name,
+                )
+            else:
+                if snapshot:
+                    profile_snapshot = {
+                        str(key): float(value)
+                        for key, value in snapshot.items()
+                        if isinstance(value, (int, float)) and math.isfinite(float(value))
+                    }
 
         if profile_snapshot is None:
             profile_snapshot = dict(profile_totals)
@@ -2481,6 +2550,9 @@ class MultiStrategyScheduler:
             self._handle_expired_signal_limits(expired_override, now, skip=(schedule,))
         if override_value is not None:
             if computed > override_value:
+        override = self._signal_limits.get((schedule.strategy_name, schedule.risk_profile))
+        if override is not None:
+            if computed > override:
                 _LOGGER.debug(
                     "Sygnal limit override dla %s/%s: %s -> %s",
                     schedule.strategy_name,
@@ -2496,6 +2568,9 @@ class MultiStrategyScheduler:
                 )
             if override_reason:
                 schedule.metrics["signal_limit_reason"] = 1.0
+                    override,
+                )
+            computed = min(computed, override)
         schedule.active_max_signals = max(0, computed)
         schedule.metrics["base_max_signals"] = float(schedule.base_max_signals)
         schedule.metrics["active_max_signals"] = float(schedule.active_max_signals)
@@ -2590,6 +2665,10 @@ __all__ = [
     "VolatilityTargetAllocation",
     "SignalStrengthAllocation",
     "MetricWeightedAllocation",
+    "EqualWeightAllocation",
+    "RiskParityAllocation",
+    "VolatilityTargetAllocation",
+    "SignalStrengthAllocation",
     "SmoothedCapitalAllocationPolicy",
     "DrawdownAdaptiveAllocation",
     "FixedWeightAllocation",

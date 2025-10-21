@@ -9,7 +9,6 @@ import pytest
 
 from bot_core.alerts import DefaultAlertRouter
 from bot_core.alerts.audit import InMemoryAlertAuditLog
-from bot_core.alerts.base import AlertChannel, AlertMessage
 from bot_core.data.base import CacheStorage, DataSource, OHLCVRequest, OHLCVResponse
 from bot_core.data.ohlcv.cache import CachedOHLCVSource
 from bot_core.execution.base import ExecutionContext
@@ -31,6 +30,8 @@ from bot_core.runtime.pipeline import (
 from bot_core.security import SecretManager, SecretStorage
 from bot_core.strategies import StrategySignal
 from bot_core.strategies.daily_trend import DailyTrendMomentumStrategy
+
+from tests._alert_channel_helpers import CollectingChannel
 
 
 class _InMemorySecretStorage(SecretStorage):
@@ -146,19 +147,6 @@ class FakeExchangeAdapter(ExchangeAdapter):
 
     def stream_private_data(self, *, channels: Sequence[str]) -> _FakeStream:  # pragma: no cover - nieużywane
         raise NotImplementedError
-
-
-class CollectingChannel(AlertChannel):
-    name = "collector"
-
-    def __init__(self) -> None:
-        self.messages: list[AlertMessage] = []
-
-    def send(self, message: AlertMessage) -> None:
-        self.messages.append(message)
-
-    def health_check(self) -> Mapping[str, str]:
-        return {"status": "ok"}
 
 
 @pytest.fixture()

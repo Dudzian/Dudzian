@@ -82,6 +82,7 @@ class StrategyCatalog:
         if tags and "tags" not in metadata:
             metadata["tags"] = tags
         engine = spec.build(
+        return spec.build(
             name=definition.name,
             parameters=definition.parameters,
             metadata=metadata,

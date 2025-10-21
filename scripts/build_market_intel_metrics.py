@@ -23,6 +23,8 @@ from typing import Iterable, Mapping
 from bot_core.config import load_core_config
 from bot_core.data import resolve_cache_namespace
 
+from scripts._cli_common import now_iso
+
 # Opcjonalne importy – różne gałęzie mają różne interfejsy
 try:
     # API dla trybu OHLCV
@@ -46,13 +48,7 @@ except Exception:
     SqliteAggregator = None  # type: ignore
 
 _LOGGER = logging.getLogger("stage6.market_intel.cli")
-
-
 # ---------------------------- wspólne utility ----------------------------
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
 def _default_output(governor: str) -> Path:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     return Path("var/market_intel") / f"market_intel_{governor}_{timestamp}.json"
@@ -175,7 +171,7 @@ def _run_ohlcv(args: argparse.Namespace) -> int:
 
     if args.format == "json":
         payload: dict[str, object] = {
-            "generated_at": _now_iso(),
+            "generated_at": now_iso(),
             "environment": args.environment,
             "governor": args.governor,
             "interval": args.interval,

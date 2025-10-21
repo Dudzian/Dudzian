@@ -10,7 +10,7 @@ from fnmatch import fnmatch
 from pathlib import Path
 from typing import Mapping, MutableMapping, Sequence
 
-from bot_core.security.signing import build_hmac_signature
+from bot_core.security.signing import build_hmac_signature, validate_hmac_signature
 
 
 _SCHEMA_MANIFEST = "stage6.resilience.bundle.manifest"
@@ -287,21 +287,7 @@ def verify_signature(
     *,
     key: bytes,
 ) -> list[str]:
-    signature = signature_doc.get("signature")
-    if not isinstance(signature, Mapping):
-        return ["Dokument podpisu nie zawiera sekcji 'signature'"]
-    algorithm = signature.get("algorithm")
-    if algorithm != "HMAC-SHA256":
-        return [f"Nieobsługiwany algorytm podpisu: {algorithm!r}"]
-    expected = build_hmac_signature(
-        manifest,
-        key=key,
-        algorithm="HMAC-SHA256",
-        key_id=signature.get("key_id"),
-    )
-    if dict(expected) != dict(signature):
-        return ["Podpis HMAC nie zgadza się z manifestem"]
-    return []
+    return validate_hmac_signature(manifest, signature_doc, key=key, algorithm="HMAC-SHA256")
 
 
 __all__ = [

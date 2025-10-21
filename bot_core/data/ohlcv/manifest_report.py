@@ -12,6 +12,7 @@ if TYPE_CHECKING:  # pragma: no cover - import tylko dla typów
 else:  # pragma: no cover - fallback podczas wczesnego bootstrapu
     InstrumentUniverseConfig = object  # type: ignore[assignment]
 
+from bot_core.data.ohlcv.utils import interval_to_minutes
 
 @dataclass(slots=True)
 class ManifestEntry:
@@ -27,32 +28,8 @@ class ManifestEntry:
     status: str
 
 
-def _interval_to_minutes(interval: str) -> int:
-    mapping = {
-        "1m": 1,
-        "3m": 3,
-        "5m": 5,
-        "15m": 15,
-        "30m": 30,
-        "1h": 60,
-        "2h": 120,
-        "4h": 240,
-        "6h": 360,
-        "8h": 480,
-        "12h": 720,
-        "1d": 1440,
-        "3d": 4320,
-        "1w": 10_080,
-        "1M": 43_200,
-    }
-    try:
-        return mapping[interval]
-    except KeyError as exc:  # pragma: no cover - walidacja konfiguracji
-        raise ValueError(f"Nieobsługiwany interwał: {interval}") from exc
-
-
 def _default_threshold_minutes(interval: str) -> int:
-    return max(1, _interval_to_minutes(interval) * 2)
+    return max(1, interval_to_minutes(interval) * 2)
 
 
 def _parse_int(value: object | None) -> int | None:
