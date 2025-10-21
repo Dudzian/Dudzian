@@ -3744,6 +3744,7 @@ def load_core_config(path: str | Path) -> CoreConfig:
                 risk_profile=cfg.get("risk_profile"),
                 tags=tuple(cfg.get("tags", []) or ()),
                 bootstrap=bool(cfg.get("bootstrap", True)),
+                trusted_auto_confirm=bool(cfg.get("trusted_auto_confirm", False)),
             )
             for name, cfg in entrypoints_raw.items()
         }

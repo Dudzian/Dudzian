@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import os
 import sys
@@ -518,6 +519,62 @@ def test_bootstrap_environment_initialises_components(tmp_path: Path) -> None:
     assert risk_state_dir.exists()
     assert getattr(context.risk_repository, "_base_path", None) == risk_state_dir
     assert context.metrics_server is None
+    assert context.live_readiness_checklist is None
+
+
+def test_bootstrap_environment_live_exposes_checklist(tmp_path: Path) -> None:
+    data = yaml.safe_load(_BASE_CONFIG)
+    live_env = copy.deepcopy(data["environments"]["binance_paper"])
+    live_env.update(
+        {
+            "environment": "live",
+            "keychain_key": "binance_live_key",
+            "alert_audit": {"backend": "file", "directory": "./var/live_alerts"},
+        }
+    )
+    data["environments"]["binance_live"] = live_env
+    auto_trader_entry = data["runtime_entrypoints"]["auto_trader"]
+    auto_trader_entry["environment"] = "binance_live"
+    auto_trader_entry["trusted_auto_confirm"] = True
+    auto_trader_entry["compliance"] = {
+        "live_allowed": True,
+        "signed": True,
+        "require_signoff": True,
+        "risk_profiles": ["balanced"],
+        "signoffs": ["kyc2024", "risk_limits"],
+    }
+
+    config_path = tmp_path / "core_live.yaml"
+    config_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+    storage, manager = _prepare_manager()
+    credentials_payload = {
+        "key_id": "live-key",
+        "secret": "live-secret",
+        "passphrase": None,
+        "permissions": ["read", "trade"],
+        "environment": Environment.LIVE.value,
+    }
+    storage.set_secret(
+        "tests:binance_live_key:trading",
+        json.dumps(credentials_payload),
+    )
+
+    context = bootstrap_environment(
+        "binance_live", config_path=config_path, secret_manager=manager
+    )
+
+    checklist = context.live_readiness_checklist
+    assert checklist is not None
+    entries = {entry["item"]: entry for entry in checklist}
+    assert entries["kyc_aml_signoff"]["status"] == "ok"
+    compliance_details = entries["kyc_aml_signoff"]["details"]
+    assert compliance_details
+    primary_entry = compliance_details[0]
+    assert primary_entry["entrypoint"] == "auto_trader"
+    assert primary_entry["signoffs"] == ("kyc2024", "risk_limits")
+    assert entries["risk_limits"]["status"] == "ok"
+    assert entries["alerting"]["status"] == "ok"
     assert context.metrics_ui_alert_sink_active is True
     default_alert_log = DEFAULT_UI_ALERTS_JSONL_PATH.expanduser()
     if not default_alert_log.is_absolute():

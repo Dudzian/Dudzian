@@ -11,8 +11,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from bot_core.ai import (
     DecisionModelInference,
     FeatureEngineer,
+    MarketRegime,
     ModelRepository,
     ModelTrainer,
+    RegimeStrategyWeights,
 )
 from bot_core.data.base import OHLCVResponse
 
@@ -691,8 +693,17 @@ def test_training_and_inference(tmp_path: Path, ohlcv_rows: list[tuple[float, ..
     assert "dataset_split" in artifact.metadata
     assert "validation_mae" in artifact.metrics
     assert "train_mae" in artifact.metrics
-    assert "test_mae" not in artifact.metrics
+    assert "expected_pnl" in artifact.metrics
     assert artifact.metrics["mae"] == pytest.approx(artifact.metrics["train_mae"])
+    assert "calibration" in artifact.metadata
+    calibration = artifact.metadata["calibration"]  # type: ignore[index]
+    assert {"slope", "intercept"}.issubset(calibration.keys())
+    assert math.isfinite(float(calibration["slope"]))
+    assert math.isfinite(float(calibration["intercept"]))
+    cv_meta = artifact.metadata["cross_validation"]  # type: ignore[index]
+    assert cv_meta["folds"] >= 2
+    assert len(cv_meta["mae"]) == cv_meta["folds"]
+    assert len(cv_meta["directional_accuracy"]) == cv_meta["folds"]
 
     inference = DecisionModelInference(repo)
     inference.load_weights(artifact_path)
@@ -704,3 +715,11 @@ def test_training_and_inference(tmp_path: Path, ohlcv_rows: list[tuple[float, ..
 
     missing_features_score = inference.score({})
     assert math.isfinite(missing_features_score.expected_return_bps)
+
+
+def test_regime_strategy_weights_normalize() -> None:
+    weights = RegimeStrategyWeights.default()
+    trend = weights.weights_for(MarketRegime.TREND)
+    assert pytest.approx(sum(trend.values()), rel=1e-6) == 1.0
+    mr = weights.weights_for(MarketRegime.MEAN_REVERSION)
+    assert pytest.approx(sum(mr.values()), rel=1e-6) == 1.0

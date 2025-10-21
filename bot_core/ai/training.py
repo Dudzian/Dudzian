@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -28,6 +29,33 @@ except Exception:  # pragma: no cover - gracefully handle missing dependency
 from ._license import ensure_ai_signals_enabled
 from .feature_engineering import FeatureDataset
 from .models import ModelArtifact
+
+
+_LOGGER = logging.getLogger(__name__)
+
+
+def _linear_calibration(
+    targets: Sequence[float], predictions: Sequence[float]
+) -> tuple[float, float]:
+    if not targets or not predictions:
+        return 1.0, 0.0
+    if len(targets) != len(predictions):
+        raise ValueError("targets and predictions must have the same length")
+    y = [float(value) for value in targets]
+    x = [float(value) for value in predictions]
+    if all(abs(value - x[0]) < 1e-12 for value in x):
+        return 0.0, float(sum(y) / len(y))
+    sum_x = sum(x)
+    sum_y = sum(y)
+    sum_xx = sum(value * value for value in x)
+    sum_xy = sum(val_x * val_y for val_x, val_y in zip(x, y))
+    n = float(len(x))
+    denominator = n * sum_xx - sum_x * sum_x
+    if abs(denominator) < 1e-12:
+        return 0.0, float(sum_y / n)
+    slope = (n * sum_xy - sum_x * sum_y) / denominator
+    intercept = (sum_y - slope * sum_x) / n
+    return float(slope), float(intercept)
 
 
 @runtime_checkable
@@ -386,29 +414,14 @@ class ModelTrainer:
         metadata["backend"] = self.backend
         if self.validation_split > 0.0:
             metadata["validation_split"] = self.validation_split
-        if self.test_split > 0.0:
-            metadata["test_split"] = self.test_split
-        metadata["dataset_split"] = {
-            "validation_ratio": float(self.validation_split),
-            "test_ratio": float(self.test_split),
+        cv_summary = self._cross_validate_matrix(matrix, targets, feature_names)
+        metadata["cross_validation"] = {
+            "folds": int(cv_summary.get("folds", 0)),
+            "mae": [float(value) for value in cv_summary.get("mae", [])],
+            "directional_accuracy": [
+                float(value) for value in cv_summary.get("directional_accuracy", [])
+            ],
         }
-        metadata.setdefault(
-            "drift_monitor",
-            {
-                "threshold": 3.5,
-                "window": 50,
-                "min_observations": 10,
-                "cooldown": 60,
-                "backend": self.backend,
-            },
-        )
-        metadata.setdefault(
-            "quality_thresholds",
-            {
-                "min_directional_accuracy": 0.55,
-                "max_mae": 25.0,
-            },
-        )
 
         if self.backend == "builtin":
             return self._train_builtin(
@@ -459,6 +472,9 @@ class ModelTrainer:
         train_samples = self._rows_to_samples(train_matrix, feature_names)
         train_predictions = model.batch_predict(train_samples)
         train_metrics = self._compute_metrics(train_targets, train_predictions)
+        slope, intercept = _linear_calibration(train_targets, train_predictions)
+        metadata["calibration"] = {"slope": slope, "intercept": intercept}
+        metrics = self._compose_metrics(train_metrics)
         validation_metrics: Mapping[str, float] | None = None
         if validation_matrix:
             validation_samples = self._rows_to_samples(validation_matrix, feature_names)
@@ -513,6 +529,9 @@ class ModelTrainer:
         train_samples = self._rows_to_samples(train_matrix, feature_names)
         train_predictions = list(model.batch_predict(train_samples))
         train_metrics = self._compute_metrics(train_targets, train_predictions)
+        slope, intercept = _linear_calibration(train_targets, train_predictions)
+        metadata["calibration"] = {"slope": slope, "intercept": intercept}
+        metrics = self._compose_metrics(train_metrics)
         validation_metrics: Mapping[str, float] | None = None
         if validation_matrix:
             validation_samples = self._rows_to_samples(validation_matrix, feature_names)
@@ -557,7 +576,17 @@ class ModelTrainer:
             if (t >= 0 and p >= 0) or (t < 0 and p < 0)
         )
         accuracy = directional_hits / len(targets)
-        return {"mae": mae, "rmse": rmse, "directional_accuracy": accuracy}
+        pnl = (
+            sum(t * p for t, p in zip(targets, predictions)) / len(targets)
+            if targets
+            else 0.0
+        )
+        return {
+            "mae": mae,
+            "rmse": rmse,
+            "directional_accuracy": accuracy,
+            "expected_pnl": pnl,
+        }
 
     def _split_learning_arrays(
         self,
@@ -615,6 +644,106 @@ class ModelTrainer:
             [float(targets[idx]) for idx in range(test_start, total)],
         )
 
+    def _cross_validate_matrix(
+        self,
+        matrix: Sequence[Sequence[float]],
+        targets: Sequence[float],
+        feature_names: Sequence[str],
+    ) -> Mapping[str, object]:
+        total = len(matrix)
+        if total < 4:
+            return {"folds": 0, "mae": [], "directional_accuracy": []}
+        folds = min(5, max(2, total // 4))
+        rows = [list(row) for row in matrix]
+        maes: list[float] = []
+        accuracies: list[float] = []
+        fold_size = max(1, total // folds)
+        for fold in range(folds):
+            start = fold * fold_size
+            end = total if fold == folds - 1 else min(total, start + fold_size)
+            validation_rows = rows[start:end]
+            validation_targets = targets[start:end]
+            train_rows = rows[:start] + rows[end:]
+            train_targets = list(targets[:start]) + list(targets[end:])
+            if not validation_rows or not train_rows:
+                continue
+            scalers = self._compute_scalers(train_rows, feature_names)
+            try:
+                model = self._train_model_for_cv(
+                    train_rows,
+                    train_targets,
+                    feature_names,
+                    scalers,
+                    validation_rows,
+                    validation_targets,
+                )
+            except Exception:
+                _LOGGER.warning(
+                    "Cross-validation failed for backend %s; falling back to builtin model",
+                    self.backend,
+                    exc_info=True,
+                )
+                model = SimpleGradientBoostingModel(
+                    learning_rate=self.learning_rate,
+                    n_estimators=self.n_estimators,
+                )
+                model.fit_matrix(
+                    train_rows,
+                    feature_names,
+                    train_targets,
+                    feature_scalers=scalers,
+                )
+            validation_samples = self._rows_to_samples(validation_rows, feature_names)
+            predictions = model.batch_predict(validation_samples)
+            metrics = self._compute_metrics(validation_targets, predictions)
+            maes.append(float(metrics.get("mae", 0.0)))
+            accuracies.append(float(metrics.get("directional_accuracy", 0.0)))
+        return {"folds": len(maes), "mae": maes, "directional_accuracy": accuracies}
+
+    def _train_model_for_cv(
+        self,
+        train_rows: Sequence[Sequence[float]],
+        train_targets: Sequence[float],
+        feature_names: Sequence[str],
+        scalers: Mapping[str, tuple[float, float]],
+        validation_rows: Sequence[Sequence[float]],
+        validation_targets: Sequence[float],
+    ) -> SupportsInference:
+        if self.backend == "builtin":
+            model = SimpleGradientBoostingModel(
+                learning_rate=self.learning_rate,
+                n_estimators=self.n_estimators,
+            )
+            model.fit_matrix(
+                train_rows,
+                feature_names,
+                train_targets,
+                feature_scalers=scalers,
+            )
+            return model
+
+        adapter = get_external_model_adapter(self.backend)
+        context = ExternalTrainingContext(
+            feature_names=feature_names,
+            scalers=scalers,
+            train_matrix=train_rows,
+            train_targets=train_targets,
+            validation_matrix=validation_rows,
+            validation_targets=validation_targets,
+            options=self.adapter_options,
+        )
+        result = adapter.train(context)
+        model = result.trained_model
+        if model is not None:
+            return model
+        metadata: MutableMapping[str, object] = {
+            "feature_scalers": {
+                name: {"mean": mean, "stdev": stdev}
+                for name, (mean, stdev) in scalers.items()
+            }
+        }
+        return adapter.load(result.state, feature_names, metadata)
+
     def _compute_scalers(
         self, matrix: Sequence[Sequence[float]], feature_names: Sequence[str]
     ) -> dict[str, tuple[float, float]]:
@@ -654,6 +783,9 @@ class ModelTrainer:
             "train_rmse": float(train_metrics.get("rmse", 0.0)),
             "train_directional_accuracy": float(train_metrics.get("directional_accuracy", 0.0)),
         }
+        if "expected_pnl" in train_metrics:
+            metrics["expected_pnl"] = float(train_metrics.get("expected_pnl", 0.0))
+            metrics["train_expected_pnl"] = float(train_metrics.get("expected_pnl", 0.0))
         if validation_metrics:
             metrics.update(
                 {
@@ -664,16 +796,10 @@ class ModelTrainer:
                     ),
                 }
             )
-        if test_metrics:
-            metrics.update(
-                {
-                    "test_mae": float(test_metrics.get("mae", 0.0)),
-                    "test_rmse": float(test_metrics.get("rmse", 0.0)),
-                    "test_directional_accuracy": float(
-                        test_metrics.get("directional_accuracy", 0.0)
-                    ),
-                }
-            )
+            if "expected_pnl" in validation_metrics:
+                metrics["validation_expected_pnl"] = float(
+                    validation_metrics.get("expected_pnl", 0.0)
+                )
         return metrics
 
 

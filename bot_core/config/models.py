@@ -1050,6 +1050,7 @@ class RuntimeEntrypointConfig:
     risk_profile: str | None = None
     tags: Sequence[str] = field(default_factory=tuple)
     bootstrap: bool = True
+    trusted_auto_confirm: bool = False
 
 
 @dataclass(slots=True)
