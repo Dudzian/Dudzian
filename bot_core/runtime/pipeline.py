@@ -827,6 +827,38 @@ class MultiStrategyRuntime:
         if self.stream_feed is not None:
             self.stream_feed.stop()
 
+    def diagnostics_snapshot(
+        self,
+        *,
+        include_metrics: bool = True,
+        only_active: bool = False,
+        tag: str | None = None,
+        strategy: str | None = None,
+    ) -> Mapping[str, object]:
+        """Zwraca rozszerzoną migawkę administracyjną runtime."""
+
+        snapshot = self.scheduler.administrative_snapshot(
+            include_metrics=include_metrics,
+            only_active=only_active,
+            tag=tag,
+            strategy=strategy,
+        )
+        strategies_summary = {}
+        for name, engine in self.strategies.items():
+            engine_cls = type(engine)
+            strategies_summary[name] = {
+                "engine_class": f"{engine_cls.__module__}.{engine_cls.__name__}",
+                "has_metadata": hasattr(engine, "metadata"),
+            }
+        snapshot["runtime"] = {
+            "environment": snapshot.get("environment"),
+            "schedule_names": [cfg.name for cfg in self.schedules],
+            "strategy_count": len(self.strategies),
+            "has_portfolio_coordinator": self.portfolio_coordinator is not None,
+        }
+        snapshot["strategies"] = strategies_summary
+        return snapshot
+
 
 class OHLCVStrategyFeed(StrategyDataFeed):
     """Strategiczny feed korzystający z lokalnego cache OHLCV."""
@@ -3056,12 +3088,8 @@ def build_multi_strategy_runtime(
     )
 
 
-def _instantiate_strategies(
-    core_config: CoreConfig, *, catalog: StrategyCatalog | None = None
-) -> dict[str, StrategyEngine]:
-    catalog = catalog or DEFAULT_STRATEGY_CATALOG
-    registry: dict[str, StrategyEngine] = {}
-    guard = get_capability_guard()
+def _collect_strategy_definitions(core_config: CoreConfig) -> dict[str, StrategyDefinition]:
+    """Zbiera definicje strategii z konfiguracji core."""
 
     definitions: dict[str, StrategyDefinition] = {}
 
@@ -3135,6 +3163,18 @@ def _instantiate_strategies(
             },
         )
 
+    return definitions
+
+
+def _instantiate_strategies(
+    core_config: CoreConfig, *, catalog: StrategyCatalog | None = None
+) -> dict[str, StrategyEngine]:
+    catalog = catalog or DEFAULT_STRATEGY_CATALOG
+    registry: dict[str, StrategyEngine] = {}
+    guard = get_capability_guard()
+
+    definitions = _collect_strategy_definitions(core_config)
+
     for name, definition in definitions.items():
         spec = catalog.get(definition.engine)
         if guard is not None and spec.capability:
@@ -3150,6 +3190,186 @@ def _instantiate_strategies(
     return registry
 
 
+def describe_strategy_definitions(
+    core_config: CoreConfig,
+    *,
+    catalog: StrategyCatalog | None = None,
+) -> Sequence[Mapping[str, object]]:
+    """Buduje opis strategii skonfigurowanych w pliku core."""
+
+    catalog = catalog or DEFAULT_STRATEGY_CATALOG
+    definitions = _collect_strategy_definitions(core_config)
+    summary: list[Mapping[str, object]] = []
+
+    for name, definition in definitions.items():
+        try:
+            spec = catalog.get(definition.engine)
+            capability = spec.capability
+            tags = tuple(dict.fromkeys((*spec.default_tags, *definition.tags)))
+        except KeyError:
+            capability = None
+            tags = tuple(dict.fromkeys(definition.tags))
+
+        payload: dict[str, object] = {
+            "name": name,
+            "engine": definition.engine,
+            "parameters": dict(definition.parameters),
+            "tags": list(tags),
+        }
+        if definition.risk_profile:
+            payload["risk_profile"] = definition.risk_profile
+        if capability:
+            payload["capability"] = capability
+        if definition.metadata:
+            payload["metadata"] = dict(definition.metadata)
+        summary.append(payload)
+
+    summary.sort(key=lambda item: item["name"])  # type: ignore[index]
+    return summary
+
+
+def describe_multi_strategy_configuration(
+    *,
+    config_path: str | Path,
+    scheduler_name: str | None = None,
+    catalog: StrategyCatalog | None = None,
+    include_strategy_definitions: bool = True,
+    only_scheduler_definitions: bool = False,
+) -> Mapping[str, object]:
+    """Opisuje konfigurację scheduler-a multi-strategy bez uruchamiania runtime."""
+
+    resolved_catalog = catalog or DEFAULT_STRATEGY_CATALOG
+    core_config = load_core_config(config_path)
+    scheduler_configs = getattr(core_config, "multi_strategy_schedulers", {})
+    if not scheduler_configs:
+        raise ValueError("Konfiguracja nie zawiera sekcji multi_strategy_schedulers.")
+
+    resolved_name = scheduler_name or next(iter(scheduler_configs))
+    scheduler_cfg = scheduler_configs.get(resolved_name)
+    if scheduler_cfg is None:
+        raise KeyError(f"Nie znaleziono scheduler-a '{resolved_name}'.")
+
+    definitions = _collect_strategy_definitions(core_config)
+    schedules: list[dict[str, object]] = []
+
+    for schedule in scheduler_cfg.schedules:
+        entry: dict[str, object] = {
+            "name": schedule.name,
+            "strategy": schedule.strategy,
+            "risk_profile": schedule.risk_profile,
+            "cadence_seconds": int(schedule.cadence_seconds),
+            "max_drift_seconds": int(schedule.max_drift_seconds),
+            "warmup_bars": int(schedule.warmup_bars),
+            "max_signals": int(schedule.max_signals),
+        }
+        if schedule.interval:
+            entry["interval"] = schedule.interval
+        definition = definitions.get(schedule.strategy)
+        if definition is not None:
+            entry["engine"] = definition.engine
+            if definition.risk_profile:
+                entry["definition_risk_profile"] = definition.risk_profile
+            try:
+                spec = resolved_catalog.get(definition.engine)
+                tags = tuple(dict.fromkeys((*spec.default_tags, *definition.tags)))
+                entry["tags"] = list(tags)
+                if spec.capability:
+                    entry["capability"] = spec.capability
+            except KeyError:
+                if definition.tags:
+                    entry["tags"] = list(dict.fromkeys(definition.tags))
+        schedules.append(entry)
+
+    schedules.sort(key=lambda item: item["name"])
+
+    policy_spec = getattr(scheduler_cfg, "capital_policy", None)
+    policy, policy_interval = _resolve_capital_policy(policy_spec, _allow_profile=False)
+    policy_summary: dict[str, object] = {
+        "name": getattr(policy, "name", policy.__class__.__name__),
+    }
+    if policy_interval is not None:
+        policy_summary["policy_interval_seconds"] = float(policy_interval)
+    cfg_interval = getattr(scheduler_cfg, "allocation_rebalance_seconds", None)
+    if cfg_interval not in (None, ""):
+        try:
+            policy_summary["configured_rebalance_seconds"] = float(cfg_interval)
+        except (TypeError, ValueError):
+            policy_summary["configured_rebalance_seconds"] = cfg_interval
+
+    def _serialize_limit_tree(tree: Mapping[str, Mapping[str, object]]) -> Mapping[str, Mapping[str, object]]:
+        result: dict[str, dict[str, object]] = {}
+        for strategy_name, profiles in (tree or {}).items():
+            if not isinstance(profiles, Mapping):
+                continue
+            profile_entry: dict[str, object] = {}
+            for profile_name, raw_limit in profiles.items():
+                if isinstance(raw_limit, SignalLimitOverrideConfig):
+                    payload: dict[str, object] = {"limit": int(raw_limit.limit)}
+                    if raw_limit.reason:
+                        payload["reason"] = raw_limit.reason
+                    if raw_limit.until:
+                        payload["until"] = raw_limit.until.isoformat()
+                    if raw_limit.duration_seconds is not None:
+                        payload["duration_seconds"] = float(raw_limit.duration_seconds)
+                    profile_entry[profile_name] = payload
+                else:
+                    try:
+                        profile_entry[profile_name] = {"limit": int(raw_limit)}
+                    except (TypeError, ValueError):
+                        continue
+            if profile_entry:
+                result[strategy_name] = profile_entry
+        return result
+
+    suspensions_payload: list[dict[str, object]] = []
+    for suspension in getattr(scheduler_cfg, "initial_suspensions", ()):
+        payload: dict[str, object] = {
+            "kind": suspension.kind,
+            "target": suspension.target,
+        }
+        if suspension.reason:
+            payload["reason"] = suspension.reason
+        if suspension.until:
+            payload["until"] = suspension.until.isoformat()
+        if suspension.duration_seconds is not None:
+            payload["duration_seconds"] = float(suspension.duration_seconds)
+        suspensions_payload.append(payload)
+
+    initial_limits = _serialize_limit_tree(
+        getattr(scheduler_cfg, "initial_signal_limits", {})
+    )
+    static_limits = _serialize_limit_tree(getattr(scheduler_cfg, "signal_limits", {}))
+
+    summary: dict[str, object] = {
+        "config_path": str(Path(config_path).expanduser()),
+        "scheduler": resolved_name,
+        "capital_policy": policy_summary,
+        "schedules": schedules,
+        "initial_suspensions": suspensions_payload,
+        "initial_signal_limits": initial_limits,
+    }
+    if static_limits:
+        summary["signal_limits"] = static_limits
+    if getattr(scheduler_cfg, "portfolio_governor", None):
+        summary["portfolio_governor"] = scheduler_cfg.portfolio_governor
+    if include_strategy_definitions:
+        if only_scheduler_definitions:
+            used_names = {entry["strategy"] for entry in schedules}
+            definitions_map = {
+                name: definition
+                for name, definition in _collect_strategy_definitions(core_config).items()
+                if name in used_names
+            }
+            summary["strategies"] = resolved_catalog.describe_definitions(
+                definitions_map,
+                include_metadata=True,
+            )
+        else:
+            summary["strategies"] = describe_strategy_definitions(
+                core_config,
+                catalog=resolved_catalog,
+            )
+    return summary
 def _build_mode_runtime(
     mode: str,
     *,
@@ -3267,4 +3487,6 @@ __all__ = [
     "InMemoryStrategySignalSink",
     "StreamingStrategyFeed",
     "DecisionAwareSignalSink",
+    "describe_strategy_definitions",
+    "describe_multi_strategy_configuration",
 ]

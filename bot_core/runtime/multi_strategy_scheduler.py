@@ -5,7 +5,6 @@ import asyncio
 import logging
 import math
 from collections import Counter, defaultdict
-from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import (
@@ -1359,7 +1358,7 @@ class MultiStrategyScheduler:
     def capital_policy_diagnostics(self) -> Mapping[str, object]:
         """Zwraca diagnostykę ostatniej alokacji polityki kapitału."""
 
-        return {
+        payload: dict[str, object] = {
             "policy_name": getattr(self._capital_policy, "name", "unknown"),
             "flags": dict(self._last_allocator_flags),
             "details": {
@@ -1369,6 +1368,11 @@ class MultiStrategyScheduler:
             "tag_weights": dict(self._last_allocator_tag_weights),
             "tag_members": dict(self._last_allocator_tag_counts),
         }
+        if self._last_allocation_at is not None:
+            payload["last_rebalance_at"] = self._last_allocation_at.isoformat()
+        if self._allocation_rebalance_seconds is not None:
+            payload["rebalance_cooldown_seconds"] = float(self._allocation_rebalance_seconds)
+        return payload
 
     def describe_schedules(self) -> Mapping[str, Mapping[str, object]]:
         """Zwraca metadane zarejestrowanych harmonogramów i ich stany."""
@@ -1453,6 +1457,99 @@ class MultiStrategyScheduler:
             descriptors[schedule.name] = descriptor
 
         return descriptors
+
+    def administrative_snapshot(
+        self,
+        *,
+        include_metrics: bool = True,
+        only_active: bool = False,
+        tag: str | None = None,
+        strategy: str | None = None,
+    ) -> Mapping[str, object]:
+        """Buduje raport administracyjny łączący kluczowe migawki runtime."""
+
+        normalized_tag = tag.lower().strip() if isinstance(tag, str) and tag.strip() else None
+        normalized_strategy = (
+            strategy.lower().strip()
+            if isinstance(strategy, str) and strategy.strip()
+            else None
+        )
+
+        schedule_map = self.describe_schedules()
+        filtered: list[dict[str, object]] = []
+        aggregated_profiles: defaultdict[str, float] = defaultdict(float)
+        aggregated_tags: defaultdict[str, float] = defaultdict(float)
+
+        for name, descriptor in schedule_map.items():
+            if not include_metrics and "metrics" in descriptor:
+                descriptor = dict(descriptor)
+                descriptor.pop("metrics", None)
+            entry = dict(descriptor)
+            entry["name"] = name
+            strategy_name = str(entry.get("strategy_name", "")).lower()
+            if normalized_strategy and strategy_name != normalized_strategy:
+                continue
+            entry_tags = tuple(entry.get("tags", ()))
+            if normalized_tag and not any(tag.lower() == normalized_tag for tag in entry_tags):
+                primary = entry.get("primary_tag")
+                if not (isinstance(primary, str) and primary.lower() == normalized_tag):
+                    continue
+            has_suspension = bool(entry.get("active_suspension"))
+            if only_active and has_suspension:
+                continue
+            filtered.append(entry)
+            try:
+                weight = float(entry.get("allocator_weight", 0.0))
+            except (TypeError, ValueError):  # pragma: no cover - dane diagnostyczne
+                weight = 0.0
+            profile = str(entry.get("risk_profile", ""))
+            if profile:
+                aggregated_profiles[profile] += weight
+            for tag_name in entry_tags:
+                aggregated_tags[tag_name] += weight
+            primary_tag = entry.get("primary_tag")
+            if (
+                isinstance(primary_tag, str)
+                and primary_tag
+                and primary_tag not in entry_tags
+            ):
+                aggregated_tags[primary_tag] += weight
+
+        filtered.sort(key=lambda item: item["name"])
+
+        allocation_state = self.capital_allocation_state()
+        policy_info = self.capital_policy_diagnostics()
+        schedule_state = {
+            "count": len(filtered),
+            "schedules": filtered,
+            "filters": {
+                "raw": {
+                    "tag": tag,
+                    "strategy": strategy,
+                },
+                "tag": normalized_tag,
+                "strategy": normalized_strategy,
+                "only_active": bool(only_active),
+            },
+            "aggregates": {
+                "risk_profiles": dict(aggregated_profiles),
+                "tags": dict(aggregated_tags),
+            },
+        }
+
+        return {
+            "environment": self._environment,
+            "portfolio": self._portfolio,
+            "timestamp": self._clock().isoformat(),
+            "capital_allocation": {
+                "weights": self.allocation_snapshot(),
+                "snapshots": allocation_state,
+                "policy": policy_info,
+            },
+            "schedules": schedule_state,
+            "suspensions": self.suspension_snapshot(),
+            "signal_limits": self.signal_limit_snapshot(),
+        }
 
     def signal_limit_snapshot(self) -> Mapping[str, Mapping[str, Mapping[str, object]]]:
         """Zwraca aktualne nadpisania limitów sygnałów wraz z metadanymi."""
@@ -1804,24 +1901,6 @@ class MultiStrategyScheduler:
             for tag_name, record in self._tag_suspensions.items():
                 tags[tag_name] = record.as_dict(now)
         return {"schedules": schedules, "tags": tags}
-        self, strategy_name: str, risk_profile: str, limit: int | None
-    ) -> None:
-        key = (strategy_name, risk_profile)
-        if limit is None:
-            self._signal_limits.pop(key, None)
-            return
-        try:
-            value = int(limit)
-        except (TypeError, ValueError):
-            return
-        self._signal_limits[key] = max(0, value)
-
-    def configure_signal_limits(
-        self, limits: Mapping[str, Mapping[str, int]]
-    ) -> None:
-        for strategy, profiles in limits.items():
-            for profile, limit in profiles.items():
-                self.configure_signal_limit(strategy, profile, limit)
 
     def attach_portfolio_coordinator(
         self, coordinator: "PortfolioRuntimeCoordinator"
@@ -2550,9 +2629,6 @@ class MultiStrategyScheduler:
             self._handle_expired_signal_limits(expired_override, now, skip=(schedule,))
         if override_value is not None:
             if computed > override_value:
-        override = self._signal_limits.get((schedule.strategy_name, schedule.risk_profile))
-        if override is not None:
-            if computed > override:
                 _LOGGER.debug(
                     "Sygnal limit override dla %s/%s: %s -> %s",
                     schedule.strategy_name,
@@ -2563,14 +2639,9 @@ class MultiStrategyScheduler:
             computed = min(computed, override_value)
             schedule.metrics["signal_limit_override"] = float(override_value)
             if override_until is not None:
-                schedule.metrics["signal_limit_expires_at"] = (
-                    override_until.timestamp()
-                )
+                schedule.metrics["signal_limit_expires_at"] = override_until.timestamp()
             if override_reason:
                 schedule.metrics["signal_limit_reason"] = 1.0
-                    override,
-                )
-            computed = min(computed, override)
         schedule.active_max_signals = max(0, computed)
         schedule.metrics["base_max_signals"] = float(schedule.base_max_signals)
         schedule.metrics["active_max_signals"] = float(schedule.active_max_signals)
