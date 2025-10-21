@@ -2,7 +2,14 @@ from __future__ import annotations
 
 import pytest
 
-from bot_core.decision.summary import summarize_evaluation_payloads
+from bot_core.decision.summary import DecisionSummaryAggregator
+
+
+def _build_summary(
+    evaluations: list[dict[str, object]], *, history_limit: int | None = None
+) -> dict[str, object]:
+    aggregator = DecisionSummaryAggregator(evaluations, history_limit=history_limit)
+    return dict(aggregator.build_summary())
 
 
 def test_summarize_evaluation_payloads_counts_and_latest_fields() -> None:
@@ -66,7 +73,7 @@ def test_summarize_evaluation_payloads_counts_and_latest_fields() -> None:
         },
     ]
 
-    summary = summarize_evaluation_payloads(evaluations, history_limit=5)
+    summary = _build_summary(evaluations, history_limit=5)
 
     assert summary["total"] == 2
     assert summary["accepted"] == 1
@@ -627,7 +634,7 @@ def test_summarize_evaluation_payloads_respects_history_limit() -> None:
         },
     ]
 
-    summary = summarize_evaluation_payloads(evaluations, history_limit=2)
+    summary = _build_summary(evaluations, history_limit=2)
 
     assert summary["total"] == 2
     assert summary["accepted"] == 1
@@ -660,7 +667,7 @@ def test_summarize_evaluation_payloads_tracks_longest_streaks() -> None:
         {"accepted": True},
     ]
 
-    summary = summarize_evaluation_payloads(evaluations)
+    summary = _build_summary(evaluations)
 
     assert summary["longest_acceptance_streak"] == 2
     assert summary["longest_rejection_streak"] == 3
