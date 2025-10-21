@@ -4068,6 +4068,11 @@ def test_auto_trader_guardrail_timeline_exports(monkeypatch: pytest.MonkeyPatch)
     assert second_record_values["count"] == 1
 
     df_minimal = trader.guardrail_timeline_to_dataframe(
+        bucket_s=20.0,
+        fill_gaps=True,
+        coerce_timestamps=True,
+        tz=timezone.utc,
+    )
     summary_records = trader.guardrail_timeline_to_records(
         bucket_s=20.0,
         fill_gaps=True,
