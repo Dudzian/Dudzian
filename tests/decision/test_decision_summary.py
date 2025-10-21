@@ -2,11 +2,38 @@ from __future__ import annotations
 
 import pytest
 
+import sys
+import types
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if "bot_core" not in sys.modules:
+    bot_core_stub = types.ModuleType("bot_core")
+    bot_core_stub.__path__ = [str(_REPO_ROOT / "bot_core")]
+    sys.modules["bot_core"] = bot_core_stub
+
+if "bot_core.decision" not in sys.modules:
+    decision_stub = types.ModuleType("bot_core.decision")
+    decision_stub.__path__ = [str(_REPO_ROOT / "bot_core" / "decision")]
+    sys.modules["bot_core.decision"] = decision_stub
+
 from bot_core.decision.summary import summarize_evaluation_payloads
 
 
-def test_summarize_evaluation_payloads_counts_and_latest_fields() -> None:
-    evaluations = [
+if TYPE_CHECKING:
+    from bot_core.decision.models import DecisionEngineSummary
+
+
+def _summarize(*args, **kwargs) -> dict[str, object]:
+    return summarize_evaluation_payloads(*args, **kwargs).model_dump(
+        exclude_none=True
+    )
+
+
+def _build_full_evaluations() -> list[dict[str, object]]:
+    return [
         {
             "accepted": True,
             "cost_bps": 1.0,
@@ -66,7 +93,11 @@ def test_summarize_evaluation_payloads_counts_and_latest_fields() -> None:
         },
     ]
 
-    summary = summarize_evaluation_payloads(evaluations, history_limit=5)
+
+def test_summarize_evaluation_payloads_counts_and_latest_fields() -> None:
+    evaluations = _build_full_evaluations()
+
+    summary = _summarize(evaluations, history_limit=5)
 
     assert summary["total"] == 2
     assert summary["accepted"] == 1
@@ -627,7 +658,7 @@ def test_summarize_evaluation_payloads_respects_history_limit() -> None:
         },
     ]
 
-    summary = summarize_evaluation_payloads(evaluations, history_limit=2)
+    summary = _summarize(evaluations, history_limit=2)
 
     assert summary["total"] == 2
     assert summary["accepted"] == 1
@@ -660,9 +691,44 @@ def test_summarize_evaluation_payloads_tracks_longest_streaks() -> None:
         {"accepted": True},
     ]
 
-    summary = summarize_evaluation_payloads(evaluations)
+    summary = _summarize(evaluations)
 
     assert summary["longest_acceptance_streak"] == 2
     assert summary["longest_rejection_streak"] == 3
     assert summary["current_acceptance_streak"] == 1
     assert summary["current_rejection_streak"] == 0
+
+
+def test_decision_engine_summary_model_validates_full_payload() -> None:
+    summary_model = summarize_evaluation_payloads(
+        _build_full_evaluations(), history_limit=5
+    )
+
+    summary_type = summary_model.__class__
+    assert summary_type.__name__ == "DecisionEngineSummary"
+    assert summary_model.total == 2
+    assert summary_model.accepted == 1
+    assert summary_model.model_breakdown is not None
+    gbm_v1 = summary_model.model_breakdown["gbm_v1"]
+    assert gbm_v1.metrics is not None
+    assert gbm_v1.metrics["net_edge_bps"].accepted_sum == pytest.approx(5.0)
+
+
+def test_decision_engine_summary_model_validates_minimal_payload() -> None:
+    empty_summary = summarize_evaluation_payloads([], history_limit=3)
+    summary_type = empty_summary.__class__
+    assert summary_type.__name__ == "DecisionEngineSummary"
+    assert empty_summary.total == 0
+    assert empty_summary.accepted == 0
+    assert empty_summary.model_dump()["rejection_reasons"] == {}
+
+    single_summary = summarize_evaluation_payloads(
+        [{"accepted": True, "model_name": "gbm_v1"}], history_limit=1
+    )
+    assert isinstance(single_summary, summary_type)
+    assert single_summary.total == 1
+    assert single_summary.accepted == 1
+    assert single_summary.rejected == 0
+
+    clone = summary_type.model_validate(single_summary.model_dump())
+    assert clone.accepted == 1

@@ -4,8 +4,8 @@ from __future__ import annotations
 import math
 from collections import Counter
 from typing import Iterable, Mapping, MutableMapping, Sequence
-from collections import Counter
-from typing import Mapping, MutableMapping, Sequence
+
+from bot_core.decision.models import DecisionEngineSummary
 
 
 def _coerce_float(value: object) -> float | None:
@@ -242,7 +242,7 @@ def summarize_evaluation_payloads(
     evaluations: Sequence[Mapping[str, object]],
     *,
     history_limit: int | None = None,
-) -> Mapping[str, object]:
+) -> DecisionEngineSummary:
     """Buduje zagregowane podsumowanie Decision Engine na podstawie ewaluacji."""
 
     items = list(evaluations)
@@ -254,8 +254,6 @@ def summarize_evaluation_payloads(
     else:
         windowed = items
     total = len(windowed)
-    total = len(evaluations)
-    limit = history_limit if history_limit is not None else total
     summary: MutableMapping[str, object] = {
         "total": total,
         "accepted": 0,
@@ -292,12 +290,8 @@ def summarize_evaluation_payloads(
         summary["full_acceptance_rate"] = (
             full_accepted / full_total if full_total else 0.0
         )
-        "history_limit": limit,
-        "history_window": total,
-        "rejection_reasons": {},
-    }
     if total == 0:
-        return summary
+        return DecisionEngineSummary.model_validate(summary)
 
     accepted = 0
     rejection_reasons: Counter[str] = Counter()
@@ -401,6 +395,13 @@ def summarize_evaluation_payloads(
 
     current_acceptance_streak = 0
     current_rejection_streak = 0
+    costs: list[float] = []
+    probabilities: list[float] = []
+    expected_returns: list[float] = []
+    notionals: list[float] = []
+    model_probabilities: list[float] = []
+    model_returns: list[float] = []
+    latencies: list[float] = []
 
     for payload in windowed:
         if not isinstance(payload, Mapping):
@@ -428,22 +429,6 @@ def summarize_evaluation_payloads(
         summary["longest_rejection_streak"] = max(
             summary["longest_rejection_streak"], current_rejection_streak
         )
-    costs: list[float] = []
-    probabilities: list[float] = []
-    expected_returns: list[float] = []
-    notionals: list[float] = []
-    model_probabilities: list[float] = []
-    model_returns: list[float] = []
-    latencies: list[float] = []
-
-    for payload in evaluations:
-        if not isinstance(payload, Mapping):
-            continue
-        if bool(payload.get("accepted")):
-            accepted += 1
-        else:
-            for reason in payload.get("reasons", ()):
-                rejection_reasons[str(reason)] += 1
 
         net_edge = _coerce_float(payload.get("net_edge_bps"))
         if net_edge is not None:
@@ -531,10 +516,6 @@ def summarize_evaluation_payloads(
             if is_accepted:
                 model_accepted[model_key] += 1
             dimension_keys["model"] = model_key
-
-        latency = _coerce_float(payload.get("latency_ms"))
-        if latency is not None:
-            latencies.append(latency)
 
         candidate = payload.get("candidate")
         if isinstance(candidate, Mapping):
@@ -680,13 +661,6 @@ def summarize_evaluation_payloads(
                         rejected_threshold_breach_counts[base_key] = (
                             rejected_threshold_breach_counts.get(base_key, 0) + 1
                         )
-            expected_return = _coerce_float(candidate.get("expected_return_bps"))
-            if expected_return is not None:
-                expected_returns.append(expected_return)
-            notional = _coerce_float(candidate.get("notional"))
-            if notional is not None:
-                notionals.append(notional)
-
     summary["accepted"] = accepted
     summary["rejected"] = total - accepted
     summary["acceptance_rate"] = accepted / total if total else 0.0
@@ -1213,11 +1187,8 @@ def summarize_evaluation_payloads(
         summary["history_start_generated_at"] = history_generated_at[0]
 
     latest_payload = windowed[-1]
-        summary["avg_model_expected_return_bps"] = sum(model_returns) / len(model_returns)
     if latencies:
         summary["avg_latency_ms"] = sum(latencies) / len(latencies)
-
-    latest_payload = evaluations[-1]
     if isinstance(latest_payload, Mapping):
         latest_model = latest_payload.get("model_name")
         if latest_model:
@@ -1409,7 +1380,7 @@ def summarize_evaluation_payloads(
             if generated_at is not None:
                 summary["latest_generated_at"] = generated_at
 
-    return summary
+    return DecisionEngineSummary.model_validate(summary)
 
 
 __all__ = [
