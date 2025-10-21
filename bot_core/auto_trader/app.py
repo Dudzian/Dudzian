@@ -40,7 +40,7 @@ from bot_core.risk.engine import ThresholdRiskEngine
 
 try:  # pragma: no cover - decision module opcjonalny
     from bot_core.decision import DecisionCandidate, DecisionEvaluation, DecisionOrchestrator
-except Exception:  # pragma: no cover - moduł decision nieobowiązkowy
+except ImportError:  # pragma: no cover - moduł decision nieobowiązkowy
     DecisionCandidate = None  # type: ignore
     DecisionEvaluation = None  # type: ignore
     DecisionOrchestrator = None  # type: ignore
