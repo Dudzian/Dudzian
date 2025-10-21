@@ -8,7 +8,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from bot_core.ai import ModelScore
+from bot_core.ai import MarketRegime, ModelScore
 from bot_core.config.models import DecisionEngineConfig, DecisionOrchestratorThresholds
 from bot_core.decision.models import (
     DecisionCandidate,
@@ -301,3 +301,36 @@ def test_orchestrator_traces_unavailable_models() -> None:
     assert fast_detail is not None
     assert fast_detail.available is True
     assert fast_detail.reason is None
+
+
+def test_orchestrator_strategy_selection_and_schedule() -> None:
+    base_time = datetime(2024, 6, 1, 9, tzinfo=timezone.utc)
+
+    def _clock() -> datetime:
+        return base_time
+
+    orchestrator = DecisionOrchestrator(_config(), clock=_clock)
+    orchestrator.record_strategy_performance(
+        "trend_follow",
+        MarketRegime.TREND,
+        hit_rate=0.62,
+        pnl=18.0,
+        sharpe=0.4,
+    )
+    orchestrator.record_strategy_performance(
+        "mean_rev",
+        MarketRegime.TREND,
+        hit_rate=0.58,
+        pnl=12.0,
+        sharpe=0.3,
+    )
+    selected = orchestrator.select_strategy(MarketRegime.TREND)
+    assert selected == "trend_follow"
+
+    schedule = orchestrator.schedule_strategy_recalibration("trend_follow", timedelta(hours=6))
+    assert schedule.next_run == base_time + timedelta(hours=6)
+    assert orchestrator.due_recalibrations(base_time + timedelta(hours=3)) == ()
+    due = orchestrator.due_recalibrations(base_time + timedelta(hours=7))
+    assert len(due) == 1 and due[0].strategy == "trend_follow"
+    orchestrator.mark_recalibrated("trend_follow", timestamp=base_time + timedelta(hours=7))
+    assert orchestrator.due_recalibrations(base_time + timedelta(hours=8)) == ()
