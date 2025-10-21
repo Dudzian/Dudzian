@@ -13,15 +13,8 @@ import pytest
 
 from bot_core.alerts import DefaultAlertRouter
 from bot_core.alerts.audit import InMemoryAlertAuditLog
-from bot_core.alerts.base import AlertChannel, AlertMessage
-from bot_core.config.models import (
-    ControllerRuntimeConfig,
-    CoreConfig,
-    EnvironmentConfig,
-    InstrumentUniverseConfig,
-    RiskProfileConfig,
-)
-from bot_core.data.base import CacheStorage, DataSource, OHLCVRequest, OHLCVResponse
+from bot_core.config.models import ControllerRuntimeConfig
+from bot_core.data.base import OHLCVRequest, OHLCVResponse
 from bot_core.data.ohlcv.backfill import OHLCVBackfillService
 from bot_core.data.ohlcv.cache import CachedOHLCVSource
 from bot_core.execution.base import ExecutionContext
@@ -32,101 +25,8 @@ from bot_core.risk.profiles.manual import ManualProfile
 from bot_core.runtime.controller import ControllerSignal, DailyTrendController, TradingController
 from bot_core.runtime.realtime import DailyTrendRealtimeRunner
 from bot_core.strategies.daily_trend import DailyTrendMomentumSettings, DailyTrendMomentumStrategy
-
-
-class CollectingChannel(AlertChannel):
-    name = "collector"
-
-    def __init__(self) -> None:
-        self.messages: list[AlertMessage] = []
-
-    def send(self, message: AlertMessage) -> None:
-        self.messages.append(message)
-
-    def health_check(self) -> Mapping[str, str]:
-        return {"status": "ok"}
-
-
-class _InMemoryStorage(CacheStorage):
-    def __init__(self) -> None:
-        self._store: dict[str, Mapping[str, Sequence[Sequence[float]]]] = {}
-        self._metadata: dict[str, str] = {}
-
-    def read(self, key: str) -> Mapping[str, Sequence[Sequence[float]]]:
-        if key not in self._store:
-            raise KeyError(key)
-        return self._store[key]
-
-    def write(self, key: str, payload: Mapping[str, Sequence[Sequence[float]]]) -> None:
-        self._store[key] = payload
-
-    def metadata(self) -> MutableMapping[str, str]:
-        return self._metadata
-
-    def latest_timestamp(self, key: str) -> float | None:
-        try:
-            rows = self._store[key]["rows"]
-        except KeyError:
-            return None
-        if not rows:
-            return None
-        return float(rows[-1][0])
-
-
-@dataclass(slots=True)
-class _FixtureSource(DataSource):
-    rows: Sequence[Sequence[float]]
-
-    def fetch_ohlcv(self, request: OHLCVRequest) -> OHLCVResponse:
-        filtered = [row for row in self.rows if request.start <= float(row[0]) <= request.end]
-        limit = request.limit or len(filtered)
-        return OHLCVResponse(
-            columns=("open_time", "open", "high", "low", "close", "volume"),
-            rows=filtered[:limit],
-        )
-
-    def warm_cache(self, symbols: Iterable[str], intervals: Iterable[str]) -> None:  # pragma: no cover
-        del symbols, intervals
-
-
-def _core_config(runtime: ControllerRuntimeConfig, environment_name: str, risk_profile: str) -> CoreConfig:
-    return CoreConfig(
-        environments={
-            environment_name: EnvironmentConfig(
-                name=environment_name,
-                exchange="paper",
-                environment=Environment.PAPER,
-                keychain_key="paper",
-                data_cache_path="./var/data",
-                risk_profile=risk_profile,
-                alert_channels=(),
-            )
-        },
-        risk_profiles={
-            risk_profile: RiskProfileConfig(
-                name=risk_profile,
-                max_daily_loss_pct=1.0,
-                max_position_pct=1.0,
-                target_volatility=0.0,
-                max_leverage=10.0,
-                stop_loss_atr_multiple=2.0,
-                max_open_positions=10,
-                hard_drawdown_pct=1.0,
-            )
-        },
-        instrument_universes={
-            "default": InstrumentUniverseConfig(name="default", description="", instruments=())
-        },
-        strategies={},
-        reporting={},
-        sms_providers={},
-        telegram_channels={},
-        email_channels={},
-        signal_channels={},
-        whatsapp_channels={},
-        messenger_channels={},
-        runtime_controllers={"daily_trend": runtime},
-    )
+from tests._alert_channel_helpers import CollectingChannel
+from tests._daily_trend_helpers import FixtureSource, InMemoryStorage, build_core_config
 
 
 def _build_controller(position_size: float = 0.2) -> tuple[DailyTrendController, PaperTradingExecutionService, AccountSnapshot, Sequence[Sequence[float]]]:
@@ -138,8 +38,8 @@ def _build_controller(position_size: float = 0.2) -> tuple[DailyTrendController,
     ]
     candles.append([float(start_time + 5 * day_ms), 107.0, 110.0, 106.0, 108.0, 12.0])
 
-    storage = _InMemoryStorage()
-    source = _FixtureSource(rows=candles)
+    storage = InMemoryStorage()
+    source = FixtureSource(rows=candles)
     cached = CachedOHLCVSource(storage=storage, upstream=source)
     backfill = OHLCVBackfillService(cached, chunk_limit=10)
 
@@ -156,7 +56,7 @@ def _build_controller(position_size: float = 0.2) -> tuple[DailyTrendController,
     strategy = DailyTrendMomentumStrategy(settings)
 
     runtime_cfg = ControllerRuntimeConfig(tick_seconds=60.0, interval="1d")
-    core_cfg = _core_config(runtime_cfg, "paper", "paper_risk")
+    core_cfg = build_core_config(runtime_cfg, "paper", "paper_risk")
 
     risk_engine = ThresholdRiskEngine()
     profile = ManualProfile(

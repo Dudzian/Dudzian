@@ -35,13 +35,7 @@ from deploy.packaging.build_core_bundle import (  # type: ignore
     _ensure_windows_safe_tree,
 )
 
-# =====================================================================
-# Helpers wspólne
-# =====================================================================
-
-def _now_iso() -> str:
-    return _dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
-
+from scripts._cli_common import now_iso
 
 # =====================================================================
 # Subcommand: report (HEAD)
@@ -366,7 +360,7 @@ def _handle_register(args: argparse.Namespace) -> int:
     materials = _normalize_unique(args.materials, label="Materiały warsztatowe") if args.materials else []
     artifacts = _prepare_artifacts(args.artifacts)
 
-    recorded_at = _now_iso()
+    recorded_at = now_iso()
     session_id = _derive_session_id(
         explicit=args.session_id,
         training_date=training_date,

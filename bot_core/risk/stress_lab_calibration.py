@@ -13,14 +13,11 @@ import math
 from bot_core.market_intel import MarketIntelSnapshot
 from bot_core.risk.simulation import RiskSimulationReport
 from bot_core.security.signing import build_hmac_signature
+from bot_core.risk._time import now_utc
 
 _REPORT_SCHEMA = "stage6.risk.stress_lab.calibration"
 _REPORT_SCHEMA_VERSION = 1
 _SIGNATURE_SCHEMA = "stage6.risk.stress_lab.calibration.signature"
-
-
-def _now_utc() -> datetime:
-    return datetime.now(timezone.utc)
 
 
 def _percentile(values: Sequence[float], quantile: float) -> float:
@@ -196,7 +193,7 @@ class StressLabCalibrator:
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._settings = settings or StressLabCalibrationSettings()
-        self._clock = clock or _now_utc
+        self._clock = clock or now_utc
 
     def calibrate(
         self,
@@ -369,7 +366,7 @@ def write_calibration_signature(
     document = {
         "schema": _SIGNATURE_SCHEMA,
         "schema_version": _REPORT_SCHEMA_VERSION,
-        "signed_at": _now_utc().isoformat(),
+        "signed_at": now_utc().isoformat(),
         "target": target or path.name,
         "signature": build_hmac_signature(payload, key=key, key_id=key_id),
     }

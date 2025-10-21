@@ -19,7 +19,8 @@ from bot_core.config import CoreConfig, load_core_config
 from bot_core.config.models import EnvironmentConfig
 from bot_core.data.ohlcv import CoverageReportPayload
 from bot_core.runtime.bootstrap import build_alert_channels
-from bot_core.security import SecretManager, SecretStorageError, create_default_secret_storage
+from bot_core.security import SecretManager, SecretStorageError
+from scripts._cli_common import create_secret_manager
 
 
 @dataclass(slots=True)
@@ -111,12 +112,11 @@ def _parse_as_of(arg: str | None) -> datetime:
 
 
 def _create_secret_manager(args: argparse.Namespace) -> SecretManager:
-    storage = create_default_secret_storage(
+    return create_secret_manager(
         namespace=args.secret_namespace,
         headless_passphrase=args.headless_passphrase,
         headless_path=args.headless_secrets_path,
     )
-    return SecretManager(storage, namespace=args.secret_namespace)
 
 
 def _initialize_router(

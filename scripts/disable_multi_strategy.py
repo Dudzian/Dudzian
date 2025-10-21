@@ -7,6 +7,11 @@ import datetime as _dt
 import json
 import logging
 import os
+import argparse
+import datetime as _dt
+import json
+import logging
+import os
 import sys
 from pathlib import Path
 from typing import Optional, Sequence
@@ -21,13 +26,10 @@ from deploy.packaging.build_core_bundle import (  # type: ignore
     _ensure_no_symlinks,
     _ensure_windows_safe_tree,
 )
+from scripts._cli_common import now_iso
 
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "var/runtime/overrides"
 DISABLE_FILENAME = "multi_strategy_disable.json"
-
-
-def _now_iso() -> str:
-    return _dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
 
 
 def _calculate_expiration(minutes: int | None) -> str | None:
@@ -60,7 +62,7 @@ def _build_payload(
     payload: dict[str, object] = {
         "schema": "stage4.scheduler.override",
         "schema_version": "1.0",
-        "timestamp": _now_iso(),
+        "timestamp": now_iso(),
         "action": "disable_multi_strategy",
         "reason": reason,
     }

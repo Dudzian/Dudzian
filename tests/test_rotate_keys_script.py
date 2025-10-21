@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._cli_parser_helpers import parser_supports
+
 # --- dostęp do modułu/CLI ---
 from scripts import rotate_keys as rotate_keys_mod
 from scripts.rotate_keys import run as rotate_keys_run
@@ -32,25 +34,14 @@ def _parser() -> object:
         # ale w testach nie wywołujemy bezpośrednio; zakładamy, że _build_parser istnieje w obu wariantach
         raise RuntimeError("rotate_keys._build_parser not available")
     return build()
-
-
-def _parser_supports(*flags: str) -> bool:
-    parser = _parser()
-    actions = getattr(parser, "_actions", ())
-    option_set = set()
-    for act in actions:
-        option_set.update(getattr(act, "option_strings", []) or [])
-    return all(flag in option_set for flag in flags)
-
-
 def _supports_head_cli() -> bool:
     # HEAD wariant: ma m.in. --environment, --operator, --executed-at, --signing-key, --output
-    return _parser_supports("--environment", "--operator", "--executed-at", "--output")
+    return parser_supports(_parser, "--environment", "--operator", "--executed-at", "--output")
 
 
 def _supports_main_cli() -> bool:
     # main wariant: ma m.in. --output-dir, --basename (i zwykle --execute)
-    return _parser_supports("--output-dir", "--basename")
+    return parser_supports(_parser, "--output-dir", "--basename")
 
 
 def _iso(dt: datetime) -> str:

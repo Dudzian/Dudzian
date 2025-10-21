@@ -1,17 +1,11 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Any, Iterable, Sequence
+from typing import Any
 
 import pytest
 
-from bot_core.exchanges.base import (
-    Environment,
-    ExchangeAdapter,
-    ExchangeCredentials,
-    OrderRequest,
-    OrderResult,
-)
+from bot_core.exchanges.base import Environment, ExchangeAdapter, ExchangeCredentials
 from bot_core.runtime.bootstrap import _instantiate_adapter
 from bot_core.security.capabilities import build_capabilities_from_payload
 from bot_core.security.guards import (
@@ -20,45 +14,7 @@ from bot_core.security.guards import (
     reset_capability_guard,
 )
 
-
-class DummyAdapter(ExchangeAdapter):
-    name = "dummy"
-
-    def configure_network(self, *, ip_allowlist: Sequence[str] | None = None) -> None:  # noqa: D401 - prosty stub
-        return None
-
-    def fetch_account_snapshot(self) -> Any:
-        return {
-            "balances": {},
-            "total_equity": 0.0,
-            "available_margin": 0.0,
-            "maintenance_margin": 0.0,
-        }
-
-    def fetch_symbols(self) -> Iterable[str]:
-        return ()
-
-    def fetch_ohlcv(
-        self,
-        symbol: str,
-        interval: str,
-        start: int | None = None,
-        end: int | None = None,
-        limit: int | None = None,
-    ) -> Sequence[Sequence[float]]:
-        return ()
-
-    def place_order(self, request: OrderRequest) -> OrderResult:
-        raise RuntimeError("not implemented in dummy adapter")
-
-    def cancel_order(self, order_id: str, *, symbol: str | None = None) -> None:
-        return None
-
-    def stream_public_data(self, *, channels: Sequence[str]) -> Any:
-        return object()
-
-    def stream_private_data(self, *, channels: Sequence[str]) -> Any:
-        return object()
+from tests._exchange_adapter_helpers import StubExchangeAdapter
 
 
 @pytest.fixture(autouse=True)
@@ -74,7 +30,7 @@ def _install(payload: dict[str, Any]) -> None:
 
 
 def _factory(credentials: ExchangeCredentials, **kwargs: Any) -> ExchangeAdapter:
-    return DummyAdapter(credentials)
+    return StubExchangeAdapter(credentials)
 
 
 def test_instantiate_adapter_denies_missing_exchange() -> None:
@@ -135,7 +91,7 @@ def test_instantiate_adapter_allows_paper_exchange() -> None:
         factories,
         Environment.PAPER,
     )
-    assert isinstance(adapter, DummyAdapter)
+    assert isinstance(adapter, StubExchangeAdapter)
 
 
 def test_instantiate_adapter_requires_pro_for_live() -> None:

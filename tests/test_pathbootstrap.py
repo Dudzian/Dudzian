@@ -840,7 +840,7 @@ def test_main_with_set_env_prints_assignment(capsys: pytest.CaptureFixture[str])
     assert captured.out.strip() == f"REPO_ROOT={expected_repo}"
 
 
-def test_main_prints_pythonpath_value(
+def test_main_prints_pythonpath_value_plain(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.delenv("PATHBOOTSTRAP_ADD_PATHS", raising=False)
@@ -885,7 +885,7 @@ def test_main_with_set_env_prints_assignment(
     assert out.strip() == f"export REPO_ROOT={repo_root}"
 
 
-def test_main_prints_pythonpath_value(
+def test_main_prints_pythonpath_value_json(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.delenv("PATHBOOTSTRAP_ADD_PATHS", raising=False)
