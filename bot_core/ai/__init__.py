@@ -1,6 +1,6 @@
 """Pakiet bot_core.ai dostarcza pipeline trenowania i inference modeli decyzyjnych."""
 
-from .feature_engineering import FeatureEngineer, FeatureDataset
+from .feature_engineering import FeatureDataset, FeatureEngineer, FeatureVector
 from .inference import DecisionModelInference, ModelRepository
 from .manager import (
     AIManager,
@@ -20,6 +20,7 @@ from .regime import (
     RegimeHistory,
     RegimeSnapshot,
     RegimeSummary,
+    RegimeStrategyWeights,
     RiskLevel,
 )
 from .pipeline import register_model_artifact, train_gradient_boosting_model
@@ -44,6 +45,7 @@ __all__ = [
     "DecisionModelInference",
     "FeatureDataset",
     "FeatureEngineer",
+    "FeatureVector",
     "EnsembleDefinition",
     "EnsembleRegistryDiff",
     "EnsembleRegistrySnapshot",
@@ -57,6 +59,7 @@ __all__ = [
     "RegimeHistory",
     "RegimeSnapshot",
     "RegimeSummary",
+    "RegimeStrategyWeights",
     "RiskLevel",
     "ExternalModelAdapter",
     "ModelTrainer",

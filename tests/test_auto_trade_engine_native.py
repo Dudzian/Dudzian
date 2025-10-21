@@ -9,13 +9,13 @@ from bot_core.trading.auto_trade import AutoTradeConfig, AutoTradeEngine
 def test_auto_trade_engine_generates_orders_and_signals() -> None:
     adapter = EmitterAdapter()
     orders: list[tuple[str, float]] = []
-    signals: list[int] = []
+    signals: list[float] = []
     statuses: list[str] = []
 
     def _collect_signals(evt_or_batch):
         batch = evt_or_batch if isinstance(evt_or_batch, list) else [evt_or_batch]
         for evt in batch:
-            signals.append(evt.payload["direction"])
+            signals.append(float(evt.payload["direction"]))
 
     adapter.subscribe(EventType.SIGNAL, _collect_signals)
 
@@ -24,8 +24,17 @@ def test_auto_trade_engine_generates_orders_and_signals() -> None:
         lambda evt: statuses.extend([ev.payload["status"] for ev in (evt if isinstance(evt, list) else [evt])]),
     )
 
-    engine = AutoTradeEngine(adapter, lambda side, qty: orders.append((side, qty)), AutoTradeConfig(symbol="BTCUSDT", qty=0.5))
-    engine.apply_params({"fast": 2, "slow": 4})
+    cfg = AutoTradeConfig(
+        symbol="BTCUSDT",
+        qty=0.5,
+        regime_window=6,
+        activation_threshold=0.0,
+        breakout_window=3,
+        mean_reversion_window=4,
+        mean_reversion_z=0.5,
+    )
+    engine = AutoTradeEngine(adapter, lambda side, qty: orders.append((side, qty)), cfg)
+    engine.apply_params({"fast": 2, "slow": 5})
 
     closes = [10, 9, 8, 7, 6, 7, 8, 9, 10, 9, 8, 7, 6]
     for px in closes:
