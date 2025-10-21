@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import copy
-from pathlib import Path
 from dataclasses import dataclass
+from enum import Enum
+from pathlib import Path
 from typing import Any
 from types import SimpleNamespace
 
@@ -21,6 +22,17 @@ from bot_core.ai.regime import (
 )
 from bot_core.auto_trader.app import AutoTrader, RiskDecision
 from tests.sample_data_loader import load_summary_for_regime
+
+
+_MISSING = object()
+
+
+class _Approval(Enum):
+    APPROVED = "approved"
+    DENIED = "denied"
+
+    def __bool__(self) -> bool:  # pragma: no cover - sugar for readability
+        return self is _Approval.APPROVED
 
 
 class _Emitter:
@@ -61,6 +73,61 @@ class _Provider:
     def get_historical(self, symbol: str, timeframe: str, limit: int = 256) -> pd.DataFrame:
         self.calls.append((symbol, timeframe, limit))
         return self.df
+
+
+class _RiskServiceStub:
+    def __init__(self, approval: Any) -> None:
+        self._approval = approval
+        self.calls: list[RiskDecision] = []
+
+    def evaluate_decision(self, decision: RiskDecision) -> Any:
+        self.calls.append(decision)
+        return self._approval
+
+    def __call__(self, decision: RiskDecision) -> Any:  # pragma: no cover - compatibility shim
+        return self.evaluate_decision(decision)
+
+
+class _RiskServiceResponseStub:
+    def __init__(self, response: Any) -> None:
+        self._response = response
+        self.calls: list[RiskDecision] = []
+
+    def _resolve(self) -> Any:
+        if callable(self._response):
+            return self._response()
+        return self._response
+
+    def evaluate_decision(self, decision: RiskDecision) -> Any:
+        self.calls.append(decision)
+        return self._resolve()
+
+    def __call__(self, decision: RiskDecision) -> Any:  # pragma: no cover - compatibility shim
+        return self.evaluate_decision(decision)
+
+
+class _ExecutionServiceStub:
+    def __init__(self) -> None:
+        self.calls: list[RiskDecision] = []
+        self.methods: list[str] = []
+
+    def execute_decision(self, decision: RiskDecision) -> None:
+        self.calls.append(decision)
+        self.methods.append("execute_decision")
+
+    def execute(self, decision: RiskDecision) -> None:
+        self.calls.append(decision)
+        self.methods.append("execute")
+
+
+class _ExecutionServiceExecuteOnly:
+    def __init__(self) -> None:
+        self.calls: list[RiskDecision] = []
+        self.methods: list[str] = []
+
+    def execute(self, decision: RiskDecision) -> None:
+        self.calls.append(decision)
+        self.methods.append("execute")
 
 
 def test_map_regime_to_signal_respects_config(monkeypatch: pytest.MonkeyPatch) -> None:

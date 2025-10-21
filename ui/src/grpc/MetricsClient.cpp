@@ -2,8 +2,10 @@
 
 #include <QCryptographicHash>
 #include <QFile>
+#include <QFileInfo>
 #include <QLoggingCategory>
 #include <QIODevice>
+#include <QStringList>
 
 #include <grpcpp/channel.h>
 #include <grpcpp/channel_arguments.h>
@@ -16,6 +18,13 @@
 Q_LOGGING_CATEGORY(lcMetricsClient, "bot.shell.telemetry.grpc")
 
 namespace {
+
+QString normalizeFingerprint(QString value)
+{
+    QString normalized = value.trimmed().toLower();
+    normalized.remove(QLatin1Char(':'));
+    return normalized;
+}
 
 std::optional<std::string> readFileUtf8(const QString& path)
 {
@@ -41,8 +50,8 @@ void verifyPinnedFingerprint(const TelemetryTlsConfig& config, const QByteArray&
         return;
     }
     const QByteArray digest = QCryptographicHash::hash(certificate, QCryptographicHash::Sha256).toHex();
-    const QString hex = QString::fromUtf8(digest);
-    if (hex.compare(config.pinnedServerSha256, Qt::CaseInsensitive) != 0) {
+    const QString hex = QString::fromUtf8(digest).toLower();
+    if (hex != config.pinnedServerSha256) {
         qCWarning(lcMetricsClient) << "Niepoprawny odcisk SHA-256 certyfikatu serwera MetricsService";
     }
 }
@@ -55,11 +64,12 @@ MetricsClient::~MetricsClient() = default;
 
 void MetricsClient::setEndpoint(const QString& endpoint)
 {
-    if (endpoint == m_endpoint) {
+    const QString sanitized = endpoint.trimmed();
+    if (sanitized == m_endpoint) {
         return;
     }
     std::lock_guard<std::mutex> lock(m_mutex);
-    m_endpoint = endpoint;
+    m_endpoint = sanitized;
     m_channel.reset();
     m_stub.reset();
 }
@@ -67,7 +77,9 @@ void MetricsClient::setEndpoint(const QString& endpoint)
 void MetricsClient::setTlsConfig(const TelemetryTlsConfig& config)
 {
     std::lock_guard<std::mutex> lock(m_mutex);
-    m_tlsConfig = config;
+    TelemetryTlsConfig sanitized = config;
+    sanitized.pinnedServerSha256 = normalizeFingerprint(sanitized.pinnedServerSha256);
+    m_tlsConfig = sanitized;
     m_channel.reset();
     m_stub.reset();
 }
@@ -75,7 +87,7 @@ void MetricsClient::setTlsConfig(const TelemetryTlsConfig& config)
 void MetricsClient::setAuthToken(const QString& token)
 {
     std::lock_guard<std::mutex> lock(m_mutex);
-    m_authToken = token;
+    m_authToken = token.trimmed();
 }
 
 void MetricsClient::setRbacRole(const QString& role)
@@ -109,6 +121,92 @@ bool MetricsClient::pushSnapshot(const botcore::trading::v1::MetricsSnapshot& sn
         return false;
     }
     return true;
+}
+
+QVector<QPair<QByteArray, QByteArray>> MetricsClient::authMetadataForTesting() const
+{
+    QVector<QPair<QByteArray, QByteArray>> metadata;
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (!m_authToken.isEmpty()) {
+        metadata.append({QByteArrayLiteral("authorization"),
+                         QByteArrayLiteral("Bearer ") + m_authToken.toUtf8()});
+    }
+    metadata.append({QByteArrayLiteral("x-bot-scope"), QByteArrayLiteral("metrics.write")});
+    if (!m_rbacRole.isEmpty()) {
+        metadata.append({QByteArrayLiteral("x-bot-role"), m_rbacRole.toUtf8()});
+    }
+    return metadata;
+}
+
+MetricsPreflightResult MetricsClient::runPreflightChecklist() const
+{
+    MetricsPreflightResult result;
+    QString endpoint;
+    TelemetryTlsConfig tls;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        endpoint = m_endpoint;
+        tls = m_tlsConfig;
+    }
+
+    if (endpoint.trimmed().isEmpty()) {
+        result.errors.append(QStringLiteral("Endpoint MetricsService nie może być pusty."));
+    }
+
+    if (tls.enabled) {
+        const QString rootPath = tls.rootCertificatePath.trimmed();
+        if (rootPath.isEmpty()) {
+            result.errors.append(QStringLiteral("Włączono TLS telemetrii, ale nie wskazano pliku root CA."));
+        } else {
+            QFileInfo rootInfo(rootPath);
+            if (!rootInfo.exists()) {
+                result.errors.append(QStringLiteral("Plik root CA MetricsService nie istnieje: %1").arg(rootPath));
+            } else {
+                QFile rootFile(rootPath);
+                if (!rootFile.open(QIODevice::ReadOnly)) {
+                    result.errors.append(QStringLiteral("Nie można odczytać root CA MetricsService (%1): %2")
+                                             .arg(rootPath, rootFile.errorString()));
+                } else {
+                    const QByteArray pem = rootFile.readAll();
+                    if (pem.isEmpty()) {
+                        result.errors.append(QStringLiteral("Plik root CA MetricsService jest pusty."));
+                    } else if (!tls.pinnedServerSha256.isEmpty()) {
+                        const QString digest = QString::fromUtf8(
+                            QCryptographicHash::hash(pem, QCryptographicHash::Sha256).toHex());
+                        if (digest != tls.pinnedServerSha256) {
+                            result.errors.append(QStringLiteral(
+                                "Fingerprint root CA nie pasuje do metrics-server-sha256."));
+                        }
+                    }
+                }
+            }
+        }
+
+        const QString certPath = tls.clientCertificatePath.trimmed();
+        const QString keyPath = tls.clientKeyPath.trimmed();
+        const bool certProvided = !certPath.isEmpty();
+        const bool keyProvided = !keyPath.isEmpty();
+        if (certProvided != keyProvided) {
+            result.errors.append(QStringLiteral(
+                "Konfiguracja mTLS MetricsService wymaga zarówno certyfikatu, jak i klucza klienta."));
+        }
+        if (certProvided) {
+            if (!QFileInfo::exists(certPath)) {
+                result.errors.append(QStringLiteral("Certyfikat klienta MetricsService nie istnieje: %1")
+                                         .arg(certPath));
+            }
+            if (!QFileInfo::exists(keyPath)) {
+                result.errors.append(QStringLiteral("Klucz klienta MetricsService nie istnieje: %1")
+                                         .arg(keyPath));
+            }
+        }
+    } else if (!tls.pinnedServerSha256.isEmpty()) {
+        result.warnings.append(QStringLiteral(
+            "Ustawiono metrics-server-sha256, ale TLS telemetrii jest wyłączony."));
+    }
+
+    result.ok = result.errors.isEmpty();
+    return result;
 }
 
 void MetricsClient::ensureChannel()

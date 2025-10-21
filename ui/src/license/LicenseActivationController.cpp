@@ -14,7 +14,11 @@
 #include <QTimer>
 #include <QtGlobal>
 
+#include "utils/PathUtils.hpp"
+
 Q_LOGGING_CATEGORY(lcActivation, "bot.shell.license")
+
+using bot::shell::utils::watchableDirectories;
 
 namespace {
 QString normalizeFingerprint(const QString& value)
@@ -113,27 +117,57 @@ LicenseActivationController::LicenseActivationController(QObject* parent)
             &LicenseActivationController::handleProvisioningDirectoryEvent);
     connect(&m_provisioningWatcher, &QFileSystemWatcher::fileChanged, this,
             &LicenseActivationController::handleProvisioningDirectoryEvent);
+
+    m_licenseReloadTimer.setSingleShot(true);
+    m_licenseReloadTimer.setInterval(100);
+    connect(&m_licenseReloadTimer, &QTimer::timeout, this, [this]() {
+        loadPersistedLicense();
+    });
+
+    m_fingerprintReloadTimer.setSingleShot(true);
+    m_fingerprintReloadTimer.setInterval(75);
+    connect(&m_fingerprintReloadTimer, &QTimer::timeout, this, [this]() {
+        refreshExpectedFingerprint();
+        if (!m_licenseActive)
+            attemptAutomaticProvisioning(false);
+    });
+
+    connect(&m_licenseWatcher, &QFileSystemWatcher::fileChanged, this,
+            &LicenseActivationController::handleLicensePathEvent);
+    connect(&m_licenseWatcher, &QFileSystemWatcher::directoryChanged, this,
+            &LicenseActivationController::handleLicensePathEvent);
+
+    connect(&m_fingerprintWatcher, &QFileSystemWatcher::fileChanged, this,
+            &LicenseActivationController::handleFingerprintPathEvent);
+    connect(&m_fingerprintWatcher, &QFileSystemWatcher::directoryChanged, this,
+            &LicenseActivationController::handleFingerprintPathEvent);
 }
 
 void LicenseActivationController::setConfigDirectory(const QString& path)
 {
     m_configDirectory = expandPath(path);
-    if (m_initialized)
+    if (m_initialized) {
         refreshExpectedFingerprint();
+        setupFingerprintWatcher();
+    }
 }
 
 void LicenseActivationController::setLicenseStoragePath(const QString& path)
 {
     m_licenseOutputPath = expandPath(path);
-    if (m_initialized)
+    if (m_initialized) {
         loadPersistedLicense();
+        setupLicenseWatcher();
+    }
 }
 
 void LicenseActivationController::setFingerprintDocumentPath(const QString& path)
 {
     m_fingerprintDocumentPath = expandPath(path);
-    if (m_initialized)
+    if (m_initialized) {
         refreshExpectedFingerprint();
+        setupFingerprintWatcher();
+    }
 }
 
 void LicenseActivationController::setProvisioningDirectory(const QString& path)
@@ -191,6 +225,8 @@ void LicenseActivationController::initialize()
     Q_EMIT provisioningDirectoryChanged();
 
     setupProvisioningWatcher();
+    setupFingerprintWatcher();
+    setupLicenseWatcher();
     attemptAutomaticProvisioning(false);
 }
 
@@ -367,10 +403,12 @@ void LicenseActivationController::loadPersistedLicense()
     const QString path = resolveLicenseOutputPath();
     QFile file(path);
     if (!file.exists()) {
+        clearLicenseState();
         return;
     }
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
         setStatusMessage(tr("Nie udało się wczytać zapisanej licencji (%1)").arg(file.errorString()), true);
+        clearLicenseState();
         return;
     }
     const QByteArray data = file.readAll();
@@ -380,6 +418,7 @@ void LicenseActivationController::loadPersistedLicense()
     const QJsonDocument doc = parseJson(data, &error);
     if (doc.isNull()) {
         setStatusMessage(tr("Niepoprawna zapisana licencja: %1").arg(error), true);
+        clearLicenseState();
         return;
     }
     activateFromDocument(doc, false, path);
@@ -726,17 +765,7 @@ void LicenseActivationController::setStatusMessage(const QString& message, bool 
 
 QString LicenseActivationController::expandPath(const QString& path)
 {
-    if (path.trimmed().isEmpty())
-        return {};
-    QString expanded = path.trimmed();
-    if (expanded == QStringLiteral("~"))
-        expanded = QDir::homePath();
-    else if (expanded.startsWith(QStringLiteral("~/")))
-        expanded = QDir::homePath() + expanded.mid(1);
-    QFileInfo info(expanded);
-    if (!info.isAbsolute())
-        expanded = QDir::current().absoluteFilePath(expanded);
-    return QDir::cleanPath(expanded);
+    return bot::shell::utils::expandPath(path);
 }
 
 bool LicenseActivationController::persistExpectedFingerprint(const QString& fingerprint, QString* errorMessage)
@@ -973,4 +1002,127 @@ bool LicenseActivationController::activateIfMatching(const QJsonDocument& docume
     if (!normalizedExpected.isEmpty() && normalizeFingerprint(info.fingerprint) != normalizedExpected)
         return false;
     return activateFromDocument(document, persist, sourceDescription);
+}
+
+void LicenseActivationController::setupLicenseWatcher()
+{
+    const QStringList currentFiles = m_licenseWatcher.files();
+    if (!currentFiles.isEmpty())
+        m_licenseWatcher.removePaths(currentFiles);
+    const QStringList currentDirs = m_licenseWatcher.directories();
+    if (!currentDirs.isEmpty())
+        m_licenseWatcher.removePaths(currentDirs);
+
+    const QString path = resolveLicenseOutputPath();
+    if (path.isEmpty())
+        return;
+
+    QFileInfo info(path);
+    const QString absolutePath = info.absoluteFilePath();
+    if (info.exists() && info.isFile())
+        m_licenseWatcher.addPath(absolutePath);
+
+    const QString directory = info.absolutePath();
+    const QStringList directories = watchableDirectories(directory);
+    for (const QString& dir : directories) {
+        if (!dir.isEmpty())
+            m_licenseWatcher.addPath(dir);
+    }
+
+    if (!directory.isEmpty()) {
+        QDir dir(directory);
+        if (!dir.exists())
+            dir.mkpath(QStringLiteral("."));
+    }
+}
+
+void LicenseActivationController::setupFingerprintWatcher()
+{
+    const QStringList currentFiles = m_fingerprintWatcher.files();
+    if (!currentFiles.isEmpty())
+        m_fingerprintWatcher.removePaths(currentFiles);
+    const QStringList currentDirs = m_fingerprintWatcher.directories();
+    if (!currentDirs.isEmpty())
+        m_fingerprintWatcher.removePaths(currentDirs);
+
+    const QString path = resolveFingerprintDocumentPath();
+    if (path.isEmpty())
+        return;
+
+    QFileInfo info(path);
+    const QString absolutePath = info.absoluteFilePath();
+    if (info.exists() && info.isFile())
+        m_fingerprintWatcher.addPath(absolutePath);
+
+    const QString directory = info.absolutePath();
+    const QStringList directories = watchableDirectories(directory);
+    for (const QString& dir : directories) {
+        if (!dir.isEmpty())
+            m_fingerprintWatcher.addPath(dir);
+    }
+}
+
+void LicenseActivationController::handleLicensePathEvent(const QString& path)
+{
+    Q_UNUSED(path);
+    setupLicenseWatcher();
+    scheduleLicenseReload(120);
+}
+
+void LicenseActivationController::handleFingerprintPathEvent(const QString& path)
+{
+    Q_UNUSED(path);
+    setupFingerprintWatcher();
+    scheduleFingerprintReload(100);
+}
+
+void LicenseActivationController::scheduleLicenseReload(int delayMs)
+{
+    if (delayMs < 0)
+        delayMs = 0;
+    m_licenseReloadTimer.start(delayMs);
+}
+
+void LicenseActivationController::scheduleFingerprintReload(int delayMs)
+{
+    if (delayMs < 0)
+        delayMs = 0;
+    m_fingerprintReloadTimer.start(delayMs);
+}
+
+void LicenseActivationController::clearLicenseState()
+{
+    const bool wasActive = m_licenseActive;
+    const bool hadData = wasActive || !m_licenseFingerprint.isEmpty() || !m_licenseEdition.isEmpty() ||
+                         !m_licenseLicenseId.isEmpty() || !m_licenseIssuedAt.isEmpty() ||
+                         !m_licenseMaintenanceUntil.isEmpty() || m_licenseMaintenanceActive ||
+                         !m_licenseHolderName.isEmpty() || !m_licenseHolderEmail.isEmpty() || m_licenseSeats != 0 ||
+                         m_licenseTrialActive || !m_licenseTrialExpiresAt.isEmpty() || !m_licenseModules.isEmpty() ||
+                         !m_licenseEnvironments.isEmpty() || !m_licenseRuntime.isEmpty() || !m_lastDocument.isNull();
+
+    if (!hadData)
+        return;
+
+    m_licenseActive = false;
+    m_licenseFingerprint.clear();
+    m_licenseEdition.clear();
+    m_licenseLicenseId.clear();
+    m_licenseIssuedAt.clear();
+    m_licenseMaintenanceUntil.clear();
+    m_licenseMaintenanceActive = false;
+    m_licenseHolderName.clear();
+    m_licenseHolderEmail.clear();
+    m_licenseSeats = 0;
+    m_licenseTrialActive = false;
+    m_licenseTrialExpiresAt.clear();
+    m_licenseModules.clear();
+    m_licenseEnvironments.clear();
+    m_licenseRuntime.clear();
+    m_lastDocument = QJsonDocument();
+
+    if (wasActive)
+        Q_EMIT licenseActiveChanged();
+    Q_EMIT licenseDataChanged();
+    if (!m_statusIsError)
+        setStatusMessage(tr("Brak aktywnej licencji"), false);
 }

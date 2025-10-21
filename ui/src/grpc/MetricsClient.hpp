@@ -1,9 +1,13 @@
 #pragma once
 
+#include <QByteArray>
+#include <QPair>
+#include <QString>
+#include <QStringList>
+#include <QVector>
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <QString>
 
 #include "telemetry/TelemetryTlsConfig.hpp"
 
@@ -17,6 +21,12 @@ class MetricsService;
 class MetricsSnapshot;
 class MetricsAck;
 } // namespace botcore::trading::v1
+
+struct MetricsPreflightResult {
+    bool ok = false;
+    QStringList warnings;
+    QStringList errors;
+};
 
 class MetricsClientInterface {
 public:
@@ -43,6 +53,9 @@ public:
 
     bool pushSnapshot(const botcore::trading::v1::MetricsSnapshot& snapshot,
                       QString* errorMessage = nullptr) override;
+
+    MetricsPreflightResult runPreflightChecklist() const;
+    QVector<QPair<QByteArray, QByteArray>> authMetadataForTesting() const;
 
 private:
     void ensureChannel();

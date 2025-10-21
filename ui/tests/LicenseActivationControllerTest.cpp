@@ -2,10 +2,12 @@
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QTemporaryDir>
+#include <QSignalSpy>
 
 #include "license/LicenseActivationController.hpp"
 
@@ -51,6 +53,7 @@ QString writeFingerprintDocument(const QString& dir, const QString& fingerprint)
 
 void writeLicenseFile(const QString& path, const QJsonDocument& doc)
 {
+    QDir().mkpath(QFileInfo(path).dir().path());
     QFile file(path);
     QVERIFY2(file.open(QIODevice::WriteOnly | QIODevice::Text), "Unable to open license file for writing");
     file.write(doc.toJson(QJsonDocument::Indented));
@@ -68,6 +71,8 @@ private slots:
     void acceptsBase64Payload();
     void autoProvisionImportsMatchingLicense();
     void autoProvisionRunsDuringInitialize();
+    void updatesFingerprintWhenDocumentCreated();
+    void tracksExternalLicenseChanges();
 };
 
 void LicenseActivationControllerTest::activatesWithValidLicense()
@@ -212,6 +217,70 @@ void LicenseActivationControllerTest::autoProvisionRunsDuringInitialize()
     QCOMPARE(controller.licenseFingerprint(), fingerprint);
     QFile archivedLicense(licenseFile + QStringLiteral(".applied"));
     QVERIFY(archivedLicense.exists());
+}
+
+void LicenseActivationControllerTest::updatesFingerprintWhenDocumentCreated()
+{
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+
+    const QString configDir = tempDir.filePath(QStringLiteral("config"));
+    QDir().mkpath(configDir);
+
+    LicenseActivationController controller;
+    controller.setConfigDirectory(configDir);
+    controller.setLicenseStoragePath(tempDir.filePath(QStringLiteral("var/licenses/active/license.json")));
+    controller.initialize();
+
+    QVERIFY(!controller.expectedFingerprintAvailable());
+
+    QSignalSpy spy(&controller, &LicenseActivationController::expectedFingerprintChanged);
+
+    const QString fingerprint = QStringLiteral("WATCH-12345");
+    writeFingerprintDocument(configDir, fingerprint);
+
+    QTRY_VERIFY_WITH_TIMEOUT(spy.count() > 0, 1000);
+    QCOMPARE(controller.expectedFingerprint(), fingerprint);
+
+    const QString fingerprint2 = QStringLiteral("WATCH-ABCDE");
+    writeFingerprintDocument(configDir, fingerprint2);
+
+    QTRY_VERIFY_WITH_TIMEOUT(spy.count() > 1, 1000);
+    QCOMPARE(controller.expectedFingerprint(), fingerprint2);
+}
+
+void LicenseActivationControllerTest::tracksExternalLicenseChanges()
+{
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+
+    const QString configDir = tempDir.filePath(QStringLiteral("config"));
+    QDir().mkpath(configDir);
+    const QString fingerprint = QStringLiteral("TRACK-777");
+    writeFingerprintDocument(configDir, fingerprint);
+
+    const QString licensePath = tempDir.filePath(QStringLiteral("var/licenses/active/license.json"));
+
+    LicenseActivationController controller;
+    controller.setConfigDirectory(configDir);
+    controller.setLicenseStoragePath(licensePath);
+    controller.initialize();
+
+    QVERIFY(!controller.licenseActive());
+
+    QSignalSpy activeSpy(&controller, &LicenseActivationController::licenseActiveChanged);
+
+    writeLicenseFile(licensePath, buildLicenseDocument(fingerprint));
+
+    QTRY_VERIFY_WITH_TIMEOUT(activeSpy.count() > 0, 1000);
+    QVERIFY(controller.licenseActive());
+    QCOMPARE(controller.licenseFingerprint(), fingerprint);
+
+    QFile::remove(licensePath);
+
+    QTRY_VERIFY_WITH_TIMEOUT(activeSpy.count() > 1, 1000);
+    QVERIFY(!controller.licenseActive());
+    QVERIFY(controller.licenseFingerprint().isEmpty());
 }
 
 QTEST_MAIN(LicenseActivationControllerTest)

@@ -8,7 +8,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from bot_core.security.signing import build_hmac_signature, canonical_json_bytes
+from bot_core.security.signing import build_hmac_signature
 
 
 DEFAULT_OUTPUT = Path("var/dist/desktop")
@@ -51,7 +51,7 @@ def _sign_updater(updater: Path, key: str, destination: Path) -> Path:
         "path": str(updater.resolve()),
         "size": updater.stat().st_size,
     }
-    signature = build_hmac_signature(key.encode("utf-8"), canonical_json_bytes(payload))
+    signature = build_hmac_signature(payload, key=key.encode("utf-8"))
     destination.write_text(signature["value"], encoding="utf-8")
     return destination
 
