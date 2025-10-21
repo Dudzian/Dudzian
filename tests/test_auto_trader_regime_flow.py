@@ -89,7 +89,6 @@ class _Provider:
         return self.df
 
 
-class _RiskServiceStub:
 def _prepare_guardrail_history(monkeypatch: pytest.MonkeyPatch) -> AutoTrader:
     emitter = _Emitter()
     gui = _GUI()
@@ -843,18 +842,16 @@ def _build_summary(
         history=snapshots,
     )
 class _RiskServiceStub:
-    def __init__(self, approval: bool) -> None:
-        self._approval = approval
-        self.calls: list[RiskDecision] = []
-
-    def __call__(self, decision: RiskDecision) -> bool:
     def __init__(self, approval: Any) -> None:
         self._approval = approval
         self.calls: list[RiskDecision] = []
 
     def evaluate_decision(self, decision: RiskDecision) -> Any:
         self.calls.append(decision)
-        return self._approval
+        result = self._approval
+        if callable(result):
+            result = result()
+        return result
 
     def __call__(self, decision: RiskDecision) -> Any:  # pragma: no cover - compatibility shim
         return self.evaluate_decision(decision)
@@ -865,28 +862,15 @@ class _RiskServiceResponseStub:
         self._response = response
         self.calls: list[RiskDecision] = []
 
-    def _resolve(self) -> Any:
-        if callable(self._response):
-            return self._response()
-        return self._response
-
-    def evaluate_decision(self, decision: RiskDecision) -> Any:
-        self.calls.append(decision)
-        return self._resolve()
-
-    def __call__(self, decision: RiskDecision) -> Any:  # pragma: no cover - compatibility shim
-        return self.evaluate_decision(decision)
-    def __call__(self, decision: RiskDecision) -> Any:
-        self.calls.append(decision)
-        if callable(self._response):
-            return self._response()
-        return self._response
     def evaluate_decision(self, decision: RiskDecision) -> Any:
         self.calls.append(decision)
         result = self._response
         if callable(result):
             result = result()
         return result
+
+    def __call__(self, decision: RiskDecision) -> Any:  # pragma: no cover - compatibility shim
+        return self.evaluate_decision(decision)
 
 
 class _ExecutionServiceStub:
@@ -4004,6 +3988,33 @@ def test_auto_trader_guardrail_timeline_exports(monkeypatch: pytest.MonkeyPatch)
     second_record_values = records[1]["guardrail_trigger_values"]
     assert second_record_values["count"] == 1
 
+    summary_records = trader.guardrail_timeline_to_records(
+        bucket_s=20.0,
+        fill_gaps=True,
+        coerce_timestamps=True,
+        tz=timezone.utc,
+        include_summary_metadata=True,
+    )
+    assert len(summary_records) == 3
+    summary_record = summary_records[-1]
+    assert summary_record["bucket_type"] == "summary"
+    summary_snapshot = trader.summarize_guardrail_timeline(
+        bucket_s=20.0,
+        fill_gaps=True,
+    )
+    assert summary_record["evaluations"] == summary_snapshot["evaluations"]
+    assert summary_record["total"] == summary_snapshot["total"]
+    assert summary_record["guardrail_events"] == summary_snapshot["total"]
+    assert summary_record.get("services") == summary_snapshot.get("services")
+    assert summary_record.get("guardrail_trigger_thresholds") == summary_snapshot.get(
+        "guardrail_trigger_thresholds"
+    )
+    assert summary_record.get("guardrail_trigger_values") == summary_snapshot.get(
+        "guardrail_trigger_values"
+    )
+    assert isinstance(summary_record["first_timestamp"], datetime)
+    assert isinstance(summary_record["last_timestamp"], datetime)
+
     df = trader.guardrail_timeline_to_dataframe(
         bucket_s=20.0,
         include_services=False,
@@ -4014,6 +4025,21 @@ def test_auto_trader_guardrail_timeline_exports(monkeypatch: pytest.MonkeyPatch)
     assert "guardrail_reasons" not in df.columns
     assert "guardrail_trigger_thresholds" not in df.columns
     assert "guardrail_trigger_values" not in df.columns
+
+    df_with_summary = trader.guardrail_timeline_to_dataframe(
+        bucket_s=20.0,
+        fill_gaps=True,
+        include_summary_metadata=True,
+        tz=timezone.utc,
+    )
+    assert df_with_summary["bucket_type"].iloc[-1] == "summary"
+    summary_row = df_with_summary.iloc[-1]
+    assert summary_row["evaluations"] == summary_snapshot["evaluations"]
+    assert summary_row["total"] == summary_snapshot["total"]
+    assert isinstance(summary_row["first_timestamp"], datetime)
+    assert isinstance(summary_row["last_timestamp"], datetime)
+    if "services" in df_with_summary.columns:
+        assert summary_row["services"] == summary_snapshot.get("services")
 
     records_with_missing = trader.guardrail_timeline_to_records(
         bucket_s=20.0,
