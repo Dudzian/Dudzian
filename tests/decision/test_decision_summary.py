@@ -2,6 +2,14 @@ from __future__ import annotations
 
 import pytest
 
+from bot_core.decision.summary import DecisionSummaryAggregator
+
+
+def _build_summary(
+    evaluations: list[dict[str, object]], *, history_limit: int | None = None
+) -> dict[str, object]:
+    aggregator = DecisionSummaryAggregator(evaluations, history_limit=history_limit)
+    return dict(aggregator.build_summary())
 from bot_core.decision.summary import (
     DecisionEngineSummary,
     summarize_evaluation_payloads,
@@ -97,6 +105,7 @@ def _build_full_evaluations() -> list[dict[str, object]]:
         },
     ]
 
+    summary = _build_summary(evaluations, history_limit=5)
     summary_model = summarize_evaluation_payloads(evaluations, history_limit=5)
     assert isinstance(summary_model, DecisionEngineSummary)
     summary = summary_model.model_dump()
@@ -665,6 +674,7 @@ def test_summarize_evaluation_payloads_respects_history_limit() -> None:
         },
     ]
 
+    summary = _build_summary(evaluations, history_limit=2)
     summary_model = summarize_evaluation_payloads(evaluations, history_limit=2)
     assert isinstance(summary_model, DecisionEngineSummary)
     summary = summary_model.model_dump()
@@ -701,6 +711,7 @@ def test_summarize_evaluation_payloads_tracks_longest_streaks() -> None:
         {"accepted": True},
     ]
 
+    summary = _build_summary(evaluations)
     summary_model = summarize_evaluation_payloads(evaluations)
     assert isinstance(summary_model, DecisionEngineSummary)
     summary = summary_model.model_dump()
