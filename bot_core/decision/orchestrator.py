@@ -1,6 +1,7 @@
 """DecisionOrchestrator oceniający kandydatów decyzji inwestycyjnych."""
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
@@ -26,6 +27,9 @@ except Exception:  # pragma: no cover - moduł TCO może nie być dostępny w ni
     ProfileCostSummary = None  # type: ignore
     StrategyCostSummary = None  # type: ignore
     TCOReport = None  # type: ignore
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -197,6 +201,7 @@ class DecisionOrchestrator:
         risk_snapshot: Mapping[str, object] | RiskSnapshot,
     ) -> DecisionEvaluation:
         thresholds = self._thresholds_for_profile(candidate.risk_profile)
+        thresholds_snapshot = self._threshold_snapshot(thresholds)
         snapshot = self._ensure_snapshot(candidate.risk_profile, risk_snapshot)
         model_name, model_score, selection_metadata = self._score_with_model(candidate)
         if model_score is not None:
@@ -252,7 +257,7 @@ class DecisionOrchestrator:
         stress_failures = self._run_stress_tests(candidate, thresholds, cost_bps or 0.0)
 
         accepted = not reasons and not stress_failures
-        return DecisionEvaluation(
+        evaluation = DecisionEvaluation(
             candidate=candidate,
             accepted=accepted,
             cost_bps=cost_bps,
@@ -268,7 +273,19 @@ class DecisionOrchestrator:
             ),
             model_name=model_name if model_score else None,
             model_selection=selection_metadata,
+            thresholds_snapshot=thresholds_snapshot,
         )
+        if not accepted:
+            _LOGGER.info(
+                "DecisionOrchestrator rejected candidate strategy=%s symbol=%s reasons=%s risk_flags=%s stress_failures=%s thresholds=%s",
+                candidate.strategy,
+                candidate.symbol or "<unknown>",
+                tuple(reasons),
+                tuple(risk_flags),
+                tuple(stress_failures),
+                thresholds_snapshot,
+            )
+        return evaluation
 
     def evaluate_candidates(
         self,
@@ -302,6 +319,22 @@ class DecisionOrchestrator:
         if overrides and profile in overrides:
             return overrides[profile]
         return self._config.orchestrator
+
+    def _threshold_snapshot(
+        self, thresholds: DecisionOrchestratorThresholds
+    ) -> Mapping[str, float | None]:
+        return {
+            "max_cost_bps": thresholds.max_cost_bps,
+            "min_net_edge_bps": thresholds.min_net_edge_bps,
+            "max_latency_ms": thresholds.max_latency_ms,
+            "max_daily_loss_pct": thresholds.max_daily_loss_pct,
+            "max_drawdown_pct": thresholds.max_drawdown_pct,
+            "max_position_ratio": thresholds.max_position_ratio,
+            "max_open_positions": thresholds.max_open_positions,
+            "max_trade_notional": getattr(thresholds, "max_trade_notional", None),
+            "min_probability": self._config.min_probability,
+            "penalty_cost_bps": getattr(self._config, "penalty_cost_bps", 0.0),
+        }
 
     def _ensure_snapshot(
         self,

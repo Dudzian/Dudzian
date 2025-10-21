@@ -179,6 +179,7 @@ decision_engine:
   min_probability: 0.55
   require_cost_data: true
   penalty_cost_bps: 1.0
+  evaluation_history_limit: 512
   profile_overrides:
     conservative:
       max_cost_bps: 9.0

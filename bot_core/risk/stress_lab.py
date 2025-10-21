@@ -34,12 +34,14 @@ from bot_core.config.models import (
     StressLabShockConfig,
     StressLabThresholdsConfig,
 )
+from bot_core.risk._time import now_utc
 from bot_core.risk.simulation import (
     ProfileSimulationResult,
     RiskSimulationReport,
     StressTestResult,
 )
-from bot_core.security.signing import build_hmac_signature
+from bot_core.market_intel.models import MarketIntelBaseline
+from bot_core.security.signing import HmacSignedReportMixin, build_hmac_signature
 
 
 # =============================================================================
@@ -50,10 +52,6 @@ _REPORT_SCHEMA = "stage6.risk.stress_lab.report"
 _REPORT_SCHEMA_VERSION = 1
 _SIGNATURE_SCHEMA = "stage6.risk.stress_lab.report.signature"
 _SEVERITY_ORDER = {"critical": 3, "warning": 2, "notice": 1, "info": 0}
-
-
-def _now_utc() -> datetime:
-    return datetime.now(timezone.utc)
 
 
 @dataclass(slots=True)
@@ -196,7 +194,7 @@ class StressLabEvaluator:
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._config = config or StressLabPolicyConfig()
-        self._clock = clock or _now_utc
+        self._clock = clock or now_utc
 
     def evaluate(
         self,
@@ -622,7 +620,7 @@ def write_report_signature(
     document = {
         "schema": _SIGNATURE_SCHEMA,
         "schema_version": _REPORT_SCHEMA_VERSION,
-        "signed_at": _now_utc().isoformat(),
+        "signed_at": now_utc().isoformat(),
         "target": target or output_path.name,
         "signature": build_hmac_signature(
             payload,
@@ -654,29 +652,9 @@ _SEVERITY_FACTORS: Mapping[str, float] = {
 }
 
 
-@dataclass(slots=True)
-class MarketBaseline:
-    """Bazowe metryki rynku wykorzystywane w Stress Lab (main)."""
-    symbol: str
-    mid_price: float
-    avg_depth_usd: float
-    avg_spread_bps: float
-    funding_rate_bps: float
-    sentiment_score: float
-    realized_volatility: float
-    weight: float = 1.0
-
-    def to_mapping(self) -> Mapping[str, float | str]:
-        return {
-            "symbol": self.symbol,
-            "mid_price": self.mid_price,
-            "avg_depth_usd": self.avg_depth_usd,
-            "avg_spread_bps": self.avg_spread_bps,
-            "funding_rate_bps": self.funding_rate_bps,
-            "sentiment_score": self.sentiment_score,
-            "realized_volatility": self.realized_volatility,
-            "weight": self.weight,
-        }
+# Bazowy zestaw metryk rynku współdzielony z agregatorem Market Intelligence.
+# Alias zachowuje dotychczasową nazwę eksportowaną przez moduł Stress Lab.
+MarketBaseline = MarketIntelBaseline
 
 
 @dataclass(slots=True)
@@ -742,7 +720,7 @@ class StressScenarioResult:
 
 
 @dataclass(slots=True)
-class StressLabReportMain:
+class StressLabReportMain(HmacSignedReportMixin):
     """Raport zbiorczy Stress Lab (main)."""
     generated_at: str
     thresholds: StressLabThresholdsConfig
@@ -765,30 +743,6 @@ class StressLabReportMain:
             json.dump(self.to_mapping(), handle, ensure_ascii=False, indent=2, sort_keys=True)
             handle.write("\n")
         return path
-
-    def build_signature(
-        self,
-        *,
-        key: bytes,
-        algorithm: str = "HMAC-SHA256",
-        key_id: str | None = None,
-    ) -> Mapping[str, str]:
-        return build_hmac_signature(self.to_mapping(), key=key, algorithm=algorithm, key_id=key_id)
-
-    def write_signature(
-        self,
-        path: Path,
-        *,
-        key: bytes,
-        algorithm: str = "HMAC-SHA256",
-        key_id: str | None = None,
-    ) -> Path:
-        signature = self.build_signature(key=key, algorithm=algorithm, key_id=key_id)
-        with path.open("w", encoding="utf-8") as handle:
-            json.dump(signature, handle, ensure_ascii=False, indent=2, sort_keys=True)
-            handle.write("\n")
-        return path
-
 
 class StressLab:
     """Wykonuje scenariusze Stress Lab na podstawie konfiguracji Stage6 (main)."""

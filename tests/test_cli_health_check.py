@@ -65,6 +65,7 @@ class _RecordingManager:
         self._paper_initial_cash = 10_000.0
         self._paper_cash_asset: str | None = "USDT"
         self.paper_simulator_settings: dict[str, float] = {}
+        self.paper_simulator_settings: Mapping[str, object] | None = None
         _RecordingManager.instances.append(self)
 
     # API używane przez CLI
@@ -106,6 +107,7 @@ class _RecordingManager:
 
     def configure_native_adapter(self, *, settings: Mapping[str, object], mode: Mode | None = None) -> None:
         self._configured_settings = dict(settings)
+        self._configured_settings = settings
         self.native_adapter_mode = mode
 
     def set_paper_variant(self, variant: str) -> None:
@@ -117,6 +119,7 @@ class _RecordingManager:
         self._paper_initial_cash = float(amount)
         if normalized_asset:
             self._paper_cash_asset = normalized_asset
+        self.paper_balance = (float(amount), asset)
 
     def set_paper_fee_rate(self, fee_rate: float) -> None:
         self.paper_fee_rate = float(fee_rate)
@@ -160,6 +163,8 @@ class _RecordingManager:
         for key, value in self.paper_simulator_settings.items():
             combined[key] = float(value)
         return combined
+    def configure_paper_simulator(self, **settings: object) -> None:
+        self.paper_simulator_settings = dict(settings)
 
     def configure_watchdog(
         self,
@@ -363,6 +368,8 @@ paper_margin:
     assert manager.paper_simulator_settings == {
         "leverage_limit": pytest.approx(6.0),
         "maintenance_margin_ratio": pytest.approx(0.1),
+        "leverage_limit": 6,
+        "maintenance_margin_ratio": 0.1,
     }
     assert manager.watchdog_config and manager.watchdog_config["retry_policy"]["max_attempts"] == 5
     assert manager._credentials == ("LIVEKEY", "LIVESECRET", None)
@@ -622,6 +629,10 @@ paper:
 def test_health_check_cli_requires_environment_when_default_missing(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    assert "Overall status" in captured.out
+
+
+def test_health_check_cli_environment_requires_environment_name(tmp_path: Path) -> None:
     env_yaml = tmp_path / "modes.yaml"
     env_yaml.write_text("paper: {}", encoding="utf-8")
 

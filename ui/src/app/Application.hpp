@@ -32,6 +32,8 @@ class LicenseActivationController;     // forward decl (license/LicenseActivatio
 class SecurityAdminController;         // forward decl (security/SecurityAdminController.hpp)
 class ReportCenterController;          // forward decl (reporting/ReportCenterController.hpp)
 class BotCoreLocalService;             // forward decl (grpc/BotCoreLocalService.hpp)
+class StrategyConfigController;        // forward decl (app/StrategyConfigController.hpp)
+class SupportBundleController;         // forward decl (support/SupportBundleController.hpp)
 
 class Application : public QObject {
     Q_OBJECT
@@ -45,6 +47,8 @@ class Application : public QObject {
     Q_PROPERTY(QObject*         alertsFilterModel   READ alertsFilterModel   CONSTANT)
     Q_PROPERTY(QObject*         activationController READ activationController CONSTANT)
     Q_PROPERTY(QObject*         reportController READ reportController CONSTANT)
+    Q_PROPERTY(QObject*         strategyController READ strategyController CONSTANT)
+    Q_PROPERTY(QObject*         supportController READ supportController CONSTANT)
     Q_PROPERTY(int              telemetryPendingRetryCount READ telemetryPendingRetryCount NOTIFY telemetryPendingRetryCountChanged)
     Q_PROPERTY(QVariantMap      riskRefreshSchedule READ riskRefreshSchedule NOTIFY riskRefreshScheduleChanged)
     Q_PROPERTY(bool             riskHistoryExportLimitEnabled READ riskHistoryExportLimitEnabled WRITE setRiskHistoryExportLimitEnabled NOTIFY riskHistoryExportLimitEnabledChanged)
@@ -78,6 +82,8 @@ public:
     QObject*         riskModel() const { return const_cast<RiskStateModel*>(&m_riskModel); }
     QObject*         activationController() const;
     QObject*         reportController() const;
+    QObject*         strategyController() const;
+    QObject*         supportController() const;
     QObject*         alertsModel() const { return const_cast<AlertsModel*>(&m_alertsModel); }
     QObject*         alertsFilterModel() const { return const_cast<AlertsFilterProxyModel*>(&m_filteredAlertsModel); }
     QObject*         riskHistoryModel() const { return const_cast<RiskHistoryModel*>(&m_riskHistoryModel); }
@@ -180,6 +186,11 @@ private:
                                           bool cliTokenProvided,
                                           bool cliTokenFileProvided);
     void applyTradingTlsEnvironmentOverrides(const QCommandLineParser& parser);
+    void applyTradingAuthEnvironmentOverrides(const QCommandLineParser& parser,
+                                              bool cliTokenProvided,
+                                              bool cliTokenFileProvided,
+                                              bool cliRoleProvided,
+                                              bool cliScopesProvided);
     void applyScreenEnvironmentOverrides(const QCommandLineParser& parser);
     void applyPreferredScreen(QQuickWindow* window);
     QScreen* resolvePreferredScreen() const;
@@ -193,6 +204,8 @@ private:
     void ensureUiSettingsTimerConfigured();
     void applyUiSettingsCliOverrides(const QCommandLineParser& parser);
     void applyRiskHistoryCliOverrides(const QCommandLineParser& parser);
+    void configureStrategyBridge(const QCommandLineParser& parser);
+    void configureSupportBundle(const QCommandLineParser& parser);
     void setUiSettingsPersistenceEnabled(bool enabled);
     void setUiSettingsPath(const QString& path, bool reload = true);
     void loadUiSettings();
@@ -216,6 +229,9 @@ private:
     PerformanceGuard       m_guard{};
     int                    m_maxSamples = 10240;
     TradingClient::TlsConfig m_tradingTlsConfig{};
+    QString                m_tradingAuthToken;
+    QString                m_tradingRbacRole;
+    QStringList            m_tradingRbacScopes;
 
     TradingClient::InstrumentConfig m_instrument{
         QStringLiteral("BINANCE"),
@@ -234,6 +250,8 @@ private:
     std::unique_ptr<LicenseActivationController> m_licenseController;
     std::unique_ptr<SecurityAdminController>   m_securityController;
     std::unique_ptr<ReportCenterController>    m_reportController;
+    std::unique_ptr<StrategyConfigController>  m_strategyController;
+    std::unique_ptr<SupportBundleController>   m_supportController;
 
     // --- Telemetry state ---
     std::unique_ptr<TelemetryReporter> m_telemetry;

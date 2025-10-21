@@ -309,6 +309,8 @@ class _ExchangeManagerAdapter(ExchangeAdapter if ExchangeAdapter is not None els
         ip_allowlist: Sequence[str] | None = None,  # noqa: ARG002 - zgodność interfejsu
     ) -> None:
         # ExchangeManager nie wymaga dodatkowej konfiguracji sieciowej z perspektywy adaptera.
+        if ip_allowlist:  # pragma: no cover - wyłącznie diagnostyka środowisk spec.
+            logger.debug("Zignorowano allowlist dla adaptera ExchangeManager: %s", ip_allowlist)
         return None
 
     def fetch_account_snapshot(self) -> "AccountSnapshot":

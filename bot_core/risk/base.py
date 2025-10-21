@@ -53,6 +53,46 @@ class RiskProfile(abc.ABC):
         ...
 
 
+class StaticRiskProfile(RiskProfile):
+    """Profil ryzyka zdefiniowany stałymi parametrami.
+
+    Podczas migracji z gałęzi legacy wiele profili kopiowało identyczne metody
+    zwracające wartości stałych atrybutów.  Ta klasa zapewnia wspólne
+    implementacje bazujące na nazwanych atrybutach klasy, dzięki czemu
+    poszczególne profile mogą definiować jedynie wartości graniczne, bez
+    powielania logiki.
+    """
+
+    _max_positions: int
+    _max_leverage: float
+    _drawdown_limit: float
+    _daily_loss_limit: float
+    _max_position_pct: float
+    _target_volatility: float
+    _stop_loss_atr_multiple: float
+
+    def max_positions(self) -> int:
+        return self._max_positions
+
+    def max_leverage(self) -> float:
+        return self._max_leverage
+
+    def drawdown_limit(self) -> float:
+        return self._drawdown_limit
+
+    def daily_loss_limit(self) -> float:
+        return self._daily_loss_limit
+
+    def max_position_exposure(self) -> float:
+        return self._max_position_pct
+
+    def target_volatility(self) -> float:
+        return self._target_volatility
+
+    def stop_loss_atr_multiple(self) -> float:
+        return self._stop_loss_atr_multiple
+
+
 class RiskEngine(abc.ABC):
     """Silnik ryzyka odpowiada za enforce limitów i pre-trade checks."""
 
@@ -108,4 +148,10 @@ class RiskRepository(Protocol):
         ...
 
 
-__all__ = ["RiskCheckResult", "RiskProfile", "RiskEngine", "RiskRepository"]
+__all__ = [
+    "RiskCheckResult",
+    "RiskProfile",
+    "StaticRiskProfile",
+    "RiskEngine",
+    "RiskRepository",
+]

@@ -14,6 +14,7 @@ from threading import Lock
 from typing import Any
 
 from bot_core.alerts import AlertMessage, DefaultAlertRouter
+from bot_core.observability._tag_utils import extract_tag
 from bot_core.security.guards import get_capability_guard
 
 DEFAULT_UI_ALERTS_JSONL_PATH = Path("logs/ui_telemetry_alerts.jsonl")
@@ -107,15 +108,6 @@ def _screen_summary(payload: Mapping[str, Any]) -> str:
         return ""
 
     return ", ".join(parts)
-
-
-def _extract_tag(payload: Mapping[str, Any]) -> str | None:
-    tag = payload.get("tag")
-    if isinstance(tag, str):
-        normalized = tag.strip()
-        if normalized:
-            return normalized
-    return None
 
 
 def _timestamp_to_iso(snapshot: Any) -> str | None:
@@ -572,7 +564,7 @@ class UiTelemetryAlertSink:
         if not metrics:
             return
 
-        tag_value = _extract_tag(payload)
+        tag_value = extract_tag(payload)
         state_key = tag_value or "__global__"
 
         for config in metrics:
@@ -594,7 +586,7 @@ class UiTelemetryAlertSink:
             now_monotonic = float(time.time())
         now_wallclock = datetime.now(timezone.utc)
 
-        tag_value = _extract_tag(payload)
+        tag_value = extract_tag(payload)
         if tag_value:
             last_seen_iso = _timestamp_to_iso(snapshot)
             if last_seen_iso is None:
@@ -780,7 +772,7 @@ class UiTelemetryAlertSink:
             if not triggered or not should_emit:
                 return
 
-            tag_value = _extract_tag(payload)
+            tag_value = extract_tag(payload)
             fps_value = getattr(snapshot, "fps", None)
             context: dict[str, str] = {"active": "true"}
             if isinstance(fps_value, (int, float)):
@@ -912,7 +904,7 @@ class UiTelemetryAlertSink:
             return
 
         severity = self._reduce_motion_incident_severity_recovered
-        tag_value = _extract_tag(payload)
+        tag_value = extract_tag(payload)
         fps_value = getattr(snapshot, "fps", None)
         context = {"active": "false"}
         if isinstance(fps_value, (int, float)):
@@ -1162,7 +1154,7 @@ class UiTelemetryAlertSink:
             context["retry_backlog_duration_seconds"] = f"{duration_seconds:.3f}"
         if escalation_reason is not None:
             context["retry_backlog_escalation"] = escalation_reason
-        tag_value = _extract_tag(payload)
+        tag_value = extract_tag(payload)
         if tag_value:
             context["tag"] = tag_value
         started_iso = _datetime_to_iso(started_wallclock)
@@ -1402,7 +1394,7 @@ class UiTelemetryAlertSink:
             "overlay_allowed": str(overlay_allowed),
             "window_count": str(payload.get("window_count", "")),
         }
-        tag_value = _extract_tag(payload)
+        tag_value = extract_tag(payload)
         if tag_value:
             context["tag"] = tag_value
         context.update(_screen_context(payload))
@@ -1548,7 +1540,7 @@ class UiTelemetryAlertSink:
             if severity_cause:
                 context["overlay_incident_severity_cause"] = severity_cause
 
-            tag_value = _extract_tag(payload)
+            tag_value = extract_tag(payload)
             if tag_value:
                 context["tag"] = tag_value
             context.update(_screen_context(payload))
@@ -1632,7 +1624,7 @@ class UiTelemetryAlertSink:
                     self._overlay_critical_threshold
                 )
 
-            tag_value = _extract_tag(payload)
+            tag_value = extract_tag(payload)
             if tag_value:
                 context["tag"] = tag_value
             context.update(_screen_context(payload))
@@ -1727,7 +1719,7 @@ class UiTelemetryAlertSink:
             context["ratio"] = f"{ratio:.3f}"
         if getattr(snapshot, "HasField", None) and snapshot.HasField("fps"):
             context["fps"] = f"{snapshot.fps:.4f}"
-        tag_value = _extract_tag(payload)
+        tag_value = extract_tag(payload)
         if tag_value:
             context["tag"] = tag_value
         context.update(_screen_context(payload))
@@ -1795,7 +1787,7 @@ class UiTelemetryAlertSink:
             "payload": payload,
             "context": dict(context) if context is not None else None,
         }
-        tag_value = _extract_tag(payload)
+        tag_value = extract_tag(payload)
         if tag_value:
             record["tag"] = tag_value
         if self._risk_profile_metadata is not None:

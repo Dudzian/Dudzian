@@ -6,6 +6,8 @@
 #include <QFile>
 #include <QIODevice>
 #include <QMetaObject>
+#include <QLoggingCategory>
+#include <QSet>
 #include <QtGlobal>
 #include <QSslCertificate>
 
@@ -15,10 +17,15 @@
 #include <grpcpp/grpcpp.h>
 #include <grpcpp/security/credentials.h>
 
+#include <algorithm>
+#include <chrono>
 #include <optional>
 #include <string>
+#include <thread>
 
 #include "trading.grpc.pb.h"
+
+Q_LOGGING_CATEGORY(lcTradingClient, "bot.shell.trading.grpc")
 
 using botcore::trading::v1::GetOhlcvHistoryRequest;
 using botcore::trading::v1::GetOhlcvHistoryResponse;
@@ -29,6 +36,7 @@ using botcore::trading::v1::StreamOhlcvRequest;
 using botcore::trading::v1::StreamOhlcvUpdate;
 using botcore::trading::v1::RiskService;
 using botcore::trading::v1::RiskState;
+using botcore::trading::v1::RiskStateRequest;
 
 namespace {
 
@@ -125,11 +133,71 @@ void TradingClient::setPerformanceGuard(const PerformanceGuard& guard) {
 }
 
 void TradingClient::setTlsConfig(const TlsConfig& config) {
-    m_tlsConfig = config;
+    TlsConfig sanitized = config;
+    sanitized.pinnedServerFingerprint = normalizeFingerprint(sanitized.pinnedServerFingerprint);
+    m_tlsConfig = sanitized;
     // zmiana TLS wymaga odtworzenia kanału/stubów
     m_channel.reset();
     m_marketDataStub.reset();
     m_riskStub.reset();
+}
+
+void TradingClient::setAuthToken(const QString& token)
+{
+    const QString sanitized = token.trimmed();
+    {
+        std::lock_guard<std::mutex> lock(m_authMutex);
+        if (m_authToken == sanitized)
+            return;
+        m_authToken = sanitized;
+    }
+    triggerStreamRestart();
+}
+
+void TradingClient::setRbacRole(const QString& role)
+{
+    const QString sanitized = role.trimmed();
+    {
+        std::lock_guard<std::mutex> lock(m_authMutex);
+        if (m_rbacRole == sanitized)
+            return;
+        m_rbacRole = sanitized;
+    }
+    triggerStreamRestart();
+}
+
+void TradingClient::setRbacScopes(const QStringList& scopes)
+{
+    QStringList sanitized;
+    QSet<QString> seen;
+    for (const QString& scope : scopes) {
+        const QString trimmed = scope.trimmed();
+        if (trimmed.isEmpty())
+            continue;
+        if (seen.contains(trimmed))
+            continue;
+        seen.insert(trimmed);
+        sanitized.append(trimmed);
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(m_authMutex);
+        if (m_rbacScopes == sanitized)
+            return;
+        m_rbacScopes = sanitized;
+    }
+    triggerStreamRestart();
+}
+
+QVector<QPair<QByteArray, QByteArray>> TradingClient::authMetadataForTesting() const
+{
+    QVector<QPair<QByteArray, QByteArray>> result;
+    const auto metadata = buildAuthMetadata();
+    result.reserve(static_cast<int>(metadata.size()));
+    for (const auto& entry : metadata) {
+        result.append({QByteArray::fromStdString(entry.first), QByteArray::fromStdString(entry.second)});
+    }
+    return result;
 }
 
 void TradingClient::start() {
@@ -139,7 +207,16 @@ void TradingClient::start() {
     if (m_streamThread.joinable()) {
         m_streamThread.join();
     }
+    m_restartRequested.store(false);
     ensureStub();
+
+    if (!m_marketDataStub) {
+        qCWarning(lcTradingClient) << "Brak poprawnie zainicjalizowanego stubu MarketDataService dla endpointu" << m_endpoint;
+        m_running.store(false);
+        Q_EMIT streamingChanged();
+        Q_EMIT connectionStateChanged(tr("unavailable"));
+        return;
+    }
 
     Q_EMIT streamingChanged();
     Q_EMIT connectionStateChanged(tr("connecting"));
@@ -150,8 +227,8 @@ void TradingClient::start() {
     historyReq.set_limit(m_historyLimit);
 
     GetOhlcvHistoryResponse historyResp;
-    grpc::ClientContext historyContext;
-    const grpc::Status historyStatus = m_marketDataStub->GetOhlcvHistory(&historyContext, historyReq, &historyResp);
+    auto historyContext = createContext();
+    const grpc::Status historyStatus = m_marketDataStub->GetOhlcvHistory(historyContext.get(), historyReq, &historyResp);
     if (historyStatus.ok()) {
         Q_EMIT historyReceived(convertHistory(historyResp.candles()));
     } else {
@@ -163,7 +240,7 @@ void TradingClient::start() {
 
     {
         std::lock_guard<std::mutex> lock(m_contextMutex);
-        m_activeContext = std::make_shared<grpc::ClientContext>();
+        m_activeContext = createContext();
     }
 
     m_streamThread = std::thread([this]() { streamLoop(); });
@@ -171,6 +248,7 @@ void TradingClient::start() {
 
 void TradingClient::stop() {
     const bool wasRunning = m_running.exchange(false);
+    m_restartRequested.store(false);
     {
         std::lock_guard<std::mutex> lock(m_contextMutex);
         if (m_activeContext) {
@@ -187,30 +265,68 @@ void TradingClient::stop() {
 }
 
 void TradingClient::ensureStub() {
+    if (m_endpoint.trimmed().isEmpty()) {
+        qCWarning(lcTradingClient) << "Endpoint gRPC nie został ustawiony – pomijam inicjalizację kanału.";
+        return;
+    }
+
     if (!m_channel) {
         std::shared_ptr<grpc::ChannelCredentials> credentials;
         grpc::ChannelArguments args;
+        QByteArray rootPem;
+        bool fingerprintValid = true;
 
         if (m_tlsConfig.enabled) {
             grpc::SslCredentialsOptions options;
 
-            if (const auto rootPem = readFileUtf8(m_tlsConfig.rootCertificatePath)) {
-                options.pem_root_certs = std::string(rootPem->constData(),
-                                                     static_cast<std::size_t>(rootPem->size()));
+            if (!m_tlsConfig.rootCertificatePath.trimmed().isEmpty()) {
+                if (const auto rootData = readFileUtf8(m_tlsConfig.rootCertificatePath)) {
+                    rootPem = *rootData;
+                    options.pem_root_certs = std::string(rootPem.constData(),
+                                                         static_cast<std::size_t>(rootPem.size()));
+                } else {
+                    qCWarning(lcTradingClient) << "Nie udało się odczytać pliku root CA" << m_tlsConfig.rootCertificatePath;
+                }
+            } else {
+                qCWarning(lcTradingClient) << "TLS aktywny bez wskazanego pliku root CA.";
             }
 
             const auto clientCert = readFileUtf8(m_tlsConfig.clientCertificatePath);
             const auto clientKey  = readFileUtf8(m_tlsConfig.clientKeyPath);
             if (clientCert && clientKey) {
                 grpc::SslCredentialsOptions::PemKeyCertPair pair;
-                pair.private_key = std::string(clientKey->constData(),  static_cast<std::size_t>(clientKey->size()));
+                pair.private_key = std::string(clientKey->constData(), static_cast<std::size_t>(clientKey->size()));
                 pair.cert_chain  = std::string(clientCert->constData(), static_cast<std::size_t>(clientCert->size()));
                 options.pem_key_cert_pairs.push_back(std::move(pair));
+            } else if (m_tlsConfig.requireClientAuth) {
+                qCWarning(lcTradingClient) << "mTLS wymaga zarówno certyfikatu, jak i klucza klienta.";
+                fingerprintValid = false;
+            }
+
+            if (!m_tlsConfig.pinnedServerFingerprint.isEmpty()) {
+                if (rootPem.isEmpty()) {
+                    qCWarning(lcTradingClient) << "Nie mogę zweryfikować fingerprintu TLS – brak danych root CA.";
+                    fingerprintValid = false;
+                } else {
+                    const QString actual = sha256Fingerprint(rootPem);
+                    if (actual.isEmpty()) {
+                        qCWarning(lcTradingClient) << "Nie udało się obliczyć fingerprintu SHA-256 certyfikatu root.";
+                        fingerprintValid = false;
+                    } else if (actual != m_tlsConfig.pinnedServerFingerprint) {
+                        qCWarning(lcTradingClient)
+                            << "Fingerprint TLS nie pasuje do konfiguracji (oczekiwano"
+                            << m_tlsConfig.pinnedServerFingerprint << "otrzymano" << actual << ')';
+                        fingerprintValid = false;
+                    }
+                }
+            }
+
+            if (!fingerprintValid) {
+                return;
             }
 
             credentials = grpc::SslCredentials(options);
 
-            // Uwaga: w TlsConfig używamy targetNameOverride (zgodne z Application.cpp)
             if (!m_tlsConfig.targetNameOverride.trimmed().isEmpty()) {
                 args.SetString(GRPC_SSL_TARGET_NAME_OVERRIDE_ARG,
                                m_tlsConfig.targetNameOverride.toStdString());
@@ -218,13 +334,21 @@ void TradingClient::ensureStub() {
 
             m_channel = grpc::CreateCustomChannel(m_endpoint.toStdString(), credentials, args);
         } else {
+            if (!m_tlsConfig.pinnedServerFingerprint.isEmpty()) {
+                qCWarning(lcTradingClient)
+                    << "Podano fingerprint TLS, ale połączenie TLS jest wyłączone – pinning zostanie zignorowany.";
+            }
             credentials = grpc::InsecureChannelCredentials();
             m_channel = grpc::CreateCustomChannel(m_endpoint.toStdString(), credentials, args);
         }
     }
 
-    m_marketDataStub = MarketDataService::NewStub(m_channel);
-    m_riskStub = RiskService::NewStub(m_channel);
+    if (m_channel && !m_marketDataStub) {
+        m_marketDataStub = MarketDataService::NewStub(m_channel);
+    }
+    if (m_channel && !m_riskStub) {
+        m_riskStub = RiskService::NewStub(m_channel);
+    }
 }
 
 QList<OhlcvPoint> TradingClient::convertHistory(const google::protobuf::RepeatedPtrField<OhlcvCandle>& candles) const {
@@ -249,76 +373,137 @@ OhlcvPoint TradingClient::convertCandle(const OhlcvCandle& candle) const {
     return point;
 }
 
-void TradingClient::streamLoop() {
-    StreamOhlcvRequest request;
-    *request.mutable_instrument() = makeInstrument(m_instrumentConfig);
-    request.mutable_granularity()->set_iso8601_duration(m_instrumentConfig.granularityIso8601.toStdString());
-    request.set_deliver_snapshots(true);
+void TradingClient::streamLoop()
+{
+    int attempt = 0;
 
-    std::shared_ptr<grpc::ClientContext> context;
-    {
-        std::lock_guard<std::mutex> lock(m_contextMutex);
-        context = m_activeContext;
-    }
-
-    auto reader = m_marketDataStub->StreamOhlcv(context.get(), request);
-    StreamOhlcvUpdate update;
-
-    while (m_running.load() && reader->Read(&update)) {
-        if (update.has_snapshot()) {
-            const auto history = convertHistory(update.snapshot().candles());
+    while (m_running.load()) {
+        ensureStub();
+        if (!m_marketDataStub) {
             QMetaObject::invokeMethod(
                 this,
-                [this, history]() { Q_EMIT historyReceived(history); },
+                [this]() { Q_EMIT connectionStateChanged(tr("stream unavailable")); },
                 Qt::QueuedConnection);
+            break;
         }
-        if (update.has_increment()) {
-            const auto point = convertCandle(update.increment().candle());
+
+        std::shared_ptr<grpc::ClientContext> context;
+        {
+            std::lock_guard<std::mutex> lock(m_contextMutex);
+            if (!m_activeContext) {
+                m_activeContext = createContext();
+            }
+            context = m_activeContext;
+        }
+
+        StreamOhlcvRequest request;
+        *request.mutable_instrument() = makeInstrument(m_instrumentConfig);
+        request.mutable_granularity()->set_iso8601_duration(m_instrumentConfig.granularityIso8601.toStdString());
+        request.set_deliver_snapshots(true);
+
+        if (attempt > 0) {
             QMetaObject::invokeMethod(
                 this,
-                [this, point]() { Q_EMIT candleReceived(point); },
+                [this, attempt]() { Q_EMIT connectionStateChanged(tr("reconnecting (%1)").arg(attempt)); },
+                Qt::QueuedConnection);
+        } else {
+            QMetaObject::invokeMethod(
+                this,
+                [this]() { Q_EMIT connectionStateChanged(tr("streaming")); },
                 Qt::QueuedConnection);
         }
-    }
 
-    const grpc::Status finishStatus = reader->Finish();
-    if (!finishStatus.ok() && m_running.load()) {
+        auto reader = m_marketDataStub->StreamOhlcv(context.get(), request);
+        StreamOhlcvUpdate update;
+        bool receivedAny = false;
+
+        while (m_running.load() && reader->Read(&update)) {
+            receivedAny = true;
+            attempt = 0;
+            if (update.has_snapshot()) {
+                const auto history = convertHistory(update.snapshot().candles());
+                QMetaObject::invokeMethod(
+                    this,
+                    [this, history]() { Q_EMIT historyReceived(history); },
+                    Qt::QueuedConnection);
+            }
+            if (update.has_increment()) {
+                const auto point = convertCandle(update.increment().candle());
+                QMetaObject::invokeMethod(
+                    this,
+                    [this, point]() { Q_EMIT candleReceived(point); },
+                    Qt::QueuedConnection);
+            }
+        }
+
+        const grpc::Status status = reader->Finish();
+
+        {
+            std::lock_guard<std::mutex> lock(m_contextMutex);
+            if (m_activeContext == context) {
+                m_activeContext.reset();
+            }
+        }
+
+        if (!m_running.load()) {
+            break;
+        }
+
+        const bool restartRequested = m_restartRequested.exchange(false);
+
+        if (status.ok()) {
+            attempt = 0;
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            continue;
+        }
+
+        if (status.error_code() == grpc::StatusCode::CANCELLED && restartRequested) {
+            attempt = 0;
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            continue;
+        }
+
+        if (status.error_code() == grpc::StatusCode::CANCELLED && !receivedAny) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(150));
+            continue;
+        }
+
         QMetaObject::invokeMethod(
             this,
-            [this, finishStatus]() {
+            [this, status]() {
                 Q_EMIT connectionStateChanged(QStringLiteral("stream error: %1")
-                                                  .arg(QString::fromStdString(finishStatus.error_message())));
+                                                  .arg(QString::fromStdString(status.error_message())));
             },
             Qt::QueuedConnection);
-    } else {
-        QMetaObject::invokeMethod(
-            this,
-            [this]() { Q_EMIT connectionStateChanged(tr("stream ended")); },
-            Qt::QueuedConnection);
+
+        ++attempt;
+        const int backoffMs = std::min(5000, 500 * std::max(1, attempt));
+        std::this_thread::sleep_for(std::chrono::milliseconds(backoffMs));
     }
 
-    {
-        std::lock_guard<std::mutex> lock(m_contextMutex);
-        m_activeContext.reset();
-    }
     m_running.store(false);
     QMetaObject::invokeMethod(this, [this]() { Q_EMIT streamingChanged(); }, Qt::QueuedConnection);
 }
 
 void TradingClient::refreshRiskState() {
+    ensureStub();
     if (!m_riskStub) {
+        qCWarning(lcTradingClient) << "Brak stubu RiskService – pomijam odczyt stanu ryzyka.";
         return;
     }
-    grpc::ClientContext riskContext;
-    botcore::trading::v1::RiskStateRequest request;
+    auto riskContext = createContext();
+    RiskStateRequest request;
     RiskState response;
-    const grpc::Status status = m_riskStub->GetRiskState(&riskContext, request, &response);
+    const grpc::Status status = m_riskStub->GetRiskState(riskContext.get(), request, &response);
     if (status.ok()) {
         const auto snapshot = convertRiskState(response);
         QMetaObject::invokeMethod(
             this,
             [this, snapshot]() { Q_EMIT riskStateReceived(snapshot); },
             Qt::QueuedConnection);
+    } else {
+        qCWarning(lcTradingClient)
+            << "GetRiskState nie powiodło się:" << QString::fromStdString(status.error_message());
     }
 }
 
@@ -362,6 +547,61 @@ RiskSnapshotData TradingClient::convertRiskState(const RiskState& state) const {
         snapshot.exposures.append(exposure);
     }
     return snapshot;
+}
+
+std::shared_ptr<grpc::ClientContext> TradingClient::createContext() const
+{
+    auto context = std::make_shared<grpc::ClientContext>();
+    applyAuthMetadata(*context);
+    return context;
+}
+
+std::vector<std::pair<std::string, std::string>> TradingClient::buildAuthMetadata() const
+{
+    QString token;
+    QString role;
+    QStringList scopes;
+    {
+        std::lock_guard<std::mutex> lock(m_authMutex);
+        token = m_authToken;
+        role = m_rbacRole;
+        scopes = m_rbacScopes;
+    }
+
+    std::vector<std::pair<std::string, std::string>> metadata;
+    metadata.reserve(2 + scopes.size());
+
+    if (!token.isEmpty()) {
+        metadata.emplace_back("authorization", std::string("Bearer ") + token.toStdString());
+    }
+    if (!role.isEmpty()) {
+        metadata.emplace_back("x-bot-role", role.toStdString());
+    }
+    for (const QString& scope : scopes) {
+        metadata.emplace_back("x-bot-scope", scope.toStdString());
+    }
+    return metadata;
+}
+
+void TradingClient::applyAuthMetadata(grpc::ClientContext& context) const
+{
+    const auto metadata = buildAuthMetadata();
+    for (const auto& entry : metadata) {
+        context.AddMetadata(entry.first, entry.second);
+    }
+    context.AddMetadata("x-bot-channel", "desktop-ui");
+}
+
+void TradingClient::triggerStreamRestart()
+{
+    if (!m_running.load()) {
+        return;
+    }
+    m_restartRequested.store(true);
+    std::lock_guard<std::mutex> lock(m_contextMutex);
+    if (m_activeContext) {
+        m_activeContext->TryCancel();
+    }
 }
 
 TradingClient::PreLiveChecklistResult TradingClient::runPreLiveChecklist() const {

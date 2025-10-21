@@ -20,6 +20,12 @@ from datetime import datetime, timedelta, timezone
 from typing import Callable, Mapping, MutableMapping, Sequence, Any
 import logging
 
+from bot_core.config.models import (
+    PortfolioGovernorConfig as _StrategyPortfolioGovernorConfig,
+    PortfolioGovernorScoringWeights as _PortfolioGovernorScoringWeights,
+    PortfolioGovernorStrategyConfig as _PortfolioGovernorStrategyConfig,
+)
+
 # -----------------------------------------------------------------------------
 # Opcjonalne zależności domenowe — zapewniamy fallbacki, by plik był samowystarczalny
 # -----------------------------------------------------------------------------
@@ -637,39 +643,9 @@ class AssetPortfolioGovernor:
 # WARIANT 2 — Strategy-level Portfolio Governor (main)
 # =============================================================================
 
-@dataclass(slots=True)
-class PortfolioGovernorScoringWeights:
-    alpha: float = 1.0
-    cost: float = 1.0
-    slo: float = 1.0
-    risk: float = 0.5
-
-
-@dataclass(slots=True)
-class PortfolioGovernorStrategyConfig:
-    baseline_weight: float
-    min_weight: float = 0.0
-    max_weight: float = 1.0
-    baseline_max_signals: int | None = None
-    max_signal_factor: float = 1.0
-    risk_profile: str | None = None
-    tags: Sequence[str] = field(default_factory=tuple)
-
-
-@dataclass(slots=True)
-class StrategyPortfolioGovernorConfig:
-    enabled: bool = False
-    rebalance_interval_minutes: float = 15.0
-    smoothing: float = 0.5
-    scoring: PortfolioGovernorScoringWeights = field(default_factory=PortfolioGovernorScoringWeights)
-    strategies: Mapping[str, PortfolioGovernorStrategyConfig] = field(default_factory=dict)
-    default_baseline_weight: float = 0.25
-    default_min_weight: float = 0.05
-    default_max_weight: float = 0.5
-    require_complete_metrics: bool = True
-    min_score_threshold: float = 0.0
-    default_cost_bps: float = 0.0
-    max_signal_floor: int = 1
+PortfolioGovernorScoringWeights = _PortfolioGovernorScoringWeights
+PortfolioGovernorStrategyConfig = _PortfolioGovernorStrategyConfig
+StrategyPortfolioGovernorConfig = _StrategyPortfolioGovernorConfig
 
 
 @dataclass(slots=True)

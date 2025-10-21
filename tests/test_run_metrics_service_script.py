@@ -28,6 +28,14 @@ HAVE_REAL_GRPC = grpc is not None and trading_pb2 is not None and trading_pb2_gr
 
 from scripts import run_metrics_service
 from bot_core.runtime.metrics_service import LoggingSink
+from tests._metrics_service_helpers import (
+    MemoryAuditStub,
+    MetricsServerStub,
+    RouterStub,
+    RuntimeServerStub,
+    SinkStub,
+    get_security_section,
+)
 
 
 def _make_dummy_server(
@@ -39,68 +47,56 @@ def _make_dummy_server(
     require_client_auth: bool = False,
     logging_sink_enabled: bool = True,
 ):
-    class DummyServer:
-        def __init__(self) -> None:
-            logging_sink = LoggingSink() if logging_sink_enabled else None
-            jsonl_sink = None
-            if jsonl_path is not None:
-                jsonl_cls = getattr(run_metrics_service, "JsonlSink", None)
-                if jsonl_cls is not None:
-                    jsonl_sink = jsonl_cls(jsonl_path)
-                else:
+    logging_sink = LoggingSink() if logging_sink_enabled else None
+    jsonl_sink = None
+    if jsonl_path is not None:
+        jsonl_cls = getattr(run_metrics_service, "JsonlSink", None)
+        if jsonl_cls is not None:
+            jsonl_sink = jsonl_cls(jsonl_path)
+        else:
 
-                    class _FallbackJsonlSink:
-                        def __init__(self, path: Path) -> None:
-                            self._path = Path(path)
-                            self._fsync = False
+            class _FallbackJsonlSink:
+                def __init__(self, path: Path) -> None:
+                    self._path = Path(path)
+                    self._fsync = False
 
-                    jsonl_sink = _FallbackJsonlSink(jsonl_path)
-            sinks = [sink for sink in (logging_sink, jsonl_sink) if sink is not None]
-            self._sinks = tuple(sinks)
-            self.address = address
-            self.history_size = history_size
-            self.tls_enabled = tls_enabled
-            self.tls_client_auth_required = require_client_auth
-            self.runtime_metadata = {
-                "history_size": history_size,
-                "logging_sink_enabled": logging_sink_enabled,
-                "jsonl_sink": {
-                    "active": jsonl_path is not None,
-                    "path": str(jsonl_path) if jsonl_path is not None else None,
-                    "fsync": False,
-                },
-                "ui_alerts_sink": {
-                    "active": False,
-                    "path": None,
-                },
-                "sink_descriptions": [
-                    {
-                        "class": sink.__class__.__name__,
-                        "module": sink.__class__.__module__,
-                    }
-                    for sink in self._sinks
-                ],
-                "additional_sink_descriptions": [],
-                "tls": {
-                    "configured": tls_enabled,
-                    "require_client_auth": require_client_auth,
-                },
+            jsonl_sink = _FallbackJsonlSink(jsonl_path)
+
+    sinks = tuple(sink for sink in (logging_sink, jsonl_sink) if sink is not None)
+    metadata = {
+        "history_size": history_size,
+        "logging_sink_enabled": logging_sink_enabled,
+        "jsonl_sink": {
+            "active": jsonl_path is not None,
+            "path": str(jsonl_path) if jsonl_path is not None else None,
+            "fsync": False,
+        },
+        "ui_alerts_sink": {
+            "active": False,
+            "path": None,
+        },
+        "sink_descriptions": [
+            {
+                "class": sink.__class__.__name__,
+                "module": sink.__class__.__module__,
             }
+            for sink in sinks
+        ],
+        "additional_sink_descriptions": [],
+        "tls": {
+            "configured": tls_enabled,
+            "require_client_auth": require_client_auth,
+        },
+    }
 
-        @property
-        def sinks(self):  # noqa: D401 - zgodność z interfejsem
-            return self._sinks
-
-        def start(self) -> None:
-            pass
-
-        def stop(self, grace=None) -> None:  # pragma: no cover - brak logiki
-            pass
-
-        def wait_for_termination(self, timeout=None):  # pragma: no cover - brak logiki
-            return True
-
-    return DummyServer()
+    return MetricsServerStub(
+        address=address,
+        history_size=history_size,
+        tls_enabled=tls_enabled,
+        require_client_auth=require_client_auth,
+        sinks=sinks,
+        runtime_metadata=metadata,
+    )
 
 
 @pytest.mark.timeout(5)
@@ -204,20 +200,7 @@ def test_metrics_service_tls_config_passed(monkeypatch: pytest.MonkeyPatch, tmp_
     def fake_build_server(**kwargs):
         nonlocal captured_kwargs
         captured_kwargs = kwargs
-
-        class Dummy:
-            address = "127.0.0.1:1234"
-
-            def start(self):
-                pass
-
-            def wait_for_termination(self, timeout=None):
-                return True
-
-            def stop(self, grace=None):
-                pass
-
-        return Dummy()
+        return RuntimeServerStub("127.0.0.1:1234")
 
     monkeypatch.setattr(run_metrics_service, "_build_server", fake_build_server)
 
@@ -344,7 +327,7 @@ def test_metrics_service_print_config_plan(tmp_path: Path, monkeypatch: pytest.M
     )
     parameter_sources = payload.get("parameter_sources", {})
     assert parameter_sources.get("fail_on_security_warnings") == "default"
-    security = _get_security_section(payload)
+    security = get_security_section(payload)
     assert security["enabled"] is False
     assert security["source"] == "default"
     assert security["parameter_source"] == "default"
@@ -419,7 +402,7 @@ def test_metrics_service_fail_on_security_warnings(
     payload = json.loads(captured)
     parameter_sources = payload.get("parameter_sources", {})
     assert parameter_sources.get("fail_on_security_warnings") == "cli"
-    security = _get_security_section(payload)
+    security = get_security_section(payload)
     assert security["enabled"] is True
     assert security["source"] == "cli"
     assert security["parameter_source"] == "cli"
@@ -892,38 +875,13 @@ def _find_env_entry(entries: list[dict[str, object]], option: str) -> dict[str, 
         if entry.get("option") == option:
             return entry
     raise AssertionError(f"Nie znaleziono wpisu dla opcji {option}")
-
-
-
-def _get_security_section(payload: Mapping[str, object]) -> Mapping[str, object]:
-    section = payload.get("security")
-    assert isinstance(section, Mapping)
-    fail_section = section.get("fail_on_security_warnings")
-    assert isinstance(fail_section, Mapping)
-    return fail_section
-
-
-
 def test_ui_alert_cli_options_forwarded(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     captured_kwargs: dict[str, object] = {}
 
     def fake_build_server(**kwargs):
         nonlocal captured_kwargs
         captured_kwargs = kwargs
-
-        class Dummy:
-            address = "127.0.0.1:6000"
-
-            def start(self) -> None:
-                pass
-
-            def wait_for_termination(self, timeout=None):
-                return True
-
-            def stop(self, grace=None):
-                pass
-
-        return Dummy()
+        return RuntimeServerStub("127.0.0.1:6000")
 
     monkeypatch.setattr(run_metrics_service, "_build_server", fake_build_server)
     monkeypatch.setattr(run_metrics_service, "METRICS_RUNTIME_AVAILABLE", True)
@@ -1022,20 +980,7 @@ def test_ui_alerts_audit_memory_note_when_file_backend_missing(monkeypatch: pyte
     def fake_build_server(**kwargs):
         nonlocal captured_kwargs
         captured_kwargs = kwargs
-
-        class Dummy:
-            address = "127.0.0.1:6000"
-
-            def start(self) -> None:
-                pass
-
-            def wait_for_termination(self, timeout=None):
-                return True
-
-            def stop(self, grace=None):
-                pass
-
-        return Dummy()
+        return RuntimeServerStub("127.0.0.1:6000")
 
     monkeypatch.setattr(run_metrics_service, "_build_server", fake_build_server)
     monkeypatch.setattr(run_metrics_service, "METRICS_RUNTIME_AVAILABLE", True)
@@ -1087,7 +1032,7 @@ def test_environment_override_applied_without_runtime(monkeypatch: pytest.Monkey
     parameter_sources = payload.get("parameter_sources", {})
     assert parameter_sources.get("host") == "env"
     assert parameter_sources.get("fail_on_security_warnings") == "default"
-    security = _get_security_section(payload)
+    security = get_security_section(payload)
     assert security["enabled"] is False
     assert security["source"] == "default"
     assert security["parameter_source"] == "default"
@@ -1111,7 +1056,7 @@ def test_environment_override_ignored_by_cli(monkeypatch: pytest.MonkeyPatch, ca
     parameter_sources = payload.get("parameter_sources", {})
     assert parameter_sources.get("port") == "cli"
     assert parameter_sources.get("fail_on_security_warnings") == "default"
-    security = _get_security_section(payload)
+    security = get_security_section(payload)
     assert security["enabled"] is False
     assert security["source"] == "default"
     assert security["parameter_source"] == "default"
@@ -1137,7 +1082,7 @@ def test_environment_override_jsonl_path(monkeypatch: pytest.MonkeyPatch, tmp_pa
     parameter_sources = payload.get("parameter_sources", {})
     assert parameter_sources.get("jsonl_path") == "env"
     assert parameter_sources.get("fail_on_security_warnings") == "default"
-    security = _get_security_section(payload)
+    security = get_security_section(payload)
     assert security["enabled"] is False
     assert security["source"] == "default"
 
@@ -1160,7 +1105,7 @@ def test_environment_override_disable_jsonl(monkeypatch: pytest.MonkeyPatch, cap
     parameter_sources = payload.get("parameter_sources", {})
     assert parameter_sources.get("jsonl_path") == "env_disabled"
     assert parameter_sources.get("fail_on_security_warnings") == "default"
-    security = _get_security_section(payload)
+    security = get_security_section(payload)
     assert security["enabled"] is False
     assert security["source"] == "default"
 
@@ -1187,7 +1132,7 @@ def test_environment_override_fail_on_security_warnings(
     assert entry["parsed_value"] is True
     parameter_sources = payload.get("parameter_sources", {})
     assert parameter_sources.get("fail_on_security_warnings") == "env"
-    security = _get_security_section(payload)
+    security = get_security_section(payload)
     assert security["enabled"] is True
 
 
@@ -1258,36 +1203,14 @@ def test_build_server_uses_memory_audit_when_file_backend_missing(
     def fake_create_metrics_server(**kwargs):
         nonlocal captured_kwargs
         captured_kwargs = kwargs
-
-        class Dummy:
-            address = "127.0.0.1:50100"
-
-            def start(self) -> None:
-                pass
-
-        return Dummy()
-
-    class DummyRouter:
-        def __init__(self, audit_log) -> None:
-            self.audit_log = audit_log
-
-        def register(self, channel) -> None:
-            return None
-
-    class DummyMemoryAudit:
-        def __init__(self, *_, **__):
-            pass
-
-    class DummySink:
-        def __init__(self, _router, **kwargs) -> None:
-            self.kwargs = kwargs
+        return RuntimeServerStub("127.0.0.1:50100")
 
     monkeypatch.setattr(run_metrics_service, "create_metrics_server", fake_create_metrics_server)
     monkeypatch.setattr(run_metrics_service, "METRICS_RUNTIME_AVAILABLE", True)
     monkeypatch.setattr(run_metrics_service, "JsonlSink", None)
-    monkeypatch.setattr(run_metrics_service, "UiTelemetryAlertSink", DummySink)
-    monkeypatch.setattr(run_metrics_service, "DefaultAlertRouter", DummyRouter)
-    monkeypatch.setattr(run_metrics_service, "InMemoryAlertAuditLog", DummyMemoryAudit)
+    monkeypatch.setattr(run_metrics_service, "UiTelemetryAlertSink", SinkStub)
+    monkeypatch.setattr(run_metrics_service, "DefaultAlertRouter", RouterStub)
+    monkeypatch.setattr(run_metrics_service, "InMemoryAlertAuditLog", MemoryAuditStub)
     monkeypatch.setattr(run_metrics_service, "FileAlertAuditLog", None)
 
     server = run_metrics_service._build_server(

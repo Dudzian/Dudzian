@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 from bot_core.config.models import LicenseValidationConfig
+from bot_core.security.capabilities import LicenseCapabilities
 from bot_core.security.fingerprint import decode_secret
 from bot_core.security.signing import build_hmac_signature
 

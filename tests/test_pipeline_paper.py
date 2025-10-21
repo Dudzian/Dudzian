@@ -15,7 +15,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from bot_core.alerts import AlertMessage, DefaultAlertRouter, InMemoryAlertAuditLog
 from bot_core.alerts.base import AlertChannel
-from bot_core.data.base import CacheStorage, OHLCVRequest
+from bot_core.data.base import OHLCVRequest
 from bot_core.data.ohlcv.cache import CachedOHLCVSource, PublicAPIDataSource
 from bot_core.execution import ExecutionContext, MarketMetadata, PaperTradingExecutionService
 from bot_core.exchanges.base import (
@@ -31,36 +31,9 @@ from bot_core.risk.engine import ThresholdRiskEngine
 from bot_core.risk.profiles.balanced import BalancedProfile
 from bot_core.strategies import MarketSnapshot
 from bot_core.strategies.daily_trend import DailyTrendMomentumSettings, DailyTrendMomentumStrategy
+from tests._daily_trend_helpers import InMemoryStorage
 
 from tests.test_runtime_bootstrap import _prepare_manager, _write_config
-
-
-class _InMemoryStorage(CacheStorage):
-    """Lekka implementacja magazynu cache do testów."""
-
-    def __init__(self) -> None:
-        self._store: dict[str, Mapping[str, Sequence[Sequence[float]]]] = {}
-        self._metadata: dict[str, str] = {}
-
-    def read(self, key: str) -> Mapping[str, Sequence[Sequence[float]]]:
-        if key not in self._store:
-            raise KeyError(key)
-        return self._store[key]
-
-    def write(self, key: str, payload: Mapping[str, Sequence[Sequence[float]]]) -> None:
-        self._store[key] = payload
-
-    def metadata(self) -> MutableMapping[str, str]:
-        return self._metadata
-
-    def latest_timestamp(self, key: str) -> float | None:
-        try:
-            rows = self._store[key]["rows"]
-        except KeyError:
-            return None
-        if not rows:
-            return None
-        return float(rows[-1][0])
 
 
 @dataclass(slots=True)
@@ -180,7 +153,7 @@ def test_paper_pipeline_executes_and_alerts(tmp_path: Path) -> None:
     candles.append([base_ts + 5 * day_ms, 105.0, 108.0, 104.0, 107.0, 20.0])
 
     adapter = _FakePaperAdapter(candles)
-    storage = _InMemoryStorage()
+    storage = InMemoryStorage()
     source = CachedOHLCVSource(storage=storage, upstream=PublicAPIDataSource(adapter))
     request = OHLCVRequest(
         symbol="BTCUSDT",

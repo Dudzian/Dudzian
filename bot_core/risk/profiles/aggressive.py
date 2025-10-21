@@ -3,11 +3,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from bot_core.risk.base import RiskProfile
+from bot_core.risk.base import StaticRiskProfile
 
 
 @dataclass(slots=True)
-class AggressiveProfile(RiskProfile):
+class AggressiveProfile(StaticRiskProfile):
     """Profil o wysokiej tolerancji ryzyka."""
 
     name: str = "aggressive"
@@ -18,27 +18,5 @@ class AggressiveProfile(RiskProfile):
     _max_position_pct: float = 0.10
     _target_volatility: float = 0.19
     _stop_loss_atr_multiple: float = 2.0
-
-    def max_positions(self) -> int:
-        return self._max_positions
-
-    def max_leverage(self) -> float:
-        return self._max_leverage
-
-    def drawdown_limit(self) -> float:
-        return self._drawdown_limit
-
-    def daily_loss_limit(self) -> float:
-        return self._daily_loss_limit
-
-    def max_position_exposure(self) -> float:
-        return self._max_position_pct
-
-    def target_volatility(self) -> float:
-        return self._target_volatility
-
-    def stop_loss_atr_multiple(self) -> float:
-        return self._stop_loss_atr_multiple
-
 
 __all__ = ["AggressiveProfile"]

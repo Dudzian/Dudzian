@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import json
-import os
 import sys
 from pathlib import Path
 
@@ -13,19 +11,8 @@ if str(ROOT) not in sys.path:
 
 from bot_core.security.signing import build_hmac_signature  # noqa: E402
 from scripts.log_stage5_training import run as log_training  # noqa: E402
-
-
-def _write_key(path: Path) -> bytes:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    data = os.urandom(48)
-    path.write_bytes(data)
-    if os.name != "nt":
-        path.chmod(0o600)
-    return data
-
-
-def _read_jsonl(path: Path) -> list[dict[str, object]]:
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+from tests._json_helpers import read_jsonl
+from tests._signing_helpers import write_random_hmac_key
 
 
 def test_log_stage5_training_writes_signed_file(tmp_path: Path) -> None:
@@ -35,7 +22,7 @@ def test_log_stage5_training_writes_signed_file(tmp_path: Path) -> None:
     """
     training_log = tmp_path / "var" / "audit" / "training" / "stage5.jsonl"
     log_key_path = tmp_path / "keys" / "training.key"
-    _write_key(log_key_path)
+    write_random_hmac_key(log_key_path)
 
     exit_code = log_training(
         [
@@ -66,7 +53,7 @@ def test_log_stage5_training_writes_signed_file(tmp_path: Path) -> None:
     assert exit_code == 0
     assert training_log.is_file()
 
-    entries = _read_jsonl(training_log)
+    entries = read_jsonl(training_log)
     assert len(entries) == 1
     entry = entries[0]
     assert entry["participants"] == ["Anna", "Bob"]
@@ -86,8 +73,8 @@ def test_log_stage5_training_end_to_end(tmp_path: Path) -> None:
     artifact.parent.mkdir(parents=True, exist_ok=True)
     artifact.write_bytes(b"dummy")
 
-    log_key = _write_key(log_key_path)
-    decision_key = _write_key(decision_key_path)
+    log_key = write_random_hmac_key(log_key_path)
+    decision_key = write_random_hmac_key(decision_key_path)
 
     exit_code = log_training(
         [
@@ -132,7 +119,7 @@ def test_log_stage5_training_end_to_end(tmp_path: Path) -> None:
 
     assert exit_code == 0
     assert training_log.is_file()
-    entries = _read_jsonl(training_log)
+    entries = read_jsonl(training_log)
     assert len(entries) == 1
     entry = entries[0]
     signature = entry.pop("signature")
@@ -147,7 +134,7 @@ def test_log_stage5_training_end_to_end(tmp_path: Path) -> None:
     artifact_record = next(iter(artifacts.values()))
     assert artifact_record["size_bytes"] == artifact.stat().st_size
 
-    decision_entries = _read_jsonl(decision_log)
+    decision_entries = read_jsonl(decision_log)
     assert len(decision_entries) == 1
     decision_entry = decision_entries[0]
     decision_signature = decision_entry.pop("signature")

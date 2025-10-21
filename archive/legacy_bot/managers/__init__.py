@@ -1,46 +1,37 @@
-# -*- coding: utf-8 -*-
-"""Subpakiet z menedżerami (DB, giełda, AI, raporty, bezpieczeństwo)."""
+"""Legacy namespace ensuring ``archive.legacy_bot.managers`` imports keep working."""
 from __future__ import annotations
 
-__all__ = [
-    "DatabaseManager", "DBOptions",
-    "AIManager", "ConfigManager", "ExchangeManager",
-    "ReportManager", "RiskManagerAdapter", "SecurityManager",
-]
+from importlib import import_module
+from types import ModuleType
+from typing import Dict
 
-# Importy opcjonalne z ochroną na brak zależności środowiskowych
-try:
-    from .database_manager import DatabaseManager, DBOptions  # type: ignore
-except Exception:  # pragma: no cover
-    DatabaseManager = None  # type: ignore
-    DBOptions = None  # type: ignore
+_ALIAS_MAP: Dict[str, str] = {
+    "ai_manager": "KryptoLowca.ai_manager",
+    "config_manager": "KryptoLowca.config_manager",
+    "database_manager": "KryptoLowca.database_manager",
+    "exchange_adapter": "KryptoLowca.exchange_adapter",
+    "exchange_core": "bot_core.exchanges.core",
+    "exchange_manager": "KryptoLowca.exchange_manager",
+    "live_exchange_ccxt": "bot_core.exchanges.ccxt_adapter",
+    "paper_exchange": "KryptoLowca.paper_exchange",
+    "report_manager": "KryptoLowca.report_manager",
+    "risk_manager_adapter": "KryptoLowca.risk_manager",
+    "scanner": "KryptoLowca.scanner",
+    "security_manager": "KryptoLowca.security_manager",
+}
 
-try:
-    from .ai_manager import AIManager  # type: ignore
-except Exception:  # pragma: no cover
-    AIManager = None  # type: ignore
+__all__ = sorted(_ALIAS_MAP)
 
-try:
-    from .config_manager import ConfigManager  # type: ignore
-except Exception:  # pragma: no cover
-    ConfigManager = None  # type: ignore
 
-try:
-    from .exchange_manager import ExchangeManager  # type: ignore
-except Exception:  # pragma: no cover
-    ExchangeManager = None  # type: ignore
+def __getattr__(name: str) -> ModuleType:  # pragma: no cover - trivial forwarding
+    try:
+        target = _ALIAS_MAP[name]
+    except KeyError as exc:  # pragma: no cover - mirror default behaviour
+        raise AttributeError(name) from exc
+    module = import_module(target)
+    globals()[name] = module
+    return module
 
-try:
-    from .report_manager import ReportManager  # type: ignore
-except Exception:  # pragma: no cover
-    ReportManager = None  # type: ignore
 
-try:
-    from .risk_manager_adapter import RiskManagerAdapter  # type: ignore
-except Exception:  # pragma: no cover
-    RiskManagerAdapter = None  # type: ignore
-
-try:
-    from .security_manager import SecurityManager  # type: ignore
-except Exception:  # pragma: no cover
-    SecurityManager = None  # type: ignore
+def __dir__() -> list[str]:  # pragma: no cover - trivial forwarding
+    return __all__

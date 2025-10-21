@@ -104,6 +104,11 @@ def create_parser() -> argparse.ArgumentParser:
             "Nazwa środowiska z pliku YAML. Opcjonalna, jeśli plik definiuje "
             "defaults.environment."
         ),
+        help="Ścieżka do pliku YAML opisującego środowiska (domyślnie config/environments/exchange_modes.yaml).",
+    )
+    health.add_argument(
+        "--environment",
+        help="Nazwa środowiska z pliku YAML, które ma zostać załadowane.",
     )
     health.add_argument(
         "--skip-public",
@@ -452,6 +457,7 @@ def _extract_jitter_pair(value: object) -> tuple[float, float] | None:
 def _read_environment_payload(
     path: str | Path,
 ) -> tuple[Path, Mapping[str, object] | None, dict[str, Mapping[str, object]]]:
+def _load_environment_profile(path: str | Path, environment: str) -> dict[str, object]:
     if yaml is None:  # pragma: no cover - opcjonalna zależność
         raise CLIUsageError("Wczytanie konfiguracji środowisk wymaga pakietu PyYAML (pip install pyyaml).")
 
@@ -494,6 +500,7 @@ def _load_environment_profile(path: str | Path, environment: str) -> dict[str, o
     storage, defaults, environments = _read_environment_payload(path)
 
     section = environments.get(environment)
+    section = payload.get(environment)
     if not isinstance(section, Mapping):
         raise CLIUsageError(f"Środowisko '{environment}' nie istnieje w pliku {storage}.")
 
@@ -732,6 +739,13 @@ def run_health_check(
             selected_environment = default_env
         environment_profile = _load_environment_profile(config_path, selected_environment)
         environment_summary = _summarize_environment(environment_profile)
+    if getattr(args, "environment_config", None) and not getattr(args, "environment", None):
+        raise CLIUsageError("Argument --environment-config wymaga podania nazwy środowiska (--environment).")
+
+    environment_profile: dict[str, object] = {}
+    if getattr(args, "environment", None):
+        config_path = getattr(args, "environment_config", None) or str(DEFAULT_ENVIRONMENT_CONFIG_PATH)
+        environment_profile = _load_environment_profile(config_path, args.environment)
 
     exchange_id = args.exchange or environment_profile.get("exchange")
     if not exchange_id:
@@ -810,6 +824,81 @@ def run_health_check(
 
         if "paper_fee_rate" in env_manager_cfg:
             manager.set_paper_fee_rate(float(env_manager_cfg.get("paper_fee_rate")))
+
+    env_mode_raw = env_manager_cfg.get("mode") if "mode" in env_manager_cfg else None
+    env_mode = str(env_mode_raw) if isinstance(env_mode_raw, str) else None
+
+    mode_choice = args.mode or env_mode or profile_mode
+
+    profile_testnet = profile.get("testnet") if "testnet" in profile else None
+    env_testnet = env_manager_cfg.get("testnet") if "testnet" in env_manager_cfg else None
+    if args.testnet:
+        testnet_flag = True
+    elif env_testnet is not None:
+        testnet_flag = bool(env_testnet)
+    elif profile_testnet is not None:
+        testnet_flag = bool(profile_testnet)
+    else:
+        testnet_flag = False
+
+    manager = manager_factory(exchange_id=exchange_id)
+    _configure_mode(manager, mode_choice or profile_mode, testnet=testnet_flag)
+
+    profile_mapping = profile if profile else None
+    environment_credentials = environment_profile.get("credentials") if isinstance(environment_profile.get("credentials"), Mapping) else None
+    api_key = _resolve_credential(
+        inline=getattr(args, "key", None),
+        env_name=getattr(args, "key_env", None),
+        profile=profile_mapping,
+        environment=environment_credentials,
+        key="key",
+    )
+    secret = _resolve_credential(
+        inline=getattr(args, "secret", None),
+        env_name=getattr(args, "secret_env", None),
+        profile=profile_mapping,
+        environment=environment_credentials,
+        key="secret",
+    )
+    passphrase = _resolve_credential(
+        inline=getattr(args, "passphrase", None),
+        env_name=getattr(args, "passphrase_env", None),
+        profile=profile_mapping,
+        environment=environment_credentials,
+        key="passphrase",
+    )
+    manager.set_credentials(api_key, secret, passphrase=passphrase)
+
+    if environment_profile:
+        paper_variant = env_manager_cfg.get("paper_variant")
+        if isinstance(paper_variant, str) and paper_variant.strip():
+            manager.set_paper_variant(paper_variant)
+
+        if "paper_initial_cash" in env_manager_cfg:
+            initial_cash = env_manager_cfg.get("paper_initial_cash")
+            cash_asset = env_manager_cfg.get("paper_cash_asset")
+            manager.set_paper_balance(
+                float(initial_cash),
+                asset=str(cash_asset) if isinstance(cash_asset, str) and cash_asset.strip() else None,
+            )
+        elif "paper_cash_asset" in env_manager_cfg:
+            cash_asset_only = env_manager_cfg.get("paper_cash_asset")
+            if isinstance(cash_asset_only, str) and cash_asset_only.strip():
+                manager.set_paper_balance(manager.get_paper_initial_cash(), asset=cash_asset_only)
+
+        if "paper_fee_rate" in env_manager_cfg:
+            manager.set_paper_fee_rate(float(env_manager_cfg.get("paper_fee_rate")))
+
+        simulator_settings = env_manager_cfg.get("simulator")
+        if isinstance(simulator_settings, Mapping):
+            manager.configure_paper_simulator(**simulator_settings)
+
+    combined_watchdog = _merge_mappings(
+        profile.get("watchdog") if isinstance(profile.get("watchdog"), Mapping) else None,
+        env_manager_cfg.get("watchdog") if isinstance(env_manager_cfg.get("watchdog"), Mapping) else None,
+    )
+    if combined_watchdog:
+        _configure_watchdog(manager, {"watchdog": combined_watchdog})
 
         simulator_settings = env_manager_cfg.get("simulator")
         if isinstance(simulator_settings, Mapping):
@@ -1009,6 +1098,23 @@ def run_health_check(
             "mode": target_mode.value,
             "settings": dict(native_settings),
         }
+    env_native = env_manager_cfg.get("native_adapter")
+    if isinstance(env_native, Mapping):
+        native_settings = env_native.get("settings")
+        native_mode_raw = env_native.get("mode")
+        target_mode = None
+        if isinstance(native_mode_raw, str):
+            normalized = native_mode_raw.strip().lower()
+            if normalized == "margin":
+                target_mode = Mode.MARGIN
+            elif normalized == "futures":
+                target_mode = Mode.FUTURES
+            else:
+                raise CLIUsageError(
+                    "Konfiguracja natywnego adaptera wspiera tylko tryby 'margin' lub 'futures'."
+                )
+        if isinstance(native_settings, Mapping):
+            manager.configure_native_adapter(settings=native_settings, mode=target_mode)
 
     health_profile = _merge_mappings(
         profile.get("health_check") if isinstance(profile.get("health_check"), Mapping) else None,

@@ -97,6 +97,8 @@ def test_orchestrator_uses_inference_score() -> None:
     assert default_detail is not None
     assert default_detail.available is True
     assert default_detail.reason is None
+    assert evaluation.thresholds_snapshot is not None
+    assert evaluation.thresholds_snapshot["min_probability"] == pytest.approx(0.5)
 
 
 def test_orchestrator_switches_models_based_on_history() -> None:
@@ -145,6 +147,7 @@ def test_orchestrator_switches_models_based_on_history() -> None:
     fast_detail = evaluation.model_selection.find("fast")
     assert fast_detail is not None
     assert fast_detail.reason is None
+    assert evaluation.thresholds_snapshot is not None
 
 
 def test_orchestrator_prefers_recent_performance() -> None:

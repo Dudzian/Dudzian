@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import os
 import sys
@@ -18,36 +17,12 @@ except Exception:  # pragma: no cover - minimalne instalacje
 
 from bot_core.security.baseline import generate_security_baseline_report
 from bot_core.security.signing import build_hmac_signature
+from scripts._cli_common import env_flag, env_list, env_value, normalize_scopes, should_print
+from scripts._json_utils import dump_json
 
 LOGGER = logging.getLogger("bot_core.scripts.audit_security_baseline")
 
 _ENV_PREFIX = "BOT_CORE_SECURITY_BASELINE_"
-
-
-def _env_flag(name: str, default: bool) -> bool:
-    value = os.environ.get(f"{_ENV_PREFIX}{name}")
-    if value is None:
-        return default
-    normalized = value.strip().lower()
-    if normalized in {"1", "true", "yes", "on"}:
-        return True
-    if normalized in {"0", "false", "no", "off"}:
-        return False
-    return default
-
-
-def _env_value(name: str, default: str | None = None) -> str | None:
-    value = os.environ.get(f"{_ENV_PREFIX}{name}")
-    if value is None:
-        return default
-    return value.strip() or default
-
-
-def _env_list(name: str) -> list[str]:
-    value = _env_value(name)
-    if not value:
-        return []
-    return [entry for entry in value.split(";") if entry] if ";" in value else value.split(",")
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
@@ -140,7 +115,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 
 
 def _resolve_config_path(args: argparse.Namespace) -> Path:
-    env_override = _env_value("CONFIG")
+    env_override = env_value(_ENV_PREFIX, "CONFIG")
     if args.config:
         return Path(args.config).expanduser()
     if env_override:
@@ -151,43 +126,33 @@ def _resolve_config_path(args: argparse.Namespace) -> Path:
 def _resolve_json_output(args: argparse.Namespace) -> str | None:
     if args.json_output:
         return args.json_output
-    return _env_value("JSON_OUTPUT")
+    return env_value(_ENV_PREFIX, "JSON_OUTPUT")
 
 
 def _resolve_warn_days(args: argparse.Namespace) -> float:
     if args.warn_expiring_days is not None:
         return float(args.warn_expiring_days)
-    env_value = _env_value("WARN_EXPIRING_DAYS")
-    if env_value is not None:
+    env_override = env_value(_ENV_PREFIX, "WARN_EXPIRING_DAYS")
+    if env_override is not None:
         try:
-            return float(env_value)
+            return float(env_override)
         except ValueError:  # pragma: no cover - diagnostyka konfiguracji
-            LOGGER.warning("Nieprawidłowa wartość WARN_EXPIRING_DAYS='%s'", env_value)
+            LOGGER.warning("Nieprawidłowa wartość WARN_EXPIRING_DAYS='%s'", env_override)
     return 30.0
 
 
-def _normalize_scopes(values: Iterable[str], *, default: tuple[str, ...]) -> tuple[str, ...]:
-    normalized: list[str] = []
-    for value in values:
-        if not value:
-            continue
-        for entry in str(value).replace(";", ",").split(","):
-            scope = entry.strip().lower()
-            if scope:
-                normalized.append(scope)
-    if not normalized:
-        normalized = list(default)
-    return tuple(dict.fromkeys(normalized))
-
-
 def _resolve_metrics_scopes(args: argparse.Namespace) -> tuple[str, ...]:
-    env_scopes = _env_list("METRICS_SCOPES")
-    return _normalize_scopes([*args.metrics_scopes, *env_scopes], default=("metrics.read",))
+    env_scopes = env_list(_ENV_PREFIX, "METRICS_SCOPES")
+    combined = [*args.metrics_scopes, *env_scopes]
+    scopes = normalize_scopes(combined)
+    return scopes or ("metrics.read",)
 
 
 def _resolve_risk_scopes(args: argparse.Namespace) -> tuple[str, ...]:
-    env_scopes = _env_list("RISK_SCOPES")
-    return _normalize_scopes([*args.risk_scopes, *env_scopes], default=("risk.read",))
+    env_scopes = env_list(_ENV_PREFIX, "RISK_SCOPES")
+    combined = [*args.risk_scopes, *env_scopes]
+    scopes = normalize_scopes(combined)
+    return scopes or ("risk.read",)
 
 
 def _normalize_scheduler_scope_entries(
@@ -212,12 +177,12 @@ def _normalize_scheduler_scope_entries(
         else:
             default_entries.append(text)
 
-    default_scopes = _normalize_scopes(
+    default_scopes = normalize_scopes(
         default_entries,
         default=("runtime.schedule.read", "runtime.schedule.write"),
     )
     normalized_overrides = {
-        name: _normalize_scopes(values, default=default_scopes)
+        name: normalize_scopes(values, default=default_scopes)
         for name, values in overrides.items()
     }
     return default_scopes, normalized_overrides
@@ -226,47 +191,50 @@ def _normalize_scheduler_scope_entries(
 def _resolve_scheduler_scopes(
     args: argparse.Namespace,
 ) -> tuple[tuple[str, ...], dict[str, tuple[str, ...]]]:
-    env_entries = _env_list("SCHEDULER_SCOPES")
+    env_entries = env_list(_ENV_PREFIX, "SCHEDULER_SCOPES")
     return _normalize_scheduler_scope_entries([*args.scheduler_scopes, *env_entries])
 
 
 def _should_print(args: argparse.Namespace) -> bool:
-    if args.print_stdout:
-        return True
-    return _env_flag("PRINT", not bool(args.json_output))
+    return should_print(
+        _ENV_PREFIX,
+        json_output=args.json_output,
+        cli_flag=args.print_stdout,
+        default_when_unspecified=not bool(args.json_output),
+    )
 
 
 def _should_fail_on_warning(args: argparse.Namespace) -> bool:
     if args.fail_on_warning:
         return True
-    return _env_flag("FAIL_ON_WARNING", False)
+    return env_flag(_ENV_PREFIX, "FAIL_ON_WARNING", False)
 
 
 def _should_fail_on_error(args: argparse.Namespace) -> bool:
     if args.fail_on_error:
         return True
-    return _env_flag("FAIL_ON_ERROR", False)
+    return env_flag(_ENV_PREFIX, "FAIL_ON_ERROR", False)
 
 
 def _apply_signature_env_overrides(args: argparse.Namespace) -> None:
     if not getattr(args, "summary_hmac_key", None):
-        env_value = _env_value("SUMMARY_HMAC_KEY")
-        if env_value:
-            args.summary_hmac_key = env_value
+        override_value = env_value(_ENV_PREFIX, "SUMMARY_HMAC_KEY")
+        if override_value:
+            args.summary_hmac_key = override_value
     if not getattr(args, "summary_hmac_key_file", None):
-        env_file = _env_value("SUMMARY_HMAC_KEY_FILE")
-        if env_file:
-            args.summary_hmac_key_file = env_file
+        override_file = env_value(_ENV_PREFIX, "SUMMARY_HMAC_KEY_FILE")
+        if override_file:
+            args.summary_hmac_key_file = override_file
     if not getattr(args, "summary_hmac_key_env", None):
-        env_name = _env_value("SUMMARY_HMAC_KEY_ENV")
-        if env_name:
-            args.summary_hmac_key_env = env_name
+        override_env = env_value(_ENV_PREFIX, "SUMMARY_HMAC_KEY_ENV")
+        if override_env:
+            args.summary_hmac_key_env = override_env
     if not getattr(args, "summary_hmac_key_id", None):
-        env_id = _env_value("SUMMARY_HMAC_KEY_ID")
-        if env_id:
-            args.summary_hmac_key_id = env_id
+        override_id = env_value(_ENV_PREFIX, "SUMMARY_HMAC_KEY_ID")
+        if override_id:
+            args.summary_hmac_key_id = override_id
     if not getattr(args, "require_summary_signature", False):
-        args.require_summary_signature = _env_flag("REQUIRE_SUMMARY_SIGNATURE", False)
+        args.require_summary_signature = env_flag(_ENV_PREFIX, "REQUIRE_SUMMARY_SIGNATURE", False)
 
 
 def _load_summary_signing_key(args: argparse.Namespace) -> tuple[bytes | None, str | None]:
@@ -339,19 +307,13 @@ def _load_summary_signing_key(args: argparse.Namespace) -> tuple[bytes | None, s
     return key_bytes, key_id
 
 
-def _dump_json(payload: Any, *, pretty: bool) -> str:
-    if pretty:
-        return json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
-    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-
-
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv if argv is not None else sys.argv[1:])
     _apply_signature_env_overrides(args)
 
     config_path = _resolve_config_path(args)
     json_output = _resolve_json_output(args)
-    pretty = args.pretty or _env_flag("PRETTY", False)
+    pretty = args.pretty or env_flag(_ENV_PREFIX, "PRETTY", False)
     warn_days = _resolve_warn_days(args)
     print_stdout = _should_print(args)
     fail_on_warning = _should_fail_on_warning(args)
@@ -390,7 +352,7 @@ def main(argv: list[str] | None = None) -> int:
             key=signing_key,
             key_id=signing_key_id,
         )
-    serialized = _dump_json(payload, pretty=pretty)
+    serialized = dump_json(payload, pretty=pretty)
 
     if json_output:
         output_path = Path(json_output).expanduser()
