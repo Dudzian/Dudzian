@@ -37,6 +37,7 @@ class BotCoreLocalService;             // forward decl (grpc/BotCoreLocalService
 class StrategyConfigController;        // forward decl (app/StrategyConfigController.hpp)
 class SupportBundleController;         // forward decl (support/SupportBundleController.hpp)
 class HealthStatusController;          // forward decl (health/HealthStatusController.hpp)
+class OfflineRuntimeBridge;            // forward decl (runtime/OfflineRuntimeBridge.hpp)
 
 class Application : public QObject {
     Q_OBJECT
@@ -64,6 +65,10 @@ class Application : public QObject {
     Q_PROPERTY(bool             riskHistoryAutoExportUseLocalTime READ riskHistoryAutoExportUseLocalTime WRITE setRiskHistoryAutoExportUseLocalTime NOTIFY riskHistoryAutoExportUseLocalTimeChanged)
     Q_PROPERTY(QDateTime        riskHistoryLastAutoExportAt READ riskHistoryLastAutoExportAt NOTIFY riskHistoryLastAutoExportAtChanged)
     Q_PROPERTY(QUrl             riskHistoryLastAutoExportPath READ riskHistoryLastAutoExportPath NOTIFY riskHistoryLastAutoExportPathChanged)
+    Q_PROPERTY(bool             offlineMode          READ offlineMode         CONSTANT)
+    Q_PROPERTY(QString          offlineDaemonStatus  READ offlineDaemonStatus NOTIFY offlineDaemonStatusChanged)
+    Q_PROPERTY(bool             offlineAutomationRunning READ offlineAutomationRunning NOTIFY offlineAutomationRunningChanged)
+    Q_PROPERTY(QString          offlineStrategyPath  READ offlineStrategyPath NOTIFY offlineStrategyPathChanged)
 
 public:
     explicit Application(QQmlApplicationEngine& engine, QObject* parent = nullptr);
@@ -102,6 +107,10 @@ public:
     bool             riskHistoryAutoExportUseLocalTime() const { return m_riskHistoryAutoExportUseLocalTime; }
     QDateTime        riskHistoryLastAutoExportAt() const { return m_lastRiskHistoryAutoExportUtc; }
     QUrl             riskHistoryLastAutoExportPath() const { return m_lastRiskHistoryAutoExportPath; }
+    bool             offlineMode() const { return m_offlineMode; }
+    QString          offlineDaemonStatus() const { return m_offlineStatus; }
+    bool             offlineAutomationRunning() const { return m_offlineAutomationRunning; }
+    QString          offlineStrategyPath() const { return m_offlineStrategyPath; }
 
 public slots:
     void start();
@@ -137,6 +146,8 @@ public slots:
     Q_INVOKABLE bool setRiskHistoryAutoExportIntervalMinutes(int minutes);
     Q_INVOKABLE bool setRiskHistoryAutoExportBasename(const QString& basename);
     Q_INVOKABLE bool setRiskHistoryAutoExportUseLocalTime(bool useLocalTime);
+    Q_INVOKABLE void startOfflineAutomation();
+    Q_INVOKABLE void stopOfflineAutomation();
 
     // Test helpers (persistent UI state)
     void saveUiSettingsImmediatelyForTesting();
@@ -166,6 +177,9 @@ signals:
     void riskHistoryAutoExportUseLocalTimeChanged();
     void riskHistoryLastAutoExportAtChanged();
     void riskHistoryLastAutoExportPathChanged();
+    void offlineDaemonStatusChanged();
+    void offlineAutomationRunningChanged(bool running);
+    void offlineStrategyPathChanged();
 
 private slots:
     void handleHistory(const QList<OhlcvPoint>& candles);
@@ -176,6 +190,8 @@ private slots:
     void handleTradingTokenPathChanged(const QString& path);
     void handleMetricsTokenPathChanged(const QString& path);
     void handleHealthTokenPathChanged(const QString& path);
+    void handleOfflineStatusChanged(const QString& status);
+    void handleOfflineAutomationChanged(bool running);
 
 private:
     // Rejestracja obiektów w kontekście QML
@@ -187,6 +203,7 @@ private:
 
     // Telemetria UI
     void ensureTelemetry();
+    void ensureOfflineBridge();
     void reportOverlayTelemetry();
     void reportReduceMotionTelemetry(bool enabled);
     void reportJankTelemetry(double frameMs, double thresholdMs);
@@ -278,6 +295,7 @@ private:
     RiskStateModel         m_riskModel;
     RiskHistoryModel       m_riskHistoryModel;
     TradingClient          m_client;
+    std::unique_ptr<OfflineRuntimeBridge> m_offlineBridge;
     AlertsModel            m_alertsModel;
     AlertsFilterProxyModel m_filteredAlertsModel;
     std::unique_ptr<BotCoreLocalService> m_localService;
@@ -285,6 +303,7 @@ private:
     QString                m_connectionStatus = QStringLiteral("idle");
     PerformanceGuard       m_guard{};
     int                    m_maxSamples = 10240;
+    int                    m_historyLimit = 500;
     TradingClient::TlsConfig m_tradingTlsConfig{};
     QString                m_tradingAuthToken;
     QString                m_tradingAuthTokenFile;
@@ -302,6 +321,13 @@ private:
 
     std::unique_ptr<FrameRateMonitor>         m_frameMonitor;
     bool                                      m_reduceMotionActive = false;
+    bool                                      m_offlineMode = false;
+    QString                                   m_offlineEndpoint;
+    QVariantMap                               m_offlineStrategyConfig;
+    bool                                      m_offlineAutoRun = false;
+    QString                                   m_offlineStatus;
+    bool                                      m_offlineAutomationRunning = false;
+    QString                                   m_offlineStrategyPath;
 
     // Oba kontrolery – aktywacja (app) i licencje OEM (license)
     std::unique_ptr<ActivationController>     m_activationController;

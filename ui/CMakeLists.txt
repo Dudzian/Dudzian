@@ -65,6 +65,7 @@ set(UI_SOURCES
     src/grpc/TradingClient.cpp
     src/grpc/MetricsClient.cpp
     src/grpc/HealthClient.cpp
+    src/runtime/OfflineRuntimeBridge.cpp
     src/models/OhlcvListModel.cpp
     src/models/AlertsModel.cpp
     src/models/AlertsFilterProxyModel.cpp
@@ -89,6 +90,7 @@ set(UI_HEADERS
     src/grpc/TradingClient.hpp
     src/grpc/MetricsClient.hpp
     src/grpc/HealthClient.hpp
+    src/runtime/OfflineRuntimeBridge.hpp
     src/grpc/GrpcTlsConfig.hpp
     src/models/AlertsModel.hpp
     src/models/AlertsFilterProxyModel.hpp

@@ -333,6 +333,65 @@ def dump_state(
     }
 
 
+def validate_oem_bundle(
+    *,
+    license_path: str,
+    fallback_path: str | None,
+    fingerprint_path: str | None = None,
+    license_keys_path: str | None = None,
+    fingerprint_keys_path: str | None = None,
+    revocation_path: str | None = None,
+    revocation_keys_path: str | None = None,
+    revocation_signature_required: bool = False,
+) -> dict[str, Any]:
+    primary_file = _resolve_license_path(license_path)
+    fallback_file = Path(fallback_path).expanduser() if fallback_path else None
+    fingerprint_file = Path(fingerprint_path).expanduser() if fingerprint_path else None
+    license_keys_file = Path(license_keys_path).expanduser() if license_keys_path else None
+    fingerprint_keys_file = (
+        Path(fingerprint_keys_path).expanduser() if fingerprint_keys_path else None
+    )
+    revocation_file = Path(revocation_path).expanduser() if revocation_path else None
+    revocation_keys_file = Path(revocation_keys_path).expanduser() if revocation_keys_path else None
+
+    primary_summary = _read_license_summary(
+        primary_file,
+        fingerprint_path=fingerprint_file,
+        license_keys_path=license_keys_file,
+        fingerprint_keys_path=fingerprint_keys_file,
+        revocation_path=revocation_file,
+        revocation_keys_path=revocation_keys_file,
+        revocation_signature_required=revocation_signature_required,
+    )
+
+    fallback_summary: dict[str, Any] | None = None
+    if fallback_file:
+        fallback_summary = _read_license_summary(
+            fallback_file,
+            fingerprint_path=fingerprint_file,
+            license_keys_path=license_keys_file,
+            fingerprint_keys_path=fingerprint_keys_file,
+            revocation_path=revocation_file,
+            revocation_keys_path=revocation_keys_file,
+            revocation_signature_required=revocation_signature_required,
+        )
+
+    use_fallback = False
+    effective = primary_summary
+    if primary_summary.get("status") != "active" and fallback_summary:
+        if fallback_summary.get("status") == "active":
+            effective = fallback_summary
+            use_fallback = True
+
+    return {
+        "primary": primary_summary,
+        "fallback": fallback_summary,
+        "using_fallback": use_fallback,
+        "effective_source": "fallback" if use_fallback else "primary",
+        "effective": effective,
+    }
+
+
 def generate_fingerprint(
     *,
     keys: Mapping[str, bytes],
@@ -433,6 +492,22 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Wymaga podpisanej listy odwołań oraz dostarczonych kluczy HMAC.",
     )
 
+    oem_parser = subparsers.add_parser(
+        "oem-validate", help="Waliduje licencję OEM oraz fallback")
+    oem_parser.add_argument("--license-path", dest="license_path", required=True)
+    oem_parser.add_argument("--fallback-path", dest="fallback_path", default=None)
+    oem_parser.add_argument("--fingerprint-path", dest="fingerprint_path", default=None)
+    oem_parser.add_argument("--license-keys", dest="license_keys", default=None)
+    oem_parser.add_argument("--fingerprint-keys", dest="fingerprint_keys", default=None)
+    oem_parser.add_argument("--revocation-path", dest="revocation_path", default=None)
+    oem_parser.add_argument("--revocation-keys", dest="revocation_keys", default=None)
+    oem_parser.add_argument(
+        "--require-signed-revocations",
+        dest="revocation_signed",
+        action="store_true",
+        help="Wymaga podpisanej listy odwołań oraz dostarczonych kluczy HMAC.",
+    )
+
     fingerprint_parser = subparsers.add_parser("fingerprint", help="Generuje podpisany fingerprint hosta")
     fingerprint_parser.add_argument("--keys-file", dest="keys_file", default=None)
     fingerprint_parser.add_argument(
@@ -478,6 +553,19 @@ def main(argv: list[str] | None = None) -> int:
             revocation_signature_required=args.revocation_signed,
         )
         print(json.dumps(state, ensure_ascii=False))
+        return 0
+    if args.command == "oem-validate":
+        summary = validate_oem_bundle(
+            license_path=args.license_path,
+            fallback_path=args.fallback_path,
+            fingerprint_path=args.fingerprint_path,
+            license_keys_path=args.license_keys,
+            fingerprint_keys_path=args.fingerprint_keys,
+            revocation_path=args.revocation_path,
+            revocation_keys_path=args.revocation_keys,
+            revocation_signature_required=args.revocation_signed,
+        )
+        print(json.dumps(summary, ensure_ascii=False))
         return 0
     if args.command == "fingerprint":
         try:
