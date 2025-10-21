@@ -1,3 +1,4 @@
+"""Narzędzia wspólne dla modułów decision engine."""
 """Common decision-engine utilities."""
 from __future__ import annotations
 
@@ -5,6 +6,7 @@ from typing import Any
 
 
 def coerce_float(value: Any) -> float | None:
+    """Próbuje zinterpretować przekazaną wartość jako liczbę zmiennoprzecinkową."""
     """Attempt to coerce various value types to ``float``.
 
     Mirrors parsing rules previously duplicated across decision modules:
@@ -20,6 +22,7 @@ def coerce_float(value: Any) -> float | None:
     if isinstance(value, (int, float)):
         try:
             return float(value)
+        except (TypeError, ValueError):  # pragma: no cover - defensywne
         except (TypeError, ValueError):  # pragma: no cover - defensive
             return None
     if isinstance(value, str):

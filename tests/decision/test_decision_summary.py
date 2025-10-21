@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import pytest
 
+from bot_core.decision.summary import (
+    DecisionEngineSummary,
+    summarize_evaluation_payloads,
+)
 import sys
 import types
 from pathlib import Path
@@ -93,6 +97,9 @@ def _build_full_evaluations() -> list[dict[str, object]]:
         },
     ]
 
+    summary_model = summarize_evaluation_payloads(evaluations, history_limit=5)
+    assert isinstance(summary_model, DecisionEngineSummary)
+    summary = summary_model.model_dump()
 
 def test_summarize_evaluation_payloads_counts_and_latest_fields() -> None:
     evaluations = _build_full_evaluations()
@@ -658,6 +665,9 @@ def test_summarize_evaluation_payloads_respects_history_limit() -> None:
         },
     ]
 
+    summary_model = summarize_evaluation_payloads(evaluations, history_limit=2)
+    assert isinstance(summary_model, DecisionEngineSummary)
+    summary = summary_model.model_dump()
     summary = _summarize(evaluations, history_limit=2)
 
     assert summary["total"] == 2
@@ -691,6 +701,9 @@ def test_summarize_evaluation_payloads_tracks_longest_streaks() -> None:
         {"accepted": True},
     ]
 
+    summary_model = summarize_evaluation_payloads(evaluations)
+    assert isinstance(summary_model, DecisionEngineSummary)
+    summary = summary_model.model_dump()
     summary = _summarize(evaluations)
 
     assert summary["longest_acceptance_streak"] == 2
