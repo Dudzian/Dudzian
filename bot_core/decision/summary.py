@@ -6,6 +6,45 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Iterable, Mapping, MutableMapping, Sequence
 
+from bot_core.decision.models import DecisionEngineSummary
+
+
+def _coerce_float(value: object) -> float | None:
+    """Próbuje rzutować dowolną wartość na float."""
+
+from .utils import coerce_float
+
+
+def _normalize_thresholds(snapshot: Mapping[str, object] | None) -> Mapping[str, float | None] | None:
+    if not snapshot or not isinstance(snapshot, Mapping):
+        return None
+    normalized: MutableMapping[str, float | None] = {}
+    for key, value in snapshot.items():
+        normalized[str(key)] = coerce_float(value)
+    return normalized
+
+
+def _extract_candidate_metadata(candidate: Mapping[str, object] | None) -> Mapping[str, object] | None:
+    if not candidate or not isinstance(candidate, Mapping):
+        return None
+    metadata = candidate.get("metadata")
+    if isinstance(metadata, Mapping):
+        return {str(key): metadata[key] for key in metadata}
+    return None
+
+
+def _extract_generated_at(payload: Mapping[str, object]) -> str | None:
+    candidate = payload.get("candidate")
+    if isinstance(candidate, Mapping):
+        metadata = _extract_candidate_metadata(candidate)
+        if metadata:
+            generated_at = metadata.get("generated_at") or metadata.get("timestamp")
+            if generated_at is not None:
+                return str(generated_at)
+        candidate_generated = candidate.get("generated_at")
+        if candidate_generated is not None:
+            return str(candidate_generated)
+
 from .schema import DecisionEngineSummary
 from .utils import coerce_float
 
@@ -371,6 +410,60 @@ def _extract_candidate_metadata(candidate: Mapping[str, object]) -> Mapping[str,
         return {str(key): metadata[key] for key in metadata}
     return None
 
+def summarize_evaluation_payloads(
+    evaluations: Sequence[Mapping[str, object]],
+    *,
+    history_limit: int | None = None,
+) -> DecisionEngineSummary:
+    """Buduje zagregowane podsumowanie Decision Engine na podstawie ewaluacji."""
+
+    items = list(evaluations)
+    full_total = len(items)
+    effective_limit = _resolve_history_limit(history_limit, full_total)
+    if full_total and effective_limit and effective_limit < full_total:
+        window_start = full_total - effective_limit
+        windowed = items[window_start:]
+    else:
+        windowed = items
+    total = len(windowed)
+    summary: MutableMapping[str, object] = {
+        "total": total,
+        "accepted": 0,
+        "rejected": 0,
+        "acceptance_rate": 0.0,
+        "history_limit": effective_limit if effective_limit else full_total,
+        "history_window": total,
+        "rejection_reasons": {},
+        "unique_rejection_reasons": 0,
+        "unique_risk_flags": 0,
+        "risk_flags_with_accepts": 0,
+        "unique_stress_failures": 0,
+        "stress_failures_with_accepts": 0,
+        "unique_models": 0,
+        "models_with_accepts": 0,
+        "unique_actions": 0,
+        "actions_with_accepts": 0,
+        "unique_strategies": 0,
+        "strategies_with_accepts": 0,
+        "unique_symbols": 0,
+        "symbols_with_accepts": 0,
+        "full_total": full_total,
+        "current_acceptance_streak": 0,
+        "current_rejection_streak": 0,
+        "longest_acceptance_streak": 0,
+        "longest_rejection_streak": 0,
+    }
+    if full_total and full_total != total:
+        full_accepted = sum(
+            1 for payload in items if isinstance(payload, Mapping) and bool(payload.get("accepted"))
+        )
+        summary["full_accepted"] = full_accepted
+        summary["full_rejected"] = full_total - full_accepted
+        summary["full_acceptance_rate"] = (
+            full_accepted / full_total if full_total else 0.0
+        )
+    if total == 0:
+        return DecisionEngineSummary.model_validate(summary)
 
 def _extract_generated_at(payload: Mapping[str, object]) -> str | None:
     candidate = payload.get("candidate")
@@ -395,6 +488,15 @@ def _extract_generated_at(payload: Mapping[str, object]) -> str | None:
         return str(raw)
     return None
 
+    current_acceptance_streak = 0
+    current_rejection_streak = 0
+    costs: list[float] = []
+    probabilities: list[float] = []
+    expected_returns: list[float] = []
+    notionals: list[float] = []
+    model_probabilities: list[float] = []
+    model_returns: list[float] = []
+    latencies: list[float] = []
 
 def _resolve_history_limit(history_limit: int | None, default: int) -> int:
     if history_limit is None:
@@ -755,6 +857,32 @@ class DecisionSummaryAggregator:
                     expected_value, accepted=is_accepted
                 )
                 observed_metrics["expected_value_bps"] = expected_value
+        candidate = payload.get("candidate")
+        if isinstance(candidate, Mapping):
+            probability = _coerce_float(candidate.get("expected_probability"))
+            if probability is not None:
+                probabilities.append(probability)
+                observed_metrics["expected_probability"] = probability
+                if is_accepted:
+                    accepted_probabilities.append(probability)
+                else:
+                    rejected_probabilities.append(probability)
+            expected_return = _coerce_float(candidate.get("expected_return_bps"))
+            candidate_expected_value = None
+            if expected_return is not None:
+                expected_returns.append(expected_return)
+                if is_accepted:
+                    accepted_expected_returns.append(expected_return)
+                else:
+                    rejected_expected_returns.append(expected_return)
+            if expected_return is not None and probability is not None:
+                candidate_expected_value = expected_return * probability
+                expected_values.append(candidate_expected_value)
+                observed_metrics["expected_value_bps"] = candidate_expected_value
+                if is_accepted:
+                    accepted_expected_values.append(candidate_expected_value)
+                else:
+                    rejected_expected_values.append(candidate_expected_value)
                 if cost is not None:
                     expected_minus_cost = expected_value - cost
                     self._metrics["expected_value_minus_cost_bps"].add(
@@ -793,6 +921,87 @@ class DecisionSummaryAggregator:
             self._action_metrics,
             is_accepted,
             observed_metrics,
+                if margin < 0:
+                    threshold_breach_counts[base_key] = (
+                        threshold_breach_counts.get(base_key, 0) + 1
+                    )
+                    if is_accepted:
+                        accepted_threshold_breach_counts[base_key] = (
+                            accepted_threshold_breach_counts.get(base_key, 0) + 1
+                        )
+                    else:
+                        rejected_threshold_breach_counts[base_key] = (
+                            rejected_threshold_breach_counts.get(base_key, 0) + 1
+                        )
+    summary["accepted"] = accepted
+    summary["rejected"] = total - accepted
+    summary["acceptance_rate"] = accepted / total if total else 0.0
+    summary["rejection_reasons"] = dict(
+        sorted(rejection_reasons.items(), key=lambda item: item[1], reverse=True)
+    )
+    summary["unique_rejection_reasons"] = len(summary["rejection_reasons"])
+    summary["current_acceptance_streak"] = current_acceptance_streak
+    summary["current_rejection_streak"] = current_rejection_streak
+
+    if net_edges:
+        total_net_edge = sum(net_edges)
+        summary["avg_net_edge_bps"] = total_net_edge / len(net_edges)
+        summary["sum_net_edge_bps"] = total_net_edge
+    if costs:
+        total_cost = sum(costs)
+        summary["avg_cost_bps"] = total_cost / len(costs)
+        summary["sum_cost_bps"] = total_cost
+    if probabilities:
+        summary["avg_expected_probability"] = sum(probabilities) / len(probabilities)
+    if expected_returns:
+        total_expected_return = sum(expected_returns)
+        summary["avg_expected_return_bps"] = (
+            total_expected_return / len(expected_returns)
+        )
+        summary["sum_expected_return_bps"] = total_expected_return
+    if expected_values:
+        total_expected_value = sum(expected_values)
+        summary["avg_expected_value_bps"] = total_expected_value / len(
+            expected_values
+        )
+        summary["sum_expected_value_bps"] = total_expected_value
+    if expected_values_minus_costs:
+        total_expected_value_minus_cost = sum(expected_values_minus_costs)
+        summary["avg_expected_value_minus_cost_bps"] = (
+            total_expected_value_minus_cost / len(expected_values_minus_costs)
+        )
+        summary["sum_expected_value_minus_cost_bps"] = (
+            total_expected_value_minus_cost
+        )
+    if notionals:
+        total_notional = sum(notionals)
+        summary["avg_notional"] = total_notional / len(notionals)
+        summary["sum_notional"] = total_notional
+
+    if net_edges:
+        summary["avg_net_edge_bps"] = sum(net_edges) / len(net_edges)
+    if costs:
+        summary["avg_cost_bps"] = sum(costs) / len(costs)
+    if probabilities:
+        summary["avg_expected_probability"] = sum(probabilities) / len(probabilities)
+    if expected_returns:
+        summary["avg_expected_return_bps"] = sum(expected_returns) / len(expected_returns)
+    if notionals:
+        summary["avg_notional"] = sum(notionals) / len(notionals)
+    if model_probabilities:
+        summary["avg_model_success_probability"] = sum(model_probabilities) / len(
+            model_probabilities
+        )
+    if model_returns:
+        total_model_expected_return = sum(model_returns)
+        summary["avg_model_expected_return_bps"] = (
+            total_model_expected_return / len(model_returns)
+        )
+        summary["sum_model_expected_return_bps"] = total_model_expected_return
+    if model_expected_values:
+        total_model_expected_value = sum(model_expected_values)
+        summary["avg_model_expected_value_bps"] = (
+            total_model_expected_value / len(model_expected_values)
         )
         self._register_dimension(
             strategy_key,
@@ -893,6 +1102,13 @@ def _populate_latest_fields(
     latest_model_return = coerce_float(payload.get("model_expected_return_bps"))
     if latest_model_return is not None:
         summary["latest_model_expected_return_bps"] = latest_model_return
+    latest_payload = windowed[-1]
+    if latencies:
+        summary["avg_latency_ms"] = sum(latencies) / len(latencies)
+    if isinstance(latest_payload, Mapping):
+        latest_model = latest_payload.get("model_name")
+        if latest_model:
+            summary["latest_model"] = str(latest_model)
 
     latest_model_probability = coerce_float(payload.get("model_success_probability"))
     if latest_model_probability is not None:
@@ -1059,6 +1275,7 @@ def summarize_evaluation_payloads(
         summary_payload["full_acceptance_rate"] = 0.0
 
     return DecisionEngineSummary.model_validate(summary_payload)
+    return DecisionEngineSummary.model_validate(summary)
 
 
 __all__ = ["DecisionEngineSummary", "summarize_evaluation_payloads"]

@@ -13,6 +13,8 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from bot_core.decision import coerce_float, summarize_evaluation_payloads
+from bot_core.decision import summarize_evaluation_payloads
+from bot_core.decision.utils import coerce_float
 
 
 def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
@@ -222,6 +224,10 @@ def _build_summary(args: argparse.Namespace, evaluations: list[tuple[datetime | 
     payloads = [payload for _, payload in evaluations]
     summary_model = summarize_evaluation_payloads(payloads, history_limit=args.history_limit)
     summary_metrics = summary_model.model_dump()
+    summary_model = summarize_evaluation_payloads(
+        payloads, history_limit=args.history_limit
+    )
+    summary_metrics = summary_model.model_dump(exclude_none=True)
     filters = {
         key: value
         for key, value in {

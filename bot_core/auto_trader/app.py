@@ -59,6 +59,23 @@ _MISSING_DECISION_MODE = "<no-mode>"
 _CONTROLLER_HISTORY_DEFAULT_LIMIT = 32
 
 
+class GuardrailTimelineRecords(list):
+    """Lista kubełków timeline'u guardrail wraz z metadanymi podsumowania."""
+
+    def __init__(self, records: Iterable[dict[str, Any]], summary: Mapping[str, Any]):
+        super().__init__(records)
+        self.summary: dict[str, Any] = dict(summary)
+
+
+def _extract_guardrail_timeline_metadata(summary: Mapping[str, Any]) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    for key in ("services", "guardrail_trigger_thresholds", "guardrail_trigger_values"):
+        value = summary.get(key)
+        if value is not None:
+            metadata[key] = copy.deepcopy(value)
+    return metadata
+
+
 class EmitterLike(Protocol):
     """Minimal protocol expected from GUI/event emitter integrations."""
 
@@ -5016,6 +5033,22 @@ class AutoTrader:
             "first_timestamp": None,
             "last_timestamp": None,
         }
+        summary_totals = {
+            "approved": 0,
+            "rejected": 0,
+            "unknown": 0,
+            "errors": 0,
+            "raw_true": 0,
+            "raw_false": 0,
+            "raw_none": 0,
+        }
+        total_services: dict[str, dict[str, int]] | None = None
+        if include_services:
+            summary["services"] = {}
+            total_services = {}
+        summary.update(summary_totals)
+        summary["approval_rate"] = 0.0
+        summary["error_rate"] = 0.0
         if not filtered_records:
             return summary
 
@@ -5059,6 +5092,23 @@ class AutoTrader:
             has_error = "error" in entry
             service_key = entry.get("service") or _UNKNOWN_SERVICE
 
+            if normalized_value is True:
+                summary_totals["approved"] += 1
+            elif normalized_value is False:
+                summary_totals["rejected"] += 1
+            else:
+                summary_totals["unknown"] += 1
+
+            if raw_value is True:
+                summary_totals["raw_true"] += 1
+            elif raw_value is False:
+                summary_totals["raw_false"] += 1
+            else:
+                summary_totals["raw_none"] += 1
+
+            if has_error:
+                summary_totals["errors"] += 1
+
             self._update_decision_bucket(
                 bucket_payload,
                 normalized_value=normalized_value,
@@ -5066,6 +5116,45 @@ class AutoTrader:
                 has_error=has_error,
                 service_key=str(service_key),
             )
+
+            if total_services is not None:
+                service_bucket = total_services.setdefault(
+                    str(service_key),
+                    {"evaluations": 0, "errors": 0},
+                )
+                service_bucket["evaluations"] += 1
+                if has_error:
+                    service_bucket["errors"] += 1
+                service_totals = total_services.setdefault(
+                    str(service_key),
+                    {
+                        "evaluations": 0,
+                        "approved": 0,
+                        "rejected": 0,
+                        "unknown": 0,
+                        "errors": 0,
+                        "raw_true": 0,
+                        "raw_false": 0,
+                        "raw_none": 0,
+                    },
+                )
+                service_totals["evaluations"] += 1
+                if normalized_value is True:
+                    service_totals["approved"] += 1
+                elif normalized_value is False:
+                    service_totals["rejected"] += 1
+                else:
+                    service_totals["unknown"] += 1
+
+                if raw_value is True:
+                    service_totals["raw_true"] += 1
+                elif raw_value is False:
+                    service_totals["raw_false"] += 1
+                else:
+                    service_totals["raw_none"] += 1
+
+                if has_error:
+                    service_totals["errors"] += 1
 
             if include_decision_dimensions:
                 decision_payload = entry.get("decision")
@@ -5150,6 +5239,41 @@ class AutoTrader:
         summary["buckets"] = buckets_output
         summary["first_timestamp"] = first_ts
         summary["last_timestamp"] = last_ts
+        summary.update(summary_totals)
+        total_count = summary.get("total", 0) or 0
+        summary["approval_rate"] = (
+            summary_totals["approved"] / total_count if total_count else 0.0
+        )
+        summary["error_rate"] = (
+            summary_totals["errors"] / total_count if total_count else 0.0
+        )
+
+        if total_services is not None:
+            summary["services"] = {
+                service_name: {
+                    "evaluations": totals.get("evaluations", 0),
+                    "approved": totals.get("approved", 0),
+                    "rejected": totals.get("rejected", 0),
+                    "unknown": totals.get("unknown", 0),
+                    "errors": totals.get("errors", 0),
+                    "raw_true": totals.get("raw_true", 0),
+                    "raw_false": totals.get("raw_false", 0),
+                    "raw_none": totals.get("raw_none", 0),
+                }
+                for service_name, totals in sorted(
+                    total_services.items(),
+                    key=lambda item: (-item[1].get("evaluations", 0), item[0]),
+                )
+            }
+
+        if total_services is not None:
+            summary["services"] = {
+                service: {
+                    "evaluations": payload.get("evaluations", 0),
+                    "errors": payload.get("errors", 0),
+                }
+                for service, payload in sorted(total_services.items())
+            }
 
         if missing_bucket is not None and missing_bucket.get("total", 0):
             self._finalize_decision_bucket(missing_bucket)
@@ -5337,6 +5461,41 @@ class AutoTrader:
                 missing_record["start"] = None
                 missing_record["end"] = None
                 records.append(missing_record)
+
+        metadata = _extract_guardrail_timeline_metadata(summary)
+
+        return GuardrailTimelineRecords(records, metadata)
+        if include_services and isinstance(summary.get("services"), Mapping):
+            summary_record = {
+                "bucket_type": "summary",
+                "index": None,
+                "start": self._normalize_timestamp_for_export(
+                    summary.get("first_timestamp"),
+                    coerce=coerce_timestamps,
+                    tz=tz,
+                ),
+                "end": self._normalize_timestamp_for_export(
+                    summary.get("last_timestamp"),
+                    coerce=coerce_timestamps,
+                    tz=tz,
+                ),
+                "total": summary.get("total", 0),
+                "approved": summary.get("approved", 0),
+                "rejected": summary.get("rejected", 0),
+                "unknown": summary.get("unknown", 0),
+                "errors": summary.get("errors", 0),
+                "raw_true": summary.get("raw_true", 0),
+                "raw_false": summary.get("raw_false", 0),
+                "raw_none": summary.get("raw_none", 0),
+                "approval_rate": summary.get("approval_rate", 0.0),
+                "error_rate": summary.get("error_rate", 0.0),
+                "services": copy.deepcopy(summary.get("services")),
+            }
+            if include_decision_dimensions:
+                summary_record.setdefault("states", {})
+                summary_record.setdefault("reasons", {})
+                summary_record.setdefault("modes", {})
+            records.append(summary_record)
 
         return records
 
@@ -7075,6 +7234,7 @@ class AutoTrader:
         include_missing_bucket: bool = False,
         coerce_timestamps: bool = False,
         tz: tzinfo | None = timezone.utc,
+        include_summary_metadata: bool = False,
     ) -> list[dict[str, Any]]:
         summary = self.summarize_guardrail_timeline(
             bucket_s=bucket_s,
@@ -7125,6 +7285,29 @@ class AutoTrader:
                 missing_record["end"] = None
                 records.append(missing_record)
 
+        if include_summary_metadata:
+            summary_record = {
+                key: copy.deepcopy(value)
+                for key, value in summary.items()
+                if key != "buckets"
+            }
+            summary_record.setdefault("bucket_type", "summary")
+            summary_record.setdefault("index", None)
+            summary_record.setdefault("start", None)
+            summary_record.setdefault("end", None)
+            summary_record.setdefault("guardrail_events", summary.get("total", 0))
+            if coerce_timestamps:
+                for timestamp_key in ("first_timestamp", "last_timestamp"):
+                    if timestamp_key in summary_record:
+                        summary_record[timestamp_key] = (
+                            self._normalize_timestamp_for_export(
+                                summary_record[timestamp_key],
+                                coerce=True,
+                                tz=tz,
+                            )
+                        )
+            records.append(summary_record)
+
         return records
 
     def guardrail_timeline_to_dataframe(
@@ -7158,6 +7341,7 @@ class AutoTrader:
         include_missing_bucket: bool = False,
         coerce_timestamps: bool = True,
         tz: tzinfo | None = timezone.utc,
+        include_summary_metadata: bool = False,
     ) -> pd.DataFrame:
         records = self.guardrail_timeline_to_records(
             bucket_s=bucket_s,
@@ -7188,10 +7372,13 @@ class AutoTrader:
             include_missing_bucket=include_missing_bucket,
             coerce_timestamps=coerce_timestamps,
             tz=tz,
+            include_summary_metadata=include_summary_metadata,
         )
 
+        summary_metadata = getattr(records, "summary", None)
+
         if not records:
-            return pd.DataFrame(
+            df = pd.DataFrame(
                 columns=[
                     "index",
                     "start",
@@ -7207,8 +7394,13 @@ class AutoTrader:
                     "bucket_type",
                 ]
             )
+        else:
+            df = pd.DataFrame(records)
 
-        return pd.DataFrame(records)
+        if summary_metadata is not None:
+            df.attrs["guardrail_summary"] = copy.deepcopy(summary_metadata)
+
+        return df
 
     def risk_evaluations_to_dataframe(
         self,

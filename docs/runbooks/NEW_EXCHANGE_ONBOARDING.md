@@ -16,9 +16,23 @@ Ten runbook prowadzi operatorów oraz deweloperów przez etapy dodawania nowej g
 5. Dodaj adapter do `bot_core/exchanges/__init__.py` oraz `_DEFAULT_ADAPTERS` w `bot_core/runtime/bootstrap.py`.
 
 ## 3. Konfiguracja i sekrety
-1. Dodaj środowiska (`paper`, `live`) w `config/core.yaml`, wskazując odpowiedni `permission_profile`.
+1. Dodaj środowiska (`paper`, `testnet`, `live`) w `config/core.yaml`, wskazując odpowiedni `permission_profile`.
 2. Upewnij się, że `SecretManager` posiada wpisy `key_id`, `secret` i opcjonalnie `passphrase` dla nowej giełdy.
 3. Zaktualizuj dokumentację `.env`/`secrets` o nowe klucze przestrzeni nazw.
+4. Dla Bybit/OKX/Coinbase ustaw zmienne środowiskowe `BYBIT_ENVIRONMENT`, `OKX_ENVIRONMENT`, `COINBASE_ENVIRONMENT`
+   – umożliwia to wymuszenie `paper`/`testnet` w health-checkach oraz w `ExchangeManager`.
+
+### Profile Stage5 – Bybit, OKX, Coinbase
+
+| Giełda  | Tryby natywne | Namespace sekretów | Wymagane dodatki |
+| --- | --- | --- | --- |
+| Bybit | `margin`, `futures`, `paper` | `secrets/exchanges/bybit_{paper,testnet,live}.json` | `hedgeMode` konfiguracja CCXT, sandbox HMAC |
+| OKX | `margin`, `futures`, `paper` | `secrets/exchanges/okx_{paper,testnet,live}.json` | `instType` w parametrach REST, opcjonalne IP allowlist |
+| Coinbase Advanced | `margin`, `futures`, `paper` | `secrets/exchanges/coinbase_{paper,testnet,live}.json` | `product_type` (margin/futures) oraz sandbox API |
+
+* Wszystkie powyższe adaptery wspierają watchdog-i Stage5 (`WatchdogCCXTAdapter`).
+* W trybie paper/testnet utrzymuj oddzielne klucze API oraz konta sub-account.
+* Health-checki muszą obejmować publiczny ticker (`BTC/USDT`) oraz prywatne saldo USDT >= 50 (ustaw `private_min_balance`).
 
 ## 4. Testy i weryfikacja
 1. Uzupełnij testy jednostkowe w `tests/exchanges/test_<nazwa>_adapter.py` weryfikujące podpisy i limity rate.
@@ -34,6 +48,7 @@ Ten runbook prowadzi operatorów oraz deweloperów przez etapy dodawania nowej g
 - [ ] Klucze API posiadają minimalne wymagane uprawnienia.
 - [ ] Zdefiniowane i udokumentowane limity rate (automatyczne throttlowanie).
 - [ ] Monitorowanie metryk (latencja, błędy podpisów) włączone w Grafanie.
+- [ ] Health-check Stage5 (`python -m bot_core.cli health-check --environment <env>`) przechodzi dla trybów paper/testnet/live.
 - [ ] Runbook aktualny i przekazany do zespołu NOC.
 
 > **Uwaga:** Utrzymuj runbook w repozytorium wraz z kodem, aktualizując go przy każdej zmianie API giełdy.

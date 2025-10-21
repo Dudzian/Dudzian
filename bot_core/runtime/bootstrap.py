@@ -90,12 +90,16 @@ from bot_core.exchanges.base import (
 )
 from bot_core.exchanges.binance import BinanceFuturesAdapter, BinanceSpotAdapter
 from bot_core.exchanges.bitfinex import BitfinexSpotAdapter
-from bot_core.exchanges.bybit import BybitSpotAdapter
-from bot_core.exchanges.coinbase import CoinbaseSpotAdapter
+from bot_core.exchanges.bybit import BybitFuturesAdapter, BybitMarginAdapter, BybitSpotAdapter
+from bot_core.exchanges.coinbase import (
+    CoinbaseFuturesAdapter,
+    CoinbaseMarginAdapter,
+    CoinbaseSpotAdapter,
+)
 from bot_core.exchanges.kraken import KrakenFuturesAdapter, KrakenSpotAdapter
 from bot_core.exchanges.nowa_gielda import NowaGieldaSpotAdapter
 from bot_core.exchanges.kucoin import KuCoinSpotAdapter
-from bot_core.exchanges.okx import OKXSpotAdapter
+from bot_core.exchanges.okx import OKXFuturesAdapter, OKXMarginAdapter, OKXSpotAdapter
 from bot_core.exchanges.zonda import ZondaSpotAdapter
 from bot_core.risk.base import RiskRepository
 from bot_core.risk.engine import ThresholdRiskEngine
@@ -338,11 +342,17 @@ _DEFAULT_ADAPTERS: dict[str, ExchangeAdapterFactory] = {
     "kraken_spot": KrakenSpotAdapter,
     "kraken_futures": KrakenFuturesAdapter,
     "coinbase_spot": CoinbaseSpotAdapter,
+    "coinbase_margin": CoinbaseMarginAdapter,
+    "coinbase_futures": CoinbaseFuturesAdapter,
     "bitfinex_spot": BitfinexSpotAdapter,
     "okx_spot": OKXSpotAdapter,
+    "okx_margin": OKXMarginAdapter,
+    "okx_futures": OKXFuturesAdapter,
     "nowa_gielda_spot": NowaGieldaSpotAdapter,
     "zonda_spot": ZondaSpotAdapter,
     "bybit_spot": BybitSpotAdapter,
+    "bybit_margin": BybitMarginAdapter,
+    "bybit_futures": BybitFuturesAdapter,
     "kucoin_spot": KuCoinSpotAdapter,
 }
 

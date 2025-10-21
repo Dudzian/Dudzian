@@ -6,6 +6,9 @@
 
 #include <algorithm>
 
+#include <QCryptographicHash>
+#include <QSslCertificate>
+
 #include "grpc/HealthClient.hpp"
 
 namespace {
@@ -44,6 +47,17 @@ QString writeCertificate(const QTemporaryDir& dir)
     return path;
 }
 
+QString certificateFingerprint()
+{
+    const QList<QSslCertificate> certificates = QSslCertificate::fromData(QByteArray(kSampleCertificatePem), QSsl::Pem);
+    if (certificates.isEmpty()) {
+        QFAIL("Nie udało się sparsować certyfikatu testowego");
+        return {};
+    }
+    const QByteArray digest = certificates.first().digest(QCryptographicHash::Sha256);
+    return QString::fromLatin1(digest.toHex()).toLower();
+}
+
 } // namespace
 
 class HealthClientTest : public QObject {
@@ -56,6 +70,7 @@ private slots:
     void preflightValidatesTlsFiles();
     void preflightWarnsOnFingerprintWithoutTls();
     void checkFailsWithoutEndpoint();
+    void checkDoesNotCreateChannelOnFingerprintMismatch();
 };
 
 void HealthClientTest::metadataUsesDefaultScope()
@@ -152,6 +167,42 @@ void HealthClientTest::checkFailsWithoutEndpoint()
     const auto result = client.check();
     QVERIFY(!result.ok);
     QVERIFY(result.errorMessage.contains(QStringLiteral("HealthService")) || result.errorMessage.isEmpty());
+}
+
+void HealthClientTest::checkDoesNotCreateChannelOnFingerprintMismatch()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString certPath = writeCertificate(dir);
+    const QString validFingerprint = certificateFingerprint();
+    QVERIFY(!validFingerprint.isEmpty());
+
+    QString invalidFingerprint = validFingerprint;
+    invalidFingerprint[0] = invalidFingerprint[0] == QLatin1Char('a') ? QLatin1Char('b') : QLatin1Char('a');
+
+    HealthClient client;
+    client.setEndpoint(QStringLiteral("localhost:50051"));
+
+    GrpcTlsConfig tls;
+    tls.enabled = true;
+    tls.rootCertificatePath = certPath;
+    tls.pinnedServerFingerprint = invalidFingerprint;
+    client.setTlsConfig(tls);
+
+    const auto mismatchResult = client.check();
+    QVERIFY(!mismatchResult.ok);
+    QCOMPARE(mismatchResult.errorMessage, QStringLiteral("Brak połączenia z HealthService"));
+    QVERIFY(!client.hasChannelForTesting());
+    QVERIFY(!client.hasStubForTesting());
+
+    tls.pinnedServerFingerprint = validFingerprint;
+    client.setTlsConfig(tls);
+
+    const auto retryResult = client.check();
+    QVERIFY(!retryResult.ok);
+    QVERIFY(client.hasChannelForTesting());
+    QVERIFY(client.hasStubForTesting());
+    QVERIFY(retryResult.errorMessage != QStringLiteral("Brak połączenia z HealthService"));
 }
 
 QTEST_MAIN(HealthClientTest)
