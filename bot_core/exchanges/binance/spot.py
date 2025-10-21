@@ -8,7 +8,7 @@ import logging
 import random
 import time
 from hashlib import sha256
-from typing import Any, Iterable, Mapping, Optional, Sequence
+from typing import Any, Callable, Iterable, Mapping, Optional, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit
 from urllib.request import Request, urlopen
@@ -209,6 +209,7 @@ class BinanceSpotAdapter(ExchangeAdapter):
         settings: Mapping[str, object] | None = None,
         metrics_registry: MetricsRegistry | None = None,
         watchdog: Watchdog | None = None,
+        network_error_handler: Callable[[str, Exception], None] | None = None,
     ) -> None:
         super().__init__(credentials)
         self._environment = environment or credentials.environment
@@ -242,6 +243,7 @@ class BinanceSpotAdapter(ExchangeAdapter):
             "Ostatnie wartości nagłówków X-MBX-USED-WEIGHT od Binance Spot.",
         )
         self._watchdog = watchdog or Watchdog()
+        self._network_error_handler = network_error_handler
 
     # ----------------------------------------------------------------------------------
     # Konfiguracja streamingu long-pollowego
@@ -636,6 +638,7 @@ class BinanceSpotAdapter(ExchangeAdapter):
                 self._metric_http_latency.observe(latency, labels=metric_labels)
                 self._metric_retries.inc(labels={**metric_labels, "reason": "network"})
                 delay = self._calculate_backoff(attempt)
+                self._notify_network_error(path, exc)
                 _LOGGER.warning(
                     "Błąd sieci podczas komunikacji z Binance (endpoint=%s, attempt=%s/%s); retry za %.2fs: %s",
                     path,
@@ -656,6 +659,14 @@ class BinanceSpotAdapter(ExchangeAdapter):
                     message="Nie udało się uzyskać odpowiedzi od API Binance po wielokrotnych próbach.",
                     reason=None,
         )
+
+    def _notify_network_error(self, endpoint: str, exc: Exception) -> None:
+        if not self._network_error_handler:
+            return
+        try:
+            self._network_error_handler(endpoint, exc)
+        except Exception:  # pragma: no cover - defensywne logowanie
+            _LOGGER.debug("Network error handler raised", exc_info=True)
 
     def _raise_for_api_error(
         self,
