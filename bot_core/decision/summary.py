@@ -11,22 +11,7 @@ from bot_core.decision.models import DecisionEngineSummary
 def _coerce_float(value: object) -> float | None:
     """Próbuje rzutować dowolną wartość na float."""
 
-    if value is None:
-        return None
-    if isinstance(value, (int, float)):
-        try:
-            return float(value)
-        except (TypeError, ValueError):  # pragma: no cover - defensywne
-            return None
-    if isinstance(value, str):
-        text = value.strip()
-        if not text:
-            return None
-        try:
-            return float(text)
-        except ValueError:
-            return None
-    return None
+from .utils import coerce_float
 
 
 def _normalize_thresholds(snapshot: Mapping[str, object] | None) -> Mapping[str, float | None] | None:
@@ -34,7 +19,7 @@ def _normalize_thresholds(snapshot: Mapping[str, object] | None) -> Mapping[str,
         return None
     normalized: MutableMapping[str, float | None] = {}
     for key, value in snapshot.items():
-        normalized[str(key)] = _coerce_float(value)
+        normalized[str(key)] = coerce_float(value)
     return normalized
 
 
