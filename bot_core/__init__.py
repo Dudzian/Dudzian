@@ -1,5 +1,17 @@
 """Podstawowy pakiet runtime bota handlowego."""
 
+from bot_core.alerts import (
+    AlertChannel,
+    AlertMessage,
+    DEFAULT_SMS_PROVIDERS,
+    SmsProviderConfig,
+    get_sms_provider,
+)
+from bot_core.auto_trader import AutoTrader, EmitterLike, RiskDecision
+from bot_core.config.loader import load_core_config
+from bot_core.config.models import CoreConfig
+from bot_core.database import DatabaseManager
+try:
 from __future__ import annotations
 try:  # pragma: no cover - defensywne importy podczas testów
     from bot_core.alerts import (
@@ -29,6 +41,22 @@ try:  # pragma: no cover - defensywne importy podczas testów
         PaperBackend,
         PositionDTO,
     )
+except Exception:  # pragma: no cover - utrzymanie kompatybilności importu pakietu
+    BaseBackend = Event = EventBus = ExchangeAdapter = ExchangeManager = None  # type: ignore[assignment]
+    MarketRules = Mode = OrderDTO = OrderResult = None  # type: ignore[assignment]
+    OrderSide = OrderStatus = OrderType = PaperBackend = PositionDTO = None  # type: ignore[assignment]
+from bot_core.runtime import BootstrapContext, bootstrap_environment
+from bot_core.trading import (
+    TradingEngine,
+    TradingEngineFactory,
+    TradingParameters,
+    TradingStrategies,
+)
+from bot_core.security import (
+    KeyringSecretStorage,
+    SecretManager,
+    SecretStorageError,
+)
     from bot_core.runtime import BootstrapContext, bootstrap_environment
     from bot_core.trading import (
         TradingEngine,

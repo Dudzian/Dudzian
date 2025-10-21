@@ -1,3 +1,4 @@
+"""Narzędzia wspólne dla modułów Decision Engine."""
 """Narzędzia wspólne dla modułów decision engine."""
 """Common decision-engine utilities."""
 from __future__ import annotations
@@ -6,6 +7,10 @@ from typing import Any
 
 
 def coerce_float(value: Any) -> float | None:
+    """Bezpiecznie konwertuje dowolną wartość na ``float``.
+
+    Funkcja akceptuje liczby, łańcuchy oraz typy konwertowalne do ``float``.
+    W przypadku niepowodzenia zwraca ``None`` zamiast zgłaszać wyjątek.
     """Próbuje zinterpretować przekazaną wartość jako liczbę zmiennoprzecinkową."""
     """Attempt to coerce various value types to ``float``.
 
@@ -22,6 +27,7 @@ def coerce_float(value: Any) -> float | None:
     if isinstance(value, (int, float)):
         try:
             return float(value)
+        except (TypeError, ValueError):  # pragma: no cover - defensywna gałąź
         except (TypeError, ValueError):  # pragma: no cover - defensywne
         except (TypeError, ValueError):  # pragma: no cover - defensive
             return None
@@ -33,6 +39,10 @@ def coerce_float(value: Any) -> float | None:
             return float(text)
         except ValueError:
             return None
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):  # pragma: no cover - brak konwersji
+        return None
     return None
 
 

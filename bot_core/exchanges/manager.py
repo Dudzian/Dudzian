@@ -621,8 +621,14 @@ class ExchangeManager:
         self._api_key = (api_key or "").strip() or None
         self._secret = (secret or "").strip() or None
         self._passphrase = (passphrase or "").strip() or None
+        api_key_length = len(self._api_key or "")
+        secret_length = len(self._secret or "")
+        passphrase_length = len(self._passphrase or "")
         log.info(
             "Credentials set (lengths): api_key=%s, secret=%s, passphrase=%s",
+            api_key_length,
+            secret_length,
+            passphrase_length,
             len(self._api_key or ""),
             len(self._secret or ""),
             len(self._passphrase or ""),

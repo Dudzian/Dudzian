@@ -32,6 +32,7 @@ if "bot_core.decision" not in sys.modules:
     sys.modules["bot_core.decision"] = decision_stub
 
 from bot_core.decision.summary import summarize_evaluation_payloads
+from bot_core.decision.schemas import DecisionEngineSummary
 
 
 if TYPE_CHECKING:
@@ -105,6 +106,8 @@ def _build_full_evaluations() -> list[dict[str, object]]:
         },
     ]
 
+    summary = summarize_evaluation_payloads(evaluations, history_limit=5)
+    DecisionEngineSummary.model_validate({"type": "decision_engine_summary", **summary})
     summary = _build_summary(evaluations, history_limit=5)
     summary_model = summarize_evaluation_payloads(evaluations, history_limit=5)
     assert isinstance(summary_model, DecisionEngineSummary)
@@ -674,6 +677,8 @@ def test_summarize_evaluation_payloads_respects_history_limit() -> None:
         },
     ]
 
+    summary = summarize_evaluation_payloads(evaluations, history_limit=2)
+    DecisionEngineSummary.model_validate({"type": "decision_engine_summary", **summary})
     summary = _build_summary(evaluations, history_limit=2)
     summary_model = summarize_evaluation_payloads(evaluations, history_limit=2)
     assert isinstance(summary_model, DecisionEngineSummary)
