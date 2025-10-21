@@ -679,12 +679,18 @@ def test_training_and_inference(tmp_path: Path, ohlcv_rows: list[tuple[float, ..
     for stats in scalers.values():
         assert "mean" in stats and "stdev" in stats
 
-    assert artifact.metadata["training_rows"] + artifact.metadata["validation_rows"] == len(
-        dataset.vectors
+    assert (
+        artifact.metadata["training_rows"]
+        + artifact.metadata["validation_rows"]
+        + artifact.metadata["test_rows"]
+        == len(dataset.vectors)
     )
     assert artifact.metadata["validation_rows"] > 0
+    assert artifact.metadata["test_rows"] == 0
     assert pytest.approx(artifact.metadata["validation_split"], rel=1e-6) == 0.2
+    assert artifact.metadata["dataset_split"]["test_ratio"] == pytest.approx(0.0)
     assert "validation_metrics" in artifact.metadata
+    assert "dataset_split" in artifact.metadata
     assert "validation_mae" in artifact.metrics
     assert "train_mae" in artifact.metrics
     assert "expected_pnl" in artifact.metrics
