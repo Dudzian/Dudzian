@@ -269,6 +269,15 @@ class DecisionEngineSummary(BaseModel):
     latest_model_selection: Mapping[str, object] | None = None
     latest_candidate: Mapping[str, object] | None = None
 
+    def __iter__(self):  # type: ignore[override]
+        return iter(self.model_dump(exclude_none=True))
+
+    def keys(self):  # type: ignore[override]
+        return self.model_dump(exclude_none=True).keys()
+
+    def __getitem__(self, item: str) -> object:  # type: ignore[override]
+        return self.model_dump(exclude_none=True)[item]
+
 
 @dataclass(slots=True)
 class ModelSelectionDetail:

@@ -1214,7 +1214,6 @@ class MultiStrategyScheduler:
         )
         if expired_override:
             self._handle_expired_signal_limits(expired_override, now, skip=(schedule,))
-        if override_value is not None:
         if override is not None:
             override_value = max(0, int(override.limit))
             if computed > override_value:
@@ -1227,9 +1226,6 @@ class MultiStrategyScheduler:
                 )
             computed = min(computed, override_value)
             schedule.metrics["signal_limit_override"] = float(override_value)
-            if override_until is not None:
-                schedule.metrics["signal_limit_expires_at"] = override_until.timestamp()
-            if override_reason:
             if override.expires_at is not None:
                 schedule.metrics["signal_limit_expires_at"] = override.expires_at.timestamp()
             if override.reason:
