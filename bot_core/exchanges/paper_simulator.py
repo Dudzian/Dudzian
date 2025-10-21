@@ -290,11 +290,6 @@ class PaperMarginSimulator(PaperBackend):
                 "interval_seconds": interval,
                 "periods": periods,
             },
-        payment = exposure * rate * (elapsed / 86_400.0)
-        self._cash_balance -= payment
-        self._margin_state.last_funding = timestamp
-        self._record_margin_event(
-            "funding", timestamp, {"payment": payment, "exposure": exposure}
         )
 
     def _enforce_margin(self, timestamp: dt.datetime) -> None:

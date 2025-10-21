@@ -45,7 +45,12 @@ tablicy `notes`, co ułatwia agregację ostrzeżeń.  Użyj wariantu
 `--output-format json-pretty`, gdy potrzebujesz czytelnego, wielowierszowego
 JSON-u do logów manualnych inspekcji.  Dodaj `--output-path
 ./artifacts/health.json`, aby zapisać payload na dysku i udostępnić go
-kolejnym etapom pipeline'u bez konieczności parsowania stdout.
+kolejnym etapom pipeline'u bez konieczności parsowania stdout.  Sekcja
+`paper.simulator` automatycznie zawiera zarówno znane parametry (leverage,
+funding), jak i dowolne dodatkowe klucze ustawione flagą
+`--paper-simulator-setting` lub w YAML-u.  Dzięki temu monitorujący
+pipeline widzi faktyczne wartości przekazane do symulatora – również te,
+które pojawią się w nowych wersjach backendu.
 
 Możesz też jawnie wskazać ticker używany przez test publiczny:
 
@@ -105,10 +110,12 @@ te parametry są również odwzorowane w wynikach JSON pod kluczem `paper`,
 gdzie sekcja `simulator` prezentuje bieżące wartości konfiguracyjne,
 dzięki czemu pipeline’y monitorujące widzą faktycznie użyte ustawienia.
   Jeżeli symulator otrzyma nowe parametry w przyszłych wersjach, możesz je
-natychmiast nadpisać flagą `--paper-simulator-setting klucz=wartość` –
-argument akceptuje wiele powtórzeń i konwertuje wartości na liczby
-zmiennoprzecinkowe, więc `--paper-simulator-setting maintenance_margin_ratio=0.2`
-zadziała bez aktualizacji CLI.
+  natychmiast nadpisać flagą `--paper-simulator-setting klucz=wartość` –
+  argument akceptuje wiele powtórzeń i konwertuje wartości na liczby
+  zmiennoprzecinkowe, więc `--paper-simulator-setting maintenance_margin_ratio=0.2`
+  zadziała bez aktualizacji CLI.  Wartości pozostają widoczne zarówno w
+  wynikach JSON, jak i w `manager.get_paper_simulator_settings()`, więc
+  kontraktowe testy konfiguracji obejmują również nowe klucze.
 
 Watchdog można stroić bezpośrednio z CLI, gdy środowisko wymaga innych
 parametrów niż te zapisane w YAML-u.  Użyj flag `--watchdog-max-attempts`,
@@ -118,9 +125,13 @@ wyłącznika (`failure_threshold`, `recovery_timeout`, `half_open_success_thresh
 ustawisz odpowiednio przez `--watchdog-failure-threshold`,
 `--watchdog-recovery-timeout` i `--watchdog-half-open-success`.  Dzięki temu
 możesz chwilowo poluzować lub zaostrzyć strażnika (np. na sandboxie z
-większym throttlingiem) bez edycji profili.  Nadpisane wartości pojawiają
-się w JSON-owym wyniku health-checka, więc pipeline monitorujący widzi
-realnie użyte ustawienia watchdog-a.
+większym throttlingiem) bez edycji profili.  Od teraz możesz także
+precyzyjnie wskazać, które wyjątki kwalifikują się do ponawiania: dodaj
+w YAML-u listę `watchdog.retry_exceptions` (pełne ścieżki modułowe
+np. `builtins.TimeoutError`), a z CLI użyj flagi
+`--watchdog-retry-exception`, powtarzając ją dla kolejnych klas.  Nazwy
+wyjątków pojawiają się w JSON-owym wyniku health-checka, więc pipeline
+monitorujący widzi realnie użyte ustawienia watchdog-a.
 
 Natywne adaptery margin/futures również można dopasować do testów bez
 modyfikowania YAML-a.  Wskaż tryb adaptera flagą `--native-mode` (do

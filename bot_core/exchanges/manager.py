@@ -579,22 +579,16 @@ class ExchangeManager:
     def configure_paper_simulator(self, **settings: object) -> None:
         """Stores custom parameters used by margin/futures simulators."""
 
-        allowed_keys = {
-            "leverage_limit",
-            "maintenance_margin_ratio",
-            "funding_rate",
-            "funding_interval_seconds",
-        }
-        normalized: Dict[str, object] = {}
+        normalized: Dict[str, float] = {}
         for key, value in settings.items():
-            if key not in allowed_keys:
-                raise ValueError(
-                    f"Nieznany parametr symulatora paper: {key}. Dozwolone: "
-                    "leverage_limit, maintenance_margin_ratio, funding_rate, funding_interval_seconds"
-                )
             if value is None:
                 continue
-            float_value = float(value)
+            try:
+                float_value = float(value)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"Parametr symulatora '{key}' wymaga liczbowej wartości."
+                ) from exc
             if key == "funding_interval_seconds" and float_value <= 0:
                 raise ValueError(
                     "Parametr funding_interval_seconds wymaga dodatniej wartości (sekundy)."
@@ -609,6 +603,7 @@ class ExchangeManager:
         self._paper_simulator_settings = merged
         if self._paper is not None:
             log.info("Reconfiguring paper simulator with settings: %s", merged)
+            self._paper = None
         self._paper = None
 
     def set_credentials(
@@ -923,8 +918,7 @@ class ExchangeManager:
 
         settings = self._default_paper_simulator_settings()
         for key, value in self._paper_simulator_settings.items():
-            if key in settings:
-                settings[key] = float(value)
+            settings[key] = float(value)
         return settings
 
     def _default_paper_simulator_settings(self) -> Dict[str, float]:
