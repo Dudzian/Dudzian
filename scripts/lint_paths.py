@@ -7,16 +7,11 @@ import re
 import sys
 
 # Paths are relative to repository root.
-BANNED_PATHS = [
-    pathlib.Path("KryptoLowca/bot"),
-]
+BANNED_PATHS = [pathlib.Path("KryptoLowca/bot")]
 
 # Python files inside these directories may still import ``KryptoLowca``
 # because they implement the legacy surface itself.
-_ALLOWED_KRYPTLOWCA_IMPORT_ROOTS = {
-    pathlib.Path("KryptoLowca"),
-    pathlib.Path("archive"),
-}
+_ALLOWED_KRYPTLOWCA_IMPORT_ROOTS = {pathlib.Path("KryptoLowca")}
 
 _IMPORT_PATTERN = re.compile(r"^\s*(?:from|import)\s+KryptoLowca\b", re.MULTILINE)
 
@@ -30,7 +25,7 @@ def main() -> int:
         if candidate.exists():
             failures.append(
                 "Disallowed legacy paths detected: "
-                f"{rel_path}. Move files to archive/legacy_bot or delete them."
+                f"{rel_path}. Usuń ten katalog lub przenieś kod do wspieranych modułów."
             )
 
     forbidden_imports: list[str] = []

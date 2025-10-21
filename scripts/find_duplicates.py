@@ -7,11 +7,9 @@ the repository, normalises the Python AST (removing docstrings and comments)
 and reports groups of duplicated files as well as duplicated class/function
 definitions.
 
-The script focuses on the directories that matter for the new runtime
-implementation (``bot_core/``, ``core/``, ``scripts/``, ``tests/``) and compares
-them with the legacy sources (``KryptoLowca/`` and ``archive/legacy_bot``).
-Whenever the same implementation appears in several locations the script
-marks the preferred (canonical) location using a deterministic priority order.
+The script focuses on the directories that matter for the maintained runtime
+implementation (``bot_core/``, ``core/``, ``scripts/``, ``tests/``,
+``KryptoLowca/``) and orders them deterministically when reporting duplicates.
 
 The output is a JSON object containing two sections:
 
@@ -44,8 +42,8 @@ from typing import Dict, Iterable, Iterator, List, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# Directories that constitute the new code base – we prefer keeping these files
-# and treat other locations as legacy fallbacks.
+# Directories that constitute the maintained code base – we prefer keeping
+# these files and treat other locations as archival fallbacks.
 CANONICAL_ROOTS = [
     REPO_ROOT / "bot_core",
     REPO_ROOT / "core",
@@ -53,16 +51,12 @@ CANONICAL_ROOTS = [
     REPO_ROOT / "proto",
     REPO_ROOT / "scripts",
     REPO_ROOT / "tests",
-]
-
-# Locations that may still contain historical sources copied from the legacy
-# repository.
-LEGACY_ROOTS = [
     REPO_ROOT / "KryptoLowca",
-    REPO_ROOT / "archive" / "legacy_bot",
 ]
 
-SCAN_ROOTS = CANONICAL_ROOTS + LEGACY_ROOTS
+# Remaining locations (np. ``archive/``) są traktowane jako archiwalne snapshoty
+# i analizowane tylko wtedy, gdy zawierają pliki Pythona.
+SCAN_ROOTS = CANONICAL_ROOTS
 
 
 class _DocstringStripper(ast.NodeTransformer):
@@ -116,11 +110,8 @@ class FileInfo:
         for index, base in enumerate(CANONICAL_ROOTS):
             if base in self.path.parents or self.path == base:
                 return (0, f"{index:02d}:{self.relative_path.as_posix()}")
-        for index, base in enumerate(LEGACY_ROOTS):
-            if base in self.path.parents or self.path == base:
-                return (index + 1, self.relative_path.as_posix())
         # Everything else is considered the lowest priority (archival).
-        return (len(LEGACY_ROOTS) + 1, self.relative_path.as_posix())
+        return (len(CANONICAL_ROOTS) + 1, self.relative_path.as_posix())
 
 
 @dataclasses.dataclass(slots=True)

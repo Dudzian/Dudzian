@@ -1,2 +1,0 @@
-symbol,timeframe,entry_ts,entry_price,entry_qty,exit_ts,exit_price_wap,pnl_usdt,pnl_pct,r_multiple,fills_json
-LINK/USDT,15m,1758150900000,24.11000000,171.99375089,1758175200000,23.82056982,-58.02394037,-1.3993,-1.1605,"[{""ts"": 1758150900000, ""price"": 24.11, ""qty"": 171.99375088822268, ""tag"": ""ENTRY""}, {""ts"": 1758175200000, ""price"": 23.820569822272443, ""qty"": 171.99375088822268, ""tag"": ""SL""}]"

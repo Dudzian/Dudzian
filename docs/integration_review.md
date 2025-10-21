@@ -1,19 +1,15 @@
 # Exchange Integration Review
 
-> **Legacy notice:** Historical sources once kept in `KryptoLowca/bot` now live under
-> `archive/legacy_bot/` and are excluded from the supported runtime. All integration
-> work must target the main `KryptoLowca` package. The legacy module
-> The legacy `KryptoLowca.managers` package has been removed; new code must rely on
-> the top-level `KryptoLowca.*` modules together with
-> `bot_core.execution.live_router.LiveExecutionRouter` and
-> `bot_core.exchanges.ccxt_adapter.CCXTSpotAdapter` (or higher-level helpers in
-> `KryptoLowca.exchange_adapter`).
->
-> **2025-02 sanity sweep:** Legacy compatibility layers now re-export the canonical
-> implementations from `bot_core`.  Modules such as `KryptoLowca.ai_manager` and
-> `archive.legacy_bot.managers.exchange_core` only proxy to the modern runtime.  Use
-> `python scripts/find_duplicates.py --json` to verify that no redundant
-> implementations reappear when touching this area.
+> **Stan na 2025-10:** Warstwa `archive/legacy_bot` została usunięta – wspierane
+> uruchomienia korzystają wyłącznie z modułów `KryptoLowca.*` oraz `bot_core.*`.
+> Pakiet `KryptoLowca.managers` pozostaje wygaszony; do usług środowiska należy
+> używać top-levelowych modułów (`KryptoLowca.exchange_manager`,
+> `KryptoLowca.report_manager`, `KryptoLowca.risk_manager`, itd.) wraz z
+> komponentami runtime z `bot_core` (np.
+> `bot_core.execution.live_router.LiveExecutionRouter`,
+> `bot_core.exchanges.ccxt_adapter.CCXTSpotAdapter`).  Skrypt
+> `python scripts/find_duplicates.py --json` nadal pomaga identyfikować
+> zdublowane implementacje i powinien być uruchamiany po większych refaktorach.
 
 ## Implemented Scope
 - Unified adapter abstraction defined in `KryptoLowca/exchanges/interfaces.py`, with REST and WebSocket helpers, rate limiting, and order handling primitives.

@@ -7,9 +7,9 @@ risk governance, AI-driven signals and a desktop Trading GUI. Runtime metadata
 – including risk profiles and environment presets – is centralised in
 `bot_core.runtime.metadata` and consumed consistently by every launcher.
 
-> **Important:** Legacy source code that previously lived under
-> `KryptoLowca/bot` is archived in `archive/legacy_bot/` and kept for reference
-> only. Modern development must target the packages described below.
+> **Important:** Pakiet `KryptoLowca/bot` został usunięty.  Wszystkie aktywne
+> moduły runtime znajdują się bezpośrednio w `KryptoLowca/` oraz `bot_core/` i to
+> tam należy kierować dalszy rozwój.
 
 ## Architecture Overview
 
