@@ -51,7 +51,7 @@ strategies:
   - `capital_policy`: nazwa (`equal_weight`, `risk_parity`, `volatility_target`, `signal_strength`, `fixed_weight`) lub słownik z polami `name`, `weights`, `label`, `rebalance_seconds`.
   - `allocation_rebalance_seconds`: wymusza minimalny odstęp pomiędzy obliczeniami alokacji (sekundy).
   - `portfolio_governor`: integracja z PortfolioGovernorem (jak dotychczas), rozszerzona o dynamiczne wagi.
-- `MultiStrategyScheduler` obsługuje polityki alokacji kapitału (`CapitalAllocationPolicy`). Domyślnie stosowana jest wariacja risk-parity (`RiskParityAllocation`), można ją nadpisać przy konstrukcji schedulera lub w konfiguracji YAML.
+- `MultiStrategyScheduler` obsługuje polityki alokacji kapitału (`CapitalAllocationPolicy`). Domyślnie stosowana jest wariacja risk-parity (`RiskParityAllocation`), można ją nadpisać przy konstrukcji schedulera lub w konfiguracji YAML. Implementacje dostępne są w module `bot_core.runtime.capital_policies` i mogą być niezależnie wykorzystywane w innych komponentach.
 - Scheduler loguje każde odświeżenie wag (`Capital allocator ... weights: ...`) oraz decyzje PortfolioGovernora, w tym nowe limity sygnałów.
 - API runtime udostępnia `MultiStrategyScheduler.set_capital_policy(...)`, `replace_capital_policy(...)` oraz `rebalance_capital(...)`,
   dzięki czemu można dynamicznie podmienić politykę kapitału, wymusić przeliczenie wag (z pominięciem cool-downu) oraz

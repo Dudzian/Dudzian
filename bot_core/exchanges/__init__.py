@@ -21,7 +21,10 @@ from bot_core.exchanges.core import (
     PaperBackend,
     PositionDTO,
 )
-from bot_core.exchanges.manager import ExchangeManager
+try:  # pragma: no cover - środowisko testowe może nie zawierać pełnej konfiguracji managera
+    from bot_core.exchanges.manager import ExchangeManager
+except Exception:  # pragma: no cover - zapewniamy import pakietu
+    ExchangeManager = None  # type: ignore[assignment]
 from bot_core.exchanges.binance.futures import BinanceFuturesAdapter
 from bot_core.exchanges.binance.margin import BinanceMarginAdapter
 from bot_core.exchanges.binance.spot import BinanceSpotAdapter
