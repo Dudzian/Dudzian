@@ -11,10 +11,7 @@
 >
 > **2025-02 sanity sweep:** Legacy compatibility layers now re-export the canonical
 > implementations from `bot_core`.  Modules such as `KryptoLowca.ai_manager` and
-> `archive.legacy_bot.managers.exchange_core` only proxy to the modern runtime. The
-> `archive.legacy_bot._compat` helper wires every legacy module to its canonical
-> counterpart, so the duplicate finder reports **zero** file-level collisions between
-> the legacy tree and the supported code paths.  Use
+> `archive.legacy_bot.managers.exchange_core` only proxy to the modern runtime.  Use
 > `python scripts/find_duplicates.py --json` to verify that no redundant
 > implementations reappear when touching this area.
 

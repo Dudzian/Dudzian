@@ -22,6 +22,7 @@ from .regime import (
     RegimeSummary,
     RiskLevel,
 )
+from .pipeline import register_model_artifact, train_gradient_boosting_model
 from .scheduler import (
     RetrainingScheduler,
     ScheduledTrainingJob,
@@ -71,4 +72,6 @@ __all__ = [
     "PipelineHistoryDiff",
     "PipelineHistorySnapshot",
     "register_external_model_adapter",
+    "register_model_artifact",
+    "train_gradient_boosting_model",
 ]

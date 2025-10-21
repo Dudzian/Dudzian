@@ -1,6 +1,19 @@
-"""Legacy compatibility shim delegating to :mod:`bot_core.exchanges.core`."""
+"""Legacy aliases for :mod:`bot_core.exchanges.core`."""
+
 from __future__ import annotations
 
-from archive.legacy_bot._compat import proxy_globals
+from typing import Any
 
-proxy_globals(globals(), "bot_core.exchanges.core", "managers/exchange_core.py")
+from bot_core.exchanges import core as _impl
+from bot_core.exchanges.core import *  # noqa: F401,F403 - keep public API intact
+
+__all__ = list(getattr(_impl, "__all__", ()))
+__doc__ = __doc__ + ("\n\n" + (_impl.__doc__ or ""))
+
+
+def __getattr__(name: str) -> Any:  # pragma: no cover
+    return getattr(_impl, name)
+
+
+def __dir__() -> list[str]:  # pragma: no cover
+    return sorted(set(__all__) | set(dir(_impl)))

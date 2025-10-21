@@ -90,10 +90,12 @@ def _emit_history_log(
     resolved_logger.log(level, message, **log_kwargs)
 
 _AI_IMPORT_ERROR: Optional[BaseException] = None
+_FALLBACK_ACTIVE = False
 try:  # pragma: no cover - w testach zastępujemy _AIModels atrapą
     from ai_models import AIModels as _DefaultAIModels  # type: ignore
 except Exception as exc:  # pragma: no cover - brak zależności na CI
     _AI_IMPORT_ERROR = exc
+    _FALLBACK_ACTIVE = True
 
     class _DefaultAIModels:
         """Minimalny model fallback używany w testach bez zależności ML."""
@@ -395,6 +397,14 @@ class AIManager:
         self._regime_classifier = MarketRegimeClassifier()
         self._latest_regimes: Dict[str, MarketRegimeAssessment] = {}
         self._regime_histories: Dict[str, RegimeHistory] = {}
+        self._degraded = bool(_AI_IMPORT_ERROR)
+        self._degradation_reason: str | None = None
+        if self._degraded:
+            self._degradation_reason = (
+                "fallback_ai_models"
+                if _AI_IMPORT_ERROR is not None
+                else "backend_validation_failed"
+            )
         try:
             init_signature = inspect.signature(_AIModels.__init__)  # type: ignore[attr-defined]
         except (TypeError, ValueError, AttributeError):
@@ -503,6 +513,28 @@ class AIManager:
         """Zwróć kopię mapowania aktywnych modeli."""
 
         return dict(self._active_models)
+
+    @property
+    def is_degraded(self) -> bool:
+        """Czy menedżer działa w trybie degradacji (tylko fallback)?"""
+
+        return self._degraded
+
+    @property
+    def degradation_reason(self) -> str | None:
+        """Zwraca powód degradacji (jeśli aktywna)."""
+
+        return self._degradation_reason
+
+    def require_real_models(self) -> None:
+        """Zgłasza wyjątek gdy dostępne są tylko fallbackowe modele AI."""
+
+        if self._degraded:
+            reason = self._degradation_reason or "AI backend in degraded mode"
+            raise RuntimeError(
+                "Real models are required for live trading; current backend is degraded: "
+                + str(reason)
+            )
 
     # --------------------------- Zespoły modeli ---------------------------
     def register_ensemble(
@@ -749,10 +781,23 @@ class AIManager:
         loader = getattr(_AIModels, "load_model", None)
         if callable(loader):
             try:
-                return loader(path)
+                model = loader(path)
+                self._mark_backend_ready(model)
+                return model
             except Exception:
                 logger.debug("Nowy loader modeli nie powiódł się dla %s", path, exc_info=True)
-        return _joblib_load(path)
+        model = _joblib_load(path)
+        self._mark_backend_ready(model)
+        return model
+
+    def _mark_backend_ready(self, model: Any) -> None:
+        if not self._degraded:
+            return
+        if _AI_IMPORT_ERROR is not None:
+            return
+        if getattr(model, "feature_names", None):
+            self._degraded = False
+            self._degradation_reason = None
 
     def _track_signal(self, symbol: str, signals: pd.Series) -> None:
         """Zachowaj ostatnie predykcje do monitorowania dryfu."""

@@ -1,6 +1,19 @@
-"""Legacy compatibility shim delegating to :mod:`KryptoLowca.exchange_manager`."""
+"""Legacy wrapper mirroring :mod:`bot_core.exchanges.manager`."""
+
 from __future__ import annotations
 
-from archive.legacy_bot._compat import proxy_globals
+from typing import Any
 
-proxy_globals(globals(), "KryptoLowca.exchange_manager", "managers/exchange_manager.py")
+from bot_core.exchanges import manager as _impl
+from bot_core.exchanges.manager import *  # noqa: F401,F403 - public API passthrough
+
+__all__ = list(getattr(_impl, "__all__", ()))
+__doc__ = __doc__ + ("\n\n" + (_impl.__doc__ or ""))
+
+
+def __getattr__(name: str) -> Any:  # pragma: no cover
+    return getattr(_impl, name)
+
+
+def __dir__() -> list[str]:  # pragma: no cover
+    return sorted(set(__all__) | set(dir(_impl)))

@@ -909,6 +909,7 @@ def test_main_prints_pythonpath_value_json(
     assert payload["repo_root"] == str(repo_root)
     assert payload["pythonpath_entries"] == [str(repo_root), expected_tests]
     assert payload["pythonpath"] == ":".join([str(repo_root), expected_tests])
+    assert captured.out.strip() == ":".join([str(repo_root), expected_tests])
 
 
 def test_main_with_set_env_and_export_prints_export_command(
