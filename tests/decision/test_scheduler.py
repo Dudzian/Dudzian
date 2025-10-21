@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import List, Mapping, Sequence
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -138,3 +138,59 @@ def test_training_scheduler_executes_external_backend() -> None:
     record = job.history[-1]
     assert record.backend == "mean_regressor"
     assert record.dataset_rows == len(dataset.vectors)
+
+
+def test_cross_validation_uses_external_adapter_for_each_fold() -> None:
+    calls: List[int] = []
+
+    def _tracking_train(context: ExternalTrainingContext) -> ExternalTrainingResult:
+        calls.append(len(context.train_matrix))
+        mean_target = sum(context.train_targets) / len(context.train_targets)
+        model = _MeanModel(mean_target, context.feature_names, context.scalers)
+        return ExternalTrainingResult(state={"mean": mean_target}, trained_model=model)
+
+    def _tracking_load(
+        state: Mapping[str, object],
+        feature_names: Sequence[str],
+        metadata: Mapping[str, object],
+    ) -> _MeanModel:
+        scalers_raw = metadata.get("feature_scalers", {})
+        scalers: dict[str, tuple[float, float]] = {}
+        if isinstance(scalers_raw, Mapping):
+            for name, payload in scalers_raw.items():
+                if not isinstance(payload, Mapping):
+                    continue
+                scalers[str(name)] = (
+                    float(payload.get("mean", 0.0)),
+                    float(payload.get("stdev", 0.0)),
+                )
+        return _MeanModel(float(state.get("mean", 0.0)), feature_names, scalers)
+
+    register_external_model_adapter(
+        ExternalModelAdapter(
+            backend="tracking_regressor",
+            train=_tracking_train,
+            load=_tracking_load,
+        )
+    )
+
+    vectors: list[FeatureVector] = []
+    for idx in range(16):
+        features = {"momentum": float(idx) / 4.0, "volume_ratio": 1.0 + (idx % 3) * 0.15}
+        vectors.append(
+            FeatureVector(
+                timestamp=1_700_200_000 + idx * 120,
+                symbol="BTCUSDT",
+                features=features,
+                target_bps=float(idx % 5 - 2),
+            )
+        )
+    dataset = FeatureDataset(vectors=tuple(vectors), metadata={"symbols": ["BTCUSDT"]})
+
+    trainer = ModelTrainer(backend="tracking_regressor", validation_split=0.2)
+    artifact = trainer.train(dataset)
+
+    cv_meta = artifact.metadata["cross_validation"]
+    folds = cv_meta.get("folds", 0)
+    assert folds > 0
+    assert len(calls) >= folds + 1
