@@ -1,6 +1,11 @@
+from __future__ import annotations
+
 import pytest
 from pydantic import ValidationError
 
+from bot_core.decision.schema import (
+    DecisionEngineSummary as SchemaDecisionEngineSummary,
+)
 from bot_core.decision.schemas import DecisionEngineSummary
 
 
@@ -74,16 +79,10 @@ def test_decision_engine_summary_rejects_invalid_type() -> None:
             "longest_acceptance_streak": 0,
             "longest_rejection_streak": 0,
         })
-from __future__ import annotations
-
-import pytest
-from pydantic import ValidationError
-
-from bot_core.decision.schema import DecisionEngineSummary
 
 
 def test_decision_engine_summary_schema_accepts_minimal_payload() -> None:
-    summary = DecisionEngineSummary(
+    summary = SchemaDecisionEngineSummary(
         total=0,
         accepted=0,
         rejected=0,
@@ -117,7 +116,7 @@ def test_decision_engine_summary_schema_accepts_minimal_payload() -> None:
 
 def test_decision_engine_summary_schema_rejects_negative_counts() -> None:
     with pytest.raises(ValidationError):
-        DecisionEngineSummary(
+        SchemaDecisionEngineSummary(
             total=-1,
             accepted=0,
             rejected=0,
