@@ -6,21 +6,17 @@ from datetime import datetime, timezone, timedelta
 
 import pytest
 
-from bot_core.runtime.multi_strategy_scheduler import (
+from bot_core.runtime.capital_policies import (
     DrawdownAdaptiveAllocation,
     FixedWeightAllocation,
     MetricWeightedAllocation,
     MetricWeightRule,
-    MultiStrategyScheduler,
     RiskProfileBudgetAllocation,
     SignalStrengthAllocation,
     SmoothedCapitalAllocationPolicy,
     TagQuotaAllocation,
-    FixedWeightAllocation,
-    MultiStrategyScheduler,
-    RiskProfileBudgetAllocation,
-    SignalStrengthAllocation,
 )
+from bot_core.runtime.multi_strategy_scheduler import MultiStrategyScheduler
 
 from tests.test_multi_strategy_scheduler import (
     DummyFeed,
