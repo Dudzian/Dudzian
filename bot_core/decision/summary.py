@@ -6,7 +6,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Iterable, Mapping, MutableMapping, Sequence
 
-from bot_core.decision.schemas import DecisionEngineSummary
+from bot_core.decision.models import DecisionEngineSummary
 
 from .utils import coerce_float
 
