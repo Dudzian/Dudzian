@@ -844,6 +844,12 @@ def _build_summary(
         history=snapshots,
     )
 class _RiskServiceStub:
+    def __init__(self, approval: bool) -> None:
+        self._approval = approval
+        self.calls: list[RiskDecision] = []
+
+    def __call__(self, decision: RiskDecision) -> bool:
+        return self.evaluate_decision(decision)
     def __init__(self, approval: Any) -> None:
         self._approval = approval
         self.calls: list[RiskDecision] = []
@@ -3336,6 +3342,11 @@ def test_auto_trader_decision_timeline_summary(
     assert timeline["total"] == 4
     assert timeline["first_timestamp"] == pytest.approx(1000.0)
     assert timeline["last_timestamp"] == pytest.approx(1078.0)
+    assert timeline["services"] == {
+        "_ServiceAlpha": {"evaluations": 2, "errors": 0},
+        "_ServiceBeta": {"evaluations": 1, "errors": 0},
+        "_ServiceGamma": {"evaluations": 1, "errors": 1},
+    }
     assert [bucket["start"] for bucket in timeline["buckets"]] == [
         1000.0,
         1020.0,
@@ -4040,6 +4051,11 @@ def test_auto_trader_guardrail_timeline_exports(monkeypatch: pytest.MonkeyPatch)
     assert len(records) == 2
     assert all(record["bucket_type"] == "bucket" for record in records)
     assert all(isinstance(record["start"], datetime) for record in records)
+    assert hasattr(records, "summary")
+    summary_metadata = records.summary
+    assert summary_metadata["services"]["_ServiceAlpha"]["guardrail_events"] == 2
+    assert summary_metadata["services"]["_ServiceAlpha"]["evaluations"] == 2
+    assert summary_metadata["guardrail_trigger_thresholds"]["count"] == 4
     first_record_thresholds = records[0]["guardrail_trigger_thresholds"]
     assert first_record_thresholds["count"] == 3
     assert first_record_thresholds["sum"] == pytest.approx(2.8)
@@ -4051,6 +4067,7 @@ def test_auto_trader_guardrail_timeline_exports(monkeypatch: pytest.MonkeyPatch)
     second_record_values = records[1]["guardrail_trigger_values"]
     assert second_record_values["count"] == 1
 
+    df_minimal = trader.guardrail_timeline_to_dataframe(
     summary_records = trader.guardrail_timeline_to_records(
         bucket_s=20.0,
         fill_gaps=True,
@@ -4083,11 +4100,19 @@ def test_auto_trader_guardrail_timeline_exports(monkeypatch: pytest.MonkeyPatch)
         include_services=False,
         include_guardrail_dimensions=False,
     )
-    assert list(df["guardrail_events"]) == [2, 1]
-    assert "services" not in df.columns
-    assert "guardrail_reasons" not in df.columns
-    assert "guardrail_trigger_thresholds" not in df.columns
-    assert "guardrail_trigger_values" not in df.columns
+    assert list(df_minimal["guardrail_events"]) == [2, 1]
+    assert "services" not in df_minimal.columns
+    assert "guardrail_reasons" not in df_minimal.columns
+    assert "guardrail_trigger_thresholds" not in df_minimal.columns
+    assert "guardrail_trigger_values" not in df_minimal.columns
+
+    df_with_metadata = trader.guardrail_timeline_to_dataframe(bucket_s=20.0)
+    assert df_with_metadata.attrs["guardrail_summary"]["services"]["_ServiceAlpha"][
+        "guardrail_events"
+    ] == 2
+    assert df_with_metadata.attrs["guardrail_summary"]["guardrail_trigger_thresholds"][
+        "count"
+    ] == 4
 
     df_with_summary = trader.guardrail_timeline_to_dataframe(
         bucket_s=20.0,
