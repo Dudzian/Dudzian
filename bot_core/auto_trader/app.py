@@ -7198,6 +7198,7 @@ class AutoTrader:
         include_missing_bucket: bool = False,
         coerce_timestamps: bool = False,
         tz: tzinfo | None = timezone.utc,
+        include_summary_metadata: bool = False,
     ) -> list[dict[str, Any]]:
         summary = self.summarize_guardrail_timeline(
             bucket_s=bucket_s,
@@ -7248,6 +7249,29 @@ class AutoTrader:
                 missing_record["end"] = None
                 records.append(missing_record)
 
+        if include_summary_metadata:
+            summary_record = {
+                key: copy.deepcopy(value)
+                for key, value in summary.items()
+                if key != "buckets"
+            }
+            summary_record.setdefault("bucket_type", "summary")
+            summary_record.setdefault("index", None)
+            summary_record.setdefault("start", None)
+            summary_record.setdefault("end", None)
+            summary_record.setdefault("guardrail_events", summary.get("total", 0))
+            if coerce_timestamps:
+                for timestamp_key in ("first_timestamp", "last_timestamp"):
+                    if timestamp_key in summary_record:
+                        summary_record[timestamp_key] = (
+                            self._normalize_timestamp_for_export(
+                                summary_record[timestamp_key],
+                                coerce=True,
+                                tz=tz,
+                            )
+                        )
+            records.append(summary_record)
+
         return records
 
     def guardrail_timeline_to_dataframe(
@@ -7281,6 +7305,7 @@ class AutoTrader:
         include_missing_bucket: bool = False,
         coerce_timestamps: bool = True,
         tz: tzinfo | None = timezone.utc,
+        include_summary_metadata: bool = False,
     ) -> pd.DataFrame:
         records = self.guardrail_timeline_to_records(
             bucket_s=bucket_s,
@@ -7311,6 +7336,7 @@ class AutoTrader:
             include_missing_bucket=include_missing_bucket,
             coerce_timestamps=coerce_timestamps,
             tz=tz,
+            include_summary_metadata=include_summary_metadata,
         )
 
         if not records:
