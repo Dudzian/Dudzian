@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from bot_core.decision.summary import summarize_evaluation_payloads
+from bot_core.decision.summary import (
+    DecisionEngineSummary,
+    summarize_evaluation_payloads,
+)
 
 
 def test_summarize_evaluation_payloads_counts_and_latest_fields() -> None:
@@ -66,7 +69,9 @@ def test_summarize_evaluation_payloads_counts_and_latest_fields() -> None:
         },
     ]
 
-    summary = summarize_evaluation_payloads(evaluations, history_limit=5)
+    summary_model = summarize_evaluation_payloads(evaluations, history_limit=5)
+    assert isinstance(summary_model, DecisionEngineSummary)
+    summary = summary_model.model_dump()
 
     assert summary["total"] == 2
     assert summary["accepted"] == 1
@@ -627,7 +632,9 @@ def test_summarize_evaluation_payloads_respects_history_limit() -> None:
         },
     ]
 
-    summary = summarize_evaluation_payloads(evaluations, history_limit=2)
+    summary_model = summarize_evaluation_payloads(evaluations, history_limit=2)
+    assert isinstance(summary_model, DecisionEngineSummary)
+    summary = summary_model.model_dump()
 
     assert summary["total"] == 2
     assert summary["accepted"] == 1
@@ -660,7 +667,9 @@ def test_summarize_evaluation_payloads_tracks_longest_streaks() -> None:
         {"accepted": True},
     ]
 
-    summary = summarize_evaluation_payloads(evaluations)
+    summary_model = summarize_evaluation_payloads(evaluations)
+    assert isinstance(summary_model, DecisionEngineSummary)
+    summary = summary_model.model_dump()
 
     assert summary["longest_acceptance_streak"] == 2
     assert summary["longest_rejection_streak"] == 3
