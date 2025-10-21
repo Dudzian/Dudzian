@@ -221,7 +221,10 @@ def _collect_evaluations(args: argparse.Namespace) -> list[tuple[datetime | None
 
 def _build_summary(args: argparse.Namespace, evaluations: list[tuple[datetime | None, Mapping[str, object]]]) -> Mapping[str, object]:
     payloads = [payload for _, payload in evaluations]
-    summary_metrics = summarize_evaluation_payloads(payloads, history_limit=args.history_limit)
+    summary_model = summarize_evaluation_payloads(
+        payloads, history_limit=args.history_limit
+    )
+    summary_metrics = summary_model.model_dump(exclude_none=True)
     filters = {
         key: value
         for key, value in {

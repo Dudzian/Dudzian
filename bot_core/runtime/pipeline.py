@@ -2257,10 +2257,11 @@ class DecisionAwareSignalSink(StrategySignalSink):
             self._serialize_evaluation_payload(evaluation, include_candidate=True)
             for evaluation in evaluations
         ]
-        return summarize_evaluation_payloads(
+        summary = summarize_evaluation_payloads(
             payloads,
             history_limit=history_limit,
         )
+        return summary.model_dump(exclude_none=True)
 
     def _legacy_evaluation_summary(
         self,
