@@ -856,7 +856,10 @@ class _RiskServiceStub:
 
     def evaluate_decision(self, decision: RiskDecision) -> Any:
         self.calls.append(decision)
-        return self._approval
+        result = self._approval
+        if callable(result):
+            result = result()
+        return result
 
     def __call__(self, decision: RiskDecision) -> Any:  # pragma: no cover - compatibility shim
         return self.evaluate_decision(decision)
@@ -867,10 +870,14 @@ class _RiskServiceResponseStub:
         self._response = response
         self.calls: list[RiskDecision] = []
 
+    def evaluate_decision(self, decision: RiskDecision) -> Any:
+        self.calls.append(decision)
+        result = self._response
+        if callable(result):
+            result = result()
+        return result
     def _resolve(self) -> Any:
-        if callable(self._response):
-            return self._response()
-        return self._response
+        return self._response() if callable(self._response) else self._response
 
     def evaluate_decision(self, decision: RiskDecision) -> Any:
         self.calls.append(decision)
@@ -878,17 +885,9 @@ class _RiskServiceResponseStub:
 
     def __call__(self, decision: RiskDecision) -> Any:  # pragma: no cover - compatibility shim
         return self.evaluate_decision(decision)
-    def __call__(self, decision: RiskDecision) -> Any:
-        self.calls.append(decision)
-        if callable(self._response):
-            return self._response()
-        return self._response
-    def evaluate_decision(self, decision: RiskDecision) -> Any:
-        self.calls.append(decision)
-        result = self._response
-        if callable(result):
-            result = result()
-        return result
+
+    def __call__(self, decision: RiskDecision) -> Any:  # pragma: no cover - compatibility shim
+        return self.evaluate_decision(decision)
 
 
 class _ExecutionServiceStub:
@@ -3385,6 +3384,42 @@ def test_auto_trader_decision_timeline_summary(
     assert last_bucket["reasons"] == {"cooldown": 1}
     assert last_bucket["states"] == {"blocked": 1}
     assert last_bucket["modes"] == {"demo": 1}
+    assert timeline["approved"] == 2
+    assert timeline["rejected"] == 1
+    assert timeline["unknown"] == 1
+    assert timeline["errors"] == 1
+    assert timeline["services"] == {
+        "_ServiceAlpha": {
+            "evaluations": 2,
+            "approved": 1,
+            "rejected": 1,
+            "unknown": 0,
+            "errors": 0,
+            "raw_true": 1,
+            "raw_false": 1,
+            "raw_none": 0,
+        },
+        "_ServiceBeta": {
+            "evaluations": 1,
+            "approved": 1,
+            "rejected": 0,
+            "unknown": 0,
+            "errors": 0,
+            "raw_true": 1,
+            "raw_false": 0,
+            "raw_none": 0,
+        },
+        "_ServiceGamma": {
+            "evaluations": 1,
+            "approved": 0,
+            "rejected": 0,
+            "unknown": 1,
+            "errors": 1,
+            "raw_true": 0,
+            "raw_false": 0,
+            "raw_none": 1,
+        },
+    }
 
     blocked_only = trader.summarize_risk_decision_timeline(
         bucket_s=20,
@@ -3400,6 +3435,7 @@ def test_auto_trader_decision_timeline_summary(
         bucket_s=20,
         include_services=False,
     )
+    assert "services" not in timeline_no_services
     assert "services" not in timeline_no_services["buckets"][0]
 
     timeline_coerced = trader.summarize_risk_decision_timeline(
@@ -3499,6 +3535,7 @@ def test_auto_trader_decision_timeline_exports(
     base_records = trader.risk_decision_timeline_to_records(
         bucket_s=20,
         fill_gaps=True,
+        include_services=False,
     )
     assert [record["index"] for record in base_records] == [60, 61, 62]
     assert base_records[0]["bucket_type"] == "bucket"
@@ -3518,6 +3555,7 @@ def test_auto_trader_decision_timeline_exports(
         "bucket",
         "bucket",
         "missing",
+        "summary",
     ]
     first_bucket = enriched_records[0]
     assert first_bucket["index"] == 60
@@ -3525,9 +3563,15 @@ def test_auto_trader_decision_timeline_exports(
     assert first_bucket["services"] == {"_ServiceAlpha": 2}
     assert first_bucket["states"] == {"active": 1, "blocked": 1}
     assert first_bucket["reasons"] == {"guardrail": 1, "ok": 1}
-    assert enriched_records[-1]["bucket_type"] == "missing"
-    assert enriched_records[-1]["start"] is None
-    assert enriched_records[-1]["index"] is None
+    missing_record = enriched_records[-2]
+    assert missing_record["bucket_type"] == "missing"
+    assert missing_record["start"] is None
+    assert missing_record["index"] is None
+    summary_record = enriched_records[-1]
+    assert summary_record["bucket_type"] == "summary"
+    assert summary_record["errors"] == 1
+    assert summary_record["services"]["_ServiceAlpha"]["evaluations"] == 2
+    assert summary_record["services"]["_ServiceBeta"]["errors"] == 1
 
     df = trader.risk_decision_timeline_to_dataframe(
         bucket_s=20,
@@ -3536,9 +3580,16 @@ def test_auto_trader_decision_timeline_exports(
         include_decision_dimensions=True,
         include_missing_bucket=True,
     )
-    assert list(df["bucket_type"]) == ["bucket", "bucket", "bucket", "missing"]
+    assert list(df["bucket_type"]) == [
+        "bucket",
+        "bucket",
+        "bucket",
+        "missing",
+        "summary",
+    ]
     assert df.loc[df["bucket_type"] == "bucket", "total"].sum() == 3
     assert df.loc[df["bucket_type"] == "missing", "total"].iloc[0] == 1
+    assert df.loc[df["bucket_type"] == "summary", "errors"].iloc[0] == 1
     assert df.loc[0, "start"] == datetime.fromtimestamp(1200.0, tz=timezone.utc)
     assert "states" in df.columns
     assert "services" in df.columns
@@ -4017,6 +4068,34 @@ def test_auto_trader_guardrail_timeline_exports(monkeypatch: pytest.MonkeyPatch)
     assert second_record_values["count"] == 1
 
     df_minimal = trader.guardrail_timeline_to_dataframe(
+    summary_records = trader.guardrail_timeline_to_records(
+        bucket_s=20.0,
+        fill_gaps=True,
+        coerce_timestamps=True,
+        tz=timezone.utc,
+        include_summary_metadata=True,
+    )
+    assert len(summary_records) == 3
+    summary_record = summary_records[-1]
+    assert summary_record["bucket_type"] == "summary"
+    summary_snapshot = trader.summarize_guardrail_timeline(
+        bucket_s=20.0,
+        fill_gaps=True,
+    )
+    assert summary_record["evaluations"] == summary_snapshot["evaluations"]
+    assert summary_record["total"] == summary_snapshot["total"]
+    assert summary_record["guardrail_events"] == summary_snapshot["total"]
+    assert summary_record.get("services") == summary_snapshot.get("services")
+    assert summary_record.get("guardrail_trigger_thresholds") == summary_snapshot.get(
+        "guardrail_trigger_thresholds"
+    )
+    assert summary_record.get("guardrail_trigger_values") == summary_snapshot.get(
+        "guardrail_trigger_values"
+    )
+    assert isinstance(summary_record["first_timestamp"], datetime)
+    assert isinstance(summary_record["last_timestamp"], datetime)
+
+    df = trader.guardrail_timeline_to_dataframe(
         bucket_s=20.0,
         include_services=False,
         include_guardrail_dimensions=False,
@@ -4034,6 +4113,21 @@ def test_auto_trader_guardrail_timeline_exports(monkeypatch: pytest.MonkeyPatch)
     assert df_with_metadata.attrs["guardrail_summary"]["guardrail_trigger_thresholds"][
         "count"
     ] == 4
+
+    df_with_summary = trader.guardrail_timeline_to_dataframe(
+        bucket_s=20.0,
+        fill_gaps=True,
+        include_summary_metadata=True,
+        tz=timezone.utc,
+    )
+    assert df_with_summary["bucket_type"].iloc[-1] == "summary"
+    summary_row = df_with_summary.iloc[-1]
+    assert summary_row["evaluations"] == summary_snapshot["evaluations"]
+    assert summary_row["total"] == summary_snapshot["total"]
+    assert isinstance(summary_row["first_timestamp"], datetime)
+    assert isinstance(summary_row["last_timestamp"], datetime)
+    if "services" in df_with_summary.columns:
+        assert summary_row["services"] == summary_snapshot.get("services")
 
     records_with_missing = trader.guardrail_timeline_to_records(
         bucket_s=20.0,

@@ -187,6 +187,19 @@ telemetry bus so that dashboards can compare paper vs. live runs.
   environment variables referenced in the YAML file.
 * Watchdog policies should be more relaxed than in production to account
   for rate limiting on sandboxes.
+* Stage5 adapters provide explicit environment overrides via
+  `BYBIT_ENVIRONMENT`, `OKX_ENVIRONMENT`, `COINBASE_ENVIRONMENT`.  Use
+  `testnet` as the value to run health-checks against CCXT sandbox APIs.
+
+### Stage5 quick-reference environments
+
+| Nazwa profilu | Typ | Klucz adaptera | Tryb testowy |
+| --- | --- | --- | --- |
+| `bybit_paper` | Paper | `bybit_spot` | `BYBIT_ENVIRONMENT=paper` |
+| `bybit_futures_testnet` | Testnet | `bybit_futures` | `BYBIT_ENVIRONMENT=testnet` |
+| `okx_margin_testnet` | Testnet | `okx_margin` | `OKX_ENVIRONMENT=testnet` |
+| `coinbase_paper` | Paper | `coinbase_margin` | `COINBASE_ENVIRONMENT=paper` |
+| `coinbase_futures_live` | Live | `coinbase_futures` | brak – ustaw LIVE |
 
 ## Live trading
 

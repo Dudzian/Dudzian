@@ -6,6 +6,7 @@
 #include <QLoggingCategory>
 #include <QIODevice>
 #include <QSet>
+#include <QSslCertificate>
 
 #include <google/protobuf/empty.pb.h>
 #include <grpcpp/channel.h>
@@ -43,6 +44,16 @@ std::optional<QByteArray> readFileBytes(const QString& path)
         return std::nullopt;
     }
     return file.readAll();
+}
+
+QString sha256Fingerprint(const QByteArray& pemData)
+{
+    const QList<QSslCertificate> certificates = QSslCertificate::fromData(pemData, QSsl::Pem);
+    if (certificates.isEmpty()) {
+        return {};
+    }
+    const QByteArray digest = certificates.first().digest(QCryptographicHash::Sha256);
+    return QString::fromLatin1(digest.toHex()).toLower();
 }
 
 QStringList normalizeScopes(const QStringList& scopes)
@@ -128,6 +139,18 @@ QVector<QPair<QByteArray, QByteArray>> HealthClient::authMetadataForTesting() co
     return metadata;
 }
 
+bool HealthClient::hasChannelForTesting() const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return static_cast<bool>(m_channel);
+}
+
+bool HealthClient::hasStubForTesting() const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return static_cast<bool>(m_stub);
+}
+
 HealthClient::HealthCheckResult HealthClient::check()
 {
     ensureStub();
@@ -209,6 +232,7 @@ void HealthClient::ensureStub()
         std::shared_ptr<grpc::ChannelCredentials> credentials;
         grpc::ChannelArguments args;
         QByteArray rootPem;
+        bool fingerprintValid = true;
 
         if (m_tlsConfig.enabled) {
             grpc::SslCredentialsOptions options;
@@ -239,13 +263,18 @@ void HealthClient::ensureStub()
             }
 
             if (!m_tlsConfig.pinnedServerFingerprint.isEmpty() && !rootPem.isEmpty()) {
-                const QByteArray digest = QCryptographicHash::hash(rootPem, QCryptographicHash::Sha256).toHex();
-                const QString fingerprint = QString::fromUtf8(digest).toLower();
-                if (fingerprint != m_tlsConfig.pinnedServerFingerprint) {
+                const QString fingerprint = sha256Fingerprint(rootPem);
+                if (!fingerprint.isEmpty() && fingerprint != m_tlsConfig.pinnedServerFingerprint) {
                     qCWarning(lcHealthClient)
                         << "Fingerprint TLS HealthService nie zgadza się z konfiguracją."
                         << "Oczekiwano" << m_tlsConfig.pinnedServerFingerprint << "otrzymano" << fingerprint;
+                    fingerprintValid = false;
                 }
+            }
+
+            if (!fingerprintValid) {
+                resetChannelLocked();
+                return;
             }
 
             m_channel = grpc::CreateCustomChannel(m_endpoint.toStdString(), credentials, args);
