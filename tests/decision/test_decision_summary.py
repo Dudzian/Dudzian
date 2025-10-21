@@ -706,6 +706,32 @@ def test_summarize_evaluation_payloads_respects_history_limit() -> None:
     assert summary["current_rejection_streak"] == 0
 
 
+def test_summarize_evaluation_payloads_includes_trimmed_history() -> None:
+    evaluations = [
+        {"accepted": True, "model_name": "gbm_v1"},
+        {
+            "accepted": False,
+            "model_name": "gbm_v2",
+            "reasons": ("latency",),
+            "candidate": {"strategy": "swing"},
+        },
+        {
+            "accepted": True,
+            "model_name": "gbm_v3",
+            "reasons": ["spread"],
+            "candidate": {"strategy": "intraday"},
+        },
+    ]
+
+    summary = _summarize(evaluations, history_limit=2)
+
+    history = summary["history"]
+    assert len(history) == 2
+    assert [entry["model_name"] for entry in history] == ["gbm_v2", "gbm_v3"]
+    assert history[0]["reasons"] == ["latency"]
+    assert isinstance(history[1]["candidate"], dict)
+
+
 def test_summarize_evaluation_payloads_tracks_longest_streaks() -> None:
     evaluations = [
         {"accepted": True},

@@ -11,18 +11,18 @@ try:  # pragma: no cover - podsystem podsumowań nie ma zależności opcjonalnyc
         DecisionSummaryAggregator,
         summarize_evaluation_payloads,
     )
-except ImportError as exc:  # pragma: no cover - defensywnie zapewniamy stabilne API
+except Exception:  # pragma: no cover - defensywnie zapewniamy stabilne API
     DecisionEngineSummary = None  # type: ignore[assignment]
     DecisionSummaryAggregator = None  # type: ignore[assignment]
 
     def summarize_evaluation_payloads(*_: Any, **__: Any) -> Any:  # type: ignore[misc]
-        raise RuntimeError("Decision summary utilities are not available") from exc
+        raise RuntimeError("Decision summary utilities are not available")
 
 try:  # pragma: no cover - utils mogą być odchudzone w środowisku testowym
     from .utils import coerce_float
-except ImportError as exc:  # pragma: no cover - zachowujemy podpis funkcji
+except Exception:  # pragma: no cover - zachowujemy podpis funkcji
     def coerce_float(*_: Any, **__: Any) -> Any:  # type: ignore[misc]
-        raise RuntimeError("Decision utilities are not available") from exc
+        raise RuntimeError("Decision utilities are not available")
 
 _MINIMAL_MODE = os.environ.get("BOT_CORE_MINIMAL_DECISION") == "1"
 
@@ -35,7 +35,7 @@ RiskSnapshot = None  # type: ignore[assignment]
 if _MINIMAL_MODE:
     try:  # pragma: no cover - orchestrator może wymagać cięższych zależności
         from .orchestrator import DecisionOrchestrator
-    except ImportError:  # pragma: no cover - zachowujemy stabilny import
+    except Exception:  # pragma: no cover - zachowujemy stabilny import
         DecisionOrchestrator = None  # type: ignore[assignment]
 
     __all__ = [
@@ -48,7 +48,7 @@ if _MINIMAL_MODE:
 else:
     try:  # pragma: no cover - konektor AI wymaga opcjonalnych pakietów
         from .ai_connector import AIManagerDecisionConnector
-    except ImportError:  # pragma: no cover - zapewniamy kompatybilność API
+    except Exception:  # pragma: no cover - zapewniamy kompatybilność API
         AIManagerDecisionConnector = None  # type: ignore[assignment]
 
     try:  # pragma: no cover - modele decyzji mogą nie być zainstalowane
@@ -57,12 +57,12 @@ else:
             DecisionEvaluation,
             RiskSnapshot,
         )
-    except ImportError:  # pragma: no cover - odchudzone środowisko
+    except Exception:  # pragma: no cover - odchudzone środowisko
         DecisionCandidate = DecisionEvaluation = RiskSnapshot = None  # type: ignore[assignment]
 
     try:  # pragma: no cover - orchestrator może zależeć od innych modułów
         from .orchestrator import DecisionOrchestrator
-    except ImportError:  # pragma: no cover
+    except Exception:  # pragma: no cover
         DecisionOrchestrator = None  # type: ignore[assignment]
 
     __all__ = [
