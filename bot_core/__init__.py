@@ -11,22 +11,27 @@ from bot_core.auto_trader import AutoTrader, EmitterLike, RiskDecision
 from bot_core.config.loader import load_core_config
 from bot_core.config.models import CoreConfig
 from bot_core.database import DatabaseManager
-from bot_core.exchanges import (
-    BaseBackend,
-    Event,
-    EventBus,
-    ExchangeAdapter,
-    ExchangeManager,
-    MarketRules,
-    Mode,
-    OrderDTO,
-    OrderResult,
-    OrderSide,
-    OrderStatus,
-    OrderType,
-    PaperBackend,
-    PositionDTO,
-)
+try:
+    from bot_core.exchanges import (
+        BaseBackend,
+        Event,
+        EventBus,
+        ExchangeAdapter,
+        ExchangeManager,
+        MarketRules,
+        Mode,
+        OrderDTO,
+        OrderResult,
+        OrderSide,
+        OrderStatus,
+        OrderType,
+        PaperBackend,
+        PositionDTO,
+    )
+except Exception:  # pragma: no cover - utrzymanie kompatybilności importu pakietu
+    BaseBackend = Event = EventBus = ExchangeAdapter = ExchangeManager = None  # type: ignore[assignment]
+    MarketRules = Mode = OrderDTO = OrderResult = None  # type: ignore[assignment]
+    OrderSide = OrderStatus = OrderType = PaperBackend = PositionDTO = None  # type: ignore[assignment]
 from bot_core.runtime import BootstrapContext, bootstrap_environment
 from bot_core.trading import (
     TradingEngine,

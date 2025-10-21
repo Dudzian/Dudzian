@@ -13,6 +13,8 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from bot_core.decision import summarize_evaluation_payloads
+from bot_core.decision.schemas import DecisionEngineSummary
+from bot_core.decision.utils import coerce_float
 
 
 def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
@@ -35,22 +37,7 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
 
 
 def _parse_float(value: object) -> float | None:
-    if value is None:
-        return None
-    if isinstance(value, (int, float)):
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return None
-    if isinstance(value, str):
-        text = value.strip()
-        if not text:
-            return None
-        try:
-            return float(text)
-        except ValueError:
-            return None
-    return None
+    return coerce_float(value)
 
 
 def _split_field(value: object) -> Sequence[str]:
@@ -275,7 +262,8 @@ def _build_summary(args: argparse.Namespace, evaluations: list[tuple[datetime | 
             history_payload.append(record)
         summary["history"] = history_payload
 
-    return summary
+    validated = DecisionEngineSummary.model_validate(summary)
+    return validated.model_dump()
 
 
 def main(argv: Sequence[str] | None = None) -> int:

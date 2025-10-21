@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from bot_core.decision.summary import summarize_evaluation_payloads
+from bot_core.decision.schemas import DecisionEngineSummary
 
 
 def test_summarize_evaluation_payloads_counts_and_latest_fields() -> None:
@@ -67,6 +68,7 @@ def test_summarize_evaluation_payloads_counts_and_latest_fields() -> None:
     ]
 
     summary = summarize_evaluation_payloads(evaluations, history_limit=5)
+    DecisionEngineSummary.model_validate({"type": "decision_engine_summary", **summary})
 
     assert summary["total"] == 2
     assert summary["accepted"] == 1
@@ -628,6 +630,7 @@ def test_summarize_evaluation_payloads_respects_history_limit() -> None:
     ]
 
     summary = summarize_evaluation_payloads(evaluations, history_limit=2)
+    DecisionEngineSummary.model_validate({"type": "decision_engine_summary", **summary})
 
     assert summary["total"] == 2
     assert summary["accepted"] == 1
