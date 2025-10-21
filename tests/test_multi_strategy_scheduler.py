@@ -1,6 +1,7 @@
 import asyncio
+import logging
 from collections import deque
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Sequence
 
 import pytest
@@ -71,6 +72,8 @@ class DummyCoordinator:
     def evaluate(self, *, force: bool = False):
         self.calls.append(force)
         return None
+
+
 
 
 def _snapshot(price: float, ts: int) -> MarketSnapshot:
@@ -157,3 +160,317 @@ def test_scheduler_invokes_portfolio_coordinator_once() -> None:
     asyncio.run(scheduler.run_once())
 
     assert coordinator.calls == [True]
+
+
+def test_scheduler_suspension_and_resume_flow() -> None:
+    snapshots = [_snapshot(150.0 + i, 2000 + i) for i in range(3)]
+    strategy = DummyStrategy()
+    feed = DummyFeed(snapshots)
+    sink = DummySink()
+    now = {"value": datetime(2024, 1, 1, tzinfo=timezone.utc)}
+
+    def _clock() -> datetime:
+        return now["value"]
+
+    scheduler = MultiStrategyScheduler(
+        environment="demo",
+        portfolio="paper",
+        clock=_clock,
+    )
+
+    scheduler.register_schedule(
+        name="mean_schedule",
+        strategy_name="mean_engine",
+        strategy=strategy,
+        feed=feed,
+        sink=sink,
+        cadence_seconds=5,
+        max_drift_seconds=1,
+        warmup_bars=0,
+        risk_profile="balanced",
+        max_signals=3,
+    )
+
+    scheduler.suspend_schedule("mean_schedule", reason="maintenance", duration_seconds=600)
+
+    asyncio.run(scheduler.run_once())
+
+    assert sink.calls == []
+    snapshot = scheduler.suspension_snapshot()
+    assert "mean_schedule" in snapshot["schedules"]
+    assert snapshot["schedules"]["mean_schedule"]["reason"] == "maintenance"
+
+
+def test_scheduler_logs_expired_suspensions(caplog: pytest.LogCaptureFixture) -> None:
+    snapshots = [_snapshot(150.0, 2000)]
+    strategy = DummyStrategy()
+    feed = DummyFeed(snapshots)
+    sink = DummySink()
+    now = {"value": datetime(2024, 1, 1, tzinfo=timezone.utc)}
+
+    def _clock() -> datetime:
+        return now["value"]
+
+    scheduler = MultiStrategyScheduler(
+        environment="demo",
+        portfolio="paper",
+        clock=_clock,
+    )
+
+    scheduler.register_schedule(
+        name="mean_schedule",
+        strategy_name="mean_engine",
+        strategy=strategy,
+        feed=feed,
+        sink=sink,
+        cadence_seconds=5,
+        max_drift_seconds=1,
+        warmup_bars=0,
+        risk_profile="balanced",
+        max_signals=3,
+    )
+
+    scheduler.suspend_schedule("mean_schedule", reason="maintenance", duration_seconds=30)
+
+    caplog.set_level(logging.INFO)
+    caplog.clear()
+
+    now["value"] = now["value"] + timedelta(minutes=5)
+
+    snapshot = scheduler.suspension_snapshot()
+
+    assert "mean_schedule" not in snapshot["schedules"]
+    assert (
+        "automatycznie wznowiony po wygaśnięciu zawieszenia" in caplog.text
+    )
+    assert "maintenance" in caplog.text
+    assert "mean_schedule" in caplog.text
+
+
+def test_scheduler_updates_allocation_interval() -> None:
+    now = {"value": datetime(2024, 1, 1, tzinfo=timezone.utc)}
+
+    def _clock() -> datetime:
+        return now["value"]
+
+    strategy = DummyStrategy()
+    feed = DummyFeed([_snapshot(100.0, 1500.0)])
+    sink = DummySink()
+
+    scheduler = MultiStrategyScheduler(
+        environment="demo",
+        portfolio="paper",
+        clock=_clock,
+    )
+
+    scheduler.set_allocation_rebalance_seconds(180)
+    assert scheduler._allocation_rebalance_seconds == pytest.approx(180.0)
+
+    scheduler.set_allocation_rebalance_seconds(0)
+    assert scheduler._allocation_rebalance_seconds is None
+
+    scheduler.set_allocation_rebalance_seconds(None)
+    assert scheduler._allocation_rebalance_seconds is None
+
+    scheduler.set_allocation_rebalance_seconds("invalid")  # type: ignore[arg-type]
+    assert scheduler._allocation_rebalance_seconds is None
+
+    scheduler.register_schedule(
+        name="mean_schedule",
+        strategy_name="mean_engine",
+        strategy=strategy,
+        feed=feed,
+        sink=sink,
+        cadence_seconds=10,
+        max_drift_seconds=2,
+        warmup_bars=0,
+        risk_profile="balanced",
+        max_signals=2,
+    )
+
+    scheduler.suspend_schedule("mean_schedule", reason="cooldown", duration_seconds=60)
+    scheduler.resume_schedule("mean_schedule")
+    now["value"] = now["value"] + timedelta(minutes=20)
+
+    asyncio.run(scheduler.run_once())
+
+    assert sink.calls, "Strategia powinna zostać wznowiona i wysłać sygnał"
+    resumed_snapshot = scheduler.suspension_snapshot()
+    assert "mean_schedule" not in resumed_snapshot["schedules"]
+
+
+def test_describe_schedules_returns_metadata() -> None:
+    strategy = DummyStrategy()
+    strategy.metadata = {"tags": ["trend"], "primary_tag": "trend"}
+    feed = DummyFeed([_snapshot(200.0, 3000)])
+    sink = DummySink()
+    now = datetime(2024, 1, 2, tzinfo=timezone.utc)
+
+    scheduler = MultiStrategyScheduler(
+        environment="demo",
+        portfolio="paper",
+        clock=lambda: now,
+    )
+
+    scheduler.register_schedule(
+        name="trend_schedule",
+        strategy_name="trend_engine",
+        strategy=strategy,
+        feed=feed,
+        sink=sink,
+        cadence_seconds=15,
+        max_drift_seconds=3,
+        warmup_bars=5,
+        risk_profile="balanced",
+        max_signals=4,
+    )
+
+    scheduler.configure_signal_limit("trend_engine", "balanced", 6)
+    scheduler.suspend_tag("trend", reason="cooldown", duration_seconds=120)
+
+    schedule = scheduler._schedules[0]
+    schedule.portfolio_weight = 0.35
+    schedule.allocator_weight = 0.55
+    schedule.allocator_signal_factor = 0.9
+    schedule.governor_signal_factor = 0.8
+    schedule.last_run = now
+    schedule.warmed_up = True
+    schedule.metrics["signals"] = 2
+
+    descriptions = scheduler.describe_schedules()
+
+    assert "trend_schedule" in descriptions
+    entry = descriptions["trend_schedule"]
+    assert entry["strategy_name"] == "trend_engine"
+    assert entry["risk_profile"] == "balanced"
+    assert entry["cadence_seconds"] == pytest.approx(15.0)
+    assert entry["base_max_signals"] == 4
+    assert entry["active_max_signals"] == 4
+    assert entry["signal_limit_override"] == 6
+    details = entry["signal_limit_details"]
+    assert details["limit"] == 6
+    assert details["active"] is True
+    assert entry["allocator_weight"] == pytest.approx(0.55)
+    assert entry["portfolio_weight"] == pytest.approx(0.35)
+    assert entry["warmed_up"] is True
+    assert entry["tags"] == ["trend"]
+    assert entry["active_suspension"]["reason"] == "cooldown"
+    assert "metrics" in entry and entry["metrics"]["signals"] == pytest.approx(2.0)
+    assert entry["last_run"] == now.isoformat()
+
+
+def test_signal_limit_snapshot_returns_nested_mapping() -> None:
+    scheduler = MultiStrategyScheduler(
+        environment="demo",
+        portfolio="paper",
+        clock=lambda: datetime(2024, 1, 1, tzinfo=timezone.utc),
+        signal_limits={
+            "trend": {"balanced": 3},
+        },
+    )
+
+    scheduler.configure_signal_limit("grid", "aggressive", 2)
+    scheduler.configure_signal_limit("trend", "balanced", 4)
+    scheduler.configure_signal_limit("grid", "aggressive", None)
+
+    snapshot = scheduler.signal_limit_snapshot()
+
+    assert "trend" in snapshot
+    assert "balanced" in snapshot["trend"]
+    entry = snapshot["trend"]["balanced"]
+    assert entry["limit"] == 4
+    assert entry["active"] is True
+    snapshot["trend"]["balanced"]["limit"] = 10
+    assert (
+        scheduler.signal_limit_snapshot()["trend"]["balanced"]["limit"]
+        == 4
+    )
+
+
+def test_signal_limit_override_expires_and_is_purged() -> None:
+    now = {"value": datetime(2024, 1, 1, tzinfo=timezone.utc)}
+
+    def _clock() -> datetime:
+        return now["value"]
+
+    scheduler = MultiStrategyScheduler(
+        environment="demo",
+        portfolio="paper",
+        clock=_clock,
+    )
+
+    scheduler.configure_signal_limit(
+        "trend",
+        "balanced",
+        5,
+        reason="manual_adjustment",
+        duration_seconds=90.0,
+    )
+
+    first_snapshot = scheduler.signal_limit_snapshot()
+    entry = first_snapshot["trend"]["balanced"]
+    assert entry["limit"] == 5
+    assert entry["reason"] == "manual_adjustment"
+    assert entry["active"] is True
+    assert entry["remaining_seconds"] == pytest.approx(90.0)
+
+    now["value"] = now["value"] + timedelta(seconds=200)
+
+    second_snapshot = scheduler.signal_limit_snapshot()
+    assert second_snapshot == {}
+
+
+
+def test_expired_signal_limit_restores_schedule_and_logs(caplog: pytest.LogCaptureFixture) -> None:
+    now = {"value": datetime(2024, 1, 1, tzinfo=timezone.utc)}
+
+    def _clock() -> datetime:
+        return now["value"]
+
+    scheduler = MultiStrategyScheduler(
+        environment="demo",
+        portfolio="paper",
+        clock=_clock,
+    )
+
+    strategy = DummyStrategy()
+    feed = DummyFeed([_snapshot(150.0, 2000)])
+    sink = DummySink()
+
+    scheduler.register_schedule(
+        name="trend_schedule",
+        strategy_name="trend",
+        strategy=strategy,
+        feed=feed,
+        sink=sink,
+        cadence_seconds=10,
+        max_drift_seconds=2,
+        warmup_bars=0,
+        risk_profile="balanced",
+        max_signals=5,
+    )
+
+    schedule = scheduler._schedules[0]
+    scheduler.configure_signal_limit(
+        "trend",
+        "balanced",
+        2,
+        reason="temporary_guard",
+        duration_seconds=30,
+    )
+    scheduler._apply_signal_limits(schedule)
+
+    assert schedule.active_max_signals == 2
+
+    now["value"] = now["value"] + timedelta(seconds=120)
+
+    with caplog.at_level("INFO"):
+        snapshot = scheduler.signal_limit_snapshot()
+
+    assert snapshot == {}
+    assert schedule.active_max_signals == 5
+    assert any(
+        "Wygasło nadpisanie limitu sygnałów trend/balanced" in record.message
+        for record in caplog.records
+    )
+

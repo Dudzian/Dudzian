@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import threading
 from collections import defaultdict, deque
 from dataclasses import dataclass
@@ -22,7 +23,10 @@ from bot_core.config.models import (
     CrossExchangeArbitrageStrategyConfig,
     StrategyScheduleConfig,
     MultiStrategySchedulerConfig,
+    MultiStrategySuspensionConfig,
+    SignalLimitOverrideConfig,
 )
+from bot_core.config.loader import load_core_config
 from bot_core.data import CachedOHLCVSource, create_cached_ohlcv_source, resolve_cache_namespace
 from bot_core.data.base import OHLCVRequest
 from bot_core.data.ohlcv import OHLCVBackfillService
@@ -43,9 +47,22 @@ from bot_core.security.guards import (
     get_capability_guard,
 )
 from bot_core.runtime.multi_strategy_scheduler import (
+    BlendedCapitalAllocation,
+    CapitalAllocationPolicy,
+    DrawdownAdaptiveAllocation,
+    EqualWeightAllocation,
+    MetricWeightedAllocation,
+    MetricWeightRule,
+    FixedWeightAllocation,
     MultiStrategyScheduler,
+    RiskParityAllocation,
+    RiskProfileBudgetAllocation,
+    SignalStrengthAllocation,
+    SmoothedCapitalAllocationPolicy,
+    TagQuotaAllocation,
     StrategyDataFeed,
     StrategySignalSink,
+    VolatilityTargetAllocation,
 )
 from bot_core.runtime.journal import TradingDecisionEvent, TradingDecisionJournal
 from bot_core.runtime.portfolio_coordinator import PortfolioRuntimeCoordinator
@@ -56,14 +73,21 @@ from bot_core.runtime.portfolio_inputs import (
 from bot_core.runtime.tco_reporting import RuntimeTCOReporter
 from bot_core.runtime.controller import DailyTrendController
 from bot_core.security import SecretManager
-from bot_core.strategies.daily_trend import DailyTrendMomentumSettings, DailyTrendMomentumStrategy
-from bot_core.strategies.mean_reversion import MeanReversionSettings, MeanReversionStrategy
-from bot_core.strategies.volatility_target import VolatilityTargetSettings, VolatilityTargetStrategy
-from bot_core.strategies.cross_exchange_arbitrage import (
-    CrossExchangeArbitrageSettings,
-    CrossExchangeArbitrageStrategy,
-)
 from bot_core.strategies.base import StrategyEngine, StrategySignal, MarketSnapshot
+from bot_core.strategies.catalog import (
+    DEFAULT_STRATEGY_CATALOG,
+    StrategyCatalog,
+    StrategyDefinition,
+)
+
+try:  # pragma: no cover - strategia może być opcjonalna w starszych gałęziach
+    from bot_core.strategies.daily_trend import (  # type: ignore
+        DailyTrendMomentumSettings,
+        DailyTrendMomentumStrategy,
+    )
+except Exception:  # pragma: no cover - fallback gdy moduł nie istnieje
+    DailyTrendMomentumSettings = None  # type: ignore
+    DailyTrendMomentumStrategy = None  # type: ignore
 
 try:  # pragma: no cover - moduł decision może być opcjonalny
     from bot_core.decision import DecisionCandidate, DecisionEvaluation
@@ -80,6 +104,60 @@ def _minutes_to_timedelta(value: float | int | None, default_minutes: float) -> 
     if minutes <= 0:
         return None
     return timedelta(minutes=minutes)
+
+
+def _safe_float(value: Any, *, default: float) -> float:
+    if value in (None, ""):
+        return float(default)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _as_bool(value: Any, *, default: bool = False) -> bool:
+    if value in (None, ""):
+        return default
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "y", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "n", "off"}:
+            return False
+    return bool(value)
+
+
+def _resolve_environment_name_for_mode(
+    core_config: CoreConfig,
+    *,
+    aliases: Sequence[str],
+    environment_type: Environment | None,
+    prefer_offline: bool | None = None,
+) -> str | None:
+    lowered_aliases = tuple(alias.lower() for alias in aliases)
+
+    def _matches(name: str) -> bool:
+        lowered = name.lower()
+        return any(alias in lowered for alias in lowered_aliases)
+
+    for name in core_config.environments.keys():
+        if _matches(name):
+            return name
+
+    if prefer_offline is not None:
+        for name, env in core_config.environments.items():
+            if bool(getattr(env, "offline_mode", False)) is prefer_offline:
+                return name
+
+    if environment_type is not None:
+        for name, env in core_config.environments.items():
+            env_kind = getattr(env, "environment", None)
+            if env_kind is environment_type:
+                return name
+            if isinstance(env_kind, str) and env_kind.lower() == environment_type.value:
+                return name
+
+    return next(iter(core_config.environments), None)
 
 
 def _create_cached_source(adapter: ExchangeAdapter, environment: EnvironmentConfig) -> CachedOHLCVSource:
@@ -211,6 +289,11 @@ def build_daily_trend_pipeline(
         markets,
         paper_settings,
     )
+
+    if DailyTrendMomentumStrategy is None or DailyTrendMomentumSettings is None:
+        raise RuntimeError(
+            "Moduł daily_trend_momentum nie jest dostępny w tej wersji instalacji."
+        )
 
     strategy = DailyTrendMomentumStrategy(
         DailyTrendMomentumSettings(
@@ -722,6 +805,7 @@ class MultiStrategyRuntime:
     signal_sink: StrategySignalSink
     strategies: Mapping[str, StrategyEngine]
     schedules: tuple[StrategyScheduleConfig, ...]
+    capital_policy: CapitalAllocationPolicy
     portfolio_coordinator: PortfolioRuntimeCoordinator | None = None
     portfolio_governor: PortfolioGovernor | None = None
     tco_reporter: RuntimeTCOReporter | None = None
@@ -1179,6 +1263,668 @@ def _estimate_default_notional(paper_settings: Mapping[str, object]) -> float:
     return default_notional
 
 
+def _collect_fixed_weight_entries(
+    source: Any, *, prefix: str | None = None
+) -> Mapping[str, float]:
+    result: dict[str, float] = {}
+    if isinstance(source, Mapping):
+        for key, value in source.items():
+            lowered = str(key).lower()
+            if lowered in {"strategies", "strategy", "schedules", "schedule", "profiles", "profile"}:
+                result.update(_collect_fixed_weight_entries(value, prefix=prefix))
+                continue
+            if isinstance(value, Mapping):
+                next_prefix = f"{prefix}:{key}" if prefix else str(key)
+                result.update(_collect_fixed_weight_entries(value, prefix=next_prefix))
+                continue
+            composite = f"{prefix}:{key}" if prefix else str(key)
+            try:
+                result[composite] = float(value)
+            except (TypeError, ValueError):
+                continue
+    elif isinstance(source, Sequence):
+        for entry in source:
+            if not isinstance(entry, Mapping):
+                continue
+            name_value = (
+                entry.get("schedule")
+                or entry.get("strategy")
+                or entry.get("name")
+            )
+            weight_value = entry.get("weight")
+            profile_value = entry.get("profile") or entry.get("risk_profile")
+            if name_value is None or weight_value is None:
+                continue
+            composite = str(name_value)
+            if profile_value not in (None, ""):
+                composite = f"{composite}:{profile_value}"
+            try:
+                result[composite] = float(weight_value)
+            except (TypeError, ValueError):
+                continue
+    return result
+
+
+def _collect_profile_weight_entries(source: Any) -> Mapping[str, float]:
+    result: dict[str, float] = {}
+    if isinstance(source, Mapping):
+        for profile, weight in source.items():
+            if profile in (None, ""):
+                continue
+            try:
+                result[str(profile).lower()] = float(weight)
+            except (TypeError, ValueError):
+                continue
+        return result
+    if isinstance(source, Sequence):
+        for entry in source:
+            if not isinstance(entry, Mapping):
+                continue
+            profile = entry.get("profile") or entry.get("risk_profile") or entry.get("name")
+            weight = entry.get("weight")
+            if profile in (None, "") or weight in (None, ""):
+                continue
+            try:
+                result[str(profile).lower()] = float(weight)
+            except (TypeError, ValueError):
+                continue
+    return result
+
+
+def _collect_tag_weight_entries(source: Any) -> Mapping[str, float]:
+    result: dict[str, float] = {}
+    if isinstance(source, Mapping):
+        for tag, weight in source.items():
+            if tag in (None, "") or weight in (None, ""):
+                continue
+            try:
+                result[str(tag)] = float(weight)
+            except (TypeError, ValueError):
+                continue
+        return result
+    if isinstance(source, Sequence):
+        for entry in source:
+            if isinstance(entry, Mapping):
+                tag = entry.get("tag") or entry.get("name") or entry.get("label")
+                weight = entry.get("weight")
+                if tag in (None, "") or weight in (None, ""):
+                    continue
+                try:
+                    result[str(tag)] = float(weight)
+                except (TypeError, ValueError):
+                    continue
+    return result
+
+
+def _apply_initial_suspensions(
+    scheduler: MultiStrategyScheduler,
+    suspensions: Sequence[MultiStrategySuspensionConfig] | None,
+) -> None:
+    if not suspensions:
+        return
+    for entry in suspensions:
+        kind = (getattr(entry, "kind", "schedule") or "schedule").lower()
+        target = getattr(entry, "target", None)
+        if not target:
+            continue
+        reason = getattr(entry, "reason", None)
+        until = getattr(entry, "until", None)
+        duration = getattr(entry, "duration_seconds", None)
+        if kind == "tag":
+            scheduler.suspend_tag(
+                target,
+                reason=reason,
+                until=until,
+                duration_seconds=duration,
+            )
+        else:
+            scheduler.suspend_schedule(
+                target,
+                reason=reason,
+                until=until,
+                duration_seconds=duration,
+            )
+
+
+def _apply_initial_signal_limits(
+    scheduler: MultiStrategyScheduler,
+    limits: Mapping[str, Mapping[str, SignalLimitOverrideConfig]] | None,
+) -> None:
+    if not limits:
+        return
+    for strategy, profiles in limits.items():
+        for profile, override in profiles.items():
+            scheduler.configure_signal_limit(strategy, profile, override)
+
+
+def _collect_metric_weight_specs(source: Any) -> tuple[MetricWeightRule, ...]:
+    rules: list[MetricWeightRule] = []
+
+    def _parse_single(metric_name: str, definition: Any) -> None:
+        if metric_name in (None, ""):
+            return
+        name = str(metric_name)
+        weight = 1.0
+        default = 0.0
+        clamp_min: float | None = None
+        clamp_max: float | None = None
+        absolute = False
+        scale = 1.0
+
+        if isinstance(definition, Mapping):
+            weight_source = (
+                definition.get("weight")
+                or definition.get("score")
+                or definition.get("coefficient")
+                or definition.get("multiplier")
+            )
+            if weight_source not in (None, ""):
+                weight = _safe_float(weight_source, default=1.0)
+            default_source = (
+                definition.get("default")
+                or definition.get("missing")
+                or definition.get("fallback")
+            )
+            if default_source not in (None, ""):
+                default = _safe_float(default_source, default=0.0)
+            min_source = (
+                definition.get("min")
+                or definition.get("clamp_min")
+                or definition.get("floor")
+            )
+            if min_source not in (None, ""):
+                clamp_min = _safe_float(min_source, default=0.0)
+            max_source = (
+                definition.get("max")
+                or definition.get("clamp_max")
+                or definition.get("cap")
+            )
+            if max_source not in (None, ""):
+                clamp_max = _safe_float(max_source, default=0.0)
+            absolute = _as_bool(
+                definition.get("absolute")
+                or definition.get("abs")
+                or definition.get("use_abs")
+                or False,
+                default=False,
+            )
+            scale_source = definition.get("scale") or definition.get("factor")
+            if scale_source not in (None, ""):
+                scale = _safe_float(scale_source, default=1.0)
+        elif isinstance(definition, Sequence):
+            try:
+                weight = _safe_float(definition[0], default=1.0)  # type: ignore[index]
+            except (IndexError, TypeError):
+                weight = 1.0
+            try:
+                default = _safe_float(definition[1], default=0.0)  # type: ignore[index]
+            except (IndexError, TypeError, ValueError):
+                default = 0.0
+        else:
+            try:
+                weight = float(definition)
+            except (TypeError, ValueError):
+                weight = 1.0
+
+        if not math.isfinite(weight) or weight == 0.0:
+            return
+        try:
+            rule = MetricWeightRule(
+                metric=name,
+                weight=float(weight),
+                default=float(default),
+                clamp_min=float(clamp_min) if clamp_min is not None else None,
+                clamp_max=float(clamp_max) if clamp_max is not None else None,
+                absolute=bool(absolute),
+                scale=float(scale),
+            )
+        except (TypeError, ValueError):
+            return
+        rules.append(rule)
+
+    if isinstance(source, Mapping):
+        for metric_name, definition in source.items():
+            _parse_single(metric_name, definition)
+    elif isinstance(source, Sequence):
+        for entry in source:
+            if isinstance(entry, Mapping):
+                metric_name = entry.get("metric") or entry.get("name")
+                if metric_name in (None, ""):
+                    continue
+                definition = dict(entry)
+                definition.setdefault("weight", entry.get("weight") or entry.get("score"))
+                _parse_single(metric_name, definition)
+    return tuple(rules)
+
+
+def _policy_factory_from_spec(
+    spec: Mapping[str, Any] | str | None,
+) -> Callable[[], CapitalAllocationPolicy]:
+    def _default() -> CapitalAllocationPolicy:
+        return RiskParityAllocation()
+
+    if spec in (None, ""):
+        return _default
+    if isinstance(spec, str) or isinstance(spec, Mapping):
+        cached_spec = spec
+
+        def _factory() -> CapitalAllocationPolicy:
+            policy, _ = _resolve_capital_policy(cached_spec, _allow_profile=False)
+            return policy
+
+        return _factory
+    if callable(spec):  # pragma: no cover - ścieżka programistyczna
+        return spec  # type: ignore[return-value]
+    return _default
+
+
+def _assign_policy_label(policy: CapitalAllocationPolicy, label: str | None) -> CapitalAllocationPolicy:
+    if label in (None, ""):
+        return policy
+    try:
+        setattr(policy, "name", str(label))
+    except Exception:  # pragma: no cover - defensywnie
+        pass
+    return policy
+
+
+def _resolve_capital_policy(
+    spec: Mapping[str, Any] | str | None,
+    *,
+    _allow_profile: bool = True,
+) -> tuple[CapitalAllocationPolicy, float | None]:
+    if spec is None:
+        return RiskParityAllocation(), None
+    if isinstance(spec, str):
+        normalized = spec.strip().lower().replace("-", "_")
+        if normalized in {"equal", "equal_weight", "uniform"}:
+            return EqualWeightAllocation(), None
+        if normalized in {"volatility_target", "vol_target", "target_volatility"}:
+            return VolatilityTargetAllocation(), None
+        if normalized in {"signal", "signal_strength", "signals"}:
+            return SignalStrengthAllocation(), None
+        if normalized in {"fixed", "fixed_weight", "manual"}:
+            return FixedWeightAllocation({}, label="fixed_weight"), None
+        if normalized in {"risk_profile", "profile_budget", "risk_budget"} and _allow_profile:
+            return RiskProfileBudgetAllocation({}, label="risk_profile_budget"), None
+        if normalized not in {"risk", "risk_parity"}:
+            _LOGGER.warning(
+                "Nieznana polityka alokacji kapitału '%s' – używam risk_parity",
+                spec,
+            )
+        return RiskParityAllocation(), None
+
+    if not isinstance(spec, Mapping):
+        _LOGGER.warning(
+            "Nieprawidłowa definicja polityki alokacji kapitału (%s) – używam risk_parity",
+            type(spec).__name__,
+        )
+        return RiskParityAllocation(), None
+
+    name_value = spec.get("name") or spec.get("policy") or spec.get("type")
+    name = str(name_value or "risk_parity").strip().lower().replace("-", "_")
+    label_value = spec.get("label") or spec.get("alias")
+    label = str(label_value) if isinstance(label_value, str) and label_value else None
+    rebalance_entry = (
+        spec.get("rebalance_seconds")
+        or spec.get("rebalance_interval")
+        or spec.get("rebalance")
+        or spec.get("interval_seconds")
+    )
+    rebalance_seconds: float | None = None
+    if rebalance_entry not in (None, ""):
+        try:
+            rebalance_seconds = float(rebalance_entry)
+        except (TypeError, ValueError):
+            _LOGGER.debug(
+                "Nie udało się sparsować rebalance_seconds=%s dla polityki kapitału",
+                rebalance_entry,
+                exc_info=True,
+            )
+            rebalance_seconds = None
+
+    if name in {"equal", "equal_weight", "uniform"}:
+        policy = _assign_policy_label(EqualWeightAllocation(), label)
+        return policy, rebalance_seconds
+    if name in {"volatility_target", "vol_target", "target_volatility"}:
+        policy = _assign_policy_label(VolatilityTargetAllocation(), label)
+        return policy, rebalance_seconds
+    if name in {"signal", "signal_strength", "signals"}:
+        policy = _assign_policy_label(SignalStrengthAllocation(), label)
+        return policy, rebalance_seconds
+    if name in {"metric", "metric_weighted", "telemetry_weighted", "metric_score"}:
+        metrics_source = (
+            spec.get("metrics")
+            or spec.get("rules")
+            or spec.get("weights")
+            or spec.get("signals")
+        )
+        metric_rules = _collect_metric_weight_specs(metrics_source)
+        if not metric_rules:
+            _LOGGER.warning(
+                "Polityka metric_weighted nie zawiera żadnych metryk – używam fallbacku",
+            )
+        default_entry = spec.get("default_score") or spec.get("bias") or spec.get("base_score")
+        default_score = _safe_float(default_entry, default=0.0)
+        shift_entry = spec.get("shift_epsilon") or spec.get("shift") or spec.get("epsilon")
+        shift_epsilon = _safe_float(shift_entry, default=1e-6)
+        fallback_spec = (
+            spec.get("fallback")
+            or spec.get("fallback_policy")
+            or spec.get("default_policy")
+        )
+        fallback_policy: CapitalAllocationPolicy | None = None
+        if isinstance(fallback_spec, str) and fallback_spec.strip().lower() in {
+            "none",
+            "disabled",
+            "disable",
+        }:
+            fallback_policy = None
+        elif fallback_spec not in (None, ""):
+            fallback_policy, _ = _resolve_capital_policy(
+                fallback_spec, _allow_profile=_allow_profile
+            )
+        policy = MetricWeightedAllocation(
+            metric_rules,
+            label=label or name,
+            default_score=default_score,
+            fallback_policy=fallback_policy,
+            shift_epsilon=shift_epsilon,
+        )
+        return policy, rebalance_seconds
+    if name in {"tag_quota", "tag_budget", "tag_weight", "tag_split"}:
+        tags_source = (
+            spec.get("tags")
+            or spec.get("tag_weights")
+            or spec.get("weights")
+            or spec.get("groups")
+        )
+        tag_weights = _collect_tag_weight_entries(tags_source)
+        if not tag_weights:
+            _LOGGER.warning(
+                "Polityka tag_quota nie zawiera żadnych tagów – używam fallbacku",
+            )
+        default_weight_entry = (
+            spec.get("default_weight")
+            or spec.get("unassigned_weight")
+            or spec.get("fallback_weight")
+        )
+        default_weight = _safe_float(default_weight_entry, default=0.0)
+        if default_weight <= 0.0:
+            default_weight = None
+        fallback_spec = spec.get("fallback") or spec.get("fallback_policy")
+        fallback_policy: CapitalAllocationPolicy | None = None
+        if fallback_spec not in (None, ""):
+            fallback_policy, _ = _resolve_capital_policy(
+                fallback_spec,
+                _allow_profile=_allow_profile,
+            )
+        inner_spec = (
+            spec.get("within_tag")
+            or spec.get("within")
+            or spec.get("inner_policy")
+        )
+        inner_factory: Callable[[], CapitalAllocationPolicy] | None = None
+        if inner_spec not in (None, ""):
+            inner_factory = _policy_factory_from_spec(inner_spec)
+        prefer_primary_entry = spec.get("primary_only")
+        if prefer_primary_entry in (None, ""):
+            prefer_primary_entry = spec.get("prefer_primary")
+        prefer_primary = _as_bool(prefer_primary_entry, default=True)
+        policy = TagQuotaAllocation(
+            tag_weights,
+            label=label or name,
+            fallback_policy=fallback_policy,
+            inner_policy_factory=inner_factory,
+            default_weight=default_weight,
+            prefer_primary=prefer_primary,
+        )
+        return policy, rebalance_seconds
+    if name in {"drawdown", "drawdown_guard", "drawdown_adaptive", "drawdown_aware"}:
+        warning_entry = (
+            spec.get("warning_pct")
+            or spec.get("warning")
+            or spec.get("soft_limit_pct")
+            or spec.get("soft_limit")
+        )
+        panic_entry = (
+            spec.get("panic_pct")
+            or spec.get("panic")
+            or spec.get("hard_limit_pct")
+            or spec.get("limit_pct")
+        )
+        pressure_entry = spec.get("pressure_weight") or spec.get("pressure")
+        min_weight_entry = spec.get("min_weight") or spec.get("floor_weight")
+        max_weight_entry = spec.get("max_weight") or spec.get("cap_weight")
+
+        warning_pct = _safe_float(warning_entry, default=10.0)
+        panic_pct = _safe_float(panic_entry, default=20.0)
+        pressure_weight = _safe_float(pressure_entry, default=0.7)
+        min_weight = _safe_float(min_weight_entry, default=0.05)
+        max_weight = _safe_float(max_weight_entry, default=1.0)
+
+        policy = DrawdownAdaptiveAllocation(
+            warning_drawdown_pct=warning_pct,
+            panic_drawdown_pct=panic_pct,
+            pressure_weight=pressure_weight,
+            min_weight=min_weight,
+            max_weight=max_weight,
+        )
+        effective_label = label or name
+        return _assign_policy_label(policy, effective_label), rebalance_seconds
+    if name in {"smoothed", "smoothed_allocation", "ewma", "ema"}:
+        base_entry = (
+            spec.get("base")
+            or spec.get("inner")
+            or spec.get("delegate")
+            or spec.get("base_policy")
+            or spec.get("inner_policy")
+        )
+        smoothing_entry = (
+            spec.get("alpha")
+            or spec.get("smoothing_factor")
+            or spec.get("smoothing")
+        )
+        min_delta_entry = (
+            spec.get("min_delta")
+            or spec.get("threshold")
+            or spec.get("min_step")
+        )
+        floor_entry = spec.get("floor_weight") or spec.get("min_weight") or spec.get("floor")
+
+        base_spec = base_entry or "risk_parity"
+        base_policy, _ = _resolve_capital_policy(base_spec, _allow_profile=_allow_profile)
+        smoothing_factor = _safe_float(smoothing_entry, default=0.35)
+        min_delta = _safe_float(min_delta_entry, default=0.0)
+        floor_weight = _safe_float(floor_entry, default=0.0)
+
+        policy = SmoothedCapitalAllocationPolicy(
+            base_policy,
+            smoothing_factor=smoothing_factor,
+            min_delta=min_delta,
+            floor_weight=floor_weight,
+        )
+        effective_label = label or name
+        return _assign_policy_label(policy, effective_label), rebalance_seconds
+    if name in {"blended", "composite", "weighted_mix", "mix"}:
+        components_source = (
+            spec.get("components")
+            or spec.get("policies")
+            or spec.get("allocators")
+            or spec.get("mix")
+        )
+        components: list[tuple[CapitalAllocationPolicy, float, str | None]] = []
+        if isinstance(components_source, Mapping):
+            for comp_label, entry in components_source.items():
+                component_spec = entry
+                weight_value = 1.0
+                if isinstance(entry, Mapping):
+                    weight_source = (
+                        entry.get("weight")
+                        or entry.get("share")
+                        or entry.get("coefficient")
+                    )
+                    weight_value = _safe_float(weight_source, default=1.0)
+                    component_spec = (
+                        entry.get("policy")
+                        or entry.get("allocator")
+                        or entry.get("spec")
+                        or entry.get("definition")
+                        or entry.get("name")
+                        or entry
+                    )
+                if component_spec in (None, "") or weight_value <= 0:
+                    continue
+                component_policy, _ = _resolve_capital_policy(
+                    component_spec, _allow_profile=False
+                )
+                components.append((component_policy, weight_value, str(comp_label)))
+        elif isinstance(components_source, Sequence):
+            for entry in components_source:
+                component_spec: Any = entry
+                weight_value = 1.0
+                label_value: str | None = None
+                if isinstance(entry, Mapping):
+                    weight_source = (
+                        entry.get("weight")
+                        or entry.get("share")
+                        or entry.get("coefficient")
+                    )
+                    weight_value = _safe_float(weight_source, default=1.0)
+                    label_entry = entry.get("label") or entry.get("alias")
+                    if isinstance(label_entry, str) and label_entry:
+                        label_value = label_entry
+                    component_spec = (
+                        entry.get("policy")
+                        or entry.get("allocator")
+                        or entry.get("spec")
+                        or entry.get("definition")
+                        or entry.get("name")
+                        or entry
+                    )
+                if component_spec in (None, "") or weight_value <= 0:
+                    continue
+                component_policy, _ = _resolve_capital_policy(
+                    component_spec, _allow_profile=False
+                )
+                components.append((component_policy, weight_value, label_value))
+        else:
+            _LOGGER.debug(
+                "Polityka blended wymaga listy komponentów – otrzymano %s",
+                type(components_source).__name__,
+            )
+        normalize_flag = (
+            spec.get("normalize_components")
+            or spec.get("normalize")
+            or spec.get("normalize_weights")
+        )
+        normalize_components = _as_bool(normalize_flag, default=True)
+        fallback_spec = (
+            spec.get("fallback")
+            or spec.get("fallback_policy")
+            or spec.get("default_policy")
+        )
+        fallback_policy: CapitalAllocationPolicy | None
+        if isinstance(fallback_spec, str) and fallback_spec.strip().lower() in {
+            "none",
+            "disabled",
+            "disable",
+        }:
+            fallback_policy = None
+        elif fallback_spec in (None, ""):
+            fallback_policy = RiskParityAllocation()
+        else:
+            fallback_policy, _ = _resolve_capital_policy(
+                fallback_spec, _allow_profile=_allow_profile
+            )
+        if not components:
+            fallback_label = getattr(fallback_policy, "name", "uniform")
+            _LOGGER.warning(
+                "Polityka blended nie zawiera komponentów – używam fallbacku %s",
+                fallback_label,
+            )
+        effective_label = label or name
+        policy = BlendedCapitalAllocation(
+            tuple(components),
+            label=effective_label,
+            normalize_components=normalize_components,
+            fallback_policy=fallback_policy,
+        )
+        return policy, rebalance_seconds
+    if name in {"fixed", "fixed_weight", "manual"}:
+        weights_source = spec.get("weights") or spec.get("allocations")
+        weights = _collect_fixed_weight_entries(weights_source)
+        if not weights:
+            _LOGGER.warning(
+                "Polityka fixed_weight nie zawiera żadnych wag – używam risk_parity",
+            )
+            fallback = _assign_policy_label(RiskParityAllocation(), label)
+            return fallback, rebalance_seconds
+        return FixedWeightAllocation(weights, label=label), rebalance_seconds
+    if name in {"risk_profile", "profile_budget", "risk_budget"}:
+        if not _allow_profile:
+            _LOGGER.warning(
+                "Zagnieżdżona polityka risk_profile jest niedozwolona – używam risk_parity",
+            )
+            fallback = _assign_policy_label(RiskParityAllocation(), label)
+            return fallback, rebalance_seconds
+        profile_source = (
+            spec.get("profiles")
+            or spec.get("profile_weights")
+            or spec.get("weights")
+            or spec.get("allocations")
+        )
+        profile_weights = _collect_profile_weight_entries(profile_source)
+        floor_value = (
+            spec.get("profile_floor")
+            or spec.get("floor")
+            or spec.get("min_weight")
+            or spec.get("minimum")
+        )
+        floor: float = 0.0
+        if floor_value not in (None, ""):
+            try:
+                floor = max(0.0, float(floor_value))
+            except (TypeError, ValueError):
+                _LOGGER.debug(
+                    "Nie udało się sparsować floor=%s dla risk_profile",
+                    floor_value,
+                    exc_info=True,
+                )
+                floor = 0.0
+        inner_spec = (
+            spec.get("within_profile")
+            or spec.get("inner_policy")
+            or spec.get("profile_policy")
+            or spec.get("strategy_policy")
+        )
+        inner_factory = _policy_factory_from_spec(inner_spec)
+        policy = RiskProfileBudgetAllocation(
+            profile_weights,
+            label=label,
+            profile_floor=floor,
+            inner_policy_factory=inner_factory,
+        )
+        return policy, rebalance_seconds
+    if name not in {"risk", "risk_parity"}:
+        _LOGGER.warning(
+            "Nieznana polityka alokacji kapitału '%s' – używam risk_parity",
+            name,
+        )
+    policy = _assign_policy_label(RiskParityAllocation(), label)
+    return policy, rebalance_seconds
+
+
+def resolve_capital_policy_spec(
+    spec: Mapping[str, Any] | str | None,
+    *,
+    allow_profile: bool = True,
+) -> tuple[CapitalAllocationPolicy, float | None]:
+    """Publiczny helper zwracający politykę kapitału oraz zalecany interwał."""
+
+    return _resolve_capital_policy(spec, _allow_profile=allow_profile)
+
+
 def _build_decision_sink(
     *,
     bootstrap: BootstrapContext,
@@ -1213,6 +1959,8 @@ def _build_decision_sink(
         portfolio=portfolio_id,
         journal=journal,
     )
+
+
 class DecisionAwareSignalSink(StrategySignalSink):
     """Filtruje sygnały strategii przez DecisionOrchestratora."""
 
@@ -1740,13 +2488,41 @@ def build_multi_strategy_runtime(
     )
     signal_sink: StrategySignalSink = decision_sink or base_sink
     portfolio_governor = getattr(bootstrap_ctx, "portfolio_governor", None)
+    capital_policy_spec = getattr(scheduler_cfg, "capital_policy", None)
+    capital_policy, policy_interval = _resolve_capital_policy(capital_policy_spec)
+    allocation_interval_raw = getattr(
+        scheduler_cfg,
+        "allocation_rebalance_seconds",
+        None,
+    )
+
+    allocation_interval: float | None = None
+    if allocation_interval_raw not in (None, ""):
+        try:
+            allocation_interval = float(allocation_interval_raw)
+        except (TypeError, ValueError):
+            _LOGGER.debug(
+                "Nie udało się sparsować allocation_rebalance_seconds=%s",
+                allocation_interval_raw,
+                exc_info=True,
+            )
+            allocation_interval = None
+    if allocation_interval is None and policy_interval is not None:
+        allocation_interval = policy_interval
+
     scheduler = MultiStrategyScheduler(
         environment=environment_name,
         portfolio=str(paper_settings["portfolio_id"]),
         telemetry_emitter=telemetry_emitter,
         decision_journal=bootstrap_ctx.decision_journal,
         portfolio_governor=portfolio_governor,
+        capital_policy=capital_policy,
+        allocation_rebalance_seconds=allocation_interval,
     )
+
+    signal_limits = getattr(scheduler_cfg, "signal_limits", None)
+    if signal_limits:
+        scheduler.configure_signal_limits(signal_limits)
 
     portfolio_coordinator: PortfolioRuntimeCoordinator | None = None
     governor_name = getattr(scheduler_cfg, "portfolio_governor", None)
@@ -1877,6 +2653,16 @@ def build_multi_strategy_runtime(
             max_signals=schedule.max_signals,
         )
 
+    _apply_initial_signal_limits(
+        scheduler,
+        getattr(scheduler_cfg, "initial_signal_limits", None),
+    )
+
+    _apply_initial_suspensions(
+        scheduler,
+        getattr(scheduler_cfg, "initial_suspensions", None),
+    )
+
     return MultiStrategyRuntime(
         bootstrap=bootstrap_ctx,
         scheduler=scheduler,
@@ -1884,6 +2670,7 @@ def build_multi_strategy_runtime(
         signal_sink=signal_sink,
         strategies=strategies,
         schedules=tuple(scheduler_cfg.schedules),
+        capital_policy=capital_policy,
         portfolio_coordinator=portfolio_coordinator,
         portfolio_governor=portfolio_governor,
         tco_reporter=bootstrap_ctx.tco_reporter,
@@ -1892,82 +2679,201 @@ def build_multi_strategy_runtime(
     )
 
 
-def _instantiate_strategies(core_config: CoreConfig) -> dict[str, StrategyEngine]:
+def _instantiate_strategies(
+    core_config: CoreConfig, *, catalog: StrategyCatalog | None = None
+) -> dict[str, StrategyEngine]:
+    catalog = catalog or DEFAULT_STRATEGY_CATALOG
     registry: dict[str, StrategyEngine] = {}
     guard = get_capability_guard()
 
-    def _require(capability: str, *, label: str, strategy_name: str) -> None:
-        if guard is None:
+    definitions: dict[str, StrategyDefinition] = {}
+
+    for name, cfg in getattr(core_config, "strategy_definitions", {}).items():
+        definitions[name] = StrategyDefinition(
+            name=cfg.name,
+            engine=cfg.engine,
+            parameters=dict(cfg.parameters),
+            risk_profile=cfg.risk_profile,
+            tags=tuple(cfg.tags),
+            metadata=dict(cfg.metadata),
+        )
+
+    def _fallback(name: str, engine: str, params: Mapping[str, Any]) -> None:
+        if name in definitions:
             return
-        guard.require_strategy(capability, message=label.format(name=strategy_name))
+        definitions[name] = StrategyDefinition(name=name, engine=engine, parameters=dict(params))
 
     for name, cfg in getattr(core_config, "strategies", {}).items():
-        _require(
-            "trend_d1",
-            label="Strategia Trend D1 '{name}' wymaga aktywnej licencji Trend D1.",
-            strategy_name=name,
-        )
-        registry[name] = DailyTrendMomentumStrategy(
-            DailyTrendMomentumSettings(
-                fast_ma=cfg.fast_ma,
-                slow_ma=cfg.slow_ma,
-                breakout_lookback=cfg.breakout_lookback,
-                momentum_window=cfg.momentum_window,
-                atr_window=cfg.atr_window,
-                atr_multiplier=cfg.atr_multiplier,
-                min_trend_strength=cfg.min_trend_strength,
-                min_momentum=cfg.min_momentum,
-            )
+        _fallback(
+            name,
+            "daily_trend_momentum",
+            {
+                "fast_ma": cfg.fast_ma,
+                "slow_ma": cfg.slow_ma,
+                "breakout_lookback": cfg.breakout_lookback,
+                "momentum_window": cfg.momentum_window,
+                "atr_window": cfg.atr_window,
+                "atr_multiplier": cfg.atr_multiplier,
+                "min_trend_strength": cfg.min_trend_strength,
+                "min_momentum": cfg.min_momentum,
+            },
         )
     for name, cfg in getattr(core_config, "mean_reversion_strategies", {}).items():
-        _require(
+        _fallback(
+            name,
             "mean_reversion",
-            label="Strategia Mean Reversion '{name}' wymaga aktywnej licencji Mean Reversion.",
-            strategy_name=name,
-        )
-        registry[name] = MeanReversionStrategy(
-            MeanReversionSettings(
-                lookback=cfg.lookback,
-                entry_zscore=cfg.entry_zscore,
-                exit_zscore=cfg.exit_zscore,
-                max_holding_period=cfg.max_holding_period,
-                volatility_cap=cfg.volatility_cap,
-                min_volume_usd=cfg.min_volume_usd,
-            )
+            {
+                "lookback": cfg.lookback,
+                "entry_zscore": cfg.entry_zscore,
+                "exit_zscore": cfg.exit_zscore,
+                "max_holding_period": cfg.max_holding_period,
+                "volatility_cap": cfg.volatility_cap,
+                "min_volume_usd": cfg.min_volume_usd,
+            },
         )
     for name, cfg in getattr(core_config, "volatility_target_strategies", {}).items():
-        _require(
+        _fallback(
+            name,
             "volatility_target",
-            label="Strategia Volatility Target '{name}' wymaga aktywnej licencji Volatility Target.",
-            strategy_name=name,
-        )
-        registry[name] = VolatilityTargetStrategy(
-            VolatilityTargetSettings(
-                target_volatility=cfg.target_volatility,
-                lookback=cfg.lookback,
-                rebalance_threshold=cfg.rebalance_threshold,
-                min_allocation=cfg.min_allocation,
-                max_allocation=cfg.max_allocation,
-                floor_volatility=cfg.floor_volatility,
-            )
+            {
+                "target_volatility": cfg.target_volatility,
+                "lookback": cfg.lookback,
+                "rebalance_threshold": cfg.rebalance_threshold,
+                "min_allocation": cfg.min_allocation,
+                "max_allocation": cfg.max_allocation,
+                "floor_volatility": cfg.floor_volatility,
+            },
         )
     for name, cfg in getattr(core_config, "cross_exchange_arbitrage_strategies", {}).items():
-        _require(
-            "cross_exchange",
-            label="Strategia Cross-Exchange '{name}' wymaga aktywnej licencji Cross-Exchange.",
-            strategy_name=name,
+        _fallback(
+            name,
+            "cross_exchange_arbitrage",
+            {
+                "primary_exchange": cfg.primary_exchange,
+                "secondary_exchange": cfg.secondary_exchange,
+                "spread_entry": cfg.spread_entry,
+                "spread_exit": cfg.spread_exit,
+                "max_notional": cfg.max_notional,
+                "max_open_seconds": cfg.max_open_seconds,
+            },
         )
-        registry[name] = CrossExchangeArbitrageStrategy(
-            CrossExchangeArbitrageSettings(
-                primary_exchange=cfg.primary_exchange,
-                secondary_exchange=cfg.secondary_exchange,
-                spread_entry=cfg.spread_entry,
-                spread_exit=cfg.spread_exit,
-                max_notional=cfg.max_notional,
-                max_open_seconds=cfg.max_open_seconds,
+
+    for name, definition in definitions.items():
+        spec = catalog.get(definition.engine)
+        if guard is not None and spec.capability:
+            guard.require_strategy(
+                spec.capability,
+                message=(
+                    f"Strategia '{name}' wymaga aktywnej licencji "
+                    f"{spec.capability}."
+                ),
             )
-        )
+        registry[name] = catalog.create(definition)
+
     return registry
+
+
+def _build_mode_runtime(
+    mode: str,
+    *,
+    config_path: str | Path,
+    secret_manager: SecretManager,
+    scheduler_name: str | None,
+    telemetry_emitter: Callable[[str, Mapping[str, float]], None] | None,
+    adapter_factories: Mapping[str, ExchangeAdapterFactory] | None,
+    environment_aliases: Sequence[str],
+    environment_type: Environment | None,
+    prefer_offline: bool | None,
+    environment_name: str | None,
+) -> MultiStrategyRuntime:
+    core_config = load_core_config(config_path)
+    resolved_env = environment_name or _resolve_environment_name_for_mode(
+        core_config,
+        aliases=environment_aliases,
+        environment_type=environment_type,
+        prefer_offline=prefer_offline,
+    )
+    if resolved_env is None:
+        raise ValueError(
+            f"Nie udało się odnaleźć środowiska {mode} w konfiguracji. Dodaj sekcję environments."
+        )
+    return build_multi_strategy_runtime(
+        environment_name=resolved_env,
+        scheduler_name=scheduler_name,
+        config_path=config_path,
+        secret_manager=secret_manager,
+        adapter_factories=adapter_factories,
+        telemetry_emitter=telemetry_emitter,
+    )
+
+
+def build_demo_multi_strategy_runtime(
+    *,
+    config_path: str | Path,
+    secret_manager: SecretManager,
+    scheduler_name: str | None = None,
+    telemetry_emitter: Callable[[str, Mapping[str, float]], None] | None = None,
+    adapter_factories: Mapping[str, ExchangeAdapterFactory] | None = None,
+    environment_name: str | None = None,
+) -> MultiStrategyRuntime:
+    return _build_mode_runtime(
+        "demo",
+        config_path=config_path,
+        secret_manager=secret_manager,
+        scheduler_name=scheduler_name,
+        telemetry_emitter=telemetry_emitter,
+        adapter_factories=adapter_factories,
+        environment_aliases=("demo", "offline", "test", "sandbox"),
+        environment_type=Environment.TESTNET,
+        prefer_offline=True,
+        environment_name=environment_name,
+    )
+
+
+def build_paper_multi_strategy_runtime(
+    *,
+    config_path: str | Path,
+    secret_manager: SecretManager,
+    scheduler_name: str | None = None,
+    telemetry_emitter: Callable[[str, Mapping[str, float]], None] | None = None,
+    adapter_factories: Mapping[str, ExchangeAdapterFactory] | None = None,
+    environment_name: str | None = None,
+) -> MultiStrategyRuntime:
+    return _build_mode_runtime(
+        "paper",
+        config_path=config_path,
+        secret_manager=secret_manager,
+        scheduler_name=scheduler_name,
+        telemetry_emitter=telemetry_emitter,
+        adapter_factories=adapter_factories,
+        environment_aliases=("paper", "stage6", "stage5"),
+        environment_type=Environment.PAPER,
+        prefer_offline=False,
+        environment_name=environment_name,
+    )
+
+
+def build_live_multi_strategy_runtime(
+    *,
+    config_path: str | Path,
+    secret_manager: SecretManager,
+    scheduler_name: str | None = None,
+    telemetry_emitter: Callable[[str, Mapping[str, float]], None] | None = None,
+    adapter_factories: Mapping[str, ExchangeAdapterFactory] | None = None,
+    environment_name: str | None = None,
+) -> MultiStrategyRuntime:
+    return _build_mode_runtime(
+        "live",
+        config_path=config_path,
+        secret_manager=secret_manager,
+        scheduler_name=scheduler_name,
+        telemetry_emitter=telemetry_emitter,
+        adapter_factories=adapter_factories,
+        environment_aliases=("live", "prod", "production"),
+        environment_type=Environment.LIVE,
+        prefer_offline=False,
+        environment_name=environment_name,
+    )
 
 
 __all__ = [
@@ -1976,6 +2882,9 @@ __all__ = [
     "create_trading_controller",
     "MultiStrategyRuntime",
     "build_multi_strategy_runtime",
+    "build_demo_multi_strategy_runtime",
+    "build_paper_multi_strategy_runtime",
+    "build_live_multi_strategy_runtime",
     "consume_stream",
     "OHLCVStrategyFeed",
     "InMemoryStrategySignalSink",

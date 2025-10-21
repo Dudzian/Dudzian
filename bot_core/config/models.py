@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Mapping, Sequence
 
 from bot_core.exchanges.base import Environment
@@ -742,6 +743,18 @@ class CrossExchangeArbitrageStrategyConfig:
 
 
 @dataclass(slots=True)
+class StrategyDefinitionConfig:
+    """Ogólny opis strategii konfigurowanej w schedulerze."""
+
+    name: str
+    engine: str
+    parameters: Mapping[str, float | int | str | bool]
+    risk_profile: str | None = None
+    tags: Sequence[str] = field(default_factory=tuple)
+    metadata: Mapping[str, object] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class StrategyScheduleConfig:
     """Opis pojedynczego zadania harmonogramu strategii."""
     name: str
@@ -755,6 +768,27 @@ class StrategyScheduleConfig:
 
 
 @dataclass(slots=True)
+class MultiStrategySuspensionConfig:
+    """Definicja początkowego zawieszenia harmonogramu lub tagu."""
+
+    kind: str
+    target: str
+    reason: str | None = None
+    until: datetime | None = None
+    duration_seconds: float | None = None
+
+
+@dataclass(slots=True)
+class SignalLimitOverrideConfig:
+    """Opis pojedynczego nadpisania limitu sygnałów."""
+
+    limit: int
+    reason: str | None = None
+    until: datetime | None = None
+    duration_seconds: float | None = None
+
+
+@dataclass(slots=True)
 class MultiStrategySchedulerConfig:
     """Konfiguracja scheduler-a wielostrate-gicznego."""
     name: str
@@ -765,6 +799,15 @@ class MultiStrategySchedulerConfig:
     rbac_tokens: Sequence[ServiceTokenConfig] = field(default_factory=tuple)
     portfolio_governor: str | None = None
     portfolio_inputs: "PortfolioRuntimeInputsConfig" | None = None
+    signal_limits: Mapping[str, Mapping[str, SignalLimitOverrideConfig]] = field(
+        default_factory=dict
+    )
+    capital_policy: Mapping[str, Any] | str | None = None
+    allocation_rebalance_seconds: int | None = None
+    initial_suspensions: Sequence[MultiStrategySuspensionConfig] = field(default_factory=tuple)
+    initial_signal_limits: Mapping[str, Mapping[str, SignalLimitOverrideConfig]] = field(
+        default_factory=dict
+    )
 
 
 @dataclass(slots=True)
@@ -1033,6 +1076,7 @@ class CoreConfig:
     permission_profiles: Mapping[str, PermissionProfileConfig] = field(default_factory=dict)
     instrument_universes: Mapping[str, InstrumentUniverseConfig] = field(default_factory=dict)
     instrument_buckets: Mapping[str, InstrumentBucketConfig] = field(default_factory=dict)
+    strategy_definitions: Mapping[str, StrategyDefinitionConfig] = field(default_factory=dict)
     strategies: Mapping[str, DailyTrendMomentumStrategyConfig] = field(default_factory=dict)
     mean_reversion_strategies: Mapping[str, MeanReversionStrategyConfig] = field(default_factory=dict)
     volatility_target_strategies: Mapping[str, VolatilityTargetingStrategyConfig] = field(default_factory=dict)
@@ -1086,6 +1130,7 @@ __all__ = [
     "InstrumentUniverseConfig",
     "InstrumentBucketConfig",
     "PermissionProfileConfig",
+    "StrategyDefinitionConfig",
     "DailyTrendMomentumStrategyConfig",
     "MeanReversionStrategyConfig",
     "VolatilityTargetingStrategyConfig",
