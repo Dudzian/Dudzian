@@ -27,6 +27,7 @@ paper_margin:
       leverage_limit: 5.0
       maintenance_margin_ratio: 0.12
       funding_rate: 0.00005
+      funding_interval_seconds: 28800
 
 paper_futures:
   description: Futures simulator mirroring production risk checks.
@@ -37,6 +38,7 @@ paper_futures:
       leverage_limit: 12.0
       maintenance_margin_ratio: 0.04
       funding_rate: 0.0001
+      funding_interval_seconds: 28800
 
 testnet:
   description: CCXT-backed testnet with real order routing disabled.
@@ -69,3 +71,6 @@ live:
   credentials:
     api_key: ${LIVE_API_KEY}
     secret: ${LIVE_SECRET}
+  health_check:
+    private_asset: USDT
+    private_min_balance: 100

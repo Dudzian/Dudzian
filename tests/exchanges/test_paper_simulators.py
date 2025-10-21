@@ -1,5 +1,7 @@
 import datetime as dt
 
+import pytest
+
 from bot_core.exchanges.core import MarketRules, OrderSide, OrderType
 from bot_core.exchanges.paper_simulator import PaperFuturesSimulator, PaperMarginSimulator
 
@@ -69,6 +71,7 @@ def _make_margin_simulator(price: float = 100.0, **kwargs) -> PaperMarginSimulat
         leverage_limit=kwargs.get("leverage_limit", 3.0),
         maintenance_margin_ratio=kwargs.get("maintenance_margin_ratio", 0.15),
         funding_rate=kwargs.get("funding_rate", 0.0),
+        funding_interval_seconds=kwargs.get("funding_interval_seconds"),
     )
     simulator.load_markets()
     return simulator
@@ -100,3 +103,46 @@ def test_futures_simulator_applies_funding_and_reports_exposure():
     assert "futures_exposure" in snapshot.balances
     events = list(simulator.fetch_margin_events())
     assert any(event["type"] == "funding" for event in events)
+
+
+def test_simulator_describe_configuration_reports_runtime_values():
+    simulator = _make_margin_simulator(
+        leverage_limit=7.0,
+        maintenance_margin_ratio=0.2,
+        funding_rate=0.0004,
+        funding_interval_seconds=7_200,
+    )
+
+    config = simulator.describe_configuration()
+
+    assert config["leverage_limit"] == pytest.approx(7.0)
+    assert config["maintenance_margin_ratio"] == pytest.approx(0.2)
+    assert config["funding_rate"] == pytest.approx(0.0004)
+    assert config["funding_interval_seconds"] == pytest.approx(7_200.0)
+
+
+def test_margin_simulator_respects_funding_interval() -> None:
+    simulator = _make_margin_simulator(
+        price=30_000.0,
+        funding_rate=0.001,
+        funding_interval_seconds=3_600,
+    )
+    simulator.create_order("BTC/USDT", OrderSide.BUY, OrderType.MARKET, 0.1)
+    simulator._margin_events.clear()
+    base = simulator._margin_state.last_funding  # type: ignore[attr-defined]
+    initial_cash = simulator._cash_balance  # type: ignore[attr-defined]
+
+    simulator._apply_funding(base + dt.timedelta(minutes=30))  # type: ignore[attr-defined]
+
+    assert simulator._margin_state.last_funding == base  # type: ignore[attr-defined]
+    assert not any(event["type"] == "funding" for event in simulator.fetch_margin_events())
+
+    simulator._apply_funding(base + dt.timedelta(hours=3))  # type: ignore[attr-defined]
+
+    events = list(simulator.fetch_margin_events())
+    assert events and events[-1]["type"] == "funding"
+    payload = events[-1]["payload"]
+    assert payload["periods"] == 3
+    assert payload["interval_seconds"] == pytest.approx(3_600.0)
+    assert simulator._margin_state.last_funding == base + dt.timedelta(hours=3)  # type: ignore[attr-defined]
+    assert simulator._cash_balance < initial_cash  # type: ignore[attr-defined]

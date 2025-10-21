@@ -567,6 +567,36 @@ class ExchangeManager:
     def configure_paper_simulator(self, **settings: object) -> None:
         """Stores custom parameters used by margin/futures simulators."""
 
+        allowed_keys = {
+            "leverage_limit",
+            "maintenance_margin_ratio",
+            "funding_rate",
+            "funding_interval_seconds",
+        }
+        normalized: Dict[str, object] = {}
+        for key, value in settings.items():
+            if key not in allowed_keys:
+                raise ValueError(
+                    f"Nieznany parametr symulatora paper: {key}. Dozwolone: "
+                    "leverage_limit, maintenance_margin_ratio, funding_rate, funding_interval_seconds"
+                )
+            if value is None:
+                continue
+            float_value = float(value)
+            if key == "funding_interval_seconds" and float_value <= 0:
+                raise ValueError(
+                    "Parametr funding_interval_seconds wymaga dodatniej wartości (sekundy)."
+                )
+            normalized[key] = float_value
+
+        if not normalized:
+            return
+
+        merged = dict(self._paper_simulator_settings)
+        merged.update(normalized)
+        self._paper_simulator_settings = merged
+        if self._paper is not None:
+            log.info("Reconfiguring paper simulator with settings: %s", merged)
         self._paper_simulator_settings = dict(settings)
         if self._paper is not None:
             log.info("Reconfiguring paper simulator with settings: %s", settings)
@@ -581,6 +611,8 @@ class ExchangeManager:
     ) -> None:
         self._api_key = (api_key or "").strip() or None
         self._secret = (secret or "").strip() or None
+        self._passphrase = (passphrase or "").strip() or None
+        log.info(
         api_key_length = len(self._api_key) if self._api_key else 0
         secret_length = len(self._secret) if self._secret else 0
         log.info(
@@ -778,6 +810,8 @@ class ExchangeManager:
             settings = dict(self._paper_simulator_settings)
             simulator: PaperBackend
             if self._paper_variant == "margin":
+                defaults = self._default_paper_simulator_settings()
+                defaults.update(settings)
                 simulator = PaperMarginSimulator(
                     public,
                     event_bus=self._event_bus,
@@ -785,6 +819,14 @@ class ExchangeManager:
                     cash_asset=self._paper_cash_asset,
                     fee_rate=self._paper_fee_rate,
                     database=self._ensure_db(),
+                    leverage_limit=float(defaults.get("leverage_limit", 3.0)),
+                    maintenance_margin_ratio=float(defaults.get("maintenance_margin_ratio", 0.15)),
+                    funding_rate=float(defaults.get("funding_rate", 0.0)),
+                    funding_interval_seconds=float(defaults.get("funding_interval_seconds", 0.0)),
+                )
+            elif self._paper_variant == "futures":
+                defaults = self._default_paper_simulator_settings()
+                defaults.update(settings)
                     leverage_limit=float(settings.get("leverage_limit", 3.0)),
                     maintenance_margin_ratio=float(settings.get("maintenance_margin_ratio", 0.15)),
                     funding_rate=float(settings.get("funding_rate", 0.0)),
@@ -797,6 +839,10 @@ class ExchangeManager:
                     cash_asset=self._paper_cash_asset,
                     fee_rate=self._paper_fee_rate,
                     database=self._ensure_db(),
+                    leverage_limit=float(defaults.get("leverage_limit", 10.0)),
+                    maintenance_margin_ratio=float(defaults.get("maintenance_margin_ratio", 0.05)),
+                    funding_rate=float(defaults.get("funding_rate", 0.0001)),
+                    funding_interval_seconds=float(defaults.get("funding_interval_seconds", 0.0)),
                     leverage_limit=float(settings.get("leverage_limit", 10.0)),
                     maintenance_margin_ratio=float(settings.get("maintenance_margin_ratio", 0.05)),
                     funding_rate=float(settings.get("funding_rate", 0.0001)),
@@ -836,10 +882,20 @@ class ExchangeManager:
             if asset:
                 self._paper._cash_asset = self._paper_cash_asset  # type: ignore[attr-defined]
 
+    def get_paper_cash_asset(self) -> Optional[str]:
+        """Zwraca aktualny symbol waluty gotówkowej w symulatorze paper."""
+
+        return self._paper_cash_asset
+
     def get_paper_initial_cash(self) -> float:
         """Zwraca aktualną wartość początkowego kapitału w symulatorze paper."""
 
         return float(self._paper_initial_cash)
+
+    def get_paper_variant(self) -> str:
+        """Zwraca aktywny wariant symulatora paper."""
+
+        return self._paper_variant
 
     def set_paper_fee_rate(self, fee_rate: float) -> None:
         self._paper_fee_rate = max(0.0, float(fee_rate))
@@ -850,6 +906,38 @@ class ExchangeManager:
         if self._paper is not None:
             return self._paper.get_fee_rate()
         return self._paper_fee_rate
+
+    def get_paper_simulator_settings(self) -> Dict[str, float]:
+        """Zwraca aktualne parametry symulatora margin/futures."""
+
+        if self._paper_variant not in {"margin", "futures"}:
+            return {}
+
+        if isinstance(self._paper, PaperMarginSimulator):
+            return dict(self._paper.describe_configuration())
+
+        settings = self._default_paper_simulator_settings()
+        for key, value in self._paper_simulator_settings.items():
+            if key in settings:
+                settings[key] = float(value)
+        return settings
+
+    def _default_paper_simulator_settings(self) -> Dict[str, float]:
+        if self._paper_variant == "margin":
+            return {
+                "leverage_limit": 3.0,
+                "maintenance_margin_ratio": 0.15,
+                "funding_rate": 0.0,
+                "funding_interval_seconds": 0.0,
+            }
+        if self._paper_variant == "futures":
+            return {
+                "leverage_limit": 10.0,
+                "maintenance_margin_ratio": 0.05,
+                "funding_rate": 0.0001,
+                "funding_interval_seconds": 0.0,
+            }
+        return {}
 
     def load_markets(self) -> Dict[str, MarketRules]:
         public = self._ensure_public()

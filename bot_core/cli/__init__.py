@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import sys
@@ -33,6 +34,8 @@ _CREDENTIAL_ALIASES = {
     "secret": ("secret", "api_secret", "apiSecret"),
     "passphrase": ("passphrase", "password", "passPhrase"),
 }
+
+_SUPPORTED_HEALTH_CHECKS = ("public_api", "private_api")
 
 
 class CLIUsageError(RuntimeError):
@@ -89,6 +92,18 @@ def create_parser() -> argparse.ArgumentParser:
     )
     health.add_argument(
         "--environment-config",
+        help=(
+            "Ścieżka do pliku YAML opisującego środowiska (domyślnie "
+            "config/environments/exchange_modes.yaml). Gdy plik posiada sekcję "
+            "defaults.environment, komenda użyje jej jako domyślnego środowiska."
+        ),
+    )
+    health.add_argument(
+        "--environment",
+        help=(
+            "Nazwa środowiska z pliku YAML. Opcjonalna, jeśli plik definiuje "
+            "defaults.environment."
+        ),
         help="Ścieżka do pliku YAML opisującego środowiska (domyślnie config/environments/exchange_modes.yaml).",
     )
     health.add_argument(
@@ -104,6 +119,182 @@ def create_parser() -> argparse.ArgumentParser:
         "--skip-private",
         action="store_true",
         help="Pomija prywatny test (np. pobieranie salda).",
+    )
+    health.add_argument(
+        "--check",
+        dest="checks",
+        action="append",
+        help=(
+            "Wykonuje tylko wskazane testy zdrowia (np. --check public_api). "
+            "Argument można podawać wielokrotnie lub przekazać listę rozdzieloną przecinkami. "
+            "Nazwy testów są nieczułe na wielkość liter."
+        ),
+    )
+    health.add_argument(
+        "--list-checks",
+        action="store_true",
+        help="Wyświetla listę dostępnych testów i kończy działanie komendy.",
+    )
+    health.add_argument(
+        "--private-asset",
+        help="Symbol waluty, której saldo ma być weryfikowane w teście private_api (np. USDT).",
+    )
+    health.add_argument(
+        "--private-min-balance",
+        type=float,
+        help="Minimalne wymagane saldo dla wskazanej waluty w teście private_api.",
+    )
+    health.add_argument(
+        "--public-symbol",
+        help=(
+            "Symbol giełdowy używany w teście public_api (np. BTC/USDT). "
+            "Domyślnie wybierany jest ticker z konfiguracji środowiska lub ładowane są całe rynki."
+        ),
+    )
+    health.add_argument(
+        "--paper-variant",
+        help="Wymusza wariant symulatora paper (np. spot, margin, futures).",
+    )
+    health.add_argument(
+        "--paper-initial-cash",
+        type=float,
+        help="Ustawia początkowy kapitał w symulatorze paper (wartość dodatnia).",
+    )
+    health.add_argument(
+        "--paper-cash-asset",
+        help="Ustawia walutę gotówkową w symulatorze paper (np. USDT).",
+    )
+    health.add_argument(
+        "--paper-fee-rate",
+        type=float,
+        help="Ustawia stawkę prowizji symulatora paper (wartość nieujemna).",
+    )
+    health.add_argument(
+        "--paper-leverage-limit",
+        type=float,
+        help=(
+            "Ustawia limit dźwigni w symulatorze margin/futures (wartość dodatnia)."
+        ),
+    )
+    health.add_argument(
+        "--paper-maintenance-margin",
+        type=float,
+        help=(
+            "Ustawia współczynnik maintenance margin w symulatorze (wartość dodatnia)."
+        ),
+    )
+    health.add_argument(
+        "--paper-funding-rate",
+        type=float,
+        help=(
+            "Ustawia dzienny funding rate w symulatorze (może być ujemny/zerowy)."
+        ),
+    )
+    health.add_argument(
+        "--paper-funding-interval",
+        type=float,
+        help=(
+            "Ustawia odstęp między naliczeniami funding w sekundach (wartość dodatnia)."
+        ),
+    )
+    health.add_argument(
+        "--paper-simulator-setting",
+        dest="paper_simulator_settings",
+        action="append",
+        metavar="KEY=VALUE",
+        help=(
+            "Nadpisuje dowolny parametr symulatora paper (np. --paper-simulator-setting maintenance_margin_ratio=0.12)."
+        ),
+    )
+    health.add_argument(
+        "--watchdog-max-attempts",
+        type=int,
+        help="Ustawia maksymalną liczbę prób w retry policy watchdog-a (wartość dodatnia).",
+    )
+    health.add_argument(
+        "--watchdog-base-delay",
+        type=float,
+        help="Ustawia początkowe opóźnienie retry w sekundach (wartość dodatnia).",
+    )
+    health.add_argument(
+        "--watchdog-max-delay",
+        type=float,
+        help="Ustawia maksymalne opóźnienie retry w sekundach (wartość dodatnia).",
+    )
+    health.add_argument(
+        "--watchdog-jitter-min",
+        type=float,
+        help="Nadpisuje minimalny jitter retry (wartość nieujemna).",
+    )
+    health.add_argument(
+        "--watchdog-jitter-max",
+        type=float,
+        help="Nadpisuje maksymalny jitter retry (wartość nieujemna).",
+    )
+    health.add_argument(
+        "--watchdog-failure-threshold",
+        type=int,
+        help="Ustawia próg otwarcia circuit breakera (liczba dodatnia).",
+    )
+    health.add_argument(
+        "--watchdog-recovery-timeout",
+        type=float,
+        help="Ustawia czas regeneracji circuit breakera w sekundach (wartość dodatnia).",
+    )
+    health.add_argument(
+        "--watchdog-half-open-success",
+        type=int,
+        help="Ustawia liczbę udanych prób wymaganych do zamknięcia stanu half-open (wartość dodatnia).",
+    )
+    health.add_argument(
+        "--native-setting",
+        dest="native_settings",
+        action="append",
+        metavar="KEY=VALUE",
+        help="Nadpisuje ustawienie natywnego adaptera (np. --native-setting margin_mode=cross).",
+    )
+    health.add_argument(
+        "--native-mode",
+        choices=("margin", "futures"),
+        help="Wymusza tryb natywnego adaptera (domyślnie zgodny z bieżącym trybem managera).",
+    )
+    health.add_argument(
+        "--output-format",
+        choices=("text", "json", "json-pretty"),
+        default="text",
+        help=(
+            "Format wyjścia komendy (domyślnie text). Użyj json-pretty, aby otrzymać czytelny JSON."
+        ),
+    )
+    health.add_argument(
+        "--output-path",
+        help=(
+            "Ścieżka do pliku, do którego zostanie zapisany wynik testów. Dostępne tylko "
+            "w połączeniu z --output-format=json lub json-pretty."
+        ),
+    )
+
+    list_envs = subparsers.add_parser(
+        "list-environments",
+        help="Wyświetla zdefiniowane środowiska z pliku YAML.",
+    )
+    list_envs.add_argument(
+        "--environment-config",
+        help="Ścieżka do pliku YAML opisującego środowiska (domyślnie config/environments/exchange_modes.yaml).",
+    )
+
+    show_env = subparsers.add_parser(
+        "show-environment",
+        help="Prezentuje pełną konfigurację środowiska po scaleniu z wartościami domyślnymi.",
+    )
+    show_env.add_argument(
+        "--environment-config",
+        help="Ścieżka do pliku YAML opisującego środowiska (domyślnie config/environments/exchange_modes.yaml).",
+    )
+    show_env.add_argument(
+        "--environment",
+        required=True,
+        help="Nazwa środowiska, którego konfigurację należy wyświetlić.",
     )
 
     return parser
@@ -140,6 +331,7 @@ def _extract_adapter_settings(profile: Mapping[str, object]) -> dict[str, object
         "paper",
         "watchdog",
         "health_check",
+        "native_adapter",
     }
     return {key: value for key, value in profile.items() if key not in skip_keys}
 
@@ -177,6 +369,94 @@ def _coerce_credential_value(value: object, *, key: str) -> str | None:
     return stripped
 
 
+def _coerce_optional_float(value: object, *, key: str) -> float | None:
+    """Konwertuje wartość na liczbę zmiennoprzecinkową lub zwraca ``None``."""
+
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None
+        try:
+            return float(stripped)
+        except ValueError as exc:
+            raise CLIUsageError(f"Wartość {key} musi być liczbą.") from exc
+    raise CLIUsageError(f"Wartość {key} musi być liczbą.")
+
+
+def _normalize_native_mode(value: str, *, context: str) -> Mode:
+    normalized = value.strip().lower()
+    if normalized == "margin":
+        return Mode.MARGIN
+    if normalized == "futures":
+        return Mode.FUTURES
+    raise CLIUsageError(f"{context} wspiera tylko tryby 'margin' lub 'futures'.")
+
+
+def _parse_native_setting_argument(argument: str) -> tuple[str, object]:
+    if not isinstance(argument, str):
+        raise CLIUsageError("Opcja --native-setting wymaga formatu klucz=wartość.")
+    if "=" not in argument:
+        raise CLIUsageError("Opcja --native-setting wymaga formatu klucz=wartość.")
+    key_raw, value_raw = argument.split("=", 1)
+    key = key_raw.strip()
+    if not key:
+        raise CLIUsageError("Opcja --native-setting wymaga niepustego klucza.")
+    value = value_raw.strip()
+    if (value.startswith("\"") and value.endswith("\"")) or (
+        value.startswith("'") and value.endswith("'")
+    ):
+        value = value[1:-1]
+    if not value:
+        return key, ""
+    lowered = value.casefold()
+    if lowered == "true":
+        return key, True
+    if lowered == "false":
+        return key, False
+    if lowered in {"null", "none"}:
+        return key, None
+    try:
+        return key, int(value)
+    except ValueError:
+        try:
+            return key, float(value)
+        except ValueError:
+            return key, value
+
+
+def _parse_paper_simulator_setting_argument(argument: str) -> tuple[str, float]:
+    """Parses ``KEY=VALUE`` pairs for paper simulator overrides."""
+
+    key, value = _parse_native_setting_argument(argument)
+    if isinstance(value, bool):
+        raise CLIUsageError(
+            "Wartość opcji --paper-simulator-setting musi być liczbą zmiennoprzecinkową."
+        )
+    if isinstance(value, (int, float)):
+        return key, float(value)
+    raise CLIUsageError(
+        "Wartość opcji --paper-simulator-setting musi być liczbą zmiennoprzecinkową."
+    )
+
+
+def _extract_jitter_pair(value: object) -> tuple[float, float] | None:
+    """Konwertuje sekwencję na parę ``(min, max)`` dla jittera."""
+
+    if isinstance(value, (list, tuple)) and len(value) >= 2:
+        try:
+            return float(value[0]), float(value[1])
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _read_environment_payload(
+    path: str | Path,
+) -> tuple[Path, Mapping[str, object] | None, dict[str, Mapping[str, object]]]:
 def _load_environment_profile(path: str | Path, environment: str) -> dict[str, object]:
     if yaml is None:  # pragma: no cover - opcjonalna zależność
         raise CLIUsageError("Wczytanie konfiguracji środowisk wymaga pakietu PyYAML (pip install pyyaml).")
@@ -199,6 +479,27 @@ def _load_environment_profile(path: str | Path, environment: str) -> dict[str, o
     defaults_raw = payload.get("defaults")
     defaults: Mapping[str, object] | None = defaults_raw if isinstance(defaults_raw, Mapping) else None
 
+    environments: dict[str, Mapping[str, object]] = {}
+    for key, value in payload.items():
+        if key == "defaults":
+            continue
+        if not isinstance(key, str):
+            raise CLIUsageError(
+                f"Klucz środowiska musi być łańcuchem znaków – wykryto {key!r} w pliku {storage}."
+            )
+        if not isinstance(value, Mapping):
+            raise CLIUsageError(
+                f"Środowisko '{key}' w pliku {storage} musi być opisane słownikiem konfiguracji."
+            )
+        environments[key] = value
+
+    return storage, defaults, environments
+
+
+def _load_environment_profile(path: str | Path, environment: str) -> dict[str, object]:
+    storage, defaults, environments = _read_environment_payload(path)
+
+    section = environments.get(environment)
     section = payload.get(environment)
     if not isinstance(section, Mapping):
         raise CLIUsageError(f"Środowisko '{environment}' nie istnieje w pliku {storage}.")
@@ -207,6 +508,44 @@ def _load_environment_profile(path: str | Path, environment: str) -> dict[str, o
     merged.setdefault("name", environment)
     merged.setdefault("__path__", str(storage))
     return merged
+
+
+def _summarize_environment(profile: Mapping[str, object]) -> str:
+    name_raw = profile.get("name")
+    name = (
+        str(name_raw).strip()
+        if isinstance(name_raw, str) and str(name_raw).strip()
+        else "(nieznane)"
+    )
+
+    path_raw = profile.get("__path__")
+    path = str(path_raw) if isinstance(path_raw, str) and path_raw else str(DEFAULT_ENVIRONMENT_CONFIG_PATH)
+
+    summary_parts: list[str] = []
+
+    exchange_raw = profile.get("exchange")
+    if isinstance(exchange_raw, str) and exchange_raw.strip():
+        summary_parts.append(f"exchange={exchange_raw.strip()}")
+
+    portfolio_raw = profile.get("portfolio")
+    if isinstance(portfolio_raw, str) and portfolio_raw.strip():
+        summary_parts.append(f"portfolio={portfolio_raw.strip()}")
+
+    manager_cfg = profile.get("exchange_manager") if isinstance(profile.get("exchange_manager"), Mapping) else None
+    if isinstance(manager_cfg, Mapping):
+        mode_raw = manager_cfg.get("mode")
+        if isinstance(mode_raw, str) and mode_raw.strip():
+            summary_parts.append(f"mode={mode_raw.strip()}")
+
+        if "testnet" in manager_cfg:
+            summary_parts.append(f"testnet={'true' if bool(manager_cfg.get('testnet')) else 'false'}")
+
+        paper_variant = manager_cfg.get("paper_variant")
+        if isinstance(paper_variant, str) and paper_variant.strip():
+            summary_parts.append(f"paper_variant={paper_variant.strip()}")
+
+    suffix = f" [{', '.join(summary_parts)}]" if summary_parts else ""
+    return f"Aktywne środowisko: {name} ({path}){suffix}"
 
 
 def _resolve_credential(
@@ -264,12 +603,35 @@ def _configure_watchdog(manager: ExchangeManager, profile: Mapping[str, object])
         manager.configure_watchdog(**kwargs)
 
 
+def _normalize_requested_checks(raw_checks: Sequence[str] | None) -> list[str]:
+    """Zamienia argumenty CLI na listę unikalnych nazw testów."""
+
+    if not raw_checks:
+        return []
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for entry in raw_checks:
+        if not entry:
+            continue
+        pieces = (segment.strip() for segment in entry.split(","))
+        for piece in pieces:
+            if not piece:
+                continue
+            canonical = piece.casefold()
+            if canonical not in seen:
+                normalized.append(canonical)
+                seen.add(canonical)
+    return normalized
+
+
 def _build_health_checks(
     manager: ExchangeManager,
     *,
     include_public: bool,
     include_private: bool,
     public_symbol: str | None,
+    private_asset: str | None,
+    private_min_balance: float | None,
 ) -> list[HealthCheck]:
     checks: list[HealthCheck] = []
     if include_public:
@@ -278,7 +640,56 @@ def _build_health_checks(
         else:
             checks.append(HealthCheck(name="public_api", check=lambda: manager.load_markets()))
     if include_private:
-        checks.append(HealthCheck(name="private_api", check=lambda: manager.fetch_balance()))
+        asset_label = private_asset
+
+        def _validate_private() -> object:
+            balance = manager.fetch_balance()
+            if not asset_label:
+                return balance
+            if not isinstance(balance, Mapping):
+                raise RuntimeError(
+                    "Odpowiedź salda powinna być mapą z sekcjami total/free – otrzymano inny typ."
+                )
+
+            normalized = asset_label.upper()
+
+            def _extract(section: Mapping[str, object] | None) -> float | None:
+                if not isinstance(section, Mapping):
+                    return None
+                for key, raw_value in section.items():
+                    if isinstance(key, str) and key.upper() == normalized:
+                        try:
+                            return float(raw_value) if raw_value is not None else None
+                        except (TypeError, ValueError) as exc:  # pragma: no cover - defensywne logowanie
+                            raise RuntimeError(
+                                f"Nie udało się sparsować salda {asset_label} do liczby: {raw_value!r}"
+                            ) from exc
+                return None
+
+            candidates: list[Mapping[str, object] | None] = [
+                balance.get("total"),
+                balance.get("free"),
+                balance.get("used"),
+            ]
+            amount = None
+            for section in candidates:
+                amount = _extract(section)
+                if amount is not None:
+                    break
+            if amount is None:
+                amount = _extract(balance)
+
+            if amount is None:
+                raise RuntimeError(f"Saldo nie zawiera waluty {asset_label} w sekcjach total/free.")
+
+            if private_min_balance is not None and amount < private_min_balance:
+                raise RuntimeError(
+                    f"Saldo waluty {asset_label} ({amount:.8f}) jest niższe niż wymagane minimum {private_min_balance:.8f}."
+                )
+
+            return balance
+
+        checks.append(HealthCheck(name="private_api", check=_validate_private))
     if not checks:
         raise CLIUsageError("Brak aktywnych testów zdrowia – włącz przynajmniej jeden check.")
     return checks
@@ -299,6 +710,35 @@ def run_health_check(
     *,
     manager_factory: type[ExchangeManager] = ExchangeManager,
 ) -> int:
+    output_format = getattr(args, "output_format", "text") or "text"
+    if getattr(args, "list_checks", False):
+        print("Dostępne testy health-check:")
+        for name in _SUPPORTED_HEALTH_CHECKS:
+            print(f"  * {name}")
+        return 0
+    environment_profile: dict[str, object] = {}
+    environment_name: str | None = getattr(args, "environment", None)
+    env_config_arg = getattr(args, "environment_config", None)
+    environment_summary: str | None = None
+    native_adapter_payload: dict[str, object] | None = None
+    if environment_name or env_config_arg:
+        config_path = env_config_arg or str(DEFAULT_ENVIRONMENT_CONFIG_PATH)
+        selected_environment = environment_name
+        if not selected_environment:
+            _, defaults, _ = _read_environment_payload(config_path)
+            default_env = None
+            if isinstance(defaults, Mapping):
+                raw_default = defaults.get("environment")
+                if isinstance(raw_default, str) and raw_default.strip():
+                    default_env = raw_default.strip()
+            if not default_env:
+                raise CLIUsageError(
+                    "Argument --environment-config wymaga podania nazwy środowiska (--environment) "
+                    "lub zdefiniowania defaults.environment w pliku."
+                )
+            selected_environment = default_env
+        environment_profile = _load_environment_profile(config_path, selected_environment)
+        environment_summary = _summarize_environment(environment_profile)
     if getattr(args, "environment_config", None) and not getattr(args, "environment", None):
         raise CLIUsageError("Argument --environment-config wymaga podania nazwy środowiska (--environment).")
 
@@ -317,6 +757,73 @@ def run_health_check(
 
     env_manager_cfg = environment_profile.get("exchange_manager")
     env_manager_cfg = env_manager_cfg if isinstance(env_manager_cfg, Mapping) else {}
+
+    env_mode_raw = env_manager_cfg.get("mode") if "mode" in env_manager_cfg else None
+    env_mode = str(env_mode_raw) if isinstance(env_mode_raw, str) else None
+
+    mode_choice = args.mode or env_mode or profile_mode
+
+    profile_testnet = profile.get("testnet") if "testnet" in profile else None
+    env_testnet = env_manager_cfg.get("testnet") if "testnet" in env_manager_cfg else None
+    if args.testnet:
+        testnet_flag = True
+    elif env_testnet is not None:
+        testnet_flag = bool(env_testnet)
+    elif profile_testnet is not None:
+        testnet_flag = bool(profile_testnet)
+    else:
+        testnet_flag = False
+
+    manager = manager_factory(exchange_id=exchange_id)
+    _configure_mode(manager, mode_choice or profile_mode, testnet=testnet_flag)
+
+    if environment_summary and output_format == "text":
+        print(environment_summary)
+
+    profile_mapping = profile if profile else None
+    environment_credentials = environment_profile.get("credentials") if isinstance(environment_profile.get("credentials"), Mapping) else None
+    api_key = _resolve_credential(
+        inline=getattr(args, "key", None),
+        env_name=getattr(args, "key_env", None),
+        profile=profile_mapping,
+        environment=environment_credentials,
+        key="key",
+    )
+    secret = _resolve_credential(
+        inline=getattr(args, "secret", None),
+        env_name=getattr(args, "secret_env", None),
+        profile=profile_mapping,
+        environment=environment_credentials,
+        key="secret",
+    )
+    passphrase = _resolve_credential(
+        inline=getattr(args, "passphrase", None),
+        env_name=getattr(args, "passphrase_env", None),
+        profile=profile_mapping,
+        environment=environment_credentials,
+        key="passphrase",
+    )
+    manager.set_credentials(api_key, secret, passphrase=passphrase)
+
+    if environment_profile:
+        paper_variant = env_manager_cfg.get("paper_variant")
+        if isinstance(paper_variant, str) and paper_variant.strip():
+            manager.set_paper_variant(paper_variant)
+
+        if "paper_initial_cash" in env_manager_cfg:
+            initial_cash = env_manager_cfg.get("paper_initial_cash")
+            cash_asset = env_manager_cfg.get("paper_cash_asset")
+            manager.set_paper_balance(
+                float(initial_cash),
+                asset=str(cash_asset) if isinstance(cash_asset, str) and cash_asset.strip() else None,
+            )
+        elif "paper_cash_asset" in env_manager_cfg:
+            cash_asset_only = env_manager_cfg.get("paper_cash_asset")
+            if isinstance(cash_asset_only, str) and cash_asset_only.strip():
+                manager.set_paper_balance(manager.get_paper_initial_cash(), asset=cash_asset_only)
+
+        if "paper_fee_rate" in env_manager_cfg:
+            manager.set_paper_fee_rate(float(env_manager_cfg.get("paper_fee_rate")))
 
     env_mode_raw = env_manager_cfg.get("mode") if "mode" in env_manager_cfg else None
     env_mode = str(env_mode_raw) if isinstance(env_mode_raw, str) else None
@@ -393,10 +900,204 @@ def run_health_check(
     if combined_watchdog:
         _configure_watchdog(manager, {"watchdog": combined_watchdog})
 
-    settings = _extract_adapter_settings(profile)
-    if settings and manager.mode in {Mode.MARGIN, Mode.FUTURES}:
-        manager.configure_native_adapter(settings=settings)
+        simulator_settings = env_manager_cfg.get("simulator")
+        if isinstance(simulator_settings, Mapping):
+            manager.configure_paper_simulator(**simulator_settings)
 
+    cli_paper_variant = getattr(args, "paper_variant", None)
+    if isinstance(cli_paper_variant, str) and cli_paper_variant.strip():
+        manager.set_paper_variant(cli_paper_variant)
+
+    cli_paper_cash_asset = getattr(args, "paper_cash_asset", None)
+    if cli_paper_cash_asset is not None:
+        normalized_asset = str(cli_paper_cash_asset).strip()
+        if not normalized_asset:
+            raise CLIUsageError("Opcja --paper-cash-asset wymaga niepustej wartości.")
+        cli_paper_cash_asset = normalized_asset
+
+    cli_initial_cash = getattr(args, "paper_initial_cash", None)
+    if cli_initial_cash is not None:
+        if cli_initial_cash <= 0:
+            raise CLIUsageError("Opcja --paper-initial-cash wymaga dodatniej wartości.")
+        manager.set_paper_balance(float(cli_initial_cash), asset=cli_paper_cash_asset)
+    elif cli_paper_cash_asset is not None:
+        manager.set_paper_balance(manager.get_paper_initial_cash(), asset=cli_paper_cash_asset)
+
+    cli_fee_rate = getattr(args, "paper_fee_rate", None)
+    if cli_fee_rate is not None:
+        if cli_fee_rate < 0:
+            raise CLIUsageError("Opcja --paper-fee-rate wymaga nieujemnej wartości.")
+        manager.set_paper_fee_rate(float(cli_fee_rate))
+
+    simulator_overrides: dict[str, float] = {}
+    cli_leverage_limit = getattr(args, "paper_leverage_limit", None)
+    if cli_leverage_limit is not None:
+        if cli_leverage_limit <= 0:
+            raise CLIUsageError("Opcja --paper-leverage-limit wymaga dodatniej wartości.")
+        simulator_overrides["leverage_limit"] = float(cli_leverage_limit)
+
+    cli_maintenance_margin = getattr(args, "paper_maintenance_margin", None)
+    if cli_maintenance_margin is not None:
+        if cli_maintenance_margin <= 0:
+            raise CLIUsageError(
+                "Opcja --paper-maintenance-margin wymaga dodatniej wartości."
+            )
+        simulator_overrides["maintenance_margin_ratio"] = float(cli_maintenance_margin)
+
+    cli_funding_rate = getattr(args, "paper_funding_rate", None)
+    if cli_funding_rate is not None:
+        simulator_overrides["funding_rate"] = float(cli_funding_rate)
+
+    cli_funding_interval = getattr(args, "paper_funding_interval", None)
+    if cli_funding_interval is not None:
+        if cli_funding_interval <= 0:
+            raise CLIUsageError(
+                "Opcja --paper-funding-interval wymaga dodatniej wartości (sekundy)."
+            )
+        simulator_overrides["funding_interval_seconds"] = float(cli_funding_interval)
+
+    cli_simulator_setting_args = getattr(args, "paper_simulator_settings", None) or []
+    for raw_argument in cli_simulator_setting_args:
+        key, value = _parse_paper_simulator_setting_argument(raw_argument)
+        simulator_overrides[key] = value
+
+    if simulator_overrides:
+        try:
+            manager.configure_paper_simulator(**simulator_overrides)
+        except ValueError as exc:
+            raise CLIUsageError(str(exc)) from exc
+
+    combined_watchdog = _merge_mappings(
+        profile.get("watchdog") if isinstance(profile.get("watchdog"), Mapping) else None,
+        env_manager_cfg.get("watchdog") if isinstance(env_manager_cfg.get("watchdog"), Mapping) else None,
+    )
+    if combined_watchdog:
+        combined_watchdog = dict(combined_watchdog)
+    else:
+        combined_watchdog = {}
+
+    retry_cfg = combined_watchdog.get("retry_policy")
+    retry_policy: dict[str, object] = dict(retry_cfg) if isinstance(retry_cfg, Mapping) else {}
+    retry_overridden = False
+
+    cli_retry_max_attempts = getattr(args, "watchdog_max_attempts", None)
+    if cli_retry_max_attempts is not None:
+        if cli_retry_max_attempts <= 0:
+            raise CLIUsageError("Opcja --watchdog-max-attempts wymaga dodatniej wartości.")
+        retry_policy["max_attempts"] = int(cli_retry_max_attempts)
+        retry_overridden = True
+
+    cli_retry_base_delay = getattr(args, "watchdog_base_delay", None)
+    if cli_retry_base_delay is not None:
+        if cli_retry_base_delay <= 0:
+            raise CLIUsageError("Opcja --watchdog-base-delay wymaga dodatniej wartości.")
+        retry_policy["base_delay"] = float(cli_retry_base_delay)
+        retry_overridden = True
+
+    cli_retry_max_delay = getattr(args, "watchdog_max_delay", None)
+    if cli_retry_max_delay is not None:
+        if cli_retry_max_delay <= 0:
+            raise CLIUsageError("Opcja --watchdog-max-delay wymaga dodatniej wartości.")
+        retry_policy["max_delay"] = float(cli_retry_max_delay)
+        retry_overridden = True
+
+    jitter_min_arg = getattr(args, "watchdog_jitter_min", None)
+    jitter_max_arg = getattr(args, "watchdog_jitter_max", None)
+    if jitter_min_arg is not None and jitter_min_arg < 0:
+        raise CLIUsageError("Opcja --watchdog-jitter-min wymaga nieujemnej wartości.")
+    if jitter_max_arg is not None and jitter_max_arg < 0:
+        raise CLIUsageError("Opcja --watchdog-jitter-max wymaga nieujemnej wartości.")
+    if jitter_min_arg is not None or jitter_max_arg is not None:
+        existing_jitter = _extract_jitter_pair(retry_policy.get("jitter"))
+        jitter_min = float(jitter_min_arg) if jitter_min_arg is not None else (existing_jitter[0] if existing_jitter else 0.0)
+        jitter_max = float(jitter_max_arg) if jitter_max_arg is not None else (existing_jitter[1] if existing_jitter else 0.2)
+        if jitter_max < jitter_min:
+            raise CLIUsageError("Opcja --watchdog-jitter-max musi być większa lub równa wartości minimalnej.")
+        retry_policy["jitter"] = (jitter_min, jitter_max)
+        retry_overridden = True
+
+    if retry_policy or retry_overridden:
+        combined_watchdog["retry_policy"] = retry_policy
+
+    circuit_cfg = combined_watchdog.get("circuit_breaker")
+    circuit_breaker: dict[str, object] = dict(circuit_cfg) if isinstance(circuit_cfg, Mapping) else {}
+    circuit_overridden = False
+
+    cli_failure_threshold = getattr(args, "watchdog_failure_threshold", None)
+    if cli_failure_threshold is not None:
+        if cli_failure_threshold <= 0:
+            raise CLIUsageError("Opcja --watchdog-failure-threshold wymaga dodatniej wartości.")
+        circuit_breaker["failure_threshold"] = int(cli_failure_threshold)
+        circuit_overridden = True
+
+    cli_recovery_timeout = getattr(args, "watchdog_recovery_timeout", None)
+    if cli_recovery_timeout is not None:
+        if cli_recovery_timeout <= 0:
+            raise CLIUsageError("Opcja --watchdog-recovery-timeout wymaga dodatniej wartości.")
+        circuit_breaker["recovery_timeout"] = float(cli_recovery_timeout)
+        circuit_overridden = True
+
+    cli_half_open_success = getattr(args, "watchdog_half_open_success", None)
+    if cli_half_open_success is not None:
+        if cli_half_open_success <= 0:
+            raise CLIUsageError("Opcja --watchdog-half-open-success wymaga dodatniej wartości.")
+        circuit_breaker["half_open_success_threshold"] = int(cli_half_open_success)
+        circuit_overridden = True
+
+    if circuit_breaker or circuit_overridden:
+        combined_watchdog["circuit_breaker"] = circuit_breaker
+
+    if combined_watchdog:
+        _configure_watchdog(manager, {"watchdog": combined_watchdog})
+
+    native_settings: dict[str, object] = {}
+    native_mode_override: Mode | None = None
+
+    profile_settings = _extract_adapter_settings(profile)
+    if profile_settings and manager.mode in {Mode.MARGIN, Mode.FUTURES}:
+        native_settings.update(profile_settings)
+
+    env_native = env_manager_cfg.get("native_adapter")
+    if isinstance(env_native, Mapping):
+        native_settings_cfg = env_native.get("settings")
+        if isinstance(native_settings_cfg, Mapping):
+            native_settings.update(native_settings_cfg)
+        native_mode_raw = env_native.get("mode")
+        if isinstance(native_mode_raw, str) and native_mode_raw.strip():
+            native_mode_override = _normalize_native_mode(
+                native_mode_raw,
+                context="Konfiguracja natywnego adaptera",
+            )
+
+    cli_native_mode = getattr(args, "native_mode", None)
+    if isinstance(cli_native_mode, str) and cli_native_mode.strip():
+        native_mode_override = _normalize_native_mode(
+            cli_native_mode,
+            context="Opcja --native-mode",
+        )
+
+    cli_native_setting_args = getattr(args, "native_settings", None) or []
+    cli_native_settings_provided = False
+    for raw_argument in cli_native_setting_args:
+        key, value = _parse_native_setting_argument(raw_argument)
+        native_settings[key] = value
+        cli_native_settings_provided = True
+
+    should_configure_native = bool(native_settings) or native_mode_override is not None or cli_native_settings_provided
+    if should_configure_native:
+        target_mode = native_mode_override
+        if target_mode is None and manager.mode in {Mode.MARGIN, Mode.FUTURES}:
+            target_mode = manager.mode
+        if target_mode is None:
+            raise CLIUsageError(
+                "Konfiguracja natywnego adaptera wymaga trybu margin lub futures. "
+                "Ustaw --mode, profil lub użyj --native-mode."
+            )
+        manager.configure_native_adapter(settings=native_settings or {}, mode=target_mode)
+        native_adapter_payload = {
+            "mode": target_mode.value,
+            "settings": dict(native_settings),
+        }
     env_native = env_manager_cfg.get("native_adapter")
     if isinstance(env_native, Mapping):
         native_settings = env_native.get("settings")
@@ -427,43 +1128,154 @@ def run_health_check(
         symbol_raw = health_config.get("public_symbol")
         if isinstance(symbol_raw, str) and symbol_raw.strip():
             public_symbol = symbol_raw.strip()
+    private_asset = None
+    private_min_balance = None
+    if isinstance(health_config, Mapping):
+        asset_raw = health_config.get("private_asset")
+        if isinstance(asset_raw, str) and asset_raw.strip():
+            private_asset = asset_raw.strip().upper()
+        private_min_balance = _coerce_optional_float(
+            health_config.get("private_min_balance"), key="health_check.private_min_balance"
+        )
+    cli_public_symbol = getattr(args, "public_symbol", None)
+    if isinstance(cli_public_symbol, str) and cli_public_symbol.strip():
+        public_symbol = cli_public_symbol.strip()
+    cli_private_asset = getattr(args, "private_asset", None)
+    if isinstance(cli_private_asset, str) and cli_private_asset.strip():
+        private_asset = cli_private_asset.strip().upper()
+    cli_private_min_balance = getattr(args, "private_min_balance", None)
+    if cli_private_min_balance is not None:
+        private_min_balance = float(cli_private_min_balance)
+    requested_checks = _normalize_requested_checks(getattr(args, "checks", None))
+    if requested_checks:
+        invalid = [name for name in requested_checks if name not in _SUPPORTED_HEALTH_CHECKS]
+        if invalid:
+            raise CLIUsageError(
+                "Nieznane testy zdrowia: "
+                + ", ".join(sorted(invalid))
+                + ". Dostępne: "
+                + ", ".join(_SUPPORTED_HEALTH_CHECKS)
+                + "."
+            )
+    requested_set = set(requested_checks)
+
     skip_public = bool(args.skip_public)
     skip_private = bool(args.skip_private)
     if isinstance(health_config, Mapping):
         skip_public = skip_public or bool(health_config.get("skip_public"))
         skip_private = skip_private or bool(health_config.get("skip_private"))
 
-    include_public = not skip_public
-    include_private = not skip_private
+    include_public = not skip_public and (not requested_checks or "public_api" in requested_set)
+    include_private = not skip_private and (not requested_checks or "private_api" in requested_set)
     notes: list[str] = []
+    public_disabled_reason: str | None = None
+    private_disabled_reason: str | None = None
+
+    if skip_public and (not requested_checks or "public_api" in requested_set):
+        public_disabled_reason = "Test public_api został wyłączony (--skip-public lub konfiguracja)."
+    if skip_private and (not requested_checks or "private_api" in requested_set):
+        private_disabled_reason = "Test private_api został wyłączony (--skip-private lub konfiguracja)."
 
     if include_private:
         if manager.mode is Mode.PAPER:
             include_private = False
+            private_disabled_reason = "Test private_api nie jest obsługiwany w trybie paper."
             notes.append("Pomijam test private_api w trybie paper.")
         elif not (api_key and secret):
             include_private = False
+            private_disabled_reason = "Brak kompletnych poświadczeń API."
             notes.append("Pomijam test private_api – brak kompletnych poświadczeń API.")
+
+    if requested_checks:
+        if "public_api" in requested_set and not include_public:
+            reason = public_disabled_reason or "Test public_api jest niedostępny w tym uruchomieniu."
+            raise CLIUsageError(f"Nie można uruchomić testu public_api: {reason}")
+        if "private_api" in requested_set and not include_private:
+            reason = private_disabled_reason or "Test private_api jest niedostępny w tym uruchomieniu."
+            raise CLIUsageError(f"Nie można uruchomić testu private_api: {reason}")
 
     checks = _build_health_checks(
         manager,
         include_public=include_public,
         include_private=include_private,
         public_symbol=public_symbol,
+        private_asset=private_asset,
+        private_min_balance=private_min_balance,
     )
+    include_public = any(check.name == "public_api" for check in checks)
+    include_private = any(check.name == "private_api" for check in checks)
     monitor = manager.create_health_monitor(checks)
     results = monitor.run()
 
     for note in notes:
         print(note, file=sys.stderr)
 
-    for result in results:
-        latency = f"{result.latency:.3f}s"
-        details = _format_details(result.details)
-        print(f"{result.name}: {result.status.value} (latency={latency}){details}")
-
     overall = HealthMonitor.overall_status(results)
-    print(f"Overall status: {overall.value}")
+
+    output_path_arg = getattr(args, "output_path", None)
+
+    if output_format not in {"json", "json-pretty"} and output_path_arg:
+        raise CLIUsageError(
+            "Opcja --output-path wymaga formatu wyjścia JSON (ustaw --output-format=json lub json-pretty)."
+        )
+
+    if output_format in {"json", "json-pretty"}:
+        payload_environment = dict(environment_profile) if environment_profile else None
+        if payload_environment is not None:
+            payload_environment = dict(payload_environment)
+        paper_payload = {
+            "variant": manager.get_paper_variant(),
+            "initial_cash": manager.get_paper_initial_cash(),
+            "cash_asset": manager.get_paper_cash_asset(),
+            "fee_rate": manager.get_paper_fee_rate(),
+        }
+        simulator_settings = manager.get_paper_simulator_settings()
+        if simulator_settings:
+            paper_payload["simulator"] = simulator_settings
+        payload = {
+            "exchange": exchange_id,
+            "mode": manager.mode.value,
+            "testnet": bool(testnet_flag),
+            "environment": payload_environment,
+            "environment_summary": environment_summary,
+            "notes": notes,
+            "requested_checks": list(requested_checks) if requested_checks else None,
+            "include_public": include_public,
+            "include_private": include_private,
+            "private_asset": private_asset,
+            "private_min_balance": private_min_balance,
+            "paper": paper_payload,
+            "native_adapter": native_adapter_payload,
+            "results": [
+                {
+                    "name": result.name,
+                    "status": result.status.value,
+                    "latency": result.latency,
+                    "details": dict(result.details),
+                }
+                for result in results
+            ],
+            "overall_status": overall.value,
+        }
+        json_kwargs: dict[str, object] = {"ensure_ascii": False}
+        if output_format == "json-pretty":
+            json_kwargs["indent"] = 2
+            json_kwargs["sort_keys"] = True
+        rendered_payload = json.dumps(payload, **json_kwargs)  # type: ignore[arg-type]
+        print(rendered_payload)
+        if output_path_arg:
+            destination = Path(output_path_arg).expanduser()
+            try:
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_text(rendered_payload + "\n", encoding="utf-8")
+            except OSError as exc:
+                raise CLIUsageError(f"Nie udało się zapisać wyniku do pliku {destination}: {exc}") from exc
+    else:
+        for result in results:
+            latency = f"{result.latency:.3f}s"
+            details = _format_details(result.details)
+            print(f"{result.name}: {result.status.value} (latency={latency}){details}")
+        print(f"Overall status: {overall.value}")
 
     exit_code_map = {
         HealthStatus.HEALTHY: 0,
@@ -471,6 +1283,118 @@ def run_health_check(
         HealthStatus.UNAVAILABLE: 2,
     }
     return exit_code_map.get(overall, 2)
+
+
+def list_environments(args: argparse.Namespace) -> int:
+    config_path = getattr(args, "environment_config", None) or str(DEFAULT_ENVIRONMENT_CONFIG_PATH)
+    storage, defaults, environments = _read_environment_payload(config_path)
+
+    defaults_dict = dict(defaults or {})
+    default_environment_raw = defaults_dict.get("environment")
+    default_environment = (
+        str(default_environment_raw).strip()
+        if isinstance(default_environment_raw, str) and default_environment_raw.strip()
+        else None
+    )
+    default_exchange = defaults_dict.get("exchange")
+    default_exchange = (
+        str(default_exchange).strip()
+        if isinstance(default_exchange, str) and str(default_exchange).strip()
+        else None
+    )
+    defaults_manager = (
+        defaults_dict.get("exchange_manager")
+        if isinstance(defaults_dict.get("exchange_manager"), Mapping)
+        else None
+    )
+
+    print(f"Zdefiniowane środowiska ({storage}):")
+    if not environments:
+        print("  (brak środowisk)")
+        return 0
+
+    for name in sorted(environments):
+        section = environments[name]
+        description_raw = section.get("description")
+        description = (
+            str(description_raw).strip()
+            if isinstance(description_raw, str) and description_raw.strip()
+            else ""
+        )
+        exchange_raw = section.get("exchange")
+        exchange = (
+            str(exchange_raw).strip()
+            if isinstance(exchange_raw, str) and exchange_raw.strip()
+            else default_exchange
+        )
+
+        manager_cfg = section.get("exchange_manager") if isinstance(section.get("exchange_manager"), Mapping) else None
+        merged_manager = _merge_mappings(defaults_manager, manager_cfg) if (defaults_manager or manager_cfg) else {}
+
+        mode_raw = merged_manager.get("mode")
+        mode = (
+            str(mode_raw).strip()
+            if isinstance(mode_raw, str) and str(mode_raw).strip()
+            else None
+        )
+
+        summary_parts: list[str] = []
+        if exchange:
+            summary_parts.append(f"exchange={exchange}")
+        if mode:
+            summary_parts.append(f"mode={mode}")
+
+        testnet_flag = merged_manager.get("testnet")
+        if testnet_flag is not None:
+            summary_parts.append(f"testnet={'true' if bool(testnet_flag) else 'false'}")
+
+        paper_variant = merged_manager.get("paper_variant")
+        if isinstance(paper_variant, str) and paper_variant.strip():
+            summary_parts.append(f"paper_variant={paper_variant.strip()}")
+
+        default_mark = " (default)" if default_environment and name == default_environment else ""
+        summary = " [" + ", ".join(summary_parts) + "]" if summary_parts else ""
+
+        description_suffix = f" - {description}" if description else ""
+        print(f"  * {name}{default_mark}{summary}{description_suffix}")
+
+    return 0
+
+
+def show_environment(args: argparse.Namespace) -> int:
+    environment_name = getattr(args, "environment", None)
+    if not environment_name:
+        raise CLIUsageError("Komenda show-environment wymaga podania nazwy środowiska (--environment).")
+
+    config_path = getattr(args, "environment_config", None) or str(DEFAULT_ENVIRONMENT_CONFIG_PATH)
+    profile = _load_environment_profile(config_path, environment_name)
+
+    storage = profile.get("__path__")
+    source_path = str(storage) if isinstance(storage, str) else config_path
+
+    print(f"Środowisko '{environment_name}' ({source_path}):")
+
+    printable = dict(profile)
+    printable.pop("__path__", None)
+
+    if not printable:
+        print("  (pusta konfiguracja)")
+        return 0
+
+    if yaml is not None:  # pragma: no cover - fallback dla braku PyYAML
+        rendered = yaml.safe_dump(  # type: ignore[union-attr]
+            printable,
+            sort_keys=True,
+            allow_unicode=True,
+            default_flow_style=False,
+        ).strip()
+    else:  # pragma: no cover - środowiska wymagają PyYAML, ale zapewniamy czytelny fallback
+        rendered = repr(printable)
+
+    for line in rendered.splitlines():
+        print(f"  {line}")
+
+    return 0
 
 
 def main(
@@ -483,10 +1407,21 @@ def main(
         args = parser.parse_args(argv)
         if args.command == "health-check":
             return run_health_check(args, manager_factory=manager_factory)
+        if args.command == "list-environments":
+            return list_environments(args)
+        if args.command == "show-environment":
+            return show_environment(args)
         raise CLIUsageError(f"Nieznana komenda: {args.command}")
     except CLIUsageError as exc:
         print(f"Błąd: {exc}", file=sys.stderr)
         return 2
 
 
-__all__ = ["main", "create_parser", "run_health_check", "CLIUsageError"]
+__all__ = [
+    "main",
+    "create_parser",
+    "run_health_check",
+    "CLIUsageError",
+    "list_environments",
+    "show_environment",
+]

@@ -185,6 +185,66 @@ def test_private_backend_receives_passphrase(monkeypatch: pytest.MonkeyPatch) ->
     assert backend.client.options["options"]["defaultType"] == "margin"
 
 
+def test_exchange_manager_reports_paper_configuration() -> None:
+    manager = ExchangeManager("binance")
+    manager.set_mode(paper=True)
+
+    assert manager.get_paper_variant() == "spot"
+    assert manager.get_paper_cash_asset() == "USDT"
+    assert manager.get_paper_initial_cash() == pytest.approx(10_000.0)
+    assert manager.get_paper_fee_rate() == pytest.approx(0.001)
+    assert manager.get_paper_simulator_settings() == {}
+
+    manager.set_paper_variant("futures")
+    manager.set_paper_balance(55_000.0, asset="eur")
+    manager.set_paper_fee_rate(0.0005)
+
+    assert manager.get_paper_variant() == "futures"
+    assert manager.get_paper_cash_asset() == "EUR"
+    assert manager.get_paper_initial_cash() == pytest.approx(55_000.0)
+    assert manager.get_paper_fee_rate() == pytest.approx(0.0005)
+    assert manager.get_paper_simulator_settings() == {
+        "leverage_limit": pytest.approx(10.0),
+        "maintenance_margin_ratio": pytest.approx(0.05),
+        "funding_rate": pytest.approx(0.0001),
+        "funding_interval_seconds": pytest.approx(0.0),
+    }
+
+
+def test_configure_paper_simulator_merges_overrides() -> None:
+    manager = ExchangeManager("binance")
+    manager.set_mode(paper=True)
+    manager.set_paper_variant("margin")
+
+    manager.configure_paper_simulator(leverage_limit=4.5)
+    manager.configure_paper_simulator(funding_rate=0.0002)
+    manager.configure_paper_simulator(funding_interval_seconds=7_200)
+
+    settings = manager.get_paper_simulator_settings()
+    assert settings["leverage_limit"] == pytest.approx(4.5)
+    assert settings["maintenance_margin_ratio"] == pytest.approx(0.15)
+    assert settings["funding_rate"] == pytest.approx(0.0002)
+    assert settings["funding_interval_seconds"] == pytest.approx(7_200.0)
+
+
+def test_configure_paper_simulator_rejects_unknown_keys() -> None:
+    manager = ExchangeManager("binance")
+    manager.set_mode(paper=True)
+    manager.set_paper_variant("margin")
+
+    with pytest.raises(ValueError, match="funding_interval_seconds"):
+        manager.configure_paper_simulator(unknown=5)
+
+
+def test_configure_paper_simulator_rejects_non_positive_interval() -> None:
+    manager = ExchangeManager("binance")
+    manager.set_mode(paper=True)
+    manager.set_paper_variant("margin")
+
+    with pytest.raises(ValueError, match="dodatniej"):
+        manager.configure_paper_simulator(funding_interval_seconds=0)
+
+
 def test_updating_credentials_rebuilds_private_backend(monkeypatch: pytest.MonkeyPatch) -> None:
     created: list[dict[str, object]] = []
 

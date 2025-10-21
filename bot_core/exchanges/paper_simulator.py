@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import math
 from dataclasses import dataclass
 from typing import Iterable, Mapping, MutableMapping, Optional
 
@@ -54,6 +55,7 @@ class _MarginState:
     maintenance_margin_ratio: float
     funding_rate: float
     last_funding: dt.datetime
+    funding_interval_seconds: float
 
 
 class PaperMarginSimulator(PaperBackend):
@@ -71,6 +73,7 @@ class PaperMarginSimulator(PaperBackend):
         cash_asset: str = "USDT",
         fee_rate: Optional[float] = None,
         database=None,
+        funding_interval_seconds: Optional[float] = None,
     ) -> None:
         super().__init__(
             price_feed_backend,
@@ -83,11 +86,16 @@ class PaperMarginSimulator(PaperBackend):
         leverage_limit = max(1.0, float(leverage_limit))
         maintenance_margin_ratio = max(0.01, float(maintenance_margin_ratio))
         funding_rate = float(funding_rate)
+        funding_interval = 0.0
+        if funding_interval_seconds is not None:
+            funding_interval = max(0.0, float(funding_interval_seconds))
+
         self._margin_state = _MarginState(
             leverage_limit=leverage_limit,
             maintenance_margin_ratio=maintenance_margin_ratio,
             funding_rate=funding_rate,
             last_funding=dt.datetime.utcnow(),
+            funding_interval_seconds=funding_interval,
         )
         self._margin_events: list[dict[str, object]] = []
 
@@ -120,6 +128,17 @@ class PaperMarginSimulator(PaperBackend):
         """Returns a copy of recorded margin/funding events."""
 
         return list(self._margin_events)
+
+    def describe_configuration(self) -> dict[str, float]:
+        """Expose runtime configuration for telemetry/reporting."""
+
+        state = self._margin_state
+        return {
+            "leverage_limit": float(state.leverage_limit),
+            "maintenance_margin_ratio": float(state.maintenance_margin_ratio),
+            "funding_rate": float(state.funding_rate),
+            "funding_interval_seconds": float(state.funding_interval_seconds),
+        }
 
     # ----------------------------------------------------------------- overrides
     def _fill_order(self, order, price: float, timestamp: dt.datetime) -> OrderDTO:  # type: ignore[override]
@@ -243,6 +262,34 @@ class PaperMarginSimulator(PaperBackend):
         if exposure <= 0:
             self._margin_state.last_funding = timestamp
             return
+        interval = self._margin_state.funding_interval_seconds
+        if interval <= 0:
+            payment = exposure * rate * (elapsed / 86_400.0)
+            self._cash_balance -= payment
+            self._margin_state.last_funding = timestamp
+            self._record_margin_event(
+                "funding",
+                timestamp,
+                {"payment": payment, "exposure": exposure, "elapsed_seconds": elapsed},
+            )
+            return
+
+        periods = math.floor(elapsed / interval)
+        if periods <= 0:
+            return
+        payment = exposure * rate * ((interval / 86_400.0) * periods)
+        self._cash_balance -= payment
+        funded_until = previous + dt.timedelta(seconds=interval * periods)
+        self._margin_state.last_funding = funded_until
+        self._record_margin_event(
+            "funding",
+            timestamp,
+            {
+                "payment": payment,
+                "exposure": exposure,
+                "interval_seconds": interval,
+                "periods": periods,
+            },
         payment = exposure * rate * (elapsed / 86_400.0)
         self._cash_balance -= payment
         self._margin_state.last_funding = timestamp
@@ -339,6 +386,7 @@ class PaperFuturesSimulator(PaperMarginSimulator):
         cash_asset: str = "USDT",
         fee_rate: Optional[float] = None,
         database=None,
+        funding_interval_seconds: Optional[float] = None,
     ) -> None:
         super().__init__(
             price_feed_backend,
@@ -349,6 +397,7 @@ class PaperFuturesSimulator(PaperMarginSimulator):
             cash_asset=cash_asset,
             fee_rate=fee_rate,
             database=database,
+            funding_interval_seconds=funding_interval_seconds,
         )
 
     def fetch_account_snapshot(self) -> AccountSnapshot:  # type: ignore[override]
