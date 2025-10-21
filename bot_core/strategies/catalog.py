@@ -81,11 +81,18 @@ class StrategyCatalog:
         metadata = dict(definition.metadata)
         if tags and "tags" not in metadata:
             metadata["tags"] = tags
+        engine = spec.build(
         return spec.build(
             name=definition.name,
             parameters=definition.parameters,
             metadata=metadata,
         )
+        try:
+            setattr(engine, "metadata", dict(metadata))
+        except Exception:
+            # Nie wszystkie strategie muszą wspierać przypięcie metadanych.
+            pass
+        return engine
 
 
 def _build_daily_trend_strategy(

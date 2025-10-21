@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -13,7 +14,12 @@ from bot_core.exchanges.base import AccountSnapshot, Environment, ExchangeAdapte
 from tests.test_runtime_bootstrap import _BASE_CONFIG, _prepare_manager
 
 
-def _write_offline_pipeline_config(tmp_path: Path) -> Path:
+def _write_offline_pipeline_config(
+    tmp_path: Path,
+    *,
+    include_suspension: bool = False,
+    include_signal_limits: bool = False,
+) -> Path:
     data = yaml.safe_load(_BASE_CONFIG)
 
     environments = data.setdefault("environments", {})
@@ -94,24 +100,46 @@ def _write_offline_pipeline_config(tmp_path: Path) -> Path:
             },
         }
     }
-    data["multi_strategy_schedulers"] = {
-        "offline_scheduler": {
-            "name": "offline_scheduler",
-            "telemetry_namespace": "offline",
-            "schedules": {
-                "offline_daily_trend": {
-                    "name": "offline_daily_trend",
-                    "strategy": "offline_trend",
-                    "cadence_seconds": 3600,
-                    "max_drift_seconds": 120,
-                    "warmup_bars": 5,
-                    "risk_profile": "balanced",
-                    "max_signals": 5,
-                    "interval": "1d",
-                }
-            },
-        }
+    scheduler_entry = {
+        "name": "offline_scheduler",
+        "telemetry_namespace": "offline",
+        "schedules": {
+            "offline_daily_trend": {
+                "name": "offline_daily_trend",
+                "strategy": "offline_trend",
+                "cadence_seconds": 3600,
+                "max_drift_seconds": 120,
+                "warmup_bars": 5,
+                "risk_profile": "balanced",
+                "max_signals": 5,
+                "interval": "1d",
+            }
+        },
     }
+    if include_suspension:
+        scheduler_entry["initial_suspensions"] = [
+            {
+                "schedule": "offline_daily_trend",
+                "reason": "maintenance",
+                "duration_seconds": 1200,
+            },
+            {
+                "tag": "offline",
+                "reason": "compliance",
+                "until": "2030-01-02T00:00:00+00:00",
+            },
+        ]
+    if include_signal_limits:
+        scheduler_entry["initial_signal_limits"] = {
+            "offline_trend": {
+                "balanced": {
+                    "limit": 3,
+                    "reason": "bootstrap",
+                    "duration_seconds": 1800,
+                }
+            }
+        }
+    data["multi_strategy_schedulers"] = {"offline_scheduler": scheduler_entry}
 
     for name, env_cfg in data.get("environments", {}).items():
         env_cfg["data_cache_path"] = str(tmp_path / "cache" / name)
@@ -262,3 +290,66 @@ def test_multi_strategy_runtime_offline_reuses_cached_feed(tmp_path: Path, monke
     assert adapter.calls
     assert adapter.calls[0][0] == "configure_network"
     assert all(call[0] != "fetch_ohlcv" for call in adapter.calls)
+
+
+def test_multi_strategy_runtime_applies_initial_suspensions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "bot_core.runtime.pipeline.MarketIntelAggregator",
+        lambda storage: _StubMarketIntelAggregator(storage),
+    )
+    config_path = _write_offline_pipeline_config(tmp_path, include_suspension=True)
+    _, secret_manager = _prepare_manager()
+
+    runtime = build_multi_strategy_runtime(
+        environment_name="coinbase_offline",
+        scheduler_name=None,
+        config_path=config_path,
+        secret_manager=secret_manager,
+        adapter_factories={"coinbase_spot": _offline_adapter_factory},
+    )
+
+    snapshot = runtime.scheduler.suspension_snapshot()
+    schedule_entry = snapshot["schedules"].get("offline_daily_trend")
+    assert schedule_entry is not None
+    assert schedule_entry["reason"] == "maintenance"
+    tag_entry = snapshot["tags"].get("offline")
+    assert tag_entry is not None
+    assert tag_entry["reason"] == "compliance"
+    until_iso = tag_entry.get("until")
+    assert until_iso is not None
+    assert datetime.fromisoformat(str(until_iso)) == datetime(2030, 1, 2, tzinfo=timezone.utc)
+
+
+def test_multi_strategy_runtime_applies_initial_signal_limits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "bot_core.runtime.pipeline.MarketIntelAggregator",
+        lambda storage: _StubMarketIntelAggregator(storage),
+    )
+    config_path = _write_offline_pipeline_config(
+        tmp_path,
+        include_signal_limits=True,
+    )
+    _, secret_manager = _prepare_manager()
+
+    runtime = build_multi_strategy_runtime(
+        environment_name="coinbase_offline",
+        scheduler_name=None,
+        config_path=config_path,
+        secret_manager=secret_manager,
+        adapter_factories={"coinbase_spot": _offline_adapter_factory},
+    )
+
+    snapshot = runtime.scheduler.signal_limit_snapshot()
+    strategy_limits = snapshot.get("offline_trend")
+    assert strategy_limits is not None
+    profile_entry = strategy_limits.get("balanced")
+    assert profile_entry is not None
+    assert profile_entry.get("limit") == 3
+    assert profile_entry.get("reason") == "bootstrap"
+    assert profile_entry.get("active") is True
+    expires_at = profile_entry.get("expires_at")
+    assert isinstance(expires_at, str)

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import threading
 from collections import Counter, defaultdict, deque
 from dataclasses import dataclass
@@ -23,6 +24,8 @@ from bot_core.config.models import (
     CrossExchangeArbitrageStrategyConfig,
     StrategyScheduleConfig,
     MultiStrategySchedulerConfig,
+    MultiStrategySuspensionConfig,
+    SignalLimitOverrideConfig,
 )
 from bot_core.config.loader import load_core_config
 from bot_core.data import CachedOHLCVSource, create_cached_ohlcv_source, resolve_cache_namespace
@@ -45,6 +48,12 @@ from bot_core.security.guards import (
     get_capability_guard,
 )
 from bot_core.runtime.multi_strategy_scheduler import (
+    BlendedCapitalAllocation,
+    CapitalAllocationPolicy,
+    DrawdownAdaptiveAllocation,
+    EqualWeightAllocation,
+    MetricWeightedAllocation,
+    MetricWeightRule,
     CapitalAllocationPolicy,
     DrawdownAdaptiveAllocation,
     EqualWeightAllocation,
@@ -54,6 +63,7 @@ from bot_core.runtime.multi_strategy_scheduler import (
     RiskProfileBudgetAllocation,
     SignalStrengthAllocation,
     SmoothedCapitalAllocationPolicy,
+    TagQuotaAllocation,
     StrategyDataFeed,
     StrategySignalSink,
     VolatilityTargetAllocation,
@@ -73,6 +83,15 @@ from bot_core.strategies.catalog import (
     StrategyCatalog,
     StrategyDefinition,
 )
+
+try:  # pragma: no cover - strategia może być opcjonalna w starszych gałęziach
+    from bot_core.strategies.daily_trend import (  # type: ignore
+        DailyTrendMomentumSettings,
+        DailyTrendMomentumStrategy,
+    )
+except Exception:  # pragma: no cover - fallback gdy moduł nie istnieje
+    DailyTrendMomentumSettings = None  # type: ignore
+    DailyTrendMomentumStrategy = None  # type: ignore
 
 try:  # pragma: no cover - moduł decision może być opcjonalny
     from bot_core.decision import (
@@ -103,6 +122,18 @@ def _safe_float(value: Any, *, default: float) -> float:
         return float(value)
     except (TypeError, ValueError):
         return float(default)
+
+
+def _as_bool(value: Any, *, default: bool = False) -> bool:
+    if value in (None, ""):
+        return default
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "y", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "n", "off"}:
+            return False
+    return bool(value)
 
 
 def _resolve_environment_name_for_mode(
@@ -267,6 +298,11 @@ def build_daily_trend_pipeline(
         markets,
         paper_settings,
     )
+
+    if DailyTrendMomentumStrategy is None or DailyTrendMomentumSettings is None:
+        raise RuntimeError(
+            "Moduł daily_trend_momentum nie jest dostępny w tej wersji instalacji."
+        )
 
     strategy = DailyTrendMomentumStrategy(
         DailyTrendMomentumSettings(
@@ -1304,6 +1340,172 @@ def _collect_profile_weight_entries(source: Any) -> Mapping[str, float]:
     return result
 
 
+def _collect_tag_weight_entries(source: Any) -> Mapping[str, float]:
+    result: dict[str, float] = {}
+    if isinstance(source, Mapping):
+        for tag, weight in source.items():
+            if tag in (None, "") or weight in (None, ""):
+                continue
+            try:
+                result[str(tag)] = float(weight)
+            except (TypeError, ValueError):
+                continue
+        return result
+    if isinstance(source, Sequence):
+        for entry in source:
+            if isinstance(entry, Mapping):
+                tag = entry.get("tag") or entry.get("name") or entry.get("label")
+                weight = entry.get("weight")
+                if tag in (None, "") or weight in (None, ""):
+                    continue
+                try:
+                    result[str(tag)] = float(weight)
+                except (TypeError, ValueError):
+                    continue
+    return result
+
+
+def _apply_initial_suspensions(
+    scheduler: MultiStrategyScheduler,
+    suspensions: Sequence[MultiStrategySuspensionConfig] | None,
+) -> None:
+    if not suspensions:
+        return
+    for entry in suspensions:
+        kind = (getattr(entry, "kind", "schedule") or "schedule").lower()
+        target = getattr(entry, "target", None)
+        if not target:
+            continue
+        reason = getattr(entry, "reason", None)
+        until = getattr(entry, "until", None)
+        duration = getattr(entry, "duration_seconds", None)
+        if kind == "tag":
+            scheduler.suspend_tag(
+                target,
+                reason=reason,
+                until=until,
+                duration_seconds=duration,
+            )
+        else:
+            scheduler.suspend_schedule(
+                target,
+                reason=reason,
+                until=until,
+                duration_seconds=duration,
+            )
+
+
+def _apply_initial_signal_limits(
+    scheduler: MultiStrategyScheduler,
+    limits: Mapping[str, Mapping[str, SignalLimitOverrideConfig]] | None,
+) -> None:
+    if not limits:
+        return
+    for strategy, profiles in limits.items():
+        for profile, override in profiles.items():
+            scheduler.configure_signal_limit(strategy, profile, override)
+
+
+def _collect_metric_weight_specs(source: Any) -> tuple[MetricWeightRule, ...]:
+    rules: list[MetricWeightRule] = []
+
+    def _parse_single(metric_name: str, definition: Any) -> None:
+        if metric_name in (None, ""):
+            return
+        name = str(metric_name)
+        weight = 1.0
+        default = 0.0
+        clamp_min: float | None = None
+        clamp_max: float | None = None
+        absolute = False
+        scale = 1.0
+
+        if isinstance(definition, Mapping):
+            weight_source = (
+                definition.get("weight")
+                or definition.get("score")
+                or definition.get("coefficient")
+                or definition.get("multiplier")
+            )
+            if weight_source not in (None, ""):
+                weight = _safe_float(weight_source, default=1.0)
+            default_source = (
+                definition.get("default")
+                or definition.get("missing")
+                or definition.get("fallback")
+            )
+            if default_source not in (None, ""):
+                default = _safe_float(default_source, default=0.0)
+            min_source = (
+                definition.get("min")
+                or definition.get("clamp_min")
+                or definition.get("floor")
+            )
+            if min_source not in (None, ""):
+                clamp_min = _safe_float(min_source, default=0.0)
+            max_source = (
+                definition.get("max")
+                or definition.get("clamp_max")
+                or definition.get("cap")
+            )
+            if max_source not in (None, ""):
+                clamp_max = _safe_float(max_source, default=0.0)
+            absolute = _as_bool(
+                definition.get("absolute")
+                or definition.get("abs")
+                or definition.get("use_abs")
+                or False,
+                default=False,
+            )
+            scale_source = definition.get("scale") or definition.get("factor")
+            if scale_source not in (None, ""):
+                scale = _safe_float(scale_source, default=1.0)
+        elif isinstance(definition, Sequence):
+            try:
+                weight = _safe_float(definition[0], default=1.0)  # type: ignore[index]
+            except (IndexError, TypeError):
+                weight = 1.0
+            try:
+                default = _safe_float(definition[1], default=0.0)  # type: ignore[index]
+            except (IndexError, TypeError, ValueError):
+                default = 0.0
+        else:
+            try:
+                weight = float(definition)
+            except (TypeError, ValueError):
+                weight = 1.0
+
+        if not math.isfinite(weight) or weight == 0.0:
+            return
+        try:
+            rule = MetricWeightRule(
+                metric=name,
+                weight=float(weight),
+                default=float(default),
+                clamp_min=float(clamp_min) if clamp_min is not None else None,
+                clamp_max=float(clamp_max) if clamp_max is not None else None,
+                absolute=bool(absolute),
+                scale=float(scale),
+            )
+        except (TypeError, ValueError):
+            return
+        rules.append(rule)
+
+    if isinstance(source, Mapping):
+        for metric_name, definition in source.items():
+            _parse_single(metric_name, definition)
+    elif isinstance(source, Sequence):
+        for entry in source:
+            if isinstance(entry, Mapping):
+                metric_name = entry.get("metric") or entry.get("name")
+                if metric_name in (None, ""):
+                    continue
+                definition = dict(entry)
+                definition.setdefault("weight", entry.get("weight") or entry.get("score"))
+                _parse_single(metric_name, definition)
+    return tuple(rules)
+
+
 def _policy_factory_from_spec(
     spec: Mapping[str, Any] | str | None,
 ) -> Callable[[], CapitalAllocationPolicy]:
@@ -1399,6 +1601,94 @@ def _resolve_capital_policy(
     if name in {"signal", "signal_strength", "signals"}:
         policy = _assign_policy_label(SignalStrengthAllocation(), label)
         return policy, rebalance_seconds
+    if name in {"metric", "metric_weighted", "telemetry_weighted", "metric_score"}:
+        metrics_source = (
+            spec.get("metrics")
+            or spec.get("rules")
+            or spec.get("weights")
+            or spec.get("signals")
+        )
+        metric_rules = _collect_metric_weight_specs(metrics_source)
+        if not metric_rules:
+            _LOGGER.warning(
+                "Polityka metric_weighted nie zawiera żadnych metryk – używam fallbacku",
+            )
+        default_entry = spec.get("default_score") or spec.get("bias") or spec.get("base_score")
+        default_score = _safe_float(default_entry, default=0.0)
+        shift_entry = spec.get("shift_epsilon") or spec.get("shift") or spec.get("epsilon")
+        shift_epsilon = _safe_float(shift_entry, default=1e-6)
+        fallback_spec = (
+            spec.get("fallback")
+            or spec.get("fallback_policy")
+            or spec.get("default_policy")
+        )
+        fallback_policy: CapitalAllocationPolicy | None = None
+        if isinstance(fallback_spec, str) and fallback_spec.strip().lower() in {
+            "none",
+            "disabled",
+            "disable",
+        }:
+            fallback_policy = None
+        elif fallback_spec not in (None, ""):
+            fallback_policy, _ = _resolve_capital_policy(
+                fallback_spec, _allow_profile=_allow_profile
+            )
+        policy = MetricWeightedAllocation(
+            metric_rules,
+            label=label or name,
+            default_score=default_score,
+            fallback_policy=fallback_policy,
+            shift_epsilon=shift_epsilon,
+        )
+        return policy, rebalance_seconds
+    if name in {"tag_quota", "tag_budget", "tag_weight", "tag_split"}:
+        tags_source = (
+            spec.get("tags")
+            or spec.get("tag_weights")
+            or spec.get("weights")
+            or spec.get("groups")
+        )
+        tag_weights = _collect_tag_weight_entries(tags_source)
+        if not tag_weights:
+            _LOGGER.warning(
+                "Polityka tag_quota nie zawiera żadnych tagów – używam fallbacku",
+            )
+        default_weight_entry = (
+            spec.get("default_weight")
+            or spec.get("unassigned_weight")
+            or spec.get("fallback_weight")
+        )
+        default_weight = _safe_float(default_weight_entry, default=0.0)
+        if default_weight <= 0.0:
+            default_weight = None
+        fallback_spec = spec.get("fallback") or spec.get("fallback_policy")
+        fallback_policy: CapitalAllocationPolicy | None = None
+        if fallback_spec not in (None, ""):
+            fallback_policy, _ = _resolve_capital_policy(
+                fallback_spec,
+                _allow_profile=_allow_profile,
+            )
+        inner_spec = (
+            spec.get("within_tag")
+            or spec.get("within")
+            or spec.get("inner_policy")
+        )
+        inner_factory: Callable[[], CapitalAllocationPolicy] | None = None
+        if inner_spec not in (None, ""):
+            inner_factory = _policy_factory_from_spec(inner_spec)
+        prefer_primary_entry = spec.get("primary_only")
+        if prefer_primary_entry in (None, ""):
+            prefer_primary_entry = spec.get("prefer_primary")
+        prefer_primary = _as_bool(prefer_primary_entry, default=True)
+        policy = TagQuotaAllocation(
+            tag_weights,
+            label=label or name,
+            fallback_policy=fallback_policy,
+            inner_policy_factory=inner_factory,
+            default_weight=default_weight,
+            prefer_primary=prefer_primary,
+        )
+        return policy, rebalance_seconds
     if name in {"drawdown", "drawdown_guard", "drawdown_adaptive", "drawdown_aware"}:
         warning_entry = (
             spec.get("warning_pct")
@@ -1465,6 +1755,111 @@ def _resolve_capital_policy(
         )
         effective_label = label or name
         return _assign_policy_label(policy, effective_label), rebalance_seconds
+    if name in {"blended", "composite", "weighted_mix", "mix"}:
+        components_source = (
+            spec.get("components")
+            or spec.get("policies")
+            or spec.get("allocators")
+            or spec.get("mix")
+        )
+        components: list[tuple[CapitalAllocationPolicy, float, str | None]] = []
+        if isinstance(components_source, Mapping):
+            for comp_label, entry in components_source.items():
+                component_spec = entry
+                weight_value = 1.0
+                if isinstance(entry, Mapping):
+                    weight_source = (
+                        entry.get("weight")
+                        or entry.get("share")
+                        or entry.get("coefficient")
+                    )
+                    weight_value = _safe_float(weight_source, default=1.0)
+                    component_spec = (
+                        entry.get("policy")
+                        or entry.get("allocator")
+                        or entry.get("spec")
+                        or entry.get("definition")
+                        or entry.get("name")
+                        or entry
+                    )
+                if component_spec in (None, "") or weight_value <= 0:
+                    continue
+                component_policy, _ = _resolve_capital_policy(
+                    component_spec, _allow_profile=False
+                )
+                components.append((component_policy, weight_value, str(comp_label)))
+        elif isinstance(components_source, Sequence):
+            for entry in components_source:
+                component_spec: Any = entry
+                weight_value = 1.0
+                label_value: str | None = None
+                if isinstance(entry, Mapping):
+                    weight_source = (
+                        entry.get("weight")
+                        or entry.get("share")
+                        or entry.get("coefficient")
+                    )
+                    weight_value = _safe_float(weight_source, default=1.0)
+                    label_entry = entry.get("label") or entry.get("alias")
+                    if isinstance(label_entry, str) and label_entry:
+                        label_value = label_entry
+                    component_spec = (
+                        entry.get("policy")
+                        or entry.get("allocator")
+                        or entry.get("spec")
+                        or entry.get("definition")
+                        or entry.get("name")
+                        or entry
+                    )
+                if component_spec in (None, "") or weight_value <= 0:
+                    continue
+                component_policy, _ = _resolve_capital_policy(
+                    component_spec, _allow_profile=False
+                )
+                components.append((component_policy, weight_value, label_value))
+        else:
+            _LOGGER.debug(
+                "Polityka blended wymaga listy komponentów – otrzymano %s",
+                type(components_source).__name__,
+            )
+        normalize_flag = (
+            spec.get("normalize_components")
+            or spec.get("normalize")
+            or spec.get("normalize_weights")
+        )
+        normalize_components = _as_bool(normalize_flag, default=True)
+        fallback_spec = (
+            spec.get("fallback")
+            or spec.get("fallback_policy")
+            or spec.get("default_policy")
+        )
+        fallback_policy: CapitalAllocationPolicy | None
+        if isinstance(fallback_spec, str) and fallback_spec.strip().lower() in {
+            "none",
+            "disabled",
+            "disable",
+        }:
+            fallback_policy = None
+        elif fallback_spec in (None, ""):
+            fallback_policy = RiskParityAllocation()
+        else:
+            fallback_policy, _ = _resolve_capital_policy(
+                fallback_spec, _allow_profile=_allow_profile
+            )
+        if not components:
+            fallback_label = getattr(fallback_policy, "name", "uniform")
+            _LOGGER.warning(
+                "Polityka blended nie zawiera komponentów – używam fallbacku %s",
+                fallback_label,
+            )
+        effective_label = label or name
+        policy = BlendedCapitalAllocation(
+            tuple(components),
+            label=effective_label,
+            normalize_components=normalize_components,
+            fallback_policy=fallback_policy,
+        )
+        return policy, rebalance_seconds
     if name in {"fixed", "fixed_weight", "manual"}:
         weights_source = spec.get("weights") or spec.get("allocations")
         weights = _collect_fixed_weight_entries(weights_source)
@@ -1527,6 +1922,16 @@ def _resolve_capital_policy(
         )
     policy = _assign_policy_label(RiskParityAllocation(), label)
     return policy, rebalance_seconds
+
+
+def resolve_capital_policy_spec(
+    spec: Mapping[str, Any] | str | None,
+    *,
+    allow_profile: bool = True,
+) -> tuple[CapitalAllocationPolicy, float | None]:
+    """Publiczny helper zwracający politykę kapitału oraz zalecany interwał."""
+
+    return _resolve_capital_policy(spec, _allow_profile=allow_profile)
 
 
 def _build_decision_sink(
@@ -2624,6 +3029,16 @@ def build_multi_strategy_runtime(
             risk_profile=schedule.risk_profile,
             max_signals=schedule.max_signals,
         )
+
+    _apply_initial_signal_limits(
+        scheduler,
+        getattr(scheduler_cfg, "initial_signal_limits", None),
+    )
+
+    _apply_initial_suspensions(
+        scheduler,
+        getattr(scheduler_cfg, "initial_suspensions", None),
+    )
 
     return MultiStrategyRuntime(
         bootstrap=bootstrap_ctx,

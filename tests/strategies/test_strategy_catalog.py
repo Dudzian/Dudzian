@@ -22,6 +22,8 @@ def test_catalog_builds_trend_strategy() -> None:
     )
     engine = DEFAULT_STRATEGY_CATALOG.create(definition)
     assert isinstance(engine, StrategyEngine)
+    metadata = getattr(engine, "metadata", {})
+    assert metadata.get("tags")
 
 
 def test_catalog_unknown_engine() -> None:

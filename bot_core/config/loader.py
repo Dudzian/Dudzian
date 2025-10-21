@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import MISSING, fields
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
@@ -43,6 +44,7 @@ from bot_core.config.models import (
     PortfolioSloOverrideConfig,
     PortfolioDecisionLogConfig,
     PortfolioRuntimeInputsConfig,
+    SignalLimitOverrideConfig,
     PermissionProfileConfig,
     RuntimeEntrypointConfig,
     LicenseValidationConfig,
@@ -82,6 +84,7 @@ try:
         CrossExchangeArbitrageStrategyConfig,
         MeanReversionStrategyConfig,
         MultiStrategySchedulerConfig,
+        MultiStrategySuspensionConfig,
         StrategyDefinitionConfig,
         StrategyScheduleConfig,
         VolatilityTargetingStrategyConfig,
@@ -90,6 +93,7 @@ except Exception:  # brak rozszerzonej biblioteki strategii
     CrossExchangeArbitrageStrategyConfig = None  # type: ignore
     MeanReversionStrategyConfig = None  # type: ignore
     MultiStrategySchedulerConfig = None  # type: ignore
+    MultiStrategySuspensionConfig = None  # type: ignore
     StrategyDefinitionConfig = None  # type: ignore
     StrategyScheduleConfig = None  # type: ignore
     VolatilityTargetingStrategyConfig = None  # type: ignore
@@ -571,6 +575,102 @@ def _load_strategy_schedule(entry_name: str, entry: Mapping[str, Any]) -> Strate
     )
 
 
+def _parse_initial_suspensions(entry: Any) -> tuple[MultiStrategySuspensionConfig, ...]:
+    if MultiStrategySuspensionConfig is None:
+        return tuple()
+    if entry in (None, ""):
+        return tuple()
+    if isinstance(entry, Mapping):
+        items = (entry,)
+    else:
+        items = tuple(item for item in entry if isinstance(item, Mapping)) if isinstance(entry, Sequence) else tuple()
+    suspensions: list[MultiStrategySuspensionConfig] = []
+    for item in items:
+        kind_raw = _format_optional_text(item.get("kind"))
+        kind = (kind_raw.strip().lower() if kind_raw else "")
+        schedule_target = _format_optional_text(item.get("schedule"))
+        tag_target = _format_optional_text(item.get("tag"))
+        target_raw = _format_optional_text(item.get("target"))
+        if schedule_target:
+            target = schedule_target.strip()
+            resolved_kind = "schedule"
+        elif tag_target:
+            target = tag_target.strip()
+            resolved_kind = "tag"
+        elif target_raw:
+            target = target_raw.strip()
+            resolved_kind = kind or "schedule"
+        else:
+            continue
+        if not target:
+            continue
+        if resolved_kind not in {"schedule", "tag"}:
+            continue
+        reason_raw = _format_optional_text(item.get("reason"))
+        reason = reason_raw.strip() if reason_raw else None
+        until_value = _parse_datetime_value(item.get("until") or item.get("resume_at"))
+        duration_source = (
+            item.get("duration_seconds")
+            if "duration_seconds" in item
+            else item.get("duration") or item.get("resume_in")
+        )
+        duration_seconds = _parse_duration_seconds(duration_source)
+        suspensions.append(
+            MultiStrategySuspensionConfig(
+                kind=resolved_kind,
+                target=target,
+                reason=reason,
+                until=until_value,
+                duration_seconds=duration_seconds,
+            )
+        )
+    return tuple(suspensions)
+
+
+def _parse_signal_limit_spec(value: Any) -> SignalLimitOverrideConfig | None:
+    if SignalLimitOverrideConfig is None:
+        return None
+    if isinstance(value, Mapping):
+        limit_value = _maybe_int(value.get("limit") or value.get("value"))
+        if limit_value is None:
+            return None
+        reason = _format_optional_text(value.get("reason"))
+        until = _parse_datetime_value(value.get("until") or value.get("expires_at"))
+        duration = _parse_duration_seconds(
+            value.get("duration_seconds") or value.get("duration")
+        )
+        return SignalLimitOverrideConfig(
+            limit=max(0, int(limit_value)),
+            reason=reason,
+            until=until,
+            duration_seconds=duration,
+        )
+    parsed_limit = _maybe_int(value)
+    if parsed_limit is None:
+        return None
+    return SignalLimitOverrideConfig(limit=max(0, int(parsed_limit)))
+
+
+def _collect_signal_limit_configs(
+    value: Any,
+) -> dict[str, dict[str, SignalLimitOverrideConfig]]:
+    if SignalLimitOverrideConfig is None or not isinstance(value, Mapping):
+        return {}
+    limits: dict[str, dict[str, SignalLimitOverrideConfig]] = {}
+    for strategy_key, profile_entry in value.items():
+        if not isinstance(profile_entry, Mapping):
+            continue
+        profiles: dict[str, SignalLimitOverrideConfig] = {}
+        for profile_key, limit_value in profile_entry.items():
+            parsed = _parse_signal_limit_spec(limit_value)
+            if parsed is None:
+                continue
+            profiles[str(profile_key)] = parsed
+        if profiles:
+            limits[str(strategy_key)] = profiles
+    return limits
+
+
 def _load_multi_strategy_schedulers(raw: Mapping[str, Any]):
     if MultiStrategySchedulerConfig is None or StrategyScheduleConfig is None:
         return {}
@@ -616,6 +716,14 @@ def _load_multi_strategy_schedulers(raw: Mapping[str, Any]):
                     stress_max_age_minutes=_maybe_int(stress_age_value),
                 )
             signal_limits_entry = entry.get("signal_limits") or {}
+            signal_limits = _collect_signal_limit_configs(signal_limits_entry)
+
+            initial_signal_limits_entry = (
+                entry.get("initial_signal_limits")
+                or entry.get("signal_limit_overrides")
+                or entry.get("initial_signal_limit_overrides")
+            )
+            initial_signal_limits = _collect_signal_limit_configs(initial_signal_limits_entry)
             signal_limits: dict[str, dict[str, int]] = {}
             if isinstance(signal_limits_entry, Mapping):
                 for strategy_key, profile_entry in signal_limits_entry.items():
@@ -642,6 +750,8 @@ def _load_multi_strategy_schedulers(raw: Mapping[str, Any]):
                 entry.get("allocation_rebalance_seconds")
                 or entry.get("capital_rebalance_seconds")
             )
+            suspensions_entry = entry.get("initial_suspensions") or entry.get("suspensions")
+            initial_suspensions = _parse_initial_suspensions(suspensions_entry)
             schedulers[name] = MultiStrategySchedulerConfig(
                 name=name,
                 schedules=tuple(schedules),
@@ -662,6 +772,8 @@ def _load_multi_strategy_schedulers(raw: Mapping[str, Any]):
                 signal_limits=signal_limits,
                 capital_policy=capital_policy,
                 allocation_rebalance_seconds=_maybe_int(allocation_rebalance_value),
+                initial_suspensions=initial_suspensions,
+                initial_signal_limits=initial_signal_limits,
             )
     return schedulers
 
@@ -1337,6 +1449,55 @@ def _format_optional_text(value: Any | None) -> str | None:
     if value in (None, ""):
         return None
     return str(value)
+
+
+_DURATION_PATTERN = re.compile(r"^(?P<value>[-+]?[0-9]*\.?[0-9]+)\s*(?P<unit>[smhdSMHD]?)$")
+
+
+def _parse_duration_seconds(value: Any | None) -> float | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        match = _DURATION_PATTERN.match(text)
+        if not match:
+            try:
+                return float(text)
+            except (TypeError, ValueError):
+                return None
+        amount = float(match.group("value"))
+        unit = match.group("unit").lower()
+        if unit in ("", "s"):
+            return amount
+        if unit == "m":
+            return amount * 60.0
+        if unit == "h":
+            return amount * 3600.0
+        if unit == "d":
+            return amount * 86400.0
+        return amount
+    return None
+
+
+def _parse_datetime_value(value: Any | None) -> datetime | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            return None
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    return None
 
 
 def _normalize_alert_mode(value: Any | None, *, field_name: str) -> str | None:

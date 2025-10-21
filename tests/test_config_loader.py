@@ -16,6 +16,7 @@ It implements exactly what's exercised in the tests the user shared:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, Iterable, Mapping, Optional, Tuple
@@ -703,6 +704,29 @@ def test_load_core_config_reads_portfolio_inputs(tmp_path: Path) -> None:
                   trend_schedule: 0.6
                   mean_reversion:
                     balanced: 0.4
+              initial_suspensions:
+                - schedule: trend_schedule
+                  reason: maintenance
+                  duration_seconds: 900
+                - tag: beta
+                  reason: compliance
+                  until: 2024-01-05T12:30:00+00:00
+              initial_signal_limits:
+                trend_schedule:
+                  balanced:
+                    limit: 4
+                    reason: bootstrap
+                    until: 2024-01-05T13:30:00+00:00
+                mean_reversion:
+                  balanced:
+                    limit: 2
+                    duration_seconds: 1200
+              signal_limits:
+                mean_reversion:
+                  balanced:
+                    limit: 3
+                    reason: manual
+                    duration: 600
               signal_limits:
                 mean_reversion:
                   balanced: 3
@@ -723,6 +747,14 @@ def test_load_core_config_reads_portfolio_inputs(tmp_path: Path) -> None:
         == "var/audit/stage6/stress_lab_report.json"
     )
     assert scheduler.portfolio_inputs.stress_max_age_minutes == 240
+    assert "mean_reversion" in scheduler.signal_limits
+    profile_limits = scheduler.signal_limits["mean_reversion"]
+    assert "balanced" in profile_limits
+    override = profile_limits["balanced"]
+    assert override.limit == 3
+    assert override.reason == "manual"
+    assert override.until is None
+    assert override.duration_seconds == pytest.approx(600.0)
     assert scheduler.signal_limits == {"mean_reversion": {"balanced": 3}}
     assert scheduler.allocation_rebalance_seconds == 45
     assert isinstance(scheduler.capital_policy, Mapping)
@@ -731,6 +763,28 @@ def test_load_core_config_reads_portfolio_inputs(tmp_path: Path) -> None:
     assert isinstance(weights_cfg, Mapping)
     assert weights_cfg.get("trend_schedule") == 0.6
     assert isinstance(weights_cfg.get("mean_reversion"), Mapping)
+    suspensions = scheduler.initial_suspensions
+    assert len(suspensions) == 2
+    first = suspensions[0]
+    assert first.kind == "schedule"
+    assert first.target == "trend_schedule"
+    assert first.reason == "maintenance"
+    assert first.duration_seconds == pytest.approx(900.0)
+    second = suspensions[1]
+    assert second.kind == "tag"
+    assert second.target == "beta"
+    assert second.reason == "compliance"
+    assert second.until == datetime(2024, 1, 5, 12, 30, tzinfo=timezone.utc)
+    initial_limits = scheduler.initial_signal_limits
+    assert "trend_schedule" in initial_limits
+    trend_limits = initial_limits["trend_schedule"]
+    assert trend_limits["balanced"].limit == 4
+    assert trend_limits["balanced"].reason == "bootstrap"
+    assert trend_limits["balanced"].until == datetime(2024, 1, 5, 13, 30, tzinfo=timezone.utc)
+    assert "mean_reversion" in initial_limits
+    mr_limits = initial_limits["mean_reversion"]
+    assert mr_limits["balanced"].limit == 2
+    assert mr_limits["balanced"].duration_seconds == pytest.approx(1200.0)
 
 
 def test_load_core_config_parses_alert_audit(tmp_path: Path) -> None:

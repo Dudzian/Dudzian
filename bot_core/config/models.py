@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Mapping, Sequence
 
 from bot_core.exchanges.base import Environment
@@ -768,6 +769,27 @@ class StrategyScheduleConfig:
 
 
 @dataclass(slots=True)
+class MultiStrategySuspensionConfig:
+    """Definicja początkowego zawieszenia harmonogramu lub tagu."""
+
+    kind: str
+    target: str
+    reason: str | None = None
+    until: datetime | None = None
+    duration_seconds: float | None = None
+
+
+@dataclass(slots=True)
+class SignalLimitOverrideConfig:
+    """Opis pojedynczego nadpisania limitu sygnałów."""
+
+    limit: int
+    reason: str | None = None
+    until: datetime | None = None
+    duration_seconds: float | None = None
+
+
+@dataclass(slots=True)
 class MultiStrategySchedulerConfig:
     """Konfiguracja scheduler-a wielostrate-gicznego."""
     name: str
@@ -778,6 +800,15 @@ class MultiStrategySchedulerConfig:
     rbac_tokens: Sequence[ServiceTokenConfig] = field(default_factory=tuple)
     portfolio_governor: str | None = None
     portfolio_inputs: "PortfolioRuntimeInputsConfig" | None = None
+    signal_limits: Mapping[str, Mapping[str, SignalLimitOverrideConfig]] = field(
+        default_factory=dict
+    )
+    capital_policy: Mapping[str, Any] | str | None = None
+    allocation_rebalance_seconds: int | None = None
+    initial_suspensions: Sequence[MultiStrategySuspensionConfig] = field(default_factory=tuple)
+    initial_signal_limits: Mapping[str, Mapping[str, SignalLimitOverrideConfig]] = field(
+        default_factory=dict
+    )
     signal_limits: Mapping[str, Mapping[str, int]] = field(default_factory=dict)
     capital_policy: Mapping[str, Any] | str | None = None
     allocation_rebalance_seconds: int | None = None
