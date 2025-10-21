@@ -14,13 +14,18 @@ from typing import Any, Mapping, MutableMapping, Sequence
 from bot_core.config import load_core_config
 from bot_core.reporting.audit import PaperSmokeJsonSynchronizer
 from bot_core.reporting.upload import SmokeArchiveUploader
-from bot_core.security import (
-    SecretManager,
-    SecretStorageError,
-    create_default_secret_storage,
-)
+from bot_core.security import SecretManager, SecretStorageError
+from scripts._cli_common import create_secret_manager
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _create_secret_manager(args: argparse.Namespace) -> SecretManager:
+    return create_secret_manager(
+        namespace=args.secret_namespace,
+        headless_passphrase=args.headless_passphrase,
+        headless_path=args.headless_storage,
+    )
 
 
 @dataclass(slots=True)
@@ -121,15 +126,6 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
 
 def _configure_logging(level: str) -> None:
     logging.basicConfig(level=getattr(logging, level.upper(), logging.INFO))
-
-
-def _create_secret_manager(args: argparse.Namespace) -> SecretManager:
-    storage = create_default_secret_storage(
-        namespace=args.secret_namespace,
-        headless_passphrase=args.headless_passphrase,
-        headless_path=args.headless_storage,
-    )
-    return SecretManager(storage, namespace=args.secret_namespace)
 
 
 def _read_summary(report_dir: Path) -> tuple[Mapping[str, Any], str, Path]:

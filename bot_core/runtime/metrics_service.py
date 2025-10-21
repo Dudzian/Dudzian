@@ -28,6 +28,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from bot_core.alerts.base import AlertRouter
     from bot_core.config.models import MetricsServiceConfig
 
+from bot_core.runtime._grpc_support import GrpcServerLifecycleMixin
 from bot_core.security.tokens import ServiceToken, ServiceTokenValidator
 
 # --- Stuby gRPC są opcjonalne podczas developmentu ---
@@ -563,7 +564,7 @@ def _build_server_credentials(tls_config: Mapping[str, Any] | Any) -> Any | None
     )
 
 
-class MetricsServer:
+class MetricsServer(GrpcServerLifecycleMixin):
     """Pełny serwer gRPC obsługujący `MetricsService`."""
 
     def __init__(
@@ -644,13 +645,6 @@ class MetricsServer:
 
     def start(self) -> None:
         self._server.start()
-
-    def stop(self, grace: Optional[float] = None) -> None:
-        self._server.stop(grace).wait()
-
-    def wait_for_termination(self, timeout: Optional[float] = None) -> None:
-        self._server.wait_for_termination(timeout)
-
 
 # =============================================================================
 # Fabryki

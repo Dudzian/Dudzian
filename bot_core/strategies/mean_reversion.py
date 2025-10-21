@@ -7,6 +7,7 @@ from math import log, sqrt
 from typing import Deque, Dict, List, Sequence
 
 from bot_core.strategies.base import MarketSnapshot, StrategyEngine, StrategySignal
+from bot_core.strategies._volatility import realized_volatility
 
 
 @dataclass(slots=True)
@@ -163,12 +164,7 @@ class MeanReversionStrategy(StrategyEngine):
         return (closes[-1] - mean_price) / std_dev if std_dev else 0.0
 
     def _realized_volatility(self, state: _SymbolState) -> float:
-        returns = list(state.returns)[-self._settings.lookback :]
-        if not returns:
-            return 0.0
-        mean_ret = sum(returns) / len(returns)
-        variance = sum((value - mean_ret) ** 2 for value in returns) / max(len(returns) - 1, 1)
-        return sqrt(max(variance, 0.0))
+        return realized_volatility(state.returns, lookback=self._settings.lookback)
 
     def _signal_confidence(self, zscore: float) -> float:
         magnitude = abs(zscore)

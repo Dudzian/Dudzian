@@ -56,6 +56,7 @@ def _paths() -> DesktopAppPaths:
         models_dir=base,
         keys_file=base / "keys.enc",
         salt_file=base / "salt.bin",
+        secret_vault_file=base / "api_keys.vault",
     )
 
 
@@ -69,6 +70,7 @@ def _build_state(
     return AppState(
         paths=_paths(),
         runtime_metadata=None,
+        symbol=DummyVar("BTC/USDT"),
         network=DummyVar(network),
         mode=DummyVar(mode),
         timeframe=DummyVar("1m"),

@@ -4,24 +4,19 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping
 
 from bot_core.security.signing import build_hmac_signature
+from bot_core.tco.utils import quantize_decimal
 
 from .models import ProfileCostSummary, StrategyCostSummary, TCOReport
 from .pdf import build_simple_pdf
 
-_DECIMAL_QUANT = Decimal("0.000001")
-
-
-def _quantize(value: Decimal) -> Decimal:
-    return value.quantize(_DECIMAL_QUANT, rounding=ROUND_HALF_UP)
-
 
 def _format_decimal(value: Decimal) -> str:
-    return f"{_quantize(value):f}"
+    return f"{quantize_decimal(value):f}"
 
 
 def _sha256(path: Path) -> str:

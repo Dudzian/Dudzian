@@ -22,15 +22,11 @@ from bot_core.portfolio import (  # noqa: E402
     PortfolioHypercareCycle,
     resolve_decision_log_config,
 )
+from scripts._cli_common import default_decision_log_path
 
 
 def _default_summary_path(governor: str) -> Path:
     return Path("var/audit/portfolio") / f"portfolio_cycle_{governor}.json"
-
-
-def _default_decision_log_path(governor: str) -> Path:
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    return Path("var/audit/decision_log") / f"portfolio_decision_{governor}_{timestamp}.jsonl"
 
 
 def _minutes_to_timedelta(value: float | None) -> timedelta | None:
@@ -164,7 +160,7 @@ def run(argv: Sequence[str] | None = None) -> int:
                 else configured_path
             )
             if decision_log_path is None:
-                decision_log_path = _default_decision_log_path(args.governor)
+                decision_log_path = default_decision_log_path(args.governor)
             decision_log_path.parent.mkdir(parents=True, exist_ok=True)
             decision_log = PortfolioDecisionLog(
                 jsonl_path=decision_log_path,

@@ -915,6 +915,7 @@ except Exception:  # pragma: no cover - brak modułu load testu
 try:  # pragma: no cover - zależne od gałęzi
     from bot_core.runtime.stage5_hypercare import (
         Stage5ComplianceConfig,
+        Stage5DecisionEngineConfig,
         Stage5HypercareConfig,
         Stage5HypercareCycle,
         Stage5HypercareResult,
@@ -945,6 +946,7 @@ except Exception:  # pragma: no cover - fallback gdy zależności runtime są ni
     LoadTestSettings = None  # type: ignore
     execute_scheduler_load_test = None  # type: ignore
     Stage5ComplianceConfig = None  # type: ignore
+    Stage5DecisionEngineConfig = None  # type: ignore
     Stage5HypercareConfig = None  # type: ignore
     Stage5HypercareCycle = None  # type: ignore
     Stage5HypercareResult = None  # type: ignore
@@ -1101,6 +1103,7 @@ __all__ = [
     "Stage5TcoConfig",
     "Stage5RotationConfig",
     "Stage5ComplianceConfig",
+    "Stage5DecisionEngineConfig",
     "Stage5TrainingConfig",
     "Stage5SloConfig",
     "Stage5OemAcceptanceConfig",

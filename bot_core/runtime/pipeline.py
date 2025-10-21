@@ -1,9 +1,10 @@
 """Budowanie gotowych pipeline'ów strategii trend-following na podstawie konfiguracji."""
 from __future__ import annotations
 
+import json
 import logging
 import threading
-from collections import defaultdict, deque
+from collections import Counter, defaultdict, deque
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 import time
@@ -23,6 +24,7 @@ from bot_core.config.models import (
     StrategyScheduleConfig,
     MultiStrategySchedulerConfig,
 )
+from bot_core.config.loader import load_core_config
 from bot_core.data import CachedOHLCVSource, create_cached_ohlcv_source, resolve_cache_namespace
 from bot_core.data.base import OHLCVRequest
 from bot_core.data.ohlcv import OHLCVBackfillService
@@ -43,9 +45,18 @@ from bot_core.security.guards import (
     get_capability_guard,
 )
 from bot_core.runtime.multi_strategy_scheduler import (
+    CapitalAllocationPolicy,
+    DrawdownAdaptiveAllocation,
+    EqualWeightAllocation,
+    FixedWeightAllocation,
     MultiStrategyScheduler,
+    RiskParityAllocation,
+    RiskProfileBudgetAllocation,
+    SignalStrengthAllocation,
+    SmoothedCapitalAllocationPolicy,
     StrategyDataFeed,
     StrategySignalSink,
+    VolatilityTargetAllocation,
 )
 from bot_core.runtime.journal import TradingDecisionEvent, TradingDecisionJournal
 from bot_core.runtime.portfolio_coordinator import PortfolioRuntimeCoordinator
@@ -56,20 +67,23 @@ from bot_core.runtime.portfolio_inputs import (
 from bot_core.runtime.tco_reporting import RuntimeTCOReporter
 from bot_core.runtime.controller import DailyTrendController
 from bot_core.security import SecretManager
-from bot_core.strategies.daily_trend import DailyTrendMomentumSettings, DailyTrendMomentumStrategy
-from bot_core.strategies.mean_reversion import MeanReversionSettings, MeanReversionStrategy
-from bot_core.strategies.volatility_target import VolatilityTargetSettings, VolatilityTargetStrategy
-from bot_core.strategies.cross_exchange_arbitrage import (
-    CrossExchangeArbitrageSettings,
-    CrossExchangeArbitrageStrategy,
-)
 from bot_core.strategies.base import StrategyEngine, StrategySignal, MarketSnapshot
+from bot_core.strategies.catalog import (
+    DEFAULT_STRATEGY_CATALOG,
+    StrategyCatalog,
+    StrategyDefinition,
+)
 
 try:  # pragma: no cover - moduł decision może być opcjonalny
-    from bot_core.decision import DecisionCandidate, DecisionEvaluation
+    from bot_core.decision import (
+        DecisionCandidate,
+        DecisionEvaluation,
+        summarize_evaluation_payloads,
+    )
 except Exception:  # pragma: no cover
     DecisionCandidate = None  # type: ignore
     DecisionEvaluation = Any  # type: ignore
+    summarize_evaluation_payloads = None  # type: ignore
 
 _DEFAULT_LEDGER_SUBDIR = Path("audit/ledger")
 _LOGGER = logging.getLogger(__name__)
@@ -80,6 +94,48 @@ def _minutes_to_timedelta(value: float | int | None, default_minutes: float) -> 
     if minutes <= 0:
         return None
     return timedelta(minutes=minutes)
+
+
+def _safe_float(value: Any, *, default: float) -> float:
+    if value in (None, ""):
+        return float(default)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _resolve_environment_name_for_mode(
+    core_config: CoreConfig,
+    *,
+    aliases: Sequence[str],
+    environment_type: Environment | None,
+    prefer_offline: bool | None = None,
+) -> str | None:
+    lowered_aliases = tuple(alias.lower() for alias in aliases)
+
+    def _matches(name: str) -> bool:
+        lowered = name.lower()
+        return any(alias in lowered for alias in lowered_aliases)
+
+    for name in core_config.environments.keys():
+        if _matches(name):
+            return name
+
+    if prefer_offline is not None:
+        for name, env in core_config.environments.items():
+            if bool(getattr(env, "offline_mode", False)) is prefer_offline:
+                return name
+
+    if environment_type is not None:
+        for name, env in core_config.environments.items():
+            env_kind = getattr(env, "environment", None)
+            if env_kind is environment_type:
+                return name
+            if isinstance(env_kind, str) and env_kind.lower() == environment_type.value:
+                return name
+
+    return next(iter(core_config.environments), None)
 
 
 def _create_cached_source(adapter: ExchangeAdapter, environment: EnvironmentConfig) -> CachedOHLCVSource:
@@ -722,6 +778,7 @@ class MultiStrategyRuntime:
     signal_sink: StrategySignalSink
     strategies: Mapping[str, StrategyEngine]
     schedules: tuple[StrategyScheduleConfig, ...]
+    capital_policy: CapitalAllocationPolicy
     portfolio_coordinator: PortfolioRuntimeCoordinator | None = None
     portfolio_governor: PortfolioGovernor | None = None
     tco_reporter: RuntimeTCOReporter | None = None
@@ -1179,6 +1236,299 @@ def _estimate_default_notional(paper_settings: Mapping[str, object]) -> float:
     return default_notional
 
 
+def _collect_fixed_weight_entries(
+    source: Any, *, prefix: str | None = None
+) -> Mapping[str, float]:
+    result: dict[str, float] = {}
+    if isinstance(source, Mapping):
+        for key, value in source.items():
+            lowered = str(key).lower()
+            if lowered in {"strategies", "strategy", "schedules", "schedule", "profiles", "profile"}:
+                result.update(_collect_fixed_weight_entries(value, prefix=prefix))
+                continue
+            if isinstance(value, Mapping):
+                next_prefix = f"{prefix}:{key}" if prefix else str(key)
+                result.update(_collect_fixed_weight_entries(value, prefix=next_prefix))
+                continue
+            composite = f"{prefix}:{key}" if prefix else str(key)
+            try:
+                result[composite] = float(value)
+            except (TypeError, ValueError):
+                continue
+    elif isinstance(source, Sequence):
+        for entry in source:
+            if not isinstance(entry, Mapping):
+                continue
+            name_value = (
+                entry.get("schedule")
+                or entry.get("strategy")
+                or entry.get("name")
+            )
+            weight_value = entry.get("weight")
+            profile_value = entry.get("profile") or entry.get("risk_profile")
+            if name_value is None or weight_value is None:
+                continue
+            composite = str(name_value)
+            if profile_value not in (None, ""):
+                composite = f"{composite}:{profile_value}"
+            try:
+                result[composite] = float(weight_value)
+            except (TypeError, ValueError):
+                continue
+    return result
+
+
+def _collect_profile_weight_entries(source: Any) -> Mapping[str, float]:
+    result: dict[str, float] = {}
+    if isinstance(source, Mapping):
+        for profile, weight in source.items():
+            if profile in (None, ""):
+                continue
+            try:
+                result[str(profile).lower()] = float(weight)
+            except (TypeError, ValueError):
+                continue
+        return result
+    if isinstance(source, Sequence):
+        for entry in source:
+            if not isinstance(entry, Mapping):
+                continue
+            profile = entry.get("profile") or entry.get("risk_profile") or entry.get("name")
+            weight = entry.get("weight")
+            if profile in (None, "") or weight in (None, ""):
+                continue
+            try:
+                result[str(profile).lower()] = float(weight)
+            except (TypeError, ValueError):
+                continue
+    return result
+
+
+def _policy_factory_from_spec(
+    spec: Mapping[str, Any] | str | None,
+) -> Callable[[], CapitalAllocationPolicy]:
+    def _default() -> CapitalAllocationPolicy:
+        return RiskParityAllocation()
+
+    if spec in (None, ""):
+        return _default
+    if isinstance(spec, str) or isinstance(spec, Mapping):
+        cached_spec = spec
+
+        def _factory() -> CapitalAllocationPolicy:
+            policy, _ = _resolve_capital_policy(cached_spec, _allow_profile=False)
+            return policy
+
+        return _factory
+    if callable(spec):  # pragma: no cover - ścieżka programistyczna
+        return spec  # type: ignore[return-value]
+    return _default
+
+
+def _assign_policy_label(policy: CapitalAllocationPolicy, label: str | None) -> CapitalAllocationPolicy:
+    if label in (None, ""):
+        return policy
+    try:
+        setattr(policy, "name", str(label))
+    except Exception:  # pragma: no cover - defensywnie
+        pass
+    return policy
+
+
+def _resolve_capital_policy(
+    spec: Mapping[str, Any] | str | None,
+    *,
+    _allow_profile: bool = True,
+) -> tuple[CapitalAllocationPolicy, float | None]:
+    if spec is None:
+        return RiskParityAllocation(), None
+    if isinstance(spec, str):
+        normalized = spec.strip().lower().replace("-", "_")
+        if normalized in {"equal", "equal_weight", "uniform"}:
+            return EqualWeightAllocation(), None
+        if normalized in {"volatility_target", "vol_target", "target_volatility"}:
+            return VolatilityTargetAllocation(), None
+        if normalized in {"signal", "signal_strength", "signals"}:
+            return SignalStrengthAllocation(), None
+        if normalized in {"fixed", "fixed_weight", "manual"}:
+            return FixedWeightAllocation({}, label="fixed_weight"), None
+        if normalized in {"risk_profile", "profile_budget", "risk_budget"} and _allow_profile:
+            return RiskProfileBudgetAllocation({}, label="risk_profile_budget"), None
+        if normalized not in {"risk", "risk_parity"}:
+            _LOGGER.warning(
+                "Nieznana polityka alokacji kapitału '%s' – używam risk_parity",
+                spec,
+            )
+        return RiskParityAllocation(), None
+
+    if not isinstance(spec, Mapping):
+        _LOGGER.warning(
+            "Nieprawidłowa definicja polityki alokacji kapitału (%s) – używam risk_parity",
+            type(spec).__name__,
+        )
+        return RiskParityAllocation(), None
+
+    name_value = spec.get("name") or spec.get("policy") or spec.get("type")
+    name = str(name_value or "risk_parity").strip().lower().replace("-", "_")
+    label_value = spec.get("label") or spec.get("alias")
+    label = str(label_value) if isinstance(label_value, str) and label_value else None
+    rebalance_entry = (
+        spec.get("rebalance_seconds")
+        or spec.get("rebalance_interval")
+        or spec.get("rebalance")
+        or spec.get("interval_seconds")
+    )
+    rebalance_seconds: float | None = None
+    if rebalance_entry not in (None, ""):
+        try:
+            rebalance_seconds = float(rebalance_entry)
+        except (TypeError, ValueError):
+            _LOGGER.debug(
+                "Nie udało się sparsować rebalance_seconds=%s dla polityki kapitału",
+                rebalance_entry,
+                exc_info=True,
+            )
+            rebalance_seconds = None
+
+    if name in {"equal", "equal_weight", "uniform"}:
+        policy = _assign_policy_label(EqualWeightAllocation(), label)
+        return policy, rebalance_seconds
+    if name in {"volatility_target", "vol_target", "target_volatility"}:
+        policy = _assign_policy_label(VolatilityTargetAllocation(), label)
+        return policy, rebalance_seconds
+    if name in {"signal", "signal_strength", "signals"}:
+        policy = _assign_policy_label(SignalStrengthAllocation(), label)
+        return policy, rebalance_seconds
+    if name in {"drawdown", "drawdown_guard", "drawdown_adaptive", "drawdown_aware"}:
+        warning_entry = (
+            spec.get("warning_pct")
+            or spec.get("warning")
+            or spec.get("soft_limit_pct")
+            or spec.get("soft_limit")
+        )
+        panic_entry = (
+            spec.get("panic_pct")
+            or spec.get("panic")
+            or spec.get("hard_limit_pct")
+            or spec.get("limit_pct")
+        )
+        pressure_entry = spec.get("pressure_weight") or spec.get("pressure")
+        min_weight_entry = spec.get("min_weight") or spec.get("floor_weight")
+        max_weight_entry = spec.get("max_weight") or spec.get("cap_weight")
+
+        warning_pct = _safe_float(warning_entry, default=10.0)
+        panic_pct = _safe_float(panic_entry, default=20.0)
+        pressure_weight = _safe_float(pressure_entry, default=0.7)
+        min_weight = _safe_float(min_weight_entry, default=0.05)
+        max_weight = _safe_float(max_weight_entry, default=1.0)
+
+        policy = DrawdownAdaptiveAllocation(
+            warning_drawdown_pct=warning_pct,
+            panic_drawdown_pct=panic_pct,
+            pressure_weight=pressure_weight,
+            min_weight=min_weight,
+            max_weight=max_weight,
+        )
+        effective_label = label or name
+        return _assign_policy_label(policy, effective_label), rebalance_seconds
+    if name in {"smoothed", "smoothed_allocation", "ewma", "ema"}:
+        base_entry = (
+            spec.get("base")
+            or spec.get("inner")
+            or spec.get("delegate")
+            or spec.get("base_policy")
+            or spec.get("inner_policy")
+        )
+        smoothing_entry = (
+            spec.get("alpha")
+            or spec.get("smoothing_factor")
+            or spec.get("smoothing")
+        )
+        min_delta_entry = (
+            spec.get("min_delta")
+            or spec.get("threshold")
+            or spec.get("min_step")
+        )
+        floor_entry = spec.get("floor_weight") or spec.get("min_weight") or spec.get("floor")
+
+        base_spec = base_entry or "risk_parity"
+        base_policy, _ = _resolve_capital_policy(base_spec, _allow_profile=_allow_profile)
+        smoothing_factor = _safe_float(smoothing_entry, default=0.35)
+        min_delta = _safe_float(min_delta_entry, default=0.0)
+        floor_weight = _safe_float(floor_entry, default=0.0)
+
+        policy = SmoothedCapitalAllocationPolicy(
+            base_policy,
+            smoothing_factor=smoothing_factor,
+            min_delta=min_delta,
+            floor_weight=floor_weight,
+        )
+        effective_label = label or name
+        return _assign_policy_label(policy, effective_label), rebalance_seconds
+    if name in {"fixed", "fixed_weight", "manual"}:
+        weights_source = spec.get("weights") or spec.get("allocations")
+        weights = _collect_fixed_weight_entries(weights_source)
+        if not weights:
+            _LOGGER.warning(
+                "Polityka fixed_weight nie zawiera żadnych wag – używam risk_parity",
+            )
+            fallback = _assign_policy_label(RiskParityAllocation(), label)
+            return fallback, rebalance_seconds
+        return FixedWeightAllocation(weights, label=label), rebalance_seconds
+    if name in {"risk_profile", "profile_budget", "risk_budget"}:
+        if not _allow_profile:
+            _LOGGER.warning(
+                "Zagnieżdżona polityka risk_profile jest niedozwolona – używam risk_parity",
+            )
+            fallback = _assign_policy_label(RiskParityAllocation(), label)
+            return fallback, rebalance_seconds
+        profile_source = (
+            spec.get("profiles")
+            or spec.get("profile_weights")
+            or spec.get("weights")
+            or spec.get("allocations")
+        )
+        profile_weights = _collect_profile_weight_entries(profile_source)
+        floor_value = (
+            spec.get("profile_floor")
+            or spec.get("floor")
+            or spec.get("min_weight")
+            or spec.get("minimum")
+        )
+        floor: float = 0.0
+        if floor_value not in (None, ""):
+            try:
+                floor = max(0.0, float(floor_value))
+            except (TypeError, ValueError):
+                _LOGGER.debug(
+                    "Nie udało się sparsować floor=%s dla risk_profile",
+                    floor_value,
+                    exc_info=True,
+                )
+                floor = 0.0
+        inner_spec = (
+            spec.get("within_profile")
+            or spec.get("inner_policy")
+            or spec.get("profile_policy")
+            or spec.get("strategy_policy")
+        )
+        inner_factory = _policy_factory_from_spec(inner_spec)
+        policy = RiskProfileBudgetAllocation(
+            profile_weights,
+            label=label,
+            profile_floor=floor,
+            inner_policy_factory=inner_factory,
+        )
+        return policy, rebalance_seconds
+    if name not in {"risk", "risk_parity"}:
+        _LOGGER.warning(
+            "Nieznana polityka alokacji kapitału '%s' – używam risk_parity",
+            name,
+        )
+    policy = _assign_policy_label(RiskParityAllocation(), label)
+    return policy, rebalance_seconds
+
+
 def _build_decision_sink(
     *,
     bootstrap: BootstrapContext,
@@ -1202,6 +1552,13 @@ def _build_decision_sink(
             min_probability = 0.55
     exchange_name = getattr(bootstrap.environment, "exchange", "")
     journal = getattr(bootstrap, "decision_journal", None)
+    history_limit = 256
+    if decision_config is not None:
+        try:
+            history_limit = int(getattr(decision_config, "evaluation_history_limit", history_limit))
+        except (TypeError, ValueError):  # pragma: no cover - konfiguracja może być uszkodzona
+            history_limit = 256
+
     return DecisionAwareSignalSink(
         base_sink=base_sink,
         orchestrator=orchestrator,
@@ -1212,7 +1569,10 @@ def _build_decision_sink(
         min_probability=min_probability,
         portfolio=portfolio_id,
         journal=journal,
+        evaluation_history_limit=history_limit,
     )
+
+
 class DecisionAwareSignalSink(StrategySignalSink):
     """Filtruje sygnały strategii przez DecisionOrchestratora."""
 
@@ -1228,6 +1588,7 @@ class DecisionAwareSignalSink(StrategySignalSink):
         min_probability: float = 0.55,
         portfolio: str | None = None,
         journal: TradingDecisionJournal | None = None,
+        evaluation_history_limit: int = 256,
     ) -> None:
         self._base_sink = base_sink
         self._orchestrator = orchestrator
@@ -1237,9 +1598,142 @@ class DecisionAwareSignalSink(StrategySignalSink):
         self._exchange = exchange
         self._min_probability = max(0.0, min(1.0, float(min_probability)))
         self._logger = logging.getLogger(__name__)
-        self._evaluations: list[DecisionEvaluation] = []
+        self._evaluations: deque[DecisionEvaluation] = deque(
+            maxlen=max(1, int(evaluation_history_limit))
+        )
         self._portfolio = str(portfolio) if portfolio is not None else ""
         self._journal = journal
+
+    @staticmethod
+    def _coerce_float(value: object) -> float | None:
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _normalize_thresholds(
+        snapshot: Mapping[str, object] | None,
+    ) -> Mapping[str, float | None] | None:
+        if not snapshot or not isinstance(snapshot, Mapping):
+            return None
+        normalized: dict[str, float | None] = {}
+        for key, value in snapshot.items():
+            key_str = str(key)
+            coerced = DecisionAwareSignalSink._coerce_float(value)
+            normalized[key_str] = coerced
+        return normalized
+
+    @staticmethod
+    def _candidate_to_mapping(candidate: object) -> Mapping[str, object]:
+        if candidate is None:
+            return {}
+        if hasattr(candidate, "to_mapping"):
+            try:
+                payload = candidate.to_mapping()  # type: ignore[assignment]
+                if isinstance(payload, Mapping):
+                    return dict(payload)
+            except Exception:  # pragma: no cover - defensywne
+                pass
+        payload_dict: dict[str, object] = {}
+        for attribute in (
+            "strategy",
+            "action",
+            "risk_profile",
+            "symbol",
+            "notional",
+            "expected_return_bps",
+            "expected_probability",
+            "cost_bps_override",
+            "latency_ms",
+        ):
+            if hasattr(candidate, attribute):
+                value = getattr(candidate, attribute)
+                if value is not None:
+                    payload_dict[attribute] = value
+        metadata = getattr(candidate, "metadata", None)
+        if isinstance(metadata, Mapping):
+            payload_dict["metadata"] = dict(metadata)
+        return payload_dict
+
+    def _serialize_evaluation_payload(
+        self,
+        evaluation: object,
+        *,
+        include_candidate: bool,
+    ) -> Mapping[str, object]:
+        payload: dict[str, object]
+        if hasattr(evaluation, "to_mapping"):
+            try:
+                mapping = evaluation.to_mapping()  # type: ignore[assignment]
+            except Exception:  # pragma: no cover - defensywne
+                mapping = None
+            if isinstance(mapping, Mapping):
+                payload = dict(mapping)
+            else:
+                payload = {}
+        else:
+            payload = {
+                "accepted": bool(getattr(evaluation, "accepted", False)),
+                "reasons": list(getattr(evaluation, "reasons", ())),
+                "risk_flags": list(getattr(evaluation, "risk_flags", ())),
+                "stress_failures": list(getattr(evaluation, "stress_failures", ())),
+                "cost_bps": getattr(evaluation, "cost_bps", None),
+                "net_edge_bps": getattr(evaluation, "net_edge_bps", None),
+                "model_expected_return_bps": getattr(
+                    evaluation, "model_expected_return_bps", None
+                ),
+                "model_success_probability": getattr(
+                    evaluation, "model_success_probability", None
+                ),
+                "model_name": getattr(evaluation, "model_name", None),
+            }
+
+        if not include_candidate:
+            payload.pop("candidate", None)
+        else:
+            candidate_payload: Mapping[str, object] | None = None
+            candidate_obj = getattr(evaluation, "candidate", None)
+            if isinstance(payload.get("candidate"), Mapping):
+                candidate_payload = dict(payload["candidate"])
+            elif candidate_obj is not None:
+                candidate_payload = self._candidate_to_mapping(candidate_obj)
+            if candidate_payload:
+                payload["candidate"] = candidate_payload
+
+        thresholds = getattr(evaluation, "thresholds_snapshot", None)
+        normalized_thresholds = self._normalize_thresholds(thresholds)
+        if normalized_thresholds:
+            payload.setdefault("thresholds", dict(normalized_thresholds))
+
+        latency = getattr(evaluation, "latency_ms", None)
+        if latency is not None:
+            try:
+                payload["latency_ms"] = float(latency)
+            except (TypeError, ValueError):  # pragma: no cover - defensywne
+                pass
+
+        evaluated_at = getattr(evaluation, "evaluated_at", None)
+        if evaluated_at is not None:
+            payload["evaluated_at"] = evaluated_at
+
+        selection = getattr(evaluation, "model_selection", None)
+        if selection is not None and "model_selection" not in payload:
+            if hasattr(selection, "to_mapping"):
+                try:
+                    selection_payload = selection.to_mapping()  # type: ignore[assignment]
+                except Exception:  # pragma: no cover - defensywne
+                    selection_payload = None
+            elif isinstance(selection, Mapping):
+                selection_payload = dict(selection)
+            else:
+                selection_payload = None
+            if selection_payload:
+                payload["model_selection"] = selection_payload
+
+        return payload
 
     def submit(
         self,
@@ -1318,7 +1812,190 @@ class DecisionAwareSignalSink(StrategySignalSink):
         return self._base_sink.export()
 
     def evaluations(self) -> Sequence[DecisionEvaluation]:
-        return tuple(self._evaluations)
+            return tuple(self._evaluations)
+
+    def evaluation_history(
+        self,
+        *,
+        limit: int | None = None,
+        include_candidates: bool = False,
+    ) -> Sequence[Mapping[str, object]]:
+        if not self._evaluations:
+            return ()
+        records = list(self._evaluations)
+        if limit is not None:
+            try:
+                limit_int = int(limit)
+            except (TypeError, ValueError):  # pragma: no cover - defensywne
+                limit_int = 0
+            if limit_int <= 0:
+                return ()
+            records = records[-limit_int:]
+        history: list[Mapping[str, object]] = []
+        for evaluation in records:
+            history.append(
+                self._serialize_evaluation_payload(
+                    evaluation, include_candidate=include_candidates
+                )
+            )
+        return tuple(history)
+
+    def evaluation_summary(self) -> Mapping[str, object]:
+        evaluations = tuple(self._evaluations)
+        history_limit = self._evaluations.maxlen or len(evaluations)
+        if summarize_evaluation_payloads is None:
+            return self._legacy_evaluation_summary(
+                evaluations, history_limit=history_limit
+            )
+
+        payloads = [
+            self._serialize_evaluation_payload(evaluation, include_candidate=True)
+            for evaluation in evaluations
+        ]
+        return summarize_evaluation_payloads(
+            payloads,
+            history_limit=history_limit,
+        )
+
+    def _legacy_evaluation_summary(
+        self,
+        evaluations: Sequence[DecisionEvaluation],
+        *,
+        history_limit: int,
+    ) -> Mapping[str, object]:
+        total = len(evaluations)
+        summary: dict[str, object] = {
+            "total": total,
+            "accepted": 0,
+            "rejected": 0,
+            "acceptance_rate": 0.0,
+            "history_limit": history_limit,
+            "rejection_reasons": {},
+            "history_window": total,
+        }
+        if not evaluations:
+            return summary
+
+        accepted = sum(
+            1 for evaluation in evaluations if getattr(evaluation, "accepted", False)
+        )
+        summary["accepted"] = accepted
+        summary["rejected"] = total - accepted
+        summary["acceptance_rate"] = accepted / total if total else 0.0
+
+        rejection_reasons: Counter[str] = Counter()
+        net_edges: list[float] = []
+        costs: list[float] = []
+        probabilities: list[float] = []
+        expected_returns: list[float] = []
+        notionals: list[float] = []
+        model_probabilities: list[float] = []
+        model_returns: list[float] = []
+        latencies: list[float] = []
+
+        for evaluation in evaluations:
+            if not getattr(evaluation, "accepted", False):
+                for reason in getattr(evaluation, "reasons", ()):
+                    rejection_reasons[str(reason)] += 1
+
+            net_edge = self._coerce_float(getattr(evaluation, "net_edge_bps", None))
+            if net_edge is not None:
+                net_edges.append(net_edge)
+
+            cost = self._coerce_float(getattr(evaluation, "cost_bps", None))
+            if cost is not None:
+                costs.append(cost)
+
+            model_prob = self._coerce_float(
+                getattr(evaluation, "model_success_probability", None)
+            )
+            if model_prob is not None:
+                model_probabilities.append(model_prob)
+
+            model_return = self._coerce_float(
+                getattr(evaluation, "model_expected_return_bps", None)
+            )
+            if model_return is not None:
+                model_returns.append(model_return)
+
+            latency = self._coerce_float(getattr(evaluation, "latency_ms", None))
+            if latency is not None:
+                latencies.append(latency)
+
+            candidate = getattr(evaluation, "candidate", None)
+            if candidate is not None:
+                probability = self._coerce_float(
+                    getattr(candidate, "expected_probability", None)
+                )
+                if probability is not None:
+                    probabilities.append(probability)
+                expected_return = self._coerce_float(
+                    getattr(candidate, "expected_return_bps", None)
+                )
+                if expected_return is not None:
+                    expected_returns.append(expected_return)
+                notional = self._coerce_float(getattr(candidate, "notional", None))
+                if notional is not None:
+                    notionals.append(notional)
+
+        summary["rejection_reasons"] = dict(
+            sorted(rejection_reasons.items(), key=lambda item: item[1], reverse=True)
+        )
+
+        if net_edges:
+            summary["avg_net_edge_bps"] = sum(net_edges) / len(net_edges)
+        if costs:
+            summary["avg_cost_bps"] = sum(costs) / len(costs)
+        if probabilities:
+            summary["avg_expected_probability"] = sum(probabilities) / len(probabilities)
+        if expected_returns:
+            summary["avg_expected_return_bps"] = sum(expected_returns) / len(
+                expected_returns
+            )
+        if notionals:
+            summary["avg_notional"] = sum(notionals) / len(notionals)
+        if model_probabilities:
+            summary["avg_model_success_probability"] = sum(model_probabilities) / len(
+                model_probabilities
+            )
+        if model_returns:
+            summary["avg_model_expected_return_bps"] = sum(model_returns) / len(
+                model_returns
+            )
+        if latencies:
+            summary["avg_latency_ms"] = sum(latencies) / len(latencies)
+
+        latest = evaluations[-1]
+        latest_model = getattr(latest, "model_name", None)
+        if latest_model:
+            summary["latest_model"] = str(latest_model)
+        latest_thresholds = self._normalize_thresholds(
+            getattr(latest, "thresholds_snapshot", None)
+        )
+        if latest_thresholds:
+            summary["latest_thresholds"] = dict(latest_thresholds)
+
+        latest_candidate = getattr(latest, "candidate", None)
+        if latest_candidate is not None:
+            summary["latest_candidate"] = {
+                "symbol": getattr(latest_candidate, "symbol", None),
+                "action": getattr(latest_candidate, "action", None),
+                "strategy": getattr(latest_candidate, "strategy", None),
+                "expected_probability": getattr(
+                    latest_candidate, "expected_probability", None
+                ),
+                "expected_return_bps": getattr(
+                    latest_candidate, "expected_return_bps", None
+                ),
+            }
+
+        metadata = getattr(latest_candidate, "metadata", None)
+        if isinstance(metadata, Mapping):
+            generated_at = metadata.get("generated_at") or metadata.get("timestamp")
+            if generated_at is not None:
+                summary["latest_generated_at"] = generated_at
+
+        return summary
 
     def _record_evaluation(
         self,
@@ -1370,6 +2047,49 @@ class DecisionAwareSignalSink(StrategySignalSink):
 
         metadata.setdefault("decision_status", "accepted" if evaluation.accepted else "rejected")
         metadata.setdefault("source", "decision_orchestrator")
+
+        _store_float(
+            "model_success_probability",
+            getattr(evaluation, "model_success_probability", None),
+        )
+        _store_float(
+            "model_expected_return_bps",
+            getattr(evaluation, "model_expected_return_bps", None),
+        )
+
+        model_name = getattr(evaluation, "model_name", None)
+        if model_name:
+            metadata.setdefault("model_name", str(model_name))
+
+        thresholds_snapshot = getattr(evaluation, "thresholds_snapshot", None)
+        normalized_thresholds = self._normalize_thresholds(thresholds_snapshot)
+        if normalized_thresholds:
+            try:
+                metadata.setdefault(
+                    "decision_thresholds",
+                    json.dumps(normalized_thresholds, sort_keys=True, ensure_ascii=False),
+                )
+            except (TypeError, ValueError):  # pragma: no cover - defensywne
+                pass
+
+        model_selection = getattr(evaluation, "model_selection", None)
+        selection_mapping: Mapping[str, object] | None = None
+        if model_selection is not None:
+            if hasattr(model_selection, "to_mapping"):
+                try:
+                    selection_mapping = model_selection.to_mapping()  # type: ignore[assignment]
+                except Exception:  # pragma: no cover - defensywne
+                    selection_mapping = None
+            elif isinstance(model_selection, Mapping):
+                selection_mapping = model_selection
+        if selection_mapping:
+            try:
+                metadata.setdefault(
+                    "model_selection",
+                    json.dumps(selection_mapping, sort_keys=True, ensure_ascii=False),
+                )
+            except (TypeError, ValueError):  # pragma: no cover - defensywne
+                pass
 
         portfolio = self._portfolio or metadata.get("portfolio_id") or metadata.get("portfolio")
         if portfolio is None:
@@ -1740,13 +2460,41 @@ def build_multi_strategy_runtime(
     )
     signal_sink: StrategySignalSink = decision_sink or base_sink
     portfolio_governor = getattr(bootstrap_ctx, "portfolio_governor", None)
+    capital_policy_spec = getattr(scheduler_cfg, "capital_policy", None)
+    capital_policy, policy_interval = _resolve_capital_policy(capital_policy_spec)
+    allocation_interval_raw = getattr(
+        scheduler_cfg,
+        "allocation_rebalance_seconds",
+        None,
+    )
+
+    allocation_interval: float | None = None
+    if allocation_interval_raw not in (None, ""):
+        try:
+            allocation_interval = float(allocation_interval_raw)
+        except (TypeError, ValueError):
+            _LOGGER.debug(
+                "Nie udało się sparsować allocation_rebalance_seconds=%s",
+                allocation_interval_raw,
+                exc_info=True,
+            )
+            allocation_interval = None
+    if allocation_interval is None and policy_interval is not None:
+        allocation_interval = policy_interval
+
     scheduler = MultiStrategyScheduler(
         environment=environment_name,
         portfolio=str(paper_settings["portfolio_id"]),
         telemetry_emitter=telemetry_emitter,
         decision_journal=bootstrap_ctx.decision_journal,
         portfolio_governor=portfolio_governor,
+        capital_policy=capital_policy,
+        allocation_rebalance_seconds=allocation_interval,
     )
+
+    signal_limits = getattr(scheduler_cfg, "signal_limits", None)
+    if signal_limits:
+        scheduler.configure_signal_limits(signal_limits)
 
     portfolio_coordinator: PortfolioRuntimeCoordinator | None = None
     governor_name = getattr(scheduler_cfg, "portfolio_governor", None)
@@ -1884,6 +2632,7 @@ def build_multi_strategy_runtime(
         signal_sink=signal_sink,
         strategies=strategies,
         schedules=tuple(scheduler_cfg.schedules),
+        capital_policy=capital_policy,
         portfolio_coordinator=portfolio_coordinator,
         portfolio_governor=portfolio_governor,
         tco_reporter=bootstrap_ctx.tco_reporter,
@@ -1892,82 +2641,201 @@ def build_multi_strategy_runtime(
     )
 
 
-def _instantiate_strategies(core_config: CoreConfig) -> dict[str, StrategyEngine]:
+def _instantiate_strategies(
+    core_config: CoreConfig, *, catalog: StrategyCatalog | None = None
+) -> dict[str, StrategyEngine]:
+    catalog = catalog or DEFAULT_STRATEGY_CATALOG
     registry: dict[str, StrategyEngine] = {}
     guard = get_capability_guard()
 
-    def _require(capability: str, *, label: str, strategy_name: str) -> None:
-        if guard is None:
+    definitions: dict[str, StrategyDefinition] = {}
+
+    for name, cfg in getattr(core_config, "strategy_definitions", {}).items():
+        definitions[name] = StrategyDefinition(
+            name=cfg.name,
+            engine=cfg.engine,
+            parameters=dict(cfg.parameters),
+            risk_profile=cfg.risk_profile,
+            tags=tuple(cfg.tags),
+            metadata=dict(cfg.metadata),
+        )
+
+    def _fallback(name: str, engine: str, params: Mapping[str, Any]) -> None:
+        if name in definitions:
             return
-        guard.require_strategy(capability, message=label.format(name=strategy_name))
+        definitions[name] = StrategyDefinition(name=name, engine=engine, parameters=dict(params))
 
     for name, cfg in getattr(core_config, "strategies", {}).items():
-        _require(
-            "trend_d1",
-            label="Strategia Trend D1 '{name}' wymaga aktywnej licencji Trend D1.",
-            strategy_name=name,
-        )
-        registry[name] = DailyTrendMomentumStrategy(
-            DailyTrendMomentumSettings(
-                fast_ma=cfg.fast_ma,
-                slow_ma=cfg.slow_ma,
-                breakout_lookback=cfg.breakout_lookback,
-                momentum_window=cfg.momentum_window,
-                atr_window=cfg.atr_window,
-                atr_multiplier=cfg.atr_multiplier,
-                min_trend_strength=cfg.min_trend_strength,
-                min_momentum=cfg.min_momentum,
-            )
+        _fallback(
+            name,
+            "daily_trend_momentum",
+            {
+                "fast_ma": cfg.fast_ma,
+                "slow_ma": cfg.slow_ma,
+                "breakout_lookback": cfg.breakout_lookback,
+                "momentum_window": cfg.momentum_window,
+                "atr_window": cfg.atr_window,
+                "atr_multiplier": cfg.atr_multiplier,
+                "min_trend_strength": cfg.min_trend_strength,
+                "min_momentum": cfg.min_momentum,
+            },
         )
     for name, cfg in getattr(core_config, "mean_reversion_strategies", {}).items():
-        _require(
+        _fallback(
+            name,
             "mean_reversion",
-            label="Strategia Mean Reversion '{name}' wymaga aktywnej licencji Mean Reversion.",
-            strategy_name=name,
-        )
-        registry[name] = MeanReversionStrategy(
-            MeanReversionSettings(
-                lookback=cfg.lookback,
-                entry_zscore=cfg.entry_zscore,
-                exit_zscore=cfg.exit_zscore,
-                max_holding_period=cfg.max_holding_period,
-                volatility_cap=cfg.volatility_cap,
-                min_volume_usd=cfg.min_volume_usd,
-            )
+            {
+                "lookback": cfg.lookback,
+                "entry_zscore": cfg.entry_zscore,
+                "exit_zscore": cfg.exit_zscore,
+                "max_holding_period": cfg.max_holding_period,
+                "volatility_cap": cfg.volatility_cap,
+                "min_volume_usd": cfg.min_volume_usd,
+            },
         )
     for name, cfg in getattr(core_config, "volatility_target_strategies", {}).items():
-        _require(
+        _fallback(
+            name,
             "volatility_target",
-            label="Strategia Volatility Target '{name}' wymaga aktywnej licencji Volatility Target.",
-            strategy_name=name,
-        )
-        registry[name] = VolatilityTargetStrategy(
-            VolatilityTargetSettings(
-                target_volatility=cfg.target_volatility,
-                lookback=cfg.lookback,
-                rebalance_threshold=cfg.rebalance_threshold,
-                min_allocation=cfg.min_allocation,
-                max_allocation=cfg.max_allocation,
-                floor_volatility=cfg.floor_volatility,
-            )
+            {
+                "target_volatility": cfg.target_volatility,
+                "lookback": cfg.lookback,
+                "rebalance_threshold": cfg.rebalance_threshold,
+                "min_allocation": cfg.min_allocation,
+                "max_allocation": cfg.max_allocation,
+                "floor_volatility": cfg.floor_volatility,
+            },
         )
     for name, cfg in getattr(core_config, "cross_exchange_arbitrage_strategies", {}).items():
-        _require(
-            "cross_exchange",
-            label="Strategia Cross-Exchange '{name}' wymaga aktywnej licencji Cross-Exchange.",
-            strategy_name=name,
+        _fallback(
+            name,
+            "cross_exchange_arbitrage",
+            {
+                "primary_exchange": cfg.primary_exchange,
+                "secondary_exchange": cfg.secondary_exchange,
+                "spread_entry": cfg.spread_entry,
+                "spread_exit": cfg.spread_exit,
+                "max_notional": cfg.max_notional,
+                "max_open_seconds": cfg.max_open_seconds,
+            },
         )
-        registry[name] = CrossExchangeArbitrageStrategy(
-            CrossExchangeArbitrageSettings(
-                primary_exchange=cfg.primary_exchange,
-                secondary_exchange=cfg.secondary_exchange,
-                spread_entry=cfg.spread_entry,
-                spread_exit=cfg.spread_exit,
-                max_notional=cfg.max_notional,
-                max_open_seconds=cfg.max_open_seconds,
+
+    for name, definition in definitions.items():
+        spec = catalog.get(definition.engine)
+        if guard is not None and spec.capability:
+            guard.require_strategy(
+                spec.capability,
+                message=(
+                    f"Strategia '{name}' wymaga aktywnej licencji "
+                    f"{spec.capability}."
+                ),
             )
-        )
+        registry[name] = catalog.create(definition)
+
     return registry
+
+
+def _build_mode_runtime(
+    mode: str,
+    *,
+    config_path: str | Path,
+    secret_manager: SecretManager,
+    scheduler_name: str | None,
+    telemetry_emitter: Callable[[str, Mapping[str, float]], None] | None,
+    adapter_factories: Mapping[str, ExchangeAdapterFactory] | None,
+    environment_aliases: Sequence[str],
+    environment_type: Environment | None,
+    prefer_offline: bool | None,
+    environment_name: str | None,
+) -> MultiStrategyRuntime:
+    core_config = load_core_config(config_path)
+    resolved_env = environment_name or _resolve_environment_name_for_mode(
+        core_config,
+        aliases=environment_aliases,
+        environment_type=environment_type,
+        prefer_offline=prefer_offline,
+    )
+    if resolved_env is None:
+        raise ValueError(
+            f"Nie udało się odnaleźć środowiska {mode} w konfiguracji. Dodaj sekcję environments."
+        )
+    return build_multi_strategy_runtime(
+        environment_name=resolved_env,
+        scheduler_name=scheduler_name,
+        config_path=config_path,
+        secret_manager=secret_manager,
+        adapter_factories=adapter_factories,
+        telemetry_emitter=telemetry_emitter,
+    )
+
+
+def build_demo_multi_strategy_runtime(
+    *,
+    config_path: str | Path,
+    secret_manager: SecretManager,
+    scheduler_name: str | None = None,
+    telemetry_emitter: Callable[[str, Mapping[str, float]], None] | None = None,
+    adapter_factories: Mapping[str, ExchangeAdapterFactory] | None = None,
+    environment_name: str | None = None,
+) -> MultiStrategyRuntime:
+    return _build_mode_runtime(
+        "demo",
+        config_path=config_path,
+        secret_manager=secret_manager,
+        scheduler_name=scheduler_name,
+        telemetry_emitter=telemetry_emitter,
+        adapter_factories=adapter_factories,
+        environment_aliases=("demo", "offline", "test", "sandbox"),
+        environment_type=Environment.TESTNET,
+        prefer_offline=True,
+        environment_name=environment_name,
+    )
+
+
+def build_paper_multi_strategy_runtime(
+    *,
+    config_path: str | Path,
+    secret_manager: SecretManager,
+    scheduler_name: str | None = None,
+    telemetry_emitter: Callable[[str, Mapping[str, float]], None] | None = None,
+    adapter_factories: Mapping[str, ExchangeAdapterFactory] | None = None,
+    environment_name: str | None = None,
+) -> MultiStrategyRuntime:
+    return _build_mode_runtime(
+        "paper",
+        config_path=config_path,
+        secret_manager=secret_manager,
+        scheduler_name=scheduler_name,
+        telemetry_emitter=telemetry_emitter,
+        adapter_factories=adapter_factories,
+        environment_aliases=("paper", "stage6", "stage5"),
+        environment_type=Environment.PAPER,
+        prefer_offline=False,
+        environment_name=environment_name,
+    )
+
+
+def build_live_multi_strategy_runtime(
+    *,
+    config_path: str | Path,
+    secret_manager: SecretManager,
+    scheduler_name: str | None = None,
+    telemetry_emitter: Callable[[str, Mapping[str, float]], None] | None = None,
+    adapter_factories: Mapping[str, ExchangeAdapterFactory] | None = None,
+    environment_name: str | None = None,
+) -> MultiStrategyRuntime:
+    return _build_mode_runtime(
+        "live",
+        config_path=config_path,
+        secret_manager=secret_manager,
+        scheduler_name=scheduler_name,
+        telemetry_emitter=telemetry_emitter,
+        adapter_factories=adapter_factories,
+        environment_aliases=("live", "prod", "production"),
+        environment_type=Environment.LIVE,
+        prefer_offline=False,
+        environment_name=environment_name,
+    )
 
 
 __all__ = [
@@ -1976,6 +2844,9 @@ __all__ = [
     "create_trading_controller",
     "MultiStrategyRuntime",
     "build_multi_strategy_runtime",
+    "build_demo_multi_strategy_runtime",
+    "build_paper_multi_strategy_runtime",
+    "build_live_multi_strategy_runtime",
     "consume_stream",
     "OHLCVStrategyFeed",
     "InMemoryStrategySignalSink",

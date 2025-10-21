@@ -6,10 +6,12 @@ import pytest
 import yaml
 
 from bot_core.alerts import AlertSeverity, get_alert_dispatcher
-from bot_core.exchanges.base import AccountSnapshot, Environment, ExchangeAdapter, ExchangeCredentials, OrderRequest, OrderResult
+from bot_core.exchanges.base import Environment, ExchangeAdapter, ExchangeCredentials
 from bot_core.runtime.bootstrap import bootstrap_environment
 from bot_core.security import SecretManager, SecretStorage
 from bot_core.security.signing import build_hmac_signature
+
+from tests._exchange_adapter_helpers import StubExchangeAdapter
 
 
 LICENSE_KEY = bytes.fromhex("7d" * 32)
@@ -29,32 +31,6 @@ class _MemorySecretStorage(SecretStorage):
 
     def delete_secret(self, key: str) -> None:
         self._store.pop(key, None)
-
-
-class DummyAdapter(ExchangeAdapter):
-    def configure_network(self, *, ip_allowlist=None) -> None:  # type: ignore[override]
-        self.ip_allowlist = ip_allowlist
-
-    def fetch_account_snapshot(self) -> AccountSnapshot:  # type: ignore[override]
-        return AccountSnapshot(balances={}, total_equity=0.0, available_margin=0.0, maintenance_margin=0.0)
-
-    def fetch_symbols(self):  # type: ignore[override]
-        return []
-
-    def fetch_ohlcv(self, symbol: str, interval: str, start=None, end=None, limit=None):  # type: ignore[override]
-        return []
-
-    def place_order(self, request: OrderRequest) -> OrderResult:  # type: ignore[override]
-        return OrderResult(order_id="1", status="filled", filled_quantity=0.0, avg_price=None, raw_response={})
-
-    def cancel_order(self, order_id: str, *, symbol: str | None = None) -> None:  # type: ignore[override]
-        return None
-
-    def stream_public_data(self, *, channels):  # type: ignore[override]
-        return self
-
-    def stream_private_data(self, *, channels):  # type: ignore[override]
-        return self
 
 
 def _write_keys(path: Path, *, key_id: str, secret: bytes) -> Path:
@@ -220,7 +196,7 @@ def _bootstrap(tmp_path: Path, *, mutate_license=None, monkeypatch=None, license
         combined_license.update(license_settings)
     config_path = _write_core_config(tmp_path, license_paths=combined_license)
     adapter_factories = {
-        "stub": lambda credentials, **kwargs: DummyAdapter(credentials),
+        "stub": lambda credentials, **kwargs: StubExchangeAdapter(credentials),
     }
     if monkeypatch is not None:
         class _RouterStub:

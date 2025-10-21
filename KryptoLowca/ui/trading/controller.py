@@ -61,6 +61,7 @@ class TradingSessionController:
         self.exchange: Optional[ExchangeManager] = exchange_manager
         self.market_intel: Optional["MarketIntelAggregator"] = market_intel
         self.engine = TradingEngine(market_intel=market_intel)
+        self._reserved_slot: Optional[str] = None
         if hasattr(self.engine, "set_market_intel"):
             try:
                 self.engine.set_market_intel(market_intel)

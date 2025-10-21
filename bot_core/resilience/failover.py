@@ -14,7 +14,7 @@ from bot_core.config.models import (
     ResilienceDrillConfig,
     ResilienceDrillThresholdsConfig,
 )
-from bot_core.security.signing import build_hmac_signature
+from bot_core.security.signing import HmacSignedReportMixin
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -79,7 +79,7 @@ class FailoverDrillResult:
 
 
 @dataclass(slots=True)
-class FailoverDrillReport:
+class FailoverDrillReport(HmacSignedReportMixin):
     """Raport zbiorczy z drillów failover."""
 
     generated_at: str
@@ -101,30 +101,6 @@ class FailoverDrillReport:
             json.dump(self.to_mapping(), handle, ensure_ascii=False, indent=2, sort_keys=True)
             handle.write("\n")
         return path
-
-    def build_signature(
-        self,
-        *,
-        key: bytes,
-        algorithm: str = "HMAC-SHA256",
-        key_id: str | None = None,
-    ) -> Mapping[str, str]:
-        return build_hmac_signature(self.to_mapping(), key=key, algorithm=algorithm, key_id=key_id)
-
-    def write_signature(
-        self,
-        path: Path,
-        *,
-        key: bytes,
-        algorithm: str = "HMAC-SHA256",
-        key_id: str | None = None,
-    ) -> Path:
-        signature = self.build_signature(key=key, algorithm=algorithm, key_id=key_id)
-        with path.open("w", encoding="utf-8") as handle:
-            json.dump(signature, handle, ensure_ascii=False, indent=2, sort_keys=True)
-            handle.write("\n")
-        return path
-
 
 class ResilienceFailoverDrill:
     """Wykonuje drille failover na podstawie konfiguracji resilience Stage6."""

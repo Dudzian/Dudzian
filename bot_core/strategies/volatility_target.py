@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import log, sqrt
+from math import log
 from typing import Deque, Dict, List, Sequence
 
 from collections import deque
 
 from bot_core.strategies.base import MarketSnapshot, StrategyEngine, StrategySignal
+from bot_core.strategies._volatility import realized_volatility
 
 
 @dataclass(slots=True)
@@ -84,12 +85,7 @@ class VolatilityTargetStrategy(StrategyEngine):
         state.last_price = snapshot.close
 
     def _realized_volatility(self, state: _SymbolState) -> float:
-        returns = list(state.returns)[-self._settings.lookback :]
-        if not returns:
-            return 0.0
-        mean_ret = sum(returns) / len(returns)
-        variance = sum((value - mean_ret) ** 2 for value in returns) / max(len(returns) - 1, 1)
-        return sqrt(max(variance, 0.0))
+        return realized_volatility(state.returns, lookback=self._settings.lookback)
 
     def _target_allocation(self, realized_vol: float) -> float:
         effective_vol = max(realized_vol, self._settings.floor_volatility)

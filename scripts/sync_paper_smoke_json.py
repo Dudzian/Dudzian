@@ -11,7 +11,8 @@ from typing import Mapping, MutableMapping, Sequence
 
 from bot_core.config import load_core_config
 from bot_core.reporting.audit import PaperSmokeJsonSynchronizer
-from bot_core.security import SecretManager, SecretStorageError, create_default_secret_storage
+from bot_core.security import SecretManager, SecretStorageError
+from scripts._cli_common import create_secret_manager
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -26,6 +27,14 @@ class _SyncResult:
     timestamp: str | None = None
     json_log_path: str | None = None
     error: str | None = None
+
+
+def _create_secret_manager(args: argparse.Namespace) -> SecretManager:
+    return create_secret_manager(
+        namespace=args.secret_namespace,
+        headless_passphrase=args.headless_passphrase,
+        headless_path=args.headless_storage,
+    )
 
 
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
@@ -81,15 +90,6 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
 
 def _configure_logging(level: str) -> None:
     logging.basicConfig(level=getattr(logging, level.upper(), logging.INFO))
-
-
-def _create_secret_manager(args: argparse.Namespace) -> SecretManager:
-    storage = create_default_secret_storage(
-        namespace=args.secret_namespace,
-        headless_passphrase=args.headless_passphrase,
-        headless_path=args.headless_storage,
-    )
-    return SecretManager(storage, namespace=args.secret_namespace)
 
 
 def _parse_timestamp_arg(value: str | None) -> datetime | None:
