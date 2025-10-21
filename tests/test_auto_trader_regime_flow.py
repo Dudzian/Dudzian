@@ -34,7 +34,12 @@ from bot_core.ai.regime import (
     RegimeSummary,
     RiskLevel,
 )
-from bot_core.auto_trader.app import AutoTrader, GuardrailTrigger, RiskDecision
+from bot_core.auto_trader.app import (
+    AutoTrader,
+    GuardrailTimelineRecords,
+    GuardrailTrigger,
+    RiskDecision,
+)
 from tests.sample_data_loader import load_summary_for_regime
 
 
@@ -3550,6 +3555,7 @@ def test_auto_trader_decision_timeline_exports(
         include_decision_dimensions=True,
         include_missing_bucket=True,
     )
+    assert isinstance(enriched_records, GuardrailTimelineRecords)
     assert [record["bucket_type"] for record in enriched_records] == [
         "bucket",
         "bucket",
@@ -3572,6 +3578,8 @@ def test_auto_trader_decision_timeline_exports(
     assert summary_record["errors"] == 1
     assert summary_record["services"]["_ServiceAlpha"]["evaluations"] == 2
     assert summary_record["services"]["_ServiceBeta"]["errors"] == 1
+    assert "services" in enriched_records.summary
+    assert enriched_records.summary["services"]["_ServiceAlpha"]["evaluations"] == 2
 
     df = trader.risk_decision_timeline_to_dataframe(
         bucket_s=20,
