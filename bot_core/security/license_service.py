@@ -253,8 +253,33 @@ class LicenseService:
         self._status_path.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     def _append_audit_log(self, snapshot: LicenseSnapshot) -> None:
+        timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        local_hwid_hash: str | None = None
+        if snapshot.local_hwid:
+            digest = hashlib.sha256(snapshot.local_hwid.encode("utf-8")).hexdigest()
+            # Skrócenie hash do czytelnej długości – pełna wartość dostępna do korelacji.
+            local_hwid_hash = digest[:24]
+
+        previous_activations = 0
+        if local_hwid_hash and self._audit_log_path.exists():
+            try:
+                with self._audit_log_path.open("r", encoding="utf-8") as handle:
+                    for line in handle:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            record = json.loads(line)
+                        except json.JSONDecodeError:
+                            LOGGER.warning("Nie udało się sparsować wpisu audytowego licencji: %s", line)
+                            continue
+                        if record.get("local_hwid_hash") == local_hwid_hash:
+                            previous_activations += 1
+            except OSError as exc:
+                LOGGER.warning("Nie udało się odczytać logu audytowego licencji: %s", exc)
+
         entry = {
-            "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "timestamp": timestamp,
             "event": "license_snapshot",
             "license_id": snapshot.capabilities.license_id,
             "edition": snapshot.capabilities.edition,
@@ -262,6 +287,9 @@ class LicenseService:
             "maintenance_active": snapshot.capabilities.is_maintenance_active(snapshot.effective_date),
             "bundle_path": str(snapshot.bundle_path),
             "payload_sha256": hashlib.sha256(snapshot.payload_bytes).hexdigest(),
+            "local_hwid_hash": local_hwid_hash,
+            "activation_count": (previous_activations + 1) if local_hwid_hash else 1,
+            "repeat_activation": previous_activations > 0,
         }
 
         self._audit_log_path.parent.mkdir(parents=True, exist_ok=True)
