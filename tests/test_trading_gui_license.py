@@ -27,9 +27,9 @@ if "reporting" not in sys.modules:
     reporting_stub.TradeInfo = dict
     sys.modules["reporting"] = reporting_stub
 
-from KryptoLowca.ui.trading.controller import TradingSessionController
-from KryptoLowca.ui.trading.license_context import COMMUNITY_NOTICE, build_license_ui_context
-from KryptoLowca.ui.trading.state import AppState
+from bot_core.ui.trading.controller import TradingSessionController
+from bot_core.ui.trading.license_context import COMMUNITY_NOTICE, build_license_ui_context
+from bot_core.ui.trading.state import AppState
 
 
 class DummyVar:
@@ -154,7 +154,7 @@ def test_build_license_ui_context_flags_missing_modules() -> None:
     assert "Licencja wygasła" in context.notice
 
 
-@patch("KryptoLowca.ui.trading.controller.messagebox.showerror")
+@patch("bot_core.ui.trading.controller.messagebox.showerror")
 def test_controller_blocks_live_without_permission(mock_messagebox: MagicMock) -> None:
     payload = {
         "edition": "standard",
@@ -175,7 +175,7 @@ def test_controller_blocks_live_without_permission(mock_messagebox: MagicMock) -
     mock_messagebox.assert_called()
 
 
-@patch("KryptoLowca.ui.trading.controller.messagebox.showerror")
+@patch("bot_core.ui.trading.controller.messagebox.showerror")
 def test_controller_reserves_and_releases_slot(mock_messagebox: MagicMock) -> None:
     payload = {
         "edition": "pro",
@@ -199,7 +199,7 @@ def test_controller_reserves_and_releases_slot(mock_messagebox: MagicMock) -> No
     assert mock_messagebox.call_count == 0
 
 
-@patch("KryptoLowca.ui.trading.controller.messagebox.showerror")
+@patch("bot_core.ui.trading.controller.messagebox.showerror")
 def test_controller_blocks_futures_without_module(mock_messagebox: MagicMock) -> None:
     payload = {
         "edition": "pro",
@@ -220,7 +220,7 @@ def test_controller_blocks_futures_without_module(mock_messagebox: MagicMock) ->
     mock_messagebox.assert_called()
 
 
-@patch("KryptoLowca.ui.trading.controller.messagebox.showerror")
+@patch("bot_core.ui.trading.controller.messagebox.showerror")
 def test_controller_blocks_autotrader_when_disabled(mock_messagebox: MagicMock) -> None:
     payload = {
         "edition": "standard",

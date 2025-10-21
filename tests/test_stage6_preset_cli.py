@@ -10,8 +10,8 @@ import sys
 import pytest
 import yaml
 from bot_core.security.file_storage import EncryptedFileSecretStorage
-from KryptoLowca.security_manager import SecurityManager
-from KryptoLowca.scripts import preset_editor_cli
+from bot_core.security.legacy import SecurityManager
+from bot_core.runtime import stage6_preset_cli as preset_editor_cli
 
 
 def _copy_core_config(tmp_path: Path) -> Path:
@@ -132,7 +132,7 @@ def test_stage6_cli_accepts_passphrase_file(tmp_path: Path) -> None:
     }
     tool = payload["tool"]
     expected_python = platform.python_version()
-    assert tool["module"] == "KryptoLowca.scripts.preset_editor_cli"
+    assert tool["module"] == "bot_core.runtime.stage6_preset_cli"
     assert tool["python"] == expected_python
     assert tool["platform"] == platform.platform()
     assert tool["package"] == "dudzian-bot"

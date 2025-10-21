@@ -39,7 +39,7 @@ ułatwia audyt działań operatorów OEM.
 
 ## Integracja z interfejsami GUI
 
-*Trading GUI* (`KryptoLowca.ui.trading`) prezentuje podsumowanie licencji w
+*Trading GUI* (`bot_core.ui.trading`) prezentuje podsumowanie licencji w
 nagłówku okna i automatycznie blokuje niedozwolone funkcje:
 
 - combobox sieci usuwa opcję **Live**, jeśli licencja nie dopuszcza środowiska
