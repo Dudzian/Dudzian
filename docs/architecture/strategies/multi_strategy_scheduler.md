@@ -158,13 +158,13 @@ multi_strategy_schedulers:
         reason: compliance_hold
 ```
 
-Startowe nadpisania limitów sygnałów zadeklarowane w YAML:
+Startowe nadpisania limitów sygnałów zadeklarowane w YAML (klucze odpowiadają wartościom pola `strategy` z sekcji `schedules`):
 
 ```yaml
 multi_strategy_schedulers:
   core_multi:
     initial_signal_limits:
-      trend_schedule:
+      trend_engine:
         balanced:
           limit: 4
           reason: bootstrap_window
