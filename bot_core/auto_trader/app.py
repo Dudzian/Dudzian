@@ -197,6 +197,7 @@ class AutoTrader:
         controller_runner_factory: Callable[[], Any] | None = None,
         controller_cycle_history_limit: int | None = 32,
         controller_cycle_history_ttl_s: float | None = None,
+        trusted_auto_confirm: bool = False,
     ) -> None:
         self.emitter = emitter
         self.gui = gui
@@ -299,7 +300,8 @@ class AutoTrader:
         self._auto_trade_stop = threading.Event()
         self._auto_trade_thread: threading.Thread | None = None
         self._auto_trade_thread_active = False
-        self._auto_trade_user_confirmed = False
+        self._trusted_auto_confirm = bool(trusted_auto_confirm)
+        self._auto_trade_user_confirmed = self._trusted_auto_confirm
         self._started = False
         self._lock = threading.RLock()
         self._risk_evaluations: list[dict[str, Any]] = []
@@ -5162,13 +5164,6 @@ class AutoTrader:
             )
 
             if total_services is not None:
-                service_bucket = total_services.setdefault(
-                    str(service_key),
-                    {"evaluations": 0, "errors": 0},
-                )
-                service_bucket["evaluations"] += 1
-                if has_error:
-                    service_bucket["errors"] += 1
                 service_totals = total_services.setdefault(
                     str(service_key),
                     {
@@ -5508,7 +5503,6 @@ class AutoTrader:
 
         metadata = _extract_guardrail_timeline_metadata(summary)
 
-        return GuardrailTimelineRecords(records, metadata)
         if include_services and isinstance(summary.get("services"), Mapping):
             summary_record = {
                 "bucket_type": "summary",
@@ -5535,13 +5529,21 @@ class AutoTrader:
                 "error_rate": summary.get("error_rate", 0.0),
                 "services": copy.deepcopy(summary.get("services")),
             }
+            if "guardrail_trigger_thresholds" in summary:
+                summary_record["guardrail_trigger_thresholds"] = copy.deepcopy(
+                    summary.get("guardrail_trigger_thresholds")
+                )
+            if "guardrail_trigger_values" in summary:
+                summary_record["guardrail_trigger_values"] = copy.deepcopy(
+                    summary.get("guardrail_trigger_values")
+                )
             if include_decision_dimensions:
                 summary_record.setdefault("states", {})
                 summary_record.setdefault("reasons", {})
                 summary_record.setdefault("modes", {})
             records.append(summary_record)
 
-        return records
+        return GuardrailTimelineRecords(records, metadata)
 
     def risk_decision_timeline_to_dataframe(
         self,

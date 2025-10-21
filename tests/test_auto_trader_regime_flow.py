@@ -34,7 +34,12 @@ from bot_core.ai.regime import (
     RegimeSummary,
     RiskLevel,
 )
-from bot_core.auto_trader.app import AutoTrader, GuardrailTrigger, RiskDecision
+from bot_core.auto_trader.app import (
+    AutoTrader,
+    GuardrailTimelineRecords,
+    GuardrailTrigger,
+    RiskDecision,
+)
 from tests.sample_data_loader import load_summary_for_regime
 
 
@@ -1533,6 +1538,33 @@ class AutoTradeResult:
             self.ai_manager._summaries.pop(symbol, None)
         else:
             self.ai_manager._summaries[symbol] = summary
+
+
+def test_auto_trader_trusted_mode_auto_confirms(monkeypatch: pytest.MonkeyPatch) -> None:
+    emitter = _Emitter()
+    gui = _GUI()
+
+    trader = AutoTrader(
+        emitter,
+        gui,
+        symbol_getter=lambda: "BTCUSDT",
+        enable_auto_trade=True,
+        auto_trade_interval_s=0.0,
+        trusted_auto_confirm=True,
+    )
+
+    started: list[bool] = []
+
+    def _fake_start() -> None:
+        started.append(True)
+
+    monkeypatch.setattr(trader, "_start_auto_trade_thread_locked", _fake_start)
+    trader.start()
+
+    assert trader._auto_trade_user_confirmed is True
+    assert started, "Trusted mode did not start the auto-trade loop"
+
+    trader.stop()
 
     def run_followup(
         self,
@@ -3550,6 +3582,7 @@ def test_auto_trader_decision_timeline_exports(
         include_decision_dimensions=True,
         include_missing_bucket=True,
     )
+    assert isinstance(enriched_records, GuardrailTimelineRecords)
     assert [record["bucket_type"] for record in enriched_records] == [
         "bucket",
         "bucket",
@@ -3572,6 +3605,8 @@ def test_auto_trader_decision_timeline_exports(
     assert summary_record["errors"] == 1
     assert summary_record["services"]["_ServiceAlpha"]["evaluations"] == 2
     assert summary_record["services"]["_ServiceBeta"]["errors"] == 1
+    assert "services" in enriched_records.summary
+    assert enriched_records.summary["services"]["_ServiceAlpha"]["evaluations"] == 2
 
     df = trader.risk_decision_timeline_to_dataframe(
         bucket_s=20,

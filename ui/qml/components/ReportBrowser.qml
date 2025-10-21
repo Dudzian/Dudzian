@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Dialogs
+import "."
 
 Item {
     id: browser
@@ -83,6 +84,8 @@ Item {
     ]
     property bool hasAnyReports: false
     property var currentCategoryStats: null
+    property var equityCurveData: []
+    property var assetHeatmapData: []
     readonly property bool isBusy: reportController && reportController.busy === true
     readonly property bool filtersActive: categoryFilter.length > 0 || searchFilter.length > 0
         || recentDaysFilter > 0 || summaryStatusFilter !== "any" || exportsFilter !== "any" || limitFilter > 0
@@ -116,6 +119,19 @@ Item {
         if (!text || !Qt.application || !Qt.application.clipboard)
             return
         Qt.application.clipboard.setText(text)
+    }
+
+    function updateDashboards() {
+        equityCurveData = reportController && reportController.equityCurve ? reportController.equityCurve : []
+        assetHeatmapData = reportController && reportController.assetHeatmap ? reportController.assetHeatmap : []
+    }
+
+    Component.onCompleted: updateDashboards()
+
+    Connections {
+        target: reportController
+        function onEquityCurveChanged() { browser.updateDashboards() }
+        function onAssetHeatmapChanged() { browser.updateDashboards() }
     }
 
     function normalizeDate(value) {
@@ -1148,6 +1164,27 @@ Item {
             visible: reportController && reportController.lastError.length > 0
             text: reportController ? reportController.lastError : ""
             color: Qt.rgba(0.9, 0.4, 0.3, 1)
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 12
+            visible: browser.equityCurveData.length > 0 || browser.assetHeatmapData.length > 0
+
+            EquityCurveDashboard {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 260
+                visible: browser.equityCurveData.length > 0
+                points: browser.equityCurveData
+            }
+
+            AssetHeatmapDashboard {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 260
+                Layout.preferredWidth: parent ? parent.width / 2 : 0
+                visible: browser.assetHeatmapData.length > 0
+                cells: browser.assetHeatmapData
+            }
         }
 
         SplitView {
