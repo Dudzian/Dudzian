@@ -15,6 +15,16 @@ from typing import (
     runtime_checkable,
 )
 
+try:  # pragma: no cover - optional dependency
+    import numpy as np
+except Exception:  # pragma: no cover - numpy may not be available in minimal builds
+    np = None  # type: ignore[assignment]
+
+try:  # pragma: no cover - LightGBM optional
+    import lightgbm as lgb
+except Exception:  # pragma: no cover - gracefully handle missing dependency
+    lgb = None  # type: ignore[assignment]
+
 from ._license import ensure_ai_signals_enabled
 from .feature_engineering import FeatureDataset
 from .models import ModelArtifact
@@ -324,15 +334,23 @@ class ModelTrainer:
         learning_rate: float = 0.1,
         n_estimators: int = 25,
         validation_split: float = 0.0,
+        test_split: float = 0.0,
         backend: str = "builtin",
         adapter_options: Mapping[str, object] | None = None,
     ) -> None:
         ensure_ai_signals_enabled("trenowania modeli AI")
         if not 0.0 <= validation_split < 1.0:
             raise ValueError("validation_split musi zawierać się w przedziale [0, 1)")
+        if not 0.0 <= test_split < 1.0:
+            raise ValueError("test_split musi zawierać się w przedziale [0, 1)")
+        if validation_split + test_split >= 1.0:
+            raise ValueError(
+                "Suma validation_split i test_split musi być mniejsza od 1.0"
+            )
         self.learning_rate = float(learning_rate)
         self.n_estimators = int(n_estimators)
         self.validation_split = float(validation_split)
+        self.test_split = float(test_split)
         self.backend = backend.lower().strip() or "builtin"
         self.adapter_options = dict(adapter_options or {})
         if self.backend != "builtin" and self.backend not in _EXTERNAL_ADAPTERS:
@@ -347,9 +365,13 @@ class ModelTrainer:
             train_targets,
             validation_matrix,
             validation_targets,
+            test_matrix,
+            test_targets,
         ) = self._split_learning_arrays(matrix, targets)
         if not train_matrix:
-            raise ValueError("Za mało danych do trenowania po podziale walidacyjnym")
+            raise ValueError(
+                "Za mało danych do trenowania po podziale walidacyjno-testowym"
+            )
 
         scalers = self._compute_scalers(train_matrix, feature_names)
         metadata: MutableMapping[str, object] = dict(dataset.metadata)
@@ -360,9 +382,33 @@ class ModelTrainer:
         }
         metadata["training_rows"] = len(train_matrix)
         metadata["validation_rows"] = len(validation_matrix)
+        metadata["test_rows"] = len(test_matrix)
         metadata["backend"] = self.backend
         if self.validation_split > 0.0:
             metadata["validation_split"] = self.validation_split
+        if self.test_split > 0.0:
+            metadata["test_split"] = self.test_split
+        metadata["dataset_split"] = {
+            "validation_ratio": float(self.validation_split),
+            "test_ratio": float(self.test_split),
+        }
+        metadata.setdefault(
+            "drift_monitor",
+            {
+                "threshold": 3.5,
+                "window": 50,
+                "min_observations": 10,
+                "cooldown": 60,
+                "backend": self.backend,
+            },
+        )
+        metadata.setdefault(
+            "quality_thresholds",
+            {
+                "min_directional_accuracy": 0.55,
+                "max_mae": 25.0,
+            },
+        )
 
         if self.backend == "builtin":
             return self._train_builtin(
@@ -370,6 +416,8 @@ class ModelTrainer:
                 train_targets,
                 validation_matrix,
                 validation_targets,
+                test_matrix,
+                test_targets,
                 feature_names,
                 scalers,
                 metadata,
@@ -379,6 +427,8 @@ class ModelTrainer:
             train_targets,
             validation_matrix,
             validation_targets,
+            test_matrix,
+            test_targets,
             feature_names,
             scalers,
             metadata,
@@ -390,6 +440,8 @@ class ModelTrainer:
         train_targets: Sequence[float],
         validation_matrix: Sequence[Sequence[float]],
         validation_targets: Sequence[float],
+        test_matrix: Sequence[Sequence[float]],
+        test_targets: Sequence[float],
         feature_names: Sequence[str],
         scalers: Mapping[str, tuple[float, float]],
         metadata: MutableMapping[str, object],
@@ -407,15 +459,21 @@ class ModelTrainer:
         train_samples = self._rows_to_samples(train_matrix, feature_names)
         train_predictions = model.batch_predict(train_samples)
         train_metrics = self._compute_metrics(train_targets, train_predictions)
-        metrics = self._compose_metrics(train_metrics)
         validation_metrics: Mapping[str, float] | None = None
         if validation_matrix:
             validation_samples = self._rows_to_samples(validation_matrix, feature_names)
             validation_predictions = model.batch_predict(validation_samples)
             validation_metrics = self._compute_metrics(validation_targets, validation_predictions)
-            metrics = self._compose_metrics(train_metrics, validation_metrics)
+        test_metrics: Mapping[str, float] | None = None
+        if test_matrix:
+            test_samples = self._rows_to_samples(test_matrix, feature_names)
+            test_predictions = model.batch_predict(test_samples)
+            test_metrics = self._compute_metrics(test_targets, test_predictions)
+        metrics = self._compose_metrics(train_metrics, validation_metrics, test_metrics)
         if validation_metrics:
             metadata["validation_metrics"] = dict(validation_metrics)
+        if test_metrics:
+            metadata["test_metrics"] = dict(test_metrics)
         artifact = ModelArtifact(
             feature_names=tuple(model.feature_names),
             model_state=model.to_state(),
@@ -432,6 +490,8 @@ class ModelTrainer:
         train_targets: Sequence[float],
         validation_matrix: Sequence[Sequence[float]],
         validation_targets: Sequence[float],
+        test_matrix: Sequence[Sequence[float]],
+        test_targets: Sequence[float],
         feature_names: Sequence[str],
         scalers: Mapping[str, tuple[float, float]],
         metadata: MutableMapping[str, object],
@@ -453,15 +513,21 @@ class ModelTrainer:
         train_samples = self._rows_to_samples(train_matrix, feature_names)
         train_predictions = list(model.batch_predict(train_samples))
         train_metrics = self._compute_metrics(train_targets, train_predictions)
-        metrics = self._compose_metrics(train_metrics)
         validation_metrics: Mapping[str, float] | None = None
         if validation_matrix:
             validation_samples = self._rows_to_samples(validation_matrix, feature_names)
             validation_predictions = list(model.batch_predict(validation_samples))
             validation_metrics = self._compute_metrics(validation_targets, validation_predictions)
-            metrics = self._compose_metrics(train_metrics, validation_metrics)
+        test_metrics: Mapping[str, float] | None = None
+        if test_matrix:
+            test_samples = self._rows_to_samples(test_matrix, feature_names)
+            test_predictions = list(model.batch_predict(test_samples))
+            test_metrics = self._compute_metrics(test_targets, test_predictions)
+        metrics = self._compose_metrics(train_metrics, validation_metrics, test_metrics)
         if validation_metrics:
             metadata["validation_metrics"] = dict(validation_metrics)
+        if test_metrics:
+            metadata["test_metrics"] = dict(test_metrics)
         if result.metrics:
             metrics = {**metrics, **result.metrics}
         if result.metadata:
@@ -497,28 +563,56 @@ class ModelTrainer:
         self,
         matrix: Sequence[Sequence[float]],
         targets: Sequence[float],
-    ) -> tuple[list[list[float]], list[float], list[list[float]], list[float]]:
+    ) -> tuple[
+        list[list[float]],
+        list[float],
+        list[list[float]],
+        list[float],
+        list[list[float]],
+        list[float],
+    ]:
         total = len(matrix)
         if total == 0:
-            return [], [], [], []
-        if self.validation_split <= 0.0 or total < 2:
+            return [], [], [], [], [], []
+        if (self.validation_split <= 0.0 and self.test_split <= 0.0) or total < 2:
             return (
                 [list(row) for row in matrix],
                 [float(value) for value in targets],
                 [],
                 [],
+                [],
+                [],
             )
-        validation_count = int(total * self.validation_split)
-        if validation_count <= 0:
-            validation_count = 1
-        if validation_count >= total:
-            validation_count = total - 1
-        split_index = total - validation_count
+        validation_count = int(round(total * self.validation_split))
+        test_count = int(round(total * self.test_split))
+        if validation_count < 0:
+            validation_count = 0
+        if test_count < 0:
+            test_count = 0
+        if validation_count + test_count >= total:
+            overflow = validation_count + test_count - (total - 1)
+            if overflow > 0 and validation_count > 0:
+                reduction = min(validation_count, overflow)
+                validation_count -= reduction
+                overflow -= reduction
+            if overflow > 0 and test_count > 0:
+                reduction = min(test_count, overflow)
+                test_count -= reduction
+        split_train_end = total - (validation_count + test_count)
+        if split_train_end <= 0:
+            raise ValueError(
+                "Za mało danych do wyznaczenia podziału walidacyjnego/testowego"
+            )
+        validation_start = split_train_end
+        validation_end = validation_start + validation_count
+        test_start = validation_end
         return (
-            [list(row) for row in matrix[:split_index]],
-            [float(targets[idx]) for idx in range(split_index)],
-            [list(row) for row in matrix[split_index:]],
-            [float(targets[idx]) for idx in range(split_index, total)],
+            [list(row) for row in matrix[:split_train_end]],
+            [float(targets[idx]) for idx in range(split_train_end)],
+            [list(row) for row in matrix[validation_start:validation_end]],
+            [float(targets[idx]) for idx in range(validation_start, validation_end)],
+            [list(row) for row in matrix[test_start:]],
+            [float(targets[idx]) for idx in range(test_start, total)],
         )
 
     def _compute_scalers(
@@ -550,6 +644,7 @@ class ModelTrainer:
         self,
         train_metrics: Mapping[str, float],
         validation_metrics: Mapping[str, float] | None = None,
+        test_metrics: Mapping[str, float] | None = None,
     ) -> Mapping[str, float]:
         metrics: MutableMapping[str, float] = {
             "mae": float(train_metrics.get("mae", 0.0)),
@@ -566,6 +661,16 @@ class ModelTrainer:
                     "validation_rmse": float(validation_metrics.get("rmse", 0.0)),
                     "validation_directional_accuracy": float(
                         validation_metrics.get("directional_accuracy", 0.0)
+                    ),
+                }
+            )
+        if test_metrics:
+            metrics.update(
+                {
+                    "test_mae": float(test_metrics.get("mae", 0.0)),
+                    "test_rmse": float(test_metrics.get("rmse", 0.0)),
+                    "test_directional_accuracy": float(
+                        test_metrics.get("directional_accuracy", 0.0)
                     ),
                 }
             )
@@ -607,6 +712,52 @@ class _LinearAdapterModel:
             else:
                 vector.append(value - mean)
         return vector
+
+
+class _LightGBMAdapterModel:
+    """Adapter LightGBM zgodny z interfejsem inference."""
+
+    def __init__(
+        self,
+        feature_names: Sequence[str],
+        scalers: Mapping[str, tuple[float, float]],
+        booster: "lgb.Booster",
+    ) -> None:
+        if lgb is None:
+            raise RuntimeError("LightGBM backend is not available")
+        self.feature_names = [str(name) for name in feature_names]
+        self.feature_scalers = {
+            str(name): (float(pair[0]), float(pair[1])) for name, pair in scalers.items()
+        }
+        self._booster = booster
+
+    def predict(self, features: Mapping[str, float]) -> float:
+        matrix = self._matrix_from_samples([features])
+        predictions = self._booster.predict(matrix)
+        return float(predictions[0]) if len(predictions) else 0.0
+
+    def batch_predict(self, samples: Sequence[Mapping[str, float]]) -> Sequence[float]:
+        if not samples:
+            return []
+        matrix = self._matrix_from_samples(samples)
+        predictions = self._booster.predict(matrix)
+        return [float(value) for value in predictions]
+
+    def _matrix_from_samples(self, samples: Sequence[Mapping[str, float]]):
+        if np is None:
+            raise RuntimeError("NumPy is required for LightGBM inference")
+        rows: list[list[float]] = []
+        for sample in samples:
+            vector: list[float] = []
+            for name in self.feature_names:
+                mean, stdev = self.feature_scalers.get(name, (0.0, 1.0))
+                raw = float(sample.get(name, mean))
+                if stdev > 0:
+                    vector.append((raw - mean) / stdev)
+                else:
+                    vector.append(raw - mean)
+            rows.append(vector)
+        return np.asarray(rows, dtype=float)
 
 
 def _normalize_matrix(
@@ -710,14 +861,140 @@ def _linear_adapter_load(
     return _LinearAdapterModel(feature_names, scalers, weights, bias)
 
 
+def _lightgbm_adapter_train(context: ExternalTrainingContext) -> ExternalTrainingResult:
+    if lgb is None or np is None:
+        raise RuntimeError("LightGBM backend is not available in this environment")
+    params = {
+        "objective": context.options.get("objective", "regression"),
+        "metric": context.options.get("metric", ["l2", "l1"]),
+        "learning_rate": float(context.options.get("learning_rate", 0.05)),
+        "num_leaves": int(context.options.get("num_leaves", 31)),
+        "min_data_in_leaf": int(context.options.get("min_data_in_leaf", 20)),
+    }
+    params_override = context.options.get("params")
+    if isinstance(params_override, Mapping):
+        params.update(params_override)  # type: ignore[arg-type]
+    train_matrix = np.asarray(
+        _normalize_matrix(context.train_matrix, context.feature_names, context.scalers),
+        dtype=float,
+    )
+    train_targets = np.asarray(context.train_targets, dtype=float)
+    train_dataset = lgb.Dataset(train_matrix, label=train_targets, feature_name=list(context.feature_names))
+    valid_sets = [train_dataset]
+    valid_names = ["train"]
+    if context.validation_matrix:
+        valid_matrix = np.asarray(
+            _normalize_matrix(context.validation_matrix, context.feature_names, context.scalers),
+            dtype=float,
+        )
+        valid_targets = np.asarray(context.validation_targets, dtype=float)
+        valid_dataset = lgb.Dataset(
+            valid_matrix,
+            label=valid_targets,
+            feature_name=list(context.feature_names),
+            reference=train_dataset,
+        )
+        valid_sets.append(valid_dataset)
+        valid_names.append("validation")
+    num_rounds = int(context.options.get("num_boost_round", 100))
+    booster = lgb.train(
+        params,
+        train_dataset,
+        num_boost_round=max(num_rounds, 10),
+        valid_sets=valid_sets,
+        valid_names=valid_names,
+        verbose_eval=False,
+    )
+    metrics: MutableMapping[str, float] = {}
+    for name in valid_names:
+        scores = booster.best_score.get(name, {})
+        for metric_name, value in scores.items():
+            metrics[f"{name}_{metric_name}"] = float(value)
+    state: MutableMapping[str, object] = {
+        "model_str": booster.model_to_string(),
+        "params": params,
+        "best_iteration": int(getattr(booster, "best_iteration", 0) or 0),
+    }
+    model = _LightGBMAdapterModel(context.feature_names, context.scalers, booster)
+    return ExternalTrainingResult(
+        state=state,
+        trained_model=model,
+        metrics=dict(metrics),
+        metadata={"external_adapter": "lightgbm"},
+    )
+
+
+def _lightgbm_adapter_load(
+    state: Mapping[str, object],
+    feature_names: Sequence[str],
+    metadata: Mapping[str, object],
+) -> SupportsInference:
+    if lgb is None:
+        raise RuntimeError("LightGBM backend is not available in this environment")
+    model_str = state.get("model_str")
+    if not isinstance(model_str, str):
+        raise ValueError("Invalid LightGBM state: missing 'model_str'")
+    booster = lgb.Booster(model_str=model_str)
+    scalers_raw = metadata.get("feature_scalers", {})
+    scalers: dict[str, tuple[float, float]] = {}
+    if isinstance(scalers_raw, Mapping):
+        for name, payload in scalers_raw.items():
+            if not isinstance(payload, Mapping):
+                continue
+            mean = float(payload.get("mean", 0.0))
+            stdev = float(payload.get("stdev", 0.0))
+            scalers[str(name)] = (mean, stdev)
+    return _LightGBMAdapterModel(feature_names, scalers, booster)
+
+
+def _missing_lightgbm_adapter_train(context: ExternalTrainingContext) -> ExternalTrainingResult:
+    raise RuntimeError(
+        "LightGBM backend requested but the 'lightgbm' or 'numpy' package is not installed"
+    )
+
+
+def _missing_lightgbm_adapter_load(
+    state: Mapping[str, object],
+    feature_names: Sequence[str],
+    metadata: Mapping[str, object],
+) -> SupportsInference:
+    raise RuntimeError(
+        "Cannot load LightGBM model because the backend dependencies are missing"
+    )
+
+
 def _ensure_default_external_adapters() -> None:
-    for name in ("pytorch", "lightgbm", "linear"):
-        if name not in _EXTERNAL_ADAPTERS:
+    if "linear" not in _EXTERNAL_ADAPTERS:
+        register_external_model_adapter(
+            ExternalModelAdapter(
+                backend="linear",
+                train=_linear_adapter_train,
+                load=_linear_adapter_load,
+            )
+        )
+    if "pytorch" not in _EXTERNAL_ADAPTERS:
+        register_external_model_adapter(
+            ExternalModelAdapter(
+                backend="pytorch",
+                train=_linear_adapter_train,
+                load=_linear_adapter_load,
+            )
+        )
+    if "lightgbm" not in _EXTERNAL_ADAPTERS:
+        if lgb is not None and np is not None:
             register_external_model_adapter(
                 ExternalModelAdapter(
-                    backend=name,
-                    train=_linear_adapter_train,
-                    load=_linear_adapter_load,
+                    backend="lightgbm",
+                    train=_lightgbm_adapter_train,
+                    load=_lightgbm_adapter_load,
+                )
+            )
+        else:
+            register_external_model_adapter(
+                ExternalModelAdapter(
+                    backend="lightgbm",
+                    train=_missing_lightgbm_adapter_train,
+                    load=_missing_lightgbm_adapter_load,
                 )
             )
 
