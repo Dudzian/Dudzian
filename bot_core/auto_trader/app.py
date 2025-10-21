@@ -40,7 +40,7 @@ from bot_core.risk.engine import ThresholdRiskEngine
 
 try:  # pragma: no cover - decision module opcjonalny
     from bot_core.decision import DecisionCandidate, DecisionEvaluation, DecisionOrchestrator
-except Exception:  # pragma: no cover - moduł decision nieobowiązkowy
+except ImportError:  # pragma: no cover - moduł decision nieobowiązkowy
     DecisionCandidate = None  # type: ignore
     DecisionEvaluation = None  # type: ignore
     DecisionOrchestrator = None  # type: ignore
@@ -3689,23 +3689,6 @@ class AutoTrader:
             ttl_snapshot,
             history_size,
         ) = self._collect_filtered_risk_evaluations(
-        trimmed_by_ttl = 0
-        ttl_snapshot: float | None = None
-        history_size = 0
-        with self._lock:
-            trimmed_by_ttl = self._prune_risk_evaluations_locked()
-            records = list(self._risk_evaluations)
-            ttl_snapshot = self._risk_evaluations_ttl_s
-            history_size = len(self._risk_evaluations)
-        self._log_risk_history_trimmed(
-            context="get",
-            trimmed=trimmed_by_ttl,
-            ttl=ttl_snapshot,
-            history=history_size,
-        )
-
-        filtered_records = self._apply_risk_evaluation_filters(
-            records,
             include_errors=include_errors,
             approved_filter=approved_filter,
             normalized_filter=normalized_filter,
@@ -3716,6 +3699,7 @@ class AutoTrader:
             reason_filter=decision_reason_filter,
             mode_filter=decision_mode_filter,
         )
+
         self._log_risk_history_trimmed(
             context="get",
             trimmed=trimmed_by_ttl,
@@ -6440,7 +6424,6 @@ class AutoTrader:
 
         return summary
 
-    def summarize_guardrail_timeline(
     def _prune_controller_cycle_history_locked(
         self,
         *,
@@ -7530,23 +7513,6 @@ class AutoTrader:
             ttl_snapshot,
             history_size,
         ) = self._collect_filtered_risk_evaluations(
-        trimmed_by_ttl = 0
-        ttl_snapshot: float | None = None
-        history_size = 0
-        with self._lock:
-            trimmed_by_ttl = self._prune_risk_evaluations_locked()
-            records = list(self._risk_evaluations)
-            ttl_snapshot = self._risk_evaluations_ttl_s
-            history_size = len(self._risk_evaluations)
-        self._log_risk_history_trimmed(
-            context="dataframe",
-            trimmed=trimmed_by_ttl,
-            ttl=ttl_snapshot,
-            history=history_size,
-        )
-
-        filtered_records = self._apply_risk_evaluation_filters(
-            records,
             include_errors=include_errors,
             approved_filter=approved_filter,
             normalized_filter=normalized_filter,
@@ -7557,6 +7523,7 @@ class AutoTrader:
             reason_filter=decision_reason_filter,
             mode_filter=decision_mode_filter,
         )
+
         self._log_risk_history_trimmed(
             context="dataframe",
             trimmed=trimmed_by_ttl,

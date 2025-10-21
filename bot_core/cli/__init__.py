@@ -108,10 +108,9 @@ def create_parser() -> argparse.ArgumentParser:
     health.add_argument(
         "--environment",
         help=(
-            "Nazwa środowiska z pliku YAML. Opcjonalna, jeśli plik definiuje "
-            "defaults.environment."
+            "Nazwa środowiska z pliku YAML, które ma zostać załadowane. "
+            "Opcjonalna, jeśli plik definiuje defaults.environment."
         ),
-        help="Nazwa środowiska z pliku YAML, które ma zostać załadowane.",
     )
     health.add_argument(
         "--skip-public",
