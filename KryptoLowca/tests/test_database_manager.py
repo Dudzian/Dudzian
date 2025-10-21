@@ -13,7 +13,7 @@ from pathlib import Path
 from sqlalchemy import select
 
 from KryptoLowca.database_manager import DatabaseManager, DBOptions
-from KryptoLowca.auto_trader import AutoTrader, RiskDecision
+from bot_core.auto_trader.app import RiskDecision
 from bot_core.database import CURRENT_SCHEMA_VERSION, RiskAuditLog
 
 
@@ -204,32 +204,9 @@ async def test_performance_and_risk_logging(db):
 
 
 @pytest.mark.asyncio
-async def test_risk_audit_logged_via_autotrader(db):
+async def test_risk_audit_logged(db):
     dbm, _ = db
 
-    class _Emitter:
-        def on(self, *_, **__):
-            return None
-
-        def off(self, *_, **__):
-            return None
-
-        def emit(self, *_, **__):
-            return None
-
-        def log(self, *_, **__):
-            return None
-
-    class _Var:
-        def get(self) -> str:
-            return "Testnet"
-
-    class _GUI:
-        def __init__(self, db_manager):
-            self.db = db_manager
-            self.network_var = _Var()
-
-    trader = AutoTrader(_Emitter(), _GUI(dbm), lambda: "BTC/USDT")
     decision = RiskDecision(
         should_trade=True,
         fraction=0.25,
@@ -237,10 +214,28 @@ async def test_risk_audit_logged_via_autotrader(db):
         reason="risk_clamped",
         details={"limit_events": ["max_fraction", "portfolio_cap"]},
         mode="paper",
+        stop_loss_pct=0.02,
+        take_profit_pct=0.04,
     )
 
-    trader._emit_risk_audit("BTC/USDT", "BUY", decision, 101.0)
-    await asyncio.sleep(0)
+    await dbm.log_risk_audit(
+        {
+            "symbol": "BTC/USDT",
+            "side": "BUY",
+            "state": decision.state,
+            "reason": decision.reason,
+            "fraction": decision.fraction,
+            "price": 101.0,
+            "mode": decision.mode,
+            "schema_version": 1,
+            "limit_events": decision.details.get("limit_events"),
+            "details": decision.details,
+            "stop_loss_pct": decision.stop_loss_pct,
+            "take_profit_pct": decision.take_profit_pct,
+            "should_trade": decision.should_trade,
+            "ts": time.time(),
+        }
+    )
 
     async with dbm.session() as session:
         rows = (await session.execute(select(RiskAuditLog))).scalars().all()
@@ -248,4 +243,7 @@ async def test_risk_audit_logged_via_autotrader(db):
     assert rows and rows[0].symbol == "BTC/USDT"
     assert rows[0].state == "warn"
     assert pytest.approx(rows[0].fraction, 1e-8) == 0.25
+    assert rows[0].should_trade is True
+    assert pytest.approx(rows[0].take_profit_pct, 1e-8) == 0.04
+    assert pytest.approx(rows[0].stop_loss_pct, 1e-8) == 0.02
     assert json.loads(rows[0].limit_events) == ["max_fraction", "portfolio_cap"]
