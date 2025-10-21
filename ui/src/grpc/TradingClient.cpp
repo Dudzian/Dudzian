@@ -28,6 +28,8 @@
 
 Q_LOGGING_CATEGORY(lcTradingClient, "bot.shell.trading.grpc")
 
+Q_LOGGING_CATEGORY(lcTradingClient, "bot.shell.trading.grpc")
+
 using botcore::trading::v1::GetOhlcvHistoryRequest;
 using botcore::trading::v1::GetOhlcvHistoryResponse;
 using botcore::trading::v1::Instrument;

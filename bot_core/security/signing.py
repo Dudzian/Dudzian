@@ -5,6 +5,7 @@ import base64
 import hashlib
 import hmac
 import json
+from pathlib import Path
 from typing import Any, Mapping, Sequence, TypeAlias
 
 
@@ -71,4 +72,74 @@ def verify_hmac_signature(
     return hmac.compare_digest(actual_value, expected_value)
 
 
-__all__ = ["canonical_json_bytes", "build_hmac_signature", "verify_hmac_signature"]
+class HmacSignedReportMixin:
+    """Wspólna implementacja podpisywania raportów HMAC.
+
+    Klasy raportów muszą implementować metodę ``to_mapping`` zwracającą
+    reprezentację zgodną z JSON.  Mixin zapewnia jednolite metody
+    ``build_signature`` oraz ``write_signature`` wykorzystywane zarówno przez
+    moduł resilience, jak i stress-lab.
+    """
+
+    def to_mapping(self) -> Mapping[str, Any]:  # pragma: no cover - dokumentuje kontrakt
+        raise NotImplementedError
+
+    def build_signature(
+        self,
+        *,
+        key: bytes,
+        algorithm: str = "HMAC-SHA256",
+        key_id: str | None = None,
+    ) -> Mapping[str, str]:
+        return build_hmac_signature(self.to_mapping(), key=key, algorithm=algorithm, key_id=key_id)
+
+    def write_signature(
+        self,
+        path: Path,
+        *,
+        key: bytes,
+        algorithm: str = "HMAC-SHA256",
+        key_id: str | None = None,
+    ) -> Path:
+        signature = self.build_signature(key=key, algorithm=algorithm, key_id=key_id)
+        path = path.expanduser()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8") as handle:
+            json.dump(signature, handle, ensure_ascii=False, indent=2, sort_keys=True)
+            handle.write("\n")
+        return path
+
+
+def validate_hmac_signature(
+    payload: JsonPayload,
+    signature_doc: Mapping[str, Any],
+    *,
+    key: bytes,
+    algorithm: str = "HMAC-SHA256",
+) -> list[str]:
+    """Sprawdza poprawność podpisu HMAC i zwraca listę błędów."""
+
+    signature = signature_doc.get("signature")
+    if not isinstance(signature, Mapping):
+        return ["Dokument podpisu nie zawiera sekcji 'signature'"]
+    algorithm_name = signature.get("algorithm")
+    if algorithm_name != algorithm:
+        return [f"Nieobsługiwany algorytm podpisu: {algorithm_name!r}"]
+    expected = build_hmac_signature(
+        payload,
+        key=key,
+        algorithm=algorithm,
+        key_id=signature.get("key_id"),
+    )
+    if dict(expected) != dict(signature):
+        return ["Podpis HMAC nie zgadza się z manifestem"]
+    return []
+
+
+__all__ = [
+    "canonical_json_bytes",
+    "build_hmac_signature",
+    "verify_hmac_signature",
+    "validate_hmac_signature",
+    "HmacSignedReportMixin",
+]

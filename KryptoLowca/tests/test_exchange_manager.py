@@ -49,7 +49,7 @@ class StubPublicBackend:
         return self._rules
 
     def get_market_rules(self, symbol: str) -> Optional[MarketRules]:
-        return self._rules.get(symbol)
+        return self._rules.get(symbol, None)
 
     def fetch_ohlcv(self, symbol: str, timeframe: str, limit: int = 500):
         self.ohlcv_requests.append((symbol, timeframe, limit))

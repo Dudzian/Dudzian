@@ -73,6 +73,8 @@ class DummyCoordinator:
         return None
 
 
+
+
 def _snapshot(price: float, ts: int) -> MarketSnapshot:
     return MarketSnapshot(
         symbol="BTC_USDT",
@@ -157,3 +159,5 @@ def test_scheduler_invokes_portfolio_coordinator_once() -> None:
     asyncio.run(scheduler.run_once())
 
     assert coordinator.calls == [True]
+
+

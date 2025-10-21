@@ -11,6 +11,18 @@ namespace {
 
 Q_LOGGING_CATEGORY(lcSupportBundle, "bot.shell.support")
 
+QString normalizePath(const QString& raw)
+{
+    QString path = raw.trimmed();
+    if (path.isEmpty())
+        return path;
+    if (path.startsWith(QStringLiteral("~/")))
+        return QDir::homePath() + path.mid(1);
+    if (path == QStringLiteral("~"))
+        return QDir::homePath();
+    return path;
+}
+
 } // namespace
 
 SupportBundleController::SupportBundleController(QObject* parent)
@@ -178,6 +190,7 @@ void SupportBundleController::setExtraIncludeSpecs(const QStringList& specs)
 QString SupportBundleController::expandPath(const QString& path) const
 {
     return bot::shell::utils::expandPath(path);
+    return normalizePath(path);
 }
 
 QString SupportBundleController::sanitizeFormat(const QString& requested) const

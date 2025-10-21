@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -13,19 +12,8 @@ if str(ROOT) not in sys.path:
 
 from bot_core.security.signing import build_hmac_signature
 from scripts.publish_strategy_bundle import run as publish_bundle
-
-
-def _write_key(path: Path) -> bytes:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    data = os.urandom(48)
-    path.write_bytes(data)
-    if os.name != "nt":
-        path.chmod(0o600)
-    return data
-
-
-def _read_jsonl(path: Path) -> list[dict[str, object]]:
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+from tests._json_helpers import read_jsonl
+from tests._signing_helpers import write_random_hmac_key
 
 
 def _sha256(path: Path) -> str:
@@ -45,8 +33,8 @@ def test_publish_strategy_bundle_end_to_end(tmp_path: Path) -> None:
 
     signing_key_path = tmp_path / "keys" / "bundle.key"
     decision_key_path = tmp_path / "keys" / "decision.key"
-    decision_key = _write_key(decision_key_path)
-    _write_key(signing_key_path)
+    decision_key = write_random_hmac_key(decision_key_path)
+    write_random_hmac_key(signing_key_path)
 
     exit_code = publish_bundle(
         [
@@ -92,7 +80,7 @@ def test_publish_strategy_bundle_end_to_end(tmp_path: Path) -> None:
     bundle_digest = metadata["artifacts"][archive.name]["sha256"]
     assert bundle_digest == _sha256(archive)
 
-    entries = _read_jsonl(decision_log)
+    entries = read_jsonl(decision_log)
     assert len(entries) == 1
     entry = entries[0]
     signature_record = entry.pop("signature")

@@ -969,6 +969,9 @@ def test_decision_orchestrator_metadata_when_candidate_passes(
     assert default_detail is not None
     assert default_detail.get("available") is True
     assert default_detail.get("reason") is None
+    thresholds_meta = decision_meta.get("thresholds")
+    assert isinstance(thresholds_meta, dict)
+    assert thresholds_meta.get("min_probability") == pytest.approx(0.4)
 
 
 def test_decision_orchestrator_blocks_when_thresholds_exceeded(
@@ -1028,6 +1031,9 @@ def test_decision_orchestrator_blocks_when_thresholds_exceeded(
     )
     assert default_detail is not None
     assert default_detail.get("available") is True
+    thresholds_meta = decision_meta.get("thresholds")
+    assert isinstance(thresholds_meta, dict)
+    assert thresholds_meta.get("min_probability") == pytest.approx(0.4)
     assert default_detail.get("reason") is None
 
 

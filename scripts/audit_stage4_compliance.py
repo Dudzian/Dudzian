@@ -20,6 +20,8 @@ from bot_core.config.loader import load_core_config  # noqa: E402
 from bot_core.config.models import CoreConfig, MultiStrategySchedulerConfig, ServiceTokenConfig  # noqa: E402
 from bot_core.security.rotation import RotationRegistry  # noqa: E402
 
+from scripts._cli_common import now_iso
+
 
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -70,12 +72,6 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         help="Opcjonalna ścieżka zapisu raportu audytu w formacie JSON.",
     )
     return parser.parse_args(argv)
-
-
-def _now_iso() -> str:
-    return _dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
-
-
 def _resolve_path(base_dir: Path, value: str | None) -> Path | None:
     if not value:
         return None
@@ -418,7 +414,7 @@ def _build_report(
     else:
         status = "ok"
     return {
-        "checked_at": _now_iso(),
+        "checked_at": now_iso(),
         "config": str(config_path),
         "status": status,
         "issues": issues,

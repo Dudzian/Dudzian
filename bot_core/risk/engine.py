@@ -957,7 +957,7 @@ class ThresholdRiskEngine(RiskEngine):
         self, evaluation: Any
     ) -> Mapping[str, object]:
         if DecisionEvaluation is not None and isinstance(evaluation, DecisionEvaluation):
-            return {
+            payload: dict[str, object] = {
                 "status": "evaluated",
                 "accepted": evaluation.accepted,
                 "cost_bps": evaluation.cost_bps,
@@ -975,6 +975,9 @@ class ThresholdRiskEngine(RiskEngine):
                     else None
                 ),
             }
+            if evaluation.thresholds_snapshot is not None:
+                payload["thresholds"] = dict(evaluation.thresholds_snapshot)
+            return payload
         if isinstance(evaluation, Mapping):
             return dict(evaluation)
         return {"status": "evaluated", "accepted": bool(getattr(evaluation, "accepted", False))}

@@ -25,6 +25,7 @@ _FAILOVER_SYMBOLS = (
     "ResilienceFailoverDrill",
 )
 _FAILOVER_CACHE: Dict[str, Any] = {}
+_FAILOVER_IMPORT_ERROR: Exception | None = None
 
 try:
     from bot_core.resilience.failover import (  # type: ignore
@@ -42,7 +43,8 @@ try:
     ):
         _FAILOVER_CACHE[name] = value
     _HAS_FAILOVER = True
-except Exception:  # pragma: no cover – brak modułu failover nie blokuje pakietu
+except Exception as exc:  # pragma: no cover – brak modułu failover nie blokuje pakietu
+    _FAILOVER_IMPORT_ERROR = exc
     _HAS_FAILOVER = False
 
 # --- Publiczny interfejs -----------------------------------------------------

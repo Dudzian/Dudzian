@@ -87,6 +87,7 @@ certyfikaty klienta oraz odcisk SHA-256 przed zbudowaniem kanału【F:ui/src/grp
   zachowując synchronizację modeli QML. Pliki przekazane w `--*-auth-token-file`
   są monitorowane i każda aktualizacja jest stosowana bez restartu
   aplikacji.【F:ui/src/app/Application.cpp†L470-L520】【F:ui/src/app/Application.cpp†L2948-L3033】【F:ui/src/grpc/TradingClient.cpp†L225-L392】
+  zachowując synchronizację modeli QML.【F:ui/src/app/Application.cpp†L470-L520】【F:ui/src/grpc/TradingClient.cpp†L225-L392】
 * Kanał market data/Risk odpytywany jest synchronicznie i strumieniowo;
   snapshot historii OHLCV oraz strumień incrementów wypełniają modele QML, a
   `refreshRiskState()` umożliwia manualne/okresowe odpytywanie Decision Engine

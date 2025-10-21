@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import math
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import datetime, timedelta, timezone
 from typing import (
     TYPE_CHECKING,
@@ -184,6 +185,9 @@ class TradingController:
     exchange_name: str | None = None
     tco_reporter: RuntimeTCOReporter | None = None
     tco_metadata: Mapping[str, object] | None = None
+    decision_orchestrator: Any | None = None
+    decision_min_probability: float | None = None
+    decision_default_notional: float = 1_000.0
 
     _clock: Callable[[], datetime] = field(init=False, repr=False)
     _health_interval: timedelta = field(init=False, repr=False)
@@ -202,6 +206,9 @@ class TradingController:
     _exchange_name: str | None = field(init=False, repr=False, default=None)
     _tco_reporter: RuntimeTCOReporter | None = field(init=False, repr=False, default=None)
     _tco_metadata: Mapping[str, object] = field(init=False, repr=False, default_factory=dict)
+    _decision_orchestrator: Any | None = field(init=False, repr=False, default=None)
+    _decision_min_probability: float = field(init=False, repr=False, default=0.0)
+    _decision_default_notional: float = field(init=False, repr=False, default=1_000.0)
 
     def __post_init__(self) -> None:
         self._clock = self.clock
@@ -248,6 +255,24 @@ class TradingController:
             "Stan trybu awaryjnego profilu ryzyka (1=liquidation, 0=normal).",
         )
         self._metric_liquidation_state.set(0.0, labels=self._metric_labels)
+        self._decision_orchestrator = self.decision_orchestrator
+        default_notional = max(100.0, float(self.decision_default_notional or 0.0))
+        self._decision_default_notional = default_notional
+        configured_min_probability: float | None = None
+        orchestrator_config = None
+        if self._decision_orchestrator is not None:
+            orchestrator_config = getattr(self._decision_orchestrator, "_config", None)
+        if orchestrator_config is not None:
+            configured_min_probability = float(
+                getattr(orchestrator_config, "min_probability", 0.0)
+            )
+        if self.decision_min_probability is not None:
+            candidate = float(self.decision_min_probability)
+        elif configured_min_probability is not None:
+            candidate = configured_min_probability
+        else:
+            candidate = 0.0
+        self._decision_min_probability = max(0.0, min(0.995, candidate))
 
     def _record_decision_event(
         self,
@@ -429,15 +454,33 @@ class TradingController:
     # ------------------------------------------- internals ----------------------------------------------
     def _handle_signal(self, signal: StrategySignal) -> OrderResult | None:
         self._emit_signal_alert(signal)
-        request = self._build_order_request(signal)
+        decision_metadata: Mapping[str, object] | None = None
+        metric_labels = dict(self._metric_labels)
+        metric_labels["symbol"] = signal.symbol
+        if self._decision_engine_enabled():
+            candidate, rejection_info = self._build_decision_candidate(signal)
+            if candidate is None:
+                self._handle_decision_filtered(signal, rejection_info)
+                self._metric_signals_total.inc(labels={**metric_labels, "status": "rejected"})
+                return None
+            evaluation = self._evaluate_decision_candidate(candidate)
+            if evaluation is not None:
+                decision_metadata = self._serialize_decision_evaluation(evaluation)
+                self._record_decision_evaluation_event(signal, evaluation)
+                if not getattr(evaluation, "accepted", False):
+                    self._handle_decision_rejection(signal, evaluation)
+                    self._metric_signals_total.inc(
+                        labels={**metric_labels, "status": "rejected"}
+                    )
+                    return None
+
+        request = self._build_order_request(signal, extra_metadata=decision_metadata)
         account = self.account_snapshot_provider()
         risk_result = self.risk_engine.apply_pre_trade_checks(
             request,
             account=account,
             profile_name=self.risk_profile,
         )
-        metric_labels = dict(self._metric_labels)
-        metric_labels["symbol"] = signal.symbol
 
         adjusted_request = request
         rejection_reason = risk_result.reason
@@ -500,6 +543,21 @@ class TradingController:
             status="submitted",
         )
         try:
+            self._maybe_reverse_position(signal, adjusted_request, metric_labels)
+        except Exception as exc:  # noqa: BLE001
+            self._emit_execution_error_alert(signal, adjusted_request, exc)
+            self._metric_orders_total.inc(
+                labels={**metric_labels, "result": "failed", "side": adjusted_request.side},
+            )
+            self._record_decision_event(
+                "order_reverse_failed",
+                signal=signal,
+                request=adjusted_request,
+                status="failed",
+                metadata={"error": str(exc)},
+            )
+            raise
+        try:
             result = self.execution_service.execute(adjusted_request, self._execution_context)
         except Exception as exc:  # noqa: BLE001
             self._emit_execution_error_alert(signal, adjusted_request, exc)
@@ -551,6 +609,88 @@ class TradingController:
         self._handle_liquidation_state(risk_result)
         return result
 
+    def _maybe_reverse_position(
+        self,
+        signal: StrategySignal,
+        request: OrderRequest,
+        metric_labels: Mapping[str, str],
+    ) -> None:
+        metadata = dict(request.metadata or {})
+        reverse_flag = metadata.pop("reverse_position", True)
+        if isinstance(reverse_flag, str):
+            reverse_flag = reverse_flag.strip().lower() not in {"false", "0", "no"}
+        if not reverse_flag:
+            return
+
+        qty_raw = metadata.pop("current_position_qty", None)
+        side_raw = metadata.pop("current_position_side", None)
+        try:
+            position_qty = float(qty_raw)
+        except (TypeError, ValueError):
+            return
+        if position_qty <= 0:
+            return
+        if not side_raw:
+            return
+        current_side = str(side_raw).upper()
+        desired_side = request.side.upper()
+        if current_side not in {"LONG", "SHORT"}:
+            return
+        if (current_side == "LONG" and desired_side == "BUY") or (
+            current_side == "SHORT" and desired_side == "SELL"
+        ):
+            return
+
+        close_side = "SELL" if current_side == "LONG" else "BUY"
+        close_request = OrderRequest(
+            symbol=request.symbol,
+            side=close_side,
+            quantity=position_qty,
+            order_type="MARKET",
+            price=None,
+            time_in_force=None,
+            client_order_id=None,
+            stop_price=None,
+            atr=None,
+            metadata={**metadata, "action": "close", "reverse_target": desired_side},
+        )
+
+        self._metric_orders_total.inc(
+            labels={**metric_labels, "result": "submitted", "side": close_side},
+        )
+        self._record_decision_event(
+            "order_close_for_reversal",
+            signal=signal,
+            request=close_request,
+            status="submitted",
+            metadata={"position_side": current_side, "position_qty": f"{position_qty:.8f}"},
+        )
+        try:
+            result = self.execution_service.execute(close_request, self._execution_context)
+        except Exception as exc:  # noqa: BLE001
+            self._metric_orders_total.inc(
+                labels={**metric_labels, "result": "failed", "side": close_side},
+            )
+            self._record_decision_event(
+                "order_close_for_reversal",
+                signal=signal,
+                request=close_request,
+                status="failed",
+                metadata={"error": str(exc)},
+            )
+            raise
+
+        self._metric_orders_total.inc(
+            labels={**metric_labels, "result": "executed", "side": close_side},
+        )
+        self._record_decision_event(
+            "order_close_for_reversal",
+            signal=signal,
+            request=close_request,
+            status=result.status or "filled",
+            metadata={"close_order_id": result.order_id or ""},
+        )
+
     def _maybe_adjust_request(
         self,
         signal: StrategySignal,
@@ -591,11 +731,16 @@ class TradingController:
         )
         return adjusted_request, new_result
 
-    def _build_order_request(self, signal: StrategySignal) -> OrderRequest:
+    def _build_order_request(
+        self, signal: StrategySignal, *, extra_metadata: Mapping[str, object] | None = None
+    ) -> OrderRequest:
         # Metadane z sygnału + domyślne z kontrolera
         metadata_source: dict[str, object] = dict(self._order_defaults)
         for k, v in signal.metadata.items():
             metadata_source[str(k)] = v
+        if extra_metadata:
+            for k, v in extra_metadata.items():
+                metadata_source[str(k)] = v
 
         # Wymagane parametry
         try:
@@ -639,6 +784,291 @@ class TradingController:
             stop_price=stop_price,
             atr=atr,
             metadata=metadata_source,
+        )
+
+    def _decision_engine_enabled(self) -> bool:
+        return DecisionCandidate is not None and self._decision_orchestrator is not None
+
+    def _normalize_signal_metadata(self, signal: StrategySignal) -> Mapping[str, object]:
+        raw_metadata = getattr(signal, "metadata", None)
+        if isinstance(raw_metadata, Mapping):
+            metadata = dict(raw_metadata)
+        elif raw_metadata is None:
+            metadata = {}
+        else:
+            try:
+                metadata = dict(raw_metadata)  # type: ignore[arg-type]
+            except Exception:  # pragma: no cover - defensywne
+                metadata = {}
+        metadata.setdefault("environment", self.environment)
+        metadata.setdefault("portfolio", self.portfolio_id)
+        metadata.setdefault("controller", self._strategy_name or self.__class__.__name__)
+        return metadata
+
+    def _build_decision_candidate(
+        self, signal: StrategySignal
+    ) -> tuple[DecisionCandidate | None, Mapping[str, object] | None]:
+        if not self._decision_engine_enabled():
+            return None, None
+        metadata = self._normalize_signal_metadata(signal)
+        probability = self._decision_extract_probability(signal, metadata)
+        if probability < self._decision_min_probability:
+            return None, {
+                "reason": "probability_below_threshold",
+                "probability": probability,
+                "min_probability": self._decision_min_probability,
+            }
+        expected_return = self._decision_extract_expected_return(signal, metadata)
+        cost_override = self._decision_extract_cost_override(metadata)
+        latency_ms = self._decision_extract_latency(metadata)
+        notional = self._decision_extract_notional(metadata)
+        action = "exit" if str(signal.side).upper() in {"SELL", "EXIT", "FLAT"} else "enter"
+        candidate = DecisionCandidate(
+            strategy=self._strategy_name or metadata.get("strategy", ""),
+            action=action,
+            risk_profile=self.risk_profile,
+            symbol=signal.symbol,
+            notional=notional,
+            expected_return_bps=expected_return,
+            expected_probability=probability,
+            cost_bps_override=cost_override,
+            latency_ms=latency_ms,
+            metadata=metadata,
+        )
+        return candidate, None
+
+    def _decision_extract_probability(
+        self, signal: StrategySignal, metadata: Mapping[str, object]
+    ) -> float:
+        candidate = metadata.get("expected_probability") or metadata.get("probability")
+        if candidate is None and isinstance(metadata.get("ai_manager"), Mapping):
+            candidate = metadata["ai_manager"].get("success_probability")
+        probability: float | None = None
+        if candidate is not None:
+            try:
+                probability = float(candidate)
+            except (TypeError, ValueError):
+                probability = None
+        if probability is None:
+            try:
+                probability = float(signal.confidence)
+            except (TypeError, ValueError):
+                probability = None
+        if probability is None:
+            return 0.0
+        return max(0.0, min(0.995, probability))
+
+    def _decision_extract_expected_return(
+        self, signal: StrategySignal, metadata: Mapping[str, object]
+    ) -> float:
+        candidate = metadata.get("expected_return_bps")
+        if candidate is None and isinstance(metadata.get("ai_manager"), Mapping):
+            candidate = metadata["ai_manager"].get("expected_return_bps")
+        if candidate is None:
+            confidence: float | None
+            try:
+                confidence = float(signal.confidence)
+            except (TypeError, ValueError):
+                confidence = None
+            if confidence is None:
+                return 5.0
+            base = max(0.0, confidence - 0.5)
+            candidate = 5.0 + base * 20.0
+        try:
+            return float(candidate)
+        except (TypeError, ValueError):
+            return 5.0
+
+    def _decision_extract_cost_override(self, metadata: Mapping[str, object]) -> float | None:
+        candidate = metadata.get("cost_bps") or metadata.get("slippage_bps")
+        if candidate is None:
+            return None
+        try:
+            return float(candidate)
+        except (TypeError, ValueError):
+            return None
+
+    def _decision_extract_latency(self, metadata: Mapping[str, object]) -> float | None:
+        latency = metadata.get("latency_ms") or metadata.get("latency")
+        if latency is None and isinstance(metadata.get("decision_engine"), Mapping):
+            latency = metadata["decision_engine"].get("latency_ms")
+        if latency is None:
+            return None
+        try:
+            return float(latency)
+        except (TypeError, ValueError):
+            return None
+
+    def _decision_extract_notional(self, metadata: Mapping[str, object]) -> float:
+        candidate = metadata.get("notional") or metadata.get("target_notional")
+        if candidate is None:
+            return self._decision_default_notional
+        try:
+            value = float(candidate)
+        except (TypeError, ValueError):
+            return self._decision_default_notional
+        if value <= 0:
+            return self._decision_default_notional
+        return value
+
+    def _decision_risk_snapshot(self, profile: str) -> Mapping[str, object]:
+        loader = getattr(self.risk_engine, "snapshot_state", None)
+        if callable(loader):
+            try:
+                snapshot = loader(profile)
+                if snapshot is not None:
+                    return snapshot
+            except Exception:  # pragma: no cover - diagnostyka risk engine
+                _LOGGER.debug("DecisionOrchestrator: snapshot_state failed", exc_info=True)
+        return {}
+
+    def _evaluate_decision_candidate(
+        self, candidate: DecisionCandidate
+    ) -> DecisionEvaluation | None:
+        orchestrator = self._decision_orchestrator
+        if orchestrator is None:
+            return None
+        snapshot = self._decision_risk_snapshot(candidate.risk_profile)
+        try:
+            return orchestrator.evaluate_candidate(candidate, snapshot)
+        except Exception:  # pragma: no cover - diagnostyka orchestratora
+            _LOGGER.exception("DecisionOrchestrator: błąd ewaluacji")
+            return None
+
+    def _serialize_decision_evaluation(
+        self, evaluation: DecisionEvaluation
+    ) -> Mapping[str, object]:
+        payload: dict[str, object] = {
+            "decision_engine": {
+                "accepted": bool(getattr(evaluation, "accepted", False)),
+                "reasons": list(getattr(evaluation, "reasons", ())),
+                "model": getattr(evaluation, "model_name", None),
+                "net_edge_bps": getattr(evaluation, "net_edge_bps", None),
+                "cost_bps": getattr(evaluation, "cost_bps", None),
+                "model_expected_return_bps": getattr(
+                    evaluation, "model_expected_return_bps", None
+                ),
+                "model_success_probability": getattr(
+                    evaluation, "model_success_probability", None
+                ),
+            }
+        }
+        selection = getattr(evaluation, "model_selection", None)
+        if selection is not None:
+            if hasattr(selection, "to_mapping"):
+                try:
+                    payload["decision_engine"]["model_selection"] = selection.to_mapping()
+                except Exception:  # pragma: no cover - defensywnie
+                    payload["decision_engine"]["model_selection"] = {
+                        "selected": getattr(selection, "selected", None)
+                    }
+            elif is_dataclass(selection):
+                payload["decision_engine"]["model_selection"] = asdict(selection)
+        return payload
+
+    def _decision_threshold_snapshot(self) -> Mapping[str, object]:
+        snapshot: dict[str, object] = {
+            "min_probability": self._decision_min_probability,
+        }
+        orchestrator = self._decision_orchestrator
+        config = getattr(orchestrator, "_config", None) if orchestrator is not None else None
+        thresholds = getattr(config, "orchestrator", None) if config is not None else None
+        if thresholds is not None:
+            if is_dataclass(thresholds):
+                snapshot.update({"orchestrator": asdict(thresholds)})
+            else:
+                try:
+                    snapshot.update({"orchestrator": dict(thresholds)})
+                except Exception:  # pragma: no cover - defensywnie
+                    snapshot["orchestrator"] = thresholds
+        return snapshot
+
+    def _handle_decision_filtered(
+        self, signal: StrategySignal, rejection_info: Mapping[str, object] | None
+    ) -> None:
+        thresholds = self._decision_threshold_snapshot()
+        reason = None
+        probability = None
+        if rejection_info:
+            reason = rejection_info.get("reason")
+            probability = rejection_info.get("probability")
+        _LOGGER.info(
+            "DecisionOrchestrator odrzucił sygnał %s %s (pre-check): %s",
+            signal.side.upper(),
+            signal.symbol,
+            reason or "brak szczegółów",
+            extra={"thresholds": thresholds, "probability": probability},
+        )
+        metadata: dict[str, object] = {
+            "decision_status": "filtered",
+            "decision_reason": reason or "probability_below_threshold",
+            "min_probability": thresholds.get("min_probability", 0.0),
+        }
+        if probability is not None:
+            metadata["expected_probability"] = probability
+        metadata["thresholds"] = json.dumps(thresholds)
+        self._record_decision_event(
+            "decision_evaluation",
+            signal=signal,
+            status="filtered",
+            metadata=metadata,
+        )
+
+    def _handle_decision_rejection(
+        self, signal: StrategySignal, evaluation: DecisionEvaluation
+    ) -> None:
+        reasons = list(getattr(evaluation, "reasons", ()))
+        thresholds = self._decision_threshold_snapshot()
+        _LOGGER.info(
+            "DecisionOrchestrator odrzucił sygnał %s %s: %s",
+            signal.side.upper(),
+            signal.symbol,
+            ", ".join(reasons) or "brak powodów",
+            extra={"thresholds": thresholds},
+        )
+        metadata: dict[str, object] = {
+            "decision_status": "rejected",
+            "decision_reason": ", ".join(reasons) or "unknown",
+            "net_edge_bps": getattr(evaluation, "net_edge_bps", None) or "",
+            "cost_bps": getattr(evaluation, "cost_bps", None) or "",
+            "thresholds": json.dumps(thresholds),
+        }
+        model_name = getattr(evaluation, "model_name", None)
+        if model_name:
+            metadata["decision_model"] = model_name
+        self._record_decision_event(
+            "decision_evaluation",
+            signal=signal,
+            status="rejected",
+            metadata=metadata,
+        )
+
+    def _record_decision_evaluation_event(
+        self, signal: StrategySignal, evaluation: DecisionEvaluation
+    ) -> None:
+        if not getattr(evaluation, "accepted", False):
+            return
+        metadata = {
+            "decision_status": "accepted",
+            "net_edge_bps": getattr(evaluation, "net_edge_bps", None) or "",
+            "cost_bps": getattr(evaluation, "cost_bps", None) or "",
+            "model_expected_return_bps": getattr(
+                evaluation, "model_expected_return_bps", None
+            )
+            or "",
+            "model_success_probability": getattr(
+                evaluation, "model_success_probability", None
+            )
+            or "",
+        }
+        model_name = getattr(evaluation, "model_name", None)
+        if model_name:
+            metadata["decision_model"] = model_name
+        self._record_decision_event(
+            "decision_evaluation",
+            signal=signal,
+            status="accepted",
+            metadata=metadata,
         )
 
     def _emit_signal_alert(self, signal: StrategySignal) -> None:

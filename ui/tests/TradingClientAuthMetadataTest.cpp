@@ -74,6 +74,12 @@ bool containsErrorLike(const QStringList& errors, const QString& needle)
 
 } // namespace
 
+#include <QMultiMap>
+#include <QSet>
+#include <QStringList>
+
+#include "grpc/TradingClient.hpp"
+
 class TradingClientAuthMetadataTest : public QObject {
     Q_OBJECT
 private slots:
@@ -207,3 +213,5 @@ void TradingClientAuthMetadataTest::checklistRequiresClientCertificateWhenMtls()
 QTEST_MAIN(TradingClientAuthMetadataTest)
 #include "TradingClientAuthMetadataTest.moc"
 
+QTEST_MAIN(TradingClientAuthMetadataTest)
+#include "TradingClientAuthMetadataTest.moc"

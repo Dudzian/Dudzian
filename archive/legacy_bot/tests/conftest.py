@@ -1,3 +1,6 @@
-"""Reuse asyncio testing utilities from the main test suite."""
+"""Legacy compatibility shim delegating to :mod:`KryptoLowca.tests.conftest`."""
+from __future__ import annotations
 
-from KryptoLowca.tests.conftest import *  # noqa: F401,F403
+from archive.legacy_bot._compat import proxy_globals
+
+proxy_globals(globals(), "KryptoLowca.tests.conftest", "tests/conftest.py")

@@ -18,6 +18,8 @@ from typing import Any, Iterable, List, Mapping, Sequence
 from deploy.packaging.build_core_bundle import SUPPORTED_PLATFORMS, build_from_cli
 from bot_core.security.signing import build_hmac_signature
 
+from scripts._cli_common import now_iso
+
 LOGGER = logging.getLogger("run_oem_acceptance")
 
 # --- opcjonalne zależności kroków --------------------------------------------
@@ -924,12 +926,6 @@ def _dump_summary(summary: list[StepOutcome], *, args: argparse.Namespace) -> li
 
 def _serialize_summary(summary: Sequence[StepOutcome]) -> list[Mapping[str, Any]]:
     return [asdict(item) for item in summary]
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
-
 def _resolve_decision_log_key(args: argparse.Namespace) -> bytes | None:
     inline = args.decision_log_hmac_key
     path = args.decision_log_hmac_key_file
@@ -961,7 +957,7 @@ def _build_decision_log_entry(
     entry: dict[str, Any] = {
         "schema": "core.oem.acceptance",
         "schema_version": "1.0",
-        "timestamp": _now_iso(),
+        "timestamp": now_iso(),
         "status": status,
         "steps": serialized_steps,
         "exit_code": exit_code,
@@ -1108,7 +1104,7 @@ def _publish_artifacts(
         return None
 
     metadata: dict[str, Any] = {
-        "generated_at": _now_iso(),
+        "generated_at": now_iso(),
         "exit_code": exit_code,
         "steps": list(serialized_summary),
     }

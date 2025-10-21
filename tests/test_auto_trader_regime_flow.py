@@ -1,11 +1,25 @@
 from __future__ import annotations
 
+import enum
 import copy
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+import enum
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from dataclasses import MISSING as _MISSING, dataclass
+from typing import Any, Iterable
+import time
+from pathlib import Path
+import enum
+from dataclasses import MISSING as _MISSING, dataclass
 from typing import Any
+from dataclasses import dataclass
 from types import SimpleNamespace
+from typing import Any
+from collections.abc import Iterable
 
 import numpy as np
 import pandas as pd
@@ -20,7 +34,7 @@ from bot_core.ai.regime import (
     RegimeSummary,
     RiskLevel,
 )
-from bot_core.auto_trader.app import AutoTrader, RiskDecision
+from bot_core.auto_trader.app import AutoTrader, GuardrailTrigger, RiskDecision
 from tests.sample_data_loader import load_summary_for_regime
 
 
@@ -76,6 +90,764 @@ class _Provider:
 
 
 class _RiskServiceStub:
+def _prepare_guardrail_history(monkeypatch: pytest.MonkeyPatch) -> AutoTrader:
+    emitter = _Emitter()
+    gui = _GUI()
+    trader = AutoTrader(
+        emitter,
+        gui,
+        symbol_getter=lambda: "SOLUSDT",
+        auto_trade_interval_s=0.0,
+        enable_auto_trade=False,
+    )
+
+    class _ServiceAlpha:
+        ...
+
+    class _ServiceBeta:
+        ...
+
+    alpha = _ServiceAlpha()
+    beta = _ServiceBeta()
+
+    def _decision(
+        reasons: Iterable[str],
+        triggers: Iterable[GuardrailTrigger],
+    ) -> RiskDecision:
+        return RiskDecision(
+            should_trade=False,
+            fraction=0.0,
+            state="blocked",
+            reason="guardrail-blocked",
+            mode="auto",
+            details={
+                "origin": "guardrail-test",
+                "guardrail_reasons": list(reasons),
+                "guardrail_triggers": [trigger.to_dict() for trigger in triggers],
+            },
+        )
+
+    timestamps = iter([2000.0, 2010.0, 2020.0, 2030.0])
+    monkeypatch.setattr("bot_core.auto_trader.app.time.time", lambda: next(timestamps))
+
+    trader._record_risk_evaluation(
+        _decision(
+            ["effective risk cap", "volatility spike"],
+            [
+                GuardrailTrigger(
+                    name="effective_risk",
+                    label="Effective risk cap",
+                    comparator=">=",
+                    threshold=0.8,
+                    unit="ratio",
+                    value=0.83,
+                ),
+                GuardrailTrigger(
+                    name="volatility_ratio",
+                    label="Volatility ratio",
+                    comparator=">=",
+                    threshold=1.2,
+                    unit="ratio",
+                    value=1.25,
+                ),
+            ],
+        ),
+        approved=False,
+        normalized=False,
+        response=False,
+        service=alpha,
+        error=None,
+    )
+
+    trader._record_risk_evaluation(
+        _decision(
+            ["effective risk cap"],
+            [
+                GuardrailTrigger(
+                    name="effective_risk",
+                    label="Effective risk cap",
+                    comparator=">=",
+                    threshold=0.8,
+                    unit="ratio",
+                    value=0.81,
+                ),
+            ],
+        ),
+        approved=False,
+        normalized=False,
+        response=False,
+        service=alpha,
+        error=None,
+    )
+
+    trader._record_risk_evaluation(
+        RiskDecision(
+            should_trade=True,
+            fraction=0.5,
+            state="active",
+            details={"origin": "guardrail-test"},
+        ),
+        approved=True,
+        normalized=True,
+        response=True,
+        service=beta,
+        error=None,
+    )
+
+    trader._record_risk_evaluation(
+        _decision(
+            ["effective risk cap", "liquidity pressure"],
+            [
+                GuardrailTrigger(
+                    name="effective_risk",
+                    label="Effective risk cap",
+                    comparator=">=",
+                    threshold=0.8,
+                    unit="score",
+                    value=0.79,
+                ),
+            ],
+        ),
+        approved=False,
+        normalized=False,
+        response=False,
+        service=None,
+        error=RuntimeError("guardrail failure"),
+    )
+
+    return trader
+
+
+def _build_summary(
+    regime: MarketRegime,
+    *,
+    confidence: float,
+    risk: float,
+    size: int = 3,
+    stability: float | None = None,
+    risk_trend: float | None = None,
+    risk_level: RiskLevel | None = None,
+    risk_volatility: float | None = None,
+    regime_persistence: float | None = None,
+    confidence_path: tuple[float, ...] | None = None,
+    regime_sequence: tuple[MarketRegime, ...] | None = None,
+    confidence_trend: float | None = None,
+    confidence_volatility: float | None = None,
+    regime_streak: int | None = None,
+    transition_rate: float | None = None,
+    instability_score: float | None = None,
+    confidence_decay: float | None = None,
+    drawdown_path: tuple[float, ...] | None = None,
+    volume_trend_path: tuple[float, ...] | None = None,
+    volatility_ratio_path: tuple[float, ...] | None = None,
+    volatility_path: tuple[float, ...] | None = None,
+    avg_drawdown: float | None = None,
+    avg_volume_trend: float | None = None,
+    drawdown_pressure: float | None = None,
+    liquidity_pressure: float | None = None,
+    volatility_ratio: float | None = None,
+    tail_risk_index: float | None = None,
+    shock_frequency: float | None = None,
+    volatility_of_volatility: float | None = None,
+    stress_index: float | None = None,
+    severe_event_rate: float | None = None,
+    cooldown_score: float | None = None,
+    recovery_potential: float | None = None,
+    volatility_trend: float | None = None,
+    drawdown_trend: float | None = None,
+    volume_trend_volatility: float | None = None,
+    stability_projection: float | None = None,
+    degradation_score: float | None = None,
+    skewness_path: tuple[float, ...] | None = None,
+    kurtosis_path: tuple[float, ...] | None = None,
+    volume_imbalance_path: tuple[float, ...] | None = None,
+    skewness_bias: float | None = None,
+    kurtosis_excess: float | None = None,
+    volume_imbalance: float | None = None,
+    distribution_pressure: float | None = None,
+    regime_entropy: float | None = None,
+    resilience_score: float | None = None,
+    stress_balance: float | None = None,
+    liquidity_gap: float | None = None,
+    confidence_resilience: float | None = None,
+    stress_projection: float | None = None,
+    stress_momentum: float | None = None,
+    liquidity_trend: float | None = None,
+    confidence_fragility: float | None = None,
+) -> RegimeSummary:
+    if size < 1:
+        size = 1
+    resolved_risk_trend = 0.0 if risk_trend is None else risk_trend
+    resolved_stability = 1.0 if stability is None else stability
+    risk_values: list[float]
+    if size >= 2 and risk_trend is not None:
+        start_risk = max(0.0, min(1.0, risk - resolved_risk_trend))
+        end_risk = max(0.0, min(1.0, risk))
+        step = (end_risk - start_risk) / (size - 1) if size > 1 else 0.0
+        risk_values = [start_risk + step * idx for idx in range(size)]
+    else:
+        risk_values = [risk for _ in range(size)]
+
+    if confidence_path is not None and len(confidence_path) == size:
+        confidences = list(confidence_path)
+    else:
+        confidences = [confidence for _ in range(size)]
+
+    if regime_sequence is not None and len(regime_sequence) == size:
+        regimes = list(regime_sequence)
+    else:
+        regimes = [regime for _ in range(size)]
+
+    counts: dict[MarketRegime, float] = {}
+    for entry in regimes:
+        counts[entry] = counts.get(entry, 0.0) + 1.0
+    distribution = np.asarray(list(counts.values()), dtype=float)
+    if distribution.size:
+        probabilities = distribution / distribution.sum()
+        default_regime_entropy = float(
+            np.clip(
+                -np.nansum(probabilities * np.log(probabilities + 1e-12))
+                / (np.log(len(MarketRegime)) or 1.0),
+                0.0,
+                1.0,
+            )
+        )
+    else:
+        default_regime_entropy = 0.0
+
+    drawdowns = (
+        list(drawdown_path)
+        if drawdown_path is not None and len(drawdown_path) == size
+        else [0.12 for _ in range(size)]
+    )
+    volume_trends = (
+        list(volume_trend_path)
+        if volume_trend_path is not None and len(volume_trend_path) == size
+        else [0.02 for _ in range(size)]
+    )
+    volatility_ratios = (
+        list(volatility_ratio_path)
+        if volatility_ratio_path is not None and len(volatility_ratio_path) == size
+        else [1.1 for _ in range(size)]
+    )
+
+    volatilities = (
+        list(volatility_path)
+        if volatility_path is not None and len(volatility_path) == size
+        else [0.02 for _ in range(size)]
+    )
+
+    skew_values = (
+        list(skewness_path)
+        if skewness_path is not None and len(skewness_path) == size
+        else [0.0 for _ in range(size)]
+    )
+    kurtosis_values = (
+        list(kurtosis_path)
+        if kurtosis_path is not None and len(kurtosis_path) == size
+        else [0.0 for _ in range(size)]
+    )
+    volume_imbalance_values = (
+        list(volume_imbalance_path)
+        if volume_imbalance_path is not None and len(volume_imbalance_path) == size
+        else [0.0 for _ in range(size)]
+    )
+
+    snapshots = tuple(
+        RegimeSnapshot(
+            regime=regimes[idx],
+            confidence=confidences[idx],
+            risk_score=risk_values[idx],
+            drawdown=drawdowns[idx],
+            volatility=volatilities[idx],
+            volume_trend=volume_trends[idx],
+            volatility_ratio=volatility_ratios[idx],
+            return_skew=skew_values[idx],
+            return_kurtosis=kurtosis_values[idx],
+            volume_imbalance=volume_imbalance_values[idx],
+        )
+        for idx in range(size)
+    )
+    resolved_level = risk_level
+    if resolved_level is None:
+        if risk >= 0.85 or resolved_risk_trend >= 0.25:
+            resolved_level = RiskLevel.CRITICAL
+        elif risk >= 0.65 or (resolved_risk_trend >= 0.1 and resolved_stability < 0.7):
+            resolved_level = RiskLevel.ELEVATED
+        elif risk <= 0.25 and resolved_risk_trend <= 0.0 and resolved_stability >= 0.55 and confidence >= 0.5:
+            resolved_level = RiskLevel.CALM
+        elif risk <= 0.45 and resolved_risk_trend <= 0.05:
+            resolved_level = RiskLevel.BALANCED
+        else:
+            resolved_level = RiskLevel.WATCH
+    resolved_volatility = risk_volatility
+    if resolved_volatility is None:
+        if len(snapshots) <= 1:
+            resolved_volatility = 0.0
+        else:
+            values = [snap.risk_score for snap in snapshots]
+            mean = sum(values) / len(values)
+            resolved_volatility = (sum((value - mean) ** 2 for value in values) / len(values)) ** 0.5
+    resolved_persistence = regime_persistence
+    if resolved_persistence is None:
+        if len(snapshots) <= 1:
+            resolved_persistence = 1.0
+        else:
+            changes = sum(
+                1 for idx in range(1, len(snapshots)) if snapshots[idx].regime != snapshots[idx - 1].regime
+            )
+            resolved_persistence = 1.0 - (changes / (len(snapshots) - 1))
+    resolved_conf_trend = confidence_trend
+    if resolved_conf_trend is None:
+        if len(snapshots) >= 2:
+            resolved_conf_trend = snapshots[-1].confidence - snapshots[0].confidence
+        else:
+            resolved_conf_trend = 0.0
+    resolved_conf_vol = confidence_volatility
+    if resolved_conf_vol is None:
+        if len(snapshots) <= 1:
+            resolved_conf_vol = 0.0
+        else:
+            values = [snap.confidence for snap in snapshots]
+            mean = sum(values) / len(values)
+            resolved_conf_vol = (sum((value - mean) ** 2 for value in values) / len(values)) ** 0.5
+    resolved_streak = regime_streak
+    if resolved_streak is None:
+        resolved_streak = 0
+        latest = snapshots[-1].regime
+        for snap in reversed(snapshots):
+            if snap.regime is latest:
+                resolved_streak += 1
+            else:
+                break
+    resolved_conf_trend = float(resolved_conf_trend)
+    resolved_conf_vol = float(resolved_conf_vol)
+    resolved_streak = int(resolved_streak)
+    resolved_transition_rate = (
+        float(transition_rate)
+        if transition_rate is not None
+        else float(max(0.0, 1.0 - resolved_persistence))
+    )
+    resolved_conf_decay = (
+        float(confidence_decay)
+        if confidence_decay is not None
+        else float(max(0.0, -resolved_conf_trend))
+    )
+    resolved_risk_volatility = resolved_volatility if resolved_volatility is not None else 0.0
+    risk_vol_norm = min(resolved_risk_volatility / 0.3, 1.0)
+    conf_vol_norm = min(resolved_conf_vol / 0.2, 1.0)
+    if instability_score is None:
+        resolved_instability = min(
+            1.0,
+            0.4 * risk_vol_norm
+            + 0.3 * resolved_transition_rate
+            + 0.2 * conf_vol_norm
+            + 0.1 * min(resolved_conf_decay, 1.0),
+        )
+    else:
+        resolved_instability = float(instability_score)
+    resolved_avg_drawdown = float(avg_drawdown) if avg_drawdown is not None else float(sum(drawdowns) / len(drawdowns))
+    resolved_avg_volume_trend = (
+        float(avg_volume_trend)
+        if avg_volume_trend is not None
+        else float(sum(volume_trends) / len(volume_trends))
+    )
+    volume_trend_component = min(max(0.0, -resolved_avg_volume_trend) / 0.35, 1.0)
+    resolved_volatility_ratio = (
+        float(volatility_ratio)
+        if volatility_ratio is not None
+        else float(sum(volatility_ratios) / len(volatility_ratios))
+    )
+    resolved_drawdown_pressure = (
+        float(drawdown_pressure)
+        if drawdown_pressure is not None
+        else min(1.0, resolved_avg_drawdown / 0.25)
+    )
+    resolved_liquidity_pressure = (
+        float(liquidity_pressure)
+        if liquidity_pressure is not None
+        else min(
+            1.0,
+            max(0.0, -resolved_avg_volume_trend) / 0.4
+            + max(0.0, resolved_volatility_ratio - 1.0) * 0.35
+            + max(0.0, resolved_instability - 0.4) * 0.2,
+        )
+    )
+    resolved_tail_risk_index = (
+        float(tail_risk_index)
+        if tail_risk_index is not None
+        else min(
+            1.0,
+            sum(
+                1
+                for snap in snapshots
+                if snap.drawdown >= 0.22
+                or snap.volatility >= 0.035
+                or snap.volatility_ratio >= 1.4
+            )
+            / max(len(snapshots), 1),
+        )
+    )
+    resolved_shock_frequency = (
+        float(shock_frequency)
+        if shock_frequency is not None
+        else (
+            0.0
+            if len(snapshots) <= 1
+            else min(
+                1.0,
+                (
+                    sum(
+                        1
+                        for idx in range(1, len(snapshots))
+                        if abs(snapshots[idx].risk_score - snapshots[idx - 1].risk_score) >= 0.12
+                    )
+                    + sum(
+                        1
+                        for idx in range(1, len(snapshots))
+                        if snapshots[idx].regime is not snapshots[idx - 1].regime
+                    )
+                )
+                / (len(snapshots) - 1),
+            )
+        )
+    )
+    resolved_vol_of_vol = (
+        float(volatility_of_volatility)
+        if volatility_of_volatility is not None
+        else (float(np.std(volatilities, dtype=float)) if len(volatilities) >= 2 else 0.0)
+    )
+    resolved_stress_index = (
+        float(stress_index)
+        if stress_index is not None
+        else min(
+            1.0,
+            0.45 * resolved_tail_risk_index
+            + 0.3 * resolved_shock_frequency
+            + 0.25 * max(min(resolved_risk_volatility / 0.3, 1.0), min(resolved_vol_of_vol / 0.025, 1.0)),
+        )
+    )
+    if severe_event_rate is not None:
+        resolved_severe_event_rate = float(severe_event_rate)
+    else:
+        severe_events = sum(
+            1
+            for snap in snapshots
+            if (
+                snap.risk_score >= 0.75
+                or snap.drawdown >= 0.22
+                or snap.volatility >= 0.035
+                or snap.volatility_ratio >= 1.45
+            )
+        )
+        resolved_severe_event_rate = float(
+            min(1.0, severe_events / max(len(snapshots), 1))
+        )
+    if recovery_potential is not None:
+        resolved_recovery_potential = float(recovery_potential)
+    else:
+        resolved_recovery_potential = float(
+            min(
+                1.0,
+                0.45 * max(0.0, -resolved_risk_trend)
+                + 0.25 * max(0.0, confidence - 0.5)
+                + 0.2 * max(0.0, resolved_persistence - 0.55)
+                + 0.15 * max(0.0, 0.4 - resolved_risk_volatility)
+                + 0.15 * max(0.0, 0.35 - resolved_drawdown_pressure)
+                + 0.15 * max(0.0, 0.35 - resolved_liquidity_pressure),
+            )
+        )
+    if cooldown_score is not None:
+        resolved_cooldown_score = float(cooldown_score)
+    else:
+        resolved_cooldown_score = float(
+            min(
+                1.0,
+                0.4 * resolved_severe_event_rate
+                + 0.25 * resolved_stress_index
+                + 0.2 * max(0.0, resolved_instability - 0.5)
+                + 0.15 * max(0.0, resolved_conf_decay)
+                + 0.15 * max(0.0, resolved_drawdown_pressure - 0.5)
+                + 0.15 * max(0.0, resolved_liquidity_pressure - 0.5),
+            )
+        )
+    if volatility_trend is not None:
+        resolved_volatility_trend = float(volatility_trend)
+    else:
+        resolved_volatility_trend = float(
+            np.clip(volatilities[-1] - volatilities[0], -0.05, 0.05)
+        ) if len(volatilities) >= 2 else 0.0
+    if drawdown_trend is not None:
+        resolved_drawdown_trend = float(drawdown_trend)
+    else:
+        resolved_drawdown_trend = float(
+            np.clip(drawdowns[-1] - drawdowns[0], -0.4, 0.4)
+        ) if len(drawdowns) >= 2 else 0.0
+    if volume_trend_volatility is not None:
+        resolved_volume_trend_volatility = float(volume_trend_volatility)
+    else:
+        resolved_volume_trend_volatility = float(
+            np.std(volume_trends, dtype=float)
+        ) if len(volume_trends) >= 2 else 0.0
+    vol_trend_intensity = min(1.0, max(0.0, resolved_volatility_trend) / 0.03)
+    drawdown_trend_intensity = min(1.0, max(0.0, resolved_drawdown_trend) / 0.18)
+    volume_trend_vol_norm = min(1.0, resolved_volume_trend_volatility / 0.25)
+    if degradation_score is not None:
+        resolved_degradation_score = float(degradation_score)
+    else:
+        resolved_degradation_score = float(
+            min(
+                1.0,
+                0.35 * vol_trend_intensity
+                + 0.35 * drawdown_trend_intensity
+                + 0.2 * volume_trend_vol_norm
+                + 0.1 * max(0.0, resolved_instability - 0.45)
+                + 0.1 * max(0.0, resolved_tail_risk_index - 0.4)
+                + 0.1 * max(0.0, resolved_stress_index - 0.45),
+            )
+        )
+    if skewness_bias is not None:
+        resolved_skewness_bias = float(skewness_bias)
+    else:
+        resolved_skewness_bias = float(np.mean(skew_values)) if skew_values else 0.0
+    if kurtosis_excess is not None:
+        resolved_kurtosis_excess = float(kurtosis_excess)
+    else:
+        resolved_kurtosis_excess = float(np.mean(kurtosis_values)) if kurtosis_values else 0.0
+    if volume_imbalance is not None:
+        resolved_volume_imbalance = float(volume_imbalance)
+    else:
+        resolved_volume_imbalance = float(np.mean(volume_imbalance_values)) if volume_imbalance_values else 0.0
+    if distribution_pressure is not None:
+        resolved_distribution_pressure = float(distribution_pressure)
+    else:
+        resolved_distribution_pressure = float(
+            min(
+                1.0,
+                max(
+                    0.0,
+                    0.3 * min(abs(resolved_skewness_bias) / 1.5, 1.0)
+                    + 0.3 * min(max(0.0, resolved_kurtosis_excess) / 3.0, 1.0)
+                    + 0.2 * min(abs(resolved_volume_imbalance) / 0.6, 1.0)
+                    + 0.1 * max(0.0, resolved_instability - 0.45),
+                ),
+            )
+        )
+    if stability_projection is not None:
+        resolved_stability_projection = float(stability_projection)
+    else:
+        resolved_stability_projection = float(
+            min(
+                1.0,
+                max(
+                    0.0,
+                    0.45 * resolved_persistence
+                    + 0.25 * max(0.0, 1.0 - resolved_transition_rate)
+                    + 0.2 * max(0.0, 1.0 - risk_vol_norm)
+                    + 0.15 * resolved_recovery_potential
+                    - 0.25 * vol_trend_intensity
+                    - 0.2 * drawdown_trend_intensity
+                    - 0.15 * volume_trend_vol_norm,
+                ),
+            )
+        )
+    if regime_entropy is not None:
+        resolved_regime_entropy = float(regime_entropy)
+    else:
+        resolved_regime_entropy = default_regime_entropy
+    if stress_balance is not None:
+        resolved_stress_balance = float(stress_balance)
+    else:
+        resolved_stress_balance = float(
+            np.clip(
+                0.5
+                + 0.5
+                * (resolved_recovery_potential - resolved_stress_index),
+                0.0,
+                1.0,
+            )
+        )
+    if resilience_score is not None:
+        resolved_resilience_score = float(resilience_score)
+    else:
+        resolved_resilience_score = float(
+            min(
+                1.0,
+                max(
+                    0.0,
+                    0.3 * resolved_recovery_potential
+                    + 0.25 * resolved_stability_projection
+                    + 0.2 * max(0.0, 1.0 - resolved_drawdown_pressure)
+                    + 0.12 * max(0.0, 1.0 - resolved_liquidity_pressure)
+                    + 0.08 * max(
+                        0.0,
+                        1.0
+                        - min(
+                            1.0,
+                            max(0.0, -resolved_avg_volume_trend) / 0.35,
+                        ),
+                    )
+                    + 0.05 * max(0.0, 1.0 - resolved_conf_decay)
+                    + 0.05 * max(0.0, 1.0 - resolved_distribution_pressure),
+                ),
+            )
+        )
+    if liquidity_gap is not None:
+        resolved_liquidity_gap = float(liquidity_gap)
+    else:
+        resolved_liquidity_gap = float(
+            min(
+                1.0,
+                max(
+                    0.0,
+                    0.45 * resolved_liquidity_pressure
+                    + 0.25 * min(max(0.0, -resolved_avg_volume_trend) / 0.35, 1.0)
+                    + 0.2 * min(abs(resolved_volume_imbalance) / 0.6, 1.0)
+                    + 0.1 * max(0.0, resolved_instability - 0.45)
+                    + 0.1 * max(0.0, resolved_volatility_ratio - 1.0)
+                    - 0.2 * resolved_recovery_potential,
+                ),
+            )
+        )
+    if confidence_resilience is not None:
+        resolved_confidence_resilience = float(confidence_resilience)
+    else:
+        resolved_confidence_resilience = float(
+            min(
+                1.0,
+                max(
+                    0.0,
+                    0.35 * confidence
+                    + 0.2 * max(0.0, 1.0 - resolved_conf_decay)
+                    + 0.15 * max(0.0, 1.0 - conf_vol_norm)
+                    + 0.15 * max(0.0, resolved_conf_trend + 0.15)
+                    + 0.15 * resolved_resilience_score
+                    - 0.1 * resolved_distribution_pressure
+                    - 0.1 * resolved_liquidity_gap,
+                ),
+            )
+        )
+    if stress_projection is not None:
+        resolved_stress_projection = float(stress_projection)
+    else:
+        resolved_stress_projection = float(
+            min(
+                1.0,
+                max(
+                    0.0,
+                    0.35 * resolved_stress_index
+                    + 0.25 * resolved_degradation_score
+                    + 0.15 * resolved_tail_risk_index
+                    + 0.1 * resolved_shock_frequency
+                    + 0.1 * resolved_distribution_pressure
+                    + 0.1 * resolved_liquidity_gap
+                    - 0.2 * resolved_recovery_potential
+                    - 0.1 * resolved_resilience_score,
+                ),
+            )
+        )
+    if stress_momentum is not None:
+        resolved_stress_momentum = float(stress_momentum)
+    else:
+        resolved_stress_momentum = float(
+            min(
+                1.0,
+                max(
+                    0.0,
+                    0.4 * resolved_stress_index
+                    + 0.3 * resolved_stress_projection
+                    + 0.2 * resolved_tail_risk_index
+                    + 0.15 * resolved_shock_frequency
+                    + 0.1 * max(0.0, resolved_risk_trend)
+                    - 0.2 * resolved_recovery_potential,
+                ),
+            )
+        )
+    if liquidity_trend is not None:
+        resolved_liquidity_trend = float(liquidity_trend)
+    else:
+        resolved_liquidity_trend = float(
+            min(
+                1.0,
+                max(
+                    0.0,
+                    0.5 * resolved_liquidity_pressure
+                    + 0.3 * resolved_liquidity_gap
+                    + 0.2 * volume_trend_component
+                    + 0.1 * max(0.0, volume_trend_vol_norm - 0.4)
+                    - 0.2 * resolved_recovery_potential,
+                ),
+            )
+        )
+    if confidence_fragility is not None:
+        resolved_confidence_fragility = float(confidence_fragility)
+    else:
+        resolved_confidence_fragility = float(
+            min(
+                1.0,
+                max(
+                    0.0,
+                    0.35 * conf_vol_norm
+                    + 0.3 * resolved_conf_decay
+                    + 0.2 * max(0.0, -resolved_conf_trend)
+                    + 0.1 * resolved_regime_entropy
+                    + 0.1 * resolved_distribution_pressure,
+                ),
+            )
+        )
+    return RegimeSummary(
+        regime=regime,
+        confidence=confidence,
+        risk_score=risk,
+        stability=resolved_stability,
+        risk_trend=resolved_risk_trend,
+        risk_level=resolved_level,
+        risk_volatility=resolved_volatility,
+        regime_persistence=resolved_persistence,
+        transition_rate=resolved_transition_rate,
+        confidence_trend=resolved_conf_trend,
+        confidence_volatility=resolved_conf_vol,
+        regime_streak=resolved_streak,
+        instability_score=resolved_instability,
+        confidence_decay=resolved_conf_decay,
+        avg_drawdown=resolved_avg_drawdown,
+        avg_volume_trend=resolved_avg_volume_trend,
+        drawdown_pressure=resolved_drawdown_pressure,
+        liquidity_pressure=resolved_liquidity_pressure,
+        volatility_ratio=resolved_volatility_ratio,
+        regime_entropy=resolved_regime_entropy,
+        tail_risk_index=resolved_tail_risk_index,
+        shock_frequency=resolved_shock_frequency,
+        volatility_of_volatility=resolved_vol_of_vol,
+        stress_index=resolved_stress_index,
+        severe_event_rate=resolved_severe_event_rate,
+        cooldown_score=resolved_cooldown_score,
+        recovery_potential=resolved_recovery_potential,
+        resilience_score=resolved_resilience_score,
+        stress_balance=resolved_stress_balance,
+        liquidity_gap=resolved_liquidity_gap,
+        confidence_resilience=resolved_confidence_resilience,
+        stress_projection=resolved_stress_projection,
+        stress_momentum=resolved_stress_momentum,
+        liquidity_trend=resolved_liquidity_trend,
+        confidence_fragility=resolved_confidence_fragility,
+        volatility_trend=resolved_volatility_trend,
+        drawdown_trend=resolved_drawdown_trend,
+        volume_trend_volatility=resolved_volume_trend_volatility,
+        stability_projection=resolved_stability_projection,
+        degradation_score=resolved_degradation_score,
+        skewness_bias=resolved_skewness_bias,
+        kurtosis_excess=resolved_kurtosis_excess,
+        volume_imbalance=resolved_volume_imbalance,
+        distribution_pressure=resolved_distribution_pressure,
+        history=snapshots,
+    )
+class _RiskServiceStub:
+    def __init__(self, approval: bool) -> None:
+        self._approval = approval
+        self.calls: list[RiskDecision] = []
+
+    def __call__(self, decision: RiskDecision) -> bool:
     def __init__(self, approval: Any) -> None:
         self._approval = approval
         self.calls: list[RiskDecision] = []
@@ -104,6 +876,17 @@ class _RiskServiceResponseStub:
 
     def __call__(self, decision: RiskDecision) -> Any:  # pragma: no cover - compatibility shim
         return self.evaluate_decision(decision)
+    def __call__(self, decision: RiskDecision) -> Any:
+        self.calls.append(decision)
+        if callable(self._response):
+            return self._response()
+        return self._response
+    def evaluate_decision(self, decision: RiskDecision) -> Any:
+        self.calls.append(decision)
+        result = self._response
+        if callable(result):
+            result = result()
+        return result
 
 
 class _ExecutionServiceStub:
@@ -118,6 +901,12 @@ class _ExecutionServiceStub:
     def execute(self, decision: RiskDecision) -> None:
         self.calls.append(decision)
         self.methods.append("execute")
+        self.methods.append("execute_decision")
+        self.calls.append(decision)
+
+    def execute(self, decision: RiskDecision) -> None:
+        self.methods.append("execute")
+        self.calls.append(decision)
 
 
 class _ExecutionServiceExecuteOnly:
@@ -128,6 +917,37 @@ class _ExecutionServiceExecuteOnly:
     def execute(self, decision: RiskDecision) -> None:
         self.calls.append(decision)
         self.methods.append("execute")
+        self.methods.append("execute")
+        self.calls.append(decision)
+
+
+_MISSING = object()
+
+
+class _Approval(enum.Enum):
+    APPROVED = "approved"
+    DENIED = "denied"
+
+
+def _build_summary(
+    regime: MarketRegime,
+    *,
+    dataset: str | None = None,
+    step: int = 24,
+    **overrides: Any,
+) -> RegimeSummary:
+    rename_map = {"risk": "risk_score"}
+    normalized: dict[str, Any] = {}
+    for key, value in overrides.items():
+        mapped = rename_map.get(key, key)
+        normalized[mapped] = value
+    overrides_map = normalized or None
+    return load_summary_for_regime(
+        regime,
+        dataset=dataset,
+        step=step,
+        overrides=overrides_map,
+    )
 
 
 def test_map_regime_to_signal_respects_config(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -499,6 +1319,7 @@ class _DummyAssessment:
     regime: MarketRegime
     risk_score: float
     confidence: float = 0.8
+    ai_prediction: float = 0.015
 
     def to_assessment(self, symbol: str) -> MarketRegimeAssessment:
         return MarketRegimeAssessment(
@@ -527,14 +1348,37 @@ class _AIManagerStub:
         self._queue = assessments
         self.calls: list[str] = []
         self._summaries = summaries or {}
+        self.ai_threshold_bps = 5.0
+        self.is_degraded = False
+        self._last_prediction = assessments[0].ai_prediction if assessments else 0.0
 
     def assess_market_regime(self, symbol: str, market_data: pd.DataFrame, **_: Any) -> MarketRegimeAssessment:
         self.calls.append(symbol)
         next_assessment = self._queue.pop(0)
+        self._last_prediction = next_assessment.ai_prediction
         return next_assessment.to_assessment(symbol)
 
     def get_regime_summary(self, symbol: str) -> RegimeSummary | None:
         return self._summaries.get(symbol)
+
+    async def predict_series(
+        self,
+        symbol: str,
+        df: pd.DataFrame,
+        *,
+        model_types: Any | None = None,
+        feature_cols: Any | None = None,
+    ) -> pd.Series:
+        del symbol, model_types, feature_cols
+        if not isinstance(df, pd.DataFrame) or df.empty:
+            index = pd.RangeIndex(start=0, stop=1)
+        else:
+            index = df.index[-1:]
+        return pd.Series([float(self._last_prediction)], index=index)
+
+    def require_real_models(self) -> None:
+        if self.is_degraded:
+            raise RuntimeError("fallback backend")
 
 
 def _assert_summary_details(
@@ -757,6 +1601,38 @@ def test_auto_trader_respects_high_risk_regime() -> None:
     assert trader.current_leverage == 0.0
     assert decision.should_trade is False
     result.assert_provider_called("ETHUSDT")
+
+
+def test_auto_trader_holds_when_ai_signal_below_threshold() -> None:
+    result = _execute_auto_trade(
+        "SOLUSDT",
+        [_DummyAssessment(regime=MarketRegime.TREND, risk_score=0.32, ai_prediction=0.0)],
+    )
+    decision, trader, _, provider, _ = result
+
+    assert decision.should_trade is False
+    assert trader._last_signal == "hold"
+    ai_details = decision.details.get("decision_engine", {}).get("ai")
+    assert ai_details is not None
+    assert ai_details.get("direction") == "hold"
+    assert ai_details.get("prediction_bps") == pytest.approx(0.0)
+    result.assert_provider_called("SOLUSDT")
+
+
+def test_auto_trader_ai_conflict_forces_hold() -> None:
+    result = _execute_auto_trade(
+        "XRPUSDT",
+        [_DummyAssessment(regime=MarketRegime.TREND, risk_score=0.3, ai_prediction=-0.02)],
+    )
+    decision, trader, _, provider, _ = result
+
+    assert decision.should_trade is False
+    assert trader._last_signal == "hold"
+    ai_details = decision.details.get("decision_engine", {}).get("ai")
+    assert ai_details is not None
+    assert ai_details.get("direction") == "sell"
+    assert ai_details.get("prediction_bps") == pytest.approx(-200.0)
+    result.assert_provider_called("XRPUSDT")
 
 
 def test_auto_trader_uses_summary_to_lock_trading_on_high_risk() -> None:
@@ -1968,8 +2844,1549 @@ def test_auto_trader_risk_history_filters_by_service_and_time(monkeypatch: pytes
     )
     assert (fill_df["decision_missing_field"] == "missing").all()
 
+    coerced_df = trader.risk_evaluations_to_dataframe(coerce_timestamps=True)
+    assert isinstance(coerced_df.loc[0, "timestamp"], datetime)
+    assert coerced_df.loc[0, "timestamp"].tzinfo is timezone.utc
+
+    naive_df = trader.risk_evaluations_to_dataframe(
+        coerce_timestamps=True,
+        tz=None,
+    )
+    assert naive_df.loc[0, "timestamp"].tzinfo is None
+
+    records_snapshot = trader.risk_evaluations_to_records()
+    assert len(records_snapshot) == 4
+    assert {"timestamp", "approved", "normalized", "decision", "response", "error"}.issubset(
+        records_snapshot[0].keys()
+    )
+    assert records_snapshot[0]["decision"]["details"]["origin"] == "unit-test"
+
+    alpha_records = trader.risk_evaluations_to_records(service="_ServiceAlpha")
+    assert len(alpha_records) == 2
+    assert all(entry["service"] == "_ServiceAlpha" for entry in alpha_records)
+
+    window_records = trader.risk_evaluations_to_records(
+        since=pd.Timestamp(1010.0, unit="s"),
+        until=pd.Timestamp(1020.0, unit="s"),
+    )
+    assert len(window_records) == 2
+    assert {entry.get("service") or "<unknown>" for entry in window_records} == {
+        "_ServiceBeta",
+        "<unknown>",
+    }
+
+    flattened_records = trader.risk_evaluations_to_records(flatten_decision=True)
+    assert {"decision_should_trade", "decision_fraction", "decision_state"}.issubset(
+        flattened_records[0].keys()
+    )
+    assert flattened_records[0]["decision_should_trade"] is True
+    assert flattened_records[1]["decision_should_trade"] is False
+
+    prefixed_records = trader.risk_evaluations_to_records(
+        flatten_decision=True,
+        decision_prefix="risk__",
+    )
+    assert "risk__should_trade" in prefixed_records[0]
+    assert "decision_should_trade" not in prefixed_records[0]
+
+    subset_records = trader.risk_evaluations_to_records(
+        flatten_decision=True,
+        decision_fields=["fraction", "details"],
+    )
+    subset_keys = [
+        key for key in subset_records[0].keys() if key.startswith("decision_")
+    ]
+    assert subset_keys == ["decision_fraction", "decision_details"]
+
+    dropped_records = trader.risk_evaluations_to_records(
+        flatten_decision=True,
+        drop_decision_column=True,
+    )
+    assert all("decision" not in entry for entry in dropped_records)
+    assert "decision_should_trade" in dropped_records[0]
+
+    filled_records = trader.risk_evaluations_to_records(
+        flatten_decision=True,
+        decision_fields=["missing_field"],
+        fill_value="missing",
+    )
+    assert all(entry["decision_missing_field"] == "missing" for entry in filled_records)
+
+    coerced_records = trader.risk_evaluations_to_records(coerce_timestamps=True)
+    assert isinstance(coerced_records[0]["timestamp"], datetime)
+    assert coerced_records[0]["timestamp"].tzinfo is timezone.utc
+
+    naive_records = trader.risk_evaluations_to_records(
+        coerce_timestamps=True,
+        tz=None,
+    )
+    assert naive_records[0]["timestamp"].tzinfo is None
+
+    records_snapshot[0]["decision"]["should_trade"] = False
+    assert trader.get_risk_evaluations()[0]["decision"]["should_trade"] is True
+
     flattened_df.loc[0, "decision_should_trade"] = False
     assert trader.get_risk_evaluations()[0]["decision"]["should_trade"] is True
 
     df.loc[pd.isna(df["service"]), "normalized"] = False
     assert trader.get_risk_evaluations()[2]["normalized"] is None
+
+
+def test_auto_trader_filters_risk_history_by_decision_fields() -> None:
+    emitter = _Emitter()
+    gui = _GUI()
+    provider = _Provider(_build_market_data())
+
+    trader = AutoTrader(
+        emitter,
+        gui,
+        symbol_getter=lambda: "OPUSDT",
+        auto_trade_interval_s=0.0,
+        enable_auto_trade=False,
+        market_data_provider=provider,
+    )
+
+    guardrail_decision = RiskDecision(
+        should_trade=False,
+        fraction=0.15,
+        state="blocked",
+        reason="guardrail",
+        mode="auto",
+        details={"origin": "decision-filter-test"},
+    )
+    missing_reason_decision = RiskDecision(
+        should_trade=False,
+        fraction=0.1,
+        state="blocked",
+        reason=None,
+        mode="auto",
+        details={"origin": "decision-filter-test"},
+    )
+    active_decision = RiskDecision(
+        should_trade=True,
+        fraction=0.5,
+        state="active",
+        reason="go",
+        mode="demo",
+        details={"origin": "decision-filter-test"},
+    )
+    cooldown_decision = RiskDecision(
+        should_trade=False,
+        fraction=0.05,
+        state="cooldown",
+        reason="cooldown",
+        mode="paper",
+        details={"origin": "decision-filter-test"},
+    )
+
+    trader._record_risk_evaluation(
+        guardrail_decision,
+        approved=False,
+        normalized=False,
+        response=False,
+        service=None,
+        error=None,
+    )
+    trader._record_risk_evaluation(
+        missing_reason_decision,
+        approved=False,
+        normalized=False,
+        response=False,
+        service=None,
+        error=None,
+    )
+    trader._record_risk_evaluation(
+        active_decision,
+        approved=True,
+        normalized=True,
+        response=True,
+        service=None,
+        error=None,
+    )
+    trader._record_risk_evaluation(
+        cooldown_decision,
+        approved=False,
+        normalized=False,
+        response=False,
+        service=None,
+        error=None,
+    )
+
+    blocked = trader.get_risk_evaluations(decision_state="blocked")
+    assert len(blocked) == 2
+    assert all(entry["decision"]["state"] == "blocked" for entry in blocked)
+
+    guardrail_reason = trader.get_risk_evaluations(decision_reason="guardrail")
+    assert [entry["decision"]["reason"] for entry in guardrail_reason] == [
+        "guardrail",
+    ]
+
+    missing_reason = trader.get_risk_evaluations(decision_reason=None)
+    assert len(missing_reason) == 1
+    assert missing_reason[0]["decision"]["reason"] is None
+
+    auto_mode = trader.get_risk_evaluations(decision_mode="auto")
+    assert len(auto_mode) == 2
+    assert all(entry["decision"]["mode"] == "auto" for entry in auto_mode)
+
+    summary_active = trader.summarize_risk_evaluations(decision_state="active")
+    assert summary_active["total"] == 1
+    assert summary_active["approved"] == 1
+    assert summary_active["rejected"] == 0
+
+    paper_records = trader.risk_evaluations_to_records(
+        decision_mode="paper",
+        flatten_decision=True,
+        decision_fields=("state", "mode"),
+    )
+    assert len(paper_records) == 1
+    assert paper_records[0]["decision_state"] == "cooldown"
+    assert paper_records[0]["decision_mode"] == "paper"
+
+    guardrail_records = trader.risk_evaluations_to_records(
+        decision_reason=["guardrail", "cooldown"],
+    )
+    assert len(guardrail_records) == 2
+    assert {record["decision"]["reason"] for record in guardrail_records} == {
+        "guardrail",
+        "cooldown",
+    }
+
+    df_auto = trader.risk_evaluations_to_dataframe(decision_mode=["auto", "demo"])
+    assert len(df_auto) == 3
+    assert set(df_auto["decision"].apply(lambda payload: payload.get("mode"))) == {
+        "auto",
+        "demo",
+    }
+
+
+def test_auto_trader_summarizes_decision_dimensions() -> None:
+    emitter = _Emitter()
+    gui = _GUI()
+    trader = AutoTrader(
+        emitter,
+        gui,
+        symbol_getter=lambda: "BNBUSDT",
+        auto_trade_interval_s=0.0,
+        enable_auto_trade=False,
+    )
+
+    class _ServiceAlpha:
+        ...
+
+    class _ServiceBeta:
+        ...
+
+    class _ServiceGamma:
+        ...
+
+    alpha = _ServiceAlpha()
+    beta = _ServiceBeta()
+    gamma = _ServiceGamma()
+
+    active_auto = RiskDecision(
+        should_trade=True,
+        fraction=0.35,
+        state="active",
+        reason="momentum",
+        mode="auto",
+    )
+    blocked_auto = RiskDecision(
+        should_trade=False,
+        fraction=0.25,
+        state="blocked",
+        reason="guardrail",
+        mode="auto",
+    )
+    blocked_demo = RiskDecision(
+        should_trade=False,
+        fraction=0.2,
+        state="blocked",
+        reason="guardrail",
+        mode="demo",
+    )
+    active_paper = RiskDecision(
+        should_trade=True,
+        fraction=0.15,
+        state="active",
+        reason=None,
+        mode="paper",
+    )
+    blocked_cooldown = RiskDecision(
+        should_trade=False,
+        fraction=0.1,
+        state="blocked",
+        reason="cooldown",
+        mode="auto",
+    )
+
+    trader._record_risk_evaluation(
+        active_auto,
+        approved=True,
+        normalized=True,
+        response=True,
+        service=alpha,
+        error=None,
+    )
+    trader._record_risk_evaluation(
+        blocked_auto,
+        approved=False,
+        normalized=False,
+        response=False,
+        service=alpha,
+        error=None,
+    )
+    trader._record_risk_evaluation(
+        blocked_auto,
+        approved=False,
+        normalized=False,
+        response=False,
+        service=gamma,
+        error=RuntimeError("blocked"),
+    )
+    trader._record_risk_evaluation(
+        blocked_demo,
+        approved=True,
+        normalized=False,
+        response=False,
+        service=beta,
+        error=None,
+    )
+    trader._record_risk_evaluation(
+        active_paper,
+        approved=None,
+        normalized=None,
+        response=True,
+        service=beta,
+        error=None,
+    )
+    trader._record_risk_evaluation(
+        blocked_cooldown,
+        approved=False,
+        normalized=False,
+        response=False,
+        service=beta,
+        error=None,
+    )
+
+    summary = trader.summarize_risk_decision_dimensions()
+    assert summary["total"] == 6
+    assert summary["services"] == {
+        "_ServiceBeta": 3,
+        "_ServiceAlpha": 2,
+        "_ServiceGamma": 1,
+    }
+    assert summary["first_timestamp"] is not None
+    assert summary["last_timestamp"] is not None
+    assert summary["last_timestamp"] >= summary["first_timestamp"]
+
+    blocked_state = summary["states"]["blocked"]
+    assert blocked_state["total"] == 4
+    assert blocked_state["rejected"] == 4
+    assert blocked_state["services"] == {
+        "_ServiceBeta": 2,
+        "_ServiceAlpha": 1,
+        "_ServiceGamma": 1,
+    }
+    assert blocked_state["error_rate"] == pytest.approx(0.25)
+
+    active_state = summary["states"]["active"]
+    assert active_state["total"] == 2
+    assert active_state["approved"] == 1
+    assert active_state["unknown"] == 1
+    assert active_state["raw_none"] == 1
+
+    guardrail_reason = summary["reasons"]["guardrail"]
+    assert guardrail_reason["total"] == 3
+    assert guardrail_reason["services"] == {
+        "_ServiceAlpha": 1,
+        "_ServiceBeta": 1,
+        "_ServiceGamma": 1,
+    }
+
+    missing_reason = summary["reasons"]["<no-reason>"]
+    assert missing_reason["total"] == 1
+    assert missing_reason["unknown"] == 1
+
+    auto_mode_summary = summary["modes"]["auto"]
+    assert auto_mode_summary["total"] == 4
+    assert auto_mode_summary["errors"] == 1
+
+    combinations = summary["combinations"]
+    assert combinations[0]["state"] == "blocked"
+    assert combinations[0]["reason"] == "guardrail"
+    assert combinations[0]["mode"] == "auto"
+    assert combinations[0]["total"] == 2
+    assert combinations[0]["services"] == {
+        "_ServiceAlpha": 1,
+        "_ServiceGamma": 1,
+    }
+    assert combinations[0]["error_rate"] == pytest.approx(0.5)
+
+    blocked_only = trader.summarize_risk_decision_dimensions(decision_state="blocked")
+    assert blocked_only["total"] == 4
+    assert list(blocked_only["states"].keys()) == ["blocked"]
+    assert all(row["state"] == "blocked" for row in blocked_only["combinations"])
+
+    guardrail_only = trader.summarize_risk_decision_dimensions(decision_reason="guardrail")
+    assert guardrail_only["total"] == 3
+    assert all(row["reason"] == "guardrail" for row in guardrail_only["combinations"])
+
+    demo_only = trader.summarize_risk_decision_dimensions(decision_mode="demo")
+    assert demo_only["total"] == 1
+    assert demo_only["combinations"][0]["mode"] == "demo"
+
+    beta_only = trader.summarize_risk_decision_dimensions(service="_ServiceBeta")
+    assert beta_only["total"] == 3
+    assert beta_only["services"] == {"_ServiceBeta": 3}
+
+    no_errors = trader.summarize_risk_decision_dimensions(include_errors=False)
+    assert no_errors["total"] == 5
+    assert no_errors["combinations"][0]["total"] == 1
+    assert "_ServiceGamma" not in no_errors["combinations"][0]["services"]
+
+
+def test_auto_trader_decision_timeline_summary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    emitter = _Emitter()
+    gui = _GUI()
+    trader = AutoTrader(
+        emitter,
+        gui,
+        symbol_getter=lambda: "BNBUSDT",
+        auto_trade_interval_s=0.0,
+        enable_auto_trade=False,
+    )
+
+    class _ServiceAlpha:
+        ...
+
+    class _ServiceBeta:
+        ...
+
+    class _ServiceGamma:
+        ...
+
+    alpha = _ServiceAlpha()
+    beta = _ServiceBeta()
+    gamma = _ServiceGamma()
+
+    timestamps = iter([1000.0, 1015.0, 1039.0, 1078.0])
+    monkeypatch.setattr("bot_core.auto_trader.app.time.time", lambda: next(timestamps))
+
+    trader._record_risk_evaluation(
+        RiskDecision(
+            should_trade=True,
+            fraction=0.5,
+            state="active",
+            reason="ok",
+            mode="auto",
+        ),
+        approved=True,
+        normalized=True,
+        response=True,
+        service=alpha,
+        error=None,
+    )
+    trader._record_risk_evaluation(
+        RiskDecision(
+            should_trade=False,
+            fraction=0.2,
+            state="blocked",
+            reason="guardrail",
+            mode="auto",
+        ),
+        approved=False,
+        normalized=False,
+        response=False,
+        service=alpha,
+        error=None,
+    )
+    trader._record_risk_evaluation(
+        RiskDecision(
+            should_trade=True,
+            fraction=0.1,
+            state="monitoring",
+            reason=None,
+            mode="paper",
+        ),
+        approved=True,
+        normalized=True,
+        response=True,
+        service=beta,
+        error=None,
+    )
+    trader._record_risk_evaluation(
+        RiskDecision(
+            should_trade=False,
+            fraction=0.15,
+            state="blocked",
+            reason="cooldown",
+            mode="demo",
+        ),
+        approved=None,
+        normalized=None,
+        response=False,
+        service=gamma,
+        error=RuntimeError("cooldown"),
+    )
+
+    timeline = trader.summarize_risk_decision_timeline(
+        bucket_s=20,
+        include_decision_dimensions=True,
+        fill_gaps=True,
+    )
+    assert timeline["bucket_s"] == pytest.approx(20.0)
+    assert timeline["total"] == 4
+    assert timeline["first_timestamp"] == pytest.approx(1000.0)
+    assert timeline["last_timestamp"] == pytest.approx(1078.0)
+    assert [bucket["start"] for bucket in timeline["buckets"]] == [
+        1000.0,
+        1020.0,
+        1040.0,
+        1060.0,
+    ]
+
+    first_bucket = timeline["buckets"][0]
+    assert first_bucket["total"] == 2
+    assert first_bucket["approved"] == 1
+    assert first_bucket["rejected"] == 1
+    assert first_bucket["services"] == {"_ServiceAlpha": 2}
+    assert first_bucket["states"] == {"active": 1, "blocked": 1}
+    assert first_bucket["reasons"] == {"guardrail": 1, "ok": 1}
+    assert first_bucket["modes"] == {"auto": 2}
+
+    second_bucket = timeline["buckets"][1]
+    assert second_bucket["total"] == 1
+    assert second_bucket["services"] == {"_ServiceBeta": 1}
+    assert second_bucket["states"] == {"monitoring": 1}
+    assert second_bucket["reasons"] == {"<no-reason>": 1}
+    assert second_bucket["modes"] == {"paper": 1}
+
+    empty_bucket = timeline["buckets"][2]
+    assert empty_bucket["total"] == 0
+    assert empty_bucket["services"] == {}
+    assert empty_bucket["states"] == {}
+    assert empty_bucket["reasons"] == {}
+    assert empty_bucket["modes"] == {}
+
+    last_bucket = timeline["buckets"][3]
+    assert last_bucket["total"] == 1
+    assert last_bucket["errors"] == 1
+    assert last_bucket["services"] == {"_ServiceGamma": 1}
+    assert last_bucket["reasons"] == {"cooldown": 1}
+    assert last_bucket["states"] == {"blocked": 1}
+    assert last_bucket["modes"] == {"demo": 1}
+
+    blocked_only = trader.summarize_risk_decision_timeline(
+        bucket_s=20,
+        decision_state="blocked",
+    )
+    assert blocked_only["total"] == 2
+    assert [bucket["start"] for bucket in blocked_only["buckets"]] == [
+        1000.0,
+        1060.0,
+    ]
+
+    timeline_no_services = trader.summarize_risk_decision_timeline(
+        bucket_s=20,
+        include_services=False,
+    )
+    assert "services" not in timeline_no_services["buckets"][0]
+
+    timeline_coerced = trader.summarize_risk_decision_timeline(
+        bucket_s=20,
+        coerce_timestamps=True,
+    )
+    assert timeline_coerced["buckets"][0]["start"] == datetime.fromtimestamp(
+        1000.0, tz=timezone.utc
+    )
+
+    with pytest.raises(ValueError):
+        trader.summarize_risk_decision_timeline(bucket_s=0)
+
+
+def test_auto_trader_decision_timeline_exports(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    emitter = _Emitter()
+    gui = _GUI()
+    trader = AutoTrader(
+        emitter,
+        gui,
+        symbol_getter=lambda: "BNBUSDT",
+        auto_trade_interval_s=0.0,
+        enable_auto_trade=False,
+    )
+
+    class _ServiceAlpha:
+        ...
+
+    class _ServiceBeta:
+        ...
+
+    alpha = _ServiceAlpha()
+    beta = _ServiceBeta()
+
+    timestamps = iter([1200.0, 1210.0, 1250.0, float("nan")])
+    monkeypatch.setattr("bot_core.auto_trader.app.time.time", lambda: next(timestamps))
+
+    trader._record_risk_evaluation(
+        RiskDecision(
+            should_trade=True,
+            fraction=0.5,
+            state="active",
+            reason="ok",
+            mode="auto",
+        ),
+        approved=True,
+        normalized=True,
+        response=True,
+        service=alpha,
+        error=None,
+    )
+    trader._record_risk_evaluation(
+        RiskDecision(
+            should_trade=False,
+            fraction=0.3,
+            state="blocked",
+            reason="guardrail",
+            mode="auto",
+        ),
+        approved=False,
+        normalized=False,
+        response=False,
+        service=alpha,
+        error=None,
+    )
+    trader._record_risk_evaluation(
+        RiskDecision(
+            should_trade=True,
+            fraction=0.2,
+            state="monitoring",
+            reason=None,
+            mode="paper",
+        ),
+        approved=True,
+        normalized=True,
+        response=True,
+        service=beta,
+        error=None,
+    )
+    trader._record_risk_evaluation(
+        RiskDecision(
+            should_trade=False,
+            fraction=0.1,
+            state="blocked",
+            reason="cooldown",
+            mode="demo",
+        ),
+        approved=None,
+        normalized=None,
+        response=False,
+        service=beta,
+        error=RuntimeError("cooldown"),
+    )
+
+    base_records = trader.risk_decision_timeline_to_records(
+        bucket_s=20,
+        fill_gaps=True,
+    )
+    assert [record["index"] for record in base_records] == [60, 61, 62]
+    assert base_records[0]["bucket_type"] == "bucket"
+    assert base_records[0]["total"] == 2
+    assert base_records[1]["total"] == 0
+    assert base_records[2]["total"] == 1
+
+    enriched_records = trader.risk_decision_timeline_to_records(
+        bucket_s=20,
+        fill_gaps=True,
+        include_services=True,
+        include_decision_dimensions=True,
+        include_missing_bucket=True,
+    )
+    assert [record["bucket_type"] for record in enriched_records] == [
+        "bucket",
+        "bucket",
+        "bucket",
+        "missing",
+    ]
+    first_bucket = enriched_records[0]
+    assert first_bucket["index"] == 60
+    assert first_bucket["start"] == pytest.approx(1200.0)
+    assert first_bucket["services"] == {"_ServiceAlpha": 2}
+    assert first_bucket["states"] == {"active": 1, "blocked": 1}
+    assert first_bucket["reasons"] == {"guardrail": 1, "ok": 1}
+    assert enriched_records[-1]["bucket_type"] == "missing"
+    assert enriched_records[-1]["start"] is None
+    assert enriched_records[-1]["index"] is None
+
+    df = trader.risk_decision_timeline_to_dataframe(
+        bucket_s=20,
+        fill_gaps=True,
+        include_services=True,
+        include_decision_dimensions=True,
+        include_missing_bucket=True,
+    )
+    assert list(df["bucket_type"]) == ["bucket", "bucket", "bucket", "missing"]
+    assert df.loc[df["bucket_type"] == "bucket", "total"].sum() == 3
+    assert df.loc[df["bucket_type"] == "missing", "total"].iloc[0] == 1
+    assert df.loc[0, "start"] == datetime.fromtimestamp(1200.0, tz=timezone.utc)
+    assert "states" in df.columns
+    assert "services" in df.columns
+
+
+def test_auto_trader_guardrail_summary(monkeypatch: pytest.MonkeyPatch) -> None:
+    trader = _prepare_guardrail_history(monkeypatch)
+
+    summary = trader.summarize_risk_guardrails()
+    assert summary["total"] == 4
+    assert summary["guardrail_events"] == 3
+    assert summary["reasons"]["effective risk cap"] == 3
+    assert summary["reasons"]["volatility spike"] == 1
+    assert summary["reasons"]["liquidity pressure"] == 1
+
+    blocked_summary = trader.summarize_risk_guardrails(decision_state="blocked")
+    assert blocked_summary["total"] == 3
+    assert blocked_summary["guardrail_events"] == 3
+
+    demo_mode_summary = trader.summarize_risk_guardrails(decision_mode="demo")
+    assert demo_mode_summary["total"] == 1
+    assert demo_mode_summary["guardrail_events"] == 0
+
+    triggers = summary["triggers"]
+    assert set(triggers.keys()) == {"effective_risk", "volatility_ratio"}
+
+    effective = triggers["effective_risk"]
+    assert effective["count"] == 3
+    assert effective["label"] == "Effective risk cap"
+    assert effective["comparator"] == ">="
+    assert effective["unit"] == "ratio"
+    assert effective["threshold"] == pytest.approx(0.8)
+    assert effective["value_min"] == pytest.approx(0.79)
+    assert effective["value_max"] == pytest.approx(0.83)
+    assert effective["value_avg"] == pytest.approx((0.83 + 0.81 + 0.79) / 3)
+    assert effective["value_last"] == pytest.approx(0.79)
+    assert effective["services"]["_ServiceAlpha"] == 2
+    assert effective["services"]["<unknown>"] == 1
+
+    volatility = triggers["volatility_ratio"]
+    assert volatility["count"] == 1
+    assert volatility["threshold"] == pytest.approx(1.2)
+    assert volatility["unit"] == "ratio"
+    assert volatility["value_min"] == pytest.approx(1.25)
+    assert volatility["value_max"] == pytest.approx(1.25)
+    assert volatility["value_avg"] == pytest.approx(1.25)
+    assert volatility["services"]["_ServiceAlpha"] == 1
+
+    services = summary["services"]
+    assert set(services.keys()) == {"_ServiceAlpha", "_ServiceBeta", "<unknown>"}
+    alpha_bucket = services["_ServiceAlpha"]
+    assert alpha_bucket["total"] == 2
+    assert alpha_bucket["guardrail_events"] == 2
+    assert alpha_bucket["reasons"]["effective risk cap"] == 2
+    assert alpha_bucket["triggers"]["effective_risk"] == 2
+    assert alpha_bucket["triggers"]["volatility_ratio"] == 1
+
+    beta_bucket = services["_ServiceBeta"]
+    assert beta_bucket["total"] == 1
+    assert beta_bucket["guardrail_events"] == 0
+    assert beta_bucket["reasons"] == {}
+    assert beta_bucket["triggers"] == {}
+
+    unknown_bucket = services["<unknown>"]
+    assert unknown_bucket["total"] == 1
+    assert unknown_bucket["guardrail_events"] == 1
+    assert unknown_bucket["reasons"]["effective risk cap"] == 1
+    assert unknown_bucket["triggers"]["effective_risk"] == 1
+
+    filtered_without_errors = trader.summarize_risk_guardrails(include_errors=False)
+    assert filtered_without_errors["total"] == 3
+    assert filtered_without_errors["guardrail_events"] == 2
+    assert set(filtered_without_errors["services"].keys()) == {"_ServiceAlpha", "_ServiceBeta"}
+
+    alpha_only = trader.summarize_risk_guardrails(service="_ServiceAlpha")
+    assert alpha_only["total"] == 2
+    assert alpha_only["guardrail_events"] == 2
+    assert set(alpha_only["services"].keys()) == {"_ServiceAlpha"}
+
+    recent_only = trader.summarize_risk_guardrails(
+        since=pd.Timestamp(2015.0, unit="s"),
+    )
+    assert recent_only["total"] == 2
+    assert recent_only["guardrail_events"] == 1
+
+    liquidity_only = trader.summarize_risk_guardrails(reason="liquidity pressure")
+    assert liquidity_only["total"] == 1
+    assert liquidity_only["guardrail_events"] == 1
+    assert set(liquidity_only["services"].keys()) == {"<unknown>"}
+    assert liquidity_only["services"]["<unknown>"]["total"] == 1
+    assert liquidity_only["reasons"]["liquidity pressure"] == 1
+    assert liquidity_only["triggers"]["effective_risk"]["count"] == 1
+
+    trigger_only_summary = trader.summarize_risk_guardrails(trigger="volatility_ratio")
+    assert trigger_only_summary["total"] == 1
+    assert trigger_only_summary["guardrail_events"] == 1
+    assert set(trigger_only_summary["services"].keys()) == {"_ServiceAlpha"}
+    assert trigger_only_summary["triggers"]["volatility_ratio"]["count"] == 1
+    assert trigger_only_summary["reasons"]["effective risk cap"] == 1
+
+    unit_ratio_summary = trader.summarize_risk_guardrails(trigger_unit="ratio")
+    assert unit_ratio_summary["total"] == 2
+    assert unit_ratio_summary["guardrail_events"] == 2
+
+    unit_score_summary = trader.summarize_risk_guardrails(trigger_unit="score")
+    assert unit_score_summary["total"] == 1
+    assert unit_score_summary["guardrail_events"] == 1
+    assert set(unit_score_summary["services"].keys()) == {"<unknown>"}
+
+    label_filtered_summary = trader.summarize_risk_guardrails(
+        trigger_label="Volatility ratio"
+    )
+    assert label_filtered_summary["total"] == 1
+    assert label_filtered_summary["guardrail_events"] == 1
+    assert "volatility_ratio" in label_filtered_summary["triggers"]
+    assert label_filtered_summary["triggers"]["volatility_ratio"]["count"] == 1
+
+    comparator_filtered_summary = trader.summarize_risk_guardrails(
+        trigger_comparator=">="
+    )
+    assert comparator_filtered_summary["total"] == 3
+    assert comparator_filtered_summary["guardrail_events"] == 3
+
+    threshold_filtered_summary = trader.summarize_risk_guardrails(
+        trigger_threshold=0.8,
+    )
+    assert threshold_filtered_summary["total"] == 3
+    assert threshold_filtered_summary["guardrail_events"] == 3
+
+    high_threshold_summary = trader.summarize_risk_guardrails(
+        trigger_threshold_min=1.0,
+    )
+    assert high_threshold_summary["total"] == 1
+    assert high_threshold_summary["guardrail_events"] == 1
+
+    threshold_range_summary = trader.summarize_risk_guardrails(
+        trigger_threshold_min=0.8,
+        trigger_threshold_max=0.8,
+    )
+    assert threshold_range_summary["total"] == 3
+    assert threshold_range_summary["guardrail_events"] == 3
+
+    value_exact_summary = trader.summarize_risk_guardrails(trigger_value=0.79)
+    assert value_exact_summary["total"] == 1
+    assert value_exact_summary["guardrail_events"] == 1
+
+    value_range_summary = trader.summarize_risk_guardrails(
+        trigger_value_min=0.8,
+        trigger_value_max=0.85,
+    )
+    assert value_range_summary["total"] == 2
+    assert value_range_summary["guardrail_events"] == 2
+
+    high_value_summary = trader.summarize_risk_guardrails(
+        trigger_value_min=1.2,
+    )
+    assert high_value_summary["total"] == 1
+    assert high_value_summary["guardrail_events"] == 1
+
+    records = trader.guardrail_events_to_records()
+    assert [record["service"] for record in records] == [
+        "_ServiceAlpha",
+        "_ServiceAlpha",
+        "<unknown>",
+    ]
+    assert records[0]["guardrail_reasons"] == (
+        "effective risk cap",
+        "volatility spike",
+    )
+    assert records[0]["guardrail_trigger_count"] == 2
+    assert records[2]["error"].startswith("RuntimeError")
+    assert records[2]["guardrail_triggers"][0]["name"] == "effective_risk"
+    assert records[2]["guardrail_triggers"][0]["unit"] == "score"
+    assert records[0]["decision"]["details"]["guardrail_reasons"][0] == "effective risk cap"
+    assert records[0]["guardrail_triggers"][0]["unit"] == "ratio"
+
+    alpha_only_records = trader.guardrail_events_to_records(service="_ServiceAlpha")
+    assert len(alpha_only_records) == 2
+    assert all(record["service"] == "_ServiceAlpha" for record in alpha_only_records)
+
+    recent_records = trader.guardrail_events_to_records(
+        since=pd.Timestamp(2015.0, unit="s"),
+    )
+    assert len(recent_records) == 1
+    assert recent_records[0]["guardrail_reasons"] == ("effective risk cap", "liquidity pressure")
+
+    limited_records = trader.guardrail_events_to_records(limit=1)
+    assert len(limited_records) == 1
+
+    reversed_records = trader.guardrail_events_to_records(reverse=True)
+    assert reversed_records[0]["service"] == "<unknown>"
+
+    filtered_records = trader.guardrail_events_to_records(include_errors=False)
+    assert len(filtered_records) == 2
+    assert all(record["error"] is None for record in filtered_records)
+
+    liquidity_records = trader.guardrail_events_to_records(reason="liquidity pressure")
+    assert len(liquidity_records) == 1
+    assert liquidity_records[0]["service"] == "<unknown>"
+    assert liquidity_records[0]["guardrail_reason_count"] == 2
+
+    blocked_records = trader.guardrail_events_to_records(decision_state="blocked")
+    assert len(blocked_records) == 3
+
+    demo_mode_records = trader.guardrail_events_to_records(decision_mode="demo")
+    assert demo_mode_records == []
+
+    trigger_records = trader.guardrail_events_to_records(trigger="volatility_ratio")
+    assert len(trigger_records) == 1
+    assert trigger_records[0]["service"] == "_ServiceAlpha"
+    assert trigger_records[0]["guardrail_trigger_count"] == 2
+
+    label_records = trader.guardrail_events_to_records(
+        trigger_label="Volatility ratio"
+    )
+    assert len(label_records) == 1
+    assert label_records[0]["service"] == "_ServiceAlpha"
+
+    comparator_records = trader.guardrail_events_to_records(trigger_comparator=">=")
+    assert len(comparator_records) == 3
+
+    unit_records = trader.guardrail_events_to_records(trigger_unit="ratio")
+    assert len(unit_records) == 2
+
+    unit_score_records = trader.guardrail_events_to_records(trigger_unit="score")
+    assert len(unit_score_records) == 1
+    assert unit_score_records[0]["service"] == "<unknown>"
+
+    threshold_records = trader.guardrail_events_to_records(trigger_threshold=0.8)
+    assert len(threshold_records) == 3
+
+    high_threshold_records = trader.guardrail_events_to_records(
+        trigger_threshold_min=1.0,
+    )
+    assert len(high_threshold_records) == 1
+
+    value_records = trader.guardrail_events_to_records(trigger_value=0.79)
+    assert len(value_records) == 1
+
+    value_range_records = trader.guardrail_events_to_records(
+        trigger_value_min=0.8,
+        trigger_value_max=0.85,
+    )
+    assert len(value_range_records) == 2
+
+    coerced_records = trader.guardrail_events_to_records(coerce_timestamps=True)
+    assert isinstance(coerced_records[0]["timestamp"], datetime)
+    assert coerced_records[0]["timestamp"].tzinfo is timezone.utc
+
+    naive_records = trader.guardrail_events_to_records(
+        coerce_timestamps=True,
+        tz=None,
+    )
+    assert naive_records[0]["timestamp"].tzinfo is None
+
+    df = trader.guardrail_events_to_dataframe()
+    assert list(df["service"]) == ["_ServiceAlpha", "_ServiceAlpha", "<unknown>"]
+    assert df.loc[0, "guardrail_reason_count"] == 2
+    assert df.loc[2, "guardrail_trigger_count"] == 1
+    assert df.loc[2, "error"].startswith("RuntimeError")
+    assert df.loc[0, "guardrail_triggers"][0]["name"] == "effective_risk"
+    assert df.loc[0, "guardrail_triggers"][0]["unit"] == "ratio"
+    assert isinstance(df.loc[0, "timestamp"], datetime)
+    assert df.loc[0, "timestamp"].tzinfo is timezone.utc
+
+    df_recent = trader.guardrail_events_to_dataframe(
+        since=pd.Timestamp(2015.0, unit="s"),
+    )
+    assert len(df_recent) == 1
+
+    df_blocked = trader.guardrail_events_to_dataframe(decision_state="blocked")
+    assert len(df_blocked) == 3
+
+    df_demo_mode = trader.guardrail_events_to_dataframe(decision_mode="demo")
+    assert df_demo_mode.empty
+
+    df_filtered = trader.guardrail_events_to_dataframe(include_errors=False)
+    assert len(df_filtered) == 2
+
+    df_liquidity = trader.guardrail_events_to_dataframe(reason="liquidity pressure")
+    assert len(df_liquidity) == 1
+    assert df_liquidity.loc[0, "service"] == "<unknown>"
+
+    df_trigger = trader.guardrail_events_to_dataframe(trigger="volatility_ratio")
+    assert len(df_trigger) == 1
+    assert df_trigger.loc[0, "service"] == "_ServiceAlpha"
+
+    df_label = trader.guardrail_events_to_dataframe(trigger_label="Volatility ratio")
+    assert len(df_label) == 1
+    assert df_label.loc[0, "service"] == "_ServiceAlpha"
+
+    df_comparator = trader.guardrail_events_to_dataframe(trigger_comparator=">=")
+    assert len(df_comparator) == 3
+
+    df_unit = trader.guardrail_events_to_dataframe(trigger_unit="ratio")
+    assert len(df_unit) == 2
+
+    df_unit_score = trader.guardrail_events_to_dataframe(trigger_unit="score")
+    assert list(df_unit_score["service"]) == ["<unknown>"]
+
+    df_threshold = trader.guardrail_events_to_dataframe(trigger_threshold=0.8)
+    assert len(df_threshold) == 3
+
+    df_high_threshold = trader.guardrail_events_to_dataframe(
+        trigger_threshold_min=1.0,
+    )
+    assert len(df_high_threshold) == 1
+
+    df_value_exact = trader.guardrail_events_to_dataframe(trigger_value=0.79)
+    assert len(df_value_exact) == 1
+
+    df_value_range = trader.guardrail_events_to_dataframe(
+        trigger_value_min=0.8,
+        trigger_value_max=0.85,
+    )
+    assert len(df_value_range) == 2
+
+    empty_reason_df = trader.guardrail_events_to_dataframe(reason="non-existent")
+    assert empty_reason_df.empty
+
+    df_reversed = trader.guardrail_events_to_dataframe(reverse=True)
+    assert df_reversed.iloc[0]["service"] == "<unknown>"
+
+    df_with_decision = trader.guardrail_events_to_dataframe(include_decision=True)
+    assert "decision" in df_with_decision.columns
+    assert df_with_decision.loc[0, "decision"]["details"]["guardrail_triggers"][0]["name"] == "effective_risk"
+
+    empty_df = trader.guardrail_events_to_dataframe(limit=0)
+    assert empty_df.empty
+
+
+def test_auto_trader_guardrail_timeline_exports(monkeypatch: pytest.MonkeyPatch) -> None:
+    trader = _prepare_guardrail_history(monkeypatch)
+
+    summary = trader.summarize_guardrail_timeline(bucket_s=10.0)
+    threshold_totals = summary["guardrail_trigger_thresholds"]
+    assert threshold_totals["count"] == 4
+    assert threshold_totals["missing"] == 0
+    assert threshold_totals["sum"] == pytest.approx(3.6)
+    assert threshold_totals["min"] == pytest.approx(0.8)
+    assert threshold_totals["max"] == pytest.approx(1.2)
+    assert threshold_totals["average"] == pytest.approx(0.9)
+    value_totals = summary["guardrail_trigger_values"]
+    assert value_totals["count"] == 4
+    assert value_totals["missing"] == 0
+    assert value_totals["sum"] == pytest.approx(3.68)
+    assert value_totals["min"] == pytest.approx(0.79)
+    assert value_totals["max"] == pytest.approx(1.25)
+    assert value_totals["average"] == pytest.approx(0.92)
+    assert summary["total"] == 3
+    assert summary["evaluations"] == 4
+    assert summary["first_timestamp"] == pytest.approx(2000.0)
+    assert summary["last_timestamp"] == pytest.approx(2030.0)
+    assert summary["services"] == {
+        "<unknown>": {"evaluations": 1, "guardrail_events": 1},
+        "_ServiceAlpha": {"evaluations": 2, "guardrail_events": 2},
+        "_ServiceBeta": {"evaluations": 1, "guardrail_events": 0},
+    }
+
+    bucket_indices = [bucket["index"] for bucket in summary["buckets"]]
+    assert bucket_indices == [200, 201, 202, 203]
+
+    first_bucket = summary["buckets"][0]
+    assert first_bucket["guardrail_events"] == 1
+    assert first_bucket["evaluations"] == 1
+    assert first_bucket["services"]["_ServiceAlpha"]["guardrail_events"] == 1
+    assert first_bucket["services"]["_ServiceAlpha"]["evaluations"] == 1
+    assert first_bucket["guardrail_reasons"] == {
+        "effective risk cap": 1,
+        "volatility spike": 1,
+    }
+    assert first_bucket["guardrail_triggers"] == {
+        "effective_risk": 1,
+        "volatility_ratio": 1,
+    }
+    assert first_bucket["guardrail_trigger_labels"] == {
+        "Effective risk cap": 1,
+        "Volatility ratio": 1,
+    }
+    assert first_bucket["guardrail_trigger_comparators"] == {">=": 2}
+    assert first_bucket["guardrail_trigger_units"] == {"ratio": 2}
+    first_thresholds = first_bucket["guardrail_trigger_thresholds"]
+    assert first_thresholds["count"] == 2
+    assert first_thresholds["missing"] == 0
+    assert first_thresholds["sum"] == pytest.approx(2.0)
+    assert first_thresholds["min"] == pytest.approx(0.8)
+    assert first_thresholds["max"] == pytest.approx(1.2)
+    assert first_thresholds["average"] == pytest.approx(1.0)
+    first_values = first_bucket["guardrail_trigger_values"]
+    assert first_values["count"] == 2
+    assert first_values["missing"] == 0
+    assert first_values["sum"] == pytest.approx(2.08)
+    assert first_values["min"] == pytest.approx(0.83)
+    assert first_values["max"] == pytest.approx(1.25)
+    assert first_values["average"] == pytest.approx(1.04)
+
+    neutral_bucket = next(bucket for bucket in summary["buckets"] if bucket["index"] == 202)
+    assert neutral_bucket["guardrail_events"] == 0
+    assert neutral_bucket["evaluations"] == 1
+    assert neutral_bucket["services"]["_ServiceBeta"]["evaluations"] == 1
+    assert neutral_bucket["services"]["_ServiceBeta"]["guardrail_events"] == 0
+    assert neutral_bucket["guardrail_reasons"] == {}
+    assert neutral_bucket["guardrail_triggers"] == {}
+    assert neutral_bucket["guardrail_trigger_labels"] == {}
+    assert neutral_bucket["guardrail_trigger_comparators"] == {}
+    assert neutral_bucket["guardrail_trigger_units"] == {}
+    assert neutral_bucket["guardrail_trigger_thresholds"] == {}
+    assert neutral_bucket["guardrail_trigger_values"] == {}
+
+    last_bucket = summary["buckets"][-1]
+    assert last_bucket["guardrail_events"] == 1
+    assert last_bucket["services"]["<unknown>"]["guardrail_events"] == 1
+    assert last_bucket["guardrail_reasons"] == {
+        "effective risk cap": 1,
+        "liquidity pressure": 1,
+    }
+    assert last_bucket["guardrail_triggers"] == {"effective_risk": 1}
+    assert last_bucket["guardrail_trigger_labels"] == {"Effective risk cap": 1}
+    assert last_bucket["guardrail_trigger_comparators"] == {">=": 1}
+    assert last_bucket["guardrail_trigger_units"] == {"score": 1}
+    last_thresholds = last_bucket["guardrail_trigger_thresholds"]
+    assert last_thresholds["count"] == 1
+    assert last_thresholds["missing"] == 0
+    assert last_thresholds["sum"] == pytest.approx(0.8)
+    assert last_thresholds["min"] == pytest.approx(0.8)
+    assert last_thresholds["max"] == pytest.approx(0.8)
+    assert last_thresholds["average"] == pytest.approx(0.8)
+    last_values = last_bucket["guardrail_trigger_values"]
+    assert last_values["count"] == 1
+    assert last_values["missing"] == 0
+    assert last_values["sum"] == pytest.approx(0.79)
+    assert last_values["min"] == pytest.approx(0.79)
+    assert last_values["max"] == pytest.approx(0.79)
+    assert last_values["average"] == pytest.approx(0.79)
+
+    decision_summary = trader.summarize_guardrail_timeline(
+        bucket_s=10.0,
+        include_decision_dimensions=True,
+    )
+    first_decision_bucket = decision_summary["buckets"][0]
+    assert first_decision_bucket["decision_states"] == {"blocked": 1}
+    assert first_decision_bucket["decision_reasons"] == {"guardrail-blocked": 1}
+    assert first_decision_bucket["decision_modes"] == {"auto": 1}
+
+    filtered = trader.summarize_guardrail_timeline(
+        bucket_s=10.0,
+        service="_ServiceAlpha",
+    )
+    assert filtered["total"] == 2
+    assert filtered["evaluations"] == 2
+    assert [bucket["index"] for bucket in filtered["buckets"]] == [200, 201]
+
+    records = trader.guardrail_timeline_to_records(
+        bucket_s=20.0,
+        fill_gaps=True,
+        coerce_timestamps=True,
+        tz=timezone.utc,
+    )
+    assert len(records) == 2
+    assert all(record["bucket_type"] == "bucket" for record in records)
+    assert all(isinstance(record["start"], datetime) for record in records)
+    first_record_thresholds = records[0]["guardrail_trigger_thresholds"]
+    assert first_record_thresholds["count"] == 3
+    assert first_record_thresholds["sum"] == pytest.approx(2.8)
+    first_record_values = records[0]["guardrail_trigger_values"]
+    assert first_record_values["count"] == 3
+    assert first_record_values["sum"] == pytest.approx(2.89)
+    second_record_thresholds = records[1]["guardrail_trigger_thresholds"]
+    assert second_record_thresholds["count"] == 1
+    second_record_values = records[1]["guardrail_trigger_values"]
+    assert second_record_values["count"] == 1
+
+    df = trader.guardrail_timeline_to_dataframe(
+        bucket_s=20.0,
+        include_services=False,
+        include_guardrail_dimensions=False,
+    )
+    assert list(df["guardrail_events"]) == [2, 1]
+    assert "services" not in df.columns
+    assert "guardrail_reasons" not in df.columns
+    assert "guardrail_trigger_thresholds" not in df.columns
+    assert "guardrail_trigger_values" not in df.columns
+
+    records_with_missing = trader.guardrail_timeline_to_records(
+        bucket_s=20.0,
+        include_missing_bucket=True,
+    )
+    assert len(records_with_missing) == 2
+    missing_record = next(
+        (
+            record
+            for record in records_with_missing
+            if record.get("bucket_type") == "missing"
+        ),
+        None,
+    )
+    if missing_record is not None:
+        assert missing_record["guardrail_trigger_labels"] == {"Effective risk cap": 1}
+        assert missing_record["guardrail_trigger_comparators"] == {">=": 1}
+        assert missing_record["guardrail_trigger_units"] == {"score": 1}
+        assert missing_record["services"]["<unknown>"]["guardrail_events"] == 1
+        assert missing_record["services"]["<unknown>"]["evaluations"] == 1
+        missing_thresholds = missing_record["guardrail_trigger_thresholds"]
+        assert missing_thresholds["count"] == 1
+        assert missing_thresholds["missing"] == 0
+        assert missing_thresholds["sum"] == pytest.approx(0.8)
+        assert missing_thresholds["average"] == pytest.approx(0.8)
+        assert missing_thresholds["min"] == pytest.approx(0.8)
+        assert missing_thresholds["max"] == pytest.approx(0.8)
+        missing_values = missing_record["guardrail_trigger_values"]
+        assert missing_values["count"] == 1
+        assert missing_values["missing"] == 0
+        assert missing_values["sum"] == pytest.approx(0.79)
+        assert missing_values["average"] == pytest.approx(0.79)
+        assert missing_values["min"] == pytest.approx(0.79)
+        assert missing_values["max"] == pytest.approx(0.79)
+
+    reason_filtered = trader.summarize_guardrail_timeline(
+        bucket_s=10.0,
+        reason="liquidity pressure",
+    )
+    assert reason_filtered["total"] == 1
+    assert reason_filtered["evaluations"] == 4
+
+
+def test_guardrail_filters_support_missing_label_and_comparator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    emitter = _Emitter()
+    gui = _GUI()
+    trader = AutoTrader(
+        emitter,
+        gui,
+        symbol_getter=lambda: "ETHUSDT",
+        auto_trade_interval_s=0.0,
+        enable_auto_trade=False,
+    )
+
+    timestamps = iter([3000.0, 3010.0, 3020.0])
+    monkeypatch.setattr("bot_core.auto_trader.app.time.time", lambda: next(timestamps))
+
+    def _decision(
+        reasons: Iterable[str],
+        triggers: Iterable[GuardrailTrigger],
+    ) -> RiskDecision:
+        return RiskDecision(
+            should_trade=False,
+            fraction=0.0,
+            state="blocked",
+            details={
+                "origin": "guardrail-test-missing",
+                "guardrail_reasons": list(reasons),
+                "guardrail_triggers": [
+                    trigger.to_dict() if hasattr(trigger, "to_dict") else dict(trigger)
+                    for trigger in triggers
+                ],
+            },
+        )
+
+    trader._record_risk_evaluation(
+        _decision(
+            ["missing label"],
+            [
+                GuardrailTrigger(
+                    name="missing_label",
+                    label=None,
+                    comparator=None,
+                    threshold=1.0,
+                    unit=None,
+                    value=1.1,
+                )
+            ],
+        ),
+        approved=False,
+        normalized=False,
+        response=False,
+        service=None,
+        error=None,
+    )
+
+    trader._record_risk_evaluation(
+        _decision(
+            ["has label"],
+            [
+                GuardrailTrigger(
+                    name="labeled",
+                    label="Labeled guardrail",
+                    comparator="<=",
+                    threshold=2.0,
+                    unit="ratio",
+                    value=None,
+                )
+            ],
+        ),
+        approved=False,
+        normalized=False,
+        response=False,
+        service="alpha",
+        error=None,
+    )
+
+    trader._record_risk_evaluation(
+        _decision(
+            ["missing threshold"],
+            [
+                {
+                    "name": "no_threshold",
+                    "label": "Numeric guardrail",
+                    "comparator": ">=",
+                    "unit": "bps",
+                    "value": 2.2,
+                }
+            ],
+        ),
+        approved=False,
+        normalized=False,
+        response=False,
+        service="beta",
+        error=None,
+    )
+
+    missing_label_summary = trader.summarize_risk_guardrails(trigger_label=None)
+    assert missing_label_summary["total"] == 1
+    assert missing_label_summary["guardrail_events"] == 1
+
+    labeled_summary = trader.summarize_risk_guardrails(trigger_label="Labeled guardrail")
+    assert labeled_summary["total"] == 1
+    assert labeled_summary["guardrail_events"] == 1
+
+    missing_comparator_summary = trader.summarize_risk_guardrails(trigger_comparator=None)
+    assert missing_comparator_summary["total"] == 1
+    assert missing_comparator_summary["guardrail_events"] == 1
+
+    comparator_summary = trader.summarize_risk_guardrails(trigger_comparator="<=")
+    assert comparator_summary["total"] == 1
+    assert comparator_summary["guardrail_events"] == 1
+
+    threshold_exact_summary = trader.summarize_risk_guardrails(trigger_threshold=1.0)
+    assert threshold_exact_summary["total"] == 1
+    assert threshold_exact_summary["guardrail_events"] == 1
+
+    missing_threshold_summary = trader.summarize_risk_guardrails(trigger_threshold=None)
+    assert missing_threshold_summary["total"] == 1
+    assert missing_threshold_summary["guardrail_events"] == 1
+
+    threshold_range_summary = trader.summarize_risk_guardrails(
+        trigger_threshold_min=1.5,
+    )
+    assert threshold_range_summary["total"] == 1
+    assert threshold_range_summary["guardrail_events"] == 1
+
+    value_exact_summary = trader.summarize_risk_guardrails(trigger_value=1.1)
+    assert value_exact_summary["total"] == 1
+    assert value_exact_summary["guardrail_events"] == 1
+
+    missing_value_summary = trader.summarize_risk_guardrails(trigger_value=None)
+    assert missing_value_summary["total"] == 1
+    assert missing_value_summary["guardrail_events"] == 1
+
+    value_range_summary = trader.summarize_risk_guardrails(
+        trigger_value_min=2.0,
+    )
+    assert value_range_summary["total"] == 1
+    assert value_range_summary["guardrail_events"] == 1
+
+    missing_unit_summary = trader.summarize_risk_guardrails(trigger_unit=None)
+    assert missing_unit_summary["total"] == 1
+    assert missing_unit_summary["guardrail_events"] == 1
+
+    ratio_unit_summary = trader.summarize_risk_guardrails(trigger_unit="ratio")
+    assert ratio_unit_summary["total"] == 1
+    assert ratio_unit_summary["guardrail_events"] == 1
+
+    bps_unit_summary = trader.summarize_risk_guardrails(trigger_unit="bps")
+    assert bps_unit_summary["total"] == 1
+    assert bps_unit_summary["guardrail_events"] == 1
+
+    missing_label_records = trader.guardrail_events_to_records(trigger_label=None)
+    assert len(missing_label_records) == 1
+    assert missing_label_records[0]["guardrail_triggers"][0]["label"] is None
+
+    comparator_records = trader.guardrail_events_to_records(trigger_comparator="<=")
+    assert len(comparator_records) == 1
+    assert comparator_records[0]["guardrail_triggers"][0]["comparator"] == "<="
+
+    missing_comparator_records = trader.guardrail_events_to_records(
+        trigger_comparator=None
+    )
+    assert len(missing_comparator_records) == 1
+    assert missing_comparator_records[0]["guardrail_triggers"][0]["comparator"] is None
+
+    threshold_records = trader.guardrail_events_to_records(trigger_threshold=1.0)
+    assert len(threshold_records) == 1
+
+    missing_threshold_records = trader.guardrail_events_to_records(trigger_threshold=None)
+    assert len(missing_threshold_records) == 1
+    assert "threshold" not in missing_threshold_records[0]["guardrail_triggers"][0]
+
+    threshold_range_records = trader.guardrail_events_to_records(
+        trigger_threshold_min=1.5,
+    )
+    assert len(threshold_range_records) == 1
+
+    value_records = trader.guardrail_events_to_records(trigger_value=1.1)
+    assert len(value_records) == 1
+
+    missing_value_records = trader.guardrail_events_to_records(trigger_value=None)
+    assert len(missing_value_records) == 1
+    assert "value" not in missing_value_records[0]["guardrail_triggers"][0]
+
+    value_range_records = trader.guardrail_events_to_records(
+        trigger_value_min=2.0,
+    )
+    assert len(value_range_records) == 1
+
+    missing_unit_records = trader.guardrail_events_to_records(trigger_unit=None)
+    assert len(missing_unit_records) == 1
+    assert missing_unit_records[0]["guardrail_triggers"][0].get("unit") is None
+
+    ratio_unit_records = trader.guardrail_events_to_records(trigger_unit="ratio")
+    assert len(ratio_unit_records) == 1
+    assert ratio_unit_records[0]["guardrail_triggers"][0]["unit"] == "ratio"
+
+    bps_unit_records = trader.guardrail_events_to_records(trigger_unit="bps")
+    assert len(bps_unit_records) == 1
+    assert bps_unit_records[0]["guardrail_triggers"][0]["unit"] == "bps"
+
+    missing_label_df = trader.guardrail_events_to_dataframe(trigger_label=None)
+    assert len(missing_label_df) == 1
+
+    comparator_df = trader.guardrail_events_to_dataframe(trigger_comparator="<=")
+    assert len(comparator_df) == 1
+
+    missing_comparator_df = trader.guardrail_events_to_dataframe(trigger_comparator=None)
+    assert len(missing_comparator_df) == 1
+
+    df_threshold = trader.guardrail_events_to_dataframe(trigger_threshold=1.0)
+    assert len(df_threshold) == 1
+
+    df_missing_threshold = trader.guardrail_events_to_dataframe(trigger_threshold=None)
+    assert len(df_missing_threshold) == 1
+
+    df_threshold_range = trader.guardrail_events_to_dataframe(
+        trigger_threshold_min=1.5,
+    )
+    assert len(df_threshold_range) == 1
+
+    df_value = trader.guardrail_events_to_dataframe(trigger_value=1.1)
+    assert len(df_value) == 1
+
+    df_missing_value = trader.guardrail_events_to_dataframe(trigger_value=None)
+    assert len(df_missing_value) == 1
+
+    df_value_range = trader.guardrail_events_to_dataframe(
+        trigger_value_min=2.0,
+    )
+    assert len(df_value_range) == 1
+
+    df_missing_unit = trader.guardrail_events_to_dataframe(trigger_unit=None)
+    assert len(df_missing_unit) == 1
+    assert df_missing_unit.loc[0, "guardrail_triggers"][0].get("unit") is None
+
+    df_ratio_unit = trader.guardrail_events_to_dataframe(trigger_unit="ratio")
+    assert len(df_ratio_unit) == 1
+    assert df_ratio_unit.loc[0, "guardrail_triggers"][0]["unit"] == "ratio"
+
+    df_bps_unit = trader.guardrail_events_to_dataframe(trigger_unit="bps")
+    assert len(df_bps_unit) == 1
+    assert df_bps_unit.loc[0, "guardrail_triggers"][0]["unit"] == "bps"
+
+
+def test_auto_trader_prunes_risk_history_by_ttl(monkeypatch: pytest.MonkeyPatch) -> None:
+    emitter = _Emitter()
+    gui = _GUI()
+    trader = AutoTrader(
+        emitter,
+        gui,
+        symbol_getter=lambda: "ADAUSDT",
+        auto_trade_interval_s=0.0,
+        enable_auto_trade=True,
+        risk_evaluations_limit=None,
+        risk_evaluations_ttl_s=10.0,
+    )
+
+    decision = RiskDecision(should_trade=True, fraction=0.25, state="ok")
+
+    class _TimeStub:
+        def __init__(self, values: list[float]) -> None:
+            self._values = values
+            self._index = 0
+            self.last_value: float | None = None
+
+        def __call__(self) -> float:
+            if self._index < len(self._values):
+                value = self._values[self._index]
+                self._index += 1
+            else:
+                value = self._values[-1]
+            self.last_value = value
+            return value
+
+    time_stub = _TimeStub([1000.0, 1002.0, 1010.0, 1012.0, 1014.0, 1016.0, 1018.0, 1020.0, 1022.0])
+    monkeypatch.setattr("bot_core.auto_trader.app.time.time", time_stub)
+
+    trader._record_risk_evaluation(
+        decision,
+        approved=True,
+        normalized=True,
+        response=True,
+        service=None,
+        error=None,
+    )
+    trader._record_risk_evaluation(
+        decision,
+        approved=False,
+        normalized=False,
+        response=False,
+        service=None,
+        error=None,
+    )
+    trader._record_risk_evaluation(
+        decision,
+        approved=True,
+        normalized=True,
+        response=True,
+        service=None,
+        error=None,
+    )
+
+    evaluations = trader.get_risk_evaluations()
+    assert len(evaluations) == 2
+    assert [entry["normalized"] for entry in evaluations] == [False, True]
+    assert evaluations[0]["timestamp"] == pytest.approx(1002.0)
+    assert evaluations[1]["timestamp"] == pytest.approx(1010.0)
+    assert trader.get_risk_evaluations_ttl() == pytest.approx(10.0)
+
+    new_ttl = trader.set_risk_evaluations_ttl(1.0)
+    assert new_ttl == pytest.approx(1.0)
+    assert trader.get_risk_evaluations_ttl() == pytest.approx(1.0)
+
+    assert trader.get_risk_evaluations() == []
+
+    disabled_ttl = trader.set_risk_evaluations_ttl(None)
+    assert disabled_ttl is None
+    assert trader.get_risk_evaluations_ttl() is None
+
+    trader._record_risk_evaluation(
+        decision,
+        approved=True,
+        normalized=True,
+        response=True,
+        service=None,
+        error=None,
+    )
+
+    refreshed = trader.get_risk_evaluations()
+    assert len(refreshed) == 1
+    assert refreshed[0]["timestamp"] == pytest.approx(time_stub.last_value or 0.0)

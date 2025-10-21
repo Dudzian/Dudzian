@@ -2,6 +2,7 @@
 from .ai_connector import AIManagerDecisionConnector
 from .models import DecisionCandidate, DecisionEvaluation, RiskSnapshot
 from .orchestrator import DecisionOrchestrator
+from .summary import summarize_evaluation_payloads
 
 __all__ = [
     "DecisionCandidate",
@@ -9,4 +10,5 @@ __all__ = [
     "DecisionOrchestrator",
     "AIManagerDecisionConnector",
     "RiskSnapshot",
+    "summarize_evaluation_payloads",
 ]

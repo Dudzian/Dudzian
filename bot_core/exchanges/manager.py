@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as dt
 import logging
 import os
+from dataclasses import dataclass
 from collections.abc import Iterable
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
@@ -41,6 +42,7 @@ from bot_core.exchanges.health import (
     RetryPolicy,
     Watchdog,
 )
+from bot_core.exchanges.paper_simulator import PaperFuturesSimulator, PaperMarginSimulator
 from bot_core.exchanges.zonda.margin import ZondaMarginAdapter
 
 try:  # pragma: no cover
@@ -52,16 +54,82 @@ except Exception:  # pragma: no cover
 log = logging.getLogger(__name__)
 
 
-_NATIVE_MARGIN_ADAPTERS = {
-    "binance": BinanceMarginAdapter,
-    "kraken": KrakenMarginAdapter,
-    "zonda": ZondaMarginAdapter,
-}
+def _enable_sandbox_mode(client: Any) -> bool:
+    """Próbuje włączyć sandbox/testnet dla przekazanego klienta CCXT.
 
-_NATIVE_FUTURES_ADAPTERS = {
-    "binance": BinanceFuturesAdapter,
-    "kraken": KrakenFuturesAdapter,
-}
+    Preferowanym mechanizmem jest wywołanie jednej z metod
+    ``setSandboxMode``/``set_sandbox_mode``.  Dla starszych adapterów CCXT,
+    które nie eksponują tych metod, stosujemy fallback polegający na
+    przepięciu adresów końcowych z wariantów ``*Test``.
+    """
+
+    for attr in ("setSandboxMode", "set_sandbox_mode"):
+        setter = getattr(client, attr, None)
+        if callable(setter):
+            try:
+                setter(True)
+            except Exception as exc:  # pragma: no cover - logowanie diagnostyczne
+                log.warning("Nie udało się włączyć sandbox mode przez %s: %s", attr, exc)
+                return False
+            return True
+
+    urls = getattr(client, "urls", None)
+    if isinstance(urls, dict):
+        remapped = False
+        for key, value in list(urls.items()):
+            if key.endswith("Test") and value:
+                urls[key[:-4]] = value
+                remapped = True
+        test_url = urls.get("test")
+        if test_url:
+            urls["api"] = test_url
+            remapped = True
+        if remapped:
+            return True
+
+    return False
+
+
+@dataclass(slots=True)
+class _NativeAdapterRegistration:
+    factory: Any
+    default_settings: Mapping[str, object]
+    supports_testnet: bool = True
+
+
+_NATIVE_ADAPTER_REGISTRY: Dict[Tuple[Mode, str], _NativeAdapterRegistration] = {}
+
+
+def register_native_adapter(
+    *,
+    exchange_id: str,
+    mode: Mode,
+    factory: Any,
+    default_settings: Mapping[str, object] | None = None,
+    supports_testnet: bool = True,
+) -> None:
+    """Registers a native adapter factory used by :class:`ExchangeManager`.
+
+    Tests rely on this helper to plug in lightweight fakes without
+    modifying global mappings directly.  Registrations are idempotent –
+    the last call wins which allows overriding defaults if required.
+    """
+
+    if mode not in {Mode.MARGIN, Mode.FUTURES}:
+        raise ValueError("Native adapters are only supported for margin/futures modes")
+    key = (mode, exchange_id)
+    _NATIVE_ADAPTER_REGISTRY[key] = _NativeAdapterRegistration(
+        factory=factory,
+        default_settings=dict(default_settings or {}),
+        supports_testnet=bool(supports_testnet),
+    )
+
+
+register_native_adapter(exchange_id="binance", mode=Mode.MARGIN, factory=BinanceMarginAdapter)
+register_native_adapter(exchange_id="kraken", mode=Mode.MARGIN, factory=KrakenMarginAdapter)
+register_native_adapter(exchange_id="zonda", mode=Mode.MARGIN, factory=ZondaMarginAdapter, supports_testnet=False)
+register_native_adapter(exchange_id="binance", mode=Mode.FUTURES, factory=BinanceFuturesAdapter)
+register_native_adapter(exchange_id="kraken", mode=Mode.FUTURES, factory=KrakenFuturesAdapter)
 
 _STATUS_MAPPING = {
     "NEW": OrderStatus.OPEN,
@@ -106,22 +174,43 @@ def _map_order_type(raw: object) -> OrderType:
 class _CCXTPublicFeed(BaseBackend):
     """Backend publiczny CCXT używany do cen oraz reguł rynku."""
 
-    def __init__(self, exchange_id: str = "binance", testnet: bool = False) -> None:
+    def __init__(
+        self,
+        exchange_id: str = "binance",
+        testnet: bool = False,
+        futures: bool = False,
+        market_type: str | None = None,
+    ) -> None:
         super().__init__(event_bus=EventBus())
         if ccxt is None:
             raise RuntimeError("CCXT nie jest zainstalowane.")
         self.exchange_id = exchange_id
         self.testnet = bool(testnet)
+        normalized_type = (market_type or ("future" if futures else "spot")).strip().lower()
+        if normalized_type not in {"spot", "margin", "future"}:
+            log.warning(
+                "Nieznany market_type=%s – domyślnie użyjemy 'spot' dla %s",
+                normalized_type,
+                exchange_id,
+            )
+            normalized_type = "spot"
+        self.market_type = normalized_type
+        self.futures = self.market_type == "future"
         self.client = getattr(ccxt, exchange_id)(
             {
                 "enableRateLimit": True,
                 "options": {
-                    "defaultType": "spot",
+                    "defaultType": self.market_type,
                 },
             }
         )
-        if exchange_id == "binance" and self.testnet:
-            pass
+        if self.testnet:
+            enabled = _enable_sandbox_mode(self.client)
+            if not enabled:
+                log.warning(
+                    "Sandbox mode żądany dla %s, lecz klient CCXT nie udostępnia trybu testowego.",
+                    exchange_id,
+                )
         self._markets: Dict[str, Any] = {}
         self._rules: Dict[str, MarketRules] = {}
 
@@ -199,33 +288,50 @@ class _CCXTPublicFeed(BaseBackend):
 
 
 class _CCXTPrivateBackend(_CCXTPublicFeed):
-    """Prywatny backend CCXT dla trybu SPOT/FUTURES."""
+    """Prywatny backend CCXT dla trybów SPOT/MARGIN/FUTURES."""
 
     def __init__(
         self,
         exchange_id: str = "binance",
         testnet: bool = False,
         futures: bool = False,
+        *,
+        market_type: str | None = None,
         api_key: Optional[str] = None,
         secret: Optional[str] = None,
+        passphrase: Optional[str] = None,
     ) -> None:
-        super().__init__(exchange_id=exchange_id, testnet=testnet)
+        resolved_market_type = market_type or ("future" if futures else "spot")
+        super().__init__(
+            exchange_id=exchange_id,
+            testnet=testnet,
+            futures=futures,
+            market_type=resolved_market_type,
+        )
         if ccxt is None:
             raise RuntimeError("CCXT nie jest zainstalowane.")
         options: Dict[str, Any] = {
             "enableRateLimit": True,
             "apiKey": api_key or "",
             "secret": secret or "",
-            "options": {"defaultType": "future" if futures else "spot"},
+            "options": {"defaultType": self.market_type},
         }
+        if passphrase:
+            options["password"] = passphrase
         self.client = getattr(ccxt, exchange_id)(options)
-        if exchange_id == "binance" and testnet:
-            if futures:
-                self.client.set_sandbox_mode(True)
-            else:
-                self.client.urls["api"] = self.client.urls["test"]
-        self.futures = futures
-        self.mode = Mode.FUTURES if futures else Mode.SPOT
+        if testnet and not _enable_sandbox_mode(self.client):
+            log.warning(
+                "Sandbox mode żądany dla %s (%s), lecz klient CCXT nie udostępnia trybu testowego.",
+                exchange_id,
+                self.market_type,
+            )
+        self.futures = self.market_type == "future"
+        if self.market_type == "margin":
+            self.mode = Mode.MARGIN
+        elif self.futures:
+            self.mode = Mode.FUTURES
+        else:
+            self.mode = Mode.SPOT
 
     def create_order(
         self,
@@ -387,6 +493,7 @@ class ExchangeManager:
         self._futures: bool = False
         self._api_key: Optional[str] = None
         self._secret: Optional[str] = None
+        self._passphrase: Optional[str] = None
 
         self._event_bus = EventBus()
         self._public: Optional[_CCXTPublicFeed] = None
@@ -395,6 +502,8 @@ class ExchangeManager:
         self._paper_initial_cash = float(paper_initial_cash)
         self._paper_cash_asset = paper_cash_asset.upper()
         self._paper_fee_rate = getattr(PaperBackend, "FEE_RATE", 0.001)
+        self._paper_variant = "spot"
+        self._paper_simulator_settings: Dict[str, object] = {}
         self._db_url = db_url or "sqlite+aiosqlite:///trading.db"
         self._db: Optional[DatabaseManager] = None
         self._db_failed: bool = False
@@ -444,15 +553,81 @@ class ExchangeManager:
         self._paper = None
         self._native_adapter = None
 
-    def set_credentials(self, api_key: Optional[str], secret: Optional[str]) -> None:
+    def set_paper_variant(self, variant: str) -> None:
+        """Selects paper simulator flavour (``spot``/``margin``/``futures``)."""
+
+        normalized = (variant or "").strip().lower()
+        if normalized not in {"spot", "margin", "futures"}:
+            raise ValueError("Paper variant must be one of: spot, margin, futures")
+        if self._paper_variant != normalized:
+            log.info("Switching paper simulator variant to %s", normalized)
+        self._paper_variant = normalized
+        self._paper = None
+
+    def configure_paper_simulator(self, **settings: object) -> None:
+        """Stores custom parameters used by margin/futures simulators."""
+
+        allowed_keys = {
+            "leverage_limit",
+            "maintenance_margin_ratio",
+            "funding_rate",
+            "funding_interval_seconds",
+        }
+        normalized: Dict[str, object] = {}
+        for key, value in settings.items():
+            if key not in allowed_keys:
+                raise ValueError(
+                    f"Nieznany parametr symulatora paper: {key}. Dozwolone: "
+                    "leverage_limit, maintenance_margin_ratio, funding_rate, funding_interval_seconds"
+                )
+            if value is None:
+                continue
+            float_value = float(value)
+            if key == "funding_interval_seconds" and float_value <= 0:
+                raise ValueError(
+                    "Parametr funding_interval_seconds wymaga dodatniej wartości (sekundy)."
+                )
+            normalized[key] = float_value
+
+        if not normalized:
+            return
+
+        merged = dict(self._paper_simulator_settings)
+        merged.update(normalized)
+        self._paper_simulator_settings = merged
+        if self._paper is not None:
+            log.info("Reconfiguring paper simulator with settings: %s", merged)
+        self._paper_simulator_settings = dict(settings)
+        if self._paper is not None:
+            log.info("Reconfiguring paper simulator with settings: %s", settings)
+        self._paper = None
+
+    def set_credentials(
+        self,
+        api_key: Optional[str],
+        secret: Optional[str],
+        *,
+        passphrase: Optional[str] = None,
+    ) -> None:
         self._api_key = (api_key or "").strip() or None
         self._secret = (secret or "").strip() or None
+        self._passphrase = (passphrase or "").strip() or None
+        log.info(
+        api_key_length = len(self._api_key) if self._api_key else 0
+        secret_length = len(self._secret) if self._secret else 0
         log.info(
             "Credentials set (lengths): api_key=%s, secret=%s",
-            len(self._api_key or 0),
-            len(self._secret or 0),
+            api_key_length,
+            secret_length,
+        self._passphrase = (passphrase or "").strip() or None
+        log.info(
+            "Credentials set (lengths): api_key=%s, secret=%s, passphrase=%s",
+            len(self._api_key or ""),
+            len(self._secret or ""),
+            len(self._passphrase or ""),
         )
         self._native_adapter = None
+        self._private = None
 
     def configure_native_adapter(
         self,
@@ -522,7 +697,18 @@ class ExchangeManager:
 
     def _ensure_public(self) -> _CCXTPublicFeed:
         if self._public is None:
-            self._public = _CCXTPublicFeed(exchange_id=self.exchange_id, testnet=self._testnet)
+            if self.mode is Mode.MARGIN:
+                market_type = "margin"
+            elif self._futures:
+                market_type = "future"
+            else:
+                market_type = "spot"
+            self._public = _CCXTPublicFeed(
+                exchange_id=self.exchange_id,
+                testnet=self._testnet,
+                futures=self._futures,
+                market_type=market_type,
+            )
         return self._public
 
     def _resolve_environment(self) -> Environment:
@@ -565,14 +751,16 @@ class ExchangeManager:
         if not self._api_key or not self._secret:
             raise RuntimeError("Brak API Key/Secret – ustaw je przed użyciem trybu live/testnet.")
 
-        if self.mode == Mode.MARGIN:
-            factory = _NATIVE_MARGIN_ADAPTERS.get(self.exchange_id)
-        else:
-            factory = _NATIVE_FUTURES_ADAPTERS.get(self.exchange_id)
+        registration = _NATIVE_ADAPTER_REGISTRY.get((self.mode, self.exchange_id))
 
-        if factory is None:
+        if registration is None:
             raise RuntimeError(
                 f"Brak natywnego adaptera dla giełdy {self.exchange_id} w trybie {self.mode.value}."
+            )
+
+        if self._testnet and not registration.supports_testnet:
+            raise RuntimeError(
+                f"Giełda {self.exchange_id} nie wspiera trybu testnet dla {self.mode.value}."
             )
 
         if self._native_adapter is None:
@@ -580,15 +768,17 @@ class ExchangeManager:
             credentials = ExchangeCredentials(
                 key_id=self._api_key,
                 secret=self._secret,
+                passphrase=self._passphrase,
                 environment=environment,
                 permissions=("read", "trade"),
             )
-            settings = self._get_adapter_settings()
+            settings = dict(registration.default_settings)
+            settings.update(self._get_adapter_settings())
             kwargs: Dict[str, object] = {"environment": environment}
             if settings:
                 kwargs["settings"] = settings
             kwargs["watchdog"] = self._ensure_watchdog()
-            self._native_adapter = factory(credentials, **kwargs)
+            self._native_adapter = registration.factory(credentials, **kwargs)
 
         return self._native_adapter
 
@@ -596,12 +786,20 @@ class ExchangeManager:
         if not self._api_key or not self._secret:
             raise RuntimeError("Brak API Key/Secret – ustaw je przed użyciem trybu live/testnet.")
         if self._private is None:
+            if self.mode is Mode.MARGIN:
+                market_type = "margin"
+            elif self._futures:
+                market_type = "future"
+            else:
+                market_type = "spot"
             self._private = _CCXTPrivateBackend(
                 exchange_id=self.exchange_id,
                 testnet=self._testnet,
                 futures=self._futures,
+                market_type=market_type,
                 api_key=self._api_key,
                 secret=self._secret,
+                passphrase=self._passphrase,
             )
             self._private.load_markets()
         return self._private
@@ -609,14 +807,56 @@ class ExchangeManager:
     def _ensure_paper(self) -> PaperBackend:
         public = self._ensure_public()
         if self._paper is None:
-            self._paper = PaperBackend(
-                price_feed_backend=public,
-                event_bus=self._event_bus,
-                initial_cash=self._paper_initial_cash,
-                cash_asset=self._paper_cash_asset,
-                fee_rate=self._paper_fee_rate,
-                database=self._ensure_db(),
-            )
+            settings = dict(self._paper_simulator_settings)
+            simulator: PaperBackend
+            if self._paper_variant == "margin":
+                defaults = self._default_paper_simulator_settings()
+                defaults.update(settings)
+                simulator = PaperMarginSimulator(
+                    public,
+                    event_bus=self._event_bus,
+                    initial_cash=self._paper_initial_cash,
+                    cash_asset=self._paper_cash_asset,
+                    fee_rate=self._paper_fee_rate,
+                    database=self._ensure_db(),
+                    leverage_limit=float(defaults.get("leverage_limit", 3.0)),
+                    maintenance_margin_ratio=float(defaults.get("maintenance_margin_ratio", 0.15)),
+                    funding_rate=float(defaults.get("funding_rate", 0.0)),
+                    funding_interval_seconds=float(defaults.get("funding_interval_seconds", 0.0)),
+                )
+            elif self._paper_variant == "futures":
+                defaults = self._default_paper_simulator_settings()
+                defaults.update(settings)
+                    leverage_limit=float(settings.get("leverage_limit", 3.0)),
+                    maintenance_margin_ratio=float(settings.get("maintenance_margin_ratio", 0.15)),
+                    funding_rate=float(settings.get("funding_rate", 0.0)),
+                )
+            elif self._paper_variant == "futures":
+                simulator = PaperFuturesSimulator(
+                    public,
+                    event_bus=self._event_bus,
+                    initial_cash=self._paper_initial_cash,
+                    cash_asset=self._paper_cash_asset,
+                    fee_rate=self._paper_fee_rate,
+                    database=self._ensure_db(),
+                    leverage_limit=float(defaults.get("leverage_limit", 10.0)),
+                    maintenance_margin_ratio=float(defaults.get("maintenance_margin_ratio", 0.05)),
+                    funding_rate=float(defaults.get("funding_rate", 0.0001)),
+                    funding_interval_seconds=float(defaults.get("funding_interval_seconds", 0.0)),
+                    leverage_limit=float(settings.get("leverage_limit", 10.0)),
+                    maintenance_margin_ratio=float(settings.get("maintenance_margin_ratio", 0.05)),
+                    funding_rate=float(settings.get("funding_rate", 0.0001)),
+                )
+            else:
+                simulator = PaperBackend(
+                    price_feed_backend=public,
+                    event_bus=self._event_bus,
+                    initial_cash=self._paper_initial_cash,
+                    cash_asset=self._paper_cash_asset,
+                    fee_rate=self._paper_fee_rate,
+                    database=self._ensure_db(),
+                )
+            self._paper = simulator
             self._paper.load_markets()
         return self._paper
 
@@ -642,6 +882,21 @@ class ExchangeManager:
             if asset:
                 self._paper._cash_asset = self._paper_cash_asset  # type: ignore[attr-defined]
 
+    def get_paper_cash_asset(self) -> Optional[str]:
+        """Zwraca aktualny symbol waluty gotówkowej w symulatorze paper."""
+
+        return self._paper_cash_asset
+
+    def get_paper_initial_cash(self) -> float:
+        """Zwraca aktualną wartość początkowego kapitału w symulatorze paper."""
+
+        return float(self._paper_initial_cash)
+
+    def get_paper_variant(self) -> str:
+        """Zwraca aktywny wariant symulatora paper."""
+
+        return self._paper_variant
+
     def set_paper_fee_rate(self, fee_rate: float) -> None:
         self._paper_fee_rate = max(0.0, float(fee_rate))
         if self._paper is not None:
@@ -651,6 +906,38 @@ class ExchangeManager:
         if self._paper is not None:
             return self._paper.get_fee_rate()
         return self._paper_fee_rate
+
+    def get_paper_simulator_settings(self) -> Dict[str, float]:
+        """Zwraca aktualne parametry symulatora margin/futures."""
+
+        if self._paper_variant not in {"margin", "futures"}:
+            return {}
+
+        if isinstance(self._paper, PaperMarginSimulator):
+            return dict(self._paper.describe_configuration())
+
+        settings = self._default_paper_simulator_settings()
+        for key, value in self._paper_simulator_settings.items():
+            if key in settings:
+                settings[key] = float(value)
+        return settings
+
+    def _default_paper_simulator_settings(self) -> Dict[str, float]:
+        if self._paper_variant == "margin":
+            return {
+                "leverage_limit": 3.0,
+                "maintenance_margin_ratio": 0.15,
+                "funding_rate": 0.0,
+                "funding_interval_seconds": 0.0,
+            }
+        if self._paper_variant == "futures":
+            return {
+                "leverage_limit": 10.0,
+                "maintenance_margin_ratio": 0.05,
+                "funding_rate": 0.0001,
+                "funding_interval_seconds": 0.0,
+            }
+        return {}
 
     def load_markets(self) -> Dict[str, MarketRules]:
         public = self._ensure_public()
@@ -1202,5 +1489,14 @@ class ExchangeManager:
         self._event_bus.subscribe(event_type, callback)
 
 
-__all__ = ["ExchangeManager", "Mode", "OrderDTO", "OrderSide", "OrderType", "OrderStatus", "PositionDTO"]
+__all__ = [
+    "ExchangeManager",
+    "Mode",
+    "OrderDTO",
+    "OrderSide",
+    "OrderType",
+    "OrderStatus",
+    "PositionDTO",
+    "register_native_adapter",
+]
 

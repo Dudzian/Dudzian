@@ -221,6 +221,7 @@ private:
                                          bool cliTlsPinnedProvided,
                                          QString& healthToken,
                                          QString& healthTokenFile);
+                                              bool cliScopesProvided);
     void applyScreenEnvironmentOverrides(const QCommandLineParser& parser);
     void applyPreferredScreen(QQuickWindow* window);
     QScreen* resolvePreferredScreen() const;

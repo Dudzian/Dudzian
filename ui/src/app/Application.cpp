@@ -98,6 +98,17 @@ std::optional<bool> envBool(const QByteArray& key)
     return std::nullopt;
 }
 
+QString expandUserPath(QString path)
+{
+    if (!path.startsWith(QLatin1Char('~')))
+        return path;
+    if (path == QStringLiteral("~"))
+        return QDir::homePath();
+    if (path.startsWith(QStringLiteral("~/")))
+        return QDir::homePath() + path.mid(1);
+    return path;
+}
+
 QString readTokenFile(const QString& rawPath, const QString& label = QStringLiteral("MetricsService"))
 {
     if (rawPath.trimmed().isEmpty())
@@ -701,6 +712,39 @@ bool Application::applyParser(const QCommandLineParser& parser) {
         m_tradingRbacScopes.clear();
     }
 
+    QString cliTradingToken = parser.value("grpc-auth-token").trimmed();
+    QString cliTradingTokenFile = parser.value("grpc-auth-token-file").trimmed();
+    const bool cliTradingTokenProvided = !cliTradingToken.isEmpty();
+    const bool cliTradingTokenFileProvided = !cliTradingTokenFile.isEmpty();
+    if (cliTradingTokenProvided && cliTradingTokenFileProvided) {
+        qCWarning(lcAppMetrics)
+            << "Podano jednocześnie --grpc-auth-token oraz --grpc-auth-token-file. Użyję tokenu przekazanego bezpośrednio.";
+    }
+
+    if (cliTradingTokenProvided) {
+        m_tradingAuthToken = cliTradingToken;
+    } else if (cliTradingTokenFileProvided) {
+        m_tradingAuthToken = readTokenFile(cliTradingTokenFile, QStringLiteral("TradingService"));
+    } else {
+        m_tradingAuthToken.clear();
+    }
+
+    QString cliTradingRole = parser.value("grpc-rbac-role").trimmed();
+    const bool cliTradingRoleProvided = !cliTradingRole.isEmpty();
+    if (cliTradingRoleProvided) {
+        m_tradingRbacRole = cliTradingRole;
+    } else {
+        m_tradingRbacRole.clear();
+    }
+
+    QString cliTradingScopesRaw = parser.value("grpc-rbac-scopes").trimmed();
+    const bool cliTradingScopesProvided = !cliTradingScopesRaw.isEmpty();
+    if (cliTradingScopesProvided) {
+        m_tradingRbacScopes = splitScopesList(cliTradingScopesRaw);
+    } else {
+        m_tradingRbacScopes.clear();
+    }
+
     // --- Telemetria ---
     m_metricsEndpoint = parser.value("metrics-endpoint");
     if (m_metricsEndpoint.isEmpty()) {
@@ -854,6 +898,11 @@ bool Application::applyParser(const QCommandLineParser& parser) {
         m_healthController->setRefreshIntervalSeconds(m_healthRefreshIntervalSeconds);
         m_healthController->setAutoRefreshEnabled(m_healthAutoRefreshEnabled);
     }
+                                         cliTradingScopesProvided);
+    m_client.setTlsConfig(m_tradingTlsConfig);
+    m_client.setAuthToken(m_tradingAuthToken);
+    m_client.setRbacRole(m_tradingRbacRole);
+    m_client.setRbacScopes(m_tradingRbacScopes);
 
     bool riskRefreshEnabled = !parser.isSet("risk-refresh-disable");
     bool intervalOk = false;
@@ -1273,6 +1322,7 @@ void Application::configureStrategyBridge(const QCommandLineParser& parser)
     if (configPath.isEmpty())
         configPath = QStringLiteral("config/core.yaml");
     m_strategyController->setConfigPath(expandPath(configPath));
+    m_strategyController->setConfigPath(expandUserPath(configPath));
 
     QString pythonExec = parser.value("strategy-config-python").trimmed();
     if (pythonExec.isEmpty()) {
@@ -1281,6 +1331,7 @@ void Application::configureStrategyBridge(const QCommandLineParser& parser)
     }
     if (!pythonExec.isEmpty())
         m_strategyController->setPythonExecutable(expandPath(pythonExec));
+        m_strategyController->setPythonExecutable(expandUserPath(pythonExec));
 
     QString bridgePath = parser.value("strategy-config-bridge").trimmed();
     if (bridgePath.isEmpty()) {
@@ -1294,6 +1345,7 @@ void Application::configureStrategyBridge(const QCommandLineParser& parser)
             bridgePath = QDir::current().absoluteFilePath(QStringLiteral("scripts/ui_config_bridge.py"));
     }
     m_strategyController->setScriptPath(expandPath(bridgePath));
+    m_strategyController->setScriptPath(expandUserPath(bridgePath));
 
     if (!m_strategyController->refresh()) {
         const QString error = m_strategyController->lastError();
@@ -1327,6 +1379,19 @@ void Application::configureSupportBundle(const QCommandLineParser& parser)
         m_supportController->setOutputDirectory(expandPath(parser.value("support-bundle-output-dir")));
     else if (const auto envOutput = envTrimmed(QByteArrayLiteral("BOT_CORE_UI_SUPPORT_OUTPUT_DIR")); envOutput.has_value())
         m_supportController->setOutputDirectory(expandPath(envOutput.value()));
+        m_supportController->setPythonExecutable(expandUserPath(parser.value("support-bundle-python")));
+    else if (const auto envPython = envTrimmed(QByteArrayLiteral("BOT_CORE_UI_SUPPORT_PYTHON")); envPython.has_value())
+        m_supportController->setPythonExecutable(expandUserPath(envPython.value()));
+
+    if (parser.isSet("support-bundle-script"))
+        m_supportController->setScriptPath(expandUserPath(parser.value("support-bundle-script")));
+    else if (const auto envScript = envTrimmed(QByteArrayLiteral("BOT_CORE_UI_SUPPORT_SCRIPT")); envScript.has_value())
+        m_supportController->setScriptPath(expandUserPath(envScript.value()));
+
+    if (parser.isSet("support-bundle-output-dir"))
+        m_supportController->setOutputDirectory(expandUserPath(parser.value("support-bundle-output-dir")));
+    else if (const auto envOutput = envTrimmed(QByteArrayLiteral("BOT_CORE_UI_SUPPORT_OUTPUT_DIR")); envOutput.has_value())
+        m_supportController->setOutputDirectory(expandUserPath(envOutput.value()));
 
     if (parser.isSet("support-bundle-format"))
         m_supportController->setFormat(parser.value("support-bundle-format"));
@@ -1384,6 +1449,7 @@ void Application::configureSupportBundle(const QCommandLineParser& parser)
         }
         const QString lower = label.toLower();
         const QString expandedPath = expandPath(path);
+        const QString expandedPath = expandUserPath(path);
         if (lower == QStringLiteral("logs")) {
             m_supportController->setLogsPath(expandedPath);
             m_supportController->setIncludeLogs(true);
@@ -2636,6 +2702,7 @@ void Application::applyTradingAuthEnvironmentOverrides(const QCommandLineParser&
                                                        bool cliScopesProvided,
                                                        QString& tradingToken,
                                                        QString& tradingTokenFile)
+                                                       bool cliScopesProvided)
 {
     Q_UNUSED(parser);
 
@@ -2657,6 +2724,7 @@ void Application::applyTradingAuthEnvironmentOverrides(const QCommandLineParser&
             if (!trimmed.isEmpty()) {
                 tradingToken = trimmed;
                 tradingTokenFile.clear();
+                m_tradingAuthToken = trimmed;
                 applied = true;
             }
         }
@@ -2667,6 +2735,9 @@ void Application::applyTradingAuthEnvironmentOverrides(const QCommandLineParser&
             if (!tokenFromFile.isEmpty()) {
                 tradingToken = tokenFromFile;
                 tradingTokenFile = expandedPath;
+            const QString tokenFromFile = readTokenFile(envTokenFile->trimmed(), QStringLiteral("TradingService"));
+            if (!tokenFromFile.isEmpty()) {
+                m_tradingAuthToken = tokenFromFile;
                 applied = true;
             }
         }
@@ -2675,6 +2746,7 @@ void Application::applyTradingAuthEnvironmentOverrides(const QCommandLineParser&
                          || (envTokenFile.has_value() && envTokenFile->trimmed().isEmpty()))) {
             tradingToken.clear();
             tradingTokenFile.clear();
+            m_tradingAuthToken.clear();
         }
     }
 
