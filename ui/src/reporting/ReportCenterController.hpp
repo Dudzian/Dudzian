@@ -33,6 +33,8 @@ class ReportCenterController : public QObject {
     Q_PROPERTY(int offset READ offset WRITE setOffset NOTIFY offsetChanged)
     Q_PROPERTY(QString sortKey READ sortKey WRITE setSortKey NOTIFY sortKeyChanged)
     Q_PROPERTY(QString sortDirection READ sortDirection WRITE setSortDirection NOTIFY sortDirectionChanged)
+    Q_PROPERTY(QVariantList equityCurve READ equityCurve NOTIFY equityCurveChanged)
+    Q_PROPERTY(QVariantList assetHeatmap READ assetHeatmap NOTIFY assetHeatmapChanged)
 
 public:
     explicit ReportCenterController(QObject* parent = nullptr);
@@ -56,6 +58,8 @@ public:
     int offset() const { return m_offset; }
     QString sortKey() const { return m_sortKey; }
     QString sortDirection() const { return m_sortDirection; }
+    QVariantList equityCurve() const { return m_equityCurve; }
+    QVariantList assetHeatmap() const { return m_assetHeatmap; }
 
     Q_INVOKABLE bool refresh();
     Q_INVOKABLE QVariantMap findReport(const QString& relativePath) const;
@@ -114,6 +118,8 @@ signals:
     void deleteFinished(const QString& relativePath, bool success);
     void purgeFinished(bool success);
     void archiveFinished(bool success);
+    void equityCurveChanged();
+    void assetHeatmapChanged();
 
 private:
     struct BridgeResult {
@@ -166,4 +172,6 @@ private:
     QString m_sortKey = QStringLiteral("updated_at");
     QString m_sortDirection = QStringLiteral("desc");
     int m_pendingTasks = 0;
+    QVariantList m_equityCurve;
+    QVariantList m_assetHeatmap;
 };
