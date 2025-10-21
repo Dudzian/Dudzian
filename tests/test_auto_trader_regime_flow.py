@@ -432,6 +432,7 @@ class _DummyAssessment:
     regime: MarketRegime
     risk_score: float
     confidence: float = 0.8
+    ai_prediction: float = 0.015
 
     def to_assessment(self, symbol: str) -> MarketRegimeAssessment:
         return MarketRegimeAssessment(
@@ -460,14 +461,37 @@ class _AIManagerStub:
         self._queue = assessments
         self.calls: list[str] = []
         self._summaries = summaries or {}
+        self.ai_threshold_bps = 5.0
+        self.is_degraded = False
+        self._last_prediction = assessments[0].ai_prediction if assessments else 0.0
 
     def assess_market_regime(self, symbol: str, market_data: pd.DataFrame, **_: Any) -> MarketRegimeAssessment:
         self.calls.append(symbol)
         next_assessment = self._queue.pop(0)
+        self._last_prediction = next_assessment.ai_prediction
         return next_assessment.to_assessment(symbol)
 
     def get_regime_summary(self, symbol: str) -> RegimeSummary | None:
         return self._summaries.get(symbol)
+
+    async def predict_series(
+        self,
+        symbol: str,
+        df: pd.DataFrame,
+        *,
+        model_types: Any | None = None,
+        feature_cols: Any | None = None,
+    ) -> pd.Series:
+        del symbol, model_types, feature_cols
+        if not isinstance(df, pd.DataFrame) or df.empty:
+            index = pd.RangeIndex(start=0, stop=1)
+        else:
+            index = df.index[-1:]
+        return pd.Series([float(self._last_prediction)], index=index)
+
+    def require_real_models(self) -> None:
+        if self.is_degraded:
+            raise RuntimeError("fallback backend")
 
 
 def _assert_summary_details(
@@ -690,6 +714,38 @@ def test_auto_trader_respects_high_risk_regime() -> None:
     assert trader.current_leverage == 0.0
     assert decision.should_trade is False
     result.assert_provider_called("ETHUSDT")
+
+
+def test_auto_trader_holds_when_ai_signal_below_threshold() -> None:
+    result = _execute_auto_trade(
+        "SOLUSDT",
+        [_DummyAssessment(regime=MarketRegime.TREND, risk_score=0.32, ai_prediction=0.0)],
+    )
+    decision, trader, _, provider, _ = result
+
+    assert decision.should_trade is False
+    assert trader._last_signal == "hold"
+    ai_details = decision.details.get("decision_engine", {}).get("ai")
+    assert ai_details is not None
+    assert ai_details.get("direction") == "hold"
+    assert ai_details.get("prediction_bps") == pytest.approx(0.0)
+    result.assert_provider_called("SOLUSDT")
+
+
+def test_auto_trader_ai_conflict_forces_hold() -> None:
+    result = _execute_auto_trade(
+        "XRPUSDT",
+        [_DummyAssessment(regime=MarketRegime.TREND, risk_score=0.3, ai_prediction=-0.02)],
+    )
+    decision, trader, _, provider, _ = result
+
+    assert decision.should_trade is False
+    assert trader._last_signal == "hold"
+    ai_details = decision.details.get("decision_engine", {}).get("ai")
+    assert ai_details is not None
+    assert ai_details.get("direction") == "sell"
+    assert ai_details.get("prediction_bps") == pytest.approx(-200.0)
+    result.assert_provider_called("XRPUSDT")
 
 
 def test_auto_trader_uses_summary_to_lock_trading_on_high_risk() -> None:
