@@ -500,6 +500,21 @@ class TradingController:
             status="submitted",
         )
         try:
+            self._maybe_reverse_position(signal, adjusted_request, metric_labels)
+        except Exception as exc:  # noqa: BLE001
+            self._emit_execution_error_alert(signal, adjusted_request, exc)
+            self._metric_orders_total.inc(
+                labels={**metric_labels, "result": "failed", "side": adjusted_request.side},
+            )
+            self._record_decision_event(
+                "order_reverse_failed",
+                signal=signal,
+                request=adjusted_request,
+                status="failed",
+                metadata={"error": str(exc)},
+            )
+            raise
+        try:
             result = self.execution_service.execute(adjusted_request, self._execution_context)
         except Exception as exc:  # noqa: BLE001
             self._emit_execution_error_alert(signal, adjusted_request, exc)
@@ -550,6 +565,88 @@ class TradingController:
         )
         self._handle_liquidation_state(risk_result)
         return result
+
+    def _maybe_reverse_position(
+        self,
+        signal: StrategySignal,
+        request: OrderRequest,
+        metric_labels: Mapping[str, str],
+    ) -> None:
+        metadata = dict(request.metadata or {})
+        reverse_flag = metadata.pop("reverse_position", True)
+        if isinstance(reverse_flag, str):
+            reverse_flag = reverse_flag.strip().lower() not in {"false", "0", "no"}
+        if not reverse_flag:
+            return
+
+        qty_raw = metadata.pop("current_position_qty", None)
+        side_raw = metadata.pop("current_position_side", None)
+        try:
+            position_qty = float(qty_raw)
+        except (TypeError, ValueError):
+            return
+        if position_qty <= 0:
+            return
+        if not side_raw:
+            return
+        current_side = str(side_raw).upper()
+        desired_side = request.side.upper()
+        if current_side not in {"LONG", "SHORT"}:
+            return
+        if (current_side == "LONG" and desired_side == "BUY") or (
+            current_side == "SHORT" and desired_side == "SELL"
+        ):
+            return
+
+        close_side = "SELL" if current_side == "LONG" else "BUY"
+        close_request = OrderRequest(
+            symbol=request.symbol,
+            side=close_side,
+            quantity=position_qty,
+            order_type="MARKET",
+            price=None,
+            time_in_force=None,
+            client_order_id=None,
+            stop_price=None,
+            atr=None,
+            metadata={**metadata, "action": "close", "reverse_target": desired_side},
+        )
+
+        self._metric_orders_total.inc(
+            labels={**metric_labels, "result": "submitted", "side": close_side},
+        )
+        self._record_decision_event(
+            "order_close_for_reversal",
+            signal=signal,
+            request=close_request,
+            status="submitted",
+            metadata={"position_side": current_side, "position_qty": f"{position_qty:.8f}"},
+        )
+        try:
+            result = self.execution_service.execute(close_request, self._execution_context)
+        except Exception as exc:  # noqa: BLE001
+            self._metric_orders_total.inc(
+                labels={**metric_labels, "result": "failed", "side": close_side},
+            )
+            self._record_decision_event(
+                "order_close_for_reversal",
+                signal=signal,
+                request=close_request,
+                status="failed",
+                metadata={"error": str(exc)},
+            )
+            raise
+
+        self._metric_orders_total.inc(
+            labels={**metric_labels, "result": "executed", "side": close_side},
+        )
+        self._record_decision_event(
+            "order_close_for_reversal",
+            signal=signal,
+            request=close_request,
+            status=result.status or "filled",
+            metadata={"close_order_id": result.order_id or ""},
+        )
 
     def _maybe_adjust_request(
         self,
