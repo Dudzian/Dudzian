@@ -40,7 +40,7 @@ Key characteristics:
 - **Shared runtime metadata** – risk profiles, environment presets and
   entrypoint configuration are defined in `config/core.yaml` and accessed
   through `bot_core.runtime.metadata`.
-- **Modular Trading GUI** – `KryptoLowca.ui.trading` renders runtime driven
+- **Modular Trading GUI** – `bot_core.ui.trading` renders runtime driven
   banners, fraction controls and default notionals while exposing an API for
   AutoTrader integration.
 - **Launcher segregation** – AutoTrader, paper trading and GUI launchers each

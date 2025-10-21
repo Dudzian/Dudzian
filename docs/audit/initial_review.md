@@ -11,7 +11,7 @@ nowej architektury `bot_core` oraz przy planowaniu kolejnych iteracji rozwoju.
   (`runtime/metadata.py`), modele ryzyka (`risk/`), adaptery paper tradingu i
   bootstrap środowisk. Dzięki temu logika niezależna od UI nie jest już
   powielana w launcherach.
-- **Pakiet `KryptoLowca.ui.trading`** udostępnia modularny interfejs graficzny
+- **Pakiet `bot_core.ui.trading`** udostępnia modularny interfejs graficzny
   (podział na `app.py`, `controller.py`, `state.py`, `view.py`). GUI renderuje
   baner profilu ryzyka i kontrolki frakcji wprost z runtime settings i potrafi
   przeładowywać `core.yaml` z poziomu przycisku.

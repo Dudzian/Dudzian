@@ -60,7 +60,7 @@ except Exception:  # pragma: no cover
     RiskManagerAdapter = None  # type: ignore
 
 try:
-    from .security_manager import SecurityManager  # type: ignore
+    from bot_core.security.legacy import SecurityManager  # type: ignore
 except Exception:  # pragma: no cover
     SecurityManager = None  # type: ignore
 
