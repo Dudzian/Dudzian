@@ -82,7 +82,6 @@ class StrategyCatalog:
         if tags and "tags" not in metadata:
             metadata["tags"] = tags
         engine = spec.build(
-        return spec.build(
             name=definition.name,
             parameters=definition.parameters,
             metadata=metadata,
@@ -93,6 +92,61 @@ class StrategyCatalog:
             # Nie wszystkie strategie muszą wspierać przypięcie metadanych.
             pass
         return engine
+
+    def merge_tags(self, definition: StrategyDefinition) -> tuple[str, ...]:
+        """Zwraca połączone tagi katalogu oraz definicji strategii."""
+
+        spec = self.get(definition.engine)
+        return tuple(dict.fromkeys((*spec.default_tags, *definition.tags)))
+
+    def describe_engines(self) -> Sequence[Mapping[str, object]]:
+        """Buduje listę zarejestrowanych silników wraz z metadanymi."""
+
+        summary: list[Mapping[str, object]] = []
+        for key in sorted(self._registry):
+            spec = self._registry[key]
+            payload: dict[str, object] = {
+                "engine": spec.key,
+                "capability": spec.capability,
+                "default_tags": list(spec.default_tags),
+            }
+            summary.append(payload)
+        return summary
+
+    def describe_definitions(
+        self,
+        definitions: Mapping[str, StrategyDefinition],
+        *,
+        include_metadata: bool = False,
+    ) -> Sequence[Mapping[str, object]]:
+        """Tworzy opis strategii na podstawie przekazanych definicji."""
+
+        summary: list[Mapping[str, object]] = []
+        for name in sorted(definitions):
+            definition = definitions[name]
+            try:
+                merged_tags = self.merge_tags(definition)
+            except KeyError:
+                merged_tags = tuple(dict.fromkeys(definition.tags))
+            payload: dict[str, object] = {
+                "name": name,
+                "engine": definition.engine,
+                "tags": list(merged_tags),
+            }
+            if definition.risk_profile:
+                payload["risk_profile"] = definition.risk_profile
+            try:
+                spec = self.get(definition.engine)
+                if spec.capability:
+                    payload["capability"] = spec.capability
+            except KeyError:
+                pass
+            if include_metadata and definition.metadata:
+                payload["metadata"] = dict(definition.metadata)
+            if definition.parameters:
+                payload["parameters"] = dict(definition.parameters)
+            summary.append(payload)
+        return summary
 
 
 def _build_daily_trend_strategy(

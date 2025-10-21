@@ -22,6 +22,7 @@ from bot_core.exchanges.errors import (
     ExchangeThrottlingError,
 )
 from bot_core.observability.metrics import MetricsRegistry, get_global_metrics_registry
+from bot_core.exchanges.health import Watchdog
 
 try:  # pragma: no cover - opcjonalny import CCXT
     import ccxt  # type: ignore
@@ -339,5 +340,37 @@ class CCXTSpotAdapter(ExchangeAdapter):
         )
 
 
-__all__ = ["CCXTSpotAdapter", "merge_adapter_settings"]
+class WatchdogCCXTAdapter(CCXTSpotAdapter):
+    """Rozszerzenie adaptera CCXT o integrację z watchdogiem."""
+
+    def __init__(
+        self,
+        credentials: ExchangeCredentials,
+        *,
+        exchange_id: str,
+        environment: Environment | None = None,
+        settings: Mapping[str, Any] | None = None,
+        client: CCXTExchange | None = None,
+        metrics_registry: MetricsRegistry | None = None,
+        watchdog: Watchdog | None = None,
+    ) -> None:
+        self._watchdog = watchdog or Watchdog()
+        super().__init__(
+            credentials,
+            exchange_id=exchange_id,
+            environment=environment,
+            settings=settings,
+            client=client,
+            metrics_registry=metrics_registry,
+        )
+
+    def _call_client(self, method_name: str, *args: Any, **kwargs: Any) -> Any:
+        operation = f"{self.name}.{method_name}"
+        return self._watchdog.execute(
+            operation,
+            lambda: super()._call_client(method_name, *args, **kwargs),
+        )
+
+
+__all__ = ["CCXTSpotAdapter", "WatchdogCCXTAdapter", "merge_adapter_settings"]
 

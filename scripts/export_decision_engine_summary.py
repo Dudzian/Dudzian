@@ -12,7 +12,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from bot_core.decision import coerce_float, summarize_evaluation_payloads
 from bot_core.decision import summarize_evaluation_payloads
+from bot_core.decision.schemas import DecisionEngineSummary
+from bot_core.decision.utils import coerce_float
 
 
 def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
@@ -35,22 +38,7 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
 
 
 def _parse_float(value: object) -> float | None:
-    if value is None:
-        return None
-    if isinstance(value, (int, float)):
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return None
-    if isinstance(value, str):
-        text = value.strip()
-        if not text:
-            return None
-        try:
-            return float(text)
-        except ValueError:
-            return None
-    return None
+    return coerce_float(value)
 
 
 def _split_field(value: object) -> Sequence[str]:
@@ -168,19 +156,19 @@ def _event_to_payload(event: Mapping[str, object]) -> tuple[datetime | None, Map
         "stress_failures": stress_failures,
     }
 
-    cost = _parse_float(event.get("cost_bps"))
+    cost = coerce_float(event.get("cost_bps"))
     if cost is not None:
         payload["cost_bps"] = cost
-    net_edge = _parse_float(event.get("net_edge_bps"))
+    net_edge = coerce_float(event.get("net_edge_bps"))
     if net_edge is not None:
         payload["net_edge_bps"] = net_edge
-    model_return = _parse_float(event.get("model_expected_return_bps"))
+    model_return = coerce_float(event.get("model_expected_return_bps"))
     if model_return is not None:
         payload["model_expected_return_bps"] = model_return
-    model_probability = _parse_float(event.get("model_success_probability"))
+    model_probability = coerce_float(event.get("model_success_probability"))
     if model_probability is not None:
         payload["model_success_probability"] = model_probability
-    latency = _parse_float(event.get("latency_ms"))
+    latency = coerce_float(event.get("latency_ms"))
     if latency is not None:
         payload["latency_ms"] = latency
 
@@ -201,13 +189,13 @@ def _event_to_payload(event: Mapping[str, object]) -> tuple[datetime | None, Map
         value = event.get(field)
         if value is not None:
             candidate[key] = value
-    expected_probability = _parse_float(event.get("expected_probability"))
+    expected_probability = coerce_float(event.get("expected_probability"))
     if expected_probability is not None:
         candidate["expected_probability"] = expected_probability
-    expected_return = _parse_float(event.get("expected_return_bps"))
+    expected_return = coerce_float(event.get("expected_return_bps"))
     if expected_return is not None:
         candidate["expected_return_bps"] = expected_return
-    notional = _parse_float(event.get("notional"))
+    notional = coerce_float(event.get("notional"))
     if notional is not None:
         candidate["notional"] = notional
 
@@ -241,7 +229,12 @@ def _collect_evaluations(args: argparse.Namespace) -> list[tuple[datetime | None
 
 def _build_summary(args: argparse.Namespace, evaluations: list[tuple[datetime | None, Mapping[str, object]]]) -> Mapping[str, object]:
     payloads = [payload for _, payload in evaluations]
-    summary_metrics = summarize_evaluation_payloads(payloads, history_limit=args.history_limit)
+    summary_model = summarize_evaluation_payloads(payloads, history_limit=args.history_limit)
+    summary_metrics = summary_model.model_dump()
+    summary_model = summarize_evaluation_payloads(
+        payloads, history_limit=args.history_limit
+    )
+    summary_metrics = summary_model.model_dump(exclude_none=True)
     filters = {
         key: value
         for key, value in {
@@ -275,7 +268,8 @@ def _build_summary(args: argparse.Namespace, evaluations: list[tuple[datetime | 
             history_payload.append(record)
         summary["history"] = history_payload
 
-    return summary
+    validated = DecisionEngineSummary.model_validate(summary)
+    return validated.model_dump()
 
 
 def main(argv: Sequence[str] | None = None) -> int:

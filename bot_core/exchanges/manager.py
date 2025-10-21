@@ -33,8 +33,14 @@ from bot_core.exchanges.base import (
 )
 from bot_core.exchanges.binance.futures import BinanceFuturesAdapter
 from bot_core.exchanges.binance.margin import BinanceMarginAdapter
+from bot_core.exchanges.bybit.futures import BybitFuturesAdapter
+from bot_core.exchanges.bybit.margin import BybitMarginAdapter
+from bot_core.exchanges.coinbase.futures import CoinbaseFuturesAdapter
+from bot_core.exchanges.coinbase.margin import CoinbaseMarginAdapter
 from bot_core.exchanges.kraken.futures import KrakenFuturesAdapter
 from bot_core.exchanges.kraken.margin import KrakenMarginAdapter
+from bot_core.exchanges.okx.futures import OKXFuturesAdapter
+from bot_core.exchanges.okx.margin import OKXMarginAdapter
 from bot_core.exchanges.health import (
     CircuitBreaker,
     HealthCheck,
@@ -130,6 +136,12 @@ register_native_adapter(exchange_id="kraken", mode=Mode.MARGIN, factory=KrakenMa
 register_native_adapter(exchange_id="zonda", mode=Mode.MARGIN, factory=ZondaMarginAdapter, supports_testnet=False)
 register_native_adapter(exchange_id="binance", mode=Mode.FUTURES, factory=BinanceFuturesAdapter)
 register_native_adapter(exchange_id="kraken", mode=Mode.FUTURES, factory=KrakenFuturesAdapter)
+register_native_adapter(exchange_id="bybit", mode=Mode.MARGIN, factory=BybitMarginAdapter)
+register_native_adapter(exchange_id="bybit", mode=Mode.FUTURES, factory=BybitFuturesAdapter)
+register_native_adapter(exchange_id="okx", mode=Mode.MARGIN, factory=OKXMarginAdapter)
+register_native_adapter(exchange_id="okx", mode=Mode.FUTURES, factory=OKXFuturesAdapter)
+register_native_adapter(exchange_id="coinbase", mode=Mode.MARGIN, factory=CoinbaseMarginAdapter)
+register_native_adapter(exchange_id="coinbase", mode=Mode.FUTURES, factory=CoinbaseFuturesAdapter)
 
 _STATUS_MAPPING = {
     "NEW": OrderStatus.OPEN,
@@ -592,6 +604,7 @@ class ExchangeManager:
         if self._paper is not None:
             log.info("Reconfiguring paper simulator with settings: %s", merged)
             self._paper = None
+        self._paper = None
 
     def set_credentials(
         self,
@@ -603,8 +616,14 @@ class ExchangeManager:
         self._api_key = (api_key or "").strip() or None
         self._secret = (secret or "").strip() or None
         self._passphrase = (passphrase or "").strip() or None
+        api_key_length = len(self._api_key or "")
+        secret_length = len(self._secret or "")
+        passphrase_length = len(self._passphrase or "")
         log.info(
             "Credentials set (lengths): api_key=%s, secret=%s, passphrase=%s",
+            api_key_length,
+            secret_length,
+            passphrase_length,
             len(self._api_key or ""),
             len(self._secret or ""),
             len(self._passphrase or ""),
@@ -705,6 +724,12 @@ class ExchangeManager:
             candidates.append(os.getenv("KRAKEN_ENVIRONMENT"))
         if self.exchange_id.startswith("zonda"):
             candidates.append(os.getenv("ZONDA_ENVIRONMENT"))
+        if self.exchange_id.startswith("bybit"):
+            candidates.append(os.getenv("BYBIT_ENVIRONMENT"))
+        if self.exchange_id.startswith("okx"):
+            candidates.append(os.getenv("OKX_ENVIRONMENT"))
+        if self.exchange_id.startswith("coinbase"):
+            candidates.append(os.getenv("COINBASE_ENVIRONMENT"))
         candidates.append(os.getenv("EXCHANGE_ENVIRONMENT"))
 
         for candidate in candidates:

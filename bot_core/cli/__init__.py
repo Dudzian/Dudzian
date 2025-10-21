@@ -21,9 +21,15 @@ try:  # pragma: no cover - PyYAML jest wymagany tylko dla konfiguracji środowis
 except ModuleNotFoundError:  # pragma: no cover - opcjonalna zależność
     yaml = None  # type: ignore[assignment]
 
+from bot_core.config.loader import load_core_config
 from bot_core.exchanges.core import Mode
 from bot_core.exchanges.health import HealthCheck, HealthMonitor, HealthStatus
 from bot_core.exchanges.manager import ExchangeManager
+from bot_core.runtime.pipeline import (
+    describe_multi_strategy_configuration,
+    describe_strategy_definitions,
+)
+from bot_core.strategies.catalog import DEFAULT_STRATEGY_CATALOG
 
 
 DEFAULT_CREDENTIALS_PATH = Path("secrets/desktop.toml")
@@ -105,6 +111,7 @@ def create_parser() -> argparse.ArgumentParser:
             "Nazwa środowiska z pliku YAML. Opcjonalna, jeśli plik definiuje "
             "defaults.environment."
         ),
+        help="Nazwa środowiska z pliku YAML, które ma zostać załadowane.",
     )
     health.add_argument(
         "--skip-public",
@@ -303,6 +310,87 @@ def create_parser() -> argparse.ArgumentParser:
         help="Nazwa środowiska, którego konfigurację należy wyświetlić.",
     )
 
+    catalog = subparsers.add_parser(
+        "strategy-catalog",
+        help="Wypisuje katalog silników strategii oraz opcjonalnie definicje z konfiguracji.",
+    )
+    catalog.add_argument(
+        "--config",
+        help="Ścieżka do pliku konfiguracji core, z którego zostaną odczytane definicje strategii.",
+    )
+    catalog.add_argument(
+        "--scheduler",
+        help="Opcjonalnie zawęża listę definicji do wskazanego scheduler-a.",
+    )
+    catalog.add_argument(
+        "--engine",
+        dest="engines",
+        action="append",
+        help="Filtruje wyniki po nazwie silnika (można podać wielokrotnie).",
+    )
+    catalog.add_argument(
+        "--capability",
+        dest="capabilities",
+        action="append",
+        help="Filtruje wyniki po wymaganej licencji/capability silnika.",
+    )
+    catalog.add_argument(
+        "--tag",
+        dest="tags",
+        action="append",
+        help="Filtruje wyniki po tagach (domyślnych lub wynikających z definicji).",
+    )
+    catalog.add_argument(
+        "--output-format",
+        choices=("text", "json", "json-pretty"),
+        default="text",
+        help="Format wyjścia (text/json/json-pretty).",
+    )
+    catalog.add_argument(
+        "--include-parameters",
+        action="store_true",
+        help="Dołącza parametry strategii przy wczytanej konfiguracji core.",
+    )
+
+    plan = subparsers.add_parser(
+        "scheduler-plan",
+        help="Buduje raport konfiguracyjny scheduler-a multi-strategy.",
+    )
+    plan.add_argument(
+        "--config",
+        required=True,
+        help="Ścieżka do pliku konfiguracji core.",
+    )
+    plan.add_argument(
+        "--scheduler",
+        help="Nazwa scheduler-a multi-strategy do opisania (domyślnie pierwszy z konfiguracji).",
+    )
+    plan.add_argument(
+        "--output-format",
+        choices=("text", "json", "json-pretty"),
+        default="text",
+        help="Format wyjścia (text/json/json-pretty).",
+    )
+    plan.add_argument(
+        "--filter-tag",
+        dest="filter_tags",
+        action="append",
+        help="Zawęża listę harmonogramów do strategii posiadających wskazany tag.",
+    )
+    plan.add_argument(
+        "--filter-strategy",
+        dest="filter_strategies",
+        action="append",
+        help="Zawęża listę harmonogramów do wskazanych nazw strategii.",
+    )
+    plan.add_argument(
+        "--no-definitions",
+        dest="include_definitions",
+        action="store_false",
+        help="Pomija sekcję definicji strategii w raporcie JSON.",
+    )
+    plan.set_defaults(include_definitions=True)
+
     return parser
 
 
@@ -464,7 +552,9 @@ def _read_environment_payload(
     path: str | Path,
 ) -> tuple[Path, Mapping[str, object] | None, dict[str, Mapping[str, object]]]:
     if yaml is None:  # pragma: no cover - opcjonalna zależność
-        raise CLIUsageError("Wczytanie konfiguracji środowisk wymaga pakietu PyYAML (pip install pyyaml).")
+        raise CLIUsageError(
+            "Wczytanie konfiguracji środowisk wymaga pakietu PyYAML (pip install pyyaml)."
+        )
 
     storage = Path(path).expanduser()
     if not storage.exists():
@@ -482,7 +572,9 @@ def _read_environment_payload(
         raise CLIUsageError(f"Plik {storage} musi zawierać słownik środowisk.")
 
     defaults_raw = payload.get("defaults")
-    defaults: Mapping[str, object] | None = defaults_raw if isinstance(defaults_raw, Mapping) else None
+    defaults: Mapping[str, object] | None = (
+        defaults_raw if isinstance(defaults_raw, Mapping) else None
+    )
 
     environments: dict[str, Mapping[str, object]] = {}
     for key, value in payload.items():
@@ -1472,6 +1564,233 @@ def show_environment(args: argparse.Namespace) -> int:
     return 0
 
 
+def show_strategy_catalog(args: argparse.Namespace) -> int:
+    output_format = getattr(args, "output_format", "text") or "text"
+    engine_filter = {value.strip().lower() for value in getattr(args, "engines", []) if value}
+    capability_filter = {
+        value.strip().lower() for value in getattr(args, "capabilities", []) if value
+    }
+    tag_filter = {value.strip().lower() for value in getattr(args, "tags", []) if value}
+
+    engines = []
+    for entry in DEFAULT_STRATEGY_CATALOG.describe_engines():
+        engine_name = str(entry.get("engine", ""))
+        normalized_engine = engine_name.lower()
+        capability = str(entry.get("capability", "") or "")
+        normalized_capability = capability.lower()
+        tags = [str(tag) for tag in entry.get("default_tags", [])]
+        normalized_tags = {tag.lower() for tag in tags}
+        if engine_filter and normalized_engine not in engine_filter:
+            continue
+        if capability_filter and normalized_capability not in capability_filter:
+            continue
+        if tag_filter and not (normalized_tags & tag_filter):
+            continue
+        engines.append(entry)
+
+    definitions: list[Mapping[str, object]] = []
+    config_path = getattr(args, "config", None)
+    scheduler_name = getattr(args, "scheduler", None)
+    if config_path:
+        try:
+            core_config = load_core_config(config_path)
+        except Exception as exc:  # pragma: no cover - błędy IO/parsingu
+            raise CLIUsageError(f"Nie udało się wczytać konfiguracji {config_path}: {exc}") from exc
+        definitions = describe_strategy_definitions(core_config)
+        if scheduler_name:
+            try:
+                plan = describe_multi_strategy_configuration(
+                    config_path=config_path,
+                    scheduler_name=scheduler_name,
+                    include_strategy_definitions=True,
+                    only_scheduler_definitions=True,
+                )
+                definitions = plan.get("strategies", [])  # type: ignore[assignment]
+            except Exception as exc:  # pragma: no cover - walidacja konfiguracji
+                raise CLIUsageError(str(exc)) from exc
+        filtered_definitions: list[Mapping[str, object]] = []
+        for entry in definitions:
+            engine_name = str(entry.get("engine", ""))
+            normalized_engine = engine_name.lower()
+            capability = str(entry.get("capability", "") or "")
+            normalized_capability = capability.lower()
+            tags = [str(tag) for tag in entry.get("tags", [])]
+            normalized_tags = {tag.lower() for tag in tags}
+            if engine_filter and normalized_engine not in engine_filter:
+                continue
+            if capability_filter and normalized_capability not in capability_filter:
+                continue
+            if tag_filter and not (normalized_tags & tag_filter):
+                continue
+            payload = dict(entry)
+            if not getattr(args, "include_parameters", False):
+                payload.pop("parameters", None)
+                payload.pop("metadata", None)
+            filtered_definitions.append(payload)
+        definitions = filtered_definitions
+
+    payload: dict[str, object] = {"engines": engines}
+    if config_path:
+        payload["config_path"] = str(Path(config_path).expanduser())
+        if scheduler_name:
+            payload["scheduler"] = scheduler_name
+        payload["definitions"] = definitions
+
+    if output_format in {"json", "json-pretty"}:
+        json_kwargs: dict[str, object] = {"ensure_ascii": False}
+        if output_format == "json-pretty":
+            json_kwargs["indent"] = 2
+            json_kwargs["sort_keys"] = True
+        print(json.dumps(payload, **json_kwargs))  # type: ignore[arg-type]
+        return 0
+
+    print("Silniki strategii dostępne w katalogu:")
+    if not engines:
+        print("  (brak wyników po zastosowaniu filtrów)")
+    else:
+        for entry in engines:
+            engine = entry.get("engine", "(nieznany)")
+            capability = entry.get("capability") or "-"
+            tags = ", ".join(entry.get("default_tags", [])) or "-"
+            print(f"  * {engine} (capability={capability}, tags={tags})")
+
+    if config_path:
+        print()
+        if not definitions:
+            print("Definicje strategii: (brak wyników po zastosowaniu filtrów)")
+        else:
+            print("Definicje strategii:")
+            for entry in definitions:
+                name = entry.get("name", "(bez nazwy)")
+                engine = entry.get("engine", "(nieznany)")
+                risk_profile = entry.get("risk_profile") or "-"
+                tags = ", ".join(entry.get("tags", [])) or "-"
+                capability = entry.get("capability") or "-"
+                print(
+                    "  * {name} -> {engine} (risk_profile={risk_profile}, capability={capability}, tags={tags})".format(
+                        name=name,
+                        engine=engine,
+                        risk_profile=risk_profile,
+                        capability=capability,
+                        tags=tags,
+                    )
+                )
+    return 0
+
+
+def show_scheduler_plan(args: argparse.Namespace) -> int:
+    output_format = getattr(args, "output_format", "text") or "text"
+    include_definitions = bool(getattr(args, "include_definitions", True))
+    scheduler_name = getattr(args, "scheduler", None)
+    try:
+        plan = describe_multi_strategy_configuration(
+            config_path=args.config,
+            scheduler_name=scheduler_name,
+            include_strategy_definitions=include_definitions,
+            only_scheduler_definitions=include_definitions and bool(scheduler_name),
+        )
+    except Exception as exc:  # pragma: no cover - walidacja konfiguracji
+        raise CLIUsageError(str(exc)) from exc
+
+    filter_tags = {value.strip().lower() for value in getattr(args, "filter_tags", []) if value}
+    filter_strategies = {
+        value.strip().lower() for value in getattr(args, "filter_strategies", []) if value
+    }
+
+    schedules = []
+    for entry in plan.get("schedules", []):
+        name = str(entry.get("name", ""))
+        strategy = str(entry.get("strategy", ""))
+        normalized_name = name.lower()
+        normalized_strategy = strategy.lower()
+        if filter_strategies and normalized_strategy not in filter_strategies and normalized_name not in filter_strategies:
+            continue
+        tags = {str(tag).lower() for tag in entry.get("tags", [])}
+        if filter_tags and not (tags & filter_tags):
+            continue
+        schedules.append(entry)
+
+    plan["schedules"] = schedules
+
+    if include_definitions and "strategies" in plan:
+        used_strategies = {entry.get("strategy") for entry in schedules}
+        filtered_definitions = [
+            entry
+            for entry in plan.get("strategies", [])
+            if entry.get("name") in used_strategies or not used_strategies
+        ]
+        plan["strategies"] = filtered_definitions
+
+    if output_format in {"json", "json-pretty"}:
+        json_kwargs: dict[str, object] = {"ensure_ascii": False}
+        if output_format == "json-pretty":
+            json_kwargs["indent"] = 2
+            json_kwargs["sort_keys"] = True
+        print(json.dumps(plan, **json_kwargs))  # type: ignore[arg-type]
+        return 0
+
+    config_path = plan.get("config_path")
+    scheduler_label = plan.get("scheduler")
+    print(
+        "Plan scheduler-a '{scheduler}' (config={config})".format(
+            scheduler=scheduler_label,
+            config=config_path,
+        )
+    )
+    policy = plan.get("capital_policy", {})
+    policy_name = policy.get("name", "(nieznana)")
+    interval = policy.get("configured_rebalance_seconds") or policy.get("policy_interval_seconds")
+    interval_text = f", rebalance_interval={interval}" if interval else ""
+    print(f"Polityka kapitału: {policy_name}{interval_text}")
+    print(f"Harmonogramy ({len(schedules)}):")
+    if not schedules:
+        print("  (brak wyników po zastosowaniu filtrów)")
+    for entry in schedules:
+        tags = ", ".join(entry.get("tags", [])) or "-"
+        interval = entry.get("interval") or "-"
+        print(
+            "  * {name}: {strategy} [profile={profile}] cadence={cadence}s drift={drift}s max_signals={max_signals} interval={interval} tags={tags}".format(
+                name=entry.get("name", "(bez nazwy)"),
+                strategy=entry.get("strategy", "(nieznana)"),
+                profile=entry.get("risk_profile", "-"),
+                cadence=entry.get("cadence_seconds", "-"),
+                drift=entry.get("max_drift_seconds", "-"),
+                max_signals=entry.get("max_signals", "-"),
+                interval=interval,
+                tags=tags,
+            )
+        )
+
+    suspensions = plan.get("initial_suspensions", [])
+    if suspensions:
+        print("Początkowe zawieszenia:")
+        for suspension in suspensions:
+            reason = suspension.get("reason") or "-"
+            until = suspension.get("until") or "-"
+            duration = suspension.get("duration_seconds")
+            duration_text = f", duration={duration}s" if duration is not None else ""
+            print(
+                f"  * {suspension.get('kind')}::{suspension.get('target')} (reason={reason}, until={until}{duration_text})"
+            )
+
+    if plan.get("initial_signal_limits"):
+        print("Początkowe nadpisania limitów sygnałów:")
+        for strategy_name, profiles in plan["initial_signal_limits"].items():
+            for profile, payload in profiles.items():
+                reason = payload.get("reason") or "-"
+                until = payload.get("until") or "-"
+                print(
+                    f"  * {strategy_name}/{profile}: limit={payload.get('limit')} reason={reason} until={until}"
+                )
+
+    if plan.get("signal_limits"):
+        print("Stałe limity sygnałów:")
+        for strategy_name, profiles in plan["signal_limits"].items():
+            for profile, payload in profiles.items():
+                print(f"  * {strategy_name}/{profile}: limit={payload.get('limit')}")
+
+    return 0
+
 def main(
     argv: Sequence[str] | None = None,
     *,
@@ -1486,6 +1805,10 @@ def main(
             return list_environments(args)
         if args.command == "show-environment":
             return show_environment(args)
+        if args.command == "strategy-catalog":
+            return show_strategy_catalog(args)
+        if args.command == "scheduler-plan":
+            return show_scheduler_plan(args)
         raise CLIUsageError(f"Nieznana komenda: {args.command}")
     except CLIUsageError as exc:
         print(f"Błąd: {exc}", file=sys.stderr)
@@ -1499,4 +1822,6 @@ __all__ = [
     "CLIUsageError",
     "list_environments",
     "show_environment",
+    "show_strategy_catalog",
+    "show_scheduler_plan",
 ]

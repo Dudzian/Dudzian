@@ -36,6 +36,7 @@ from bot_core.ai.regime import (
     RiskLevel,
 )
 from bot_core.ai.config_loader import load_risk_thresholds
+from bot_core.risk.engine import ThresholdRiskEngine
 
 try:  # pragma: no cover - decision module opcjonalny
     from bot_core.decision import DecisionCandidate, DecisionEvaluation, DecisionOrchestrator
@@ -57,6 +58,23 @@ _MISSING_DECISION_STATE = "<no-state>"
 _MISSING_DECISION_REASON = "<no-reason>"
 _MISSING_DECISION_MODE = "<no-mode>"
 _CONTROLLER_HISTORY_DEFAULT_LIMIT = 32
+
+
+class GuardrailTimelineRecords(list):
+    """Lista kubełków timeline'u guardrail wraz z metadanymi podsumowania."""
+
+    def __init__(self, records: Iterable[dict[str, Any]], summary: Mapping[str, Any]):
+        super().__init__(records)
+        self.summary: dict[str, Any] = dict(summary)
+
+
+def _extract_guardrail_timeline_metadata(summary: Mapping[str, Any]) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    for key in ("services", "guardrail_trigger_thresholds", "guardrail_trigger_values"):
+        value = summary.get(key)
+        if value is not None:
+            metadata[key] = copy.deepcopy(value)
+    return metadata
 
 
 class EmitterLike(Protocol):
@@ -193,12 +211,12 @@ class AutoTrader:
         self.execution_service = execution_service
         self.data_provider = data_provider
         self.bootstrap_context = bootstrap_context
-        self.decision_orchestrator = (
+        bootstrap_orchestrator = (
             getattr(bootstrap_context, "decision_orchestrator", None)
             if bootstrap_context is not None
             else None
         )
-        self._decision_risk_engine = (
+        bootstrap_risk_engine = (
             getattr(bootstrap_context, "risk_engine", None)
             if bootstrap_context is not None
             else None
@@ -208,10 +226,38 @@ class AutoTrader:
             if bootstrap_context is not None
             else None
         )
-        self.core_risk_engine = core_risk_engine
+        if core_risk_engine is not None:
+            self.core_risk_engine = core_risk_engine
+        else:
+            self.core_risk_engine = bootstrap_risk_engine or self._build_default_risk_engine()
+        self._decision_risk_engine = bootstrap_risk_engine or self.core_risk_engine
+        self.decision_orchestrator = bootstrap_orchestrator
+        if (
+            self.decision_orchestrator is None
+            and self._decision_engine_config is not None
+            and DecisionOrchestrator is not None
+        ):
+            try:
+                self.decision_orchestrator = DecisionOrchestrator(self._decision_engine_config)
+            except Exception:  # pragma: no cover - diagnostyka inicjalizacji
+                LOGGER.debug("AutoTrader failed to initialise DecisionOrchestrator", exc_info=True)
+                self.decision_orchestrator = None
+        if (
+            self.decision_orchestrator is not None
+            and hasattr(self.core_risk_engine, "attach_decision_orchestrator")
+        ):
+            try:
+                self.core_risk_engine.attach_decision_orchestrator(self.decision_orchestrator)
+            except Exception:  # pragma: no cover - defensywne logowanie
+                LOGGER.debug(
+                    "AutoTrader could not attach DecisionOrchestrator to risk engine",
+                    exc_info=True,
+                )
         self.core_execution_service = core_execution_service
         self.ai_connector = ai_connector
         self.ai_manager: Any | None = getattr(gui, "ai_mgr", None)
+        if self.ai_manager is None and bootstrap_context is not None:
+            self.ai_manager = getattr(bootstrap_context, "ai_manager", None)
         self._thresholds_loader: Callable[[], Mapping[str, Any]] = (
             thresholds_loader or load_risk_thresholds
         )
@@ -561,6 +607,13 @@ class AutoTrader:
             return self.ai_connector
         return None
 
+    def _build_default_risk_engine(self) -> Any | None:
+        try:
+            return ThresholdRiskEngine()
+        except Exception:  # pragma: no cover - środowisko testowe może nie mieć zależności
+            LOGGER.debug("AutoTrader could not create default ThresholdRiskEngine", exc_info=True)
+            return None
+
     def _ai_feature_columns(self, market_data: pd.DataFrame) -> list[str]:
         numeric_cols = [
             str(column)
@@ -797,6 +850,7 @@ class AutoTrader:
         assessment: MarketRegimeAssessment,
         last_return: float,
         ai_context: Mapping[str, object] | None = None,
+        ai_manager: Any | None = None,
     ) -> Any | None:
         if DecisionCandidate is None:
             return None
@@ -826,25 +880,45 @@ class AutoTrader:
                 "generated_at": timestamp,
             },
         }
+        decision_section = metadata["decision_engine"]
         expected_return = float(last_return * 10_000.0)
         if signal == "sell":
             expected_return = -abs(expected_return)
         elif signal == "buy":
             expected_return = abs(expected_return)
         expected_probability = max(0.0, min(1.0, float(assessment.confidence)))
+        candidate_notional = self._estimate_candidate_notional(symbol)
+        if ai_manager is not None and hasattr(ai_manager, "build_decision_engine_payload"):
+            try:
+                engine_payload = ai_manager.build_decision_engine_payload(
+                    strategy=self.current_strategy,
+                    action="enter" if signal == "buy" else "exit",
+                    risk_profile=self._decision_risk_profile_name(),
+                    symbol=symbol,
+                    notional=candidate_notional,
+                    features=features,
+                )
+            except Exception:  # pragma: no cover - diagnostyka integracji
+                engine_payload = None
+                LOGGER.debug("AI manager decision payload generation failed", exc_info=True)
+            else:
+                if isinstance(engine_payload, Mapping):
+                    decision_section.update(engine_payload)
+                    if ai_context is None and isinstance(engine_payload.get("ai"), Mapping):
+                        ai_context = engine_payload.get("ai")
         if ai_context:
             expected_return, expected_probability, ai_payload = self._normalize_ai_context(
                 ai_context,
                 default_return_bps=expected_return,
                 default_probability=expected_probability,
             )
-            metadata["decision_engine"]["ai"] = ai_payload
+            decision_section["ai"] = ai_payload
         candidate = DecisionCandidate(
             strategy=self.current_strategy,
             action="enter" if signal == "buy" else "exit",
             risk_profile=self._decision_risk_profile_name(),
             symbol=symbol,
-            notional=self._estimate_candidate_notional(symbol),
+            notional=candidate_notional,
             expected_return_bps=expected_return,
             expected_probability=expected_probability,
             metadata=metadata,
@@ -923,6 +997,7 @@ class AutoTrader:
         assessment: MarketRegimeAssessment,
         last_return: float,
         ai_context: Mapping[str, object] | None = None,
+        ai_manager: Any | None = None,
     ) -> Any | None:
         orchestrator = self._resolve_decision_orchestrator()
         if orchestrator is None or DecisionCandidate is None:
@@ -934,6 +1009,7 @@ class AutoTrader:
             assessment=assessment,
             last_return=last_return,
             ai_context=ai_context,
+            ai_manager=ai_manager,
         )
         if candidate is None:
             return None
@@ -2472,6 +2548,7 @@ class AutoTrader:
                 assessment=assessment,
                 last_return=last_return,
                 ai_context=ai_context,
+                ai_manager=ai_manager,
             )
             if decision_evaluation is not None and not getattr(
                 decision_evaluation, "accepted", True
@@ -5016,6 +5093,22 @@ class AutoTrader:
             "first_timestamp": None,
             "last_timestamp": None,
         }
+        summary_totals = {
+            "approved": 0,
+            "rejected": 0,
+            "unknown": 0,
+            "errors": 0,
+            "raw_true": 0,
+            "raw_false": 0,
+            "raw_none": 0,
+        }
+        total_services: dict[str, dict[str, int]] | None = None
+        if include_services:
+            summary["services"] = {}
+            total_services = {}
+        summary.update(summary_totals)
+        summary["approval_rate"] = 0.0
+        summary["error_rate"] = 0.0
         if not filtered_records:
             return summary
 
@@ -5059,6 +5152,23 @@ class AutoTrader:
             has_error = "error" in entry
             service_key = entry.get("service") or _UNKNOWN_SERVICE
 
+            if normalized_value is True:
+                summary_totals["approved"] += 1
+            elif normalized_value is False:
+                summary_totals["rejected"] += 1
+            else:
+                summary_totals["unknown"] += 1
+
+            if raw_value is True:
+                summary_totals["raw_true"] += 1
+            elif raw_value is False:
+                summary_totals["raw_false"] += 1
+            else:
+                summary_totals["raw_none"] += 1
+
+            if has_error:
+                summary_totals["errors"] += 1
+
             self._update_decision_bucket(
                 bucket_payload,
                 normalized_value=normalized_value,
@@ -5066,6 +5176,45 @@ class AutoTrader:
                 has_error=has_error,
                 service_key=str(service_key),
             )
+
+            if total_services is not None:
+                service_bucket = total_services.setdefault(
+                    str(service_key),
+                    {"evaluations": 0, "errors": 0},
+                )
+                service_bucket["evaluations"] += 1
+                if has_error:
+                    service_bucket["errors"] += 1
+                service_totals = total_services.setdefault(
+                    str(service_key),
+                    {
+                        "evaluations": 0,
+                        "approved": 0,
+                        "rejected": 0,
+                        "unknown": 0,
+                        "errors": 0,
+                        "raw_true": 0,
+                        "raw_false": 0,
+                        "raw_none": 0,
+                    },
+                )
+                service_totals["evaluations"] += 1
+                if normalized_value is True:
+                    service_totals["approved"] += 1
+                elif normalized_value is False:
+                    service_totals["rejected"] += 1
+                else:
+                    service_totals["unknown"] += 1
+
+                if raw_value is True:
+                    service_totals["raw_true"] += 1
+                elif raw_value is False:
+                    service_totals["raw_false"] += 1
+                else:
+                    service_totals["raw_none"] += 1
+
+                if has_error:
+                    service_totals["errors"] += 1
 
             if include_decision_dimensions:
                 decision_payload = entry.get("decision")
@@ -5150,6 +5299,41 @@ class AutoTrader:
         summary["buckets"] = buckets_output
         summary["first_timestamp"] = first_ts
         summary["last_timestamp"] = last_ts
+        summary.update(summary_totals)
+        total_count = summary.get("total", 0) or 0
+        summary["approval_rate"] = (
+            summary_totals["approved"] / total_count if total_count else 0.0
+        )
+        summary["error_rate"] = (
+            summary_totals["errors"] / total_count if total_count else 0.0
+        )
+
+        if total_services is not None:
+            summary["services"] = {
+                service_name: {
+                    "evaluations": totals.get("evaluations", 0),
+                    "approved": totals.get("approved", 0),
+                    "rejected": totals.get("rejected", 0),
+                    "unknown": totals.get("unknown", 0),
+                    "errors": totals.get("errors", 0),
+                    "raw_true": totals.get("raw_true", 0),
+                    "raw_false": totals.get("raw_false", 0),
+                    "raw_none": totals.get("raw_none", 0),
+                }
+                for service_name, totals in sorted(
+                    total_services.items(),
+                    key=lambda item: (-item[1].get("evaluations", 0), item[0]),
+                )
+            }
+
+        if total_services is not None:
+            summary["services"] = {
+                service: {
+                    "evaluations": payload.get("evaluations", 0),
+                    "errors": payload.get("errors", 0),
+                }
+                for service, payload in sorted(total_services.items())
+            }
 
         if missing_bucket is not None and missing_bucket.get("total", 0):
             self._finalize_decision_bucket(missing_bucket)
@@ -5337,6 +5521,41 @@ class AutoTrader:
                 missing_record["start"] = None
                 missing_record["end"] = None
                 records.append(missing_record)
+
+        metadata = _extract_guardrail_timeline_metadata(summary)
+
+        return GuardrailTimelineRecords(records, metadata)
+        if include_services and isinstance(summary.get("services"), Mapping):
+            summary_record = {
+                "bucket_type": "summary",
+                "index": None,
+                "start": self._normalize_timestamp_for_export(
+                    summary.get("first_timestamp"),
+                    coerce=coerce_timestamps,
+                    tz=tz,
+                ),
+                "end": self._normalize_timestamp_for_export(
+                    summary.get("last_timestamp"),
+                    coerce=coerce_timestamps,
+                    tz=tz,
+                ),
+                "total": summary.get("total", 0),
+                "approved": summary.get("approved", 0),
+                "rejected": summary.get("rejected", 0),
+                "unknown": summary.get("unknown", 0),
+                "errors": summary.get("errors", 0),
+                "raw_true": summary.get("raw_true", 0),
+                "raw_false": summary.get("raw_false", 0),
+                "raw_none": summary.get("raw_none", 0),
+                "approval_rate": summary.get("approval_rate", 0.0),
+                "error_rate": summary.get("error_rate", 0.0),
+                "services": copy.deepcopy(summary.get("services")),
+            }
+            if include_decision_dimensions:
+                summary_record.setdefault("states", {})
+                summary_record.setdefault("reasons", {})
+                summary_record.setdefault("modes", {})
+            records.append(summary_record)
 
         return records
 
@@ -7075,6 +7294,7 @@ class AutoTrader:
         include_missing_bucket: bool = False,
         coerce_timestamps: bool = False,
         tz: tzinfo | None = timezone.utc,
+        include_summary_metadata: bool = False,
     ) -> list[dict[str, Any]]:
         summary = self.summarize_guardrail_timeline(
             bucket_s=bucket_s,
@@ -7125,6 +7345,29 @@ class AutoTrader:
                 missing_record["end"] = None
                 records.append(missing_record)
 
+        if include_summary_metadata:
+            summary_record = {
+                key: copy.deepcopy(value)
+                for key, value in summary.items()
+                if key != "buckets"
+            }
+            summary_record.setdefault("bucket_type", "summary")
+            summary_record.setdefault("index", None)
+            summary_record.setdefault("start", None)
+            summary_record.setdefault("end", None)
+            summary_record.setdefault("guardrail_events", summary.get("total", 0))
+            if coerce_timestamps:
+                for timestamp_key in ("first_timestamp", "last_timestamp"):
+                    if timestamp_key in summary_record:
+                        summary_record[timestamp_key] = (
+                            self._normalize_timestamp_for_export(
+                                summary_record[timestamp_key],
+                                coerce=True,
+                                tz=tz,
+                            )
+                        )
+            records.append(summary_record)
+
         return records
 
     def guardrail_timeline_to_dataframe(
@@ -7158,6 +7401,7 @@ class AutoTrader:
         include_missing_bucket: bool = False,
         coerce_timestamps: bool = True,
         tz: tzinfo | None = timezone.utc,
+        include_summary_metadata: bool = False,
     ) -> pd.DataFrame:
         records = self.guardrail_timeline_to_records(
             bucket_s=bucket_s,
@@ -7188,10 +7432,13 @@ class AutoTrader:
             include_missing_bucket=include_missing_bucket,
             coerce_timestamps=coerce_timestamps,
             tz=tz,
+            include_summary_metadata=include_summary_metadata,
         )
 
+        summary_metadata = getattr(records, "summary", None)
+
         if not records:
-            return pd.DataFrame(
+            df = pd.DataFrame(
                 columns=[
                     "index",
                     "start",
@@ -7207,8 +7454,13 @@ class AutoTrader:
                     "bucket_type",
                 ]
             )
+        else:
+            df = pd.DataFrame(records)
 
-        return pd.DataFrame(records)
+        if summary_metadata is not None:
+            df.attrs["guardrail_summary"] = copy.deepcopy(summary_metadata)
+
+        return df
 
     def risk_evaluations_to_dataframe(
         self,

@@ -66,6 +66,9 @@ ActivationController::ActivationController(QObject* parent)
     , m_rotationLog(envValue("DUDZIAN_ACTIVATION_ROTATION", QStringLiteral("var/licenses/fingerprint_rotation.json")))
     , m_registryPath(envValue("DUDZIAN_LICENSE_REGISTRY", QStringLiteral("var/licenses/registry.jsonl")))
     , m_dongleHint(envValue("DUDZIAN_ACTIVATION_DONGLE"))
+    , m_primaryLicensePath(envValue("DUDZIAN_ACTIVATION_LICENSE", QStringLiteral("var/licenses/active/license.json")))
+    , m_fallbackLicensePath(envValue("DUDZIAN_ACTIVATION_LICENSE_FALLBACK", QStringLiteral("config/oem_fallback_license.json")))
+    , m_licenseKeysFile(envValue("DUDZIAN_ACTIVATION_LICENSE_KEYS"))
 {
     refresh();
 }
@@ -110,15 +113,41 @@ void ActivationController::setDongleHint(const QString& value)
     refresh();
 }
 
+void ActivationController::setPrimaryLicensePath(const QString& value)
+{
+    if (m_primaryLicensePath == value)
+        return;
+    m_primaryLicensePath = value;
+    refresh();
+}
+
+void ActivationController::setFallbackLicensePath(const QString& value)
+{
+    if (m_fallbackLicensePath == value)
+        return;
+    m_fallbackLicensePath = value;
+    refresh();
+}
+
+void ActivationController::setLicenseKeysFile(const QString& value)
+{
+    if (m_licenseKeysFile == value)
+        return;
+    m_licenseKeysFile = value;
+    refresh();
+}
+
 void ActivationController::refresh()
 {
     updateFingerprint();
     updateLicenses();
+    updateOemLicense();
 }
 
 void ActivationController::reloadRegistry()
 {
     updateLicenses();
+    updateOemLicense();
 }
 
 bool ActivationController::exportFingerprint(const QUrl& destination) const
@@ -206,6 +235,68 @@ void ActivationController::updateLicenses()
 {
     m_licenses = parseRegistryRecords(m_registryPath);
     Q_EMIT licensesChanged();
+}
+
+void ActivationController::updateOemLicense()
+{
+    const QString licensePath = m_primaryLicensePath.trimmed();
+    if (licensePath.isEmpty()) {
+        if (!m_oemLicenseSummary.isEmpty()) {
+            m_oemLicenseSummary.clear();
+            Q_EMIT oemLicenseChanged();
+        }
+        return;
+    }
+
+    QStringList args;
+    args << QStringLiteral("-m") << QStringLiteral("bot_core.security.ui_bridge") << QStringLiteral("oem-validate");
+    args << QStringLiteral("--license-path") << licensePath;
+    if (!m_fallbackLicensePath.trimmed().isEmpty())
+        args << QStringLiteral("--fallback-path") << m_fallbackLicensePath.trimmed();
+    if (!m_licenseKeysFile.trimmed().isEmpty())
+        args << QStringLiteral("--license-keys") << m_licenseKeysFile.trimmed();
+    if (!m_keysFile.trimmed().isEmpty())
+        args << QStringLiteral("--fingerprint-keys") << m_keysFile.trimmed();
+
+    QProcess process;
+    process.start(m_pythonExecutable, args);
+    if (!process.waitForFinished(10000)) {
+        process.kill();
+        if (!m_oemLicenseSummary.isEmpty()) {
+            m_oemLicenseSummary.clear();
+            Q_EMIT oemLicenseChanged();
+        }
+        setError(tr("Timeout podczas walidacji licencji OEM."));
+        return;
+    }
+
+    if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
+        const QString stderrText = QString::fromUtf8(process.readAllStandardError());
+        if (!m_oemLicenseSummary.isEmpty()) {
+            m_oemLicenseSummary.clear();
+            Q_EMIT oemLicenseChanged();
+        }
+        setError(tr("Walidacja licencji OEM nie powiodła się: %1").arg(stderrText.trimmed()));
+        return;
+    }
+
+    const QByteArray output = process.readAllStandardOutput();
+    QJsonParseError error{};
+    const QJsonDocument doc = QJsonDocument::fromJson(output, &error);
+    if (error.error != QJsonParseError::NoError) {
+        if (!m_oemLicenseSummary.isEmpty()) {
+            m_oemLicenseSummary.clear();
+            Q_EMIT oemLicenseChanged();
+        }
+        setError(tr("Nie udało się sparsować JSON walidacji licencji: %1").arg(error.errorString()));
+        return;
+    }
+
+    QVariantMap summary = doc.object().toVariantMap();
+    if (summary != m_oemLicenseSummary) {
+        m_oemLicenseSummary = summary;
+        Q_EMIT oemLicenseChanged();
+    }
 }
 
 void ActivationController::setError(const QString& message)

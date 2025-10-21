@@ -738,6 +738,70 @@ Drawer {
                     }
 
                     GroupBox {
+                        title: qsTr("Tryb offline i automatyzacja")
+                        Layout.fillWidth: true
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 12
+
+                            Label {
+                                wrapMode: Text.WordWrap
+                                text: appController && appController.offlineMode
+                                      ? qsTr("Status: %1").arg(appController.offlineDaemonStatus)
+                                      : qsTr("Tryb offline jest nieaktywny. Uruchom aplikację z parametrem --offline-mode, aby korzystać z lokalnego daemona REST.")
+                                color: appController && appController.offlineMode ? palette.text : palette.mid
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                visible: appController && appController.offlineMode
+                                spacing: 8
+
+                                Label {
+                                    text: qsTr("Konfiguracja")
+                                    Layout.alignment: Qt.AlignVCenter
+                                }
+
+                                TextField {
+                                    Layout.fillWidth: true
+                                    readOnly: true
+                                    text: appController && appController.offlineStrategyPath.length > 0
+                                          ? appController.offlineStrategyPath
+                                          : qsTr("(brak pliku)")
+                                    selectByMouse: true
+                                }
+                            }
+
+                            Label {
+                                visible: appController && appController.offlineMode
+                                text: appController && appController.offlineAutomationRunning
+                                      ? qsTr("Auto-run: aktywny")
+                                      : qsTr("Auto-run: zatrzymany")
+                                color: palette.text
+                            }
+
+                            RowLayout {
+                                Layout.alignment: Qt.AlignLeft
+                                spacing: 12
+                                visible: appController && appController.offlineMode
+
+                                Button {
+                                    text: qsTr("Start auto-run")
+                                    enabled: appController && !appController.offlineAutomationRunning
+                                    onClicked: appController.startOfflineAutomation()
+                                }
+
+                                Button {
+                                    text: qsTr("Stop auto-run")
+                                    enabled: appController && appController.offlineAutomationRunning
+                                    onClicked: appController.stopOfflineAutomation()
+                                }
+                            }
+                        }
+                    }
+
+                    GroupBox {
                         title: qsTr("DecisionOrchestrator")
                         Layout.fillWidth: true
 

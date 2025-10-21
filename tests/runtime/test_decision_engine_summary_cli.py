@@ -36,7 +36,6 @@ def _record_event(
         risk_profile="balanced",
         symbol=symbol,
         side=side,
-        side="BUY",
         strategy=strategy,
         schedule=schedule,
         status=status,
@@ -79,7 +78,6 @@ def test_export_decision_engine_summary(tmp_path: Path) -> None:
             "generated_at": "2024-05-01T00:00:00Z",
             "latency_ms": "42.0",
             "risk_flags": "volatility_spike",
-            "decision_thresholds": json.dumps({"min_probability": 0.6, "max_cost_bps": 18.0}),
             "generated_at": "2024-05-01T00:00:00Z",
             "latency_ms": "42.0",
         },
@@ -115,9 +113,6 @@ def test_export_decision_engine_summary(tmp_path: Path) -> None:
             "latency_ms": "55.0",
             "risk_flags": "liquidity",
             "stress_failures": "stress_liquidity",
-            "decision_thresholds": json.dumps({"min_probability": 0.65, "max_cost_bps": 12.0}),
-            "decision_reasons": "too_costly",
-            "latency_ms": "55.0",
         },
     )
 
