@@ -58,6 +58,9 @@ public:
     QVector<QPair<QByteArray, QByteArray>> authMetadataForTesting() const override;
     HealthCheckResult check() override;
 
+    bool hasChannelForTesting() const;
+    bool hasStubForTesting() const;
+
     struct PreflightResult {
         bool        ok = false;
         QStringList errors;

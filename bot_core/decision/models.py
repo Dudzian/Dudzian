@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Mapping, MutableMapping, Sequence
 
+from pydantic import BaseModel, ConfigDict
+
 
 @dataclass(slots=True)
 class DecisionCandidate:
@@ -182,6 +184,90 @@ class DecisionEvaluation:
         if self.thresholds_snapshot is not None:
             payload["thresholds"] = dict(self.thresholds_snapshot)
         return payload
+
+
+class DecisionEngineMetricSummary(BaseModel):
+    """Podsumowanie metryki z rozbiciem na akceptacje i odrzucenia."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    total_sum: float | None = None
+    total_avg: float | None = None
+    total_count: int | None = None
+    accepted_sum: float | None = None
+    accepted_avg: float | None = None
+    accepted_count: int | None = None
+    rejected_sum: float | None = None
+    rejected_avg: float | None = None
+    rejected_count: int | None = None
+
+
+class DecisionEngineBreakdownEntry(BaseModel):
+    """Reprezentuje raport dla pojedynczego klucza breakdownu."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    total: int
+    accepted: int
+    rejected: int
+    acceptance_rate: float
+    metrics: Mapping[str, DecisionEngineMetricSummary] | None = None
+
+
+class DecisionEngineSummary(BaseModel):
+    """Walidowany schemat raportu Decision Engine."""
+
+    model_config = ConfigDict(extra="allow")
+
+    total: int
+    accepted: int
+    rejected: int
+    acceptance_rate: float
+    history_limit: int | None = None
+    history_window: int
+    rejection_reasons: Mapping[str, int]
+    unique_rejection_reasons: int
+    unique_risk_flags: int
+    risk_flags_with_accepts: int
+    unique_stress_failures: int
+    stress_failures_with_accepts: int
+    unique_models: int
+    models_with_accepts: int
+    unique_actions: int
+    actions_with_accepts: int
+    unique_strategies: int
+    strategies_with_accepts: int
+    unique_symbols: int
+    symbols_with_accepts: int
+    full_total: int
+    current_acceptance_streak: int
+    current_rejection_streak: int
+    longest_acceptance_streak: int
+    longest_rejection_streak: int
+    history_start_generated_at: str | None = None
+    full_accepted: int | None = None
+    full_rejected: int | None = None
+    full_acceptance_rate: float | None = None
+    risk_flag_counts: Mapping[str, int] | None = None
+    risk_flag_breakdown: Mapping[str, DecisionEngineBreakdownEntry] | None = None
+    stress_failure_counts: Mapping[str, int] | None = None
+    stress_failure_breakdown: (
+        Mapping[str, DecisionEngineBreakdownEntry] | None
+    ) = None
+    model_usage: Mapping[str, int] | None = None
+    model_breakdown: Mapping[str, DecisionEngineBreakdownEntry] | None = None
+    action_usage: Mapping[str, int] | None = None
+    action_breakdown: Mapping[str, DecisionEngineBreakdownEntry] | None = None
+    strategy_usage: Mapping[str, int] | None = None
+    strategy_breakdown: Mapping[str, DecisionEngineBreakdownEntry] | None = None
+    symbol_usage: Mapping[str, int] | None = None
+    symbol_breakdown: Mapping[str, DecisionEngineBreakdownEntry] | None = None
+    latest_model: str | None = None
+    latest_status: str | None = None
+    latest_risk_flags: Sequence[str] | None = None
+    latest_stress_failures: Sequence[str] | None = None
+    latest_model_selection: Mapping[str, object] | None = None
+    latest_candidate: Mapping[str, object] | None = None
 
 
 @dataclass(slots=True)

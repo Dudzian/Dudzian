@@ -13,7 +13,7 @@ import pytest
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from scripts import run_multi_strategy_scheduler  # type: ignore  # noqa: E402
-from bot_core.runtime.multi_strategy_scheduler import FixedWeightAllocation
+from bot_core.runtime.capital_policies import FixedWeightAllocation
 from bot_core.security.guards import LicenseCapabilityError
 from bot_core.security.license import LicenseValidationError
 

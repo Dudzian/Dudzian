@@ -9,6 +9,16 @@ except Exception:  # pragma: no cover - brak zależności dla testów
     DecisionOrchestrator = None  # type: ignore[assignment]
 
 from .summary import DecisionSummaryAggregator, summarize_evaluation_payloads
+from .ai_connector import AIManagerDecisionConnector
+from .models import (
+    DecisionCandidate,
+    DecisionEngineSummary,
+    DecisionEvaluation,
+    RiskSnapshot,
+)
+from .orchestrator import DecisionOrchestrator
+from .summary import DecisionEngineSummary, summarize_evaluation_payloads
+from .utils import coerce_float
 
 __all__ = [
     "DecisionCandidate",
@@ -17,5 +27,7 @@ __all__ = [
     "AIManagerDecisionConnector",
     "RiskSnapshot",
     "DecisionSummaryAggregator",
+    "DecisionEngineSummary",
     "summarize_evaluation_payloads",
+    "coerce_float",
 ]

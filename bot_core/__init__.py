@@ -1,4 +1,4 @@
-"""Nowa modularna architektura bota handlowego."""
+"""Podstawowy pakiet runtime bota handlowego."""
 
 try:  # pragma: no cover - defensywne importy podczas testów
     from bot_core.alerts import (
@@ -99,3 +99,4 @@ __all__ = [
 
 if MetricsRegistry is not None and get_global_metrics_registry is not None:  # pragma: no cover
     __all__ += ["MetricsRegistry", "get_global_metrics_registry"]
+__all__: list[str] = []

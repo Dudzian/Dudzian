@@ -47,26 +47,25 @@ from bot_core.security.guards import (
     LicenseCapabilityError,
     get_capability_guard,
 )
-from bot_core.runtime.multi_strategy_scheduler import (
+from bot_core.runtime.capital_policies import (
     BlendedCapitalAllocation,
     CapitalAllocationPolicy,
     DrawdownAdaptiveAllocation,
     EqualWeightAllocation,
-    MetricWeightedAllocation,
-    MetricWeightRule,
-    CapitalAllocationPolicy,
-    DrawdownAdaptiveAllocation,
-    EqualWeightAllocation,
     FixedWeightAllocation,
-    MultiStrategyScheduler,
+    MetricWeightRule,
+    MetricWeightedAllocation,
     RiskParityAllocation,
     RiskProfileBudgetAllocation,
     SignalStrengthAllocation,
     SmoothedCapitalAllocationPolicy,
     TagQuotaAllocation,
+    VolatilityTargetAllocation,
+)
+from bot_core.runtime.multi_strategy_scheduler import (
+    MultiStrategyScheduler,
     StrategyDataFeed,
     StrategySignalSink,
-    VolatilityTargetAllocation,
 )
 from bot_core.runtime.journal import TradingDecisionEvent, TradingDecisionJournal
 from bot_core.runtime.portfolio_coordinator import PortfolioRuntimeCoordinator
@@ -2257,10 +2256,11 @@ class DecisionAwareSignalSink(StrategySignalSink):
             self._serialize_evaluation_payload(evaluation, include_candidate=True)
             for evaluation in evaluations
         ]
-        return summarize_evaluation_payloads(
+        summary = summarize_evaluation_payloads(
             payloads,
             history_limit=history_limit,
         )
+        return summary.model_dump(exclude_none=True)
 
     def _legacy_evaluation_summary(
         self,

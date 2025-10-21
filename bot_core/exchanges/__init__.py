@@ -21,13 +21,20 @@ from bot_core.exchanges.core import (
     PaperBackend,
     PositionDTO,
 )
-from bot_core.exchanges.manager import ExchangeManager
+try:  # pragma: no cover - środowisko testowe może nie zawierać pełnej konfiguracji managera
+    from bot_core.exchanges.manager import ExchangeManager
+except Exception:  # pragma: no cover - zapewniamy import pakietu
+    ExchangeManager = None  # type: ignore[assignment]
 from bot_core.exchanges.binance.futures import BinanceFuturesAdapter
 from bot_core.exchanges.binance.margin import BinanceMarginAdapter
 from bot_core.exchanges.binance.spot import BinanceSpotAdapter
 from bot_core.exchanges.bitfinex.spot import BitfinexSpotAdapter
-from bot_core.exchanges.bybit.spot import BybitSpotAdapter
-from bot_core.exchanges.coinbase.spot import CoinbaseSpotAdapter
+from bot_core.exchanges.bybit import BybitFuturesAdapter, BybitMarginAdapter, BybitSpotAdapter
+from bot_core.exchanges.coinbase import (
+    CoinbaseFuturesAdapter,
+    CoinbaseMarginAdapter,
+    CoinbaseSpotAdapter,
+)
 from bot_core.exchanges.errors import (
     ExchangeAPIError,
     ExchangeAuthError,
@@ -40,7 +47,7 @@ from bot_core.exchanges.kraken.futures import KrakenFuturesAdapter
 from bot_core.exchanges.kraken.margin import KrakenMarginAdapter
 from bot_core.exchanges.kraken.spot import KrakenSpotAdapter
 from bot_core.exchanges.nowa_gielda.spot import NowaGieldaSpotAdapter
-from bot_core.exchanges.okx.spot import OKXSpotAdapter
+from bot_core.exchanges.okx import OKXFuturesAdapter, OKXMarginAdapter, OKXSpotAdapter
 from bot_core.exchanges.zonda.margin import ZondaMarginAdapter
 from bot_core.exchanges.zonda.spot import ZondaSpotAdapter
 from bot_core.exchanges.health import (
@@ -75,10 +82,16 @@ __all__ = [
     "KrakenSpotAdapter",
     "KrakenMarginAdapter",
     "BybitSpotAdapter",
+    "BybitMarginAdapter",
+    "BybitFuturesAdapter",
     "CoinbaseSpotAdapter",
+    "CoinbaseMarginAdapter",
+    "CoinbaseFuturesAdapter",
     "BitfinexSpotAdapter",
     "KuCoinSpotAdapter",
     "OKXSpotAdapter",
+    "OKXMarginAdapter",
+    "OKXFuturesAdapter",
     "NowaGieldaSpotAdapter",
     "MarketRules",
     "Mode",
