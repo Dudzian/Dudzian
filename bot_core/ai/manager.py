@@ -12,12 +12,13 @@ import asyncio
 import inspect
 import json
 import logging
+import math
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from os import PathLike
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Dict, Iterable, List, Mapping, Optional, Tuple, Union
+from typing import Any, Awaitable, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Union
 
 try:  # pragma: no cover - środowisko testowe może nie mieć joblib
     import joblib
@@ -44,14 +45,23 @@ import numpy as np
 import pandas as pd
 
 from ._license import ensure_ai_signals_enabled
+from .feature_engineering import FeatureDataset
 from .inference import DecisionModelInference, ModelRepository
-from .models import ModelScore
+from .models import ModelArtifact, ModelScore
 from .regime import (
     MarketRegimeAssessment,
     MarketRegimeClassifier,
     RegimeHistory,
     RegimeSummary,
 )
+from .scheduler import (
+    RetrainingScheduler,
+    ScheduledTrainingJob,
+    TrainingScheduler,
+    WalkForwardResult,
+    WalkForwardValidator,
+)
+from .training import ModelTrainer
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:
@@ -90,6 +100,27 @@ def _emit_history_log(
         log_kwargs["extra"] = dict(extra)
     log_kwargs["stacklevel"] = stacklevel
     resolved_logger.log(level, message, **log_kwargs)
+
+
+def _safe_float(value: object) -> Optional[float]:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(number) or math.isinf(number):
+        return None
+    return number
+
+
+def _safe_mean(values: Iterable[object]) -> Optional[float]:
+    collected: List[float] = []
+    for value in values:
+        number = _safe_float(value)
+        if number is not None:
+            collected.append(number)
+    if not collected:
+        return None
+    return sum(collected) / len(collected)
 
 _AI_IMPORT_ERROR: Optional[BaseException] = None
 _FALLBACK_ACTIVE = False
@@ -407,9 +438,15 @@ class AIManager:
         self._degraded = bool(_AI_IMPORT_ERROR)
         self._degradation_reason: str | None = None
         self._decision_model_repository: ModelRepository | None = None
+        self._model_repository: ModelRepository | None = None
+        self._repository_models: Dict[str, DecisionModelInference] = {}
+        self._repository_paths: Dict[str, Path] = {}
         self._decision_inferences: Dict[str, DecisionModelInference] = {}
         self._decision_default_name: str | None = None
         self._decision_orchestrator: Any | None = None
+        self._training_scheduler: TrainingScheduler | None = None
+        self._scheduled_training_jobs: Dict[str, ScheduledTrainingJob] = {}
+        self._job_artifact_paths: Dict[str, Path] = {}
         if self._degraded:
             self._degradation_reason = (
                 "fallback_ai_models"
@@ -540,12 +577,213 @@ class AIManager:
     def require_real_models(self) -> None:
         """Zgłasza wyjątek gdy dostępne są tylko fallbackowe modele AI."""
 
-        if self._degraded or not self._decision_inferences:
+        if self._degraded or (not self._decision_inferences and not self._repository_models):
             reason = self._degradation_reason or "AI backend in degraded mode"
             raise RuntimeError(
                 "Real models are required for live trading; current backend is degraded: "
                 + str(reason)
             )
+
+    # -------------------------- Harmonogram treningów --------------------------
+    def _ensure_training_scheduler(self) -> TrainingScheduler:
+        if self._training_scheduler is None:
+            self._training_scheduler = TrainingScheduler()
+        return self._training_scheduler
+
+    def list_training_jobs(self) -> Tuple[str, ...]:
+        """Zwróć posortowaną listę nazw zarejestrowanych zadań treningowych."""
+
+        return tuple(sorted(self._scheduled_training_jobs))
+
+    def get_training_job(self, name: str) -> ScheduledTrainingJob | None:
+        """Zwróć zadanie treningowe o podanej nazwie (bez modyfikacji)."""
+
+        key = name.strip().lower()
+        return self._scheduled_training_jobs.get(key)
+
+    def unregister_training_job(self, name: str) -> None:
+        """Usuń zadanie treningowe z harmonogramu."""
+
+        key = name.strip().lower()
+        if self._training_scheduler is not None:
+            self._training_scheduler.unregister(name)
+        self._scheduled_training_jobs.pop(key, None)
+        self._job_artifact_paths.pop(key, None)
+
+    def register_training_job(
+        self,
+        name: str,
+        schedule: RetrainingScheduler,
+        dataset_provider: Callable[[], FeatureDataset],
+        *,
+        trainer_factory: Callable[[], ModelTrainer] | None = None,
+        validator_factory: Callable[[FeatureDataset], WalkForwardValidator] | None = None,
+        artifact_metadata: Mapping[str, object] | None = None,
+        repository_base: PathInput | None = None,
+        repository_filename: str | None = None,
+        attach_to_decision: bool = False,
+        decision_name: str | None = None,
+        decision_repository_root: PathInput | None = None,
+        set_default_decision: bool = False,
+        symbol: str | None = None,
+        model_type: str | None = None,
+    ) -> ScheduledTrainingJob:
+        """Zarejestruj zadanie treningowe i opcjonalnie podłącz inference do DecisionOrchestratora."""
+
+        key = name.strip().lower()
+        if not key:
+            raise ValueError("Nazwa zadania treningowego nie może być pusta")
+        if key in self._scheduled_training_jobs:
+            raise ValueError(f"Zadanie treningowe {name!r} jest już zarejestrowane")
+
+        scheduler = self._ensure_training_scheduler()
+        model_factory = trainer_factory or (lambda: ModelTrainer())
+
+        repository: ModelRepository
+        if attach_to_decision:
+            root = decision_repository_root or repository_base
+            if root is None:
+                root = self.model_dir / "decision_engine"
+            repository = self.configure_decision_repository(root)
+        else:
+            root = repository_base or (self.model_dir / "repository")
+            repository = self.configure_model_repository(root)
+
+        last_metadata: Dict[str, object] = {}
+        last_symbols: List[str] = []
+
+        def _dataset_provider() -> FeatureDataset:
+            dataset = dataset_provider()
+            metadata = dict(dataset.metadata)
+            last_metadata.clear()
+            last_metadata.update(metadata)
+            last_symbols.clear()
+            last_symbols.extend(sorted({vector.symbol for vector in dataset.vectors}))
+            return dataset
+
+        def _serialize_validation(result: WalkForwardResult | None) -> Mapping[str, object] | None:
+            if result is None:
+                return None
+            return {
+                "average_mae": float(result.average_mae),
+                "average_directional_accuracy": float(result.average_directional_accuracy),
+                "windows": [dict(window) for window in result.windows],
+            }
+
+        normalized_model_type = (
+            self._normalize_model_type(model_type)
+            if model_type is not None
+            else self._normalize_model_type(name)
+        )
+
+        def _resolve_symbol() -> str | None:
+            if symbol is not None:
+                return self._normalize_symbol(symbol)
+            if last_symbols:
+                return self._normalize_symbol(last_symbols[0])
+            symbols_meta = last_metadata.get("symbols")
+            if isinstance(symbols_meta, Sequence) and symbols_meta:
+                first = symbols_meta[0]
+                if isinstance(first, str):
+                    return self._normalize_symbol(first)
+            return None
+
+        def _on_completed(artifact: ModelArtifact, validation: WalkForwardResult | None) -> None:
+            inferred_symbol = _resolve_symbol()
+            timestamp = artifact.trained_at.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            filename = repository_filename or f"{(inferred_symbol or 'model')}_{normalized_model_type}_{timestamp}.json"
+
+            metadata: Dict[str, object] = dict(artifact.metadata)
+            metadata.setdefault("job_name", name)
+            metadata.setdefault("model_type", normalized_model_type)
+            if inferred_symbol is not None:
+                metadata.setdefault("symbol", inferred_symbol)
+            if last_symbols:
+                metadata.setdefault("symbols", list(last_symbols))
+            metadata.setdefault(
+                "schedule_interval_seconds",
+                float(schedule.interval.total_seconds()),
+            )
+            validation_payload = _serialize_validation(validation)
+            if validation_payload is not None:
+                metadata["walk_forward"] = validation_payload
+            if artifact_metadata:
+                metadata.update(dict(artifact_metadata))
+
+            enriched = ModelArtifact(
+                feature_names=artifact.feature_names,
+                model_state=artifact.model_state,
+                trained_at=artifact.trained_at,
+                metrics=artifact.metrics,
+                metadata=metadata,
+                backend=artifact.backend,
+            )
+            destination = repository.save(enriched, filename)
+
+            inference = DecisionModelInference(repository)
+            inference.load_weights(destination)
+            self._job_artifact_paths[key] = destination
+
+            if inferred_symbol is not None:
+                repository_key = self._model_key(inferred_symbol, normalized_model_type)
+                self._repository_models[repository_key] = inference
+                self._repository_paths[repository_key] = destination
+            self._mark_backend_ready(inference)
+
+            performance_name = normalized_model_type
+            if attach_to_decision:
+                decision_label = decision_name or normalized_model_type
+                performance_name = decision_label
+                try:
+                    self.load_decision_artifact(
+                        decision_label,
+                        destination,
+                        repository_root=repository.base_path,
+                        set_default=set_default_decision,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Nie udało się zarejestrować artefaktu Decision Engine %s",
+                        decision_label,
+                    )
+
+            self._update_decision_orchestrator_performance(
+                performance_name,
+                artifact=enriched,
+                metadata=metadata,
+                validation=validation,
+                strategy=normalized_model_type,
+            )
+
+        job = ScheduledTrainingJob(
+            name=name,
+            scheduler=schedule,
+            trainer_factory=model_factory,
+            dataset_provider=_dataset_provider,
+            validator_factory=validator_factory,
+            on_completed=_on_completed,
+        )
+        scheduler.register(job)
+        self._scheduled_training_jobs[key] = job
+        return job
+
+    def run_due_training_jobs(
+        self, now: datetime | None = None
+    ) -> Tuple[tuple[ScheduledTrainingJob, ModelArtifact, Path | None], ...]:
+        """Uruchom wszystkie zaplanowane zadania wymagające odświeżenia."""
+
+        if self._training_scheduler is None:
+            return ()
+        results: List[tuple[ScheduledTrainingJob, ModelArtifact, Path | None]] = []
+        for job, artifact in self._training_scheduler.run_due_jobs(now):
+            path = self._job_artifact_paths.get(job.name.strip().lower())
+            results.append((job, artifact, path))
+        return tuple(results)
+
+    def get_last_trained_artifact_path(self, name: str) -> Path | None:
+        """Zwróć ścieżkę do ostatniego artefaktu zapisanego przez zadanie."""
+
+        return self._job_artifact_paths.get(name.strip().lower())
 
     # ------------------------ Decision Engine repo ------------------------
     def configure_decision_repository(self, base_path: PathInput) -> ModelRepository:
@@ -555,6 +793,15 @@ class AIManager:
         repository_path.mkdir(parents=True, exist_ok=True)
         repository = ModelRepository(repository_path)
         self._decision_model_repository = repository
+        return repository
+
+    def configure_model_repository(self, base_path: PathInput) -> ModelRepository:
+        """Configure repository used for live trading models."""
+
+        repository_path = Path(base_path).expanduser().resolve()
+        repository_path.mkdir(parents=True, exist_ok=True)
+        repository = ModelRepository(repository_path)
+        self._model_repository = repository
         return repository
 
     def attach_decision_orchestrator(
@@ -641,6 +888,50 @@ class AIManager:
                 )
         self._mark_backend_ready(inference)
         return inference
+
+    def ingest_model_repository(
+        self,
+        base_path: PathInput | None = None,
+        *,
+        pattern: str = "*.json",
+    ) -> int:
+        """Load all model artifacts matching ``pattern`` into the manager.
+
+        The repository must contain artefacts produced by the Decision Engine
+        pipeline.  Each artefact should include ``symbol`` and ``model_type``
+        metadata so that it can be addressed at runtime.
+        """
+
+        if base_path is not None:
+            repository = self.configure_model_repository(base_path)
+        elif self._model_repository is None:
+            repository_root = self.model_dir / "repository"
+            repository = self.configure_model_repository(repository_root)
+        else:
+            repository = self._model_repository
+
+        loaded = 0
+        for artifact_path in sorted(repository.base_path.glob(pattern)):
+            try:
+                inference = DecisionModelInference(repository)
+                inference.load_weights(artifact_path)
+            except Exception:
+                logger.warning("Failed to load model artifact from %s", artifact_path, exc_info=True)
+                continue
+
+            artifact = getattr(inference, "_artifact", None)
+            metadata = dict(getattr(artifact, "metadata", {})) if artifact else {}
+            symbol = metadata.get("symbol")
+            model_type = metadata.get("model_type") or metadata.get("name") or artifact_path.stem
+            if symbol is None:
+                logger.debug("Skipping artifact %s without symbol metadata", artifact_path)
+                continue
+            key = self._model_key(str(symbol), str(model_type))
+            self._repository_models[key] = inference
+            self._repository_paths[key] = artifact_path if isinstance(artifact_path, Path) else Path(artifact_path)
+            self._mark_backend_ready(inference)
+            loaded += 1
+        return loaded
 
     def _resolve_decision_inference(self, model_name: str | None = None) -> DecisionModelInference:
         if not self._decision_inferences:
@@ -840,6 +1131,20 @@ class AIManager:
             raise ValueError(f"Nieobsługiwana agregacja zespołu: {agg}")
         return combined if isinstance(combined, pd.Series) else pd.Series(combined, index=frame.index)
 
+    def _predict_series_from_inference(
+        self,
+        inference: DecisionModelInference,
+        df: pd.DataFrame,
+        feature_cols: Iterable[str],
+    ) -> pd.Series:
+        rows: list[float] = []
+        for _, row in df.iterrows():
+            features = {name: float(row[name]) for name in feature_cols if name in row}
+            score = inference.score(features)
+            rows.append(float(score.expected_return_bps))
+        series = pd.Series(rows, index=df.index)
+        return self._sanitize_predictions(series)
+
     async def _predict_model_series(
         self,
         symbol_key: str,
@@ -869,6 +1174,11 @@ class AIManager:
                 return combined
 
             key = self._model_key(symbol_key, normalized_type)
+            repository_model = self._repository_models.get(key)
+            if repository_model is not None:
+                preds = self._predict_series_from_inference(repository_model, df, feats)
+                cache[normalized_type] = preds
+                return preds
             model = self.models.get(key)
             if model is None:
                 path = self.model_dir / f"{symbol_key}:{normalized_type}.joblib"
@@ -973,6 +1283,84 @@ class AIManager:
         if getattr(model, "feature_names", None):
             self._degraded = False
             self._degradation_reason = None
+
+    def _compose_performance_metrics(
+        self,
+        base_metrics: Mapping[str, float],
+        metadata: Mapping[str, object],
+        validation: WalkForwardResult | None,
+    ) -> Dict[str, float]:
+        summary: Dict[str, float] = {}
+        for key, value in base_metrics.items():
+            number = _safe_float(value)
+            if number is None:
+                continue
+            summary[str(key)] = number
+
+        cross_validation = metadata.get("cross_validation")
+        if isinstance(cross_validation, Mapping):
+            mae_values = cross_validation.get("mae", ())
+            mae_mean = _safe_mean(mae_values if isinstance(mae_values, Iterable) else ())
+            if mae_mean is not None:
+                summary.setdefault("cv_mae_mean", mae_mean)
+            directional_values = cross_validation.get("directional_accuracy", ())
+            directional_mean = _safe_mean(
+                directional_values if isinstance(directional_values, Iterable) else ()
+            )
+            if directional_mean is not None:
+                summary.setdefault("cv_directional_accuracy_mean", directional_mean)
+            folds = _safe_float(cross_validation.get("folds"))
+            if folds is not None:
+                summary.setdefault("cv_folds", folds)
+
+        if validation is not None:
+            mae = _safe_float(validation.average_mae)
+            if mae is not None:
+                summary.setdefault("walk_forward_mae", mae)
+            directional = _safe_float(validation.average_directional_accuracy)
+            if directional is not None:
+                summary.setdefault("walk_forward_directional_accuracy", directional)
+
+        walk_forward_meta = metadata.get("walk_forward")
+        if isinstance(walk_forward_meta, Mapping):
+            wf_mae = _safe_float(walk_forward_meta.get("average_mae"))
+            if wf_mae is not None:
+                summary.setdefault("walk_forward_mae", wf_mae)
+            wf_directional = _safe_float(
+                walk_forward_meta.get("average_directional_accuracy")
+            )
+            if wf_directional is not None:
+                summary.setdefault("walk_forward_directional_accuracy", wf_directional)
+
+        return summary
+
+    def _update_decision_orchestrator_performance(
+        self,
+        name: str,
+        *,
+        artifact: ModelArtifact,
+        metadata: Mapping[str, object],
+        validation: WalkForwardResult | None,
+        strategy: str,
+    ) -> None:
+        orchestrator = self._decision_orchestrator
+        if orchestrator is None:
+            return
+        metrics = self._compose_performance_metrics(artifact.metrics, metadata, validation)
+        risk_profile = metadata.get("risk_profile")
+        profile_value = str(risk_profile) if isinstance(risk_profile, str) else None
+        try:
+            orchestrator.update_model_performance(
+                name,
+                metrics,
+                strategy=strategy,
+                risk_profile=profile_value,
+                timestamp=artifact.trained_at,
+            )
+        except Exception:  # pragma: no cover - zapewniamy odporność na zmiany API
+            logger.exception(
+                "Nie udało się zaktualizować metryk modelu %s w DecisionOrchestrator", name
+            )
 
     def _track_signal(self, symbol: str, signals: pd.Series) -> None:
         """Zachowaj ostatnie predykcje do monitorowania dryfu."""
@@ -1107,6 +1495,39 @@ class AIManager:
 
             for model_type in model_types:
                 model_name = str(model_type).lower()
+                key = self._model_key(symbol_key, model_name)
+                repository_inference = self._repository_models.get(key)
+                if repository_inference is not None:
+                    artifact = getattr(repository_inference, "_artifact", None)
+                    metrics = dict(getattr(artifact, "metrics", {})) if artifact else {}
+                    metadata = dict(getattr(artifact, "metadata", {})) if artifact else {}
+                    cv_raw = metadata.get("cross_validation")
+                    cv_meta = cv_raw if isinstance(cv_raw, Mapping) else {}
+                    cv_scores = [
+                        float(value)
+                        for value in cv_meta.get("directional_accuracy", [])
+                        if isinstance(value, (int, float))
+                    ]
+                    pnl = float(metrics.get("expected_pnl", 0.0))
+                    hit_rate = (
+                        float(np.mean(cv_scores))
+                        if cv_scores
+                        else float(metrics.get("directional_accuracy", 0.0))
+                    )
+                    sharpe = self._sharpe_ratio(np.asarray(cv_scores, dtype=float)) if cv_scores else 0.0
+                    model_path = self._repository_paths.get(key)
+                    evaluations.append(
+                        ModelEvaluation(
+                            model_type=model_name,
+                            hit_rate=hit_rate,
+                            pnl=pnl,
+                            sharpe=sharpe,
+                            cv_scores=cv_scores,
+                            model_path=str(model_path) if model_path is not None else None,
+                        )
+                    )
+                    continue
+
                 cv_scores: List[float] = []
                 pnl_scores: List[float] = []
 

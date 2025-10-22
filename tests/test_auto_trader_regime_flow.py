@@ -3933,6 +3933,22 @@ def test_auto_trader_guardrail_timeline_exports(monkeypatch: pytest.MonkeyPatch)
     trader = _prepare_guardrail_history(monkeypatch)
 
     summary = trader.summarize_guardrail_timeline(bucket_s=10.0)
+    summary_filters = summary["filters"]
+    assert summary_filters["approved"] is None
+    assert summary_filters["normalized"] is None
+    assert summary_filters["include_errors"] is True
+    assert summary_filters["service"] is None
+    assert summary_filters["trigger"] is None
+    assert summary_filters["trigger_threshold"] is None
+    assert summary_filters["trigger_value"] is None
+    assert summary_filters["since"] is None
+    assert summary_filters["until"] is None
+    assert summary_filters["include_services"] is True
+    assert summary_filters["include_guardrail_dimensions"] is True
+    assert summary_filters["include_decision_dimensions"] is False
+    assert summary_filters["fill_gaps"] is False
+    assert summary_filters["coerce_timestamps"] is False
+    assert summary_filters["tz"] == "UTC"
     threshold_totals = summary["guardrail_trigger_thresholds"]
     assert threshold_totals["count"] == 4
     assert threshold_totals["missing"] == 0
@@ -3949,6 +3965,11 @@ def test_auto_trader_guardrail_timeline_exports(monkeypatch: pytest.MonkeyPatch)
     assert value_totals["average"] == pytest.approx(0.92)
     assert summary["total"] == 3
     assert summary["evaluations"] == 4
+    assert summary["guardrail_rate"] == pytest.approx(
+        summary["total"] / summary["evaluations"]
+    )
+    assert summary["approval_states"] == {"denied": 3, "approved": 1}
+    assert summary["normalization_states"] == {"raw": 3, "normalized": 1}
     assert summary["first_timestamp"] == pytest.approx(2000.0)
     assert summary["last_timestamp"] == pytest.approx(2030.0)
     assert summary["services"] == {
@@ -3956,6 +3977,21 @@ def test_auto_trader_guardrail_timeline_exports(monkeypatch: pytest.MonkeyPatch)
         "_ServiceAlpha": {"evaluations": 2, "guardrail_events": 2},
         "_ServiceBeta": {"evaluations": 1, "guardrail_events": 0},
     }
+    assert summary["guardrail_reasons"] == {
+        "effective risk cap": 3,
+        "liquidity pressure": 1,
+        "volatility spike": 1,
+    }
+    assert summary["guardrail_triggers"] == {
+        "effective_risk": 3,
+        "volatility_ratio": 1,
+    }
+    assert summary["guardrail_trigger_labels"] == {
+        "Effective risk cap": 3,
+        "Volatility ratio": 1,
+    }
+    assert summary["guardrail_trigger_comparators"] == {">=": 4}
+    assert summary["guardrail_trigger_units"] == {"ratio": 3, "score": 1}
 
     bucket_indices = [bucket["index"] for bucket in summary["buckets"]]
     assert bucket_indices == [200, 201, 202, 203]
@@ -3963,6 +3999,9 @@ def test_auto_trader_guardrail_timeline_exports(monkeypatch: pytest.MonkeyPatch)
     first_bucket = summary["buckets"][0]
     assert first_bucket["guardrail_events"] == 1
     assert first_bucket["evaluations"] == 1
+    assert first_bucket["guardrail_rate"] == pytest.approx(1.0)
+    assert first_bucket["approval_states"] == {"denied": 1}
+    assert first_bucket["normalization_states"] == {"raw": 1}
     assert first_bucket["services"]["_ServiceAlpha"]["guardrail_events"] == 1
     assert first_bucket["services"]["_ServiceAlpha"]["evaluations"] == 1
     assert first_bucket["guardrail_reasons"] == {
@@ -3997,6 +4036,9 @@ def test_auto_trader_guardrail_timeline_exports(monkeypatch: pytest.MonkeyPatch)
     neutral_bucket = next(bucket for bucket in summary["buckets"] if bucket["index"] == 202)
     assert neutral_bucket["guardrail_events"] == 0
     assert neutral_bucket["evaluations"] == 1
+    assert neutral_bucket["guardrail_rate"] == pytest.approx(0.0)
+    assert neutral_bucket["approval_states"] == {"approved": 1}
+    assert neutral_bucket["normalization_states"] == {"normalized": 1}
     assert neutral_bucket["services"]["_ServiceBeta"]["evaluations"] == 1
     assert neutral_bucket["services"]["_ServiceBeta"]["guardrail_events"] == 0
     assert neutral_bucket["guardrail_reasons"] == {}
@@ -4009,6 +4051,9 @@ def test_auto_trader_guardrail_timeline_exports(monkeypatch: pytest.MonkeyPatch)
 
     last_bucket = summary["buckets"][-1]
     assert last_bucket["guardrail_events"] == 1
+    assert last_bucket["guardrail_rate"] == pytest.approx(1.0)
+    assert last_bucket["approval_states"] == {"denied": 1}
+    assert last_bucket["normalization_states"] == {"raw": 1}
     assert last_bucket["services"]["<unknown>"]["guardrail_events"] == 1
     assert last_bucket["guardrail_reasons"] == {
         "effective risk cap": 1,
@@ -4037,6 +4082,9 @@ def test_auto_trader_guardrail_timeline_exports(monkeypatch: pytest.MonkeyPatch)
         bucket_s=10.0,
         include_decision_dimensions=True,
     )
+    assert decision_summary["decision_states"] == {"blocked": 3}
+    assert decision_summary["decision_reasons"] == {"guardrail-blocked": 3}
+    assert decision_summary["decision_modes"] == {"auto": 3}
     first_decision_bucket = decision_summary["buckets"][0]
     assert first_decision_bucket["decision_states"] == {"blocked": 1}
     assert first_decision_bucket["decision_reasons"] == {"guardrail-blocked": 1}
@@ -4050,6 +4098,13 @@ def test_auto_trader_guardrail_timeline_exports(monkeypatch: pytest.MonkeyPatch)
     assert filtered["evaluations"] == 2
     assert [bucket["index"] for bucket in filtered["buckets"]] == [200, 201]
 
+    summary_snapshot = trader.summarize_guardrail_timeline(
+        bucket_s=20.0,
+        fill_gaps=True,
+        coerce_timestamps=True,
+        tz=timezone.utc,
+    )
+
     records = trader.guardrail_timeline_to_records(
         bucket_s=20.0,
         fill_gaps=True,
@@ -4061,6 +4116,16 @@ def test_auto_trader_guardrail_timeline_exports(monkeypatch: pytest.MonkeyPatch)
     assert all(isinstance(record["start"], datetime) for record in records)
     assert hasattr(records, "summary")
     summary_metadata = records.summary
+    assert summary_metadata["bucket_s"] == pytest.approx(20.0)
+    assert summary_metadata["total"] == summary_snapshot["total"]
+    assert summary_metadata["evaluations"] == summary_snapshot["evaluations"]
+    assert summary_metadata["approval_states"]["denied"] == 3
+    assert summary_metadata["normalization_states"]["raw"] == 3
+    assert summary_metadata["first_timestamp"] == summary_snapshot["first_timestamp"]
+    assert summary_metadata["last_timestamp"] == summary_snapshot["last_timestamp"]
+    assert summary_metadata.get("missing_timestamp") == summary_snapshot.get(
+        "missing_timestamp"
+    )
     assert summary_metadata["services"]["_ServiceAlpha"]["guardrail_events"] == 2
     assert summary_metadata["services"]["_ServiceAlpha"]["evaluations"] == 2
     assert summary_metadata["guardrail_trigger_thresholds"]["count"] == 4
@@ -4091,10 +4156,6 @@ def test_auto_trader_guardrail_timeline_exports(monkeypatch: pytest.MonkeyPatch)
     assert len(summary_records) == 3
     summary_record = summary_records[-1]
     assert summary_record["bucket_type"] == "summary"
-    summary_snapshot = trader.summarize_guardrail_timeline(
-        bucket_s=20.0,
-        fill_gaps=True,
-    )
     assert summary_record["evaluations"] == summary_snapshot["evaluations"]
     assert summary_record["total"] == summary_snapshot["total"]
     assert summary_record["guardrail_events"] == summary_snapshot["total"]
@@ -4105,8 +4166,33 @@ def test_auto_trader_guardrail_timeline_exports(monkeypatch: pytest.MonkeyPatch)
     assert summary_record.get("guardrail_trigger_values") == summary_snapshot.get(
         "guardrail_trigger_values"
     )
+    assert summary_record["approval_states"] == summary_snapshot["approval_states"]
+    assert summary_record["normalization_states"] == summary_snapshot[
+        "normalization_states"
+    ]
+    assert summary_record["guardrail_rate"] == pytest.approx(
+        summary_snapshot["total"] / summary_snapshot["evaluations"]
+    )
     assert isinstance(summary_record["first_timestamp"], datetime)
     assert isinstance(summary_record["last_timestamp"], datetime)
+    assert summary_record["filters"]["fill_gaps"] is True
+    assert summary_record["filters"]["coerce_timestamps"] is True
+    assert summary_records.summary["filters"]["fill_gaps"] is True
+    assert summary_records.summary["filters"]["tz"] == "UTC"
+    assert summary_records.summary["guardrail_reasons"]["effective risk cap"] == 3
+    assert summary_records.summary["guardrail_trigger_units"] == {
+        "ratio": 3,
+        "score": 1,
+    }
+    assert summary_records.summary["approval_states"] == summary_snapshot[
+        "approval_states"
+    ]
+    assert summary_records.summary["normalization_states"] == summary_snapshot[
+        "normalization_states"
+    ]
+    assert summary_records.summary["guardrail_rate"] == summary_snapshot[
+        "guardrail_rate"
+    ]
 
     df = trader.guardrail_timeline_to_dataframe(
         bucket_s=20.0,
@@ -4114,6 +4200,13 @@ def test_auto_trader_guardrail_timeline_exports(monkeypatch: pytest.MonkeyPatch)
         include_guardrail_dimensions=False,
     )
     assert list(df_minimal["guardrail_events"]) == [2, 1]
+    for events, evals, rate in zip(
+        df_minimal["guardrail_events"].tolist(),
+        df_minimal["evaluations"].tolist(),
+        df_minimal["guardrail_rate"].tolist(),
+    ):
+        expected_rate = events / evals if evals else 0.0
+        assert rate == pytest.approx(expected_rate)
     assert "services" not in df_minimal.columns
     assert "guardrail_reasons" not in df_minimal.columns
     assert "guardrail_trigger_thresholds" not in df_minimal.columns
@@ -4126,6 +4219,18 @@ def test_auto_trader_guardrail_timeline_exports(monkeypatch: pytest.MonkeyPatch)
     assert df_with_metadata.attrs["guardrail_summary"]["guardrail_trigger_thresholds"][
         "count"
     ] == 4
+    assert df_with_metadata.attrs["guardrail_summary"]["guardrail_reasons"][
+        "effective risk cap"
+    ] == 3
+    assert df_with_metadata.attrs["guardrail_summary"]["approval_states"][
+        "denied"
+    ] == 3
+    assert df_with_metadata.attrs["guardrail_summary"]["normalization_states"][
+        "raw"
+    ] == 3
+    assert df_with_metadata.attrs["guardrail_summary"]["guardrail_rate"] == (
+        pytest.approx(summary["total"] / summary["evaluations"])
+    )
 
     df_with_summary = trader.guardrail_timeline_to_dataframe(
         bucket_s=20.0,
@@ -4139,8 +4244,29 @@ def test_auto_trader_guardrail_timeline_exports(monkeypatch: pytest.MonkeyPatch)
     assert summary_row["total"] == summary_snapshot["total"]
     assert isinstance(summary_row["first_timestamp"], datetime)
     assert isinstance(summary_row["last_timestamp"], datetime)
+    assert summary_row["guardrail_rate"] == pytest.approx(
+        summary_snapshot["total"] / summary_snapshot["evaluations"]
+    )
     if "services" in df_with_summary.columns:
         assert summary_row["services"] == summary_snapshot.get("services")
+    if "guardrail_reasons" in df_with_summary.columns:
+        assert summary_row["guardrail_reasons"] == summary_snapshot.get(
+            "guardrail_reasons"
+        )
+    assert summary_row["approval_states"] == summary_snapshot["approval_states"]
+    assert summary_row["normalization_states"] == summary_snapshot[
+        "normalization_states"
+    ]
+    df_summary_metadata = df_with_summary.attrs.get("guardrail_summary")
+    assert df_summary_metadata is not None
+    assert df_summary_metadata["total"] == summary_snapshot["total"]
+    assert df_summary_metadata["first_timestamp"] == summary_snapshot["first_timestamp"]
+    assert df_summary_metadata["filters"]["fill_gaps"] is True
+    assert df_summary_metadata["approval_states"] == summary_snapshot["approval_states"]
+    assert df_summary_metadata["normalization_states"] == summary_snapshot[
+        "normalization_states"
+    ]
+    assert df_summary_metadata["guardrail_rate"] == summary_snapshot["guardrail_rate"]
 
     records_with_missing = trader.guardrail_timeline_to_records(
         bucket_s=20.0,
@@ -4161,6 +4287,7 @@ def test_auto_trader_guardrail_timeline_exports(monkeypatch: pytest.MonkeyPatch)
         assert missing_record["guardrail_trigger_units"] == {"score": 1}
         assert missing_record["services"]["<unknown>"]["guardrail_events"] == 1
         assert missing_record["services"]["<unknown>"]["evaluations"] == 1
+        assert missing_record["guardrail_rate"] == pytest.approx(1.0)
         missing_thresholds = missing_record["guardrail_trigger_thresholds"]
         assert missing_thresholds["count"] == 1
         assert missing_thresholds["missing"] == 0

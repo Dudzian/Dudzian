@@ -15,6 +15,75 @@ from .inference import DecisionModelInference, ModelRepository
 from .models import ModelArtifact
 from .training import SimpleGradientBoostingModel
 
+
+def _calibrate_predictions(
+    targets: Sequence[float], predictions: Sequence[float]
+) -> tuple[float, float]:
+    """Return a simple linear calibration (slope, intercept).
+
+    The calibration rescales raw model outputs to better match the
+    distribution of training targets.  We intentionally keep the
+    implementation minimal – a closed form least squares regression – so
+    that it works in constrained environments (CI, smoke tests) without
+    requiring additional dependencies.
+    """
+
+    if not targets or not predictions:
+        return 1.0, 0.0
+
+    y = np.asarray(targets, dtype=float)
+    x = np.asarray(predictions, dtype=float)
+    if x.size != y.size:
+        raise ValueError("Targets and predictions must have the same size for calibration")
+
+    if np.allclose(x, x[0]):
+        # Degenerate case – the model produced a constant prediction.  In
+        # that scenario the best calibration we can do is to shift the
+        # output towards the empirical mean of the targets.
+        return 0.0, float(np.mean(y))
+
+    A = np.vstack([x, np.ones_like(x)]).T
+    solution, *_ = np.linalg.lstsq(A, y, rcond=None)
+    slope = float(solution[0])
+    intercept = float(solution[1])
+    return slope, intercept
+
+
+def _cross_validate(
+    features: Sequence[Mapping[str, float]],
+    targets: Sequence[float],
+    *,
+    folds: int = 5,
+) -> Mapping[str, Sequence[float]]:
+    """Compute walk-forward style cross-validation metrics."""
+
+    total = len(features)
+    if total == 0:
+        return {"mae": (), "directional_accuracy": ()}
+    folds = max(2, min(int(folds), total))
+    fold_size = max(1, total // folds)
+    maes: list[float] = []
+    accuracies: list[float] = []
+
+    for fold in range(folds):
+        start = fold * fold_size
+        end = total if fold == folds - 1 else min(total, start + fold_size)
+        validation_features = features[start:end]
+        validation_targets = targets[start:end]
+        train_features = features[:start] + features[end:]
+        train_targets = targets[:start] + targets[end:]
+
+        if not validation_features or not train_features:
+            continue
+
+        model = SimpleGradientBoostingModel()
+        model.fit(train_features, train_targets)
+        metrics = _compute_metrics(model, validation_features, validation_targets)
+        maes.append(float(metrics.get("mae", 0.0)))
+        accuracies.append(float(metrics.get("directional_accuracy", 0.0)))
+
+    return {"mae": tuple(maes), "directional_accuracy": tuple(accuracies)}
+
 LOGGER = logging.getLogger(__name__)
 
 
@@ -52,9 +121,11 @@ def _compute_metrics(
     target_arr = np.asarray(targets, dtype=float)
     mae = float(np.mean(np.abs(predictions - target_arr))) if len(predictions) else 0.0
     hits = float(np.mean(np.sign(predictions) == np.sign(target_arr))) if len(predictions) else 0.0
+    pnl = float(np.mean(predictions * target_arr)) if len(predictions) else 0.0
     return {
         "mae": mae,
         "directional_accuracy": hits,
+        "expected_pnl": pnl,
     }
 
 
@@ -72,11 +143,23 @@ def train_gradient_boosting_model(
     features, targets = _prepare_training_sets(frame, feature_cols, target_col)
     model = SimpleGradientBoostingModel()
     model.fit(features, targets)
+    raw_predictions = list(model.batch_predict(features))
     metrics = _compute_metrics(model, features, targets)
+    calibration_slope, calibration_intercept = _calibrate_predictions(targets, raw_predictions)
+    cv_payload = _cross_validate(features, targets, folds=max(3, min(5, len(features))))
     meta_payload = {
         "feature_scalers": {
             name: {"mean": mean, "stdev": stdev}
             for name, (mean, stdev) in model.feature_scalers.items()
+        },
+        "calibration": {
+            "slope": calibration_slope,
+            "intercept": calibration_intercept,
+        },
+        "cross_validation": {
+            "folds": len(cv_payload["mae"]),
+            "mae": list(cv_payload["mae"]),
+            "directional_accuracy": list(cv_payload["directional_accuracy"]),
         },
     }
     if metadata:
