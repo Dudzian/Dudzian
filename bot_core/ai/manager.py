@@ -9,6 +9,7 @@ API znany z pierwszych iteracji projektu.
 from __future__ import annotations
 
 import asyncio
+import importlib
 import inspect
 import json
 import logging
@@ -16,7 +17,7 @@ import math
 from collections import deque
 from copy import deepcopy
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from os import PathLike
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Union
@@ -72,6 +73,12 @@ if not logger.handlers:
 logger.setLevel(logging.INFO)
 _history_logger = logger.getChild("history")
 
+
+def _utcnow() -> datetime:
+    """Zwróć bieżący czas w strefie UTC."""
+
+    return datetime.now(timezone.utc)
+
 LoggerLike = Union[logging.Logger, logging.LoggerAdapter]
 
 
@@ -125,12 +132,116 @@ def _safe_mean(values: Iterable[object]) -> Optional[float]:
 
 _AI_IMPORT_ERROR: Optional[BaseException] = None
 _FALLBACK_ACTIVE = False
-try:  # pragma: no cover - w testach zastępujemy _AIModels atrapą
-    from ai_models import AIModels as _DefaultAIModels  # type: ignore
-except Exception as exc:  # pragma: no cover - brak zależności na CI
-    _AI_IMPORT_ERROR = exc
-    _FALLBACK_ACTIVE = True
 
+
+def _bundle_import_errors(primary: BaseException, secondary: BaseException) -> BaseException:
+    """Połącz dwa wyjątki importu w jeden obiekt z zachowaniem kontekstu."""
+
+    try:
+        return ExceptionGroup("AI backend import failed", [primary, secondary])  # type: ignore[name-defined]
+    except NameError:  # pragma: no cover - Python < 3.11
+        secondary.__cause__ = primary  # type: ignore[attr-defined]
+        return secondary
+
+
+def _collect_exception_messages(error: BaseException) -> Tuple[str, ...]:
+    """Zbierz unikalne komunikaty z łańcucha wyjątków w kolejności przyczyn."""
+
+    pieces: List[str] = []
+    for current in _iter_exception_chain(error):
+        message = str(current).strip()
+        if not message:
+            message = current.__class__.__name__
+        else:
+            message = f"{current.__class__.__name__}: {message}"
+        pieces.append(message)
+
+    unique_messages: List[str] = []
+    seen_text: set[str] = set()
+    for piece in pieces:
+        if piece not in seen_text:
+            unique_messages.append(piece)
+            seen_text.add(piece)
+
+    return tuple(unique_messages)
+
+
+def _collect_exception_types(error: BaseException) -> Tuple[str, ...]:
+    """Zwróć krotkę nazw klas wyjątków z zachowaniem kolejności."""
+
+    identifiers: set[str] = set()
+    ordered: List[str] = []
+    for current in _iter_exception_chain(error):
+        name = f"{current.__class__.__module__}.{current.__class__.__qualname__}"
+        if name not in identifiers:
+            ordered.append(name)
+            identifiers.add(name)
+    return tuple(ordered)
+
+
+def _iter_exception_chain(error: BaseException) -> Iterable[BaseException]:
+    """Iteruj po wyjątkach (w tym grupach), zachowując kolejność przyczyn."""
+
+    queue: deque[BaseException] = deque([error])
+    seen: set[int] = set()
+
+    while queue:
+        current = queue.popleft()
+        identifier = id(current)
+        if identifier in seen:
+            continue
+        seen.add(identifier)
+        yield current
+
+        nested = getattr(current, "exceptions", None)
+        if isinstance(nested, Iterable):
+            for child in nested:
+                if isinstance(child, BaseException):
+                    queue.append(child)
+
+        cause = getattr(current, "__cause__", None)
+        if isinstance(cause, BaseException):
+            queue.append(cause)
+
+        context = getattr(current, "__context__", None)
+        suppressed = getattr(current, "__suppress_context__", False)
+        if not suppressed and isinstance(context, BaseException):
+            queue.append(context)
+
+
+def _build_exception_diagnostics(error: BaseException) -> Tuple[ExceptionDiagnostics, ...]:
+    """Zwróć uporządkowaną listę diagnoz wyjątków z łańcucha."""
+
+    diagnostics: List[ExceptionDiagnostics] = []
+    seen: set[Tuple[str, str, str]] = set()
+    for current in _iter_exception_chain(error):
+        module = current.__class__.__module__
+        qualname = current.__class__.__qualname__
+        message = str(current).strip()
+        key = (module, qualname, message)
+        if key in seen:
+            continue
+        seen.add(key)
+        diagnostics.append(ExceptionDiagnostics(module=module, qualname=qualname, message=message))
+    return tuple(diagnostics)
+
+
+def _flatten_exception_messages(error: BaseException) -> str:
+    """Zbuduj zwięzły opis z łańcucha wyjątków importu."""
+
+    return " | ".join(_collect_exception_messages(error))
+
+
+def _is_fallback_degradation(reason: Optional[str]) -> bool:
+    """Sprawdź, czy wskazany powód oznacza degradację przez fallback modeli."""
+
+    if reason is None:
+        return True
+    prefix = reason.split(":", 1)[0].strip()
+    return prefix in {"fallback_ai_models", "backend_validation_failed"}
+
+
+def _build_fallback_ai_models() -> type:
     class _DefaultAIModels:
         """Minimalny model fallback używany w testach bez zależności ML."""
 
@@ -177,6 +288,26 @@ except Exception as exc:  # pragma: no cover - brak zależności na CI
         @staticmethod
         def load_model(path: str) -> "_DefaultAIModels":
             return _joblib_load(Path(path))
+
+    return _DefaultAIModels
+
+
+try:  # pragma: no cover - w testach zastępujemy _AIModels atrapą
+    from ai_models import AIModels as _DefaultAIModels  # type: ignore
+except Exception as exc:  # pragma: no cover - brak zależności na CI
+    try:
+        _kryptolowca_ai_models = importlib.import_module("KryptoLowca.ai_models")
+    except Exception as namespace_exc:
+        _AI_IMPORT_ERROR = _bundle_import_errors(exc, namespace_exc)
+        _FALLBACK_ACTIVE = True
+        _DefaultAIModels = _build_fallback_ai_models()
+    else:
+        try:
+            _DefaultAIModels = getattr(_kryptolowca_ai_models, "AIModels")
+        except AttributeError as attr_exc:
+            _AI_IMPORT_ERROR = _bundle_import_errors(exc, attr_exc)
+            _FALLBACK_ACTIVE = True
+            _DefaultAIModels = _build_fallback_ai_models()
 
 # --- Import funkcji windowize z różnych możliwych miejsc, z bezpiecznym fallbackiem ---
 _default_windowize: Callable[..., Tuple[np.ndarray, np.ndarray]]
@@ -302,6 +433,204 @@ class EnsembleRegistryDiff:
 
     def names(self) -> Tuple[str, ...]:
         return tuple(sorted(set(self.added) | set(self.removed) | set(self.changed)))
+
+
+@dataclass(frozen=True, slots=True)
+class ExceptionDiagnostics:
+    """Struktura opisująca pojedynczy wyjątek z łańcucha degradacji."""
+
+    module: str
+    qualname: str
+    message: str
+
+    @property
+    def type_name(self) -> str:
+        return f"{self.module}.{self.qualname}" if self.module else self.qualname
+
+    @property
+    def formatted(self) -> str:
+        text = self.message.strip()
+        if text:
+            return f"{self.type_name}: {text}"
+        return self.type_name
+
+    def as_dict(self) -> Dict[str, str]:
+        data: Dict[str, str] = {
+            "module": self.module,
+            "qualname": self.qualname,
+            "type": self.type_name,
+            "formatted": self.formatted,
+        }
+        if self.message:
+            data["message"] = self.message
+        return data
+
+
+@dataclass(frozen=True, slots=True)
+class BackendStatus:
+    """Migawka stanu backendu modeli AI."""
+
+    degraded: bool
+    reason: str | None
+    details: Tuple[str, ...] = ()
+    exception_types: Tuple[str, ...] = ()
+    exception_diagnostics: Tuple[ExceptionDiagnostics, ...] = ()
+    since: datetime | None = None
+
+    def as_dict(self) -> Dict[str, object]:
+        since_value: str | None
+        if self.since is None:
+            since_value = None
+        else:
+            since_value = self.since.astimezone(timezone.utc).isoformat()
+        duration_seconds: float | None
+        duration = self.duration()
+        if duration is None:
+            duration_seconds = None
+        else:
+            duration_seconds = max(duration, timedelta(0)).total_seconds()
+        return {
+            "degraded": self.degraded,
+            "reason": self.reason,
+            "details": list(self.details),
+            "exception_types": list(self.exception_types),
+            "exception_diagnostics": [diag.as_dict() for diag in self.exception_diagnostics],
+            "since": since_value,
+            "duration_seconds": duration_seconds,
+        }
+
+    def duration(self, *, now: datetime | None = None) -> timedelta | None:
+        """Zwróć czas trwania degradacji liczony od chwili `since`."""
+
+        if self.since is None:
+            return None
+        current = now if now is not None else _utcnow()
+        duration = current - self.since
+        if duration < timedelta(0):
+            return timedelta(0)
+        return duration
+
+
+@dataclass(frozen=True, slots=True)
+class DegradationEvent:
+    """Pojedyncze zdarzenie degradacji backendu AI."""
+
+    reason: str
+    details: Tuple[str, ...]
+    exception_types: Tuple[str, ...]
+    exception_diagnostics: Tuple[ExceptionDiagnostics, ...]
+    started_at: datetime
+    ended_at: datetime | None = None
+
+    def duration(self, *, now: datetime | None = None) -> timedelta:
+        """Zwróć czas trwania zdarzenia (zabezpieczony przed ujemnymi wartościami)."""
+
+        end = self.ended_at
+        if end is None:
+            end = now if now is not None else _utcnow()
+        duration = end - self.started_at
+        if duration < timedelta(0):
+            return timedelta(0)
+        return duration
+
+    def as_dict(self) -> Dict[str, object]:
+        """Zserializuj zdarzenie do prostego słownika z ISO znacznikami czasu."""
+
+        started_iso = self.started_at.astimezone(timezone.utc).isoformat()
+        ended_iso: str | None
+        if self.ended_at is None:
+            ended_iso = None
+        else:
+            ended_iso = self.ended_at.astimezone(timezone.utc).isoformat()
+        duration_seconds = self.duration().total_seconds()
+        return {
+            "reason": self.reason,
+            "details": list(self.details),
+            "exception_types": list(self.exception_types),
+            "exception_diagnostics": [diag.as_dict() for diag in self.exception_diagnostics],
+            "started_at": started_iso,
+            "ended_at": ended_iso,
+            "duration_seconds": duration_seconds,
+        }
+
+    def resolve(self, *, ended_at: datetime | None = None) -> "DegradationEvent":
+        """Zwróć kopię zdarzenia z ustawionym czasem zakończenia."""
+
+        end = ended_at if ended_at is not None else _utcnow()
+        if end < self.started_at:
+            end = self.started_at
+        return DegradationEvent(
+            reason=self.reason,
+            details=self.details,
+            exception_types=self.exception_types,
+            exception_diagnostics=self.exception_diagnostics,
+            started_at=self.started_at,
+            ended_at=end,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ReasonDegradationStatistics:
+    """Statystyki degradacji pogrupowane według przyczyny."""
+
+    reason: str
+    total_events: int
+    active_events: int
+    resolved_events: int
+    total_downtime_seconds: float
+    active_downtime_seconds: float
+    resolved_downtime_seconds: float
+    average_downtime_seconds: float | None
+    longest_downtime_seconds: float | None
+    shortest_downtime_seconds: float | None
+
+    def as_dict(self) -> Dict[str, object]:
+        """Zserializuj statystyki przyczyny do słownika."""
+
+        return {
+            "reason": self.reason,
+            "total_events": self.total_events,
+            "active_events": self.active_events,
+            "resolved_events": self.resolved_events,
+            "total_downtime_seconds": self.total_downtime_seconds,
+            "active_downtime_seconds": self.active_downtime_seconds,
+            "resolved_downtime_seconds": self.resolved_downtime_seconds,
+            "average_downtime_seconds": self.average_downtime_seconds,
+            "longest_downtime_seconds": self.longest_downtime_seconds,
+            "shortest_downtime_seconds": self.shortest_downtime_seconds,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class DegradationStatistics:
+    """Zagregowane statystyki zdarzeń degradacji backendu AI."""
+
+    total_events: int
+    active_events: int
+    resolved_events: int
+    total_downtime_seconds: float
+    active_downtime_seconds: float
+    resolved_downtime_seconds: float
+    average_downtime_seconds: float | None
+    longest_downtime_seconds: float | None
+    shortest_downtime_seconds: float | None
+    by_reason: Tuple[ReasonDegradationStatistics, ...] = ()
+
+    def as_dict(self) -> Dict[str, object]:
+        """Zserializuj statystyki do słownika z wartościami numerycznymi."""
+
+        return {
+            "total_events": self.total_events,
+            "active_events": self.active_events,
+            "resolved_events": self.resolved_events,
+            "total_downtime_seconds": self.total_downtime_seconds,
+            "active_downtime_seconds": self.active_downtime_seconds,
+            "resolved_downtime_seconds": self.resolved_downtime_seconds,
+            "average_downtime_seconds": self.average_downtime_seconds,
+            "longest_downtime_seconds": self.longest_downtime_seconds,
+            "shortest_downtime_seconds": self.shortest_downtime_seconds,
+            "by_reason": {item.reason: item.as_dict() for item in self.by_reason},
+        }
 
 
 @dataclass(slots=True)
@@ -436,8 +765,14 @@ class AIManager:
         self._regime_classifier = MarketRegimeClassifier()
         self._latest_regimes: Dict[str, MarketRegimeAssessment] = {}
         self._regime_histories: Dict[str, RegimeHistory] = {}
-        self._degraded = bool(_AI_IMPORT_ERROR)
+        self._degraded = False
         self._degradation_reason: str | None = None
+        self._degradation_details: Tuple[str, ...] = ()
+        self._degradation_exceptions: Tuple[BaseException, ...] = ()
+        self._degradation_exception_types: Tuple[str, ...] = ()
+        self._degradation_exception_diagnostics: Tuple[ExceptionDiagnostics, ...] = ()
+        self._degradation_since: datetime | None = None
+        self._degradation_history: List[DegradationEvent] = []
         self._decision_model_repository: ModelRepository | None = None
         self._model_repository: ModelRepository | None = None
         self._repository_models: Dict[str, DecisionModelInference] = {}
@@ -448,11 +783,27 @@ class AIManager:
         self._training_scheduler: TrainingScheduler | None = None
         self._scheduled_training_jobs: Dict[str, ScheduledTrainingJob] = {}
         self._job_artifact_paths: Dict[str, Path] = {}
-        if self._degraded:
-            self._degradation_reason = (
-                "fallback_ai_models"
-                if _AI_IMPORT_ERROR is not None
-                else "backend_validation_failed"
+        if _AI_IMPORT_ERROR is not None:
+            flattened = _flatten_exception_messages(_AI_IMPORT_ERROR)
+            reason = f"fallback_ai_models: {flattened}" if flattened else "fallback_ai_models"
+            messages = _collect_exception_messages(_AI_IMPORT_ERROR)
+            if messages:
+                details = messages
+            elif flattened:
+                details = (flattened,)
+            else:
+                details = (reason,)
+            self._activate_degradation(
+                reason,
+                details=details,
+                exceptions=tuple(_iter_exception_chain(_AI_IMPORT_ERROR)),
+                exception_types=_collect_exception_types(_AI_IMPORT_ERROR),
+                exception_diagnostics=_build_exception_diagnostics(_AI_IMPORT_ERROR),
+            )
+        elif _FALLBACK_ACTIVE:
+            self._activate_degradation(
+                "backend_validation_failed",
+                details=("backend_validation_failed",),
             )
         try:
             init_signature = inspect.signature(_AIModels.__init__)  # type: ignore[attr-defined]
@@ -598,15 +949,263 @@ class AIManager:
 
         return self._degradation_reason
 
+    @property
+    def degradation_details(self) -> Tuple[str, ...]:
+        """Zwraca szczegóły degradacji backendu."""
+
+        return self._degradation_details
+
+    @property
+    def degradation_exceptions(self) -> Tuple[BaseException, ...]:
+        """Zwraca krotkę wyjątków opisujących degradację (jeśli dostępne)."""
+
+        return self._degradation_exceptions
+
+    @property
+    def degradation_exception_types(self) -> Tuple[str, ...]:
+        """Zwraca nazwy klas wyjątków związanych z degradacją."""
+
+        return self._degradation_exception_types
+
+    @property
+    def degradation_exception_diagnostics(self) -> Tuple[ExceptionDiagnostics, ...]:
+        """Zwraca szczegółowe dane wyjątków użyte do diagnostyki backendu."""
+
+        return self._degradation_exception_diagnostics
+
+    @property
+    def degradation_since(self) -> datetime | None:
+        """Zwraca moment wejścia w tryb degradacji (UTC) jeśli dostępny."""
+
+        return self._degradation_since
+
+    @property
+    def degradation_history(self) -> Tuple[DegradationEvent, ...]:
+        """Zwraca historię zdarzeń degradacji backendu."""
+
+        return tuple(self._degradation_history)
+
+    def backend_status(self) -> BackendStatus:
+        """Zwraca migawkę stanu backendu modeli AI."""
+
+        return BackendStatus(
+            degraded=self._degraded,
+            reason=self._degradation_reason,
+            details=self._degradation_details,
+            exception_types=self._degradation_exception_types,
+            exception_diagnostics=self._degradation_exception_diagnostics,
+            since=self._degradation_since,
+        )
+
+    def degradation_statistics(self) -> DegradationStatistics:
+        """Zwróć zagregowane statystyki dotyczące historii degradacji."""
+
+        events = tuple(self._degradation_history)
+        total_events = len(events)
+        if not events:
+            return DegradationStatistics(
+                total_events=0,
+                active_events=0,
+                resolved_events=0,
+                total_downtime_seconds=0.0,
+                active_downtime_seconds=0.0,
+                resolved_downtime_seconds=0.0,
+                average_downtime_seconds=None,
+                longest_downtime_seconds=None,
+                shortest_downtime_seconds=None,
+                by_reason=(),
+            )
+
+        now = _utcnow()
+        active_events = 0
+        resolved_events = 0
+        active_total = 0.0
+        resolved_total = 0.0
+        durations: List[float] = []
+        reason_accumulators: Dict[str, Dict[str, Any]] = {}
+
+        for event in events:
+            reason_key = event.reason or ""
+            accumulator = reason_accumulators.setdefault(
+                reason_key,
+                {
+                    "total": 0,
+                    "active": 0,
+                    "resolved": 0,
+                    "active_seconds": 0.0,
+                    "resolved_seconds": 0.0,
+                    "durations": [],
+                },
+            )
+            if event.ended_at is None:
+                duration_seconds = event.duration(now=now).total_seconds()
+                active_events += 1
+                active_total += duration_seconds
+                accumulator["active"] = int(accumulator["active"]) + 1
+                accumulator["active_seconds"] = float(accumulator["active_seconds"]) + duration_seconds
+            else:
+                duration_seconds = event.duration().total_seconds()
+                resolved_events += 1
+                resolved_total += duration_seconds
+                accumulator["resolved"] = int(accumulator["resolved"]) + 1
+                accumulator["resolved_seconds"] = float(accumulator["resolved_seconds"]) + duration_seconds
+            durations.append(duration_seconds)
+            durations_list = accumulator["durations"]
+            if isinstance(durations_list, list):
+                durations_list.append(duration_seconds)
+            else:
+                new_list = [duration_seconds]
+                accumulator["durations"] = new_list
+            accumulator["total"] = int(accumulator["total"]) + 1
+
+        total_downtime = active_total + resolved_total
+        if durations:
+            longest = max(durations)
+            shortest = min(durations)
+            average = total_downtime / total_events if total_events else None
+        else:
+            longest = None
+            shortest = None
+            average = None
+
+        reason_stats: List[ReasonDegradationStatistics] = []
+        for reason_key, data in sorted(reason_accumulators.items()):
+            reason_total = int(data["total"])
+            reason_active = int(data["active"])
+            reason_resolved = int(data["resolved"])
+            reason_active_seconds = float(data["active_seconds"])
+            reason_resolved_seconds = float(data["resolved_seconds"])
+            durations_list = data["durations"]
+            if isinstance(durations_list, list):
+                reason_durations = [float(value) for value in durations_list]
+            else:
+                reason_durations = []
+            reason_total_seconds = reason_active_seconds + reason_resolved_seconds
+            if reason_durations:
+                reason_longest = max(reason_durations)
+                reason_shortest = min(reason_durations)
+                reason_average = (
+                    reason_total_seconds / reason_total if reason_total else None
+                )
+            else:
+                reason_longest = None
+                reason_shortest = None
+                reason_average = None
+            reason_stats.append(
+                ReasonDegradationStatistics(
+                    reason=reason_key,
+                    total_events=reason_total,
+                    active_events=reason_active,
+                    resolved_events=reason_resolved,
+                    total_downtime_seconds=reason_total_seconds,
+                    active_downtime_seconds=reason_active_seconds,
+                    resolved_downtime_seconds=reason_resolved_seconds,
+                    average_downtime_seconds=reason_average,
+                    longest_downtime_seconds=reason_longest,
+                    shortest_downtime_seconds=reason_shortest,
+                )
+            )
+
+        return DegradationStatistics(
+            total_events=total_events,
+            active_events=active_events,
+            resolved_events=resolved_events,
+            total_downtime_seconds=total_downtime,
+            active_downtime_seconds=active_total,
+            resolved_downtime_seconds=resolved_total,
+            average_downtime_seconds=average,
+            longest_downtime_seconds=longest,
+            shortest_downtime_seconds=shortest,
+            by_reason=tuple(reason_stats),
+        )
+
+    @property
+    def degradation_duration(self) -> timedelta | None:
+        """Zwróć czas trwania bieżącej degradacji jeśli aktywna."""
+
+        if self._degradation_since is None:
+            return None
+        duration = _utcnow() - self._degradation_since
+        if duration < timedelta(0):
+            return timedelta(0)
+        return duration
+
     def require_real_models(self) -> None:
         """Zgłasza wyjątek gdy dostępne są tylko fallbackowe modele AI."""
 
         if self._degraded or (not self._decision_inferences and not self._repository_models):
             reason = self._degradation_reason or "AI backend in degraded mode"
+            detail_text = ""
+            if self._degradation_details:
+                joined = " | ".join(self._degradation_details)
+                detail_text = f" (details: {joined})"
+            if self._degradation_since is not None:
+                since_text = self._degradation_since.astimezone(timezone.utc).isoformat()
+                duration = self.degradation_duration
+                segments = [f"since={since_text}"]
+                if duration is not None:
+                    segments.append(f"duration={duration.total_seconds():.3f}s")
+                suffix = " [" + ", ".join(segments) + "]"
+                if detail_text:
+                    detail_text += suffix
+                else:
+                    detail_text = suffix
             raise RuntimeError(
                 "Real models are required for live trading; current backend is degraded: "
                 + str(reason)
+                + detail_text
             )
+
+    def _activate_degradation(
+        self,
+        reason: str,
+        *,
+        details: Tuple[str, ...] = (),
+        exceptions: Tuple[BaseException, ...] = (),
+        exception_types: Tuple[str, ...] = (),
+        exception_diagnostics: Tuple[ExceptionDiagnostics, ...] = (),
+        since: datetime | None = None,
+    ) -> None:
+        """Ustaw stan degradacji i zarejestruj zdarzenie w historii."""
+
+        activation_time = since or _utcnow()
+        if self._degraded:
+            self._finalize_degradation_event(ended_at=activation_time)
+        self._degraded = True
+        self._degradation_reason = reason
+        self._degradation_details = details
+        self._degradation_exceptions = exceptions
+        self._degradation_exception_types = exception_types
+        self._degradation_exception_diagnostics = exception_diagnostics
+        self._degradation_since = activation_time
+        event = DegradationEvent(
+            reason=reason,
+            details=details,
+            exception_types=exception_types,
+            exception_diagnostics=exception_diagnostics,
+            started_at=activation_time,
+        )
+        self._degradation_history.append(event)
+
+    def _finalize_degradation_event(self, *, ended_at: datetime | None = None) -> None:
+        if not self._degradation_history:
+            return
+        last = self._degradation_history[-1]
+        if last.ended_at is not None:
+            return
+        self._degradation_history[-1] = last.resolve(ended_at=ended_at)
+
+    def _resolve_degradation(self) -> None:
+        if not self._degraded:
+            return
+        self._degraded = False
+        self._degradation_reason = None
+        self._degradation_details = ()
+        self._degradation_exceptions = ()
+        self._degradation_exception_types = ()
+        self._degradation_exception_diagnostics = ()
+        self._degradation_since = None
+        self._finalize_degradation_event()
 
     # -------------------------- Harmonogram treningów --------------------------
     def _ensure_training_scheduler(self) -> TrainingScheduler:
@@ -899,7 +1498,7 @@ class AIManager:
         self._decision_inferences[normalized_name] = inference
         if set_default or self._decision_default_name is None:
             self._decision_default_name = normalized_name
-        quality_ok = self._evaluate_decision_model_quality(inference, normalized_name)
+        quality_ok, quality_details = self._evaluate_decision_model_quality(inference, normalized_name)
         if self._decision_orchestrator is not None:
             try:
                 self._decision_orchestrator.attach_named_inference(
@@ -913,9 +1512,17 @@ class AIManager:
                 )
         self._mark_backend_ready(inference)
         if not quality_ok:
-            self._degraded = True
-            self._degradation_reason = (
-                f"Decision model {normalized_name} failed quality thresholds"
+            message = f"Decision model {normalized_name} failed quality thresholds"
+            details = tuple(quality_details) if quality_details else (message,)
+            error = RuntimeError(message)
+            self._activate_degradation(
+                message,
+                details=details,
+                exceptions=(error,),
+                exception_types=(
+                    f"{error.__class__.__module__}.{error.__class__.__qualname__}",
+                ),
+                exception_diagnostics=_build_exception_diagnostics(error),
             )
         return inference
 
@@ -1304,25 +1911,22 @@ class AIManager:
     def _mark_backend_ready(self, model: Any) -> None:
         if not self._degraded:
             return
-        fallback_reasons = {None, "fallback_ai_models", "backend_validation_failed"}
         if isinstance(model, DecisionModelInference) and getattr(model, "is_ready", False):
-            if self._degradation_reason in fallback_reasons:
-                self._degraded = False
-                self._degradation_reason = None
+            if _is_fallback_degradation(self._degradation_reason):
+                self._resolve_degradation()
             return
         if _AI_IMPORT_ERROR is not None:
             return
         if getattr(model, "feature_names", None):
-            if self._degradation_reason in fallback_reasons:
-                self._degraded = False
-                self._degradation_reason = None
+            if _is_fallback_degradation(self._degradation_reason):
+                self._resolve_degradation()
 
     def _evaluate_decision_model_quality(
         self, inference: DecisionModelInference, name: str
-    ) -> bool:
+    ) -> Tuple[bool, Tuple[str, ...]]:
         artifact = getattr(inference, "_artifact", None)
         if artifact is None:
-            return True
+            return True, ()
         metadata = getattr(artifact, "metadata", {}) or {}
         thresholds = metadata.get("quality_thresholds", {}) if isinstance(metadata, Mapping) else {}
         min_directional = float(thresholds.get("min_directional_accuracy", 0.5))
@@ -1352,8 +1956,17 @@ class AIManager:
                 min_directional,
                 max_mae,
             )
-            return False
-        return True
+            details: List[str] = [
+                f"Decision model {name} failed quality thresholds",
+            ]
+            if directional < min_directional:
+                details.append(
+                    f"directional_accuracy={directional:.3f} < min {min_directional:.3f}"
+                )
+            if mae > max_mae:
+                details.append(f"mae={mae:.3f} > max {max_mae:.3f}")
+            return False, tuple(details)
+        return True, ()
 
     def _compose_performance_metrics(
         self,

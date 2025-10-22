@@ -14,6 +14,35 @@ Dokument opisuje proces przygotowania kompletu artefaktów OEM dla środowisk
   środowisku (`pip install pyinstaller briefcase`).
 * Zbudowana w trybie `Release` aplikacja Qt (`ui/`) – katalog z binarką i
   zasobami QML (`build/ui/Release` lub analogiczny).
+* Pakiet `KryptoLowca` zainstalowany w tym samym środowisku (np.
+  `pip install -e ./KryptoLowca`), aby moduły `KryptoLowca.*` – w tym
+  `KryptoLowca.ai_models` – były dostępne na ścieżce importu.
+  Stan backendu można weryfikować w narzędziach serwisowych przy użyciu
+  `AIManager.backend_status()`, które zwraca flagę degradacji, szczegóły
+  tekstowe, listę klas wyjątków (`exception_types`), znacznik czasu wejścia w
+  tryb degradacji (`since`, w strefie UTC), bieżące oszacowanie czasu trwania
+  degradacji (`duration_seconds`) oraz `exception_diagnostics` – uporządkowane
+  rekordy zawierające moduł, kwalifikowaną nazwę typu, komunikat oraz
+  sformatowaną wersję opisu każdego wyjątku (np. brak
+  `KryptoLowca.ai_models`). Na potrzeby integracji operatorskich dostępna jest
+  też właściwość `AIManager.degradation_duration`, która zwraca obiekt
+  `timedelta` reprezentujący czas w trybie degradacji, oraz
+  `AIManager.degradation_history` – uporządkowaną listę zdarzeń degradacji
+  z informacją o przyczynie (`reason`), szczegółach (`details`), typach
+  wyjątków (`exception_types`), diagnostyce (`exception_diagnostics`),
+  znacznikach czasu rozpoczęcia/zakończenia (`started_at`/`ended_at`) oraz
+  łącznym czasie trwania (`duration_seconds`). Każde zdarzenie dostępne jest
+  również w postaci słownika (`as_dict()`), co ułatwia serializację do logów.
+  Do agregacji historii służy `AIManager.degradation_statistics()`, zwracające
+  sumaryczne metryki (`total_events`, `active_events`,
+  `resolved_events`, `total_downtime_seconds`, `active_downtime_seconds`,
+  `resolved_downtime_seconds`, `average_downtime_seconds`,
+  `longest_downtime_seconds`, `shortest_downtime_seconds`) oraz szczegółowe
+  rozbicie według przyczyn (`by_reason`). Każdy wpis `by_reason` zawiera te same
+  pola liczbowe wraz z nazwą powodu (`reason`), co umożliwia szybkie
+  zidentyfikowanie, które degradacje odpowiadają za największy przestój. Metoda
+  `as_dict()` upraszcza eksport do JSON, mapując przyczyny na odpowiadające im
+  słowniki ze statystykami.
 * Plik konfiguracyjny `config/core.yaml` oraz tajemnice potrzebne do walidacji
   licencji OEM.
 * Klucz HMAC (BASE64 lub plaintext) używany do podpisywania manifestów.
