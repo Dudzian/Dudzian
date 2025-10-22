@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from .app import AutoTrader, EmitterLike, RiskDecision
 from .audit import DecisionAuditLog, DecisionAuditRecord
-from .schedule import ScheduleWindow, TradingSchedule
+from .schedule import ScheduleOverride, ScheduleWindow, TradingSchedule
 
 __all__ = [
     "AutoTrader",
@@ -13,4 +13,5 @@ __all__ = [
     "DecisionAuditRecord",
     "TradingSchedule",
     "ScheduleWindow",
+    "ScheduleOverride",
 ]

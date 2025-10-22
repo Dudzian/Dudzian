@@ -4,7 +4,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
-from collections import Counter, defaultdict
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -593,18 +592,441 @@ class MultiStrategyScheduler:
         return self._suspension_manager.resume_tag(tag)
 
     def suspension_snapshot(self) -> Mapping[str, Mapping[str, object]]:
-        now = self._clock()
-        self._purge_expired_suspensions(now)
-        schedules: dict[str, dict[str, object]] = {}
-        tags: dict[str, dict[str, object]] = {}
-        with self._suspension_lock:
-            for name, record in self._schedule_suspensions.items():
-                schedules[name] = record.as_dict(now)
-            for tag_name, record in self._tag_suspensions.items():
-                tags[tag_name] = record.as_dict(now)
-        return {"schedules": schedules, "tags": tags}
+        """Return a snapshot of active schedule and tag suspensions.
 
-        return self._suspension_manager.snapshot()
+        Besides the raw mappings exported by :class:`SuspensionManager`, the
+        snapshot now exposes lightweight metadata that is useful when
+        troubleshooting the runtime.  The additional keys are backwards
+        compatible with previous consumers because the ``schedules`` and
+        ``tags`` entries remain unchanged, while the metadata lives under new
+        top-level keys such as ``counts``, ``reason_stats``, ``next_expiration``
+        or the aggregated ``expiring_entries`` and ``expiration_buckets``.
+        """
+
+        snapshot = self._suspension_manager.snapshot()
+        schedules = dict(snapshot.get("schedules", {})) if isinstance(snapshot, Mapping) else {}
+        tags = dict(snapshot.get("tags", {})) if isinstance(snapshot, Mapping) else {}
+
+        now = self._clock()
+
+        metadata: dict[str, object] = {
+            "schedules": schedules,
+            "tags": tags,
+        }
+
+        expiring_entries: list[dict[str, object]] = []
+
+        schedule_count = len(schedules)
+        tag_count = len(tags)
+        metadata["counts"] = {
+            "schedules": schedule_count,
+            "tags": tag_count,
+            "total": schedule_count + tag_count,
+        }
+
+        schedule_reasons: dict[str, str] = {}
+        tag_reasons: dict[str, str] = {}
+        reason_stats: dict[str, dict[str, object]] = {}
+        scope_stats: dict[str, dict[str, object]] = {
+            "schedules": {
+                "total": schedule_count,
+                "expiring": 0,
+                "indefinite": 0,
+            },
+            "tags": {
+                "total": tag_count,
+                "expiring": 0,
+                "indefinite": 0,
+            },
+        }
+
+        def _parse_timestamp(value: object) -> datetime | None:
+            if isinstance(value, str) and value:
+                try:
+                    return datetime.fromisoformat(value)
+                except ValueError:
+                    return None
+            return None
+
+        def _register_reason(
+            *,
+            scope: str,
+            name: str,
+            reason_value: object,
+            remaining_seconds: float | None,
+            until_value: str | None,
+            applied_value: str | None,
+            applied_at: datetime | None,
+            age_seconds: float | None,
+        ) -> None:
+            if not isinstance(reason_value, str) or not reason_value:
+                return
+
+            container = schedule_reasons if scope == "schedules" else tag_reasons
+            container[name] = reason_value
+
+            stats = reason_stats.setdefault(
+                reason_value,
+                {
+                    "schedules": 0,
+                    "tags": 0,
+                    "total": 0,
+                    "expiring": 0,
+                    "indefinite": 0,
+                },
+            )
+            stats[scope] = int(stats.get(scope, 0)) + 1
+            stats["total"] = int(stats.get("total", 0)) + 1
+            entries = stats.setdefault("entries", [])
+
+            if remaining_seconds is not None:
+                stats["expiring"] = int(stats.get("expiring", 0)) + 1
+                next_payload = {
+                    "scope": scope[:-1],
+                    "name": name,
+                    "remaining_seconds": remaining_seconds,
+                }
+                if until_value:
+                    next_payload["until"] = until_value
+                if applied_value:
+                    next_payload["applied_at"] = applied_value
+                if age_seconds is not None:
+                    next_payload["age_seconds"] = age_seconds
+
+                existing_next = stats.get("next_expiration")
+                if not isinstance(existing_next, Mapping):
+                    stats["next_expiration"] = next_payload
+                else:
+                    existing_value = existing_next.get("remaining_seconds")
+                    try:
+                        existing_seconds = float(existing_value)
+                    except (TypeError, ValueError):
+                        existing_seconds = math.inf
+                    if remaining_seconds < existing_seconds:
+                        stats["next_expiration"] = next_payload
+
+            else:
+                stats["indefinite"] = int(stats.get("indefinite", 0)) + 1
+
+            descriptor = {
+                "scope": scope[:-1],
+                "name": name,
+            }
+            if isinstance(reason_value, str) and reason_value:
+                descriptor["reason"] = reason_value
+            if remaining_seconds is not None:
+                descriptor["remaining_seconds"] = remaining_seconds
+            if until_value:
+                descriptor["until"] = until_value
+            if isinstance(applied_value, str) and applied_value:
+                descriptor["applied_at"] = applied_value
+            if age_seconds is not None:
+                descriptor["age_seconds"] = age_seconds
+            entries.append(descriptor)
+            if remaining_seconds is not None:
+                expiring_entries.append(dict(descriptor))
+
+            scope_breakdown = stats.setdefault("scope_breakdown", {})
+            bucket = scope_breakdown.setdefault(
+                scope,
+                {"expiring": 0, "indefinite": 0},
+            )
+            if remaining_seconds is not None:
+                bucket["expiring"] = int(bucket.get("expiring", 0)) + 1
+                candidate = {
+                    "scope": scope[:-1],
+                    "name": name,
+                    "remaining_seconds": remaining_seconds,
+                }
+                if until_value:
+                    candidate["until"] = until_value
+                if applied_value:
+                    candidate["applied_at"] = applied_value
+                if age_seconds is not None:
+                    candidate["age_seconds"] = age_seconds
+                existing_scope_next = bucket.get("next_expiration")
+                existing_scope_seconds = bucket.get("_next_seconds")
+                if (
+                    not isinstance(existing_scope_next, Mapping)
+                    or not isinstance(existing_scope_seconds, (int, float))
+                    or remaining_seconds < float(existing_scope_seconds)
+                ):
+                    bucket["next_expiration"] = candidate
+                    bucket["_next_seconds"] = remaining_seconds
+            else:
+                bucket["indefinite"] = int(bucket.get("indefinite", 0)) + 1
+
+            scopes = stats.setdefault("_scopes", set())
+            scopes.add(scope)
+
+            bucket_ages = bucket.setdefault("_ages", [])
+            if age_seconds is not None:
+                bucket_ages.append(age_seconds)
+                stats.setdefault("_ages", []).append(age_seconds)
+
+            if applied_at is not None and applied_value:
+                oldest_marker = bucket.get("_oldest_ts")
+                newest_marker = bucket.get("_newest_ts")
+                if (
+                    not isinstance(oldest_marker, datetime)
+                    or applied_at < oldest_marker
+                ):
+                    bucket["oldest"] = descriptor
+                    bucket["_oldest_ts"] = applied_at
+                if (
+                    not isinstance(newest_marker, datetime)
+                    or applied_at >= newest_marker
+                ):
+                    bucket["newest"] = descriptor
+                    bucket["_newest_ts"] = applied_at
+
+                stats_oldest = stats.get("_oldest_ts")
+                if not isinstance(stats_oldest, datetime) or applied_at < stats_oldest:
+                    stats["oldest"] = descriptor
+                    stats["_oldest_ts"] = applied_at
+                stats_newest = stats.get("_newest_ts")
+                if not isinstance(stats_newest, datetime) or applied_at >= stats_newest:
+                    stats["newest"] = descriptor
+                    stats["_newest_ts"] = applied_at
+
+        def _summarize_scope(
+            *, entries: Mapping[str, object], scope: str
+        ) -> None:
+            oldest: tuple[datetime, dict[str, object]] | None = None
+            newest: tuple[datetime, dict[str, object]] | None = None
+            stats = scope_stats[scope]
+            ages: list[float] = []
+            for name, entry in entries.items():
+                if not isinstance(entry, Mapping):
+                    continue
+
+                remaining_raw = entry.get("remaining_seconds")
+                remaining_seconds: float | None = None
+                has_expiration = False
+                if remaining_raw not in (None, ""):
+                    try:
+                        seconds = float(remaining_raw)
+                    except (TypeError, ValueError):
+                        has_expiration = False
+                    else:
+                        if math.isfinite(seconds) and seconds >= 0.0:
+                            has_expiration = True
+                            remaining_seconds = max(0.0, seconds)
+                if has_expiration:
+                    stats["expiring"] = int(stats.get("expiring", 0)) + 1
+                else:
+                    stats["indefinite"] = int(stats.get("indefinite", 0)) + 1
+
+                applied_value = entry.get("applied_at")
+                applied_at = _parse_timestamp(applied_value)
+                age_seconds: float | None = None
+                if applied_at is not None:
+                    try:
+                        age_seconds = max(0.0, (now - applied_at).total_seconds())
+                    except (TypeError, OverflowError):
+                        age_seconds = None
+                if age_seconds is not None:
+                    ages.append(age_seconds)
+                until_value_obj = entry.get("until")
+                until_value = (
+                    str(until_value_obj)
+                    if isinstance(until_value_obj, str) and until_value_obj
+                    else None
+                )
+                reason_value = entry.get("reason")
+                _register_reason(
+                    scope=scope,
+                    name=name,
+                    reason_value=reason_value,
+                    remaining_seconds=remaining_seconds,
+                    until_value=until_value,
+                    applied_value=applied_value if isinstance(applied_value, str) else None,
+                    applied_at=applied_at,
+                    age_seconds=age_seconds,
+                )
+
+                if applied_at is None or not isinstance(applied_value, str):
+                    continue
+                descriptor = {
+                    "scope": scope[:-1],
+                    "name": name,
+                    "applied_at": applied_value,
+                }
+                if isinstance(reason_value, str) and reason_value:
+                    descriptor["reason"] = reason_value
+                if age_seconds is not None:
+                    descriptor["age_seconds"] = age_seconds
+                if oldest is None or applied_at < oldest[0]:
+                    oldest = (applied_at, descriptor)
+                if newest is None or applied_at >= newest[0]:
+                    newest = (applied_at, descriptor)
+
+            if oldest is not None:
+                stats["oldest"] = oldest[1]
+            if newest is not None:
+                stats["newest"] = newest[1]
+            if ages:
+                stats["age_stats"] = {
+                    "average": sum(ages) / len(ages),
+                    "min": min(ages),
+                    "max": max(ages),
+                }
+
+        _summarize_scope(entries=schedules, scope="schedules")
+        _summarize_scope(entries=tags, scope="tags")
+
+        if schedule_reasons or tag_reasons:
+            unique_reasons = sorted({*schedule_reasons.values(), *tag_reasons.values()})
+            for reason_value, stats in reason_stats.items():
+                scope_breakdown = stats.get("scope_breakdown")
+                if isinstance(scope_breakdown, Mapping):
+                    for bucket in list(scope_breakdown.values()):
+                        if not isinstance(bucket, dict):
+                            continue
+                        ages = bucket.pop("_ages", None)
+                        if isinstance(ages, list) and ages:
+                            bucket["age_stats"] = {
+                                "average": sum(ages) / len(ages),
+                                "min": min(ages),
+                                "max": max(ages),
+                            }
+                        bucket.pop("_next_seconds", None)
+                        bucket.pop("_oldest_ts", None)
+                        bucket.pop("_newest_ts", None)
+                        if "next_expiration" not in bucket and bucket.get("expiring") == 0:
+                            bucket.pop("next_expiration", None)
+                        if "oldest" not in bucket:
+                            bucket.pop("oldest", None)
+                        if "newest" not in bucket:
+                            bucket.pop("newest", None)
+                stats.pop("_oldest_ts", None)
+                stats.pop("_newest_ts", None)
+                scopes = stats.pop("_scopes", None)
+                if scopes:
+                    stats["scopes"] = sorted(set(scopes))
+                ages = stats.pop("_ages", None)
+                if isinstance(ages, list) and ages:
+                    stats["age_stats"] = {
+                        "average": sum(ages) / len(ages),
+                        "min": min(ages),
+                        "max": max(ages),
+                    }
+                entries = stats.get("entries")
+                if isinstance(entries, list):
+                    def _entry_sort_key(payload: Mapping[str, object]) -> tuple[str, str]:
+                        applied = ""
+                        applied_value = payload.get("applied_at")
+                        if isinstance(applied_value, str):
+                            applied = applied_value
+                        return applied, str(payload.get("name", ""))
+
+                    entries.sort(key=_entry_sort_key)
+
+            metadata["reasons"] = {
+                "schedules": schedule_reasons,
+                "tags": tag_reasons,
+                "unique": unique_reasons,
+            }
+            metadata["reason_stats"] = reason_stats
+        metadata["scope_stats"] = scope_stats
+
+        def _extract_next_expiration(
+            entries: Mapping[str, object],
+            scope: str,
+        ) -> tuple[float, dict[str, object]] | None:
+            next_candidate: tuple[float, dict[str, object]] | None = None
+            for name, payload in entries.items():
+                if not isinstance(payload, Mapping):
+                    continue
+                remaining = payload.get("remaining_seconds")
+                if remaining in (None, ""):
+                    continue
+                try:
+                    seconds = float(remaining)
+                except (TypeError, ValueError):
+                    continue
+                seconds = max(0.0, seconds)
+                candidate = {
+                    "scope": scope,
+                    "name": name,
+                    "remaining_seconds": seconds,
+                }
+                until_value = payload.get("until")
+                if isinstance(until_value, str) and until_value:
+                    candidate["until"] = until_value
+                applied_value = payload.get("applied_at")
+                if isinstance(applied_value, str) and applied_value:
+                    candidate["applied_at"] = applied_value
+                if next_candidate is None or seconds < next_candidate[0]:
+                    next_candidate = (seconds, candidate)
+            return next_candidate
+
+        upcoming: tuple[float, dict[str, object]] | None = None
+        schedule_next = _extract_next_expiration(schedules, "schedule")
+        if schedule_next is not None:
+            scope_stats["schedules"]["next_expiration"] = schedule_next[1]
+        tag_next = _extract_next_expiration(tags, "tag")
+        if tag_next is not None:
+            scope_stats["tags"]["next_expiration"] = tag_next[1]
+        for candidate in (schedule_next, tag_next):
+            if candidate is None:
+                continue
+            if upcoming is None or candidate[0] < upcoming[0]:
+                upcoming = candidate
+        if upcoming is not None:
+            metadata["next_expiration"] = upcoming[1]
+
+        if expiring_entries:
+            def _expiring_sort_key(payload: Mapping[str, object]) -> tuple[float, str, str]:
+                remaining = payload.get("remaining_seconds")
+                try:
+                    seconds = float(remaining)
+                except (TypeError, ValueError):
+                    seconds = math.inf
+                applied_value = payload.get("applied_at")
+                applied = applied_value if isinstance(applied_value, str) else ""
+                return seconds, applied, str(payload.get("name", ""))
+
+            expiring_entries.sort(key=_expiring_sort_key)
+            metadata["expiring_entries"] = expiring_entries
+            metadata["expiring_total"] = len(expiring_entries)
+
+            bucket_definitions: tuple[tuple[str, float], ...] = (
+                ("1m", 60.0),
+                ("5m", 5 * 60.0),
+                ("15m", 15 * 60.0),
+                ("1h", 60.0 * 60.0),
+                ("4h", 4 * 60.0 * 60.0),
+                ("12h", 12 * 60.0 * 60.0),
+                ("1d", 24 * 60.0 * 60.0),
+                ("3d", 3 * 24 * 60.0 * 60.0),
+                ("7d", 7 * 24 * 60.0 * 60.0),
+            )
+
+            expiration_buckets: dict[str, dict[str, object]] = {}
+            for label, threshold in bucket_definitions:
+                window: list[dict[str, object]] = [
+                    entry
+                    for entry in expiring_entries
+                    if float(entry.get("remaining_seconds", math.inf)) <= threshold
+                ]
+                if not window:
+                    continue
+                scopes = sorted({entry.get("scope", "") for entry in window if entry.get("scope")})
+                bucket_payload: dict[str, object] = {
+                    "count": len(window),
+                    "next": dict(window[0]),
+                }
+                if len(window) > 1:
+                    bucket_payload["last"] = dict(window[-1])
+                if scopes:
+                    bucket_payload["scopes"] = scopes
+                expiration_buckets[label] = bucket_payload
+            if expiration_buckets:
+                metadata["expiration_buckets"] = expiration_buckets
+
+        return metadata
+
     def attach_portfolio_coordinator(
         self, coordinator: "PortfolioRuntimeCoordinator"
     ) -> None:
