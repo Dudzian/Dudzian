@@ -593,8 +593,6 @@ class MultiStrategyScheduler:
         return self._suspension_manager.resume_tag(tag)
 
     def suspension_snapshot(self) -> Mapping[str, Mapping[str, object]]:
-        """Zwraca aktualną migawkę aktywnych zawieszeń."""
-
         return self._suspension_manager.snapshot()
     def attach_portfolio_coordinator(
         self, coordinator: "PortfolioRuntimeCoordinator"

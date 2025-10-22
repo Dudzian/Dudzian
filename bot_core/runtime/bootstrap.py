@@ -1394,20 +1394,6 @@ def build_live_readiness_checklist(
             required_for_check = doc_required or doc_name in declared_required
             doc_ok = True
             doc_reasons: list[str] = []
-
-            resolved_doc_path: Path | None = None
-            doc_path_verified = False
-            if doc_path:
-                candidate = Path(doc_path)
-                if candidate.is_absolute():
-                    resolved_doc_path = candidate
-                    doc_path_verified = True
-                elif root_path is not None:
-                    resolved_doc_path = (root_path / candidate).resolve()
-                    doc_path_verified = True
-                else:
-                    resolved_doc_path = candidate
-
             if required_for_check:
                 if not doc_signed:
                     doc_ok = False
@@ -1421,36 +1407,6 @@ def build_live_readiness_checklist(
                 if not doc_sha:
                     doc_ok = False
                     doc_reasons.append("missing sha256 digest")
-                if doc_signature_path and root_path is not None:
-                    signature_candidate = Path(doc_signature_path)
-                    if not signature_candidate.is_absolute():
-                        signature_candidate = (root_path / signature_candidate).resolve()
-                    if not signature_candidate.exists():
-                        doc_ok = False
-                        doc_reasons.append("signature artifact missing")
-
-            computed_sha: str | None = None
-            if doc_path_verified and resolved_doc_path is not None:
-                if not resolved_doc_path.exists():
-                    if required_for_check:
-                        doc_ok = False
-                        doc_reasons.append("file not found")
-                else:
-                    try:
-                        digest = hashlib.sha256()
-                        with resolved_doc_path.open("rb") as handle:
-                            for chunk in iter(lambda: handle.read(65536), b""):
-                                digest.update(chunk)
-                        computed_sha = digest.hexdigest()
-                    except OSError as exc:  # pragma: no cover - nieoczekiwane błędy IO
-                        if required_for_check:
-                            doc_ok = False
-                            doc_reasons.append(f"failed to read file: {exc}")
-                    if computed_sha is not None and doc_sha:
-                        if computed_sha.lower() != doc_sha.lower():
-                            doc_ok = False
-                            doc_reasons.append("sha256 mismatch")
-
             detail: dict[str, Any] = {
                 "name": doc_name,
                 "required": required_for_check,
@@ -1460,10 +1416,6 @@ def build_live_readiness_checklist(
                 "signed_by": doc_signers,
                 "status": "ok" if doc_ok or not required_for_check else "blocked",
             }
-            if resolved_doc_path is not None:
-                detail["resolved_path"] = str(resolved_doc_path)
-            if computed_sha is not None:
-                detail["computed_sha256"] = computed_sha
             if doc_signature_path:
                 detail["signature_path"] = doc_signature_path
             if doc_signed_at:
@@ -1494,19 +1446,8 @@ def build_live_readiness_checklist(
             checklist_reasons.append("checklist not signed")
         if checklist_signed and not checklist_signers:
             checklist_reasons.append("missing checklist signers")
-        signature_path_obj: Path | None = None
         if checklist_signed and not checklist_signature_path:
             checklist_reasons.append("missing checklist signature artifact")
-        elif checklist_signature_path:
-            signature_path_obj = Path(checklist_signature_path)
-            signature_checked = False
-            if not signature_path_obj.is_absolute() and root_path is not None:
-                signature_path_obj = (root_path / signature_path_obj).resolve()
-                signature_checked = True
-            elif signature_path_obj.is_absolute():
-                signature_checked = True
-            if signature_checked and not signature_path_obj.exists():
-                checklist_reasons.append("checklist signature missing")
 
         documents_status_ok = documents_ok and not checklist_reasons
 
@@ -1518,13 +1459,8 @@ def build_live_readiness_checklist(
             "signature_path": checklist_signature_path,
             "status": "ok" if not checklist_reasons else "blocked",
         }
-        if signature_path_obj is not None:
-            checklist_details["resolved_signature_path"] = str(signature_path_obj)
         if checklist_reasons:
             checklist_details["reasons"] = tuple(checklist_reasons)
-        if required_targets:
-            checklist_details["required_documents"] = tuple(sorted(required_targets))
-
         checklist.append(
             {
                 "item": "live_checklist",
@@ -1796,30 +1732,15 @@ def bootstrap_environment(
                 "status": "invalid",
                 "license_path": str(Path(license_config.license_path).expanduser()),
             }
-            if offline_mode:
-                _LOGGER.warning(
-                    "Pomijam weryfikację licencji OEM dla środowiska %s w trybie offline: %s",
-                    environment.name,
-                    exc,
-                )
-                emit_alert(
-                    "Weryfikacja licencji OEM pominięta – środowisko działa offline.",
-                    severity=AlertSeverity.WARNING,
-                    source="security.license",
-                    context=context,
-                    exception=exc,
-                )
-                license_result = exc.result
-            else:
-                emit_alert(
-                    "Weryfikacja licencji OEM zakończona błędem – zatrzymuję kontroler.",
-                    severity=AlertSeverity.CRITICAL,
-                    source="security.license",
-                    context=context,
-                    exception=exc,
-                )
-                _LOGGER.critical("Weryfikacja licencji OEM nie powiodła się: %s", exc)
-                raise RuntimeError(str(exc)) from exc
+            emit_alert(
+                "Weryfikacja licencji OEM zakończona błędem – zatrzymuję kontroler.",
+                severity=AlertSeverity.CRITICAL,
+                source="security.license",
+                context=context,
+                exception=exc,
+            )
+            _LOGGER.critical("Weryfikacja licencji OEM nie powiodła się: %s", exc)
+            raise RuntimeError(str(exc)) from exc
 
     if license_result is not None:
         if license_result.warnings:

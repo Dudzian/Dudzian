@@ -32,68 +32,21 @@ python scripts/promotion_to_live.py <environment> \
   --pretty
 ```
 
-> **Nowość:** raport można wygenerować także w formacie Markdown:
-
-```bash
-python scripts/promotion_to_live.py <environment> \
-  --config config/core.yaml \
-  --output var/audit/live/promotion_report.md \
-  --format markdown
-```
-
-> **Zbiorcze raporty:** aby wygenerować raport dla wszystkich środowisk LIVE
-> zdefiniowanych w `core.yaml`, użyj przełącznika `--all-live`. Możesz jednocześnie
-> wskazać katalog na indywidualne raporty:
-
-```bash
-python scripts/promotion_to_live.py --all-live \
-  --config config/core.yaml \
-  --output var/audit/live/promotion_summary.json \
-  --output-dir var/audit/live/promotion_reports \
-  --skip-license
-```
-
 Parametry dodatkowe:
 
 - `--skip-license` – pomija walidację licencji (przydatne w CI lub na środowiskach
   developerskich bez dostępu do kluczy).
-- `--fail-on-license` – kończy działanie kodem 3, jeśli walidacja licencji zwróci
-  status inny niż OK; w połączeniu z `--skip-license` raport zakończy się sukcesem,
-  ale wypisze ostrzeżenie o pominiętej walidacji.
-- `--fail-on-skipped-license` – kończy działanie kodem 4, jeżeli walidacja licencji
-  zostanie pominięta (np. przez `--skip-license` lub brak sekcji licencji w
-  konfiguracji).
 - `--pretty` – zapisuje raport w formacie JSON z wcięciami.
-- `--format markdown` – generuje raport w formacie Markdown (domyślnie JSON).
-- `--all-live` – generuje raporty dla wszystkich środowisk, które mają
-  `environment: live`.
-- `--output-dir` – katalog, w którym zostaną zapisane raporty dla poszczególnych
-  środowisk (np. jeden plik JSON na środowisko).
-- `--document-root` – katalog bazowy z artefaktami checklisty. Domyślnie skrypt
-  zakłada, że dokumenty znajdują się obok `core.yaml`, ale można wskazać inny
-  katalog (np. zasób read-only z podpisanymi dokumentami).
 
 Raport zawiera sekcje:
 
 - `risk_profile_details` – skrócone limity z profilu ryzyka.
 - `license` – wynik walidacji licencji (`status`, ostrzeżenia i błędy).
-  Przy statusie `skipped` raport zawiera także powód pominięcia (np.
-  `cli_skip_requested`).
 - `alerting` – kanały, throttling i backend audytu.
 - `live_readiness_checklist` – weryfikacja podpisów KYC/AML oraz kompletności
   dokumentów LIVE zgodnie z konfiguracją.
 - `live_readiness_metadata` – surowe metadane checklisty (nazwy dokumentów,
-  podpisy, sumy SHA-256, katalog dokumentów).
-- Przy pracy w trybie `--all-live` raport zbiorczy zawiera dodatkowe podsumowanie
-  (`summary`) wskazujące środowiska z blokadami, problemy licencyjne oraz listę
-  pominiętych walidacji wraz z licznikami środowisk OK/zablokowanych i
-  brakujących dokumentów. Podsumowanie raportuje też powody pominięcia
-  walidacji licencji (`license_skipped_reasons`).
-
-Podczas generowania raportu skrypt potwierdza fizyczną obecność każdego pliku
-zadeklarowanego w sekcji `live_readiness.documents`, weryfikuje sumy SHA-256 i
-istnienie artefaktów podpisów. Brak pliku, rozbieżność skrótu lub brak podpisu
-powoduje oznaczenie pozycji jako `blocked` z odpowiednią przyczyną.
+  podpisy, sumy SHA-256).
 
 ## 3. Checklist manualna
 
