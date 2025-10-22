@@ -17,7 +17,6 @@ from bot_core.ai.regime import (
     RegimeHistory,
     RegimeStrategyWeights,
     RegimeSummary,
-    RiskLevel,
 )
 from bot_core.backtest.ma import simulate_trades_ma  # noqa: F401 - zachowaj kompatybilność API
 from bot_core.events import DebounceRule, Event, EventBus, EventType, EmitterAdapter
@@ -106,6 +105,13 @@ class AutoTradeEngine:
         self._auto_risk_frozen_until: float = 0.0
         self._auto_risk_frozen: bool = False
         self._submit_market = broker_submit_market
+        self._regime_classifier = MarketRegimeClassifier()
+        self._regime_history = RegimeHistory(
+            thresholds_loader=self._regime_classifier.thresholds_loader
+        )
+        self._regime_history.reload_thresholds(
+            thresholds=self._regime_classifier.thresholds_snapshot()
+        )
         self._strategy_weights = RegimeStrategyWeights(
             weights={
                 MarketRegime(regime): dict(weights)
@@ -114,10 +120,6 @@ class AutoTradeEngine:
         )
         self._last_regime: MarketRegimeAssessment | None = None
         self._last_summary: RegimeSummary | None = None
-        self._install_regime_components(
-            regime_classifier or MarketRegimeClassifier(),
-            regime_history,
-        )
 
         batch_rule = DebounceRule(window=0.1, max_batch=1)
         self.bus.subscribe(EventType.MARKET_TICK, self._on_ticks_batch, rule=batch_rule)
@@ -455,8 +457,6 @@ class AutoTradeEngine:
         )
         self._regime_history.update(assessment)
         summary = self._regime_history.summarise()
-        if summary is not None:
-            self._handle_auto_risk_freeze(summary)
         should_emit = self._last_regime is None or (
             self._last_regime.regime != assessment.regime
         )
@@ -500,70 +500,6 @@ class AutoTradeEngine:
         """Udostępnij aktualnie aktywne progi klasyfikatora."""
 
         return self._regime_history.thresholds_snapshot()
-
-    def _recompute_risk_freeze_until(self) -> None:
-        self._risk_frozen_until = max(self._manual_risk_frozen_until, self._auto_risk_frozen_until)
-
-    def _should_auto_freeze(self, summary: RegimeSummary) -> bool:
-        if not self.cfg.auto_risk_freeze:
-            return False
-        level_threshold = self.cfg.auto_risk_freeze_level
-        summary_level = summary.risk_level
-        if not isinstance(level_threshold, RiskLevel):  # pragma: no cover - sanity
-            level_threshold = RiskLevel(level_threshold)
-        level_check = (
-            self._RISK_LEVEL_ORDER[summary_level]
-            >= self._RISK_LEVEL_ORDER[level_threshold]
-        )
-        score_check = summary.risk_score >= self.cfg.auto_risk_freeze_score
-        return level_check or score_check
-
-    def _handle_auto_risk_freeze(self, summary: RegimeSummary) -> None:
-        if not self.cfg.auto_risk_freeze:
-            if self._auto_risk_frozen:
-                self._auto_risk_frozen = False
-                self._auto_risk_frozen_until = 0.0
-                self._recompute_risk_freeze_until()
-            return
-
-        now = time.time()
-        should_freeze = self._should_auto_freeze(summary)
-        if should_freeze:
-            expiry = now + self.cfg.risk_freeze_seconds
-            previous_auto_until = self._auto_risk_frozen_until
-            if expiry > previous_auto_until:
-                self._auto_risk_frozen_until = expiry
-                self._recompute_risk_freeze_until()
-            if not self._auto_risk_frozen or expiry > previous_auto_until + 1e-9:
-                self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
-                    "risk_freeze",
-                    detail={
-                        "symbol": self.cfg.symbol,
-                        "until": self._risk_frozen_until,
-                        "reason": "auto_risk_freeze",
-                        "risk_level": summary.risk_level.value,
-                        "risk_score": summary.risk_score,
-                    },
-                    level="WARN",
-                )
-            self._auto_risk_frozen = True
-            return
-
-        if self._auto_risk_frozen:
-            self._auto_risk_frozen = False
-            self._auto_risk_frozen_until = 0.0
-            self._recompute_risk_freeze_until()
-            self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
-                "risk_freeze_release",
-                detail={
-                    "symbol": self.cfg.symbol,
-                    "reason": "auto_risk_release",
-                    "risk_level": summary.risk_level.value,
-                    "risk_score": summary.risk_score,
-                    "until": self._risk_frozen_until,
-                },
-                level="INFO",
-            )
 
 
 __all__ = ["AutoTradeConfig", "AutoTradeEngine"]
