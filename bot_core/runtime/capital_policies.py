@@ -147,17 +147,30 @@ class MetricWeightedAllocation:
         fallback_policy: CapitalAllocationPolicy | None = None,
         shift_epsilon: float = 1e-6,
         default_score: float = 0.0,
+        label: str | None = None,
     ) -> None:
         self._rules = tuple(rules)
         self._fallback = fallback_policy
         self._shift_epsilon = max(1e-9, float(shift_epsilon))
         self._default_score = float(default_score)
         self._last_snapshot: dict[str, dict[str, float]] = {}
+        if label not in (None, ""):
+            try:
+                self.name = str(label)
+            except Exception:  # pragma: no cover - defensywnie
+                pass
 
     def allocate(self, schedules: Sequence["_ScheduleContext"]) -> Mapping[str, float]:
         if not schedules:
             self._last_snapshot = {}
             return {}
+
+        if not self._rules:
+            return self._fallback_or_equal(
+                schedules,
+                diagnostics=None,
+                reason="no_rules",
+            )
 
         scores: dict[str, float] = {}
         diagnostics: dict[str, dict[str, float]] = {}
@@ -218,6 +231,10 @@ class MetricWeightedAllocation:
 
     def allocation_diagnostics(self) -> Mapping[str, Mapping[str, float]]:
         return {key: dict(value) for key, value in self._last_snapshot.items()}
+
+    @property
+    def metrics(self) -> tuple[MetricWeightRule, ...]:
+        return self._rules
 
     def _fallback_or_equal(
         self,

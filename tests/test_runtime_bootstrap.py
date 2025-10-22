@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 import sys
@@ -45,6 +46,7 @@ from bot_core.runtime.bootstrap import (
     _load_initial_tco_costs,
     bootstrap_environment,
     catalog_runtime_entrypoints,
+    extract_live_readiness_metadata,
     get_registered_adapter_factories,
     register_adapter_factory,
     register_adapter_factory_from_path,
@@ -534,6 +536,75 @@ def test_bootstrap_environment_live_exposes_checklist(tmp_path: Path) -> None:
             "alert_audit": {"backend": "file", "directory": "./var/live_alerts"},
         }
     )
+    checklist_signature_rel = "compliance/live/binance/checklist.sig"
+    checklist_signature_path = tmp_path / checklist_signature_rel
+    checklist_signature_path.parent.mkdir(parents=True, exist_ok=True)
+    checklist_signature_path.write_text("checklist-sig", encoding="utf-8")
+
+    kyc_digest = _write_document(
+        tmp_path,
+        "compliance/live/binance/kyc_packet.pdf",
+        content="kyc-packet-live",
+    )
+    (tmp_path / "compliance/live/binance/kyc_packet.sig").write_text(
+        "kyc-sig",
+        encoding="utf-8",
+    )
+    license_digest = _write_document(
+        tmp_path,
+        "compliance/live/binance/license_attestation.pdf",
+        content="license-attestation",
+    )
+    (tmp_path / "compliance/live/binance/license_attestation.sig").write_text(
+        "license-sig",
+        encoding="utf-8",
+    )
+    alert_digest = _write_document(
+        tmp_path,
+        "sre/live/binance/alerting_playbook.pdf",
+        content="alerting-playbook",
+    )
+    (tmp_path / "sre/live/binance/alerting_playbook.sig").write_text(
+        "alert-sig",
+        encoding="utf-8",
+    )
+    live_env["live_readiness"] = {
+        "checklist_id": "binance-q3",
+        "signed": True,
+        "signed_by": ["compliance", "security"],
+        "signed_at": "2024-06-01T10:00:00Z",
+        "signature_path": checklist_signature_rel,
+        "required_documents": ["kyc_packet", "license_attestation", "alerting_playbook"],
+        "documents": [
+            {
+                "name": "kyc_packet",
+                "path": "compliance/live/binance/kyc_packet.pdf",
+                "sha256": kyc_digest,
+                "signature_path": "compliance/live/binance/kyc_packet.sig",
+                "signed": True,
+                "signed_by": ["compliance"],
+                "signed_at": "2024-05-28T09:45:00Z",
+            },
+            {
+                "name": "license_attestation",
+                "path": "compliance/live/binance/license_attestation.pdf",
+                "sha256": license_digest,
+                "signature_path": "compliance/live/binance/license_attestation.sig",
+                "signed": True,
+                "signed_by": ["security"],
+                "signed_at": "2024-05-29T15:30:00Z",
+            },
+            {
+                "name": "alerting_playbook",
+                "path": "sre/live/binance/alerting_playbook.pdf",
+                "sha256": alert_digest,
+                "signature_path": "sre/live/binance/alerting_playbook.sig",
+                "signed": True,
+                "signed_by": ["sre"],
+                "signed_at": "2024-05-30T07:10:00Z",
+            },
+        ],
+    }
     data["environments"]["binance_live"] = live_env
     auto_trader_entry = data["runtime_entrypoints"]["auto_trader"]
     auto_trader_entry["environment"] = "binance_live"
@@ -575,6 +646,35 @@ def test_bootstrap_environment_live_exposes_checklist(tmp_path: Path) -> None:
     primary_entry = compliance_details[0]
     assert primary_entry["entrypoint"] == "auto_trader"
     assert primary_entry["signoffs"] == ("kyc2024", "risk_limits")
+    checklist_entry = entries["live_checklist"]
+    assert checklist_entry["status"] == "ok"
+    checklist_details = checklist_entry["details"]
+    checklist_meta = checklist_details["checklist"]
+    assert checklist_meta["status"] == "ok"
+    assert checklist_meta["signed_by"] == ("compliance", "security")
+    assert checklist_meta["resolved_signature_path"].endswith("checklist.sig")
+    documents = {doc["name"]: doc for doc in checklist_details["documents"]}
+    assert documents["kyc_packet"]["status"] == "ok"
+    assert documents["kyc_packet"]["computed_sha256"] == kyc_digest
+    assert documents["kyc_packet"]["resolved_path"].endswith("kyc_packet.pdf")
+    assert documents["license_attestation"]["signed_by"] == ("security",)
+    assert documents["alerting_playbook"]["signature_path"].endswith("alerting_playbook.sig")
+
+    metadata = extract_live_readiness_metadata(checklist)
+    assert metadata is not None
+    assert metadata["status"] == "ok"
+    checklist_meta_summary = metadata.get("checklist")
+    assert checklist_meta_summary is not None
+    assert checklist_meta_summary.get("status") == "ok"
+    assert set(checklist_meta_summary.get("required_documents", ())) == {
+        "kyc_packet",
+        "license_attestation",
+        "alerting_playbook",
+    }
+    metadata_docs = {doc["name"]: doc for doc in metadata.get("documents", [])}
+    assert metadata_docs["kyc_packet"]["resolved_path"].endswith("kyc_packet.pdf")
+    assert metadata_docs["kyc_packet"]["computed_sha256"] == kyc_digest
+
     assert entries["risk_limits"]["status"] == "ok"
     assert entries["alerting"]["status"] == "ok"
     assert context.metrics_ui_alert_sink_active is True
@@ -613,6 +713,109 @@ def test_bootstrap_environment_live_exposes_checklist(tmp_path: Path) -> None:
     assert audit_info["requested"] == "inherit"
     assert audit_info["backend"] == "memory"
     assert audit_info["note"] == "inherited_environment_router"
+
+
+def test_live_checklist_blocks_on_missing_documents(tmp_path: Path) -> None:
+    data = yaml.safe_load(_BASE_CONFIG)
+    live_env = copy.deepcopy(data["environments"]["binance_paper"])
+    checklist_signature_path = tmp_path / "compliance/live/binance/checklist.sig"
+    checklist_signature_path.parent.mkdir(parents=True, exist_ok=True)
+    checklist_signature_path.write_text("checklist-sig", encoding="utf-8")
+
+    kyc_digest = _write_document(
+        tmp_path,
+        "compliance/live/binance/kyc_packet.pdf",
+        content="kyc-packet-missing",
+    )
+    (tmp_path / "compliance/live/binance/kyc_packet.sig").write_text(
+        "kyc-sig",
+        encoding="utf-8",
+    )
+    alert_digest = _write_document(
+        tmp_path,
+        "sre/live/binance/alerting_playbook.pdf",
+        content="alerting-playbook-missing",
+    )
+
+    live_env.update(
+        {
+            "environment": "live",
+            "keychain_key": "binance_live_key",
+            "alert_audit": {"backend": "file", "directory": "./var/live_alerts"},
+            "live_readiness": {
+                "checklist_id": "binance-q3",
+                "signed": True,
+                "signed_by": ["compliance"],
+                "signature_path": "compliance/live/binance/checklist.sig",
+                "required_documents": ["kyc_packet", "alerting_playbook"],
+                "documents": [
+                    {
+                        "name": "kyc_packet",
+                        "path": "compliance/live/binance/kyc_packet.pdf",
+                        "sha256": kyc_digest,
+                        "signed": True,
+                        "signed_by": ["compliance"],
+                        "signature_path": "compliance/live/binance/kyc_packet.sig",
+                    },
+                    {
+                        "name": "alerting_playbook",
+                        "path": "sre/live/binance/alerting_playbook.pdf",
+                        "sha256": alert_digest,
+                        "signed": False,
+                        "signed_by": [],
+                    },
+                ],
+            },
+        }
+    )
+    data["environments"]["binance_live"] = live_env
+    auto_trader_entry = data["runtime_entrypoints"]["auto_trader"]
+    auto_trader_entry["environment"] = "binance_live"
+    auto_trader_entry["trusted_auto_confirm"] = True
+    auto_trader_entry["compliance"] = {
+        "live_allowed": True,
+        "signed": True,
+        "require_signoff": True,
+        "risk_profiles": ["balanced"],
+        "signoffs": ["kyc2024"],
+    }
+
+    config_path = tmp_path / "core_live.yaml"
+    config_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+    storage, manager = _prepare_manager()
+    credentials_payload = {
+        "key_id": "live-key",
+        "secret": "live-secret",
+        "passphrase": None,
+        "permissions": ["read", "trade"],
+        "environment": Environment.LIVE.value,
+    }
+    storage.set_secret(
+        "tests:binance_live_key:trading",
+        json.dumps(credentials_payload),
+    )
+
+    context = bootstrap_environment(
+        "binance_live", config_path=config_path, secret_manager=manager
+    )
+
+    checklist = context.live_readiness_checklist
+    assert checklist is not None
+    entries = {entry["item"]: entry for entry in checklist}
+    checklist_entry = entries["live_checklist"]
+    assert checklist_entry["status"] == "blocked"
+    documents = checklist_entry["details"]["documents"]
+    document_map = {doc["name"]: doc for doc in documents if "name" in doc}
+    assert document_map["alerting_playbook"]["status"] == "blocked"
+    missing = [doc for doc in documents if doc.get("status") == "missing"]
+    assert missing == []
+
+    metadata = extract_live_readiness_metadata(checklist)
+    assert metadata is not None
+    assert metadata["status"] == "blocked"
+    metadata_docs = {doc["name"]: doc for doc in metadata.get("documents", [])}
+    assert metadata_docs["alerting_playbook"]["status"] == "blocked"
 
 
 def test_sms_provider_fallback_without_providers_module(
@@ -2233,6 +2436,14 @@ def _tco_config_with_report(
             max_report_age_hours=max_hours,
         )
     )
+
+
+def _write_document(root: Path, relative_path: str, *, content: str) -> str:
+    data = content.encode("utf-8")
+    path = root / relative_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    return hashlib.sha256(data).hexdigest()
 
 
 def _write_tco_report(path: Path) -> None:
