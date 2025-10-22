@@ -223,6 +223,56 @@ def test_set_work_schedule_accepts_mapping_payload() -> None:
     assert payload["reason"] == "config"
 
 
+def test_describe_work_schedule_returns_payload_with_state() -> None:
+    trader, _ = _build_trader()
+    now = datetime.now(timezone.utc)
+    schedule_payload = {
+        "timezone": "UTC",
+        "default_mode": "live",
+        "windows": [
+            {
+                "start": "07:00",
+                "end": "19:00",
+                "mode": "live",
+                "allow_trading": True,
+                "days": ["mon", "tue"],
+                "label": "session",
+            }
+        ],
+        "overrides": [
+            {
+                "start": (now - timedelta(minutes=5)).isoformat(),
+                "end": (now + timedelta(minutes=25)).isoformat(),
+                "mode": "maintenance",
+                "allow_trading": False,
+                "label": "window",
+            }
+        ],
+    }
+
+    trader.set_work_schedule(schedule_payload)
+
+    described = trader.describe_work_schedule()
+
+    assert described["timezone"] == "UTC"
+    assert described["windows"][0]["label"] == "session"
+    state = described["state"]
+    assert state["mode"] == "maintenance"
+    assert "override_active" in state
+
+
+def test_describe_work_schedule_returns_default_when_unset() -> None:
+    trader, _ = _build_trader()
+
+    described = trader.describe_work_schedule()
+
+    assert described["default_mode"] == "demo"
+    assert described["windows"]
+    state = described["state"]
+    assert state["mode"] == "demo"
+    assert state["is_open"] is True
+
+
 def test_schedule_override_blocks_trading_and_serializes() -> None:
     trader, emitter = _build_trader()
     now = datetime.now(timezone.utc)

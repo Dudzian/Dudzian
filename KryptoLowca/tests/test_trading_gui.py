@@ -633,6 +633,8 @@ async def test_market_data_worker_reports_connection_error(tk_root):
 @pytest.mark.asyncio
 async def test_market_data_worker_sets_success_status(monkeypatch, tk_root):
     class SuccessfulAdapter:
+        name = "stub-rest"
+
         async def connect(self) -> None:
             return None
 
@@ -673,7 +675,7 @@ async def test_market_data_worker_sets_success_status(monkeypatch, tk_root):
     await gui._market_data_worker(["BTC-PLN"], True)
     gui._drain_market_data_queue()
 
-    assert gui.state.status.get() == "Ticker REST aktywny"
+    assert gui.state.status.get() == "Ticker REST aktywny – stub-rest"
     assert captured and captured[0][0] == "BTC-PLN"
     assert gui.state.market_price.get() == "101.00"
 
