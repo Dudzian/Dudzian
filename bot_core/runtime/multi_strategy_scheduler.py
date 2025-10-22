@@ -736,6 +736,10 @@ class MultiStrategyScheduler:
                 schedule.portfolio_weight = 0.0
 
             schedule.metrics["portfolio_weight"] = float(schedule.portfolio_weight)
+            schedule.metrics["governor_signal_factor"] = float(schedule.governor_signal_factor)
+            schedule.metrics["governor_max_signals"] = float(
+                schedule.base_max_signals * max(0.0, schedule.governor_signal_factor)
+            )
             self._apply_signal_limits(schedule)
 
             snapshots = schedule.feed.fetch_latest(schedule.strategy_name)
@@ -919,6 +923,10 @@ class MultiStrategyScheduler:
             schedule.portfolio_weight = float(allocation.weight)
             schedule.metrics["portfolio_weight"] = float(allocation.weight)
             schedule.metrics["portfolio_signal_factor"] = float(allocation.signal_factor)
+            schedule.metrics["governor_signal_factor"] = float(schedule.governor_signal_factor)
+            schedule.metrics["governor_max_signals"] = float(
+                schedule.base_max_signals * max(0.0, schedule.governor_signal_factor)
+            )
             self._apply_signal_limits(schedule)
         allocation_map = {
             sched.name: sched.portfolio_weight for sched in self._schedules
@@ -1185,12 +1193,21 @@ class MultiStrategyScheduler:
 
     def _apply_signal_limits(self, schedule: _ScheduleContext) -> None:
         floor = self._min_signal_floor()
-        factor = max(0.0, schedule.governor_signal_factor) * max(
-            0.0, schedule.allocator_signal_factor
+        governor_factor = max(0.0, schedule.governor_signal_factor)
+        allocator_factor = max(0.0, schedule.allocator_signal_factor)
+        schedule.metrics["governor_signal_factor"] = float(governor_factor)
+        schedule.metrics["allocator_signal_factor"] = float(allocator_factor)
+        schedule.metrics["governor_max_signals"] = float(
+            schedule.base_max_signals * governor_factor
         )
-        computed = int(round(schedule.base_max_signals * factor))
-        if schedule.base_max_signals > 0:
-            computed = max(floor if factor > 0 else 0, computed)
+        if allocator_factor <= 0.0:
+            computed = 0
+        else:
+            computed = int(round(schedule.base_max_signals * governor_factor))
+            if schedule.base_max_signals > 0:
+                computed = max(floor if governor_factor > 0 else 0, computed)
+            if allocator_factor > 1.0 and computed > 0:
+                computed = int(round(computed * allocator_factor))
         schedule.metrics.pop("signal_limit_override", None)
         schedule.metrics.pop("signal_limit_expires_at", None)
         schedule.metrics.pop("signal_limit_reason", None)

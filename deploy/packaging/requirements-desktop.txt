@@ -1,5 +1,4 @@
 # Zależności wymagane do przygotowania bundla desktopowego w środowiskach offline.
-dudzian-bot==0.1.0
 numpy==1.26.4
 pandas==2.2.2
 joblib==1.4.2

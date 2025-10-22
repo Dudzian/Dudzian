@@ -189,6 +189,7 @@ class TradingParameters:
     max_position_size: int = 5
     min_weight: float = 0.0
     max_weight: Optional[float] = None
+    max_weight_change: Optional[float] = None
 
     # Position sizing
     volatility_target: float = 0.15

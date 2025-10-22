@@ -13,6 +13,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+os.environ["BOT_CORE_MINIMAL_DECISION"] = "0"
+
 from bot_core.config.loader import load_core_config
 from bot_core.decision import DecisionCandidate, DecisionOrchestrator
 from bot_core.security.signing import build_hmac_signature

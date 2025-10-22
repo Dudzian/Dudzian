@@ -16,12 +16,16 @@ from __future__ import annotations
 import asyncio
 import copy
 import enum
+import json
 import logging
 import math
 import threading
 import time
 import uuid
-from collections import Counter
+from bisect import bisect_right
+from datetime import datetime, timezone, tzinfo
+from collections import Counter, OrderedDict
+from pathlib import Path
 from collections.abc import Iterable
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -426,6 +430,7 @@ class AutoTrader:
         self._last_guardrail_reasons: list[str] = []
         self._last_guardrail_triggers: list[GuardrailTrigger] = []
         self._ai_degraded = False
+        self._active_decision_id: str | None = None
 
         self._stop = threading.Event()
         self._auto_trade_stop = threading.Event()
@@ -879,6 +884,24 @@ class AutoTrader:
         self._schedule_state = state
         self._schedule_mode = state.mode
         return state
+
+    def describe_work_schedule(self) -> dict[str, Any]:
+        schedule = self._ensure_work_schedule()
+        state = schedule.describe()
+        self._schedule_state = state
+        self._schedule_mode = state.mode
+        description = schedule.to_payload()
+        description["state"] = _serialize_schedule_state(state)
+        return description
+
+    def describe_work_schedule(self) -> dict[str, Any]:
+        schedule = self._ensure_work_schedule()
+        state = schedule.describe()
+        self._schedule_state = state
+        self._schedule_mode = state.mode
+        description = schedule.to_payload()
+        description["state"] = _serialize_schedule_state(state)
+        return description
 
     def is_schedule_open(self) -> bool:
         return self.get_schedule_state().is_open
@@ -1719,15 +1742,17 @@ class AutoTrader:
                 or self._active_decision_id
                 or self._generate_decision_id()
             )
+            payload_dict = dict(payload or {})
+            if normalized_decision_id is not None:
+                payload_dict.setdefault("decision_id", normalized_decision_id)
             record = log.record(
                 stage,
                 symbol,
                 mode=self._schedule_mode,
-                payload=payload or {},
+                payload=payload_dict,
                 risk_snapshot=risk_snapshot,
                 portfolio_snapshot=portfolio_snapshot,
                 metadata=metadata,
-                decision_id=normalized_decision_id,
             )
             self._emit_decision_audit_event(record)
         except Exception:  # pragma: no cover - audit log failures should not break trading
@@ -2481,15 +2506,17 @@ class AutoTrader:
                 or self._active_decision_id
                 or self._generate_decision_id()
             )
+            payload_dict = dict(payload or {})
+            if normalized_decision_id is not None:
+                payload_dict.setdefault("decision_id", normalized_decision_id)
             record = log.record(
                 stage,
                 symbol,
                 mode=self._schedule_mode,
-                payload=payload or {},
+                payload=payload_dict,
                 risk_snapshot=risk_snapshot,
                 portfolio_snapshot=portfolio_snapshot,
                 metadata=metadata,
-                decision_id=normalized_decision_id,
             )
             self._emit_decision_audit_event(record)
         except Exception:  # pragma: no cover - audit log failures should not break trading
@@ -12080,6 +12107,7 @@ class AutoTrader:
             decision_state_filter,
             decision_reason_filter,
             decision_mode_filter,
+            decision_id_filter,
             normalized_decision_fields,
             since_ts,
             until_ts,
@@ -12090,6 +12118,7 @@ class AutoTrader:
             decision_state=decision_state,
             decision_reason=decision_reason,
             decision_mode=decision_mode,
+            decision_id=decision_id,
             since=since,
             until=until,
             decision_fields=decision_fields,
@@ -12188,6 +12217,7 @@ class AutoTrader:
         decision_state: str | Iterable[str | None] | object = _NO_FILTER,
         decision_reason: str | Iterable[str | None] | object = _NO_FILTER,
         decision_mode: str | Iterable[str | None] | object = _NO_FILTER,
+        decision_id: str | Iterable[str | None] | object = _NO_FILTER,
         since: Any = None,
         until: Any = None,
         flatten_decision: bool = False,
@@ -12207,6 +12237,7 @@ class AutoTrader:
             decision_state_filter,
             decision_reason_filter,
             decision_mode_filter,
+            decision_id_filter,
             normalized_decision_fields,
             since_ts,
             until_ts,
@@ -12217,6 +12248,7 @@ class AutoTrader:
             decision_state=decision_state,
             decision_reason=decision_reason,
             decision_mode=decision_mode,
+            decision_id=decision_id,
             since=since,
             until=until,
             decision_fields=decision_fields,
@@ -12237,6 +12269,7 @@ class AutoTrader:
             state_filter=decision_state_filter,
             reason_filter=decision_reason_filter,
             mode_filter=decision_mode_filter,
+            decision_id_filter=decision_id_filter,
         )
         self._log_risk_history_trimmed(
             context="records",
@@ -12284,6 +12317,7 @@ class AutoTrader:
             decision_state_filter,
             decision_reason_filter,
             decision_mode_filter,
+            decision_id_filter,
             normalized_decision_fields,
             since_ts,
             until_ts,
@@ -12294,6 +12328,7 @@ class AutoTrader:
             decision_state=decision_state,
             decision_reason=decision_reason,
             decision_mode=decision_mode,
+            decision_id=decision_id,
             since=since,
             until=until,
             decision_fields=decision_fields,
@@ -12352,6 +12387,7 @@ class AutoTrader:
             "decision_state": _serialize_filter(decision_state_filter),
             "decision_reason": _serialize_filter(decision_reason_filter),
             "decision_mode": _serialize_filter(decision_mode_filter),
+            "decision_id": _serialize_filter(decision_id_filter),
             "since": since_ts.isoformat() if since_ts is not None else None,
             "until": until_ts.isoformat() if until_ts is not None else None,
             "flatten_decision": bool(flatten_decision),
@@ -12391,6 +12427,7 @@ class AutoTrader:
         decision_state: str | Iterable[str | None] | object = _NO_FILTER,
         decision_reason: str | Iterable[str | None] | object = _NO_FILTER,
         decision_mode: str | Iterable[str | None] | object = _NO_FILTER,
+        decision_id: str | Iterable[str | None] | object = _NO_FILTER,
         since: Any = None,
         until: Any = None,
         flatten_decision: bool = False,
@@ -12410,6 +12447,7 @@ class AutoTrader:
             decision_state=decision_state,
             decision_reason=decision_reason,
             decision_mode=decision_mode,
+            decision_id=decision_id,
             since=since,
             until=until,
             flatten_decision=flatten_decision,
@@ -12514,6 +12552,15 @@ class AutoTrader:
             for key in ("service", "response", "error"):
                 if key in entry:
                     record[key] = copy.deepcopy(entry[key])
+
+            decision_id_value = entry.get("decision_id")
+            normalized_decision_id = self._normalize_decision_id(decision_id_value)
+            if normalized_decision_id is not None or decision_id_value is not None:
+                record["decision_id"] = (
+                    normalized_decision_id if normalized_decision_id is not None else copy.deepcopy(decision_id_value)
+                )
+
+            records.append(record)
 
         records.sort(key=lambda item: float(item.get("timestamp", 0.0)))
 

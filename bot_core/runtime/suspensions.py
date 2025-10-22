@@ -145,12 +145,51 @@ class SuspensionManager:
         self._purge_expired(now)
         schedules: dict[str, dict[str, object]] = {}
         tags: dict[str, dict[str, object]] = {}
+        schedule_reasons: dict[str, str] = {}
+        tag_reasons: dict[str, str] = {}
+        next_expiration_info: tuple[str, str, float] | None = None
         with self._lock:
             for name, record in self._schedule_suspensions.items():
                 schedules[name] = record.as_dict(now)
+                descriptor = self._active_reasons.get(name, record.reason)
+                schedule_reasons[name] = descriptor
+                remaining = record.remaining_seconds(now)
+                if remaining is not None:
+                    if (
+                        next_expiration_info is None
+                        or remaining < next_expiration_info[2]
+                    ):
+                        next_expiration_info = ("schedule", name, remaining)
             for tag_name, record in self._tag_suspensions.items():
                 tags[tag_name] = record.as_dict(now)
-        return {"schedules": schedules, "tags": tags}
+                tag_reasons[tag_name] = record.reason
+                remaining = record.remaining_seconds(now)
+                if remaining is not None:
+                    if (
+                        next_expiration_info is None
+                        or remaining < next_expiration_info[2]
+                    ):
+                        next_expiration_info = ("tag", tag_name, remaining)
+        counts = {
+            "schedules": len(schedules),
+            "tags": len(tags),
+            "total": len(schedules) + len(tags),
+        }
+        reasons = {"schedules": schedule_reasons, "tags": tag_reasons}
+        payload = {
+            "schedules": schedules,
+            "tags": tags,
+            "counts": counts,
+            "reasons": reasons,
+        }
+        if next_expiration_info is not None:
+            scope, name, remaining = next_expiration_info
+            payload["next_expiration"] = {
+                "scope": scope,
+                "name": name,
+                "remaining_seconds": remaining,
+            }
+        return payload
 
     def resolve(
         self,
