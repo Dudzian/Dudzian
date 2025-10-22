@@ -294,3 +294,145 @@ def test_schedule_next_override_shortens_transition() -> None:
     assert during_override.next_transition == first_override.end
     assert during_override.next_override is not None
     assert during_override.next_override.label == "next-day"
+
+
+def test_add_schedule_override_updates_state_and_events() -> None:
+    trader, emitter = _build_trader()
+    window = ScheduleWindow(start=time(0, 0), end=time(0, 0), mode="live", allow_trading=True)
+    schedule = TradingSchedule((window,), timezone_name="UTC")
+    trader.set_work_schedule(schedule)
+
+    emitter.events.clear()
+
+    now = datetime.now(timezone.utc)
+    override_payload = {
+        "start": (now - timedelta(minutes=15)).isoformat(),
+        "end": (now + timedelta(minutes=30)).isoformat(),
+        "mode": "maintenance",
+        "allow_trading": False,
+        "label": "window",
+    }
+
+    state = trader.add_schedule_override(override_payload)
+
+    assert state.override is not None
+    assert state.override.label == "window"
+    assert state.override_active is True
+    assert state.is_open is False
+
+    overrides = trader.list_schedule_overrides()
+    assert len(overrides) == 1
+    assert overrides[0].label == "window"
+
+    entries = trader.get_decision_audit_entries(limit=1)
+    assert entries
+    assert entries[-1]["payload"]["reason"] == "override_added"
+
+    assert emitter.events
+    event_name, payload = emitter.events[-1]
+    assert event_name == "auto_trader.schedule_state"
+    assert payload["reason"] == "override_added"
+    assert payload["override"]["label"] == "window"
+
+
+def test_add_schedule_override_replaces_overlap_when_requested() -> None:
+    trader, _ = _build_trader()
+    window = ScheduleWindow(start=time(0, 0), end=time(0, 0))
+    schedule = TradingSchedule((window,), timezone_name="UTC")
+    trader.set_work_schedule(schedule)
+
+    now = datetime.now(timezone.utc)
+    first = ScheduleOverride(
+        start=now - timedelta(minutes=45),
+        end=now + timedelta(minutes=15),
+        allow_trading=False,
+    )
+    trader.add_schedule_override(first)
+
+    replacement = ScheduleOverride(
+        start=now - timedelta(minutes=30),
+        end=now + timedelta(minutes=45),
+        allow_trading=False,
+    )
+
+    state = trader.add_schedule_override(replacement, replace_overlaps=True)
+
+    overrides = trader.list_schedule_overrides()
+    assert len(overrides) == 1
+    assert overrides[0].start == replacement.start
+    assert overrides[0].end == replacement.end
+    assert state.override is not None
+    assert state.override.start == replacement.start
+    assert trader.get_decision_audit_entries(limit=1)[-1]["payload"]["reason"] == "override_replaced"
+
+
+def test_add_schedule_override_rejects_overlap_without_flag() -> None:
+    trader, _ = _build_trader()
+    window = ScheduleWindow(start=time(0, 0), end=time(0, 0))
+    schedule = TradingSchedule((window,), timezone_name="UTC")
+    trader.set_work_schedule(schedule)
+
+    now = datetime.now(timezone.utc)
+    trader.add_schedule_override(
+        ScheduleOverride(
+            start=now,
+            end=now + timedelta(minutes=60),
+            allow_trading=False,
+        )
+    )
+
+    with pytest.raises(ValueError):
+        trader.add_schedule_override(
+            {
+                "start": (now + timedelta(minutes=30)).isoformat(),
+                "end": (now + timedelta(minutes=120)).isoformat(),
+                "allow_trading": False,
+            }
+        )
+
+
+def test_remove_schedule_override_by_label() -> None:
+    trader, emitter = _build_trader()
+    window = ScheduleWindow(start=time(0, 0), end=time(0, 0))
+    schedule = TradingSchedule((window,), timezone_name="UTC")
+    trader.set_work_schedule(schedule)
+
+    trader.add_schedule_override(
+        {
+            "start": "2024-01-01T09:00:00+00:00",
+            "end": "2024-01-01T11:00:00+00:00",
+            "label": "incident",
+            "allow_trading": False,
+        }
+    )
+
+    emitter.events.clear()
+
+    state = trader.remove_schedule_override(label="incident")
+
+    assert not trader.list_schedule_overrides()
+    assert state.override is None
+    assert trader.get_decision_audit_entries(limit=1)[-1]["payload"]["reason"] == "override_removed"
+
+    assert emitter.events
+    event_name, payload = emitter.events[-1]
+    assert event_name == "auto_trader.schedule_state"
+    assert payload["reason"] == "override_removed"
+
+
+def test_remove_schedule_override_requires_match() -> None:
+    trader, _ = _build_trader()
+    window = ScheduleWindow(start=time(0, 0), end=time(0, 0))
+    schedule = TradingSchedule((window,), timezone_name="UTC")
+    trader.set_work_schedule(schedule)
+
+    with pytest.raises(LookupError):
+        trader.remove_schedule_override(label="missing")
+
+
+def test_clear_schedule_overrides_noop_when_empty() -> None:
+    trader, emitter = _build_trader()
+    trader.clear_schedule_overrides()
+
+    assert not emitter.events
+
