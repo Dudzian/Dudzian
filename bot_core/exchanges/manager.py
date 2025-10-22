@@ -8,7 +8,7 @@ import os
 from dataclasses import dataclass
 from collections.abc import Iterable
 from collections import Counter
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Mapping, MutableMapping, Optional, Sequence, Tuple
 
 from pydantic import BaseModel, Field
 
@@ -105,6 +105,43 @@ class _NativeAdapterRegistration:
 
 
 _NATIVE_ADAPTER_REGISTRY: Dict[Tuple[Mode, str], _NativeAdapterRegistration] = {}
+
+
+class _LegacyAdapterMapping(MutableMapping[str, Any]):
+    """Compatybilna z wcześniejszym API mapa natywnych adapterów."""
+
+    def __init__(self, mode: Mode) -> None:
+        self._mode = mode
+
+    def __getitem__(self, key: str) -> Any:
+        normalized = (key or "").strip().lower()
+        entry = _NATIVE_ADAPTER_REGISTRY.get((self._mode, normalized))
+        if entry is None:
+            raise KeyError(normalized)
+        return entry.factory
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        register_native_adapter(
+            exchange_id=str(key).strip().lower(),
+            mode=self._mode,
+            factory=value,
+        )
+
+    def __delitem__(self, key: str) -> None:
+        normalized = (key or "").strip().lower()
+        _NATIVE_ADAPTER_REGISTRY.pop((self._mode, normalized), None)
+
+    def __iter__(self):
+        for (mode, exchange_id), _ in _NATIVE_ADAPTER_REGISTRY.items():
+            if mode == self._mode:
+                yield exchange_id
+
+    def __len__(self) -> int:
+        return sum(1 for mode, _ in _NATIVE_ADAPTER_REGISTRY if mode == self._mode)
+
+
+_NATIVE_MARGIN_ADAPTERS: MutableMapping[str, Any] = _LegacyAdapterMapping(Mode.MARGIN)
+_NATIVE_FUTURES_ADAPTERS: MutableMapping[str, Any] = _LegacyAdapterMapping(Mode.FUTURES)
 
 
 def register_native_adapter(

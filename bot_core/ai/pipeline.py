@@ -177,6 +177,7 @@ def _compute_metrics(
     predictions = np.asarray(model.batch_predict(features), dtype=float)
     target_arr = np.asarray(targets, dtype=float)
     mae = float(np.mean(np.abs(predictions - target_arr))) if len(predictions) else 0.0
+    rmse = float(np.sqrt(np.mean((predictions - target_arr) ** 2))) if len(predictions) else 0.0
     hits = float(np.mean(np.sign(predictions) == np.sign(target_arr))) if len(predictions) else 0.0
     pnl = float(np.mean(predictions * target_arr)) if len(predictions) else 0.0
     return {
@@ -220,12 +221,27 @@ def train_gradient_boosting_model(
             _extract_learning_set(test_frame, feature_cols, target_col, name="test")
         )
     train_set = learning_sets[0]
-    model = SimpleGradientBoostingModel()
-    model.fit(features, targets)
-    raw_predictions = list(model.batch_predict(features))
-    metrics = _compute_metrics(model, features, targets)
-    calibration_slope, calibration_intercept = _calibrate_predictions(targets, raw_predictions)
-    cv_payload = _cross_validate(features, targets, folds=max(3, min(5, len(features))))
+    train_features = train_set.features
+    train_targets = train_set.targets
+    min_leaf = max(1, min(5, max(len(train_features) // 3, 1)))
+    model = SimpleGradientBoostingModel(min_samples_leaf=min_leaf)
+    model.fit(train_features, train_targets)
+    raw_predictions = list(model.batch_predict(train_features))
+    calibration_slope, calibration_intercept = _calibrate_predictions(train_targets, raw_predictions)
+    cv_payload = _cross_validate(
+        train_features, train_targets, folds=max(3, min(5, len(train_features)))
+    )
+    subset_metrics: dict[str, Mapping[str, float]] = {
+        subset.name: _compute_metrics(model, subset.features, subset.targets)
+        for subset in learning_sets
+    }
+    metrics = dict(subset_metrics.get(train_set.name, {}))
+    if not metrics:
+        metrics = _compute_metrics(model, train_features, train_targets)
+    for subset_name, values in subset_metrics.items():
+        prefix = subset_name.lower()
+        for metric_name, value in values.items():
+            metrics[f"{prefix}_{metric_name}"] = value
     meta_payload = {
         "feature_scalers": {
             name: {"mean": mean, "stdev": stdev}
@@ -240,9 +256,38 @@ def train_gradient_boosting_model(
             "mae": list(cv_payload["mae"]),
             "directional_accuracy": list(cv_payload["directional_accuracy"]),
         },
+        "dataset_split": {
+            "train_ratio": max(0.0, 1.0 - float(validation_ratio) - float(test_ratio)),
+            "validation_ratio": float(validation_ratio),
+            "test_ratio": float(test_ratio),
+            "train_rows": len(train_frame),
+            "validation_rows": len(validation_frame),
+            "test_rows": len(test_frame),
+        },
+        "drift_monitor": {
+            "threshold": 3.5,
+            "window": 50,
+            "min_observations": 10,
+            "cooldown": 25,
+            "backend": "decision_engine",
+        },
+        "quality_thresholds": {
+            "min_directional_accuracy": 0.55,
+            "max_mae": 20.0,
+        },
     }
     if metadata:
-        meta_payload.update(metadata)
+        for key, value in metadata.items():
+            if (
+                isinstance(value, Mapping)
+                and key in meta_payload
+                and isinstance(meta_payload[key], Mapping)
+            ):
+                merged = dict(meta_payload[key])
+                merged.update(value)  # type: ignore[arg-type]
+                meta_payload[key] = merged
+            else:
+                meta_payload[key] = value
     if "train" in subset_metrics:
         meta_payload["train_metrics"] = dict(subset_metrics["train"])
     if "validation" in subset_metrics:

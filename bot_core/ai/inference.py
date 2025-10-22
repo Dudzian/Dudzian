@@ -137,6 +137,9 @@ class DecisionModelInference:
         self._target_scale: float = 1.0
         self._feature_scalers: dict[str, tuple[float, float]] = {}
         self._calibration: tuple[float, float] | None = None
+        self._model_label: str = "unknown"
+        self._drift_monitor = _FeatureDriftMonitor()
+        self._last_drift_score: float | None = None
 
     @property
     def is_ready(self) -> bool:
@@ -162,6 +165,19 @@ class DecisionModelInference:
         self._target_scale = float(metadata.get("target_scale", 1.0))
         self._feature_scalers = self._extract_scalers(metadata)
         self._calibration = self._extract_calibration(metadata)
+        drift_config = metadata.get("drift_monitor")
+        if isinstance(drift_config, Mapping):
+            self._drift_monitor.configure(
+                model_name=getattr(self, "_model_label", "unknown"),
+                threshold=drift_config.get("threshold"),
+                window=drift_config.get("window"),
+                min_observations=drift_config.get("min_observations"),
+                cooldown=drift_config.get("cooldown"),
+                backend=drift_config.get("backend"),
+            )
+        else:
+            self._drift_monitor.configure(model_name=getattr(self, "_model_label", "unknown"))
+        self._last_drift_score = None
         if hasattr(self._model, "feature_scalers"):
             model_scalers = getattr(self._model, "feature_scalers")
             if not self._feature_scalers and isinstance(model_scalers, Mapping):
